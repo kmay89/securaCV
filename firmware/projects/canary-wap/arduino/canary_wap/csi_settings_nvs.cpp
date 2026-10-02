@@ -142,7 +142,7 @@ bool store_quiet_hours_from_settings(Preferences& prefs, char* body) {
 
 void apply_quiet_hours_from_nvs(void) {
   Preferences prefs;
-  if (!prefs.begin(csi_module_settings_nvs::kNamespace, /*readOnly=*/true)) return;
+  if (!csi_module_settings_nvs::begin_read_only(prefs)) return;
   const QuietHours qh = read_quiet_hours(prefs);
   prefs.end();
   csi_event_set_quiet_window((uint16_t)qh.start_min, (uint16_t)qh.end_min, qh.enabled);
@@ -265,7 +265,7 @@ bool store_privacy_ceiling_from_settings(Preferences& prefs, const char* body) {
  * permissive level. Moved from csi_integration.cpp (sweep F151). */
 void apply_privacy_ceiling_from_nvs(void) {
   Preferences prefs;
-  if (!prefs.begin(csi_module_settings_nvs::kNamespace, /*readOnly=*/true)) return;
+  if (!csi_module_settings_nvs::begin_read_only(prefs)) return;
   const int32_t raw = read_privacy_ceiling(prefs);
   prefs.end();
   csi_privacy_class_t ceiling;
@@ -275,4 +275,18 @@ void apply_privacy_ceiling_from_nvs(void) {
     default:                      ceiling = CSI_PRIVACY_P0; break;
   }
   csi_event_set_privacy_ceiling(ceiling);
+}
+
+/* ── The boot's first read of the namespace (sweep F150) ─────────────── */
+
+bool read_event_id_floor_rows(const char* floor_key, const char* ceiling_key,
+                              uint32_t* floor, uint32_t* ceiling) {
+  *floor = 0;
+  *ceiling = 0;
+  Preferences prefs;
+  if (!csi_module_settings_nvs::begin_read_only(prefs)) return false;
+  *floor = (uint32_t)prefs.getULong(floor_key, 0);
+  *ceiling = (uint32_t)prefs.getULong(ceiling_key, 0);
+  prefs.end();
+  return true;
 }

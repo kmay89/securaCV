@@ -169,6 +169,7 @@
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
+#include "csi_module_settings_nvs.h" // begin_read_only(): the quiet read-only open of "csi" (F150)
 #include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
 #include "usb_evidence_drive.h" // USB evidence drive / update drop-zone (opt-in build)
 #include "setup_page_html.h"     // Static captive-portal "open canary.local" page
@@ -2585,7 +2586,7 @@ static const char* csi_zone_id() {
     char  scratch[32];
     bool  found = false;
     Preferences prefs;
-    if (prefs.begin("csi", /*readOnly=*/true)) {
+    if (csi_module_settings_nvs::begin_read_only(prefs, "csi")) {
       String v = prefs.getString("core.zone_id", "");
       prefs.end();
       if (v.length() > 0 && v.length() < sizeof(scratch)) {

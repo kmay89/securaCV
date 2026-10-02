@@ -1109,12 +1109,45 @@ void test_the_egress_counters_ride_a_retained_topic_of_their_own() {
   std::printf("PASS the_egress_counters_ride_a_retained_topic_of_their_own\n");
 }
 
+// Sweep F150: a read-only open of a "csi" namespace nothing has created
+// logged "nvs_open failed: NOT_FOUND" at error level (Arduino-ESP32's
+// Preferences::begin()). The bridge's boot read of its settings goes through
+// csi_module_settings_nvs.h's begin_read_only(), which asks IDF's nvs_open()
+// first: on such NVS it opens nothing, logs nothing, and loads the defaults
+// it loaded before (disabled, port 1883, the default prefix, discovery on).
+// A namespace that is there is read as before.
+void test_the_settings_read_on_a_fresh_nvs_logs_nothing() {
+  stub_nvs().clear();
+  stub_nvs_created().clear();
+  const int logs = stub_nvs_error_logs();
+  csi_mqtt::Config cfg;
+  CHECK(csi_mqtt::config_load(&cfg));
+  CHECK(stub_nvs_error_logs() == logs);
+  CHECK(!stub_nvs_has_namespace("csi"));          // a read creates nothing
+  CHECK(!cfg.enabled && cfg.port == 1883 && cfg.discovery && !cfg.ca_set);
+  CHECK(std::string(cfg.prefix) == "securacv" && cfg.host[0] == '\0');
+
+  // Stored, then read back with no error line.
+  cfg.enabled = true;
+  std::snprintf(cfg.host, sizeof cfg.host, "%s", "10.0.0.9");
+  cfg.discovery = false;
+  CHECK(csi_mqtt::config_save(cfg));
+  csi_mqtt::Config back;
+  CHECK(csi_mqtt::config_load(&back));
+  CHECK(stub_nvs_error_logs() == logs);
+  CHECK(back.enabled && std::string(back.host) == "10.0.0.9" && !back.discovery);
+  stub_nvs().clear();
+  stub_nvs_created().clear();
+  std::printf("PASS the_settings_read_on_a_fresh_nvs_logs_nothing\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
 };
 const Test kTests[] = {
     {"a_config_post_reinits_on_the_loop_task", test_a_config_post_reinits_on_the_loop_task},
+    {"the_settings_read_on_a_fresh_nvs_logs_nothing", test_the_settings_read_on_a_fresh_nvs_logs_nothing},
     {"a_publish_in_flight_keeps_its_client", test_a_publish_in_flight_keeps_its_client},
     {"the_test_handler_reports_the_new_clients_connect", test_the_test_handler_reports_the_new_clients_connect},
     {"the_test_handler_is_bounded", test_the_test_handler_is_bounded},

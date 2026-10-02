@@ -132,6 +132,22 @@ int32_t read_privacy_ceiling(Preferences& prefs);
  *  then re-applies with apply_privacy_ceiling_from_nvs()). */
 bool store_privacy_ceiling_from_settings(Preferences& prefs, const char* body);
 
+/* ── The boot's first read of the namespace (sweep F150) ──────────────────
+ * csi_integration::init() restores the event-id floor before anything else
+ * touches "csi". On the first boot after an NVS erase nothing has created
+ * the namespace yet (the events egress's first delivery-ceiling record,
+ * right after, is what does), and a read-only Preferences::begin() of it
+ * logged "nvs_open failed: NOT_FOUND" at error level. */
+
+/** Read the persisted event-id floor (`floor_key`) and the events egress's
+ *  delivery ceiling (`ceiling_key`), each 0 when absent, through one
+ *  read-only handle opened by csi_module_settings_nvs::begin_read_only().
+ *  False when NVS was not read: the namespace would not open (a fault, which
+ *  Preferences logs) or does not exist (which logs nothing); both are left
+ *  0. */
+bool read_event_id_floor_rows(const char* floor_key, const char* ceiling_key,
+                              uint32_t* floor, uint32_t* ceiling);
+
 /** Push the stored ceiling into the chokepoint (csi_event_set_privacy_ceiling);
  *  a value that is not 1 or 2 is P0, never a more permissive level. Called at
  *  boot (csi_integration::init()) and after POST /api/settings stores it. A

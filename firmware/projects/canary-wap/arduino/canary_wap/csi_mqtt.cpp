@@ -62,6 +62,7 @@
 #include "csi_event_wire.h"         /* staged copy of firmware/common/csi/src — the shared events body */
 #include "csi_event_id_floor.h"     /* staged copy — space_low(): the health's event-id warning (F82) */
 #include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
+#include "csi_module_settings_nvs.h" /* staged copy — begin_read_only(), the quiet read-only open (F150) */
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -495,7 +496,7 @@ bool config_load(Config* out) {
   if (!out) return false;
   memset(out, 0, sizeof(*out));
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
+  if (!csi_module_settings_nvs::begin_read_only(prefs, SETTINGS_NS)) {
     /* No NVS yet (or namespace corrupt) — treat as disabled with
      * default port + prefix. Discovery defaults to true so a fresh
      * device with no NVS state still publishes HA auto-discovery on
@@ -568,7 +569,7 @@ namespace {
 void ca_load() {
   s_ca_pem[0] = '\0';
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  if (!csi_module_settings_nvs::begin_read_only(prefs, SETTINGS_NS)) return;
   if (prefs.isKey(NVS_KEY_CA)) {
     prefs.getString(NVS_KEY_CA, s_ca_pem, sizeof(s_ca_pem));
     s_ca_pem[sizeof(s_ca_pem) - 1] = '\0';

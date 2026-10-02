@@ -460,7 +460,7 @@ void apply_tz_rule(const char* rule) {
 
 void apply_tz_from_nvs() {
   Preferences tprefs;
-  if (!tprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  if (!csi_module_settings_nvs::begin_read_only(tprefs)) return;
   char rule[tz_rule::MAX_POSIX_LEN + 1] = {0};
   if (tprefs.isKey(NVS_KEY_TZ)) tprefs.getString(NVS_KEY_TZ, rule, sizeof(rule));
   tprefs.end();
@@ -512,7 +512,7 @@ constexpr const char* NVS_KEY_FILTER_FOREIGN = "csi.ff";
 
 bool read_filter_foreign_from_nvs() {
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return true;
+  if (!csi_module_settings_nvs::begin_read_only(prefs)) return true;
   const bool on = prefs.getBool(NVS_KEY_FILTER_FOREIGN, true);
   prefs.end();
   return on;
@@ -559,13 +559,15 @@ constexpr const char*    NVS_KEY_EVENT_ID = "ev.next";
 uint32_t                 g_id_floor_stored = 0;
 
 /* True when NVS was read (the floor is now what it holds, or none was ever
- * stored); false when the namespace could not be opened. */
+ * stored); false when the namespace could not be opened, or (the first boot
+ * after an NVS erase) does not exist yet: read_event_id_floor_rows() asks
+ * quietly (sweep F150). This is the boot's first read of the namespace. */
 bool apply_event_id_floor_from_nvs() {
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return false;
-  const uint32_t persisted = (uint32_t)prefs.getULong(NVS_KEY_EVENT_ID, 0);
-  const uint32_t delivered = (uint32_t)prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0);
-  prefs.end();
+  uint32_t persisted = 0;
+  uint32_t delivered = 0;
+  if (!read_event_id_floor_rows(NVS_KEY_EVENT_ID, csi_mqtt::NVS_KEY_DELIVERED, &persisted, &delivered)) {
+    return false;
+  }
   csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(persisted, delivered));
   if (persisted > 0) g_id_floor_stored = persisted;
   return true;
@@ -920,7 +922,7 @@ esp_err_t handle_calibrate_status(httpd_req_t* req) {
    * if they reopened the page (NVS is the source of truth across
    * reboots). */
   Preferences prefs;
-  bool prefs_ok = prefs.begin(SETTINGS_NS, /*readOnly=*/true);
+  bool prefs_ok = csi_module_settings_nvs::begin_read_only(prefs);
   /* Through the key map, the rows core.presence reads (sweep F151). */
   PresenceThresholds current = {35, 75, 30};
   if (prefs_ok) {
@@ -1025,7 +1027,7 @@ esp_err_t handle_calibrate_apply(httpd_req_t* req) {
 esp_err_t handle_settings_get(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
+  if (!csi_module_settings_nvs::begin_read_only(prefs)) {
     /* Don't silently report defaults — the dashboard would reconcile
      * localStorage to those values and quietly clobber any choice the
      * user had previously made. Surface the unavailability so the
@@ -1400,7 +1402,7 @@ esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
   Preferences prefs;
-  bool prefs_ok = prefs.begin(SETTINGS_NS, /*readOnly=*/true);
+  bool prefs_ok = csi_module_settings_nvs::begin_read_only(prefs);
 
   /* Stream out one big JSON object; chunked send keeps RAM bounded
    * even as the table grows past the 16-coefficient v1 set. */
@@ -1489,7 +1491,7 @@ esp_err_t handle_tune_get_preset(httpd_req_t* req) {
   httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"tuning-preset.json\"");
 
   Preferences prefs;
-  bool prefs_ok = prefs.begin(SETTINGS_NS, /*readOnly=*/true);
+  bool prefs_ok = csi_module_settings_nvs::begin_read_only(prefs);
 
   httpd_resp_send_chunk(req, "{", -1);
   bool first = true;

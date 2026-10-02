@@ -1125,6 +1125,35 @@ Owner: U1.
     do.
   - Artifact: `docs/audit/repro/F123/dashboard-and-lab-one-window/`.
 
+## canary-wap first boot after an NVS erase (F150) — on-device verification
+
+Code: `firmware/common/csi/src/csi_module_settings_nvs.h`
+(`begin_read_only()`, staged into the canary-wap sketch) and its callers:
+every read-only open of the `csi` namespace in the sketch
+(`read_event_id_floor_rows()` and the other readers in
+`csi_settings_nvs.cpp`, `csi_event_egress.cpp`'s `begin()`, `csi_mqtt.cpp`,
+`csi_integration.cpp`, `canary_wap.ino`). Host-tested
+(`tests_host/test_wap_module_boot.cpp`, `test_wap_event_egress.cpp`,
+`test_mqtt_reinit.cpp`, whose NVS fakes count the error line
+Arduino-ESP32's `Preferences::begin()` logs for a namespace that is not
+there); that IDF's `nvs_open()` answers `ESP_ERR_NVS_NOT_FOUND` without an
+error-level line is from IDF's source as read (F125). Compile is CI's.
+Owner: U1.
+
+- [ ] **A first boot after an erase logs no `nvs_open failed` line for `csi`**
+  - Setup: a canary-wap board; `esptool.py erase_region` over its `nvs`
+    partition (or `erase_flash` and a reflash); serial monitor at the
+    release envs' log level (`CORE_DEBUG_LEVEL=1` keeps error lines).
+  - Repro: boot it and let it reach the dashboard; reboot it once more.
+  - Expected: neither boot logs `[E][Preferences.cpp:...] begin(): nvs_open
+    failed: NOT_FOUND` for the CSI start-up (before F150 the first boot
+    logged two, from the event-id floor's read and the events egress's
+    ceiling read); the first boot prints `[EVT-LOG] event-id floor not
+    readable from NVS - the log is not reloaded this boot`, as before, and
+    the second does not. Lines from other namespaces (`mesh`, `securacv`)
+    are outside this row.
+  - Artifact: `docs/audit/repro/F150/first-boot-log/`.
+
 ## canary-wap dashboard presence settings and calibration (F151) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_settings_nvs.cpp`

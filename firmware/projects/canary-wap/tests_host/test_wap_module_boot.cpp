@@ -38,12 +38,32 @@
 // never-written test fails with begin() going straight to Preferences (the
 // code before F125).
 //
+// Sweep F150: the canary-wap's boot reads "csi" read-only twice before
+// anything writes it: csi_integration::init() restores the event-id floor,
+// then the events egress reads its delivery ceiling. Each went to
+// Preferences::begin(), which logs "nvs_open failed: NOT_FOUND" at error
+// level for a namespace that is not there: two lines on the first boot
+// after an erase. (The egress then stores its first ceiling record, which
+// creates the namespace, so the reads after it find it; on a boot where that
+// record is not written, each later read-only open logged one more line.)
+// Every read-only open of the namespace in the sketch now goes through
+// csi_module_settings_nvs::begin_read_only(), the F125 probe in front of
+// Preferences::begin(): the floor's read (read_event_id_floor_rows(),
+// csi_settings_nvs.cpp), Quiet Hours and the privacy ceiling run here in
+// the boot's order on such NVS; test_wap_event_egress.cpp runs the egress's
+// read and test_mqtt_reinit.cpp the MQTT bridge's; the source pin at the end
+// holds every other read-only open of the namespace (csi_integration.cpp's,
+// canary_wap.ino's) to the helper.
+//
 // Build/run: make -C firmware/projects/canary-wap/tests_host
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <regex>
 #include <sstream>
@@ -486,6 +506,249 @@ static int test_the_model_is_register_v1_modules() {
   return 0;
 }
 
+// ── Sweep F150: the first boot after an NVS erase ───────────────────────
+
+// begin_read_only() answers as Preferences::begin() would, without the
+// error line an absent namespace costs: false and no open for one never
+// created; one open for one that is there; and a fault still goes to
+// Preferences, which logs it.
+static int test_begin_read_only_answers_as_the_open_would() {
+  host_prefs().clear();
+  {
+    Preferences p;
+    CHECK(!csi_module_settings_nvs::begin_read_only(p));
+    CHECK(!csi_module_settings_nvs::begin_read_only(p, "another"));
+  }
+  CHECK(host_prefs().begins == 0 && host_prefs().error_logs == 0 && host_prefs().probes == 2);
+  CHECK(!host_prefs().has_namespace("csi"));             // a read creates nothing
+  host_prefs().created.insert("csi");
+  {
+    Preferences p;
+    CHECK(csi_module_settings_nvs::begin_read_only(p));
+    p.end();
+  }
+  CHECK(host_prefs().opens == 1 && host_prefs().error_logs == 0);
+  host_prefs().clear();
+  host_prefs().fail_begin = true;
+  {
+    Preferences p;
+    CHECK(!csi_module_settings_nvs::begin_read_only(p));
+  }
+  CHECK(host_prefs().begins == 1 && host_prefs().error_logs == 1);
+  host_prefs().clear();
+  return 0;
+}
+
+static void reset_counts() {
+  host_prefs().begins = 0;
+  host_prefs().opens = 0;
+  host_prefs().error_logs = 0;
+  host_prefs().probes = 0;
+  host_prefs().gets.clear();
+}
+
+// csi_integration::init()'s reads of "csi", in its order, on NVS that holds
+// nothing. The floor's read finds no namespace and says NVS was not read
+// (the boot does not reload the card's log, as before), without a line.
+// Then the events egress (test_wap_event_egress.cpp) reads its ceiling, as
+// quietly, and stores its first record, which creates the namespace; the
+// reads after it open it. On a boot where that record is not written (the
+// egress could not allocate its state), they find no namespace either, and
+// say nothing either.
+static int test_a_first_boot_after_an_erase_logs_no_nvs_error() {
+  constexpr const char* kFloorKey = "ev.next";       // csi_integration.cpp's NVS_KEY_EVENT_ID
+  constexpr const char* kCeilingKey = "csi.evsent";  // csi_mqtt::NVS_KEY_DELIVERED
+  for (int egress_record = 0; egress_record < 2; ++egress_record) {
+    host_prefs().clear();
+    csi_event_test_reset();
+    csi_module_test_reset();
+    uint32_t floor = 1, ceiling = 1;
+    CHECK(!read_event_id_floor_rows(kFloorKey, kCeilingKey, &floor, &ceiling));
+    CHECK(floor == 0 && ceiling == 0);
+    CHECK(host_prefs().begins == 0 && host_prefs().error_logs == 0);
+    if (egress_record) {
+      Preferences w;                                   // the egress's persist_ceiling()
+      CHECK(w.begin("csi", /*readOnly=*/false));
+      CHECK(w.putULong(kCeilingKey, 1) == 4);
+      w.end();
+    }
+    reset_counts();
+    register_v1_modules_model();                       // register_v1_modules(),
+    apply_quiet_hours_from_nvs();                      //   which applies Quiet Hours
+    (void)csi_settings_nvs_init_modules();             // the modules' boot init (F93, F125)
+    apply_privacy_ceiling_from_nvs();
+    CHECK(host_prefs().error_logs == 0);
+    CHECK(host_prefs().begins == (egress_record ? 3 : 0));
+    CHECK(host_prefs().opens == host_prefs().begins);
+    CHECK(csi_event_get_privacy_ceiling() == CSI_PRIVACY_P0);
+  }
+
+  // A later boot reads what was stored, through one handle, with no line.
+  host_prefs().clear();
+  host_prefs().u32[std::string("csi/") + kFloorKey] = kFloor;
+  host_prefs().u32[std::string("csi/") + kCeilingKey] = kFloor - 3;
+  uint32_t floor = 0, ceiling = 0;
+  CHECK(read_event_id_floor_rows(kFloorKey, kCeilingKey, &floor, &ceiling));
+  CHECK(floor == kFloor && ceiling == kFloor - 3);
+  CHECK(host_prefs().opens == 1 && host_prefs().error_logs == 0);
+
+  // NVS refusing every open (a fault) keeps each read's one line.
+  host_prefs().fail_begin = true;
+  reset_counts();
+  CHECK(!read_event_id_floor_rows(kFloorKey, kCeilingKey, &floor, &ceiling));
+  apply_quiet_hours_from_nvs();
+  apply_privacy_ceiling_from_nvs();
+  CHECK(host_prefs().begins == 3 && host_prefs().error_logs == 3);
+  host_prefs().clear();
+  return 0;
+}
+
+// ── Source pin: every read-only open of "csi" is the quiet one ──────────
+
+// `src` with its comments blanked (string literals kept: "csi" is one).
+static std::string without_comments(const std::string& s) {
+  std::string out = s;
+  const size_t n = s.size();
+  size_t i = 0;
+  while (i < n) {
+    if (s[i] == '/' && i + 1 < n && s[i + 1] == '/') {
+      while (i < n && s[i] != '\n') out[i++] = ' ';
+      continue;
+    }
+    if (s[i] == '/' && i + 1 < n && s[i + 1] == '*') {
+      const size_t end = s.find("*/", i + 2);
+      const size_t stop = end == std::string::npos ? n : end + 2;
+      for (; i < stop; ++i) {
+        if (out[i] != '\n') out[i] = ' ';
+      }
+      continue;
+    }
+    if (s[i] == 'R' && i + 1 < n && s[i + 1] == '"' &&
+        (i == 0 || !(std::isalnum((unsigned char)s[i - 1]) || s[i - 1] == '_'))) {
+      const size_t open = s.find('(', i + 2);
+      if (open == std::string::npos) break;
+      const std::string close = ")" + s.substr(i + 2, open - (i + 2)) + "\"";
+      const size_t end = s.find(close, open + 1);
+      i = end == std::string::npos ? n : end + close.size();
+      continue;
+    }
+    if (s[i] == '"' || (s[i] == '\'' && !(i > 0 && std::isxdigit((unsigned char)s[i - 1])))) {
+      const char q = s[i];
+      for (++i; i < n && s[i] != q; ++i) {
+        if (s[i] == '\\') ++i;
+      }
+      ++i;
+      continue;
+    }
+    ++i;
+  }
+  return out;
+}
+
+static std::string trimmed(const std::string& s) {
+  size_t a = 0, b = s.size();
+  while (a < b && std::isspace((unsigned char)s[a])) ++a;
+  while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+  return s.substr(a, b - a);
+}
+
+// The read-only Preferences opens of the "csi" namespace in `src` that do
+// not go through begin_read_only(): each `.begin(<ns>, true)` whose <ns> is
+// one of the spellings the sketch gives that namespace.
+static std::vector<std::string> plain_read_only_opens(const std::string& src) {
+  static const char* const kCsi[] = {"SETTINGS_NS", "\"csi\"", "kNamespace",
+                                     "csi_module_settings_nvs::kNamespace"};
+  const std::string code = without_comments(src);
+  std::vector<std::string> out;
+  for (size_t at = code.find(".begin("); at != std::string::npos; at = code.find(".begin(", at + 1)) {
+    size_t i = at + 7;
+    int depth = 1;
+    std::vector<std::string> args(1);
+    for (; i < code.size() && depth > 0; ++i) {
+      const char c = code[i];
+      if (c == '(') ++depth;
+      if (c == ')' && --depth == 0) break;
+      if (c == ',' && depth == 1) {
+        args.emplace_back();
+        continue;
+      }
+      args.back() += c;
+    }
+    if (args.size() != 2 || trimmed(args[1]) != "true") continue;
+    const std::string ns = trimmed(args[0]);
+    for (const char* k : kCsi) {
+      if (ns == k) out.push_back(code.substr(at, i - at + 1));
+    }
+  }
+  return out;
+}
+
+static int test_every_read_only_open_of_csi_is_the_quiet_one() {
+  namespace fs = std::filesystem;
+  std::vector<std::string> scanned;
+  size_t quiet_calls = 0;
+  const std::regex settings_ns(R"(\bSETTINGS_NS\s*=\s*([^;]+);)");
+  for (const fs::directory_entry& e : fs::directory_iterator(WAP_SKETCH_DIR)) {
+    const std::string name = e.path().filename().string();
+    const std::string ext = e.path().extension().string();
+    if (ext != ".cpp" && ext != ".h" && ext != ".ino") continue;
+    const std::string src = read_source(name.c_str());
+    if (src.find("Preferences") == std::string::npos && src.find("begin_read_only") == std::string::npos) continue;
+    scanned.push_back(name);
+    // A file's SETTINGS_NS is the "csi" namespace, or the rule below would
+    // not know what it opens.
+    for (std::sregex_iterator it(src.begin(), src.end(), settings_ns), end; it != end; ++it) {
+      const std::string v = trimmed((*it)[1].str());
+      if (v != "\"csi\"" && v != "csi_module_settings_nvs::kNamespace") {
+        std::fprintf(stderr, "%s: SETTINGS_NS is %s, not the csi namespace\n", name.c_str(), v.c_str());
+        CHECK(false);
+      }
+    }
+    for (const std::string& open : plain_read_only_opens(src)) {
+      std::fprintf(stderr, "%s: a read-only open of \"csi\" not through begin_read_only(): %s\n",
+                   name.c_str(), open.c_str());
+      CHECK(false);
+    }
+    const std::string code = without_comments(src);
+    for (size_t at = code.find("begin_read_only("); at != std::string::npos;
+         at = code.find("begin_read_only(", at + 1)) {
+      if (name != "csi_module_settings_nvs.h") ++quiet_calls;
+    }
+  }
+  for (const char* must : {"csi_integration.cpp", "csi_settings_nvs.cpp", "csi_event_egress.cpp",
+                           "csi_mqtt.cpp", "canary_wap.ino", "csi_module_settings_nvs.h"}) {
+    CHECK(std::find(scanned.begin(), scanned.end(), must) != scanned.end());
+  }
+  CHECK(quiet_calls >= 13);
+
+  // Every quiet open, put back as a plain one, is caught; and so are the
+  // other spellings of the namespace.
+  size_t mutations = 0;
+  for (const char* file : {"csi_integration.cpp", "csi_settings_nvs.cpp", "csi_event_egress.cpp",
+                           "csi_mqtt.cpp", "canary_wap.ino"}) {
+    const std::string src = read_source(file);
+    const std::regex quiet(R"(csi_module_settings_nvs::begin_read_only\((\w+)(?:,\s*([^)]+))?\))");
+    for (std::sregex_iterator it(src.begin(), src.end(), quiet), end; it != end; ++it) {
+      const std::string ns = (*it)[2].matched ? (*it)[2].str() : std::string("csi_module_settings_nvs::kNamespace");
+      std::string mutated = src;
+      mutated.replace((size_t)it->position(0), (size_t)it->length(0),
+                      (*it)[1].str() + ".begin(" + ns + ", /*readOnly=*/true)");
+      ++mutations;
+      if (plain_read_only_opens(mutated).empty()) {
+        std::fprintf(stderr, "%s: putting back the plain open at offset %zu was not caught\n", file,
+                     (size_t)it->position(0));
+        CHECK(false);
+      }
+    }
+  }
+  CHECK(mutations == quiet_calls);
+  CHECK(plain_read_only_opens("p.begin(\"csi\", true);").size() == 1);
+  CHECK(plain_read_only_opens("p.begin(kNamespace,/*ro*/true);").size() == 1);
+  CHECK(plain_read_only_opens("p.begin(\"csi\", false); p.begin(\"mesh\", true); "
+                              "// p.begin(\"csi\", true);\n/* p.begin(SETTINGS_NS, true) */").empty());
+  return 0;
+}
+
 int main() {
   if (test_a_saved_preset_applies_at_boot()) return 1;
   if (test_saved_thresholds_and_pet_mode_apply_at_boot()) return 1;
@@ -496,6 +759,9 @@ int main() {
   if (test_an_nvs_fault_costs_the_boot_one_open()) return 1;
   if (test_nothing_commits_during_the_boot_init()) return 1;
   if (test_the_model_is_register_v1_modules()) return 1;
+  if (test_begin_read_only_answers_as_the_open_would()) return 1;
+  if (test_a_first_boot_after_an_erase_logs_no_nvs_error()) return 1;
+  if (test_every_read_only_open_of_csi_is_the_quiet_one()) return 1;
   std::printf("ALL wap_module_boot TESTS PASSED (%d checks)\n", g_checks);
   return 0;
 }

@@ -343,7 +343,7 @@ EGRESS_LIB = $(SRC_DIR)/csi_event_egress.cpp $(EVLOAD_LIB)
 
 $(EGRESS_BIN): $(EGRESS_SRC) $(EGRESS_LIB) $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/csi_event_log.h \
                $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_backfill.h $(SRC_DIR)/csi_event_log_line.h \
-               $(SRC_DIR)/csi_event_id_floor.h $(SRC_DIR)/csi_mqtt.h \
+               $(SRC_DIR)/csi_event_id_floor.h $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
                $(wildcard $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/loop_command_ring.h) \
                $(wildcard stubs/egress/*.h stubs/egress/freertos/*.h stubs/sd_fake/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
@@ -893,7 +893,7 @@ clean: clean-bt-commands
 MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
 
-$(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
+$(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
                   $(SRC_DIR)/csi_event_egress.h \
                   $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \

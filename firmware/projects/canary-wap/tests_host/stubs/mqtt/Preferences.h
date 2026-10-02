@@ -1,6 +1,13 @@
 /* Preferences for the MQTT bridge host build: one in-memory NVS (every
  * value as bytes under "<namespace>/<key>") with the typed calls
- * csi_mqtt.cpp makes. */
+ * csi_mqtt.cpp makes.
+ *
+ * Namespaces are NVS's (sweep F150): one exists once a read-write begin()
+ * created it or a value is stored in it, and a read-only begin() of one that
+ * does not exist fails, as nvs_open() answers ESP_ERR_NVS_NOT_FOUND, and
+ * counts one error log (stub_nvs_error_logs()), as Arduino-ESP32's
+ * Preferences::begin() logs "nvs_open failed: ..." at error level. nvs.h
+ * beside this file answers IDF's nvs_open() from the same store. */
 #ifndef STUB_MQTT_PREFERENCES_H
 #define STUB_MQTT_PREFERENCES_H
 
@@ -8,6 +15,7 @@
 #include <string.h>
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -15,12 +23,31 @@ inline std::map<std::string, std::vector<uint8_t>>& stub_nvs() {
   static std::map<std::string, std::vector<uint8_t>> nvs;
   return nvs;
 }
+inline std::set<std::string>& stub_nvs_created() {
+  static std::set<std::string> created;
+  return created;
+}
+inline int& stub_nvs_error_logs() {
+  static int logs = 0;
+  return logs;
+}
+inline bool stub_nvs_has_namespace(const std::string& ns) {
+  if (stub_nvs_created().count(ns) != 0) return true;
+  const std::string prefix = ns + "/";
+  auto it = stub_nvs().lower_bound(prefix);
+  return it != stub_nvs().end() && it->first.compare(0, prefix.size(), prefix) == 0;
+}
 
 class Preferences {
  public:
   bool begin(const char* name, bool read_only = false, const char* = nullptr) {
     ns_ = name ? name : "";
     ro_ = read_only;
+    if (read_only && !stub_nvs_has_namespace(ns_)) {
+      ++stub_nvs_error_logs();          /* log_e("nvs_open failed: NOT_FOUND") */
+      return false;
+    }
+    if (!read_only) stub_nvs_created().insert(ns_);
     return true;
   }
   void end() {}

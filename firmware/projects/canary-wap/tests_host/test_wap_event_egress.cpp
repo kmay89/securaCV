@@ -83,6 +83,7 @@
 #include "csi_event_wire.h"
 #include "csi_integration.h"
 #include "csi_module.h"
+#include "csi_module_settings_nvs.h"
 #include "csi_mqtt.h"
 
 #include <Arduino.h>
@@ -156,7 +157,7 @@ static World W;
 
 static uint32_t nvs_get(const char* key) {
   Preferences p;
-  if (!p.begin("csi", true)) return 0;
+  if (!csi_module_settings_nvs::begin_read_only(p, "csi")) return 0;   /* as the sketch opens it (F150) */
   const uint32_t v = p.getULong(key, 0);
   p.end();
   return v;
@@ -332,6 +333,7 @@ static void boot() {
 /* A fresh device: empty NVS, a card with an empty /EVENTS, no broker link. */
 static void fresh_device(bool card = true) {
   host_nvs().u32.clear();
+  host_nvs().created.clear();
   host_nvs().fail_puts = false;
   SD.files.clear();
   SD.dirs.clear();
@@ -1405,6 +1407,51 @@ static void test_broken_rewrite_closes_the_log() {
 }
 #endif  // !EGRESS_PRE_FIX
 
+/* F150: the first boot after an NVS erase. begin() reads the delivery
+ * ceiling from a "csi" namespace nothing has created yet; it handed it to
+ * Preferences::begin(), which logs "nvs_open failed: NOT_FOUND" at error
+ * level (the second such line of that boot, after the event-id floor's
+ * read in csi_integration::init()). It asks IDF's nvs_open() first
+ * (csi_module_settings_nvs.h's begin_read_only()) and opens nothing: no
+ * error line, the ceiling read as none, as before. Then, with no record,
+ * the planner writes one (csi_event_backfill.h's restore()), and that write
+ * creates the namespace: every read-only open of it later in the boot (Quiet
+ * Hours, the modules, the privacy ceiling, the filter, the MQTT bridge, the
+ * time zone) finds it. A namespace that is there opens as before, and a
+ * real fault still logs. */
+static void test_first_boot_after_an_erase_logs_no_nvs_error() {
+  printf("-- the first boot after an NVS erase: the ceiling read logs nothing\n");
+  fresh_device();
+  csi_event_egress::test_reset();
+  host_nvs().u32.clear();
+  host_nvs().created.clear();
+  int logs = host_nvs().error_logs;
+  g_floor_stored = 0;
+  csi_event_egress::begin();
+  CHECK(host_nvs().error_logs == logs, "an absent namespace costs begin() no error line");
+  CHECK(csi_event_egress::watermark() == 0, "no ceiling: nothing delivered yet");
+  CHECK(host_nvs().u32.count("csi/" + std::string(csi_mqtt::NVS_KEY_DELIVERED)) == 1 &&
+        host_nvs().has_namespace("csi"),
+        "the planner's first record is what creates the namespace, at boot");
+
+  /* The namespace is there (a row stored): one open, no line, the ceiling read. */
+  fresh_device();
+  host_nvs().u32["csi/" + std::string(csi_mqtt::NVS_KEY_DELIVERED)] = csi_event_id_floor::kIdSpaceBase + 7;
+  host_nvs().u32["csi/ev.next"] = csi_event_id_floor::kIdSpaceBase + 20;
+  boot();
+  CHECK(host_nvs().error_logs == logs, "a namespace that is there opens without a line");
+  CHECK(csi_event_egress::watermark() == csi_event_id_floor::kIdSpaceBase + 6,
+        "and the watermark is just under its ceiling, as before");
+
+  /* A fault (NVS refuses the open) still logs its line. */
+  csi_event_egress::test_reset();
+  host_nvs().fail_next_begin = true;
+  logs = host_nvs().error_logs;
+  csi_event_egress::begin();
+  CHECK(host_nvs().error_logs == logs + 1, "a real fault keeps its error line");
+  fresh_device();
+}
+
 int main() {
   Serial.quiet = true;
   csi_event_test_reset();
@@ -1466,6 +1513,7 @@ int main() {
   test_tail_dismissal_does_not_hide_unsent_rows();
   test_idle_passes_read_nothing();
   test_broken_rewrite_closes_the_log();
+  test_first_boot_after_an_erase_logs_no_nvs_error();
 #endif
 
   CHECK(g_ceiling_violations_total == 0,

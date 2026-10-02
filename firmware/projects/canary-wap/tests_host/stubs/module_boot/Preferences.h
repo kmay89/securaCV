@@ -31,6 +31,7 @@ struct HostPrefs {
   std::map<std::string, int32_t> i32;   /* "<namespace>/<key>" */
   std::map<std::string, bool>    flag;
   std::map<std::string, float>   f32;
+  std::map<std::string, uint32_t> u32;  /* getULong / putULong rows (the event-id floor, F150) */
   std::set<std::string> created;       /* namespaces a read-write begin() made */
   bool fail_begin = false;              /* NVS refuses every open (a fault) */
   int  begins = 0;                      /* begin() calls, opened or refused */
@@ -44,7 +45,8 @@ struct HostPrefs {
   bool has_namespace(const std::string& ns) const {
     if (created.count(ns) != 0) return true;
     const std::string prefix = ns + "/";
-    return has_prefix(i32, prefix) || has_prefix(flag, prefix) || has_prefix(f32, prefix);
+    return has_prefix(i32, prefix) || has_prefix(flag, prefix) || has_prefix(f32, prefix) ||
+           has_prefix(u32, prefix);
   }
   template <class Rows>
   static bool has_prefix(const Rows& rows, const std::string& prefix) {
@@ -83,9 +85,11 @@ class Preferences {
   int32_t getInt(const char* key, int32_t d = 0) { return get(host_prefs().i32, key, d); }
   bool getBool(const char* key, bool d = false) { return get(host_prefs().flag, key, d); }
   float getFloat(const char* key, float d = 0.0f) { return get(host_prefs().f32, key, d); }
+  uint32_t getULong(const char* key, uint32_t d = 0) { return get(host_prefs().u32, key, d); }
 
   size_t putInt(const char* key, int32_t v) { return put(host_prefs().i32, key, v); }
   size_t putBool(const char* key, bool v) { return put(host_prefs().flag, key, v); }
+  size_t putULong(const char* key, uint32_t v) { return put(host_prefs().u32, key, v); }
 
  private:
   template <class T>

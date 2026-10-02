@@ -372,13 +372,18 @@ fi
 # whose walk never sends or credits a card line at or above the allocator's
 # next id; check_wap_event_egress.py (rule 5, below) holds the egress to
 # handing it that floor and that bound. test_csi_event_backfill.cpp runs the
-# planner and test_wap_event_egress.cpp the egress on the host.
+# planner and test_wap_event_egress.cpp the egress on the host. The two rows
+# are read by csi_settings_nvs.cpp's read_event_id_floor_rows() (sweep F150:
+# the boot's first read of the namespace, made quietly on a first boot after
+# an NVS erase), which test_wap_module_boot.cpp runs.
 WAP_INTEG="$STAGED/csi_integration.cpp"
 if ! grep -qF 'csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(persisted, delivered));' "$WAP_INTEG" \
-   || ! grep -qF 'prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0)' "$WAP_INTEG"; then
+   || ! grep -qF 'read_event_id_floor_rows(NVS_KEY_EVENT_ID, csi_mqtt::NVS_KEY_DELIVERED, &persisted, &delivered)' "$WAP_INTEG" \
+   || ! grep -qF '*ceiling = (uint32_t)prefs.getULong(ceiling_key, 0);' "$STAGED/csi_settings_nvs.cpp"; then
     echo "::error::$WAP_INTEG must restore the event-id floor as"
     echo "         csi_event_id_floor::boot_floor(persisted, delivered), the delivery ceiling read"
-    echo "         from csi_mqtt::NVS_KEY_DELIVERED (backlog F46)."
+    echo "         from csi_mqtt::NVS_KEY_DELIVERED (backlog F46) by read_event_id_floor_rows()"
+    echo "         (csi_settings_nvs.cpp, sweep F150)."
     drift=1
 fi
 

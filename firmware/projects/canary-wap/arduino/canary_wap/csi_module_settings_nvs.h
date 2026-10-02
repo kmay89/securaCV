@@ -32,7 +32,17 @@
  *     keeps its log line;
  *   - outside a session (a NULL handle: the canary-wap's re-init after a
  *     settings change), one read-only handle per read, closed before it
- *     returns;
+ *     returns, opened the same quiet way;
+ *   - every other read-only open of the namespace a host makes goes through
+ *     begin_read_only() below, the same probe in front of
+ *     Preferences::begin() (sweep F150): the canary-wap's first boot after
+ *     an NVS erase read the event-id floor and the events egress's delivery
+ *     ceiling through a read-only begin() before the egress's first ceiling
+ *     record created the namespace, and each logged "nvs_open failed:
+ *     NOT_FOUND"; its later reads (Quiet Hours, the privacy ceiling, the
+ *     transmitter filter, the MQTT bridge, the time zone, the HTTP
+ *     handlers) log the same way on a boot where that record was not
+ *     written, and go through it too;
  *   - the value is returned as stored, typed as asked (getInt / getBool /
  *     getFloat); range checks are the module's own (anomaly.baseline clamps
  *     on read, for one).
@@ -160,15 +170,26 @@ inline NamespaceState probe_namespace(const char* ns) {
   return err == ESP_ERR_NVS_NOT_FOUND ? NamespaceState::kAbsent : NamespaceState::kUnknown;
 }
 
+/** Open `prefs` read-only on `ns` (by default the module settings'
+ *  namespace) the way Preferences::begin() would, without the error line a
+ *  namespace never created costs it (sweeps F125, F150). An absent
+ *  namespace is not handed to begin(): this returns false, as the refused
+ *  open did, so the caller reads its defaults (or answers "unavailable") as
+ *  before, and nothing is logged. Present or unknown, Preferences opens it,
+ *  and logs a real fault as before. The caller ends a handle this opened. */
+template <class Prefs>
+bool begin_read_only(Prefs& prefs, const char* ns = kNamespace) {
+  if (probe_namespace(ns) == NamespaceState::kAbsent) return false;
+  return prefs.begin(ns, /*readOnly=*/true);
+}
+
 /** Open the boot's read-only handle. A namespace never created opens
  *  nothing and logs nothing: every read of the session is its default, as
  *  a refused open would make it. Present or unknown, Preferences opens it
  *  (and logs a real fault, as before). */
 template <class Prefs>
 void begin(Session<Prefs>& session) {
-  session.open = false;
-  if (probe_namespace(kNamespace) == NamespaceState::kAbsent) return;
-  session.open = session.prefs.begin(kNamespace, /*readOnly=*/true);
+  session.open = begin_read_only(session.prefs);
 }
 
 template <class Prefs>
@@ -187,7 +208,7 @@ T read(const Session<Prefs>* session, const char* full_key, T default_value, Get
     return session->open ? get(session->prefs, nvs_key, default_value) : default_value;
   }
   Prefs prefs;
-  if (!prefs.begin(kNamespace, /*readOnly=*/true)) return default_value;
+  if (!begin_read_only(prefs)) return default_value;
   const T v = get(prefs, nvs_key, default_value);
   prefs.end();
   return v;

@@ -15,6 +15,7 @@
 
 #include "csi_event_log.h"
 #include "csi_integration.h"
+#include "csi_module_settings_nvs.h"  /* begin_read_only(): the quiet read-only open (F150) */
 #include "csi_mqtt.h"
 #include "loop_command_ring.h"   /* PortMuxLock, for the stats snapshot */
 #include "loop_snapshot.h"       /* the counters other tasks read (F149) */
@@ -364,7 +365,7 @@ void begin() {
   uint32_t ceiling = 0;
   {
     Preferences prefs;
-    if (prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
+    if (csi_module_settings_nvs::begin_read_only(prefs, SETTINGS_NS)) {
       ceiling = (uint32_t)prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0);
       prefs.end();
     }
