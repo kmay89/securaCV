@@ -752,7 +752,9 @@ EVENT_PANE = keyed_as({
 # features too (sweep A37), the way the firmware's own snapshot does: the
 # page's VisionSim feeds the committed WASM core (canary-local/emulator/
 # vision, built from presence_fsm.cpp and detection_pipeline.h), which
-# returns the FSM's presence_ms and dwell_ms and the frame's posture,
+# returns the FSM's presence_ms and dwell_ms (0 on every event tick: the FSM
+# sets dwell_start_ms_ on the tick that emits dwell_started and clears
+# dwelling_ before dwell_ended's snapshot) and the frame's posture,
 # proximity, person count and occupied-cell mask. ts_ms is that clock plus
 # the example's ts_ms (the sandbox clock starts where these rows stand),
 # bucket_uptime_s its 10-minute bucket, and visit_ms the last stay's length,
@@ -765,12 +767,16 @@ for needle in ("s.presence_ms = presence_ ? (now_ms - presence_start_ms_) : 0;",
                "s.visit_ms    = last_visit_ms_;",
                "last_visit_ms_ = now_ms - presence_start_ms_;\n    return emit(out_event, \"presence_ended\");",
                "presence_start_ms_ = now_ms;",
+               "      dwelling_ = true;\n      dwell_start_ms_ = now_ms;\n      return emit(out_event, \"dwell_started\");",
+               "        dwelling_ = false;\n        return emit(out_event, \"dwell_ended\");",
                "s.posture      = posture_;", "s.proximity    = proximity_;", "s.voxel_mask   = voxel_mask_;",
                "s.ts_ms      = now_ms;"):
     must(PRESENCE_FSM_CPP, needle, "the FSM snapshot the pane derives its clocks from")
 must(MAIN_CPP, "    publish_event_json(ev.event_name, ev.reason, now_ms, vs);\n    publish_state_now(now_ms);",
      "the event and the state go out on the tick's own clock")
 must(MAIN_CPP, "const uint32_t bucket_uptime_s = (now_ms / 1000UL / 600UL) * 600UL;", "the 10-minute bucket")
+must(MAIN_CPP, "    last_heartbeat_ms = now_ms;\n    publish_heartbeat_now(now_ms);\n    publish_state_now(now_ms);",
+     "only the heartbeat's state row carries a running dwell")
 for needle in ('"\\"person_count\\":%u,\\"posture\\":\\"%s\\","',
                '"\\"proximity\\":\\"%s\\",\\"voxel_mask\\":%u},"',
                '"\\"confidence\\":%d,\\"presence_ms\\":%lu,\\"dwell_ms\\":%lu},"',
@@ -785,10 +791,13 @@ MQTT["pane"] = {
     "source": "payload keys from mqtt_mgr.cpp + main.cpp",
     "clock": {"t0_ms": EX_TS_MS,
               "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, "
-                      "dwell_ms, posture, proximity, occupancy and occ_mask come from the firmware core this "
-                      "page runs, ts_ms is its clock, and visit_ms the last stay. Two stay illustrative: the "
-                      "voxel is the frame's cell (the device publishes its tracker's settled cell, which the "
-                      "core does not return), and a moved chain head's hash is elided."},
+                      "posture, proximity, occupancy and occ_mask come from the firmware core this page runs, "
+                      "ts_ms is its clock, and visit_ms the last stay. dwell_ms is 0 on every event row, as "
+                      "the device sends it: its FSM starts or clears the dwell on the tick that emits each "
+                      "event, and only the state heartbeat, which this pane does not stage, carries a running "
+                      "dwell. Two values stay illustrative: the voxel is the frame's cell (the device "
+                      "publishes its tracker's settled cell, which the core does not return), and a moved "
+                      "chain head's hash is elided."},
     "occupancy": OCCUPANCY,
     "online": [{"suffix": s, "retain": r, "payload": payload(o)} for s, r, o in PANE_ONLINE]
               + [{"suffix": "aim/state", "retain": True, "payload": "OFF"}],

@@ -668,7 +668,7 @@
       "source": "payload keys from mqtt_mgr.cpp + main.cpp",
       "clock": {
         "t0_ms": 41250,
-        "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, dwell_ms, posture, proximity, occupancy and occ_mask come from the firmware core this page runs, ts_ms is its clock, and visit_ms the last stay. Two stay illustrative: the voxel is the frame's cell (the device publishes its tracker's settled cell, which the core does not return), and a moved chain head's hash is elided."
+        "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, posture, proximity, occupancy and occ_mask come from the firmware core this page runs, ts_ms is its clock, and visit_ms the last stay. dwell_ms is 0 on every event row, as the device sends it: its FSM starts or clears the dwell on the tick that emits each event, and only the state heartbeat, which this pane does not stage, carries a running dwell. Two values stay illustrative: the voxel is the frame's cell (the device publishes its tracker's settled cell, which the core does not return), and a moved chain head's hash is elided."
       },
       "occupancy": [
         "none",

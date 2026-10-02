@@ -271,12 +271,16 @@ test("the pane's clocks and coarse features follow the sandbox (sweep A37)", asy
     for (let i = 0; i < 400 && !seen.some((e) => e.name === "presence_ended"); i++)
       sim.tick(data.detect.invoke_period_ms, data.detect.invoke_period_ms);
     const at = (n) => seen.find((e) => e.name === n);
-    for (const n of ["presence_started", "dwell_started", "presence_ended"]) assert.ok(at(n), "the linger never emitted " + n);
+    for (const n of ["presence_started", "dwell_started", "dwell_ended", "presence_ended"]) assert.ok(at(n), "the linger never emitted " + n);
     const t0 = data.mqtt.pane.clock.t0_ms;
     for (const e of seen) {
       assert.strictEqual(e.ev.ts_ms, t0 + e.t, e.name + ": ts_ms is the clock the event fired at");
       assert.strictEqual(e.ev.presence_ms, e.snap.fsm.presence_ms, e.name);
-      assert.strictEqual(e.ev.dwell_ms, e.snap.fsm.dwell_ms, e.name);
+      // no event the firmware emits carries a running dwell: dwell_started
+      // sets dwell_start_ms_ on its own tick, dwell_ended clears dwelling_
+      // before its snapshot, and the rest are not dwelling
+      assert.strictEqual(e.ev.dwell_ms, 0, e.name + ": dwell_ms on an event row");
+      assert.strictEqual(e.snap.fsm.dwell_ms, 0, e.name + ": the core agrees");
       assert.strictEqual(e.state.ts_ms, e.ev.ts_ms, e.name + ": the state row goes out on the same tick");
       assert.strictEqual(e.state.presence_ms, e.ev.presence_ms);
       const bb = e.snap.sample.bbox;
@@ -289,6 +293,14 @@ test("the pane's clocks and coarse features follow the sandbox (sweep A37)", asy
     assert.strictEqual(dwell.ev.presence_ms, dwell.t - start.t, "dwell_started: time present so far");
     assert.ok(dwell.ev.presence_ms >= sim.cfg.dwell_start_ms, "past the dwell start");
     assert.strictEqual(dwell.ev.dwell_ms, 0, "dwell_start_ms_ is set on the tick that emits dwell_started");
+    // dwell_ended: still present (presence_ended follows), the stay so far,
+    // and dwell_ms 0 though the dwell lasted (the firmware does not latch it)
+    const dend = at("dwell_ended");
+    assert.ok(dend.ev.presence_ms > 0, "dwell_ended is sent while present");
+    assert.strictEqual(dend.ev.presence_ms, dend.t - start.t, "dwell_ended: time present so far");
+    assert.ok(dend.t - dwell.t > 0, "the dwell lasted");
+    assert.strictEqual(dend.ev.dwell_ms, 0, "dwelling_ is cleared before dwell_ended's snapshot");
+    assert.strictEqual(dend.ev.presence, "present");
     assert.strictEqual(start.ev.visit_ms, 0, "no stay has ended yet");
     assert.strictEqual(end.ev.presence_ms, 0, "presence is over");
     assert.strictEqual(end.ev.visit_ms, end.t - start.t, "presence_ended reports the stay it closed");
@@ -297,6 +309,8 @@ test("the pane's clocks and coarse features follow the sandbox (sweep A37)", asy
     // the pane says which values stay illustrative
     assert.strictEqual(outer.all("vis-mqtt-note")[0].textContent, data.mqtt.pane.clock.note);
     assert.match(data.mqtt.pane.clock.note, /voxel is the frame's cell/);
+    assert.match(data.mqtt.pane.clock.note, /dwell_ms is 0 on every event row/);
+    assert.doesNotMatch(data.mqtt.pane.clock.note, /presence_ms, dwell_ms/, "the note may not say the sandbox moves dwell_ms");
     assert.ok(read(join(FW, "src/state/presence_fsm.cpp")).includes("s.voxel = voxel_tracker_.stable();"),
       "the device publishes its tracker's settled cell");
   });

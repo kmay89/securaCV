@@ -721,7 +721,9 @@ export function buildSerial(data, bus) {
 // the event has one, right after its name, where the firmware puts it.
 // Its clocks and coarse features are the sandbox's too (sweep A37), as the
 // firmware takes them from its FSM snapshot on the tick that emits the
-// event: presence_ms and dwell_ms from the firmware core's FSM, posture,
+// event: presence_ms and dwell_ms from the firmware core's FSM (dwell_ms is
+// 0 on every event tick, as the device's is: the FSM starts or clears the
+// dwell on the tick that emits each event), posture,
 // proximity, the person count's occupancy bucket and the occupied-cell mask
 // from its detection pipeline, ts_ms the sandbox clock (as the core saw it)
 // plus the pane's clock.t0_ms, and visit_ms the last stay, which the caller
