@@ -1408,8 +1408,8 @@ The web UI MUST include a "Opera" panel showing:
    seen the first, and grinds it until the two codes match. It then opens
    the `PAIR_COMPLETE` and holds the `opera_secret`. Host-probed on
    canary-wap against its real pairing handlers (2026-10-02): about 1.5
-   million X25519 tries, 165 s on one host core, and the search splits
-   across cores, against a 2-minute pairing timeout; the relay presented
+   million X25519 tries, under 3 minutes on one host core, and the search
+   splits across cores, against a 2-minute pairing timeout; the relay presented
    both devices' own long-term keys, so this is not the key substitution
    above. The PlatformIO tree derives its code the same way and its OFFER
    and ACCEPT come in the same order (read from code, not probed). Closing

@@ -735,8 +735,8 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   match. Both owners then confirm the same code, and the relay opens the
   COMPLETE and holds the `opera_secret` (host-probed on canary-wap against
   its real pairing handlers, 2026-10-02: about 1.5 million X25519 tries,
-  165 s on one host core, and the search splits across cores, against a
-  2-minute pairing timeout; the relay presented both devices' own
+  under 3 minutes on one host core, and the search splits across cores,
+  against a 2-minute pairing timeout; the relay presented both devices' own
   long-term keys, so this is not the key substitution above). The
   PlatformIO tree derives its code the same way, in the same OFFER and
   ACCEPT order (read from code, not probed). Fixing both needs a
