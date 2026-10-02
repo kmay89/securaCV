@@ -213,6 +213,9 @@ bool start_pairing_joiner   (uint32_t now_ms);
  * has then run): the partner refused at the confirm (F118:
  * pairing_fail_reason() is PARTNER_REFUSED) or a sealing failure. */
 bool confirm_pairing_code   (uint32_t now_ms);
+/* Ends a running pairing (NOTIFY_FAILED, canceled). A pairing that already
+ * ended, PAIRED or FAILED, is left as it is (F135): no FailedCallback, and
+ * an initiator's PAIRED is still reported by the next process(). */
 void cancel_pairing         ();
 
 /* Why the current pairing is FAILED; NONE while it is not (F118). */

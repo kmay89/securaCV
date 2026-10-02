@@ -32,6 +32,9 @@
  *   9. A partner the PartnerGate refuses fails the pairing (F118): at the
  *      owner's confirm, before the initiator seals, before the joiner
  *      opens; and every NOTIFY_FAILED carries its reason.
+ *  10. cancel() ends only a running pairing (F135): after the COMPLETE went
+ *      out the pairing stays PAIRED and the initiator's NOTIFY_PAIRED still
+ *      fires; a FAILED one keeps its reason and reports nothing again.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -1335,6 +1338,123 @@ void test_every_failure_says_why() {
   std::printf("PASS test_every_failure_says_why\n");
 }
 
+/* ── F135 — cancel() leaves an ended pairing alone ────────────────────────
+ *
+ * Until F135 cancel() failed every state but IDLE. A cancel that landed
+ * after the initiator's COMPLETE went out turned its PAIRED context FAILED
+ * (NOTIFY_FAILED, canceled; the deferred NOTIFY_PAIRED never came), though
+ * the joiner had the secret; on FAILED it reported the failure again. */
+
+/* A cancel after the initiator's SEND_COMPLETE, in both orders: NONE, the
+ * context still PAIRED, and the next tick still NOTIFY_PAIRED. The joiner,
+ * PAIRED with the secret, is left alone too: NONE, and the secret is still
+ * there to consume. Fails on the code before F135 (NOTIFY_FAILED, canceled,
+ * then NONE from the tick). */
+void test_a_cancel_after_the_complete_leaves_the_pairing_paired() {
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::Action a;
+    InFlight cfi;
+    if (joiner_first) {
+      a = mesh_pairing::confirm_code(p.cj, 50);
+      InFlight cfj; must(action_to_inflight(a, &cfj));
+      assert(deliver(p.ci, p.mac_j, cfj, 60).type == mesh_pairing::ActionType::NONE);
+      a = mesh_pairing::confirm_code(p.ci, 70);
+    } else {
+      a = mesh_pairing::confirm_code(p.ci, 50);
+      must(action_to_inflight(a, &cfi));
+      assert(deliver(p.cj, p.mac_i, cfi, 55).type == mesh_pairing::ActionType::NONE);
+      a = mesh_pairing::confirm_code(p.cj, 60);
+      InFlight cfj; must(action_to_inflight(a, &cfj));
+      a = deliver(p.ci, p.mac_j, cfj, 70);
+    }
+    assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+    InFlight lead, cp;
+    must(leading_confirm_to_inflight(a, &lead));
+    must(action_to_inflight(a, &cp));
+
+    /* The owner's cancel lands now, before the tick that reports PAIRED. */
+    mesh_pairing::Action c = mesh_pairing::cancel(p.ci);
+    assert(c.type == mesh_pairing::ActionType::NONE);
+    assert(c.fail_reason == mesh_pairing::FailReason::NONE);
+    assert(p.ci.state == mesh_pairing::State::PAIRED);
+    assert(p.ci.fail_reason == mesh_pairing::FailReason::NONE);
+    assert(p.ci.pending_notify_paired);
+
+    /* The joiner takes the COMPLETE; a cancel there is a no-op as well. */
+    assert(deliver(p.cj, p.mac_i, lead, 80).type == mesh_pairing::ActionType::NONE);
+    assert(deliver(p.cj, p.mac_i, cp, 80).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    assert(mesh_pairing::cancel(p.cj).type == mesh_pairing::ActionType::NONE);
+    assert(p.cj.state == mesh_pairing::State::PAIRED && p.cj.opera_secret_present);
+    expect_both_paired(p, 90);   /* the initiator's NOTIFY_PAIRED still fires */
+    /* After it fired, too. */
+    assert(mesh_pairing::cancel(p.ci).type == mesh_pairing::ActionType::NONE);
+    assert(p.ci.state == mesh_pairing::State::PAIRED);
+  }
+  std::printf("PASS test_a_cancel_after_the_complete_leaves_the_pairing_paired  (both orders)\n");
+}
+
+/* A cancel on a FAILED pairing reports nothing again and keeps the reason
+ * it failed for: a timeout, a bad CONFIRM, a refusal and a cancel each
+ * stay what they were. Fails on the code before F135 (a second
+ * NOTIFY_FAILED, and the reason overwritten with CANCELED). */
+void test_a_cancel_on_a_failed_pairing_reports_nothing_again() {
+  using mesh_pairing::FailReason;
+  for (int how = 0; how < 4; ++how) {
+    Pair p;
+    uint8_t pub_i[32], pub_j[32];
+    pair_to_code_gated(p, pub_i, pub_j);
+    mesh_pairing::Action a;
+    FailReason want;
+    if (how == 0) {
+      a = mesh_pairing::tick(p.ci, 10 + mesh_pairing::PAIRING_TIMEOUT_MS);
+      want = FailReason::TIMEOUT;
+    } else if (how == 1) {
+      a = mesh_pairing::confirm_code(p.cj, 50);
+      InFlight bad; must(action_to_inflight(a, &bad));
+      bad.bytes[0] ^= 0x01;
+      a = deliver(p.ci, p.mac_j, bad, 60);
+      want = FailReason::BAD_CONFIRM;
+    } else if (how == 2) {
+      g_gate_admits = false;
+      a = mesh_pairing::confirm_code(p.ci, 50);
+      g_gate_admits = true;
+      want = FailReason::PARTNER_REFUSED;
+    } else {
+      a = mesh_pairing::cancel(p.ci);
+      want = FailReason::CANCELED;
+    }
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED && a.fail_reason == want);
+    assert(p.ci.state == mesh_pairing::State::FAILED);
+    for (int again = 0; again < 2; ++again) {
+      mesh_pairing::Action c = mesh_pairing::cancel(p.ci);
+      assert(c.type == mesh_pairing::ActionType::NONE);
+      assert(c.fail_reason == FailReason::NONE);
+      assert(p.ci.state == mesh_pairing::State::FAILED);
+      assert(p.ci.fail_reason == want);
+    }
+    assert(mesh_pairing::tick(p.ci, 20 + mesh_pairing::PAIRING_TIMEOUT_MS).type ==
+           mesh_pairing::ActionType::NONE);
+  }
+  std::printf("PASS test_a_cancel_on_a_failed_pairing_reports_nothing_again  "
+              "(timeout, bad_confirm, partner_refused, canceled)\n");
+}
+
+/* A cancel with nothing running: a fresh context and one that was reset
+ * stay IDLE, and nothing is reported. */
+void test_a_cancel_with_nothing_running_does_nothing() {
+  mesh_pairing::PairingContext ctx;
+  mesh_pairing::context_init(ctx);
+  for (int i = 0; i < 2; ++i) {
+    mesh_pairing::Action c = mesh_pairing::cancel(ctx);
+    assert(c.type == mesh_pairing::ActionType::NONE);
+    assert(ctx.state == mesh_pairing::State::IDLE);
+    assert(ctx.fail_reason == mesh_pairing::FailReason::NONE);
+  }
+  std::printf("PASS test_a_cancel_with_nothing_running_does_nothing\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -1368,6 +1488,9 @@ int main() {
   test_the_initiator_seals_nothing_to_a_refused_partner();
   test_the_joiner_opens_nothing_from_a_refused_partner();
   test_every_failure_says_why();
+  test_a_cancel_after_the_complete_leaves_the_pairing_paired();
+  test_a_cancel_on_a_failed_pairing_reports_nothing_again();
+  test_a_cancel_with_nothing_running_does_nothing();
   std::printf("\nALL MESH_PAIRING TESTS PASSED\n");
   return 0;
 }

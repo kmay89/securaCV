@@ -506,7 +506,9 @@ static bool end_pair_contact(bool paired) {
 
 /* True while a pairing exchange is between start_* and a terminal state.
  * Used so disable/leave only cancel a pairing that is actually running
- * (cancel() from IDLE would fire a spurious FailedCallback). */
+ * (since F135 mesh_pairing::cancel() is a no-op on IDLE, PAIRED and FAILED
+ * too, so this is no longer the only thing that keeps a spurious
+ * FailedCallback away). */
 static bool pairing_in_progress() {
   switch (s_ctx.state) {
     case mesh_pairing::State::IDLE:
@@ -2023,7 +2025,11 @@ static void execute_request(const Request& req, uint32_t now_ms, RequestResult* 
       }
       break;
     case RequestType::PAIR_CANCEL:
-      cancel_pairing();   /* a no-op when nothing runs or the mesh is off */
+      /* A no-op when nothing runs, when the pairing already ended (F135:
+       * it runs before this pass's pairing tick, so one landing after the
+       * initiator's COMPLETE went out leaves the pairing PAIRED and its
+       * NOTIFY_PAIRED still fires below), or when the mesh is off. */
+      cancel_pairing();
       break;
     case RequestType::NONE:
     default:

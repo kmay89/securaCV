@@ -18,7 +18,8 @@
  *   4. The wire envelope is exactly [1-byte MsgType][payload bytes]
  *      with no MessageHeader prefix.
  *   5. The bridge ignores frames with reserved/unknown MsgType bytes.
- *   6. cancel_pairing() fires the FailedCallback and wipes state.
+ *   6. cancel_pairing() fires the FailedCallback and wipes state; on a
+ *      pairing that already ended it does nothing (F135).
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -83,8 +84,10 @@ void on_paired(const uint8_t* secret, uint32_t code) {
 }
 mesh_pairing::FailReason g_failed_why = mesh_pairing::FailReason::NONE;
 std::vector<uint8_t>     g_failed_fp;
+int                      g_failed_count = 0;   /* FailedCallbacks since reset_world (F135) */
 void on_failed(mesh_pairing::FailReason why, const uint8_t* fp) {
   g_failed_fired = true;
+  ++g_failed_count;
   g_failed_why = why;
   if (fp != nullptr) g_failed_fp.assign(fp, fp + mesh_crypto::FINGERPRINT_LEN);
   else g_failed_fp.clear();
@@ -99,6 +102,7 @@ void reset_world() {
   g_paired_with_secret = false;
   g_paired_code = 0;
   g_failed_fired = false;
+  g_failed_count = 0;
   g_failed_why = mesh_pairing::FailReason::NONE;
   g_failed_fp.clear();
   g_code_ready = 0;
@@ -5540,6 +5544,113 @@ size_t sends_to_mark() {
   return (size_t)(g_nvs_ctr - mesh_session::outbound_counter());
 }
 
+/* ── F135 — a cancel leaves an ended pairing alone ───────────────────────
+ *
+ * The REST pair/cancel runs at the start of process(), before the pairing
+ * tick. Until F135 mesh_pairing::cancel() failed every state but IDLE. */
+
+/* PAIR_CANCEL through the REST slot, as the handler sends it. */
+mesh_session::RequestStatus rest_cancel(uint32_t now) {
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_CANCEL)));
+  mesh_session::process(now);
+  mesh_session::RequestResult res;
+  assert(mesh_session::take_request_result(&res));
+  return res.status;
+}
+
+/* As the INITIATOR, its owner first: the joiner's CONFIRM arrives in a
+ * transport pass and the session sends its CONFIRM and the COMPLETE (PAIRED,
+ * the NOTIFY_PAIRED due at the next tick). The owner's cancel lands in the
+ * next process(), ahead of that tick. The pairing stays PAIRED: the
+ * PairedCallback runs, the member is registered, bound and stored (the
+ * main.cpp stand-in), its address stays in the table, and no
+ * FailedCallback fires; the joiner opens the COMPLETE. On the code before
+ * F135 the cancel turned it FAILED: one FailedCallback (canceled), no
+ * PairedCallback, the partner's address taken out, nothing stored, while
+ * the joiner held the secret. */
+void test_a_cancel_after_the_complete_still_reports_paired() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x35 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  g_in_paired_cb_done = false;
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x13, 0x50, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x13, 0x50, 0x02};
+  uint8_t j_pub[32], j_priv[32], j_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_crypto::compute_fingerprint(j_pub, j_fp);
+  mesh_pairing::PairingContext cj;
+  initiator_to_code(S, me, mac_j, j_pub, j_priv, 100, cj);
+  assert(rest_confirm(110) == mesh_session::RequestStatus::OK);
+  mesh_pairing::Action a;
+  feed_pure(cj, me, last_to(mac_j), 115, &a);          /* the joiner checks it */
+  a = mesh_pairing::confirm_code(cj, 120);
+  const std::vector<uint8_t> conf_j = wire(a);
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();                           /* the transport pass */
+  assert(sent_to(mac_j) == 2);                         /* CONFIRM, COMPLETE */
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  assert(!g_paired_fired && g_failed_count == 0);
+
+  assert(rest_cancel(130) == mesh_session::RequestStatus::OK);
+  assert(g_paired_fired && !g_paired_with_secret);
+  assert(g_failed_count == 0);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  assert(mesh_session::pairing_fail_reason() == mesh_pairing::FailReason::NONE);
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(g_bound_calls.size() == 1 && g_bound_calls[0].bound);
+  assert(std::memcmp(g_bound_calls[0].fp, j_fp, 8) == 0);
+  assert(g_nvs_pubs.size() == 1 && std::memcmp(g_nvs_pubs[0].data(), j_pub, 32) == 0);
+  assert(transport_has(mac_j));
+
+  /* The joiner takes the COMPLETE: both ends agree. */
+  feed_pure(cj, me, g_outs[0].bytes, 135, &a);
+  feed_pure(cj, me, g_outs[1].bytes, 135, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  uint8_t got[32];
+  assert(mesh_pairing::consume_opera_secret(cj, got));
+  assert(std::memcmp(got, S, sizeof(S)) == 0);
+
+  /* Another cancel, after PAIRED was reported: still nothing. */
+  assert(rest_cancel(140) == mesh_session::RequestStatus::OK);
+  mesh_session::cancel_pairing();
+  assert(g_failed_count == 0 && g_bound_calls.size() == 1);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  std::printf("PASS test_a_cancel_after_the_complete_still_reports_paired\n");
+}
+
+/* A pairing that has FAILED is not failed again: a timeout, then a REST
+ * cancel and a direct one, fire the FailedCallback once, and the reason
+ * stays the timeout; a canceled pairing canceled again fires it once too.
+ * On the code before F135 each cancel fired it again, with the reason
+ * overwritten (canceled). */
+void test_a_cancel_on_a_failed_pairing_fires_nothing_again() {
+  for (int first = 0; first < 2; ++first) {
+    reset_world();
+    assert(mesh_session::start_pairing_joiner(1000));
+    if (first == 0) {
+      mesh_session::process(1000 + mesh_pairing::PAIRING_TIMEOUT_MS);
+      assert(g_failed_count == 1 && g_failed_why == mesh_pairing::FailReason::TIMEOUT);
+    } else {
+      assert(rest_cancel(2000) == mesh_session::RequestStatus::OK);
+      assert(g_failed_count == 1 && g_failed_why == mesh_pairing::FailReason::CANCELED);
+    }
+    const mesh_pairing::FailReason why = first == 0 ? mesh_pairing::FailReason::TIMEOUT
+                                                    : mesh_pairing::FailReason::CANCELED;
+    assert(rest_cancel(3000 + mesh_pairing::PAIRING_TIMEOUT_MS) == mesh_session::RequestStatus::OK);
+    mesh_session::cancel_pairing();
+    mesh_session::process(4000 + mesh_pairing::PAIRING_TIMEOUT_MS);
+    assert(g_failed_count == 1);
+    assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);
+    assert(mesh_session::pairing_fail_reason() == why);
+  }
+  std::printf("PASS test_a_cancel_on_a_failed_pairing_fires_nothing_again  (timeout, canceled)\n");
+}
+
 /* Sends `n` alerts; returns the counters that went on air. The virtual
  * clock steps 20 ms per send so the transport's storm limiter (100/s)
  * never trips. */
@@ -6264,6 +6375,9 @@ int main() {
   test_a_partner_the_initiator_cannot_hold_fails_the_pairing();
   test_the_initiator_asks_again_before_it_seals();
   test_a_joiner_that_cannot_hold_its_initiator_fails_the_pairing();
+  /* F135 — a cancel leaves an ended pairing alone. */
+  test_a_cancel_after_the_complete_still_reports_paired();
+  test_a_cancel_on_a_failed_pairing_fires_nothing_again();
   /* F33 part 3 — the outbound counter survives a reboot. */
   test_outbound_counter_reserve_ahead();
   test_outbound_counter_without_reservation_restarts();

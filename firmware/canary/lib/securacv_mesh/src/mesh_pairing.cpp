@@ -629,9 +629,26 @@ Action confirm_code(PairingContext& ctx, uint32_t now_ms) {
   return make_send_action(ActionType::SEND_CONFIRM, ctx.peer_mac, &confirm, sizeof(confirm));
 }
 
+/* F135: only a running pairing is canceled. One that has ended is left as
+ * it ended: PAIRED stays PAIRED (an initiator's NOTIFY_PAIRED still fires
+ * at the next tick(), and the joiner keeps the secret it opened), FAILED
+ * keeps its reason and reports nothing again, and IDLE has nothing to end.
+ * Until F135 cancel() failed every state but IDLE. The session runs a REST
+ * pair/cancel at the start of process(), before the tick, so one that
+ * landed after the initiator's COMPLETE went out (the joiner's CONFIRM
+ * arrived in the transport pass just before) turned the PAIRED context
+ * FAILED: the joiner held the secret, and the initiator never registered,
+ * bound or stored it. On FAILED it fired NOTIFY_FAILED, and the session's
+ * FailedCallback, a second time. */
 Action cancel(PairingContext& ctx) {
-  if (ctx.state == State::IDLE) return make_action(ActionType::NONE);
-  return fail(ctx, FailReason::CANCELED);
+  switch (ctx.state) {
+    case State::IDLE:
+    case State::PAIRED:
+    case State::FAILED:
+      return make_action(ActionType::NONE);
+    default:
+      return fail(ctx, FailReason::CANCELED);
+  }
 }
 
 bool consume_opera_secret(PairingContext& ctx,

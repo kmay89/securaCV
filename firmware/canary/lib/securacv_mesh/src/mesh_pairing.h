@@ -559,9 +559,13 @@ Action tick(PairingContext& ctx, uint32_t now_ms);
  * context's PartnerGate refuses the partner (F118). */
 Action confirm_code(PairingContext& ctx, uint32_t now_ms);
 
-/* Abort pairing from any state. Wipes the ephemeral key + session
- * key + opera_secret. Returns NOTIFY_FAILED (CANCELED) so the
- * integration layer tears down UI. */
+/* Abort a running pairing: FAILED (CANCELED), the ephemeral key, session
+ * key and opera_secret wiped, and NOTIFY_FAILED returned so the
+ * integration layer tears down its UI. A pairing that has already ended,
+ * PAIRED or FAILED, or never started (IDLE), is left as it is and NONE is
+ * returned (F135): a cancel that lands after the initiator's COMPLETE went
+ * out no longer turns a PAIRED context FAILED, so its NOTIFY_PAIRED still
+ * fires, and a FAILED one does not report its failure twice. */
 Action cancel(PairingContext& ctx);
 
 /* Read out and zero the joiner's received opera_secret. Returns true
