@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hold the canary-wap's loop-task ownership: mesh, Chirp and Bluetooth
-commands, mesh and Chirp status reads, MQTT re-inits, and the MQTT client's
-network timeout.
+commands, mesh, Chirp and Bluetooth status reads, the NimBLE host task's
+callbacks, MQTT re-inits, and the MQTT client's network timeout.
 
 Sweep F96: `canary_wap.ino`'s `handle_mesh_*` REST handlers called
 `remove_peer`, `leave_opera`, `start_pairing_*`, `cancel_pairing`,
@@ -2944,8 +2944,9 @@ def main() -> int:
         return 1
     print(f"canary-wap loop-task ownership holds: the mesh's, Chirp's and Bluetooth's owner "
           f"commands are internal to their channels and run from update()'s drain, the REST "
-          f"handlers only submit, the mesh and Chirp status routes read only what the loop task "
-          f"published, "
+          f"handlers only submit, the mesh, Chirp and Bluetooth status routes read only what the "
+          f"loop task published, the NimBLE host task's callbacks only post events update() "
+          f"applies, "
           f"the MQTT client is replaced only by loop()'s re-init, which never stops a client "
           f"(the retire_task worker does), and every client's network timeout keeps a "
           f"loop-task publish under the watchdog "
