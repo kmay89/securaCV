@@ -300,7 +300,8 @@ function lcg(seed) {
 }
 
 const STALE = "differs from the committed dist: if this tree changed the core's sources, the dist is stale " +
-  "(Actions -> \"Rebuild emulator dist (pinned emsdk)\"); if not, the native build is not the wasm one";
+  "(Actions -> \"Rebuild emulator dist (pinned emsdk)\"); if not, the native build and the wasm one disagree " +
+  "on this input (another compiler, a 64-bit ABI: see tests/native/README.md)";
 
 test("native vision core = committed dist, tick for tick (LAB_CORES=native)", native, async () => {
   const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-vision-core.js"))(),

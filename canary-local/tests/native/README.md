@@ -74,11 +74,19 @@ build is 64-bit where wasm is 32-bit. A page change that needs a core change
 still ships with the rebuilt dist, and the default run keeps checking that
 dist.
 
-To see whether the committed dist matches this tree, run
+To compare the committed dist with this tree, run
 `LAB_CORES=native node --test canary-local/tests/native_cores.test.js`. It
-drives each native core next to its committed bundle, call for call (3000
-Vision ticks, and the audio cadences plus noise), and the two agree while
-the dist is current. Without the variable, the same file checks the loader
+drives each native core next to its committed bundle, call for call, on
+fixed scenarios: 3000 Vision ticks of random boxes in and around the
+frame, with out-of-range tuning, and the audio cadences plus noise. A difference means the dist is
+stale, or that the native build and the wasm one disagree on that input.
+They can: `long` is 64 bits on a 64-bit host and 32 in wasm, and a signed overflow
+(undefined in C++) can come out one way from g++ and another from
+emscripten's clang. A box two billion pixels wide reads `unknown` on the
+dist and `near` natively today. So agreement covers the calls those
+scenarios make, not every input. `CXX=clang++` is the closer compiler (on
+that box it matches the dist's voxel row, where g++ does not), but the ABI
+is still 64-bit. Without the variable, the same file checks the loader
 itself without compiling anything. It checks what the default returns, how
 `build.sh` is read, that it finds every export and runtime method the dist
 has, and that a signature a wasm call can't carry is refused. It also drives
