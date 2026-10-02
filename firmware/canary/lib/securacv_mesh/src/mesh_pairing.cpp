@@ -190,8 +190,6 @@ inline void copy_name(char* dst, size_t dst_cap, const char* src) {
   dst[i] = '\0';
 }
 
-/* End the pairing: FAILED, every secret wiped, and the NOTIFY_FAILED that
- * tells the integration layer why. */
 /* The initiator's kept COMPLETE and its leading CONFIRM (F134), wiped. */
 inline void wipe_kept_complete(PairingContext& ctx) {
   ctx.complete_resend_armed = false;
@@ -199,6 +197,8 @@ inline void wipe_kept_complete(PairingContext& ctx) {
   secure_zero(&ctx.kept_confirm,  sizeof(ctx.kept_confirm));
 }
 
+/* End the pairing: FAILED, every secret wiped, and the NOTIFY_FAILED that
+ * tells the integration layer why. */
 inline Action fail(PairingContext& ctx, FailReason why) {
   ctx.state = State::FAILED;
   ctx.fail_reason = why;
