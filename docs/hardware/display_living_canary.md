@@ -112,6 +112,15 @@ familiar splash instead, with the tagline swapped for a quiet
 "hello again" — you two have already met, and a returning boot must
 never feel slower than home.
 
+Where the bird and the bubble sit is `include/canary/ui/splash_layout.h`'s
+call: the bird high over the centered bubble, as drawn for the round
+watch's disc. A canvas too short to hold that seat with the bird's highest
+hop — the nightlight's 320x180 landscape, which a saved rotation boots into
+— drops the bird just enough to keep the hop on the glass, and the bubble
+then hangs from just under the bird instead of the center (F88). Every other
+canvas draws as it always did; `tests_host/test_splash_layout.cpp` holds the
+bird and the tallest bubble on every canvas the splash runs on.
+
 ## The performance engine (`firmware/common/story/` — pure, host-tested)
 
 The meeting above used to be a hard-coded beat array inside `splash.cpp`. It is
