@@ -33,6 +33,7 @@
 #include "splash.h"
 #include "canary_mark.h"
 #include "round_frame_core.h"
+#include "splash_layout.h"
 #include "story.h"
 #include "story_scripts.h"
 #include "device_pseudonym.h"
@@ -106,32 +107,35 @@ void splash_play(uint32_t hold_ms) {
 
   const bool first_meeting = !met_before();
 
+  // The seats are splash_layout.h's (F88): the bird's over the bubble on
+  // a first meeting, over the wordmark after.
 #ifdef CD_FLAVOR_WATCH
-  constexpr int BIRD = 64;
-  constexpr int BIRD_Y = -42, WORD_Y = 26, TAG_Y = 56;
   // Intro: bird high, bubble CENTERED — the round glass is widest at its
   // middle, and a wrapped line low on the disc would clip its corners.
   // The Round Frame engine pins that claim: the bubble's band (its tallest
   // three-line case, roughly ±40 px around BUB_Y) must keep its chord.
-  constexpr int INTRO_BIRD_Y = -70;
-  constexpr int BUB_W = 196, BUB_Y = 5;
+  constexpr splashlayout::Family GLASS = splashlayout::kSmallGlass;
 #if !defined(CD_FLAVOR_NIGHTSTAND)
-  static_assert(BUB_W <= canary::ui::roundframe::chord(
-                             canary::ui::roundframe::kDiscDiameter / 2 +
-                                 BUB_Y - 40,
-                             80),
+  static_assert(GLASS.bubble_w <= canary::ui::roundframe::chord(
+                                      canary::ui::roundframe::kDiscDiameter / 2 +
+                                          GLASS.bubble_off - 40,
+                                      80),
                 "speech bubble outgrew the disc's mid-band chord");
 #endif
 #else
-  constexpr int BIRD = 96;
-  constexpr int BIRD_Y = -66, WORD_Y = 34, TAG_Y = 78;
-  constexpr int INTRO_BIRD_Y = -80;
-  constexpr int BUB_W = 420, BUB_Y = 24;
+  constexpr splashlayout::Family GLASS = splashlayout::kWideGlass;
 #endif
+  constexpr int BIRD = GLASS.bird;
+  constexpr int WORD_Y = GLASS.word_off, TAG_Y = GLASS.tag_off;
+  constexpr int BUB_W = GLASS.bubble_w, BUB_Y = GLASS.bubble_off;
+  // The seat holds the bird's hop on the canvas: on a canvas too short for
+  // the usual one (the nightlight's 320x180 landscape) the bird drops just
+  // enough, and the bubble hangs from under it instead of the center.
+  const splashlayout::Seat seat = splashlayout::seat(
+      (int)lv_disp_get_ver_res(NULL), GLASS, first_meeting);
 
   lv_obj_t* bird = canary_mark_create(scr, BIRD);
-  lv_obj_align(bird, LV_ALIGN_CENTER, 0,
-               first_meeting ? INTRO_BIRD_Y : BIRD_Y);
+  lv_obj_align(bird, LV_ALIGN_CENTER, 0, seat.bird_off);
 
   lv_obj_t* word = lv_label_create(scr);
   lv_obj_set_style_text_font(word, font_title(), 0);
@@ -154,11 +158,15 @@ void splash_play(uint32_t hold_ms) {
   lv_obj_set_style_bg_color(bub, col_surface(), 0);
   lv_obj_set_style_bg_opa(bub, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(bub, col_edge(), 0);
-  lv_obj_set_style_border_width(bub, 1, 0);
+  lv_obj_set_style_border_width(bub, splashlayout::kBubbleBorder, 0);
   lv_obj_set_style_radius(bub, 12, 0);
-  lv_obj_set_style_pad_all(bub, 10, 0);
+  lv_obj_set_style_pad_all(bub, splashlayout::kBubblePad, 0);
   lv_obj_clear_flag(bub, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_align(bub, LV_ALIGN_CENTER, 0, BUB_Y);
+  if (seat.hang) {
+    lv_obj_align(bub, LV_ALIGN_TOP_MID, 0, seat.bubble_top);
+  } else {
+    lv_obj_align(bub, LV_ALIGN_CENTER, 0, BUB_Y);
+  }
 
   lv_obj_t* tail = lv_obj_create(scr);
   lv_obj_set_size(tail, 12, 12);
@@ -179,7 +187,7 @@ void splash_play(uint32_t hold_ms) {
   // a giant empty pill on the bench; the fixed width also lets short lines
   // sit centered instead of lopsided against the left pad.
   lv_obj_t* line = lv_label_create(bub);
-  lv_obj_set_width(line, BUB_W - 24);
+  lv_obj_set_width(line, BUB_W - splashlayout::kBubbleTextInset);
   lv_label_set_long_mode(line, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(line, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(line, font_label(), 0);

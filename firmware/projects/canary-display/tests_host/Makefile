@@ -441,3 +441,33 @@ clean-io-cores:
 
 run: run-io-cores
 clean: clean-io-cores
+
+# The boot splash's seats (canary/ui/splash_layout.h, F88): on every canvas
+# the splash runs on (each display env's panel, and the panel turned for the
+# two flavors main.cpp rotates before splash_play), the bird's whole box over
+# its breath and highest hop stays on the canvas, only the seats that needed
+# it move (the landscape nightlight's first meeting), and where the bird
+# moved the speech bubble hangs under it, its tallest form (the script's
+# lines wrapped the way LVGL 8.4 wraps a label, held to the heights a native
+# harness drew) on the canvas and clear of the bird. The test is C++17
+# (story_scripts.h's inline variables); the header alone is held to gnu++11
+# first, since the core-2.0.17 sketch compiles it there. Hooked into `run`
+# and `clean` by prerequisite.
+SPLASH_BIN = test_splash_layout
+SPLASH_SRC = test_splash_layout.cpp
+
+$(SPLASH_BIN): $(SPLASH_SRC) onboard_test_env.h ../include/canary/ui/splash_layout.h \
+	  montserrat_metrics.h ../../../common/story/story.h ../../../common/story/story_scripts.h
+	echo '#include "canary/ui/splash_layout.h"' | \
+	  $(CXX) -std=gnu++11 -Wall -Wextra -Werror $(INC) -fsyntax-only -x c++ -
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -I ../../../common \
+	  '-DFW_DIR="$(abspath ../../..)"' -o $@ $(SPLASH_SRC)
+
+.PHONY: run-splash-layout clean-splash-layout
+run-splash-layout: $(SPLASH_BIN)
+	$(call run_marked,$(SPLASH_BIN))
+clean-splash-layout:
+	rm -f $(SPLASH_BIN)
+
+run: run-splash-layout
+clean: clean-splash-layout
