@@ -1961,11 +1961,11 @@ so — see D2 below.)
   compiles are CI's; not bench-tested (U1: the F96/F106 rows in
   `hardware_verification_checklist.md`, "Test & save" against an unreachable
   broker IP included). Found here: F112.
-  *Since F112 (#1762):* every client's network timeout is 2 s, read at the
-  esp-mqtt commit the pinned core uses (6af4446), so the retiring stop waits
-  out at most a 2 s connect step plus esp_mqtt's reconnect wait of up to 5 s,
-  and a loop-task publish over a stalled link waits one 2 s timeout, not 10 s
-  (what is left is F142).
+  *Since F112 (#1762):* every client's network timeout is 2 s (esp-mqtt now
+  read at the commit the pinned core uses, 6af4446), so the retiring stop
+  waits out at most a 2 s connect step plus esp_mqtt's reconnect wait of up to
+  5 s, and a loop-task publish over a stalled link waits one 2 s timeout, not
+  10 s (what is left is F142).
 - [x] **F112 [code] canary-wap's loop-task MQTT publishes can block inside
   esp-mqtt past the watchdog.** Every `csi_mqtt` publish (the event egress,
   health, status, counts, mesh) calls `esp_mqtt_client_publish` on the loop
