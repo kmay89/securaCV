@@ -837,10 +837,13 @@ clean: clean-mesh-commands
 # disabled channel, every command, a refused send's reason, a command the
 # loop task never reaches (withdrawn), a full ring (busy) and the post
 # order, with no NVS write or ESP-NOW call made from the handler's side.
+# And the status routes' view (sweep F138): what GET /api/chirp, /nearby and
+# /recent read is what the loop task last published (loop_snapshot.h), from
+# real presence, witness and confirmation frames, the prune and each command.
 CHIRP_CMD_BIN = test_chirp_commands_wap
 CHIRP_CMD_SRC = test_chirp_commands_wap.cpp
 
-$(CHIRP_CMD_BIN): $(CHIRP_CMD_SRC) $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/chirp_channel.cpp $(SRC_DIR)/mesh_network.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/airtime_governor.cpp
+$(CHIRP_CMD_BIN): $(CHIRP_CMD_SRC) $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/chirp_channel.cpp $(SRC_DIR)/mesh_network.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/airtime_governor.cpp
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_CMD_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
 
 .PHONY: run-chirp-commands clean-chirp-commands

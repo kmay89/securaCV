@@ -1253,8 +1253,109 @@ inline const char* not_run_error(loop_command_ring::Wait w) {
 // Status
 // ──────────────────────────────────────────────────────────────────────────
 
-// Get current chirp channel status
+// Get current chirp channel status. The loop task's, as is every reader of
+// the live state in this namespace (get_status, get_recent_chirps,
+// get_pending_chirps, get_nearby_*, get_cooldown_*, has_presence_requirement,
+// can_send_chirp, is_*, get_session_*); another task reads the published
+// view (read_status, read_nearby, read_recent, below).
 ChirpStatus get_status();
+
+// ──────────────────────────────────────────────────────────────────────────
+// The status routes' view (sweep F138)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// GET /api/chirp, /api/chirp/nearby and /api/chirp/recent run on
+// esp_http_server's task, and what they show (the session, the cooldowns,
+// the mute, the recent and nearby tables) is update()'s, written on the
+// loop task, and by the chirp frames mesh_network::update() hands
+// dispatch_espnow_message() there. Read in place, a response could mix two
+// passes: a row read while prune_old_chirps() shifts the table under it, a
+// count from one pass with rows from another, an emoji read while disable()
+// wipes the session. So the loop task publishes what the routes show and
+// they read whole copies (loop_snapshot.h, as the mesh's routes do since
+// sweep F110):
+//   - a StatusView at the end of every update() pass (its early return
+//     included), after each owner command run_command() runs (before the
+//     drain posts its result, so a read right after a POST's answer shows
+//     what it did), and from init();
+//   - the two tables (a NearbyTable and a RecentTable: what each route
+//     shows of a row, no key or signature) only when something changed them:
+//     a chirp frame handled, update()'s 30-second prune, an owner command,
+//     init(). The tables are in PSRAM and copying them every pass would read
+//     them every pass; most passes change nothing.
+// read_status(), read_nearby() and read_recent() never wait for the loop
+// task. What counts in time (the cooldown and mute left, the presence
+// requirement, the wall clock) is counted at the read, from what the loop
+// task published, as the live readers counted it.
+
+// One pass, as GET /api/chirp shows it.
+struct StatusView {
+  ChirpState state;
+  char session_emoji[EMOJI_DISPLAY_SIZE];
+  uint8_t nearby_count;
+  uint8_t recent_chirp_count;
+  uint8_t cooldown_tier;                  // get_cooldown_tier()
+  bool relay_enabled;
+  bool muted;                             // the flag; mute_remaining_ms says if it still runs
+  uint32_t last_chirp_sent_ms;            // 0 if never
+  uint32_t cooldown_ms;                   // the tier's cooldown, counted from last_chirp_sent_ms
+  uint32_t mute_until_ms;
+  uint32_t session_start_ms;              // 0: never enabled since boot
+  // Counted at the read by read_status() (the loop task publishes them 0):
+  uint32_t cooldown_remaining_ms;
+  uint32_t mute_remaining_ms;
+  bool presence_met;                      // has_presence_requirement()
+  bool clock_synced;                      // time() at or past MIN_UNIX_TIME
+  bool night_mode;                        // is_night_mode()
+  bool can_send;                          // can_send_chirp()
+};
+
+// One nearby device, as GET /api/chirp/nearby shows it.
+struct NearbyView {
+  char emoji[EMOJI_DISPLAY_SIZE];
+  int8_t rssi;
+  bool listening;
+  uint32_t last_seen_ms;
+};
+struct NearbyTable {
+  uint8_t count;
+  NearbyView devices[MAX_NEARBY_CACHE];
+};
+
+// One received chirp, as GET /api/chirp/recent shows it.
+struct RecentView {
+  char sender_emoji[EMOJI_DISPLAY_SIZE];
+  ChirpTemplate template_id;
+  ChirpDetailSlot detail;
+  ChirpUrgency urgency;
+  uint8_t hop_count;
+  uint8_t confirm_count;
+  bool validated;
+  bool suppressed;
+  bool relayed;
+  bool dismissed;
+  uint8_t nonce[8];
+  uint32_t received_ms;
+};
+struct RecentTable {
+  uint8_t count;
+  RecentView chirps[MAX_RECENT_CHIRPS];
+};
+
+// Any task. The last pass update() published, with its time-counted fields
+// counted now; before init() publishes the first, a disabled channel (what
+// get_status() said then).
+void read_status(StatusView* out);
+
+// Any task. The last tables published (count 0 before the first).
+void read_nearby(NearbyTable* out);
+void read_recent(RecentTable* out);
+
+// Why a read view cannot send (GET /api/chirp's cannot_send_reason), in the
+// order the route has always checked: "disabled", "cooldown",
+// "presence_required", then "clock_unsynced" (sweep F146: the route named no
+// reason for it, and the dashboard said Ready). nullptr when it can send.
+const char* cannot_send_reason(const StatusView& v);
 
 // Get state name as string
 const char* state_name(ChirpState state);
@@ -1313,8 +1414,9 @@ const ReceivedChirp* get_pending_chirps(size_t* count);
 // Confirming a chirp ("I see this too": a signed ACK) is CHIRP_CMD_CONFIRM;
 // dismissing one from display (a signed suppress vote) is CHIRP_CMD_DISMISS.
 
-// Get validation status text
+// Get validation status text (a live chirp, or one row of a read RecentTable)
 const char* get_validation_status(const ReceivedChirp* chirp);
+const char* get_validation_status(const RecentView* chirp);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Nearby devices (anonymous)

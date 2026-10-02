@@ -15,6 +15,22 @@
 // which posts it to a ring (loop_command_ring.h, as the mesh does since F96)
 // that update() drains on the loop task, and waits for its Result.
 //
+// The GET routes (sweep F138) read the same state: chirp_api.h's status,
+// nearby and recent handlers called get_status(), get_nearby_devices() and
+// get_recent_chirps() on the HTTP server's task while update() and the
+// chirp frames mesh_network::update() hands it rewrote the session, the
+// cooldowns and the tables (a row read mid-shift by the prune). They now
+// read read_status(), read_nearby() and read_recent(): whole copies of what
+// the loop task last published (loop_snapshot.h). The view tests drive real
+// frames (a presence beacon, a signed witness, a signed confirmation) through
+// dispatch_espnow_message(), and a "drain only" turn (Turn::kDrain) for what
+// a read right after a POST's answer must already show. The harness is one
+// thread: no test here shows a torn read on the old code, the evidence for
+// whole copies is test_loop_snapshot.cpp's threads.
+//
+// A refused send names its reason (sweep F146): a wall clock not set yet is
+// clock_unsynced, no longer a cooldown with 0 seconds left.
+//
 // The harness is one thread, so "the HTTP server's task" is a role the test
 // plays: rest() sets host_sim::on_httpd_task and calls submit() the way a
 // handler does. submit() waits in vTaskDelay, and the stub's vTaskDelay is
@@ -155,6 +171,10 @@ void boot(bool wipe = true) {
   cc::g_muted = false;
   cc::g_mute_until_ms = 0;
   cc::g_commands = decltype(cc::g_commands)();
+  cc::g_status_view = decltype(cc::g_status_view)();     // nothing published yet
+  cc::g_nearby_view = decltype(cc::g_nearby_view)();
+  cc::g_recent_view = decltype(cc::g_recent_view)();
+  cc::g_tables_changed = true;
   host_sim::httpd_side_effects = 0;
   host_sim::on_httpd_task = false;
   host_sim::on_task_delay = nullptr;
@@ -177,9 +197,17 @@ struct Rest {
   size_t sent_before_turn = 0;
 };
 
+// How much of a pass the loop task gets at its turn.
+enum class Turn {
+  kPass,    // a whole update() pass
+  kDrain,   // only update()'s first statement, its drain of the commands:
+            // on a device the handler answers as soon as the drain posts the
+            // result, while the loop task may still be at the rest of the pass
+};
+
 // The REST handler submits `cmd` (the HTTP server's task), and the loop task
-// gets one update() pass on the handler's `turn_at`-th sleep (never, when 0).
-Rest rest(const cc::Command& cmd, unsigned turn_at = 1) {
+// gets one turn (`how`) on the handler's `turn_at`-th sleep (never, when 0).
+Rest rest(const cc::Command& cmd, unsigned turn_at = 1, Turn how = Turn::kPass) {
   Rest out;
   const uint32_t start = host_sim::now_ms;
   host_sim::on_task_delay = [&](uint32_t ms) {
@@ -193,7 +221,11 @@ Rest rest(const cc::Command& cmd, unsigned turn_at = 1) {
     }
     if (turn_at != 0 && out.sleeps == turn_at) {
       host_sim::on_httpd_task = false;   // the loop task's turn
-      cc::update();
+      if (how == Turn::kPass) {
+        cc::update();
+      } else {
+        cc::g_commands.drain(cc::run_command);
+      }
       ++out.loop_turns;
       host_sim::on_httpd_task = true;
     }
@@ -594,6 +626,519 @@ void test_a_late_turn_still_answers() {
   std::printf("PASS a_late_turn_still_answers\n");
 }
 
+// ── The status routes read what the loop task published (sweep F138) ─────
+
+// GET /api/chirp, /nearby and /recent (chirp_api.h) read
+// chirp_channel::read_status(), read_nearby() and read_recent() on the HTTP
+// server's task. Each read here plays that task: it must not wait for the
+// loop task, take a lock it leaves held, or touch the radio or the flash.
+template <typename F>
+void as_httpd(F&& read) {
+  const unsigned delays = host_sim::task_delays;
+  const unsigned effects = host_sim::httpd_side_effects;
+  host_sim::on_httpd_task = true;
+  read();
+  host_sim::on_httpd_task = false;
+  CHECK(host_sim::task_delays == delays);          // it never waits for the loop task
+  CHECK(host_sim::httpd_side_effects == effects);
+  CHECK(host_sim::mux_depth == 0);
+}
+cc::StatusView status_read() {
+  cc::StatusView v;
+  memset(&v, 0xA5, sizeof v);
+  as_httpd([&] { cc::read_status(&v); });
+  return v;
+}
+cc::NearbyTable nearby_read() {
+  cc::NearbyTable t;
+  memset(&t, 0xA5, sizeof t);
+  as_httpd([&] { cc::read_nearby(&t); });
+  return t;
+}
+cc::RecentTable recent_read() {
+  cc::RecentTable t;
+  memset(&t, 0xA5, sizeof t);
+  as_httpd([&] { cc::read_recent(&t); });
+  return t;
+}
+std::string reason_of(const cc::StatusView& v) {
+  const char* why = cc::cannot_send_reason(v);
+  return why != nullptr ? why : "(none)";
+}
+
+// Another chirp device in range: its own session key, as it would derive it.
+struct Neighbor {
+  uint8_t priv[32];
+  uint8_t pub[32];
+  uint8_t sid[cc::SESSION_ID_SIZE];
+  uint8_t mac[6];
+  std::string emoji;
+};
+Neighbor neighbor_of(uint8_t seed, const char* emoji) {
+  Neighbor n;
+  memset(n.priv, seed, sizeof n.priv);
+  n.priv[0] ^= 0x5A;
+  Ed25519::derivePublicKey(n.pub, n.priv);
+  cc::session_id_from_pubkey(n.pub, n.sid);
+  const uint8_t mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, seed};
+  memcpy(n.mac, mac, sizeof mac);
+  n.emoji = emoji;
+  return n;
+}
+cc::ChirpHeader header_of(const Neighbor& n, cc::ChirpMsgType type, uint8_t nonce_byte) {
+  cc::ChirpHeader h;
+  memset(&h, 0, sizeof h);
+  h.magic = cc::CHIRP_MAGIC;
+  h.version = cc::PROTOCOL_VERSION;
+  h.msg_type = type;
+  memcpy(h.session_id, n.sid, sizeof h.session_id);
+  h.timestamp = (uint32_t)host_sim::wall_now;
+  memset(h.nonce, nonce_byte, sizeof h.nonce);
+  return h;
+}
+template <typename P>
+std::vector<uint8_t> frame_of(const cc::ChirpHeader& h, const P& p) {
+  std::vector<uint8_t> f(sizeof h + sizeof p);
+  memcpy(f.data(), &h, sizeof h);
+  memcpy(f.data() + sizeof h, &p, sizeof p);
+  return f;
+}
+// mesh_network::update() hands every ESP-NOW frame to the channel on the
+// loop task, before the sketch's loop() runs chirp_channel::update().
+void deliver(const Neighbor& n, const std::vector<uint8_t>& f, int8_t rssi = -60) {
+  cc::dispatch_espnow_message(n.mac, f.data(), (int)f.size(), rssi);
+}
+std::vector<uint8_t> presence_of(const Neighbor& n) {
+  cc::ChirpPresencePayload p;
+  memset(&p, 0, sizeof p);
+  strncpy(p.emoji, n.emoji.c_str(), sizeof p.emoji - 1);
+  p.listening = 1;
+  p.last_chirp_age_min = 255;
+  return frame_of(header_of(n, cc::CHIRP_MSG_PRESENCE, 0x70), p);
+}
+std::vector<uint8_t> witness_of(const Neighbor& n, cc::ChirpTemplate tpl, cc::ChirpUrgency urg,
+                                cc::ChirpDetailSlot detail, uint8_t nonce_byte) {
+  const cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_WITNESS, nonce_byte);
+  cc::ChirpWitnessPayload p;
+  memset(&p, 0, sizeof p);
+  p.template_id = (uint8_t)tpl;
+  p.detail_slot = (uint8_t)detail;
+  p.urgency = (uint8_t)urg;
+  p.ttl_minutes = 15;
+  memcpy(p.session_pubkey, n.pub, sizeof p.session_pubkey);
+  uint8_t canonical[256];
+  const size_t cl = cc::build_witness_canonical(&h, &p, n.pub, canonical, sizeof canonical);
+  CHECK(cl > 0);
+  Ed25519::sign(p.signature, n.priv, n.pub, canonical, cl);
+  return frame_of(h, p);
+}
+std::vector<uint8_t> confirm_of(const Neighbor& n, const uint8_t nonce[8]) {
+  const cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_ACK, 0x71);
+  cc::ChirpAckPayload p;
+  memset(&p, 0, sizeof p);
+  memcpy(p.original_nonce, nonce, 8);
+  p.ack_type = cc::CHIRP_ACK_CONFIRMED;
+  memcpy(p.confirmer_session_pubkey, n.pub, sizeof p.confirmer_session_pubkey);
+  uint8_t canonical[128];
+  const size_t cl = cc::build_ack_canonical(nonce, cc::CHIRP_ACK_CONFIRMED, n.pub, canonical,
+                                            sizeof canonical);
+  CHECK(cl > 0);
+  Ed25519::sign(p.signature, n.priv, n.pub, canonical, cl);
+  return frame_of(h, p);
+}
+
+const char* const BEE = "\xF0\x9F\x90\x9D\xF0\x9F\x8C\xB8";   // two of EMOJI_SET's
+const char* const TREE = "\xF0\x9F\x8C\xB3";
+
+// The loop task changes the channel mid-pass: a read shows the last pass it
+// published, whole, until the pass ends and publishes the change. A read of
+// the live state (the routes before F138) would show it at once.
+void test_a_status_read_is_the_last_published_pass() {
+  boot();
+  cc::StatusView v = status_read();                    // what init() published
+  CHECK(v.state == cc::CHIRP_DISABLED && v.session_emoji[0] == '\0');
+  CHECK(v.relay_enabled && !v.muted && !v.can_send && reason_of(v) == "disabled");
+  enabled_channel();
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted);
+  CHECK(strcmp(v.session_emoji, cc::get_session_emoji()) == 0);
+
+  CHECK(cc::mute(30));                                 // the loop task, mid-pass
+  CHECK(cc::g_state == cc::CHIRP_MUTED && cc::g_muted);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted && v.mute_remaining_ms == 0);   // not yet published
+  cc::update();                                        // the pass ends
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.muted && v.mute_remaining_ms == 30u * 60000u);
+
+  // A table the loop task rewrites mid-pass (the prune's shift, a frame's
+  // row) is read as it was published, count and rows from one pass.
+  const uint8_t n1[8] = {1, 1, 1, 1, 1, 1, 1, 1};
+  neighbor_chirp(n1);
+  cc::g_tables_changed = true;
+  cc::update();
+  cc::RecentTable r = recent_read();
+  CHECK(r.count == 1 && memcmp(r.chirps[0].nonce, n1, 8) == 0);
+  cc::g_recent_chirp_count = 0;                        // the loop task, mid-pass
+  r = recent_read();
+  CHECK(r.count == 1 && memcmp(r.chirps[0].nonce, n1, 8) == 0);
+  CHECK(status_read().recent_chirp_count == 1);
+  cc::g_tables_changed = true;
+  cc::update();
+  CHECK(recent_read().count == 0 && status_read().recent_chirp_count == 0);
+
+  // Before anything is published (the HTTP server can start before init()
+  // runs): a disabled channel, as get_status() said then.
+  cc::g_status_view = decltype(cc::g_status_view)();
+  cc::g_nearby_view = decltype(cc::g_nearby_view)();
+  cc::g_recent_view = decltype(cc::g_recent_view)();
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_DISABLED && v.session_emoji[0] == '\0' && v.nearby_count == 0);
+  CHECK(v.relay_enabled && !v.can_send && v.last_chirp_sent_ms == 0);
+  CHECK(nearby_read().count == 0 && recent_read().count == 0);
+  std::printf("PASS a_status_read_is_the_last_published_pass\n");
+}
+
+// init() publishes the first view, with the settings it loaded: the HTTP
+// server can answer before loop() runs a pass, and a relay the owner turned
+// off must not read as on (the unpublished default) until then.
+void test_init_publishes_the_stored_settings() {
+  boot();
+  cc::Command s = cmd_of(cc::CHIRP_CMD_SETTINGS);
+  s.set_relay = true;
+  s.relay_enabled = false;
+  CHECK(rest(s).r.ok);
+  boot(/*wipe=*/false);                               // a reboot: the flash keeps it
+  CHECK(!cc::g_relay_enabled);
+  const cc::StatusView v = status_read();             // no pass has run
+  CHECK(v.state == cc::CHIRP_DISABLED && !v.relay_enabled);
+  std::printf("PASS init_publishes_the_stored_settings\n");
+}
+
+// A read right after a POST's answer shows what the command did. The loop
+// task gets only its drain here: on a device the handler answers as soon as
+// the drain posts the result, before the pass reaches its end, so the view
+// must already be published (run_command()), not just at the pass's end.
+void test_a_read_right_after_a_post_shows_what_it_did() {
+  boot();
+  Rest e = rest(cmd_of(cc::CHIRP_CMD_ENABLE), 1, Turn::kDrain);
+  CHECK(e.wait == lcr::Wait::kDone && e.r.ok);
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && strcmp(v.session_emoji, e.r.session_emoji) == 0);
+  CHECK(v.session_start_ms != 0 && !v.presence_met && reason_of(v) == "presence_required");
+
+  cc::Command m = cmd_of(cc::CHIRP_CMD_MUTE);
+  m.duration_minutes = 60;
+  CHECK(rest(m, 1, Turn::kDrain).r.ok);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.muted && v.mute_remaining_ms > 59u * 60000u);
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_UNMUTE), 1, Turn::kDrain).r.ok);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted && v.mute_remaining_ms == 0);
+
+  cc::Command s = cmd_of(cc::CHIRP_CMD_SETTINGS);
+  s.set_relay = true;
+  s.relay_enabled = false;
+  CHECK(rest(s, 1, Turn::kDrain).r.ok);
+  CHECK(!status_read().relay_enabled);
+
+  // The dashboard reloads the list right after a dismiss.
+  const uint8_t n1[8] = {3, 1, 4, 1, 5, 9, 2, 6};
+  neighbor_chirp(n1);
+  cc::g_tables_changed = true;
+  cc::update();
+  cc::RecentTable r = recent_read();
+  CHECK(r.count == 1 && !r.chirps[0].dismissed);
+  CHECK(rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, n1), 1, Turn::kDrain).r.ok);
+  r = recent_read();
+  CHECK(r.count == 1 && r.chirps[0].dismissed);       // the route leaves it out
+
+  // A send starts the cooldown the status shows at once.
+  host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;
+  CHECK(status_read().presence_met);                  // counted at the read
+  Rest sent = rest(send_of(cc::TPL_INFRA_POWER_OUT), 1, Turn::kDrain);
+  CHECK(sent.r.ok);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_COOLDOWN && v.cooldown_tier == 1 && !v.can_send);
+  CHECK(v.last_chirp_sent_ms == cc::g_cooldown.last_chirp_ms && v.last_chirp_sent_ms != 0);
+  CHECK(v.cooldown_remaining_ms == cc::COOLDOWN_TIER_1_MS - (host_sim::now_ms - v.last_chirp_sent_ms));
+  CHECK(reason_of(v) == "cooldown");
+
+  // Off: the session and both tables go with it.
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE), 1, Turn::kDrain).r.ok);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_DISABLED && v.session_emoji[0] == '\0');
+  CHECK(v.recent_chirp_count == 0 && v.nearby_count == 0 && reason_of(v) == "disabled");
+  CHECK(recent_read().count == 0 && nearby_read().count == 0);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_read_right_after_a_post_shows_what_it_did\n");
+}
+
+// What update() itself changes (a mute that ran out, a cooldown that ended)
+// shows once the pass that changed it ends.
+void test_the_pass_publishes_what_it_changed() {
+  boot();
+  enabled_channel();
+  cc::Command m = cmd_of(cc::CHIRP_CMD_MUTE);
+  m.duration_minutes = 15;
+  CHECK(rest(m).r.ok);
+  CHECK(status_read().state == cc::CHIRP_MUTED);
+  host_sim::now_ms += 15u * 60000u;
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.mute_remaining_ms == 0);   // ran out; the pass has not run
+  cc::update();
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted && v.can_send);
+
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);
+  CHECK(status_read().state == cc::CHIRP_COOLDOWN);
+  host_sim::now_ms += cc::COOLDOWN_TIER_1_MS;
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_COOLDOWN && v.cooldown_remaining_ms == 0 && !v.can_send);
+  cc::update();
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && v.can_send && v.cooldown_tier == 1);
+  CHECK(reason_of(v) == "(none)");
+  std::printf("PASS the_pass_publishes_what_it_changed\n");
+}
+
+// The chirp frames mesh_network::update() hands the channel change the
+// nearby and recent tables; chirp_channel::update(), later in the same
+// loop() pass, publishes them. A real presence beacon, a signed witness and
+// a signed confirmation, each through dispatch_espnow_message().
+void test_a_frame_shows_in_the_tables_after_its_pass() {
+  boot();
+  enabled_channel();
+  const Neighbor N = neighbor_of(1, BEE);
+  const Neighbor M = neighbor_of(2, TREE);
+  deliver(N, presence_of(N), -48);
+  CHECK(cc::g_nearby_count == 1);
+  CHECK(nearby_read().count == 0 && status_read().nearby_count == 0);   // not yet published
+  cc::update();
+  cc::NearbyTable t = nearby_read();
+  CHECK(t.count == 1 && status_read().nearby_count == 1);
+  CHECK(std::string(t.devices[0].emoji) == BEE && t.devices[0].rssi == -48);
+  CHECK(t.devices[0].listening && t.devices[0].last_seen_ms == host_sim::now_ms);
+  deliver(M, presence_of(M), -71);
+  cc::update();
+  t = nearby_read();
+  CHECK(t.count == 2 && std::string(t.devices[1].emoji) == TREE && t.devices[1].rssi == -71);
+
+  const size_t sent_before = host_sim::espnow->sent.size();
+  deliver(N, witness_of(N, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT,
+                        cc::DETAIL_STATUS_SPREADING, 0x11));
+  CHECK(cc::g_recent_chirp_count == 1);
+  CHECK(recent_read().count == 0);
+  cc::update();
+  cc::RecentTable r = recent_read();
+  CHECK(r.count == 1 && status_read().recent_chirp_count == 1);
+  const cc::RecentView& w = r.chirps[0];
+  CHECK(w.template_id == cc::TPL_EMERG_FIRE_VISIBLE && w.urgency == cc::CHIRP_URG_URGENT);
+  CHECK(w.detail == cc::DETAIL_STATUS_SPREADING && w.hop_count == 0);
+  uint8_t nonce[8];
+  memset(nonce, 0x11, sizeof nonce);
+  CHECK(memcmp(w.nonce, nonce, 8) == 0 && w.received_ms == host_sim::now_ms);
+  CHECK(strcmp(w.sender_emoji, cc::g_recent_chirps[0].sender_emoji) == 0 && w.sender_emoji[0] != '\0');
+  CHECK(w.confirm_count == 0 && !w.validated && !w.relayed);
+  CHECK(std::string(cc::get_validation_status(&w)) == "awaiting_confirmation");
+
+  // M saw it too: one confirmation validates a safety template, and the
+  // relay re-signs and sends it.
+  deliver(M, confirm_of(M, nonce));
+  CHECK(cc::g_recent_chirps[0].validated && cc::g_recent_chirps[0].relayed);
+  CHECK(!recent_read().chirps[0].validated);
+  cc::update();
+  r = recent_read();
+  CHECK(r.chirps[0].confirm_count == 1 && r.chirps[0].validated && r.chirps[0].relayed);
+  CHECK(std::string(cc::get_validation_status(&r.chirps[0])) == "validated");
+  bool relayed = false;
+  for (uint8_t type : sent_types(sent_before)) relayed = relayed || type == cc::CHIRP_MSG_WITNESS;
+  CHECK(relayed);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_frame_shows_in_the_tables_after_its_pass\n");
+}
+
+// update()'s 30-second prune drops a neighbor not heard for 3 minutes and a
+// chirp older than 30; the pass that prunes publishes the shorter tables.
+void test_the_prune_shows_in_the_tables() {
+  boot();
+  enabled_channel();
+  const Neighbor N = neighbor_of(3, BEE);
+  deliver(N, presence_of(N));
+  deliver(N, witness_of(N, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x22));
+  cc::update();
+  CHECK(nearby_read().count == 1 && recent_read().count == 1);
+
+  host_sim::now_ms += cc::NEARBY_TIMEOUT_MS + 31000;
+  cc::update();                                        // the prune's pass
+  CHECK(cc::g_nearby_count == 0 && cc::g_recent_chirp_count == 1);
+  CHECK(nearby_read().count == 0 && status_read().nearby_count == 0);
+  CHECK(recent_read().count == 1);
+  host_sim::now_ms += cc::DEFAULT_DISPLAY_MS;
+  cc::update();
+  CHECK(cc::g_recent_chirp_count == 0);
+  CHECK(recent_read().count == 0 && status_read().recent_chirp_count == 0);
+  std::printf("PASS the_prune_shows_in_the_tables\n");
+}
+
+// What counts in time is counted at the read, from what the loop task
+// published: the cooldown and mute left, the presence requirement, the wall
+// clock (and with it night mode and can_send), as the live readers counted
+// them. No pass runs between these reads.
+void test_a_status_read_counts_time_at_the_read() {
+  boot();
+  enabled_channel(/*present=*/false);
+  cc::StatusView v = status_read();
+  CHECK(!v.presence_met && reason_of(v) == "presence_required");
+  host_sim::now_ms += cc::PRESENCE_REQUIRED_MS - 1;
+  CHECK(!status_read().presence_met);
+  host_sim::now_ms += 1;
+  v = status_read();
+  CHECK(v.presence_met && v.can_send && reason_of(v) == "(none)");
+
+  // A wall clock not set yet: the route names it (sweep F146; it named no
+  // reason, and the dashboard said Ready to a send that would be refused).
+  host_sim::wall_now = cc::MIN_UNIX_TIME - 1;
+  v = status_read();
+  CHECK(!v.clock_synced && !v.can_send && v.night_mode);   // night: the conservative answer
+  CHECK(reason_of(v) == "clock_unsynced");
+  host_sim::wall_now = 1760050800;                        // 23:00 UTC
+  v = status_read();
+  CHECK(v.clock_synced && v.night_mode && v.can_send);
+  host_sim::wall_now = 1760000000;                        // 08:53 UTC
+  CHECK(!status_read().night_mode);
+
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);
+  v = status_read();
+  const uint32_t left = v.cooldown_remaining_ms;
+  CHECK(left > 0 && left <= cc::COOLDOWN_TIER_1_MS);
+  host_sim::now_ms += 10000;
+  CHECK(status_read().cooldown_remaining_ms == left - 10000);
+  cc::Command m = cmd_of(cc::CHIRP_CMD_MUTE);             // a mute, in the cooldown
+  m.duration_minutes = 15;
+  CHECK(rest(m).r.ok);
+  const uint32_t mute_left = status_read().mute_remaining_ms;
+  host_sim::now_ms += 60000;
+  CHECK(status_read().mute_remaining_ms == mute_left - 60000);
+  std::printf("PASS a_status_read_counts_time_at_the_read\n");
+}
+
+// cannot_send_reason() checks in the route's order, the clock last.
+void test_cannot_send_reason_names_the_clock() {
+  cc::StatusView v;
+  memset(&v, 0, sizeof v);
+  v.state = cc::CHIRP_ACTIVE;
+  v.presence_met = true;
+  v.clock_synced = true;
+  v.can_send = true;
+  CHECK(reason_of(v) == "(none)");
+  v.can_send = false;
+  v.clock_synced = false;
+  CHECK(reason_of(v) == "clock_unsynced");
+  v.presence_met = false;
+  CHECK(reason_of(v) == "presence_required");
+  v.state = cc::CHIRP_COOLDOWN;
+  CHECK(reason_of(v) == "cooldown");
+  v.state = cc::CHIRP_DISABLED;
+  CHECK(reason_of(v) == "disabled");
+  std::printf("PASS cannot_send_reason_names_the_clock\n");
+}
+
+// Every field the routes show is the live one, as the pass that published
+// it left it: the status against get_status() and the live readers, each
+// row against the live table's.
+void test_every_field_the_routes_show_is_the_live_one() {
+  boot();
+  enabled_channel();
+  const Neighbor N = neighbor_of(4, BEE);
+  const Neighbor M = neighbor_of(5, TREE);
+  deliver(N, presence_of(N), -41);
+  deliver(M, presence_of(M), -88);
+  cc::g_nearby_devices[1].listening = false;
+  deliver(N, witness_of(N, cc::TPL_WX_FLOOD, cc::CHIRP_URG_CAUTION, cc::DETAIL_DIR_EAST, 0x33));
+  deliver(M, witness_of(M, cc::TPL_AID_OFFERING_HELP, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x44));
+  CHECK(cc::g_recent_chirp_count == 2);
+  cc::ReceivedChirp& a = cc::g_recent_chirps[0];       // as later frames would leave them
+  a.hop_count = 2;
+  a.confirm_count = 3;
+  a.validated = true;
+  a.relayed = true;
+  cc::ReceivedChirp& b = cc::g_recent_chirps[1];
+  b.suppressed = true;
+  b.dismissed = true;
+  cc::g_tables_changed = true;
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);  // a cooldown, tier 1
+  cc::Command m = cmd_of(cc::CHIRP_CMD_MUTE);
+  m.duration_minutes = 120;
+  CHECK(rest(m).r.ok);
+  cc::Command s = cmd_of(cc::CHIRP_CMD_SETTINGS);
+  s.set_relay = true;
+  s.relay_enabled = false;
+  CHECK(rest(s).r.ok);
+  host_sim::now_ms += 1234;
+
+  const cc::StatusView v = status_read();
+  const cc::ChirpStatus live = cc::get_status();
+  CHECK(v.state == live.state && strcmp(v.session_emoji, live.session_emoji) == 0);
+  CHECK(v.nearby_count == live.nearby_count && v.nearby_count == 2);
+  CHECK(v.recent_chirp_count == live.recent_chirp_count && v.recent_chirp_count == 2);
+  CHECK(v.last_chirp_sent_ms == live.last_chirp_sent_ms);
+  CHECK(v.cooldown_remaining_ms == live.cooldown_remaining_ms);
+  CHECK(v.relay_enabled == live.relay_enabled && !v.relay_enabled);
+  CHECK(v.muted == live.muted && v.muted);
+  CHECK(v.mute_remaining_ms == live.mute_remaining_ms && v.mute_remaining_ms > 0);
+  CHECK(v.cooldown_tier == cc::get_cooldown_tier() && v.cooldown_tier == 1);
+  CHECK(v.presence_met == cc::has_presence_requirement());
+  CHECK(v.can_send == cc::can_send_chirp() && v.night_mode == cc::is_night_mode());
+
+  const cc::NearbyTable t = nearby_read();
+  CHECK(t.count == cc::g_nearby_count);
+  for (size_t i = 0; i < t.count; i++) {
+    const cc::NearbyDevice& d = cc::g_nearby_devices[i];
+    CHECK(strcmp(t.devices[i].emoji, d.emoji) == 0);
+    CHECK(t.devices[i].rssi == d.rssi && t.devices[i].listening == d.listening);
+    CHECK(t.devices[i].last_seen_ms == d.last_seen_ms);
+  }
+  CHECK(t.devices[0].listening && !t.devices[1].listening);
+
+  const cc::RecentTable r = recent_read();
+  CHECK(r.count == cc::g_recent_chirp_count);
+  for (size_t i = 0; i < r.count; i++) {
+    const cc::ReceivedChirp& c = cc::g_recent_chirps[i];
+    const cc::RecentView& w = r.chirps[i];
+    CHECK(strcmp(w.sender_emoji, c.sender_emoji) == 0);
+    CHECK(w.template_id == c.template_id && w.detail == c.detail && w.urgency == c.urgency);
+    CHECK(w.hop_count == c.hop_count && w.confirm_count == c.confirm_count);
+    CHECK(w.validated == c.validated && w.suppressed == c.suppressed);
+    CHECK(w.relayed == c.relayed && w.dismissed == c.dismissed);
+    CHECK(memcmp(w.nonce, c.nonce, 8) == 0 && w.received_ms == c.received_ms);
+    CHECK(strcmp(cc::get_validation_status(&w), cc::get_validation_status(&c)) == 0);
+  }
+  CHECK(r.chirps[0].template_id == cc::TPL_WX_FLOOD && r.chirps[0].detail == cc::DETAIL_DIR_EAST);
+  CHECK(r.chirps[0].hop_count == 2 && r.chirps[0].confirm_count == 3);
+  CHECK(r.chirps[0].validated && r.chirps[0].relayed && !r.chirps[0].dismissed);
+  CHECK(r.chirps[1].suppressed && r.chirps[1].dismissed && r.chirps[1].urgency == cc::CHIRP_URG_INFO);
+  CHECK(std::string(cc::get_validation_status(&r.chirps[1])) == "suppressed");
+  std::printf("PASS every_field_the_routes_show_is_the_live_one\n");
+}
+
+// What the view costs: the three published copies are static (internal
+// SRAM on a device), the tables' scratch is one PSRAM allocation. The sizes
+// the docs quote, on this host's layout (the device's 32-bit layout of these
+// structs is the same: no pointer, size_t or 8-byte member in any).
+void test_the_view_sizes() {
+  static_assert(sizeof(cc::StatusView) == 68, "StatusView size the docs quote");
+  static_assert(sizeof(cc::NearbyView) == 40 && sizeof(cc::NearbyTable) == 1284,
+                "NearbyTable size the docs quote");
+  static_assert(sizeof(cc::RecentView) == 52 && sizeof(cc::RecentTable) == 836,
+                "RecentTable size the docs quote");
+  static_assert(sizeof(cc::ViewScratch) == 1284, "the scratch is the larger table");
+  std::printf("PASS the_view_sizes (StatusView %zu B, NearbyTable %zu B, RecentTable %zu B; "
+              "the live tables they copy from: %zu B and %zu B)\n",
+              sizeof(cc::StatusView), sizeof(cc::NearbyTable), sizeof(cc::RecentTable),
+              cc::NEARBY_BYTES, cc::RECENT_CHIRPS_BYTES);
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -607,6 +1152,16 @@ const Test kTests[] = {
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},
     {"a_late_turn_still_answers", test_a_late_turn_still_answers},
+    {"a_status_read_is_the_last_published_pass", test_a_status_read_is_the_last_published_pass},
+    {"init_publishes_the_stored_settings", test_init_publishes_the_stored_settings},
+    {"a_read_right_after_a_post_shows_what_it_did", test_a_read_right_after_a_post_shows_what_it_did},
+    {"the_pass_publishes_what_it_changed", test_the_pass_publishes_what_it_changed},
+    {"a_frame_shows_in_the_tables_after_its_pass", test_a_frame_shows_in_the_tables_after_its_pass},
+    {"the_prune_shows_in_the_tables", test_the_prune_shows_in_the_tables},
+    {"a_status_read_counts_time_at_the_read", test_a_status_read_counts_time_at_the_read},
+    {"cannot_send_reason_names_the_clock", test_cannot_send_reason_names_the_clock},
+    {"every_field_the_routes_show_is_the_live_one", test_every_field_the_routes_show_is_the_live_one},
+    {"the_view_sizes", test_the_view_sizes},
 };
 
 }  // namespace chirp_commands

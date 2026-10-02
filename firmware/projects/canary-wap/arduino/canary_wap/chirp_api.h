@@ -22,9 +22,14 @@
  * task read right after the command ran, in the shape it always had. A
  * command that did not run answers 409 chirp_busy or 503 chirp_timeout
  * (send_not_run). firmware/scripts/check_wap_loop_commands.py holds every
- * handler here to that. The GET routes still read the loop task's state
- * from this task (a torn read, never a freed pointer: the tables are
- * allocated once).
+ * handler here to that.
+ *
+ * Sweep F138: the GET routes read what the loop task published
+ * (chirp_channel::read_status, read_nearby, read_recent: whole copies,
+ * mesh_network.h), never the live session, cooldowns or tables, which
+ * update() and the chirp frames it is handed rewrite on the loop task; a
+ * read in place could mix two passes (a row read while the 30-second prune
+ * shifts the table under it). The responses are what they were.
  */
 
 #ifndef SECURACV_CHIRP_API_H
@@ -83,32 +88,28 @@ inline esp_err_t send_not_run(httpd_req_t* req, loop_command_ring::Wait w) {
 
 // GET /api/chirp - Chirp channel status
 inline esp_err_t handle_chirp_status(httpd_req_t* req) {
-  chirp_channel::ChirpStatus status = chirp_channel::get_status();
+  chirp_channel::StatusView v;
+  chirp_channel::read_status(&v);
 
   JsonDocument doc;
-  doc["state"] = chirp_channel::state_name(status.state);
-  doc["session_emoji"] = status.session_emoji;
-  doc["nearby_count"] = status.nearby_count;
-  doc["recent_chirps"] = status.recent_chirp_count;
-  doc["last_chirp_sent_ms"] = status.last_chirp_sent_ms;
-  doc["cooldown_remaining_sec"] = status.cooldown_remaining_ms / 1000;
-  doc["cooldown_tier"] = chirp_channel::get_cooldown_tier();
-  doc["presence_met"] = chirp_channel::has_presence_requirement();
-  doc["night_mode"] = chirp_channel::is_night_mode();
-  doc["relay_enabled"] = status.relay_enabled;
-  doc["muted"] = status.muted;
-  doc["mute_remaining_sec"] = status.mute_remaining_ms / 1000;
-  doc["can_send"] = chirp_channel::can_send_chirp();
+  doc["state"] = chirp_channel::state_name(v.state);
+  doc["session_emoji"] = v.session_emoji;
+  doc["nearby_count"] = v.nearby_count;
+  doc["recent_chirps"] = v.recent_chirp_count;
+  doc["last_chirp_sent_ms"] = v.last_chirp_sent_ms;
+  doc["cooldown_remaining_sec"] = v.cooldown_remaining_ms / 1000;
+  doc["cooldown_tier"] = v.cooldown_tier;
+  doc["presence_met"] = v.presence_met;
+  doc["night_mode"] = v.night_mode;
+  doc["relay_enabled"] = v.relay_enabled;
+  doc["muted"] = v.muted;
+  doc["mute_remaining_sec"] = v.mute_remaining_ms / 1000;
+  doc["can_send"] = v.can_send;
 
-  // If can't send, explain why
-  if (!chirp_channel::can_send_chirp()) {
-    if (status.state == chirp_channel::CHIRP_DISABLED) {
-      doc["cannot_send_reason"] = "disabled";
-    } else if (status.state == chirp_channel::CHIRP_COOLDOWN) {
-      doc["cannot_send_reason"] = "cooldown";
-    } else if (!chirp_channel::has_presence_requirement()) {
-      doc["cannot_send_reason"] = "presence_required";
-    }
+  // If can't send, explain why (clock_unsynced since sweep F146)
+  const char* why = chirp_channel::cannot_send_reason(v);
+  if (why != nullptr) {
+    doc["cannot_send_reason"] = why;
   }
 
   char buffer[768];
@@ -121,8 +122,16 @@ inline esp_err_t handle_chirp_status(httpd_req_t* req) {
 
 // GET /api/chirp/nearby - Count of nearby chirp devices
 inline esp_err_t handle_chirp_nearby(httpd_req_t* req) {
-  size_t count;
-  const chirp_channel::NearbyDevice* devices = chirp_channel::get_nearby_devices(&count);
+  // The copy is about 1.3 KB: the heap, not this task's stack.
+  chirp_channel::NearbyTable* t =
+      (chirp_channel::NearbyTable*)malloc(sizeof(chirp_channel::NearbyTable));
+  if (!t) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
+    return ESP_FAIL;
+  }
+  chirp_channel::read_nearby(t);
+  const size_t count = t->count;
+  const chirp_channel::NearbyView* devices = t->devices;
 
   JsonDocument doc;
   doc["count"] = count;
@@ -138,6 +147,7 @@ inline esp_err_t handle_chirp_nearby(httpd_req_t* req) {
 
   char buffer[3072];
   serializeJson(doc, buffer);
+  free(t);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -146,8 +156,16 @@ inline esp_err_t handle_chirp_nearby(httpd_req_t* req) {
 
 // GET /api/chirp/recent - Recent community chirps
 inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
-  size_t count;
-  const chirp_channel::ReceivedChirp* chirps = chirp_channel::get_recent_chirps(&count);
+  // The copy is about 0.8 KB: the heap, not this task's stack.
+  chirp_channel::RecentTable* t =
+      (chirp_channel::RecentTable*)malloc(sizeof(chirp_channel::RecentTable));
+  if (!t) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
+    return ESP_FAIL;
+  }
+  chirp_channel::read_recent(t);
+  const size_t count = t->count;
+  const chirp_channel::RecentView* chirps = t->chirps;
 
   JsonDocument doc;
   JsonArray arr = doc["chirps"].to<JsonArray>();
@@ -186,11 +204,13 @@ inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
 
   char* buffer = (char*)malloc(4096);
   if (!buffer) {
+    free(t);
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
     return ESP_FAIL;
   }
 
   serializeJson(doc, buffer, 4096);
+  free(t);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   esp_err_t ret = httpd_resp_sendstr(req, buffer);

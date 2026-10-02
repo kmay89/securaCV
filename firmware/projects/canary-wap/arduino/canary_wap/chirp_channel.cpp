@@ -37,6 +37,7 @@
 
 #include "mesh_network.h"
 #include "csi_mem.h"
+#include "loop_snapshot.h"       // F138: what the status routes read
 #include "airtime_governor.h"
 #include "nvs_store.h"
 #include "health_log.h"
@@ -145,6 +146,29 @@ static constexpr size_t SELFTEST_SEEN_BYTES =
 // while one runs.
 static loop_command_ring::Ring<Command, Result, COMMAND_SLOTS, loop_command_ring::PortMuxLock>
     g_commands;
+
+// What the status routes show (sweep F138): published by the loop task
+// (publish_view: the status at the end of every update() pass, after each
+// owner command and from init(); the two tables only when g_tables_changed
+// says something changed them), read whole by read_status(), read_nearby()
+// and read_recent() from esp_http_server's task. The three published copies
+// are static, in internal SRAM (the host's layout: 68 + 1284 + 836 bytes of
+// view, plus each copy's lock and flag); a status publish that changed
+// nothing costs a 68-byte compare. The tables are built in a PSRAM scratch
+// (g_view_scratch, allocated in init() with the tables it copies from), so
+// building one reads the PSRAM tables only on a pass that changed them.
+static loop_snapshot::Value<StatusView, loop_command_ring::PortMuxLock> g_status_view;
+static loop_snapshot::Value<NearbyTable, loop_command_ring::PortMuxLock> g_nearby_view;
+static loop_snapshot::Value<RecentTable, loop_command_ring::PortMuxLock> g_recent_view;
+union ViewScratch {
+  NearbyTable nearby;
+  RecentTable recent;
+};
+static ViewScratch* g_view_scratch = nullptr;
+// Something changed the recent or nearby table since they were last
+// published: a chirp frame handled (on_espnow_recv), update()'s prune, an
+// owner command (run_command), init(). publish_view() clears it.
+static bool g_tables_changed = true;
 
 // Callbacks
 static ChirpReceivedCallback g_chirp_callback = nullptr;
@@ -268,6 +292,7 @@ static void prune_stale_nearby();
 static void prune_old_chirps();
 static void load_settings();
 static void save_settings();
+static void publish_view();
 static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int8_t rssi_dbm);
 static const TemplateEntry* find_template(ChirpTemplate id);
 static ChirpCategory template_to_category(ChirpTemplate id);
@@ -1057,6 +1082,9 @@ static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int
   if (rssi > 0) rssi = 0;
   if (rssi < -120) rssi = -120;
 
+  // A chirp frame may change the recent or nearby table: the pass that
+  // handled it publishes them (sweep F138).
+  g_tables_changed = true;
   switch (hdr->msg_type) {
     case CHIRP_MSG_PRESENCE:        handle_presence(data, (size_t)len, rssi); break;
     case CHIRP_MSG_WITNESS:         handle_witness(data, (size_t)len, rssi);  break;
@@ -1118,6 +1146,109 @@ static void save_settings() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// THE STATUS ROUTES' VIEW (sweep F138)
+// ════════════════════════════════════════════════════════════════════════════
+
+// The loop task: what GET /api/chirp, /nearby and /recent show, from this
+// pass. Called at the end of every update() pass, its early return
+// included, after each owner command (run_command(), before the drain posts
+// the result) and from init(); nothing else publishes. The status every
+// time (a compare when nothing it shows changed); the tables only when
+// g_tables_changed, and only once init() has their scratch.
+static void publish_view() {
+  StatusView s;
+  memset(&s, 0, sizeof(s));
+  s.state = g_state;
+  strncpy(s.session_emoji, g_session.emoji_display, EMOJI_DISPLAY_SIZE - 1);
+  s.nearby_count = (uint8_t)g_nearby_count;
+  s.recent_chirp_count = (uint8_t)g_recent_chirp_count;
+  s.cooldown_tier = get_cooldown_tier();
+  s.relay_enabled = g_relay_enabled;
+  s.muted = g_muted;
+  s.last_chirp_sent_ms = g_cooldown.last_chirp_ms;
+  s.cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
+  s.mute_until_ms = g_mute_until_ms;
+  s.session_start_ms = g_session_start_ms;
+  (void)g_status_view.publish(s);
+
+  if (!g_tables_changed || g_view_scratch == nullptr) return;
+  g_tables_changed = false;
+
+  NearbyTable* n = &g_view_scratch->nearby;
+  memset(n, 0, sizeof(*n));
+  for (size_t i = 0; i < g_nearby_count && i < MAX_NEARBY_CACHE; i++) {
+    const NearbyDevice& d = g_nearby_devices[i];
+    NearbyView& v = n->devices[n->count++];
+    strncpy(v.emoji, d.emoji, EMOJI_DISPLAY_SIZE - 1);
+    v.rssi = d.rssi;
+    v.listening = d.listening;
+    v.last_seen_ms = d.last_seen_ms;
+  }
+  (void)g_nearby_view.publish(*n);
+
+  RecentTable* r = &g_view_scratch->recent;
+  memset(r, 0, sizeof(*r));
+  for (size_t i = 0; i < g_recent_chirp_count && i < MAX_RECENT_CHIRPS; i++) {
+    const ReceivedChirp& c = g_recent_chirps[i];
+    RecentView& v = r->chirps[r->count++];
+    strncpy(v.sender_emoji, c.sender_emoji, EMOJI_DISPLAY_SIZE - 1);
+    v.template_id = c.template_id;
+    v.detail = c.detail;
+    v.urgency = c.urgency;
+    v.hop_count = c.hop_count;
+    v.confirm_count = c.confirm_count;
+    v.validated = c.validated;
+    v.suppressed = c.suppressed;
+    v.relayed = c.relayed;
+    v.dismissed = c.dismissed;
+    memcpy(v.nonce, c.nonce, sizeof(v.nonce));
+    v.received_ms = c.received_ms;
+  }
+  (void)g_recent_view.publish(*r);
+}
+
+void read_status(StatusView* out) {
+  if (!g_status_view.read(out)) {
+    // Before init() publishes: what get_status() said then.
+    memset(out, 0, sizeof(*out));
+    out->state = CHIRP_DISABLED;
+    out->relay_enabled = true;
+  }
+  // What counts in time, counted now, from what the loop task published,
+  // as get_status(), has_presence_requirement() and can_send_chirp() count it.
+  const uint32_t now = millis();
+  out->cooldown_remaining_ms = 0;
+  if (out->state == CHIRP_COOLDOWN && out->last_chirp_sent_ms > 0) {
+    const uint32_t elapsed = now - out->last_chirp_sent_ms;
+    out->cooldown_remaining_ms = (elapsed < out->cooldown_ms) ? out->cooldown_ms - elapsed : 0;
+  }
+  out->mute_remaining_ms = (out->muted && now < out->mute_until_ms) ? out->mute_until_ms - now : 0;
+  out->presence_met = out->session_start_ms != 0 &&
+                      (now - out->session_start_ms) >= PRESENCE_REQUIRED_MS;
+  out->clock_synced = wall_clock_is_synced();
+  out->night_mode = is_night_mode();
+  out->can_send = out->state != CHIRP_DISABLED && out->state != CHIRP_COOLDOWN &&
+                  out->presence_met && out->clock_synced;
+}
+
+void read_nearby(NearbyTable* out) {
+  if (!g_nearby_view.read(out)) memset(out, 0, sizeof(*out));
+}
+
+void read_recent(RecentTable* out) {
+  if (!g_recent_view.read(out)) memset(out, 0, sizeof(*out));
+}
+
+const char* cannot_send_reason(const StatusView& v) {
+  if (v.can_send) return nullptr;
+  if (v.state == CHIRP_DISABLED) return "disabled";
+  if (v.state == CHIRP_COOLDOWN) return "cooldown";
+  if (!v.presence_met) return "presence_required";
+  if (!v.clock_synced) return "clock_unsynced";
+  return nullptr;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // PUBLIC API
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1134,8 +1265,10 @@ bool init() {
     g_pubkey_rate = (PubkeyRateEntry*)csi_large_calloc(PUBKEY_RATE_BYTES);
   if (!g_selftest_seen)
     g_selftest_seen = (SelfTestSeenEntry*)csi_large_calloc(SELFTEST_SEEN_BYTES);
+  if (!g_view_scratch)
+    g_view_scratch = (ViewScratch*)csi_large_calloc(sizeof(ViewScratch));
   if (!g_recent_chirps || !g_nearby_devices || !g_bloom || !g_pubkey_rate ||
-      !g_selftest_seen) {
+      !g_selftest_seen || !g_view_scratch) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                "chirp: table alloc failed — channel disabled");
     return false;  /* fail-safe: caller treats false as chirp unavailable */
@@ -1152,6 +1285,10 @@ bool init() {
   load_settings();
   g_initialized = true;
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp channel v0.2 initialized");
+  // The first view, with the settings just loaded: the HTTP server may
+  // already be up (sweep F138).
+  g_tables_changed = true;
+  publish_view();
   return true;
 }
 
@@ -1239,6 +1376,11 @@ static Result run_command(const Command& cmd) {
       r.urgency_filter = g_urgency_filter;
       break;
   }
+  // The view shows the command before the drain posts its result: the
+  // dashboard reads the status (and the recent list after a dismiss) right
+  // after a POST's answer, while this pass may still be running (sweep F138).
+  g_tables_changed = true;
+  publish_view();
   return r;
 }
 
@@ -1262,7 +1404,10 @@ void update() {
   // disabled channel still runs CHIRP_CMD_ENABLE (sweep F111).
   g_commands.drain(run_command);
 
-  if (g_state == CHIRP_DISABLED) return;
+  if (g_state == CHIRP_DISABLED) {
+    publish_view();
+    return;
+  }
   uint32_t now = millis();
   reset_cooldown_if_stale();
   if (g_muted && now >= g_mute_until_ms) {
@@ -1278,8 +1423,10 @@ void update() {
   if (now - last_prune_ms > 30000) {
     prune_stale_nearby();
     prune_old_chirps();
+    g_tables_changed = true;
     last_prune_ms = now;
   }
+  publish_view();
 }
 
 ChirpStatus get_status() {
@@ -1385,6 +1532,13 @@ uint32_t get_cooldown_remaining_ms() {
 }
 
 const char* get_validation_status(const ReceivedChirp* chirp) {
+  if (!chirp) return "unknown";
+  if (chirp->suppressed) return "suppressed";
+  if (chirp->validated) return "validated";
+  return "awaiting_confirmation";
+}
+
+const char* get_validation_status(const RecentView* chirp) {
   if (!chirp) return "unknown";
   if (chirp->suppressed) return "suppressed";
   if (chirp->validated) return "validated";
