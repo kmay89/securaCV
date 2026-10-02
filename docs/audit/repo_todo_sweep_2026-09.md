@@ -3339,8 +3339,9 @@ so — see D2 below.)
   handlers) fails 8 of 8 Chirp and 11 of 12 Bluetooth tests; the drain after
   the early return fails 7 Chirp and 3 Bluetooth tests; `enable()` calling
   `init()` again fails 1; settings applied whole fails 2.
-  `firmware/scripts/check_wap_loop_commands.py` (rules C1-C4: 53 new self-test
-  mutations, 123 in all with F110's rule 9; run by `regression_check.sh`)
+  `firmware/scripts/check_wap_loop_commands.py` (rules C1-C4: 48 new self-test
+  mutations, 53 with F112's rule M1, 123 in all with F110's rule 9; run by
+  `regression_check.sh`)
   holds the internal linkage, every caller inside each .cpp, the drains,
   `submit()`, `bluetooth_channel::init(`'s two callers, and the handlers'
   side, which no host test compiles (they build their answers with

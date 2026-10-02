@@ -198,9 +198,11 @@
   client down under a main-loop publish. They ask `csi_mqtt::loop()` to
   re-init; the config save waits up to 2 s for it and the test up to 4 s, as
   before. The loop detaches the old client, and a short-lived worker task
-  stops it, because esp-mqtt's stop can wait out a 10 s connect attempt,
-  longer than the loop's 8 s watchdog. The auto-update switch set from the OTA
-  settings page is published by the loop. Pinned by `test_loop_command_ring`,
+  stops it, because esp-mqtt's stop can wait out a connect step plus its
+  reconnect wait (since F112, above, a 2 s step where it was 10 s, plus up to
+  5 s), too close to the loop's 8 s watchdog to run there. The auto-update
+  switch set from the OTA settings page is published by the loop. Pinned by
+  `test_loop_command_ring`,
   `test_mesh_commands_wap` and `test_mqtt_reinit`, each failing with its fix
   reverted, and held in the source by
   `firmware/scripts/check_wap_loop_commands.py`. **Host-tested only**:
