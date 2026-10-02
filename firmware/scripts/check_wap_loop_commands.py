@@ -1004,7 +1004,9 @@ BT_SETTINGS_FIELDS = {             # key: (the field it fills, the mask bit that
 # What a handler may call on the channel after its command ran: pure lookups
 # of its request's own values. State the command changed is answered from
 # the Result the loop task read, never from a live reader on this task.
-AFTER_SUBMIT_CALLS = {"chirp_channel": ("get_template_text", "urgency_name"), "bluetooth_channel": ()}
+AFTER_SUBMIT_CALLS = {"chirp_channel": ("get_template_text", "urgency_name", "send_refusal_error",
+                                       "send_refusal_message"),
+                      "bluetooth_channel": ()}
 # Right after `const loop_command_ring::Wait w = <ns>::submit(...);`: every
 # answer but kDone is a command that did not run.
 NOT_RUN_GUARD = "if(w!=loop_command_ring::Wait::kDone)returnsend_not_run(req,w);"

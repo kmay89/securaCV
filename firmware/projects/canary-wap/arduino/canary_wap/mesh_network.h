@@ -1176,14 +1176,44 @@ struct Command {
 
 // Why a CHIRP_CMD_SEND did not go out, checked in the order the send handler
 // has always named them: the channel off, the presence requirement, then
-// can_send_chirp() (the cooldown, and an unsynced clock), then night mode.
+// can_send_chirp()'s two (the cooldown, then a wall clock that has not
+// synced yet), then night mode. The clock had no refusal of its own: it was
+// answered as a cooldown with 0 seconds left, which told the owner to wait
+// for nothing (sweep F146).
 enum SendRefusal : uint8_t {
   SEND_REFUSED_NONE = 0,  // it went out, or failed for a reason none of these names
   SEND_REFUSED_DISABLED,
   SEND_REFUSED_PRESENCE,
   SEND_REFUSED_COOLDOWN,
+  SEND_REFUSED_CLOCK_UNSYNCED,  // time() still below MIN_UNIX_TIME: the sketch's one clock
+                                // source, GPS (canary_wap.ino has no SNTP), has not set it
   SEND_REFUSED_NIGHT,
 };
+
+// POST /api/chirp/send's answer to a refusal: its "error" and "message"
+// (nullptr for SEND_REFUSED_NONE, which names no reason).
+inline const char* send_refusal_error(SendRefusal why) {
+  switch (why) {
+    case SEND_REFUSED_DISABLED:       return "chirp_disabled";
+    case SEND_REFUSED_PRESENCE:       return "presence_required";
+    case SEND_REFUSED_COOLDOWN:       return "cooldown";
+    case SEND_REFUSED_CLOCK_UNSYNCED: return "clock_unsynced";
+    case SEND_REFUSED_NIGHT:          return "night_restricted";
+    case SEND_REFUSED_NONE:           break;
+  }
+  return nullptr;
+}
+inline const char* send_refusal_message(SendRefusal why) {
+  switch (why) {
+    case SEND_REFUSED_DISABLED:       return "Chirp channel is not enabled";
+    case SEND_REFUSED_PRESENCE:       return "Must be active for 10 minutes before sending";
+    case SEND_REFUSED_COOLDOWN:       return "Please wait before sending another chirp";
+    case SEND_REFUSED_CLOCK_UNSYNCED: return "Waiting for the clock to be set from GPS time before sending";
+    case SEND_REFUSED_NIGHT:          return "This template is not available during night hours (10pm-6am)";
+    case SEND_REFUSED_NONE:           break;
+  }
+  return nullptr;
+}
 
 // What a command did, as the loop task saw it right after the command ran.
 struct Result {

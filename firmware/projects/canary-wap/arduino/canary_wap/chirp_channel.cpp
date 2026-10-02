@@ -1206,9 +1206,13 @@ static Result run_command(const Command& cmd) {
           r.refusal = SEND_REFUSED_DISABLED;
         } else if (!has_presence_requirement()) {
           r.refusal = SEND_REFUSED_PRESENCE;
-        } else if (!can_send_chirp()) {
+        } else if (g_state == CHIRP_COOLDOWN) {
           r.refusal = SEND_REFUSED_COOLDOWN;
           r.cooldown_remaining_ms = get_cooldown_remaining_ms();
+        } else if (!wall_clock_is_synced()) {
+          // can_send_chirp()'s other refusal, which was answered as a
+          // cooldown with 0 seconds left (sweep F146).
+          r.refusal = SEND_REFUSED_CLOCK_UNSYNCED;
         } else if (is_night_mode()) {
           r.refusal = SEND_REFUSED_NIGHT;
         }

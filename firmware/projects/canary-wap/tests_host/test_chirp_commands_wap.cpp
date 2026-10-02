@@ -374,31 +374,63 @@ void test_every_command_runs_on_the_loop_task() {
   std::printf("PASS every_command_runs_on_the_loop_task\n");
 }
 
+// The send handler's "error" for a refusal (chirp_api.h answers
+// send_refusal_error(r.refusal) and its message; nullptr: no reason named).
+std::string error_of(cc::SendRefusal why) {
+  const char* e = cc::send_refusal_error(why);
+  return e != nullptr ? e : "(none)";
+}
+
 // A send that does not go out names why, read on the loop task right after
 // the attempt, in the order the send handler always checked: the channel
-// off, then the presence requirement, then can_send_chirp() (the cooldown,
-// and, as before, an unsynced wall clock), then night mode.
+// off, then the presence requirement, then can_send_chirp()'s two (the
+// cooldown, then a wall clock not set yet), then night mode. The clock was
+// answered as a cooldown with 0 seconds left (sweep F146); it has its own
+// refusal now, clock_unsynced.
 void test_a_refused_send_names_why() {
   boot();
   Rest r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
   CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
   CHECK(r.r.refusal == cc::SEND_REFUSED_DISABLED);
+  CHECK(error_of(r.r.refusal) == "chirp_disabled");
 
   enabled_channel(/*present=*/false);
   r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
   CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_PRESENCE);
+  CHECK(error_of(r.r.refusal) == "presence_required");
 
   host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;
-  host_sim::wall_now = cc::MIN_UNIX_TIME - 1;          // the clock not synced yet
+  host_sim::wall_now = cc::MIN_UNIX_TIME - 1;          // the clock not set yet
+  const size_t sent_before = host_sim::espnow->sent.size();
+  r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_CLOCK_UNSYNCED);
+  CHECK(error_of(r.r.refusal) == "clock_unsynced");
+  CHECK(std::string(cc::send_refusal_message(r.r.refusal)).find("clock") != std::string::npos);
+  CHECK(r.r.cooldown_remaining_ms == 0 && r.r.cooldown_tier == 0);
+  CHECK(cc::g_state == cc::CHIRP_ACTIVE);              // no cooldown started
+  for (uint8_t t : sent_types(sent_before)) CHECK(t != cc::CHIRP_MSG_WITNESS);   // no chirp went out
+  host_sim::wall_now = cc::MIN_UNIX_TIME;              // the first second it counts as set
+  r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(r.r.ok && r.r.cooldown_tier == 1);
+  // Both at once (not on a device: its clock is only ever set forward, and a
+  // cooldown needs a send the clock allowed; the order is the handler's): the
+  // cooldown comes first, with its own time left.
+  host_sim::now_ms += 60000;
+  host_sim::wall_now = cc::MIN_UNIX_TIME - 1;
   r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
   CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_COOLDOWN);
-  CHECK(r.r.cooldown_remaining_ms == 0);
+  CHECK(error_of(r.r.refusal) == "cooldown");
+  CHECK(r.r.cooldown_remaining_ms == cc::COOLDOWN_TIER_1_MS - 60000 - 5);
+  CHECK(host_sim::httpd_side_effects == 0);
+  boot();                                              // a fresh cooldown for the rest
+  enabled_channel();
   host_sim::wall_now = 1760000000;
 
   // Night (23:00 UTC): a template not allowed at night is refused for it.
   host_sim::wall_now = 1760050800;                     // 2025-10-09 23:00:00 UTC
   r = rest(send_of(cc::TPL_INFRA_INTERNET_DOWN));
   CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_NIGHT);
+  CHECK(error_of(r.r.refusal) == "night_restricted");
   host_sim::wall_now = 1760000000;
 
   r = rest(send_of(cc::TPL_INFRA_INTERNET_DOWN));      // day: it goes out
@@ -409,6 +441,17 @@ void test_a_refused_send_names_why() {
   CHECK(r.r.cooldown_tier == 1);
   CHECK(r.r.cooldown_remaining_ms == cc::COOLDOWN_TIER_1_MS - 60000 - 5);
   CHECK(host_sim::httpd_side_effects == 0);
+
+  // The answers the handler always sent are the ones it sends now, and a
+  // send that went out names no reason.
+  CHECK(error_of(cc::SEND_REFUSED_NONE) == "(none)" && cc::send_refusal_message(cc::SEND_REFUSED_NONE) == nullptr);
+  CHECK(std::string(cc::send_refusal_message(cc::SEND_REFUSED_DISABLED)) == "Chirp channel is not enabled");
+  CHECK(std::string(cc::send_refusal_message(cc::SEND_REFUSED_PRESENCE)) ==
+        "Must be active for 10 minutes before sending");
+  CHECK(std::string(cc::send_refusal_message(cc::SEND_REFUSED_COOLDOWN)) ==
+        "Please wait before sending another chirp");
+  CHECK(std::string(cc::send_refusal_message(cc::SEND_REFUSED_NIGHT)) ==
+        "This template is not available during night hours (10pm-6am)");
   std::printf("PASS a_refused_send_names_why\n");
 }
 

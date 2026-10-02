@@ -310,28 +310,15 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
   if (success) {
     doc["template_text"] = chirp_channel::get_template_text(template_id);
     doc["cooldown_tier"] = r.cooldown_tier;
-  } else {
-    switch (r.refusal) {
-      case chirp_channel::SEND_REFUSED_DISABLED:
-        doc["error"] = "chirp_disabled";
-        doc["message"] = "Chirp channel is not enabled";
-        break;
-      case chirp_channel::SEND_REFUSED_PRESENCE:
-        doc["error"] = "presence_required";
-        doc["message"] = "Must be active for 10 minutes before sending";
-        break;
-      case chirp_channel::SEND_REFUSED_COOLDOWN:
-        doc["error"] = "cooldown";
-        doc["message"] = "Please wait before sending another chirp";
-        doc["cooldown_remaining_sec"] = r.cooldown_remaining_ms / 1000;
-        doc["cooldown_tier"] = r.cooldown_tier;
-        break;
-      case chirp_channel::SEND_REFUSED_NIGHT:
-        doc["error"] = "night_restricted";
-        doc["message"] = "This template is not available during night hours (10pm-6am)";
-        break;
-      case chirp_channel::SEND_REFUSED_NONE:
-        break;
+  } else if (r.refusal != chirp_channel::SEND_REFUSED_NONE) {
+    // Each refusal answers its own error and message (mesh_network.h,
+    // host-tested): a clock not yet set is clock_unsynced, not a cooldown
+    // with 0 seconds left (sweep F146).
+    doc["error"] = chirp_channel::send_refusal_error(r.refusal);
+    doc["message"] = chirp_channel::send_refusal_message(r.refusal);
+    if (r.refusal == chirp_channel::SEND_REFUSED_COOLDOWN) {
+      doc["cooldown_remaining_sec"] = r.cooldown_remaining_ms / 1000;
+      doc["cooldown_tier"] = r.cooldown_tier;
     }
   }
 
