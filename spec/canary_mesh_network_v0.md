@@ -635,10 +635,11 @@ the initiator's owner has confirmed too: 1 s after that, then every 2 s, at
 most three times, only to the pairing partner and only while no COMPLETE
 has come. The pre-F97 initiator answers the copy with the COMPLETE, and the
 pair completes in both orders. An updated initiator sends its COMPLETE right
-behind its CONFIRM, so two updated devices exchange the same frames as
-before (host-probed, both orders, the owners' confirms 0 s to 4 minutes
-apart); a copy that did go out would reach an initiator already done, which
-drops it.
+behind its CONFIRM, so between two updated devices the joiner sends its
+CONFIRM once, as before (host-probed, both orders, the owners' confirms 0 s
+to 4 minutes apart); a copy that did go out would reach an initiator already
+done, which drops it. (Since F134 the initiator sends its own COMPLETE
+again until it hears the joiner, below.)
 
 A device that cannot hold its partner fails the pairing: a deny-listed key
 (§5.6), a new member for a full opera, a re-pair onto an address another
@@ -711,6 +712,49 @@ one of those, recorded and replayed at the re-pair, counts as heard. So
 can a genuine frame it sent another member and this device has not heard
 (the envelope names no destination, F72), and one heard since this
 device's last 5-minute last-seen save before a reboot.
+
+PlatformIO tree (F134, host-tested, not bench-verified): the same shape.
+Until F134 the initiator sent its COMPLETE once, behind its own CONFIRM,
+and reported the pairing done, so a COMPLETE lost on the air left it
+holding a member that never joined: the joiner's re-sent CONFIRMs (F117)
+reached an initiator already done, which dropped them, and the joiner timed
+out (host-probed on the pure library, and against the pre-F117 and wave-10
+libraries as joiners). Now the initiator keeps the two frames it sent, its
+leading CONFIRM and the sealed COMPLETE, byte for byte (the pairing key
+stays wiped; nothing is sealed again), and sends both again every 2 s, to
+the pairing partner's address only, for at most the 5-minute pairing
+timeout after the first send, which the joiner's own wait cannot outlast: at
+most 149 copies. The session ends them early when it hears the joiner (its
+first verified fresh frame under this opera, so it holds the secret), and
+before any copy is due when the joiner is no longer a member bound at the
+address it paired from (removed, left, rotated out, a bind that failed) or
+this device no longer holds the opera the COMPLETE carried (left, rotated);
+a new pairing ends them too. A joiner still waiting takes the next copy:
+an updated one in either of its waiting states, and one on firmware before
+F97 too, since every copy carries the CONFIRM in front. Two differences
+from canary-wap: this tree's members send nothing on a timer, so a joiner
+that took the COMPLETE is usually not heard and the copies run their whole
+window, dropped by that joiner; and the end of the window is not logged,
+because that is the routine case here. A joiner's CONFIRM reaching an
+initiator already done is still dropped and brings no copy: the next timed
+copy is at most 2 s away, and the CONFIRM authenticates nothing a radio in
+range could not replay or reflect (the reflection above). No frame moves the
+copies to another address or brings one early (host-tested with replayed,
+reflected and third-party CONFIRM, DISCOVER, OFFER, ACCEPT and COMPLETE
+frames). One side effect on that reflection: a joiner whose owner confirms
+after the initiator completed on its own reflected CONFIRM, inside the
+window, now takes a copy and joins; one whose owner never confirms still
+leaves the initiator holding a member that never joined. An initiator on
+firmware before F134 still loses its joiner to a lost COMPLETE: the joiner
+cannot repair that.
+
+A cancel after the end (F135, PlatformIO, host-tested): the session runs a
+`pair/cancel` at the start of its loop pass, before the pairing tick, so one
+that landed after the initiator's COMPLETE went out used to turn the
+completed pairing into a failed one: the joiner held the secret and the
+initiator never registered, bound or stored it. On a failed pairing it
+reported the failure again. A cancel now ends only a running pairing; one
+that has completed or failed is left as it ended.
 
 ### 5.3 Pairing Security
 
@@ -1291,6 +1335,27 @@ than the illustrative shape in §8.2. `pairing_code` is included **only** when
 `state == "PAIRING_CONFIRM"`; it is never present in any other state so the
 6-digit confirmation value (§5.3) is not exposed before the out-of-band
 visual-match step.
+
+**The last pairing's outcome (F133):** three fields follow all of those, so a
+client that reads only the older ones parses the body as before:
+`pairing_seq` (pairings started since boot; 0: none), `pairing_result`
+(`"none"`, `"running"`, `"paired"` or `"failed"`) and `pairing_fail_reason`
+(`"timeout"`, `"canceled"`, `"bad_confirm"`, `"bad_complete"`, `"crypto"`,
+`"partner_refused"`; `"none"` unless the result is `"failed"`). An
+initiator reads `"running"` from its COMPLETE until its next loop pass has
+registered the member, then `"paired"`: it sent the secret, which nothing
+acknowledges (§5.2, F134). `pair/start` and `pair/join` answer the
+`pairing_seq` they started, so a client tells its own pairing's result
+from an earlier one's, and a later pairing or a reboot (which starts the
+count again) from its own. Until F133 the web UI read only `state`, and an
+initiator already in an opera returns to `ACTIVE` or `CONNECTING` after a
+timeout, a refusal or a cancel exactly as after a success, so the page
+called those pairings complete. The status buffer is 640 bytes (the widest
+body is 517). These fields are read from the HTTP server's task without a
+lock, as the rest of this tree's status is (canary-wap reads a view its loop
+publishes, F110). `pair/cancel` answers `{ok: true}` whether or not a
+pairing was running; one that has already ended is left as it ended (F135,
+§5.2).
 
 **Peer fields:** `fingerprint` is derived from the persisted trusted-peer
 public keys (`mesh_crypto::fingerprint`). `name` is best-effort and may be

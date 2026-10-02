@@ -891,6 +891,40 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   verdict), and the `main.cpp` source pin, which holds its restore loop and
   its refusal log to their exact form; the canary build is CI's; not
   bench-verified.
+- **PlatformIO pairing endings (F133-F135; host-tested only).**
+  - *A lost COMPLETE (F134).* Nothing acknowledges a COMPLETE, and until
+    F134 the initiator sent it once and reported success, so one lost on
+    the air left it holding a member that never joined, the same harm as
+    the reflection above. Now it sends the frames it already put on the
+    air (its CONFIRM and the sealed COMPLETE, byte for byte; the pairing
+    key stays wiped and nothing is sealed again) every 2 s, to the
+    partner's address only, for at most the 5-minute pairing timeout, and
+    stops when it hears the joiner, when the joiner is no longer a member
+    bound where it paired from, or when the opera is left or rotated. The
+    copies disclose nothing the first send did not: the same ciphertext,
+    to the same address. No frame redirects them or brings one early: a
+    CONFIRM reaching a completed initiator, the joiner's, replayed or
+    reflected, is dropped (host-tested, with third-party, replayed and
+    reflected pairing frames of every type). A joiner still takes a copy
+    only after its own owner confirmed; so the reflection above now ends in
+    a pairing when the joiner's owner confirms within the window, and still
+    leaves the initiator holding a member that never joined when that owner
+    does not. An initiator on firmware before F134 keeps the old harm. The
+    cost: this tree's members send nothing on a timer, so the copies
+    usually run their whole window, at most 149 copies of two frames.
+  - *A cancel after the end (F135).* A `pair/cancel` that landed after the
+    initiator's COMPLETE went out used to fail the completed pairing: the
+    joiner held the `opera_secret` while the initiator never trusted or
+    stored it. A cancel now ends only a running pairing.
+  - *The pairing screen (F133).* The web UI called any pairing that ended
+    in `ACTIVE` or `CONNECTING` complete, a timeout, a refusal (above) or a
+    cancel included. `GET /api/mesh` now reports the last pairing's number,
+    outcome and failure reason, and the page reports a failure as one.
+  Pinned by host tests in `test_mesh_pairing` and `test_mesh_session` and a
+  node test of the page's poll, each failing on the code before its fix
+  and by mutation; an interop probe in scratch ran the pairing library
+  against the pre-F117, wave-10 and pre-F97 libraries; the canary build is
+  CI's; not bench-verified.
 - **A canary-wap that left its opera stored an all-zero one (F113).** Its
   leave saved the zeroed opera config as it stood, the next boot loaded the
   zero `opera_id` and `opera_secret` as an opera, and the next pairing it
