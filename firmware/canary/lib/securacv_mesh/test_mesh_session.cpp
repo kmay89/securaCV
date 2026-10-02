@@ -5137,6 +5137,108 @@ mesh_session::RequestStatus rest_confirm(uint32_t now) {
   return res.status;
 }
 
+/* F118 — can_hold_partner itself, one refusal at a time. Each case is
+ * built so that only the check it names can refuse it (a key the opera can
+ * take, at an address no member holds, with room in the transport table,
+ * unless the case is about that), with a control beside it that the same
+ * setup admits; so the case fails if its check is removed. The pairing
+ * tests below reach the held-address and full-opera refusals through the
+ * protocol; the deny-list, the broadcast/group/zero address and the full
+ * transport table are pinned here. */
+void test_can_hold_partner_refusals() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x61 + i);
+  uint8_t pub[32], priv[32];
+  const uint8_t free_mac[6] = {0x24, 0x0A, 0xC4, 0x61, 0x00, 0x01};
+  uint8_t n_pub[32], n_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(n_pub, n_priv));
+
+  /* Not a unicast address: broadcast, all-zero, a group address. */
+  stand_up_session(S, pub, priv);
+  {
+    const uint8_t bc[6]    = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    const uint8_t zero[6]  = {0, 0, 0, 0, 0, 0};
+    const uint8_t group[6] = {0x01, 0x00, 0x5E, 0x61, 0x00, 0x01};
+    assert(mesh_session::can_hold_partner(n_pub, free_mac));            /* control */
+    assert(!mesh_session::can_hold_partner(n_pub, bc));
+    assert(!mesh_session::can_hold_partner(n_pub, zero));
+    assert(!mesh_session::can_hold_partner(n_pub, group));
+    assert(!mesh_session::can_hold_partner(nullptr, free_mac));
+    assert(!mesh_session::can_hold_partner(n_pub, nullptr));
+  }
+
+  /* A deny-listed key (§5.6), through the session's own removal: X was a
+   * member, the owner removed it, so it is no longer trusted and its old
+   * address is free; only the deny-list refuses it. */
+  stand_up_session(S, pub, priv);
+  {
+    uint8_t x_pub[32], x_priv[32], x_fp[8];
+    assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+    mesh_crypto::compute_fingerprint(x_pub, x_fp);
+    const uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x61, 0x00, 0x0A};
+    assert(mesh_session::register_trusted_peer(x_pub));
+    assert(mesh_session::bind_peer_mac(x_fp, mac_x));
+    uint8_t removed[32] = {0};
+    const mesh_session::RemoveResult r = mesh_session::remove_peer(x_fp, 0, removed);
+    assert(r == mesh_session::RemoveResult::COMMITTED || r == mesh_session::RemoveResult::STARTED);
+    assert(mesh_session::is_revoked(x_fp) && mesh_session::trusted_peer_count() == 0);
+    assert(!transport_has(mac_x));
+    assert(!mesh_session::can_hold_partner(x_pub, free_mac));
+    assert(!mesh_session::can_hold_partner(x_pub, mac_x));
+    assert(mesh_session::can_hold_partner(n_pub, free_mac));            /* control */
+    assert(mesh_session::can_hold_partner(n_pub, mac_x));               /* control */
+  }
+
+  /* A full transport table: eight addresses in it, none a member's. A new
+   * address has no room; one already in the table needs none. */
+  stand_up_session(S, pub, priv);
+  {
+    uint8_t m[6] = {0x24, 0x0A, 0xC4, 0x61, 0x01, 0x00};
+    while (mesh_transport::peer_count() < mesh_transport::MESH_TRANSPORT_MAX_PEERS) {
+      ++m[5];
+      assert(mesh_transport::add_peer(m));
+    }
+    assert(!transport_has(free_mac));
+    assert(!mesh_session::can_hold_partner(n_pub, free_mac));
+    assert(mesh_session::can_hold_partner(n_pub, m));                   /* control */
+  }
+
+  /* A full opera: eight members, none bound. A new key is refused at a
+   * free address; a member re-pairing from it needs no slot. */
+  stand_up_session(S, pub, priv);
+  {
+    uint8_t first_pub[32] = {0};
+    for (size_t k = 0; k < mesh_session::MAX_TRUSTED_PEERS; ++k) {
+      uint8_t k_pub[32], k_priv[32];
+      assert(mesh_crypto::ed25519_generate_keypair(k_pub, k_priv));
+      assert(mesh_session::register_trusted_peer(k_pub));
+      if (k == 0) std::memcpy(first_pub, k_pub, 32);
+    }
+    assert(!mesh_session::can_hold_partner(n_pub, free_mac));
+    assert(mesh_session::can_hold_partner(first_pub, free_mac));        /* control */
+  }
+
+  /* An address another member is bound to: refused to a new key and to
+   * another member; the member it is bound to is admitted there. */
+  stand_up_session(S, pub, priv);
+  {
+    uint8_t a_pub[32], a_priv[32], a_fp[8], b_pub[32], b_priv[32];
+    assert(mesh_crypto::ed25519_generate_keypair(a_pub, a_priv));
+    assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+    mesh_crypto::compute_fingerprint(a_pub, a_fp);
+    const uint8_t mac_a[6] = {0x24, 0x0A, 0xC4, 0x61, 0x00, 0x0A};
+    assert(mesh_session::register_trusted_peer(a_pub));
+    assert(mesh_session::register_trusted_peer(b_pub));
+    assert(mesh_session::bind_peer_mac(a_fp, mac_a));
+    assert(!mesh_session::can_hold_partner(n_pub, mac_a));
+    assert(!mesh_session::can_hold_partner(b_pub, mac_a));
+    assert(mesh_session::can_hold_partner(a_pub, mac_a));               /* control */
+    assert(mesh_session::can_hold_partner(a_pub, free_mac));            /* control */
+    assert(mesh_session::can_hold_partner(b_pub, free_mac));            /* control */
+  }
+  std::printf("PASS test_can_hold_partner_refusals\n");
+}
+
 /* As the INITIATOR, for the two refusals a pairing can reach — a re-pair of
  * member J from member C's address, and a new member N while eight are
  * trusted — in both confirm orders: the owner's confirm through the REST
@@ -6118,6 +6220,7 @@ int main() {
   test_opera_sends_reach_bound_members_only();
   test_opera_sends_count_only_what_the_transport_took();
   /* F118 — a pairing whose partner this device cannot hold fails. */
+  test_can_hold_partner_refusals();
   test_a_partner_the_initiator_cannot_hold_fails_the_pairing();
   test_the_initiator_asks_again_before_it_seals();
   test_a_joiner_that_cannot_hold_its_initiator_fails_the_pairing();
