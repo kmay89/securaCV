@@ -194,15 +194,34 @@ static_assert(sizeof(PairCompletePayload) ==
  *     → derive session_key + code
  *     → NOTIFY_CODE_READY (UI prompt)
  *
- *   confirm_code() [after user OK]           confirm_code() [after user OK]
- *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — joiner accepts
- *                                              the initiator's confirm hash
- *   handle (CONFIRM) ◄──────────────────────  (joiner already moved to
- *     → verify hash matches                   AWAITING_COMPLETE after sending
- *     → SEND_COMPLETE (AEAD(opera_secret))►   its own confirm, so a peer-side
- *     → tick() returns NOTIFY_PAIRED          confirm here is a no-op drop)
- *                                            handle (COMPLETE)
+ *   The owners confirm in either order (spec §5.2; F97). Initiator's
+ *   owner first:
+ *
+ *   confirm_code() [after user OK]
+ *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — hash checked,
+ *                                              nothing else needed from it
+ *                                            confirm_code() [after user OK]
+ *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash)
+ *     → verify hash matches
+ *     → SEND_COMPLETE (AEAD(opera_secret))►   handle (COMPLETE) — taken once
+ *     → tick() returns NOTIFY_PAIRED            this owner confirmed
  *                                            → decrypt → NOTIFY_PAIRED
+ *
+ *   Joiner's owner first:
+ *
+ *                                            confirm_code() [after user OK]
+ *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash)
+ *     → verify hash, keep it (peer_confirmed)
+ *   confirm_code() [after user OK]
+ *     → SEND_COMPLETE, no CONFIRM ────────►   handle (COMPLETE)
+ *     → tick() returns NOTIFY_PAIRED          → decrypt → NOTIFY_PAIRED
+ *
+ *   A CONFIRM counts only from the partner's address and only once the
+ *   code is shown (AWAITING_CONFIRM or later). Until F97 a CONFIRM was
+ *   taken only after this side's own owner confirmed and was sent once,
+ *   so in either order one was dropped: the joiner's owner first left both
+ *   sides waiting for the 5-minute timeout, and the initiator's owner first
+ *   left the initiator PAIRED and the joiner dropping the COMPLETE.
  *
  * On any failure or 5-minute timeout, both sides transition to FAILED
  * and the integration layer is told via NOTIFY_FAILED.
@@ -225,8 +244,10 @@ enum class State : uint8_t {
   DISCOVERING_JOINER,       /* joiner:    broadcasting DISCOVER(JOIN), waiting for initiator OFFER */
   AWAITING_ACCEPT,          /* initiator: sent OFFER, awaiting joiner ACCEPT */
   AWAITING_CONFIRM,         /* both:      have session_key + code, awaiting user_confirm() */
-  AWAITING_CONFIRM_PEER,    /* both:      sent our CONFIRM hash, awaiting peer's CONFIRM */
-  AWAITING_COMPLETE,        /* joiner:    sent CONFIRM, awaiting encrypted opera_secret */
+  AWAITING_CONFIRM_PEER,    /* both:      owner confirmed, sent our CONFIRM hash; the initiator
+                               awaits the joiner's CONFIRM, the joiner takes a COMPLETE here too */
+  AWAITING_COMPLETE,        /* joiner:    sent CONFIRM and checked the initiator's, awaiting the
+                               encrypted opera_secret */
   PAIRED,                   /* terminal:  success — opera_secret available on joiner */
   FAILED,                   /* terminal:  any error path or 5-min timeout */
 };
@@ -332,6 +353,12 @@ struct PairingContext {
    * screens. Set by confirm_code(); used to gate SEND_CONFIRM. */
   bool     user_confirmed;
 
+  /* Initiator only (F97): the joiner's CONFIRM arrived, from the partner's
+   * address and with the right hash, before this device's own owner
+   * confirmed. confirm_code() then sends the COMPLETE, with no CONFIRM of
+   * its own. Cleared by fail() and at PAIRED. */
+  bool     peer_confirmed;
+
   /* One-shot flag: set when the initiator transitions to PAIRED after
    * SEND_COMPLETE. The next tick() reads it, clears it, and returns
    * NOTIFY_PAIRED so the integration layer gets a definitive success
@@ -398,8 +425,10 @@ Action receive(PairingContext& ctx,
 Action tick(PairingContext& ctx, uint32_t now_ms);
 
 /* User-driven confirmation that the 6-digit code matches on both
- * screens. Valid only in AWAITING_CONFIRM / AWAITING_CONFIRM_PEER.
- * Returns SEND_CONFIRM. */
+ * screens. Valid only in AWAITING_CONFIRM (a second call returns NONE).
+ * Returns SEND_CONFIRM, or — on an initiator that already holds the
+ * joiner's verified CONFIRM (F97) — SEND_COMPLETE, after which the next
+ * tick() returns NOTIFY_PAIRED. */
 Action confirm_code(PairingContext& ctx, uint32_t now_ms);
 
 /* Abort pairing from any state. Wipes the ephemeral key + session

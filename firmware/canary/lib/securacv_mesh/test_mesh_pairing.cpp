@@ -529,6 +529,321 @@ void test_receive_unexpected_message_is_dropped() {
   std::printf("PASS test_receive_unexpected_message_is_dropped\n");
 }
 
+/* ── F97 — the owners confirm in either order ─────────────────────────────
+ *
+ * Until F97 either_handle_confirm acted only in AWAITING_CONFIRM_PEER (this
+ * side's own owner already confirmed), dropped an earlier CONFIRM, and
+ * nothing ever re-sent one; the joiner took a COMPLETE only in
+ * AWAITING_COMPLETE, reached only through the initiator's CONFIRM. So with
+ * frames delivered as they are sent, no order completed: the joiner's owner
+ * first left both sides at the 5-minute timeout, and the initiator's owner
+ * first left the initiator PAIRED with a joiner that dropped the COMPLETE.
+ * The F75 fix on canary-wap carries over (spec §5.2). */
+
+/* Two contexts driven through DISCOVER/OFFER/ACCEPT: both show the code
+ * (AWAITING_CONFIRM), nothing confirmed yet. */
+struct Pair {
+  mesh_pairing::PairingContext ci, cj;
+  uint8_t mac_i[6] = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x01};
+  uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x02};
+  uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x0E};   /* a third radio */
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  uint32_t code = 0;
+};
+
+void pair_to_code(Pair& p) {
+  mesh_pairing::context_init(p.ci);
+  mesh_pairing::context_init(p.cj);
+  uint8_t pub_i[32], priv_i[32], pub_j[32], priv_j[32];
+  assert(mesh_crypto::ed25519_generate_keypair(pub_i, priv_i));
+  assert(mesh_crypto::ed25519_generate_keypair(pub_j, priv_j));
+  for (size_t i = 0; i < sizeof(p.secret); ++i) p.secret[i] = (uint8_t)(0x97 ^ (i * 5));
+  mesh_pairing::Action a = mesh_pairing::start_initiator(p.ci, pub_i, priv_i, p.secret, "Home", 10);
+  assert(a.type == mesh_pairing::ActionType::BROADCAST_DISCOVER);
+  a = mesh_pairing::start_joiner(p.cj, pub_j, priv_j, 10);
+  InFlight dj; must(action_to_inflight(a, &dj));
+  a = mesh_pairing::receive(p.ci, p.mac_j, dj.type, dj.bytes.data(), dj.bytes.size(), 20);
+  InFlight of; must(action_to_inflight(a, &of));
+  a = mesh_pairing::receive(p.cj, p.mac_i, of.type, of.bytes.data(), of.bytes.size(), 30);
+  assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
+  InFlight ac; must(action_to_inflight(a, &ac));
+  a = mesh_pairing::receive(p.ci, p.mac_j, ac.type, ac.bytes.data(), ac.bytes.size(), 40);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+  p.code = a.confirmation_code;
+  assert(p.ci.state == mesh_pairing::State::AWAITING_CONFIRM);
+  assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM);
+}
+
+mesh_pairing::Action deliver(mesh_pairing::PairingContext& to, const uint8_t from[6],
+                             const InFlight& f, uint32_t now) {
+  return mesh_pairing::receive(to, from, f.type, f.bytes.data(), f.bytes.size(), now);
+}
+
+/* The joiner's secret matches the initiator's, and neither side times out. */
+void expect_both_paired(Pair& p, uint32_t now) {
+  uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+  assert(mesh_pairing::consume_opera_secret(p.cj, got));
+  assert(std::memcmp(got, p.secret, sizeof(got)) == 0);
+  assert(p.ci.state == mesh_pairing::State::PAIRED);
+  assert(p.cj.state == mesh_pairing::State::PAIRED);
+  mesh_pairing::Action a = mesh_pairing::tick(p.ci, now);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  assert(a.confirmation_code == p.code);
+  assert(mesh_pairing::tick(p.ci, now + mesh_pairing::PAIRING_TIMEOUT_MS).type ==
+         mesh_pairing::ActionType::NONE);
+  assert(mesh_pairing::tick(p.cj, now + mesh_pairing::PAIRING_TIMEOUT_MS).type ==
+         mesh_pairing::ActionType::NONE);
+}
+
+/* The joiner's owner confirms first. The initiator keeps the CONFIRM and,
+ * at its own owner's confirm, sends the COMPLETE and only the COMPLETE. On
+ * the code before F97 the initiator dropped that CONFIRM, its confirm_code
+ * sent a CONFIRM, and both sides failed at the timeout. */
+void test_the_joiners_owner_may_confirm_first() {
+  Pair p;
+  pair_to_code(p);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  InFlight cfj; must(action_to_inflight(a, &cfj));
+  assert(std::memcmp(cfj.to, p.mac_i, 6) == 0);
+
+  /* Kept, not acted on: the initiator's owner has not confirmed. */
+  a = deliver(p.ci, p.mac_j, cfj, 60);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  assert(p.ci.state == mesh_pairing::State::AWAITING_CONFIRM);
+  assert(p.ci.peer_confirmed);
+
+  /* The owner confirms: COMPLETE, with no CONFIRM in front of it. */
+  a = mesh_pairing::confirm_code(p.ci, 70);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  assert(std::memcmp(a.peer_mac, p.mac_j, 6) == 0);
+  assert(p.ci.state == mesh_pairing::State::PAIRED);
+  assert(!p.ci.peer_confirmed);
+  InFlight cp; must(action_to_inflight(a, &cp));
+  /* A second confirm sends nothing more. */
+  assert(mesh_pairing::confirm_code(p.ci, 71).type == mesh_pairing::ActionType::NONE);
+
+  /* The joiner takes it without ever seeing the initiator's CONFIRM. */
+  assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+  a = deliver(p.cj, p.mac_i, cp, 80);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  expect_both_paired(p, 90);
+  std::printf("PASS test_the_joiners_owner_may_confirm_first  (code=%06u)\n", p.code);
+}
+
+/* The initiator's owner confirms first. Its CONFIRM reaches a joiner whose
+ * owner has not confirmed; the joiner checks it and needs nothing else from
+ * it, and takes the COMPLETE after its own owner confirms. On the code
+ * before F97 the joiner dropped that CONFIRM, then waited for it in
+ * AWAITING_CONFIRM_PEER and dropped the COMPLETE: the initiator reported
+ * PAIRED and the joiner failed at the timeout. */
+void test_the_initiators_owner_may_confirm_first() {
+  for (int lose_initiator_confirm = 0; lose_initiator_confirm < 2; ++lose_initiator_confirm) {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::Action a = mesh_pairing::confirm_code(p.ci, 50);
+    assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+    InFlight cfi; must(action_to_inflight(a, &cfi));
+    assert(p.ci.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+    if (!lose_initiator_confirm) {
+      a = deliver(p.cj, p.mac_i, cfi, 60);
+      assert(a.type == mesh_pairing::ActionType::NONE);
+      assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM);   /* still the owner's call */
+    }
+
+    a = mesh_pairing::confirm_code(p.cj, 70);
+    assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+    InFlight cfj; must(action_to_inflight(a, &cfj));
+    a = deliver(p.ci, p.mac_j, cfj, 80);
+    assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+    InFlight cp; must(action_to_inflight(a, &cp));
+
+    assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+    a = deliver(p.cj, p.mac_i, cp, 90);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    expect_both_paired(p, 100);
+  }
+  std::printf("PASS test_the_initiators_owner_may_confirm_first  (the initiator's CONFIRM heard and lost)\n");
+}
+
+/* Unchanged: with the initiator's owner confirmed and no CONFIRM from the
+ * joiner, the initiator sends nothing more and fails at the timeout. */
+void test_the_initiator_still_waits_for_the_joiners_confirm() {
+  Pair p;
+  pair_to_code(p);
+  assert(mesh_pairing::confirm_code(p.ci, 50).type == mesh_pairing::ActionType::SEND_CONFIRM);
+  assert(mesh_pairing::confirm_code(p.ci, 51).type == mesh_pairing::ActionType::NONE);
+  assert(mesh_pairing::tick(p.ci, 60).type == mesh_pairing::ActionType::NONE);
+  assert(p.ci.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+  assert(mesh_pairing::tick(p.ci, 10 + mesh_pairing::PAIRING_TIMEOUT_MS).type ==
+         mesh_pairing::ActionType::NOTIFY_FAILED);
+  std::printf("PASS test_the_initiator_still_waits_for_the_joiners_confirm\n");
+}
+
+/* A CONFIRM counts only from the partner's address. Here a third radio
+ * sends the joiner's correct hash (ESP-NOW frames are not encrypted, so a
+ * radio that overheard it has it) before the initiator's owner confirms: it
+ * is not kept, the owner's confirm sends a CONFIRM, not a COMPLETE, and the
+ * pairing still completes with the real joiner. A wrong hash from that
+ * radio does not end the pairing either, before or after the owner's
+ * confirm. Both fail with the address check removed. */
+void test_a_confirm_from_another_address_does_not_count() {
+  Pair p;
+  pair_to_code(p);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+  InFlight cfj; must(action_to_inflight(a, &cfj));
+
+  a = deliver(p.ci, p.mac_x, cfj, 60);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  assert(!p.ci.peer_confirmed);
+  InFlight bad = cfj;
+  bad.bytes[0] ^= 0x01;
+  a = deliver(p.ci, p.mac_x, bad, 61);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  assert(p.ci.state == mesh_pairing::State::AWAITING_CONFIRM);
+
+  a = mesh_pairing::confirm_code(p.ci, 70);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  InFlight cfi; must(action_to_inflight(a, &cfi));
+  a = deliver(p.ci, p.mac_x, bad, 71);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  a = deliver(p.ci, p.mac_x, cfj, 72);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  assert(p.ci.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+
+  /* The joiner, too, ignores a CONFIRM from the third radio. */
+  a = deliver(p.cj, p.mac_x, bad, 73);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+
+  /* The real joiner's CONFIRM completes it. */
+  a = deliver(p.ci, p.mac_j, cfj, 80);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  InFlight cp; must(action_to_inflight(a, &cp));
+  assert(deliver(p.cj, p.mac_i, cfi, 85).type == mesh_pairing::ActionType::NONE);
+  assert(p.cj.state == mesh_pairing::State::AWAITING_COMPLETE);
+  assert(deliver(p.cj, p.mac_i, cp, 90).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  expect_both_paired(p, 100);
+  std::printf("PASS test_a_confirm_from_another_address_does_not_count\n");
+}
+
+/* A CONFIRM counts only once the code is shown. Before the ACCEPT the
+ * initiator's session key and code are all zero, so anyone can compute
+ * that CONFIRM's hash; one sent from the partner's own address then must
+ * not count later. Fails with the state check removed (the initiator then
+ * seals the opera_secret under the all-zero key at once). */
+void test_a_confirm_before_the_code_is_shown_does_not_count() {
+  mesh_pairing::PairingContext ci, cj;
+  mesh_pairing::context_init(ci);
+  mesh_pairing::context_init(cj);
+  uint8_t pub_i[32], priv_i[32], pub_j[32], priv_j[32];
+  assert(mesh_crypto::ed25519_generate_keypair(pub_i, priv_i));
+  assert(mesh_crypto::ed25519_generate_keypair(pub_j, priv_j));
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  std::memset(secret, 0x5C, sizeof(secret));
+  const uint8_t mac_i[6] = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x21};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x22};
+  mesh_pairing::start_initiator(ci, pub_i, priv_i, secret, "Home", 10);
+  mesh_pairing::Action a = mesh_pairing::start_joiner(cj, pub_j, priv_j, 10);
+  InFlight dj; must(action_to_inflight(a, &dj));
+  a = deliver(ci, mac_j, dj, 20);
+  InFlight of; must(action_to_inflight(a, &of));
+  assert(ci.state == mesh_pairing::State::AWAITING_ACCEPT);
+
+  /* The all-zero CONFIRM, from the partner's address. */
+  const uint8_t zero_key[mesh_pairing::SESSION_KEY_LEN] = {0};
+  InFlight early;
+  std::memcpy(early.to, mac_i, 6);
+  early.type = mesh_pairing::MsgType::CONFIRM;
+  early.bytes.resize(sizeof(mesh_pairing::PairConfirmPayload));
+  mesh_pairing::compute_confirmation_hash(zero_key, ci.confirmation_code, early.bytes.data());
+  a = deliver(ci, mac_j, early, 25);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  assert(ci.state == mesh_pairing::State::AWAITING_ACCEPT);
+  assert(!ci.peer_confirmed);
+
+  a = deliver(cj, mac_i, of, 30);
+  InFlight ac; must(action_to_inflight(a, &ac));
+  a = deliver(ci, mac_j, ac, 40);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+  /* The owner's confirm waits for the joiner's real CONFIRM. */
+  a = mesh_pairing::confirm_code(ci, 50);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  assert(ci.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+  std::printf("PASS test_a_confirm_before_the_code_is_shown_does_not_count\n");
+}
+
+/* A wrong hash from the partner's address ends the pairing in either order,
+ * on either side: until F97 one that arrived before the owner's confirm was
+ * dropped unread. */
+void test_a_bad_confirm_from_the_partner_ends_the_pairing_in_either_order() {
+  for (int side = 0; side < 2; ++side) {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::PairingContext& to = side == 0 ? p.ci : p.cj;
+    const uint8_t* from = side == 0 ? p.mac_j : p.mac_i;
+    mesh_pairing::Action a = mesh_pairing::confirm_code(side == 0 ? p.cj : p.ci, 50);
+    InFlight cf; must(action_to_inflight(a, &cf));
+    cf.bytes[7] ^= 0x80;
+    assert(to.state == mesh_pairing::State::AWAITING_CONFIRM);   /* before its owner's */
+    a = deliver(to, from, cf, 60);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+    assert(to.state == mesh_pairing::State::FAILED);
+    assert(!to.peer_confirmed);
+    /* Wiped, and the owner's confirm now does nothing. */
+    uint8_t zero[mesh_pairing::SESSION_KEY_LEN] = {0};
+    assert(std::memcmp(to.session_key, zero, sizeof(zero)) == 0);
+    assert(mesh_pairing::confirm_code(to, 70).type == mesh_pairing::ActionType::NONE);
+  }
+  std::printf("PASS test_a_bad_confirm_from_the_partner_ends_the_pairing_in_either_order\n");
+}
+
+/* The joiner takes a COMPLETE only after its own owner confirmed, and only
+ * a joiner takes one. The COMPLETE here comes from an initiator that took
+ * the joiner's hash from somewhere other than the joiner (the reflection
+ * F94 names): a joiner whose owner has not confirmed drops it, and takes
+ * the same COMPLETE once its owner has. An initiator drops a COMPLETE at
+ * every step. */
+void test_the_joiner_takes_a_complete_only_after_its_owner_confirms() {
+  Pair p;
+  pair_to_code(p);
+  InFlight forged;
+  std::memcpy(forged.to, p.mac_i, 6);
+  forged.type = mesh_pairing::MsgType::CONFIRM;
+  forged.bytes.resize(sizeof(mesh_pairing::PairConfirmPayload));
+  mesh_pairing::compute_confirmation_hash(p.cj.session_key, p.cj.confirmation_code,
+                                          forged.bytes.data());
+  assert(deliver(p.ci, p.mac_j, forged, 50).type == mesh_pairing::ActionType::NONE);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.ci, 60);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  InFlight cp; must(action_to_inflight(a, &cp));
+
+  a = deliver(p.cj, p.mac_i, cp, 70);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM);
+  assert(!p.cj.opera_secret_present);
+
+  a = mesh_pairing::confirm_code(p.cj, 80);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  a = deliver(p.cj, p.mac_i, cp, 90);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+
+  /* An initiator never takes a COMPLETE: not before its owner's confirm,
+   * not after it. (Without the role check a garbled one from the partner's
+   * address would end its pairing.) */
+  Pair q;
+  pair_to_code(q);
+  InFlight junk;
+  std::memcpy(junk.to, q.mac_i, 6);
+  junk.type = mesh_pairing::MsgType::COMPLETE;
+  junk.bytes.assign(sizeof(mesh_pairing::PairCompletePayload), 0xA5);
+  assert(deliver(q.ci, q.mac_j, junk, 50).type == mesh_pairing::ActionType::NONE);
+  assert(mesh_pairing::confirm_code(q.ci, 60).type == mesh_pairing::ActionType::SEND_CONFIRM);
+  assert(deliver(q.ci, q.mac_j, junk, 70).type == mesh_pairing::ActionType::NONE);
+  assert(q.ci.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+  std::printf("PASS test_the_joiner_takes_a_complete_only_after_its_owner_confirms\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -547,6 +862,13 @@ int main() {
   test_timeout_after_5_minutes();
   test_cancel_wipes_state();
   test_receive_unexpected_message_is_dropped();
+  test_the_joiners_owner_may_confirm_first();
+  test_the_initiators_owner_may_confirm_first();
+  test_the_initiator_still_waits_for_the_joiners_confirm();
+  test_a_confirm_from_another_address_does_not_count();
+  test_a_confirm_before_the_code_is_shown_does_not_count();
+  test_a_bad_confirm_from_the_partner_ends_the_pairing_in_either_order();
+  test_the_joiner_takes_a_complete_only_after_its_owner_confirms();
   std::printf("\nALL MESH_PAIRING TESTS PASSED\n");
   return 0;
 }

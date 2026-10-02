@@ -3445,6 +3445,126 @@ void test_pairing_over_the_air_as_joiner() {
   std::printf("PASS test_pairing_over_the_air_as_joiner\n");
 }
 
+/* F97 through the session, as the INITIATOR, the joiner's owner confirming
+ * first: its CONFIRM arrives before this device's owner confirms. The
+ * session sends nothing then; the owner's confirm, through the REST slot,
+ * sends exactly one frame, the COMPLETE (no CONFIRM in front of it), and the
+ * same process() reports PAIRED. On the code before F97 the CONFIRM was
+ * dropped, the confirm sent a CONFIRM, and both sides timed out. */
+void test_pairing_over_the_air_joiner_confirms_first() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x97 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::set_paired_callback(on_paired_register);
+  assert(mesh_session::set_opera_secret(S));
+  g_paired_mac.clear();
+
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x31};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x32};
+  uint8_t j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_pairing::PairingContext cj;
+  mesh_pairing::context_init(cj);
+  mesh_pairing::Action a = mesh_pairing::start_joiner(cj, j_pub, j_priv, 10);
+  const std::vector<uint8_t> disc = wire(a);
+
+  assert(mesh_session::start_pairing_initiator(S, "Home", 20));
+  mesh_transport::test::inject_recv(mac_j, disc.data(), disc.size(), -40);
+  mesh_transport::process();
+  feed_pure(cj, me, last_to(mac_j), 30, &a);
+  const std::vector<uint8_t> accept = wire(a);
+  mesh_transport::test::inject_recv(mac_j, accept.data(), accept.size(), -40);
+  mesh_transport::process();
+  assert(mesh_session::pairing_state() == mesh_pairing::State::AWAITING_CONFIRM);
+
+  /* The joiner's owner confirms first. */
+  a = mesh_pairing::confirm_code(cj, 30);
+  const std::vector<uint8_t> conf_j = wire(a);
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  mesh_session::process(35);
+  assert(g_outs.empty() && !g_failed_fired && !g_paired_fired);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::AWAITING_CONFIRM);
+
+  /* This owner confirms, through the REST slot. */
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_CONFIRM)));
+  mesh_session::process(40);
+  mesh_session::RequestResult res;
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK);
+  assert(g_outs.size() == 1);
+  assert(std::memcmp(g_outs[0].mac, mac_j, 6) == 0);
+  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
+  assert(g_paired_fired);
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(transport_has(mac_j));
+
+  feed_pure(cj, me, g_outs[0].bytes, 50, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  uint8_t got[32];
+  assert(mesh_pairing::consume_opera_secret(cj, got));
+  assert(std::memcmp(got, S, sizeof(S)) == 0);
+  std::printf("PASS test_pairing_over_the_air_joiner_confirms_first\n");
+}
+
+/* F97 through the session, as the JOINER, the initiator's owner confirming
+ * first: its CONFIRM reaches this device before its owner confirms. The
+ * session keeps waiting for its owner, sends its CONFIRM at the confirm,
+ * and takes the COMPLETE that answers it. On the code before F97 that
+ * COMPLETE was dropped (the joiner waited for the initiator's CONFIRM,
+ * already dropped), so the initiator held a member that never joined. */
+void test_pairing_over_the_air_initiator_confirms_first() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xA7 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::set_paired_callback(on_paired_register);
+  g_paired_mac.clear();
+
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x41};
+  const uint8_t mac_i[6] = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x42};
+  uint8_t i_pub[32], i_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  mesh_pairing::PairingContext ci;
+  mesh_pairing::context_init(ci);
+  mesh_pairing::Action a = mesh_pairing::start_initiator(ci, i_pub, i_priv, S, "Home", 10);
+
+  assert(mesh_session::start_pairing_joiner(20));
+  feed_pure(ci, me, last_to((const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}), 30, &a);
+  const std::vector<uint8_t> offer = wire(a);
+  mesh_transport::test::inject_recv(mac_i, offer.data(), offer.size(), -40);
+  mesh_transport::process();
+  feed_pure(ci, me, last_to(mac_i), 40, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+
+  /* The initiator's owner confirms first. */
+  a = mesh_pairing::confirm_code(ci, 50);
+  const std::vector<uint8_t> conf_i = wire(a);
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_i, conf_i.data(), conf_i.size(), -40);
+  mesh_transport::process();
+  assert(g_outs.empty() && !g_failed_fired);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::AWAITING_CONFIRM);
+
+  assert(mesh_session::confirm_pairing_code(60));
+  assert(g_outs.size() == 1);
+  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM));
+  feed_pure(ci, me, g_outs[0].bytes, 70, &a);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  const std::vector<uint8_t> complete = wire(a);
+  mesh_transport::test::inject_recv(mac_i, complete.data(), complete.size(), -40);
+  mesh_transport::process();
+  assert(g_paired_fired && g_paired_with_secret);
+  assert(std::memcmp(g_paired_secret, S, 32) == 0);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  assert(transport_has(mac_i));
+  mesh_session::process(80 + mesh_pairing::PAIRING_TIMEOUT_MS);
+  assert(!g_failed_fired);
+  std::printf("PASS test_pairing_over_the_air_initiator_confirms_first\n");
+}
+
 /* A pairing that ends without a member takes the partner's address out of
  * the table again; an unknown MAC's non-pairing frame is never taken. */
 void test_failed_pairing_removes_partner_address() {
@@ -4738,6 +4858,8 @@ int main() {
   test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing();
   test_pairing_over_the_air_as_initiator();
   test_pairing_over_the_air_as_joiner();
+  test_pairing_over_the_air_joiner_confirms_first();
+  test_pairing_over_the_air_initiator_confirms_first();
   test_failed_pairing_removes_partner_address();
   test_repair_moves_a_trusted_peers_address();
   /* F70 */

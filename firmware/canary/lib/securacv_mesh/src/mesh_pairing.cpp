@@ -160,6 +160,7 @@ inline void copy_name(char* dst, size_t dst_cap, const char* src) {
 
 inline void fail(PairingContext& ctx) {
   ctx.state = State::FAILED;
+  ctx.peer_confirmed = false;
   secure_zero(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
   secure_zero(ctx.session_key, sizeof(ctx.session_key));
   secure_zero(ctx.opera_secret, sizeof(ctx.opera_secret));
@@ -247,8 +248,9 @@ Action start_joiner(PairingContext& ctx,
  *   • Initiator handles DISCOVER (role=JOINER)  → sends OFFER
  *   • Joiner    handles OFFER                   → sends ACCEPT
  *   • Initiator handles ACCEPT                  → derives session, NOTIFY_CODE_READY
- *   • Both      handle CONFIRM                   → SEND_COMPLETE (initiator) or move to AWAITING_COMPLETE (joiner)
- *   • Joiner    handles COMPLETE                → NOTIFY_PAIRED + opera_secret available
+ *   • Both      handle CONFIRM                   → SEND_COMPLETE, or kept until the owner's
+ *                                                 confirm (initiator); checked (joiner)
+ *   • Joiner    handles COMPLETE (after its own owner confirmed) → NOTIFY_PAIRED + opera_secret
  */
 namespace {
 
@@ -329,11 +331,82 @@ Action initiator_handle_accept(PairingContext& ctx,
   return a;
 }
 
+/* The initiator's last step, whichever owner confirmed first: AEAD-seal
+ * the opera_secret to the joiner under the session key, go PAIRED and arm
+ * the NOTIFY_PAIRED the next tick() returns. Layout: ct || tag, then the
+ * nonce. Its callers: either_handle_confirm (the joiner's CONFIRM arrives
+ * after this side's owner confirmed) and confirm_code (it arrived before). */
+Action initiator_complete(PairingContext& ctx) {
+  PairCompletePayload complete{};
+  uint8_t nonce[mesh_crypto::AEAD_NONCE_LEN];
+  mesh_crypto::aead_generate_nonce(nonce);
+  uint8_t ct[mesh_crypto::OPERA_SECRET_LEN];
+  uint8_t tag[mesh_crypto::AEAD_TAG_LEN];
+  if (!mesh_crypto::aead_encrypt(ctx.session_key, nonce, nullptr, 0,
+                                 ctx.opera_secret, mesh_crypto::OPERA_SECRET_LEN,
+                                 ct, tag)) {
+    fail(ctx);
+    return make_action(ActionType::NOTIFY_FAILED);
+  }
+  memcpy(complete.encrypted_secret, ct, mesh_crypto::OPERA_SECRET_LEN);
+  memcpy(complete.encrypted_secret + mesh_crypto::OPERA_SECRET_LEN, tag,
+         mesh_crypto::AEAD_TAG_LEN);
+  memcpy(complete.nonce, nonce, mesh_crypto::AEAD_NONCE_LEN);
+  /* Initiator is done — wipe sensitive state and arm the success
+   * notification. The integration layer's caller sequence:
+   *   1. send the SEND_COMPLETE payload over mesh_transport
+   *   2. next tick() → NOTIFY_PAIRED (gated on pending_notify_paired) */
+  ctx.state = State::PAIRED;
+  secure_zero(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
+  secure_zero(ctx.session_key,   sizeof(ctx.session_key));
+  secure_zero(ctx.opera_secret,  sizeof(ctx.opera_secret));
+  ctx.opera_secret_present = false;
+  ctx.peer_confirmed = false;
+  ctx.pending_notify_paired = true;
+  Action a = make_send_action(ActionType::SEND_COMPLETE, ctx.peer_mac,
+                              &complete, sizeof(complete));
+  a.confirmation_code = ctx.confirmation_code;
+  return a;
+}
+
+/* A partner's CONFIRM, in either order (spec §5.2; sweep F97, canary-wap's
+ * F75 carried over). Until F97 this acted only in AWAITING_CONFIRM_PEER,
+ * i.e. after this device's own owner had confirmed, and dropped a CONFIRM
+ * that arrived earlier, while neither side ever sends its CONFIRM twice and
+ * tick() re-sends nothing. So:
+ *   • the joiner's owner confirming first left the initiator without the
+ *     joiner's CONFIRM, and both sides failed at the 5-minute timeout;
+ *   • the initiator's owner confirming first got the initiator's CONFIRM
+ *     dropped by the joiner, which then waited in AWAITING_CONFIRM_PEER for
+ *     it and dropped the COMPLETE: the initiator reported PAIRED and held a
+ *     member that never joined, and the joiner failed at the timeout.
+ * A pairing completed only when both owners confirmed before either CONFIRM
+ * crossed the air (host-probed, both orders).
+ *
+ * Now a CONFIRM counts only from the partner's address, and only once the
+ * code is shown (AWAITING_CONFIRM or later): before the ACCEPT the
+ * initiator's session key is all zero, so anyone can compute that hash.
+ *   • The initiator keeps a verified early CONFIRM (peer_confirmed) and
+ *     completes at its own owner's confirm (confirm_code), sending the
+ *     COMPLETE alone: the joiner does not need this side's CONFIRM.
+ *   • The joiner checks the initiator's CONFIRM in either order and needs
+ *     nothing else from it: it takes the COMPLETE once its own owner has
+ *     confirmed (joiner_handle_complete), and the COMPLETE decrypting under
+ *     the session key is the proof the CONFIRM was.
+ * A wrong hash from the partner's address ends the pairing in either order,
+ * as it did after the owner's confirm. Not closed (F94): the hash is the
+ * same in both directions and the address is not authenticated, so the
+ * initiator's own CONFIRM reflected to it from the joiner's address counts
+ * as the joiner's; the same before F97. */
 Action either_handle_confirm(PairingContext& ctx,
                              const uint8_t from_mac[6],
                              const uint8_t* payload, size_t payload_len,
                              uint32_t now_ms) {
-  if (ctx.state != State::AWAITING_CONFIRM_PEER) return make_action(ActionType::NONE);
+  (void)now_ms;
+  if (ctx.state != State::AWAITING_CONFIRM &&
+      ctx.state != State::AWAITING_CONFIRM_PEER) {
+    return make_action(ActionType::NONE);
+  }
   if (payload_len != sizeof(PairConfirmPayload)) return make_action(ActionType::NONE);
   if (memcmp(from_mac, ctx.peer_mac, 6) != 0) return make_action(ActionType::NONE);
   const PairConfirmPayload* cf = (const PairConfirmPayload*)payload;
@@ -346,51 +419,36 @@ Action either_handle_confirm(PairingContext& ctx,
   }
 
   if (ctx.role == ROLE_INITIATOR) {
-    /* Send COMPLETE: AEAD-encrypt the opera_secret under the session
-     * key with a fresh random nonce. Layout: ct || tag || nonce in the
-     * payload buffer. */
-    PairCompletePayload complete{};
-    uint8_t nonce[mesh_crypto::AEAD_NONCE_LEN];
-    mesh_crypto::aead_generate_nonce(nonce);
-    uint8_t ct[mesh_crypto::OPERA_SECRET_LEN];
-    uint8_t tag[mesh_crypto::AEAD_TAG_LEN];
-    if (!mesh_crypto::aead_encrypt(ctx.session_key, nonce, nullptr, 0,
-                                   ctx.opera_secret, mesh_crypto::OPERA_SECRET_LEN,
-                                   ct, tag)) {
-      fail(ctx);
-      return make_action(ActionType::NOTIFY_FAILED);
+    if (ctx.state == State::AWAITING_CONFIRM) {
+      /* The joiner's owner confirmed first: keep it for confirm_code. */
+      ctx.peer_confirmed = true;
+      return make_action(ActionType::NONE);
     }
-    memcpy(complete.encrypted_secret, ct, mesh_crypto::OPERA_SECRET_LEN);
-    memcpy(complete.encrypted_secret + mesh_crypto::OPERA_SECRET_LEN, tag,
-           mesh_crypto::AEAD_TAG_LEN);
-    memcpy(complete.nonce, nonce, mesh_crypto::AEAD_NONCE_LEN);
-    /* Initiator is done — wipe sensitive state and arm the success
-     * notification. The integration layer's caller sequence:
-     *   1. send the SEND_COMPLETE payload over mesh_transport
-     *   2. next tick() → NOTIFY_PAIRED (gated on pending_notify_paired) */
-    ctx.state = State::PAIRED;
-    secure_zero(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
-    secure_zero(ctx.session_key,   sizeof(ctx.session_key));
-    secure_zero(ctx.opera_secret,  sizeof(ctx.opera_secret));
-    ctx.opera_secret_present = false;
-    ctx.pending_notify_paired = true;
-    Action a = make_send_action(ActionType::SEND_COMPLETE, ctx.peer_mac,
-                                &complete, sizeof(complete));
-    a.confirmation_code = ctx.confirmation_code;
-    (void)now_ms;
-    return a;
-  } else {
-    /* Joiner: hash matched, now just wait for COMPLETE. */
-    ctx.state = State::AWAITING_COMPLETE;
-    (void)now_ms;
-    return make_action(ActionType::NONE);
+    return initiator_complete(ctx);
   }
+  /* Joiner: the hash matched. After its own owner's confirm it now waits
+   * for the COMPLETE alone; before it, nothing changes (the COMPLETE is
+   * still taken only after this owner confirms). */
+  if (ctx.state == State::AWAITING_CONFIRM_PEER) ctx.state = State::AWAITING_COMPLETE;
+  return make_action(ActionType::NONE);
 }
 
+/* The initiator's COMPLETE, taken once this device's own owner has
+ * confirmed (AWAITING_CONFIRM_PEER or AWAITING_COMPLETE), and only by a
+ * joiner. Until F97 only AWAITING_COMPLETE, which the joiner reached only by
+ * receiving the initiator's CONFIRM after its own owner confirmed; an
+ * initiator whose owner confirmed first had that CONFIRM dropped, and its
+ * COMPLETE then was too (either_handle_confirm above). Never before the
+ * owner's confirm: a COMPLETE in AWAITING_CONFIRM would finish the pairing
+ * with no owner on this side. */
 Action joiner_handle_complete(PairingContext& ctx,
                               const uint8_t from_mac[6],
                               const uint8_t* payload, size_t payload_len) {
-  if (ctx.state != State::AWAITING_COMPLETE) return make_action(ActionType::NONE);
+  if (ctx.role != ROLE_JOINER) return make_action(ActionType::NONE);
+  if (ctx.state != State::AWAITING_CONFIRM_PEER &&
+      ctx.state != State::AWAITING_COMPLETE) {
+    return make_action(ActionType::NONE);
+  }
   if (payload_len != sizeof(PairCompletePayload)) return make_action(ActionType::NONE);
   if (memcmp(from_mac, ctx.peer_mac, 6) != 0) return make_action(ActionType::NONE);
   const PairCompletePayload* complete = (const PairCompletePayload*)payload;
@@ -464,6 +522,14 @@ Action confirm_code(PairingContext& ctx, uint32_t now_ms) {
   if (ctx.state != State::AWAITING_CONFIRM) return make_action(ActionType::NONE);
   ctx.user_confirmed = true;
   (void)now_ms;
+
+  /* F97: the joiner's owner confirmed first and its CONFIRM is kept. The
+   * joiner is owed the COMPLETE, and only the COMPLETE: it takes one after
+   * its own owner's confirm without this side's CONFIRM, so a CONFIRM in
+   * front of it would be one more frame for nothing (on canary-wap, where
+   * the receive buffer holds one frame, the one that got the COMPLETE
+   * dropped). */
+  if (ctx.role == ROLE_INITIATOR && ctx.peer_confirmed) return initiator_complete(ctx);
 
   PairConfirmPayload confirm{};
   compute_confirmation_hash(ctx.session_key, ctx.confirmation_code, confirm.confirmation_hash);
