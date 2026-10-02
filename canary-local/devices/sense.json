@@ -535,6 +535,7 @@
       }
     ],
     "offline_note": "no broker? the witness keeps sensing and chaining \u2014 every transition still advances the NVS-persisted hash chain; an outage shows up as a jump in seq/chain length, never lost tamper evidence",
+    "heartbeat_ms": 5000,
     "discovery": {
       "prefix": "homeassistant",
       "config_topic": "homeassistant/<component>/<device_id>/<object_id>/config",
@@ -1247,8 +1248,6 @@
         {
           "suffix": "state",
           "set": {
-            "presence": true,
-            "presence_state": "present",
             "lux": 1.0
           },
           "advance": [],

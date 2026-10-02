@@ -64,6 +64,57 @@ export function senseChainPayload(chain, seq) {
   return { ...chain, length: seq, latest_hash: "…" };
 }
 
+// main.cpp's g_snap after a lab tick, in the state row's own keys: what
+// refresh_snapshot reads off the presence FSM, and, on the wellbeing build
+// (`vitals` set), the vitals block: breathing_locked, and the BPMs only while
+// the lock holds with exactly one target (bpm_valid), else null — the moment a
+// second person appears the BPMs go, while the lock rides out lost_ms.
+export function senseLabSnapshot(fsm, vitals) {
+  const snap = {
+    presence: fsm.state === "present", presence_state: fsm.state,
+    occupants: fsm.count, range: fsm.range, radar_ok: fsm.state !== "unknown",
+  };
+  if (vitals) {
+    const valid = vitals.locked && fsm.count === "1";
+    snap.breathing_locked = vitals.locked;
+    snap.breath_bpm = valid ? vitals.breath_bpm : null;
+    snap.heart_bpm = valid ? vitals.heart_bpm : null;
+  }
+  return snap;
+}
+
+// drive_fsms marks the state row dirty on a presence or count change and on
+// any change to the vitals block; the loop publishes it then, and every
+// HEARTBEAT_MS whatever it says. So a range band that moves alone (no count
+// change) reaches the broker on the next heartbeat, not at once. A build
+// switch (the lab's wellbeing toggle) is a reflash, and setup() publishes the
+// state once at boot.
+export function senseStateDue(snap, published, heartbeat) {
+  if (heartbeat || !published) return true;
+  const keys = new Set([...Object.keys(snap), ...Object.keys(published)]);
+  for (const k of keys) if (k !== "range" && snap[k] !== published[k]) return true;
+  return false;
+}
+
+// The state row publish_state_retained sends for a snapshot: the build's
+// example (the wellbeing build's when the snapshot carries the vitals block),
+// every key in its order, with the snapshot laid over the row as it last
+// stood, so what the lab does not model (a lux the lights scene moved, the
+// last witnessed event) carries on.
+export function senseStatePayload(templates, last, snap) {
+  const tpl = "breathing_locked" in snap ? templates.wellbeing : templates.base;
+  const out = {};
+  for (const k of Object.keys(tpl)) out[k] = k in snap ? snap[k] : last && k in last ? last[k] : tpl[k];
+  return out;
+}
+
+// The state row's bytes: publish_state_retained writes lux as "%.1f" (142.5,
+// 1.0), which JSON.stringify would shorten to 1.
+export function senseStateJson(row) {
+  return "{" + Object.entries(row).map(([k, v]) =>
+    JSON.stringify(k) + ":" + (k === "lux" && typeof v === "number" ? v.toFixed(1) : JSON.stringify(v))).join(",") + "}";
+}
+
 // Flatten the serial data into one ordered list of {cls,text} console lines:
 // the banner scenes, the tagged net bring-up log, then the ready scene —
 // the exact order main.cpp's setup() prints them. A boot line with no tag is
@@ -114,7 +165,16 @@ export function makePresenceFSM(cfg) {
       // (the target run ends with the link, so a returning frame runs a fresh
       // debounce instead of promoting itself off the pre-stall clock — mirrors
       // mr60_presence.cpp)
-      if (now - lastFrame >= cfg.stall_ms) { state = "unknown"; range = "unknown"; rawTarget = false; }
+      // A stall drops the count and band with the link and ends the tick
+      // there, as mr60_presence.cpp's does (the lab used to keep the count,
+      // so a stalled state row would have said someone was still counted).
+      if (now - lastFrame >= cfg.stall_ms) {
+        rawTarget = false;
+        if (state !== "unknown") {
+          state = "unknown"; count = "0"; range = "unknown";
+          return { state, count, range, stateChanged: true, countChanged: count !== beforeCount, stalled: true };
+        }
+      }
       if (frame) {
         lastFrame = now;
         if (frame.hasTarget) {
@@ -465,6 +525,10 @@ export function buildRadarLab(data, bus) {
     lastPub = event;
     bus.emit("labevent", { event, ...extra });
   }
+  // The state row, as the loop publishes it: on a dirtying change, and every
+  // heartbeat (senseStateDue). The lab's BPMs are the wellbeing example's.
+  const wellbeingRow = JSON.parse(data.mqtt.topics.find((t) => t.suffix === "state").wellbeing);
+  let publishedSnap = null, lastBeat = performance.now();
 
   function tick(now) {
     world.cat.t += 0.006;
@@ -494,6 +558,15 @@ export function buildRadarLab(data, bus) {
       bus.emit("serial", { text: `[vitals] breathing ${vfsm.lock === "locked" ? "locked" : "lost"}`, kind: "ok" });
       bus.emit("labvitals", { locked: vfsm.lock === "locked" });
     }
+    const snap = senseLabSnapshot(fsm, world.wellbeing
+      ? { locked: vfsm.lock === "locked", breath_bpm: wellbeingRow.breath_bpm, heart_bpm: wellbeingRow.heart_bpm }
+      : null);
+    const heartbeat = now - lastBeat >= data.mqtt.heartbeat_ms;
+    if (heartbeat) lastBeat = now;
+    if (senseStateDue(snap, publishedSnap, heartbeat)) {
+      publishedSnap = snap;
+      bus.emit("labstate", { snap });
+    }
 
     // readouts
     const stateName = fsm.state[0].toUpperCase() + fsm.state.slice(1);
@@ -504,7 +577,7 @@ export function buildRadarLab(data, bus) {
     rows["Occupants"].textContent = fsm.count + (fsm.count === "2+" ? "  (bucketed — never a track log)" : "");
     rows["Range band"].textContent = fsm.range + (fsm.range !== "unknown" ? "  (raw cm never publish)" : "");
     rows["Vitals"].textContent = !world.wellbeing ? "presence-only build — compiled out"
-      : vfsm.lock === "locked" ? "breathing locked · 14 / 68 bpm (P1)"
+      : snap.breath_bpm != null ? `breathing locked · ${snap.breath_bpm} / ${snap.heart_bpm} bpm (P1)`
         : (fsm.count === "2+" ? "suppressed — 2+ targets (code rule)" : "no lock (" + vfsm.lock + ")");
     rows["Publishes"].textContent = lastPub;
 
@@ -658,6 +731,9 @@ export function buildRadarLab(data, bus) {
       world.fan.on = false; tFan.classList.remove("on");
     }
     if (cmd === "walkin") { world.people[0].x = 3.0; world.people[0].y = 0.4; }
+    // the lights scene needs someone inside: walk person ① in only if they
+    // are not in the cone already
+    if (cmd === "inside" && !inCone(world.people[0].x, world.people[0].y)) { world.people[0].x = 3.0; world.people[0].y = 0.4; }
     if (cmd === "near") { world.people[0].x = 1.1; world.people[0].y = 0.1; }
   });
 
@@ -715,41 +791,67 @@ export function buildMqtt(data, bus) {
 
   // Every payload is sense.json's (gen_sense.py), keyed as mqtt_mgr.cpp and
   // main.cpp publish it; the lab and the sandbox only lay their values over.
+  const topicOf = (sfx) => withId(m.topic_pattern.replace("<suffix>", sfx), id);
   const example = (sfx) => JSON.parse(m.topics.find((t) => t.suffix === sfx).payload);
   const eventExample = example("events");
+  const templates = { base: example("state"), wellbeing: JSON.parse(m.topics.find((t) => t.suffix === "state").wellbeing) };
   let chain = example("chain");
+  let stateNow = templates.base;   // the retained state row as it stands
+  let lastEvent = null;            // the last witnessed event (g_last_event)
+  const said = {};                 // the retained string each topic last got
   const retainedTopic = (sfx) => !!(m.topics.find((t) => t.suffix === sfx) || {}).retained;
+  function retain(sfx, payload) {
+    said[sfx] = payload;
+    mqttApply(store, { topic: topicOf(sfx), payload, retain: true });
+    renderRetained();
+  }
+  // publish_state_retained: the row is retained; the stream shows it when it
+  // says something new (a heartbeat that repeats the row changes nothing here,
+  // since the pane keeps the example's uptime_s and ts_ms).
+  function publishState(row) {
+    const payload = senseStateJson(row);
+    const moved = payload !== said.state;
+    stateNow = row;
+    retain("state", payload);
+    if (moved) pushStream(topicOf("state"), payload, "");
+  }
   bus.on("mqtt", () => {
-    const seq = [];
-    for (const t of m.topics) {
-      if (!t.retained) continue;
-      seq.push({ topic: withId(m.topic_pattern.replace("<suffix>", t.suffix), id), payload: t.payload, retain: true });
-    }
+    const seq = m.topics.filter((t) => t.retained);
     (async () => {
-      for (const msg of seq) {
+      for (const t of seq) {
         await sleep(150); if (!alive(wrap)) return;
-        mqttApply(store, msg); renderRetained();
+        // each topic lands as it stands when its turn comes: a scene clicked
+        // as the bench connects has already moved chain and state
+        mqttApply(store, { topic: topicOf(t.suffix), payload: said[t.suffix] ?? t.payload, retain: true });
+        renderRetained();
       }
       pushStream(m.discovery.prefix + "/…/config", m.discovery.counts.default + " announced (retained)", "disc");
     })();
   });
   bus.on("labevent", (e) => {
     // record_event_now: the event at seq = chain length + 1, then the chain
-    // head at that length
+    // head at that length; the state row follows when the loop publishes it
     const seq = chain.length + 1;
-    const evTopic = withId(m.topic_pattern.replace("<suffix>", "events"), id);
-    pushStream(evTopic, JSON.stringify(senseEventPayload(eventExample, e, seq)), "live");
+    lastEvent = e.event;
+    pushStream(topicOf("events"), JSON.stringify(senseEventPayload(eventExample, e, seq)), "live");
     chain = senseChainPayload(chain, seq);
-    const chTopic = withId(m.topic_pattern.replace("<suffix>", "chain"), id);
-    mqttApply(store, { topic: chTopic, payload: JSON.stringify(chain), retain: true });
-    renderRetained();
+    retain("chain", JSON.stringify(chain));
+  });
+  bus.on("labstate", ({ snap }) => {
+    publishState(senseStatePayload(templates, stateNow, lastEvent ? { ...snap, last_event: lastEvent } : snap));
   });
   bus.on("sandboxpub", ({ pubs }) => {
     for (const pub of pubs || []) {
-      const topic = withId(m.topic_pattern.replace("<suffix>", pub.suffix), id);
-      const retain = retainedTopic(pub.suffix);
-      if (retain) { mqttApply(store, { topic, payload: pub.payload, retain: true }); renderRetained(); }
-      pushStream(topic, pub.payload, retain ? "" : "live");
+      if (pub.suffix === "state" && pub.set) {
+        // a scene's state fields (the lights' lux) over the row as it stands
+        const row = { ...stateNow };
+        for (const [k, v] of Object.entries(pub.set)) if (k in row) row[k] = v;
+        publishState(row);
+        continue;
+      }
+      const retained = retainedTopic(pub.suffix);
+      if (retained) retain(pub.suffix, pub.payload);
+      pushStream(topicOf(pub.suffix), pub.payload, retained ? "" : "live");
     }
   });
   return wrap;
@@ -918,7 +1020,11 @@ export function buildSandbox(data, bus) {
   const readout = el("p", "muted wap-sandbox-read",
     "Power the device on in the console above, or just tap a card — the bench will bring it online for you.");
 
-  const LABCMD = { walk: "walkin", approach: "near", sit: "still", second: "person2", leave: "clearall", stall: "stall" };
+  // A lab-driven scene moves the radar lab, and the lab publishes what the
+  // firmware would (the events row, the chain head, the state row) when its
+  // FSM gets there; the lights and identify scenes push their own rows.
+  const LABCMD = { walk: "walkin", approach: "near", sit: "still", second: "person2", leave: "clearall", stall: "stall", lights: "inside" };
+  const PUSHED = new Set(["lights", "identify"]);
 
   for (const sc of data.sandbox) {
     const card = el("button", "card wap-sand-card");
@@ -928,7 +1034,7 @@ export function buildSandbox(data, bus) {
       if (!bus.has("mqtt")) { bus.emit("power"); bus.emit("wifi"); bus.emit("mqtt"); bus.emit("ready"); }
       if (LABCMD[sc.id]) bus.emit("labcmd", { cmd: LABCMD[sc.id] });
       if (sc.serial && !LABCMD[sc.id]) bus.emit("serial", { text: sc.serial, kind: "ok" });
-      if (sc.id === "identify" || sc.id === "lights") bus.emit("sandboxpub", { pubs: sc.mqtt });
+      if (PUSHED.has(sc.id)) bus.emit("sandboxpub", { pubs: sc.mqtt });
       if (sc.state) bus.emit("state", { state: sc.state.toLowerCase() });
       readout.textContent = "▶ " + sc.label + " — " + sc.blurb + (sc.ha ? "  →  " + sc.ha : "");
     });

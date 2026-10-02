@@ -674,6 +674,22 @@ ENTITIES = [
 N_DEFAULT = sum(1 for e in ENTITIES if e["flavor"] == "default")
 N_WELLBEING = len(ENTITIES)
 
+# When the state row goes out (main.cpp): drive_fsms marks it dirty on a
+# presence change, a count change and any vitals change (and the lux loop on a
+# 5 lx move); the loop publishes it then, and on every heartbeat. A range band
+# that moves alone dirties nothing, so it waits for the heartbeat.
+HEARTBEAT_MS = grab_int(CFG_DEFAULT, "CS_HEARTBEAT_MS")
+if grab_int(CFG_WELLBEING, "CS_HEARTBEAT_MS") != HEARTBEAT_MS:
+    die("the two Sense builds beat at different rates; the lab stages one")
+must(MAIN_CPP, "  if (g_state_dirty) {\n    publish_state_now(now);\n  }", "a dirty state row goes out in the loop")
+must(MAIN_CPP, "    refresh_snapshot(now);\n    canary::net::publish_heartbeat(TOPICS, g_snap);\n    publish_state_now(now);",
+     "the heartbeat republishes the state row")
+must(MAIN_CPP, "    g_state_dirty = true;\n  }\n\n  if (pev.count_changed) {", "a presence change dirties the state row")
+must(MAIN_CPP, "      record_event_now(\"occupancy_changed\", now);\n    }\n    g_state_dirty = true;\n  }",
+     "a count change dirties the state row")
+must(MAIN_CPP, "  if (vev.lock_changed) {\n    boot_linef(\"[vitals] breathing %s%s\", locked ? \"locked\" : \"lost\",\n"
+     "               vev.stalled ? \" (stall)\" : \"\");\n    g_state_dirty = true;", "a vitals lock change dirties the state row")
+
 MQTT = {
     "prefix": "securacv",
     "topic_pattern": "securacv/<device_id>/<suffix>",
@@ -683,6 +699,9 @@ MQTT = {
     "topics": TOPICS,
     "subscribed": SUBSCRIBED,
     "offline_note": "no broker? the witness keeps sensing and chaining — every transition still advances the NVS-persisted hash chain; an outage shows up as a jump in seq/chain length, never lost tamper evidence",
+    # the loop republishes the state row every heartbeat (the radar lab
+    # stages it, so a range band that moves alone still reaches the broker)
+    "heartbeat_ms": HEARTBEAT_MS,
     "discovery": {
         "prefix": grab_str(CFG_DEFAULT, "CS_HA_DISCOVERY_PREFIX"),
         "config_topic": "homeassistant/<component>/<device_id>/<object_id>/config",
@@ -969,7 +988,10 @@ SANDBOX = [
      "blurb": "Lux collapses while radar presence persists: the tamper-corroboration pattern. Camera-blind means nothing to a radar.",
      "state": "Present", "led": "green", "event": None,
      "serial": None,
-     "mqtt": [state_pub(presence=True, presence_state="present", lux=1.0)],
+     # a lux move of 5 lx or more dirties the state row; the page walks
+     # someone in first if the room is empty, and lays the lux over the row
+     # as it stands, so presence is whatever the radar says
+     "mqtt": [state_pub(lux=1.0)],
      "ha": "lights-out + presence — the tamper automation's trigger pair"},
     {"id": "stall", "label": "Unplug the radar UART",
      "blurb": f"No frame for {D['stall_ms']} ms → Unknown (amber LED); the radar_link problem sensor trips. Health, not a witness event — silence is never evidence.",
@@ -992,6 +1014,8 @@ must(MAIN_CPP, "g_snap.radar_ok  = (g_presence.state() != Presence::Unknown);", 
 must(PRESENCE_H.with_suffix(".cpp"), "        state_ = Presence::Unknown;\n        count_ = CountBucket::Zero;\n"
      "        range_ = RangeBand::Unknown;", "a stall drops count and band")
 must(MQTT_CPP, 'else           snprintf(lux_val, sizeof(lux_val), "%.1f", (double)s.lux);', "lux in one decimal")
+must(MAIN_CPP, "      if (g_snap.lux < 0 || fabsf(lux - g_snap.lux) >= 5.0f) {\n        g_snap.lux = lux;\n        g_state_dirty = true;",
+     "a 5 lx move dirties the state row")
 _BASES = {"state": STATE_PAYLOAD, "events": EVENT_PAYLOAD,
           "chain": next(t for t in TOPICS if t["suffix"] == "chain")["payload"]}
 for sc in SANDBOX:

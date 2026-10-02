@@ -288,6 +288,175 @@ test("the MQTT pane publishes a lab event, then the chain head at its seq", asyn
   });
 });
 
+test("the state row: the lab's snapshot over the build's example, published when main.cpp would", async () => {
+  const { senseLabSnapshot, senseStateDue, senseStatePayload, senseStateJson } = await import("../assets/sense-ui.js");
+  const st = data.mqtt.topics.find((t) => t.suffix === "state");
+  const templates = { base: JSON.parse(st.payload), wellbeing: JSON.parse(st.wellbeing) };
+  const fsm = (state, count, range) => ({ state, count, range });
+  // presence-only build: no vitals keys at all
+  const clear = senseLabSnapshot(fsm("clear", "0", "unknown"), null);
+  assert.deepStrictEqual(clear, { presence: false, presence_state: "clear", occupants: "0", range: "unknown", radar_ok: true });
+  assert.strictEqual(senseLabSnapshot(fsm("unknown", "0", "unknown"), null).radar_ok, false, "radar_ok is not-unknown");
+  // wellbeing: BPMs only while locked with exactly one target (bpm_valid)
+  const v = { locked: true, breath_bpm: 14, heart_bpm: 68 };
+  assert.strictEqual(senseLabSnapshot(fsm("present", "1", "near"), v).breath_bpm, 14);
+  const two = senseLabSnapshot(fsm("present", "2+", "near"), v);
+  assert.deepStrictEqual([two.breathing_locked, two.breath_bpm, two.heart_bpm], [true, null, null],
+    "a second person drops the BPMs at once; the lock rides out lost_ms");
+  // due: any change but the range band alone, and every heartbeat
+  const a = senseLabSnapshot(fsm("present", "1", "mid"), null);
+  assert.ok(senseStateDue(a, null, false), "the first (boot) publish");
+  assert.ok(!senseStateDue({ ...a, range: "near" }, a, false), "a range band alone waits for the heartbeat");
+  assert.ok(senseStateDue({ ...a, range: "near" }, a, true), "...and goes out on it");
+  assert.ok(senseStateDue({ ...a, occupants: "2+" }, a, false));
+  assert.ok(senseStateDue(senseLabSnapshot(fsm("present", "1", "mid"), { ...v, locked: false }), a, false), "a build switch");
+  // the row: the build's keys in the firmware's order, lux carried over
+  const row = senseStatePayload(templates, { ...templates.base, lux: 1.0 }, clear);
+  assert.deepStrictEqual(Object.keys(row), Object.keys(templates.base));
+  assert.strictEqual(row.lux, 1.0);
+  assert.strictEqual(row.presence_state, "clear");
+  const wrow = senseStatePayload(templates, templates.base, two);
+  assert.deepStrictEqual(Object.keys(wrow), Object.keys(templates.wellbeing));
+  assert.ok(senseStateJson(row).includes('"lux":1.0'), "publish_state_retained's %.1f");
+  assert.ok(mainCpp.includes("if (g_state_dirty) {\n    publish_state_now(now);"), "the dirty row goes out in the loop");
+  assert.ok(mainCpp.includes("canary::net::publish_heartbeat(TOPICS, g_snap);\n    publish_state_now(now);"), "and on the heartbeat");
+  assert.strictEqual(data.mqtt.heartbeat_ms, cint(cfgDefault, "CS_HEARTBEAT_MS"));
+});
+
+// The radar lab, the MQTT pane and the sandbox on one bus, on the fake DOM and
+// the test's clock. Each lab-driven scene is clicked and the lab's frame loop
+// runs until its FSM gets there; the pane must then have published exactly
+// the rows sense.json lists for that scene (seq and the chain length counted
+// on from the rows before). The pane used to publish no state row from the
+// lab at all, so the walk, approach, sit, second, leave and stall rows were
+// data no page rendered.
+test("each sandbox scene, played through the radar lab, publishes the rows sense.json lists", async () => {
+  const { withFakeDom, withFakeClock, fakeBus } = require("./fixtures/fake_dom.js");
+  const { buildRadarLab, buildMqtt, buildSandbox } = await import("../assets/sense-ui.js");
+  const topic = (sfx) => `securacv/${data.device.id_example}/${sfx}`;
+  const scene = (id) => data.sandbox.find((s) => s.id === id);
+  const rowOf = (id, sfx) => scene(id).mqtt.find((p) => p.suffix === sfx).payload;
+  const at = (payload, k, n) => JSON.stringify({ ...JSON.parse(payload), [k]: n });
+  const cfg = data.fsm.presence, vit = data.fsm.vitals;
+  const chain0 = topicEx("chain").length;
+
+  async function bench(fn) {
+    await withFakeDom(() => withFakeClock(async (clock) => {
+      const bus = fakeBus();
+      buildRadarLab(data, bus);
+      const pane = buildMqtt(data, bus);
+      const pad = buildSandbox(data, bus);
+      let t = performance.now();
+      const run = async (ms) => { for (let e = 0; e < ms; e += 50) { t += 50; clock.frame(t); } await clock.advance(ms); };
+      const click = (id) => pad.all("wap-sand-card").find((c) => c.children[0].textContent === scene(id).label).click();
+      let seen = new Set();
+      // the rows published since the last call, oldest first (the stream
+      // prepends, so new rows sit at the top)
+      const fresh = () => {
+        const rows = pane.all("wap-mqtt-ev").filter((r) => !seen.has(r));
+        rows.forEach((r) => seen.add(r));
+        return rows.reverse().map((r) => [r.children[0].textContent, r.children[1].textContent])
+          .filter(([tp]) => tp.startsWith("securacv/"));
+      };
+      const retained = () => Object.fromEntries(pane.all("wap-mqtt-row").map((r) => [r.children[0].textContent, r.children[1].textContent]));
+      await run(200);   // the lab's first frame: Unknown -> Clear, the boot publish
+      fresh();
+      await fn({ run, click, fresh, retained });
+    }));
+  }
+
+  // presence-only build: walk in, close in, everyone leaves
+  await bench(async ({ run, click, fresh, retained }) => {
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    // mr60_presence.cpp's count and band follow every frame while presence
+    // waits out the debounce, and drive_fsms dirties the row on the count
+    // change: so the device publishes a clear row counting one occupant first
+    const counting = JSON.stringify({ ...JSON.parse(rowOf("walk", "state")), presence: false, presence_state: "clear" });
+    assert.deepStrictEqual(fresh(), [[topic("state"), counting], [topic("events"), rowOf("walk", "events")],
+      [topic("state"), rowOf("walk", "state")]], "walk: the debounce window's row, the event, then the state row");
+    assert.strictEqual(retained()[topic("chain")], rowOf("walk", "chain"));
+    assert.strictEqual(retained()[topic("state")], rowOf("walk", "state"), "the retained snapshot did not land the example over it");
+
+    click("approach");
+    await run(200);
+    assert.deepStrictEqual(fresh(), [], "a range band alone dirties nothing (drive_fsms)");
+    await run(data.mqtt.heartbeat_ms);
+    assert.deepStrictEqual(fresh(), [[topic("state"), rowOf("approach", "state")]], "the heartbeat carries it");
+
+    click("leave");
+    await run(cfg.clear_ms + 500);
+    assert.deepStrictEqual(fresh(), [[topic("events"), at(rowOf("leave", "events"), "seq", chain0 + 2)],
+      [topic("state"), rowOf("leave", "state")]]);
+    assert.strictEqual(retained()[topic("chain")], at(rowOf("leave", "chain"), "length", chain0 + 2));
+  });
+
+  // the lights go out with someone inside; the lux rides every later row
+  await bench(async ({ run, click, fresh, retained }) => {
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    fresh();
+    click("lights");
+    assert.deepStrictEqual(fresh(), [[topic("state"), rowOf("lights", "state")]]);
+    await run(data.mqtt.heartbeat_ms + 200);
+    assert.strictEqual(retained()[topic("state")], rowOf("lights", "state"), "the heartbeat keeps the lux");
+  });
+  await bench(async ({ run, click, retained }) => {
+    click("lights");   // an empty room: the scene walks someone in first
+    await run(cfg.debounce_ms + 700);
+    assert.strictEqual(retained()[topic("state")], rowOf("lights", "state"));
+  });
+
+  // the radar UART unplugged: Unknown, count and band dropped, radar_ok false
+  await bench(async ({ run, click, fresh }) => {
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    fresh();
+    click("stall");
+    await run(cfg.stall_ms + 500);
+    assert.deepStrictEqual(fresh(), [[topic("state"), rowOf("stall", "state")]], "health, not a witness event");
+  });
+
+  // wellbeing: the lock confirms, then a second person suppresses it
+  await bench(async ({ run, click, fresh, retained }) => {
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    click("approach");
+    await run(data.mqtt.heartbeat_ms + 200);
+    fresh();
+    click("sit");
+    await run(vit.lock_ms + 500);
+    const sit = fresh();
+    assert.deepStrictEqual(sit[sit.length - 1], [topic("state"), rowOf("sit", "state")], "the lock and its BPMs");
+    click("second");
+    await run(200);
+    const now = fresh();
+    assert.deepStrictEqual(now[0], [topic("events"), at(rowOf("second", "events"), "seq", chain0 + 2)]);
+    const held = JSON.parse(now[1][1]);
+    assert.deepStrictEqual([held.occupants, held.breathing_locked, held.breath_bpm, held.heart_bpm, held.last_event],
+      ["2+", true, null, null, "occupancy_changed"], "the BPMs go at once; the lock rides out lost_ms");
+    await run(vit.lost_ms + 500);
+    assert.strictEqual(retained()[topic("state")], rowOf("second", "state"));
+  });
+});
+
+test("a stall drops the count with the link, as mr60_presence.cpp does", async () => {
+  const { makePresenceFSM } = await import("../assets/sense-ui.js");
+  const cfg = data.fsm.presence;
+  const fsm = makePresenceFSM(cfg);
+  let t = 1000;
+  fsm.reset(t);
+  const two = { hasTarget: true, count: 2, distanceCm: 200 };
+  fsm.tick(two, t);
+  fsm.tick(two, t + cfg.debounce_ms);
+  assert.deepStrictEqual([fsm.state, fsm.count], ["present", "2+"]);
+  const ev = fsm.tick(null, t + cfg.debounce_ms + cfg.stall_ms);
+  assert.deepStrictEqual([fsm.state, fsm.count, fsm.range], ["unknown", "0", "unknown"]);
+  assert.ok(ev.stalled && ev.countChanged);
+  const presence = read(join(REPO, "firmware/common/sensors/mmwave_mr60/mr60_presence.cpp"));
+  assert.ok(presence.includes("        state_ = Presence::Unknown;\n        count_ = CountBucket::Zero;"));
+});
+
 // ── 7. serial log lines trace to firmware sources ──────────────────────────
 test("boot banner + radar scene anchors exist in the sources", () => {
   const banner = read(join(REPO, "firmware/common/boot/boot_banner.cpp"));
