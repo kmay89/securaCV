@@ -528,8 +528,15 @@ STATE_PAYLOAD = ('{"device_id":"%s","device_type":"canary-sense","presence":true
                  '"presence_state":"present","occupants":"1","range":"mid","radar_ok":true,'
                  '"frame_errors":0,"lux":142.5,"last_event":"presence_detected","uptime_s":312,"ts_ms":312400}'
                  ) % EX_ID
-STATE_PAYLOAD_WELLBEING = ('{…,"breathing_locked":true,"breath_bpm":14,"heart_bpm":68,…}  '
-                           "(BPM fields null unless the lock holds — stale vitals never freeze in HA)")
+# The wellbeing build's state, whole: the vitals keys sit between lux and
+# last_event (publish_state_retained's #ifdef CANARY_SENSE_VITALS block). It
+# used to be an abbreviation ({…,"breathing_locked":true,…}), which the
+# sandbox could not lay a scene over (sweep A30).
+STATE_PAYLOAD_WELLBEING = ('{"device_id":"%s","device_type":"canary-sense","presence":true,'
+                           '"presence_state":"present","occupants":"1","range":"near","radar_ok":true,'
+                           '"frame_errors":0,"lux":142.5,"breathing_locked":true,"breath_bpm":14,"heart_bpm":68,'
+                           '"last_event":"presence_detected","uptime_s":312,"ts_ms":312400}') % EX_ID
+STATE_WELLBEING_NOTE = "BPM fields are null unless the lock holds — stale vitals never freeze in HA"
 EVENT_PAYLOAD = ('{"device_id":"%s","device_type":"canary-sense","event":"presence_detected",'
                  '"seq":313,"bucket_uptime_s":0,"presence":"present","occupants":"1","range":"mid",'
                  '"signed":true,"v":1,"alg":"ed25519","fp":"%s","sig":"…"}') % (EX_ID, EX_FP)
@@ -547,7 +554,7 @@ TOPICS = [
      "payload": EVENT_PAYLOAD,
      "note": "the FULL vocabulary that ever leaves the device about what the radar saw — no distance, no vitals, ever; time is a 10-minute uptime bucket"},
     {"suffix": "state", "retained": True, "cadence": "on change + heartbeat",
-     "payload": STATE_PAYLOAD, "wellbeing": STATE_PAYLOAD_WELLBEING},
+     "payload": STATE_PAYLOAD, "wellbeing": STATE_PAYLOAD_WELLBEING, "wellbeing_note": STATE_WELLBEING_NOTE},
     {"suffix": "status", "retained": True, "cadence": "on connect + 5 s heartbeat",
      "payload": '{"device_id":"%s","device_type":"canary-sense","status":"online","presence":true,"radar_ok":true,"rssi":-54,"heap_free":145120,"heap_min":128044,"degraded":"normal","ts_ms":312400}' % EX_ID},
     {"suffix": "chain", "retained": True, "cadence": "on each witnessed event",
@@ -582,6 +589,58 @@ for t in SUBSCRIBED:
     if t["suffix"].startswith("cfg/"):
         must(TOPICS_H, t["suffix"], f"cfg topic {t['suffix']}")
 must(MQTT_CPP, '\\"status\\":\\"offline\\"', "LWT payload")
+
+# The topics a sandbox scene lays its fields over are keyed as the firmware
+# publishes them (sweep A30): publish_state_retained's format (with and
+# without the vitals block), record_event_now's body and sign_event_envelope,
+# and publish_chain_retained's signed branch. A scene's field that is not a
+# key of its topic's payload is refused below.
+def _fn(path, signature):
+    text = read(path)
+    i = text.find(signature)
+    if i < 0:
+        die(f"{signature!r} not found in {path.relative_to(REPO)}")
+    j = text.find("\n}\n", i)
+    return text[i:j if j >= 0 else len(text)]
+
+
+def _keys(fragment):
+    return re.findall(r'\\"([a-z_0-9]+)\\":', fragment)
+
+
+def _between(text, start, end, label):
+    i = text.find(start)
+    j = text.find(end, i + len(start)) if i >= 0 else -1
+    if i < 0 or j < 0:
+        die(f"{label}: {start!r} … {end!r} not found")
+    return text[i:j]
+
+
+_state_fn = _fn(MQTT_CPP, "void publish_state_retained(")
+_vitals = _between(_state_fn, '#ifdef CANARY_SENSE_VITALS\n           "', "#endif", "the state's vitals block")
+STATE_KEYS_WELLBEING = _keys(_between(_state_fn, "snprintf(msg, sizeof(msg),", "canary::cfg::get()", "state format"))
+STATE_KEYS = [k for k in STATE_KEYS_WELLBEING if k not in _keys(_vitals)]
+EVENT_KEYS = (_keys(_between(_fn(MAIN_CPP, "static void record_event_now("), "const int n = snprintf(msg, sizeof(msg),",
+                             "canary::cfg::get()", "event format"))
+              + _keys(_fn(WITNESS_CPP, "bool sign_event_envelope(")))
+CHAIN_KEYS = _keys(_between(_fn(MQTT_CPP, "void publish_chain_retained("), "if (signed_ok) {", "} else {", "chain"))
+SENSE_KEYS = {"state": STATE_KEYS, "events": EVENT_KEYS, "chain": CHAIN_KEYS}
+for label, payload, keys in (("state", STATE_PAYLOAD, STATE_KEYS),
+                             ("state (wellbeing)", STATE_PAYLOAD_WELLBEING, STATE_KEYS_WELLBEING),
+                             ("events", EVENT_PAYLOAD, EVENT_KEYS),
+                             ("chain", next(t for t in TOPICS if t["suffix"] == "chain")["payload"], CHAIN_KEYS)):
+    if list(json.loads(payload)) != keys:
+        die(f"Sense {label} example keys {list(json.loads(payload))} are not the firmware's {keys}")
+if EVENT_KEYS[-4:] != ["v", "alg", "fp", "sig"] or len(STATE_KEYS_WELLBEING) != len(STATE_KEYS) + 3:
+    die("the Sense event envelope or the state's vitals block moved")
+# seq rides the chain: record_event_now's seq is chain_length() + 1, and the
+# chain head it then republishes is that length; the event goes out first.
+must(MAIN_CPP, "? canary::witness::chain_length() + 1", "seq is the next chain length")
+must(MAIN_CPP, "  canary::net::publish_event(TOPICS, msg);\n  canary::net::publish_chain_retained(TOPICS);",
+     "event, then the chain head")
+for word in ('case Presence::Present: return "present";', 'case Presence::Clear:   return "clear";',
+             'case CountBucket::TwoPlus: return "2+";', 'case RangeBand::Near: return "near";'):
+    must(MAIN_CPP, word, "the Sense's coarse vocabulary")
 
 # HA discovery entities, validated against ha_discovery.cpp object ids + names.
 def entity(comp, obj, name, state_topic, flavor="default", **kw):
@@ -841,62 +900,119 @@ TUNING = {
 # 9. sandbox scenarios — every effect traces to a real firmware signal path
 # --------------------------------------------------------------------------- #
 
+# A scene's publishes are the firmware's whole payloads (sweep A30): the
+# topic's example with the scene's fields laid over it (`set`) and its
+# counters moved on (`advance`), key order kept — the WAP's scenePayload and
+# the Vision pane's vizEventPayload do the same. Before this a scene spelled
+# only what it changed: an events row with no envelope, chain {"length":+1}
+# (not JSON), and a state row of two or three keys that, pushed by the page,
+# replaced the retained state whole. A vitals scene lays over the wellbeing
+# build's state (`base`). Witnessed events advance seq and the chain head
+# together; the new head's hash is elided.
+CHAIN_NEXT = {"suffix": "chain", "set": {"latest_hash": "…"}, "advance": ["length"]}
+
+
+def event_pub(event, presence, occupants, rng):
+    return {"suffix": "events", "advance": ["seq"],
+            "set": {"event": event, "presence": presence, "occupants": occupants, "range": rng}}
+
+
+def state_pub(base=None, **fields):
+    pub = {"suffix": "state", "set": fields}
+    if base:
+        pub["base"] = base
+    return pub
+
+
 SANDBOX = [
     {"id": "walk", "label": "Walk into the room",
      "blurb": f"A target sustains past the {D['debounce_ms']} ms debounce → Present; the LED goes green and a signed event chains.",
      "state": "Present", "led": "green", "event": "presence_detected",
      "serial": "[presence] -> present",
-     "mqtt": [{"suffix": "events", "payload": '{"event":"presence_detected","presence":"present","occupants":"1","range":"mid","signed":true}'},
-              {"suffix": "state", "payload": '{"presence":true,"occupants":"1","range":"mid"}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}],
+     "mqtt": [event_pub("presence_detected", "present", "1", "mid"),
+              state_pub(presence=True, presence_state="present", occupants="1", range="mid",
+                        last_event="presence_detected"),
+              CHAIN_NEXT],
      "ha": "binary_sensor.<id>_presence -> ON"},
     {"id": "approach", "label": "Walk toward it",
      "blurb": "Range band steps far → mid → near as you close in — the host-side zone gate in action; raw centimeters never publish.",
      "state": "Present", "led": "green", "event": None,
      "serial": None,
-     "mqtt": [{"suffix": "state", "payload": '{"presence":true,"range":"near"}'}],
+     "mqtt": [state_pub(presence=True, presence_state="present", range="near")],
      "ha": "sensor.<id>_range_band: far → mid → near"},
     {"id": "sit", "label": "Sit still and breathe (wellbeing)",
      "blurb": f"Plausible vitals sustain {FSM['vitals']['lock_ms']} ms with exactly one target → the breathing lock confirms; BPM numerics go live (P1).",
      "state": "Present", "led": "green", "event": None,
      "serial": "[vitals] breathing locked",
-     "mqtt": [{"suffix": "state", "payload": '{"presence":true,"breathing_locked":true,"breath_bpm":14,"heart_bpm":68}'}],
+     "mqtt": [state_pub("wellbeing", presence=True, presence_state="present", occupants="1",
+                        breathing_locked=True, breath_bpm=14, heart_bpm=68)],
      "ha": "binary_sensor.<id>_breathing -> ON · sensors read 14 / 68 bpm"},
     {"id": "second", "label": "A second person walks in",
      "blurb": "The count bucket moves 1 → 2+; occupancy_changed chains, and vitals hard-suppress (BPM → null) — attribution refused, by code.",
      "state": "Present", "led": "green", "event": "occupancy_changed",
      "serial": "[vitals] breathing lost",
-     "mqtt": [{"suffix": "events", "payload": '{"event":"occupancy_changed","occupants":"2+","signed":true}'},
-              {"suffix": "state", "payload": '{"occupants":"2+","breathing_locked":false,"breath_bpm":null,"heart_bpm":null}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}],
+     "mqtt": [event_pub("occupancy_changed", "present", "2+", "near"),
+              state_pub("wellbeing", presence=True, presence_state="present", occupants="2+",
+                        breathing_locked=False, breath_bpm=None, heart_bpm=None, last_event="occupancy_changed"),
+              CHAIN_NEXT],
      "ha": "sensor.<id>_occupants -> 2+ · BPM entities -> unknown"},
     {"id": "leave", "label": "Everyone leaves",
      "blurb": f"No target for {D['clear_ms']} ms → Clear; the LED goes blue and presence_cleared chains.",
      "state": "Clear", "led": "blue", "event": "presence_cleared",
      "serial": "[presence] -> clear",
-     "mqtt": [{"suffix": "events", "payload": '{"event":"presence_cleared","presence":"clear","occupants":"0","signed":true}'},
-              {"suffix": "state", "payload": '{"presence":false,"occupants":"0"}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}],
+     "mqtt": [event_pub("presence_cleared", "clear", "0", "unknown"),
+              state_pub(presence=False, presence_state="clear", occupants="0", range="unknown",
+                        last_event="presence_cleared"),
+              CHAIN_NEXT],
      "ha": "binary_sensor.<id>_presence -> OFF"},
     {"id": "lights", "label": "Kill the lights — with someone inside",
      "blurb": "Lux collapses while radar presence persists: the tamper-corroboration pattern. Camera-blind means nothing to a radar.",
      "state": "Present", "led": "green", "event": None,
      "serial": None,
-     "mqtt": [{"suffix": "state", "payload": '{"presence":true,"lux":1.0}'}],
+     "mqtt": [state_pub(presence=True, presence_state="present", lux=1.0)],
      "ha": "lights-out + presence — the tamper automation's trigger pair"},
     {"id": "stall", "label": "Unplug the radar UART",
      "blurb": f"No frame for {D['stall_ms']} ms → Unknown (amber LED); the radar_link problem sensor trips. Health, not a witness event — silence is never evidence.",
      "state": "Unknown", "led": "amber", "event": None,
      "serial": "[presence] -> unknown (radar stall)",
-     "mqtt": [{"suffix": "state", "payload": '{"radar_ok":false,"presence":false}'}],
+     # a stall drops the count and band with the link (mr60_presence.cpp)
+     "mqtt": [state_pub(presence=False, presence_state="unknown", occupants="0", range="unknown", radar_ok=False)],
      "ha": "binary_sensor.<id>_radar_link -> ON (problem)"},
     {"id": "identify", "label": "Press Identify in Home Assistant",
      "blurb": "The WS2812 flashes white at 2 Hz for 10 s and the identify echo mirrors the window — the 'which device is which' moment.",
      "state": None, "led": "white", "event": None,
      "serial": "[identify] flashing LED for 10 s",
-     "mqtt": [{"suffix": "identify", "payload": '"on"'}],
+     # the identify echo is a bare word, no quotes
+     "mqtt": [{"suffix": "identify", "payload": "on"}],
      "ha": "button.<id>_identify pressed"},
 ]
+# radar_ok is the presence state's "not unknown" (refresh_snapshot), and the
+# lux the state carries is "%.1f" of the BH1750's reading
+must(MAIN_CPP, "g_snap.radar_ok  = (g_presence.state() != Presence::Unknown);", "radar_ok")
+must(PRESENCE_H.with_suffix(".cpp"), "        state_ = Presence::Unknown;\n        count_ = CountBucket::Zero;\n"
+     "        range_ = RangeBand::Unknown;", "a stall drops count and band")
+must(MQTT_CPP, 'else           snprintf(lux_val, sizeof(lux_val), "%.1f", (double)s.lux);', "lux in one decimal")
+_BASES = {"state": STATE_PAYLOAD, "events": EVENT_PAYLOAD,
+          "chain": next(t for t in TOPICS if t["suffix"] == "chain")["payload"]}
+for sc in SANDBOX:
+    for pub in sc["mqtt"]:
+        label = f"sandbox {sc['id']} {pub['suffix']}"
+        if "set" not in pub and "advance" not in pub:
+            if pub["suffix"] != "identify" or pub["payload"] not in ("on", "off"):
+                die(f"{label}: a publish with no fields to lay over must be a bare word the firmware writes")
+            continue
+        base = STATE_PAYLOAD_WELLBEING if pub.get("base") == "wellbeing" else _BASES[pub["suffix"]]
+        obj = json.loads(base)
+        for k in list(pub.get("set", {})) + pub.get("advance", []):
+            if k not in obj:
+                die(f"{label}: {k!r} is not a key of the topic's payload {list(obj)}")
+        for k in pub.get("advance", []):
+            obj[k] += 1
+        obj.update(pub.get("set", {}))
+        pub.setdefault("set", {})
+        pub.setdefault("advance", [])
+        pub["payload"] = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+must(MQTT_CPP, 'publish_checked("IDFY", topics.identify_echo, active ? "on" : "off",', "the identify echo is a bare on/off")
 must(MAIN_CPP, '"[identify] flashing LED for 10 s"', "identify serial line")
 for sc in SANDBOX:
     for pub in sc.get("mqtt", []):

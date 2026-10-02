@@ -892,11 +892,40 @@
       "mqtt": [
         {
           "suffix": "events",
-          "payload": "{\"event_type\":\"motion\",\"state\":\"motion\",\"motion\":74}"
+          "advance": [
+            "event_id"
+          ],
+          "set": {
+            "event_type": "active",
+            "confidence": "tentative",
+            "module": "core.presence",
+            "type": "presence_changed",
+            "category": "event",
+            "privacy": "p0",
+            "state": "active",
+            "motion": 78,
+            "breathing": 8,
+            "bpm": 0
+          },
+          "payload": "{\"event_id\":3221226707,\"event_type\":\"active\",\"timestamp\":312,\"zone\":\"\",\"confidence\":\"tentative\",\"signed\":true,\"module\":\"core.presence\",\"type\":\"presence_changed\",\"category\":\"event\",\"privacy\":\"p0\",\"state\":\"active\",\"motion\":78,\"breathing\":8,\"bpm\":0,\"duration_sec\":0,\"bundled\":1,\"replay\":false,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        },
+        {
+          "suffix": "counts",
+          "advance": [
+            "total"
+          ],
+          "set": {},
+          "payload": "{\"v\":1,\"total\":313,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
         },
         {
           "suffix": "chain",
-          "payload": "{\"length\":+1}"
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":313,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
         }
       ]
     },
@@ -910,7 +939,40 @@
       "mqtt": [
         {
           "suffix": "events",
-          "payload": "{\"event_type\":\"subtle\",\"state\":\"subtle\",\"breathing\":11,\"bpm\":14}"
+          "advance": [
+            "event_id"
+          ],
+          "set": {
+            "event_type": "quiet",
+            "confidence": "tentative",
+            "module": "core.presence",
+            "type": "presence_changed",
+            "category": "event",
+            "privacy": "p0",
+            "state": "quiet",
+            "motion": 12,
+            "breathing": 41,
+            "bpm": 0
+          },
+          "payload": "{\"event_id\":3221226707,\"event_type\":\"quiet\",\"timestamp\":312,\"zone\":\"\",\"confidence\":\"tentative\",\"signed\":true,\"module\":\"core.presence\",\"type\":\"presence_changed\",\"category\":\"event\",\"privacy\":\"p0\",\"state\":\"quiet\",\"motion\":12,\"breathing\":41,\"bpm\":0,\"duration_sec\":0,\"bundled\":1,\"replay\":false,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        },
+        {
+          "suffix": "counts",
+          "advance": [
+            "total"
+          ],
+          "set": {},
+          "payload": "{\"v\":1,\"total\":313,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        },
+        {
+          "suffix": "chain",
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":313,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
         }
       ]
     },
@@ -924,7 +986,40 @@
       "mqtt": [
         {
           "suffix": "events",
-          "payload": "{\"event_type\":\"empty\",\"state\":\"empty\"}"
+          "advance": [
+            "event_id"
+          ],
+          "set": {
+            "event_type": "empty",
+            "confidence": "tentative",
+            "module": "core.presence",
+            "type": "presence_changed",
+            "category": "event",
+            "privacy": "p0",
+            "state": "empty",
+            "motion": 2,
+            "breathing": 3,
+            "bpm": 0
+          },
+          "payload": "{\"event_id\":3221226707,\"event_type\":\"empty\",\"timestamp\":312,\"zone\":\"\",\"confidence\":\"tentative\",\"signed\":true,\"module\":\"core.presence\",\"type\":\"presence_changed\",\"category\":\"event\",\"privacy\":\"p0\",\"state\":\"empty\",\"motion\":2,\"breathing\":3,\"bpm\":0,\"duration_sec\":0,\"bundled\":1,\"replay\":false,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        },
+        {
+          "suffix": "counts",
+          "advance": [
+            "total"
+          ],
+          "set": {},
+          "payload": "{\"v\":1,\"total\":313,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        },
+        {
+          "suffix": "chain",
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":313,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
         }
       ]
     },
@@ -938,7 +1033,31 @@
       "mqtt": [
         {
           "suffix": "sensing",
-          "payload": "{\"acoustic_event\":\"smoke_alarm_t3\",\"t3_detected\":1}"
+          "set": {
+            "acoustic_event": "smoke_alarm_t3"
+          },
+          "advance": [
+            "t3_detected"
+          ],
+          "payload": "{\"acoustic_event\":\"smoke_alarm_t3\",\"mic_muted\":false,\"t3_detected\":1,\"t4_detected\":0,\"knock_detected\":0,\"doorbell_detected\":0,\"glass_break_detected\":0,\"i2s_read_errors\":0}"
+        },
+        {
+          "suffix": "counts",
+          "advance": [
+            "total"
+          ],
+          "set": {},
+          "payload": "{\"v\":1,\"total\":313,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        },
+        {
+          "suffix": "chain",
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":313,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
         }
       ],
       "ha": "binary_sensor.<id>_smoke_alarm -> ON"
@@ -952,27 +1071,34 @@
       "mqtt": [
         {
           "suffix": "sensing",
-          "payload": "{\"acoustic_event\":\"co_alarm_t4\",\"t4_detected\":1}"
-        }
-      ],
-      "ha": "binary_sensor.<id>_co_alarm -> ON"
-    },
-    {
-      "id": "panic",
-      "label": "Long-press the panic pad",
-      "blurb": "A silent panic event is signed into the witness chain \u2014 no LED, no beep in the room.",
-      "event": "silent_panic",
-      "serial": "witness record: silent_panic (signed)",
-      "mqtt": [
+          "set": {
+            "acoustic_event": "co_alarm_t4"
+          },
+          "advance": [
+            "t4_detected"
+          ],
+          "payload": "{\"acoustic_event\":\"co_alarm_t4\",\"mic_muted\":false,\"t3_detected\":0,\"t4_detected\":1,\"knock_detected\":0,\"doorbell_detected\":0,\"glass_break_detected\":0,\"i2s_read_errors\":0}"
+        },
         {
-          "suffix": "events",
-          "payload": "{\"event_type\":\"silent_panic\",\"signed\":true}"
+          "suffix": "counts",
+          "advance": [
+            "total"
+          ],
+          "set": {},
+          "payload": "{\"v\":1,\"total\":313,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
         },
         {
           "suffix": "chain",
-          "payload": "{\"length\":+1}"
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":313,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
         }
-      ]
+      ],
+      "ha": "binary_sensor.<id>_co_alarm -> ON"
     },
     {
       "id": "mute",
@@ -983,7 +1109,25 @@
       "mqtt": [
         {
           "suffix": "mic/state",
-          "payload": "\"muted\""
+          "payload": "muted"
+        },
+        {
+          "suffix": "counts",
+          "advance": [
+            "total"
+          ],
+          "set": {},
+          "payload": "{\"v\":1,\"total\":313,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        },
+        {
+          "suffix": "chain",
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":313,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
         }
       ],
       "ha": "switch.<id>_mic_mute -> ON"

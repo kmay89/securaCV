@@ -80,8 +80,10 @@ const KEY = testKey();
 // ("any" where the product parses either). pins: [file, literal] pairs that
 // make the spelling the source's, not this file's belief.
 const PAYLOAD = /^\.mqtt\.topics\[\d+\]\.payload$/;
-// The Hub page's "Meet the fleet" wire lines are the WAP's payloads (A27).
-const WAP_WIRE = /^(?:\.mqtt\.topics\[\d+\]\.payload|\.terminal\.chapters\[\d+\]\.steps\[\d+\]\.out\[\d+\])$/;
+// The Hub page's "Meet the fleet" wire lines are the WAP's payloads (A27),
+// and so are a sandbox scene's publishes (A30: each is a topic's example with
+// the scene's fields laid over it).
+const WAP_WIRE = /^(?:\.mqtt\.topics\[\d+\]\.payload|\.sandbox\[\d+\]\.mqtt\[\d+\]\.payload|\.terminal\.chapters\[\d+\]\.steps\[\d+\]\.out\[\d+\])$/;
 const WAP_PAGES = ["wap.json", "homeassistant.json"];
 const VISION_PANE = /^\.mqtt\.pane\.(?:online\[\d+\]|events)\.payload$/;
 const RULES = [
@@ -116,7 +118,7 @@ const RULES = [
     ],
   },
   {
-    page: "sense.json", where: /^(?:\.mqtt\.topics\[\d+\]\.payload|\.serial\.boot\[\d+\]\.text|\.device\.fp_example)$/,
+    page: "sense.json", where: /^(?:\.mqtt\.topics\[\d+\]\.payload|\.sandbox\[\d+\]\.mqtt\[\d+\]\.payload|\.serial\.boot\[\d+\]\.text|\.device\.fp_example)$/,
     labels: ["fp", "fp_example"], len: 16, kase: "lower",
     what: "the Sense's fp (witness.cpp fp_hex)",
     pins: [
@@ -292,7 +294,9 @@ test("the WAP page's fingerprint is the repo test key's, as the firmware test an
 
   const wap = EXAMPLES.filter((e) => e.page === "wap.json" && !e.value.includes("…"));
   const fps = wap.filter((e) => e.label === "fp");
-  assert.strictEqual(fps.length, 3, "events, chain and counts each carry an fp");
+  assert.strictEqual(fps.filter((e) => e.path.startsWith(".mqtt.topics")).length, 3,
+    "events, chain and counts each carry an fp");
+  assert.ok(fps.filter((e) => e.path.startsWith(".sandbox")).length >= 3, "and so do the sandbox's signed publishes (A30)");
   for (const e of fps) assert.strictEqual(e.value, fp, `${e.path}: not the test key's fp`);
   const boot = wap.filter((e) => e.label === "fingerprint");
   assert.strictEqual(boot.length, 1, "one [PROV] fingerprint line");
@@ -609,9 +613,10 @@ test("every mDNS template names the host its firmware composes, never one from t
 // v, alg, fp and sig (a sig or hash elided with "…" is still an example of
 // the field). Two kinds of string are examples: a topic-contract entry (an
 // object with that suffix and a payload) and a wire line ("<prefix>/<id>/
-// chain {…}"). Not covered: a sandbox scene's publishes (`.sandbox[…]`),
-// which spell only the fields the scene changes ({"length":+1} is not even
-// JSON) — an open item of their own.
+// chain {…}"). A sandbox scene's publishes are examples too (sweep A30):
+// they used to spell only the fields the scene changed ({"length":+1} is not
+// even JSON) and were exempt; each is now the topic's example with the
+// scene's fields laid over it, and held like any other.
 const SIGNED_TOPIC = /^(?:events|chain|counts)$/;
 const ENVELOPE_PINS = [
   ["firmware/common/identity/device_signature.h", "constexpr int         SCHEMA_V    = 1;"],
@@ -647,8 +652,7 @@ function signedExamples() {
   const out = [];
   for (const page of PAGES) {
     for (const [path, o] of objects(DATA[page], ""))
-      if (typeof o.suffix === "string" && SIGNED_TOPIC.test(o.suffix) && typeof o.payload === "string" &&
-          !path.startsWith(".sandbox"))
+      if (typeof o.suffix === "string" && SIGNED_TOPIC.test(o.suffix) && typeof o.payload === "string")
         out.push({ page, path, suffix: o.suffix, payload: o.payload });
     for (const [path, s] of strings(DATA[page], "")) {
       const m = s.match(/^[a-z]+\/[^/\s]+\/(events|chain|counts) (\{.*\})$/);
@@ -759,7 +763,8 @@ test("the Vision pane's fp and key are the test key's (canary-vision derives its
 // may only interpolate one from the page's generated data, `${data.<path>}`,
 // and only a <path> that resolves, in the page's devices/<page>.json, to an
 // example the JSON walk above already holds to exactly one rule
-// (sense-ui.js's `"fp":"${data.device.fp_example}"` is one). A literal, a
+// (sense-ui.js's `"fp":"${data.device.fp_example}"` was one, until sweep A31
+// built that row from sense.json's events example). A literal, a
 // bare "…" or any other expression fails: move the payload into the
 // generator, where a rule can read it. A plain declaration
 // (`const MQTT_FP_PLACEHOLDER = "AA:BB:CC:…"`, the broker certificate's
@@ -877,7 +882,11 @@ test("no page script spells an fp or key example of its own", () => {
     // a forgery still has the wire's shape, so the drill fails where it says
     assert.strictEqual(shapeProblem(x.value, RULES[0]), null, `${x.file}: the forged fp is not shaped as an envelope fp`);
   }
-  // the walk reads the scripts at all: sense-ui.js's interpolated fp is in it
-  assert.ok(found.some((e) => e.file.endsWith("/sense-ui.js") && e.value === "${data.device.fp_example}"),
+  // the walk reads the scripts at all: guides.js's forged fp is in it (the
+  // exemption's one hit, above), and so would a payload field a script wrote
+  assert.ok(found.some((e) => e.file.endsWith("/guides.js") && e.label === "fp"),
     "the script walk found nothing (its match broke?)");
+  // sense-ui.js writes no fp of its own any more: its events and chain rows
+  // are sense.json's examples with the lab's values laid over (sweep A31)
+  assert.ok(!found.some((e) => e.file.endsWith("/sense-ui.js")), "sense-ui.js spells an fp field again");
 });

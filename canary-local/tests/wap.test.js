@@ -251,6 +251,113 @@ test("sandbox scenarios only publish to real topics", () => {
       assert.ok(suffixes.has(pub.suffix), "sandbox publishes unknown topic: " + pub.suffix);
 });
 
+// Sweep A30: a scene used to publish only the fields it changed — an events
+// row with no v/alg/fp/sig, and chain {"length":+1}, which is not JSON and
+// replaced the retained chain row — under a pane that says its payloads are
+// csi_mqtt.cpp's exact strings. Each publish is now the topic's example with
+// the scene's fields laid over it, and the page lays them over whatever the
+// topic says by then.
+test("every sandbox publish is its topic's payload with the scene's fields laid over it", async () => {
+  const { scenePayload } = await import("../assets/wap-ui.js");
+  const example = Object.fromEntries(data.mqtt.topics.map((t) => [t.suffix, t.payload]));
+  const want = firmwareKeys();
+  let n = 0;
+  for (const sc of data.sandbox) {
+    for (const pub of sc.mqtt) {
+      const at = `${sc.id} → ${pub.suffix}`;
+      if (!pub.set && !pub.advance) {
+        // publish_mic_state writes the bare word, not a JSON string
+        assert.strictEqual(pub.suffix, "mic/state", at);
+        assert.ok(["muted", "live"].includes(pub.payload), `${at}: ${pub.payload}`);
+        continue;
+      }
+      const base = JSON.parse(example[pub.suffix]);
+      const got = JSON.parse(pub.payload);
+      assert.deepStrictEqual(Object.keys(got), Object.keys(base), `${at}: every key of the topic, in its order`);
+      assert.deepStrictEqual(Object.keys(got), want[pub.suffix].filter((k) => !(OPTIONAL_KEYS[pub.suffix] || []).includes(k) || k in got),
+        `${at}: the firmware's keys`);
+      // the first click is the overlay on the example; the page's own function agrees
+      assert.strictEqual(scenePayload(base, pub), pub.payload, `${at}: wap.json and scenePayload disagree`);
+      for (const k of pub.advance) assert.strictEqual(got[k], base[k] + 1, `${at}: ${k} moves on by one`);
+      for (const [k, v] of Object.entries(pub.set)) assert.deepStrictEqual(got[k], v, `${at}: ${k}`);
+      n++;
+    }
+  }
+  assert.ok(n >= 15, "the scenes' publishes went missing");
+});
+
+test("every sandbox events row is one a WAP module commits; the WAP has no panic pad", () => {
+  const presence = read(join(FW, "core_presence.cpp"));
+  const states = presence.match(/const char\* STATE_NAMES\[STATE__COUNT\] = \{\s*([^}]*)\}/)[1].match(/"([a-z]+)"/g)
+    .map((x) => x.slice(1, -1));
+  const rows = data.sandbox.flatMap((sc) => sc.mqtt.filter((p) => p.suffix === "events").map((p) => JSON.parse(p.payload)));
+  assert.ok(rows.length >= 3);
+  for (const r of rows) {
+    assert.deepStrictEqual([r.module, r.type, r.category, r.privacy], ["core.presence", "presence_changed", "event", "p0"]);
+    assert.ok(states.includes(r.state) && r.event_type === r.state, r.state);
+  }
+  // a committed row is a witness record: counts and chain move together, in
+  // the order the loop publishes them
+  assert.ok(ino.includes("      csi_mqtt::publish_counts(g_health.records_created);\n" +
+                         "      csi_mqtt::publish_chain(g_device.seq, g_device.chain_head);"));
+  for (const sc of data.sandbox) {
+    const order = sc.mqtt.map((p) => p.suffix);
+    assert.ok(order.indexOf("counts") >= 0 && order.indexOf("counts") + 1 === order.indexOf("chain"), sc.id + ": " + order);
+  }
+  // silent_panic is firmware/canary's touch pad (securacv_touch); no WAP source emits it
+  const sources = ["canary_wap.ino", "csi_mqtt.cpp", "core_presence.cpp", "acoustic_events_module.cpp",
+    "tamper_events_module.cpp"].map((f) => read(join(FW, f))).join("\n");
+  assert.ok(!sources.includes("silent_panic"));
+  assert.ok(!JSON.stringify(data.sandbox).includes("silent_panic"), "a scene publishes an event no WAP emits");
+});
+
+test("the MQTT pane publishes each scene over the topic as it stands, retained by the topic's own flag", async () => {
+  const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
+  await withFakeDom(async () => {
+    const { buildMqtt } = await import("../assets/wap-ui.js");
+    const bus = fakeBus();
+    const wrap = buildMqtt(data, bus);
+    const id = data.device.id_example;
+    const topic = (sfx) => `${data.mqtt.prefix}/${id}/${sfx}`;
+    const stream = () => wrap.all("wap-mqtt-ev").map((r) => [r.children[0].textContent, r.children[1].textContent]);
+    const retained = () => Object.fromEntries(wrap.all("wap-mqtt-row").map((r) => [r.children[0].textContent, r.children[1].textContent]));
+    const scene = (sid) => data.sandbox.find((s) => s.id === sid);
+    const ex = (sfx) => JSON.parse(data.mqtt.topics.find((t) => t.suffix === sfx).payload);
+
+    bus.emit("event", scene("wave"));
+    // the first click is wap.json's payload, verbatim
+    const [ev1] = stream().filter(([t]) => t === topic("events"));
+    assert.strictEqual(ev1[1], scene("wave").mqtt[0].payload);
+    assert.strictEqual(retained()[topic("chain")], scene("wave").mqtt[2].payload, "chain is retained, whole");
+    assert.ok(!(topic("events") in retained()), "events is not retained");
+
+    bus.emit("event", scene("leave"));
+    const evs = stream().filter(([t]) => t === topic("events")).map(([, p]) => JSON.parse(p));
+    assert.strictEqual(evs.length, 2);
+    assert.strictEqual(evs[0].event_id, ex("events").event_id + 2, "the next committed row takes the next id");
+    assert.strictEqual(evs[0].state, "empty");
+    assert.strictEqual(evs[0].motion, 2, "leave's own scores, not wave's");
+    assert.deepStrictEqual(Object.keys(evs[0]), Object.keys(ex("events")));
+    const chain = JSON.parse(retained()[topic("chain")]);
+    const counts = JSON.parse(retained()[topic("counts")]);
+    assert.strictEqual(chain.length, ex("chain").length + 2);
+    assert.strictEqual(counts.total, ex("counts").total + 2);
+    assert.strictEqual(chain.latest_hash, "…", "a moved head is not the example's hash");
+    for (const k of ["v", "alg", "fp", "sig"]) assert.strictEqual(chain[k], ex("chain")[k], "the envelope rides along");
+
+    bus.emit("event", scene("smoke"));
+    bus.emit("event", scene("smoke"));
+    const sensing = JSON.parse(retained()[topic("sensing")]);
+    assert.strictEqual(sensing.acoustic_event, "smoke_alarm_t3");
+    assert.strictEqual(sensing.t3_detected, ex("sensing").t3_detected + 2, "t3_detected counts detections");
+    assert.deepStrictEqual(Object.keys(sensing), Object.keys(ex("sensing")));
+
+    bus.emit("event", scene("mute"));
+    assert.strictEqual(retained()[topic("mic/state")], "muted", "publish_mic_state's bare word");
+    assert.strictEqual(JSON.parse(retained()[topic("chain")]).length, ex("chain").length + 5, "a mute is a witness record too");
+  });
+});
+
 // ── 8. DOM-free cores (wap-ui.js) ──────────────────────────────────────────
 test("withId substitutes the device id into templates", async () => {
   const { withId } = await import("../assets/wap-ui.js");

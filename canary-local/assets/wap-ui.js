@@ -71,8 +71,25 @@ export function pillForEvent(ev) {
   return {
     motion: "Motion", present: "Presence", subtle: "Presence",
     empty: "Quiet", quiet: "Quiet", active: "Active",
-    smoke_alarm_t3: "Motion", co_alarm_t4: "Motion", silent_panic: "Presence",
+    smoke_alarm_t3: "Motion", co_alarm_t4: "Motion",
   }[ev] || null;
+}
+
+// A sandbox publish as csi_mqtt.cpp writes it (sweep A30): the topic's
+// payload as it stands now (the retained row, or the last event) with the
+// scene's fields laid over it and its counters moved on, every key kept in
+// the firmware's order. wap.json's `payload` is the first click's (laid over
+// the topic's example); this is the same overlay on whatever the topic says
+// by then, so a second click takes the next event id and chain length. A
+// publish with no fields to lay over (mic/state's bare word) goes out as is.
+export function scenePayload(current, pub) {
+  if (!pub.set && !pub.advance) return pub.payload;
+  const out = {};
+  for (const k of Object.keys(current)) {
+    out[k] = k in (pub.set || {}) ? pub.set[k]
+      : (pub.advance || []).includes(k) ? current[k] + 1 : current[k];
+  }
+  return JSON.stringify(out);
 }
 
 // ── the cable's spine (DOM-free; pinned in tests/wap.test.js) ─────────────
@@ -1049,12 +1066,18 @@ export function buildMqtt(data, bus) {
       pushStream(withId(m.discovery.prefix + "/…/config", id), m.discovery.counts.entities + " entities announced (retained)", "disc");
     })();
   });
+  // What each topic says now: its wap.json example until a scene moves it.
+  const byTopic = Object.fromEntries(m.topics.map((t) => [t.suffix, t]));
+  const now = {};
+  for (const t of m.topics) if (!t.payload.startsWith('"')) now[t.suffix] = JSON.parse(t.payload);
   bus.on("event", (e) => {
     for (const pub of e.mqtt || []) {
       const topic = withId(m.topic_pattern.replace("<suffix>", pub.suffix), id);
-      const retain = pub.suffix !== "events";
-      if (retain) { mqttApply(store, { topic, payload: pub.payload, retain: true }); renderRetained(); }
-      pushStream(topic, pub.payload, retain ? "" : "live");
+      const payload = scenePayload(now[pub.suffix], pub);
+      if (pub.set || pub.advance) now[pub.suffix] = JSON.parse(payload);
+      const retain = !!(byTopic[pub.suffix] && byTopic[pub.suffix].retained);
+      if (retain) { mqttApply(store, { topic, payload, retain: true }); renderRetained(); }
+      pushStream(topic, payload, retain ? "" : "live");
     }
   });
   return wrap;

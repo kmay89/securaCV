@@ -44,6 +44,26 @@ const alive = (node) => document.body.contains(node);
 
 // ── DOM-free cores (exported; pinned in tests/sense.test.js) ──────────────
 
+// A witnessed transition as main.cpp's record_event_now publishes it (sweep
+// A31): sense.json's events example, every key in the firmware's order with
+// the v/alg/fp/sig envelope, the lab's own fields laid over it, and seq the
+// next chain length (chain_length() + 1). The pane used to hand-write this
+// row with no v, alg, sig or bucket_uptime_s.
+export function senseEventPayload(example, e, seq) {
+  const over = { event: e.event, seq, presence: e.presence, occupants: e.occupants, range: e.range };
+  const out = {};
+  for (const k of Object.keys(example)) out[k] = k in over ? over[k] : example[k];
+  return out;
+}
+
+// The chain head record_event_now republishes right after the event: the
+// chain example at the event's seq. Its new hash is the device's, which this
+// page cannot know, so it is elided whole once it moves; the envelope (fp
+// included, which HA's signature.py needs) rides along.
+export function senseChainPayload(chain, seq) {
+  return { ...chain, length: seq, latest_hash: "…" };
+}
+
 // Flatten the serial data into one ordered list of {cls,text} console lines:
 // the banner scenes, the tagged net bring-up log, then the ready scene —
 // the exact order main.cpp's setup() prints them. A boot line with no tag is
@@ -693,7 +713,12 @@ export function buildMqtt(data, bus) {
   }
   renderRetained();
 
-  let chainLen = 313;
+  // Every payload is sense.json's (gen_sense.py), keyed as mqtt_mgr.cpp and
+  // main.cpp publish it; the lab and the sandbox only lay their values over.
+  const example = (sfx) => JSON.parse(m.topics.find((t) => t.suffix === sfx).payload);
+  const eventExample = example("events");
+  let chain = example("chain");
+  const retainedTopic = (sfx) => !!(m.topics.find((t) => t.suffix === sfx) || {}).retained;
   bus.on("mqtt", () => {
     const seq = [];
     for (const t of m.topics) {
@@ -709,19 +734,20 @@ export function buildMqtt(data, bus) {
     })();
   });
   bus.on("labevent", (e) => {
-    chainLen += 1;
+    // record_event_now: the event at seq = chain length + 1, then the chain
+    // head at that length
+    const seq = chain.length + 1;
     const evTopic = withId(m.topic_pattern.replace("<suffix>", "events"), id);
-    pushStream(evTopic,
-      `{"event":"${e.event}","presence":"${e.presence}","occupants":"${e.occupants}","range":"${e.range}","seq":${chainLen},"signed":true,"fp":"${data.device.fp_example}"}`,
-      "live");
+    pushStream(evTopic, JSON.stringify(senseEventPayload(eventExample, e, seq)), "live");
+    chain = senseChainPayload(chain, seq);
     const chTopic = withId(m.topic_pattern.replace("<suffix>", "chain"), id);
-    mqttApply(store, { topic: chTopic, payload: `{"v":1,"length":${chainLen},"latest_hash":"…","alg":"ed25519","sig":"…"}`, retain: true });
+    mqttApply(store, { topic: chTopic, payload: JSON.stringify(chain), retain: true });
     renderRetained();
   });
   bus.on("sandboxpub", ({ pubs }) => {
     for (const pub of pubs || []) {
       const topic = withId(m.topic_pattern.replace("<suffix>", pub.suffix), id);
-      const retain = pub.suffix !== "events" && pub.suffix !== "identify";
+      const retain = retainedTopic(pub.suffix);
       if (retain) { mqttApply(store, { topic, payload: pub.payload, retain: true }); renderRetained(); }
       pushStream(topic, pub.payload, retain ? "" : "live");
     }

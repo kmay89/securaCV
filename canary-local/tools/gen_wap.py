@@ -792,41 +792,101 @@ SENSING = {
 # 8. sandbox scenarios (the fun bit) — every effect traces to a real signal
 # --------------------------------------------------------------------------- #
 
+# A scene's publishes are the firmware's whole payloads (sweep A30): each one
+# is the topic's example above with the scene's fields laid over it (`set`)
+# and its counters moved on (`advance`), key order kept, the way the Vision
+# pane's vizEventPayload lays the sandbox over its example (A26). `payload` is
+# what the first click publishes; wap-ui.js's scenePayload lays the same
+# fields over the topic's payload as it then stands, so a second click takes
+# the next event id and the next chain length. Before this a scene published
+# only the fields it changed: an events row with no envelope, and chain
+# {"length":+1}, which is not JSON, replacing the retained chain row.
+#
+# A committed row and every acoustic or mute detection create a witness
+# record (csi_event_commit_witness and create_witness_record), and the loop
+# publishes counts then chain whenever records_created moves, so every scene
+# advances both. The chain's head moves with it, and the page cannot know
+# the new hash, so it is elided whole once it moves.
+must(INO, "      csi_mqtt::publish_counts(g_health.records_created);\n"
+          "      csi_mqtt::publish_chain(g_device.seq, g_device.chain_head);", "counts then chain, together")
+must(INO, "create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);\n        }\n"
+          "        const bool life_safety =", "an acoustic detection is a witness record")
+must(INO, 'cb.write_text("event_type"); cb.write_text("mic_mute");', "a mute is a witness record")
+must(FW / "securacv_audio.cpp", 'case AUDIO_EVENT_T3_SMOKE_ALARM: return "smoke_alarm_t3";', "acoustic_event word (T3)")
+must(FW / "securacv_audio.cpp", 'case AUDIO_EVENT_T4_CO_ALARM:    return "co_alarm_t4";', "acoustic_event word (T4)")
+TOPIC_PAYLOAD = {t["suffix"]: t["payload"] for t in TOPICS}
+RECORD = [{"suffix": "counts", "advance": ["total"]},
+          {"suffix": "chain", "set": {"latest_hash": "…"}, "advance": ["length"]}]
+
+
+def presence_row(state, motion, breathing):
+    return {"suffix": "events", "advance": ["event_id"],
+            "set": {"event_type": state, "confidence": "tentative", "module": "core.presence",
+                    "type": "presence_changed", "category": "event", "privacy": "p0", "state": state,
+                    "motion": motion, "breathing": breathing, "bpm": 0}}
+
+
+def lay_over(payload: str, set_: dict, advance: list, label: str) -> str:
+    obj = json.loads(payload)
+    for k in list(set_) + list(advance):
+        if k not in obj:
+            die(f"sandbox {label}: {k!r} is not a key of the topic's payload {list(obj)}")
+    for k in advance:
+        if not isinstance(obj[k], int) or isinstance(obj[k], bool):
+            die(f"sandbox {label}: {k!r} is not a counter")
+        obj[k] += 1
+    obj.update(set_)
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
 SANDBOX = [
     {"id": "wave", "label": "Wave your arm",
      "blurb": "Room-scale movement lights the CSI motion gauge.",
      "pill": "Motion", "event": "motion", "serial": "witness record: state=motion",
-     "mqtt": [{"suffix": "events", "payload": '{"event_type":"motion","state":"motion","motion":74}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}]},
+     "mqtt": [presence_row("active", 78, 8)] + RECORD},
     {"id": "sit", "label": "Sit still and breathe",
      "blurb": "Micro-motion settles the device into Presence; the breathing band lights up.",
      "pill": "Presence", "event": "subtle", "serial": "witness record: state=subtle",
-     "mqtt": [{"suffix": "events", "payload": '{"event_type":"subtle","state":"subtle","breathing":11,"bpm":14}'}]},
+     "mqtt": [presence_row("quiet", 12, 41)] + RECORD},
     {"id": "leave", "label": "Leave the room",
      "blurb": "The field goes still; presence clears to Quiet.",
      "pill": "Quiet", "event": "empty", "serial": "witness record: state=empty",
-     "mqtt": [{"suffix": "events", "payload": '{"event_type":"empty","state":"empty"}'}]},
+     "mqtt": [presence_row("empty", 2, 3)] + RECORD},
     {"id": "smoke", "label": "Fire a T3 smoke cadence",
      "blurb": "The mic matches the NFPA-72 smoke pattern; the Acoustic card turns red and a signed sensing event fires an HA notification.",
      "pill": "Motion", "event": "smoke_alarm_t3", "serial": "acoustic: matched smoke_alarm_t3",
-     "mqtt": [{"suffix": "sensing", "payload": '{"acoustic_event":"smoke_alarm_t3","t3_detected":1}'}],
+     "mqtt": [{"suffix": "sensing", "set": {"acoustic_event": "smoke_alarm_t3"}, "advance": ["t3_detected"]}] + RECORD,
      "ha": "binary_sensor.<id>_smoke_alarm -> ON"},
     {"id": "co", "label": "Fire a T4 CO cadence",
      "blurb": "The mic matches the UL-2034 CO pattern.",
      "event": "co_alarm_t4", "serial": "acoustic: matched co_alarm_t4",
-     "mqtt": [{"suffix": "sensing", "payload": '{"acoustic_event":"co_alarm_t4","t4_detected":1}'}],
+     "mqtt": [{"suffix": "sensing", "set": {"acoustic_event": "co_alarm_t4"}, "advance": ["t4_detected"]}] + RECORD,
      "ha": "binary_sensor.<id>_co_alarm -> ON"},
-    {"id": "panic", "label": "Long-press the panic pad",
-     "blurb": "A silent panic event is signed into the witness chain — no LED, no beep in the room.",
-     "event": "silent_panic", "serial": "witness record: silent_panic (signed)",
-     "mqtt": [{"suffix": "events", "payload": '{"event_type":"silent_panic","signed":true}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}]},
     {"id": "mute", "label": "Mute the microphone",
      "blurb": "POST /api/audio/mute uninstalls the I2S driver and tri-states the mic GPIOs; the switch signs the change into the chain.",
      "event": "mic_mute", "serial": "audio: I2S driver uninstalled (muted)",
-     "mqtt": [{"suffix": "mic/state", "payload": '"muted"'}],
+     # publish_mic_state writes the bare word, no quotes
+     "mqtt": [{"suffix": "mic/state", "payload": "muted"}] + RECORD,
      "ha": "switch.<id>_mic_mute -> ON"},
 ]
+# The canary-wap has no touch pad: the silent-panic scene this page used to
+# stage ({"event_type":"silent_panic"}) is firmware/canary's (securacv_touch),
+# and no WAP module emits it, so there is no payload of the WAP's to lay it
+# over. It is gone rather than dressed in a WAP envelope.
+for sc in SANDBOX:
+    for pub in sc["mqtt"]:
+        label = f"{sc['id']} {pub['suffix']}"
+        if "set" in pub or "advance" in pub:
+            pub.setdefault("set", {})
+            pub.setdefault("advance", [])
+            pub["payload"] = lay_over(TOPIC_PAYLOAD[pub["suffix"]], pub["set"], pub["advance"], label)
+            keyed_as(pub["payload"], KEYS[pub["suffix"]], label, OPTIONAL.get(pub["suffix"], ()))
+            if pub["suffix"] == "events":
+                check_event(pub["payload"], f"sandbox {label}")
+        elif pub["suffix"] != "mic/state" or pub["payload"] not in ("muted", "live"):
+            die(f"sandbox {label}: a publish with no fields to lay over must be a bare word the firmware writes")
+for word in ("smoke_alarm_t3", "co_alarm_t4"):
+    must(CSI_MQTT_CPP, f"value_json.acoustic_event == '{word}'", f"HA reads {word}")
 
 # --------------------------------------------------------------------------- #
 # 8.5 flashing — the bench skills (parsed from the firmware README + build

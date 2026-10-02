@@ -449,7 +449,8 @@
         "retained": true,
         "cadence": "on change + heartbeat",
         "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":true,\"presence_state\":\"present\",\"occupants\":\"1\",\"range\":\"mid\",\"radar_ok\":true,\"frame_errors\":0,\"lux\":142.5,\"last_event\":\"presence_detected\",\"uptime_s\":312,\"ts_ms\":312400}",
-        "wellbeing": "{\u2026,\"breathing_locked\":true,\"breath_bpm\":14,\"heart_bpm\":68,\u2026}  (BPM fields null unless the lock holds \u2014 stale vitals never freeze in HA)"
+        "wellbeing": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":true,\"presence_state\":\"present\",\"occupants\":\"1\",\"range\":\"near\",\"radar_ok\":true,\"frame_errors\":0,\"lux\":142.5,\"breathing_locked\":true,\"breath_bpm\":14,\"heart_bpm\":68,\"last_event\":\"presence_detected\",\"uptime_s\":312,\"ts_ms\":312400}",
+        "wellbeing_note": "BPM fields are null unless the lock holds \u2014 stale vitals never freeze in HA"
       },
       {
         "suffix": "status",
@@ -1053,15 +1054,38 @@
       "mqtt": [
         {
           "suffix": "events",
-          "payload": "{\"event\":\"presence_detected\",\"presence\":\"present\",\"occupants\":\"1\",\"range\":\"mid\",\"signed\":true}"
+          "advance": [
+            "seq"
+          ],
+          "set": {
+            "event": "presence_detected",
+            "presence": "present",
+            "occupants": "1",
+            "range": "mid"
+          },
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"event\":\"presence_detected\",\"seq\":314,\"bucket_uptime_s\":0,\"presence\":\"present\",\"occupants\":\"1\",\"range\":\"mid\",\"signed\":true,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"b7e2c49a11f03d5c\",\"sig\":\"\u2026\"}"
         },
         {
           "suffix": "state",
-          "payload": "{\"presence\":true,\"occupants\":\"1\",\"range\":\"mid\"}"
+          "set": {
+            "presence": true,
+            "presence_state": "present",
+            "occupants": "1",
+            "range": "mid",
+            "last_event": "presence_detected"
+          },
+          "advance": [],
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":true,\"presence_state\":\"present\",\"occupants\":\"1\",\"range\":\"mid\",\"radar_ok\":true,\"frame_errors\":0,\"lux\":142.5,\"last_event\":\"presence_detected\",\"uptime_s\":312,\"ts_ms\":312400}"
         },
         {
           "suffix": "chain",
-          "payload": "{\"length\":+1}"
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":314,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"b7e2c49a11f03d5c\",\"sig\":\"\u2026\"}"
         }
       ],
       "ha": "binary_sensor.<id>_presence -> ON"
@@ -1077,7 +1101,13 @@
       "mqtt": [
         {
           "suffix": "state",
-          "payload": "{\"presence\":true,\"range\":\"near\"}"
+          "set": {
+            "presence": true,
+            "presence_state": "present",
+            "range": "near"
+          },
+          "advance": [],
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":true,\"presence_state\":\"present\",\"occupants\":\"1\",\"range\":\"near\",\"radar_ok\":true,\"frame_errors\":0,\"lux\":142.5,\"last_event\":\"presence_detected\",\"uptime_s\":312,\"ts_ms\":312400}"
         }
       ],
       "ha": "sensor.<id>_range_band: far \u2192 mid \u2192 near"
@@ -1093,7 +1123,17 @@
       "mqtt": [
         {
           "suffix": "state",
-          "payload": "{\"presence\":true,\"breathing_locked\":true,\"breath_bpm\":14,\"heart_bpm\":68}"
+          "set": {
+            "presence": true,
+            "presence_state": "present",
+            "occupants": "1",
+            "breathing_locked": true,
+            "breath_bpm": 14,
+            "heart_bpm": 68
+          },
+          "base": "wellbeing",
+          "advance": [],
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":true,\"presence_state\":\"present\",\"occupants\":\"1\",\"range\":\"near\",\"radar_ok\":true,\"frame_errors\":0,\"lux\":142.5,\"breathing_locked\":true,\"breath_bpm\":14,\"heart_bpm\":68,\"last_event\":\"presence_detected\",\"uptime_s\":312,\"ts_ms\":312400}"
         }
       ],
       "ha": "binary_sensor.<id>_breathing -> ON \u00b7 sensors read 14 / 68 bpm"
@@ -1109,15 +1149,41 @@
       "mqtt": [
         {
           "suffix": "events",
-          "payload": "{\"event\":\"occupancy_changed\",\"occupants\":\"2+\",\"signed\":true}"
+          "advance": [
+            "seq"
+          ],
+          "set": {
+            "event": "occupancy_changed",
+            "presence": "present",
+            "occupants": "2+",
+            "range": "near"
+          },
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"event\":\"occupancy_changed\",\"seq\":314,\"bucket_uptime_s\":0,\"presence\":\"present\",\"occupants\":\"2+\",\"range\":\"near\",\"signed\":true,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"b7e2c49a11f03d5c\",\"sig\":\"\u2026\"}"
         },
         {
           "suffix": "state",
-          "payload": "{\"occupants\":\"2+\",\"breathing_locked\":false,\"breath_bpm\":null,\"heart_bpm\":null}"
+          "set": {
+            "presence": true,
+            "presence_state": "present",
+            "occupants": "2+",
+            "breathing_locked": false,
+            "breath_bpm": null,
+            "heart_bpm": null,
+            "last_event": "occupancy_changed"
+          },
+          "base": "wellbeing",
+          "advance": [],
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":true,\"presence_state\":\"present\",\"occupants\":\"2+\",\"range\":\"near\",\"radar_ok\":true,\"frame_errors\":0,\"lux\":142.5,\"breathing_locked\":false,\"breath_bpm\":null,\"heart_bpm\":null,\"last_event\":\"occupancy_changed\",\"uptime_s\":312,\"ts_ms\":312400}"
         },
         {
           "suffix": "chain",
-          "payload": "{\"length\":+1}"
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":314,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"b7e2c49a11f03d5c\",\"sig\":\"\u2026\"}"
         }
       ],
       "ha": "sensor.<id>_occupants -> 2+ \u00b7 BPM entities -> unknown"
@@ -1133,15 +1199,38 @@
       "mqtt": [
         {
           "suffix": "events",
-          "payload": "{\"event\":\"presence_cleared\",\"presence\":\"clear\",\"occupants\":\"0\",\"signed\":true}"
+          "advance": [
+            "seq"
+          ],
+          "set": {
+            "event": "presence_cleared",
+            "presence": "clear",
+            "occupants": "0",
+            "range": "unknown"
+          },
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"event\":\"presence_cleared\",\"seq\":314,\"bucket_uptime_s\":0,\"presence\":\"clear\",\"occupants\":\"0\",\"range\":\"unknown\",\"signed\":true,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"b7e2c49a11f03d5c\",\"sig\":\"\u2026\"}"
         },
         {
           "suffix": "state",
-          "payload": "{\"presence\":false,\"occupants\":\"0\"}"
+          "set": {
+            "presence": false,
+            "presence_state": "clear",
+            "occupants": "0",
+            "range": "unknown",
+            "last_event": "presence_cleared"
+          },
+          "advance": [],
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":false,\"presence_state\":\"clear\",\"occupants\":\"0\",\"range\":\"unknown\",\"radar_ok\":true,\"frame_errors\":0,\"lux\":142.5,\"last_event\":\"presence_cleared\",\"uptime_s\":312,\"ts_ms\":312400}"
         },
         {
           "suffix": "chain",
-          "payload": "{\"length\":+1}"
+          "set": {
+            "latest_hash": "\u2026"
+          },
+          "advance": [
+            "length"
+          ],
+          "payload": "{\"v\":1,\"length\":314,\"latest_hash\":\"\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"b7e2c49a11f03d5c\",\"sig\":\"\u2026\"}"
         }
       ],
       "ha": "binary_sensor.<id>_presence -> OFF"
@@ -1157,7 +1246,13 @@
       "mqtt": [
         {
           "suffix": "state",
-          "payload": "{\"presence\":true,\"lux\":1.0}"
+          "set": {
+            "presence": true,
+            "presence_state": "present",
+            "lux": 1.0
+          },
+          "advance": [],
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":true,\"presence_state\":\"present\",\"occupants\":\"1\",\"range\":\"mid\",\"radar_ok\":true,\"frame_errors\":0,\"lux\":1.0,\"last_event\":\"presence_detected\",\"uptime_s\":312,\"ts_ms\":312400}"
         }
       ],
       "ha": "lights-out + presence \u2014 the tamper automation's trigger pair"
@@ -1173,7 +1268,15 @@
       "mqtt": [
         {
           "suffix": "state",
-          "payload": "{\"radar_ok\":false,\"presence\":false}"
+          "set": {
+            "presence": false,
+            "presence_state": "unknown",
+            "occupants": "0",
+            "range": "unknown",
+            "radar_ok": false
+          },
+          "advance": [],
+          "payload": "{\"device_id\":\"canary_sense_001\",\"device_type\":\"canary-sense\",\"presence\":false,\"presence_state\":\"unknown\",\"occupants\":\"0\",\"range\":\"unknown\",\"radar_ok\":false,\"frame_errors\":0,\"lux\":142.5,\"last_event\":\"presence_detected\",\"uptime_s\":312,\"ts_ms\":312400}"
         }
       ],
       "ha": "binary_sensor.<id>_radar_link -> ON (problem)"
@@ -1189,7 +1292,7 @@
       "mqtt": [
         {
           "suffix": "identify",
-          "payload": "\"on\""
+          "payload": "on"
         }
       ],
       "ha": "button.<id>_identify pressed"
