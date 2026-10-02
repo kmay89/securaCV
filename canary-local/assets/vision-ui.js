@@ -719,20 +719,35 @@ export function buildSerial(data, bus) {
 // example (every key, in the firmware's order, with the v/alg/fp/sig
 // envelope) with the sandbox's own values laid over it, and a reason, when
 // the event has one, right after its name, where the firmware puts it.
-export function vizEventPayload(example, name, snap, seq) {
+// Its clocks and coarse features are the sandbox's too (sweep A37), as the
+// firmware takes them from its FSM snapshot on the tick that emits the
+// event: presence_ms and dwell_ms from the firmware core's FSM, posture,
+// proximity, the person count's occupancy bucket and the occupied-cell mask
+// from its detection pipeline, ts_ms the sandbox clock (as the core saw it)
+// plus the pane's clock.t0_ms, and visit_ms the last stay, which the caller
+// latches at presence_ended (the core does not return it).
+export function vizEventPayload(example, name, snap, seq, clock = {}) {
   const bb = snap.sample.bbox || { x: 0, y: 0, w: 0, h: 0, score: 0 };
   const v = snap.sample.voxel || { r: -1, c: -1 };
   const present = !!snap.fsm.presence;
+  const ts = (clock.t0_ms || 0) + ((snap.t || 0) >>> 0);
+  const names = clock.occupancy || ["none", "one", "two", "several"];
+  const count = Math.max(0, snap.sample.person_count | 0);
   const over = {
     event: name, seq,
+    bucket_uptime_s: Math.floor(ts / 1000 / 600) * 600,
     presence: present ? "present" : "clear", occupants: present ? "1" : "0",
-    confidence: bb.score,
+    ts_ms: ts,
+    presence_ms: snap.fsm.presence_ms | 0,
+    dwell_ms: snap.fsm.dwell_ms | 0,
+    visit_ms: clock.visit_ms | 0,
+    confidence: snap.fsm.confidence != null ? snap.fsm.confidence : bb.score,
     voxel: { ...example.voxel, r: v.r, c: v.c },
     bbox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
-    // the sandbox has one box, so the occupied-cell mask is its cell's bit
-    // (types.h: bit r*cols + c); nobody in frame reads empty throughout
-    occ_mask: present && v.r >= 0 && v.c >= 0 ? 1 << (v.r * example.voxel.cols + v.c) : 0,
-    ...(present ? {} : { occupancy: "none", posture: "unknown", proximity: "unknown" }),
+    occupancy: names[Math.min(count, names.length - 1)],
+    posture: snap.sample.posture || "unknown",
+    proximity: snap.sample.proximity || "unknown",
+    occ_mask: snap.sample.voxel_mask >>> 0,
   };
   const out = {};
   for (const k of Object.keys(example)) {
@@ -783,6 +798,10 @@ export function buildMqtt(data, bus) {
   const live = { state: like("state"), chain: like("chain"), cfg: like("cfg/state") };
   const current = { state: live.state, chain: live.chain, "cfg/state": live.cfg };
   let seq = live.chain.length;
+  // the sandbox clock's zero sits at the rows' own ts_ms; visit_ms is the
+  // last stay, latched when presence ends (PresenceFSM::tick's last_visit_ms_)
+  const clock = { t0_ms: pane.clock.t0_ms, occupancy: pane.occupancy, visit_ms: 0 };
+  let presentSince = null;
   bus.on("online", () => {
     idle.remove();
     // a (re)connect republishes the retained surfaces as they stand now
@@ -796,13 +815,18 @@ export function buildMqtt(data, bus) {
   bus.on("sim-event", ({ name, snap }) => {
     const base = "securacv/" + id;
     const row2 = (suffix, obj, retain) => row(base + "/" + suffix, JSON.stringify(obj), retain);
-    const ev = vizEventPayload(JSON.parse(pane.events.payload), name, snap, ++seq);
+    const now = (snap.t || 0) >>> 0;
+    if (name === "presence_started") presentSince = now;
+    if (name === "presence_ended" && presentSince != null) { clock.visit_ms = now - presentSince; presentSince = null; }
+    const ev = vizEventPayload(JSON.parse(pane.events.payload), name, snap, ++seq, clock);
     row2("events", ev, false);
+    // publish_state_now, on the same tick: the same snapshot, as the state row keys it
     Object.assign(live.state, {
       presence: !!snap.fsm.presence, dwelling: !!snap.fsm.dwelling,
+      presence_ms: ev.presence_ms, dwell_ms: ev.dwell_ms,
       confidence: ev.confidence, voxel: ev.voxel, bbox: ev.bbox,
       occupancy: ev.occupancy, posture: ev.posture, proximity: ev.proximity, occ_mask: ev.occ_mask,
-      last_event: name,
+      last_event: name, uptime_s: Math.floor(ev.ts_ms / 1000), ts_ms: ev.ts_ms,
     });
     row2("state", live.state, true);
     // the event advanced the chain; main.cpp republishes the signed head,

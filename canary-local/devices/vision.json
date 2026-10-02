@@ -666,6 +666,16 @@
     },
     "pane": {
       "source": "payload keys from mqtt_mgr.cpp + main.cpp",
+      "clock": {
+        "t0_ms": 41250,
+        "note": "ts_ms is the sandbox clock plus the example's ts_ms; presence_ms, dwell_ms, posture, proximity, occupancy and occ_mask are the firmware core's; visit_ms is latched at presence_ended"
+      },
+      "occupancy": [
+        "none",
+        "one",
+        "two",
+        "several"
+      ],
       "online": [
         {
           "suffix": "status",

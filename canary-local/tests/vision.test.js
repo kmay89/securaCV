@@ -196,9 +196,13 @@ test("every MQTT pane row is keyed as the firmware publishes it", () => {
 test("a sandbox event publishes in the firmware's shape, the sandbox's values laid over it", async () => {
   const { vizEventPayload } = await import("../assets/vision-ui.js");
   const example = JSON.parse(data.mqtt.pane.events.payload);
-  const snap = { sample: { bbox: { x: 10, y: 20, w: 30, h: 40, score: 88 }, voxel: { r: 2, c: 0 } },
-                 fsm: { presence: true, dwelling: false }, reason: null };
-  const ev = vizEventPayload(example, "presence_started", snap, 77);
+  const clock = { t0_ms: data.mqtt.pane.clock.t0_ms, occupancy: data.mqtt.pane.occupancy, visit_ms: 0 };
+  // a snapshot as the firmware core returns it (vision_core_bindings.cpp)
+  const snap = { t: 5000.7,
+                 sample: { bbox: { x: 10, y: 20, w: 30, h: 40, score: 88 }, voxel: { r: 2, c: 0 },
+                           person_count: 2, posture: "ambiguous", proximity: "far", voxel_mask: 64 + 8 },
+                 fsm: { presence: true, dwelling: false, confidence: 88, presence_ms: 3200, dwell_ms: 0 }, reason: null };
+  const ev = vizEventPayload(example, "presence_started", snap, 77, clock);
   assert.deepStrictEqual(Object.keys(ev), Object.keys(example), "every key, in the firmware's order");
   assert.strictEqual(ev.event, "presence_started");
   assert.strictEqual(ev.seq, 77);
@@ -207,21 +211,90 @@ test("a sandbox event publishes in the firmware's shape, the sandbox's values la
   assert.strictEqual(ev.confidence, 88);
   assert.deepStrictEqual(ev.voxel, { rows: example.voxel.rows, cols: example.voxel.cols, r: 2, c: 0 });
   assert.deepStrictEqual(ev.bbox, { x: 10, y: 20, w: 30, h: 40 });
-  // the mask is the box's own cell (types.h: "occupied 3x3 cells: bit (r*cols + c)")
+  // sweep A37: the clocks and coarse features are the snapshot's, not the example's
+  assert.strictEqual(ev.ts_ms, clock.t0_ms + 5000, "the core's clock (t >>> 0) plus the rows' own ts_ms");
+  assert.strictEqual(ev.bucket_uptime_s, Math.floor(ev.ts_ms / 1000 / 600) * 600);
+  assert.deepStrictEqual([ev.presence_ms, ev.dwell_ms, ev.visit_ms], [3200, 0, 0]);
+  assert.deepStrictEqual([ev.posture, ev.proximity, ev.occupancy], ["ambiguous", "far", "two"]);
+  assert.strictEqual(ev.occ_mask, 72, "the pipeline's own mask (types.h: bit r*cols + c), every box's cell");
   assert.ok(read(join(FW, "include/canary/types.h")).includes("occupied 3x3 cells: bit (r*cols + c)"));
-  assert.strictEqual(ev.occ_mask, 1 << (2 * example.voxel.cols + 0), "r2c0's bit, not the example's r1c1");
   for (const k of ["v", "alg", "fp", "sig"]) assert.strictEqual(ev[k], example[k], `the ${k} envelope field rides along`);
   // with a reason: right after the name, as publish_event_json's reason branch writes it
-  const left = vizEventPayload(example, "presence_ended", { ...snap, fsm: { presence: false }, reason: "lost" }, 78);
+  const left = vizEventPayload(example, "presence_ended",
+    { t: 9000, sample: { bbox: null, voxel: { r: -1, c: -1 }, person_count: 0, posture: "unknown", proximity: "unknown", voxel_mask: 0 },
+      fsm: { presence: false, dwelling: false, confidence: 0, presence_ms: 0, dwell_ms: 0 }, reason: "lost" },
+    78, { ...clock, visit_ms: 4000 });
   const keys = Object.keys(left);
   assert.strictEqual(keys[keys.indexOf("event") + 1], "reason");
   assert.strictEqual(left.reason, "lost");
   assert.strictEqual(left.presence, "clear");
   assert.strictEqual(left.occupants, "0");
   assert.strictEqual(left.occupancy, "none", "nobody in frame reads as no occupancy");
-  assert.strictEqual(left.occ_mask, 0);
+  assert.deepStrictEqual([left.posture, left.proximity, left.occ_mask, left.visit_ms], ["unknown", "unknown", 0, 4000]);
   assert.ok(mainCpp.includes('"\\"event\\":\\"%s\\","\n        "\\"reason\\":\\"%s\\","'),
     "main.cpp's reason branch still writes reason right after event");
+  // the occupancy words are optical_features.h's buckets
+  const optical = read(join(FW, "include/canary/vision/optical_features.h"));
+  assert.deepStrictEqual(data.mqtt.pane.occupancy,
+    [...optical.split("inline const char* occupancy_name(int count) {")[1].split("\n}\n")[0].matchAll(/return "([a-z]+)";/g)].map((m) => m[1]));
+});
+
+// Sweep A37, end to end: the pane's events, driven by VisionSim on the
+// committed firmware core, carry the FSM's own clocks and the frame's own
+// coarse features. Before it, ts_ms, presence_ms, dwell_ms and visit_ms kept
+// the example's values for every event, and posture and proximity read
+// upright / mid for any box while someone was present.
+test("the pane's clocks and coarse features follow the sandbox (sweep A37)", async () => {
+  const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
+  const optical = read(join(FW, "include/canary/vision/optical_features.h"));
+  const knob = (n) => +optical.match(new RegExp("#define " + n + " (\\d+)"))[1];
+  const posture = (w, h) => (h * 100 >= w * knob("OPT_POSTURE_UPRIGHT_RATIO_X100") ? "upright"
+    : w * 100 >= h * knob("OPT_POSTURE_HORIZONTAL_RATIO_X100") ? "horizontal" : "ambiguous");
+  const proximity = (w, h) => {
+    const pct = Math.floor((w * h * 100) / (data.detect.frame.w * data.detect.frame.h));
+    return pct >= knob("OPT_PROXIMITY_NEAR_PCT") ? "near" : pct <= knob("OPT_PROXIMITY_FAR_PCT") ? "far" : "mid";
+  };
+  await withFakeDom(async () => {
+    const { buildMqtt, VisionSim } = await import("../assets/vision-ui.js");
+    const bus = fakeBus();
+    const outer = buildMqtt(data, bus);
+    const sim = new VisionSim(data, await firmwareCore());
+    const base = "securacv/" + data.device.id_example + "/";
+    const payloadOf = (topic) => {
+      const r = outer.all("vis-mqtt-row").find((x) => x.all("vis-mqtt-topic")[0].children[0].textContent === base + topic);
+      return JSON.parse(r.all("vis-mqtt-payload")[0].textContent);
+    };
+    const seen = [];
+    bus.on("sim-event", ({ name, snap }) => seen.push({ name, t: snap.t >>> 0, snap, ev: payloadOf("events"), state: payloadOf("state") }));
+    sim.on("event", (name, snap) => bus.emit("sim-event", { name, snap }));
+    sim.run("linger");
+    for (let i = 0; i < 400 && !seen.some((e) => e.name === "presence_ended"); i++)
+      sim.tick(data.detect.invoke_period_ms, data.detect.invoke_period_ms);
+    const at = (n) => seen.find((e) => e.name === n);
+    for (const n of ["presence_started", "dwell_started", "presence_ended"]) assert.ok(at(n), "the linger never emitted " + n);
+    const t0 = data.mqtt.pane.clock.t0_ms;
+    for (const e of seen) {
+      assert.strictEqual(e.ev.ts_ms, t0 + e.t, e.name + ": ts_ms is the clock the event fired at");
+      assert.strictEqual(e.ev.presence_ms, e.snap.fsm.presence_ms, e.name);
+      assert.strictEqual(e.ev.dwell_ms, e.snap.fsm.dwell_ms, e.name);
+      assert.strictEqual(e.state.ts_ms, e.ev.ts_ms, e.name + ": the state row goes out on the same tick");
+      assert.strictEqual(e.state.presence_ms, e.ev.presence_ms);
+      const bb = e.snap.sample.bbox;
+      assert.strictEqual(e.ev.posture, bb ? posture(bb.w, bb.h) : "unknown", e.name + ": posture is the box's");
+      assert.strictEqual(e.ev.proximity, bb ? proximity(bb.w, bb.h) : "unknown", e.name + ": proximity is the box's");
+      assert.strictEqual(e.ev.occ_mask, e.snap.sample.voxel_mask);
+    }
+    const start = at("presence_started"), dwell = at("dwell_started"), end = at("presence_ended");
+    assert.strictEqual(start.ev.presence_ms, 0, "presence starts on that tick");
+    assert.strictEqual(dwell.ev.presence_ms, dwell.t - start.t, "dwell_started: time present so far");
+    assert.ok(dwell.ev.presence_ms >= sim.cfg.dwell_start_ms, "past the dwell start");
+    assert.strictEqual(dwell.ev.dwell_ms, 0, "dwell_start_ms_ is set on the tick that emits dwell_started");
+    assert.strictEqual(start.ev.visit_ms, 0, "no stay has ended yet");
+    assert.strictEqual(end.ev.presence_ms, 0, "presence is over");
+    assert.strictEqual(end.ev.visit_ms, end.t - start.t, "presence_ended reports the stay it closed");
+    assert.deepStrictEqual([end.ev.posture, end.ev.proximity, end.ev.occupancy], ["unknown", "unknown", "none"],
+      "no box, no coarse features: not the example's upright / mid");
+  });
 });
 
 // ── 5. serial boot lines trace to firmware sources ─────────────────────────

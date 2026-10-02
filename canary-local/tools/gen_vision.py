@@ -748,8 +748,46 @@ EVENT_PANE = keyed_as({
     "bbox": {"x": 96, "y": 88, "w": 64, "h": 128},
     "occupancy": "one", "posture": "upright", "proximity": "mid", "occ_mask": 16,
     "v": 1, "alg": "ed25519", "fp": EX_FP, "sig": "…"}, EVENT_KEYS + ENVELOPE_KEYS, "events")
+# The sandbox's clock and box move the event's and state's clocks and coarse
+# features too (sweep A37), the way the firmware's own snapshot does: the
+# page's VisionSim feeds the committed WASM core (canary-local/emulator/
+# vision, built from presence_fsm.cpp and detection_pipeline.h), which
+# returns the FSM's presence_ms and dwell_ms and the frame's posture,
+# proximity, person count and occupied-cell mask. ts_ms is that clock plus
+# the example's ts_ms (the sandbox clock starts where these rows stand),
+# bucket_uptime_s its 10-minute bucket, and visit_ms the last stay's length,
+# latched at presence_ended as PresenceFSM::tick latches last_visit_ms_ (the
+# core does not return it, so the pane keeps it from the events it sees).
+OPTICAL_H = FW / "include/canary/vision/optical_features.h"
+CORE_BINDINGS = REPO / "canary-local/emulator/vision/vision_core_bindings.cpp"
+for needle in ("s.presence_ms = presence_ ? (now_ms - presence_start_ms_) : 0;",
+               "s.dwell_ms    = dwelling_ ? (now_ms - dwell_start_ms_) : 0;",
+               "s.visit_ms    = last_visit_ms_;",
+               "last_visit_ms_ = now_ms - presence_start_ms_;\n    return emit(out_event, \"presence_ended\");",
+               "presence_start_ms_ = now_ms;",
+               "s.posture      = posture_;", "s.proximity    = proximity_;", "s.voxel_mask   = voxel_mask_;",
+               "s.ts_ms      = now_ms;"):
+    must(PRESENCE_FSM_CPP, needle, "the FSM snapshot the pane derives its clocks from")
+must(MAIN_CPP, "    publish_event_json(ev.event_name, ev.reason, now_ms, vs);\n    publish_state_now(now_ms);",
+     "the event and the state go out on the tick's own clock")
+must(MAIN_CPP, "const uint32_t bucket_uptime_s = (now_ms / 1000UL / 600UL) * 600UL;", "the 10-minute bucket")
+for needle in ('"\\"person_count\\":%u,\\"posture\\":\\"%s\\","',
+               '"\\"proximity\\":\\"%s\\",\\"voxel_mask\\":%u},"',
+               '"\\"confidence\\":%d,\\"presence_ms\\":%lu,\\"dwell_ms\\":%lu},"',
+               "return JSON.parse(tickJson(nowMs >>> 0));"):
+    must(CORE_BINDINGS if "JSON" not in needle else REPO / "canary-local/emulator/web/vision-core.js",
+         needle, "the WASM core returns what the pane reads")
+_occ = fn_body(OPTICAL_H, "inline const char* occupancy_name(int count) {", "occupancy_name")
+OCCUPANCY = re.findall(r'return "([a-z]+)";', _occ)
+if OCCUPANCY != ["none", "one", "two", "several"] or "if (count <= 0)" not in _occ or "if (count == 2)" not in _occ:
+    die(f"occupancy_name's buckets moved: {OCCUPANCY}")
 MQTT["pane"] = {
     "source": "payload keys from mqtt_mgr.cpp + main.cpp",
+    "clock": {"t0_ms": EX_TS_MS,
+              "note": "ts_ms is the sandbox clock plus the example's ts_ms; presence_ms, dwell_ms, posture, "
+                      "proximity, occupancy and occ_mask are the firmware core's; visit_ms is latched at "
+                      "presence_ended"},
+    "occupancy": OCCUPANCY,
     "online": [{"suffix": s, "retain": r, "payload": payload(o)} for s, r, o in PANE_ONLINE]
               + [{"suffix": "aim/state", "retain": True, "payload": "OFF"}],
     "events": {"suffix": "events", "retain": False, "payload": payload(EVENT_PANE)},
