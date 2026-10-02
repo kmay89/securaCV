@@ -412,9 +412,7 @@ function instance({ plan, bin }) {
 
 function nativeFactory(name) {
   const plan = buildPlan(name);   // refuse an unreadable build.sh before any test runs
-  const factory = async () => instance(await build(plan));
-  Object.defineProperty(factory, "name", { value: plan.exportName });
-  return factory;
+  return async () => instance(await build(plan));
 }
 
-module.exports = { coreFactory, buildPlan, exportTable, mode, CORES };
+module.exports = { coreFactory, buildPlan, exportsOf, exportTable, mode, CORES };

@@ -462,7 +462,7 @@ jobs:
         with:
           node-version: "22"
       # The path-filter gate (sweep CI2): every node and python3 process in the
-      # three test steps below records the repo paths it reads (node: opens,
+      # four test steps below records the repo paths it reads (node: opens,
       # stats, listings, existence checks; python3: opens and listings only,
       # CPython audits no stat or exists call; shell tools such as the Witness
       # Wall step's cmp are not recorded), and the step after the last of them
@@ -498,6 +498,7 @@ jobs:
           node --test canary-local/tests/vision_session.test.js
           node --test canary-local/tests/eyes.test.js
           node --test canary-local/tests/audio.test.js
+          node --test canary-local/tests/native_cores.test.js
           node --test canary-local/tests/board_identity.test.js
           node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
@@ -528,6 +529,23 @@ jobs:
           node --test canary-local/tests/body_dims.test.js
           node --test canary-local/tests/device_models.test.js
           node --test canary-local/tests/settings_rollers.test.js
+      - name: Core-driving page tests on this tree's sources (LAB_CORES=native, g++, no emsdk)
+        # The step above runs these three on the committed emulator/dist cores.
+        # Here tests/native/cores.js builds the Vision and WAP audio cores from
+        # the sources, flags and include paths build.sh hands em++ (read from
+        # build.sh), with the runner's g++, and serves them to the same tests
+        # (sweep A40). Green here and red above on a core change: the sources
+        # are right and the dist is stale (Actions -> "Rebuild emulator dist
+        # (pinned emsdk)"). The dist still ships; this proves the sources.
+        env:
+          LAB_CORES: native
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+        run: |
+          node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/eyes.test.js
+          node --test canary-local/tests/audio.test.js
       - name: Witness Wall emulator copies in sync (Flasher <-> Lab)
         # One canonical emulator (the website repo), vendored by
         # scripts/vendor_witness_emulator.sh into both apps — byte-identical,
@@ -657,7 +675,7 @@ jobs:
         run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 
       - name: Every file the logic tests read is inside this workflow's path filter
-        # Reads the recordings the three test steps above left (the suites are
+        # Reads the recordings the four test steps above left (the suites are
         # not run again) and matches each path against on.pull_request.paths
         # with GitHub's pattern rules. A miss is a test that a PR editing that
         # file never runs: it fails here naming the test, the file, the test

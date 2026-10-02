@@ -1,0 +1,244 @@
+// canary-local/tests/native_cores.test.js — the honesty gate for
+// tests/native/cores.js, the loader the core-driving page tests take their
+// WebAssembly core from (sweep A40).
+//
+// The default run (LAB_CORES unset, as CI's page logic job runs it) compiles
+// nothing. It holds what the default promises — the tests get the committed
+// dist bundle, the very module they used to require — and holds the native
+// build's reading of build.sh and of the bindings to the dist it stands in
+// for, so a build.sh or bindings change the reader cannot follow fails here
+// rather than only under the opt-in. With LAB_CORES=native it also builds
+// both cores and drives each next to its committed dist, call for call: the
+// two agree while the dist is current, and a difference names a stale dist
+// (or a native build that is not the wasm one).
+
+const { test } = require("node:test");
+const assert = require("node:assert");
+const fs = require("node:fs");
+const os = require("node:os");
+const { join, relative } = require("node:path");
+
+const ROOT = join(__dirname, "..");
+const REPO = join(ROOT, "..");
+const cores = require("./native/cores.js");
+const NAMES = Object.keys(cores.CORES);
+
+function withMode(value, fn) {
+  const saved = process.env.LAB_CORES;
+  if (value === undefined) delete process.env.LAB_CORES;
+  else process.env.LAB_CORES = value;
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete process.env.LAB_CORES;
+    else process.env.LAB_CORES = saved;
+  }
+}
+
+test("unset or dist: the tests get the committed bundle, the module they always required", () => {
+  for (const name of NAMES) {
+    const dist = require(join(ROOT, "emulator/dist", name + ".js"));
+    assert.strictEqual(withMode(undefined, () => cores.coreFactory(name)), dist, name + " (unset)");
+    assert.strictEqual(withMode("", () => cores.coreFactory(name)), dist, name + " (empty)");
+    assert.strictEqual(withMode("dist", () => cores.coreFactory(name)), dist, name + " (dist)");
+  }
+});
+
+test("any other LAB_CORES value is refused, never read as the dist", () => {
+  for (const v of ["Native", "1", "true", "wasm"]) {
+    assert.throws(() => withMode(v, () => cores.coreFactory("canary-vision-core")),
+      /expected "dist" \(the default: the committed emulator\/dist bundles\) or "native"/, v);
+  }
+  assert.throws(() => cores.coreFactory("canary-display-watch"), /no Lab core canary-display-watch/,
+    "a display flavor is not a core cores.js can build");
+});
+
+test("every test that requires a dist core takes it through cores.js", () => {
+  // (this file requires the dist on purpose: it compares the two)
+  const takers = [];
+  for (const f of fs.readdirSync(__dirname).filter((x) => /\.test\.m?js$/.test(x) && x !== "native_cores.test.js").sort()) {
+    const src = fs.readFileSync(join(__dirname, f), "utf8");
+    assert.doesNotMatch(src, /require\([^)]*emulator\/dist\//, `${f} requires a dist bundle directly`);
+    for (const m of src.matchAll(/require\("\.\/native\/cores\.js"\)\.coreFactory\("([\w-]+)"\)/g)) {
+      takers.push(`${f}:${m[1]}`);
+    }
+  }
+  assert.deepStrictEqual(takers, ["audio.test.js:canary-wap-audio", "eyes.test.js:canary-vision-core",
+    "vision.test.js:canary-vision-core"]);
+});
+
+// The build plan is build.sh's, so these hold the reading, not a copy.
+test("the vision plan is the five sources build.sh hands em++, with its flags", () => {
+  const plan = cores.buildPlan("canary-vision-core");
+  assert.strictEqual(plan.flavor, "vision");
+  assert.deepStrictEqual(plan.sources.map((s) => relative(REPO, s)), [
+    "firmware/projects/canary-vision/src/detect_config.cpp",
+    "firmware/projects/canary-vision/src/state/presence_fsm.cpp",
+    "firmware/projects/canary-vision/src/state/voxel_tracker.cpp",
+    "canary-local/emulator/vision/vision_core_bindings.cpp",
+    "canary-local/emulator/vision/vision_core_shim.cpp",
+  ]);
+  for (const f of ["-std=gnu++17", "-fno-exceptions", "-fno-rtti", "-DARDUINO=10812", '-D__DATE__="emu"'])
+    assert.ok(plan.flags.includes(f), "flag " + f);
+  const incs = plan.flags.flatMap((f, i) => (f === "-I" ? [relative(REPO, plan.flags[i + 1])] : []));
+  assert.deepStrictEqual(incs, ["canary-local/emulator/shim", "canary-local/emulator/vision",
+    "firmware/projects/canary-vision/include", "firmware/configs/canary-vision/default"]);
+  assert.strictEqual(plan.exportName, "createCanaryVisionCore");
+});
+
+test("the audio plan is build.sh's two sources against the WAP's host stubs", () => {
+  const plan = cores.buildPlan("canary-wap-audio");
+  assert.strictEqual(plan.flavor, "audio");
+  assert.deepStrictEqual(plan.sources.map((s) => relative(REPO, s)), [
+    "firmware/projects/canary-wap/arduino/canary_wap/securacv_audio.cpp",
+    "canary-local/emulator/audio/audio_core_bindings.cpp",
+  ]);
+  const incs = plan.flags.flatMap((f, i) => (f === "-I" ? [relative(REPO, plan.flags[i + 1])] : []));
+  assert.deepStrictEqual(incs, ["canary-local/emulator/audio", "firmware/projects/canary-wap/tests_host/stubs/audio",
+    "firmware/projects/canary-wap/arduino/canary_wap"]);
+  assert.strictEqual(plan.exportName, "createCanaryAudioCore");
+});
+
+test("the plan reads every export and runtime method the committed dist has", async () => {
+  for (const name of NAMES) {
+    const plan = cores.buildPlan(name);
+    const declared = plan.sources.map((s) => fs.readFileSync(s, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, "").split("EMSCRIPTEN_KEEPALIVE").length - 1)
+      .reduce((a, b) => a + b, 0);
+    assert.strictEqual(plan.exports.length, declared, `${name}: every EMSCRIPTEN_KEEPALIVE is read`);
+    const mod = await require(join(ROOT, "emulator/dist", name + ".js"))();
+    const keys = Object.keys(mod);
+    for (const k of keys.filter((x) => x.startsWith("_")))
+      assert.ok(plan.exports.some((e) => "_" + e.name === k), `${name}: the dist exports ${k}, the plan does not`);
+    assert.deepStrictEqual(plan.runtime, keys.filter((x) => !x.startsWith("_")),
+      `${name}: -sEXPORTED_RUNTIME_METHODS, as the dist was linked`);
+  }
+});
+
+test("every export a page or test cwraps is one the native build serves", () => {
+  const wrapped = (file) => [...fs.readFileSync(join(ROOT, file), "utf8").matchAll(/cwrap\("(\w+)"/g)].map((m) => m[1]);
+  const served = (name) => new Set(cores.buildPlan(name).exports.map((e) => e.name));
+  const vision = served("canary-vision-core"), audio = served("canary-wap-audio");
+  for (const fn of wrapped("emulator/web/vision-core.js")) assert.ok(vision.has(fn), "vision-core.js wraps " + fn);
+  for (const f of ["assets/smoke-bench.js", "tests/audio.test.js"])
+    for (const fn of wrapped(f)) assert.ok(audio.has(fn), `${f} wraps ${fn}`);
+});
+
+test("a signature a wasm call cannot carry is refused by name, never guessed", () => {
+  const dir = fs.mkdtempSync(join(os.tmpdir(), "securacv-cores-test-"));
+  try {
+    const refuse = (sig, why) => {
+      const f = join(dir, "b.cpp");
+      fs.writeFileSync(f, `#include <emscripten.h>\nextern "C" {\nEMSCRIPTEN_KEEPALIVE ${sig} { }\n}\n`);
+      assert.throws(() => cores.exportsOf(f), why, sig);
+    };
+    refuse("double f(int x)", /f returns double/);
+    refuse("int f(double x)", /f takes "double x"/);
+    refuse("int f(long long x)", /f takes "long long x"/);
+    refuse("int f(const char* s)", /f takes "const char\* s"/);
+    refuse("long f()", /f returns long/);
+    const f = join(dir, "ok.cpp");
+    fs.writeFileSync(f, "EMSCRIPTEN_KEEPALIVE unsigned int g(unsigned int a, int b) { return a; }\n" +
+      "// EMSCRIPTEN_KEEPALIVE double commented_out();\n" +
+      "EMSCRIPTEN_KEEPALIVE const char *h(void) { return \"\"; }\n");
+    assert.deepStrictEqual(cores.exportsOf(f).map(({ name, kind, params }) => [name, kind, params]),
+      [["g", "n", ["unsigned int", "int"]], ["h", "s", []]]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── LAB_CORES=native only: the native core next to its committed dist ──────
+
+const native = { skip: cores.mode() !== "native" && "LAB_CORES=native only (builds with g++)" };
+
+function lcg(seed) {
+  let s = seed >>> 0;
+  return (n) => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s % n;
+  };
+}
+
+const STALE = "differs from the committed dist: if this tree changed the core's sources, the dist is stale " +
+  "(Actions -> \"Rebuild emulator dist (pinned emsdk)\"); if not, the native build is not the wasm one";
+
+test("native vision core = committed dist, tick for tick (LAB_CORES=native)", native, async () => {
+  const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-vision-core.js"))(),
+    cores.coreFactory("canary-vision-core")()]);
+  const [d, n] = pair.map((m) => ({
+    contract: m.cwrap("vision_emu_contract_json", "string", []),
+    reset: m.cwrap("vision_emu_reset", null, []),
+    config: m.cwrap("vision_emu_set_config", null, ["number", "number", "number", "number"]),
+    begin: m.cwrap("vision_emu_begin_frame", null, []),
+    push: m.cwrap("vision_emu_push_box", "number", Array(6).fill("number")),
+    tick: m.cwrap("vision_emu_tick_json", "string", ["number"]),
+  }));
+  assert.ok(pair[1].nativeCore, "the second core is the native one");
+  d.reset(); n.reset();
+  assert.strictEqual(n.contract(), d.contract(), "contract " + STALE);
+  const r = lcg(1762);
+  let t = 0;
+  for (let i = 0; i < 3000; i++) {
+    if (r(200) === 0) {
+      // out-of-range values on purpose: the clamps are the firmware's
+      const cfg = [r(300) - 20, r(300) - 20, r(40000), r(120000)];
+      d.config(...cfg); n.config(...cfg);
+      assert.strictEqual(n.contract(), d.contract(), `contract after set_config(${cfg}) ` + STALE);
+    }
+    d.begin(); n.begin();
+    for (let b = r(40) < 30 ? r(3) : r(36); b > 0; b--) {
+      const box = [r(700) - 50, r(500) - 50, r(400), r(500), r(110), r(3)];
+      assert.strictEqual(n.push(...box), d.push(...box), "push_box " + STALE);
+    }
+    t += 50 + r(400);
+    const want = d.tick(t);
+    assert.strictEqual(n.tick(t), want, `tick ${i} at ${t} ms ` + STALE);
+  }
+});
+
+test("native audio core = committed dist, frame for frame (LAB_CORES=native)", native, async () => {
+  const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-wap-audio.js"))(),
+    cores.coreFactory("canary-wap-audio")()]);
+  const [d, n] = pair.map((m) => ({
+    m,
+    contract: m.cwrap("audio_emu_contract_json", "string", []),
+    reset: m.cwrap("audio_emu_reset", null, []),
+    samples: m.cwrap("audio_emu_frame_samples", "number", []),
+    ptr: m.cwrap("audio_emu_frame_ptr", "number", []),
+    thresholds: m.cwrap("audio_emu_set_thresholds", "number", ["number", "number"]),
+    proc: m.cwrap("audio_emu_process_frame", "string", []),
+  }));
+  assert.ok(pair[1].nativeCore, "the second core is the native one");
+  d.reset(); n.reset();
+  assert.strictEqual(n.contract(), d.contract(), "contract " + STALE);
+  const N = d.samples();
+  assert.strictEqual(n.samples(), N);
+  const r = lcg(4040);
+  let ph = 0;
+  // a T3 cadence, a T4 cadence, an off-band rhythm and noise, in turns
+  const plan = [];
+  for (let k = 0; k < 3; k++) for (const [hz, f] of [[3400, 25], [0, 25], [3400, 25], [0, 25], [3400, 25], [0, 90]]) plan.push([hz, f]);
+  for (let k = 0; k < 2; k++) for (let b = 0; b < 4; b++) plan.push([3400, 5], [0, 5]);
+  plan.push([0, 300], [300, 25], [0, 25], [-1, 60], [3400, 200], [0, 60]);
+  let frame = 0;
+  for (const [hz, frames] of plan) {
+    for (let f = 0; f < frames; f++, frame++) {
+      if (r(400) === 0) {
+        const th = [r(3000), r(2000)];
+        assert.strictEqual(n.thresholds(...th), d.thresholds(...th), "set_thresholds " + STALE);
+      }
+      const pcm = new Int16Array(N);
+      for (let i = 0; i < N; i++) {
+        if (hz < 0) { pcm[i] = r(20000) - 10000; continue; }
+        if (hz === 0) { pcm[i] = r(64) - 32; continue; }
+        ph += (2 * Math.PI * hz) / 16000;
+        if (ph > 2 * Math.PI) ph -= 2 * Math.PI;
+        pcm[i] = Math.round(8000 * Math.sin(ph));
+      }
+      for (const c of [d, n]) new Int16Array(c.m.HEAP16.buffer, c.ptr(), N).set(pcm);
+      const want = d.proc();
+      assert.strictEqual(n.proc(), want, `frame ${frame} (${hz} Hz) ` + STALE);
+    }
+  }
+});
