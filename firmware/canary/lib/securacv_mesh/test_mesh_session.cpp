@@ -6056,7 +6056,9 @@ void test_status_json_fits_worst_case() {
  * case: CONNECTING or ACTIVE after a failure as after a success), each
  * ending is told apart, and each pairing has its own number:
  *   1  a timeout          → CONNECTING, failed, timeout;
- *   2  a cancel (REST)    → failed, canceled; the POST answer names seq 2;
+ *   2  a cancel (REST)    → failed, canceled; the POST answer names seq 2,
+ *                           and a start and a join refused while it runs
+ *                           name none and leave it at 2, running;
  *   3  a refusal at the confirm (a member holds the partner's address)
  *                         → failed, partner_refused;
  *   4  a success          → paired; while the NOTIFY_PAIRED is still due
@@ -6101,6 +6103,20 @@ void test_get_mesh_tells_each_pairing_outcome() {
   assert(mesh_session::take_request_result(&res));
   assert(res.status == mesh_session::RequestStatus::OK && res.pairing_seq == 2);
   assert(has(status_body(), "\"pairing_seq\":2,\"pairing_result\":\"running\""));
+  /* A second start and a join while it runs (a second tab, a double
+   * click) are refused, name no number, and leave the count alone: the
+   * first page's poll still reads its own pairing, running. */
+  for (int k = 0; k < 2; ++k) {
+    mesh_session::Request again = make_request(k == 0 ? mesh_session::RequestType::PAIR_START
+                                                       : mesh_session::RequestType::PAIR_JOIN);
+    if (k == 0) std::memcpy(again.opera_secret, S, sizeof(S));
+    assert(mesh_session::submit_request(again));
+    mesh_session::process(400010 + k);
+    assert(mesh_session::take_request_result(&res));
+    assert(res.status == mesh_session::RequestStatus::REFUSED && res.pairing_seq == 0);
+    assert(has(status_body(), "\"pairing_seq\":2,\"pairing_result\":\"running\""));
+  }
+  assert(mesh_session::pairing_seq() == 2);
   assert(rest_cancel(400100) == mesh_session::RequestStatus::OK);
   b = status_body();
   assert(has(b, "\"state\":\"CONNECTING\""));
@@ -6179,11 +6195,15 @@ void test_get_mesh_tells_each_pairing_outcome() {
  * next process(), ahead of that tick. The pairing stays PAIRED: the
  * PairedCallback runs, the member is registered, bound and stored (the
  * main.cpp stand-in), its address stays in the table, and no
- * FailedCallback fires; the joiner opens the COMPLETE. On the code before
- * F135 the cancel turned it FAILED: one FailedCallback (canceled), no
+ * FailedCallback fires; the joiner opens the COMPLETE. The cancel leaves
+ * F134's copies running, and so does a second one: with both frames lost,
+ * the copy 2 s later is what the joiner opens. On the code before F135 the
+ * cancel turned it FAILED: one FailedCallback (canceled), no
  * PairedCallback, the partner's address taken out, nothing stored, while
- * the joiner held the secret. */
+ * the joiner held the secret. With a cancel that ends the copies, the
+ * joiner never gets one. */
 void test_a_cancel_after_the_complete_still_reports_paired() {
+  for (int lost = 0; lost < 2; ++lost) {   /* 1: the CONFIRM and COMPLETE lost */
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x35 + i);
   uint8_t pub[32], priv[32];
@@ -6222,20 +6242,43 @@ void test_a_cancel_after_the_complete_still_reports_paired() {
   assert(g_nvs_pubs.size() == 1 && std::memcmp(g_nvs_pubs[0].data(), j_pub, 32) == 0);
   assert(transport_has(mac_j));
 
+  const std::vector<OutFrame> first = g_outs;
+  if (lost) {
+    /* Nothing reached the joiner. The cancel left F134's copies running,
+     * so 2 s after the first send the same two frames go to it again; it
+     * opens them. */
+    g_outs.clear();
+    for (uint32_t t = 200; t <= 120 + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS + 100; t += 100) {
+      mesh_transport::test::set_now_ms(t);
+      mesh_session::process(t);
+    }
+    assert(g_outs.size() == 2 && sent_to(mac_j) == 2);
+    assert(g_outs[0].bytes == first[0].bytes && g_outs[1].bytes == first[1].bytes);
+  }
   /* The joiner takes the COMPLETE: both ends agree. */
-  feed_pure(cj, me, g_outs[0].bytes, 135, &a);
-  feed_pure(cj, me, g_outs[1].bytes, 135, &a);
+  feed_pure(cj, me, g_outs[0].bytes, 2300, &a);
+  feed_pure(cj, me, g_outs[1].bytes, 2300, &a);
   assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
   uint8_t got[32];
   assert(mesh_pairing::consume_opera_secret(cj, got));
   assert(std::memcmp(got, S, sizeof(S)) == 0);
 
-  /* Another cancel, after PAIRED was reported: still nothing. */
-  assert(rest_cancel(140) == mesh_session::RequestStatus::OK);
+  /* Another cancel, after PAIRED was reported: still nothing, and the
+   * copies still go (nothing heard the joiner): one in the next 2 s. */
+  assert(rest_cancel(2400) == mesh_session::RequestStatus::OK);
   mesh_session::cancel_pairing();
   assert(g_failed_count == 0 && g_bound_calls.size() == 1);
   assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
-  std::printf("PASS test_a_cancel_after_the_complete_still_reports_paired\n");
+  g_outs.clear();
+  for (uint32_t t = 2500; t < 2500 + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 100) {
+    mesh_transport::test::set_now_ms(t);
+    mesh_session::process(t);
+  }
+  assert(g_outs.size() == 2 && sent_to(mac_j) == 2);
+  assert(g_outs[1].bytes == first[1].bytes);
+  }
+  std::printf("PASS test_a_cancel_after_the_complete_still_reports_paired"
+              "  (the COMPLETE delivered, and lost then sent again)\n");
 }
 
 /* A pairing that has FAILED is not failed again: a timeout, then a REST

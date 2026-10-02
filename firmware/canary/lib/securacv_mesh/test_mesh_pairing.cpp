@@ -1708,10 +1708,15 @@ void test_a_copy_is_taken_only_after_the_joiners_owner_confirms() {
 /* A cancel after the initiator's SEND_COMPLETE, in both orders: NONE, the
  * context still PAIRED, and the next tick still NOTIFY_PAIRED. The joiner,
  * PAIRED with the secret, is left alone too: NONE, and the secret is still
- * there to consume. Fails on the code before F135 (NOTIFY_FAILED, canceled,
- * then NONE from the tick). */
+ * there to consume. The cancel leaves F134's copies running as well: with
+ * the COMPLETE lost, the copy 2 s after the first send is the joiner's only
+ * way in, and it opens it. Fails on the code before F135 (NOTIFY_FAILED,
+ * canceled, then NONE from the tick), and with a cancel on PAIRED that ends
+ * the copies (no copy, the joiner never pairs). */
 void test_a_cancel_after_the_complete_leaves_the_pairing_paired() {
-  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+  for (int run = 0; run < 4; ++run) {
+    const int  joiner_first = run & 1;
+    const bool lost         = (run & 2) != 0;   /* the COMPLETE (and its CONFIRM) lost */
     Pair p;
     pair_to_code(p);
     mesh_pairing::Action a;
@@ -1741,18 +1746,46 @@ void test_a_cancel_after_the_complete_leaves_the_pairing_paired() {
     assert(p.ci.state == mesh_pairing::State::PAIRED);
     assert(p.ci.fail_reason == mesh_pairing::FailReason::NONE);
     assert(p.ci.pending_notify_paired);
+    /* F134's copies go on: the pairing is over, and the joiner may still be
+     * waiting for one. */
+    assert(mesh_pairing::complete_resend_running(p.ci));
 
-    /* The joiner takes the COMPLETE; a cancel there is a no-op as well. */
-    assert(deliver(p.cj, p.mac_i, lead, 80).type == mesh_pairing::ActionType::NONE);
-    assert(deliver(p.cj, p.mac_i, cp, 80).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
-    assert(mesh_pairing::cancel(p.cj).type == mesh_pairing::ActionType::NONE);
-    assert(p.cj.state == mesh_pairing::State::PAIRED && p.cj.opera_secret_present);
-    expect_both_paired(p, 90);   /* the initiator's NOTIFY_PAIRED still fires */
+    if (lost) {
+      /* Nothing reached the joiner. The initiator's NOTIFY_PAIRED still
+       * fires, and 2 s after the first send a copy goes: the same two
+       * frames, which the joiner opens. */
+      assert(p.cj.state != mesh_pairing::State::PAIRED);
+      a = mesh_pairing::tick(p.ci, 80);
+      assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED && a.confirmation_code == p.code);
+      const uint32_t due = 70 + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS;
+      assert(mesh_pairing::tick(p.ci, due - 1).type == mesh_pairing::ActionType::NONE);
+      a = mesh_pairing::tick(p.ci, due);
+      assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+      InFlight lead2, cp2;
+      must(leading_confirm_to_inflight(a, &lead2));
+      must(action_to_inflight(a, &cp2));
+      assert(lead2.bytes == lead.bytes && cp2.bytes == cp.bytes);
+      assert(deliver(p.cj, p.mac_i, lead2, due + 10).type == mesh_pairing::ActionType::NONE);
+      assert(deliver(p.cj, p.mac_i, cp2, due + 10).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+      assert(mesh_pairing::cancel(p.cj).type == mesh_pairing::ActionType::NONE);
+      uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+      assert(mesh_pairing::consume_opera_secret(p.cj, got));
+      assert(std::memcmp(got, p.secret, sizeof(got)) == 0);
+      assert(p.ci.state == mesh_pairing::State::PAIRED && p.cj.state == mesh_pairing::State::PAIRED);
+    } else {
+      /* The joiner takes the COMPLETE; a cancel there is a no-op as well. */
+      assert(deliver(p.cj, p.mac_i, lead, 80).type == mesh_pairing::ActionType::NONE);
+      assert(deliver(p.cj, p.mac_i, cp, 80).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+      assert(mesh_pairing::cancel(p.cj).type == mesh_pairing::ActionType::NONE);
+      assert(p.cj.state == mesh_pairing::State::PAIRED && p.cj.opera_secret_present);
+      expect_both_paired(p, 90);   /* the initiator's NOTIFY_PAIRED still fires */
+    }
     /* After it fired, too. */
     assert(mesh_pairing::cancel(p.ci).type == mesh_pairing::ActionType::NONE);
     assert(p.ci.state == mesh_pairing::State::PAIRED);
   }
-  std::printf("PASS test_a_cancel_after_the_complete_leaves_the_pairing_paired  (both orders)\n");
+  std::printf("PASS test_a_cancel_after_the_complete_leaves_the_pairing_paired"
+              "  (both orders; the COMPLETE delivered, and lost then sent again)\n");
 }
 
 /* A cancel on a FAILED pairing reports nothing again and keeps the reason
