@@ -48,7 +48,7 @@ import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { birdPerch, breathOnSeat } from "./bird_perch.mjs";
+import { birdPerch, breathOnSeat, flourishHop } from "./bird_perch.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -490,14 +490,21 @@ async function walkHarness(flavor) {
     // onboard_layout.h names for this glass and scene, read through a whole
     // swing (the scene stands until the phone posts; canary_mark's breath
     // is a 1.4 s half-swing at most x1.25, so 4 s of reads hold one).
-    const perchAt = await E(birdState);
-    check(perchAt.bird && perchAt.bird.shown, "the PhoneJoined scene shows no bird (F64)");
-    const phoneJoined = await readScene(perchAt, (st) => st.bird && st.bird.shown, 4000);
-    check(phoneJoined.length > 1 && phoneJoined[phoneJoined.length - 1].at - phoneJoined[0].at >= 3500,
-      `PhoneJoined: the bird left the stage after ${phoneJoined.length} reads (F64)`);
-    for (const st of phoneJoined) {
-      const perch = birdPerch(st);
-      check(perch === null, `PhoneJoined: ${perch}`);
+    // An idle flourish may hop the bird inside those 4 s; then the scene
+    // is read again (flourishHop), at most twice more.
+    let phoneJoined = [];
+    for (let k = 0; k < 3; k++) {
+      const perchAt = await E(birdState);
+      check(perchAt.bird && perchAt.bird.shown, "the PhoneJoined scene shows no bird (F64)");
+      phoneJoined = await readScene(perchAt, (st) => st.bird && st.bird.shown, 4000);
+      check(phoneJoined.length > 1 && phoneJoined[phoneJoined.length - 1].at - phoneJoined[0].at >= 3500,
+        `PhoneJoined: the bird left the stage after ${phoneJoined.length} reads (F64)`);
+      for (const st of phoneJoined) {
+        const perch = birdPerch(st);
+        check(perch === null, `PhoneJoined: ${perch}`);
+      }
+      if (!flourishHop(phoneJoined)) break;
+      await new Promise((r) => setTimeout(r, 800));
     }
     const onSeat = breathOnSeat(phoneJoined);
     check(onSeat === null, `PhoneJoined: ${onSeat}`);

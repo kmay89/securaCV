@@ -229,8 +229,9 @@ test("bird seat (F89): the probe holds the drawn bird to the seat onboard_layout
   assert.ok(probe.includes("const onSeat = breathOnSeat(phoneJoined);"), "the probe holds the PhoneJoined scene's bird");
   assert.ok(probe.includes("const helloPerch = birdPerch(st);"), "the Hello bird is on the glass and clear of text");
   assert.ok(probe.includes("const hello = await readScene(first, helloUp, 60000);") &&
-    probe.includes("const phoneJoined = await readScene(perchAt, (st) => st.bird && st.bird.shown, 4000);"),
+    probe.includes("phoneJoined = await readScene(perchAt, (st) => st.bird && st.bird.shown, 4000);"),
   "the probe reads each scene's bird through its breath, not once");
+  assert.ok(probe.includes("if (!flourishHop(phoneJoined)) break;"), "a flourish's hop earns a re-read, not a pass");
 });
 
 // canary_mark's breath as LVGL 8.4 draws it: start_bob(1400, 2) scaled by
@@ -310,6 +311,16 @@ test("bird breath (F89): breathOnSeat holds a scene's bird to its seat exactly, 
   moved[5] = { ...moved[5], seat: { ...seat, y: 37 } };
   assert.match(breathOnSeat(moved), /seat changed within the scene/);
   assert.match(breathOnSeat([]), /no reads/);
+  // An idle flourish's hop (at least 8 px for 560 ms) inside the reads
+  // fails the run and marks it for a re-read; the breath alone, or a bird
+  // up to 5 px off its seat, is never taken for a hop (it fails as above,
+  // with no re-read), and one further off is re-read and fails again.
+  const { flourishHop } = await import("./bird_perch.mjs");
+  const hopped = reads(0, 0, 3000).map((r, k) => (k >= 10 && k < 16 ? { ...r, bird: { ...r.bird, y: 36 - 8 } } : r));
+  assert.ok(flourishHop(hopped));
+  assert.match(breathOnSeat(hopped), /drawn at 100,28/);
+  for (const dy of [-5, -3, -1, 0, 1, 3, 7]) assert.ok(!flourishHop(reads(dy, 0, 3000)), `${dy} px off is no hop`);
+  assert.ok(flourishHop(reads(-10, 0, 3000)), "a bird 10 px high on every read is re-read, and fails again");
 });
 
 test("CI runs the generator check, this test and the browser probe", () => {

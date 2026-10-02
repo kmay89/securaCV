@@ -93,3 +93,17 @@ export function breathOnSeat(reads) {
   }
   return null;
 }
+
+/**
+ * F89: did an idle flourish hop the bird during these reads? canary_mark's
+ * idle bird hops now and then on its own (a flourish: every 25-60 s at most
+ * x1.4, a hop about one time in six), and a hop lifts it at least 8 px
+ * (12 px times the temperament, clamped to 8..18) for 560 ms. A run that
+ * caught one cannot be held to the breath, so the probe reads the scene
+ * again — once the hop is over, the next is 17 s or more away. A bird drawn
+ * 8 px or more above its seat on every read also counts, and fails again on
+ * the re-read. reads: as breathOnSeat takes them.
+ */
+export function flourishHop(reads) {
+  return reads.some((r) => r.bird && r.bird.shown && r.seat && r.bird.y <= r.seat.y - 8);
+}
