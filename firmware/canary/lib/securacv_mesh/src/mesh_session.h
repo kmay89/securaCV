@@ -579,7 +579,8 @@ size_t online_peer_count();
  *
  * restore_peer_macs() binds the persisted (fingerprint, MAC) entries —
  * mesh_state peer_macs, in blob order — and says what became of each, so
- * the integration layer can drop the ones that must go. Call it after every
+ * the integration layer can drop the ones that must go (stored_mac_must_drop
+ * below says which). Call it after every
  * stored pubkey has been registered (register_trusted_peer), as main.cpp's
  * setup does. Per entry:
  *   • UNTRUSTED (F120): its fingerprint is not a registered peer — a
@@ -618,6 +619,16 @@ enum class StoredMacVerdict : uint8_t {
 size_t restore_peer_macs(const uint8_t (*fps)[mesh_crypto::FINGERPRINT_LEN],
                          const uint8_t (*macs)[mesh_transport::MESH_TRANSPORT_MAC_LEN],
                          size_t n, StoredMacVerdict* out);
+
+/* Whether the integration layer drops a stored entry from NVS after
+ * restore_peer_macs: true for SHARED and UNTRUSTED, and only when
+ * `peers_loaded` (the stored pubkey list was read and registered) — a
+ * failed read registers nobody, so every entry would come back UNTRUSTED
+ * and a drop would erase every member's address. BOUND and REFUSED entries
+ * are kept. The decision lives here, not in main.cpp, so the host suite
+ * holds every verdict × peers_loaded case; main.cpp's boot loop drops
+ * exactly what this says (the scripts/tests source pin holds it to that). */
+bool stored_mac_must_drop(StoredMacVerdict verdict, bool peers_loaded);
 
 /* Drop ONE trusted peer by fingerprint (empties its slot and takes its
  * bound MAC, and no other address, out of the transport table; its replay

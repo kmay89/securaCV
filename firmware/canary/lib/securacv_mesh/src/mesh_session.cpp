@@ -1607,6 +1607,11 @@ size_t restore_peer_macs(const uint8_t (*fps)[mesh_crypto::FINGERPRINT_LEN],
   return bound;
 }
 
+bool stored_mac_must_drop(StoredMacVerdict verdict, bool peers_loaded) {
+  if (!peers_loaded) return false;
+  return verdict == StoredMacVerdict::SHARED || verdict == StoredMacVerdict::UNTRUSTED;
+}
+
 bool can_hold_partner(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN],
                       const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
   if (pubkey == nullptr || mac == nullptr || !mac_is_unicast(mac)) return false;

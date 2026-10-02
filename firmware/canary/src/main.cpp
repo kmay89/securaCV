@@ -1542,13 +1542,15 @@ void setup() {
               mesh_session::restore_peer_macs(mac_fps, mac_addrs, n_macs, verdicts);
           Serial.printf("[OK] Bound %u/%u peer radio MACs from NVS\n",
                         (unsigned)bound, (unsigned)n_macs);
-          for (size_t i = 0; i < n_macs && peers_loaded; ++i) {
-            const bool shared = verdicts[i] == mesh_session::StoredMacVerdict::SHARED;
-            if (!shared && verdicts[i] != mesh_session::StoredMacVerdict::UNTRUSTED) continue;
+          /* Which entries go is mesh_session::stored_mac_must_drop's call
+           * (host-tested for every verdict and both peers_loaded values);
+           * this loop drops exactly those and nothing else. */
+          for (size_t i = 0; i < n_macs; ++i) {
+            if (!mesh_session::stored_mac_must_drop(verdicts[i], peers_loaded)) continue;
             const bool dropped = mesh_state::remove_peer_mac(mac_fps[i]);
             char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
             mesh_fp_hex(mac_fps[i], hex);
-            if (shared) {
+            if (verdicts[i] == mesh_session::StoredMacVerdict::SHARED) {
               Serial.printf("[WARN] Peer %s: its stored radio address is stored for another "
                             "member too; not bound%s — re-pair it\n",
                             hex, dropped ? ", entry dropped" : "");

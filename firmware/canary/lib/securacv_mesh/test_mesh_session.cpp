@@ -4354,15 +4354,31 @@ std::vector<mesh_session::StoredMacVerdict> main_like_boot(const uint8_t pub[32]
   std::vector<mesh_session::StoredMacVerdict> v(n);
   const size_t bound = mesh_session::restore_peer_macs(fps, macs, n, v.data());
   if (bound_out != nullptr) *bound_out = bound;
-  if (peers_loaded) {
-    for (size_t i = 0; i < n; ++i) {
-      if (v[i] == mesh_session::StoredMacVerdict::UNTRUSTED ||
-          v[i] == mesh_session::StoredMacVerdict::SHARED) {
-        assert(mesh_state::peer_mac_blob::remove(g_nvs_macs, &g_nvs_macs_len, fps[i]));
-      }
-    }
+  /* main.cpp's drop loop, line for line (the scripts/tests pin holds it). */
+  for (size_t i = 0; i < n; ++i) {
+    if (!mesh_session::stored_mac_must_drop(v[i], peers_loaded)) continue;
+    assert(mesh_state::peer_mac_blob::remove(g_nvs_macs, &g_nvs_macs_len, fps[i]));
   }
   return v;
+}
+
+/* The drop decision itself, every verdict × peers_loaded: a stored entry is
+ * dropped exactly when it is SHARED or UNTRUSTED and the pubkey list was
+ * read. main.cpp's boot loop asks this and nothing else, so an inverted or
+ * widened drop shows here, not only on a bench after a reboot. */
+void test_stored_mac_must_drop_truth_table() {
+  using V = mesh_session::StoredMacVerdict;
+  assert(!mesh_session::stored_mac_must_drop(V::BOUND, true));
+  assert(!mesh_session::stored_mac_must_drop(V::REFUSED, true));
+  assert(mesh_session::stored_mac_must_drop(V::UNTRUSTED, true));
+  assert(mesh_session::stored_mac_must_drop(V::SHARED, true));
+  /* A failed pubkey read registered nobody: every entry reads UNTRUSTED,
+   * and none may go. */
+  assert(!mesh_session::stored_mac_must_drop(V::BOUND, false));
+  assert(!mesh_session::stored_mac_must_drop(V::REFUSED, false));
+  assert(!mesh_session::stored_mac_must_drop(V::UNTRUSTED, false));
+  assert(!mesh_session::stored_mac_must_drop(V::SHARED, false));
+  std::printf("PASS test_stored_mac_must_drop_truth_table\n");
 }
 
 /* A raw peer_macs entry appended to the fake blob, bypassing upsert (which
@@ -6090,6 +6106,7 @@ int main() {
   test_refused_repair_bind_is_not_persisted_across_reboot();
   test_successful_repair_is_persisted_across_reboot();
   /* F119, F120 — the boot restore of the stored addresses. */
+  test_stored_mac_must_drop_truth_table();
   test_boot_restore_binds_neither_member_of_a_shared_address();
   test_boot_restore_drops_entries_of_peers_no_longer_trusted();
   /* F70 */
