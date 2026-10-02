@@ -196,14 +196,16 @@ MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
 and takes the client's API lock, held by the esp_mqtt task across its own
 socket operations; esp_mqtt's default timeout for each is 10 s, past the
-loop task's 8 s watchdog (`test_mqtt_reinit.cpp`'s F112 tests).
+loop task's 8 s watchdog (`test_mqtt_reinit.cpp`'s F112 tests, which also
+hold that a loop pass never waits behind the CONNECTED burst).
 
 M1. `open_client()` sets `cfg.network.timeout_ms = (int)kNetworkTimeoutMs;`
     before `esp_mqtt_client_init(&cfg)`. `csi_mqtt.h` defines
-    `kNetworkTimeoutMs` (> 0) and `kNetworkOpsBudget` (>= 3: the esp_mqtt
-    task's connect is three operations in a row), and their product sits
-    under `canary_wap.ino`'s `WATCHDOG_TIMEOUT_SEC` in milliseconds; the
-    sketch static_asserts the same.
+    `kNetworkTimeoutMs` (> 0) and `kNetworkOpsBudget` (>= 3: an esp_mqtt
+    operation a publish waits behind, its own write, and room for the rest
+    of the pass), and their product sits under `canary_wap.ino`'s
+    `WATCHDOG_TIMEOUT_SEC` in milliseconds; the sketch static_asserts the
+    same.
 
 ## It proves it bites
 
@@ -1285,8 +1287,9 @@ def check_mqtt_timeout(ino: str, mqtt_h: str | None, mqtt: str, errors: list[str
         errors.append(f"{MQTT_H}: kNetworkTimeoutMs and kNetworkOpsBudget (and {INO}'s "
                       "WATCHDOG_TIMEOUT_SEC) must be integer constants this check can read (F112)")
     elif timeout <= 0 or budget < 3 or budget * timeout >= watchdog_s * 1000:
-        errors.append(f"{MQTT_H}: kNetworkOpsBudget ({budget}, at least 3: the esp_mqtt task's "
-                      f"connect) x kNetworkTimeoutMs ({timeout} ms) must sit under the loop task's "
+        errors.append(f"{MQTT_H}: kNetworkOpsBudget ({budget}, at least 3: an esp_mqtt operation "
+                      f"a publish waits behind, its own write, the rest of the pass) x "
+                      f"kNetworkTimeoutMs ({timeout} ms) must sit under the loop task's "
                       f"{watchdog_s} s watchdog (F112)")
     assert_ok = re.search(r"static_assert\(csi_mqtt::kNetworkTimeoutMs>0&&csi_mqtt::kNetworkOpsBudget"
                           r"\*csi_mqtt::kNetworkTimeoutMs<WATCHDOG_TIMEOUT_SEC\*1000u,", squash(icode))
@@ -1745,7 +1748,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
          on("mqtt", SIG_OPEN, r"\n[ \t]*cfg\.network\.timeout_ms\s*=\s*\(int\)kNetworkTimeoutMs;", "")(s))),
     ("kNetworkTimeoutMs grows past the watchdog's budget",
      raw_other(MQTT_H, "constexpr uint32_t kNetworkTimeoutMs = 2000;", "constexpr uint32_t kNetworkTimeoutMs = 3000;")),
-    ("kNetworkOpsBudget shrinks below the connect's three operations",
+    ("kNetworkOpsBudget shrinks below its three operations",
      raw_other(MQTT_H, "constexpr uint32_t kNetworkOpsBudget = 3;", "constexpr uint32_t kNetworkOpsBudget = 1;")),
     ("the sketch drops its static_assert of the MQTT timeout budget",
      raw("ino", "static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&", "static_assert(true ||")),

@@ -119,17 +119,34 @@ constexpr size_t MAX_CA_LEN     = 3071;   /* PEM bytes, NUL excluded (mqtt_trans
  * connected, writes the message on the caller's task through
  * esp_mqtt_write(), which hands this timeout to every
  * esp_transport_write(). A write that sends nothing within it fails the
- * publish (-1, which publish_raw() reports) and aborts the connection, and
- * a publish to a client that is not connected returns -1 as soon as it has
- * the lock. The
- * esp_mqtt task holds the same lock across its own socket operations, each
- * given this timeout too: a keepalive ping, a resend, the rest of a long
- * incoming message, and, while it connects, three in a row (the TCP/TLS
- * connect, the CONNECT write and the CONNACK wait). The timeout restarts on
- * every partial write or read, so it bounds a stall, not a slow trickle.
+ * publish (-1, which publish_raw() reports) and aborts the connection
+ * (DISCONNECTED, which clears the bridge's link), and a publish to a client
+ * that is not connected returns -1 as soon as it has the lock. The esp_mqtt
+ * task holds the same lock across its own socket operations, each given
+ * this timeout too: a keepalive ping, a resend, the rest of a long incoming
+ * message. A link that stops costs a loop pass one timeout: whichever
+ * operation meets the stall (its own write, or the esp_mqtt task's it
+ * queued behind) gives up and aborts, and every publish after that returns
+ * at publish_raw()'s gate. The timeout restarts on every partial write or
+ * read, so it bounds a stall, not a slow trickle: a link that makes a
+ * little progress just inside the timeout, write after write, holds a
+ * publish longer.
  *
- * kNetworkOpsBudget of them must fit under the loop's watchdog with room
- * left for the rest of its pass: canary_wap.ino static_asserts it, and
+ * What the loop task does not wait for: the esp_mqtt task's connect (the
+ * TCP/TLS connect, the CONNECT write and the CONNACK wait, three operations
+ * in a row under the lock) and its CONNECTED burst (the status, the
+ * discovery set, the cached states and the subscribes, sent under the lock
+ * from the event handler). publish_raw() lets nothing but that burst
+ * through until the burst is sent (csi_mqtt.cpp's s_burst_task), an abort
+ * clears the link before esp_mqtt waits out its reconnect delay with the
+ * lock released, and refresh_connection_after_ms (which reconnects in the
+ * same locked pass as its abort) is not set. Only the re-init's worker
+ * waits out a connect (esp_mqtt_client_stop, F106).
+ *
+ * kNetworkOpsBudget of them must fit under the loop's watchdog: two back to
+ * back (an esp_mqtt operation that finishes just inside the timeout, then
+ * the publish's own write meeting the stall), and one more for the rest of
+ * the pass. canary_wap.ino static_asserts it, and
  * firmware/scripts/check_wap_loop_commands.py holds this file to setting it
  * on the client. A side effect: a broker that takes longer than this to
  * answer one step of a connect (the TCP connect, a TLS handshake read, the

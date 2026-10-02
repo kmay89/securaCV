@@ -7,12 +7,14 @@
  *     and resends. A publish is NOT posted to that task: while the client
  *     is connected, esp_mqtt_client_publish() takes the client's API lock
  *     and writes the socket on the caller's task, so the loop task's
- *     publishes wait on the network. Every such wait, the write and the
- *     lock the esp_mqtt task holds across its own socket operations, is
- *     bounded by the client's network timeout, kNetworkTimeoutMs (sweep
- *     F112; csi_mqtt.h says what it bounds and what it does not), set in
- *     open_client() instead of esp_mqtt's 10 s default, which outlasted
- *     the loop task's 8 s panic watchdog.
+ *     publishes wait on the network. A stalled write, and the esp_mqtt
+ *     task's own socket operation a publish waits behind, give up after the
+ *     client's network timeout, kNetworkTimeoutMs (sweep F112; csi_mqtt.h
+ *     says what it bounds and what it does not), set in open_client()
+ *     instead of esp_mqtt's 10 s default, which outlasted the loop task's
+ *     8 s panic watchdog. The link is announced to the loop task
+ *     (s_connected) only after the CONNECTED burst, which esp_mqtt sends
+ *     under the same lock, so a loop publish never waits behind it.
  *     Event callbacks fire on the MQTT task; we keep them to flag-flips,
  *     Serial logs and the reconnect republish, so we never block the
  *     network stack.
@@ -88,6 +90,17 @@ constexpr const char* DEFAULT_PREFIX = "securacv";
  * still being stopped never sets s_connected or publishes. */
 std::atomic<esp_mqtt_client_handle_t> s_client{nullptr};
 std::atomic<bool>        s_connected{false};
+/* The esp_mqtt task while its CONNECTED handler sends the connect burst
+ * (the retained status, the discovery set, the cached states, the
+ * subscribes), else nullptr. esp_mqtt dispatches CONNECTED with the
+ * client's API lock held, and every publish takes that lock: a loop-task
+ * publish that saw the link up would wait behind the whole burst, and only
+ * the link's throughput bounds it (each write restarts the network
+ * timeout). So s_connected turns true only once the burst is sent, the
+ * burst's own publishes pass publish_raw()'s gate as this task, and a
+ * DISCONNECTED during the burst (the burst's own failed write) clears this
+ * so the link is not announced (the F112 review). */
+std::atomic<TaskHandle_t> s_burst_task{nullptr};
 /* A broker is configured (accepting()): written by open_client() on the loop
  * task, read by the egress on the loop task and by any task. */
 std::atomic<bool>        s_accepting{false};
@@ -175,7 +188,13 @@ bool publish_raw(const char* topic, const char* payload, size_t len, bool retain
   /* Read once: on the esp_mqtt task (the reconnect republish) the loop task
    * may detach it meanwhile, and that task's own client outlives this call. */
   esp_mqtt_client_handle_t client = s_client.load(std::memory_order_acquire);
-  if (!client || !s_connected.load(std::memory_order_relaxed)) return false;
+  if (!client) return false;
+  /* The link is up for every task once the connect burst is sent; during
+   * it, only for the esp_mqtt task sending it (s_burst_task). */
+  if (!s_connected.load(std::memory_order_relaxed) &&
+      s_burst_task.load(std::memory_order_relaxed) != xTaskGetCurrentTaskHandle()) {
+    return false;
+  }
   const int msg_id = esp_mqtt_client_publish(
       client, topic, payload, (int)len, /*qos=*/0, retain ? 1 : 0);
   if (msg_id < 0) return false;
@@ -198,7 +217,11 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
   if (!e || e->client != s_client.load(std::memory_order_acquire)) return;
   switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED: {
-      s_connected.store(true, std::memory_order_relaxed);
+      /* The connect burst below is sent before the link is announced
+       * (s_burst_task): the loop task's publishes wait for the API lock
+       * this task holds until it ends, so they wait for nothing. */
+      TaskHandle_t self = xTaskGetCurrentTaskHandle();
+      s_burst_task.store(self, std::memory_order_relaxed);
       s_last_error[0] = '\0';
       Serial.println("[MQTT] connected");
       /* Replace the LWT-published "offline" with a fresh "online" so
@@ -273,6 +296,15 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
        * backfill itself, in id order, before anything committed since. A
        * file-system walk on this task would block the reconnect fastpath,
        * and a publish from it would race the backfill. */
+      /* The burst is sent: announce the link, unless a DISCONNECTED came
+       * meanwhile (the burst's own failed write aborts the connection and
+       * dispatches it on this task, clearing s_burst_task) or the loop task
+       * detached this client meanwhile (its re-init opens the next one only
+       * after this task lets go of the lock: the worker's stop takes it). */
+      if (s_burst_task.compare_exchange_strong(self, nullptr, std::memory_order_relaxed) &&
+          e->client == s_client.load(std::memory_order_acquire)) {
+        s_connected.store(true, std::memory_order_relaxed);
+      }
       break;
     }
     case MQTT_EVENT_DATA: {
@@ -356,6 +388,7 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       break;
     }
     case MQTT_EVENT_DISCONNECTED:
+      s_burst_task.store(nullptr, std::memory_order_relaxed);
       s_connected.store(false, std::memory_order_relaxed);
       Serial.println("[MQTT] disconnected (will retry)");
       break;

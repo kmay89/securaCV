@@ -44,4 +44,15 @@ inline BaseType_t xTaskCreate(TaskFunction_t fn, const char* name, uint32_t /*st
 /* A task ending itself (vTaskDelete(nullptr)): its function returns next. */
 inline void vTaskDelete(TaskHandle_t) { ++stub_mqtt::tasks_deleted; }
 
+/* The task the test is playing, as a handle: test_mqtt_reinit.cpp gives each
+ * of its roles its own (stub_mqtt::current_task). Never nullptr, as on a
+ * device once the scheduler runs. */
+namespace stub_mqtt {
+inline TaskHandle_t (*current_task)() = nullptr;
+}  // namespace stub_mqtt
+inline TaskHandle_t xTaskGetCurrentTaskHandle() {
+  return stub_mqtt::current_task != nullptr ? stub_mqtt::current_task()
+                                            : reinterpret_cast<TaskHandle_t>(static_cast<uintptr_t>(1));
+}
+
 #endif

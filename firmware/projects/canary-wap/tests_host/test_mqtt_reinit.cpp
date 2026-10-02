@@ -40,7 +40,10 @@
 // at the commit ESP-IDF 5.5.4 pins (6af4446): a socket that takes nothing
 // for the timeout fails the write, the connection is aborted (DISCONNECTED,
 // dispatched on the task that hit it), and a publish to a client that is
-// not connected returns -1 once it has the lock. A model, not esp_mqtt.
+// not connected returns -1 once it has the lock. The esp_mqtt task holds
+// the API lock across every event it dispatches, CONNECTED included, whose
+// handler sends the reconnect burst under it; the bridge announces the link
+// only once that burst is sent (the F112 review). A model, not esp_mqtt.
 //
 // Run: ./test_mqtt_reinit [name]
 
@@ -59,6 +62,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -111,6 +115,18 @@ uint32_t socket_stall_ms = 0;
 // ping, a resend) when the next publish comes, holding the API lock; with
 // the socket stalled it gives up after the timeout and aborts the connection.
 bool mqtt_task_in_socket_op = false;
+// A slow link, not a stalled one (the F112 review): every write the socket
+// takes costs this long (0: at once). No write times out, since each makes
+// progress, and that restarts esp_mqtt's network timeout.
+uint32_t write_ms = 0;
+// The client's API lock, as the esp_mqtt task holds it: across every event
+// it dispatches (mqtt_client.c's esp_mqtt_task takes it at the top of each
+// iteration and dispatches CONNECTED under it). A publish or subscribe from
+// another task then waits for the dispatch to end. The fake cannot block,
+// so it records each such wait and, when the dispatch ends, how long it was.
+std::string lock_holder;
+std::vector<std::pair<std::string, uint32_t>> lock_waits_open;   // task, since
+std::vector<uint32_t> lock_waited_ms;
 
 // esp_mqtt's own rule (mqtt_client.c at the IDF 5.5.4 pin): a timeout of 0
 // or less is MQTT_NETWORK_TIMEOUT_MS, 10 s.
@@ -133,6 +149,25 @@ void reset() {
   stop_blocks_ms = 0;
   socket_stall_ms = 0;
   mqtt_task_in_socket_op = false;
+  write_ms = 0;
+  lock_holder.clear();
+  lock_waits_open.clear();
+  lock_waited_ms.clear();
+}
+
+// The task the test is playing, as the handle xTaskGetCurrentTaskHandle()
+// gives (stubs/mqtt/freertos/task.h): one per role, never nullptr.
+TaskHandle_t task_handle() {
+  static std::map<std::string, uintptr_t> ids;
+  auto it = ids.find(task);
+  if (it == ids.end()) it = ids.emplace(task, ids.size() + 1).first;
+  return reinterpret_cast<TaskHandle_t>(it->second);
+}
+
+// A call that takes the client's API lock: from a task other than the one
+// holding it, it waits (recorded).
+void take_lock() {
+  if (!lock_holder.empty() && lock_holder != task) lock_waits_open.emplace_back(task, stub_mqtt::now_ms);
 }
 
 esp_mqtt_client* last_client() { return clients.empty() ? nullptr : clients.back(); }
@@ -155,11 +190,17 @@ void dispatch(esp_mqtt_client* c, esp_mqtt_event_id_t id) {
   c->handler(c->handler_args, "MQTT_EVENTS", (int32_t)id, &e);
 }
 
-// The esp_mqtt task delivers an event to the client's handler.
+// The esp_mqtt task delivers an event to the client's handler, holding the
+// client's API lock across the dispatch.
 void deliver(esp_mqtt_client* c, esp_mqtt_event_id_t id) {
   const std::string was = task;
+  const std::string held = lock_holder;
   task = "mqtt";
+  lock_holder = "mqtt";
   dispatch(c, id);
+  lock_holder = held;
+  for (const auto& w : lock_waits_open) lock_waited_ms.push_back(stub_mqtt::now_ms - w.second);
+  lock_waits_open.clear();
   task = was;
 }
 
@@ -220,6 +261,7 @@ int esp_mqtt_client_publish(esp_mqtt_client_handle_t c, const char* topic, const
     ++fake::publishes_on_dead;
     return -1;
   }
+  fake::take_lock();
   // The API lock: the esp_mqtt task's own socket operation goes first, and
   // on a stalled socket it gives up after the timeout and aborts.
   if (fake::mqtt_task_in_socket_op) {
@@ -254,6 +296,7 @@ int esp_mqtt_client_publish(esp_mqtt_client_handle_t c, const char* topic, const
     stub_mqtt::now_ms += fake::socket_stall_ms;
     fake::socket_stall_ms = 0;
   }
+  stub_mqtt::now_ms += fake::write_ms;
   ++c->in_publish;
   if (fake::during_publish) {
     std::function<void()> f = std::move(fake::during_publish);
@@ -268,6 +311,8 @@ int esp_mqtt_client_publish(esp_mqtt_client_handle_t c, const char* topic, const
 }
 
 int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t c, const char*, int) {
+  fake::take_lock();
+  if (c != nullptr && c->connected) stub_mqtt::now_ms += fake::write_ms;
   fake::calls.push_back({"subscribe", fake::task, c != nullptr ? c->id : 0});
   return (c != nullptr && c->alive) ? 1 : -1;
 }
@@ -868,6 +913,67 @@ void test_a_stall_under_the_timeout_keeps_the_connection() {
   std::printf("PASS a_stall_under_the_timeout_keeps_the_connection\n");
 }
 
+// The connect burst (the F112 review): esp_mqtt dispatches CONNECTED with
+// the client's API lock held, and the handler sends the retained status, the
+// discovery set, the cached states and the subscribes under it. Over a slow
+// link (every write waits a little on the socket, none long enough to time
+// out) that alone outlasts the loop's watchdog, and every write restarts
+// the network timeout, so the timeout does not bound it. A loop pass in the
+// middle of it must not wait for that lock: the bridge says the link is up
+// only once the burst is sent, so the pass's publishes return at the gate
+// (the egress keeps its rows for the next pass). Before, the handler said
+// so first, and the pass's first publish waited out the rest of the burst.
+void test_a_loop_pass_never_waits_behind_the_connect_burst() {
+  boot_with_broker("10.0.0.1", /*connect=*/false);
+  fake::write_ms = 250;
+  size_t pass_published = 99;
+  bool up_during_burst = true;
+  fake::during_publish = [&] {          // inside the burst's first write (the status)
+    CHECK(fake::task == "mqtt");
+    up_during_burst = csi_mqtt::connected();
+    const size_t before = fake::published.size();
+    (void)busy_publish_pass();
+    pass_published = fake::published.size() - before;
+  };
+  const uint32_t t0 = stub_mqtt::now_ms;
+  fake::deliver(fake::last_client(), MQTT_EVENT_CONNECTED);
+  const uint32_t burst_ms = stub_mqtt::now_ms - t0;
+  CHECK(burst_ms > kLoopWatchdogMs);                 // the burst alone, at 250 ms a write
+  uint32_t longest_wait = 0;
+  for (uint32_t w : fake::lock_waited_ms) longest_wait = w > longest_wait ? w : longest_wait;
+  if (longest_wait > 0) {
+    std::fprintf(stderr, "the loop waited %u ms for the burst's lock\n", (unsigned)longest_wait);
+  }
+  CHECK(fake::lock_waited_ms.empty());               // the pass took no lock the burst held
+  CHECK(!up_during_burst && pass_published == 0);
+  CHECK(csi_mqtt::connected());                      // announced once the burst was sent
+  CHECK(!fake::published.empty() && fake::published.front().first == "securacv/canary-wap-7f3a/status");
+  for (const std::string& t : fake::published_on) CHECK(t == "mqtt");
+  // The next pass publishes as before.
+  fake::write_ms = 0;
+  const size_t before = fake::published.size();
+  CHECK(busy_publish_pass() == 0);
+  CHECK(fake::published.size() - before == 5);       // status, health, counts, chain, chirp
+  std::printf("PASS a_loop_pass_never_waits_behind_the_connect_burst\n");
+}
+
+// The burst's own write fails (the link stalls as it connects): esp_mqtt
+// aborts the connection and dispatches DISCONNECTED on the esp_mqtt task,
+// inside the CONNECTED dispatch. The burst stops at the gate after one
+// timeout, and the link is never announced.
+void test_a_connect_burst_cut_short_leaves_the_link_down() {
+  boot_with_broker("10.0.0.1", /*connect=*/false);
+  fake::socket_stall_ms = 60000;
+  const uint32_t t0 = stub_mqtt::now_ms;
+  fake::deliver(fake::last_client(), MQTT_EVENT_CONNECTED);
+  CHECK(stub_mqtt::now_ms - t0 == csi_mqtt::kNetworkTimeoutMs);
+  CHECK(!csi_mqtt::connected());
+  CHECK(fake::published.empty());
+  CHECK(busy_publish_pass() == 0);                   // the loop does not touch the socket
+  CHECK(fake::published.empty());
+  std::printf("PASS a_connect_burst_cut_short_leaves_the_link_down\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -891,12 +997,15 @@ const Test kTests[] = {
     {"a_stalled_link_cannot_hold_the_loop_past_its_watchdog", test_a_stalled_link_cannot_hold_the_loop_past_its_watchdog},
     {"a_publish_behind_the_esp_mqtt_tasks_stalled_write_is_bounded", test_a_publish_behind_the_esp_mqtt_tasks_stalled_write_is_bounded},
     {"a_stall_under_the_timeout_keeps_the_connection", test_a_stall_under_the_timeout_keeps_the_connection},
+    {"a_loop_pass_never_waits_behind_the_connect_burst", test_a_loop_pass_never_waits_behind_the_connect_burst},
+    {"a_connect_burst_cut_short_leaves_the_link_down", test_a_connect_burst_cut_short_leaves_the_link_down},
 };
 
 }  // namespace reinit
 
 int main(int argc, char** argv) {
   using namespace reinit;
+  stub_mqtt::current_task = fake::task_handle;
   const char* only = argc > 1 ? argv[1] : nullptr;
   int ran = 0;
   for (const Test& t : kTests) {

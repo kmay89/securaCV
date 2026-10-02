@@ -2645,19 +2645,38 @@
   description became the reason nobody looked at its timeouts.
 - **Fix:** every client carries `network.timeout_ms` = `kNetworkTimeoutMs`
   (2 s, `csi_mqtt.h`), and the sketch `static_assert`s that three of them
-  (the esp_mqtt task's connect: the TCP/TLS connect, the CONNECT write, the
-  CONNACK wait) fit under the watchdog. A write that sends nothing in 2 s
-  fails and aborts the connection, so the rest of the pass returns at once.
-  `esp_mqtt_client_enqueue()` was not the fix: it takes the same lock, and
-  the event egress reads `publish()`'s result as "written while connected".
-  The loop task can still wait out one timeout (2 s) on a stalled link; that
-  is over this file's 1 s rule, and a publishing worker would be the full
-  answer.
+  (an esp_mqtt operation a publish waits behind, its own write, and room
+  for the rest of the pass) fit under the watchdog. A write that sends
+  nothing in 2 s fails and aborts the connection, so the rest of the pass
+  returns at once. `esp_mqtt_client_enqueue()` was not the fix: it takes
+  the same lock, and the event egress reads `publish()`'s result as
+  "written while connected".
+- **And the lock is held across more than socket calls.** The F112 review
+  found the wait the first fix's budget missed: esp_mqtt dispatches
+  `MQTT_EVENT_CONNECTED` with the API lock held, and the bridge's handler
+  sends its whole reconnect burst under it (the status, the discovery
+  configs, the cached states and the subscribes: 34 publishes, about
+  16.5 KB, and 3 subscribes in the host build). The
+  handler set the link up first, so a loop publish that came meanwhile
+  waited for the lock until the burst was sent, and since every write that
+  makes progress restarts the timeout, only the link's throughput bounded
+  that (at 250 ms a write, about 9 s in the host model). The link is now
+  announced after the burst (`s_burst_task`); the burst's own publishes pass
+  the gate as the esp_mqtt task. Two waits are left: one timeout (2 s) on a
+  stalled link, over this file's 1 s rule, and a link that trickles, which
+  restarts the timeout write after write; a publishing worker would be the
+  full answer. And a connect is not a wait the loop meets at all: an abort
+  clears the link before esp_mqtt's reconnect delay, so naming the
+  connect's three operations as the loop's budget was budgeting the wrong
+  thing.
 - **Regression check:** `test_mqtt_reinit.cpp`'s F112 tests (a fake that
-  follows esp-mqtt's write path: a stalled link costs a busy pass one
-  timeout, not 10 s) and `check_wap_loop_commands.py`'s rule M1 (the config
-  line, the constants and the `static_assert`). Before you call a library
-  "asynchronous", find where it writes.
+  follows esp-mqtt's write path and holds the API lock across the
+  esp_mqtt task's dispatches: a stalled link costs a busy pass one timeout,
+  not 10 s; a loop pass in the middle of the CONNECTED burst waits for no
+  lock; a burst cut short by its own failed write leaves the link down) and
+  `check_wap_loop_commands.py`'s rule M1 (the config line, the constants and
+  the `static_assert`). Before you call a library "asynchronous", find where
+  it writes, and what it holds while your callback runs.
 - **Date learned:** 2026-10
 
 ### A command that can bring a stack up cannot run on the loop task

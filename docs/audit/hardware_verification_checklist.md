@@ -715,7 +715,9 @@ on every pass), `chirp_api.h` and `bluetooth_api.h` (the POST handlers
 submit and answer from the result; a Bluetooth handler that turns
 Bluetooth on calls `init()` on its own task first), and `csi_mqtt.cpp`
 (`open_client()` sets the client's `network.timeout_ms` to
-`kNetworkTimeoutMs`, 2 s). Host-tested (`tests_host/test_chirp_commands_wap.cpp`,
+`kNetworkTimeoutMs`, 2 s; the link is announced to the loop task only after
+the CONNECTED handler's burst, which esp_mqtt sends under the client's API
+lock). Host-tested (`tests_host/test_chirp_commands_wap.cpp`,
 `test_bluetooth_commands_wap.cpp` over a NimBLE stand-in,
 `test_mqtt_reinit.cpp` over a fake esp_mqtt) and held by
 `firmware/scripts/check_wap_loop_commands.py`; the real radio stacks, two
@@ -764,10 +766,27 @@ test can run. Compile is CI's. Owner: U1.
   - Expected: no `task_wdt` / Guru Meditation and no reboot; the serial log
     shows `[MQTT] disconnected (will retry)` once the link gives out: about
     2 s after the publish that finds the TCP send buffer full, or when the
-    60 s keepalive goes unanswered, whichever comes first; events committed
-    meanwhile reach HA after the reconnect (from the card or the RAM hold,
-    per F78).
+    60 s keepalive goes unanswered, whichever comes first; HA shows the
+    board unavailable (the broker publishes its will) until the reconnect.
+    Events committed after the link failed reach HA after the reconnect
+    (from the card or the RAM hold, per F78), except QoS 0 rows the board
+    had already handed to the socket before the abort: those count as sent
+    and may be missing. Count them (compare the board's event ids with HA's
+    history for the window) and note the number.
   - Artifact: `docs/audit/repro/F112/stalled-broker/`.
+- [ ] **A reconnect over a slow link does not trip the loop watchdog**
+  - Setup: a board connected to Home Assistant's broker with discovery on;
+    the broker host can shape the board's traffic (for example
+    `tc qdisc add dev <if> root netem rate 16kbit` for its IP).
+  - Repro: shape the link, restart the broker (or the board's Wi-Fi) so the
+    board reconnects and sends its status, discovery configs and cached
+    states over the slow link; keep walking in front of the sensor while it
+    does; then remove the shaping.
+  - Expected: no `task_wdt` / Guru Meditation and no reboot while
+    `[MQTT] connected` is followed by the burst; the HA entities come back;
+    events committed during the burst reach HA after it (the egress waits
+    for the link the bridge announces once the burst is sent).
+  - Artifact: `docs/audit/repro/F112/slow-reconnect/`.
 
 ## One event-id space (F46) — on-device verification
 

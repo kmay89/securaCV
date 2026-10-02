@@ -1425,10 +1425,13 @@ static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
 // The loop task publishes MQTT, and esp_mqtt writes the socket on the
 // publishing task and holds its API lock across its own socket operations;
 // each one gives up after the client's network timeout (csi_mqtt.h, sweep
-// F112). kNetworkOpsBudget of them (the esp_mqtt task's connect: the TCP/TLS
-// connect, the CONNECT write, the CONNACK wait) must fit under the watchdog
-// with room for the rest of a pass. firmware/scripts/check_wap_loop_commands.py
-// reads this line, the constants and the client config that sets the timeout.
+// F112). kNetworkOpsBudget of them (an esp_mqtt operation a publish queued
+// behind, its own write, and room for the rest of the pass) must fit under
+// the watchdog. The esp_mqtt task's connect and CONNECTED burst are not
+// among them: a publish waits for neither (csi_mqtt.h). A link that trickles
+// restarts the timeout on every write, so this bounds a stall, not that.
+// firmware/scripts/check_wap_loop_commands.py reads this line, the
+// constants and the client config that sets the timeout.
 static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&
                   csi_mqtt::kNetworkOpsBudget * csi_mqtt::kNetworkTimeoutMs <
                       WATCHDOG_TIMEOUT_SEC * 1000u,
