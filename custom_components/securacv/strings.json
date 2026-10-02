@@ -217,6 +217,9 @@
       "sd_replace": {
         "name": "SD Replacement Recommended"
       },
+      "event_id_space_low": {
+        "name": "Event ID Space Low"
+      },
       "transport_wifi_ap": {
         "name": "WiFi AP"
       },

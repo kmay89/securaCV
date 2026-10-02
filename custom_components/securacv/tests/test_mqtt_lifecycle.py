@@ -60,7 +60,7 @@ ENTITY_CLASSES = [
     (sensor_platform.SecuraCVCanaryWitnessCountSensor, ()),
     (sensor_platform.SecuraCVCanaryChainLengthSensor, ()),
     (sensor_platform.SecuraCVCanaryLastEventSensor, ()),
-    (sensor_platform.SecuraCVCanaryHealthSensor, ()),
+    (sensor_platform.SecuraCVCanaryHealthSensor, ()),        # 2 subscriptions
     (sensor_platform.SecuraCVCanarySDWearSensor, ()),
     (sensor_platform.SecuraCVCanaryGPSSensor, ()),
     (sensor_platform.SecuraCVCanaryRadarLinkSensor, ()),
@@ -70,6 +70,7 @@ ENTITY_CLASSES = [
     (bs_platform.SecuraCVCanaryTamperTypeSensor,
      ("power_loss", "mdi:power-plug-off")),  # 2 subscriptions
     (bs_platform.SecuraCVCanarySDReplaceSensor, ()),
+    (bs_platform.SecuraCVCanaryEventIdSpaceLowSensor, ()),
     (bs_platform.SecuraCVCanaryTransportSensor,
      ("wifi_sta", "mdi:wifi")),
     (bs_platform.SecuraCVCanaryMotionSensor, ()),

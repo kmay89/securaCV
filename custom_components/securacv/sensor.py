@@ -25,6 +25,7 @@ from .const import (
     CONF_ENABLE_MQTT,
     TOPIC_COUNTS,
     TOPIC_CHAIN,
+    TOPIC_EGRESS,
     TOPIC_EVENTS,
     TOPIC_HEALTH,
     TOPIC_STATUS,
@@ -59,9 +60,11 @@ from .health_metrics import (
     bytes_per_day_to_mb,
     canary_sd,
     canary_sd_wear_pct,
+    egress_counters,
     kernel_storage,
     kernel_thermal,
     memory_free_bytes,
+    offline_queue_counters,
     round_pct,
 )
 from .signature import (
@@ -974,16 +977,28 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
 
 
 class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
-    """Sensor for device health status from a Canary device."""
+    """Sensor for device health status from a Canary device.
+
+    Its attributes also carry what the device's committed-event egress
+    dropped and sent since its boot (HA24): the canary base sends that in
+    its health as ``csi_event_egress``, beside its MQTT offline queue's drops
+    (``offline_queue``); the canary-wap sends the same object on a retained
+    topic of its own, ``egress`` (firmware sweep F149), which this sensor
+    follows too. Counters, not a per-row ledger: what each one counts is in
+    docs/csi_developer_api.md.
+    """
 
     _attr_icon = "mdi:heart-pulse"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
         super().__init__(prefix, device_id, entry, "health_status")
+        # The canary-wap's last `egress` publish, carried into every health
+        # rebuild of the attributes below.
+        self._egress_topic: dict[str, Any] | None = None
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT when added; release the subscription on removal."""
+        """Subscribe to MQTT when added; release the subscriptions on removal."""
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -991,6 +1006,28 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
                 self._handle_message,
             )
         )
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_EGRESS}",
+                self._handle_egress_message,
+            )
+        )
+
+    @callback
+    def _handle_egress_message(self, msg: mqtt.ReceiveMessage) -> None:
+        """Handle the canary-wap's egress counters (retained, beside health)."""
+        counters = egress_counters(parse_mqtt_json(msg.payload))
+        if counters is None:
+            # Not a JSON object: keep the last counters rather than show junk.
+            return
+        self._egress_topic = counters
+        attrs = dict(getattr(self, "_attr_extra_state_attributes", None) or {})
+        attrs["csi_event_egress"] = counters
+        # The egress topic is not signed either.
+        attrs.update(unsigned_trust_attrs(self.hass, self._entry, self._device_id))
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
@@ -1056,6 +1093,16 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
             self._attr_extra_state_attributes["sd"] = sd
         if (temp_c := data.get("temp_c")) is not None:
             self._attr_extra_state_attributes["temp_c"] = temp_c
+        # The committed-event egress's counters (HA24): in the canary base's
+        # health, else from the canary-wap's own topic; and the canary base's
+        # MQTT offline queue drops, where an outage with no card loses rows.
+        egress = egress_counters(data.get("csi_event_egress"))
+        if egress is None:
+            egress = self._egress_topic
+        if egress is not None:
+            self._attr_extra_state_attributes["csi_event_egress"] = egress
+        if (queue := offline_queue_counters(data.get("offline_queue"))) is not None:
+            self._attr_extra_state_attributes["offline_queue"] = queue
         self.async_write_ha_state()
 
 

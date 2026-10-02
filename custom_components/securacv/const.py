@@ -40,10 +40,38 @@ TOPIC_TAMPER = "tamper"
 TOPIC_MESH = "mesh"
 TOPIC_CHIRP = "chirp"
 TOPIC_TRANSPORT = "transport"
+# The canary-wap's committed-event egress counters (firmware sweep F149),
+# retained, beside its health: the object the canary base carries in its
+# health as `csi_event_egress`. Its health body has no room for them.
+TOPIC_EGRESS = "egress"
 # The retained per-variant snapshot. This — not a `presence` topic — is where
 # the firmware actually publishes presence: canary-sense's topics.h builds
 # `securacv/<id>/state`, and its own HA discovery reads `value_json.presence`.
 TOPIC_STATE = "state"
+
+# =============================================================================
+# Event egress counters (firmware sweeps F109 and F149; HA24)
+# =============================================================================
+# What a device's committed-event egress dropped and sent since its last boot,
+# in the firmware's own names: the canary-wap's csi_event_egress::Stats (the
+# canary base's CsiEventEgressStats mirrors it field for field), the SD
+# backfill planner's Stats (nested as `planner`), and the canary base's MQTT
+# offline queue's drop counters. The health sensor shows them as attributes.
+# A counter the firmware adds is not shown until it is named here; in the
+# monorepo tests/test_egress_health.py holds these to the firmware structs.
+EGRESS_COUNTERS = ("dropped", "held_dropped", "ambient_dropped", "unsent_dropped")
+EGRESS_PLANNER_COUNTERS = (
+    "live",
+    "held",
+    "queued",
+    "replayed",
+    "skipped",
+    "untrusted",
+    "unsendable",
+    "truncated_unsent",
+    "read_giveups",
+)
+OFFLINE_QUEUE_COUNTERS = ("dropped_overflow", "dropped_oversize", "dropped_flushed")
 
 # =============================================================================
 # Transport Types - Multi-path resilience
