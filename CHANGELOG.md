@@ -210,8 +210,8 @@
   replay, on both devices (the live body said 1); host tests of the Canary's
   real CSI bridge playing its main loop, three more ceiling probes (exactly
   144 rows on a day that starts with the limit's counter, and a 60 s refresh
-  beside a new state every ten minutes, 286 rows a day before, now within
-  the limit), and a static check that holds the main loop's call in place;
+  beside a new state every ten minutes, 286 rows a day before, now exactly
+  144), and a static check that holds the main loop's call in place;
   and the account of what the change means. A refresh inside a bundle's ten
   minutes costs nothing, and the row carries every observation and the time
   they span. A return to a state within two minutes joins its open bundle, so
@@ -227,7 +227,11 @@
   less exposed than the limit leak's 714 suggests. Not fixed, and measured on
   the host: a state held for an hour or more fills core.presence's limit of
   six an hour with its own rows, and the next change then waits up to about
-  ten minutes for a slot (F90, which both PRs filed).
+  ten minutes for a slot (F90, which both PRs filed). Also measured, and
+  filed in the review of the merge: the limit's hour is six ten-minute
+  slots, not any 60 minutes, and a row lands when its bundle closes, so one
+  sliding hour can hold up to twice the limit (twelve rows when openings
+  bunch at a slot's edge), though each day still holds 144 (F132).
   **Host-tested only**: the ESP32 builds are CI's, and nothing was checked on
   a bench.
 - **canary-wap no longer lets a new event overtake its own backlog after a

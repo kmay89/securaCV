@@ -417,8 +417,9 @@ firmware, live or backfilled, is now a finding.
   - Repro: stop the broker; commit more than 12 events (presence changes
     in front of the sensor); restart the broker. Since sweep F81 a presence
     row commits when its bundle closes, two minutes after the state's last
-    refresh or ten minutes after it opened, and `core.presence` commits at
-    most six an hour, so keep the broker down for a few hours, or count the
+    refresh or ten minutes after it opened, and `core.presence` opens at
+    most six bundles in each of its ceiling's hours (six 10-minute buckets,
+    sweep F132), so keep the broker down for a few hours, or count the
     other modules' rows too (the serial log's commit lines).
   - Expected: the serial log shows `[EVT-LOG] /EVENTS/today.ndjson open`
     at boot and `[CSI] event backfill done: N event(s) from the card`

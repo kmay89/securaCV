@@ -205,7 +205,9 @@ so each of its observations was a row of its own, committed within a
 second. A module's hourly ceiling counts rows: a bundle that opens spends
 one slot, an observation merged into its open bundle spends none, and a
 bundle that reopens after its ten minutes or its quiet gap spends one like
-any other opening (sweep F80). A state held for an hour therefore spends
+any other opening (sweep F80). The ceiling's hour is its six 10-minute
+buckets, not a sliding 60 minutes, so one sliding hour can hold up to twice
+the ceiling's rows (sweep F132). A state held for an hour therefore spends
 six slots on its own rows, which is all of `core.presence`'s six an hour:
 until one ages out, the next transition is refused, and so is every further
 observation of the held state (measured on the host: after an hour or more

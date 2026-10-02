@@ -1287,7 +1287,8 @@ so — see D2 below.)
   `duration_sec`) instead of one per refresh, as the canary-wap does. So once
   closed bundles reach the ring, the daily summary's active and quiet counts
   count bundles: a state held for three hours is about 18 rows, one per
-  10-minute window, and core.presence commits at most six an hour (F90). The
+  10-minute window, and core.presence opens at most six bundles in each of
+  its ceiling's hours (F90; a sliding hour can hold more rows, F132). The
   summary would have to join consecutive same-state rows (or sum
   `duration_sec`) to count periods, and a row's span can take in a brief other
   state (a return within two minutes joins the open bundle). On the canary the
@@ -1424,11 +1425,26 @@ so — see D2 below.)
   `has_open()` were dropped in the merge). It adds three tests to
   `test_csi_bundler_ceiling.cpp` (folded in from its own ceiling test when
   the two merged), on a day anchored where the module's counter is created:
-  the 121 s probe commits exactly 144 rows, so every hour
+  the 121 s probe commits exactly 144 rows, so each of the counter's hours
   still gets its six; a 60 s refresh beside one new state every 10 minutes,
   whose bundle closes on its 10-minute window inside a refresh's admit,
-  commits 144 (286 before, 143 of them the refreshed state); and thirty
-  merges into one open bundle leave five of the six slots for new states.
+  commits exactly 144 (286 before, 143 of them the refreshed state); and
+  thirty merges into one open bundle leave five of the six slots for new
+  states.
+  Correction to #1763's text above: "no hour holds more than the ceiling" is
+  true of the ceiling's own hours, not of every 60 minutes. The counter keeps
+  six 10-minute buckets (the current one and the five before it) and bounds
+  the openings in them; a row commits when its bundle closes, two to ten
+  minutes after it opened. So a sliding 60 minutes of committed rows can
+  hold more than six: 7 in the 121 s probe (with or without the final
+  flush's row), 8 in the window probe (two of them the final flush's rows,
+  which close two bundles early; 6 without them), and 12, twice the
+  ceiling, when six openings fall at the end of one bucket and six at the
+  start of the bucket that pushes it out, fifty minutes later
+  (`test_a_sliding_hour_can_hold_twice_the_ceiling`, which pins it). Each
+  probe's day still holds 144. Not a regression: the 121 s and window probes
+  committed 714 and 286 rows a day before F80. Filed as F132; the test's "+1"
+  comments now name this cause, not the final flush.
   Correction to the item: the canary-wap was less exposed than it says. A host
   that ticks every loop pass mostly closes an overdue bundle before the next
   emit can reopen it: with a 1 s tick the 121 s probe commits 144 a day on the
@@ -1442,7 +1458,8 @@ so — see D2 below.)
   defaults (`csi_event_id_floor.h`, pinned in `test_csi_event_id_floor.cpp`;
   F46 and F82 are corrected). Bench rows: the F80/F81 section of
   `hardware_verification_checklist.md` (U1). Host-tested; the ESP32 compiles
-  are CI's; not bench-verified. Found here: F90, which #1763 filed too.
+  are CI's; not bench-verified. Found here: F90, which #1763 filed too, and
+  F132 (in the review of the merge with #1763).
 - [x] **F81 [code] The canary flushes every open bundle on every CSI
   window.** `firmware/canary/src/csi_modules_integration.cpp` calls
   `csi_event_flush_bundles()` (close all) after each module tick. Its
@@ -1859,6 +1876,36 @@ so — see D2 below.)
   full ceiling only an emit that needs a slot, decided from the admit's
   outcome as the refund now is, and extend `test_csi_bundler_ceiling.cpp`.
   Filed by both PRs: found doing F80 (#1763), and by F80 and F81 (#1762).
+- [ ] **F132 [code+decision] The hourly ceiling's hour is six 10-minute
+  buckets, so a sliding 60 minutes can hold twice the ceiling.**
+  `csi_event.cpp`'s per-module counter keeps six 10-minute buckets, the
+  current one and the five before it, and refuses an emit when they already
+  hold the ceiling. Any six consecutive buckets therefore hold at most the
+  ceiling's openings, but a sliding 60 minutes does not: six openings at the
+  end of one bucket and six more once that bucket rotates out are twelve in
+  about fifty minutes. Rows add their own lag, since a bundled row commits
+  when its bundle closes, two to ten minutes after the opening a bucket
+  counted. On the library (host, `CSI_TEST_CLOCK`) one sliding hour of
+  committed rows held 7 in F80's 121 s probe (none of them a flush's), 8 in
+  the window probe (two of them its final flush's) and 12 at a bucket edge,
+  while each day held 144. Both trees run the same library. The counter's
+  comment said "sliding 60-minute window" and F80's Done text "no hour holds
+  more than the ceiling"; the comment is corrected, F80 carries the
+  correction, and `test_csi_bundler_ceiling.cpp` pins the bucket-edge 12
+  (`test_a_sliding_hour_can_hold_twice_the_ceiling`). The ceiling is
+  privacy-relevant (F90 calls raising it a privacy-contract change), so
+  decide what "per hour" promises. Options: count a true sliding hour of
+  openings (each module keeps its last N opening times, N the ceiling, which
+  the override can raise to 255), or say in the module docs and the privacy
+  contract that the bound is per six-bucket hour and up to twice that in any
+  60 minutes. Either way rows still commit at their bundle's close, with a
+  lag of two to ten minutes that varies per row, so even a sliding-hour
+  bound on openings lets committed rows bunch; only a count taken at commit
+  time bounds rows per 60 minutes, and a closing bundle cannot be refused
+  without losing it. F90's fix (who gets a slot at a full ceiling) has to be
+  decided with this one. Not a regression: before F80 the 121 s and window
+  probes committed 714 and 286 rows a day. Found by the review of the #1763
+  merge into #1762.
 - [ ] **F91 [decision] Anomaly rows wait in an open bundle.** Every
   non-ambient row with a state goes through the bundler, ANOMALY rows
   included, and commits only when its bundle closes. `anomaly.baseline`'s

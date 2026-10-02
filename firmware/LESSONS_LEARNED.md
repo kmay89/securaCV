@@ -2423,8 +2423,13 @@
 - **Regression check:** `firmware/tests_host/test_csi_bundler_ceiling.cpp`
   runs the real library on a clock the test moves (`CSI_TEST_CLOCK`): the
   121 s probe stays at 144 rows a day (714 on the old library), exactly 144
-  on a day anchored at the counter, the 10-minute window reopen within the
-  ceiling (286 before), and refreshes of an open bundle spend nothing.
+  on a day anchored at the counter, the 10-minute window reopen at exactly
+  144 (286 before), and refreshes of an open bundle spend nothing. Its hour
+  is the counter's six 10-minute buckets, and the same file pins twelve rows
+  in one sliding 60 minutes at a bucket edge (F132): F80's Done text had said
+  "no hour holds more than the ceiling" until the review of the merge
+  measured a sliding hour. State a rate limit in the units its counter
+  keeps, and measure the claim in those units.
   `test_csi_modules_integration.cpp` (the canary's real bridge playing the
   main loop: no row and no slot per refresh, one row per closed bundle, a
   close while CSI is shed), `test_csi_event_wire.cpp` (the body's `bundled`

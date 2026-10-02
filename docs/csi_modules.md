@@ -238,6 +238,12 @@ checked before the bundler runs, so the held state's own refreshes are
 refused too). Size the ceiling
 above the window rate plus the transitions you need to keep.
 
+The ceiling's hour is six 10-minute buckets, the current one and the five
+before it, not a sliding 60 minutes. Any six consecutive buckets hold at
+most the ceiling's openings, but openings that bunch at a bucket edge can
+put up to twice the ceiling in one sliding hour, and a bundled row commits
+when its bundle closes, after the bucket that counted it (sweep F132).
+
 ## Dismiss feedback
 
 The dashboard's "That was nothing" swipe routes to your
