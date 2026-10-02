@@ -8,8 +8,8 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep items F71, F73-F76, F95 and F98-F100: each was a way the opera
-// went quiet, or a pairing went wrong, with nothing reporting it.
+// Sweep items F71, F73-F76, F95, F98-F100 and F113: each was a way the
+// opera went quiet, or a pairing went wrong, with nothing reporting it.
 //   F71  a rebooted device's frames dropped as replays at every member
 //        that had heard it (its send counters restarted at 1);
 //   F73  a pairing whose partner add_peer refused still persisted, went
@@ -29,7 +29,10 @@
 //        rejoins a survivor, or a reboot before the last-seen save, cost
 //        frames until they climbed back (fixed: they carry on);
 //   F100 a pairing COMPLETE lost on the air, or refused by the storm gate,
-//        was never sent again, and the joiner timed out.
+//        was never sent again, and the joiner timed out;
+//   F113 a device that left its opera stored it as all zeros, loaded that
+//        back as an opera at the next boot, and paired into it a joiner
+//        that held another opera_id.
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -1824,6 +1827,96 @@ void test_the_complete_is_not_sent_again_once_it_is_not_the_operas() {
   std::printf("PASS the_complete_is_not_sent_again_once_it_is_not_the_operas\n");
 }
 
+// ── F113: a device with no opera stores none ────────────────────────────
+//
+// leave_opera zeroed the opera config and persisted it as it stood, so NVS
+// held a 16-byte zero opera_id and a 32-byte zero opera_secret, and the next
+// boot loaded them as an opera (load_opera_config checked the lengths
+// only). Started as an initiator, the device kept that opera instead of
+// founding one, and its joiner, which derives the opera_id from the secret
+// it is sent, held another id than the initiator's stored zero one: each
+// dropped the other's frames (host-probed on #<W10>'s code). Now the id and
+// secret keys are removed while no opera is configured, and an all-zero id
+// or secret is not loaded, so NVS an older firmware's leave wrote heals too.
+
+bool nvs_has(const Device& d, const char* key) {
+  return d.nvs.count(std::string("mesh/") + key) != 0;
+}
+
+bool all_zero(const uint8_t* p, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    if (p[i] != 0) return false;
+  }
+  return true;
+}
+
+void test_a_device_that_left_founds_a_new_opera_after_a_reboot() {
+  fresh_opera({&A, &B});
+  become(A);
+  CHECK(mn::leave_opera());
+  CHECK(!nvs_has(A, "opera_id") && !nvs_has(A, "opera_sec"));
+  boot(A);
+  become(A);
+  CHECK(!mn::g_opera_config.configured);
+  CHECK(mn::g_mesh_state == mn::MESH_DISABLED);     // a leave turns the mesh off, as before
+  mn::set_enabled(true);
+  CHECK(mn::g_mesh_state == mn::MESH_NO_OPERA);     // was MESH_CONNECTING, in the zero opera
+  fresh_device(J);
+  re_pair(A, J);
+  become(A);
+  CHECK(!all_zero(mn::g_opera_config.opera_secret, mn::OPERA_SECRET_SIZE));   // founded one
+  CHECK(opera_id_of(A) == opera_id_of(J));
+  CHECK(hears_next_heartbeat(J, A));
+  CHECK(hears_next_heartbeat(A, J));
+  std::printf("PASS a_device_that_left_founds_a_new_opera_after_a_reboot\n");
+}
+
+void test_a_setting_saved_after_a_leave_stores_no_opera() {
+  // Turning the mesh on or renaming the opera after a leave saves the opera
+  // config too (set_enabled, set_opera_name): with none configured, still
+  // no id and no secret.
+  fresh_opera({&A, &B});
+  become(A);
+  CHECK(mn::leave_opera());
+  mn::set_enabled(true);
+  CHECK(mn::set_opera_name("attic"));
+  CHECK(!nvs_has(A, "opera_id") && !nvs_has(A, "opera_sec"));
+  boot(A);
+  become(A);
+  CHECK(!mn::g_opera_config.configured);
+  CHECK(mn::g_mesh_state == mn::MESH_NO_OPERA);     // on, with no opera
+  CHECK(std::string(mn::g_opera_config.opera_name) == "attic");
+  std::printf("PASS a_setting_saved_after_a_leave_stores_no_opera\n");
+}
+
+void test_an_empty_opera_older_firmware_stored_is_not_loaded() {
+  // What a leave on firmware from before F113 left in NVS, then the mesh
+  // turned back on: an all-zero id and secret. Each half alone is refused
+  // too (an id with a zero secret, a secret with a zero id).
+  for (int which = 0; which < 3; ++which) {
+    fresh_opera({&A, &B});
+    become(A);
+    std::vector<uint8_t> id(mn::OPERA_ID_SIZE, 0), secret(mn::OPERA_SECRET_SIZE, 0);
+    if (which == 1) host_sim::fill_random(id.data(), id.size());
+    if (which == 2) host_sim::fill_random(secret.data(), secret.size());
+    A.nvs["mesh/opera_id"] = id;
+    A.nvs["mesh/opera_sec"] = secret;
+    A.nvs["mesh/peer_cnt"] = {0};
+    A.nvs["mesh/enabled"] = {1};
+    g_health.clear();
+    boot(A);
+    become(A);
+    CHECK(!mn::g_opera_config.configured);
+    CHECK(mn::g_mesh_state == mn::MESH_NO_OPERA);
+    CHECK(logged("opera: the stored opera is empty"));
+    fresh_device(J);
+    re_pair(A, J);
+    CHECK(opera_id_of(A) == opera_id_of(J));
+    CHECK(hears_next_heartbeat(J, A));
+  }
+  std::printf("PASS an_empty_opera_older_firmware_stored_is_not_loaded\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1908,6 +2001,11 @@ const Test kTests[] = {
      test_an_earlier_pairings_complete_does_not_end_a_later_one},
     {"the_complete_is_not_sent_again_once_it_is_not_the_operas",
      test_the_complete_is_not_sent_again_once_it_is_not_the_operas},
+    {"a_device_that_left_founds_a_new_opera_after_a_reboot",
+     test_a_device_that_left_founds_a_new_opera_after_a_reboot},
+    {"a_setting_saved_after_a_leave_stores_no_opera", test_a_setting_saved_after_a_leave_stores_no_opera},
+    {"an_empty_opera_older_firmware_stored_is_not_loaded",
+     test_an_empty_opera_older_firmware_stored_is_not_loaded},
 };
 
 }  // namespace liveness

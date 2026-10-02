@@ -1774,6 +1774,11 @@ static bool flash_encryption_enabled() {
   return esp_flash_encryption_enabled();
 }
 
+// An opera is stored only while this device has one (sweep F113). With none
+// (after leave_opera(), or a set_enabled() or set_opera_name() before the
+// next pairing), the id and secret keys are removed. They used to be written
+// as they stood in RAM, all zero after a leave, and load_opera_config() took
+// the zero opera back as configured at the next boot.
 static bool persist_opera_config() {
   if (!flash_encryption_enabled()) {
     health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
@@ -1782,11 +1787,22 @@ static bool persist_opera_config() {
   }
   g_prefs.begin(NVS_NS, false);
   g_prefs.putBool(NVS_ENABLED, g_opera_config.enabled);
-  g_prefs.putBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
-  g_prefs.putBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+  if (g_opera_config.configured) {
+    g_prefs.putBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
+    g_prefs.putBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+  } else {
+    if (g_prefs.isKey(NVS_FLEET_ID)) g_prefs.remove(NVS_FLEET_ID);
+    if (g_prefs.isKey(NVS_FLEET_SECRET)) g_prefs.remove(NVS_FLEET_SECRET);
+  }
   g_prefs.putString(NVS_FLEET_NAME, g_opera_config.opera_name);
   g_prefs.end();
   return true;
+}
+
+static bool all_zero(const uint8_t* p, size_t n) {
+  uint8_t acc = 0;
+  for (size_t i = 0; i < n; i++) acc |= p[i];
+  return acc == 0;
 }
 
 static bool load_opera_config() {
@@ -1810,6 +1826,22 @@ static bool load_opera_config() {
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   g_opera_config.configured = (id_len == OPERA_ID_SIZE && secret_len == OPERA_SECRET_SIZE);
   g_prefs.end();
+  // An all-zero id or secret is no opera (sweep F113): what a leave on
+  // firmware from before F113 stored (persist_opera_config). Taken as
+  // configured, it was kept by the next start_pairing_initiator() instead
+  // of founding one, and a joiner, which derives the opera_id from the
+  // secret it is sent, held another id than the initiator's stored zero
+  // one, so each dropped the other's frames. Refused, it is nothing to
+  // load, and the next pairing overwrites it.
+  if (g_opera_config.configured &&
+      (all_zero(g_opera_config.opera_id, OPERA_ID_SIZE) ||
+       all_zero(g_opera_config.opera_secret, OPERA_SECRET_SIZE))) {
+    secure_wipe(g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+    memset(g_opera_config.opera_id, 0, OPERA_ID_SIZE);
+    g_opera_config.configured = false;
+    health_log(SCV_LOG_INFO, SCV_CAT_MESH,
+               "opera: the stored opera is empty (a leave on older firmware); none loaded");
+  }
   return g_opera_config.configured;
 }
 
@@ -2525,7 +2557,8 @@ static bool leave_opera() {
   }
   g_peer_count = 0;
 
-  // Persist
+  // Persist: with no opera configured, the id and secret keys are removed
+  // (sweep F113; they were stored as zeros and loaded back as an opera).
   persist_opera_config();
   persist_peers();
 
