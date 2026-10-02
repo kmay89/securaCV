@@ -3,8 +3,16 @@
  * @brief Implementation of the optional MQTT bridge declared in csi_mqtt.h.
  *
  * Threading model:
- *   - esp_mqtt_client maintains its own task. publishes are posted to
- *     that task's queue and the main-loop callers return immediately.
+ *   - esp_mqtt_client maintains its own task, which connects, reads, pings
+ *     and resends. A publish is NOT posted to that task: while the client
+ *     is connected, esp_mqtt_client_publish() takes the client's API lock
+ *     and writes the socket on the caller's task, so the loop task's
+ *     publishes wait on the network. Every such wait, the write and the
+ *     lock the esp_mqtt task holds across its own socket operations, is
+ *     bounded by the client's network timeout, kNetworkTimeoutMs (sweep
+ *     F112; csi_mqtt.h says what it bounds and what it does not), set in
+ *     open_client() instead of esp_mqtt's 10 s default, which outlasted
+ *     the loop task's 8 s panic watchdog.
  *     Event callbacks fire on the MQTT task; we keep them to flag-flips,
  *     Serial logs and the reconnect republish, so we never block the
  *     network stack.
@@ -17,10 +25,11 @@
  *     may be holding.
  *   - The loop task never stops a client itself. esp_mqtt_client_stop()
  *     takes the client's API lock, which the esp_mqtt task holds across a
- *     whole connect attempt (up to network_timeout_ms, 10 s by default, for
- *     the TCP connect and again for the CONNACK), and then waits for that
- *     task to exit: against an unreachable broker it can take ten seconds,
- *     and the loop task is subscribed to an 8 s panic watchdog. So a
+ *     whole connect attempt (the network timeout for the TCP/TLS connect,
+ *     again for the CONNECT write and again for the CONNACK; 10 s each
+ *     before F112 set it), and then waits for that task to exit: against an
+ *     unreachable broker it took ten seconds, and the loop task is
+ *     subscribed to an 8 s panic watchdog. So a
  *     re-init detaches the client on the loop task (s_client = nullptr:
  *     nothing on this task can reach it again, and its events are ignored)
  *     and a one-shot worker (retire_task) stops and destroys it; a later
@@ -649,6 +658,13 @@ bool open_client() {
   cfg.session.last_will.qos     = 1;
   cfg.session.last_will.retain  = 1;
   cfg.session.keepalive         = 60;
+  /* Sweep F112: every socket operation esp_mqtt runs for this client (the
+   * loop task's publish writes, and the connect, pings and resends it holds
+   * the API lock across) gives up after this long without progress, not
+   * after esp_mqtt's 10 s default, past the loop's 8 s watchdog. The
+   * nested IDF 5 field, like every field above: canary-wap builds only on
+   * Arduino-ESP32 3.x (IDF 5.5). */
+  cfg.network.timeout_ms        = (int)kNetworkTimeoutMs;
 
   esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
   if (!client) {

@@ -31,6 +31,17 @@
 // (run_tasks). Host-tested only: the Arduino compile of the sketch is CI's,
 // and nothing here runs esp_mqtt.
 //
+// And the loop task's publishes are bounded (sweep F112). While connected,
+// esp_mqtt_client_publish() writes the socket on the publishing task, and
+// the esp_mqtt task holds the client's API lock across its own socket
+// operations; each gives up after the client's network.timeout_ms, which
+// csi_mqtt.cpp used to leave at esp_mqtt's 10 s default, past the loop's
+// 8 s watchdog. The fake follows esp-mqtt's publish path as its source reads
+// at the commit ESP-IDF 5.5.4 pins (6af4446): a socket that takes nothing
+// for the timeout fails the write, the connection is aborted (DISCONNECTED,
+// dispatched on the task that hit it), and a publish to a client that is
+// not connected returns -1 once it has the lock. A model, not esp_mqtt.
+//
 // Run: ./test_mqtt_reinit [name]
 
 #include "csi_mqtt.h"
@@ -67,6 +78,8 @@ struct esp_mqtt_client {
   void* handler_args = nullptr;
   std::string uri;
   std::string will_topic;
+  int network_timeout_ms = 0;  // as configured; 0 or less is esp_mqtt's 10 s
+  bool connected = false;      // esp_mqtt's own view: CONNECTED until aborted
 };
 
 namespace fake {
@@ -90,6 +103,21 @@ std::function<void()> during_client_init;  // runs inside the next esp_mqtt_clie
 // How long esp_mqtt_client_stop() holds its caller: the rest of a connect
 // attempt the esp_mqtt task holds the API lock across (0: returns at once).
 uint32_t stop_blocks_ms = 0;
+// A stalled link (sweep F112): the socket takes no bytes for this long
+// (0: it takes them at once). A write gives up after the client's network
+// timeout; a stall shorter than that ends, and the write goes through.
+uint32_t socket_stall_ms = 0;
+// The esp_mqtt task is inside one of its own socket operations (a keepalive
+// ping, a resend) when the next publish comes, holding the API lock; with
+// the socket stalled it gives up after the timeout and aborts the connection.
+bool mqtt_task_in_socket_op = false;
+
+// esp_mqtt's own rule (mqtt_client.c at the IDF 5.5.4 pin): a timeout of 0
+// or less is MQTT_NETWORK_TIMEOUT_MS, 10 s.
+constexpr uint32_t kEspMqttDefaultTimeoutMs = 10000;
+uint32_t timeout_of(const esp_mqtt_client* c) {
+  return c->network_timeout_ms > 0 ? (uint32_t)c->network_timeout_ms : kEspMqttDefaultTimeoutMs;
+}
 
 void reset() {
   task = "loop";
@@ -103,6 +131,8 @@ void reset() {
   during_publish = nullptr;
   during_client_init = nullptr;
   stop_blocks_ms = 0;
+  socket_stall_ms = 0;
+  mqtt_task_in_socket_op = false;
 }
 
 esp_mqtt_client* last_client() { return clients.empty() ? nullptr : clients.back(); }
@@ -115,16 +145,27 @@ int count(const std::string& what, const std::string& on_task = "") {
   return n;
 }
 
-// The esp_mqtt task delivers an event to the client's handler.
-void deliver(esp_mqtt_client* c, esp_mqtt_event_id_t id) {
-  const std::string was = task;
-  task = "mqtt";
+// The client's handler gets an event on the task the test is playing.
+void dispatch(esp_mqtt_client* c, esp_mqtt_event_id_t id) {
+  if (id == MQTT_EVENT_CONNECTED) c->connected = true;
+  if (id == MQTT_EVENT_DISCONNECTED) c->connected = false;
   esp_mqtt_event_t e = {};
   e.event_id = id;
   e.client = c;
   c->handler(c->handler_args, "MQTT_EVENTS", (int32_t)id, &e);
+}
+
+// The esp_mqtt task delivers an event to the client's handler.
+void deliver(esp_mqtt_client* c, esp_mqtt_event_id_t id) {
+  const std::string was = task;
+  task = "mqtt";
+  dispatch(c, id);
   task = was;
 }
+
+// esp_mqtt_abort_connection(): the socket closed, the state WAIT_RECONNECT,
+// DISCONNECTED dispatched on the calling task (esp_event_loop_run inline).
+void abort_connection(esp_mqtt_client* c) { dispatch(c, MQTT_EVENT_DISCONNECTED); }
 
 }  // namespace fake
 
@@ -135,6 +176,7 @@ esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t* co
   c->id = (int)fake::clients.size() + 1;
   c->uri = config->broker.address.uri ? config->broker.address.uri : "";
   c->will_topic = config->session.last_will.topic ? config->session.last_will.topic : "";
+  c->network_timeout_ms = config->network.timeout_ms;
   fake::clients.push_back(c);
   fake::calls.push_back({"init", fake::task, c->id});
   if (fake::during_client_init) {
@@ -177,6 +219,40 @@ int esp_mqtt_client_publish(esp_mqtt_client_handle_t c, const char* topic, const
   if (c == nullptr || !c->alive) {
     ++fake::publishes_on_dead;
     return -1;
+  }
+  // The API lock: the esp_mqtt task's own socket operation goes first, and
+  // on a stalled socket it gives up after the timeout and aborts.
+  if (fake::mqtt_task_in_socket_op) {
+    fake::mqtt_task_in_socket_op = false;
+    if (fake::socket_stall_ms > 0 && c->connected) {
+      const uint32_t t = fake::timeout_of(c);
+      if (fake::socket_stall_ms >= t) {
+        stub_mqtt::now_ms += t;
+        fake::socket_stall_ms -= t;
+        const std::string was = fake::task;
+        fake::task = "mqtt";
+        fake::abort_connection(c);
+        fake::task = was;
+      } else {
+        stub_mqtt::now_ms += fake::socket_stall_ms;
+        fake::socket_stall_ms = 0;
+      }
+    }
+  }
+  // Not connected (any more): QoS 0 is not kept, -1.
+  if (!c->connected) return -1;
+  // The write: a stalled socket fails it after the timeout and aborts the
+  // connection on this task; a shorter stall ends and the write goes through.
+  if (fake::socket_stall_ms > 0) {
+    const uint32_t t = fake::timeout_of(c);
+    if (fake::socket_stall_ms >= t) {
+      stub_mqtt::now_ms += t;
+      fake::socket_stall_ms -= t;
+      fake::abort_connection(c);
+      return -1;
+    }
+    stub_mqtt::now_ms += fake::socket_stall_ms;
+    fake::socket_stall_ms = 0;
   }
   ++c->in_publish;
   if (fake::during_publish) {
@@ -701,6 +777,97 @@ void test_the_pump_sees_a_new_destination_the_pass_it_opens() {
   std::printf("PASS the_pump_sees_a_new_destination_the_pass_it_opens\n");
 }
 
+// ── The loop task's publishes are bounded (sweep F112) ──────────────────
+
+// canary_wap.ino's WATCHDOG_TIMEOUT_SEC: the panic watchdog the loop task is
+// subscribed to. check_wap_loop_commands.py holds the sketch's static_assert
+// of csi_mqtt.h's budget against it.
+constexpr uint32_t kLoopWatchdogMs = 8000;
+
+// One busy loop pass's publishes, in canary_wap.ino's order: loop() (the
+// re-init and the event egress pump), the retained status, health, counts
+// and chain, and the chirp state. Returns how long the pass took.
+uint32_t busy_publish_pass() {
+  const std::string was = fake::task;
+  fake::task = "loop";
+  const uint32_t start = stub_mqtt::now_ms;
+  csi_mqtt::loop();
+  csi_mqtt::publish_status(true, true, -55);
+  csi_mqtt::publish_health(150000, 3600);
+  csi_mqtt::publish_counts(42);
+  const uint8_t head[32] = {0};
+  csi_mqtt::publish_chain(42, head);
+  csi_mqtt::publish_chirp_state("active");
+  fake::task = was;
+  return stub_mqtt::now_ms - start;
+}
+
+// Every client the bridge opens, at boot and on a re-init, carries the
+// network timeout, and the budget it sets fits under the loop's watchdog.
+void test_every_client_bounds_its_network_operations() {
+  CHECK(csi_mqtt::kNetworkTimeoutMs > 0);
+  CHECK(csi_mqtt::kNetworkOpsBudget * csi_mqtt::kNetworkTimeoutMs < kLoopWatchdogMs);
+  boot_with_broker("10.0.0.1");
+  CHECK(fake::last_client()->network_timeout_ms == (int)csi_mqtt::kNetworkTimeoutMs);
+  CHECK(fake::timeout_of(fake::last_client()) < kLoopWatchdogMs);
+  save_host("10.0.0.2");
+  (void)csi_mqtt::request_reinit();
+  reinit_turns();
+  CHECK(fake::clients.size() == 2);
+  CHECK(fake::last_client()->network_timeout_ms == (int)csi_mqtt::kNetworkTimeoutMs);
+  std::printf("PASS every_client_bounds_its_network_operations\n");
+}
+
+// The link dies with the client connected (Wi-Fi gone, the broker hung, the
+// TCP send buffer full): the loop's first publish waits out one network
+// timeout, fails, and aborts the connection; every publish after it in the
+// pass returns at once. The pass stays under the watchdog. With esp_mqtt's
+// 10 s default (the code before F112), the first publish alone held the
+// loop task 10 s.
+void test_a_stalled_link_cannot_hold_the_loop_past_its_watchdog() {
+  boot_with_broker("10.0.0.1");
+  fake::socket_stall_ms = 60000;
+  const uint32_t took = busy_publish_pass();
+  CHECK(took < kLoopWatchdogMs);
+  CHECK(took == csi_mqtt::kNetworkTimeoutMs);        // one timeout, not one per publish
+  CHECK(!csi_mqtt::connected());                     // the abort reached the bridge
+  CHECK(fake::published.empty());                    // nothing claimed sent
+  // The next pass does not touch the socket: publish_raw sees no link.
+  const uint32_t again = busy_publish_pass();
+  CHECK(again == 0);
+  std::printf("PASS a_stalled_link_cannot_hold_the_loop_past_its_watchdog\n");
+}
+
+// The esp_mqtt task is inside its own socket operation (a keepalive ping)
+// holding the API lock when the loop publishes, and the socket is stalled:
+// it gives up after the timeout and aborts, and the loop's publish, which
+// waited for the lock, returns -1 without writing. One timeout, not the
+// esp_mqtt default.
+void test_a_publish_behind_the_esp_mqtt_tasks_stalled_write_is_bounded() {
+  boot_with_broker("10.0.0.1");
+  fake::socket_stall_ms = 60000;
+  fake::mqtt_task_in_socket_op = true;
+  const uint32_t took = busy_publish_pass();
+  CHECK(took < kLoopWatchdogMs);
+  CHECK(took == csi_mqtt::kNetworkTimeoutMs);
+  CHECK(!csi_mqtt::connected());
+  CHECK(fake::published.empty());
+  std::printf("PASS a_publish_behind_the_esp_mqtt_tasks_stalled_write_is_bounded\n");
+}
+
+// A link that is slow, not dead: a stall shorter than the timeout ends and
+// the publish goes through. The timeout drops a stalled connection, not a
+// slow one (and the loop pays the stall).
+void test_a_stall_under_the_timeout_keeps_the_connection() {
+  boot_with_broker("10.0.0.1");
+  fake::socket_stall_ms = csi_mqtt::kNetworkTimeoutMs / 2;
+  const uint32_t took = busy_publish_pass();
+  CHECK(took == csi_mqtt::kNetworkTimeoutMs / 2);
+  CHECK(csi_mqtt::connected());
+  CHECK(fake::published.size() == 5);                // status, health, counts, chain, chirp
+  std::printf("PASS a_stall_under_the_timeout_keeps_the_connection\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -720,6 +887,10 @@ const Test kTests[] = {
     {"a_request_made_during_the_open_waits_for_the_next", test_a_request_made_during_the_open_waits_for_the_next},
     {"a_request_made_during_the_stop_is_served_by_the_open", test_a_request_made_during_the_stop_is_served_by_the_open},
     {"the_pump_sees_a_new_destination_the_pass_it_opens", test_the_pump_sees_a_new_destination_the_pass_it_opens},
+    {"every_client_bounds_its_network_operations", test_every_client_bounds_its_network_operations},
+    {"a_stalled_link_cannot_hold_the_loop_past_its_watchdog", test_a_stalled_link_cannot_hold_the_loop_past_its_watchdog},
+    {"a_publish_behind_the_esp_mqtt_tasks_stalled_write_is_bounded", test_a_publish_behind_the_esp_mqtt_tasks_stalled_write_is_bounded},
+    {"a_stall_under_the_timeout_keeps_the_connection", test_a_stall_under_the_timeout_keeps_the_connection},
 };
 
 }  // namespace reinit

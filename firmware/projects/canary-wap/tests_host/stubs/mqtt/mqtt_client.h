@@ -77,6 +77,13 @@ typedef struct {
     } last_will;
     int keepalive;
   } session;
+  /* IDF 5's network_t, the fields csi_mqtt.cpp may set (sweep F112):
+   * timeout_ms is how long esp_mqtt lets one socket operation go without
+   * progress; 0 or less means its default, 10 s. */
+  struct {
+    int reconnect_timeout_ms;
+    int timeout_ms;
+  } network;
 } esp_mqtt_client_config_t;
 
 esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t* config);

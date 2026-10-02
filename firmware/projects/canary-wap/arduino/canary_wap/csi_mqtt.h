@@ -20,10 +20,17 @@
  *
  * The loop task never STOPS a client: esp_mqtt_client_stop() can wait out a
  * whole connect attempt (the esp_mqtt task holds the client's lock across
- * it, network_timeout_ms, 10 s by default), past the loop task's 8 s panic
- * watchdog. A re-init detaches the old client (no loop publish can reach it,
- * and its events are ignored), a one-shot worker task stops and destroys it,
- * and a later loop pass opens the new one once the worker is done.
+ * it: a TCP/TLS connect, the CONNECT write and the CONNACK wait, each given
+ * the client's network timeout, kNetworkTimeoutMs below), and then waits for
+ * that task to exit. A re-init detaches the old client (no loop publish can
+ * reach it, and its events are ignored), a one-shot worker task stops and
+ * destroys it, and a later loop pass opens the new one once the worker is
+ * done.
+ *
+ * The loop task's publishes do run esp_mqtt: esp_mqtt_client_publish()
+ * takes the same lock and, while connected, writes the socket on the
+ * caller's task. Each of those waits is bounded by kNetworkTimeoutMs, set
+ * on every client (sweep F112), not esp_mqtt's 10 s default.
  *
  * Topic schema (locked against custom_components/securacv/const.py +
  * docs/homeassistant_setup.md):
@@ -99,6 +106,36 @@ constexpr size_t MAX_USER_LEN   = 64;
 constexpr size_t MAX_PASS_LEN   = 128;
 constexpr size_t MAX_PREFIX_LEN = 32;
 constexpr size_t MAX_CA_LEN     = 3071;   /* PEM bytes, NUL excluded (mqtt_transport_logic.h kCaPemMax) */
+
+/* The client's network timeout (esp_mqtt_client_config_t's
+ * network.timeout_ms; sweep F112): how long esp_mqtt lets one socket
+ * operation go without progress before it gives up. Its default is 10 s,
+ * and the loop task, which publishes, is subscribed to an 8 s panic
+ * watchdog (WATCHDOG_TIMEOUT_SEC in canary_wap.ino).
+ *
+ * From esp-mqtt's source at the commit ESP-IDF 5.5.4 pins (6af4446; the
+ * pinned core 3.3.8 is built on IDF 5.5.4), not probed on a device:
+ * esp_mqtt_client_publish() takes the client's API lock and, while
+ * connected, writes the message on the caller's task through
+ * esp_mqtt_write(), which hands this timeout to every
+ * esp_transport_write(). A write that sends nothing within it fails the
+ * publish (-1, which publish_raw() reports) and aborts the connection, and
+ * a publish to a client that is not connected returns -1 as soon as it has
+ * the lock. The
+ * esp_mqtt task holds the same lock across its own socket operations, each
+ * given this timeout too: a keepalive ping, a resend, the rest of a long
+ * incoming message, and, while it connects, three in a row (the TCP/TLS
+ * connect, the CONNECT write and the CONNACK wait). The timeout restarts on
+ * every partial write or read, so it bounds a stall, not a slow trickle.
+ *
+ * kNetworkOpsBudget of them must fit under the loop's watchdog with room
+ * left for the rest of its pass: canary_wap.ino static_asserts it, and
+ * firmware/scripts/check_wap_loop_commands.py holds this file to setting it
+ * on the client. A side effect: a broker that takes longer than this to
+ * answer one step of a connect (the TCP connect, a TLS handshake read, the
+ * CONNACK) fails that attempt, and esp_mqtt retries it 10 s later. */
+constexpr uint32_t kNetworkTimeoutMs = 2000;
+constexpr uint32_t kNetworkOpsBudget = 3;
 
 /* Configuration mirror of the NVS row. password is loaded but
  * intentionally never returned by handle_config_get. */

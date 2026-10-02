@@ -1422,6 +1422,18 @@ static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uin
 static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
               "an NvsManager session wait must sit under the loop's task watchdog");
 
+// The loop task publishes MQTT, and esp_mqtt writes the socket on the
+// publishing task and holds its API lock across its own socket operations;
+// each one gives up after the client's network timeout (csi_mqtt.h, sweep
+// F112). kNetworkOpsBudget of them (the esp_mqtt task's connect: the TCP/TLS
+// connect, the CONNECT write, the CONNACK wait) must fit under the watchdog
+// with room for the rest of a pass. firmware/scripts/check_wap_loop_commands.py
+// reads this line, the constants and the client config that sets the timeout.
+static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&
+                  csi_mqtt::kNetworkOpsBudget * csi_mqtt::kNetworkTimeoutMs <
+                      WATCHDOG_TIMEOUT_SEC * 1000u,
+              "the MQTT client's network timeout must keep a publish under the loop's task watchdog");
+
 static bool nvs_load_key(uint8_t priv[32]) {
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return false;

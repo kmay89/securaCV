@@ -777,7 +777,9 @@ clean: clean-mesh-commands
 # POST, the test handler and a QR provisioning only request a re-init;
 # loop() runs one per batch of requests; a publish in flight keeps its
 # client; the waits are bounded; the auto-update switch set from the httpd
-# task is published by loop().
+# task is published by loop(). And the loop task's publishes are bounded
+# (sweep F112): every client carries csi_mqtt.h's network timeout, and over
+# a stalled link a busy pass waits out one timeout, not esp_mqtt's 10 s.
 MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
 
