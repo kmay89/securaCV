@@ -542,7 +542,7 @@ Full background, threat model, and rotation procedure: see
 |-------|-----------|---------|
 | `securacv/{device_id}/status` | Device → HA | Device state, GPS, chain sequence (every 30s) |
 | `securacv/{device_id}/health` | Device → HA | System metrics (every 60s) |
-| `securacv/{device_id}/egress` | Device → HA | canary-wap only: its committed-event egress counters, beside health (retained) |
+| `securacv/{device_id}/egress` | Device → HA | canary-wap only: its committed-event egress counters, right after each health publish, naming that health's `firmware_version` and `uptime` (retained) |
 | `securacv/{device_id}/events` | Device → HA | Witness record events |
 | `securacv/{device_id}/chain` | Device → HA | Hash chain state |
 | `securacv/{device_id}/tamper` | Device → HA | Tamper alerts (immediate) |
@@ -560,8 +560,10 @@ shows (`mosquitto_sub -t 'securacv/+/health' -t 'securacv/+/egress'`):
   Past the wrap Home Assistant refuses the device's events as replays. The
   integration shows it as the **Event ID Space Low** binary sensor. The
   recovery is not decided yet; the flag only warns.
-- `csi_event_egress` (Canary base in `health`; canary-wap as the whole body
-  of its retained `egress` topic, since its health has no room for it):
+- `csi_event_egress` (Canary base in `health`; canary-wap in its retained
+  `egress` topic, since its health has no room for it, as
+  `{"firmware_version":…,"uptime":…,"csi_event_egress":{…}}`, the version
+  and uptime of the health publish it follows):
   what its committed-event egress did since boot — `dropped` (commits its
   egress queue had no room for),
   `held_dropped` (rows dropped from its 8-row RAM hold, oldest first),
@@ -580,8 +582,15 @@ shows (`mosquitto_sub -t 'securacv/+/health' -t 'securacv/+/egress'`):
 The **Health** sensor carries `csi_event_egress` and `offline_queue` as
 attributes of the same names, holding the counters the integration knows
 (`custom_components/securacv/const.py`); a device that sends none shows
-neither attribute. The canary-wap also returns `csi_event_egress` from its
-token-gated `GET /api/diagnostics`.
+neither attribute. The counters start over at every boot and the `egress`
+topic is retained, so the sensor shows a canary-wap's only while they pair
+with its latest health: the same `firmware_version`, and an `uptime` no
+later than the health's. A body an earlier boot left on the broker, or one
+left behind by newer firmware after a rollback to firmware that publishes
+no `egress` topic, is not shown as current, after a Home Assistant restart
+too. Clearing the retained topic (`mosquitto_pub -r -n -t
+securacv/<device_id>/egress`) removes the attribute. The canary-wap also
+returns `csi_event_egress` from its token-gated `GET /api/diagnostics`.
 
 These count paths, not rows: `planner.queued` counts a row handed to the
 offline queue even if the queue evicts it later (then it is in

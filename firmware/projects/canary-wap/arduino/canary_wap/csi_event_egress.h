@@ -147,7 +147,9 @@ static_assert(sizeof(Stats) == 13 * sizeof(uint32_t),
  *               "untrusted":N,"unsendable":N,"truncated_unsent":N,
  *               "read_giveups":N}}
  * The canary-wap's MQTT `egress` topic (csi_mqtt::publish_egress) carries
- * it as its whole body, and GET /api/diagnostics as `csi_event_egress`.
+ * it as `csi_event_egress`, after the firmware version and uptime of the
+ * health publish it follows, and GET /api/diagnostics (wap_diagnostics.h)
+ * as `csi_event_egress`.
  * kStatsJsonMax holds it with every counter at 4294967295 (319 bytes and
  * the NUL). Returns its length, or 0 (and `out` holds no partial object)
  * when it does not fit `cap`. Pure: any task, any copy. */

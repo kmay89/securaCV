@@ -392,13 +392,21 @@ differs from the canary base in five ways:
   name for name, built by `csi_event_egress::stats_json()`; sweep F149) do
   not ride its health: that body has 34 of its 384 bytes spare at worst and
   the object is up to 319. They go on a retained topic of their own,
-  `{prefix}/{device_id}/egress`, published beside health at its cadence
-  (about every 60 s, stretched on battery), and in the token-gated
+  `{prefix}/{device_id}/egress`, published right after each health publish
+  (about every 60 s, stretched on battery) as
+  `{"firmware_version":…,"uptime":…,"csi_event_egress":{…}}`: the version
+  and uptime that health carried, so a reader can tell this boot's counters
+  from a retained body an earlier boot, or a firmware with no `egress`
+  topic, left on the broker (Home Assistant shows them only while they pair
+  with the latest health). Up to 405 bytes; nothing goes out before the
+  boot's first health. They are also in the token-gated
   `GET /api/diagnostics` as `csi_event_egress` (`null` before the loop
-  task's first pass). The diagnostics route runs on the HTTP server's task,
-  so it reads a copy the loop task publishes at the end of every pass
-  (`read_stats()`, `loop_snapshot.h`): at most one pass old, and never torn.
-  It has no `offline_queue` object (no offline queue).
+  task's first pass), whose body `wap_diagnostics.h` builds (649 bytes at
+  the widest, in a 768-byte buffer; host-tested). The diagnostics route runs
+  on the HTTP server's task, so it reads a copy the loop task publishes at
+  the end of every pass (`read_stats()`, `loop_snapshot.h`): at most one
+  pass old, and never torn. It has no `offline_queue` object (no offline
+  queue).
 
 A dismissal line on its card (`"dismissed":1`) is the owner's local record
 and is never replayed. A dismissal the log cannot take yet (no open log, or

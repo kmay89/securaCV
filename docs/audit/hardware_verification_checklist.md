@@ -632,12 +632,13 @@ does, is in `docs/csi_developer_api.md`.
 Code: the canary-wap's `csi_event_egress.cpp` (`pump()` publishes the
 counters through `loop_snapshot.h` as its last step; `read_stats()`;
 `stats_json()` in `csi_event_egress.h`), `csi_mqtt.cpp`'s
-`publish_egress()` (the retained `egress` topic, called after
+`publish_egress()` (the retained `egress` topic, called right after
 `publish_health()` in `canary_wap.ino`'s loop) and `handle_diagnostics()`
-(`GET /api/diagnostics`); Home Assistant's `binary_sensor.py` (Event ID
-Space Low) and `sensor.py` (the Health sensor's `csi_event_egress` and
-`offline_queue` attributes). Host-tested (`test_wap_event_egress.cpp`,
-`test_mqtt_reinit.cpp`, `check_wap_event_egress.py` rule 12,
+(`GET /api/diagnostics`, its body built by `wap_diagnostics.h`); Home
+Assistant's `binary_sensor.py` (Event ID Space Low) and `sensor.py` (the
+Health sensor's `csi_event_egress` and `offline_queue` attributes).
+Host-tested (`test_wap_event_egress.cpp`, `test_mqtt_reinit.cpp`,
+`test_wap_diagnostics.cpp`, `check_wap_event_egress.py` rule 12,
 `tests/test_egress_health.py`); the canary-wap's compiles are CI's. Owner: U1.
 
 - [ ] **The canary-wap's counters reach the broker and its diagnostics**
@@ -649,7 +650,8 @@ Space Low) and `sensor.py` (the Health sensor's `csi_event_egress` and
     the next health publish (once a minute on mains). Then
     `curl -H 'Authorization: Bearer <token>' http://<wap>/api/diagnostics`.
   - Expected: right after each health publish, a retained `egress` publish
-    whose body is one JSON object with `dropped`, `held_dropped`,
+    whose `firmware_version` and `uptime` are that health's, and whose
+    `csi_event_egress` object holds `dropped`, `held_dropped`,
     `ambient_dropped`, `unsent_dropped` and a `planner` object
     (`planner.live` counts the first rows, `planner.held` and
     `planner.replayed` the outage's). The diagnostics response carries the
@@ -666,7 +668,9 @@ Space Low) and `sensor.py` (the Health sensor's `csi_event_egress` and
     sensor, off; the Health sensor's attributes carry `csi_event_egress` on
     both (the canary-wap's from its `egress` topic, after a Home Assistant
     restart too) and `offline_queue` on the canary only. After the floor
-    write that device's Event ID Space Low turns on.
+    write that device's Event ID Space Low turns on. Reboot the canary-wap:
+    its counters leave the Health sensor at its first health publish and
+    come back, started over, with the `egress` publish that follows it.
   - Artifact: `docs/audit/repro/HA24/ha-entities/`.
 
 ## canary-wap loop-task ownership (F96, F106) — on-device verification

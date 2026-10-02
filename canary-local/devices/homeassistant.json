@@ -711,7 +711,7 @@
     {
       "topic": "securacv/{device_id}/egress",
       "direction": "Device \u2192 HA",
-      "content": "canary-wap only: its committed-event egress counters, beside health (retained)"
+      "content": "canary-wap only: its committed-event egress counters, right after each health publish, naming that health's `firmware_version` and `uptime` (retained)"
     },
     {
       "topic": "securacv/{device_id}/events",
