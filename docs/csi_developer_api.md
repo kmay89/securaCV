@@ -581,6 +581,16 @@ not the full module-tunable surface):
 | `"tz_iana"` | string | The same, as an IANA zone name (`"Europe/Berlin"`), mapped on the device through the fleet's table (`firmware/common/time/tz_rule.h`). A zone the table does not know is refused (`400`, `"unknown zone"`) — never stored, never silently UTC. A typed `"tz"` wins when both are sent. |
 | `"filter_foreign"` | bool | CSI transmitter filter: accept frames only from the router this Canary is associated with (and registered peer Canaries); everything else is counted under `frames_dropped_foreign` on `/api/status` and never buffered. Default on. Off restores every decoded frame on the channel. Applied to the HAL at once and persisted; `/api/status` reports `filter_armed` (the setting is on and the Canary has associated, so the filter is comparing). |
 
+Each module setting a POST carries is stored on the shared key map's row
+for its module key (`firmware/common/csi/src/csi_module_settings_nvs.h`):
+`pet_mode`, `preset` and `sensitivity` on `core.presence.pet_mode`,
+`.preset` and `.sensitivity`, `privacy_ceiling` on `core.privacy_ceiling`,
+the rows `core.presence`'s `init()`, the boot and the Tuning Lab read, and
+`GET /api/settings` reads them back the same way. So does the calibration's
+apply, on `core.presence.motion_threshold`, `.active_threshold` and
+`.breathing_threshold` (sweep F151: the handlers spelled these NVS keys by
+hand, and a key misspelled there saved a value no module read).
+
 ```bash
 curl -X POST http://canary.local/api/settings \
      -H 'Content-Type: application/json' \
