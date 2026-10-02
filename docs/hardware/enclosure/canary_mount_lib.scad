@@ -202,9 +202,13 @@ module mount_dovelug_pocket(cy, z0, len = mount_dt_len(), travel = mount_dt_trav
     ww = mount_dt_window_w(clear);  wl = mount_dt_window_l(len, clear);
     y_we = cy - travel + wl/2;                   // window's upper end = channel start
     y_ce = cy + len/2 + 0.6;                     // channel end
+    // the dovetail offset by the clearance, plus the relief over the lug's top
+    // ONLY: the relief starts at the lug's top face, never at the pocket's
+    // mouth — a full-depth rectangle here cut the lips away and left a slot
+    // the lug pulled straight out of (the v0.6 review caught it)
     module section2d() {
         offset(delta = clear) mount_dt_profile2d(sink = 1.0);
-        translate([-mount_dt_top_w()/2 - clear, 0]) square([mount_dt_top_w() + 2*clear, d]);
+        translate([-mount_dt_top_w()/2 - clear, mount_dt_h()]) square([mount_dt_top_w() + 2*clear, d - mount_dt_h()]);
     }
     translate([0, 0, z0]) {
         // the drop-in window, full depth
@@ -232,6 +236,10 @@ module mount_selfcheck() {
            "mount: the dovetail pocket must fit the depth a keyhole pocket budgets");
     assert(mount_dt_neck_w()*mount_dt_len() >= 3*PI*pow(mount_stud_d()/2, 2),
            "mount: the dovetail's root section must be >= 3x the T-stud stem's");
+    // retention: the pocket's mouth (neck + clearance) must be narrower than the
+    // lug's top, or the lug pulls straight out — each lip overlaps by this much
+    assert(mount_dt_top_w()/2 - (mount_dt_neck_w()/2 + mount_dt_clear()) >= 1.0,
+           "mount: the dovetail lips must overlap the lug's top by >= 1.0 mm a side");
     assert(mount_dt_neck_h() > mount_dt_root() + 0.5,
            "mount: the pocket lip needs a straight land above the root chamfer — no knife edge");
     // tolerance compares: 1.4 + 1.2 + 0.8 is not bit-equal to 3.4 in floats
