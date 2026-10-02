@@ -287,6 +287,14 @@ MODINT_HDRS = ../canary/src/csi_modules_integration.h $(IDSPACE_HDRS) $(wildcard
               stubs/csi_modules/Preferences.h stubs/csi_hal/Arduino.h
 MODINT_BIN  = $(BUILD_DIR)/test_csi_modules_integration
 
+# The CSI modules' boot init on the canary (sweep F93): the same REAL bridge,
+# library and modules over a fake NVS that outlives a modeled reboot. Each
+# registered module's init() runs once per boot, after the event-id floor
+# and before any tick, and commits nothing; a stored preset, sensitivity,
+# threshold, pet mode and anomaly cooldown apply from the boot's first
+# window; the key map and read rule are csi_module_settings_nvs.h's.
+MODBOOT_BIN = $(BUILD_DIR)/test_csi_module_boot
+
 # The canary's reconnect backfill from that log
 # (common/csi/src/csi_event_backfill.h, backlog F37): whole outages, reboots
 # and card faults replayed against a model of Home Assistant's replay gate —
@@ -724,6 +732,11 @@ $(MODINT_BIN): test_csi_modules_integration.cpp $(MODINT_SRC) $(MODINT_HDRS) Mak
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
 	    test_csi_modules_integration.cpp $(MODINT_SRC) -o $@
 
+$(MODBOOT_BIN): test_csi_module_boot.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
+	    test_csi_module_boot.cpp $(MODINT_SRC) -o $@
+
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
 
@@ -820,7 +833,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -849,6 +862,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(IDSPACE_BIN)
 	./$(CEILING_BIN)
 	./$(MODINT_BIN)
+	./$(MODBOOT_BIN)
 	./$(EVLINE_BIN)
 	./$(BACKFILL_BIN)
 	./$(CANEGR_BIN)
