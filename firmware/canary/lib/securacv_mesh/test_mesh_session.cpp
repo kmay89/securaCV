@@ -20,6 +20,9 @@
  *   5. The bridge ignores frames with reserved/unknown MsgType bytes.
  *   6. cancel_pairing() fires the FailedCallback and wipes state; on a
  *      pairing that already ended it does nothing (F135).
+ *   7. As the initiator, a lost COMPLETE goes again every 2 s until the
+ *      member is heard, and not once it is no longer a member bound where
+ *      it paired from or this device no longer holds that opera (F134).
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \

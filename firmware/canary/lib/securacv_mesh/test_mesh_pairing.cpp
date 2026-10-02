@@ -35,6 +35,12 @@
  *  10. cancel() ends only a running pairing (F135): after the COMPLETE went
  *      out the pairing stays PAIRED and the initiator's NOTIFY_PAIRED still
  *      fires; a FAILED one keeps its reason and reports nothing again.
+ *  11. A lost COMPLETE is sent again (F134): the initiator's tick re-sends
+ *      the frames it sent, byte for byte, every 2 s to the partner, for at
+ *      most the pairing timeout or until stop_complete_resend(); a joiner
+ *      still waiting (a pre-F97 one too) completes on the next copy, and
+ *      nothing reaching a PAIRED initiator moves the copies or brings one
+ *      early.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \

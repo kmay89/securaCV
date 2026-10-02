@@ -449,8 +449,9 @@ constexpr uint32_t COMPLETE_RESEND_INTERVAL_MS = 2000;
 constexpr uint32_t COMPLETE_RESEND_WINDOW_MS   = PAIRING_TIMEOUT_MS;
 
 /* Per-context state. Treat as opaque from the integration side — only
- * the API below should touch fields. Sized so multiple contexts can sit
- * on the stack without pressure (~250 B). */
+ * the API below should touch fields. About 440 B on the x86-64 host build
+ * since F134's kept COMPLETE (336 before it); the session keeps its one
+ * context in static storage, and the host tests hold two on the stack. */
 struct PairingContext {
   State    state;
   Role     role;
