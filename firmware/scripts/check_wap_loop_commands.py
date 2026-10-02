@@ -239,6 +239,28 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
      (only `consume` runs it), and each `apply_<event>()` only from
      `apply_event()`. The event queue's room for a link's events, and what a
      full queue does, are `test_bluetooth_commands_wap.cpp`'s.
+BV3. The Bluetooth status routes read only what the loop task published
+     (F138). `bluetooth_channel.h` declares none of the live readers
+     (`BT_LIVE_READERS`: `get_status`, `get_settings`, `get_scanned_devices`,
+     `get_paired_devices`, `is_scanning`, ...), and no HTTP handler in the
+     sketch names one. `handle_bluetooth_status`, `handle_bluetooth_scan_results`,
+     `handle_bluetooth_paired_list` and `handle_bluetooth_settings_get` each
+     call their reader (`read_status`, `read_scan`, `read_paired`,
+     `read_settings`) once and nothing else on the channel but the pure
+     helpers (`BT_GET_PURE`: names, distances, the address format, and the
+     bring-up's own `init_fail_reason`). In `bluetooth_channel.cpp`:
+     `publish_views(` is called only from `update()`, right before its every
+     `return` and as its last statement, and from `run_command()`, whose one
+     `return` comes right after it (so a GET right after a POST shows the
+     command: the handler answers as soon as the drain posts the result);
+     each view's `.publish(` only in its `publish_<view>_view()`, which only
+     `publish_views()` calls; each view's `.read(` only in its readers; and
+     the readers name none of `BT_LIVE_STATE`. Each route's JSON keys are
+     the ones it always sent (`BT_GET_KEYS`, the response shapes), and the
+     dashboard's Bluetooth panel (`web_ui.h`: `refreshBtStatus`,
+     `toggleBtAdvertising`, `loadBtSettings`, `btStartScan`,
+     `renderBtScanList`, `deviceIcon`, `loadBtPairedDevices`) reads no key
+     its route does not send.
 
 ## It proves it bites
 
@@ -1449,14 +1471,188 @@ def check_bluetooth_callbacks(cpp_src: str, errors: list[str]) -> None:
                           "the radio's latest state (F143)")
 
 
+# BV3 (F138): the status routes' reads.
+BT_LIVE_READERS = ("get_status", "get_state", "get_settings", "get_scanned_devices",
+                   "get_paired_devices", "is_scanning", "is_connected", "get_connection_info",
+                   "get_pairing_state", "get_pairing_pin")
+BT_GET_ROUTES = (("handle_bluetooth_status", "read_status"),
+                 ("handle_bluetooth_scan_results", "read_scan"),
+                 ("handle_bluetooth_paired_list", "read_paired"),
+                 ("handle_bluetooth_settings_get", "read_settings"))
+BT_GET_PURE = ("state_name", "format_address", "estimate_distance_m", "distance_label",
+               "device_type_name", "security_level_name", "pairing_state_name", "init_fail_reason")
+# Who may touch each published view, in bluetooth_channel.cpp.
+BT_VIEW_CALLS = (
+    (r"(?<![\w:.>])publish_views\s*\(", ("update", "run_command"), "publish_views(",
+     "the loop task publishes: update()'s passes and each owner command"),
+    (r"(?<![\w:.>])publish_status_view\s*\(", ("publish_views",), "publish_status_view(", "publish_views() publishes"),
+    (r"(?<![\w:.>])publish_scan_view\s*\(", ("publish_views",), "publish_scan_view(", "publish_views() publishes"),
+    (r"(?<![\w:.>])publish_paired_view\s*\(", ("publish_views",), "publish_paired_view(", "publish_views() publishes"),
+    (r"\bg_status_view\s*\.\s*publish\s*\(", ("publish_status_view",), "g_status_view.publish(", "one builder"),
+    (r"\bg_scan_view\s*\.\s*publish\s*\(", ("publish_scan_view",), "g_scan_view.publish(", "one builder"),
+    (r"\bg_paired_view\s*\.\s*publish\s*\(", ("publish_paired_view",), "g_paired_view.publish(", "one builder"),
+    (r"\bg_status_view\s*\.\s*read\s*\(", ("read_status", "read_settings"), "g_status_view.read(",
+     "the readers copy the view"),
+    (r"\bg_scan_view\s*\.\s*read\s*\(", ("read_scan",), "g_scan_view.read(", "the reader copies the view"),
+    (r"\bg_paired_view\s*\.\s*read\s*\(", ("read_paired",), "g_paired_view.read(", "the reader copies the view"),
+)
+SIG_BT_RUN_COMMAND = r"\bstatic\s+Result\s+run_command\s*\([^)]*\)"
+BT_READERS = ("read_status", "read_settings", "read_scan", "read_paired")
+# The JSON each GET route sends: `<object>.<key>` for every literal key it
+# sets (doc is the top level; conn, pair, stats and dev are its objects).
+BT_GET_KEYS = {
+    "handle_bluetooth_status": {
+        "doc": ("state", "enabled", "advertising", "init_fail_reason", "scanning", "connected",
+                "device_name", "local_address", "tx_power", "mtu", "battery_pct", "paired_count",
+                "scanned_count", "connection", "pairing", "stats"),
+        "conn": ("address", "name", "rssi", "distance_m", "distance_label", "security",
+                 "connected_sec", "bytes_sent", "bytes_received"),
+        "pair": ("state", "pin", "peer_address", "peer_name"),
+        "stats": ("total_connections", "total_bytes_sent", "total_bytes_received",
+                  "advertising_time_sec", "connected_time_sec"),
+    },
+    "handle_bluetooth_scan_results": {
+        "doc": ("scanning", "count", "devices"),
+        "dev": ("address", "name", "rssi", "distance_m", "distance_label", "type", "connectable",
+                "is_securacv", "age_sec"),
+    },
+    "handle_bluetooth_paired_list": {
+        "doc": ("count", "devices"),
+        "dev": ("address", "name", "paired_timestamp", "last_connected_sec", "connection_count",
+                "security", "trusted", "blocked"),
+    },
+    "handle_bluetooth_settings_get": {
+        "doc": ("enabled", "auto_advertise", "allow_pairing", "require_pin", "device_name",
+                "tx_power", "inactivity_timeout_sec", "notify_on_connect", "long_range_mode"),
+    },
+}
+WEB_UI = f"{SKETCH}/web_ui.h"
+# What the dashboard's Bluetooth panel reads from each route: (its function,
+# the variable holding the answer, the route's object the keys belong to).
+BT_JS_READS = (
+    ("refreshBtStatus", r"data", ("handle_bluetooth_status", "doc")),
+    ("refreshBtStatus", r"data\.connection", ("handle_bluetooth_status", "conn")),
+    ("refreshBtStatus", r"data\.pairing", ("handle_bluetooth_status", "pair")),
+    ("toggleBtAdvertising", r"st", ("handle_bluetooth_status", "doc")),
+    ("loadBtSettings", r"data", ("handle_bluetooth_settings_get", "doc")),
+    ("btStartScan", r"r", ("handle_bluetooth_scan_results", "doc")),
+    ("renderBtScanList", r"d", ("handle_bluetooth_scan_results", "dev")),
+    ("deviceIcon", r"d", ("handle_bluetooth_scan_results", "dev")),
+    ("loadBtPairedDevices", r"data", ("handle_bluetooth_paired_list", "doc")),
+    ("loadBtPairedDevices", r"d", ("handle_bluetooth_paired_list", "dev")),
+)
+
+
+def js_function_body(src: str, name: str) -> str | None:
+    m = re.search(r"\bfunction\s+" + name + r"\s*\([^)]*\)\s*\{", src)
+    if m is None:
+        return None
+    end = close_brace(src, m.end() - 1)
+    return None if end < 0 else src[m.end():end]
+
+
+def check_bluetooth_reads(files: dict[str, str], errors: list[str]) -> None:
+    """Rule BV3 (F138)."""
+    hcode = namespace_block(blank_comments_and_strings(files[BT_H]), "bluetooth_channel") \
+        if BT_H in files else ""
+    for fn in BT_LIVE_READERS:
+        if re.search(r"(?<![\w:.>])" + fn + r"\s*\(", hcode):
+            errors.append(f"{BT_H}: declares {fn}() — the channel's state is the loop task's; another "
+                          "task reads the published view (read_status, read_settings, read_scan, "
+                          "read_paired) (F138)")
+    live_call = r"\bbluetooth_channel::(" + "|".join(BT_LIVE_READERS) + r")\s*\("
+    for name, src in files.items():
+        c = blank_comments_and_strings(src)
+        if "bluetooth_channel::" not in c:
+            continue
+        for hname, s, e in handler_spans(c):
+            m = re.search(live_call, c[s:e])
+            if m:
+                errors.append(f"{name}: HTTP handler {hname}() reads bluetooth_channel::{m.group(1)}( — "
+                              "read the view the loop task published (F138)")
+    api = blank_comments_and_strings(files[BT_API])
+    api_kept = blank_comments_only(files[BT_API])
+    for h, reader in BT_GET_ROUTES:
+        span = the_body(api, r"\besp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                        f"{BT_API}: {h}()", errors)
+        if span is None:
+            continue
+        body = api[span[0]:span[1]]
+        calls = re.findall(r"\bbluetooth_channel::(\w+)\s*\(", body)
+        if calls.count(reader) != 1 or any(c not in BT_GET_PURE + (reader,) for c in calls):
+            errors.append(f"{BT_API}: {h}() must read bluetooth_channel::{reader}( once and call "
+                          f"nothing else on the channel but {', '.join(BT_GET_PURE)} (found "
+                          f"{', '.join(calls) or 'none'}) — the route answers from the view the "
+                          "loop task published, whole (F138)")
+        kept = api_kept[span[0]:span[1]]
+        sent = {(obj, key) for obj, key in re.findall(r"\b(\w+)\s*\[\s*\"(\w+)\"\s*\]", kept)
+                if obj != "input"}
+        want = {(obj, key) for obj, keys in BT_GET_KEYS[h].items() for key in keys}
+        if sent != want:
+            errors.append(f"{BT_API}: {h}()'s JSON keys changed (missing {sorted(want - sent)}, new "
+                          f"{sorted(sent - want)}) — the dashboard and the apps read this shape; F138 "
+                          "moved where the values come from, not what is sent")
+    code = blank_comments_and_strings(files[BT_CPP])
+    spans = named_bodies(code)
+    for pattern, allowed, label, why in BT_VIEW_CALLS:
+        for m in re.finditer(pattern, code):
+            where = enclosing_function(spans, m.start())
+            if where is None:
+                continue
+            if where not in allowed:
+                errors.append(f"{BT_CPP}: {where}() names {label} — {why}; only {', '.join(allowed)} "
+                              "may (F138)")
+    update = body_of(code, SIG_UPDATE, f"{BT_CPP}: update()", errors)
+    if update is not None:
+        sq = squash(update)
+        rets = [m.start() for m in re.finditer(r"\breturn\b", sq)]
+        if not sq.endswith("publish_views();") or any(not sq[:r].endswith("publish_views();") for r in rets):
+            errors.append(f"{BT_CPP}: update() must call publish_views() right before every return and "
+                          "as its last statement — the status routes show the pass it ends, a disabled "
+                          "channel's included (F138)")
+    run = body_of(code, SIG_BT_RUN_COMMAND, f"{BT_CPP}: run_command()", errors)
+    if run is not None:
+        rets = [m.start() for m in re.finditer(r"\breturn\b", run)]
+        if len(rets) != 1 or not squash(run[:rets[0]]).endswith("publish_views();"):
+            errors.append(f"{BT_CPP}: run_command() must return once, right after publish_views() — the "
+                          "drain posts the result when it returns and the handler answers at once, so "
+                          "a GET right after the POST must already show the command (F138)")
+    for name, s0, e0 in spans:
+        if name in BT_READERS:
+            hit = re.search(BT_LIVE_STATE_RE, code[s0:e0])
+            if hit:
+                errors.append(f"{BT_CPP}: {name}() names {hit.group(1)} — it runs on the httpd task and "
+                              "reads only what the loop task published (F138)")
+    for r in BT_READERS:
+        if not any(n == r for n, _s, _e in spans):
+            errors.append(f"{BT_CPP}: {r}() is not defined (F138)")
+    ui = files.get(WEB_UI)
+    if ui is None:
+        errors.append(f"{WEB_UI}: missing")
+        return
+    for fn, var, (route, obj) in BT_JS_READS:
+        body = js_function_body(ui, fn)
+        if body is None:
+            errors.append(f"{WEB_UI}: the dashboard's {fn}() is not where this check reads it (F138)")
+            continue
+        keys = set(BT_GET_KEYS[route][obj])
+        for m in re.finditer(r"(?<![\w.])" + var + r"\.(\w+)", body):
+            key = m.group(1)
+            nested = [k for k in ("connection", "pairing") if var == "data" and key == k]
+            if key not in keys and not nested and not (var in ("data", "st", "r") and key in ("length",)):
+                errors.append(f"{WEB_UI}: {fn}() reads {var}.{key}, which {route}() does not send in "
+                              f"its {obj} object (F138)")
+
+
 def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
-    """Rules BV1..: the Bluetooth channel's settings enable (F144) and the
-    NimBLE host task's events (F143)."""
+    """Rules BV1..BV3: the Bluetooth channel's settings enable (F144), the
+    NimBLE host task's events (F143) and the status routes' reads (F138)."""
     if BT_API not in files or BT_CPP not in files:
         errors.append(f"{SKETCH}: the Bluetooth channel's sources ({BT_API}, {BT_CPP}) are missing")
         return
     check_bluetooth_settings_enable(files[BT_API], files[BT_CPP], errors)
     check_bluetooth_callbacks(files[BT_CPP], errors)
+    check_bluetooth_reads(files, errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -1983,6 +2179,59 @@ BV_MUTATIONS += [
               r"\1 g_events.consume(apply_event);")),
     ("update() applies a link's end directly",
      on_other(BT_CPP, SIG_UPDATE, r"(handle_scan_timeout\(\);)", r"\1 if (false) apply_disconnect(make_event(BT_EV_DISCONNECT));")),
+]
+# Rule BV3: the status routes' reads (F138).
+SIG_BT_PUBLISH_SCAN = r"\bstatic\s+void\s+publish_scan_view\s*\(\s*\)"
+BV_MUTATIONS += [
+    ("bluetooth_channel.h declares get_status again",
+     raw_other(BT_H, "// Status\nconst char* state_name(BluetoothState state);",
+               "// Status\nBluetoothStatus get_status();\nconst char* state_name(BluetoothState state);")),
+    ("the status route reads get_status() again",
+     on_other(BT_API, api_handler("handle_bluetooth_status"),
+              r"bluetooth_channel::BluetoothStatus\s+status;\s*bluetooth_channel::read_status\(&status\);",
+              "bluetooth_channel::BluetoothStatus status = bluetooth_channel::get_status();")),
+    ("the scan route takes the scan flag live",
+     on_other(BT_API, api_handler("handle_bluetooth_scan_results"), r"=\s*view\.scanning;",
+              "= bluetooth_channel::is_scanning();")),
+    ("the settings route reads the enabled flag live",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_get"), r"=\s*settings\.enabled;",
+              "= bluetooth_channel::is_enabled();")),
+    ("the paired route reads the view twice (two passes in one answer)",
+     on_other(BT_API, api_handler("handle_bluetooth_paired_list"), r"(bluetooth_channel::read_paired\(&view\);)",
+              r"\1 bluetooth_channel::read_paired(&view);")),
+    ("the status route drops a key",
+     on_other(BT_API, api_handler("handle_bluetooth_status"), r"\n[ \t]*doc\[\"mtu\"\]\s*=\s*status\.mtu;", "")),
+    ("the scan route renames a key",
+     on_other(BT_API, api_handler("handle_bluetooth_scan_results"), r"dev\[\"age_sec\"\]", "dev[\"age_s\"]")),
+    ("the dashboard reads a status key the route does not send",
+     raw_other(WEB_UI, "if (data.connected && data.mtu) {", "if (data.connected && data.att_mtu) {")),
+    ("the dashboard reads a scan key the route does not send",
+     raw_other(WEB_UI, "if (d.is_securacv) return", "if (d.securacv) return")),
+    ("update() returns early without publishing the views",
+     on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*publish_views\(\);[^\n]*\n(\s*return;)", r"\n\1")),
+    ("update() does not publish the views at the end of its pass",
+     on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*publish_views\(\);\s*$", "\n")),
+    ("run_command() answers before it publishes the views",
+     on_other(BT_CPP, SIG_BT_RUN_COMMAND, r"\n[ \t]*publish_views\(\);[^\n]*\n", "\n")),
+    ("run_command() returns from a case before it publishes",
+     on_other(BT_CPP, SIG_BT_RUN_COMMAND, r"(r\.ok\s*=\s*set_tx_power\(cmd\.power\);)", r"\1 return r;")),
+    ("init() publishes the views (the bring-up task, a second writer)",
+     on_other(BT_CPP, r"\bbool\s+init\s*\(\s*\)", r"(g_initialized\s*=\s*true;)", r"\1 publish_views();")),
+    ("a scan result publishes the scan view itself",
+     on_other(BT_CPP, r"\bstatic\s+void\s+apply_scan_result\s*\([^)]*\)", r"(\*entry\s*=\s*seen;)",
+              r"\1 publish_scan_view();")),
+    ("update() publishes the scan view past publish_views()",
+     on_other(BT_CPP, SIG_UPDATE, r"(handle_scan_timeout\(\);)", r"\1 (void)g_scan_view.publish(ScanView());")),
+    ("read_status() takes the state live",
+     on_other(BT_CPP, r"\bvoid\s+read_status\s*\([^)]*\)", r"(\*out\s*=\s*v\.status;)", r"\1 out->state = g_state;")),
+    ("read_scan() copies the live table",
+     on_other(BT_CPP, r"\bvoid\s+read_scan\s*\([^)]*\)", r"if\s*\(!g_scan_view\.read\(out\)\)\s*memset\(out,\s*0,\s*sizeof\(\*out\)\);",
+              "memset(out, 0, sizeof(*out)); out->count = (uint8_t)g_scanned_count;")),
+    ("read_settings() returns the live settings",
+     on_other(BT_CPP, r"\bBluetoothSettings\s+read_settings\s*\(\s*\)", r"return\s+v\.settings;", "return g_settings;")),
+    ("publish_scan_view() reads the paired view",
+     on_other(BT_CPP, SIG_BT_PUBLISH_SCAN, r"(\(void\)g_scan_view\.publish\(v\);)",
+              r"PairedView pv; (void)g_paired_view.read(&pv); \1")),
 ]
 MUTATIONS += BV_MUTATIONS
 
