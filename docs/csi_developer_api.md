@@ -415,20 +415,28 @@ the Lab from the dashboard (long-press on the version chip, or
 | --- | --- |
 | `GET /tune` | the Tuning Lab UI |
 | `GET /api/tune/coefficients` | every registered tuning knob, current values |
-| `POST /api/tune/coefficients` | update one knob; persists to NVS; a module knob applies at once and from every boot, a Quiet Hours knob from the next boot |
-| `GET /api/tune/preset` | export a signed JSON tuning bundle |
-| `POST /api/tune/preset` | import a signed JSON tuning bundle |
+| `POST /api/tune/coefficients` | update one or more knobs; persists to NVS; applies at once and from every boot |
+| `GET /api/tune/preset` | export every knob's current value as one flat, unsigned JSON object (a download named `tuning-preset.json`) |
+| `POST /api/tune/preset` | import such an object: the same handler as `POST /api/tune/coefficients`, which checks no signature |
 
-Tuning bundles ride the existing witness-chain export format — no new
-persistence layer.
+A tuning bundle is that flat object, one `"<full_key>": value` pair per
+knob (`{"core.presence.preset":1,"core.presence.sensitivity":50,...}`). It
+is not signed and it is not part of the witness chain or its export: an
+import checks only that each key names a knob and its value is a number
+(or `true` / `false`), and clamps each value to that knob's range. The Lab
+saves a bundle as a file your browser downloads and loads one from a file
+you pick; the device keeps no copy, only the knob values it stores.
 
 A coefficient POST re-runs the `init()` of the module it belongs to
 (`core.presence`, `core.breathing`, `anomaly.baseline`), so the new value
 lands on the next tick, and every module reads its stored values in its
-boot `init()` (sweep F93). The three `core.quiet_hours.*` knobs are the
-exception: no module reads them, the Tuning Lab only stores them, and the
-chokepoint picks them up at the next boot (or at once from a Quiet Hours
-change through `POST /api/settings`). A bundle import is the same handler,
+boot `init()` (sweep F93). The three `core.quiet_hours.*` knobs belong to
+no module: a POST that stores one re-applies the stored Quiet Hours window
+to the chokepoint at once, as a Quiet Hours change through
+`POST /api/settings` does (sweep F128), and every boot applies it too.
+Their declared defaults are the device's own, off and 23:00 to 07:00
+(sweep F123), so a device that never stored them shows the Lab, and
+exports, the window it runs. A bundle import is the same handler,
 so it stores every coefficient in the bundle, the three presence
 thresholds included. So do the Lab's per-row **reset** and **Reset all**,
 which POST each coefficient's default as a stored value. A stored
@@ -498,17 +506,20 @@ open; falls back to declared defaults for unset keys.
 
 ```json
 {
-  "ok": true,
   "pet_mode": false,
   "preset": "balanced",
   "sensitivity": 50,
-  "quiet_hours": { "enabled": false, "start_min": 0, "end_min": 480 },
+  "quiet_hours": { "enabled": false, "start_min": 1380, "end_min": 420 },
   "privacy_ceiling": "p0",
   "filter_foreign": true,
   "tz": "EST5EDT,M3.2.0,M11.1.0",
   "tz_iana": "America/New_York"
 }
 ```
+
+Apart from the zone, that is what a device that never stored a setting
+reports. Its Quiet Hours read off, 1380 to 420 (23:00 to 07:00): the one
+default the chokepoint and the Tuning Lab share (sweep F123).
 
 `tz` / `tz_iana` are the household time zone (repo sweep F28, option A —
 maintainer to confirm): the POSIX rule the device applies, and the IANA name
@@ -528,8 +539,8 @@ for the affected module(s) so the new value lands on the next tick.
 Saved values also apply from every boot: the modules read them in their
 boot `init()` (sweep F93; before it, a boot ran on the modules' defaults
 until the next settings change). The calibration's apply and the Tuning
-Lab's module coefficients behave the same way; a Tuning Lab Quiet Hours
-change applies from the next boot (see the Tuning Lab section above). The
+Lab's coefficients behave the same way, its Quiet Hours knobs included
+(sweep F128; see the Tuning Lab section above). The
 preset and sensitivity set only the default of `core.presence`'s three
 thresholds: once a threshold is stored directly (the calibration's apply
 stores all three; so do the Tuning Lab's reset buttons and a bundle
@@ -665,8 +676,13 @@ always pass through** — the night-time category is precisely when
 unusual activity matters most.
 
 The host wires this in `firmware/projects/canary-wap/arduino/canary_wap/
-csi_integration.cpp::register_v1_modules()` (boot-time NVS read) and
-the `/api/settings` POST handler (live re-apply on dashboard change).
+csi_settings_nvs.cpp::apply_quiet_hours_from_nvs()`, which
+`csi_integration.cpp`'s `register_v1_modules()` calls at boot, the
+`/api/settings` POST handler calls on a Quiet Hours change, and the Tuning
+Lab's POST (`csi_tune_lab.cpp`'s `tune_post()`, also the bundle import)
+calls when it stores a `core.quiet_hours.*` knob (sweep F128). A device
+that never stored the range runs it off, 23:00 to 07:00
+(`kQuietHoursDefault*` in `csi_settings_nvs.h`, sweep F123).
 
 ---
 

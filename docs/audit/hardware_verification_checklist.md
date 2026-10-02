@@ -1007,14 +1007,48 @@ device. Owner: U1.
     canary-wap image ever stored settings on the board; nothing on the
     canary writes them).
   - Expected: presence and anomaly rows as on the previous firmware; the
-    boot log shows CSI armed as before, plus one Preferences
-    `nvs_open failed: NOT_FOUND` error line when the modules initialize
-    (the boot's one read-only open of the `csi` namespace, which nothing on
-    the canary creates; host-tested as one attempt, not one per setting).
-    The other difference by design: the activity ribbon's first 15-minute
-    bucket starts when the modules initialize in `setup()`, not at
-    power-on.
+    boot log shows CSI armed as before and no `nvs_open failed` error line
+    when the modules initialize (sweep F125: the boot asks IDF's
+    `nvs_open()` whether the `csi` namespace exists, which nothing on the
+    canary creates, and opens nothing through Preferences when it does
+    not; before F125 this boot logged one Preferences
+    `nvs_open failed: NOT_FOUND` error line here). The other difference by
+    design: the activity ribbon's first 15-minute bucket starts when the
+    modules initialize in `setup()`, not at power-on.
   - Artifact: `docs/audit/repro/F93/canary-defaults/`.
+
+## Tuning Lab Quiet Hours (F123, F128) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_tune_lab.cpp`
+(the Lab's knobs and `tune_post()`, which stores a POST and applies it) and
+`csi_settings_nvs.cpp` (the one Quiet Hours default, 23:00 to 07:00, off;
+its reader; its apply to the chokepoint). Host-tested
+(`firmware/projects/canary-wap/tests_host/test_wap_tune_lab.cpp`) with the
+staged CSI library; the handlers in `csi_integration.cpp` are compiled by CI
+and held to that code by the test's source pins; not run on a device.
+Owner: U1.
+
+- [ ] **A fresh device shows the Lab the window it runs**
+  - Setup: a canary-wap on this firmware with NVS erased, paired, `/tune`
+    open.
+  - Expected: the Quiet hours group shows Enabled off, Start 23:00, End
+    07:00, as the dashboard's Quiet hours row and `GET /api/settings`
+    (`"start_min":1380,"end_min":420`). "Save preset" downloads a file
+    with `"core.quiet_hours.start_min":1380` and
+    `"core.quiet_hours.end_min":420`. Before F123 the Lab showed 00:00 to
+    08:00.
+  - Artifact: `docs/audit/repro/F123/fresh-device-window/`.
+- [ ] **A Lab Quiet Hours change applies without a reboot**
+  - Setup: as above, the household time zone set, Quiet Hours off.
+  - Repro: in `/tune`, set Start to a minute just past now and End an hour
+    later, then turn Enabled on; walk in front of the device in the
+    window.
+  - Expected: no presence row while the window is open (anomaly rows still
+    pass); turn Enabled off in the Lab and the next row is preceded by one
+    `held_summary` row (`"note":"quiet_hours"`). No reboot and no dashboard
+    change in between. Before F128 the Lab change did nothing until a
+    reboot or a dashboard Quiet Hours change.
+  - Artifact: `docs/audit/repro/F128/lab-applies-at-once/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 
