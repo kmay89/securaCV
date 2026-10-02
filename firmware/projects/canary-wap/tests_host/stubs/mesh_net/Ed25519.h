@@ -10,6 +10,8 @@
 
 #include <openssl/evp.h>
 
+#include "Arduino.h"   // host_sim::fill_random
+
 class Ed25519 {
  public:
   static void sign(uint8_t signature[64], const uint8_t private_key[32],
@@ -34,6 +36,11 @@ class Ed25519 {
     EVP_MD_CTX_free(c);
     EVP_PKEY_free(k);
     return ok;
+  }
+  // A fresh private key: 32 bytes from the harness's fixed-seed generator
+  // (chirp_channel.cpp's session identity, test_chirp_commands_wap).
+  static void generatePrivateKey(uint8_t private_key[32]) {
+    host_sim::fill_random(private_key, 32);
   }
   static void derivePublicKey(uint8_t public_key[32], const uint8_t private_key[32]) {
     memset(public_key, 0, 32);

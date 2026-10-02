@@ -45,6 +45,8 @@
 #include <WiFi.h>
 #include <mbedtls/sha256.h>
 #include <Ed25519.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>       /* vTaskDelay: submit() waits for the loop task */
 #include <time.h>
 #include <string.h>
 
@@ -135,6 +137,14 @@ struct SelfTestSeenEntry {
 static SelfTestSeenEntry* g_selftest_seen = nullptr;
 static constexpr size_t SELFTEST_SEEN_BYTES =
     MAX_NEARBY_CACHE * sizeof(SelfTestSeenEntry);
+
+// The owner's commands on their way to the loop task (sweep F111): posted by
+// submit() on esp_http_server's task (chirp_api.h's handlers), drained by
+// update() on the loop task (run_command). A portMUX spinlock guards the
+// slots; it is held only to copy a command or a result in or out, never
+// while one runs.
+static loop_command_ring::Ring<Command, Result, COMMAND_SLOTS, loop_command_ring::PortMuxLock>
+    g_commands;
 
 // Callbacks
 static ChirpReceivedCallback g_chirp_callback = nullptr;
@@ -280,6 +290,22 @@ static bool pubkey_rate_check_and_record(const uint8_t* pubkey);
 static bool nearby_has_pubkey_with_presence(const uint8_t* pubkey);
 static bool wall_clock_is_synced();
 static uint32_t wall_clock_now_seconds();
+// The owner's commands' bodies: they change what update() reads and writes,
+// so only the loop task runs them, through run_command() (update()'s drain
+// of g_commands). A REST handler, on esp_http_server's task, hands a Command
+// to submit() instead (mesh_network.h, sweep F111). deinit(),
+// send_all_clear() and clear_chirps() have no caller; they stay here, as
+// internal as the rest, for the loop task alone.
+static bool enable();
+static void disable();
+static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
+                       ChirpDetailSlot detail, uint8_t ttl_minutes);
+static bool confirm_chirp(const uint8_t* nonce);
+static bool dismiss_chirp(const uint8_t* nonce);
+static bool mute(uint8_t duration_minutes);
+static void unmute();
+static void set_relay_enabled(bool enabled);
+static void set_urgency_filter(ChirpUrgency min_urgency);
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATE MANAGEMENT
@@ -1129,9 +1155,9 @@ bool init() {
   return true;
 }
 
-void deinit() { if (!g_initialized) return; disable(); g_initialized = false; }
+[[maybe_unused]] static void deinit() { if (!g_initialized) return; disable(); g_initialized = false; }
 
-bool enable() {
+static bool enable() {
   if (!g_initialized) return false;
   if (g_state != CHIRP_DISABLED) return true;
   set_state(CHIRP_INITIALIZING);
@@ -1144,7 +1170,7 @@ bool enable() {
   return true;
 }
 
-void disable() {
+static void disable() {
   if (g_state == CHIRP_DISABLED) return;
   memset(&g_session, 0, sizeof(g_session));
   g_nearby_count = 0;
@@ -1154,7 +1180,84 @@ void disable() {
 
 bool is_enabled() { return g_state != CHIRP_DISABLED; }
 
+// One owner command, on the loop task (update()'s drain of g_commands). The
+// Result is read here, right after the command, so a REST answer describes
+// the state the command left.
+static Result run_command(const Command& cmd) {
+  Result r;
+  memset(&r, 0, sizeof(r));
+  switch (cmd.type) {
+    case CHIRP_CMD_ENABLE:
+      r.ok = enable();
+      if (r.ok) {
+        strncpy(r.session_emoji, g_session.emoji_display, EMOJI_DISPLAY_SIZE - 1);
+        r.session_emoji[EMOJI_DISPLAY_SIZE - 1] = '\0';
+      }
+      break;
+    case CHIRP_CMD_DISABLE:
+      disable();
+      r.ok = true;
+      break;
+    case CHIRP_CMD_SEND:
+      r.ok = send_chirp(cmd.template_id, cmd.urgency, cmd.detail, cmd.ttl_minutes);
+      r.cooldown_tier = get_cooldown_tier();
+      if (!r.ok) {
+        if (!is_enabled()) {
+          r.refusal = SEND_REFUSED_DISABLED;
+        } else if (!has_presence_requirement()) {
+          r.refusal = SEND_REFUSED_PRESENCE;
+        } else if (!can_send_chirp()) {
+          r.refusal = SEND_REFUSED_COOLDOWN;
+          r.cooldown_remaining_ms = get_cooldown_remaining_ms();
+        } else if (is_night_mode()) {
+          r.refusal = SEND_REFUSED_NIGHT;
+        }
+      }
+      break;
+    case CHIRP_CMD_CONFIRM:
+      r.ok = confirm_chirp(cmd.nonce);
+      break;
+    case CHIRP_CMD_DISMISS:
+      r.ok = dismiss_chirp(cmd.nonce);
+      break;
+    case CHIRP_CMD_MUTE:
+      r.ok = mute(cmd.duration_minutes);
+      break;
+    case CHIRP_CMD_UNMUTE:
+      unmute();
+      r.ok = true;
+      break;
+    case CHIRP_CMD_SETTINGS:
+      if (cmd.set_relay) set_relay_enabled(cmd.relay_enabled);
+      if (cmd.set_filter) set_urgency_filter(cmd.urgency_filter);
+      r.ok = true;
+      r.relay_enabled = g_relay_enabled;
+      r.urgency_filter = g_urgency_filter;
+      break;
+  }
+  return r;
+}
+
+loop_command_ring::Wait submit(const Command& cmd, Result* result, uint32_t timeout_ms) {
+  Result r;
+  memset(&r, 0, sizeof(r));
+  const loop_command_ring::Wait w = loop_command_ring::submit(
+      g_commands, cmd, &r, timeout_ms, COMMAND_POLL_MS,
+      []() { return (uint32_t)millis(); },
+      [](uint32_t ms) {
+        const TickType_t ticks = pdMS_TO_TICKS(ms);
+        vTaskDelay(ticks > 0 ? ticks : 1);
+      });
+  if (w != loop_command_ring::Wait::kDone) memset(&r, 0, sizeof(r));
+  if (result != nullptr) *result = r;
+  return w;
+}
+
 void update() {
+  // The owner's commands first, and before the early return below: a
+  // disabled channel still runs CHIRP_CMD_ENABLE (sweep F111).
+  g_commands.drain(run_command);
+
   if (g_state == CHIRP_DISABLED) return;
   uint32_t now = millis();
   reset_cooldown_if_stale();
@@ -1284,8 +1387,8 @@ const char* get_validation_status(const ReceivedChirp* chirp) {
   return "awaiting_confirmation";
 }
 
-bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
-                ChirpDetailSlot detail, uint8_t ttl_minutes) {
+static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
+                       ChirpDetailSlot detail, uint8_t ttl_minutes) {
   if (!can_send_chirp()) return false;
   const TemplateEntry* entry = find_template(template_id);
   if (!entry) {
@@ -1341,7 +1444,7 @@ bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   return true;
 }
 
-bool send_all_clear(ChirpTemplate clear_type) {
+[[maybe_unused]] static bool send_all_clear(ChirpTemplate clear_type) {
   if (clear_type != TPL_CLR_RESOLVED &&
       clear_type != TPL_CLR_SAFE &&
       clear_type != TPL_CLR_FALSE_ALARM) clear_type = TPL_CLR_RESOLVED;
@@ -1367,7 +1470,7 @@ const ReceivedChirp* get_pending_chirps(size_t* count) {
   return pending;
 }
 
-bool confirm_chirp(const uint8_t* nonce) {
+static bool confirm_chirp(const uint8_t* nonce) {
   if (!has_presence_requirement()) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
                "chirp: refused confirm — presence requirement not met");
@@ -1414,7 +1517,7 @@ bool confirm_chirp(const uint8_t* nonce) {
   return false;
 }
 
-bool dismiss_chirp(const uint8_t* nonce) {
+static bool dismiss_chirp(const uint8_t* nonce) {
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     if (memcmp(g_recent_chirps[i].nonce, nonce, 8) == 0) {
       g_recent_chirps[i].dismissed = true;
@@ -1449,7 +1552,7 @@ bool dismiss_chirp(const uint8_t* nonce) {
   return false;
 }
 
-void clear_chirps() { g_recent_chirp_count = 0; }
+[[maybe_unused]] static void clear_chirps() { g_recent_chirp_count = 0; }
 
 uint8_t get_nearby_count() { return (uint8_t)g_nearby_count; }
 const NearbyDevice* get_nearby_devices(size_t* count) {
@@ -1457,7 +1560,7 @@ const NearbyDevice* get_nearby_devices(size_t* count) {
   return g_nearby_devices;
 }
 
-bool mute(uint8_t duration_minutes) {
+static bool mute(uint8_t duration_minutes) {
   if (duration_minutes != 15 && duration_minutes != 30 &&
       duration_minutes != 60 && duration_minutes != 120) return false;
   g_muted = true;
@@ -1481,7 +1584,7 @@ bool mute(uint8_t duration_minutes) {
   return true;
 }
 
-void unmute() {
+static void unmute() {
   g_muted = false;
   g_mute_until_ms = 0;
   if (g_state == CHIRP_MUTED) set_state(CHIRP_ACTIVE);
@@ -1489,9 +1592,9 @@ void unmute() {
 
 bool is_muted() { return g_muted && millis() < g_mute_until_ms; }
 
-void set_relay_enabled(bool enabled) { g_relay_enabled = enabled; save_settings(); }
+static void set_relay_enabled(bool enabled) { g_relay_enabled = enabled; save_settings(); }
 bool is_relay_enabled() { return g_relay_enabled; }
-void set_urgency_filter(ChirpUrgency min_urgency) { g_urgency_filter = min_urgency; save_settings(); }
+static void set_urgency_filter(ChirpUrgency min_urgency) { g_urgency_filter = min_urgency; save_settings(); }
 ChirpUrgency get_urgency_filter() { return g_urgency_filter; }
 
 void set_chirp_callback(ChirpReceivedCallback callback) { g_chirp_callback = callback; }

@@ -28,7 +28,7 @@
 #include "mesh_beacon.h"        // BEACON_EVENT wire format (PR canary-wap parity)
 #include "mesh_channel_hop.h"   // CHANNEL_LOCK wire format + HopTracker (PR 4b)
 #include "mesh_hub_election.h"  // HUB_ELECTION wire format + HubMonitor (PR 4c)
-#include "loop_command_ring.h"  // F96: owner commands handed to the loop task
+#include "loop_command_ring.h"  // F96, F111: owner commands handed to the loop task
 #include <string.h>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1111,24 +1111,113 @@ typedef void (*ChirpStateCallback)(ChirpState old_state, ChirpState new_state);
 // Initialize chirp channel (call once at boot, does NOT enable)
 bool init();
 
-// Shutdown chirp channel
-void deinit();
-
-// Enable chirp channel (generates new session identity)
-bool enable();
-
-// Disable chirp channel (discards session identity)
-void disable();
-
-// Check if enabled
+// Check if enabled (turned on and off by CHIRP_CMD_ENABLE / CHIRP_CMD_DISABLE)
 bool is_enabled();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Main loop
 // ──────────────────────────────────────────────────────────────────────────
 
-// Call from main loop to process messages
+// Call from main loop to process messages. Runs the owner's commands first
+// (below), on every pass, the disabled channel's included.
 void update();
+
+// ──────────────────────────────────────────────────────────────────────────
+// The owner's commands (sweep F111)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// What the owner asks for over REST (chirp_api.h): turn the channel on or
+// off, send a chirp, confirm or dismiss one, mute, unmute, and change the
+// relay and urgency-filter settings. The REST handlers run on
+// esp_http_server's task, and what these change (the session identity, the
+// cooldowns, the recent and nearby tables, the mute and relay state) is
+// update()'s, on the loop task, where it is read and written with no lock.
+// So the functions that do it are internal to chirp_channel.cpp, and a
+// handler hands a Command to submit() instead: submit() posts it to a ring
+// of COMMAND_SLOTS (loop_command_ring.h, as mesh_network::submit() does,
+// sweep F96) that update() drains first thing on every pass (a disabled
+// channel included, so CHIRP_CMD_ENABLE can turn it on), and waits for its
+// Result.
+//
+// The wait is bounded for a command the loop task has not started: after
+// timeout_ms it is withdrawn and never runs. kDone: it ran, and *result is
+// what it did, read on the loop task right after it ran. kBusy (every slot
+// taken) and kWithdrawn: it did not run and will not, and *result is
+// zeroed; the handler answers not_run_status() / not_run_error(): 409
+// chirp_busy and 503 chirp_timeout, the codes the mesh answers with for the
+// same two cases. A command the loop task has started is waited for until
+// it is done. Never call submit() from the loop task: it would wait for
+// itself, and the command would be withdrawn.
+
+enum CommandType : uint8_t {
+  CHIRP_CMD_ENABLE = 0,
+  CHIRP_CMD_DISABLE,
+  CHIRP_CMD_SEND,       // template_id, urgency, detail, ttl_minutes
+  CHIRP_CMD_CONFIRM,    // nonce: "I see this too"
+  CHIRP_CMD_DISMISS,    // nonce
+  CHIRP_CMD_MUTE,       // duration_minutes
+  CHIRP_CMD_UNMUTE,
+  CHIRP_CMD_SETTINGS,   // set_relay: relay_enabled; set_filter: urgency_filter
+};
+
+struct Command {
+  CommandType     type;
+  ChirpTemplate   template_id;
+  ChirpUrgency    urgency;
+  ChirpDetailSlot detail;
+  uint8_t         ttl_minutes;
+  uint8_t         duration_minutes;
+  uint8_t         nonce[8];
+  bool            set_relay;
+  bool            relay_enabled;
+  bool            set_filter;
+  ChirpUrgency    urgency_filter;
+};
+
+// Why a CHIRP_CMD_SEND did not go out, checked in the order the send handler
+// has always named them: the channel off, the presence requirement, then
+// can_send_chirp() (the cooldown, and an unsynced clock), then night mode.
+enum SendRefusal : uint8_t {
+  SEND_REFUSED_NONE = 0,  // it went out, or failed for a reason none of these names
+  SEND_REFUSED_DISABLED,
+  SEND_REFUSED_PRESENCE,
+  SEND_REFUSED_COOLDOWN,
+  SEND_REFUSED_NIGHT,
+};
+
+// What a command did, as the loop task saw it right after the command ran.
+struct Result {
+  bool         ok;                     // the command's own answer (DISABLE, UNMUTE, SETTINGS: true)
+  SendRefusal  refusal;                // SEND that failed: why
+  uint8_t      cooldown_tier;          // SEND: get_cooldown_tier() after the attempt
+  uint32_t     cooldown_remaining_ms;  // SEND refused for the cooldown
+  bool         relay_enabled;          // SETTINGS: the setting after the command
+  ChirpUrgency urgency_filter;         // SETTINGS: the setting after the command
+  char         session_emoji[EMOJI_DISPLAY_SIZE];  // ENABLE: the session's emoji
+};
+
+// A command of `type` with every other field zero.
+inline Command make_command(CommandType type) {
+  Command cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.type = type;
+  return cmd;
+}
+
+static const size_t   COMMAND_SLOTS   = 4;
+static const uint32_t COMMAND_WAIT_MS = 2000;   // for the loop task to start it
+static const uint32_t COMMAND_POLL_MS = 5;
+
+loop_command_ring::Wait submit(const Command& cmd, Result* result,
+                               uint32_t timeout_ms = COMMAND_WAIT_MS);
+
+// The REST answer to a command that did not run (any Wait but kDone).
+inline int not_run_status(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? 409 : 503;
+}
+inline const char* not_run_error(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? "chirp_busy" : "chirp_timeout";
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Status
@@ -1156,14 +1245,9 @@ bool can_send_chirp();
 // Sending chirps (HUMAN-IN-THE-LOOP)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Send a chirp to the community using structured templates (NO FREE TEXT)
-// IMPORTANT: This should only be called after human confirmation!
-// Returns false if rate-limited, disabled, or presence requirement not met
-bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
-                ChirpDetailSlot detail = DETAIL_NONE, uint8_t ttl_minutes = 15);
-
-// Send an all-clear (de-escalation)
-bool send_all_clear(ChirpTemplate clear_type = TPL_CLR_RESOLVED);
+// Sending is CHIRP_CMD_SEND (above): structured templates only, NO FREE
+// TEXT, and only after human confirmation. It is refused when rate-limited,
+// disabled, or the presence requirement is not met.
 
 // Check if presence requirement is met (10 min)
 bool has_presence_requirement();
@@ -1196,15 +1280,8 @@ const ReceivedChirp* get_recent_chirps(size_t* count);
 // Get pending chirps (unvalidated, awaiting confirmation)
 const ReceivedChirp* get_pending_chirps(size_t* count);
 
-// Confirm a chirp ("I see this too") - adds witness count
-// If enough confirmations, chirp becomes validated and relays
-bool confirm_chirp(const uint8_t* nonce);
-
-// Dismiss a chirp from display (contributes to suppress voting)
-bool dismiss_chirp(const uint8_t* nonce);
-
-// Clear all recent chirps
-void clear_chirps();
+// Confirming a chirp ("I see this too": a signed ACK) is CHIRP_CMD_CONFIRM;
+// dismissing one from display (a signed suppress vote) is CHIRP_CMD_DISMISS.
 
 // Get validation status text
 const char* get_validation_status(const ReceivedChirp* chirp);
@@ -1223,11 +1300,8 @@ const NearbyDevice* get_nearby_devices(size_t* count);
 // Mute control
 // ──────────────────────────────────────────────────────────────────────────
 
-// Mute chirps for duration (15, 30, 60, or 120 minutes)
-bool mute(uint8_t duration_minutes);
-
-// Unmute chirps
-void unmute();
+// Muting (15, 30, 60 or 120 minutes) is CHIRP_CMD_MUTE; unmuting is
+// CHIRP_CMD_UNMUTE.
 
 // Check if muted
 bool is_muted();
@@ -1236,12 +1310,9 @@ bool is_muted();
 // Settings
 // ──────────────────────────────────────────────────────────────────────────
 
-// Enable/disable relaying other chirps
-void set_relay_enabled(bool enabled);
+// Relaying other chirps, and the minimum urgency to display (filters lower
+// urgency); both are changed by CHIRP_CMD_SETTINGS.
 bool is_relay_enabled();
-
-// Set minimum urgency to display (filters lower urgency)
-void set_urgency_filter(ChirpUrgency min_urgency);
 ChirpUrgency get_urgency_filter();
 
 // ──────────────────────────────────────────────────────────────────────────

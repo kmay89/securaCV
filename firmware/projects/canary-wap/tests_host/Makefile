@@ -770,6 +770,29 @@ clean-mesh-commands:
 run: run-mesh-commands
 clean: clean-mesh-commands
 
+# The owner's Chirp commands run on the loop task (sweep F111): the REAL
+# chirp_channel.cpp, #included and compiled on the host against
+# stubs/mesh_net (an ESP-NOW send log, an in-memory NVS, OpenSSL's Ed25519
+# and SHA-256) with the real airtime governor, and the test's own wall clock.
+# The handler's side submits, the loop task's update() drains: enable on a
+# disabled channel, every command, a refused send's reason, a command the
+# loop task never reaches (withdrawn), a full ring (busy) and the post
+# order, with no NVS write or ESP-NOW call made from the handler's side.
+CHIRP_CMD_BIN = test_chirp_commands_wap
+CHIRP_CMD_SRC = test_chirp_commands_wap.cpp
+
+$(CHIRP_CMD_BIN): $(CHIRP_CMD_SRC) $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/chirp_channel.cpp $(SRC_DIR)/mesh_network.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/airtime_governor.cpp
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_CMD_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
+
+.PHONY: run-chirp-commands clean-chirp-commands
+run-chirp-commands: $(CHIRP_CMD_BIN)
+	$(call run_marked,$(CHIRP_CMD_BIN))
+clean-chirp-commands:
+	rm -f $(CHIRP_CMD_BIN)
+
+run: run-chirp-commands
+clean: clean-chirp-commands
+
 # The MQTT bridge re-inits on the loop task (sweep F106): the REAL
 # csi_mqtt.cpp over stubs/mqtt (an in-memory NVS, a request/response httpd,
 # and a fake esp_mqtt client the test defines, which records the task of

@@ -12,6 +12,19 @@
  *     and every handler is wrapped in chirp_auth_gated<>.
  *   - register_routes() must be called from canary_wap.ino after the
  *     HTTPS server is up.
+ *
+ * Sweep F111: the handlers run on esp_http_server's task, and the state a
+ * POST changes (the session, cooldowns, recent chirps, mute and relay
+ * state) is chirp_channel::update()'s, on the loop task, with no lock. So
+ * no handler here changes it: each POST validates its body as before, hands
+ * a chirp_channel::Command to chirp_channel::submit() and waits (up to 2 s
+ * for the loop task to start it), then answers from the Result the loop
+ * task read right after the command ran, in the shape it always had. A
+ * command that did not run answers 409 chirp_busy or 503 chirp_timeout
+ * (send_not_run). firmware/scripts/check_wap_loop_commands.py holds every
+ * handler here to that. The GET routes still read the loop task's state
+ * from this task (a torn read, never a freed pointer: the tables are
+ * allocated once).
  */
 
 #ifndef SECURACV_CHIRP_API_H
@@ -20,6 +33,7 @@
 #include "esp_http_server.h"
 #include "mesh_network.h"
 #include "api_auth.h"
+#include "http_status_line.h"
 #include <ArduinoJson.h>
 
 namespace chirp_api {
@@ -38,6 +52,29 @@ static esp_err_t chirp_auth_gated(httpd_req_t* req) {
   const char* tok = auth_token_storage();
   if (tok && !api_auth_check(req, tok)) return ESP_OK;
   return Real(req);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE LOOP TASK'S ANSWER (sweep F111)
+// ════════════════════════════════════════════════════════════════════════════
+
+// A command the loop task did not run: every slot was taken (409
+// chirp_busy), or it did not start within its wait and was withdrawn (503
+// chirp_timeout). Nothing changed. The body keeps the chirp routes' shape:
+// the dashboard reads success and message or error.
+inline esp_err_t send_not_run(httpd_req_t* req, loop_command_ring::Wait w) {
+  httpd_resp_set_status(req, http_status_line(chirp_channel::not_run_status(w)));
+  JsonDocument doc;
+  doc["success"] = false;
+  doc["error"] = chirp_channel::not_run_error(w);
+  doc["message"] = w == loop_command_ring::Wait::kBusy
+                       ? "Chirp channel is busy; try again"
+                       : "Chirp channel did not answer in time; try again";
+  char buffer[160];
+  serializeJson(doc, buffer);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_sendstr(req, buffer);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -163,12 +200,16 @@ inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
 
 // POST /api/chirp/enable - Enable chirp channel
 inline esp_err_t handle_chirp_enable(httpd_req_t* req) {
-  bool success = chirp_channel::enable();
+  chirp_channel::Result r;
+  const loop_command_ring::Wait w = chirp_channel::submit(
+      chirp_channel::make_command(chirp_channel::CHIRP_CMD_ENABLE), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  bool success = r.ok;
 
   JsonDocument doc;
   doc["success"] = success;
   if (success) {
-    doc["session_emoji"] = chirp_channel::get_session_emoji();
+    doc["session_emoji"] = r.session_emoji;
   } else {
     doc["error"] = "Failed to enable chirp channel";
   }
@@ -183,7 +224,10 @@ inline esp_err_t handle_chirp_enable(httpd_req_t* req) {
 
 // POST /api/chirp/disable - Disable chirp channel
 inline esp_err_t handle_chirp_disable(httpd_req_t* req) {
-  chirp_channel::disable();
+  chirp_channel::Result r;
+  const loop_command_ring::Wait w = chirp_channel::submit(
+      chirp_channel::make_command(chirp_channel::CHIRP_CMD_DISABLE), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
 
   JsonDocument doc;
   doc["success"] = true;
@@ -249,30 +293,45 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
 
   chirp_channel::ChirpDetailSlot detail = (chirp_channel::ChirpDetailSlot)detail_raw;
 
-  // Attempt to send
-  bool success = chirp_channel::send_chirp(template_id, urgency, detail, ttl);
+  // Attempt to send, on the loop task; the refusal is read there too.
+  chirp_channel::Command cmd = chirp_channel::make_command(chirp_channel::CHIRP_CMD_SEND);
+  cmd.template_id = template_id;
+  cmd.urgency = urgency;
+  cmd.detail = detail;
+  cmd.ttl_minutes = ttl;
+  chirp_channel::Result r;
+  const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  bool success = r.ok;
 
   JsonDocument doc;
   doc["success"] = success;
 
   if (success) {
     doc["template_text"] = chirp_channel::get_template_text(template_id);
-    doc["cooldown_tier"] = chirp_channel::get_cooldown_tier();
+    doc["cooldown_tier"] = r.cooldown_tier;
   } else {
-    if (!chirp_channel::is_enabled()) {
-      doc["error"] = "chirp_disabled";
-      doc["message"] = "Chirp channel is not enabled";
-    } else if (!chirp_channel::has_presence_requirement()) {
-      doc["error"] = "presence_required";
-      doc["message"] = "Must be active for 10 minutes before sending";
-    } else if (!chirp_channel::can_send_chirp()) {
-      doc["error"] = "cooldown";
-      doc["message"] = "Please wait before sending another chirp";
-      doc["cooldown_remaining_sec"] = chirp_channel::get_cooldown_remaining_ms() / 1000;
-      doc["cooldown_tier"] = chirp_channel::get_cooldown_tier();
-    } else if (chirp_channel::is_night_mode()) {
-      doc["error"] = "night_restricted";
-      doc["message"] = "This template is not available during night hours (10pm-6am)";
+    switch (r.refusal) {
+      case chirp_channel::SEND_REFUSED_DISABLED:
+        doc["error"] = "chirp_disabled";
+        doc["message"] = "Chirp channel is not enabled";
+        break;
+      case chirp_channel::SEND_REFUSED_PRESENCE:
+        doc["error"] = "presence_required";
+        doc["message"] = "Must be active for 10 minutes before sending";
+        break;
+      case chirp_channel::SEND_REFUSED_COOLDOWN:
+        doc["error"] = "cooldown";
+        doc["message"] = "Please wait before sending another chirp";
+        doc["cooldown_remaining_sec"] = r.cooldown_remaining_ms / 1000;
+        doc["cooldown_tier"] = r.cooldown_tier;
+        break;
+      case chirp_channel::SEND_REFUSED_NIGHT:
+        doc["error"] = "night_restricted";
+        doc["message"] = "This template is not available during night hours (10pm-6am)";
+        break;
+      case chirp_channel::SEND_REFUSED_NONE:
+        break;
     }
   }
 
@@ -424,10 +483,15 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
   // diagnostic-only and produce no local state change; we accept the
   // request and return success without doing anything observable.
   bool success;
-  if (strcmp(ack_type_str, "confirmed") == 0) {
-    success = chirp_channel::confirm_chirp(nonce);
-  } else if (strcmp(ack_type_str, "resolved") == 0) {
-    success = chirp_channel::dismiss_chirp(nonce);
+  if (strcmp(ack_type_str, "confirmed") == 0 || strcmp(ack_type_str, "resolved") == 0) {
+    chirp_channel::Command cmd = chirp_channel::make_command(
+        strcmp(ack_type_str, "confirmed") == 0 ? chirp_channel::CHIRP_CMD_CONFIRM
+                                               : chirp_channel::CHIRP_CMD_DISMISS);
+    memcpy(cmd.nonce, nonce, sizeof(cmd.nonce));
+    chirp_channel::Result r;
+    const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
+    if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+    success = r.ok;
   } else {
     // SEEN — no-op, but still acknowledge the request.
     success = true;
@@ -469,12 +533,15 @@ inline esp_err_t handle_chirp_dismiss(httpd_req_t* req) {
     return ESP_FAIL;
   }
 
-  uint8_t nonce[8];
+  chirp_channel::Command cmd = chirp_channel::make_command(chirp_channel::CHIRP_CMD_DISMISS);
   for (int i = 0; i < 8; i++) {
-    sscanf(nonce_hex + i * 2, "%2hhx", &nonce[i]);
+    sscanf(nonce_hex + i * 2, "%2hhx", &cmd.nonce[i]);
   }
 
-  bool success = chirp_channel::dismiss_chirp(nonce);
+  chirp_channel::Result r;
+  const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  bool success = r.ok;
 
   JsonDocument doc;
   doc["success"] = success;
@@ -506,7 +573,12 @@ inline esp_err_t handle_chirp_mute(httpd_req_t* req) {
 
   uint8_t duration = input["duration_minutes"] | 30;
 
-  bool success = chirp_channel::mute(duration);
+  chirp_channel::Command cmd = chirp_channel::make_command(chirp_channel::CHIRP_CMD_MUTE);
+  cmd.duration_minutes = duration;
+  chirp_channel::Result r;
+  const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  bool success = r.ok;
 
   JsonDocument doc;
   doc["success"] = success;
@@ -525,7 +597,10 @@ inline esp_err_t handle_chirp_mute(httpd_req_t* req) {
 
 // POST /api/chirp/unmute - Unmute chirps
 inline esp_err_t handle_chirp_unmute(httpd_req_t* req) {
-  chirp_channel::unmute();
+  chirp_channel::Result r;
+  const loop_command_ring::Wait w = chirp_channel::submit(
+      chirp_channel::make_command(chirp_channel::CHIRP_CMD_UNMUTE), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
 
   JsonDocument doc;
   doc["success"] = true;
@@ -555,9 +630,12 @@ inline esp_err_t handle_chirp_settings(httpd_req_t* req) {
     return ESP_FAIL;
   }
 
+  chirp_channel::Command cmd = chirp_channel::make_command(chirp_channel::CHIRP_CMD_SETTINGS);
+
   // Update relay setting if provided
   if (input["relay_enabled"].is<JsonVariant>()) {
-    chirp_channel::set_relay_enabled(input["relay_enabled"].as<bool>());
+    cmd.set_relay = true;
+    cmd.relay_enabled = input["relay_enabled"].as<bool>();
   }
 
   // Update urgency filter if provided
@@ -566,14 +644,19 @@ inline esp_err_t handle_chirp_settings(httpd_req_t* req) {
     chirp_channel::ChirpUrgency filter = chirp_channel::CHIRP_URG_INFO;
     if (strcmp(filter_str, "caution") == 0) filter = chirp_channel::CHIRP_URG_CAUTION;
     else if (strcmp(filter_str, "urgent") == 0) filter = chirp_channel::CHIRP_URG_URGENT;
-    chirp_channel::set_urgency_filter(filter);
+    cmd.set_filter = true;
+    cmd.urgency_filter = filter;
   }
 
-  // Return current settings
+  chirp_channel::Result r;
+  const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+
+  // Return the settings as the command left them
   JsonDocument doc;
   doc["success"] = true;
-  doc["relay_enabled"] = chirp_channel::is_relay_enabled();
-  doc["urgency_filter"] = chirp_channel::urgency_name(chirp_channel::get_urgency_filter());
+  doc["relay_enabled"] = r.relay_enabled;
+  doc["urgency_filter"] = chirp_channel::urgency_name(r.urgency_filter);
 
   char buffer[128];
   serializeJson(doc, buffer);
@@ -608,12 +691,15 @@ inline esp_err_t handle_chirp_confirm(httpd_req_t* req) {
     return ESP_FAIL;
   }
 
-  uint8_t nonce[8];
+  chirp_channel::Command cmd = chirp_channel::make_command(chirp_channel::CHIRP_CMD_CONFIRM);
   for (int i = 0; i < 8; i++) {
-    sscanf(nonce_hex + i * 2, "%2hhx", &nonce[i]);
+    sscanf(nonce_hex + i * 2, "%2hhx", &cmd.nonce[i]);
   }
 
-  bool success = chirp_channel::confirm_chirp(nonce);
+  chirp_channel::Result r;
+  const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  bool success = r.ok;
 
   JsonDocument doc;
   doc["success"] = success;
