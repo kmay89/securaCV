@@ -5800,6 +5800,157 @@ void test_complete_copies_reaching_a_paired_joiner_do_nothing() {
   std::printf("PASS test_complete_copies_reaching_a_paired_joiner_do_nothing\n");
 }
 
+/* The COMPLETE copies to `to` in g_outs. */
+size_t complete_copies_to(const uint8_t to[6]) {
+  size_t n = 0;
+  for (const auto& o : g_outs) {
+    n += std::memcmp(o.mac, to, 6) == 0 &&
+         o.bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE);
+  }
+  return n;
+}
+
+/* Only the joiner's own verified, fresh frame, from the address it paired
+ * from and under this opera, ends the copies: the heard stop sits after
+ * every check on_opera_frame makes. Each of these frames fails one of them,
+ * is dropped, and leaves the next two copies due:
+ *   0  the joiner's fingerprint under a bad signature, from its own address
+ *      (its key went out in clear in its DISCOVER and the fingerprint is in
+ *      every header, so any radio can write this frame);
+ *   1  its genuine frame, from another member's address (F70);
+ *   2  its genuine frame, signed under another opera;
+ *   3  a replay of a frame it sent before this pairing (a member that
+ *      re-pairs keeps its counter);
+ *   4  control: a fresh genuine frame from its own address ends them.
+ * With the stop moved above the address check, the signature check, the
+ * opera check or the counter check, one forged or stale frame ends the
+ * copies and case 0, 1, 2 or 3 fails. */
+void test_only_the_joiners_own_fresh_frame_ends_the_copies() {
+  uint8_t S[32], S2[32];
+  for (size_t i = 0; i < sizeof(S); ++i) { S[i] = (uint8_t)(0xC1 + i); S2[i] = (uint8_t)(0xD1 + i); }
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x13, 0x43, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x13, 0x43, 0x02};
+  const uint8_t mac_k[6] = {0x24, 0x0A, 0xC4, 0x13, 0x43, 0x0B};
+  for (int c = 0; c <= 4; ++c) {
+    uint8_t pub[32], priv[32];
+    stand_up_session(S, pub, priv);
+    reset_fake_main_nvs();
+    mesh_session::set_paired_callback(main_like_paired);
+    mesh_session::set_paired_peer_bound_callback(main_like_bound);
+    mesh_session::set_tamper_alert_handler(on_alert_rx);
+    uint8_t k_pub[32], k_priv[32], k_fp[8];   /* another member, bound at mac_k */
+    assert(mesh_crypto::ed25519_generate_keypair(k_pub, k_priv));
+    assert(mesh_session::register_trusted_peer(k_pub));
+    mesh_crypto::compute_fingerprint(k_pub, k_fp);
+    assert(mesh_session::bind_peer_mac(k_fp, mac_k));
+    uint8_t j_pub[32], j_priv[32], j_fp[8];
+    assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+    mesh_crypto::compute_fingerprint(j_pub, j_fp);
+    uint8_t before[mesh_envelope::MAX_FRAME_LEN];
+    size_t before_n = 0;
+    if (c == 3) {   /* a member, heard at counter 7, that pairs again */
+      assert(mesh_session::register_trusted_peer(j_pub));
+      assert(mesh_session::bind_peer_mac(j_fp, mac_j));
+      before_n = build_alert_frame(j_pub, j_priv, S, 7, mesh_alert::Kind::TEMP_DRIFT, 3, 1,
+                                   before, sizeof(before));
+      mesh_transport::test::inject_recv(mac_j, before, before_n, -40);
+      mesh_transport::process();
+      assert(g_alerts_rx.size() == 1);
+      g_alerts_rx.clear();
+    }
+    mesh_pairing::PairingContext cj;
+    const uint32_t T0 = 900000, T = T0 + 10;
+    initiator_completes(S, me, mac_j, j_pub, j_priv, T0, cj);
+
+    uint8_t f[mesh_envelope::MAX_FRAME_LEN];
+    size_t n = 0;
+    const uint8_t* from = mac_j;
+    switch (c) {
+      case 0:
+        n = build_alert_frame(j_pub, j_priv, S, 50, mesh_alert::Kind::TEMP_DRIFT, 3, 2, f, sizeof(f));
+        f[n - 1] ^= 0x01;   /* the signature's last byte */
+        break;
+      case 1:
+        n = build_alert_frame(j_pub, j_priv, S, 50, mesh_alert::Kind::TEMP_DRIFT, 3, 2, f, sizeof(f));
+        from = mac_k;
+        break;
+      case 2:
+        n = build_alert_frame(j_pub, j_priv, S2, 50, mesh_alert::Kind::TEMP_DRIFT, 3, 2, f, sizeof(f));
+        break;
+      case 3:
+        std::memcpy(f, before, before_n);
+        n = before_n;
+        break;
+      default:
+        n = build_alert_frame(j_pub, j_priv, S, 50, mesh_alert::Kind::TEMP_DRIFT, 3, 2, f, sizeof(f));
+        break;
+    }
+    mesh_transport::test::inject_recv(from, f, n, -40);
+    mesh_transport::process();
+    assert(g_alerts_rx.size() == (c == 4 ? 1u : 0u));   /* 0-3 dropped, 4 taken */
+    g_outs.clear();
+    for (uint32_t t = T + 100; t <= T + 2 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 100) {
+      mesh_transport::test::set_now_ms(t);
+      mesh_session::process(t);
+    }
+    if (c == 4) {
+      assert(g_outs.empty());
+    } else {
+      assert(complete_copies_to(mac_j) == 2 && sent_to(mac_j) == 4 && g_outs.size() == 4);
+    }
+    assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  }
+  std::printf("PASS test_only_the_joiners_own_fresh_frame_ends_the_copies"
+              "  (bad signature, another address, another opera, replay; control)\n");
+}
+
+/* process() runs the session's check before the pairing tick, which is what
+ * sends a copy, so a REST LEAVE, or a REST REMOVE of the member, drained in
+ * the very pass a copy falls due sends no copy: not to a member just
+ * removed, and not with the secret of an opera just left or rotated. With
+ * the check after the tick, each sends one. */
+void test_a_leave_or_removal_in_a_copys_pass_sends_no_copy() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xE1 + i);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x13, 0x44, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x13, 0x44, 0x02};
+  for (int remove = 0; remove <= 1; ++remove) {
+    uint8_t pub[32], priv[32];
+    stand_up_session(S, pub, priv);
+    reset_fake_main_nvs();
+    mesh_session::set_paired_callback(main_like_paired);
+    mesh_session::set_paired_peer_bound_callback(main_like_bound);
+    uint8_t j_pub[32], j_priv[32], j_fp[8];
+    assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+    mesh_crypto::compute_fingerprint(j_pub, j_fp);
+    mesh_pairing::PairingContext cj;
+    const uint32_t T0 = 950000, T = T0 + 10;
+    initiator_completes(S, me, mac_j, j_pub, j_priv, T0, cj);
+    for (uint32_t t = T + 100; t < T + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 100) {
+      mesh_transport::test::set_now_ms(t);
+      mesh_session::process(t);
+    }
+    assert(g_outs.empty());
+    mesh_session::Request r = make_request(remove ? mesh_session::RequestType::REMOVE
+                                                  : mesh_session::RequestType::LEAVE);
+    if (remove) std::memcpy(r.fp, j_fp, sizeof(j_fp));
+    assert(mesh_session::submit_request(r));
+    mesh_transport::test::set_now_ms(T + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+    mesh_session::process(T + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);   /* a copy is due */
+    mesh_session::RequestResult res;
+    assert(mesh_session::take_request_result(&res));
+    assert(res.status == mesh_session::RequestStatus::OK);
+    if (remove) assert(res.remove == mesh_session::RemoveResult::COMMITTED);
+    assert(complete_copies_to(mac_j) == 0);
+    for (uint32_t t = T + 2100; t <= T + 3 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 100) {
+      mesh_transport::test::set_now_ms(t);
+      mesh_session::process(t);
+    }
+    assert(complete_copies_to(mac_j) == 0);   /* and none after it */
+  }
+  std::printf("PASS test_a_leave_or_removal_in_a_copys_pass_sends_no_copy  (LEAVE, REMOVE)\n");
+}
+
 /* ── F133 — GET /api/mesh reports the last pairing's outcome ─────────────
  *
  * The web UI's pairing poll read only `state`, and an initiator already in
@@ -6847,6 +6998,8 @@ int main() {
   test_a_lost_complete_is_sent_again_through_the_session();
   test_complete_copies_stop_when_they_can_no_longer_help();
   test_complete_copies_reaching_a_paired_joiner_do_nothing();
+  test_only_the_joiners_own_fresh_frame_ends_the_copies();
+  test_a_leave_or_removal_in_a_copys_pass_sends_no_copy();
   /* F135 — a cancel leaves an ended pairing alone. */
   test_a_cancel_after_the_complete_still_reports_paired();
   test_a_cancel_on_a_failed_pairing_fires_nothing_again();
