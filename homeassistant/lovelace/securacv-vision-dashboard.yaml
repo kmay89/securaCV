@@ -52,9 +52,13 @@ views:
       # "The clocks and the cell on an event row"). So whether anyone is here
       # comes from the Presence binary sensor, read off the same state row:
       # the cell is 🟧 while the device holds someone present (through its
-      # lost timeout) and 🔲 once the visit has ended. (Before sweep HA25 the
-      # Presence sensor's discovery template never matched its payloads, so
-      # this card read the confidence sensor instead.)
+      # lost timeout) and 🔲 once the visit has ended.
+      # Presence needs Vision firmware with the sweep HA25 discovery fix: on
+      # older firmware its template never matched its payloads, so it stays
+      # unknown. While it is neither on nor off the card falls back to the
+      # confidence sensor (the best person box's score; 🟧 while it is above
+      # 0, which also reads 🔲 on a frame that missed someone), says so, and
+      # never claims nobody is present.
       # The grid renders top row first, matching the camera's view.
       # -----------------------------------------------------------------------
       - type: markdown
@@ -64,13 +68,15 @@ views:
           {% set p = v.split(',') %}
           {% set r = p[0] | int(-1) if p | count == 2 else -1 %}
           {% set c = p[1] | int(-1) if p | count == 2 else -1 %}
-          {% set present = states('binary_sensor.securacv_canary_vision_DEVICE_ID_presence') == 'on' %}
+          {% set ps = states('binary_sensor.securacv_canary_vision_DEVICE_ID_presence') %}
+          {% set known = ps in ['on', 'off'] %}
+          {% set present = ps == 'on' if known else states('sensor.securacv_canary_vision_DEVICE_ID_confidence') | int(0) > 0 %}
           {% for row in range(3) -%}
           {% for col in range(3) -%}
           {{ ('🟧' if present else '🔲') if (row == r and col == c) else '▫️' }}
           {%- endfor %}{{ '\n\n' }}
           {%- endfor %}
-          {% if r < 0 %}_Nobody seen since the device started._{% elif not present %}_Nobody present. 🔲 is where they last settled._{% endif %}
+          {% if r < 0 %}_Nobody seen since the device started._{% elif not known %}_Presence is unknown, so this follows the confidence: {{ 'someone in frame now' if present else 'no person in frame, and 🔲 is where they last settled' }}. If Presence stays unknown, update the Vision's firmware._{% elif not present %}_Nobody present. 🔲 is where they last settled._{% endif %}
 
       # -----------------------------------------------------------------------
       # Aim camera — boxes-only live view (never pixels). Flip the card's

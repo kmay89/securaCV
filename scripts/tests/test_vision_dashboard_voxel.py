@@ -22,6 +22,12 @@ present: dwell_ended's row, the rows through the lost timeout, a heartbeat
 taken on a frame that missed them. Each visit now starts its own tracker
 (sweep F152), so while Presence is on the cell is this visit's.
 
+Presence turns on and off only on firmware with the HA25 discovery fix; on
+older firmware it stays unknown, and the dashboard YAML is copied
+separately from firmware updates. So while Presence is neither on nor off
+the card falls back to A39's confidence gate and says that it has, instead
+of saying "Nobody present." about a device that has not said so.
+
 This renders the card in Home Assistant's template environment
 (_ha_jinja.environment(): its sandbox, its LoggingUndefined and its own
 `int` filter; jinja2 itself is installed by lint.yml at HA's pin, so it is
@@ -98,7 +104,11 @@ class TheFirmwareSaysWhatTheCardAssumes(unittest.TestCase):
         self.assertNotIn('("-1,-1" when nobody is present)', text)
         self.assertIn("it stays put", text)
         self.assertIn(PRESENCE, card()["content"])
-        self.assertNotIn(CONFIDENCE, card()["content"], "one frame's score is not whether anyone is here")
+        # the confidence is read only when Presence has said nothing
+        self.assertIn("{% set present = ps == 'on' if known else states('" + CONFIDENCE + "') | int(0) > 0 %}",
+                      card()["content"])
+        self.assertIn("{% set known = ps in ['on', 'off'] %}", card()["content"])
+        self.assertIn("sweep HA25 discovery fix", text, "the comment names the firmware Presence needs")
 
 
 class TheCardRenders(unittest.TestCase):
@@ -133,9 +143,27 @@ class TheCardRenders(unittest.TestCase):
         lines = render("unavailable", "unavailable")
         self.assertEqual(lines[-1], "_Nobody seen since the device started._")
 
-    def test_an_unknown_presence_is_not_someone_present(self):
-        lines = render("2,0", "unknown", "91")
+    def test_off_is_off_whatever_the_confidence(self):
+        lines = render("2,0", "off", "91")
         self.assertEqual(cell(lines, 2, 0), "🔲")
+        self.assertEqual(lines[-1], "_Nobody present. 🔲 is where they last settled._")
+
+    def test_an_unknown_presence_falls_back_to_the_confidence_and_says_so(self):
+        # firmware before HA25: Presence never matched its payloads, so it is
+        # unknown; the card must not say nobody is present about it
+        for presence in ("unknown", "unavailable"):
+            with self.subTest(presence=presence):
+                lines = render("2,0", presence, "91")
+                self.assertEqual(cell(lines, 2, 0), "🟧")
+                self.assertFalse(any("Nobody" in line for line in lines), lines)
+                self.assertEqual(lines[-1], "_Presence is unknown, so this follows the confidence: someone in "
+                                            "frame now. If Presence stays unknown, update the Vision's firmware._")
+                lines = render("2,0", presence, "0")
+                self.assertEqual(cell(lines, 2, 0), "🔲")
+                self.assertFalse(any("Nobody" in line for line in lines), lines)
+                self.assertEqual(lines[-1], "_Presence is unknown, so this follows the confidence: no person in "
+                                            "frame, and 🔲 is where they last settled. If Presence stays unknown, "
+                                            "update the Vision's firmware._")
 
 
 if __name__ == "__main__":
