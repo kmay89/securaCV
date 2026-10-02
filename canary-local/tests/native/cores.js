@@ -401,13 +401,16 @@ function instance({ plan, bin, args = [] }) {
     if (returnType !== "string" && e.kind === "s") {
       throw new Error(`${fn} returns a C string: cwrap it as "string" (a native core has no wasm address for it)`);
     }
-    return (...args) => {
-      const out = invoke(e, args);
-      return returnType === "boolean" ? Boolean(out) : out;
-    };
+    // As the dist's cwrap: with number arguments and any return but
+    // "string" it hands back the raw export, so a "boolean" return is the
+    // export's number, unconverted. Only ccall converts it.
+    return (...args) => invoke(e, args);
   };
   if (plan.runtime.includes("ccall")) {
-    mod.ccall = (fn, returnType, argTypes, args) => mod.cwrap(fn, returnType, argTypes)(...(args || []));
+    mod.ccall = (fn, returnType, argTypes, args) => {
+      const out = mod.cwrap(fn, returnType, argTypes)(...(args || []));
+      return returnType === "boolean" ? Boolean(out) : out;
+    };
   }
   if (plan.runtime.includes("UTF8ToString")) {
     mod.UTF8ToString = () => {

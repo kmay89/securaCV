@@ -151,7 +151,7 @@ test("a signature a wasm call cannot carry is refused by name, never guessed", (
 // The pipe itself, with a stand-in core (native/fake_core.js speaks
 // core_server.cpp's protocol and misbehaves on request), so the default run
 // holds it with no compiler.
-const FAKE_PLAN = { name: "fake-core", sources: [], runtime: ["cwrap"], memory: {}, exports: [
+const FAKE_PLAN = { name: "fake-core", sources: [], runtime: ["ccall", "cwrap"], memory: {}, exports: [
   { name: "num", ret: "int", kind: "n", params: ["int"] },
   { name: "str", ret: "const char*", kind: "s", params: [] },
   { name: "die", ret: "void", kind: "v", params: [] },
@@ -167,10 +167,28 @@ test("the pipe answers synchronously, with the i32s a wasm call would pass", () 
   assert.deepStrictEqual([num(41.9), num(-1.5), num(2 ** 32 + 5), num(2 ** 31), num(NaN), num(true)],
     [41, -1, 5, -(2 ** 31), 0, 1]);
   assert.strictEqual(m.cwrap("str", "string", [])(), "hello from the fake core");
-  assert.throws(() => m.cwrap("str", "number", [])(), /returns a C string: cwrap it as "string"/);
-  assert.throws(() => m.cwrap("num", "string", ["number"])(1), /returns int, not a C string/);
+  // refused by cwrap itself, before a wrapper exists to call: nothing runs
+  assert.throws(() => m.cwrap("str", "number", []), /returns a C string: cwrap it as "string"/);
+  assert.throws(() => m.cwrap("num", "string", ["number"]), /returns int, not a C string/);
   assert.throws(() => m.cwrap("gone", "number", []), /no export gone/);
   assert.throws(() => m.cwrap("num", "number", ["string"]), /passes number arguments only, not string/);
+});
+
+// What the dist's cwrap and ccall hand back for a "boolean" return, read off
+// the committed bundle rather than assumed: cwrap returns the raw export (a
+// number), ccall converts it. The native module must do the same.
+test("a \"boolean\" return is a number through cwrap and a boolean through ccall, as on the dist", async () => {
+  const dist = await require(join(ROOT, "emulator/dist/canary-wap-audio.js"))();
+  const fake = fakeCore();
+  const seen = (m, fn, args) => [m.cwrap(fn, "boolean", args.map(() => "number"))(...args),
+    m.ccall(fn, "boolean", args.map(() => "number"), args)];
+  assert.deepStrictEqual(seen(dist, "audio_emu_set_thresholds", [1200, 600]), [1, true], "the dist");
+  assert.deepStrictEqual(seen(dist, "audio_emu_frame_samples", []).map((x) => typeof x), ["number", "boolean"],
+    "the dist");
+  assert.deepStrictEqual(seen(fake, "num", [1]), [1, true], "the native module");
+  assert.deepStrictEqual(seen(fake, "num", [0]), [0, false], "the native module");
+  assert.deepStrictEqual(seen(fake, "num", [7]), [7, true], "the native module");
+  assert.strictEqual(fake.ccall("num", "number", ["number"], [5]), 5, "ccall with a number return");
 });
 
 test("a core that dies or answers twice fails the call that saw it, and every call after", () => {
