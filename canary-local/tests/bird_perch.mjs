@@ -3,9 +3,10 @@
 //
 // A bird on stage sits where its host placed it: on the glass, and clear of
 // every line of text. In the onboarding scenes it sits exactly where the
-// layout seats it (F89): birdOnSeat holds the drawn box to the seat
-// onboard_layout.h names for that glass and scene. The mark keeps its seat as a style offset from its
-// alignment; a base read from the laid-out position instead (before F64)
+// layout seats it (F89): birdOnSeat holds one drawn box to the seat
+// onboard_layout.h names for that glass and scene, and breathOnSeat holds
+// a scene's run of drawn boxes to it exactly. The mark keeps its seat as a
+// style offset from its alignment; a base read from the laid-out position instead (before F64)
 // lost the offset, so the round watch's bird perched on the ring and the
 // onboarding's sat behind the titles, and once a host re-seated it the
 // bird left the glass.
@@ -49,6 +50,46 @@ export function birdOnSeat(st) {
   if (b.w !== s.w || b.h !== s.h || b.x !== s.x || Math.abs(b.y - s.y) > s.breath) {
     return `the bird is drawn at ${b.x},${b.y} (${b.w}x${b.h}); onboard_layout.h seats it at ` +
       `${s.x},${s.y} (${s.w}x${s.h}, breathing ${s.breath} px) (F89)`;
+  }
+  return null;
+}
+
+/**
+ * F89, over the breath: a run of reads of one scene, in time order (each
+ * {bird, seat} as birdOnSeat takes it), held to the seat exactly.
+ *
+ * canary_mark breathes the bird `breath` px either way of its seat on an
+ * eased swing (lv_anim_path_ease_in_out), and LVGL's anim rounds the eased
+ * offset down. So the drawn top sits at seat.y - breath for about a third of
+ * every swing, and at seat.y + breath - 1 for another third, while
+ * seat.y + breath itself is drawn only on the tick a swing completes. One
+ * read cannot place the bird: anywhere in the breath, a bird up to
+ * 2 * breath px off its seat can read within it. Across reads that span a
+ * whole swing the drawn top must reach seat.y - breath exactly, reach
+ * seat.y + breath - 1 (or the top itself), and never pass either end (each
+ * read through birdOnSeat): a bird 1 px off its seat moves the low end and
+ * fails wherever the reads fall. Reads that do not span a swing fail too,
+ * rather than pass on what they did not see. Returns a failure message, or
+ * null.
+ */
+export function breathOnSeat(reads) {
+  if (!reads || reads.length === 0) return "no reads of the bird in the scene (F89)";
+  const seat = reads[0].seat;
+  for (const r of reads) {
+    if (JSON.stringify(r.seat) !== JSON.stringify(seat)) {
+      return `the seat changed within the scene: ${JSON.stringify(seat)}, then ` +
+        `${JSON.stringify(r.seat)} (F89)`;
+    }
+    const one = birdOnSeat(r);
+    if (one !== null) return one;
+  }
+  const ys = reads.map((r) => r.bird.y);
+  const lo = Math.min(...ys);
+  const hi = Math.max(...ys);
+  if (lo !== seat.y - seat.breath || hi < seat.y + seat.breath - 1) {
+    return `over ${reads.length} reads the bird's top ran y ${lo}..${hi}; seated at y ${seat.y} ` +
+      `it breathes from ${seat.y - seat.breath} to ${seat.y + seat.breath}, so a whole swing reaches ` +
+      `${seat.y - seat.breath} and at least ${seat.y + seat.breath - 1} (F89)`;
   }
   return null;
 }

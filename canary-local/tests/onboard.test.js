@@ -225,9 +225,91 @@ test("bird seat (F89): the probe holds the drawn bird to the seat onboard_layout
   const shellSrc = read(join(ROOT, "emulator/web/emu-shell.js"));
   assert.ok(shellSrc.includes('M.cwrap("emu_onboard_seat", "number", [])'));
   const probe = read(join(__dirname, "onboard_probe.mjs"));
-  assert.ok(probe.includes("const helloSeat = birdOnSeat(hello);"), "the probe holds the Hello scene's bird");
-  assert.ok(probe.includes("const onSeat = birdOnSeat(perchAt);"), "the probe holds the PhoneJoined scene's bird");
-  assert.ok(probe.includes("const helloPerch = birdPerch(hello);"), "the Hello bird is on the glass and clear of text");
+  assert.ok(probe.includes("const helloSeat = breathOnSeat(hello);"), "the probe holds the Hello scene's bird");
+  assert.ok(probe.includes("const onSeat = breathOnSeat(phoneJoined);"), "the probe holds the PhoneJoined scene's bird");
+  assert.ok(probe.includes("const helloPerch = birdPerch(st);"), "the Hello bird is on the glass and clear of text");
+  assert.ok(probe.includes("const hello = await readScene(first, helloUp, 60000);") &&
+    probe.includes("const phoneJoined = await readScene(perchAt, (st) => st.bird && st.bird.shown, 4000);"),
+  "the probe reads each scene's bird through its breath, not once");
+});
+
+// canary_mark's breath as LVGL 8.4 draws it: start_bob(1400, 2) scaled by
+// the temperament, lv_anim_path_ease_in_out (lv_bezier3 with control points
+// 0, 50, 952, 1024) with playback, and lv_anim's integer rounding (the eased
+// step times the span, shifted down 10 bits, so it rounds toward -inf). The
+// top of the swing is drawn only around the tick it completes (here: two
+// 5 ms ticks). Returns the offset from the seat at `ms` after the breath
+// started.
+function lvBreath(ms, halfMs = 1400, amp = 2) {
+  const bezier3 = (t, u0, u1, u2, u3) => {
+    const r = 1024 - t;
+    const r2 = Math.floor((r * r) / 1024), r3 = Math.floor((r2 * r) / 1024);
+    const t2 = Math.floor((t * t) / 1024), t3 = Math.floor((t2 * t) / 1024);
+    return Math.floor((r3 * u0) / 1024) + Math.floor((3 * r2 * t * u1) / 1048576) +
+      Math.floor((3 * r * t2 * u2) / 1048576) + Math.floor((t3 * u3) / 1024);
+  };
+  const at = Math.floor(ms / 5) * 5 % (2 * halfMs);
+  if (at === halfMs) return amp;  // the tick the swing completes
+  const back = at > halfMs;
+  const t = Math.floor(((back ? at - halfMs : at) * 1024) / halfMs);
+  const step = bezier3(t, 0, 50, 952, 1024);
+  const from = back ? amp : -amp;
+  return Math.floor((step * -2 * from) / 1024) + from;
+}
+
+test("bird breath (F89): breathOnSeat holds a scene's bird to its seat exactly, wherever its reads fall", async () => {
+  const { breathOnSeat, birdOnSeat } = await import("./bird_perch.mjs");
+  // The model is LVGL's: from the seat less 2 to the seat plus 2 and back,
+  // the low end and the seat plus 1 each held for about a third of a swing.
+  const offs = new Set();
+  for (let ms = 0; ms < 2800; ms += 5) offs.add(lvBreath(ms));
+  assert.deepStrictEqual([...offs].sort((a, b) => a - b), [-2, -1, 0, 1, 2]);
+  const ticks = (v) => Array.from({ length: 560 }, (_, k) => lvBreath(k * 5)).filter((o) => o === v).length;
+  assert.ok(ticks(-2) * 5 > 700 && ticks(1) * 5 > 700 && ticks(2) >= 1 && ticks(2) <= 2,
+    `the breath holds -2 for ${ticks(-2) * 5} ms, +1 for ${ticks(1) * 5} ms and +2 for ${ticks(2)} tick(s) a cycle`);
+
+  // Reads of a bird drawn `dy` px off a seat at y 36, every `every` ms from
+  // `phase` ms into its breath, for `span` ms.
+  const seat = { x: 100, y: 36, w: 40, h: 40, breath: 2 };
+  const reads = (dy, phase, span, every = 100, halfMs = 1400) => {
+    const out = [];
+    for (let ms = phase; ms <= phase + span; ms += every) {
+      out.push({ seat, bird: { x: 100, y: 36 + dy + lvBreath(ms, halfMs), w: 40, h: 40, shown: true } });
+    }
+    return out;
+  };
+  for (const phase of [0, 300, 700, 1100, 1500, 1900, 2300, 2700]) {
+    // On its seat: every whole swing passes, at the breath's slowest pace too.
+    assert.strictEqual(breathOnSeat(reads(0, phase, 3000)), null, `on the seat from ${phase} ms`);
+    assert.strictEqual(breathOnSeat(reads(0, phase, 3700, 100, 1750)), null, `on the seat, slow breath, from ${phase} ms`);
+    // Off it by a pixel either way, or by the 3 px a single read let through
+    // (the review's watch case), it fails wherever the reads fall.
+    for (const dy of [-3, -1, 1, 3]) {
+      assert.match(breathOnSeat(reads(dy, phase, 3000)) || "", /F89/, `${dy} px off the seat from ${phase} ms`);
+    }
+  }
+  // The Hello scene: read on the slowed clock from the bird's first breath
+  // to the scene's end (2.6 s), it holds; 1 px off, it fails.
+  assert.strictEqual(breathOnSeat(reads(0, 0, 2600, 5)), null);
+  assert.match(breathOnSeat(reads(1, 0, 2600, 5)), /drawn at 100,39/);
+  assert.match(breathOnSeat(reads(-1, 0, 2600, 5)), /drawn at 100,33/);
+  // A single read can pass a bird 1 px off (the old check), and so can
+  // every read of a run that misses the swing's top tick; the run cannot.
+  const oneOff = reads(1, 50, 3000);
+  assert.ok(oneOff.every((r) => birdOnSeat(r) === null), "each read of a bird 1 px low sits within the breath");
+  assert.match(breathOnSeat(oneOff), /ran y 35\.\.38/);
+  // Reads that miss a swing fail rather than pass on what they did not see,
+  // and so does a bird that never breathes.
+  assert.match(breathOnSeat(reads(0, 1000, 400)), /a whole swing reaches 34 and at least 37/);
+  const still = reads(0, 0, 3000).map((r) => ({ ...r, bird: { ...r.bird, y: 36 } }));
+  assert.match(breathOnSeat(still), /ran y 36\.\.36/);
+  // Each read is held as birdOnSeat holds it, and the seat stays put.
+  const aside = reads(0, 0, 3000).map((r) => ({ ...r, bird: { ...r.bird, x: 101 } }));
+  assert.match(breathOnSeat(aside), /drawn at 101,/);
+  const moved = reads(0, 0, 3000);
+  moved[5] = { ...moved[5], seat: { ...seat, y: 37 } };
+  assert.match(breathOnSeat(moved), /seat changed within the scene/);
+  assert.match(breathOnSeat([]), /no reads/);
 });
 
 test("CI runs the generator check, this test and the browser probe", () => {

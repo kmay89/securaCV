@@ -11,10 +11,12 @@
 //     its first-boot line on serial and raises "SecuraCV-XXXX" with the key it
 //     printed; the Hello scene before it (read on a clock slowed tenfold, as
 //     it stands for 2.6 s) and the PhoneJoined scene after it show the bird
-//     on the glass, clear of every line and drawn at the seat
-//     onboard_layout.h names for that glass and scene, which the firmware
-//     reports itself (F64, F89: birdPerch, birdOnSeat; --shots saves
-//     onboard_hello_<flavor>.png); the glass's Join scene shows its QR card with nothing painted
+//     on the glass, clear of every line, and breathing exactly about the
+//     seat onboard_layout.h names for that glass and scene, which the
+//     firmware reports itself: read through a whole swing of its breath,
+//     its drawn top reaches the seat less the breath and the seat plus
+//     the breath less 1 px and never passes either (F64, F89: birdPerch,
+//     breathOnSeat; --shots saves onboard_hello_<flavor>.png); the glass's Join scene shows its QR card with nothing painted
 //     over it (read off the framebuffer — F43, see joinCard; --shots saves
 //     onboard_join_<flavor>.png), no line cut to an ellipsis, and the network
 //     name and key it printed readable on the glass, before and after the
@@ -46,7 +48,7 @@ import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { birdPerch, birdOnSeat } from "./bird_perch.mjs";
+import { birdPerch, breathOnSeat } from "./bird_perch.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -326,6 +328,20 @@ async function walkHarness(flavor) {
     const png = await E(() => document.getElementById("glass").toDataURL("image/png"));
     await writeFile(`${SHOTS}/${name}_${flavor}.png`, Buffer.from(png.split(",")[1], "base64"));
   };
+  // F89: read the bird again and again while `up` holds (its scene stands),
+  // from `first` on, for at most `ms` of wall time: the reads breathOnSeat
+  // takes, each stamped with when it was read.
+  const readScene = async (first, up, ms) => {
+    const reads = [{ ...first, at: Date.now() }];
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      await new Promise((r) => setTimeout(r, 50));
+      const st = await E(birdState);
+      if (!up(st)) break;
+      reads.push({ ...st, at: Date.now() });
+    }
+    return reads;
+  };
   // Poll /status until the firmware leaves "connecting".
   const verdict = () => until(async () => {
     const r = await E(() => window.__emu.http("GET", "/status"));
@@ -363,19 +379,25 @@ async function walkHarness(flavor) {
     await until(async () => (await serial()).includes('First boot - onboarding AP "SecuraCV-'), "the first-boot serial line");
     // F89: the Hello scene, which stands only for the welcome beat (2.6 s)
     // before the AP comes up — the emulated clock runs at a tenth of its
-    // speed while the probe reads it. The bird is on stage, on the glass,
-    // clear of every line, and drawn at the seat onboard_layout.h names.
+    // speed while the probe reads it, from the bird's first breath to the
+    // scene's end: on the glass, clear of every line, and breathing exactly
+    // about the seat onboard_layout.h names (its breath's swing starts with
+    // the scene and both of its ends fall inside it).
     await E(() => window.__emu.setTimeScale(0.1));
     try {
-      const hello = await until(async () => {
+      const helloUp = (st) => st.labels.some((l) => l.shown && l.opa > 0 && l.text === "Hello.") &&
+        st.bird && st.bird.shown && st.seat;
+      const first = await until(async () => {
         const st = await E(birdState);
-        const said = st.labels.some((l) => l.shown && l.opa > 0 && l.text === "Hello.");
-        return said && st.bird && st.bird.shown && st.seat ? st : null;
-      }, "the Hello scene with its bird", 20000);
+        return helloUp(st) ? st : null;
+      }, "the Hello scene with its bird", 20000, 50);
       await shotAs("onboard_hello");
-      const helloPerch = birdPerch(hello);
-      check(helloPerch === null, `Hello: ${helloPerch}`);
-      const helloSeat = birdOnSeat(hello);
+      const hello = await readScene(first, helloUp, 60000);
+      for (const st of hello) {
+        const helloPerch = birdPerch(st);
+        check(helloPerch === null, `Hello: ${helloPerch}`);
+      }
+      const helloSeat = breathOnSeat(hello);
       check(helloSeat === null, `Hello: ${helloSeat}`);
     } finally {
       await E(() => window.__emu.setTimeScale(1));
@@ -464,13 +486,20 @@ async function walkHarness(flavor) {
     // F64: the PhoneJoined scene puts the bird on stage, and it sits where
     // the scene placed it: on the glass, clear of every line of text.
     // Before F64 it sat behind the title; after #1755 re-seated it per
-    // scene, it left the glass. F89: and exactly at the seat
-    // onboard_layout.h names for this glass and scene.
+    // scene, it left the glass. F89: and it breathes exactly about the seat
+    // onboard_layout.h names for this glass and scene, read through a whole
+    // swing (the scene stands until the phone posts; canary_mark's breath
+    // is a 1.4 s half-swing at most x1.25, so 4 s of reads hold one).
     const perchAt = await E(birdState);
     check(perchAt.bird && perchAt.bird.shown, "the PhoneJoined scene shows no bird (F64)");
-    const perch = birdPerch(perchAt);
-    check(perch === null, `PhoneJoined: ${perch}`);
-    const onSeat = birdOnSeat(perchAt);
+    const phoneJoined = await readScene(perchAt, (st) => st.bird && st.bird.shown, 4000);
+    check(phoneJoined.length > 1 && phoneJoined[phoneJoined.length - 1].at - phoneJoined[0].at >= 3500,
+      `PhoneJoined: the bird left the stage after ${phoneJoined.length} reads (F64)`);
+    for (const st of phoneJoined) {
+      const perch = birdPerch(st);
+      check(perch === null, `PhoneJoined: ${perch}`);
+    }
+    const onSeat = breathOnSeat(phoneJoined);
     check(onSeat === null, `PhoneJoined: ${onSeat}`);
 
     // Captive DNS: the firmware's dns_build_response.
