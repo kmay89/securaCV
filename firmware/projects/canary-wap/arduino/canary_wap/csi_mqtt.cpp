@@ -391,8 +391,11 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
  * until it is done). */
 void retire_task(void* arg) {
   esp_mqtt_client_handle_t client = static_cast<esp_mqtt_client_handle_t>(arg);
+  const uint32_t start = millis();
   esp_mqtt_client_stop(client);      /* waits for the client's esp_mqtt task to exit */
   esp_mqtt_client_destroy(client);
+  Serial.printf("[MQTT] previous client stopped after %lu ms\n",
+                (unsigned long)(millis() - start));
   s_retire_done.store(true, std::memory_order_release);
   vTaskDelete(nullptr);
 }

@@ -579,10 +579,13 @@ is CI's. Owner: U1. The serial lines below are the egress's own.
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
 (`submit()` posts a mesh owner command to a four-slot
-`loop_command_ring.h`; `update()` drains it first on every pass) and
-`csi_mqtt.cpp` (`request_reinit()`; `csi_mqtt::loop()` runs the re-init).
-The `handle_mesh_*` handlers, the MQTT config and test handlers and the QR
-scanner hand their work to the loop task instead of doing it on their own.
+`loop_command_ring.h`; `update()` drains it first on every pass; the
+pre-reboot replay save is one more command from the httpd task) and
+`csi_mqtt.cpp` (`request_reinit()`; `csi_mqtt::loop()` serves the re-init:
+it detaches the old client, a one-shot `mqtt_retire` task stops and destroys
+it, and a later pass opens the new one). The `handle_mesh_*` handlers, the
+MQTT config and test handlers and the QR scanner hand their work to the loop
+task instead of doing it on their own.
 Host-tested (`tests_host/test_loop_command_ring.cpp`,
 `test_mesh_commands_wap.cpp`, `test_mqtt_reinit.cpp`) and held by
 `firmware/scripts/check_wap_loop_commands.py`; two real tasks on two cores
@@ -619,6 +622,29 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     `[MQTT] bridge started` per re-init (presses that land while one waits
     share it).
   - Artifact: `docs/audit/repro/F106/save-under-load/`.
+- [ ] **"Test & save" with an unreachable broker IP does not reboot the board**
+  - Setup: one board with the companion page open; a broker address on the
+    LAN that nothing answers (an unused IP, so the TCP connect times out
+    rather than being refused).
+  - Repro: enter that IP and press Test & save; while the first attempt is
+    still connecting, press it again two or three times.
+  - Expected: no `task_wdt` / Guru Meditation and no reboot (uptime keeps
+    counting, and the rapid-reboot counter does not move); the config save
+    answers within about 2 s and the test within about 4 s (`ok:false`);
+    in the serial log each `[MQTT] bridge started` follows a
+    `[MQTT] previous client stopped after N ms` line, where N can reach
+    about 10000 against that IP while the loop keeps running. Then enter
+    the real broker and press Test & save once: `Reached the broker`.
+  - Artifact: `docs/audit/repro/F106/unreachable-broker/`.
+- [ ] **A reboot from the dashboard still saves the mesh's replay counters**
+  - Setup: two paired canary-wap boards exchanging heartbeats for a few
+    minutes.
+  - Repro: press Reboot on one (POST /api/reboot); repeat with the safe-mode
+    Retry button if a board is in safe mode.
+  - Expected: the board answers `Rebooting...` and restarts within about
+    3 s; after it boots, the pair keeps exchanging frames (the peer stays
+    `connected`), with no fault on either board.
+  - Artifact: `docs/audit/repro/F96/reboot-save/`.
 - [ ] **A QR hub provision still joins the fleet**
   - Setup: an unprovisioned canary-wap with a camera; a canary-display
     showing its provisioning QR with a hub.

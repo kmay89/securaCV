@@ -190,8 +190,9 @@
   synchronizes with the WiFi coexistence layer and can block its caller far
   past the 8 s budget. Two consecutive crashes; one more would have tripped
   safe mode.
-- **The pattern (now used 4×):** SD mount worker (#820), MJPEG stream worker
-  (#822), fleet mDNS browse worker (#823), BLE bring-up worker (this fix).
+- **The pattern (now used 5×):** SD mount worker (#820), MJPEG stream worker
+  (#822), fleet mDNS browse worker (#823), BLE bring-up worker (this fix),
+  and the MQTT client's retire worker (sweep F106's review, below).
   The loop task is WDT-subscribed and owns the periodic state machine; its
   budget is milliseconds. Any call that *can* wait on another subsystem's
   semaphore (SD driver, httpd socket, mDNS component, BT controller/coex)
@@ -2573,17 +2574,49 @@
   small lock-protected ring (`loop_command_ring.h`), and `update()` drains
   it first on every pass (before its early return, or a disabled mesh could
   never be enabled again). A command the loop task never reached is
-  withdrawn, so the 503 is true. The MQTT re-init is a coalescing request
-  `csi_mqtt::loop()` serves; the handlers wait for it, bounded.
-- **Regression check:** `test_loop_command_ring.cpp` (including two real
-  threads, clean under `make tsan-loop-ring`), `test_mesh_commands_wap.cpp`
-  and `test_mqtt_reinit.cpp` (a fake esp_mqtt that records each call's task
-  and notices a client destroyed under a publish), and
+  withdrawn, so the 503 is true. The pre-reboot replay save, which POST
+  /api/reboot runs on the httpd task through a function pointer, is one more
+  command. The MQTT re-init is a coalescing request `csi_mqtt::loop()`
+  serves; the handlers wait for it, bounded.
+- **Regression check:** `test_loop_command_ring.cpp` (six requester threads
+  and one loop thread, including a run with a one-tick timeout where
+  withdrawals race the drain; clean under `make tsan-loop-ring`),
+  `test_mesh_commands_wap.cpp` and `test_mqtt_reinit.cpp` (a fake esp_mqtt
+  that records each call's task and notices a client destroyed under a
+  publish), and
   `firmware/scripts/check_wap_loop_commands.py` in `regression_check.sh`,
   which holds the handlers, the drain and the re-init path in the source and
   proves each rule with a mutation it must refuse. When a handler on another
   task must change what a loop owns, make the change unreachable from it and
   give it a way to ask.
+- **Date learned:** 2026-10
+
+### Moving a call onto the loop task moves what it blocks on there too
+- **What happened:** the F106 fix ran the MQTT re-init on the loop task, so
+  the handlers no longer destroyed the client under a loop-task publish. The
+  re-init begins with `esp_mqtt_client_stop()`. That call takes the client's
+  API lock, which the esp_mqtt task holds across a whole connect attempt
+  (`network_timeout_ms`, 10 s by default, for the TCP connect and again for
+  the CONNACK), and then waits for that task to exit. The review modeled the
+  companion's "Test & save" against an unreachable broker: the second
+  re-init's stop waited about 9.9 s on the loop task, past its 8 s panic
+  watchdog. On the httpd task, which no watchdog watches, that wait had been
+  harmless (from source and a host model; not bench-probed).
+- **Root cause:** "run it on the task that owns the state" was applied to a
+  whole function. Only its state changes needed the owner. The blocking
+  wait inside it needed a task that is allowed to wait.
+- **Fix:** split it. The loop task detaches the client (`s_client = nullptr`:
+  no publish of its own can reach it, and the event handler ignores the old
+  client's events). A one-shot worker (`retire_task`) stops and destroys it,
+  and a later loop pass opens the new one once the worker says it is done.
+  A worker that cannot be created is retried. The client is never stopped
+  inline.
+- **Regression check:** `test_mqtt_reinit.cpp`'s
+  `a_stop_that_blocks_never_holds_the_loop` gives the fake stop a 9940 ms
+  lock wait and holds every loop pass under 1 s;
+  `check_wap_loop_commands.py` rule 6 allows `esp_mqtt_client_stop(` only
+  in `retire_task()`. Before you move a call onto the loop task, read what it
+  waits on.
 - **Date learned:** 2026-10
 
 ## How to Add an Entry
