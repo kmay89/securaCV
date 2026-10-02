@@ -191,6 +191,38 @@ static int test_stored_sensitivity_and_thresholds_apply_at_boot() {
   return 0;
 }
 
+// The same precedence the other way round: a stored threshold beside the
+// "sensitive" preset (25) keeps the preset from lowering it. A canary-wap
+// image stores all three thresholds on a calibration apply, a Tuning Lab
+// reset (its TUNE_COEFFS defaults, 35 / 75 / 30, as rows; the canary-wap's
+// test_wap_module_boot.cpp reads them from the source) or a bundle import,
+// and a board with those rows reads like the balanced default whatever its
+// preset row says. The precedence predates F93; this pins what the docs and
+// the CHANGELOG say about it. The first case fails on the canary before F93
+// (the static 35 reads 40 as "subtle"); both fail with on_init() made to
+// let the preset win.
+static int test_a_stored_threshold_wins_over_the_stored_preset() {
+  host_prefs().clear();
+  store_int("cp.preset", 0);
+  store_int("cp.mt", 45);
+  reboot_and_boot();
+  hold(window_of(40));
+  CHECK(presence_open("empty"));
+  CHECK(!presence_open("subtle"));
+
+  host_prefs().clear();
+  store_int("cp.preset", 0);
+  store_int("cp.mt", 35);
+  store_int("cp.at", 75);
+  store_int("cp.bt", 30);
+  reboot_and_boot();
+  hold(window_of(30));
+  CHECK(presence_open("empty"));              // "sensitive" alone reads "subtle"
+  CHECK(!presence_open("subtle"));
+  host_prefs().clear();
+  return 0;
+}
+
 // Pet mode (stored as a bool): a breathing peak reads "subtle" until it has
 // held for pet_mode_seconds; without it the same windows read "quiet".
 static int test_stored_pet_mode_applies_at_boot() {
@@ -415,6 +447,7 @@ static int test_the_shared_settings_rule() {
 int main() {
   if (test_a_stored_preset_applies_at_boot()) return 1;
   if (test_stored_sensitivity_and_thresholds_apply_at_boot()) return 1;
+  if (test_a_stored_threshold_wins_over_the_stored_preset()) return 1;
   if (test_stored_pet_mode_applies_at_boot()) return 1;
   if (test_a_stored_anomaly_cooldown_applies_at_boot()) return 1;
   if (test_init_runs_once_per_boot()) return 1;

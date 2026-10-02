@@ -48,6 +48,7 @@
 #include "csi_event.h"
 #include "csi_event_id_floor.h"
 #include "csi_module.h"
+#include "csi_module_settings_nvs.h"
 #include "csi_settings_nvs.h"
 
 #include "anomaly_baseline.h"
@@ -212,6 +213,76 @@ static int test_saved_thresholds_and_pet_mode_apply_at_boot() {
   hold(window_of(0, 40));
   CHECK(presence_open("subtle"));
   CHECK(!presence_open("quiet"));
+  return 0;
+}
+
+// The Tuning Lab's default for a coefficient, read from TUNE_COEFFS: the
+// value its per-row "reset" and "Reset all" POST (tune_ui.h), which
+// tune_write_value() stores as a row like any other. -1 if absent.
+static std::string read_source(const char* name);
+static int32_t tune_default_of(const std::string& integ, const char* full_key) {
+  // { "<key>", "<group>", "<label>", TK_*, min, max, default, "<reinit>" },
+  const std::string row = std::string(R"(\{\s*")") + full_key +
+                          R"("\s*,\s*"[^"]*"\s*,\s*"[^"]*"\s*,\s*\w+\s*,\s*-?\d+\s*,\s*-?\d+\s*,\s*(-?\d+)\s*,)";
+  std::smatch m;
+  if (!std::regex_search(integ, m, std::regex(row))) return -1;
+  return (int32_t)std::stol(m[1].str());
+}
+
+// A threshold stored directly wins over the saved preset and sensitivity,
+// at boot as after a change (core_presence.cpp's on_init() passes the
+// preset's baseline only as the default of the direct reads). The
+// calibration's apply stores all three thresholds, and so do the Tuning
+// Lab's per-row reset and "Reset all" (each POSTs its TUNE_COEFFS default
+// as a row) and a bundle import (every coefficient). On such a board a
+// saved preset changes nothing, at boot or at once. The docs and the
+// CHANGELOG say so; this pins it. It is not an F93 behavior: the precedence
+// predates it. The first case fails on the canary-wap before F93 (no boot
+// init: the static 35 reads a motion of 40 as "subtle"); every case fails
+// with on_init() made to let the preset win.
+static int test_a_stored_threshold_wins_over_the_saved_preset() {
+  namespace nvs = csi_module_settings_nvs;
+  // "sensitive" (motion threshold 25) beside a motion threshold of 45.
+  host_prefs().clear();
+  store_int("cp.preset", 0);
+  store_int("cp.mt", 45);
+  reboot_and_boot();
+  hold(window_of(40));
+  CHECK(presence_open("empty"));
+  CHECK(!presence_open("subtle"));
+
+  // "sensitive" beside the rows the Tuning Lab's reset buttons store: the
+  // device's own TUNE_COEFFS defaults, the balanced thresholds.
+  const std::string integ = read_source("csi_integration.cpp");
+  CHECK(!integ.empty());
+  const char* const kThresholds[] = {"core.presence.motion_threshold",
+                                     "core.presence.active_threshold",
+                                     "core.presence.breathing_threshold"};
+  host_prefs().clear();
+  store_int("cp.preset", 0);
+  for (const char* full : kThresholds) {
+    const int32_t d = tune_default_of(integ, full);
+    CHECK(d > 0);
+    CHECK(nvs::nvs_key_for(full) != nullptr);
+    store_int(nvs::nvs_key_for(full), d);
+  }
+  CHECK(tune_default_of(integ, "core.presence.motion_threshold") == 35);
+  reboot_and_boot();
+  hold(window_of(30));
+  CHECK(presence_open("empty"));              // sensitive alone reads "subtle"
+  CHECK(!presence_open("subtle"));
+
+  // The dashboard saves "sensitive" again and slides sensitivity to 100
+  // (/api/settings, then reinit_module(), modeled): still the stored rows.
+  store_int("cp.preset", 0);
+  store_int("cp.sens", 100);
+  const csi_module_t* m = csi_module_find("core.presence");
+  CHECK(m != nullptr);
+  m->deinit();
+  m->init(nullptr);
+  hold(window_of(30));
+  CHECK(!presence_open("subtle"));
+  host_prefs().clear();
   return 0;
 }
 
@@ -387,6 +458,7 @@ static int test_the_model_is_register_v1_modules() {
 int main() {
   if (test_a_saved_preset_applies_at_boot()) return 1;
   if (test_saved_thresholds_and_pet_mode_apply_at_boot()) return 1;
+  if (test_a_stored_threshold_wins_over_the_saved_preset()) return 1;
   if (test_a_saved_anomaly_cooldown_applies_at_boot()) return 1;
   if (test_init_runs_once_per_boot_and_a_change_still_applies()) return 1;
   if (test_a_missing_namespace_costs_the_boot_one_open()) return 1;
