@@ -47,6 +47,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 7 (2026-09-23, PR #1703 and PR #1704, website #201 and #202) | a wave that worked the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) rather than this list; where it touched rows here, each a decision for the maintainer to confirm: the two decisions taken on 2026-09-22 (row 30's exact pin and the ten-minute uptime-bucket floor, #1704); row 21's render-plan package in part (the manifests home the Lab's enclosure cards, option B; the selector half not built) and `body_mm` retired by construction (#1703); and on rows 1 and 20 the Docker sidecar's bind switch and the Witness Wall's viewer-token pairing (#1704). The website carry of the 1.69's knobs, which row 21 still listed, had already landed in website PR #197 |
 | Landed in wave 8 (PR #1691, PR #1720, PR #1722, PR #1725, PR #1727 and PR #1761, website #199 and #207, mirror #17) | the open clauses of rows 12 (both flashers' receipts name the broker TLS mode they sealed; in PR #1722, the products' TLS connect bounded under their task watchdog) and 17 (the iPhone's Display settings sheet reads the glass's `on_glass` block, read-only; in PR #1727, the Quiet Hours wheels center on every touch glass, with the emulator dist rebuilt by CI's pinned emsdk), and follow-ups from a fresh security sweep of the wave-5 and wave-6 surfaces (the Canary API's credential carry, `Host` guard and CA verdict, under row 12's canary client, with the provisioning receipt's `Host` check in PR #1722; the security docs rewritten to the shipped posture with a banned-claims test, whose passages older than #1704's page-token gate PR #1720 brought up to date, sweep D8) and a validator gap (the size-guard rule for every product, wave 6's row-12 prelude made structural). PR #1722 also lands a sentence on row 37 and §5's steps 4 (the wander and jitter extractor, host half) and 5 (the probe's airtime accounting); the rest of the batch is recorded in the 2026-09-20 sweep (F51, F52, F56, A23, A24, D7-D9, CI1 and HA15 ticked; F53-F55, W21, HA14, HA16, CI2 and CI3 open when it merged). PR #1725 lands the airtime governor's framing (F54), the Canary's and the WAP's NVS fixes (F55, F53), the key-source docs (HA14) and two CI gates (CI3, CI2), with a sentence on row 37, and files F57-F61, HA17, HA18 and CI4 (HA17 and HA18 in progress). PR #1727 closes HA18 (Home Assistant verifies a canary-wap's capital fingerprint) and HA17 (Sense and Sentinel print their full key at boot), lands the two firmware fixes HA18 turned up (HA19, the display's fleet model, from its sweep of the other fingerprint readers; HA21, the WAP's BLE Device Info, from its review) and row 17's last open clause, fixes HA22 (the TOFU hook's hex check), F50 (the display's join hints, beside #1755's) and HA20 (the WAP's lowercase MQTT publishes), and files F63-F67 and A25. PR #1761 withdraws #1756's radio-address learning (F49 part 3), which a replayed frame the receiver had never heard could steer at an outsider's radio, and files F68-F70 from its review (how a changed address could be learned safely; pairing does not authenticate the long-term keys; where rekey replies go). It also brings canary-wap to the same rule (spec §8.3): a frame from any address but the member's own drops before verification, a re-pair re-binds the member it already holds, and its pairing waits for both owners and wipes its keys once done; F71-F76 file what that review found in canary-wap's mesh (counters reset at boot, per-destination counters, pairing that reports a refused partner as success, the broadcast peer, the confirm order, heartbeats that wait to hear a member). PR #1761 also lands three more packages: one event-id space on the Canary and the WAP, where every row takes its id at commit and an upgraded device needs no reset in Home Assistant (F46; F77-F83 and HA23 filed); the Lab's WAP page showing the firmware's 16-digit fingerprints, with a test that holds every fingerprint example in the Lab pages' generated data to its product (A25; A26-A29 filed); and the display's onboarding bird at its seat and, on small glass, every scene line fitted and the halo clear of the rows and the QR card (F64-F66; F84-F89 filed), with the emulator dist rebuilt in the PR by CI's pinned emsdk. The PR's own title says wave 7; the row above already holds that name, so this document calls it wave 8. Website #199 makes the Wall read a silent `online` as offline, PR #1720 re-vendors the Wall's emulator into both apps, and website #207 adds the contract vectors to the site's weekly carry. The HACS mirror's resync landed in securacv-homeassistant#17 (2026-09-24); PR #1725 and PR #1727 change carried files again, and PR #1761 adds one carried test; their resync follows (sweep U6). See §3, "Landed in wave 8" |
 | Landed in wave 9 (PR #<W9>) | a wave that worked the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) rather than this list, taking items PR #1761 filed; it closes none of the rows here and changes one sentence of §2's Wi-Fi sensing row. canary-wap's mesh is heard after a reboot, pairs in either confirm order, refuses a partner it cannot hold and finds members it has not heard (F71, F73-F76); the PIO mesh takes a member's frame only from its own bound address (F70); the Canary ticks its CSI bundles instead of flushing them every window, and a reopened bundle spends the hourly ceiling (F81, F80); canary-wap's new events wait behind its SD backlog, with one writer on the loop task (F78, F83 hardened); and the Lab's WAP, Sense, Vision and Hub examples are derived from the firmware and held to it by tests (A26-A29). It files F90-F106, A30-A37 and D10. Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 9" |
+| Landed in wave 10 (PR #<W10>) | a second wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items wave 9 filed; it closes none of the rows here and adds one clause to §2's Wi-Fi sensing row (F93). The Canary's egress holds a row whose card append failed behind the card's backlog, and rows committed while its card is not open for up to 45 s, as the canary-wap's does, and both egresses drop a held row the card already sent (F103, F104); canary-wap's mesh owner commands and MQTT re-inits run on its loop task, with the MQTT client's stop on a one-shot worker (F96, F106); canary-wap's mesh keeps one member per radio address, starts a re-paired member's counter above everything it signed, keeps counters across a rotation and resends a lost pairing COMPLETE (F98-F100; F95 in part: the AUTH exchange cannot complete as it stands, so its rotation waits on F48); the PIO mesh pairs in either confirm order, sends Opera frames to bound members only and stores a paired member's address only once it is bound (F97, F101, F102); saved CSI module settings apply at boot on both trees (F93); and the Lab's WAP, Sense, Vision and Hub panes publish the firmware's whole payloads and say what they stage (A30-A32, A35-A37). It files F107-F131, A38, A39 and D11. Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 10" |
 | Still open | 0 in full, 1 in part (21's Parametrize leftovers — the 7" frame's panel record, the render-plan package's selector half and the C6 manifest's `figure`; see row 21 and §4); row 20 carries one new open clause (a signed head for the sealed-log document, without which the Wall's "Verified" cannot say the tail is current or complete). Decisions taken and waiting on the maintainer's confirmation: row 30's version spread and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §3, "Landed in wave 4"), both decided on 2026-09-22 and landed in PR #1704; the two wave-5 questions, landed in PR #1703 — the render-plan package's Lab-card half (option B; the selector half, option A, is not built) and `canary-local/devices/registry.json`'s hand-typed `body_mm` (retired and derived; row 21); and, landed in PR #1704, the sidecar's bind (option (3), row 1) and the Wall's viewer token (option (a), row 20) |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -61,7 +62,7 @@ One line per area, so the open list in §3 reads against a known baseline.
 
 | Area | What landed | Where |
 |---|---|---|
-| **Wi-Fi sensing** | IDF-portable CSI config (legacy and HE structs), L-LTF data-tone selection replacing the first-52-pairs copy, a router-echo traffic source, breathing band on the corrected tone index, bundle refreshes no longer spend the commit ceiling inside a bundle's 10-minute window, on both trees (since sweep F81 the canary ticks the bundler like the canary-wap, so its state-bearing rows land when their bundle closes, two to ten minutes after the state began; a reopened bundle spends a slot like any opening, F80; a state held for an hour fills core.presence's 6/hour ceiling, F90, and anomaly rows wait in their bundle, F91, both open decisions), one event-id space: every row takes its id at commit (sweep F46; closed bundles do not reach the event ring, F77), window phase lock resynchronizes, honest probe airtime comment | `firmware/common/csi/`, [`csi_wifi_sensing_research.md`](csi_wifi_sensing_research.md) |
+| **Wi-Fi sensing** | IDF-portable CSI config (legacy and HE structs), L-LTF data-tone selection replacing the first-52-pairs copy, a router-echo traffic source, breathing band on the corrected tone index, bundle refreshes no longer spend the commit ceiling inside a bundle's 10-minute window, on both trees (since sweep F81 the canary ticks the bundler like the canary-wap, so its state-bearing rows land when their bundle closes, two to ten minutes after the state began; a reopened bundle spends a slot like any opening, F80; a state held for an hour fills core.presence's 6/hour ceiling, F90, and anomaly rows wait in their bundle, F91, both open decisions), one event-id space: every row takes its id at commit (sweep F46; closed bundles do not reach the event ring, F77), every registered module's `init()` runs once at boot with its saved settings, on both trees (sweep F93), window phase lock resynchronizes, honest probe airtime comment | `firmware/common/csi/`, [`csi_wifi_sensing_research.md`](csi_wifi_sensing_research.md) |
 | **Kernel** | Time-bucket coarsening is widen-only; accept loops classify errors instead of exiting; sandbox reaps its child and denies `statx`; the MQTT bridge stops republishing the current bucket | `src/lib.rs`, `src/api`, `src/break_glass`, `src/module_runtime/sandbox.rs`, `src/bin/event_mqtt_bridge.rs` |
 | **CI / release** | Freshness workflows fall back to an issue; kernel releases re-mark latest; desktop publishes refuse to run without the updater key; BOM regeneration gated; secret scan covers the file types this project actually has; version-sync, plist, icon, mesh-sync and CSI host-test gates; Dependabot sees the composite actions and pip | `.github/` |
 | **Apple** | ATS local networking; privacy manifest for four targets; octet-parsing private-host check with tests; Wall defaults a missing `online` to false and stops saying "verified" without a pinned key; build stamps read the one firmware define | `ios/`, `tvos/` |
@@ -746,6 +747,76 @@ adversarially and fixed before it joined the PR. Five packages:
   lint holds the docs' WAP names to the recipe. Page data, docs and page
   scripts; host-tested, with the browser probes run locally. Files A30-A37 and
   D10.
+
+### Landed in wave 10
+
+A tenth pass on 2026-10-02 (monorepo PR #<W10>) worked the 2026-09-20 sweep's
+backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md))
+again, taking items wave 9 filed. It closes none of the rows above; it adds
+one clause to §2's Wi-Fi sensing row (the modules' boot init, F93). Each
+package was built in its own worktree, reviewed adversarially and fixed before
+it joined the PR. Six packages:
+
+- **The Canary keeps its card's backlog (sweep F103, F104).** A row whose card
+  append fails while older rows wait, and a row committed while a card that
+  may hold older rows is not open (for up to 45 s, `kCardWaitMs`, now one
+  constant for both egresses), wait in an 8-row RAM hold behind the card's
+  rows instead of overtaking them, and write their delivery ceiling only when
+  they go. Review found a duplicate on both devices (a failed append that
+  landed all but its newline went out from the card and from RAM); both
+  egresses now drop a held row at or below the watermark. Host-tested against
+  the real egress and SD log (`test_canary_event_egress`, 65 checks; 49 of 51
+  mutations fail it, the two survivors change nothing a host can see); the
+  PlatformIO compile is CI's; not bench-tested. A canary with an SD slot and
+  no usable card now delivers its first 45 s of rows late, or not at all
+  across a reboot. Files F107-F109, among them that 45 s wait at every boot
+  (F108).
+- **canary-wap's mesh commands and MQTT re-inits run on the loop task (sweep
+  F96, F106).** The state-changing mesh routes hand a command to a four-slot
+  ring that `mesh_network::update()` drains first on every pass; a command
+  that did not run answers 409 `mesh_busy` or 503 `mesh_timeout`. The MQTT
+  config save, Test connection and the QR hub provision ask `csi_mqtt::loop()`
+  to re-init; the loop detaches the client and a one-shot worker stops it,
+  since esp-mqtt's stop can outlast the loop's 8 s watchdog. Host-tested
+  (`test_loop_command_ring` under TSan, `test_mesh_commands_wap`,
+  `test_mqtt_reinit`) and held by `check_wap_loop_commands.py`; the compile is
+  CI's; not bench-tested. Files F110-F112, among them loop-task publishes
+  that can still block inside esp-mqtt (F112).
+- **canary-wap's mesh: one member per address, counters after a re-pair, the
+  COMPLETE sent again (sweep F98-F100; F95 in part).** `add_peer` refuses an
+  address another member holds; a new member starts one past the highest
+  counter the device signed; a rotation keeps every counter; the initiator
+  resends its COMPLETE until the joiner is heard. F95's main part stays open:
+  the AUTH exchange cannot complete as it stands (a 262 B signed frame against
+  ESP-NOW's 250 B, and keys that would differ), so a removal still splits a
+  canary-wap opera until F48. Host-tested against the real
+  `mesh_network.cpp`; the Arduino compile is CI's; not bench-verified. Files
+  F113-F116, among them a 6-digit pairing code a relay can grind (F115).
+- **The PIO mesh pairs in either order, sends to members only, persists only a
+  bound address (sweep F97, F101, F102).** canary-wap's F75 rules carry over,
+  and every PIO COMPLETE carries the initiator's CONFIRM in front so a joiner
+  on older firmware still completes; Opera frames go to bound members only and
+  count only what the radio took; a paired member's address is stored only
+  once the session bound it. Host-tested on the 13 mesh suites with a source
+  pin on `main.cpp`'s wiring; the `[env:full]` compile is CI's; not
+  bench-verified. Files F117-F120.
+- **Saved CSI settings apply at boot on both trees (sweep F93).**
+  `csi_module_init_all()` runs every registered module's `init()` once at
+  boot, after the event-id floor and the egress and before the first tick,
+  through one read-only NVS session and one shared key map; the library ticks
+  no module before its init. A setting a canary-wap owner saved long ago now
+  takes effect at boot. Host-tested on both trees (`test_csi_module_boot`,
+  `test_wap_module_boot`), with each tree's call held by a static check; the
+  compiles are CI's; not bench-tested. Files F121-F128 and D11, among them a
+  stored threshold that overrides the dashboard's preset (F127).
+- **The Lab's MQTT panes publish whole payloads and say what they stage
+  (sweep A30-A32, A35-A37).** The WAP and Sense sandboxes lay each scene over
+  its topic's full example, every WAP topic example is keyed from the code
+  that publishes it, the Vision pane's clocks and coarse features follow the
+  sandbox, and the Hub demo shows the WAP's own entities. Two firmware
+  comments and a test fixture show WAP names a Canary can print. Page data
+  and scripts; host-tested, the browser probes are CI's. Files A38, A39 and
+  F129-F131.
 
 ### The documentation wave
 
