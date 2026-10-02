@@ -777,7 +777,7 @@ class SecuraCVCanaryEventIdSpaceLowSensor(SecuraCVCanaryBinarySensorBase):
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
         super().__init__(prefix, device_id, entry, "event_id_space_low")
-        self._attr_is_on = None
+        self._attr_is_on: bool | None = None
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT health topic; release the subscription on removal."""
