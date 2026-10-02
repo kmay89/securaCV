@@ -144,6 +144,13 @@ char                          s_last_error[192]  = {};
 char                     s_device_id[33]      = {};
 char                     s_firmware_version[24] = {};
 char                     s_public_key_hex[65]   = {};
+/* The uptime the last health body carried, and whether one was built this
+ * boot (loop task: publish_health and publish_egress both run there). The
+ * egress topic names the health it follows with it (sweep F149), so Home
+ * Assistant can tell this boot's counters from a retained copy an earlier
+ * boot, or an older firmware with no egress topic, left on the broker. */
+uint32_t                 s_health_uptime      = 0;
+bool                     s_health_built       = false;
 /* Re-inits another task asked for (request_reinit, sweep F106): the
  * number of the newest request, and of the newest one a loop-task init()
  * has served. A request is served by an init() that began after it was
@@ -750,6 +757,9 @@ bool init(const char* device_id,
           const char* firmware_version,
           const char* public_key_hex) {
   set_identity(device_id, firmware_version, public_key_hex);
+  /* The boot's one call (start_http_server): no health has been built yet,
+   * so no egress publish names one. */
+  s_health_built = false;
   /* The boot's open (setup()'s start_http_server, before loop() runs). A
    * client already open, or still being retired, is never stopped here: that
    * could wait out a connect attempt. Hand it to loop()'s re-init instead. */
@@ -1056,16 +1066,25 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
   if (len + 1 >= sizeof(body)) return;
   body[len++] = '}';
   body[len] = '\0';
+  s_health_uptime = uptime_sec;
+  s_health_built = true;
   publish_raw(topic, body, len, /*retain=*/true);
 }
 
 void publish_egress() {
+  /* Only after a health body this boot: the egress body names the health
+   * it follows, by the firmware version and the uptime that body carried. */
+  if (!s_health_built) return;
+  char object[csi_event_egress::kStatsJsonMax];
+  if (csi_event_egress::stats_json(csi_event_egress::stats(), object, sizeof(object)) == 0) return;
   char topic[192];
   build_topic(topic, sizeof(topic), "egress");
-  char body[csi_event_egress::kStatsJsonMax];
-  const size_t n = csi_event_egress::stats_json(csi_event_egress::stats(), body, sizeof(body));
-  if (n == 0) return;
-  publish_raw(topic, body, n, /*retain=*/true);
+  char body[kEgressBodyMax];
+  const int n = snprintf(body, sizeof(body),
+      "{\"firmware_version\":\"%s\",\"uptime\":%lu,\"csi_event_egress\":%s}",
+      s_firmware_version, (unsigned long)s_health_uptime, object);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return;
+  publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
 
 void publish_update_state(const char* json_payload) {

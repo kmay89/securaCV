@@ -420,16 +420,26 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
 
 /**
  * Push the committed-event egress's counters to {prefix}/{device_id}/egress
- * (sweep F149), retained, beside the health publish and at its cadence.
- * The body is csi_event_egress::stats_json() of csi_event_egress::stats():
- * the object the canary PIO tree carries as its health's
- * `csi_event_egress` (dropped, held_dropped, ambient_dropped,
+ * (sweep F149), retained, right after the health publish and at its
+ * cadence (the sketch's loop() calls it as the statement after
+ * publish_health()). The body names the health it follows, then carries
+ * the counters under the key the canary PIO tree's health uses:
+ *   {"firmware_version":"<v>","uptime":<s>,"csi_event_egress":{...}}
+ * `firmware_version` and `uptime` are the ones the last health body
+ * carried; the object is csi_event_egress::stats_json() of
+ * csi_event_egress::stats() (dropped, held_dropped, ambient_dropped,
  * unsent_dropped and the backfill planner's counters under `planner`), so
- * Home Assistant reads both devices with one parser. A topic of its own
- * because the health body has 34 of its 384 bytes spare at worst and the
- * object is up to 319. The counters start over at every boot. Loop task
- * only: stats() reads the pump's state, which the pump writes there.
+ * Home Assistant reads both devices' counters with one parser, and shows
+ * these only while they pair with the device's current health: a retained
+ * body an earlier boot, or a firmware with no egress topic, left behind
+ * names another version or a later uptime. Nothing is published before
+ * this boot's first health body. A topic of its own because the health
+ * body has 34 of its 384 bytes spare at worst and the object is up to 319;
+ * the whole body is up to 405 (a 23-character version, every counter at
+ * 4294967295). The counters start over at every boot. Loop task only:
+ * stats() reads the pump's state, which the pump writes there.
  */
+constexpr size_t kEgressBodyMax = 448;
 void publish_egress();
 
 /**

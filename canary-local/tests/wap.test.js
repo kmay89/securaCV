@@ -169,9 +169,9 @@ function firmwareKeys() {
     beacon: keysOf(fnBody(csiMqttCpp, "void publish_beacon_state(")),
     "update/state": [...new Set([...fnBody(ino, "static void ota_publish_update_state() {")
       .matchAll(/doc\["([a-z_]+)"\]/g)].map((m) => m[1]))],
-    // csi_event_egress::stats_json(), through `planner` (sweep F149); its
-    // nested keys are the next test's
-    egress: egressKeys().top,
+    // publish_egress()'s body (sweep F149): the health it follows, then the
+    // counters; their nested keys are the next test's
+    egress: keysOf(fnBody(csiMqttCpp, "void publish_egress(")),
   };
 }
 function egressKeys() {
@@ -203,10 +203,18 @@ test("the egress example is the body csi_mqtt::publish_egress() sends (sweep F14
   const t = data.mqtt.topics.find((x) => x.suffix === "egress");
   assert.ok(t && t.retained, "the egress topic is retained, beside health");
   const body = JSON.parse(t.payload);
-  assert.deepStrictEqual(Object.keys(body.planner), egressKeys().planner, "the planner's counters, in stats_json()'s order");
+  // it names the health it follows, as that body spells the two
+  const health = data.mqtt.topics.find((x) => x.suffix === "health");
+  assert.strictEqual(body.firmware_version, JSON.parse(health.payload).firmware_version);
+  assert.ok(Number.isInteger(body.uptime) && body.uptime >= 0);
+  const k = egressKeys();
+  assert.deepStrictEqual(Object.keys(body.csi_event_egress), k.top, "the counters, in stats_json()'s order");
+  assert.deepStrictEqual(Object.keys(body.csi_event_egress.planner), k.planner,
+    "the planner's counters, in stats_json()'s order");
   const pub = fnBody(csiMqttCpp, "void publish_egress(");
   assert.ok(pub.includes('build_topic(topic, sizeof(topic), "egress");'));
-  assert.ok(pub.includes("csi_event_egress::stats_json(csi_event_egress::stats(), body, sizeof(body));"));
+  assert.ok(pub.includes("csi_event_egress::stats_json(csi_event_egress::stats(), object, sizeof(object))"));
+  assert.ok(pub.includes("s_firmware_version, (unsigned long)s_health_uptime, object);"));
   assert.ok(pub.includes("/*retain=*/true"));
 });
 

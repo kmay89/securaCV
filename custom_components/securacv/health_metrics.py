@@ -185,6 +185,53 @@ def egress_counters(obj: Any) -> dict[str, Any] | None:
     return out
 
 
+def _uint(value: Any) -> int | None:
+    """A JSON non-negative integer (a bool is not one), else None."""
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def health_identity(health_payload: Any) -> tuple[str, int] | None:
+    """The (firmware_version, uptime) a health payload names, or None when
+    it lacks either as a string and a non-negative integer."""
+    if not isinstance(health_payload, dict):
+        return None
+    version = health_payload.get("firmware_version")
+    uptime = _uint(health_payload.get("uptime"))
+    if not isinstance(version, str) or uptime is None:
+        return None
+    return version, uptime
+
+
+def egress_topic(payload: Any) -> tuple[tuple[str, int], dict[str, Any]] | None:
+    """The canary-wap's ``egress`` topic body (firmware sweep F149).
+
+    ``{"firmware_version": v, "uptime": s, "csi_event_egress": {...}}``: the
+    firmware version and uptime of the health publish it follows, then the
+    counters under the canary base's health key. Returns ((version, uptime),
+    counters), or None when the body is not that shape.
+    """
+    ident = health_identity(payload)
+    if ident is None:
+        return None
+    counters = egress_counters(payload.get("csi_event_egress"))
+    if counters is None:
+        return None
+    return ident, counters
+
+
+def egress_topic_pairs(topic_ident: tuple[str, int], health_ident: tuple[str, int] | None) -> bool:
+    """Whether an ``egress`` body's counters belong to the device's current
+    health: the same firmware version, sent no later in the boot than that
+    health. A retained body an earlier boot left behind names a later uptime
+    (or another version), and one a firmware with no egress topic left
+    behind names another version."""
+    if health_ident is None:
+        return False
+    return topic_ident[0] == health_ident[0] and topic_ident[1] <= health_ident[1]
+
+
 def offline_queue_counters(obj: Any) -> dict[str, int] | None:
     """The canary base's MQTT offline queue drops since its boot (its health
     `offline_queue` object): `dropped_overflow`, `dropped_oversize`,

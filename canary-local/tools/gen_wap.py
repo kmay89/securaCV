@@ -540,12 +540,16 @@ HEALTH_KEYS = (fmt_keys(between(_health, "} else {", "if (n <= 0", "health witho
 HEALTH_OPTIONAL = ("sd_mounted", "enclosure_open")
 _ota = fn_body(INO, "static void ota_publish_update_state() {", "update/state")
 UPDATE_KEYS = list(dict.fromkeys(re.findall(r'doc\["([a-z_]+)"\]', _ota)))
-# The egress topic's body is csi_event_egress::stats_json() of stats() (sweep
-# F149): the canary health's csi_event_egress object, the planner's counters
-# nested under `planner`.
+# The egress topic's body (sweep F149) names the health it follows (its
+# firmware version and uptime), then carries csi_event_egress::stats_json() of
+# stats() under `csi_event_egress`: the canary health's object of that name,
+# the planner's counters nested under `planner`.
 must(CSI_MQTT_CPP, 'build_topic(topic, sizeof(topic), "egress");', "the egress topic")
-must(CSI_MQTT_CPP, "csi_event_egress::stats_json(csi_event_egress::stats(), body, sizeof(body));",
-     "the egress body is stats_json()")
+must(CSI_MQTT_CPP, "csi_event_egress::stats_json(csi_event_egress::stats(), object, sizeof(object))",
+     "the egress object is stats_json()")
+EGRESS_BODY_KEYS = fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_egress(", "egress"))
+if EGRESS_BODY_KEYS[-1:] != ["csi_event_egress"]:
+    die(f"egress: publish_egress() no longer ends its body in csi_event_egress: {EGRESS_BODY_KEYS}")
 _egress = fmt_keys(between(read(EGRESS_H), "inline size_t stats_json(", "(unsigned long)s.dropped", "egress"))
 if "planner" not in _egress:
     die("egress: stats_json() no longer nests the planner's counters under `planner`")
@@ -563,7 +567,7 @@ KEYS = {
     "chirp": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_chirp_state(", "chirp")),
     "beacon": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_beacon_state(", "beacon")),
     "update/state": UPDATE_KEYS,
-    "egress": EGRESS_KEYS,
+    "egress": EGRESS_BODY_KEYS,
 }
 OPTIONAL = {"health": HEALTH_OPTIONAL, "update/state": ("release_url", "release_summary")}
 # the bare-string topics: what csi_mqtt.cpp writes, verbatim
@@ -648,11 +652,14 @@ TOPICS = [
      "note": "event_id_space_low turns true once the event-id allocator nears the end of its space "
              "(sweep F82); Home Assistant shows it as the Event ID Space Low binary sensor"},
     {"suffix": "egress", "retained": True, "cadence": "~60 s, after health",
-     "payload": '{"dropped":0,"held_dropped":0,"ambient_dropped":0,"unsent_dropped":0,"planner":{"live":12,'
-                '"held":0,"queued":3,"replayed":0,"skipped":0,"untrusted":0,"unsendable":0,'
-                '"truncated_unsent":0,"read_giveups":0}}',
-     "note": "what the committed-event egress dropped and sent since boot (sweep F149); its own topic because "
-             "the health body has no room; Home Assistant shows it as the Health sensor's csi_event_egress"},
+     "payload": '{"firmware_version":"' + FW_VERSION + '","uptime":86400,"csi_event_egress":{"dropped":0,'
+                '"held_dropped":0,"ambient_dropped":0,"unsent_dropped":0,"planner":{"live":12,"held":0,'
+                '"queued":3,"replayed":0,"skipped":0,"untrusted":0,"unsendable":0,"truncated_unsent":0,'
+                '"read_giveups":0}}}',
+     "note": "what the committed-event egress dropped and sent since boot (sweep F149), named by the "
+             "firmware_version and uptime of the health publish it follows; its own topic because the health "
+             "body has no room; Home Assistant shows it as the Health sensor's csi_event_egress while it "
+             "pairs with the current health"},
     {"suffix": "counts", "retained": True, "cadence": "on each new record",
      "payload": '{"v":1,"total":312,"alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "tamper", "retained": False, "cadence": "per committed system.integrity event (live only, never backfill)",
@@ -678,7 +685,10 @@ for t in TOPICS:
     elif t["suffix"] not in ("update/auto", "mic/state"):
         die(f"MQTT topic {t['suffix']!r} has no firmware key list to hold its example to")
 check_event(next(t for t in TOPICS if t["suffix"] == "events")["payload"], "the events example")
-_egress_example = json.loads(next(t for t in TOPICS if t["suffix"] == "egress")["payload"])
+_egress_example = json.loads(next(t for t in TOPICS if t["suffix"] == "egress")["payload"])["csi_event_egress"]
+if list(_egress_example.keys()) != EGRESS_KEYS:
+    die(f"MQTT egress: example csi_event_egress keys {list(_egress_example)} are not the firmware's "
+        f"{EGRESS_KEYS}")
 if list(_egress_example["planner"].keys()) != EGRESS_PLANNER_KEYS:
     die(f"MQTT egress: example planner keys {list(_egress_example['planner'])} are not the firmware's "
         f"{EGRESS_PLANNER_KEYS}")

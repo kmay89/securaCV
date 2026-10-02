@@ -1037,9 +1037,12 @@ void test_the_health_publish_warns_before_the_id_space_runs_out() {
 // ── The egress counters' topic (sweep F149) ────────────────────────────
 
 // The canary-wap's egress counters reach Home Assistant on a retained topic
-// of their own, beside health: the object (up to 319 bytes) does not fit
-// the health body's 34 spare bytes. The body is the canary's health
-// `csi_event_egress` object, name for name.
+// of their own, right after health: the object (up to 319 bytes) does not
+// fit the health body's 34 spare bytes. The body names the health it
+// follows (its firmware version and uptime), so Home Assistant can tell a
+// retained copy from an earlier boot, or one a firmware with no egress topic
+// left behind, from this boot's; the counters ride under the canary health's
+// key, `csi_event_egress`, name for name.
 std::string last_on(const std::string& suffix, bool* retained = nullptr) {
   for (size_t i = fake::published.size(); i-- > 0;) {
     const std::string& topic = fake::published[i].first;
@@ -1059,26 +1062,43 @@ void test_the_egress_counters_ride_a_retained_topic_of_their_own() {
   st.planner.live = 5; st.planner.held = 6; st.planner.queued = 7; st.planner.replayed = 8;
   st.planner.skipped = 9; st.planner.untrusted = 10; st.planner.unsendable = 11;
   st.planner.truncated_unsent = 12; st.planner.read_giveups = 13;
+  // Before this boot's first health body there is no health to name: the
+  // retained copy on the broker stays as it is.
+  csi_mqtt::publish_egress();
+  CHECK(fake::published.empty());
+  csi_mqtt::publish_health(200000, 312);
+  CHECK(fake::published.size() == 1);
   csi_event_egress::g_stats_read_on.clear();
   csi_mqtt::publish_egress();
-  CHECK(fake::published.size() == 1);
-  CHECK(fake::published[0].first == std::string("securacv/") + kDeviceId + "/egress");
-  CHECK(fake::published_retained[0]);   // a hub that starts later still reads them
-  CHECK(fake::published[0].second ==
+  CHECK(fake::published.size() == 2);
+  CHECK(fake::published[1].first == std::string("securacv/") + kDeviceId + "/egress");
+  CHECK(fake::published_retained[1]);   // a hub that starts later still reads them
+  CHECK(fake::published[1].second ==
+        "{\"firmware_version\":\"2.4.15-wap\",\"uptime\":312,\"csi_event_egress\":"
         "{\"dropped\":1,\"held_dropped\":2,\"ambient_dropped\":3,\"unsent_dropped\":4,"
         "\"planner\":{\"live\":5,\"held\":6,\"queued\":7,\"replayed\":8,\"skipped\":9,"
-        "\"untrusted\":10,\"unsendable\":11,\"truncated_unsent\":12,\"read_giveups\":13}}");
+        "\"untrusted\":10,\"unsendable\":11,\"truncated_unsent\":12,\"read_giveups\":13}}}");
   CHECK(csi_event_egress::g_stats_read_on.size() == 1 &&
         csi_event_egress::g_stats_read_on[0] == "loop");
-  // Every counter at its widest: the whole object goes out.
+  // The next health's uptime is the one the next egress body names.
+  csi_mqtt::publish_health(200000, 372);
+  csi_mqtt::publish_egress();
+  CHECK(last_on("/egress").find("\"uptime\":372,") != std::string::npos);
+  // Every counter at its widest, the longest version the identity keeps
+  // (23 characters) and the widest uptime: the whole body goes out.
   memset(&st, 0xFF, sizeof(st));
+  csi_mqtt::set_identity(kDeviceId, "2.4.15-wap-rc1+abcdef12", "ab");
+  csi_mqtt::publish_health(200000, 4294967295u);
   csi_mqtt::publish_egress();
   bool retained = false;
   const std::string widest = last_on("/egress", &retained);
-  CHECK(widest.size() == 319 && retained && widest.back() == '}');
+  CHECK(widest.size() == 405 && retained && widest.back() == '}');
+  CHECK(widest.size() < csi_mqtt::kEgressBodyMax);
+  CHECK(widest.find("\"firmware_version\":\"2.4.15-wap-rc1+abcdef12\",\"uptime\":4294967295,") !=
+        std::string::npos);
   // The health body is not where they went: it keeps its own keys.
-  csi_mqtt::publish_health(200000, 312);
   CHECK(last_on("/health").find("dropped") == std::string::npos);
+  csi_mqtt::set_identity(kDeviceId, "2.4.15-wap", "ab");
   // With the link down nothing is published (the loop's 60 s block only
   // runs while connected; the bridge's gate refuses anyway).
   fake::deliver(fake::last_client(), MQTT_EVENT_DISCONNECTED);

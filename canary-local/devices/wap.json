@@ -510,8 +510,8 @@
         "suffix": "egress",
         "retained": true,
         "cadence": "~60 s, after health",
-        "payload": "{\"dropped\":0,\"held_dropped\":0,\"ambient_dropped\":0,\"unsent_dropped\":0,\"planner\":{\"live\":12,\"held\":0,\"queued\":3,\"replayed\":0,\"skipped\":0,\"untrusted\":0,\"unsendable\":0,\"truncated_unsent\":0,\"read_giveups\":0}}",
-        "note": "what the committed-event egress dropped and sent since boot (sweep F149); its own topic because the health body has no room; Home Assistant shows it as the Health sensor's csi_event_egress"
+        "payload": "{\"firmware_version\":\"2.4.15-wap\",\"uptime\":86400,\"csi_event_egress\":{\"dropped\":0,\"held_dropped\":0,\"ambient_dropped\":0,\"unsent_dropped\":0,\"planner\":{\"live\":12,\"held\":0,\"queued\":3,\"replayed\":0,\"skipped\":0,\"untrusted\":0,\"unsendable\":0,\"truncated_unsent\":0,\"read_giveups\":0}}}",
+        "note": "what the committed-event egress dropped and sent since boot (sweep F149), named by the firmware_version and uptime of the health publish it follows; its own topic because the health body has no room; Home Assistant shows it as the Health sensor's csi_event_egress while it pairs with the current health"
       },
       {
         "suffix": "counts",
