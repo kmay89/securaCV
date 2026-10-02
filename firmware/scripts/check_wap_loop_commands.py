@@ -228,8 +228,13 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
      `onPassKeyDisplay`, `onConfirmPassKey`, `onWrite`, `onRead`,
      `onResult`, `onScanEnd`) and the helpers they build their events with
      (`make_event`, `link_event`, `post_event`) name none of `BT_LIVE_STATE`
+     and no other file global but the queue (`post_event`'s `g_events`) and
+     the data hook (`onWrite`'s `g_data_callback`), name nothing qualified
+     `bluetooth_channel::`, call no `log_health(` and no `ble_*::` module,
      and call no function of the file but those helpers and
-     `detect_device_type` (which reads only the advertisement).
+     `detect_device_type` (which reads only the advertisement). `onWrite`,
+     `onRead` and `onResult` post with `EVENT_LOSSY_LIMIT`; a link's own
+     callbacks (`BT_LINK_CALLBACKS`) never do.
      `g_events.post(` is called only in `post_event()`, and `post_event(`
      only in the callbacks. `update()` applies the events with
      `g_events.consume(apply_event);` once, before its first `return` and
@@ -237,8 +242,9 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
      Bluetooth is off still ends; a command acts on the radio's latest
      state), and nothing else consumes them. `apply_event(` is never called
      (only `consume` runs it), and each `apply_<event>()` only from
-     `apply_event()`. The event queue's room for a link's events, and what a
-     full queue does, are `test_bluetooth_commands_wap.cpp`'s.
+     `apply_event()`. What a full queue does (a link's events kept, the
+     drops logged by kind, a passkey failed closed) and what each event
+     carries are `test_bluetooth_commands_wap.cpp`'s.
 BV3. The Bluetooth status routes read only what the loop task published
      (F138). `bluetooth_channel.h` declares none of the live readers
      (`BT_LIVE_READERS`: `get_status`, `get_settings`, `get_scanned_devices`,
@@ -908,7 +914,8 @@ BT_INTERNAL = {
     "stop_advertising": ("deinit", "disable"),
     "stop_scan": ("deinit", "disable", "handle_scan_timeout"),
     "clear_scan_results": ("start_scan",),
-    "cancel_pairing": ("update", "reject_pairing"),
+    "cancel_pairing": ("update", "reject_pairing",
+                       "disable"),   # F143 review: turning Bluetooth off ends a pairing first
     "disconnect": ("deinit", "disable", "handle_inactivity_timeout"),
 }
 BT_HANDLERS = ("handle_bluetooth_enable", "handle_bluetooth_disable",
@@ -1415,10 +1422,21 @@ BT_LIVE_STATE = ("g_state", "g_settings", "g_initialized", "g_connection", "g_pa
                  "g_total_connections", "g_total_bytes_sent", "g_total_bytes_received",
                  "g_advertising_start_ms", "g_advertising_total_ms", "g_connected_total_ms",
                  "g_advertising", "g_scanner", "g_server", "g_status_char", "g_commands",
-                 "g_conn_callback", "g_pair_callback", "g_scan_callback", "g_events_dropped_seen",
-                 "g_events_dropped_logged_ms")
+                 "g_conn_callback", "g_pair_callback", "g_scan_callback", "g_link_drops",
+                 "g_lossy_drops")
 BT_LIVE_STATE_RE = r"\b(" + "|".join(BT_LIVE_STATE) + r")\b"
 CALL_RE = r"(?<![\w:.>])([A-Za-z_]\w*)\s*\("
+# The only file globals a callback or its event helpers may name: the queue
+# (post_event's) and the data hook (onWrite's, which runs on the NimBLE host
+# task with the written bytes). Any other g_ name is the loop task's or the
+# bring-up's (g_init_fail_reason, g_local_address, the views, ...).
+BT_CALLBACK_GLOBALS = {"g_events": ("post_event",), "g_data_callback": ("onWrite",)}
+# What a callback hands the loop task, by kind: GATT activity and scan
+# results are posted under EVENT_LOSSY_LIMIT (a burst of them never takes
+# the room a link's events are kept), a link's own at the full limit.
+BT_LOSSY_CALLBACKS = ("onWrite", "onRead", "onResult")
+BT_LINK_CALLBACKS = ("onConnect", "onDisconnect", "onAuthenticationComplete", "onPassKeyDisplay",
+                     "onConfirmPassKey", "onScanEnd")
 
 
 def check_bluetooth_callbacks(cpp_src: str, errors: list[str]) -> None:
@@ -1441,6 +1459,30 @@ def check_bluetooth_callbacks(cpp_src: str, errors: list[str]) -> None:
                 errors.append(f"{BT_CPP}: {name}() calls {callee}() — a NimBLE callback only "
                               f"builds and posts its event ({', '.join(BT_CALLBACK_CALLS)}); "
                               "update() applies it on the loop task (F143)")
+        for m in re.finditer(r"\b(g_\w+)\b", body):
+            if name not in BT_CALLBACK_GLOBALS.get(m.group(1), ()) and not hit:
+                errors.append(f"{BT_CPP}: {name}() names {m.group(1)} — on the NimBLE host task a "
+                              "callback names only the event queue (post_event) and the data hook "
+                              "(onWrite); the rest is the loop task's or the bring-up's (F143)")
+                break
+        other = re.search(r"\bbluetooth_channel::|(?<![\w:.>])log_health\s*\(|\bble_\w+::", body)
+        if other:
+            errors.append(f"{BT_CPP}: {name}() names {other.group(0).rstrip('(').strip()} — the "
+                          "channel's functions, the health log and the BLE modules are the loop "
+                          "task's; a NimBLE callback only posts its event (F143)")
+        if name in BT_LOSSY_CALLBACKS + BT_LINK_CALLBACKS:
+            for post in re.finditer(r"(?<![\w:.>])post_event\s*\(", body):
+                close = matching_paren(body, post.end() - 1)
+                args = squash(body[post.end():close]) if close > 0 else ""
+                lossy = args.endswith(",EVENT_LOSSY_LIMIT")
+                if name in BT_LOSSY_CALLBACKS and not lossy:
+                    errors.append(f"{BT_CPP}: {name}() posts without EVENT_LOSSY_LIMIT — a burst of "
+                                  "GATT activity or scan results would take the room kept for a "
+                                  "link's own events (F143)")
+                if name in BT_LINK_CALLBACKS and "EVENT_LOSSY_LIMIT" in args:
+                    errors.append(f"{BT_CPP}: {name}() posts under EVENT_LOSSY_LIMIT — a link's own "
+                                  "events are posted at the full limit, into the room kept for them "
+                                  "(F143)")
     for pattern, allowed, label in (
             (r"\bg_events\s*\.\s*post\s*\(", ("post_event",), "g_events.post("),
             (r"(?<![\w:.>])post_event\s*\(", BT_CALLBACKS, "post_event("),
@@ -2179,6 +2221,30 @@ BV_MUTATIONS += [
               r"\1 g_events.consume(apply_event);")),
     ("update() applies a link's end directly",
      on_other(BT_CPP, SIG_UPDATE, r"(handle_scan_timeout\(\);)", r"\1 if (false) apply_disconnect(make_event(BT_EV_DISCONNECT));")),
+    ("onRead posts its activity at the full limit",
+     on_other(BT_CPP, SIG_BT_CB.format("onRead"), r"post_event\(make_event\(BT_EV_ACTIVITY\),\s*EVENT_LOSSY_LIMIT\)",
+              "post_event(make_event(BT_EV_ACTIVITY))")),
+    ("onWrite posts its activity at the full limit",
+     on_other(BT_CPP, SIG_BT_CB.format("onWrite"), r"post_event\(e,\s*EVENT_LOSSY_LIMIT\)", "post_event(e)")),
+    ("onResult posts a scan result at the full limit",
+     on_other(BT_CPP, SIG_BT_CB.format("onResult"), r"post_event\(e,\s*EVENT_LOSSY_LIMIT\)", "post_event(e)")),
+    ("onDisconnect posts a link's end under the lossy limit",
+     on_other(BT_CPP, SIG_BT_CB.format("onDisconnect"), r"\(void\)post_event\(e\);",
+              "(void)post_event(e, EVENT_LOSSY_LIMIT);")),
+    ("onScanEnd clears the bring-up's failure reason",
+     on_other(BT_CPP, SIG_BT_CB.format("onScanEnd"), r"(\(void\)post_event\()", r"g_init_fail_reason[0] = 0; \1")),
+    ("onScanEnd reads the published scan view",
+     on_other(BT_CPP, SIG_BT_CB.format("onScanEnd"), r"(\(void\)post_event\()",
+              r"ScanView v; (void)g_scan_view.read(&v); \1")),
+    ("onConnect writes the health log on the NimBLE host task",
+     on_other(BT_CPP, SIG_BT_CB.format("onConnect"), r"(\(void\)post_event\()",
+              r"log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, \"BLE device connected\", nullptr); \1")),
+    ("onConnect tells the presence sensor on the NimBLE host task",
+     on_other(BT_CPP, SIG_BT_CB.format("onConnect"), r"(\(void\)post_event\()",
+              r"ble_presence::notify_console_connected(true); \1")),
+    ("onScanEnd stops the scan by its qualified name",
+     on_other(BT_CPP, SIG_BT_CB.format("onScanEnd"), r"(\(void\)post_event\()",
+              r"bluetooth_channel::stop_scan(); \1")),
 ]
 # Rule BV3: the status routes' reads (F138).
 SIG_BT_PUBLISH_SCAN = r"\bstatic\s+void\s+publish_scan_view\s*\(\s*\)"
