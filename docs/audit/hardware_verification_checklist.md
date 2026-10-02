@@ -694,7 +694,10 @@ handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
   - Repro: on A, remove B (its only member); wait out the 7-day deny-list
     grace (a debug build with a short grace, or leave A powered for 7
     days); re-pair A and B. Then erase B's flash, reflash it, and pair it
-    with A again (removing B's old entry on A first).
+    with A again (removing B's old entry on A first). Then, with a third
+    board C paired too, remove B while C stays (the opera rotates), wait
+    out the grace and re-pair B; if a board on a release from before F71
+    is at hand, repeat that last step with B on it.
   - Expected: after each re-pair B shows connected on A within about a
     minute, and A's serial log shows no `pairing COMPLETE never answered`.
   - Artifact: `docs/audit/repro/F116/re-pair/`.

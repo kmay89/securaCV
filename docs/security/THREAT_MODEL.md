@@ -720,17 +720,30 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   more, and one replayed from its address at the re-pair counted as the
   joiner heard and ended the COMPLETE resend (host-probed). The PlatformIO
   tree already kept such counters as tombstones; canary-wap now does too,
-  in NVS (`rx_tombs`), and a re-add on either side of the pairing, or a
-  boot, starts the member there. Limits: eight at most, so a ninth drop
+  in NVS (`rx_tombs`), each for the opera the member was dropped from, and
+  a re-add into that opera on either side of the pairing, or a boot,
+  starts the member there. In any other opera the old frames drop at the
+  `opera_id` check (a removal with a survivor rotates the opera at once),
+  so no tombstone applies there. Limits: eight at most, so a ninth drop
   evicts the oldest, whose window reopens at its next re-add; and a
   removal of a member not heard above the tombstone its re-add restored
   releases it, so the next re-add starts at 0 again. That release is the
   owner's way back for a device whose own counters went back while it kept
   its key (its send-counter record lost), which would otherwise drop at its
-  tombstone for good; it reopens the window for that member. A frame the
-  member sent another member and this device has not heard is still fresh
-  here (the cross-member gap above, open), and so is one heard since the
-  last 5-minute last-seen save before a reboot. Host-tested only.
+  tombstone for good; it reopens the window for that member. Every member
+  on firmware from before F71 is in that class: it starts its counters at
+  1 at every boot and every add, so after a removal and a re-pair into the
+  same opera it stays unheard until it is updated (F71's first boot starts
+  it above) or removed again and re-paired after the deny-list grace.
+  Update it first. Not covered: a frame the member signed after its
+  removal (the removal is one-sided, so it goes on signing above its
+  tombstone) is fresh at the re-pair, and one replayed there still ends
+  the COMPLETE resend; a frame the member sent another member and this
+  device has not heard is still fresh here (the cross-member gap above,
+  open), and so is one heard since the last 5-minute last-seen save before
+  a reboot; and on a board without flash encryption a boot loads no opera
+  and no member, so the members it held then leave no tombstone and a
+  re-pair into the same opera starts them at 0. Host-tested only.
 - **The 6-digit pairing code does not cover the long-term keys**
   (pre-existing; found in the review of the F49 part 3 withdrawal). The
   code and the CONFIRM hash are derived from the ephemeral X25519 session

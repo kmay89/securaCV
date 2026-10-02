@@ -220,12 +220,21 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
   traffic was, until the next boot levels them. **A re-added member's
   last-seen** (F116, host-tested) starts where this device left it: a
   member dropped by a removal or a leave leaves its last-seen counter as a
-  tombstone (§4.2, §12.3), and `add_peer` (initiator and joiner side) and a
-  boot start the re-added member there. It used to start at 0, so in an
-  opera whose id had not changed (removing the last member rotates
-  nothing; a re-pair into the same opera after a leave) every frame the
-  member had signed before was fresh once more, and one replayed at the
-  re-pair counted as the joiner heard and ended the COMPLETE resend (§5.2).
+  tombstone for the opera it was dropped from (§4.2, §12.3), and
+  `add_peer` (initiator and joiner side; the joiner under the opera it is
+  joining) and a boot start the member there when it is re-added into
+  that opera. It used to start at 0, so in an opera whose id had not
+  changed (removing the last member rotates nothing; a re-pair into the
+  same opera after a leave) every frame the member had signed before its
+  removal was fresh once more, and one replayed at the re-pair counted as
+  the joiner heard and ended the COMPLETE resend (§5.2). In any other
+  opera those frames drop at the `opera_id` check, so no tombstone applies
+  there (a removal with a survivor rotates the opera at once, F95). A
+  member on firmware from before F71 starts its counters at 1 at every
+  boot and every add, so re-added into the same opera it stays unheard
+  here until its counter passes the tombstone: update it before
+  re-pairing it (F71's first boot starts it above), or remove it again
+  and re-pair it after the deny-list grace (§4.2).
   The envelope names no
   destination, so a receiver judges a frame its sender addressed to
   another member by its own last-seen counter for that sender (open).
@@ -346,15 +355,30 @@ canary-wap acts on no `LEAVE_OPERA` it receives (the member stays until the
 owner removes it), but since F116 (host-tested) it keeps the same kind of
 tombstone for every member it drops itself, at a removal (§5.6) or at its
 own leave: at most eight, the oldest dropped first, under NVS `rx_tombs`
-(§12.3), applied by `add_peer` on either side of the re-pair and at boot.
-A device whose own counters went back while it kept its key (its
-`tx_ctrs` record lost, §3.3) would drop at its tombstone for good, so a
-removal of a member not heard above the tombstone its re-add restored
-releases it, and the next re-pair starts it at 0, as every re-add did
+(§12.3), each for the `opera_id` the member was dropped from, applied by
+`add_peer` on either side of a re-pair into that opera and at boot. Unlike
+the PlatformIO tree's, it applies in that opera only: the member's old
+frames carry that id, and any other opera drops them at the id check
+(a removal with a survivor rotates the opera at once, F95), so a
+tombstone restored there would guard nothing and only shut out a member
+whose counters restart. A device whose own counters went back while it
+kept its key (its `tx_ctrs` record lost, §3.3; or a member on firmware
+from before F71, which starts them at 1 at every boot and every add)
+drops at its tombstone after a re-pair into the same opera, for good from
+a floor as high as F71's, so a removal of a member not heard above the
+tombstone its re-add restored releases it, and the next re-pair into that
+opera (after the deny-list grace) starts it at 0, as every re-add did
 before F116: the owner's way out, at the cost of reopening the window for
-that member. A device whose NVS was erased has a new key, so no tombstone
-applies; one that kept its NVS resumes its counters above everything it
-signed (§3.3).
+that member. For a member on older firmware the better way is to update
+it first: F71's first boot starts its counters above any tombstone. A
+device whose NVS was erased has a new key, so no tombstone applies; one
+that kept its NVS resumes its counters above everything it signed (§3.3).
+Not covered: a frame the member signed after its removal (it does not
+know it was removed and goes on signing, above its tombstone) is fresh at
+a re-pair into the same opera, and one recorded and replayed there still
+counts as heard (§5.2); and on a board without flash encryption a boot
+loads no opera and no member (§5.5), so the members it held at that boot
+leave no tombstone, and a re-pair into the same opera starts them at 0.
 
 #### REKEY_OFFER / REKEY_ACCEPT / REKEY_SECRET / REKEY_ACK — v0.3 (PlatformIO)
 The `opera_secret` rotation that `remove` runs (§5.6, PlatformIO subsection).
@@ -677,12 +701,16 @@ comes): it used to end the pairing, from any address, so any radio could
 cancel a confirmed pairing, and the copies of an earlier pairing's
 COMPLETE would end the same joiner's next pairing with that initiator.
 "Heard" is judged against the joiner's last-seen counter when the COMPLETE
-went out, which for a joiner this device dropped before is its tombstone
-since F116 (§3.3, §4.2), not 0: a frame it signed before, replayed from its
-address at the re-pair, no longer ends the copies. A genuine frame it sent
-another member and this device has not heard still can (the envelope names
-no destination, F72), as can one heard since this device's last 5-minute
-last-seen save before a reboot.
+went out, which for a joiner this device dropped before from the same
+opera is its tombstone since F116 (§3.3, §4.2), not 0: a frame it signed
+before its removal (or before this device's leave), replayed from its
+address at the re-pair, no longer ends the copies. A frame it signed
+after its removal still can: the removal is one-sided, so it goes on
+signing above its tombstone until its own owner removes this device, and
+one of those, recorded and replayed at the re-pair, counts as heard. So
+can a genuine frame it sent another member and this device has not heard
+(the envelope names no destination, F72), and one heard since this
+device's last 5-minute last-seen save before a reboot.
 
 ### 5.3 Pairing Security
 
@@ -1706,9 +1734,12 @@ before the rewrite, the record is not rewritten when no member is left, and
 a boot reads it with no member loaded too), not gated, like the last-seen counters it keeps under
 `replay_ctrs`: counts, not secrets, and a gate would restart the counters
 at every boot of an FE-off board. Since F116 it also stores `rx_tombs` (up
-to 8 × (8 B fingerprint + u64), oldest first), the last-seen counters of
-members it dropped (§4.2), written at each removal or leave that changes
-them and removed when none is left; not gated either, for the same reason.
+to 8 × (8 B fingerprint + 16 B `opera_id` + u64), oldest first), the
+last-seen counters of members it dropped and the opera each was dropped
+from (§4.2), written at each removal or leave that changes them and
+removed when none is left; not gated either, for the same reason (the
+`opera_id` is in the clear in every frame). On an FE-off board a boot
+loads no member, so the members it held then leave no tombstone.
 Its `opera_id` and `opera_sec` keys are there only while it holds an opera
 (F113, §5.4).
 
