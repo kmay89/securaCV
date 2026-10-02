@@ -101,11 +101,26 @@ the egress's own rules the test reaches only through behavior.
     with `s_dest_known` set bumps `s_dest_epoch.fetch_add(`; `s_dest_known
     = true;` follows. `destination_epoch()` returns `s_dest_epoch`. The
     egress's side (a changed epoch drops the backlog) is host-tested.
+12. The counters, off the loop task (sweep F149). `stats()` reads the
+    pump's own state, so only the loop task may call it: across the sketch
+    (comments and strings blanked) `csi_event_egress::stats(` is called
+    once, in `csi_mqtt.cpp`'s `publish_egress()` (the egress topic), and
+    `csi_mqtt::publish_egress(` once, in the sketch's `loop()`
+    (`canary_wap.ino`). Every other task reads the copy the pump publishes:
+    in the egress, `s_stats_view.publish(stats());` is `pump()`'s last
+    statement and the file's one `s_stats_view.publish(`, and
+    `s_stats_view.read(` appears once, in `read_stats()`, which names none
+    of the pump's state (`g_state`, `stats(`, `planner`, `held`,
+    `s_dropped`). `handle_diagnostics` (GET /api/diagnostics, the httpd
+    task) calls `csi_event_egress::read_stats(`. What the copy holds after
+    each pass, and the JSON both surfaces spell, is host-tested
+    (test_wap_event_egress.cpp, test_mqtt_reinit.cpp).
 
 ## It proves it bites
 
-Each run applies mutations to the three sources in memory and requires the
-check to fail on every one. A mutation whose anchor moved fails the run.
+Each run applies mutations to the three sources (and, for rule 12, to the
+sketch's other files) in memory and requires the check to fail on every
+one. A mutation whose anchor moved fails the run.
 
 Run locally:  python3 firmware/scripts/check_wap_event_egress.py   (repo root)
 CI:           firmware.yml "CSI Sketch Copy Sync", via check_csi_sync.sh
@@ -144,6 +159,7 @@ SKETCH = "firmware/projects/canary-wap/arduino/canary_wap"
 INTEG_CPP = f"{SKETCH}/csi_integration.cpp"
 EGRESS_CPP = f"{SKETCH}/csi_event_egress.cpp"
 MQTT_CPP = f"{SKETCH}/csi_mqtt.cpp"
+INO = f"{SKETCH}/canary_wap.ino"
 SKETCH_GLOBS = ("*.cpp", "*.h", "*.ino")
 
 SIG_HOOK = r"\bvoid\s+csi_event_on_committed\s*\([^)]*\)"
@@ -169,6 +185,11 @@ SETTINGS_CPP = f"{SKETCH}/csi_settings_nvs.cpp"
 SIG_BOOT_INIT_FN = r"\bsize_t\s+csi_settings_nvs_init_modules\s*\(\s*(?:void)?\s*\)"
 SIG_REINIT = r"\bvoid\s+reinit_module\s*\(\s*const\s+char\s*\*\s*module_id\s*\)"
 SIG_REGISTER = r"\bvoid\s+register_v1_modules\s*\(\s*\)"
+SIG_READ_STATS = r"\bbool\s+read_stats\s*\(\s*Stats\s*\*\s*\w+\s*\)"
+SIG_PUBLISH_EGRESS = r"\bvoid\s+publish_egress\s*\(\s*\)"
+SIG_DIAGNOSTICS = r"\bstatic\s+esp_err_t\s+handle_diagnostics\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)"
+SIG_SKETCH_LOOP = r"\bvoid\s+loop\s*\(\s*\)"
+READ_STATS_FORBIDDEN = (r"\bg_state\b", r"\bstats\s*\(", r"\bplanner\b", r"\bheld\w*", r"\bs_dropped\b")
 
 CONTROL_FLOW = r"\b(?:if|else|for|while|do|switch|return|continue|break|goto)\b"
 PUMP_LOOP = "for(intbudget=kPumpBudget;budget>0;--budget)"
@@ -564,6 +585,49 @@ def check_destination_epoch(mqtt: str, errors: list[str]) -> None:
         errors.append(f"{MQTT_CPP}: csi_mqtt::destination_epoch() must return s_dest_epoch")
 
 
+def check_stats_off_the_loop(integ: str, egress: str, mqtt: str, others: dict[str, str],
+                             errors: list[str]) -> None:
+    """Rule 12, F149: stats() on the loop task only; other tasks read the
+    copy the pump publishes as its last step."""
+    code = blank_comments_and_strings(egress)
+    pump = body_of(code, SIG_PUMP, f"{EGRESS_CPP}: pump()", errors)
+    publish = "s_stats_view.publish(stats());"
+    if code.count("s_stats_view.publish(") != 1 or pump is None or \
+            not squash(pump).endswith(squash(publish)):
+        errors.append(f"{EGRESS_CPP}: `{publish}` must be pump()'s last statement and the file's one "
+                      "s_stats_view.publish( — other tasks read the counters as the pump left them "
+                      "each pass (F149)")
+    read = body_of(code, SIG_READ_STATS, f"{EGRESS_CPP}: read_stats()", errors)
+    if code.count("s_stats_view.read(") != 1 or read is None or "s_stats_view.read(" not in read:
+        errors.append(f"{EGRESS_CPP}: read_stats() must be the one reader of s_stats_view "
+                      "(`s_stats_view.read(`) — any task calls it (F149)")
+    if read is not None:
+        for pat in READ_STATS_FORBIDDEN:
+            hit = re.search(pat, read)
+            if hit:
+                errors.append(f"{EGRESS_CPP}: read_stats() names `{hit.group(0)}` — it runs on any "
+                              "task and may read only the published copy, never the pump's state (F149)")
+    files = dict(others)
+    files[INTEG_CPP] = integ
+    files[MQTT_CPP] = mqtt
+    files[EGRESS_CPP] = egress
+    code_of = {name: blank_cached(src) for name, src in files.items()}
+    for call, home, sig, where in (
+            ("csi_event_egress::stats(", MQTT_CPP, SIG_PUBLISH_EGRESS, "csi_mqtt.cpp's publish_egress()"),
+            ("csi_mqtt::publish_egress(", INO, SIG_SKETCH_LOOP, "the sketch's loop()")):
+        sites = [name for name, c in code_of.items() for _ in re.finditer(re.escape(call), c)]
+        span = the_body(code_of[home], sig, f"{home}: {where}", []) if home in code_of else None
+        inside = span is not None and code_of[home][span[0]:span[1]].count(call) == 1
+        if len(sites) != 1 or not inside:
+            errors.append(f"{SKETCH}: `{call}` must be called exactly once in the sketch, in {where} "
+                          f"(found {len(sites)}: {', '.join(sorted(set(sites))) or 'none'}) — "
+                          "stats() reads the pump's state, which only the loop task may (F149)")
+    diag = body_of(code_of.get(INO, ""), SIG_DIAGNOSTICS, f"{INO}: handle_diagnostics()", errors)
+    if diag is not None and "csi_event_egress::read_stats(" not in diag:
+        errors.append(f"{INO}: handle_diagnostics() (the httpd task) must read the egress's counters "
+                      "through csi_event_egress::read_stats( (F149)")
+
+
 def check(integ: str, egress: str, mqtt: str, others: dict[str, str] | None = None) -> list[str]:
     errors: list[str] = []
     check_hook(integ, errors)
@@ -578,6 +642,7 @@ def check(integ: str, egress: str, mqtt: str, others: dict[str, str] | None = No
     check_boot_init_callers(integ, others or {}, errors)
     check_hand_over(egress, errors)
     check_destination_epoch(mqtt, errors)
+    check_stats_off_the_loop(integ, egress, mqtt, others or {}, errors)
     return errors
 
 
@@ -779,8 +844,65 @@ MUTATIONS: list[tuple[str, Mutation]] = [
 ]
 
 
+# Rule 12 (F149) reaches into the sketch's other files: these mutations take
+# and return them too.
+OthersMutation = Callable[[str, str, str, dict], "tuple[str, str, str, dict]"]
+
+
+def on_o(path: str, sig: str, pat: str, repl: str) -> OthersMutation:
+    def mutate(i: str, e: str, m: str, o: dict) -> "tuple[str, str, str, dict]":
+        o = dict(o)
+        o[path] = mutate_in(o[path], sig, pat, repl)
+        return i, e, m, o
+    return mutate
+
+
+def on_3(mutation: Mutation) -> OthersMutation:
+    def mutate(i: str, e: str, m: str, o: dict) -> "tuple[str, str, str, dict]":
+        return (*mutation(i, e, m), o)
+    return mutate
+
+
+OTHERS_MUTATIONS: list[tuple[str, OthersMutation]] = [
+    ("the pump never publishes its counters",
+     on_3(on_e(SIG_PUMP, r"\n[ \t]*s_stats_view\.publish\(stats\(\)\);", ""))),
+    ("the pump publishes its counters before the pass's work",
+     on_3(lambda i, e, m: (i, mutate_in(mutate_in(e, SIG_PUMP, r"\n[ \t]*s_stats_view\.publish\(stats\(\)\);", ""),
+                                        SIG_PUMP, r"(Committed\s+ev\s*;)", r"s_stats_view.publish(stats()); \1"), m))),
+    ("the pump publishes its counters twice",
+     on_3(on_e(SIG_PUMP, r"(Committed\s+ev\s*;)", r"s_stats_view.publish(stats()); \1"))),
+    ("read_stats() reads the pump's state",
+     on_3(on_e(SIG_READ_STATS, r"return\s+s_stats_view\.read\(out\);", "*out = stats(); return true;"))),
+    ("read_stats() peeks at the planner",
+     on_3(on_e(SIG_READ_STATS, r"(return\s+s_stats_view\.read\(out\);)",
+               r"if (g_state && g_state->planner.pending()) return false; \1"))),
+    ("GET /api/diagnostics reads the pump's state on the httpd task",
+     on_o(INO, SIG_DIAGNOSTICS, r"csi_event_egress::read_stats\(&egress_stats\)",
+          "(egress_stats = csi_event_egress::stats(), true)")),
+    ("GET /api/diagnostics publishes the egress topic",
+     on_o(INO, SIG_DIAGNOSTICS, r"(g_health\.http_requests\+\+;)", r"\1 csi_mqtt::publish_egress();")),
+    ("the egress topic leaves the loop",
+     on_o(INO, SIG_SKETCH_LOOP, r"\n[ \t]*csi_mqtt::publish_egress\(\);", "")),
+    ("the egress topic publishes something other than stats()",
+     on_3(on_m(SIG_PUBLISH_EGRESS, r"csi_event_egress::stats\(\)", "csi_event_egress::Stats{}"))),
+    ("csi_integration::loop reads stats() too",
+     on_3(on_i(SIG_INTEG_LOOP, r"(csi_bundler_tick\(\);)", r"\1 (void)csi_event_egress::stats();"))),
+]
+
+
 def self_test(integ: str, egress: str, mqtt: str, others: dict[str, str]) -> list[str]:
     problems = []
+    for name, mutate4 in OTHERS_MUTATIONS:
+        try:
+            i, e, m, o = mutate4(integ, egress, mqtt, others)
+        except AnchorMissing as missing:
+            problems.append(f"self-test: mutation '{name}' no longer applies (anchor {missing}) — "
+                            "the source changed shape; update this guard's mutations with it")
+            continue
+        if (i, e, m, o) == (integ, egress, mqtt, others):
+            problems.append(f"self-test: mutation '{name}' changed nothing")
+        elif not check(i, e, m, o):
+            problems.append(f"self-test: the check did not bite on mutation '{name}'")
     for name, mutate in MUTATIONS:
         try:
             i, e, m = mutate(integ, egress, mqtt)
@@ -824,8 +946,9 @@ def main() -> int:
           f"the egress runs once, on the loop task, after the id floor and before the modules "
           f"register; the modules' boot init runs once, after they register and before the "
           f"first tick; live rows wait behind the "
-          f"card and RAM backlog; the tamper bridge goes first; a changed broker bumps the epoch "
-          f"({len(MUTATIONS)} mutations refused).")
+          f"card and RAM backlog; the tamper bridge goes first; a changed broker bumps the epoch; "
+          f"only the loop task reads the egress's own counters "
+          f"({len(MUTATIONS) + len(OTHERS_MUTATIONS)} mutations refused).")
     return 0
 
 

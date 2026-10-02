@@ -104,6 +104,7 @@ std::vector<Call> calls;
 std::vector<std::pair<std::string, std::string>> published;   // topic, payload
 std::vector<std::string> published_on;     // the task of each publish
 std::vector<int> published_to;             // the client of each publish
+std::vector<bool> published_retained;      // each publish's retain flag
 int publishes_on_dead = 0;
 int destroyed_under_publish = 0;
 std::function<void()> during_publish;      // runs inside the next publish
@@ -146,6 +147,7 @@ void reset() {
   published.clear();
   published_on.clear();
   published_to.clear();
+  published_retained.clear();
   publishes_on_dead = 0;
   destroyed_under_publish = 0;
   during_publish = nullptr;
@@ -260,7 +262,7 @@ esp_err_t esp_mqtt_client_destroy(esp_mqtt_client_handle_t c) {
 }
 
 int esp_mqtt_client_publish(esp_mqtt_client_handle_t c, const char* topic, const char* data,
-                            int len, int, int) {
+                            int len, int, int retain) {
   if (c == nullptr || !c->alive) {
     ++fake::publishes_on_dead;
     return -1;
@@ -311,6 +313,7 @@ int esp_mqtt_client_publish(esp_mqtt_client_handle_t c, const char* topic, const
   fake::published.emplace_back(topic, std::string(data, data + len));
   fake::published_on.push_back(fake::task);
   fake::published_to.push_back(c->id);
+  fake::published_retained.push_back(retain != 0);
   return 1;
 }
 
@@ -358,6 +361,14 @@ uint32_t g_epoch_at_pump = 0;   // destination_epoch() as the last pump saw it
 void pump() {
   ++g_pumps;
   g_epoch_at_pump = csi_mqtt::destination_epoch();
+}
+// The egress's counters, as its stats() returns them on the loop task; the
+// egress topic's publish reads them (sweep F149).
+Stats g_stats = {};
+std::vector<std::string> g_stats_read_on;   // the task of each stats() read
+Stats stats() {
+  g_stats_read_on.push_back(fake::task);
+  return g_stats;
 }
 }  // namespace csi_event_egress
 
@@ -434,6 +445,7 @@ void boot_with_broker(const char* host, bool connect = true) {
   fake::published.clear();
   fake::published_on.clear();
   fake::published_to.clear();
+  fake::published_retained.clear();
 }
 
 // The loop task's turn: one pass of csi_mqtt::loop(), timed.
@@ -1022,6 +1034,61 @@ void test_the_health_publish_warns_before_the_id_space_runs_out() {
   std::printf("PASS the_health_publish_warns_before_the_id_space_runs_out\n");
 }
 
+// ── The egress counters' topic (sweep F149) ────────────────────────────
+
+// The canary-wap's egress counters reach Home Assistant on a retained topic
+// of their own, beside health: the object (up to 319 bytes) does not fit
+// the health body's 34 spare bytes. The body is the canary's health
+// `csi_event_egress` object, name for name.
+std::string last_on(const std::string& suffix, bool* retained = nullptr) {
+  for (size_t i = fake::published.size(); i-- > 0;) {
+    const std::string& topic = fake::published[i].first;
+    if (topic.size() >= suffix.size() &&
+        topic.compare(topic.size() - suffix.size(), suffix.size(), suffix) == 0) {
+      if (retained != nullptr) *retained = fake::published_retained[i];
+      return fake::published[i].second;
+    }
+  }
+  return "";
+}
+
+void test_the_egress_counters_ride_a_retained_topic_of_their_own() {
+  boot_with_broker("10.0.0.1");
+  csi_event_egress::Stats& st = csi_event_egress::g_stats;
+  st.dropped = 1; st.held_dropped = 2; st.ambient_dropped = 3; st.unsent_dropped = 4;
+  st.planner.live = 5; st.planner.held = 6; st.planner.queued = 7; st.planner.replayed = 8;
+  st.planner.skipped = 9; st.planner.untrusted = 10; st.planner.unsendable = 11;
+  st.planner.truncated_unsent = 12; st.planner.read_giveups = 13;
+  csi_event_egress::g_stats_read_on.clear();
+  csi_mqtt::publish_egress();
+  CHECK(fake::published.size() == 1);
+  CHECK(fake::published[0].first == std::string("securacv/") + kDeviceId + "/egress");
+  CHECK(fake::published_retained[0]);   // a hub that starts later still reads them
+  CHECK(fake::published[0].second ==
+        "{\"dropped\":1,\"held_dropped\":2,\"ambient_dropped\":3,\"unsent_dropped\":4,"
+        "\"planner\":{\"live\":5,\"held\":6,\"queued\":7,\"replayed\":8,\"skipped\":9,"
+        "\"untrusted\":10,\"unsendable\":11,\"truncated_unsent\":12,\"read_giveups\":13}}");
+  CHECK(csi_event_egress::g_stats_read_on.size() == 1 &&
+        csi_event_egress::g_stats_read_on[0] == "loop");
+  // Every counter at its widest: the whole object goes out.
+  memset(&st, 0xFF, sizeof(st));
+  csi_mqtt::publish_egress();
+  bool retained = false;
+  const std::string widest = last_on("/egress", &retained);
+  CHECK(widest.size() == 319 && retained && widest.back() == '}');
+  // The health body is not where they went: it keeps its own keys.
+  csi_mqtt::publish_health(200000, 312);
+  CHECK(last_on("/health").find("dropped") == std::string::npos);
+  // With the link down nothing is published (the loop's 60 s block only
+  // runs while connected; the bridge's gate refuses anyway).
+  fake::deliver(fake::last_client(), MQTT_EVENT_DISCONNECTED);
+  const size_t before = fake::published.size();
+  csi_mqtt::publish_egress();
+  CHECK(fake::published.size() == before);
+  st = csi_event_egress::Stats{};
+  std::printf("PASS the_egress_counters_ride_a_retained_topic_of_their_own\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1048,6 +1115,7 @@ const Test kTests[] = {
     {"a_loop_pass_never_waits_behind_the_connect_burst", test_a_loop_pass_never_waits_behind_the_connect_burst},
     {"a_connect_burst_cut_short_leaves_the_link_down", test_a_connect_burst_cut_short_leaves_the_link_down},
     {"the_health_publish_warns_before_the_id_space_runs_out", test_the_health_publish_warns_before_the_id_space_runs_out},
+    {"the_egress_counters_ride_a_retained_topic_of_their_own", test_the_egress_counters_ride_a_retained_topic_of_their_own},
 };
 
 }  // namespace reinit

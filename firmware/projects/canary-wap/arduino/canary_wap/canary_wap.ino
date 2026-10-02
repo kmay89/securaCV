@@ -163,6 +163,7 @@
 #include "tamper_events_module.h" // system.integrity watcher (fed from loop())
 #include "contact_tamper.h"      // enclosure contact debounce (FEATURE_TAMPER_GPIO)
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
+#include "csi_event_egress.h"    // the egress's counters, for GET /api/diagnostics (F149)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -3671,7 +3672,8 @@ static esp_err_t handle_system_metrics(httpd_req_t* req) {
 #endif
 
 // ────────────────────────────────────────────────────────────────────────────
-// GET /api/diagnostics — heap snapshot + SD health + degradation level
+// GET /api/diagnostics — heap snapshot + SD health + degradation level, and
+// the committed-event egress's counters (sweep F149)
 // ────────────────────────────────────────────────────────────────────────────
 
 #if FEATURE_SYS_MONITOR
@@ -3681,7 +3683,20 @@ static esp_err_t handle_diagnostics(httpd_req_t* req) {
   sys_monitor::DegradeLevel degrade = sys_monitor::get_degrade_level();
   sys_monitor::SDHealthStats sd_h = sys_monitor::get_sd_health();
 
-  char buf[512];
+  // The egress's counters as the loop task's last pump published them
+  // (this is the httpd task: csi_event_egress::stats() reads the pump's own
+  // state, which only the loop task may), in the names of the canary's MQTT
+  // health and of this device's egress topic. null before the first pump.
+  char egress[csi_event_egress::kStatsJsonMax];
+  csi_event_egress::Stats egress_stats;
+  if (!csi_event_egress::read_stats(&egress_stats) ||
+      csi_event_egress::stats_json(egress_stats, egress, sizeof(egress)) == 0) {
+    strcpy(egress, "null");
+  }
+
+  // Worst case 663 bytes: every number at 10 digits, "EMERGENCY", and a
+  // 319-byte egress object (it was 512 before the object).
+  char buf[768];
   int len = snprintf(buf, sizeof(buf),
     "{"
     "\"ok\":true,"
@@ -3702,7 +3717,8 @@ static esp_err_t handle_diagnostics(httpd_req_t* req) {
       "\"space_warning\":%s,"
       "\"space_critical\":%s"
     "},"
-    "\"uptime_sec\":%u"
+    "\"uptime_sec\":%u,"
+    "\"csi_event_egress\":%s"
     "}",
     (unsigned)sys_monitor::g_sys_metrics.heap_free,
     (unsigned)sys_monitor::g_sys_metrics.heap_min_free,
@@ -3715,7 +3731,8 @@ static esp_err_t handle_diagnostics(httpd_req_t* req) {
     (unsigned)sd_h.usage_pct,
     sd_h.space_warning  ? "true" : "false",
     sd_h.space_critical ? "true" : "false",
-    (unsigned)sys_monitor::g_sys_metrics.uptime_sec);
+    (unsigned)sys_monitor::g_sys_metrics.uptime_sec,
+    egress);
 
   if (len <= 0 || len >= (int)sizeof(buf)) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
@@ -12411,6 +12428,11 @@ void loop() {
       csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
                                (uint32_t)uptime_seconds(), batt_ptr,
                                &tamper_lv);
+      // What the committed-event egress dropped and sent this boot (sweep
+      // F149), on a retained topic of its own beside health: the object
+      // does not fit the health body. This task runs the pump, so it reads
+      // the counters directly.
+      csi_mqtt::publish_egress();
     }
 
 #if FEATURE_ACOUSTIC_EVENTS

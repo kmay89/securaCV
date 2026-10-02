@@ -865,11 +865,13 @@ clean: clean-bt-commands
 # stalled link a busy pass waits out one timeout, not esp_mqtt's 10 s, and a
 # pass never waits behind the CONNECTED burst esp_mqtt sends under its lock.
 # Also the health publish's event-id space warning (sweep F82), against a
-# stubbed allocator.
+# stubbed allocator, and the egress counters' retained topic (sweep F149),
+# against a stubbed csi_event_egress::stats().
 MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
 
 $(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
+                  $(SRC_DIR)/csi_event_egress.h \
                   $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
 	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp

@@ -419,6 +419,20 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
                     const MqttTamperLevels* tamper = nullptr);
 
 /**
+ * Push the committed-event egress's counters to {prefix}/{device_id}/egress
+ * (sweep F149), retained, beside the health publish and at its cadence.
+ * The body is csi_event_egress::stats_json() of csi_event_egress::stats():
+ * the object the canary PIO tree carries as its health's
+ * `csi_event_egress` (dropped, held_dropped, ambient_dropped,
+ * unsent_dropped and the backfill planner's counters under `planner`), so
+ * Home Assistant reads both devices with one parser. A topic of its own
+ * because the health body has 34 of its 384 bytes spare at worst and the
+ * object is up to 319. The counters start over at every boot. Loop task
+ * only: stats() reads the pump's state, which the pump writes there.
+ */
+void publish_egress();
+
+/**
  * Push the witness count to {prefix}/{device_id}/counts. Used by the
  * canary fleet view as the "how many records did this device write?"
  * indicator.

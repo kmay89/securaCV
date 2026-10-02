@@ -821,6 +821,8 @@ bool connected() {
  *   events: {event_type, timestamp, zone, confidence, signed, motion,
  *            breathing, bpm, duration_sec, state}
  *   health: {battery, memory_free, uptime, firmware_version, public_key}
+ *   egress: csi_event_egress::stats_json (the canary's health
+ *           csi_event_egress object; HA's health sensor attributes)
  *   chain : {length, latest_hash, algorithm}
  *   counts: {total}
  *   status: {online, csi_running, wifi_connected, rssi}
@@ -1055,6 +1057,15 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
   body[len++] = '}';
   body[len] = '\0';
   publish_raw(topic, body, len, /*retain=*/true);
+}
+
+void publish_egress() {
+  char topic[192];
+  build_topic(topic, sizeof(topic), "egress");
+  char body[csi_event_egress::kStatsJsonMax];
+  const size_t n = csi_event_egress::stats_json(csi_event_egress::stats(), body, sizeof(body));
+  if (n == 0) return;
+  publish_raw(topic, body, n, /*retain=*/true);
 }
 
 void publish_update_state(const char* json_payload) {
