@@ -72,6 +72,17 @@
  * and the flush run before the backfill pass instead of after it (a held
  * row goes one pass later, in the same order).
  *
+ * F107: a row routed, and a held row flushed, in the pass the offline queue
+ * still drains an outage join the queue's back instead of going live past
+ * it (each fails with the branch removed from, or moved after the live send
+ * in, mqtt_offline_queue.h's publish_or_queue()). F109: the egress's
+ * counters (csi_event_egress_stats(), the health publish's
+ * csi_event_egress): live, held, replayed and queued rows, a full egress
+ * queue, the hold's overflow and the ambient rows it refuses, all from
+ * boot. F82: csi_event_egress_id_space_low() is up once the real
+ * allocator reaches kHoldLimit, after a reboot past it, and after a wrap.
+ * Each fails with its line of the fix reverted.
+ *
  * The proofs build this file, with this directory's Makefile and stubs,
  * against an older egress source: for F104 the one from the commit that
  * added this test ("test(canary): host-test the real canary event egress"),
