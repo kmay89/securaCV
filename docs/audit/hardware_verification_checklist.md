@@ -723,9 +723,13 @@ device. Owner: U1.
     canary-wap image ever stored settings on the board; nothing on the
     canary writes them).
   - Expected: presence and anomaly rows as on the previous firmware; the
-    boot log shows CSI armed as before. The one difference by design: the
-    activity ribbon's first 15-minute bucket starts when the modules
-    initialize in `setup()`, not at power-on.
+    boot log shows CSI armed as before, plus one Preferences
+    `nvs_open failed: NOT_FOUND` error line when the modules initialize
+    (the boot's one read-only open of the `csi` namespace, which nothing on
+    the canary creates; host-tested as one attempt, not one per setting).
+    The other difference by design: the activity ribbon's first 15-minute
+    bucket starts when the modules initialize in `setup()`, not at
+    power-on.
   - Artifact: `docs/audit/repro/F93/canary-defaults/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
