@@ -509,6 +509,7 @@ enum CommandType : uint8_t {
   MESH_CMD_REMOVE_PEER,      // fingerprint
   MESH_CMD_RENAME,           // name
   MESH_CMD_CLEAR_ALERTS,
+  MESH_CMD_SAVE_REPLAY,      // the replay counters to NVS (save_replay_counters_before_reboot)
 };
 
 struct Command {
@@ -570,9 +571,19 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 // Save/load per-peer msg_counter_rx to NVS so replay defense survives
 // reboots. Called from canary_wap.ino at boot (load) and periodically
 // from loop (save every 5 min) + on clean shutdown.
+//
+// save_replay_counters() reads the peer table and writes through the mesh's
+// one Preferences handle, so it runs on the loop task only (the periodic
+// save). Before a reboot, call save_replay_counters_before_reboot() from any
+// task: on the loop task (init()'s, which is setup()'s and loop()'s) it saves
+// in place; from another (POST /api/reboot and the safe-mode retry run on
+// esp_http_server's task) it hands MESH_CMD_SAVE_REPLAY to submit() and
+// waits up to COMMAND_WAIT_MS. True when the blob was written; false when
+// the save failed or did not run (the 5-minute save is the one before it).
 // ════════════════════════════════════════════════════════════════════════════
 
 bool save_replay_counters();
+bool save_replay_counters_before_reboot();
 bool load_replay_counters();
 
 // ════════════════════════════════════════════════════════════════════════════

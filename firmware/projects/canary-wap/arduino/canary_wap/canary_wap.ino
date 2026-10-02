@@ -11162,7 +11162,9 @@ void setup() {
       });
 
       mesh_network::load_replay_counters();
-      pre_reboot_fn hook = []() { mesh_network::save_replay_counters(); };
+      // From any task: POST /api/reboot and the safe-mode retry call it on
+      // esp_http_server's task, which hands the save to the loop task.
+      pre_reboot_fn hook = []() { (void)mesh_network::save_replay_counters_before_reboot(); };
       __atomic_store_n(&g_pre_reboot_hook, hook, __ATOMIC_RELEASE);
 
       mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,

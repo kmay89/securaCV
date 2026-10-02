@@ -472,6 +472,84 @@ void test_a_pairing_driven_over_rest_completes() {
   std::printf("PASS a_pairing_driven_over_rest_completes\n");
 }
 
+// ── The pre-reboot replay save ──────────────────────────────────────────
+
+// What one pre-reboot save saw, called as the hook calls it on the task the
+// test plays (the HTTP server's when `httpd`), with the loop task getting
+// one update() pass on the caller's `turn_at`-th sleep (never, when 0).
+struct RebootSave {
+  bool ok = false;
+  unsigned sleeps = 0;
+  unsigned loop_turns = 0;
+  uint32_t waited_ms = 0;
+};
+RebootSave reboot_save(Device& d, bool httpd, unsigned turn_at) {
+  become(d);
+  RebootSave r;
+  const uint32_t start = host_sim::now_ms;
+  host_sim::on_task_delay = [&](uint32_t ms) {
+    host_sim::now_ms += ms;
+    ++r.sleeps;
+    if (turn_at != 0 && r.sleeps == turn_at) {
+      host_sim::on_httpd_task = false;
+      mn::update();
+      ++r.loop_turns;
+      host_sim::on_httpd_task = true;
+    }
+  };
+  host_sim::on_httpd_task = httpd;
+  r.ok = mn::save_replay_counters_before_reboot();
+  host_sim::on_httpd_task = false;
+  host_sim::on_task_delay = nullptr;
+  r.waited_ms = host_sim::now_ms - start;
+  return r;
+}
+
+// The first member's msg_counter_rx in d's saved replay blob (0: none).
+uint64_t saved_rx_counter(Device& d) {
+  become(d);
+  uint8_t blob[mn::MAX_OPERA_SIZE * mn::REPLAY_ENTRY_SIZE] = {};
+  mn::g_prefs.begin(mn::NVS_NS, true);
+  const size_t got = mn::g_prefs.getBytes(mn::NVS_REPLAY_KEY, blob, sizeof(blob));
+  mn::g_prefs.end();
+  if (got < mn::REPLAY_ENTRY_SIZE) return 0;
+  uint64_t ctr = 0;
+  std::memcpy(&ctr, blob + mn::FINGERPRINT_SIZE, sizeof(ctr));
+  return ctr;
+}
+
+// POST /api/reboot and the safe-mode retry run the pre-reboot hook on the
+// HTTP server's task. The replay save reads the peer table and writes
+// through the mesh's one g_prefs handle, which update() uses on the loop
+// task, so from there it is a MESH_CMD_SAVE_REPLAY the loop task runs (the
+// F96 review found the hook calling save_replay_counters() in place). On
+// the loop task (the safe-mode paths in setup() and loop()) it saves in
+// place, and a save the loop task never reaches does not run.
+void test_a_reboot_save_from_the_http_task_runs_on_the_loop_task() {
+  fresh_opera({&A, &B});
+  become(A);
+  mn::g_peers[0].msg_counter_rx = 4242;
+  host_sim::httpd_side_effects = 0;
+  RebootSave r = reboot_save(A, /*httpd=*/true, /*turn_at=*/1);
+  CHECK(host_sim::httpd_side_effects == 0);           // nothing written from the HTTP task
+  CHECK(r.ok && r.loop_turns == 1);
+  CHECK(saved_rx_counter(A) == 4242);                 // the loop task wrote it
+  // The loop task never gets to it: the save is withdrawn, not run.
+  become(A);
+  mn::g_peers[0].msg_counter_rx = 5555;
+  r = reboot_save(A, /*httpd=*/true, /*turn_at=*/0);
+  CHECK(!r.ok && r.waited_ms == mn::COMMAND_WAIT_MS);
+  CHECK(host_sim::httpd_side_effects == 0);
+  CHECK(saved_rx_counter(A) == 4242);
+  // On the loop task: in place, no hand-over, no wait.
+  become(A);
+  mn::g_peers[0].msg_counter_rx = 6666;
+  r = reboot_save(A, /*httpd=*/false, /*turn_at=*/1);
+  CHECK(r.ok && r.sleeps == 0 && r.loop_turns == 0);
+  CHECK(saved_rx_counter(A) == 6666);
+  std::printf("PASS a_reboot_save_from_the_http_task_runs_on_the_loop_task\n");
+}
+
 // The status line of every code an error answer in canary_wap.ino carries
 // (http_send_error: 400, 409, 500, 503, and 404). Before F96 every code but
 // 400, 404 and 500 went out as "400 Bad Request", the audio self-test's 409
@@ -503,6 +581,8 @@ const Test kTests[] = {
     {"commands_run_in_the_order_they_were_posted", test_commands_run_in_the_order_they_were_posted},
     {"a_pairing_driven_over_rest_completes", test_a_pairing_driven_over_rest_completes},
     {"every_error_code_has_its_status_line", test_every_error_code_has_its_status_line},
+    {"a_reboot_save_from_the_http_task_runs_on_the_loop_task",
+     test_a_reboot_save_from_the_http_task_runs_on_the_loop_task},
 };
 
 }  // namespace commands

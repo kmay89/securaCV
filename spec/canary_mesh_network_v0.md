@@ -892,7 +892,11 @@ loop task to start it. Two errors follow, with the PlatformIO tree's codes:
 the loop task did not start it in time; it was withdrawn and did not run).
 A command the loop task has started is waited for and answered with its
 own result, so every other answer is unchanged. A request sent while the
-device is still booting, before its loop runs, gets `mesh_timeout`.
+device is still booting, before its loop runs, gets `mesh_timeout`. The
+replay counters that `POST /api/reboot` and the safe-mode retry save
+before the restart go the same way (one more command through the same
+ring). The loop task writes them; a save it does not start within 2 s does
+not run, and the periodic save (every 5 minutes) is the last one on flash.
 Host-tested (`test_mesh_commands_wap.cpp`, `test_loop_command_ring.cpp`);
 the Arduino compile is CI's; not bench-tested.
 

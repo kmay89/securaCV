@@ -56,6 +56,13 @@ Mesh (F96):
    from the sketch's `loop()`. `http_send_error()` sets its status line with
    `http_status_line(status_code)` (`http_status_line.h`, host-tested), so a
    409 `mesh_busy` and a 503 `mesh_timeout` go out with their own lines.
+   `mesh_network::save_replay_counters(` (the peer table and the one
+   `g_prefs` handle) is called only from the sketch's `loop()`; the
+   pre-reboot hook, which POST /api/reboot and the safe-mode retry run on
+   the httpd task, calls `mesh_network::save_replay_counters_before_reboot(`,
+   which saves in place only on the loop task (`xTaskGetCurrentTaskHandle()`
+   against the one `init()` recorded) and otherwise hands
+   `MESH_CMD_SAVE_REPLAY` to `submit(`.
 
 MQTT (F106):
 
@@ -152,6 +159,7 @@ SIG_HANDLER = r"\besp_err_t\s+(\w+)\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)"
 SIG_SEND_ERROR = r"\bstatic\s+esp_err_t\s+http_send_error\s*\([^)]*\)"
 SIG_UPDATE = r"\bvoid\s+update\s*\(\s*\)"
 SIG_SUBMIT = r"\bloop_command_ring::Wait\s+submit\s*\([^)]*\)"
+SIG_REBOOT_SAVE = r"\bbool\s+save_replay_counters_before_reboot\s*\(\s*\)"
 SIG_RECV_CB = r"\bstatic\s+void\s+espnow_recv_cb\s*\([^)]*\)"
 SIG_SEND_CB = r"\bstatic\s+void\s+espnow_send_cb\s*\([^)]*\)"
 SIG_MQTT_LOOP = r"\bvoid\s+loop\s*\(\s*\)"
@@ -307,6 +315,13 @@ def check_mesh_callers(mesh_cpp: str, errors: list[str]) -> None:
             if re.search(r"\b" + tok + r"\s*\(", submit):
                 errors.append(f"{MESH_CPP}: submit() names {tok}( — it runs on the HTTP server's "
                               "task and only posts the command and waits (F96)")
+    reboot_save = body_of(code, SIG_REBOOT_SAVE, f"{MESH_CPP}: save_replay_counters_before_reboot()", errors)
+    if reboot_save is not None:
+        s = squash(reboot_save)
+        if "xTaskGetCurrentTaskHandle()" not in s or "submit(make_command(MESH_CMD_SAVE_REPLAY)" not in s:
+            errors.append(f"{MESH_CPP}: save_replay_counters_before_reboot() must save in place only on "
+                          "the loop task (xTaskGetCurrentTaskHandle() against g_loop_task) and hand "
+                          "MESH_CMD_SAVE_REPLAY to submit() from any other (F96)")
     for sig, what in ((SIG_RECV_CB, "espnow_recv_cb()"), (SIG_SEND_CB, "espnow_send_cb()")):
         cb = body_of(code, sig, f"{MESH_CPP}: {what}", errors)
         if cb is None:
@@ -361,6 +376,17 @@ def check_mesh_sketch(ino: str, others: dict[str, str], errors: list[str]) -> No
                       "httpd_resp_set_status(req, http_status_line(status_code)) — the host-tested table "
                       "(http_status_line.h) that gives 409 mesh_busy and 503 mesh_timeout their lines (F96)")
     loop = body_of(ino_code, SIG_INO_LOOP, f"{INO}: loop()", errors)
+    loop_span = the_body(ino_code, SIG_INO_LOOP, "", [])
+    saves = [(f, p) for f, c in code.items() for p in call_sites(c, "mesh_network::save_replay_counters")]
+    in_loop = [p for f, p in saves if f == INO and loop_span is not None and loop_span[0] <= p < loop_span[1]]
+    if len(in_loop) != len(saves):
+        errors.append(f"{SKETCH}: mesh_network::save_replay_counters( outside the sketch's loop() "
+                      f"({len(saves) - len(in_loop)} call(s)) — it reads the peer table and writes the "
+                      "mesh's one g_prefs handle; from any other task (the pre-reboot hook) call "
+                      "mesh_network::save_replay_counters_before_reboot() (F96)")
+    if "mesh_network::save_replay_counters_before_reboot(" not in ino_code:
+        errors.append(f"{INO}: the pre-reboot hook must call "
+                      "mesh_network::save_replay_counters_before_reboot() (F96)")
     total = sum(c.count("mesh_network::update(") for c in code.values())
     if loop is None or loop.count("mesh_network::update(") != 1 or total != 1:
         errors.append(f"{SKETCH}: mesh_network::update( must be called once, from the sketch's "
@@ -658,6 +684,12 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on("ino", SIG_SEND_ERROR, r"http_status_line\(status_code\)",
         'status_code == 400 ? "400 Bad Request" : status_code == 404 ? "404 Not Found" : '
         'status_code == 500 ? "500 Internal Server Error" : "400 Bad Request"')),
+    ("the pre-reboot hook saves the replay counters in place (on the httpd task)",
+     raw("ino", "(void)mesh_network::save_replay_counters_before_reboot();",
+         "(void)mesh_network::save_replay_counters();")),
+    ("save_replay_counters_before_reboot() saves in place on any task",
+     on("mesh_cpp", SIG_REBOOT_SAVE, r"bool\s+ok\s*=\s*false;\s*\(void\)submit\([^;]*;\s*return\s+ok;",
+        "return save_replay_counters();")),
     ("the sketch calls mesh_network::update twice",
      on("ino", SIG_INO_LOOP, r"(mesh_network::update\(\);)", r"\1 mesh_network::update();")),
     # Rule 1: the owner commands are internal.

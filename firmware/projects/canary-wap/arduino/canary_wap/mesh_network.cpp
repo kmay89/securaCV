@@ -228,6 +228,11 @@ static PairingSession g_pairing;
 // copy a command or a result in or out, never while one runs.
 static loop_command_ring::Ring<Command, bool, COMMAND_SLOTS, loop_command_ring::PortMuxLock>
     g_commands;
+// The loop task, recorded by init() (setup() runs it there, and loop() runs
+// on the same task): save_replay_counters_before_reboot() saves in place on
+// it and hands the save to it from any other task. Written once, before the
+// pre-reboot hook that reads it is installed; read with an acquire load.
+static TaskHandle_t g_loop_task = nullptr;
 
 // Alert history
 /* PSRAM-resident (csi_mem.h): ~2.9 KB of semantic alert metadata, loop-task
@@ -1788,6 +1793,7 @@ static void store_alert(const MeshAlert* alert) {
 // ════════════════════════════════════════════════════════════════════════════
 
 bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const char* device_name) {
+  __atomic_store_n(&g_loop_task, xTaskGetCurrentTaskHandle(), __ATOMIC_RELEASE);
   if (g_initialized) {
     return true;
   }
@@ -1928,6 +1934,8 @@ static bool run_command(const Command& cmd) {
     case MESH_CMD_CLEAR_ALERTS:
       clear_alerts();
       return true;
+    case MESH_CMD_SAVE_REPLAY:
+      return save_replay_counters();
   }
   return false;
 }
@@ -2694,6 +2702,18 @@ bool save_replay_counters() {
   size_t put = g_prefs.putBytes(NVS_REPLAY_KEY, blob, offset);
   g_prefs.end();
   return put == offset;
+}
+
+bool save_replay_counters_before_reboot() {
+  // Before init() there is no hook to call this, and no loop task recorded:
+  // only setup() (the loop task) could be here.
+  const TaskHandle_t loop_task = __atomic_load_n(&g_loop_task, __ATOMIC_ACQUIRE);
+  if (loop_task == nullptr || loop_task == xTaskGetCurrentTaskHandle()) {
+    return save_replay_counters();
+  }
+  bool ok = false;
+  (void)submit(make_command(MESH_CMD_SAVE_REPLAY), &ok);
+  return ok;
 }
 
 bool load_replay_counters() {
