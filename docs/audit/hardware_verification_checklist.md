@@ -923,6 +923,63 @@ test can run. Compile is CI's. Owner: U1.
     for the link the bridge announces once the burst is sent).
   - Artifact: `docs/audit/repro/F112/slow-reconnect/`.
 
+## canary-wap Bluetooth: settings on/off, NimBLE events, status views (F144, F143, F138) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
+(`set_settings()` turns Bluetooth off and on from the setting as it stood;
+the NimBLE host task's callbacks post events to a 24-slot
+`loop_event_queue.h` that `update()` applies first on every pass, scan
+results and GATT activity only while fewer than 16 wait, and a passkey to
+confirm that finds no room is answered no on the NimBLE task;
+`publish_views()` at every end of `update()` and after each command) and
+`bluetooth_api.h` (the settings POST brings the stack up first when it says
+`"enabled": true`; the four GET routes read `read_status`, `read_scan`,
+`read_paired`, `read_settings`). Host-tested
+(`tests_host/test_bluetooth_commands_wap.cpp` over the NimBLE stand-in,
+three threads of it under `make tsan-bt-commands`;
+`test_loop_event_queue.cpp`) and held by
+`firmware/scripts/check_wap_loop_commands.py` rules BV1-BV3; a real NimBLE
+host task on the other core, a phone's bond and a crowded radio room are
+not something a host test can run. Compile is CI's. Owner: U1.
+
+- [ ] **The settings' "enabled" turns Bluetooth off and on**
+  - Setup: one canary-wap advertising (the default), a phone connected to
+    it in nRF Connect, a Bluetooth scan running from the web UI.
+  - Repro: `POST /api/bluetooth/settings {"enabled": false}`; then
+    `GET /api/bluetooth`; then `POST /api/bluetooth/settings {"enabled":
+    true}` and `GET /api/bluetooth` again; then press Start Advertising.
+  - Expected: after the first POST the phone drops, nRF Connect no longer
+    sees the device, the scan stops and the status says `"state":
+    "disabled"`, `"enabled": false` (and still disabled once the phone's
+    link has gone); after the second, `"state": "idle"`, `"enabled": true`,
+    and Start Advertising makes the device visible again. A reboot between
+    the two keeps it off.
+  - Artifact: `docs/audit/repro/F144/settings-enabled/`.
+- [ ] **Pairing, bonding and scanning with the callbacks on the NimBLE task**
+  - Setup: one canary-wap; two phones with nRF Connect.
+  - Repro: Bluetooth > Pair; pair the first phone (confirm the six digits in
+    the web UI); while it is paired, start a scan in a room with many BLE
+    devices; pair the second phone and let the pairing time out without
+    confirming; reject a third attempt; disconnect from the phone side.
+  - Expected: no Guru Meditation, heap-poisoning abort or watchdog reset;
+    the paired list shows the first phone after a reboot; the scan list
+    fills (up to 16) and ends with `"scanning": false`; the timed-out and
+    rejected attempts fail on the phone and never show as paired;
+    advertising resumes after the disconnect. The health log has no
+    `BLE events dropped (queue full)` in normal use; if it appears, note
+    the count and what the board was doing.
+  - Artifact: `docs/audit/repro/F143/pairing-and-scan/`.
+- [ ] **The Bluetooth panel reads as before**
+  - Setup: the web UI's Bluetooth tab open on a canary-wap, with a phone
+    connected and a scan's results listed.
+  - Repro: leave the tab polling for two minutes while pairing, scanning,
+    removing the paired phone and renaming the device.
+  - Expected: every card fills as it did before (state, name, TX power, MTU,
+    battery, the live connection card with RSSI and distance, the PIN box,
+    the nearby list, the paired list); the paired list empties right after
+    a removal; no field flickers between two values.
+  - Artifact: `docs/audit/repro/F138/bt-panel/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at
