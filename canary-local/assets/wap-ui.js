@@ -1051,33 +1051,43 @@ export function buildMqtt(data, bus) {
   }
   renderRetained();
 
+  // What each topic says now: its wap.json example until a scene moves it
+  // (`now`, parsed, for laying the next scene over; `said`, the retained
+  // string a scene last published).
+  const byTopic = Object.fromEntries(m.topics.map((t) => [t.suffix, t]));
+  const now = {};
+  for (const t of m.topics) if (!t.payload.startsWith('"')) now[t.suffix] = JSON.parse(t.payload);
+  const said = {};
+
   bus.on("mqtt", () => {
     // LWT is replaced by online on connect, then the retained snapshot lands
     const seq = [];
-    seq.push({ topic: withId(m.lwt.topic, id), payload: '{"online":true,"device_type":"canary-wap"}', retain: true });
+    seq.push({ topic: withId(m.lwt.topic, id), payload: '{"online":true,"device_type":"canary-wap"}' });
     for (const t of m.topics) {
       if (!t.retained) continue;
-      seq.push({ topic: withId(m.topic_pattern.replace("<suffix>", t.suffix), id), payload: t.payload, retain: true });
+      seq.push({ topic: withId(m.topic_pattern.replace("<suffix>", t.suffix), id), suffix: t.suffix });
     }
     (async () => {
       for (const msg of seq) {
         await sleep(160); if (!alive(wrap)) return;
-        mqttApply(store, msg); renderRetained();
+        // Each topic lands as it stands when its turn comes. The sandbox emits
+        // online, mqtt and the scene in one click, so the scene has usually
+        // moved chain and counts before the snapshot reaches them; landing the
+        // example then would take the retained chain back to the example's
+        // length until the next click.
+        const payload = msg.suffix ? (said[msg.suffix] ?? byTopic[msg.suffix].payload) : msg.payload;
+        mqttApply(store, { topic: msg.topic, payload, retain: true }); renderRetained();
       }
       pushStream(withId(m.discovery.prefix + "/…/config", id), m.discovery.counts.entities + " entities announced (retained)", "disc");
     })();
   });
-  // What each topic says now: its wap.json example until a scene moves it.
-  const byTopic = Object.fromEntries(m.topics.map((t) => [t.suffix, t]));
-  const now = {};
-  for (const t of m.topics) if (!t.payload.startsWith('"')) now[t.suffix] = JSON.parse(t.payload);
   bus.on("event", (e) => {
     for (const pub of e.mqtt || []) {
       const topic = withId(m.topic_pattern.replace("<suffix>", pub.suffix), id);
       const payload = scenePayload(now[pub.suffix], pub);
       if (pub.set || pub.advance) now[pub.suffix] = JSON.parse(payload);
       const retain = !!(byTopic[pub.suffix] && byTopic[pub.suffix].retained);
-      if (retain) { mqttApply(store, { topic, payload, retain: true }); renderRetained(); }
+      if (retain) { said[pub.suffix] = payload; mqttApply(store, { topic, payload, retain: true }); renderRetained(); }
       pushStream(topic, payload, retain ? "" : "live");
     }
   });

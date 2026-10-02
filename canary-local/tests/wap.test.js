@@ -358,6 +358,41 @@ test("the MQTT pane publishes each scene over the topic as it stands, retained b
   });
 });
 
+// The sandbox's main path: tap a card on an offline bench. wap.js emits
+// online, mqtt and the scene in one click, so the scene publishes before the
+// retained snapshot (160 ms a topic) reaches chain and counts. The snapshot
+// must land each topic as it then stands, not the example over the scene's row.
+test("a scene clicked as the bench connects is not undone by the retained snapshot", async () => {
+  const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
+  await withFakeDom(async () => {
+    const { buildMqtt } = await import("../assets/wap-ui.js");
+    const bus = fakeBus();
+    const wrap = buildMqtt(data, bus);
+    const id = data.device.id_example;
+    const topic = (sfx) => `${data.mqtt.prefix}/${id}/${sfx}`;
+    const retained = () => Object.fromEntries(wrap.all("wap-mqtt-row").map((r) => [r.children[0].textContent, r.children[1].textContent]));
+    const scene = (sid) => data.sandbox.find((s) => s.id === sid);
+    const ex = (sfx) => JSON.parse(data.mqtt.topics.find((t) => t.suffix === sfx).payload);
+    const nRetained = data.mqtt.topics.filter((t) => t.retained).length + 1; // + the LWT's online
+
+    bus.emit("online"); bus.emit("mqtt"); bus.emit("event", scene("smoke"));
+    assert.strictEqual(JSON.parse(retained()[topic("chain")]).length, ex("chain").length + 1);
+    await new Promise((r) => setTimeout(r, 160 * nRetained + 400));
+    assert.ok(retained()[topic("status")], "the snapshot landed");
+    assert.strictEqual(JSON.parse(retained()[topic("chain")]).length, ex("chain").length + 1, "chain stays where the scene left it");
+    assert.strictEqual(JSON.parse(retained()[topic("counts")]).total, ex("counts").total + 1, "counts too");
+    const sensing = JSON.parse(retained()[topic("sensing")]);
+    assert.strictEqual(sensing.acoustic_event, "smoke_alarm_t3", "the smoke row is not reverted to the example");
+    assert.strictEqual(sensing.t3_detected, ex("sensing").t3_detected + 1);
+    // untouched topics land their example
+    assert.strictEqual(retained()[topic("mesh")], data.mqtt.topics.find((t) => t.suffix === "mesh").payload);
+
+    bus.emit("event", scene("wave"));
+    assert.strictEqual(JSON.parse(retained()[topic("chain")]).length, ex("chain").length + 2, "the next click is +2");
+    assert.strictEqual(JSON.parse(retained()[topic("counts")]).total, ex("counts").total + 2);
+  });
+});
+
 // ── 8. DOM-free cores (wap-ui.js) ──────────────────────────────────────────
 test("withId substitutes the device id into templates", async () => {
   const { withId } = await import("../assets/wap-ui.js");
