@@ -81,9 +81,10 @@ Two smaller one-time human acts, same flavor:
   files behind (every refresh ran green and pushed nothing) until a hand
   resync in securacv-homeassistant#17 (2026-09-24). HA14 moved the carried
   `custom_components/securacv` files again in #1725 (and F55 one carried
-  test), and HA18 and HA17 moved them again in #1727; their resync follows
-  both. Until the secret is set, every `main` change to the carried set
-  needs that again.
+  test), resynced in securacv-homeassistant#19, and HA18, HA17 and HA22
+  moved them again in #1727, resynced by hand in securacv-homeassistant#20
+  (2026-10-01). Until the secret is set, every `main` change to the
+  carried set needs that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
   to an integration icon on HA < 2026.3.
@@ -1381,8 +1382,8 @@ so — see D2 below.)
   to the tuning console, which has no identity command, so `j` needs a new
   input path on both. Which port that input would arrive on is F67's
   question, so settle F67 first. Found doing HA17.
-- [ ] **F64 [code] The onboarding bird never sits where its host placed
-  it.** canary_mark_mood() records the bird's base with lv_obj_get_x/y at
+- [x] **F64 [code] The onboarding bird never sits where its host placed
+  it.** (#1760) canary_mark_mood() records the bird's base with lv_obj_get_x/y at
   its first on-stage mood, and the breath and the poses then write that base
   back as the style offset. onboard_ui_create() reaches that mood (Hello,
   Idle) before LVGL's first layout pass, so the base reads 0. The bird then
@@ -1414,6 +1415,19 @@ so — see D2 below.)
   at the panel center behind the title. The fix here covers both; check
   that the drawn bird sits where each scene places it. Found by F50
   (#1727).
+  *Done (#1760):* `record_base()` reads the bird's style offset
+  (`lv_obj_get_style_x/y`), the number the host's `lv_obj_align` wrote and
+  the poses write back, instead of the laid-out position; the wing and eye
+  reads that offset their own last pose do the same. The emulator exports
+  `emu_mark_box()` (the shell's `markBox()`), and a shared probe check
+  (`canary-local/tests/bird_perch.mjs`) fails a shown bird that is off the
+  glass or over a line of text: `boot_probe` runs it on every flavor's
+  face, `onboard_probe` on the PhoneJoined scene, which must show the bird.
+  On the rebuilt dist both pass for all five flavors (local Chromium run),
+  and the screenshots show the round watch's PhoneJoined bird above its
+  title (none was drawn before), the watch face's bird inside the ring
+  above the clock (it sat on the ring), and the portrait face's bird at
+  its `TOP_MID V(22)` seat. Not seen on real glass (U1).
 - [ ] **F65 [code] The onboarding's scene titles and bodies are cut on small
   glass.** Only the Join scene's credentials rows and the coach line are
   fitted (F45, F50). The titles and bodies keep LV_LABEL_LONG_DOT at a fixed
@@ -1892,14 +1906,18 @@ so — see D2 below.)
   a newcomer as `online: true`, the tile toast says "online · chain intact"
   for an offline tile, and the paragraph's 8799 instruction does not work
   inside either app.
-- [ ] **A25 [code] canary-local's WAP page shows an 8-digit example
-  fingerprint.** `canary-local/tools/gen_wap.py`'s TOPICS examples for
+- [x] **A25 [code] canary-local's WAP page shows an 8-digit example
+  fingerprint.** (#1760) `canary-local/tools/gen_wap.py`'s TOPICS examples for
   `events`, `chain` and `counts` carry `"fp":"7f3a9c21"`. The envelope `fp`
   is 16 hex digits (8 bytes of `pubkey_fp`), and since HA20 a canary-wap
   sends it in lowercase. The examples elide the signature with an ellipsis,
   but the fp reads as a whole value. Give them a 16-digit lowercase example
   (regenerate `wap.json`, then `gen_csp.py` if the page hash moves). Found
   in HA20 (#1727).
+  *Done (#1760):* the envelope examples carry `7f3a9c21b04e6d58`, and the
+  boot log's `Public key fingerprint:` line carries the same 16 digits in
+  `hex_to_str`'s capitals (it prints `g_device.fingerprint_hex`, which HA20
+  left in capitals). `wap.json` regenerated; the CSP did not move.
 
 ---
 
@@ -2430,8 +2448,9 @@ so — see D2 below.)
   files #1703, #1704 and #1718 had moved. The same PR brought the store
   page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
-  one and refuses "encrypted by default". PR #1725 and PR #1727 move
-  carried files again, and their resync follows them (U6). Its health
+  one and refuses "encrypted by default". PR #1725's carried files
+  followed in securacv-homeassistant#19 and PR #1727's in #20 (2026-10-01),
+  byte-identical again (U6). Its health
   items are U6 and U7 above, plus the three monorepo-fixture tests its CI
   deselects, which is by design. A few more tests skip themselves there
   because they read firmware sources the mirror does not carry.)*
@@ -2744,8 +2763,8 @@ so — see D2 below.)
   `witness.html`, `docs/roadmap.md`, `lab.html`, `linux.html`,
   `engine.html`, `compare.html` and `apple-tv.html`. The glossary defines
   the companion app. Left: A24 and W21.
-- [ ] **W21 [code] The website's copy of the fleet contract vectors is
-  hand-carried.** W20 copied
+- [x] **W21 [code] The website's copy of the fleet contract vectors is
+  hand-carried.** (website #216) W20 copied
   `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json` into the
   website's `tests/fixtures/`. `tests/tv-wall.test.mjs` pins it by sha256
   and tells a human to re-copy it. Add it to `scripts/carry_to_site.py`'s
@@ -2758,7 +2777,11 @@ so — see D2 below.)
   products' disclosed outbound paths", path 3. The monorepo half landed in
   #1720, and website #207 added the file to the carry job's `CARRY_PATHS`
   and fixed that pointer; what is left is retiring the hand pin once the
-  first carry PR has run. — in progress (2026-09-23)
+  first carry PR has run.
+  *Done (website #216):* the carry, run from `main` (4507279), added the
+  vectors to `tv/vendor/PROVENANCE.txt` with the sha256 the hand pin held
+  (the file itself was byte-identical); the provenance test now requires
+  that pin, and the hand pin and its test are gone. 705 site tests pass.
 
 ---
 

@@ -12,6 +12,7 @@
 #include <string>
 
 #include "emu_bus.h"
+#include "canary/ui/canary_mark.h"
 #include "canary/ui/character.h"
 #include "canary/glass_settings.h"
 
@@ -158,5 +159,26 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* emu_screen_labels(void) {
   lv_obj_t* scr = lv_scr_act();
   if (scr != nullptr) collect_labels(scr, out);
   out += "]";
+  return out.c_str();
+}
+
+// Where the canary mark is drawn (F64): its area on the panel and whether
+// it and every parent are unhidden, as {x,y,w,h,shown}; "null" while no
+// bird is alive. The bird keeps its base as a style offset from its
+// alignment, so only the laid-out area says where it really is: off the
+// glass, or behind a line of text. Read-only.
+extern "C" EMSCRIPTEN_KEEPALIVE const char* emu_mark_box(void) {
+  static std::string out;
+  lv_obj_t* b = canary::ui::canary_mark_obj();
+  if (b == nullptr) {
+    out = "null";
+    return out.c_str();
+  }
+  lv_area_t a;
+  lv_obj_get_coords(b, &a);
+  out = "{\"x\":" + std::to_string(a.x1) + ",\"y\":" + std::to_string(a.y1) +
+        ",\"w\":" + std::to_string(lv_area_get_width(&a)) +
+        ",\"h\":" + std::to_string(lv_area_get_height(&a)) +
+        ",\"shown\":" + (shown(b) ? "1" : "0") + "}";
   return out.c_str();
 }

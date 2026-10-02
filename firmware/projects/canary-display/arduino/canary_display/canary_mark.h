@@ -50,12 +50,18 @@ lv_obj_t* canary_mark_create(lv_obj_t* parent, int size_px);
 void canary_mark_mood(CanaryMood m);
 
 // The host moved the bird (a new lv_obj_align). The mark records its base
-// position once, at the first on-stage mood after placement, and every
+// position once, at the first on-stage mood after placement (the style
+// offset the placement wrote, never the laid-out position: F64), and every
 // pose and bob writes from that base — so a later move alone is undone on
 // the next animation frame. Call this right after the new placement:
 // off stage it re-arms the one-shot capture for the next mood; on stage
 // it re-enters the current mood so the pose restarts from the new seat.
 void canary_mark_rebase();
+
+// The live bird's object, or nullptr when none is alive. For readers of
+// the glass (the emulator's probes ask where the bird is drawn); a host
+// places the bird through the object canary_mark_create returned.
+lv_obj_t* canary_mark_obj();
 
 void canary_mark_react(CanaryReact r);
 

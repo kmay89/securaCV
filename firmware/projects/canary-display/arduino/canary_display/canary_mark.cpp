@@ -224,7 +224,7 @@ void flourish_wing(int reps, uint32_t half_ms) {
   lv_anim_init(&a);
   lv_anim_set_var(&a, s_wing);
   lv_anim_set_exec_cb(&a, wing_anim_cb);
-  const int y = lv_obj_get_y(s_wing);
+  const int y = (int)lv_obj_get_style_y(s_wing, LV_PART_MAIN);
   lv_anim_set_values(&a, y, y - s_size * 6 / 100);
   lv_anim_set_time(&a, half_ms);
   lv_anim_set_playback_time(&a, half_ms);
@@ -372,6 +372,18 @@ void on_delete(lv_event_t*) {
   s_base_recorded = false;  // the next bird records its own base
 }
 
+// The base is the host's placement as LVGL stores it: the style offset
+// from the bird's alignment anchor, which lv_obj_align and lv_obj_set_pos
+// write, and which every pose and the breath write back (lv_obj_set_x/y).
+// lv_obj_get_x/y is the laid-out position instead: another number under
+// any alignment but TOP_LEFT, and 0 until LVGL's first layout pass. A base
+// read from it lost the host's offset, and once a host re-seated the bird
+// it carried the old seat into the new one, off the glass (F64).
+void record_base(lv_obj_t* o) {
+  s_base_x = (int)lv_obj_get_style_x(o, LV_PART_MAIN);
+  s_base_y = (int)lv_obj_get_style_y(o, LV_PART_MAIN);
+}
+
 }  // namespace
 
 lv_obj_t* canary_mark_create(lv_obj_t* parent, int s) {
@@ -418,8 +430,7 @@ lv_obj_t* canary_mark_create(lv_obj_t* parent, int s) {
 
   s_bird = c;
   s_size = s;
-  s_base_y = lv_obj_get_y(c);
-  s_base_x = lv_obj_get_x(c);
+  record_base(c);
   lv_obj_add_event_cb(c, on_delete, LV_EVENT_DELETE, nullptr);
   s_blink = lv_timer_create(blink_cb, 2900, nullptr);
   s_flourish = lv_timer_create(flourish_cb, 30000, nullptr);
@@ -460,8 +471,7 @@ void canary_mark_mood(CanaryMood m) {
   // bob/hop offsets (up to the 12 px hop apex) into the base and the
   // bird would drift (review catch). The poses restore from this base.
   if (!s_base_recorded) {
-    s_base_y = lv_obj_get_y(s_bird);
-    s_base_x = lv_obj_get_x(s_bird);
+    record_base(s_bird);
     s_base_recorded = true;
   }
   lv_obj_clear_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
@@ -531,6 +541,8 @@ void canary_mark_rebase() {
   canary_mark_mood(m);
 }
 
+lv_obj_t* canary_mark_obj() { return s_bird; }
+
 void canary_mark_trust(uint16_t days) { s_trust_days = days; }
 
 void canary_mark_temperament(float breath, float flourish, float hop) {
@@ -574,7 +586,8 @@ void canary_mark_react(CanaryReact r) {
     case CanaryReact::Tilt:
       // Curious head-cock: beak dips while the eye rises a step.
       lv_obj_set_y(s_beak, s_beak_y + s_size * 3 / 100);
-      lv_obj_set_y(s_eye, lv_obj_get_y(s_eye) - s_size * 2 / 100);
+      lv_obj_set_y(s_eye, (int)lv_obj_get_style_y(s_eye, LV_PART_MAIN) -
+                              s_size * 2 / 100);
       arm_react_restore(700);
       break;
     case CanaryReact::Startle: {
@@ -601,7 +614,7 @@ void canary_mark_react(CanaryReact r) {
     case CanaryReact::Reassure:
       // Acknowledgement is friendship done right: the bird settles, but it
       // does not pretend the condition vanished before the facts do.
-      lv_obj_set_y(s_eye, lv_obj_get_y(s_eye) + 1);
+      lv_obj_set_y(s_eye, (int)lv_obj_get_style_y(s_eye, LV_PART_MAIN) + 1);
       flourish_wing(1, 420);
       arm_react_restore(900);
       break;

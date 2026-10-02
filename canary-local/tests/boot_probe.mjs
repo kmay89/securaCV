@@ -13,6 +13,7 @@ import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { birdPerch } from "./bird_perch.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -98,10 +99,13 @@ for (const flavor of RUN) {
     await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&flavor=${flavor}`);
     await page.waitForFunction("window.__ready === true", null, { timeout: 90000 });
     await new Promise((res) => setTimeout(res, 6500)); // splash + face
-    st = await page.evaluate(() => ({
+    st = await page.evaluate(async () => ({
       flushes: window.__state.flushes,
       mqtt: window.__state.mqtt,
       serial: window.__state.serialText,
+      bird: await window.__emu.markBox(),
+      labels: await window.__emu.screenLabels(),
+      glass: { w: document.getElementById("glass").width, h: document.getElementById("glass").height },
     }));
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/ci_face_${flavor}.png` });
   } catch (e) {
@@ -118,6 +122,8 @@ for (const flavor of RUN) {
     { fail(flavor, "fleet payloads never reached the dispatcher"); continue; }
   if (!st.serial.includes("Pinned new witness pubkey"))
     { fail(flavor, "TOFU pinning never happened — trust path broken"); continue; }
+  const perch = birdPerch(st);
+  if (perch) { fail(flavor, perch); continue; }
   console.log(`BOOT_PROBE_OK[${flavor}] flushes=${st.flushes} mqtt=${st.mqtt.length}`);
 }
 

@@ -316,7 +316,9 @@ BANNER = [
 BOOT = [
     {"tag": "[PROV]", "text": "Provisioning device identity..."},
     {"tag": "[PROV]", "text": "Loaded existing keypair from NVS"},
-    {"tag": "[PROV]", "text": "Public key fingerprint: 7f3a9c21"},
+    # g_device.fingerprint_hex: 8 bytes as 16 hex digits, in hex_to_str's
+    # capitals (the MQTT envelopes below carry the same bytes in lowercase).
+    {"tag": "[PROV]", "text": "Public key fingerprint: 7F3A9C21B04E6D58"},
     {"tag": "[PROV]", "text": f"Device ID: {EX_ID}"},
     {"tag": "[PROV]", "text": "Boot count: 5"},
     {"tag": "[..]", "text": "Initializing camera for peek/preview..."},
@@ -407,13 +409,13 @@ TOPICS = [
     {"suffix": "status", "retained": True, "cadence": "on connect + ~30 s",
      "payload": '{"online":true,"device_type":"canary-wap","csi_running":true,"wifi_connected":true,"rssi":-58}'},
     {"suffix": "events", "retained": False, "cadence": "per committed CSI event",
-     "payload": '{"event_id":1234,"event_type":"motion","state":"motion","motion":72,"breathing":8,"signed":true,"v":1,"alg":"ed25519","fp":"7f3a9c21","sig":"…"}'},
+     "payload": '{"event_id":1234,"event_type":"motion","state":"motion","motion":72,"breathing":8,"signed":true,"v":1,"alg":"ed25519","fp":"7f3a9c21b04e6d58","sig":"…"}'},
     {"suffix": "chain", "retained": True, "cadence": "on each new record",
-     "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"7f3a9c21","sig":"…"}'},
+     "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"7f3a9c21b04e6d58","sig":"…"}'},
     {"suffix": "health", "retained": True, "cadence": "~60 s",
      "payload": '{"battery":100,"battery_present":false,"memory_free":204800,"uptime":312,"firmware_version":"' + FW_VERSION + '","public_key":"…"}'},
     {"suffix": "counts", "retained": True, "cadence": "on each new record",
-     "payload": '{"v":1,"total":312,"alg":"ed25519","fp":"7f3a9c21","sig":"…"}'},
+     "payload": '{"v":1,"total":312,"alg":"ed25519","fp":"7f3a9c21b04e6d58","sig":"…"}'},
     {"suffix": "tamper", "retained": False, "cadence": "per committed system.integrity event (live only, never backfill)",
      "payload": '{"type":"sd_remove","severity":"tamper"}',
      "note": "type is a const.py tamper kind; the HA per-type tamper sensors key on it"},
