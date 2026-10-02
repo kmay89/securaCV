@@ -120,7 +120,7 @@ class WapPort : public csi_event_backfill::Port {
 struct State {
   csi_event_backfill::Planner planner;
   WapPort  port;
-  Held     held[kHeldMax];
+  Held     held[kHeldMax] = {};  /* zeroed: no slot is read before push() fills it */
   size_t   held_head = 0;
   size_t   held_count = 0;
   uint32_t held_dropped = 0;
