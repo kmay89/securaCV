@@ -210,6 +210,7 @@ static bool start_scan(uint32_t duration_ms);
 static void stop_scan();
 static void clear_scan_results();
 static bool start_pairing();
+static void drop_pending_pairing();
 static bool answer_pending_pairing(bool accept);
 static void cancel_pairing();
 static bool confirm_pairing(uint32_t pin);
@@ -513,10 +514,12 @@ static void apply_disconnect(const Event& e) {
   // stack ended that pairing when the link went, and the copy must not
   // outlive it, or a later confirm of its six digits would answer yes on
   // whatever link takes the handle next (a phone whose own digits were
-  // never shown). No answer is given: there is no link to give it to.
+  // never shown). No answer is given, not even a no: the link it belonged
+  // to is gone, and whatever holds the handle by this pass (the same phone
+  // back already, pairing afresh) is a pairing of its own.
   if (g_pending_pair_info != nullptr &&
       g_pending_pair_info->getConnHandle() == e.u.link.handle) {
-    (void)answer_pending_pairing(false);   // the link is gone: deleted unanswered
+    drop_pending_pairing();
     g_pairing.state = PAIR_FAILED;
     g_pairing.pin_displayed = false;       // its digits mean nothing now
     g_pairing.pin_code = 0;
@@ -1319,20 +1322,23 @@ static bool pending_link_is_up() {
          live.getAddress() == g_pending_pair_info->getAddress();
 }
 
+// The pending Numeric Comparison let go unanswered (its link ended).
+static void drop_pending_pairing() {
+  delete g_pending_pair_info;
+  g_pending_pair_info = nullptr;
+  g_pending_pair_active = false;
+}
+
 // The one way the pending Numeric Comparison is answered: `accept` goes to
 // its link when that link is still up (pending_link_is_up()), never to
 // another; then the copy is deleted. True when the answer was given.
 static bool answer_pending_pairing(bool accept) {
   bool answered = false;
-  if (g_pending_pair_info != nullptr) {
-    if (pending_link_is_up()) {
-      NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, accept);
-      answered = true;
-    }
-    delete g_pending_pair_info;
-    g_pending_pair_info = nullptr;
+  if (g_pending_pair_info != nullptr && pending_link_is_up()) {
+    NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, accept);
+    answered = true;
   }
-  g_pending_pair_active = false;
+  drop_pending_pairing();
   return answered;
 }
 

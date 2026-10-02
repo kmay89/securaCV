@@ -1093,6 +1093,19 @@ void test_a_pairing_ends_with_its_link() {
   CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
   CHECK(host_sim::passkey_answers.empty());
   none_on_httpd();
+
+  // The phone is back on the same handle before the loop task applies the
+  // end of its old link (it reconnected at once and pairs afresh): the old
+  // copy still goes unanswered, so no stale no lands on the new pairing.
+  boot();
+  host_sim::server->peers = {7};
+  pairing_awaiting_confirm(482913, a);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), a, 0x13); });
+  host_sim::server->link_up(a);                             // the same phone, the same handle, again
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), a); });
+  loop_pass();
+  CHECK(host_sim::passkey_answers.empty() && host_sim::conn_heap == 0);
+  CHECK(bc::g_pairing.state == bc::PAIR_FAILED && bc::g_connection.connected);
   std::printf("PASS a_pairing_ends_with_its_link\n");
 }
 
