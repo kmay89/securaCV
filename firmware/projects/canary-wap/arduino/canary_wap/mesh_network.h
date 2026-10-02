@@ -1282,7 +1282,10 @@ ChirpStatus get_status();
 //     shows of a row, no key or signature) only when something changed them:
 //     a chirp frame handled, update()'s 30-second prune, an owner command,
 //     init(). The tables are in PSRAM and copying them every pass would read
-//     them every pass; most passes change nothing.
+//     them every pass; most passes change nothing. Their published copies
+//     are in PSRAM too (chirp_channel.cpp's g_view_tables), so they take
+//     nothing back from the internal heap the PSRAM diet freed for the BLE
+//     stack; only the 68-byte status's copy is static.
 // read_status(), read_nearby() and read_recent() never wait for the loop
 // task. What counts in time (the cooldown and mute left, the presence
 // requirement, the wall clock) is counted at the read, from what the loop

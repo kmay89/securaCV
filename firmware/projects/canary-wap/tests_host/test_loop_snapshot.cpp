@@ -9,14 +9,19 @@
 // What it pins:
 //   - Value: nothing to read before the first publish; a read is the last
 //     value published, whole; publishing the same bytes takes no lock;
+//   - AttachedValue (sweep F138): the same, with the published bytes in
+//     the storage attach() names and not in the object; nothing to keep or
+//     read before attach() or after attach(nullptr), nor after a re-attach
+//     until the next publish;
 //   - Log: records are read in storage order, at most `cap`, none without
 //     storage; a read the loop task changes the log under (an append that
 //     wraps over a record the read already copied, a clear) starts over and
 //     returns one moment's records, never a mix; a read the loop task keeps
 //     changing ends with one copy under one hold;
-//   - real threads (one writer, four readers): every Value read is one
-//     published value, whole, and every Log read is one moment's records
-//     (whole records, consecutive sequence numbers, as many as were held).
+//   - real threads (one writer, four readers): every Value and
+//     AttachedValue read is one published value, whole, and every Log read
+//     is one moment's records (whole records, consecutive sequence
+//     numbers, as many as were held).
 //     The writer starts only once all four readers are reading, and hands
 //     the CPU over every 10,000 writes until a reader has read since, so
 //     the readers read while it writes on one CPU too (`taskset -c 0`);
@@ -175,6 +180,46 @@ static void test_value_same_bytes_take_no_lock() {
   CHECK(HookLock::locks == after_first + 1);
 }
 
+// ── AttachedValue (sweep F138) ───────────────────────────────────────────
+
+static void test_attached_value_reads_from_its_storage() {
+  std::printf("test_attached_value_reads_from_its_storage\n");
+  ls::AttachedValue<View, NoLock> v;
+  static_assert(sizeof(v) < sizeof(View), "the published bytes are not in the object");
+  View out = view_of(99);
+  CHECK(!v.publish(view_of(1)));             // nowhere to keep it
+  CHECK(!v.read(&out) && out.gen == 99);
+  View storage;
+  memset(&storage, 0, sizeof storage);
+  v.attach(&storage);
+  CHECK(!v.read(&out) && out.gen == 99);     // attached, nothing published yet
+  CHECK(v.publish(view_of(1)));
+  CHECK(storage.gen == 1 && whole(storage)); // the bytes went to the storage
+  CHECK(v.read(&out) && out.gen == 1 && whole(out));
+  storage = view_of(7);                      // a read copies the storage
+  CHECK(v.read(&out) && out.gen == 7);
+  v.attach(&storage);                        // re-attached: nothing published
+  CHECK(!v.read(&out) && out.gen == 7);
+  CHECK(v.publish(view_of(7)));              // so the same bytes are copied, not compared away
+  CHECK(v.read(&out) && out.gen == 7);
+  v.attach(nullptr);
+  CHECK(!v.read(&out) && !v.publish(view_of(8)));
+}
+
+static void test_attached_value_same_bytes_take_no_lock() {
+  std::printf("test_attached_value_same_bytes_take_no_lock\n");
+  reset_hook();
+  View storage;
+  ls::AttachedValue<View, HookLock> v;
+  v.attach(&storage);
+  CHECK(v.publish(view_of(5)));
+  const unsigned after_first = HookLock::locks;
+  CHECK(!v.publish(view_of(5)));
+  CHECK(HookLock::locks == after_first);     // compared, not copied
+  CHECK(v.publish(view_of(6)));
+  CHECK(HookLock::locks == after_first + 1);
+}
+
 // ── Log ──────────────────────────────────────────────────────────────────
 
 static void test_log_reads_in_storage_order() {
@@ -314,6 +359,42 @@ static void test_threads_value_reads_are_whole() {
   CHECK(torn.load() == 0);
 }
 
+static void test_threads_attached_value_reads_are_whole() {
+  std::printf("test_threads_attached_value_reads_are_whole\n");
+  static View storage;
+  ls::AttachedValue<View, MutexLock> v;
+  v.attach(&storage);
+  std::atomic<bool> stop{false};
+  std::atomic<int> ready{0};
+  std::atomic<long> reads{0}, torn{0}, mid{0};
+  std::vector<std::thread> readers;
+  for (int r = 0; r < kReaders; ++r) {
+    readers.emplace_back([&] {
+      View out;
+      ++ready;
+      while (!stop.load()) {
+        if (v.read(&out)) {
+          ++reads;
+          if (!whole(out)) ++torn;
+          if (out.gen < kWrites) ++mid;            // read while the writer wrote
+        }
+      }
+    });
+  }
+  wait_for_readers(ready);
+  for (uint32_t gen = 1; gen <= kWrites; ++gen) {
+    v.publish(view_of(gen));
+    if (gen % 3 == 0) v.publish(view_of(gen));   // the same bytes again
+    let_readers_in(gen, reads);
+  }
+  stop = true;
+  for (std::thread& t : readers) t.join();
+  View last;
+  CHECK(v.read(&last) && last.gen == kWrites);
+  CHECK(mid.load() > 0);
+  CHECK(torn.load() == 0);
+}
+
 static void test_threads_log_reads_are_one_moment() {
   std::printf("test_threads_log_reads_are_one_moment\n");
   static Rec storage[8];
@@ -361,11 +442,14 @@ static void test_threads_log_reads_are_one_moment() {
 int main() {
   test_value_reads_the_last_publish_whole();
   test_value_same_bytes_take_no_lock();
+  test_attached_value_reads_from_its_storage();
+  test_attached_value_same_bytes_take_no_lock();
   test_log_reads_in_storage_order();
   test_log_read_starts_over_when_the_log_changes();
   test_log_read_across_a_clear_is_empty();
   test_log_read_the_loop_task_keeps_changing_ends_whole();
   test_threads_value_reads_are_whole();
+  test_threads_attached_value_reads_are_whole();
   test_threads_log_reads_are_one_moment();
   if (g_failures != 0) {
     std::printf("loop_snapshot: %d of %d checks FAILED\n", g_failures, g_checks);

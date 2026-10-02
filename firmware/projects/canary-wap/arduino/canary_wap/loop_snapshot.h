@@ -18,6 +18,11 @@
  * no lock (the writer compares against its own last copy, which only it
  * writes), so publishing on every pass costs a compare.
  *
+ * AttachedValue<T>: the same, with the published bytes in storage the loop
+ * task attaches (a PSRAM block) instead of the object, for a T too large to
+ * keep in internal SRAM; the lock and the flag stay in the object (sweep
+ * F138: the Chirp routes' tables).
+ *
  * Log<E, N>: a bounded log the loop task appends records to (the oldest
  * overwritten once N are held) and clears; any task reads the records whole
  * and all from one moment. A read copies one record per critical section,
@@ -81,6 +86,50 @@ class Value {
  private:
   Lock lock_;
   T value_{};
+  bool published_ = false;
+};
+
+/* Value<T> for a T too large for internal SRAM (sweep F138: the Chirp
+ * routes' nearby and recent tables): the published bytes live where the
+ * loop task's attach() says (a PSRAM block, csi_mem.h), as Log<>'s records
+ * do; the lock and the published flag stay in the object, which the caller
+ * keeps on-die (a spinlock never lives in PSRAM). Until attach() gives it
+ * storage (or after attach(nullptr)) a publish keeps nothing and a read
+ * answers false, as before a first publish. */
+template <typename T, typename Lock>
+class AttachedValue {
+  static_assert(std::is_trivially_copyable<T>::value, "a value is copied whole under the lock");
+
+ public:
+  /* The loop task. Where the published T lives; nothing is published until
+   * the next publish(). */
+  void attach(T* storage) {
+    Guard<Lock> g(lock_);
+    storage_ = storage;
+    published_ = false;
+  }
+
+  /* The loop task, the one writer: Value<T>::publish(), into the storage. */
+  bool publish(const T& v) {
+    if (storage_ == nullptr) return false;
+    if (published_ && memcmp(&v, storage_, sizeof(T)) == 0) return false;
+    Guard<Lock> g(lock_);
+    memcpy(storage_, &v, sizeof(T));
+    published_ = true;
+    return true;
+  }
+
+  /* Any task: Value<T>::read(). */
+  bool read(T* out) {
+    Guard<Lock> g(lock_);
+    if (!published_) return false;
+    memcpy(out, storage_, sizeof(T));
+    return true;
+  }
+
+ private:
+  Lock lock_;
+  T* storage_ = nullptr;
   bool published_ = false;
 };
 

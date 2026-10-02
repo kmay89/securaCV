@@ -200,7 +200,10 @@ task. Now `chirp_channel.cpp` publishes a `StatusView` every pass, after
 each command and from `init()`, and the two tables whenever a frame, the
 prune, a command or `init()` changed them (`g_tables_changed`), and the
 routes read whole copies through `read_status()`, `read_nearby()` and
-`read_recent()` (`loop_snapshot.h`; `test_chirp_commands_wap.cpp`).
+`read_recent()` (`loop_snapshot.h`; `test_chirp_commands_wap.cpp`). The
+status's copy is static; the tables' copies live in one PSRAM block
+(`g_view_tables`, `loop_snapshot::AttachedValue`), so they take nothing
+back from the internal heap the PSRAM diet freed for the BLE stack.
 
 CV1. No HTTP handler anywhere in the sketch names a live Chirp reader
      (`chirp_channel::get_status(`, `get_recent_chirps(`,
@@ -215,14 +218,21 @@ CV3. In `chirp_channel.cpp`, `publish_view(` is called only from
      before its every `return` and as its last statement, `run_command()`
      returns once, right after `g_tables_changed = true; publish_view();`
      (a read right after a POST's answer shows the command), and `init()`
-     ends `g_tables_changed = true; publish_view(); return true;` (the
-     HTTP server can answer before a pass runs).
+     ends by attaching the two tables' copies to their PSRAM block, then
+     `g_tables_changed = true; publish_view(); return true;` (the HTTP
+     server can answer before a pass runs).
 CV4. Each view's `.publish(` is in `publish_view()` alone and its `.read(`
-     in its own reader alone; `g_tables_changed = false` only in
-     `publish_view()`, `= true` only in the four places that change the
-     tables, `g_view_scratch` only in `init()` and `publish_view()`; the
-     readers and `cannot_send_reason()` copy their view and name none of the
-     live state (`CHIRP_LIVE_STATE`).
+     in its own reader alone. The two tables' views are
+     `loop_snapshot::AttachedValue`s (their copies in the PSRAM block, not
+     in internal SRAM: the PSRAM diet's budget for the BLE heap), their
+     `.attach(` only in `init()`, and `g_view_tables` (that block: the
+     copies and the scratch, from `csi_large_calloc()`) only in `init()`
+     and `publish_view()`. `g_tables_changed = false` only in
+     `publish_view()`, once, right after its `if (!g_tables_changed || ...)
+     return;` (a pass nothing marked builds no table); `= true` only in the
+     four places that change the tables. The readers and
+     `cannot_send_reason()` copy their view and name none of the live
+     state (`CHIRP_LIVE_STATE`).
 CV5. Every change to the tables is marked for the view: `on_espnow_recv()`
      sets `g_tables_changed = true;` once, right before its dispatch switch;
      `update()` sets it right after its prune; the functions that name the
@@ -1383,7 +1393,7 @@ CHIRP_VIEW_LOOKUPS = ("state_name", "category_name", "urgency_name", "get_templa
 # What the readers may not name: the live state and its readers (rule CV4).
 CHIRP_LIVE_STATE = ("g_state", "g_session", "g_cooldown", "g_recent_chirps", "g_recent_chirp_count",
                     "g_nearby_devices", "g_nearby_count", "g_muted", "g_mute_until_ms", "g_relay_enabled",
-                    "g_urgency_filter", "g_session_start_ms", "g_last_chirp_sent_ms", "g_view_scratch",
+                    "g_urgency_filter", "g_session_start_ms", "g_last_chirp_sent_ms", "g_view_tables",
                     "g_tables_changed", "publish_view") + CHIRP_LIVE_READERS
 CHIRP_READER_FUNCS = CHIRP_VIEW_READERS + ("cannot_send_reason",)
 # Who may touch the published copies, in chirp_channel.cpp (rules CV3, CV4).
@@ -1406,8 +1416,13 @@ CHIRP_VIEW_CALLS = (
      "only the publish that copied the tables clears it"),
     (r"\bg_tables_changed\s*=\s*true\b", ("on_espnow_recv", "update", "run_command", "init"),
      "g_tables_changed = true", "the tables change in a frame, the prune, a command and init()"),
-    (r"\bg_view_scratch\b", ("publish_view", "init"), "g_view_scratch",
-     "init() allocates the tables' scratch and publish_view() alone builds in it"),
+    (r"\bg_view_tables\b", ("publish_view", "init"), "g_view_tables",
+     "init() allocates the tables' PSRAM block and attaches their copies to it; publish_view() "
+     "alone builds in its scratch"),
+    (r"\bg_nearby_view\s*\.\s*attach\s*\(", ("init",), "g_nearby_view.attach(",
+     "init() attaches the published copy to the PSRAM block, once it is allocated"),
+    (r"\bg_recent_view\s*\.\s*attach\s*\(", ("init",), "g_recent_view.attach(",
+     "init() attaches the published copy to the PSRAM block, once it is allocated"),
 )
 # The recent and nearby tables (rule CV5), and every function that names
 # them today. The view shows them only when g_tables_changed says a pass
@@ -1451,6 +1466,11 @@ SIG_CHIRP_INIT = r"\bbool\s+init\s*\(\s*\)"
 SIG_CHIRP_RUN = r"\bstatic\s+Result\s+run_command\s*\([^)]*\)"
 SIG_CHIRP_RECV = r"\bstatic\s+void\s+on_espnow_recv\s*\([^)]*\)"
 SIG_CHIRP_PUBLISH = r"\bstatic\s+void\s+publish_view\s*\(\s*\)"
+# How init() ends (rules CV3, CV4): the tables' copies attached to their
+# PSRAM block, then the first view published; and the block's allocation.
+CHIRP_INIT_TAIL = ("g_nearby_view.attach(&g_view_tables->nearby);g_recent_view.attach(&g_view_tables->recent);"
+                   "g_tables_changed=true;publish_view();returntrue;")
+CHIRP_BLOCK_ALLOC = "g_view_tables=(ViewTables*)csi_large_calloc(sizeof(ViewTables));"
 CHIRP_READER_SIGS = {
     "read_status": r"\bvoid\s+read_status\s*\([^)]*\)",
     "read_nearby": r"\bvoid\s+read_nearby\s*\([^)]*\)",
@@ -1540,10 +1560,32 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
                           "handler answers at once, so a read right after the POST (the dashboard's "
                           "status, its recent list after a dismiss) must already show it (F138)")
     init = body_of(code, SIG_CHIRP_INIT, f"{CHIRP_CPP}: init()", errors)
-    if init is not None and not squash(init).endswith("g_tables_changed=true;publish_view();returntrue;"):
-        errors.append(f"{CHIRP_CPP}: init() must end `g_tables_changed = true; publish_view(); return "
-                      "true;` — the HTTP server can answer before loop() runs a pass, and the first "
-                      "view carries the settings init() loaded (F138)")
+    if init is not None and not squash(init).endswith(CHIRP_INIT_TAIL):
+        errors.append(f"{CHIRP_CPP}: init() must end `g_nearby_view.attach(&g_view_tables->nearby); "
+                      "g_recent_view.attach(&g_view_tables->recent); g_tables_changed = true; "
+                      "publish_view(); return true;` — the HTTP server can answer before loop() runs "
+                      "a pass, and the first view carries the settings init() loaded (F138)")
+    if init is not None and squash(init).count(CHIRP_BLOCK_ALLOC) != 1:
+        errors.append(f"{CHIRP_CPP}: init() must allocate the tables' block once with "
+                      "`g_view_tables = (ViewTables*)csi_large_calloc(sizeof(ViewTables));` — their "
+                      "published copies belong in PSRAM, not the internal heap the BLE stack needs "
+                      "(F138)")
+    decls = re.findall(r"\bstatic\s+loop_snapshot::(\w+)\s*<\s*(NearbyTable|RecentTable)\b", code)
+    if sorted(t for _k, t in decls) != ["NearbyTable", "RecentTable"] or \
+            any(k != "AttachedValue" for k, _t in decls):
+        errors.append(f"{CHIRP_CPP}: the nearby and recent tables' views must each be one static "
+                      "`loop_snapshot::AttachedValue<...>` — a `Value<>` keeps its 1-KB copy in the "
+                      "object, internal SRAM, which the PSRAM diet reclaimed for the BLE stack (F138)")
+    pub = body_of(code, SIG_CHIRP_PUBLISH, f"{CHIRP_CPP}: publish_view()", errors)
+    if pub is not None:
+        s = squash(pub)
+        guard = re.search(r"if\(!g_tables_changed(?:\|\|[^)]*)?\)return;", s)
+        if guard is None or not s[guard.end():].startswith("g_tables_changed=false;") or \
+                s.count("g_tables_changed=false;") != 1:
+            errors.append(f"{CHIRP_CPP}: publish_view() must clear the tables' flag right after its "
+                          "`if (!g_tables_changed || ...) return;`, once — a pass nothing marked "
+                          "builds no table and reads no PSRAM; with the flag left set every pass "
+                          "rebuilds and compares both tables (F138)")
     recv = body_of(code, SIG_CHIRP_RECV, f"{CHIRP_CPP}: on_espnow_recv()", errors)
     if recv is not None:
         s = squash(recv)
@@ -2461,6 +2503,30 @@ MUTATIONS: list[tuple[str, Mutation]] = [
               r"\1 { StatusView z; memset(&z, 0, sizeof z); (void)g_status_view.publish(z); }")),
     ("chirp update() clears the tables' flag before it publishes them",
      on_other(CHIRP_CPP, SIG_UPDATE, r"(g_commands\.drain\(run_command\);)", r"\1 g_tables_changed = false;")),
+    ("chirp publish_view() never clears the tables' flag (every pass rebuilds both tables)",
+     on_other(CHIRP_CPP, SIG_CHIRP_PUBLISH, r"(return;)\s*g_tables_changed\s*=\s*false;", r"\1")),
+    ("chirp publish_view() clears the tables' flag before its guard",
+     on_other(CHIRP_CPP, SIG_CHIRP_PUBLISH,
+              r"(if\s*\(!g_tables_changed[^)]*\)\s*return;)\s*g_tables_changed\s*=\s*false;",
+              r"g_tables_changed = false; \1")),
+    ("the nearby table's published copy is static again",
+     raw_other(CHIRP_CPP, "static loop_snapshot::AttachedValue<NearbyTable,",
+               "static loop_snapshot::Value<NearbyTable,")),
+    ("the recent table's view is declared twice, once static",
+     raw_other(CHIRP_CPP, "static loop_snapshot::AttachedValue<RecentTable, loop_command_ring::PortMuxLock> g_recent_view;",
+               "static loop_snapshot::AttachedValue<RecentTable, loop_command_ring::PortMuxLock> g_recent_view;\n"
+               "static loop_snapshot::Value<RecentTable, loop_command_ring::PortMuxLock> g_recent_copy;")),
+    ("the tables' block comes from the internal heap",
+     on_other(CHIRP_CPP, SIG_CHIRP_INIT, r"csi_large_calloc\(sizeof\(ViewTables\)\)",
+              "calloc(1, sizeof(ViewTables))")),
+    ("chirp init() never attaches the recent table's copy",
+     on_other(CHIRP_CPP, SIG_CHIRP_INIT, r"\n[ \t]*g_recent_view\.attach\([^;]*\);", "")),
+    ("chirp init() attaches the nearby copy to the scratch",
+     on_other(CHIRP_CPP, SIG_CHIRP_INIT, r"g_nearby_view\.attach\(&g_view_tables->nearby\)",
+              "g_nearby_view.attach(&g_view_tables->scratch.nearby)")),
+    ("chirp update() re-attaches the recent view",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+              r"\1 g_recent_view.attach(nullptr);")),
     # Rule CV5: every change to the tables is marked for the view.
     ("a chirp frame no longer marks the tables",
      on_other(CHIRP_CPP, SIG_CHIRP_RECV, r"g_tables_changed\s*=\s*true;\s*(switch)", r"\1")),

@@ -109,9 +109,15 @@ jobs:
         # (g_recent_chirps 10.8 KB, g_bloom 4 KB, g_nearby_devices,
         # g_pubkey_rate, g_selftest_seen), mesh g_alert_history 2.9 KB,
         # the GPS byte ring 2 KB, and airtime_governor::g_ring 2 KB. All
-        # now live in PSRAM via csi_mem.h. Deliberately NOT dieted:
-        # csi_hal::s_ring (hot per-frame WiFi path) and mesh g_peers
-        # (session keys stay in on-die SRAM). If any dieted buffer
+        # now live in PSRAM via csi_mem.h. Sweep F138 added the Chirp
+        # routes' published table copies (chirp_channel::g_nearby_view
+        # 1.3 KB, g_recent_view 0.8 KB): loop_snapshot::AttachedValue keeps
+        # their bytes in a PSRAM block and only a lock, a pointer and a
+        # flag on-die (a few bytes; the recent copy as Value<> would be
+        # about 0.85 KB, so these two are held at 256 B, not 1 KB): a
+        # revert to Value<> lands here. Deliberately
+        # NOT dieted: csi_hal::s_ring (hot per-frame WiFi path) and mesh
+        # g_peers (session keys stay in on-die SRAM). If any dieted buffer
         # reappears in the internal DRAM window at >= 1 KB, someone
         # reverted a pointer back to a static array — fail loudly.
         run: |
@@ -120,13 +126,15 @@ jobs:
           ELF=$(find /tmp/wap-buildpath /tmp/wap-build -name '*.elf' | head -1)
           NM=$(find "$HOME/.arduino15/packages/esp32/tools" -name 'xtensa-esp32s3-elf-nm' | head -1)
           BAD=$("$NM" --print-size -C "$ELF"             | gawk '{ a = strtonum("0x"$1); sz = strtonum("0x"$2);
-                      if (a >= 0x3FC88000 && a < 0x3FD00000 && sz >= 1024 &&
+                      if ((a >= 0x3FC88000 && a < 0x3FD00000 && sz >= 1024 &&
                           ($0 ~ /g_health_log_ring/ || $0 ~ /emit_summary/ ||
                            $0 ~ /s_amp_hist/ || $0 ~ /g_fleet_scan/ ||
                            $0 ~ /g_recent_chirps/ || $0 ~ /chirp_channel::g_bloom/ ||
                            $0 ~ /g_nearby_devices/ || $0 ~ /g_pubkey_rate/ ||
                            $0 ~ /g_selftest_seen/ || $0 ~ /g_alert_history/ ||
-                           $0 ~ /g_gps_rb/ || $0 ~ /airtime_governor::g_ring/))
+                           $0 ~ /g_gps_rb/ || $0 ~ /airtime_governor::g_ring/)) ||
+                         (a >= 0x3FC88000 && a < 0x3FD00000 && sz >= 256 &&
+                          ($0 ~ /chirp_channel::g_nearby_view/ || $0 ~ /chirp_channel::g_recent_view/)))
                         print sz " B  " $0 }')
           if [ -n "$BAD" ]; then
             echo "::error::PSRAM-dieted buffer is back in internal DRAM:"

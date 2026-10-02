@@ -1155,8 +1155,44 @@ void test_every_field_the_routes_show_is_the_live_one() {
   std::printf("PASS every_field_the_routes_show_is_the_live_one\n");
 }
 
-// What the view costs: the three published copies are static (internal
-// SRAM on a device), the tables' scratch is one PSRAM allocation. The sizes
+// The two tables' published copies live in the block init() allocates
+// (g_view_tables: PSRAM on a device, csi_mem.h), beside the scratch, not in
+// the static objects that hold their locks. The PSRAM diet moved these
+// tables out of internal SRAM for the BLE stack's heap; a static copy of
+// each would have put 2.1 KB of it back. A read returns the block's bytes,
+// and the static objects are a lock, a pointer and a flag.
+void test_the_tables_publish_into_their_block() {
+  static_assert(sizeof(cc::g_nearby_view) < sizeof(cc::NearbyTable) / 8,
+                "the nearby table's published copy is not in the static object");
+  static_assert(sizeof(cc::g_recent_view) < sizeof(cc::RecentTable) / 8,
+                "the recent table's published copy is not in the static object");
+  boot();
+  CHECK(cc::g_view_tables != nullptr);
+  enabled_channel();
+  const Neighbor N = neighbor_of(7, BEE);
+  deliver(N, presence_of(N), -52);
+  deliver(N, witness_of(N, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x66));
+  cc::update();
+  cc::NearbyTable t = nearby_read();
+  cc::RecentTable r = recent_read();
+  CHECK(t.count == 1 && r.count == 1);
+  CHECK(memcmp(&t, &cc::g_view_tables->nearby, sizeof t) == 0);
+  CHECK(memcmp(&r, &cc::g_view_tables->recent, sizeof r) == 0);
+  cc::g_view_tables->nearby.devices[0].rssi = -99;     // the block is what a read copies
+  cc::g_view_tables->recent.chirps[0].hop_count = 3;
+  CHECK(nearby_read().devices[0].rssi == -99 && recent_read().chirps[0].hop_count == 3);
+
+  // Not attached (as before init()): nothing to read, an empty table.
+  cc::g_nearby_view.attach(nullptr);
+  cc::g_recent_view.attach(nullptr);
+  CHECK(nearby_read().count == 0 && recent_read().count == 0);
+  CHECK(!cc::g_nearby_view.publish(t));
+  std::printf("PASS the_tables_publish_into_their_block\n");
+}
+
+// What the view costs: the status's published copy is static (internal
+// SRAM on a device), the tables' copies and their scratch are one PSRAM
+// allocation (the_tables_publish_into_their_block). The sizes
 // the docs quote, on this host's layout (the device's 32-bit layout of these
 // structs is the same: no pointer, size_t or 8-byte member in any).
 void test_the_view_sizes() {
@@ -1166,6 +1202,7 @@ void test_the_view_sizes() {
   static_assert(sizeof(cc::RecentView) == 52 && sizeof(cc::RecentTable) == 836,
                 "RecentTable size the docs quote");
   static_assert(sizeof(cc::ViewScratch) == 1284, "the scratch is the larger table");
+  static_assert(sizeof(cc::ViewTables) == 1284 + 836 + 1284, "the PSRAM block: two copies and the scratch");
   std::printf("PASS the_view_sizes (StatusView %zu B, NearbyTable %zu B, RecentTable %zu B; "
               "the live tables they copy from: %zu B and %zu B)\n",
               sizeof(cc::StatusView), sizeof(cc::NearbyTable), sizeof(cc::RecentTable),
@@ -1195,6 +1232,7 @@ const Test kTests[] = {
     {"a_status_read_counts_time_at_the_read", test_a_status_read_counts_time_at_the_read},
     {"cannot_send_reason_names_the_clock", test_cannot_send_reason_names_the_clock},
     {"every_field_the_routes_show_is_the_live_one", test_every_field_the_routes_show_is_the_live_one},
+    {"the_tables_publish_into_their_block", test_the_tables_publish_into_their_block},
     {"the_view_sizes", test_the_view_sizes},
 };
 

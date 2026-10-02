@@ -151,20 +151,30 @@ static loop_command_ring::Ring<Command, Result, COMMAND_SLOTS, loop_command_ring
 // (publish_view: the status at the end of every update() pass, after each
 // owner command and from init(); the two tables only when g_tables_changed
 // says something changed them), read whole by read_status(), read_nearby()
-// and read_recent() from esp_http_server's task. The three published copies
-// are static, in internal SRAM (the host's layout: 68 + 1284 + 836 bytes of
-// view, plus each copy's lock and flag); a status publish that changed
-// nothing costs a 68-byte compare. The tables are built in a PSRAM scratch
-// (g_view_scratch, allocated in init() with the tables it copies from), so
-// building one reads the PSRAM tables only on a pass that changed them.
+// and read_recent() from esp_http_server's task. The 68-byte status is a
+// static copy in internal SRAM, like the mesh's (a publish that changed
+// nothing costs a 68-byte compare). The two tables' copies are not: they
+// live in g_view_tables, one PSRAM block init() allocates with the tables
+// they copy from (csi_mem.h; the internal heap on a board without PSRAM),
+// so the PSRAM diet's internal-heap budget for the BLE stack keeps what
+// it reclaimed. Their locks and flags stay here, on-die (a spinlock never
+// lives in PSRAM). The same block holds the scratch publish_view() builds
+// the next table in, so a pass reads the PSRAM tables only when they
+// changed. Sizes (the host's layout, the device's too: the_view_sizes):
+// 1284 + 836 bytes of published copies plus a 1284-byte scratch.
 static loop_snapshot::Value<StatusView, loop_command_ring::PortMuxLock> g_status_view;
-static loop_snapshot::Value<NearbyTable, loop_command_ring::PortMuxLock> g_nearby_view;
-static loop_snapshot::Value<RecentTable, loop_command_ring::PortMuxLock> g_recent_view;
+static loop_snapshot::AttachedValue<NearbyTable, loop_command_ring::PortMuxLock> g_nearby_view;
+static loop_snapshot::AttachedValue<RecentTable, loop_command_ring::PortMuxLock> g_recent_view;
 union ViewScratch {
   NearbyTable nearby;
   RecentTable recent;
 };
-static ViewScratch* g_view_scratch = nullptr;
+struct ViewTables {
+  NearbyTable nearby;     // g_nearby_view's published copy
+  RecentTable recent;     // g_recent_view's
+  ViewScratch scratch;    // publish_view()'s build
+};
+static ViewTables* g_view_tables = nullptr;
 // Something changed the recent or nearby table since they were last
 // published: a chirp frame handled (on_espnow_recv), update()'s prune, an
 // owner command (run_command), init(). publish_view() clears it.
@@ -1154,7 +1164,9 @@ static void save_settings() {
 // included, after each owner command (run_command(), before the drain posts
 // the result) and from init(); nothing else publishes. The status every
 // time (a compare when nothing it shows changed); the tables only when
-// g_tables_changed, and only once init() has their scratch.
+// g_tables_changed, and only once init() has their block. The flag is
+// cleared right after that guard: a pass nothing marked builds no table
+// and reads no PSRAM (an_idle_pass_does_not_rebuild_the_tables).
 static void publish_view() {
   StatusView s;
   memset(&s, 0, sizeof(s));
@@ -1171,10 +1183,10 @@ static void publish_view() {
   s.session_start_ms = g_session_start_ms;
   (void)g_status_view.publish(s);
 
-  if (!g_tables_changed || g_view_scratch == nullptr) return;
+  if (!g_tables_changed || g_view_tables == nullptr) return;
   g_tables_changed = false;
 
-  NearbyTable* n = &g_view_scratch->nearby;
+  NearbyTable* n = &g_view_tables->scratch.nearby;
   memset(n, 0, sizeof(*n));
   for (size_t i = 0; i < g_nearby_count && i < MAX_NEARBY_CACHE; i++) {
     const NearbyDevice& d = g_nearby_devices[i];
@@ -1186,7 +1198,7 @@ static void publish_view() {
   }
   (void)g_nearby_view.publish(*n);
 
-  RecentTable* r = &g_view_scratch->recent;
+  RecentTable* r = &g_view_tables->scratch.recent;
   memset(r, 0, sizeof(*r));
   for (size_t i = 0; i < g_recent_chirp_count && i < MAX_RECENT_CHIRPS; i++) {
     const ReceivedChirp& c = g_recent_chirps[i];
@@ -1265,10 +1277,10 @@ bool init() {
     g_pubkey_rate = (PubkeyRateEntry*)csi_large_calloc(PUBKEY_RATE_BYTES);
   if (!g_selftest_seen)
     g_selftest_seen = (SelfTestSeenEntry*)csi_large_calloc(SELFTEST_SEEN_BYTES);
-  if (!g_view_scratch)
-    g_view_scratch = (ViewScratch*)csi_large_calloc(sizeof(ViewScratch));
+  if (!g_view_tables)
+    g_view_tables = (ViewTables*)csi_large_calloc(sizeof(ViewTables));
   if (!g_recent_chirps || !g_nearby_devices || !g_bloom || !g_pubkey_rate ||
-      !g_selftest_seen || !g_view_scratch) {
+      !g_selftest_seen || !g_view_tables) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                "chirp: table alloc failed — channel disabled");
     return false;  /* fail-safe: caller treats false as chirp unavailable */
@@ -1286,7 +1298,9 @@ bool init() {
   g_initialized = true;
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp channel v0.2 initialized");
   // The first view, with the settings just loaded: the HTTP server may
-  // already be up (sweep F138).
+  // already be up (sweep F138). The tables' copies live in g_view_tables.
+  g_nearby_view.attach(&g_view_tables->nearby);
+  g_recent_view.attach(&g_view_tables->recent);
   g_tables_changed = true;
   publish_view();
   return true;
