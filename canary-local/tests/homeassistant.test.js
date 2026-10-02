@@ -237,6 +237,38 @@ test("the demo plays the WAP's discovery and counts on from the printed chain", 
       assert.strictEqual(value(demo.tick_entity), (chain + 1).toLocaleString("en-US"), "the witness count ticks on from the wire, not from 1284");
       assert.strictEqual(value(demo.chain_entity), (chain + 1).toLocaleString("en-US") + " blocks", "with the chain beside it, in its unit");
       assert.strictEqual(wrap.all("hub-ha-chain")[0].textContent, `chain ${chain + 1} · verified ✓ (Ed25519, pinned key)`);
+
+      // The drill and the mic switch, clicked: each detection or mute is a
+      // witness record (the WAP signs it into its chain), and an alarm that
+      // clears is not.
+      const tlRows = () => wrap.all("hub-ha-tlrow").map((r) => [r.all("hub-ha-tltext")[0].textContent, r.all("hub-ha-tlsig")[0].textContent]);
+      const moved = (n) => {
+        assert.strictEqual(value(demo.tick_entity), (chain + n).toLocaleString("en-US"), "Witness Records at +" + n);
+        assert.strictEqual(value(demo.chain_entity), (chain + n).toLocaleString("en-US") + " blocks", "Chain Length at +" + n);
+        assert.strictEqual(wrap.all("hub-ha-chain")[0].textContent, `chain ${chain + n} · verified ✓ (Ed25519, pinned key)`);
+      };
+      const drillBtn = wrap.all("hub-ha-drill")[0];
+      drillBtn.click();   // the detection lands before the drill's first pause
+      const [alertText, alertSig] = tlRows()[0];
+      assert.strictEqual(alertText, `acoustic_event: ${demo.drill.acoustic_event} — NFPA 72 T3 cadence matched`,
+        "the drill names the word the WAP's sensing topic carries");
+      assert.strictEqual(alertSig, "✓ #" + (chain + 2), "the detection is a witness record");
+      assert.strictEqual(value(demo.drill.trigger_entity), "on");
+      moved(2);
+      for (let i = 0; i < 400 && drillBtn.disabled; i++) await wait();
+      assert.ok(!drillBtn.disabled, "the drill never finished");
+      assert.deepStrictEqual(tlRows()[0], ["acoustic_event cleared — alarm stopped", "✓"], "a clear is not a record");
+      assert.deepStrictEqual(tlRows()[1], [alertText, alertSig]);
+      assert.strictEqual(value(demo.drill.trigger_entity), "off");
+      moved(2);
+
+      const mic = wrap.all("hub-ha-switch")[0];
+      mic.click();
+      assert.deepStrictEqual(tlRows()[0], ["mic muted (source: ha) — signed into the witness chain", "✓ #" + (chain + 3)]);
+      moved(3);
+      mic.click();
+      assert.deepStrictEqual(tlRows()[0], ["mic live (source: ha) — signed into the witness chain", "✓ #" + (chain + 4)]);
+      moved(4);
     });
   } finally {
     globalThis.IntersectionObserver = saved.IO; globalThis.requestAnimationFrame = saved.raf;
