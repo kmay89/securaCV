@@ -35,6 +35,13 @@ private:
   bool interaction_latch_=false;
   bool interaction_emitted_=false;
   uint32_t last_leave_seen_=0;
+  // The reason of an ended visit's interaction_likely that is still owed
+  // when the next visit starts on the frame right after presence_ended
+  // (the one frame interaction_likely would have gone out on); sent on the
+  // frame after that, inside the same window, then cleared. nullptr when
+  // nothing is owed.
+  const char* pending_interaction_reason_=nullptr;
+  bool send_pending_interaction(uint32_t now_ms, EventMsg& out_event);
 
   // current
   BBox bbox_{};

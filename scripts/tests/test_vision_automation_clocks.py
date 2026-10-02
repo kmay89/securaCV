@@ -17,10 +17,12 @@ litter-box recipe (homeassistant/automations/securacv_litterbox.yaml)
 printed it on every visit-completed alert. The confidence is the best person
 box's score on the frame the event was sent from (PresenceFSM::tick:
 confidence_ = vs.person_now ? vs.bbox.score : 0), and interaction_likely is
-only ever sent from an empty frame after presence_ended, so it said
-"confidence 0%" every time (sweep HA26). Both recipes now print the
-confidence for dwell_started only (sent from a frame with the person in it)
-and never on interaction_likely.
+sent after the visit has ended: from the empty frame after presence_ended,
+so it said "confidence 0%" (sweep HA26), or, when someone is seen again on
+that very frame, from the next visit's following frame (F152's review), so
+it would print that visit's box. Neither says anything about the visit it
+reports. Both recipes now print the confidence for dwell_started only (sent
+from a frame with the person in it) and never on interaction_likely.
 
 This holds the recipes to that: the alert triggers on those two events, its
 message never reads dwell_ms, it reads each event's own clock, and both
@@ -89,13 +91,19 @@ class TheLingeringAlert(unittest.TestCase):
         self.assertIn("      dwelling_ = true;\n      dwell_start_ms_ = now_ms;\n"
                       "      return emit(out_event, \"dwell_started\");", fsm)
         self.assertIn("s.visit_ms    = last_visit_ms_;", fsm)
-        # the confidence is the frame's best box score, 0 on an empty frame,
-        # and the person branch returns before the leave-side events, so
-        # interaction_likely (sent from an empty frame) always carries 0
+        # the confidence is the frame's best box score, 0 on an empty frame.
+        # interaction_likely is sent from the leave-side code, past the
+        # person branch's return (an empty frame: 0), or by
+        # send_pending_interaction on the frame after the next visit's
+        # presence_started (that visit's frame): never from a frame of the
+        # visit it reports
         self.assertIn("confidence_ = vs.person_now ? vs.bbox.score : 0;", fsm)
         person_branch = fsm.index("  if (vs.person_now) {")
         self.assertLess(fsm.index("    return false;\n  }\n", person_branch),
-                        fsm.index('return emit(out_event, "interaction_likely", reason);'))
+                        fsm.index('      return emit(out_event, "interaction_likely", reason);\n    }'))
+        self.assertEqual(fsm.count('emit(out_event, "interaction_likely"'), 2)
+        owed = fsm[fsm.index("bool PresenceFSM::send_pending_interaction("):]
+        self.assertIn('  return emit(out_event, "interaction_likely", reason);\n}', owed)
 
     def test_the_message_reads_the_clocks_those_events_carry(self):
         msg = alert()["action"][0]["data"]["message"]
@@ -112,9 +120,11 @@ class TheLingeringAlert(unittest.TestCase):
         self.assertEqual(left, "canary_vision_001: interaction_likely (dwell_then_left) — stayed 17s")
 
     def test_interaction_likely_reports_no_confidence(self):
-        # HA26: it is sent from an empty frame, so its confidence is always 0
+        # HA26: sent after the visit has ended, its confidence is 0 (an empty
+        # frame) or the next visit's box (someone back on the very next frame)
         self.assertNotIn("confidence", render(alert(), LEFT))
         self.assertNotIn("confidence", render(alert(), {**LEFT, "reason": "zone_interaction_then_left"}))
+        self.assertNotIn("confidence", render(alert(), {**LEFT, "confidence": 91, "presence_ms": 100}))
 
 
 class TheEnvironmentIsHomeAssistants(unittest.TestCase):
@@ -134,7 +144,7 @@ class TheLitterBoxVisitAlert(unittest.TestCase):
 
     def test_the_message_says_how_long_and_no_confidence(self):
         msg = litter_visit()["action"][0]["data"]["message"]
-        self.assertNotIn("confidence", msg, "interaction_likely always carries confidence 0")
+        self.assertNotIn("confidence", msg, "interaction_likely's confidence is not this visit's")
         left = render(litter_visit(), {**LEFT, "profile": "litter_box"})
         self.assertEqual(left, "Visit completed (dwell_then_left) — in the box about 17s.")
 

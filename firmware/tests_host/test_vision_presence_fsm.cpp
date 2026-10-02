@@ -26,6 +26,16 @@
 // settled visit still ends with it, and presence_started names the cell the
 // visit began in.
 //
+// Pinned here (F152's review): a visit that qualified still reports
+// interaction_likely when someone is seen on the frame right after its
+// presence_ended. interaction_likely goes out on that frame only if it is
+// empty; a sighting there starts the next visit, whose presence_started
+// cleared the ended visit's latches. Before F152 the stale interaction
+// clock usually made the next fragment report one late (with its own
+// length and the zone reason); with F152 alone the visit reported nothing.
+// The FSM now owes it: it is sent on the frame after that presence_started,
+// inside the same window, with the ended visit's reason and visit_ms.
+//
 // Pinned here (sweep F154), in a second build of this file with
 // -DVISION_DWELL_END_GRACE_MS=4000 (longer than the 1.5 s lost timeout):
 // the dwell end grace holds a dweller present and dwelling past the lost
@@ -45,6 +55,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "canary/config.h"
 #include "canary/detect_config.h"
@@ -346,6 +357,158 @@ static void test_first_visit_after_boot_opens_on_its_cell() {
   assert(after.voxel.r == 2 && after.voxel.c == 1);
 }
 
+// ---- F152's review: a visit seen again on the frame after presence_ended ----
+
+struct Log {
+  std::string events;
+  std::vector<Seen> seen;
+};
+static void note(Log& log, const Seen& s) {
+  if (!log.events.empty()) log.events += ' ';
+  log.events += s.name;
+  if (s.reason) { log.events += ':'; log.events += s.reason; }
+  log.seen.push_back(s);
+}
+// `ms` of frames showing `vs`, every 100 ms from t; t ends after the last.
+static void frames(PresenceFSM& fsm, uint32_t& t, Log& log, const VisionSample& vs, uint32_t ms) {
+  for (const uint32_t end = t + ms; t < end; t += 100) {
+    Seen s;
+    if (step(fsm, vs, t, s)) note(log, s);
+  }
+}
+// Empty frames until `name` is emitted; t ends on the frame after it.
+static void empty_until(PresenceFSM& fsm, uint32_t& t, Log& log, const char* name) {
+  for (const uint32_t give_up = t + 60000; t < give_up; t += 100) {
+    Seen s;
+    if (step(fsm, empty(), t, s)) {
+      note(log, s);
+      if (is(s, name)) { t += 100; return; }
+    }
+  }
+  assert(false && "never emitted");
+}
+static const Seen& nth(const Log& log, const char* name, int n = 0) {
+  for (const Seen& s : log.seen)
+    if (is(s, name) && n-- == 0) return s;
+  assert(false && "no such event");
+  return log.seen.front();
+}
+static uint32_t settle_ms() {
+  return canary::cfg::detect().lost_timeout_ms + DWELL_END_GRACE_MS + INTERACTION_AFTER_LEAVE_WINDOW_MS + 1000;
+}
+
+// A 4 s visit settled in (1,1) qualifies; someone is seen in (0,2) on the
+// frame right after its presence_ended, for 1 s (not a qualifying visit).
+// The ended visit's interaction_likely goes out on the frame after that
+// presence_started, with its own reason and length; the 1 s visit's end
+// brings none. On the FSM before this, nothing was sent for either.
+static void test_back_to_back_visit_keeps_the_ended_visits_interaction() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Log log;
+  uint32_t t = 1000;
+  frames(fsm, t, log, person(1, 1), 4000);
+  empty_until(fsm, t, log, "presence_ended");
+  frames(fsm, t, log, person(0, 2), 1000);
+  frames(fsm, t, log, empty(), settle_ms());
+  std::printf("  seen again on the frame after presence_ended: %s\n", log.events.c_str());
+  assert(log.events == "presence_started presence_ended presence_started "
+                       "interaction_likely:zone_interaction_then_left presence_ended");
+  const Seen& ended = nth(log, "presence_ended");
+  const Seen& again = nth(log, "presence_started", 1);
+  const Seen& late = nth(log, "interaction_likely");
+  assert(again.t == ended.t + 100);  // the very next frame
+  assert(late.t == again.t + 100);   // and the one after it
+  assert(late.snap.visit_ms == ended.snap.visit_ms && late.snap.visit_ms > 4000);  // the ended visit's
+  // the row is the new visit's frame: present, its box, its cell
+  assert(late.snap.presence && late.snap.confidence == 91);
+  assert(late.snap.voxel.r == 0 && late.snap.voxel.c == 2);
+  assert(nth(log, "presence_ended", 1).snap.visit_ms < 4000);  // the 1 s visit's own length
+}
+
+// The same for a visit that dwelled: dwell_then_left, owed and sent.
+static void test_back_to_back_after_a_dwell() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Log log;
+  uint32_t t = 1000;
+  frames(fsm, t, log, person(1, 1), DWELL_START_MS + 2000);
+  empty_until(fsm, t, log, "presence_ended");
+  frames(fsm, t, log, person(1, 1), 300);
+  frames(fsm, t, log, empty(), settle_ms());
+  std::printf("  a dweller seen again on the frame after presence_ended: %s\n", log.events.c_str());
+  assert(log.events == "presence_started dwell_started dwell_ended presence_ended presence_started "
+                       "interaction_likely:dwell_then_left presence_ended");
+  assert(nth(log, "interaction_likely").snap.visit_ms == nth(log, "presence_ended").snap.visit_ms);
+}
+
+// Seen on that one frame only: the owed event goes out on the next, empty,
+// frame (the new visit is still held present through its lost timeout).
+static void test_one_frame_back_still_sends_it() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Log log;
+  uint32_t t = 1000;
+  frames(fsm, t, log, person(1, 1), 4000);
+  empty_until(fsm, t, log, "presence_ended");
+  frames(fsm, t, log, person(1, 1), 100);
+  frames(fsm, t, log, empty(), settle_ms());
+  assert(log.events == "presence_started presence_ended presence_started "
+                       "interaction_likely:zone_interaction_then_left presence_ended");
+  const Seen& late = nth(log, "interaction_likely");
+  assert(late.t == nth(log, "presence_started", 1).t + 100);
+  assert(late.snap.presence && late.snap.confidence == 0);  // an empty frame
+}
+
+// The visit back on that frame is judged on its own as well: a qualifying
+// one ends in its own interaction_likely, with its own length.
+static void test_back_to_back_visits_each_report() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Log log;
+  uint32_t t = 1000;
+  frames(fsm, t, log, person(1, 1), 4000);
+  empty_until(fsm, t, log, "presence_ended");
+  frames(fsm, t, log, person(2, 2), 6000);
+  frames(fsm, t, log, empty(), settle_ms());
+  assert(log.events == "presence_started presence_ended presence_started "
+                       "interaction_likely:zone_interaction_then_left presence_ended "
+                       "interaction_likely:zone_interaction_then_left");
+  assert(nth(log, "interaction_likely", 0).snap.visit_ms == nth(log, "presence_ended", 0).snap.visit_ms);
+  assert(nth(log, "interaction_likely", 1).snap.visit_ms == nth(log, "presence_ended", 1).snap.visit_ms);
+  assert(nth(log, "presence_ended", 1).snap.visit_ms > 6000);
+}
+
+// Guards: nothing is owed for a visit that did not qualify, and an owed
+// event whose window has closed by the next frame is dropped, not sent late.
+static void test_nothing_owed_unless_qualified_and_in_the_window() {
+  {
+    PresenceFSM fsm;
+    fsm.reset();
+    Log log;
+    uint32_t t = 1000;
+    frames(fsm, t, log, person(1, 1), 1000);
+    empty_until(fsm, t, log, "presence_ended");
+    frames(fsm, t, log, person(1, 1), 1000);
+    frames(fsm, t, log, empty(), settle_ms());
+    assert(log.events == "presence_started presence_ended presence_started presence_ended");
+  }
+  {
+    PresenceFSM fsm;
+    fsm.reset();
+    Log log;
+    uint32_t t = 1000;
+    frames(fsm, t, log, person(1, 1), 4000);
+    empty_until(fsm, t, log, "presence_ended");
+    const uint32_t left = nth(log, "presence_ended").t;
+    frames(fsm, t, log, person(1, 1), 100);  // the next frame
+    // a stalled camera: the frame after that lands past the window
+    t = left + INTERACTION_AFTER_LEAVE_WINDOW_MS + 100;
+    frames(fsm, t, log, empty(), settle_ms());
+    assert(log.events == "presence_started presence_ended presence_started presence_ended");
+  }
+}
+
 // ---- sweep F154: the dwell end grace (the build with a grace) ----
 #if VISION_DWELL_END_GRACE_MS > 0
 
@@ -459,6 +622,11 @@ int main() {
   test_pass_in_another_cell_names_its_own_cell();
   test_long_settled_visit_still_qualifies();
   test_first_visit_after_boot_opens_on_its_cell();
+  test_back_to_back_visit_keeps_the_ended_visits_interaction();
+  test_back_to_back_after_a_dwell();
+  test_one_frame_back_still_sends_it();
+  test_back_to_back_visits_each_report();
+  test_nothing_owed_unless_qualified_and_in_the_window();
 #if VISION_DWELL_END_GRACE_MS > 0
   test_grace_holds_the_dweller_then_dwell_ended_fires();
   test_dweller_back_within_the_grace_keeps_the_dwell();

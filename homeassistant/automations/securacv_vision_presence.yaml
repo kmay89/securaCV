@@ -25,8 +25,10 @@
 # starts on dwell_started's frame, and interaction_likely follows
 # presence_ended. The confidence is printed for dwell_started only: it is the
 # best person box's score on the frame the event was sent from, and
-# interaction_likely is sent from an empty frame after the person has gone,
-# so it always reads 0 there.
+# interaction_likely is sent after the visit has ended, from the empty frame
+# after presence_ended (where it reads 0) or, when someone is seen again on
+# that very frame, from the next visit's following frame (where it is that
+# visit's box). Either way it says nothing about the visit it reports.
 
 # ---------------------------------------------------------------------------
 # A) Dwell / interaction alert

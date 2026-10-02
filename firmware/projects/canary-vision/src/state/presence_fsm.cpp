@@ -20,6 +20,7 @@ void PresenceFSM::reset() {
   interaction_latch_=false;
   interaction_emitted_=false;
   last_leave_seen_=0;
+  pending_interaction_reason_=nullptr;
 
   bbox_ = BBox{};
   confidence_=0;
@@ -36,6 +37,16 @@ static inline bool emit(EventMsg& out, const char* name, const char* reason=null
   out.event_name = name;
   out.reason = reason;
   return true;
+}
+
+// Sends the interaction_likely an ended visit still owes (see the
+// presence_started branch of tick), once, if its window is still open.
+bool PresenceFSM::send_pending_interaction(uint32_t now_ms, EventMsg& out_event) {
+  if (!pending_interaction_reason_) return false;
+  const char* reason = pending_interaction_reason_;
+  pending_interaction_reason_ = nullptr;
+  if ((now_ms - last_leave_ms_) > INTERACTION_AFTER_LEAVE_WINDOW_MS) return false;
+  return emit(out_event, "interaction_likely", reason);
 }
 
 bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_event) {
@@ -65,6 +76,18 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
     voxel_tracker_.update(vs.voxel, now_ms);
 
     if (!presence_) {
+      // The visit that just ended reports interaction_likely on the first
+      // frame after its presence_ended. When someone is seen on that very
+      // frame, this one, the leave-side code below never ran (a latch still
+      // set here says so: it is cleared once the report is sent or its
+      // window has closed), and clearing the latches would drop a qualified
+      // visit's report: hold its reason, and send it on the next frame if
+      // the window is still open. That row reads the new visit's frame
+      // (present, its confidence and cell); visit_ms still says how long
+      // the ended visit lasted.
+      pending_interaction_reason_ = dwell_latch_        ? "dwell_then_left"
+                                    : interaction_latch_ ? "zone_interaction_then_left"
+                                                         : nullptr;
       presence_ = true;
       dwelling_ = false;
       presence_start_ms_ = now_ms;
@@ -74,6 +97,8 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
       interaction_emitted_ = false;
       return emit(out_event, "presence_started");
     }
+
+    if (send_pending_interaction(now_ms, out_event)) return true;
 
     if (!dwelling_ && (now_ms - presence_start_ms_) >= canary::cfg::detect().dwell_start_ms) {
       dwelling_ = true;
@@ -90,6 +115,8 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
 
     return false;
   }
+
+  if (send_pending_interaction(now_ms, out_event)) return true;
 
   if (presence_ && (now_ms - last_seen_ms_) > canary::cfg::detect().lost_timeout_ms) {
     if (dwelling_) {
