@@ -60,6 +60,7 @@
 #include "api_auth.h"
 #include "device_signature.h"
 #include "csi_event_wire.h"         /* staged copy of firmware/common/csi/src — the shared events body */
+#include "csi_event_id_floor.h"     /* staged copy — space_low(): the health's event-id warning (F82) */
 #include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
 
 #include <Arduino.h>
@@ -987,8 +988,8 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
    * passes the real state and HA gets SoC, charge state, and the
    * cycle-fade health estimate. The object is closed below, after the
    * optional tamper levels. Worst case (battery, the 11-char
-   * "discharging", 10-digit counters, a 23-char firmware version, both
-   * levels): 323 bytes, so 384 still fits with room to spare. */
+   * "discharging", 10-digit counters, a 23-char firmware version, the
+   * event-id flag, both levels): 350 bytes, so 384 still fits. */
   char body[384];
   int n;
   if (battery) {
@@ -1027,6 +1028,15 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
   }
   if (n <= 0 || (size_t)n >= sizeof(body)) return;
   size_t len = (size_t)n;
+  /* The event-id space is running out (sweep F82), the canary PIO tree's
+   * flag of the same name: true once the allocator reaches
+   * csi_event_id_floor::kHoldLimit, and after it wraps, when Home Assistant
+   * starts refusing this device's events. A warning only: the recovery is
+   * not decided yet. */
+  n = snprintf(body + len, sizeof(body) - len, ",\"event_id_space_low\":%s",
+               csi_event_id_floor::space_low(csi_event_get_next_event_id()) ? "true" : "false");
+  if (n <= 0 || (size_t)n >= sizeof(body) - len) return;
+  len += (size_t)n;
   /* The tamper levels (F41), each only when the .ino reports it — see
    * MqttTamperLevels for why an absent key is the right answer. */
   if (tamper && tamper->sd_mounted >= 0) {

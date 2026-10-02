@@ -45,6 +45,10 @@
 // handler sends the reconnect burst under it; the bridge announces the link
 // only once that burst is sent (the F112 review). A model, not esp_mqtt.
 //
+// Being the harness that compiles csi_mqtt.cpp, it also holds the health
+// publish's event-id space warning (sweep F82): `event_id_space_low` comes
+// up once the allocator reaches kHoldLimit, and stays up after a wrap.
+//
 // Run: ./test_mqtt_reinit [name]
 
 #include "csi_mqtt.h"
@@ -342,6 +346,11 @@ bool sign_event(uint32_t, const char*, const char*, const char*, int, int, int, 
 bool sign_counts(uint32_t, char*, size_t) { return false; }
 const char* fingerprint_hex() { return "0011223344556677"; }
 }  // namespace device_signature
+
+// The chokepoint's allocator: the health publish reads its next id for the
+// event-id space warning (sweep F82).
+uint32_t g_next_event_id = 0xC0000000u;
+extern "C" uint32_t csi_event_get_next_event_id(void) { return g_next_event_id; }
 
 namespace csi_event_egress {
 int g_pumps = 0;
@@ -974,6 +983,45 @@ void test_a_connect_burst_cut_short_leaves_the_link_down() {
   std::printf("PASS a_connect_burst_cut_short_leaves_the_link_down\n");
 }
 
+// ── The health publish (sweep F82) ──────────────────────────────────────
+
+// The health topic says when the event-id space is running out: from the
+// moment the allocator's next id reaches csi_event_id_floor::kHoldLimit,
+// and after it wraps (ids from 1 again). The canary PIO tree's health
+// carries the same flag. Home Assistant refuses a wrapped device's events;
+// nothing said so before.
+std::string last_health() {
+  for (size_t i = fake::published.size(); i-- > 0;) {
+    const std::string& topic = fake::published[i].first;
+    if (topic.size() >= 7 && topic.compare(topic.size() - 7, 7, "/health") == 0) {
+      return fake::published[i].second;
+    }
+  }
+  return "";
+}
+
+void test_the_health_publish_warns_before_the_id_space_runs_out() {
+  boot_with_broker("10.0.0.1");
+  g_next_event_id = 0xC0000000u + 1234;
+  csi_mqtt::publish_health(200000, 312);
+  CHECK(last_health().find("\"event_id_space_low\":false") != std::string::npos);
+  g_next_event_id = 0xF0000000u - 1;
+  csi_mqtt::publish_health(200000, 312);
+  CHECK(last_health().find("\"event_id_space_low\":false") != std::string::npos);
+  g_next_event_id = 0xF0000000u;   // kHoldLimit
+  csi_mqtt::publish_health(200000, 312);
+  CHECK(last_health().find("\"event_id_space_low\":true") != std::string::npos);
+  g_next_event_id = 7;             // wrapped
+  const csi_mqtt::MqttTamperLevels levels = {1, 0};
+  csi_mqtt::MqttBatteryInfo batt = {80, 95, 3900, "discharging"};
+  csi_mqtt::publish_health(200000, 312, &batt, &levels);
+  const std::string body = last_health();
+  CHECK(body.find("\"event_id_space_low\":true") != std::string::npos);
+  CHECK(body.find("\"sd_mounted\":true") != std::string::npos && body.back() == '}');
+  g_next_event_id = 0xC0000000u;
+  std::printf("PASS the_health_publish_warns_before_the_id_space_runs_out\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -999,6 +1047,7 @@ const Test kTests[] = {
     {"a_stall_under_the_timeout_keeps_the_connection", test_a_stall_under_the_timeout_keeps_the_connection},
     {"a_loop_pass_never_waits_behind_the_connect_burst", test_a_loop_pass_never_waits_behind_the_connect_burst},
     {"a_connect_burst_cut_short_leaves_the_link_down", test_a_connect_burst_cut_short_leaves_the_link_down},
+    {"the_health_publish_warns_before_the_id_space_runs_out", test_the_health_publish_warns_before_the_id_space_runs_out},
 };
 
 }  // namespace reinit

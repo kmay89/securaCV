@@ -828,6 +828,8 @@ clean: clean-bt-commands
 # (sweep F112): every client carries csi_mqtt.h's network timeout, over a
 # stalled link a busy pass waits out one timeout, not esp_mqtt's 10 s, and a
 # pass never waits behind the CONNECTED burst esp_mqtt sends under its lock.
+# Also the health publish's event-id space warning (sweep F82), against a
+# stubbed allocator.
 MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
 

@@ -403,9 +403,13 @@ struct MqttTamperLevels {
  * Push the canonical health snapshot to {prefix}/{device_id}/health.
  * Schema (matches custom_components/securacv/sensor.py health handler):
  *   battery, battery_present, memory_free, uptime, firmware_version,
- *   public_key — plus charge_state, battery_health_pct, battery_mv
- *   when a battery is present, and sd_mounted / enclosure_open when
- *   `tamper` reports them (binary_sensor.py's per-type tamper sensors).
+ *   public_key, event_id_space_low — plus charge_state,
+ *   battery_health_pct, battery_mv when a battery is present, and
+ *   sd_mounted / enclosure_open when `tamper` reports them
+ *   (binary_sensor.py's per-type tamper sensors). event_id_space_low
+ *   (sweep F82) is true once the event-id allocator reaches
+ *   csi_event_id_floor::kHoldLimit, and after it wraps; Home Assistant
+ *   does not read it yet.
  * The HA sensor derives "healthy/warning/critical" from battery +
  * memory_free; charging devices and mains-powered devices (battery
  * nullptr → battery=100) never trip the battery thresholds.

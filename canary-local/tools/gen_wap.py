@@ -630,7 +630,10 @@ TOPICS = [
      "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "health", "retained": True, "cadence": "~60 s",
      "payload": '{"battery":100,"battery_present":false,"memory_free":204800,"uptime":' + str(EX_UPTIME_S)
-                + ',"firmware_version":"' + FW_VERSION + '","public_key":"…","sd_mounted":true}'},
+                + ',"firmware_version":"' + FW_VERSION + '","public_key":"…","event_id_space_low":false,'
+                + '"sd_mounted":true}',
+     "note": "event_id_space_low turns true once the event-id allocator nears the end of its space "
+             "(sweep F82); Home Assistant does not read it yet"},
     {"suffix": "counts", "retained": True, "cadence": "on each new record",
      "payload": '{"v":1,"total":312,"alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "tamper", "retained": False, "cadence": "per committed system.integrity event (live only, never backfill)",
