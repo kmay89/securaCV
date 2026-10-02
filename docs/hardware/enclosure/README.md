@@ -1273,6 +1273,17 @@ doorbell STL is re-cut:
   the back of the disc), 0.4 mm of focus travel under the disc, then a cone at
   the datasheet's 62° diagonal FOV + 4° a side, so nothing in the face crops
   the image (asserted).
+- **Holes that print clean face-down** (from the first print: strings across
+  the lens, vent and button holes). The face prints on the bed, so every
+  seat cut into the outer face left a flat ring with nothing under it, and a
+  slicer bridges a circle as spaghetti. The lens-disc and button-bezel seats
+  now carry **bridge steps** (`core_bridge_steps`): one layer above the
+  seat floor is a slot the hole's width (two straight bridges anchored on the
+  seat's walls), the next a square (bridges across those), then the round
+  hole. Set `bridge_layer` to your slicer's layer height — the seat depths are
+  asserted to land on whole layers. The vent membrane's seat moves to the
+  **inner** face (where the assembly steps always put the patch), so the
+  outer face carries only the Ø1 holes and nothing has to bridge.
 
 ![doorbell — body, face, plate and gasket](./preview_doorbell.png)
 

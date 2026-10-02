@@ -3740,7 +3740,7 @@
       {
        "name": "vent_pad_d",
        "default": "12.0",
-       "comment": "GORE-vent seat Ø on the face's outer side — core_vent_pad_d()"
+       "comment": "GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
       },
       {
        "name": "vent_pad_depth",
@@ -3828,6 +3828,16 @@
      "name": "Quality",
      "note": "",
      "params": [
+      {
+       "name": "bridge_layer",
+       "default": "0.2",
+       "range": [
+        0.08,
+        0.04,
+        0.32
+       ],
+       "comment": "your slicer's layer height: the face's counterbores get bridge steps this thick (core_bridge_steps)"
+      },
       {
        "name": "ledge_w",
        "default": "pl_ledge(e_seal, gasket_w, tol_slide)",

@@ -1113,7 +1113,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2199,7 +2199,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2294,7 +2294,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "9a0bfac838e05e495fd6c73d7a4b3927e26592a245c5cc39afe11cb16011bd6b",
+      "sha256": "0aedf8f5ef6db476dcc951ba917aa0913ee85b9da6e4620b5f98f7172d37ca92",
       "groups": [
         {
           "name": "What to render",
@@ -3036,7 +3036,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent seat Ø on the face's outer side — core_vent_pad_d()"
+              "desc": "GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
@@ -3145,6 +3145,15 @@
           "name": "Quality",
           "params": [
             {
+              "name": "bridge_layer",
+              "type": "number",
+              "default": 0.2,
+              "min": 0.08,
+              "step": 0.04,
+              "max": 0.32,
+              "desc": "your slicer's layer height: the face's counterbores get bridge steps this thick (core_bridge_steps)"
+            },
+            {
               "name": "vm_cx",
               "type": "number",
               "default": 0
@@ -3166,7 +3175,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4126,7 +4135,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4585,7 +4594,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",

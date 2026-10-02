@@ -323,7 +323,7 @@ label_font  = "Liberation Sans:style=Bold";  // the font label_text is set in (i
 lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press) — core_lightpipe_d()
 lp_dx  = 8.0;      // light-pipe port center X, from the module center
 lp_dy  = -8.0;     // light-pipe port center Y, from the module center
-vent_pad_d     = 12.0;  // GORE-vent seat Ø on the face's outer side — core_vent_pad_d()
+vent_pad_d     = 12.0;  // GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()
 vent_pad_depth = 0.8;   // that seat's recess depth — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
@@ -347,6 +347,7 @@ clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) �
 clip_root_r = 0.6;   // 45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root
 
 /* [Quality] */
+bridge_layer = 0.2;  // your slicer's layer height: the face's counterbores get bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 // curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
 // exploding tiny holes into thousands of facets like a large $fn would
 $fa = 3; $fs = 0.4;
@@ -379,6 +380,7 @@ cam_post_eff = cam_lens_h - cam_barrel_in;
 cam_ap_d     = cam_barrel_d + 2*tol_slide;
 cam_half     = cam_fov/2 + cam_fov_margin;            // the cone the hole must clear, per side
 cam_bore_top = lid_t - ((cam_disc_t > 0 && cam_disc_d > 0) ? cam_disc_t + 0.2 : 0);   // bore floor -> disc seat
+function cam_cone_d(z) = cam_ap_d + 2*max(0, z - cam_barrel_in)*tan(cam_half);         // the lens cone's Ø at face height z
 
 // the zones along Y are set by the boards alone, so they come first: the
 // post rows and the mid posts read them, and the cavity's width reads the posts
@@ -532,6 +534,12 @@ assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= cor
            " % of its groove - past ", round(100*core_gasket_fill_max()),
            " % the incompressible gasket props the plate off its ledge instead of sealing; narrow gasket_w or deepen gasket_groove"));
 assert(cam_disc_d == 0 || cam_disc_d > cam_ap_d, "cam_disc_d must exceed cam_ap_d");
+// the face prints face-down: each bed-side counterbore floor must sit on a whole layer,
+// or the bridge steps over it land between layers and the slicer merges them away
+function _on_layer(d) = abs(d/bridge_layer - round(d/bridge_layer)) < 1e-6;
+assert(_on_layer(lid_t - cam_bore_top) && (btn_bez_d == 0 || _on_layer(btn_bez_t)),
+       str("the disc seat (", lid_t - cam_bore_top, ") and bezel seat (", btn_bez_t, ") depths must be whole ",
+           bridge_layer, " mm layers — set bridge_layer to your slicer's layer height"));
 assert(mount_dt_depth() + 1.5 <= plate_t, "the lug pockets leave under 1.5 mm of plate over them — raise lug_extra");
 // the camera: the holder clears the face, the barrel keeps focus travel under
 // the disc, and nothing in the face crops the lens's field
@@ -796,6 +804,10 @@ module shell_solid() {
                     // cosmetic 45° lead-in around the seat rim (cleaner edge, easier disc entry)
                     translate([lens_x, lens_y, lid_t - 0.4])
                         cylinder(d1 = cam_disc_d + 2*tol_slide, d2 = cam_disc_d + 2*tol_slide + 1.0, h = 0.41);
+                    // the face prints face-DOWN: this seat is a counterbore on the bed, and the
+                    // layer over its floor would bridge a ring round the cone — bridge steps
+                    core_bridge_steps(lens_x, lens_y, cam_bore_top, cam_cone_d(cam_bore_top),
+                                      cam_disc_d + 2*tol_slide, up = -1, layer = bridge_layer);
                 }
                 // button hole + bezel seat (+ matching lead-in rim)
                 translate([0, btn_cy, -1]) cylinder(d = btn_d + 2*tol_slide, h = lid_t + 2);
@@ -804,10 +816,13 @@ module shell_solid() {
                         cylinder(d = btn_bez_d + 2*tol_slide, h = btn_bez_t + 1);
                     translate([0, btn_cy, lid_t - 0.4])
                         cylinder(d1 = btn_bez_d + 2*tol_slide, d2 = btn_bez_d + 2*tol_slide + 1.0, h = 0.41);
+                    core_bridge_steps(0, btn_cy, lid_t - btn_bez_t, btn_d + 2*tol_slide,
+                                      btn_bez_d + 2*tol_slide, up = -1, layer = bridge_layer);
                 }
                 if (e_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
                 if (e_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
-                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
+                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes,
+                                              seat_inner = true);   // the membrane goes INSIDE: nothing to bridge on the bed
                 if (label_text != "")
                     translate([label_dx, label_dy, lid_t - label_depth])
                         linear_extrude(label_depth + 1) rotate(label_rot)

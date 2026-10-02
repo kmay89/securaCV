@@ -391,13 +391,41 @@ module pl_post_pilot(x, y, z_end, depth, d, insert = false, ins_bore = 0, ins_h 
 //  geometry lives here once; what legitimately varies per case rides in as
 //  arguments from that case's Customizer knobs.
 // ---------------------------------------------------------------------------
-module core_vent_cluster(x, y, t, pad_d, pad_depth, ring_d, hole_d, holes) {
+module core_vent_cluster(x, y, t, pad_d, pad_depth, ring_d, hole_d, holes, seat_inner = false) {
     translate([x, y, 0]) {
-        // recessed seat for the adhesive GORE vent on the OUTER face
-        translate([0, 0, t - pad_depth]) cylinder(d = pad_d, h = pad_depth + 1);
+        // recessed seat for the adhesive GORE vent — on the OUTER face by
+        // default; seat_inner puts it on the INNER face (z = 0). A shell that
+        // prints FACE-DOWN wants the inner seat: an outer seat is a Ø pad_d
+        // pocket on the bed, and the layer over it bridges a circle full of
+        // holes — it prints as a nest of strings (the doorbell's first print)
+        if (seat_inner) translate([0, 0, -1]) cylinder(d = pad_d, h = pad_depth + 1);
+        else translate([0, 0, t - pad_depth]) cylinder(d = pad_d, h = pad_depth + 1);
         // ring of through-holes for sound + pressure equalization
         for (i = [0 : holes - 1]) rotate([0, 0, i * 360 / holes])
             translate([ring_d/2, 0, -1]) cylinder(d = hole_d, h = t + 2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Bridge steps — a counterbore that prints on the BED side (a face-down
+//  shell's lens-disc or button-bezel seat) leaves, one layer above its floor,
+//  a flat ring around the smaller hole with nothing under it. A slicer bridges
+//  that ring as a circle, and a circle bridges as spaghetti. The fix is the
+//  sacrificial-bridge step: the first layer over the floor is cut as a SLOT
+//  the hole's width, so it prints as two straight bridges anchored on the
+//  counterbore's walls; the next layer is cut as a SQUARE the hole's width,
+//  so its bridges run across the first pair; the round hole starts above
+//  that. Every layer is a straight, anchored bridge. SUBTRACT, in the part's
+//  frame: (x, y, z_floor) is the counterbore floor's center, `up` is the
+//  print's up direction along z there (+1 or -1), `layer` the layer height
+//  the floor sits on a multiple of.
+// ---------------------------------------------------------------------------
+module core_bridge_steps(x, y, z_floor, hole_d, seat_d, up = 1, layer = 0.2, rot = 0) {
+    assert(seat_d > hole_d, "core_bridge_steps: the counterbore must be wider than the hole");
+    assert(up == 1 || up == -1, "core_bridge_steps: up is +1 or -1");
+    translate([x, y, z_floor]) rotate([0, 0, rot]) mirror([0, 0, up < 0 ? 1 : 0]) {
+        translate([-seat_d/2, -hole_d/2, -0.01]) cube([seat_d, hole_d, layer + 0.01]);   // the slot
+        translate([-hole_d/2, -hole_d/2, layer - 0.01]) cube([hole_d, hole_d, layer + 0.01]); // the square
     }
 }
 
