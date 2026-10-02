@@ -542,6 +542,34 @@ static size_t build_signed_frame(mesh_envelope::MsgType type,
                                          out, out_cap);
 }
 
+/* Send one signed opera frame to every trusted peer's bound radio MAC, and
+ * to no other address (F101). Returns how many of those sends the
+ * transport took: what every opera sender reports as "sent", and
+ * leave_opera() as `notified`.
+ *
+ * Until F101 the opera senders used the transport's broadcast(), which
+ * sends to every address in the transport table. The table also holds,
+ * while a pairing runs, the partner's address (ensure_pair_contact), which
+ * an outsider gets there by answering the pairing from its own radio. So
+ * tamper alerts, beacon events, channel locks, hub elections, rekey OFFERs
+ * and a LEAVE were unicast to a device that is not a member, and counted:
+ * with no member at all, send_tamper_alert() returned true and
+ * leave_opera() reported notified, each with only the outsider's copy sent
+ * (host-probed). The frames are signed, not encrypted, so they told it
+ * nothing a radio in range could not overhear; the harm was a false
+ * "sent". A member with no binding is not sent to either: it is heard from
+ * nowhere (F70), and its radio is not in the table. Same task contract as
+ * every sender. */
+static size_t send_to_members(const uint8_t* frame, size_t len) {
+  size_t sent = 0;
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    const TrustedPeer& p = s_trusted_peers[i];
+    if (!p.in_use || !p.radio_mac_set) continue;
+    if (mesh_transport::send_to_peer(p.radio_mac, frame, len)) ++sent;
+  }
+  return sent;
+}
+
 /* Forget a trusted peer entirely: copy out its pubkey, then unregister it,
  * which takes its own radio MAC out of the transport table (so later
  * broadcasts stop reaching it) and no other address. Until F70 this also
@@ -576,8 +604,9 @@ static void revoke_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN], uint32_t
   }
 }
 
-/* Sign and send one rekey payload: broadcast, or unicast to dest_fp's
- * bound radio MAC (broadcast when none is bound). Signed under the
+/* Sign and send one rekey payload: to every member (send_to_members), or
+ * unicast to dest_fp's bound radio MAC (every member when none is bound).
+ * Signed under the
  * CURRENT opera_id — the ACK ordering depends on it. Until F70 the unicast
  * went to the address dest's last verified frame came from, so a replay of
  * dest's frame from a pairing partner's or a copied address steered this
@@ -593,7 +622,7 @@ static void send_rekey_frame(const mesh_rekey::Action& a, bool broadcast,
   if (dest != nullptr && dest->radio_mac_set) {
     mesh_transport::send_to_peer(dest->radio_mac, frame, n);
   } else {
-    mesh_transport::broadcast(frame, n);
+    send_to_members(frame, n);
   }
   secure_zero(frame, sizeof(frame));
 }
@@ -1325,12 +1354,12 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
                                       frame, sizeof(frame));
   if (n == 0) return false;
 
-  /* 3. Broadcast to every paired peer. mesh_transport::broadcast
-   * returns the number of peers that accepted; 0 means no peers
-   * known yet (legitimate during early boot before pairing). We
+  /* 3. Send to every member's bound radio MAC (send_to_members, F101).
+   * It returns how many sends the transport took; 0 means no bound
+   * member took it (legitimate during early boot before pairing). We
    * still consider that a failure for the send_beacon_event return
    * so the caller can choose to retry / queue. */
-  return mesh_transport::broadcast(frame, n) > 0;
+  return send_to_members(frame, n) > 0;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1553,7 +1582,7 @@ bool send_channel_lock(uint8_t channel,
                                       payload, sizeof(payload), now_ms,
                                       frame, sizeof(frame));
   if (n == 0) return false;
-  return mesh_transport::broadcast(frame, n) > 0;
+  return send_to_members(frame, n) > 0;
 }
 
 void set_channel_lock_handler(channel_lock_received_fn fn) {
@@ -1576,7 +1605,7 @@ bool send_hub_election(mesh_hub_election::Event event,
                                       payload, sizeof(payload), now_ms,
                                       frame, sizeof(frame));
   if (n == 0) return false;
-  return mesh_transport::broadcast(frame, n) > 0;
+  return send_to_members(frame, n) > 0;
 }
 
 void set_hub_election_handler(hub_election_received_fn fn) {
@@ -1596,7 +1625,7 @@ bool leave_opera(uint32_t now_ms) {
     const size_t n = build_signed_frame(mesh_envelope::MsgType::LEAVE_OPERA,
                                         nullptr, 0, now_ms,
                                         frame, sizeof(frame));
-    if (n > 0) notified = mesh_transport::broadcast(frame, n) > 0;
+    if (n > 0) notified = send_to_members(frame, n) > 0;   /* members only (F101) */
   }
   if (s_running && pairing_in_progress()) cancel_pairing();
   reset_rekey();                       /* leaving ends any rotation */
@@ -1634,7 +1663,7 @@ bool send_tamper_alert(mesh_alert::Kind kind,
                                       payload, sizeof(payload), now_ms,
                                       frame, sizeof(frame));
   if (n == 0) return false;
-  return mesh_transport::broadcast(frame, n) > 0;
+  return send_to_members(frame, n) > 0;
 }
 
 void set_tamper_alert_handler(tamper_alert_received_fn fn) {

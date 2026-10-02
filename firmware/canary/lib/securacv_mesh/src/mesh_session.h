@@ -236,7 +236,8 @@ void process(uint32_t now_ms);
  *
  *   send_beacon_event() — build a signed envelope carrying a BLE
  *   Scout beacon-event payload (state + label, see mesh_beacon.h)
- *   and broadcast it to every paired peer.
+ *   and send it to every member's bound radio MAC (MEMBERS ONLY,
+ *   below).
  *
  *     Threading: MUST be invoked from the same task as process()
  *     (the main loop). The outbound counter is incremented without
@@ -250,9 +251,24 @@ void process(uint32_t now_ms);
  *     than surface them.
  *
  *     Returns false if set_opera_secret() has not been called, if
- *     the underlying envelope serialization fails, or if the
- *     broadcast had no peers to send to. sender_fp is derived from
- *     the device pubkey passed to init().
+ *     the underlying envelope serialization fails, or if no bound
+ *     member took the send. sender_fp is derived from the device
+ *     pubkey passed to init().
+ *
+ * MEMBERS ONLY (F101). Every opera sender here — beacon events, channel
+ * locks, hub elections, tamper alerts, LEAVE, the rekey OFFER — sends one
+ * unicast to each trusted peer's bound radio MAC (RADIO ADDRESSES below)
+ * and to no other address, and its "sent" (leave_opera's `notified`)
+ * counts only those. Until F101 they used mesh_transport::broadcast(),
+ * which sends to every address in the transport table; while a pairing
+ * runs that includes the partner's, which an outsider gets there by
+ * answering the pairing from its own radio. So the outsider got every
+ * opera frame and it counted: with no member at all, send_tamper_alert()
+ * returned true and leave_opera() reported notified (host-probed). The
+ * frames are signed, not encrypted, so it learned nothing a radio in range
+ * could not overhear; the harm was a false "sent". A member with no
+ * binding is sent nothing: its radio is not in the table, and it is heard
+ * from nowhere until a pairing binds one (F70).
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN]);
@@ -430,10 +446,11 @@ size_t trusted_peer_count();
 /* ──────────────────────────────────────────────────────────────────────────
  * RADIO ADDRESSES — the transport peer table on the device (F33 part 1)
  *
- * mesh_transport delivers only frames from MACs in its table and
- * broadcast() sends only to them; before F33 nothing but the host tests
- * filled it, so on a device every frame dropped as recv_dropped_no_peer and
- * every broadcast reached nobody. The session now keeps it in step with the
+ * mesh_transport delivers only frames from MACs in its table, and the
+ * opera senders reach only the members' bound MACs in it (MEMBERS ONLY,
+ * above); before F33 nothing but the host tests filled it, so on a device
+ * every frame dropped as recv_dropped_no_peer and every opera send reached
+ * nobody. The session now keeps it in step with the
  * trusted peers:
  *   • bind_peer_mac(fp, mac) — a trusted peer's radio MAC goes into the
  *     transport table and is remembered with the peer (it replaces an older
@@ -534,7 +551,7 @@ void set_beacon_event_handler(beacon_event_received_fn fn);
  * csi_hal::set_channel_lock() with the proposed channel.
  *
  * send_channel_lock() works identically to send_beacon_event(): builds
- * a signed envelope, broadcasts to all trusted peers.
+ * a signed envelope and sends it to every member's bound radio MAC.
  *
  * Threading: send MUST be called from the main loop; the receive handler
  * runs on the same task as mesh_transport::process().
@@ -580,8 +597,9 @@ void set_hub_election_handler(hub_election_received_fn fn);
  *
  * leave_opera() makes this device forget its opera:
  *   1. if it holds an opera, it signs a LEAVE_OPERA frame (empty payload)
- *      under the current opera_id and broadcasts it — best effort, the
- *      return value says whether any peer took the frame;
+ *      under the current opera_id and sends it to every member's bound
+ *      radio MAC — best effort, the return value says whether any member
+ *      took the frame (a running pairing's partner does not count, F101);
  *   2. then cancels any pairing and wipes every opera-scoped RAM item:
  *      opera_id / sender_fp binding, trusted-peer table, opera name,
  *      alert history and counter. Two things are KEPT on purpose: the
@@ -619,9 +637,10 @@ void set_peer_left_handler(peer_left_fn fn);
  *
  * send_tamper_alert() builds a signed TAMPER_ALERT envelope carrying the
  * 6-byte mesh_alert payload (kind, severity, witness_seq — no free text)
- * and broadcasts it to every paired peer. Same return contract and task
- * contract as send_beacon_event(): false before set_opera_secret(), while
- * disabled, on an invalid payload (severity > 7), or when no peer took it.
+ * and sends it to every member's bound radio MAC. Same return contract and
+ * task contract as send_beacon_event(): false before set_opera_secret(),
+ * while disabled, on an invalid payload (severity > 7), or when no bound
+ * member took it.
  *
  * Receive side: a verified TAMPER_ALERT (signature + opera_id + replay
  * checks passed, payload decodes) increments the sender's

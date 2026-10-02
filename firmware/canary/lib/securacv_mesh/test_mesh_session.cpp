@@ -112,6 +112,18 @@ void reset_world() {
   assert(mesh_session::start());
 }
 
+/* A trusted member bound to `mac`. The opera senders reach bound members
+ * only (F101), not a bare transport address, so a test that wants a send
+ * to land adds one of these rather than mesh_transport::add_peer(). */
+void add_bound_member(const uint8_t mac[6]) {
+  uint8_t pub[mesh_crypto::PUBKEY_LEN], priv[mesh_crypto::PRIVKEY_LEN];
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  assert(mesh_session::register_trusted_peer(pub));
+  mesh_crypto::compute_fingerprint(pub, fp);
+  assert(mesh_session::bind_peer_mac(fp, mac));
+}
+
 /* ── Test bodies ──────────────────────────────────────────────────────── */
 
 void test_start_initiator_emits_discover_init() {
@@ -384,9 +396,9 @@ void test_send_beacon_event_signs_and_broadcasts() {
   assert(mesh_session::set_opera_secret(opera_secret));
   assert(mesh_session::has_opera_secret());
 
-  /* Add a paired peer so mesh_transport::broadcast has someone to send to. */
+  /* Add a member, bound to its radio MAC, so the send has a target. */
   uint8_t peer_mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01};
-  assert(mesh_transport::add_peer(peer_mac));
+  add_bound_member(peer_mac);
 
   /* Send. */
   assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED,
@@ -930,7 +942,7 @@ void test_deinit_clears_opera_auth_state() {
 
   /* send_beacon_event must refuse before the new set_opera_secret(). */
   uint8_t peer_mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x05};
-  assert(mesh_transport::add_peer(peer_mac));
+  add_bound_member(peer_mac);
   g_outs.clear();
   assert(!mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED,
                                           "stale", 1000));
@@ -1398,7 +1410,7 @@ void test_send_tamper_alert() {
   uint8_t pub[mesh_crypto::PUBKEY_LEN], priv[mesh_crypto::PRIVKEY_LEN];
   stand_up_session(nullptr, pub, priv);
   const uint8_t peer_mac[6] = {0x02, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5};
-  assert(mesh_transport::add_peer(peer_mac));
+  add_bound_member(peer_mac);
 
   /* No opera yet → refused, nothing on the air. */
   g_outs.clear();
@@ -1645,10 +1657,10 @@ void test_outer_frame_is_the_registry_frame() {
   assert(mesh_session::trusted_peer_count() == 0);
 
   /* Every opera frame THIS tree sends has the same first two bytes. (B's
-   * last LEAVE took its bound address out of the table; put one back by
-   * hand so the broadcast has somewhere to go.) */
+   * last LEAVE dropped it and its bound address; bind a member there so
+   * the send has somewhere to go: the senders reach bound members only.) */
   assert(mesh_session::set_opera_secret(secret));
-  assert(mesh_transport::add_peer(b_mac));
+  add_bound_member(b_mac);
   g_outs.clear();
   assert(mesh_session::send_tamper_alert(mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 1, 9000));
   assert(g_outs.size() == 1);
@@ -1670,7 +1682,9 @@ void test_leave_opera() {
   assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
   assert(mesh_session::register_trusted_peer(b_pub));
   const uint8_t b_mac[6] = {0x02, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5};
-  assert(mesh_transport::add_peer(b_mac));
+  uint8_t b_fp_bind[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(b_pub, b_fp_bind);
+  assert(mesh_session::bind_peer_mac(b_fp_bind, b_mac));
 
   g_outs.clear();
   assert(mesh_session::leave_opera(5000));
@@ -2087,15 +2101,18 @@ void test_leave_keeps_outbound_counter() {
   assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
   assert(mesh_session::register_trusted_peer(b_pub));
   const uint8_t b_mac[6] = {0x02, 0x5E, 0x5E, 0x5E, 0x5E, 0x5E};
-  assert(mesh_transport::add_peer(b_mac));
+  uint8_t b_fp_bind[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(b_pub, b_fp_bind);
+  assert(mesh_session::bind_peer_mac(b_fp_bind, b_mac));
 
   g_outs.clear();
   assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 100));   /* 1 */
   assert(mesh_session::leave_opera(200));                                               /* 2 */
   assert(g_outs.size() == 2);
-  /* Re-pair into the same opera. */
+  /* Re-pair into the same opera (which binds B's address again). */
   assert(mesh_session::set_opera_secret(secret));
   assert(mesh_session::register_trusted_peer(b_pub));
+  assert(mesh_session::bind_peer_mac(b_fp_bind, b_mac));
   g_outs.clear();
   assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 300));
   assert(g_outs.size() == 1);
@@ -2880,7 +2897,7 @@ void test_rest_request_slot() {
 
   /* LEAVE through the slot forgets the opera and the radio peer table. */
   const uint8_t mac[6] = {0x02, 0x93, 0x93, 0x93, 0x93, 0x93};
-  assert(mesh_transport::add_peer(mac));
+  add_bound_member(mac);
   assert(mesh_session::submit_request(make_request(mesh_session::RequestType::LEAVE)));
   mesh_session::process(1300);
   assert(mesh_session::take_request_result(&res));
@@ -4112,6 +4129,114 @@ void test_unbound_member_frame_is_never_taken() {
   std::printf("PASS test_unbound_member_frame_is_never_taken\n");
 }
 
+/* ── F101 — the opera senders reach bound members only ──────────────────
+ *
+ * Until F101 every opera sender used mesh_transport::broadcast(), which
+ * sends to every address in the transport table. While a pairing runs the
+ * table also holds the partner's address (ensure_pair_contact), and an
+ * outsider gets its address there by answering the pairing from its own
+ * radio. So the opera's tamper alerts, beacon events, channel locks, hub
+ * elections, rekey OFFERs and a LEAVE went to it too, and counted as sent:
+ * with no member at all, send_tamper_alert() returned true and
+ * leave_opera() reported notified. Each test below fails on the code
+ * before F101. */
+
+/* Start a pairing as initiator and have an outsider at `mac_o` answer it:
+ * its address is now in the transport table as the pairing partner. */
+void outsider_answers_the_pairing(const uint8_t S[32], const uint8_t mac_o[6]) {
+  assert(mesh_session::start_pairing_initiator(S, "Home", 20));
+  uint8_t o_pub[32], o_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(o_pub, o_priv));
+  mesh_pairing::PairingContext co;
+  mesh_pairing::context_init(co);
+  const std::vector<uint8_t> disc = wire(mesh_pairing::start_joiner(co, o_pub, o_priv, 20));
+  mesh_transport::test::inject_recv(mac_o, disc.data(), disc.size(), -40);
+  mesh_transport::process();
+  assert(transport_has(mac_o));
+  assert(mesh_session::pairing_state() == mesh_pairing::State::AWAITING_ACCEPT);
+}
+
+/* With no member, nothing is sent and nothing reports sent, though the
+ * pairing partner's address is in the table. */
+void test_opera_sends_with_only_a_pairing_partner_reach_nobody() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x11 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  const uint8_t mac_o[6] = {0x24, 0x0A, 0xC4, 0x01, 0x01, 0x0E};
+  outsider_answers_the_pairing(S, mac_o);
+
+  /* A trusted member with no binding is not sent to either. */
+  uint8_t u_pub[32], u_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(u_pub, u_priv));
+  assert(mesh_session::register_trusted_peer(u_pub));
+
+  g_outs.clear();
+  uint8_t fp[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  assert(!mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 1, 30));
+  assert(!mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED, "door", 31));
+  assert(!mesh_session::send_channel_lock(6, mesh_channel_hop::Reason::UTILIZATION, 32));
+  assert(!mesh_session::send_hub_election(mesh_hub_election::Event::HUB_ELECTED, fp, 33));
+  assert(g_outs.empty());
+  assert(!mesh_session::leave_opera(40));
+  assert(sent_of_type(mesh_envelope::MsgType::LEAVE_OPERA) == 0);
+  assert(sent_to(mac_o) == 0);
+  std::printf("PASS test_opera_sends_with_only_a_pairing_partner_reach_nobody\n");
+}
+
+/* With a bound member B, an unbound member U and the outsider answering a
+ * pairing, each opera sender sends exactly one frame, to B, and the LEAVE
+ * too. */
+void test_opera_sends_reach_bound_members_only() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x21 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  const uint8_t mac_b[6] = {0x24, 0x0A, 0xC4, 0x01, 0x02, 0x0B};
+  const uint8_t mac_o[6] = {0x24, 0x0A, 0xC4, 0x01, 0x02, 0x0E};
+  add_bound_member(mac_b);
+  uint8_t u_pub[32], u_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(u_pub, u_priv));
+  assert(mesh_session::register_trusted_peer(u_pub));
+  outsider_answers_the_pairing(S, mac_o);
+
+  uint8_t fp[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  g_outs.clear();
+  assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 1, 30));
+  assert(g_outs.size() == 1 && sent_to(mac_b) == 1);
+  g_outs.clear();
+  assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED, "door", 31));
+  assert(g_outs.size() == 1 && sent_to(mac_b) == 1);
+  g_outs.clear();
+  assert(mesh_session::send_channel_lock(6, mesh_channel_hop::Reason::UTILIZATION, 32));
+  assert(g_outs.size() == 1 && sent_to(mac_b) == 1);
+  g_outs.clear();
+  assert(mesh_session::send_hub_election(mesh_hub_election::Event::HUB_ELECTED, fp, 33));
+  assert(g_outs.size() == 1 && sent_to(mac_b) == 1);
+
+  /* A rotation's OFFER, re-sent while the pairing runs, goes to B alone.
+   * (POST /api/mesh/pair/start refuses to start a pairing during a
+   * rotation; the session API itself does not, so the overlap is set up
+   * here directly.) */
+  mesh_session::cancel_pairing();
+  uint8_t c_pub[32], c_priv[32], c_fp[8], removed[32];
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  assert(mesh_session::register_trusted_peer(c_pub));
+  mesh_crypto::compute_fingerprint(c_pub, c_fp);
+  assert(mesh_session::remove_peer(c_fp, 100, removed) == mesh_session::RemoveResult::STARTED);
+  outsider_answers_the_pairing(S, mac_o);
+  g_outs.clear();
+  mesh_session::process(100 + mesh_rekey::REKEY_RETRY_MS);
+  assert(sent_of_type(mesh_envelope::MsgType::REKEY_OFFER) == 1);
+  assert(g_outs.size() == 1 && sent_to(mac_b) == 1);
+
+  g_outs.clear();
+  assert(mesh_session::leave_opera(200));
+  assert(sent_of_type(mesh_envelope::MsgType::LEAVE_OPERA) == 1);
+  assert(sent_to(mac_b) == 1 && sent_to(mac_o) == 0);
+  std::printf("PASS test_opera_sends_reach_bound_members_only\n");
+}
+
 /* ── F33 part 3 — the outbound counter survives a reboot ──────────────── */
 
 /* A fake NVS for mesh_state::save/load_outbound_counter. */
@@ -4147,7 +4272,7 @@ void boot_device(const uint8_t pub[32], const uint8_t priv[32], const uint8_t S[
   assert(mesh_session::set_opera_secret(S));
   if (g_nvs_has) mesh_session::restore_outbound_counter(g_nvs_ctr);
   mesh_session::set_counter_reserve_handler(fake_reserve);
-  assert(mesh_transport::add_peer(kCtrPeer));   /* someone to broadcast to */
+  add_bound_member(kCtrPeer);   /* someone to send to */
   /* reset_world() rewound the transport clock; keep it moving forward so
    * the storm limiter's window logic sees real time. */
   g_ctr_clock += 60000;
@@ -4281,12 +4406,12 @@ void test_outbound_counter_without_reservation_restarts() {
   reset_world();
   mesh_session::deinit();
   assert(mesh_session::init(pub, priv) && mesh_session::start() && mesh_session::set_opera_secret(S));
-  assert(mesh_transport::add_peer(kCtrPeer));
+  add_bound_member(kCtrPeer);
   std::vector<uint64_t> used = send_alerts(5);
   reset_world();
   mesh_session::deinit();
   assert(mesh_session::init(pub, priv) && mesh_session::start() && mesh_session::set_opera_secret(S));
-  assert(mesh_transport::add_peer(kCtrPeer));
+  add_bound_member(kCtrPeer);
   std::vector<uint64_t> after = send_alerts(1);
   assert(after[0] <= used.back());   /* a reused counter: dropped as a replay */
   std::printf("PASS test_outbound_counter_without_reservation_restarts\n");
@@ -4867,6 +4992,8 @@ int main() {
   test_copied_member_address_moves_no_link();
   test_forgetting_a_peer_drops_only_its_own_address();
   test_unbound_member_frame_is_never_taken();
+  test_opera_sends_with_only_a_pairing_partner_reach_nobody();
+  test_opera_sends_reach_bound_members_only();
   /* F33 part 3 — the outbound counter survives a reboot. */
   test_outbound_counter_reserve_ahead();
   test_outbound_counter_without_reservation_restarts();

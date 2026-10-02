@@ -175,8 +175,11 @@ size_t list_peers(Peer* out, size_t max);
 bool send_to_peer(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
                   const uint8_t* data, size_t len);
 
-/* Broadcast to every paired peer (NOT FF:FF:FF:FF:FF:FF). Returns the
- * number of peers that accepted the send. */
+/* Send to every address in the peer table (NOT FF:FF:FF:FF:FF:FF).
+ * Returns the number of peers that accepted the send. The table can hold
+ * more than members: mesh_session adds a running pairing's partner too,
+ * so mesh_session's opera senders do not use this; they unicast to each
+ * member's bound MAC (mesh_session.h, MEMBERS ONLY; F101). */
 size_t broadcast(const uint8_t* data, size_t len);
 
 /* Send to an arbitrary MAC, including FF:FF:FF:FF:FF:FF, WITHOUT
