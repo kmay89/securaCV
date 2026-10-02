@@ -365,10 +365,17 @@ static void dispatch_action(const mesh_pairing::Action& a) {
       if (s_paired_bound_cb) s_paired_bound_cb(member_fp, member_mac, bound);
       break;
     }
-    case mesh_pairing::ActionType::NOTIFY_FAILED:
+    case mesh_pairing::ActionType::NOTIFY_FAILED: {
+      /* The partner, once the DISCOVER or OFFER named one (F118: the
+       * integration layer logs a refusal by fingerprint). */
+      static const uint8_t kNoKey[mesh_crypto::PUBKEY_LEN] = {0};
+      uint8_t partner_fp[mesh_crypto::FINGERPRINT_LEN];
+      const bool named = memcmp(s_ctx.peer_pubkey, kNoKey, sizeof(kNoKey)) != 0;
+      if (named) mesh_crypto::compute_fingerprint(s_ctx.peer_pubkey, partner_fp);
       end_pair_contact(/*paired=*/false);
-      if (s_failed_cb) s_failed_cb();
+      if (s_failed_cb) s_failed_cb(a.fail_reason, named ? partner_fp : nullptr);
       break;
+    }
     default:
       break;
   }
@@ -1162,7 +1169,8 @@ bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRE
   recycle_finished_pairing();
   mesh_pairing::Action a =
       mesh_pairing::start_initiator(s_ctx, s_device_pub, s_device_priv,
-                                    opera_secret, opera_name, now_ms);
+                                    opera_secret, opera_name, now_ms,
+                                    &can_hold_partner);   /* F118 */
   if (a.type == mesh_pairing::ActionType::NONE) return false;
   /* Cache the opera display name for GET /api/mesh. The initiator knows
    * it up front (it's the existing opera's name); the joiner learns it
@@ -1177,7 +1185,8 @@ bool start_pairing_joiner(uint32_t now_ms) {
   if (!s_running) return false;
   recycle_finished_pairing();
   mesh_pairing::Action a =
-      mesh_pairing::start_joiner(s_ctx, s_device_pub, s_device_priv, now_ms);
+      mesh_pairing::start_joiner(s_ctx, s_device_pub, s_device_priv, now_ms,
+                                 &can_hold_partner);   /* F118 */
   if (a.type == mesh_pairing::ActionType::NONE) return false;
   dispatch_action(a);
   return true;
@@ -1188,7 +1197,9 @@ bool confirm_pairing_code(uint32_t now_ms) {
   mesh_pairing::Action a = mesh_pairing::confirm_code(s_ctx, now_ms);
   if (a.type == mesh_pairing::ActionType::NONE) return false;
   dispatch_action(a);
-  return true;
+  /* The confirm ended the pairing: a partner this device cannot hold
+   * (F118), or the COMPLETE could not be sealed. */
+  return a.type != mesh_pairing::ActionType::NOTIFY_FAILED;
 }
 
 void cancel_pairing() {
@@ -1198,6 +1209,10 @@ void cancel_pairing() {
 }
 
 mesh_pairing::State pairing_state()        { return s_ctx.state; }
+mesh_pairing::FailReason pairing_fail_reason() {
+  return s_ctx.state == mesh_pairing::State::FAILED ? s_ctx.fail_reason
+                                                     : mesh_pairing::FailReason::NONE;
+}
 uint32_t            pairing_confirmation_code() { return s_ctx.confirmation_code; }
 
 bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
@@ -1551,6 +1566,28 @@ bool bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
   if (s_pair_contact_added &&
       memcmp(s_pair_contact_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0) {
     s_pair_contact_added = false;
+  }
+  return true;
+}
+
+bool can_hold_partner(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN],
+                      const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
+  if (pubkey == nullptr || mac == nullptr || !mac_is_unicast(mac)) return false;
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(pubkey, fp);
+  /* register_trusted_peer's refusals: a deny-listed key; a new member for
+   * a full table (a trusted one, re-pairing, needs no slot). */
+  if (mesh_revocation::contains(s_revoked, fp, s_last_process_ms)) return false;
+  const TrustedPeer* p = find_trusted_peer(fp);
+  if (p == nullptr && trusted_peer_count() >= MAX_TRUSTED_PEERS) return false;
+  /* bind_peer_mac's: one address, one member; and room for the address in
+   * the transport table (while a pairing runs the partner's address is
+   * normally there already, as the pair contact). */
+  const TrustedPeer* holder = find_peer_by_radio_mac(mac);
+  if (holder != nullptr && holder != p) return false;
+  if (!mesh_transport::has_peer(mac) &&
+      mesh_transport::peer_count() >= mesh_transport::MESH_TRANSPORT_MAX_PEERS) {
+    return false;
   }
   return true;
 }
@@ -1936,7 +1973,12 @@ static void execute_request(const Request& req, uint32_t now_ms, RequestResult* 
         res->status = RequestStatus::MESH_DISABLED;
         break;
       }
-      if (!confirm_pairing_code(now_ms)) res->status = RequestStatus::REFUSED;
+      if (!confirm_pairing_code(now_ms)) {
+        /* F118: say why, so the owner who pressed confirm hears it. */
+        res->status = pairing_fail_reason() == mesh_pairing::FailReason::PARTNER_REFUSED
+                          ? RequestStatus::PARTNER_REFUSED
+                          : RequestStatus::REFUSED;
+      }
       break;
     case RequestType::PAIR_CANCEL:
       cancel_pairing();   /* a no-op when nothing runs or the mesh is off */

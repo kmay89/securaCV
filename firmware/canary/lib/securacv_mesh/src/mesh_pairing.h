@@ -239,7 +239,21 @@ static_assert(sizeof(PairCompletePayload) ==
  *   devices did.
  *
  * On any failure or 5-minute timeout, both sides transition to FAILED
- * and the integration layer is told via NOTIFY_FAILED.
+ * and the integration layer is told via NOTIFY_FAILED, with the reason
+ * (Action::fail_reason).
+ *
+ *   A device that cannot hold its partner fails the pairing (spec §5.2,
+ *   F118): the PartnerGate the integration layer passed to start_* is
+ *   asked at this side's owner's confirm, before its CONFIRM goes out; on
+ *   the initiator again before the opera_secret is sealed into the
+ *   COMPLETE; on the joiner again before a COMPLETE is opened. A refusal
+ *   is NOTIFY_FAILED (PARTNER_REFUSED) and nothing is sent. So a refusing
+ *   joiner sends no CONFIRM and its initiator seals nothing to it and
+ *   times out, and a refusing initiator seals and sends nothing. Until
+ *   F118 nothing was asked: the initiator sealed the secret first, both
+ *   sides reported PAIRED, and the session's bind of the partner's address
+ *   (an address another member holds, a full table) failed after that, so
+ *   the partner became a member heard from nowhere and sent nothing.
  *
  * Key lifecycle:
  *   • Ephemeral keypair: generated at start_*, wiped on terminate.
@@ -308,6 +322,37 @@ enum class ActionType : uint8_t {
   NOTIFY_FAILED,         /* integration: clear pairing UI; log */
 };
 
+/* Why a pairing ended in FAILED (F118). Every NOTIFY_FAILED carries one
+ * (Action::fail_reason), and the context keeps it (PairingContext::
+ * fail_reason) until the next start_*. */
+enum class FailReason : uint8_t {
+  NONE = 0,          /* not failed */
+  CANCELED,          /* cancel(): the owner, a disable, a leave */
+  TIMEOUT,           /* PAIRING_TIMEOUT_MS passed */
+  BAD_CONFIRM,       /* the partner's CONFIRM hash did not match */
+  BAD_COMPLETE,      /* the COMPLETE did not open under the session key */
+  CRYPTO,            /* key generation, derivation or sealing failed */
+  PARTNER_REFUSED,   /* this device cannot hold the partner (PartnerGate, F118) */
+};
+
+/* A short lowercase name for logs ("partner_refused"). */
+const char* fail_reason_name(FailReason r);
+
+/* May this device hold the partner — `peer_pubkey` at `peer_mac` — as a
+ * member (F118; spec §5.2: a device that cannot hold its partner fails the
+ * pairing)? The integration layer answers from its own tables:
+ * mesh_session's answers false for a deny-listed key, a new member for a
+ * full opera, an address another member holds, or an address the transport
+ * has no room for — exactly the cases in which it could not register the
+ * partner and bind it to that address once the pairing completed. Asked at
+ * this device's owner's confirm, before any CONFIRM goes out (both roles);
+ * on the initiator again before the opera_secret is sealed into the
+ * COMPLETE; on the joiner again before a COMPLETE is opened. A false ends
+ * the pairing (FailReason::PARTNER_REFUSED). nullptr admits everyone (the
+ * pure state-machine tests). */
+using PartnerGate = bool (*)(const uint8_t peer_pubkey[mesh_crypto::PUBKEY_LEN],
+                             const uint8_t peer_mac[6]);
+
 constexpr size_t MAX_ACTION_PAYLOAD =
     sizeof(PairCompletePayload) > sizeof(PairOfferPayload) ?
     sizeof(PairCompletePayload) : sizeof(PairOfferPayload);
@@ -329,6 +374,8 @@ struct Action {
    * Built before the session key is wiped. */
   bool               leading_confirm_present;
   PairConfirmPayload leading_confirm;
+  /* NOTIFY_FAILED only: why (F118). NONE on every other action. */
+  FailReason         fail_reason;
 };
 
 /* Pairing timeout. Matches canary-wap (5 min). Crossing this fires
@@ -390,6 +437,13 @@ struct PairingContext {
    * signal on the initiator side (the joiner gets it inline when
    * COMPLETE decrypts). */
   bool     pending_notify_paired;
+
+  /* F118: the integration layer's admission check, set at start_* (see
+   * PartnerGate). nullptr admits. */
+  PartnerGate partner_gate;
+
+  /* Why the pairing is FAILED; NONE until then (F118). */
+  FailReason  fail_reason;
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -405,21 +459,25 @@ void context_init(PairingContext& ctx);
 
 /* Begin pairing as the initiator (an existing opera member who has a
  * valid opera_secret). Generates an ephemeral keypair and returns an
- * Action with type=BROADCAST_DISCOVER. */
+ * Action with type=BROADCAST_DISCOVER. `gate` is asked before this side
+ * confirms and before it seals the opera_secret (PartnerGate, F118). */
 Action start_initiator(PairingContext& ctx,
                        const uint8_t  device_pub[mesh_crypto::PUBKEY_LEN],
                        const uint8_t  device_priv[mesh_crypto::PRIVKEY_LEN],
                        const uint8_t  opera_secret[mesh_crypto::OPERA_SECRET_LEN],
                        const char*    opera_name,
-                       uint32_t       now_ms);
+                       uint32_t       now_ms,
+                       PartnerGate    gate = nullptr);
 
 /* Begin pairing as the joiner (a new device with no opera_secret yet).
- * State becomes AWAITING_OFFER; no message goes out (the initiator's
- * DISCOVER is the trigger). */
+ * State becomes DISCOVERING_JOINER and a DISCOVER(role=JOINER) goes out.
+ * `gate` is asked before this side confirms and before it opens a
+ * COMPLETE (PartnerGate, F118). */
 Action start_joiner(PairingContext& ctx,
                     const uint8_t  device_pub[mesh_crypto::PUBKEY_LEN],
                     const uint8_t  device_priv[mesh_crypto::PRIVKEY_LEN],
-                    uint32_t       now_ms);
+                    uint32_t       now_ms,
+                    PartnerGate    gate = nullptr);
 
 /* Feed an incoming message into the state machine. msg_type identifies
  * the PAIR_* phase (see message types below). Returns the next action;
@@ -453,12 +511,14 @@ Action tick(PairingContext& ctx, uint32_t now_ms);
  * screens. Valid only in AWAITING_CONFIRM (a second call returns NONE).
  * Returns SEND_CONFIRM, or — on an initiator that already holds the
  * joiner's verified CONFIRM (F97) — SEND_COMPLETE (with its leading
- * CONFIRM), after which the next tick() returns NOTIFY_PAIRED. */
+ * CONFIRM), after which the next tick() returns NOTIFY_PAIRED. Returns
+ * NOTIFY_FAILED (PARTNER_REFUSED) instead, sending nothing, when the
+ * context's PartnerGate refuses the partner (F118). */
 Action confirm_code(PairingContext& ctx, uint32_t now_ms);
 
 /* Abort pairing from any state. Wipes the ephemeral key + session
- * key + opera_secret. Returns NOTIFY_FAILED so the integration layer
- * tears down UI. */
+ * key + opera_secret. Returns NOTIFY_FAILED (CANCELED) so the
+ * integration layer tears down UI. */
 Action cancel(PairingContext& ctx);
 
 /* Read out and zero the joiner's received opera_secret. Returns true

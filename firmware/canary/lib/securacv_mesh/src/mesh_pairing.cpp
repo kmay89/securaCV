@@ -84,6 +84,19 @@ const char* mesh_state_name(bool   enabled,
   return peers_online > 0 ? "ACTIVE" : "CONNECTING";
 }
 
+const char* fail_reason_name(FailReason r) {
+  switch (r) {
+    case FailReason::NONE:            return "none";
+    case FailReason::CANCELED:        return "canceled";
+    case FailReason::TIMEOUT:         return "timeout";
+    case FailReason::BAD_CONFIRM:     return "bad_confirm";
+    case FailReason::BAD_COMPLETE:    return "bad_complete";
+    case FailReason::CRYPTO:          return "crypto";
+    case FailReason::PARTNER_REFUSED: return "partner_refused";
+  }
+  return "unknown";
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * STATE-MACHINE INTERNALS
  * ────────────────────────────────────────────────────────────────────────── */
@@ -158,13 +171,26 @@ inline void copy_name(char* dst, size_t dst_cap, const char* src) {
   dst[i] = '\0';
 }
 
-inline void fail(PairingContext& ctx) {
+/* End the pairing: FAILED, every secret wiped, and the NOTIFY_FAILED that
+ * tells the integration layer why. */
+inline Action fail(PairingContext& ctx, FailReason why) {
   ctx.state = State::FAILED;
+  ctx.fail_reason = why;
   ctx.peer_confirmed = false;
   secure_zero(ctx.ephem_privkey, sizeof(ctx.ephem_privkey));
   secure_zero(ctx.session_key, sizeof(ctx.session_key));
   secure_zero(ctx.opera_secret, sizeof(ctx.opera_secret));
   ctx.opera_secret_present = false;
+  Action a = make_action(ActionType::NOTIFY_FAILED);
+  a.fail_reason = why;
+  return a;
+}
+
+/* F118: may this device hold the partner the exchange named? Asked only
+ * once the partner's key and address are both known (AWAITING_CONFIRM or
+ * later). */
+inline bool partner_admitted(const PairingContext& ctx) {
+  return ctx.partner_gate == nullptr || ctx.partner_gate(ctx.peer_pubkey, ctx.peer_mac);
 }
 
 }  /* namespace */
@@ -184,7 +210,8 @@ Action start_initiator(PairingContext& ctx,
                        const uint8_t  device_priv[mesh_crypto::PRIVKEY_LEN],
                        const uint8_t  opera_secret[mesh_crypto::OPERA_SECRET_LEN],
                        const char*    opera_name,
-                       uint32_t       now_ms) {
+                       uint32_t       now_ms,
+                       PartnerGate    gate) {
   if (ctx.state != State::IDLE) return make_action(ActionType::NONE);
   if (device_pub == nullptr || device_priv == nullptr || opera_secret == nullptr) {
     return make_action(ActionType::NONE);
@@ -197,7 +224,8 @@ Action start_initiator(PairingContext& ctx,
   memcpy(ctx.opera_secret,   opera_secret, mesh_crypto::OPERA_SECRET_LEN);
   ctx.opera_secret_present = true;
   copy_name(ctx.opera_name, sizeof(ctx.opera_name), opera_name);
-  if (!generate_ephemeral(ctx)) { fail(ctx); return make_action(ActionType::NOTIFY_FAILED); }
+  ctx.partner_gate = gate;
+  if (!generate_ephemeral(ctx)) return fail(ctx, FailReason::CRYPTO);
   ctx.started_ms = now_ms;
   ctx.state = State::DISCOVERING_INITIATOR;
 
@@ -217,7 +245,8 @@ Action start_initiator(PairingContext& ctx,
 Action start_joiner(PairingContext& ctx,
                     const uint8_t  device_pub[mesh_crypto::PUBKEY_LEN],
                     const uint8_t  device_priv[mesh_crypto::PRIVKEY_LEN],
-                    uint32_t       now_ms) {
+                    uint32_t       now_ms,
+                    PartnerGate    gate) {
   if (ctx.state != State::IDLE) return make_action(ActionType::NONE);
   if (device_pub == nullptr || device_priv == nullptr) {
     return make_action(ActionType::NONE);
@@ -226,7 +255,8 @@ Action start_joiner(PairingContext& ctx,
   ctx.role = ROLE_JOINER;
   memcpy(ctx.device_pubkey,  device_pub,  mesh_crypto::PUBKEY_LEN);
   memcpy(ctx.device_privkey, device_priv, mesh_crypto::PRIVKEY_LEN);
-  if (!generate_ephemeral(ctx)) { fail(ctx); return make_action(ActionType::NOTIFY_FAILED); }
+  ctx.partner_gate = gate;
+  if (!generate_ephemeral(ctx)) return fail(ctx, FailReason::CRYPTO);
   ctx.started_ms = now_ms;
   ctx.state = State::DISCOVERING_JOINER;
 
@@ -294,7 +324,7 @@ Action joiner_handle_offer(PairingContext& ctx,
   /* Remember the opera_name the initiator advertised so the UI can show it. */
   copy_name(ctx.opera_name, sizeof(ctx.opera_name), offer->opera_name);
 
-  if (!derive_session_state(ctx)) { fail(ctx); return make_action(ActionType::NOTIFY_FAILED); }
+  if (!derive_session_state(ctx)) return fail(ctx, FailReason::CRYPTO);
 
   /* Send ACCEPT carrying OUR (joiner's) ephemeral pub + device pub.
    * Matches canary-wap mesh_network.cpp:803-815 (reuses PairOfferPayload). */
@@ -322,7 +352,7 @@ Action initiator_handle_accept(PairingContext& ctx,
   const PairAcceptPayload* accept = (const PairAcceptPayload*)payload;
   memcpy(ctx.peer_ephem_pubkey, accept->ephemeral_pubkey, mesh_crypto::PUBKEY_LEN);
 
-  if (!derive_session_state(ctx)) { fail(ctx); return make_action(ActionType::NOTIFY_FAILED); }
+  if (!derive_session_state(ctx)) return fail(ctx, FailReason::CRYPTO);
 
   /* Initiator now has the session_key + code — surface to UI. */
   ctx.state = State::AWAITING_CONFIRM;
@@ -347,6 +377,11 @@ Action initiator_handle_accept(PairingContext& ctx,
  * against the pre-F97 code, both orders). Built here, before the session
  * key is wiped. */
 Action initiator_complete(PairingContext& ctx) {
+  /* F118: nothing is sealed to a partner this device cannot hold. Asked
+   * here as well as at the owner's confirm (confirm_code), because in the
+   * initiator-first order this runs when the joiner's CONFIRM arrives, a
+   * while after that confirm. */
+  if (!partner_admitted(ctx)) return fail(ctx, FailReason::PARTNER_REFUSED);
   PairConfirmPayload lead{};
   compute_confirmation_hash(ctx.session_key, ctx.confirmation_code, lead.confirmation_hash);
   PairCompletePayload complete{};
@@ -357,8 +392,7 @@ Action initiator_complete(PairingContext& ctx) {
   if (!mesh_crypto::aead_encrypt(ctx.session_key, nonce, nullptr, 0,
                                  ctx.opera_secret, mesh_crypto::OPERA_SECRET_LEN,
                                  ct, tag)) {
-    fail(ctx);
-    return make_action(ActionType::NOTIFY_FAILED);
+    return fail(ctx, FailReason::CRYPTO);
   }
   memcpy(complete.encrypted_secret, ct, mesh_crypto::OPERA_SECRET_LEN);
   memcpy(complete.encrypted_secret + mesh_crypto::OPERA_SECRET_LEN, tag,
@@ -432,8 +466,7 @@ Action either_handle_confirm(PairingContext& ctx,
   uint8_t expected[mesh_crypto::SHA256_OUT_LEN];
   compute_confirmation_hash(ctx.session_key, ctx.confirmation_code, expected);
   if (!mesh_crypto::ct_equal(cf->confirmation_hash, expected, mesh_crypto::SHA256_OUT_LEN)) {
-    fail(ctx);
-    return make_action(ActionType::NOTIFY_FAILED);
+    return fail(ctx, FailReason::BAD_CONFIRM);
   }
 
   if (ctx.role == ROLE_INITIATOR) {
@@ -469,6 +502,10 @@ Action joiner_handle_complete(PairingContext& ctx,
   }
   if (payload_len != sizeof(PairCompletePayload)) return make_action(ActionType::NONE);
   if (memcmp(from_mac, ctx.peer_mac, 6) != 0) return make_action(ActionType::NONE);
+  /* F118: a joiner that cannot hold its initiator does not open the
+   * secret, let alone install it. Asked here as well as at the owner's
+   * confirm, in case the tables changed since. */
+  if (!partner_admitted(ctx)) return fail(ctx, FailReason::PARTNER_REFUSED);
   const PairCompletePayload* complete = (const PairCompletePayload*)payload;
 
   const uint8_t* ct  = complete->encrypted_secret;
@@ -476,8 +513,7 @@ Action joiner_handle_complete(PairingContext& ctx,
   if (!mesh_crypto::aead_decrypt(ctx.session_key, complete->nonce, nullptr, 0,
                                  ct, mesh_crypto::OPERA_SECRET_LEN, tag,
                                  ctx.opera_secret)) {
-    fail(ctx);
-    return make_action(ActionType::NOTIFY_FAILED);
+    return fail(ctx, FailReason::BAD_COMPLETE);
   }
   ctx.opera_secret_present = true;
   ctx.state = State::PAIRED;
@@ -530,8 +566,7 @@ Action tick(PairingContext& ctx, uint32_t now_ms) {
     return make_action(ActionType::NONE);
   }
   if ((now_ms - ctx.started_ms) >= PAIRING_TIMEOUT_MS) {
-    fail(ctx);
-    return make_action(ActionType::NOTIFY_FAILED);
+    return fail(ctx, FailReason::TIMEOUT);
   }
   return make_action(ActionType::NONE);
 }
@@ -540,6 +575,14 @@ Action confirm_code(PairingContext& ctx, uint32_t now_ms) {
   if (ctx.state != State::AWAITING_CONFIRM) return make_action(ActionType::NONE);
   ctx.user_confirmed = true;
   (void)now_ms;
+
+  /* F118 (spec §5.2): a device that cannot hold its partner fails the
+   * pairing, and says so at its owner's confirm, before its CONFIRM goes
+   * out. On a joiner that matters most: with no CONFIRM from it, its
+   * initiator never seals the opera_secret to it and never takes it as a
+   * member (canary-wap's joiner refuses only at the COMPLETE, F73, after
+   * its initiator has already added it). */
+  if (!partner_admitted(ctx)) return fail(ctx, FailReason::PARTNER_REFUSED);
 
   /* F97: the joiner's owner confirmed first and its CONFIRM is kept. The
    * joiner is owed the COMPLETE now. It goes with this side's CONFIRM in
@@ -561,8 +604,7 @@ Action confirm_code(PairingContext& ctx, uint32_t now_ms) {
 
 Action cancel(PairingContext& ctx) {
   if (ctx.state == State::IDLE) return make_action(ActionType::NONE);
-  fail(ctx);
-  return make_action(ActionType::NOTIFY_FAILED);
+  return fail(ctx, FailReason::CANCELED);
 }
 
 bool consume_opera_secret(PairingContext& ctx,

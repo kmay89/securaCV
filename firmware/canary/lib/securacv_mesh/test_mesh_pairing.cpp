@@ -25,6 +25,9 @@
  *      rules completes too), the joiner takes the COMPLETE once its own
  *      owner confirmed, and a CONFIRM counts only from the partner's
  *      address and once the code is shown.
+ *   8. A partner the PartnerGate refuses fails the pairing (F118): at the
+ *      owner's confirm, before the initiator seals, before the joiner
+ *      opens; and every NOTIFY_FAILED carries its reason.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -950,6 +953,203 @@ void test_a_pre_f97_joiner_completes_in_either_order() {
   std::printf("PASS test_a_pre_f97_joiner_completes_in_either_order\n");
 }
 
+/* ── F118 — a device that cannot hold its partner fails the pairing ──────
+ *
+ * The integration layer's PartnerGate (mesh_session::can_hold_partner on a
+ * device) is asked at this side's owner's confirm, before any CONFIRM goes
+ * out; on the initiator again before the opera_secret is sealed; on the
+ * joiner again before a COMPLETE is opened. Until F118 nothing was asked:
+ * the initiator sealed the secret and both sides reported PAIRED, and only
+ * then did the session find it could not bind the partner. */
+
+/* A gate the test flips, recording what it was asked. */
+bool                 g_gate_admits = true;
+int                  g_gate_calls  = 0;
+std::vector<uint8_t> g_gate_pub, g_gate_mac;
+bool test_gate(const uint8_t pub[mesh_crypto::PUBKEY_LEN], const uint8_t mac[6]) {
+  ++g_gate_calls;
+  g_gate_pub.assign(pub, pub + mesh_crypto::PUBKEY_LEN);
+  g_gate_mac.assign(mac, mac + 6);
+  return g_gate_admits;
+}
+
+/* pair_to_code() with the test gate on both sides; the long-term keys are
+ * returned so the gate's arguments can be checked. */
+void pair_to_code_gated(Pair& p, uint8_t pub_i[32], uint8_t pub_j[32]) {
+  mesh_pairing::context_init(p.ci);
+  mesh_pairing::context_init(p.cj);
+  uint8_t priv_i[32], priv_j[32];
+  assert(mesh_crypto::ed25519_generate_keypair(pub_i, priv_i));
+  assert(mesh_crypto::ed25519_generate_keypair(pub_j, priv_j));
+  for (size_t i = 0; i < sizeof(p.secret); ++i) p.secret[i] = (uint8_t)(0x18 ^ (i * 3));
+  mesh_pairing::Action a =
+      mesh_pairing::start_initiator(p.ci, pub_i, priv_i, p.secret, "Home", 10, test_gate);
+  a = mesh_pairing::start_joiner(p.cj, pub_j, priv_j, 10, test_gate);
+  InFlight dj; must(action_to_inflight(a, &dj));
+  a = deliver(p.ci, p.mac_j, dj, 20);
+  InFlight of; must(action_to_inflight(a, &of));
+  a = deliver(p.cj, p.mac_i, of, 30);
+  InFlight ac; must(action_to_inflight(a, &ac));
+  a = deliver(p.ci, p.mac_j, ac, 40);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+  p.code = a.confirmation_code;
+  g_gate_calls = 0;   /* nothing asks it before a confirm */
+}
+
+void expect_refused(const mesh_pairing::Action& a, const mesh_pairing::PairingContext& c) {
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+  assert(a.fail_reason == mesh_pairing::FailReason::PARTNER_REFUSED);
+  assert(c.state == mesh_pairing::State::FAILED);
+  assert(c.fail_reason == mesh_pairing::FailReason::PARTNER_REFUSED);
+  const uint8_t zero[mesh_pairing::SESSION_KEY_LEN] = {0};
+  assert(std::memcmp(c.session_key, zero, sizeof(zero)) == 0);
+  assert(!c.opera_secret_present);
+}
+
+/* Refused at this side's owner's confirm, on either role: NOTIFY_FAILED
+ * (PARTNER_REFUSED) in place of the CONFIRM, nothing sent, the keys wiped,
+ * and the gate asked with the partner's long-term key and address. A
+ * refusing joiner sends no CONFIRM, so its initiator never seals the
+ * secret to it: it waits and fails at the timeout. Fails with the gate
+ * removed from confirm_code (the CONFIRM goes out). */
+void test_a_refused_partner_fails_at_the_owners_confirm() {
+  for (int joiner_side = 0; joiner_side < 2; ++joiner_side) {
+    Pair p;
+    uint8_t pub_i[32], pub_j[32];
+    pair_to_code_gated(p, pub_i, pub_j);
+    mesh_pairing::PairingContext& me = joiner_side ? p.cj : p.ci;
+    g_gate_admits = false;
+    mesh_pairing::Action a = mesh_pairing::confirm_code(me, 50);
+    expect_refused(a, me);
+    assert(g_gate_calls == 1);
+    assert(std::memcmp(g_gate_pub.data(), joiner_side ? pub_i : pub_j, 32) == 0);
+    assert(std::memcmp(g_gate_mac.data(), joiner_side ? p.mac_i : p.mac_j, 6) == 0);
+    assert(std::strcmp(mesh_pairing::fail_reason_name(a.fail_reason), "partner_refused") == 0);
+    /* Over: a second confirm does nothing; the tick reports nothing more. */
+    assert(mesh_pairing::confirm_code(me, 51).type == mesh_pairing::ActionType::NONE);
+    assert(mesh_pairing::tick(me, 10 + mesh_pairing::PAIRING_TIMEOUT_MS).type ==
+           mesh_pairing::ActionType::NONE);
+    if (joiner_side) {
+      /* The initiator's owner confirms: its CONFIRM goes, no COMPLETE ever
+       * does, and it fails at the timeout. */
+      g_gate_admits = true;
+      assert(mesh_pairing::confirm_code(p.ci, 60).type == mesh_pairing::ActionType::SEND_CONFIRM);
+      for (uint32_t t = 70; t < 10 + mesh_pairing::PAIRING_TIMEOUT_MS; t += 10000) {
+        assert(mesh_pairing::tick(p.ci, t).type == mesh_pairing::ActionType::NONE);
+      }
+      a = mesh_pairing::tick(p.ci, 10 + mesh_pairing::PAIRING_TIMEOUT_MS);
+      assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+      assert(a.fail_reason == mesh_pairing::FailReason::TIMEOUT);
+    }
+  }
+  g_gate_admits = true;
+  std::printf("PASS test_a_refused_partner_fails_at_the_owners_confirm  (both roles)\n");
+}
+
+/* The initiator asks again before it seals the opera_secret. Initiator's
+ * owner first: its confirm is admitted and its CONFIRM goes; the gate then
+ * refuses (the tables changed), and the joiner's CONFIRM gets NOTIFY_FAILED
+ * instead of the COMPLETE. Joiner's owner first: its CONFIRM is kept, and
+ * the initiator's owner's confirm, refused, seals nothing either. Fails
+ * with the gate removed from initiator_complete (the first order seals and
+ * returns SEND_COMPLETE). */
+void test_the_initiator_seals_nothing_to_a_refused_partner() {
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    Pair p;
+    uint8_t pub_i[32], pub_j[32];
+    pair_to_code_gated(p, pub_i, pub_j);
+    mesh_pairing::Action a;
+    if (joiner_first) {
+      a = mesh_pairing::confirm_code(p.cj, 50);
+      InFlight cfj; must(action_to_inflight(a, &cfj));
+      assert(deliver(p.ci, p.mac_j, cfj, 60).type == mesh_pairing::ActionType::NONE);
+      assert(p.ci.peer_confirmed);
+      g_gate_admits = false;
+      a = mesh_pairing::confirm_code(p.ci, 70);
+    } else {
+      a = mesh_pairing::confirm_code(p.ci, 50);
+      assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+      a = mesh_pairing::confirm_code(p.cj, 60);
+      InFlight cfj; must(action_to_inflight(a, &cfj));
+      g_gate_admits = false;
+      a = deliver(p.ci, p.mac_j, cfj, 70);
+    }
+    expect_refused(a, p.ci);
+    assert(!a.leading_confirm_present);
+    assert(!p.ci.pending_notify_paired);
+    assert(mesh_pairing::tick(p.ci, 80).type == mesh_pairing::ActionType::NONE);
+    g_gate_admits = true;
+  }
+  std::printf("PASS test_the_initiator_seals_nothing_to_a_refused_partner  (both orders)\n");
+}
+
+/* The joiner asks again before it opens a COMPLETE: admitted at its
+ * owner's confirm, refused when the COMPLETE arrives. NOTIFY_FAILED, the
+ * secret neither opened nor handed over. Fails with the gate removed from
+ * joiner_handle_complete (NOTIFY_PAIRED with the secret). */
+void test_the_joiner_opens_nothing_from_a_refused_partner() {
+  Pair p;
+  uint8_t pub_i[32], pub_j[32];
+  pair_to_code_gated(p, pub_i, pub_j);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+  InFlight cfj; must(action_to_inflight(a, &cfj));
+  a = mesh_pairing::confirm_code(p.ci, 60);
+  InFlight cfi; must(action_to_inflight(a, &cfi));
+  a = deliver(p.ci, p.mac_j, cfj, 70);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  InFlight cp; must(action_to_inflight(a, &cp));
+  assert(deliver(p.cj, p.mac_i, cfi, 75).type == mesh_pairing::ActionType::NONE);
+  g_gate_admits = false;
+  g_gate_calls = 0;
+  a = deliver(p.cj, p.mac_i, cp, 80);
+  expect_refused(a, p.cj);
+  assert(g_gate_calls == 1);
+  uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+  assert(!mesh_pairing::consume_opera_secret(p.cj, got));
+  g_gate_admits = true;
+  std::printf("PASS test_the_joiner_opens_nothing_from_a_refused_partner\n");
+}
+
+/* Every NOTIFY_FAILED says why, and the context keeps it. */
+void test_every_failure_says_why() {
+  using mesh_pairing::FailReason;
+  Pair p;
+  pair_to_code(p);
+  mesh_pairing::Action a = mesh_pairing::cancel(p.ci);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED && a.fail_reason == FailReason::CANCELED);
+  assert(p.ci.fail_reason == FailReason::CANCELED);
+  a = mesh_pairing::tick(p.cj, 10 + mesh_pairing::PAIRING_TIMEOUT_MS);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED && a.fail_reason == FailReason::TIMEOUT);
+
+  Pair q;
+  pair_to_code(q);
+  a = mesh_pairing::confirm_code(q.cj, 50);
+  InFlight bad; must(action_to_inflight(a, &bad));
+  bad.bytes[3] ^= 0x10;
+  a = deliver(q.ci, q.mac_j, bad, 60);
+  assert(a.fail_reason == FailReason::BAD_CONFIRM && q.ci.fail_reason == FailReason::BAD_CONFIRM);
+
+  Pair r;
+  pair_to_code(r);
+  assert(mesh_pairing::confirm_code(r.cj, 50).type == mesh_pairing::ActionType::SEND_CONFIRM);
+  InFlight junk;
+  std::memcpy(junk.to, r.mac_j, 6);
+  junk.type = mesh_pairing::MsgType::COMPLETE;
+  junk.bytes.assign(sizeof(mesh_pairing::PairCompletePayload), 0x3C);
+  a = deliver(r.cj, r.mac_i, junk, 60);
+  assert(a.fail_reason == FailReason::BAD_COMPLETE);
+
+  /* Success and every other action carry NONE; a fresh context has none. */
+  Pair s;
+  pair_to_code(s);
+  assert(s.ci.fail_reason == FailReason::NONE);
+  a = mesh_pairing::confirm_code(s.ci, 50);
+  assert(a.fail_reason == FailReason::NONE);
+  assert(std::strcmp(mesh_pairing::fail_reason_name(FailReason::TIMEOUT), "timeout") == 0);
+  assert(std::strcmp(mesh_pairing::fail_reason_name(FailReason::NONE), "none") == 0);
+  std::printf("PASS test_every_failure_says_why\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -976,6 +1176,10 @@ int main() {
   test_a_bad_confirm_from_the_partner_ends_the_pairing_in_either_order();
   test_the_joiner_takes_a_complete_only_after_its_owner_confirms();
   test_a_pre_f97_joiner_completes_in_either_order();
+  test_a_refused_partner_fails_at_the_owners_confirm();
+  test_the_initiator_seals_nothing_to_a_refused_partner();
+  test_the_joiner_opens_nothing_from_a_refused_partner();
+  test_every_failure_says_why();
   std::printf("\nALL MESH_PAIRING TESTS PASSED\n");
   return 0;
 }

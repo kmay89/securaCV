@@ -5590,6 +5590,13 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
   mesh_session::RequestResult res;
   esp_err_t rc = ESP_OK;
   if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status == mesh_session::RequestStatus::PARTNER_REFUSED) {
+    // F118 (spec §5.2): this Canary cannot hold the partner — another
+    // member holds its radio address, or the opera is full — so the
+    // confirm ended the pairing and nothing was sent. The health log names
+    // the partner by fingerprint (main.cpp on_mesh_pairing_failed).
+    return http_send_error(req, 409, "partner_refused");
+  }
   if (res.status != mesh_session::RequestStatus::OK) {
     return http_send_error(req, 400, "confirm_failed");
   }

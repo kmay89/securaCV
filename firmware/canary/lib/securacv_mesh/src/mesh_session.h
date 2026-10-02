@@ -112,9 +112,17 @@ constexpr size_t MAX_SESSION_FRAME =
 using PairedCallback = void (*)(const uint8_t* opera_secret_or_null,
                                 uint32_t       confirmation_code);
 
-/* Fires on any error path (tamper, timeout, AEAD-fail). The integration
- * layer should tear down its pairing UI. */
-using FailedCallback = void (*)();
+/* Fires on any error path (tamper, timeout, AEAD-fail, cancel, a partner
+ * this device cannot hold). The integration layer should tear down its
+ * pairing UI. `why` says which (F118); `partner_fp` is the partner's
+ * fingerprint once the exchange named one (from the DISCOVER or OFFER),
+ * nullptr before. A PARTNER_REFUSED is a pairing the owner confirmed and
+ * this device refused: the partner is a member it could not hold (spec
+ * §5.2 — a deny-listed key, a new member for a full opera, an address
+ * another member holds, no transport room), and the owner should be told,
+ * because nothing else on the screen says why the pairing ended. */
+using FailedCallback = void (*)(mesh_pairing::FailReason why,
+                                const uint8_t* partner_fp);
 
 /* Fires when both ephemeral keys have been exchanged and the 6-digit
  * code is ready for the user to confirm on this device's screen. Both
@@ -195,8 +203,35 @@ bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRE
                              const char*   opera_name,
                              uint32_t      now_ms);
 bool start_pairing_joiner   (uint32_t now_ms);
+/* True when the owner's confirm was taken. False when there was nothing
+ * to confirm, and when the confirm ended the pairing (its NOTIFY_FAILED
+ * has then run): the partner refused at the confirm (F118:
+ * pairing_fail_reason() is PARTNER_REFUSED) or a sealing failure. */
 bool confirm_pairing_code   (uint32_t now_ms);
 void cancel_pairing         ();
+
+/* Why the current pairing is FAILED; NONE while it is not (F118). */
+mesh_pairing::FailReason pairing_fail_reason();
+
+/* F118 — spec §5.2: may this device hold `pubkey` as a member at `mac`?
+ * The PartnerGate the session hands every pairing it starts, so the
+ * pairing fails before the initiator seals the opera_secret, and before a
+ * joiner confirms or installs it, rather than completing with a member
+ * that cannot be bound. False for:
+ *   • a deny-listed key (§5.6; its DISCOVER/OFFER is dropped anyway);
+ *   • a new member when MAX_TRUSTED_PEERS are trusted (register_trusted_peer
+ *     would refuse it);
+ *   • an address another member is bound to (bind_peer_mac: one address,
+ *     one member) — a re-pair onto it, or a new member at it;
+ *   • a broadcast/group/zero address;
+ *   • an address not in the transport table when the table is full.
+ * A re-pair of a trusted member from its own address or from a free one is
+ * admitted (the bind moves it). These are exactly bind_peer_mac's and
+ * register_trusted_peer's refusals, so a pairing this admits binds, unless
+ * the radio driver refuses the address (the PairedPeerBoundCallback still
+ * reports that, F102). Main-loop task. */
+bool can_hold_partner(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN],
+                      const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 
 mesh_pairing::State pairing_state();
 uint32_t            pairing_confirmation_code();
@@ -923,6 +958,9 @@ enum class RequestStatus : uint8_t {
   OPERA_EXISTS,      /* PAIR_START {create} while the session holds an opera */
   NOT_PERSISTED,     /* PAIR_START {create}: the new secret could not be
                       * stored — no opera was created (F33 part 4) */
+  PARTNER_REFUSED,   /* PAIR_CONFIRM: this device cannot hold the partner
+                      * (can_hold_partner), so the confirm ended the
+                      * pairing and nothing was sent (F118) */
 };
 
 struct Request {

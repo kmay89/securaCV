@@ -611,6 +611,31 @@ static void on_mesh_paired_peer_bound(const uint8_t fp[mesh_crypto::FINGERPRINT_
   }
 }
 
+/* The pairing ended without a member (mesh_session FailedCallback). A
+ * PARTNER_REFUSED is a pairing this device's owner confirmed and this
+ * device refused (F118, spec §5.2): the partner is a member it could not
+ * hold — another member holds its radio address, the opera is full, a
+ * deny-listed key — so nothing was sealed, installed or stored. Until F118
+ * such a pairing reported success, registered and persisted the partner's
+ * key, and only the address bind failed (on_mesh_paired_peer_bound). It
+ * goes to the health log by fingerprint, as that refusal did, since the
+ * pairing screen says no more than that the pairing ended (the confirm
+ * itself answers 409 partner_refused when the refusal came at it). Other
+ * failures (timeout, cancel, a bad CONFIRM or COMPLETE) are Serial only,
+ * as before. */
+static void on_mesh_pairing_failed(mesh_pairing::FailReason why,
+                                   const uint8_t* partner_fp) {
+  if (why != mesh_pairing::FailReason::PARTNER_REFUSED) {
+    Serial.printf("[INFO] Opera pairing ended: %s\n", mesh_pairing::fail_reason_name(why));
+    return;
+  }
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1] = "?";
+  if (partner_fp != nullptr) mesh_fp_hex(partner_fp, hex);
+  Serial.printf("[WARN] Opera pairing refused: this Canary cannot hold %s "
+                "(another member holds its address, or the opera is full)\n", hex);
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Opera pairing refused", hex);
+}
+
 static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   if (secret == nullptr) {
     Serial.printf("[OK] Paired as initiator (code=%06u) — opera_secret "
@@ -1546,6 +1571,9 @@ void setup() {
     /* F102: the partner's address is persisted after the session's bind,
      * and only when it took. */
     mesh_session::set_paired_peer_bound_callback(&on_mesh_paired_peer_bound);
+    /* F118: a pairing the session refused (a partner it cannot hold) is
+     * logged by fingerprint. */
+    mesh_session::set_failed_callback(&on_mesh_pairing_failed);
     /* F10: a peer's signed LEAVE drops its NVS entry; a peer's verified
      * TAMPER_ALERT lands in the health log. Installed here rather than in
      * securacv_csi_modules_init() so they are live on mesh builds without

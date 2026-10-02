@@ -24,6 +24,14 @@ wiring the stand-in mirrors:
   longer reads the partner's address at all;
 * the bound callback is installed with set_paired_peer_bound_callback.
 
+Since F118 the session refuses, before anything is sealed or installed, a
+partner it could not hold (test_mesh_session.cpp:
+test_a_partner_the_initiator_cannot_hold_fails_the_pairing and its
+neighbors), and tells the FailedCallback why. main.cpp's half:
+
+* on_mesh_pairing_failed logs a PARTNER_REFUSED to the health log;
+* it is installed with set_failed_callback.
+
 Each rule is shown to fail on a mutation of the real file, so the pin cannot
 read as covered while catching nothing.
 
@@ -41,6 +49,7 @@ MAIN = REPO / "firmware/canary/src/main.cpp"
 
 BOUND_FN = "on_mesh_paired_peer_bound"
 PAIRED_FN = "register_paired_peer"
+FAILED_FN = "on_mesh_pairing_failed"
 
 
 def _strip(src: str) -> str:
@@ -131,6 +140,16 @@ def check(src: str) -> list[str]:
                      code):
         problems.append(f"{BOUND_FN} is not installed with "
                         f"set_paired_peer_bound_callback")
+
+    # F118: a refused pairing reaches the health log.
+    failed = _body(code, FAILED_FN)
+    if failed is None:
+        problems.append(f"{FAILED_FN} is missing")
+    elif not (re.search(r"\bPARTNER_REFUSED\b", failed) and
+              re.search(r"\blog_health\s*\(", failed)):
+        problems.append(f"{FAILED_FN} does not log a PARTNER_REFUSED to the health log")
+    if not re.search(r"set_failed_callback\s*\(\s*&?\s*" + FAILED_FN + r"\s*\)", code):
+        problems.append(f"{FAILED_FN} is not installed with set_failed_callback")
     return problems
 
 
@@ -183,6 +202,20 @@ class PairBindWiring(unittest.TestCase):
             "mesh_session::set_paired_peer_bound_callback(&on_mesh_paired_peer_bound);",
             "// mesh_session::set_paired_peer_bound_callback(&on_mesh_paired_peer_bound);")
         self.assertTrue(any("is not installed" in p for p in check(src)))
+
+
+    def test_the_failed_callback_not_installed_fails(self) -> None:
+        src = self.mutate(
+            "mesh_session::set_failed_callback(&on_mesh_pairing_failed);", "")
+        self.assertTrue(any(f"{FAILED_FN} is not installed" in p for p in check(src)))
+
+    def test_a_refusal_not_logged_fails(self) -> None:
+        body = _body(self.src, FAILED_FN)
+        self.assertIsNotNone(body)
+        assert body is not None
+        self.assertEqual(body.count("  log_health("), 1)
+        src = self.src.replace(body, body.replace("  log_health(", "  (void)(", 1))
+        self.assertTrue(any("does not log a PARTNER_REFUSED" in p for p in check(src)))
 
 
 if __name__ == "__main__":

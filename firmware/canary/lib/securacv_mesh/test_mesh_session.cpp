@@ -81,7 +81,14 @@ void on_paired(const uint8_t* secret, uint32_t code) {
     std::memcpy(g_paired_secret, secret, mesh_crypto::OPERA_SECRET_LEN);
   }
 }
-void on_failed() { g_failed_fired = true; }
+mesh_pairing::FailReason g_failed_why = mesh_pairing::FailReason::NONE;
+std::vector<uint8_t>     g_failed_fp;
+void on_failed(mesh_pairing::FailReason why, const uint8_t* fp) {
+  g_failed_fired = true;
+  g_failed_why = why;
+  if (fp != nullptr) g_failed_fp.assign(fp, fp + mesh_crypto::FINGERPRINT_LEN);
+  else g_failed_fp.clear();
+}
 void on_code_ready(uint32_t code) { g_code_ready = code; }
 
 void reset_world() {
@@ -92,6 +99,8 @@ void reset_world() {
   g_paired_with_secret = false;
   g_paired_code = 0;
   g_failed_fired = false;
+  g_failed_why = mesh_pairing::FailReason::NONE;
+  g_failed_fp.clear();
   g_code_ready = 0;
   std::memset(g_paired_secret, 0, sizeof(g_paired_secret));
 
@@ -3921,11 +3930,15 @@ void reset_fake_main_nvs() {
 
 /* Run one whole pairing with this session as the INITIATOR and a pure
  * joiner holding (j_pub, j_priv) at mac_j, the joiner's owner confirming
- * first. Returns once the session's NOTIFY_PAIRED has fired. */
-void pair_from(const uint8_t S[32], const uint8_t me[6], const uint8_t mac_j[6],
+ * first. Returns true once the session's NOTIFY_PAIRED has fired; false
+ * when the session refused the partner at its owner's confirm (F118: a
+ * member it could not hold), in which case nothing was sealed or sent to
+ * the joiner and neither paired callback ran. */
+bool pair_from(const uint8_t S[32], const uint8_t me[6], const uint8_t mac_j[6],
                const uint8_t j_pub[32], const uint8_t j_priv[32], uint32_t t) {
   g_in_paired_cb_done = false;
   g_paired_fired = false;
+  g_failed_fired = false;
   mesh_pairing::PairingContext cj;
   mesh_pairing::context_init(cj);
   mesh_pairing::Action a = mesh_pairing::start_joiner(cj, j_pub, j_priv, t);
@@ -3942,18 +3955,43 @@ void pair_from(const uint8_t S[32], const uint8_t me[6], const uint8_t mac_j[6],
   const std::vector<uint8_t> conf_j = wire(a);
   mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
   mesh_transport::process();
-  assert(mesh_session::confirm_pairing_code(t + 3));
+  const size_t frames_before = g_outs.size();
+  const size_t bound_before  = g_bound_calls.size();
+  if (!mesh_session::confirm_pairing_code(t + 3)) {
+    assert(mesh_session::pairing_fail_reason() == mesh_pairing::FailReason::PARTNER_REFUSED);
+    assert(g_failed_fired && g_failed_why == mesh_pairing::FailReason::PARTNER_REFUSED);
+    uint8_t j_fp[8];
+    mesh_crypto::compute_fingerprint(j_pub, j_fp);
+    assert(g_failed_fp.size() == 8 && std::memcmp(g_failed_fp.data(), j_fp, 8) == 0);
+    assert(g_outs.size() == frames_before);          /* no CONFIRM, no COMPLETE */
+    mesh_session::process(t + 4);
+    assert(!g_paired_fired && g_bound_calls.size() == bound_before);
+    return false;
+  }
   mesh_session::process(t + 4);
   assert(g_paired_fired);
   feed_pure(cj, me, last_to(mac_j), t + 5, &a);
   assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  return true;
+}
+
+/* main.cpp's PairedCallback when register_trusted_peer refuses the partner
+ * for a reason the session's gate cannot foresee (F118 asks
+ * can_hold_partner before the pairing completes, so the re-pair from
+ * another member's address and the new member for a full table no longer
+ * get this far): here it registers nothing. */
+void main_like_paired_unregistered(const uint8_t* secret, uint32_t code) {
+  on_paired(secret, code);
+  g_in_paired_cb_done = true;
 }
 
 /* The bound callback fires once per completed pairing, after the
  * PairedCallback, with the outcome of the bind: true for a new member at a
- * free address, false for a re-pair from an address another member holds
- * (the binding stays where it was) and false for a member the
- * PairedCallback could not register (the trusted table full). */
+ * free address, and false for a member the PairedCallback did not register
+ * (the partner's address then leaves with the pairing). Until F118 it also
+ * reported false for a re-pair from an address another member holds and
+ * for a new member when the trusted table was full; those pairings now
+ * fail at the owner's confirm (F118), so neither paired callback runs. */
 void test_paired_peer_bound_reports_the_bind() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x02 + i);
@@ -3972,20 +4010,18 @@ void test_paired_peer_bound_reports_the_bind() {
   mesh_crypto::compute_fingerprint(j_pub, j_fp);
 
   /* A new member at a free address: bound. */
-  pair_from(S, me, mac_x, j_pub, j_priv, 100);
+  assert(pair_from(S, me, mac_x, j_pub, j_priv, 100));
   assert(g_bound_calls.size() == 1);
   assert(g_bound_calls[0].bound && g_bound_calls[0].after_paired_cb);
   assert(std::memcmp(g_bound_calls[0].fp, j_fp, 8) == 0);
   assert(std::memcmp(g_bound_calls[0].mac, mac_x, 6) == 0);
-  pair_from(S, me, mac_c, c_pub, c_priv, 200);
+  assert(pair_from(S, me, mac_c, c_pub, c_priv, 200));
   assert(g_bound_calls.size() == 2 && g_bound_calls[1].bound);
 
-  /* J re-pairs from C's address: the bind is refused and reported. */
-  pair_from(S, me, mac_c, j_pub, j_priv, 300);
-  assert(g_bound_calls.size() == 3);
-  assert(!g_bound_calls[2].bound && g_bound_calls[2].after_paired_cb);
-  assert(std::memcmp(g_bound_calls[2].fp, j_fp, 8) == 0);
-  assert(std::memcmp(g_bound_calls[2].mac, mac_c, 6) == 0);
+  /* J re-pairs from C's address: refused at the confirm since F118, so no
+   * bound callback (it used to report false here). */
+  assert(!pair_from(S, me, mac_c, j_pub, j_priv, 300));
+  assert(g_bound_calls.size() == 2);
   /* The session kept J at X and C at its own address. */
   uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t n = build_alert_frame(c_pub, c_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 1,
@@ -3997,21 +4033,18 @@ void test_paired_peer_bound_reports_the_bind() {
   mesh_transport::process();
   assert(g_alerts_rx.size() == 2);
 
-  /* A member the PairedCallback cannot register: eight are trusted, one of
-   * them unbound so the transport table still has a slot for the partner. */
-  for (int i = 0; i < 5; ++i) {
-    const uint8_t m[6] = {0x24, 0x0A, 0xC4, 0x02, 0x01, (uint8_t)i};
-    add_bound_member(m);
-  }
-  uint8_t u_pub[32], u_priv[32];
-  assert(mesh_crypto::ed25519_generate_keypair(u_pub, u_priv));
-  assert(mesh_session::register_trusted_peer(u_pub));
-  assert(mesh_session::trusted_peer_count() == mesh_session::MAX_TRUSTED_PEERS);
+  /* A member the PairedCallback did not register: the bind has no member
+   * to bind, and reports false. */
+  mesh_session::set_paired_callback(main_like_paired_unregistered);
   const uint8_t mac_n[6] = {0x24, 0x0A, 0xC4, 0x02, 0x00, 0x0D};
-  uint8_t n_pub[32], n_priv[32];
+  uint8_t n_pub[32], n_priv[32], n_fp[8];
   assert(mesh_crypto::ed25519_generate_keypair(n_pub, n_priv));
-  pair_from(S, me, mac_n, n_pub, n_priv, 400);
-  assert(g_bound_calls.size() == 4 && !g_bound_calls[3].bound);
+  mesh_crypto::compute_fingerprint(n_pub, n_fp);
+  assert(pair_from(S, me, mac_n, n_pub, n_priv, 400));
+  assert(g_bound_calls.size() == 3);
+  assert(!g_bound_calls[2].bound && g_bound_calls[2].after_paired_cb);
+  assert(std::memcmp(g_bound_calls[2].fp, n_fp, 8) == 0);
+  assert(std::memcmp(g_bound_calls[2].mac, mac_n, 6) == 0);
   assert(!transport_has(mac_n));   /* the partner's address left with the pairing */
   std::printf("PASS test_paired_peer_bound_reports_the_bind\n");
 }
@@ -4022,7 +4055,9 @@ void test_paired_peer_bound_reports_the_bind() {
  * order, as main.cpp's setup does, C is heard from its own address and J
  * from X; J's frames from C's address are not taken. Before F102 NVS
  * recorded J at C's address, J took it at the reboot, and C was not heard
- * at all. */
+ * at all. Since F118 the re-pair from C's address fails at the owner's
+ * confirm, so nothing reaches the callbacks at all; the stored state and
+ * the reboot are the same. */
 void test_refused_repair_bind_is_not_persisted_across_reboot() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x12 + i);
@@ -4039,9 +4074,9 @@ void test_refused_repair_bind_is_not_persisted_across_reboot() {
   assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
   mesh_crypto::compute_fingerprint(j_pub, j_fp);
   mesh_crypto::compute_fingerprint(c_pub, c_fp);
-  pair_from(S, me, mac_x, j_pub, j_priv, 100);   /* J first: its entry is first in the blob */
-  pair_from(S, me, mac_c, c_pub, c_priv, 200);
-  pair_from(S, me, mac_c, j_pub, j_priv, 300);   /* the re-pair from C's address */
+  assert(pair_from(S, me, mac_x, j_pub, j_priv, 100));   /* J first: its entry is first in the blob */
+  assert(pair_from(S, me, mac_c, c_pub, c_priv, 200));
+  assert(!pair_from(S, me, mac_c, j_pub, j_priv, 300));  /* the re-pair from C's address */
 
   mesh_state::PeerMac stored[mesh_state::MAX_TRUSTED_PEERS];
   size_t n_stored = 0;
@@ -4107,11 +4142,11 @@ void test_successful_repair_is_persisted_across_reboot() {
   assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
   mesh_crypto::compute_fingerprint(j_pub, j_fp);
 
-  pair_from(S, me, mac_x, j_pub, j_priv, 100);
+  assert(pair_from(S, me, mac_x, j_pub, j_priv, 100));
   assert(g_bound_calls.size() == 1 && g_bound_calls[0].bound);
 
   /* The re-pair from the free address Z: bound, reported, persisted. */
-  pair_from(S, me, mac_z, j_pub, j_priv, 200);
+  assert(pair_from(S, me, mac_z, j_pub, j_priv, 200));
   assert(g_bound_calls.size() == 2);
   assert(g_bound_calls[1].bound && g_bound_calls[1].after_paired_cb);
   assert(std::memcmp(g_bound_calls[1].fp, j_fp, 8) == 0);
@@ -4120,7 +4155,7 @@ void test_successful_repair_is_persisted_across_reboot() {
   assert(transport_has(mac_z) && !transport_has(mac_x));
 
   /* Again from Z, the address it holds: still bound, nothing moves. */
-  pair_from(S, me, mac_z, j_pub, j_priv, 300);
+  assert(pair_from(S, me, mac_z, j_pub, j_priv, 300));
   assert(g_bound_calls.size() == 3 && g_bound_calls[2].bound);
 
   mesh_state::PeerMac stored[mesh_state::MAX_TRUSTED_PEERS];
@@ -4711,6 +4746,262 @@ void test_opera_sends_count_only_what_the_transport_took() {
   std::printf("PASS test_opera_sends_count_only_what_the_transport_took\n");
 }
 
+/* ── F118 — a pairing whose partner this device cannot hold fails ─────────
+ *
+ * Spec §5.2: a device that cannot hold its partner fails the pairing. Until
+ * F118 the PIO session asked nothing before the end: the initiator sealed
+ * the opera_secret into its COMPLETE, both sides reported PAIRED,
+ * main.cpp's PairedCallback registered and persisted the partner's key, and
+ * only then did the session try the bind — refused for an address another
+ * member holds, and the callback's register refused for a new member when
+ * the trusted table was full. The partner became a member heard from
+ * nowhere (F70), sent nothing (F101), holding a slot until removed (F102
+ * kept its address out of NVS). Now the session hands every pairing
+ * can_hold_partner as its PartnerGate: asked at the owner's confirm before
+ * any CONFIRM goes out, on the initiator again before it seals, on the
+ * joiner again before it opens a COMPLETE. */
+
+/* Drive this session as the INITIATOR, with a pure joiner (j_pub, j_priv)
+ * at mac_j, up to both codes shown. */
+void initiator_to_code(const uint8_t S[32], const uint8_t me[6], const uint8_t mac_j[6],
+                       const uint8_t j_pub[32], const uint8_t j_priv[32], uint32_t t,
+                       mesh_pairing::PairingContext& cj) {
+  mesh_pairing::context_init(cj);
+  mesh_pairing::Action a = mesh_pairing::start_joiner(cj, j_pub, j_priv, t);
+  const std::vector<uint8_t> disc = wire(a);
+  assert(mesh_session::start_pairing_initiator(S, "Home", t));
+  mesh_transport::test::inject_recv(mac_j, disc.data(), disc.size(), -40);
+  mesh_transport::process();
+  feed_pure(cj, me, last_to(mac_j), t + 1, &a);
+  assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
+  const std::vector<uint8_t> accept = wire(a);
+  mesh_transport::test::inject_recv(mac_j, accept.data(), accept.size(), -40);
+  mesh_transport::process();
+  assert(mesh_session::pairing_state() == mesh_pairing::State::AWAITING_CONFIRM);
+}
+
+/* The PAIR_CONFIRM request, through the REST slot as the handler sends it. */
+mesh_session::RequestStatus rest_confirm(uint32_t now) {
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_CONFIRM)));
+  mesh_session::process(now);
+  mesh_session::RequestResult res;
+  assert(mesh_session::take_request_result(&res));
+  return res.status;
+}
+
+/* As the INITIATOR, for the two refusals a pairing can reach — a re-pair of
+ * member J from member C's address, and a new member N while eight are
+ * trusted — in both confirm orders: the owner's confirm through the REST
+ * slot answers PARTNER_REFUSED; the FailedCallback gets PARTNER_REFUSED and
+ * the partner's fingerprint; nothing goes to the partner (no CONFIRM, no
+ * COMPLETE: no opera_secret is sealed); neither paired callback runs; the
+ * trusted table, the bindings and the fake NVS are as they were (J heard at
+ * X, C at its own address); a new partner's address leaves the transport
+ * table; and the joiner, which never gets a COMPLETE, fails at its
+ * timeout. On the code before F118 each case reported PAIRED, sent the
+ * COMPLETE, and main.cpp's callback registered and stored the partner. */
+void test_a_partner_the_initiator_cannot_hold_fails_the_pairing() {
+  for (int full_opera = 0; full_opera < 2; ++full_opera) {
+    for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+      uint8_t S[32];
+      for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x18 + i);
+      uint8_t pub[32], priv[32];
+      stand_up_session(S, pub, priv);
+      reset_fake_main_nvs();
+      mesh_session::set_paired_callback(main_like_paired);
+      mesh_session::set_paired_peer_bound_callback(main_like_bound);
+      mesh_session::set_tamper_alert_handler(on_alert_rx);
+      const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x18, 0x00, 0x01};
+      const uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x18, 0x00, 0x0A};
+      const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x18, 0x00, 0x0C};
+      const uint8_t mac_n[6] = {0x24, 0x0A, 0xC4, 0x18, 0x00, 0x0D};
+      uint8_t j_pub[32], j_priv[32], c_pub[32], c_priv[32], n_pub[32], n_priv[32];
+      assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+      assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+      assert(mesh_crypto::ed25519_generate_keypair(n_pub, n_priv));
+      assert(pair_from(S, me, mac_x, j_pub, j_priv, 100));
+      assert(pair_from(S, me, mac_c, c_pub, c_priv, 200));
+      if (full_opera) {
+        for (int i = 0; i < 5; ++i) {
+          const uint8_t m[6] = {0x24, 0x0A, 0xC4, 0x18, 0x01, (uint8_t)i};
+          add_bound_member(m);
+        }
+        uint8_t u_pub[32], u_priv[32];   /* the eighth, unbound: the transport has a slot */
+        assert(mesh_crypto::ed25519_generate_keypair(u_pub, u_priv));
+        assert(mesh_session::register_trusted_peer(u_pub));
+      }
+      const size_t trusted = mesh_session::trusted_peer_count();
+      const uint8_t* p_pub   = full_opera ? n_pub : j_pub;
+      const uint8_t* p_priv  = full_opera ? n_priv : j_priv;
+      const uint8_t* p_mac   = full_opera ? mac_n : mac_c;
+      uint8_t p_fp[8];
+      mesh_crypto::compute_fingerprint(p_pub, p_fp);
+      assert(!mesh_session::can_hold_partner(p_pub, p_mac));
+
+      mesh_pairing::PairingContext cj;
+      initiator_to_code(S, me, p_mac, p_pub, p_priv, 300, cj);
+      g_failed_fired = false;
+      g_paired_fired = false;
+      g_outs.clear();
+      std::vector<uint8_t> conf_j;
+      if (joiner_first) {
+        mesh_pairing::Action a = mesh_pairing::confirm_code(cj, 310);
+        conf_j = wire(a);
+        mesh_transport::test::inject_recv(p_mac, conf_j.data(), conf_j.size(), -40);
+        mesh_transport::process();
+        assert(g_outs.empty() && !g_failed_fired);
+      }
+      assert(rest_confirm(320) == mesh_session::RequestStatus::PARTNER_REFUSED);
+      assert(g_failed_fired && g_failed_why == mesh_pairing::FailReason::PARTNER_REFUSED);
+      assert(g_failed_fp.size() == 8 && std::memcmp(g_failed_fp.data(), p_fp, 8) == 0);
+      assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);
+      assert(mesh_session::pairing_fail_reason() == mesh_pairing::FailReason::PARTNER_REFUSED);
+      if (!joiner_first) {
+        /* The joiner's owner confirms after: its CONFIRM is dropped. */
+        mesh_pairing::Action a = mesh_pairing::confirm_code(cj, 330);
+        conf_j = wire(a);
+        mesh_transport::test::inject_recv(p_mac, conf_j.data(), conf_j.size(), -40);
+        mesh_transport::process();
+      }
+      mesh_session::process(340);
+      assert(sent_to(p_mac) == 0);                 /* no CONFIRM, no COMPLETE */
+      assert(!g_paired_fired && g_bound_calls.size() == 2);
+      assert(mesh_session::trusted_peer_count() == trusted);
+      assert(g_nvs_pubs.size() == 2);
+      mesh_state::PeerMac stored[mesh_state::MAX_TRUSTED_PEERS];
+      size_t n_stored = 0;
+      assert(mesh_state::peer_mac_blob::decode(g_nvs_macs, g_nvs_macs_len, stored,
+                                               mesh_state::MAX_TRUSTED_PEERS, &n_stored));
+      assert(n_stored == 2);
+      if (full_opera) assert(!transport_has(mac_n));   /* the pair contact went */
+      /* J is still heard at X and C at its own address. */
+      g_alerts_rx.clear();
+      uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+      size_t n = build_alert_frame(j_pub, j_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 1,
+                                   frame, sizeof(frame));
+      mesh_transport::test::inject_recv(mac_x, frame, n, -40);
+      n = build_alert_frame(c_pub, c_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 2,
+                            frame, sizeof(frame));
+      mesh_transport::test::inject_recv(mac_c, frame, n, -40);
+      mesh_transport::process();
+      assert(g_alerts_rx.size() == 2);
+      /* The joiner never got a COMPLETE: it fails at its timeout. */
+      mesh_pairing::Action a = mesh_pairing::tick(cj, 300 + mesh_pairing::PAIRING_TIMEOUT_MS);
+      assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+      assert(!cj.opera_secret_present);
+    }
+  }
+  std::printf("PASS test_a_partner_the_initiator_cannot_hold_fails_the_pairing"
+              "  (held address, full opera; both orders)\n");
+}
+
+/* As the INITIATOR, asked again before the seal: the owner confirms first
+ * and is admitted (its CONFIRM goes out); the trusted table then fills
+ * before the joiner's CONFIRM arrives, and that CONFIRM ends the pairing
+ * with PARTNER_REFUSED and no COMPLETE. Fails with the gate removed from
+ * mesh_pairing's initiator_complete. */
+void test_the_initiator_asks_again_before_it_seals() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x28 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_paired_callback(on_paired_register);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x18, 0x10, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x18, 0x10, 0x02};
+  uint8_t j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_pairing::PairingContext cj;
+  initiator_to_code(S, me, mac_j, j_pub, j_priv, 100, cj);
+  g_outs.clear();
+  assert(rest_confirm(110) == mesh_session::RequestStatus::OK);
+  assert(sent_to(mac_j) == 1);                   /* its CONFIRM */
+  for (size_t i = 0; i < mesh_session::MAX_TRUSTED_PEERS; ++i) {
+    uint8_t k_pub[32], k_priv[32];
+    assert(mesh_crypto::ed25519_generate_keypair(k_pub, k_priv));
+    assert(mesh_session::register_trusted_peer(k_pub));
+  }
+  mesh_pairing::Action a = mesh_pairing::confirm_code(cj, 120);
+  const std::vector<uint8_t> conf_j = wire(a);
+  mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  mesh_session::process(130);
+  assert(sent_to(mac_j) == 1);                   /* no COMPLETE */
+  assert(g_failed_fired && g_failed_why == mesh_pairing::FailReason::PARTNER_REFUSED);
+  assert(!g_paired_fired);
+  assert(!transport_has(mac_j));
+  std::printf("PASS test_the_initiator_asks_again_before_it_seals\n");
+}
+
+/* As the JOINER. First, refused at its owner's confirm: a member of this
+ * device (it joins another opera without leaving its own) is bound at the
+ * initiator's address. The confirm answers PARTNER_REFUSED and sends no
+ * CONFIRM, so the initiator never seals the secret to it: it waits and
+ * fails at its timeout (canary-wap's joiner refuses only at the COMPLETE,
+ * after its initiator has added it, F73). Then refused at the COMPLETE: the
+ * owner's confirm is admitted, the trusted table fills before the COMPLETE
+ * arrives, and the COMPLETE ends the pairing: no PairedCallback, no secret,
+ * no opera. On the code before F118 both reported PAIRED and installed the
+ * initiator's secret. */
+void test_a_joiner_that_cannot_hold_its_initiator_fails_the_pairing() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x38 + i);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x18, 0x20, 0x01};
+  const uint8_t mac_i[6] = {0x24, 0x0A, 0xC4, 0x18, 0x20, 0x02};
+  for (int at_complete = 0; at_complete < 2; ++at_complete) {
+    uint8_t pub[32], priv[32];
+    stand_up_session(nullptr, pub, priv);
+    mesh_session::set_paired_callback(on_paired_register);
+    if (!at_complete) add_bound_member(mac_i);
+    uint8_t i_pub[32], i_priv[32];
+    assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+    mesh_pairing::PairingContext ci;
+    mesh_pairing::context_init(ci);
+    mesh_pairing::Action a = mesh_pairing::start_initiator(ci, i_pub, i_priv, S, "Home", 10);
+    assert(mesh_session::start_pairing_joiner(20));
+    feed_pure(ci, me, last_to((const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}), 30, &a);
+    const std::vector<uint8_t> offer = wire(a);
+    mesh_transport::test::inject_recv(mac_i, offer.data(), offer.size(), -40);
+    mesh_transport::process();
+    feed_pure(ci, me, last_to(mac_i), 40, &a);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+    g_outs.clear();
+    if (!at_complete) {
+      assert(rest_confirm(50) == mesh_session::RequestStatus::PARTNER_REFUSED);
+      assert(g_outs.empty());                    /* no CONFIRM */
+      assert(g_failed_fired && g_failed_why == mesh_pairing::FailReason::PARTNER_REFUSED);
+      a = mesh_pairing::confirm_code(ci, 60);
+      assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+      const std::vector<uint8_t> conf_i = wire(a);
+      mesh_transport::test::inject_recv(mac_i, conf_i.data(), conf_i.size(), -40);
+      mesh_transport::process();
+      assert(g_outs.empty());
+      a = mesh_pairing::tick(ci, 10 + mesh_pairing::PAIRING_TIMEOUT_MS);
+      assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);   /* never sealed */
+      assert(transport_has(mac_i));              /* the member's binding stays */
+    } else {
+      assert(rest_confirm(50) == mesh_session::RequestStatus::OK);
+      assert(g_outs.size() == 1);                /* its CONFIRM */
+      for (size_t i = 0; i < mesh_session::MAX_TRUSTED_PEERS; ++i) {
+        uint8_t k_pub[32], k_priv[32];
+        assert(mesh_crypto::ed25519_generate_keypair(k_pub, k_priv));
+        assert(mesh_session::register_trusted_peer(k_pub));
+      }
+      feed_pure(ci, me, g_outs[0].bytes, 60, &a);
+      assert(a.type == mesh_pairing::ActionType::NONE);
+      a = mesh_pairing::confirm_code(ci, 70);
+      assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+      inject_all(mac_i, wire_all(a));
+      assert(g_failed_fired && g_failed_why == mesh_pairing::FailReason::PARTNER_REFUSED);
+      assert(!transport_has(mac_i));             /* the pair contact went */
+    }
+    assert(!g_paired_fired && !g_paired_with_secret);
+    assert(!mesh_session::has_opera());
+    assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);
+  }
+  std::printf("PASS test_a_joiner_that_cannot_hold_its_initiator_fails_the_pairing"
+              "  (at the confirm, at the COMPLETE)\n");
+}
+
 /* ── F33 part 3 — the outbound counter survives a reboot ──────────────── */
 
 /* A fake NVS for mesh_state::save/load_outbound_counter. */
@@ -4894,8 +5185,8 @@ void test_outbound_counter_without_reservation_restarts() {
 /* ── F33 part 5 — the pairing routes run on the main loop ─────────────── */
 
 bool g_abandon_in_failed = false;
-void on_failed_abandoning() {
-  on_failed();
+void on_failed_abandoning(mesh_pairing::FailReason why, const uint8_t* fp) {
+  on_failed(why, fp);
   /* The handler gives up while its request is still RUNNING. */
   if (g_abandon_in_failed) mesh_session::abandon_request();
 }
@@ -5473,6 +5764,10 @@ int main() {
   test_opera_sends_with_only_a_pairing_partner_reach_nobody();
   test_opera_sends_reach_bound_members_only();
   test_opera_sends_count_only_what_the_transport_took();
+  /* F118 — a pairing whose partner this device cannot hold fails. */
+  test_a_partner_the_initiator_cannot_hold_fails_the_pairing();
+  test_the_initiator_asks_again_before_it_seals();
+  test_a_joiner_that_cannot_hold_its_initiator_fails_the_pairing();
   /* F33 part 3 — the outbound counter survives a reboot. */
   test_outbound_counter_reserve_ahead();
   test_outbound_counter_without_reservation_restarts();
