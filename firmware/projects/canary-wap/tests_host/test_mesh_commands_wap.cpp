@@ -21,6 +21,10 @@
 // command that ran on the handler's task shows up there, and the handlers'
 // own source is held by firmware/scripts/check_wap_loop_commands.py.
 //
+// Sweep F110: the status routes (GET /api/mesh, /peers, /alerts) read the
+// copies update() publishes, read_status() and read_alerts(), never the
+// live state; the tests at the end pin what is published and when.
+//
 // Host-tested only: the stubs stand in for the radio, the flash and the
 // scheduler; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
@@ -564,6 +568,164 @@ void test_every_error_code_has_its_status_line() {
   std::printf("PASS every_error_code_has_its_status_line\n");
 }
 
+// ── The status routes read what update() published (sweep F110) ──────────
+//
+// GET /api/mesh, /peers and /alerts read the peer table, the pairing
+// session, the opera config and the alert history from the HTTP server's
+// task while update() writes them on the loop task. Now they read
+// read_status() and read_alerts(): copies the loop task publishes at the
+// end of every pass (loop_snapshot.h; test_loop_snapshot holds the copies
+// whole under real threads). These pin what is published, when, and that a
+// read never waits for the loop task or touches anything.
+
+// A status read as a handler makes it, on the HTTP server's task.
+mn::StatusView status_read(Device& d) {
+  become(d);
+  mn::StatusView v;
+  memset(&v, 0xA5, sizeof v);
+  const unsigned delays = host_sim::task_delays;
+  host_sim::on_httpd_task = true;
+  mn::read_status(&v);
+  host_sim::on_httpd_task = false;
+  CHECK(host_sim::task_delays == delays);       // it never waits for the loop task
+  CHECK(v.peer_count == v.status.peers_total);  // one pass: the count and the list agree
+  return v;
+}
+
+std::string name_at(const mn::StatusView& v, uint8_t i) { return v.peers[i].name; }
+
+// A removal the loop task has made but not yet published: the read is the
+// last published pass, whole (the removed member's name, not the next
+// one's shifted into its slot), and the next pass publishes the removal.
+void test_a_status_read_is_the_last_published_pass() {
+  fresh_opera({&A, &B, &C});
+  become(A);
+  mn::update();
+  mn::StatusView v = status_read(A);
+  CHECK(v.peer_count == 2);
+  CHECK(name_at(v, 0) == "B" && name_at(v, 1) == "C");
+  uint8_t fp_b[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(B.pub, fp_b);
+  CHECK(memcmp(v.peers[0].fingerprint, fp_b, sizeof fp_b) == 0);
+  become(A);
+  CHECK(mn::remove_peer(fp_b));                 // the loop task, mid-pass
+  CHECK(mn::g_peer_count == 1);
+  v = status_read(A);
+  CHECK(v.peer_count == 2);                     // not yet published
+  CHECK(name_at(v, 0) == "B" && name_at(v, 1) == "C");
+  become(A);
+  mn::update();
+  v = status_read(A);
+  CHECK(v.peer_count == 1 && name_at(v, 0) == "C");
+  CHECK(v.has_opera && v.enabled && std::string(v.opera_name) == "test");
+  std::printf("PASS a_status_read_is_the_last_published_pass\n");
+}
+
+// The pass that turns the mesh off returns early; it publishes too, or the
+// routes would show the mesh on until it was turned back on.
+void test_a_disabled_mesh_publishes_its_state() {
+  fresh_opera({&A, &B});
+  mn::Command off = cmd_of(mn::MESH_CMD_SET_ENABLED);
+  CHECK(rest(A, off).ok);
+  mn::StatusView v = status_read(A);
+  CHECK(v.status.state == mn::MESH_DISABLED && !v.enabled);
+  mn::Command on = cmd_of(mn::MESH_CMD_SET_ENABLED);
+  on.flag = true;
+  CHECK(rest(A, on).ok);
+  v = status_read(A);
+  CHECK(v.status.state == mn::MESH_CONNECTING && v.enabled);
+  // A leave, which a disabled mesh's pass also returns early after.
+  CHECK(rest(A, off).ok);
+  CHECK(rest(A, cmd_of(mn::MESH_CMD_LEAVE)).ok);
+  v = status_read(A);
+  CHECK(!v.has_opera && v.peer_count == 0);
+  std::printf("PASS a_disabled_mesh_publishes_its_state\n");
+}
+
+// The pairing code is in the view while the code is shown, and gone from
+// it with the pass that ends the pairing.
+void test_the_pairing_code_shows_only_while_it_is_displayed() {
+  fresh_device(A);
+  fresh_device(J);
+  CHECK(rest(A, cmd_of(mn::MESH_CMD_PAIR_START)).ok);
+  CHECK(rest(J, cmd_of(mn::MESH_CMD_PAIR_JOIN)).ok);
+  mn::StatusView v = status_read(A);
+  CHECK(v.status.state == mn::MESH_PAIRING_INIT && !v.pairing_code_shown && v.pairing_code == 0);
+  host_sim::now_ms += 2001;
+  become(J);
+  mn::update();
+  deliver(A, J.mac, sent_to(J, BROADCAST).back());
+  deliver(J, A.mac, sent_to(A, J.mac).back());
+  deliver(A, J.mac, sent_to(J, A.mac).back());   // the ACCEPT; this pass publishes the code
+  become(A);
+  const uint32_t code = mn::g_pairing.confirmation_code;
+  v = status_read(A);
+  CHECK(v.status.state == mn::MESH_PAIRING_CONFIRM && v.pairing_code_shown);
+  CHECK(v.pairing_code == code);
+  CHECK(rest(A, cmd_of(mn::MESH_CMD_PAIR_CANCEL)).ok);
+  v = status_read(A);
+  CHECK(v.status.state != mn::MESH_PAIRING_CONFIRM);
+  CHECK(!v.pairing_code_shown && v.pairing_code == 0);
+  std::printf("PASS the_pairing_code_shows_only_while_it_is_displayed\n");
+}
+
+// Uptime is counted at the read, as get_status() did; before the first
+// publish a read says what get_status() said then (a disabled mesh, the
+// zero opera id), and nothing a read does touches NVS or the radio.
+void test_a_status_read_counts_uptime_and_touches_nothing() {
+  fresh_opera({&A, &B});
+  host_sim::httpd_side_effects = 0;
+  mn::StatusView v = status_read(A);
+  become(A);
+  CHECK(v.status.uptime_ms == host_sim::now_ms - mn::g_start_time_ms);
+  host_sim::now_ms += 12345;                    // no pass meanwhile
+  const mn::StatusView w = status_read(A);
+  CHECK(w.status.uptime_ms == v.status.uptime_ms + 12345);
+  CHECK(host_sim::httpd_side_effects == 0);
+  become(A);
+  const decltype(mn::g_status_view) saved = mn::g_status_view;
+  mn::g_status_view = decltype(mn::g_status_view)();   // nothing published yet
+  v = status_read(A);
+  CHECK(v.status.state == mn::MESH_DISABLED && !v.enabled && !v.has_opera);
+  CHECK(std::string(v.status.opera_id_hex) == std::string(mn::OPERA_ID_SIZE * 2, '0'));
+  CHECK(v.status.uptime_ms == host_sim::now_ms);
+  become(A);
+  mn::g_status_view = saved;
+  std::printf("PASS a_status_read_counts_uptime_and_touches_nothing\n");
+}
+
+// The alerts read is the history in storage order (as get_alerts() returns
+// it and the route has always listed it), at most `cap`, and empty after
+// the DELETE.
+void test_the_alerts_read_is_the_history_in_storage_order() {
+  fresh_opera({&A, &B});
+  CHECK(rest(A, cmd_of(mn::MESH_CMD_CLEAR_ALERTS)).ok);
+  become(A);
+  for (uint32_t i = 1; i <= mn::MAX_ALERT_HISTORY + 3; ++i) {
+    mn::MeshAlert alert = {};
+    alert.type = mn::ALERT_TAMPER;
+    alert.witness_seq = i;
+    snprintf(alert.detail, sizeof alert.detail, "alert %u", (unsigned)i);
+    mn::store_alert(&alert);
+  }
+  size_t n = 0;
+  const mn::MeshAlert* live = mn::get_alerts(&n);
+  CHECK(n == mn::MAX_ALERT_HISTORY);
+  std::vector<mn::MeshAlert> out(mn::MAX_ALERT_HISTORY + 4);
+  host_sim::on_httpd_task = true;
+  const size_t got = mn::read_alerts(out.data(), out.size());
+  host_sim::on_httpd_task = false;
+  CHECK(got == n);
+  for (size_t i = 0; i < got; ++i) {
+    CHECK(memcmp(&out[i], &live[i], sizeof(mn::MeshAlert)) == 0);
+  }
+  CHECK(out[0].witness_seq == mn::MAX_ALERT_HISTORY + 1);   // slot 0 was overwritten first
+  CHECK(mn::read_alerts(out.data(), 5) == 5);
+  CHECK(rest(A, cmd_of(mn::MESH_CMD_CLEAR_ALERTS)).ok);
+  CHECK(mn::read_alerts(out.data(), out.size()) == 0);
+  std::printf("PASS the_alerts_read_is_the_history_in_storage_order\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -583,6 +745,14 @@ const Test kTests[] = {
     {"every_error_code_has_its_status_line", test_every_error_code_has_its_status_line},
     {"a_reboot_save_from_the_http_task_runs_on_the_loop_task",
      test_a_reboot_save_from_the_http_task_runs_on_the_loop_task},
+    {"a_status_read_is_the_last_published_pass", test_a_status_read_is_the_last_published_pass},
+    {"a_disabled_mesh_publishes_its_state", test_a_disabled_mesh_publishes_its_state},
+    {"the_pairing_code_shows_only_while_it_is_displayed",
+     test_the_pairing_code_shows_only_while_it_is_displayed},
+    {"a_status_read_counts_uptime_and_touches_nothing",
+     test_a_status_read_counts_uptime_and_touches_nothing},
+    {"the_alerts_read_is_the_history_in_storage_order",
+     test_the_alerts_read_is_the_history_in_storage_order},
 };
 
 }  // namespace commands
