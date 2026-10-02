@@ -795,12 +795,14 @@ clean-mqtt-reinit:
 run: run-mqtt-reinit
 clean: clean-mqtt-reinit
 
-# The hand-over from a requesting task to the loop task (sweep F96, F106):
+# The hand-over from a requesting task to the loop task (sweep F96):
 # the REAL loop_command_ring.h. Commands run in post order across the ticket
 # wrap, a full ring refuses, each waiter collects its own result once, a
 # command not started by the timeout is withdrawn and never runs, one already
-# started is waited for, and with real threads every command runs once, on
-# the loop thread. `make tsan-loop-ring` builds and runs the same suite under
+# started is waited for, and with real threads (six requesters, one loop
+# thread) every command runs once, on the loop thread, and with a one-tick
+# timeout no withdrawn command runs and no slot is lost while withdrawals
+# race the drain. `make tsan-loop-ring` builds and runs the same suite under
 # -fsanitize=thread (not part of `run`: it needs a sanitizer runtime).
 LOOP_RING_BIN = test_loop_command_ring
 LOOP_RING_SRC = test_loop_command_ring.cpp

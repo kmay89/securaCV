@@ -10,8 +10,11 @@
 //   - results: each waiter collects its own command's result, once;
 //   - timeouts: a command not started by the timeout is withdrawn and never
 //     runs; one the loop task has started is waited for until it is done;
-//   - two real threads: every submitted command runs exactly once, on the
-//     loop thread, and every waiter gets its own result.
+//   - real threads (six requesters and one loop thread): every submitted
+//     command runs exactly once, on the loop thread, and every waiter gets
+//     its own result; and with a timeout of one tick, so that withdrawals
+//     race the drain thousands of times a run, no withdrawn command ever
+//     runs (the 503 mesh_timeout is true) and no slot is lost.
 
 #include "loop_command_ring.h"
 
@@ -367,6 +370,99 @@ static void test_two_threads_every_command_runs_once_on_the_loop_thread() {
   std::printf("  (%d posts found the ring full and retried)\n", busy.load());
 }
 
+// The same six requesters, but each waits one tick (a fake clock that moves
+// one tick per poll), so most commands are withdrawn while the loop thread
+// is draining, and the two race on the same slot thousands of times a run.
+// A withdrawn command must never run, a done one must run exactly once and
+// return its own result, and no slot may be lost: a drain that marked a slot
+// running in a second lock section, after copying its command, ran
+// withdrawn commands and leaked the slots they left, until every post found
+// the ring full. A 20 s deadline turns that into a failure, not a hang.
+static void test_withdrawals_racing_the_drain_never_run() {
+  std::printf("test_withdrawals_racing_the_drain_never_run\n");
+  using RingM = lcr::Ring<Cmd, Res, 4, MutexLock>;
+  RingM ring;
+  constexpr int kRequesters = 6;
+  constexpr uint32_t kPer = 2000;
+  constexpr uint32_t kTotal = kRequesters * kPer;
+  std::vector<std::atomic<int>> ran(kTotal);       // runs per id (loop thread writes)
+  std::vector<std::atomic<int>> outcome(kTotal);   // 1 done, 2 withdrawn, 3 gave up
+  for (auto& a : ran) a = 0;
+  for (auto& a : outcome) a = 0;
+  std::atomic<bool> stop{false};
+  std::atomic<bool> late{false};
+  std::atomic<int> wrong{0};
+  const auto t0 = std::chrono::steady_clock::now();
+  auto past_deadline = [&] {
+    if (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(20)) late = true;
+    return late.load();
+  };
+
+  std::thread loop([&] {
+    while (!stop.load()) {
+      ring.drain([&](const Cmd& cmd) {
+        if (cmd.id < kTotal) ran[cmd.id]++;
+        std::this_thread::yield();               // widen the window a withdrawal can hit
+        return Res{cmd.id, cmd.arg + 1};
+      });
+      std::this_thread::yield();
+    }
+  });
+
+  std::vector<std::thread> requesters;
+  for (int k = 0; k < kRequesters; ++k) {
+    requesters.emplace_back([&, k] {
+      uint32_t fake_now = 0;
+      for (uint32_t i = 0; i < kPer; ++i) {
+        const uint32_t id = (uint32_t)k * kPer + i;
+        Res r = {};
+        lcr::Wait w = lcr::Wait::kBusy;
+        while (!past_deadline()) {
+          w = lcr::submit(ring, Cmd{id, (int32_t)id}, &r, /*timeout_ms=*/1, /*poll_ms=*/1,
+                          [&] { return fake_now; },
+                          [&](uint32_t) { fake_now += 1; std::this_thread::yield(); });
+          if (w != lcr::Wait::kBusy) break;
+          std::this_thread::yield();
+        }
+        if (w == lcr::Wait::kBusy) {
+          outcome[id] = 3;
+          return;                                // the ring is stuck: stop this requester
+        }
+        outcome[id] = w == lcr::Wait::kDone ? 1 : 2;
+        if (w == lcr::Wait::kDone && (r.id != id || r.value != (int32_t)id + 1)) wrong++;
+      }
+    });
+  }
+  for (auto& t : requesters) t.join();
+  stop = true;
+  loop.join();
+
+  int done = 0, withdrawn = 0, withdrawn_ran = 0, done_not_once = 0, unfinished = 0;
+  for (uint32_t i = 0; i < kTotal; ++i) {
+    const int o = outcome[i].load();
+    if (o == 1) {
+      ++done;
+      if (ran[i].load() != 1) ++done_not_once;
+    } else if (o == 2) {
+      ++withdrawn;
+      if (ran[i].load() != 0) ++withdrawn_ran;
+    } else {
+      ++unfinished;
+    }
+  }
+  CHECK(!late.load());
+  CHECK(unfinished == 0);
+  CHECK(withdrawn_ran == 0);
+  CHECK(done_not_once == 0);
+  CHECK(wrong.load() == 0);
+  CHECK(withdrawn > 0);                          // the race was run, both ways
+  CHECK(done > 0);
+  int free_slots = 0;                            // no slot left behind
+  for (int i = 0; i < 4; ++i) free_slots += ring.post(Cmd{0, 0}) != 0 ? 1 : 0;
+  CHECK(free_slots == 4);
+  std::printf("  (%d done, %d withdrawn while the loop thread drained)\n", done, withdrawn);
+}
+
 int main() {
   test_runs_in_post_order_and_reports_each_result();
   test_order_is_by_ticket_not_by_slot();
@@ -377,6 +473,7 @@ int main() {
   test_submit_withdraws_an_unstarted_command_at_the_timeout();
   test_submit_waits_for_a_command_that_has_started();
   test_two_threads_every_command_runs_once_on_the_loop_thread();
+  test_withdrawals_racing_the_drain_never_run();
   if (g_failures != 0) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;
