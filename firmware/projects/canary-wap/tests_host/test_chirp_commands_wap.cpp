@@ -412,6 +412,64 @@ void test_a_refused_send_names_why() {
   std::printf("PASS a_refused_send_names_why\n");
 }
 
+// ── What the owner sent reaches the command ─────────────────────────────
+
+// POST /api/chirp/send's template, urgency, detail and TTL reach the witness
+// frame the loop task signs and broadcasts. The dashboard's Info / Caution /
+// Urgent choice is the urgency: a run_command() that dropped it would send
+// every urgent alert as info. The other tests send INFO, no detail and 15
+// minutes, which are also the defaults, so they cannot tell.
+void test_a_send_carries_the_owners_fields() {
+  boot();
+  enabled_channel();
+  const size_t before = host_sim::espnow->sent.size();
+  cc::Command c = send_of(cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_URGENT);
+  c.detail = cc::DETAIL_STATUS_SPREADING;
+  c.ttl_minutes = 30;
+  const Rest r = rest(c);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(r.sent_before_turn == before);
+  CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_WITNESS});
+  const std::vector<uint8_t>& f = host_sim::espnow->sent[before].bytes;
+  CHECK(f.size() >= sizeof(cc::ChirpHeader) + sizeof(cc::ChirpWitnessPayload));
+  cc::ChirpWitnessPayload p;
+  memcpy(&p, f.data() + sizeof(cc::ChirpHeader), sizeof p);
+  CHECK(p.template_id == (uint8_t)cc::TPL_INFRA_POWER_OUT);
+  CHECK(p.urgency == (uint8_t)cc::CHIRP_URG_URGENT);
+  CHECK(p.detail_slot == (uint8_t)cc::DETAIL_STATUS_SPREADING);
+  CHECK(p.ttl_minutes == 30);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_send_carries_the_owners_fields\n");
+}
+
+// POST /api/chirp/settings changes only the fields it names: the filter
+// alone leaves the relay as it stands, and the relay alone leaves the
+// filter. The answer is both, as the command left them.
+void test_a_settings_post_changes_only_what_it_names() {
+  boot();
+  enabled_channel();
+  CHECK(cc::g_relay_enabled && cc::g_urgency_filter == cc::CHIRP_URG_INFO);
+  cc::Command f = cmd_of(cc::CHIRP_CMD_SETTINGS);
+  f.set_filter = true;
+  f.urgency_filter = cc::CHIRP_URG_CAUTION;
+  f.relay_enabled = false;                  // not named: ignored
+  Rest r = rest(f);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(cc::g_relay_enabled && r.r.relay_enabled);
+  CHECK(cc::g_urgency_filter == cc::CHIRP_URG_CAUTION && r.r.urgency_filter == cc::CHIRP_URG_CAUTION);
+
+  cc::Command relay = cmd_of(cc::CHIRP_CMD_SETTINGS);
+  relay.set_relay = true;
+  relay.relay_enabled = false;
+  relay.urgency_filter = cc::CHIRP_URG_URGENT;   // not named: ignored
+  r = rest(relay);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(!cc::g_relay_enabled && !r.r.relay_enabled);
+  CHECK(cc::g_urgency_filter == cc::CHIRP_URG_CAUTION && r.r.urgency_filter == cc::CHIRP_URG_CAUTION);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_settings_post_changes_only_what_it_names\n");
+}
+
 // ── The ring's edges, through the real submit() and update() ────────────
 
 // The loop task never gets to it (busy, or the device still booting): after
@@ -501,6 +559,8 @@ const Test kTests[] = {
     {"enable_runs_on_the_loop_task", test_enable_runs_on_the_loop_task},
     {"every_command_runs_on_the_loop_task", test_every_command_runs_on_the_loop_task},
     {"a_refused_send_names_why", test_a_refused_send_names_why},
+    {"a_send_carries_the_owners_fields", test_a_send_carries_the_owners_fields},
+    {"a_settings_post_changes_only_what_it_names", test_a_settings_post_changes_only_what_it_names},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},
     {"a_late_turn_still_answers", test_a_late_turn_still_answers},

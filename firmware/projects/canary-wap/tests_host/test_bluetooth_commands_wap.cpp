@@ -504,6 +504,149 @@ void test_settings_apply_the_fields_named() {
   std::printf("PASS settings_apply_the_fields_named\n");
 }
 
+// The settings fields, one by one: a POST naming one field changes that
+// field and no other, whatever the rest of the command's settings say. The
+// dashboard's Bluetooth panel sends auto_advertise and long_range_mode on
+// their own; settings_apply_the_fields_named covers allow_pairing, the name,
+// the TX power and the inactivity timeout together.
+void test_each_settings_field_applies_alone() {
+  struct Field {
+    uint16_t bit;
+    const char* name;
+  };
+  const Field fields[] = {
+      {bc::BT_SET_ENABLED, "enabled"},
+      {bc::BT_SET_AUTO_ADVERTISE, "auto_advertise"},
+      {bc::BT_SET_ALLOW_PAIRING, "allow_pairing"},
+      {bc::BT_SET_REQUIRE_PIN, "require_pin"},
+      {bc::BT_SET_DEVICE_NAME, "device_name"},
+      {bc::BT_SET_TX_POWER, "tx_power"},
+      {bc::BT_SET_INACTIVITY, "inactivity_timeout"},
+      {bc::BT_SET_NOTIFY_ON_CONNECT, "notify_on_connect"},
+      {bc::BT_SET_LONG_RANGE, "long_range_mode"},
+  };
+  // Which fields differ between two settings.
+  auto differ = [](const bc::BluetoothSettings& a, const bc::BluetoothSettings& b) {
+    uint16_t m = 0;
+    if (a.enabled != b.enabled) m |= bc::BT_SET_ENABLED;
+    if (a.auto_advertise != b.auto_advertise) m |= bc::BT_SET_AUTO_ADVERTISE;
+    if (a.allow_pairing != b.allow_pairing) m |= bc::BT_SET_ALLOW_PAIRING;
+    if (a.require_pin != b.require_pin) m |= bc::BT_SET_REQUIRE_PIN;
+    if (strcmp(a.device_name, b.device_name) != 0) m |= bc::BT_SET_DEVICE_NAME;
+    if (a.tx_power != b.tx_power) m |= bc::BT_SET_TX_POWER;
+    if (a.inactivity_timeout_ms != b.inactivity_timeout_ms) m |= bc::BT_SET_INACTIVITY;
+    if (a.notify_on_connect != b.notify_on_connect) m |= bc::BT_SET_NOTIFY_ON_CONNECT;
+    if (a.long_range_mode != b.long_range_mode) m |= bc::BT_SET_LONG_RANGE;
+    return m;
+  };
+  for (const Field& f : fields) {
+    boot();
+    const bc::BluetoothSettings before = bc::g_settings;
+    // Every field different from the device's, in range (tx_power is
+    // clamped to -12..+9 and the name is at most MAX_DEVICE_NAME_LEN).
+    bc::Command s = cmd_of(bc::BT_CMD_SETTINGS);
+    s.settings.enabled = !before.enabled;
+    s.settings.auto_advertise = !before.auto_advertise;
+    s.settings.allow_pairing = !before.allow_pairing;
+    s.settings.require_pin = !before.require_pin;
+    strcpy(s.settings.device_name, strcmp(before.device_name, "Shed") == 0 ? "Barn" : "Shed");
+    s.settings.tx_power = before.tx_power == -6 ? -3 : -6;
+    s.settings.inactivity_timeout_ms = before.inactivity_timeout_ms + 60000;
+    s.settings.notify_on_connect = !before.notify_on_connect;
+    s.settings.long_range_mode = !before.long_range_mode;
+    CHECK(differ(before, s.settings) == 0x1FF);
+    s.set_mask = f.bit;
+    const Rest r = rest(s);
+    CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+    if (differ(before, bc::g_settings) != f.bit) {
+      std::fprintf(stderr, "field %s: changed mask 0x%x\n", f.name,
+                   (unsigned)differ(before, bc::g_settings));
+    }
+    CHECK(differ(before, bc::g_settings) == f.bit);
+    CHECK(differ(s.settings, bc::g_settings) == (0x1FF & ~f.bit));
+    none_on_httpd();
+  }
+  std::printf("PASS each_settings_field_applies_alone\n");
+}
+
+// Trust and block take the owner's flag both ways: untrust and unblock are
+// the same POSTs with false.
+void test_trust_and_block_take_the_owners_flag() {
+  boot();
+  NimBLEConnInfo phone = link(11, 0xD1);
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::server->peers = {11};
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  CHECK(bc::g_paired_count == 1);
+  bc::Command t = cmd_of(bc::BT_CMD_PAIRED_TRUST);
+  memcpy(t.address, phone.address.getBase()->val, 6);
+  t.flag = true;
+  CHECK(rest(t).r.ok && bc::g_paired_devices[0].trusted);
+  t.flag = false;
+  Rest r = rest(t);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && !bc::g_paired_devices[0].trusted);
+  bc::Command b = t;
+  b.type = bc::BT_CMD_PAIRED_BLOCK;
+  b.flag = true;
+  CHECK(rest(b).r.ok && bc::g_paired_devices[0].blocked);
+  b.flag = false;
+  r = rest(b);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && !bc::g_paired_devices[0].blocked);
+  CHECK(!bc::g_paired_devices[0].trusted);
+  none_on_httpd();
+  std::printf("PASS trust_and_block_take_the_owners_flag\n");
+}
+
+// DELETE /api/bluetooth/paired/all forgets every paired device: the table,
+// each NimBLE bond and the saved list, on the loop task.
+void test_paired_clear_forgets_every_device() {
+  boot();
+  NimBLEConnInfo phone = link(11, 0xD1);
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::server->peers = {11};
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  CHECK(bc::g_paired_count == 1);
+  host_sim::bonds = {phone.address, link(12, 0xD2).address};
+  host_sim::calls.clear();
+  const Rest r = rest(cmd_of(bc::BT_CMD_PAIRED_CLEAR));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(r.calls_before_turn == 0);
+  CHECK(bc::g_paired_count == 0);
+  CHECK(host_sim::count("bond_delete", "loop") == 2);
+  CHECK(host_sim::count("nvs_write", "loop") > 0);
+  none_on_httpd();
+  std::printf("PASS paired_clear_forgets_every_device\n");
+}
+
+// "Start Advertising" and "Pair" are the owner turning Bluetooth on: with
+// the stack up and Bluetooth off (POST /api/bluetooth/disable, or
+// enabled=false in NVS), each command enables it on the loop task and then
+// does its own work. no_command_brings_the_stack_up covers the stack down.
+void test_advertise_and_pair_turn_bluetooth_on() {
+  boot();
+  Rest r = rest(cmd_of(bc::BT_CMD_DISABLE));
+  CHECK(r.wait == lcr::Wait::kDone && !bc::is_enabled());
+  CHECK(!host_sim::advertising.isAdvertising());
+  r = rest(cmd_of(bc::BT_CMD_ADVERTISE_START));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.refusal == bc::BT_REFUSED_NONE);
+  CHECK(r.state_before_turn == bc::BT_DISABLED);
+  CHECK(bc::is_enabled() && host_sim::advertising.isAdvertising());
+  CHECK(bc::g_state == bc::BT_ADVERTISING);
+
+  r = rest(cmd_of(bc::BT_CMD_DISABLE));
+  CHECK(r.wait == lcr::Wait::kDone && !bc::is_enabled());
+  r = rest(cmd_of(bc::BT_CMD_PAIR_START));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.refusal == bc::BT_REFUSED_NONE);
+  CHECK(r.r.allow_pairing);                 // the handler reads it on a refusal
+  CHECK(bc::is_enabled() && bc::g_pairing.state == bc::PAIR_INITIATED);
+  CHECK(host_sim::advertising.isAdvertising());   // pairing mode advertises
+  CHECK(host_sim::count("nimble_init") == 0);
+  none_on_httpd();
+  std::printf("PASS advertise_and_pair_turn_bluetooth_on\n");
+}
+
 // ── The stack is init()'s, never a command's ────────────────────────────
 
 // The owner turns Bluetooth on before the bring-up worker has run: the
@@ -597,6 +740,10 @@ const Test kTests[] = {
     {"a_wrong_pin_reject_and_cancel_answer_no_once", test_a_wrong_pin_reject_and_cancel_answer_no_once},
     {"every_command_runs_on_the_loop_task", test_every_command_runs_on_the_loop_task},
     {"settings_apply_the_fields_named", test_settings_apply_the_fields_named},
+    {"each_settings_field_applies_alone", test_each_settings_field_applies_alone},
+    {"trust_and_block_take_the_owners_flag", test_trust_and_block_take_the_owners_flag},
+    {"paired_clear_forgets_every_device", test_paired_clear_forgets_every_device},
+    {"advertise_and_pair_turn_bluetooth_on", test_advertise_and_pair_turn_bluetooth_on},
     {"no_command_brings_the_stack_up", test_no_command_brings_the_stack_up},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},
