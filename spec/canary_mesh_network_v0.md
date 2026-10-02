@@ -1232,7 +1232,10 @@ owner-run pairing from its own address gets matching codes on both
 screens while choosing that key. Claiming a trusted member's key re-binds
 the member to the outsider's radio and persists it; claiming its own gets
 it trusted (host-probed on the PlatformIO tree, the same before #1756;
-open, a wire change). And on the PlatformIO tree, with eight members
+open, a wire change). The code binds even the ephemeral exchange only
+weakly (§11.1): a relay that swaps both ephemeral keys can grind its second
+one until the codes match, and then reads the `opera_secret` in the
+COMPLETE (host-probed on canary-wap; open). And on the PlatformIO tree, with eight members
 bound the transport table has no slot for the new address, so the
 pairing's replies cannot be sent and the re-pair cannot start until a
 member leaves or is removed (host-probed). Learning a new address safely
@@ -1391,16 +1394,29 @@ The web UI MUST include a "Opera" panel showing:
    themselves are signed, not encrypted (§8.3), so anyone in range reads
    their payloads.
 5. **Man-in-the-Middle**: Visual confirmation codes during pairing.
-   Partial: the code and the CONFIRM hash are derived from the ephemeral
-   X25519 session key only, so they detect a relay that swaps an ephemeral
-   key (different codes on the two screens, by construction) but not one
-   that swaps the long-term public key the DISCOVER or OFFER carries, which
-   signs nothing in the exchange. A relay doing that can get its own key
-   trusted, or re-bind an already-trusted member to its radio (§8.3;
-   host-probed on the PlatformIO tree; on canary-wap, which derives the code
-   the same way, host-probed for a relay claiming a member's key). Closing
-   it needs both long-term keys in the code
-   and the CONFIRM hash, or a transcript signed with them: a wire change on
+   Partial, on two counts. The code and the CONFIRM hash are derived from
+   the ephemeral X25519 session key only, so they do not cover the
+   long-term public key the DISCOVER or OFFER carries, which signs nothing
+   in the exchange. A relay that swaps it can get its own key trusted, or
+   re-bind an already-trusted member to its radio (§8.3; host-probed on the
+   PlatformIO tree; on canary-wap, which derives the code the same way,
+   host-probed for a relay claiming a member's key). And they bind the
+   ephemeral exchange only weakly. A relay that swaps one ephemeral key
+   shows different codes on the two screens, but the code has 10^6 values
+   and nothing commits either side's ephemeral before the other side's is
+   sent, so a relay that swaps both picks its second ephemeral after it has
+   seen the first, and grinds it until the two codes match. It then opens
+   the `PAIR_COMPLETE` and holds the `opera_secret`. Host-probed on
+   canary-wap against its real pairing handlers (2026-10-02): about 1.5
+   million X25519 tries, 165 s on one host core, and the search splits
+   across cores, against a 2-minute pairing timeout; the relay presented
+   both devices' own long-term keys, so this is not the key substitution
+   above. The PlatformIO tree derives its code the same way and its OFFER
+   and ACCEPT come in the same order (read from code, not probed). Closing
+   both needs a commitment to one side's ephemeral before it sees the
+   other's (Bluetooth's numeric comparison commits to a nonce that way) or
+   a much longer code, together with both long-term keys in the code and
+   the CONFIRM hash, or a transcript signed with them: a wire change on
    both trees, open.
 6. **Resource Exhaustion**: Max opera size, rate limiting
 

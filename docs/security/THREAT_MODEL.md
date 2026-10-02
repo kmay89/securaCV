@@ -727,12 +727,24 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   re-binds that member to the relay's radio there too (host-probed;
   before, the relay added a duplicate entry no lookup reached); the move
   is logged as a health WARNING, the owner's only sign. What the code
-  does bind is the ephemeral exchange: by construction (not probed end to
-  end), a relay that swaps an ephemeral key shows different codes on the
-  two screens, which is what keeps the `opera_secret` sealed in COMPLETE
-  from it. Fixing the key substitution needs both long-term keys in the
-  code and the CONFIRM hash, or a transcript signed with them: a wire
-  change on both trees, open. On the PlatformIO tree the re-pair also
+  does bind is the ephemeral exchange, and only weakly. A relay that swaps
+  one ephemeral key shows different codes on the two screens, but the code
+  has 10^6 values and nothing commits either side's ephemeral before the
+  other side's is sent, so a relay that swaps both picks its second
+  ephemeral after it has seen the first and grinds it until the two codes
+  match. Both owners then confirm the same code, and the relay opens the
+  COMPLETE and holds the `opera_secret` (host-probed on canary-wap against
+  its real pairing handlers, 2026-10-02: about 1.5 million X25519 tries,
+  165 s on one host core, and the search splits across cores, against a
+  2-minute pairing timeout; the relay presented both devices' own
+  long-term keys, so this is not the key substitution above). The
+  PlatformIO tree derives its code the same way, in the same OFFER and
+  ACCEPT order (read from code, not probed). Fixing both needs a
+  commitment to one side's ephemeral before it sees the other's (as
+  Bluetooth's numeric comparison commits to a nonce) or a much longer
+  code, together with both long-term keys in the code and the CONFIRM
+  hash, or a transcript signed with them: a wire change on both trees,
+  open. On the PlatformIO tree the re-pair also
   cannot start while eight members are bound: the transport table has no
   slot for the new address, so the pairing's replies cannot be sent until
   a member leaves or is removed (host-probed).
