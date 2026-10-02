@@ -41,6 +41,7 @@ import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { birdPerch } from "./bird_perch.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -423,6 +424,19 @@ async function walkHarness(flavor) {
     const cutPhone = await E(joinEllipses);
     check(cutPhone.length === 0, `the phone-joined scene cuts ${cutPhone.length} line(s) to an ellipsis (first ` +
       `dots at ${JSON.stringify(cutPhone)}; lines: ${JSON.stringify((await E(glassLines)).map((l) => l.text))}) (F65)`);
+
+    // F64: the PhoneJoined scene puts the bird on stage, and it sits where
+    // the scene placed it: on the glass, clear of every line of text.
+    // Before F64 it sat behind the title; after #1755 re-seated it per
+    // scene, it left the glass.
+    const perchAt = await E(async () => ({
+      bird: await window.__emu.markBox(),
+      labels: await window.__emu.screenLabels(),
+      glass: { w: document.getElementById("glass").width, h: document.getElementById("glass").height },
+    }));
+    check(perchAt.bird && perchAt.bird.shown, "the PhoneJoined scene shows no bird (F64)");
+    const perch = birdPerch(perchAt);
+    check(perch === null, `PhoneJoined: ${perch}`);
 
     // Captive DNS: the firmware's dns_build_response.
     const dns = await E(async () => {

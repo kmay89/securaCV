@@ -81,11 +81,12 @@ Two smaller one-time human acts, same flavor:
   files behind (every refresh ran green and pushed nothing) until a hand
   resync in securacv-homeassistant#17 (2026-09-24). HA14 moved the carried
   `custom_components/securacv` files again in #1725 (and F55 one carried
-  test), and HA18 and HA17 moved them again in #1727; their resync follows
-  both. Mirror PR securacv-homeassistant#21 is open for #1727's files.
-  #1761 adds one carried test (F46's `tests/test_replay_one_id_space.py`),
-  which #21 does not carry, so it waits for the next resync. Until the
-  secret is set, every `main` change to the carried set needs that again.
+  test), resynced in securacv-homeassistant#19, and HA18, HA17 and HA22
+  moved them again in #1727, resynced by hand in securacv-homeassistant#20
+  (2026-10-01). #1761 adds one carried test (F46's
+  `tests/test_replay_one_id_space.py`), which waits for the next resync.
+  Until the secret is set, every `main` change to the carried set needs
+  that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
   to an integration icon on HA < 2026.3.
@@ -1796,7 +1797,7 @@ so — see D2 below.)
   input path on both. Which port that input would arrive on is F67's
   question, so settle F67 first. Found doing HA17.
 - [x] **F64 [code] The onboarding bird never sits where its host placed
-  it.** canary_mark_mood() records the bird's base with lv_obj_get_x/y at
+  it.** (#1760, #1761) canary_mark_mood() records the bird's base with lv_obj_get_x/y at
   its first on-stage mood, and the breath and the poses then write that base
   back as the style offset. onboard_ui_create() reaches that mood (Hello,
   Idle) before LVGL's first layout pass, so the base reads 0. The bird then
@@ -1828,16 +1829,29 @@ so — see D2 below.)
   at the panel center behind the title. The fix here covers both; check
   that the drawn bird sits where each scene places it. Found by F50
   (#1727).
-  *Done (#1761):* canary_mark records the bird's base as the host's style
-  offset from its anchor (`lv_obj_get_style_x/y`, the same call on LVGL 8
-  and 9). That is the one coordinate every pose, breath and hop writes
-  back, so the bird is drawn where its host aligned it, under any anchor,
-  whether its first mood comes before LVGL's first layout pass or after.
-  `canary_mark_rebase()` needed no change of its own: it re-arms the same
-  capture, which now reads the offset the align just wrote. A native
-  harness (LVGL 8.4.0 with the display's lv_conf, the real faces linked,
-  the bird's drawn box read after every refresh) measured every face's bird
-  off its seat before the fix:
+  *Done (#1760):* `record_base()` reads the bird's style offset
+  (`lv_obj_get_style_x/y`), the number the host's `lv_obj_align` wrote and
+  the poses write back, instead of the laid-out position; the wing and eye
+  reads that offset their own last pose do the same. The emulator exports
+  `emu_mark_box()` (the shell's `markBox()`), and a shared probe check
+  (`canary-local/tests/bird_perch.mjs`) fails a shown bird that is off the
+  glass or over a line of text: `boot_probe` runs it on every flavor's
+  face, `onboard_probe` on the PhoneJoined scene, which must show the bird.
+  On the rebuilt dist both pass for all five flavors (local Chromium run),
+  and the screenshots show the round watch's PhoneJoined bird above its
+  title (none was drawn before), the watch face's bird inside the ring
+  above the clock (it sat on the ring), and the portrait face's bird at
+  its `TOP_MID V(22)` seat. Not seen on real glass (U1).
+  *Also (#1761), built independently with host tests:* canary_mark records the
+  bird's base as the host's style offset from its anchor
+  (`lv_obj_get_style_x/y`, the same call on LVGL 8 and 9). That is the one
+  coordinate every pose, breath and hop writes back, so the bird is drawn
+  where its host aligned it, under any anchor, whether its first mood comes
+  before LVGL's first layout pass or after. `canary_mark_rebase()` needed no
+  change of its own: it re-arms the same capture, which now reads the offset
+  the align just wrote. A native harness (LVGL 8.4.0 with the display's
+  lv_conf, the real faces linked, the bird's drawn box read after every
+  refresh) measured every face's bird off its seat before the fix:
   - the onboarding bird sat at the panel's center (y 98..102 instead of 36
     on the round watch, 62..66 px low on every small glass), then walked
     another anchor-distance off the glass at each re-seat (PhoneJoined at
@@ -1868,8 +1882,9 @@ so — see D2 below.)
   both ladders; against the old canary_mark.cpp it fails 72 checks in its
   round build and 362 in its rectangular one. Host-tested, and measured
   natively (the harness is not in CI); the ESP32 builds are CI's; not
-  bench-tested. The emulator dist is rebuilt in this PR by CI's pinned
-  emsdk. Found here: F88, F89.
+  bench-tested. #1761 keeps #1760's `record_base()` and its wing and eye
+  reads on merging main; the emulator dist is rebuilt in this PR by CI's
+  pinned emsdk. Found here: F88, F89.
 - [x] **F65 [code] The onboarding's scene titles and bodies are cut on small
   glass.** Only the Join scene's credentials rows and the coach line are
   fitted (F45, F50). The titles and bodies keep LV_LABEL_LONG_DOT at a fixed
@@ -2085,6 +2100,13 @@ so — see D2 below.)
   else on a first boot paints) in the Hello and PhoneJoined scenes could
   hold the bird's box to the seat each flavor's layout names, the way
   `test_onboard_scenes` holds it on the host. Found by F64 (#1761).
+  *Partly done (#1760):* the emulator exports the mark's drawn box
+  (`emu_mark_box()`, the shell's `markBox()`), and
+  `canary-local/tests/bird_perch.mjs` fails a shown bird that is off the glass
+  or over a line of text: `boot_probe` runs it on every flavor's face, and
+  `onboard_probe` on the PhoneJoined scene, which must show the bird. Left:
+  the Hello scene, and holding the box to the seat each flavor's
+  `onboard_layout.h` names rather than only on the glass and clear of text.
 - [ ] **F67 [code] The C6 builds most likely send `Serial` to UART0 on the
   radar's pins, not to USB.** `firmware/envs/platformio/canary-sense.ini`
   :78 and `canary-sentinel.ini` :67 add `-UARDUINO_USB_CDC_ON_BOOT` (so do
@@ -2524,14 +2546,19 @@ so — see D2 below.)
   for an offline tile, and the paragraph's 8799 instruction does not work
   inside either app.
 - [x] **A25 [code] canary-local's WAP page shows an 8-digit example
-  fingerprint.** `canary-local/tools/gen_wap.py`'s TOPICS examples for
+  fingerprint.** (#1760, #1761) `canary-local/tools/gen_wap.py`'s TOPICS examples for
   `events`, `chain` and `counts` carry `"fp":"7f3a9c21"`. The envelope `fp`
   is 16 hex digits (8 bytes of `pubkey_fp`), and since HA20 a canary-wap
   sends it in lowercase. The examples elide the signature with an ellipsis,
   but the fp reads as a whole value. Give them a 16-digit lowercase example
   (regenerate `wap.json`, then `gen_csp.py` if the page hash moves). Found
   in HA20 (#1727).
-  *Done (#1761):* `gen_wap.py`'s `events`, `chain` and `counts` examples
+  *Done (#1760):* the envelope examples carry `7f3a9c21b04e6d58`, and the
+  boot log's `Public key fingerprint:` line carries the same 16 digits in
+  `hex_to_str`'s capitals (it prints `g_device.fingerprint_hex`, which HA20
+  left in capitals). `wap.json` regenerated; the CSP did not move.
+  *Then (#1761), replacing #1760's example:* `gen_wap.py`'s `events`,
+  `chain` and `counts` examples
   now carry `"fp":"7916ca487912fa1b"`, and its `[PROV]` boot line reads
   `Public key fingerprint: 7916CA487912FA1B`. Both are the repo's Ed25519
   test key (seed 0x42 × 32, public key `2152f8d1…81db12`). The WAP's
@@ -3171,11 +3198,11 @@ so — see D2 below.)
   files #1703, #1704 and #1718 had moved. The same PR brought the store
   page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
-  one and refuses "encrypted by default". PR #1725 and PR #1727 move
-  carried files again, and their resync follows them (U6). PR #1761 adds
-  one carried test (F46's `tests/test_replay_one_id_space.py`), which
-  mirror PR securacv-homeassistant#21, open for #1727's files, does not
-  carry. Its health
+  one and refuses "encrypted by default". PR #1725's carried files
+  followed in securacv-homeassistant#19 and PR #1727's in #20 (2026-10-01),
+  byte-identical again (U6). PR #1761 adds one carried test (F46's
+  `tests/test_replay_one_id_space.py`), which waits for the next resync.
+  Its health
   items are U6 and U7 above, plus the three monorepo-fixture tests its CI
   deselects, which is by design. A few more tests skip themselves there
   because they read firmware sources the mirror does not carry.)*
@@ -3488,8 +3515,8 @@ so — see D2 below.)
   `witness.html`, `docs/roadmap.md`, `lab.html`, `linux.html`,
   `engine.html`, `compare.html` and `apple-tv.html`. The glossary defines
   the companion app. Left: A24 and W21.
-- [ ] **W21 [code] The website's copy of the fleet contract vectors is
-  hand-carried.** W20 copied
+- [x] **W21 [code] The website's copy of the fleet contract vectors is
+  hand-carried.** (website #216) W20 copied
   `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json` into the
   website's `tests/fixtures/`. `tests/tv-wall.test.mjs` pins it by sha256
   and tells a human to re-copy it. Add it to `scripts/carry_to_site.py`'s
@@ -3502,7 +3529,11 @@ so — see D2 below.)
   products' disclosed outbound paths", path 3. The monorepo half landed in
   #1720, and website #207 added the file to the carry job's `CARRY_PATHS`
   and fixed that pointer; what is left is retiring the hand pin once the
-  first carry PR has run. — in progress (2026-09-23)
+  first carry PR has run.
+  *Done (website #216):* the carry, run from `main` (4507279), added the
+  vectors to `tv/vendor/PROVENANCE.txt` with the sha256 the hand pin held
+  (the file itself was byte-identical); the provenance test now requires
+  that pin, and the hand pin and its test are gone. 705 site tests pass.
 
 ---
 

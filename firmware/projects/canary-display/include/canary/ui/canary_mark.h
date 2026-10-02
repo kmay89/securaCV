@@ -44,22 +44,24 @@ enum class CanaryReact : uint8_t {
 
 // Builds the bird inside `parent` (size_px square). Recreating (e.g. on a
 // new screen) is safe: the module tracks one live bird and cleans up its
-// timers when the bird's screen is deleted. The host places it with
-// lv_obj_align (any anchor) or lv_obj_set_pos, before or after a layout
-// pass: the mark keeps the anchor and reads the offset the host set.
+// timers when the bird's screen is deleted.
 lv_obj_t* canary_mark_create(lv_obj_t* parent, int size_px);
 
 void canary_mark_mood(CanaryMood m);
 
 // The host moved the bird (a new lv_obj_align). The mark records its base
-// once, at the first on-stage mood after placement — the host's style
-// offset from its anchor (lv_obj_get_style_x/y), never the laid-out box,
-// which is stale until LVGL's next layout pass (F64) — and every pose and
-// bob writes from that base, so a later move alone is undone on the next
-// animation frame. Call this right after the new placement: off stage it
-// re-arms the one-shot capture for the next mood; on stage it re-enters
-// the current mood so the pose restarts from the new seat.
+// position once, at the first on-stage mood after placement (the style
+// offset the placement wrote, never the laid-out position: F64), and every
+// pose and bob writes from that base — so a later move alone is undone on
+// the next animation frame. Call this right after the new placement:
+// off stage it re-arms the one-shot capture for the next mood; on stage
+// it re-enters the current mood so the pose restarts from the new seat.
 void canary_mark_rebase();
+
+// The live bird's object, or nullptr when none is alive. For readers of
+// the glass (the emulator's probes ask where the bird is drawn); a host
+// places the bird through the object canary_mark_create returned.
+lv_obj_t* canary_mark_obj();
 
 void canary_mark_react(CanaryReact r);
 

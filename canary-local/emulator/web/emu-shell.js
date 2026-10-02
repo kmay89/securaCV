@@ -256,6 +256,8 @@ export class CanaryEmulator {
       udpSend: M.cwrap("emu_udp_send_hex", "number", ["number", "string"]),
       // What the glass says (emu_bindings.cpp): a pointer, decoded page-side.
       screenLabels: M.cwrap("emu_screen_labels", "number", []),
+      // Where the canary mark is drawn (emu_bindings.cpp, F64), the same way.
+      markBox: M.cwrap("emu_mark_box", "number", []),
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
@@ -424,6 +426,18 @@ export class CanaryEmulator {
     if (!ptr) return [];
     return JSON.parse(this.module.UTF8ToString(ptr)).map(({ text_hex, shown, ...l }) =>
       ({ ...l, shown: shown === 1, text: hexDecode(text_hex) }));
+  }
+
+  /** Where the canary mark is drawn: {x, y, w, h, shown} on the panel, or
+   *  null while no bird is alive (emu_mark_box). The firmware keeps the
+   *  bird's seat as a style offset, so only this laid-out area says whether
+   *  it is on the glass and clear of the text (F64). */
+  async markBox() {
+    if (!this.c || this.dead) return null;
+    const ptr = await this.c.markBox();
+    if (!ptr) return null;
+    const b = JSON.parse(this.module.UTF8ToString(ptr));
+    return b && { ...b, shown: b.shown === 1 };
   }
 
   /** The phone asks the AP to associate: 1 joined · 0 no such network ·
