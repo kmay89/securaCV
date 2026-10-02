@@ -312,7 +312,8 @@ test("the committed Vision core returns the fsm keys its bindings print (sweep A
   const flat = (o) => Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" ? [k, ...flat(v)] : [k]));
   assert.deepStrictEqual(flat(idle.fsm), printed,
     "canary-local/emulator/dist/canary-vision-core.js predates vision_core_bindings.cpp: rebuild the dist " +
-    "(build.sh vision, or Actions -> \"Rebuild emulator dist (pinned emsdk)\")");
+    "(build.sh vision, or Actions -> \"Rebuild emulator dist (pinned emsdk)\"); until then, LAB_CORES=native " +
+    "runs these tests on the tree's sources (tests/native/README.md)");
   // nobody seen yet: the tracker's reset cell, which the pane's retained state row shows
   const stateRow = JSON.parse(data.mqtt.pane.online.find((r) => r.suffix === "state").payload);
   const v = idle.fsm.voxel;
