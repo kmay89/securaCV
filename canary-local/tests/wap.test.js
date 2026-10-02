@@ -185,7 +185,7 @@ test("every MQTT topic example is keyed as the firmware publishes it (sweep A32)
       t.suffix + ": not the firmware's keys, in its order");
   }
   // the bare strings are csi_mqtt.cpp's own
-  assert.ok(csiMqttCpp.includes('const char* pl = enabled ? "ON" : "OFF";'));
+  assert.ok(csiMqttCpp.includes('const char* pl = state ? "ON" : "OFF";'));
   assert.ok(csiMqttCpp.includes('const char* pl = muted ? "muted" : "live";'));
 });
 

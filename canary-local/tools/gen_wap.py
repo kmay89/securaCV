@@ -554,7 +554,7 @@ KEYS = {
 }
 OPTIONAL = {"health": HEALTH_OPTIONAL, "update/state": ("release_url", "release_summary")}
 # the bare-string topics: what csi_mqtt.cpp writes, verbatim
-must(CSI_MQTT_CPP, 'const char* pl = enabled ? "ON" : "OFF";', "update/auto is a bare ON/OFF")
+must(CSI_MQTT_CPP, 'const char* pl = state ? "ON" : "OFF";', "update/auto is a bare ON/OFF (published from loop(), F106)")
 must(CSI_MQTT_CPP, 'const char* pl = muted ? "muted" : "live";', "mic/state is a bare muted/live")
 # The health example is the FULL profile's, the build the boot log above
 # narrates: an SD card mounted this boot, so sd_mounted rides every health

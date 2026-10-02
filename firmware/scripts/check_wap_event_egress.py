@@ -94,8 +94,9 @@ the egress's own rules the test reaches only through behavior.
     `&&` terms include `!deferred`, `!m_st->planner.pending()` and
     `m_st->held_count == 0`: a row whose append failed goes live only when
     nothing older waits on the card or in RAM.
-11. The broker-change epoch. In `csi_mqtt::init()`,
-    `destination_digest(s_active_cfg)` is taken before
+11. The broker-change epoch. In `open_client()`, which the boot
+    `csi_mqtt::init()` and every loop-task re-init (`serve_reinit()`) call
+    (sweep F106), `destination_digest(s_active_cfg)` is taken before
     `config_load(&s_active_cfg)` and compared after it, and a difference
     with `s_dest_known` set bumps `s_dest_epoch.fetch_add(`; `s_dest_known
     = true;` follows. `destination_epoch()` returns `s_dest_epoch`. The
@@ -159,6 +160,8 @@ SIG_HANDLER = r"\bvoid\s+mqtt_event_handler\s*\([^)]*\)"
 SIG_PUBLISH_ROW = r"\bEventSend\s+publish_event_row\s*\([^)]*\)"
 SIG_HAND_TO_QUEUE = r"\bbool\s+WapPort::hand_to_queue\s*\([^)]*\)"
 SIG_MQTT_INIT = r"\bbool\s+init\s*\(\s*const\s+char\s*\*\s*device_id[^)]*\)"
+SIG_OPEN_CLIENT = r"\bbool\s+open_client\s*\(\s*\)"
+SIG_SERVE_REINIT = r"\bvoid\s+serve_reinit\s*\(\s*\)"
 SIG_DEST_EPOCH = r"\buint32_t\s+destination_epoch\s*\(\s*\)"
 SIG_DISMISS = r"\besp_err_t\s+handle_events_dismiss\s*\([^)]*\)"
 SIG_INTEG_LOOP = r"\bvoid\s+loop\s*\(\s*bool\s+run_csi\s*\)"
@@ -535,7 +538,15 @@ def check_hand_over(egress: str, errors: list[str]) -> None:
 
 def check_destination_epoch(mqtt: str, errors: list[str]) -> None:
     code = blank_comments_and_strings(mqtt)
-    init = body_of(code, SIG_MQTT_INIT, f"{MQTT_CPP}: csi_mqtt::init()", errors)
+    # Every client the bridge opens goes through open_client(): the boot's
+    # init() and the loop task's serve_reinit() (F106). The epoch is taken
+    # there, so both have to reach it.
+    for sig, name in ((SIG_MQTT_INIT, "csi_mqtt::init()"), (SIG_SERVE_REINIT, "serve_reinit()")):
+        caller = body_of(code, sig, f"{MQTT_CPP}: {name}", errors)
+        if caller is not None and "open_client();" not in squash(caller):
+            errors.append(f"{MQTT_CPP}: {name} must open the client through open_client(), "
+                          "which takes the broker-change epoch")
+    init = body_of(code, SIG_OPEN_CLIENT, f"{MQTT_CPP}: open_client()", errors)
     if init is not None:
         s = squash(init)
         before = s.find("constuint32_tprev_dest=destination_digest(s_active_cfg);")
@@ -544,7 +555,7 @@ def check_destination_epoch(mqtt: str, errors: list[str]) -> None:
                       "s_dest_epoch.fetch_add(")
         known = s.find("s_dest_known=true;")
         if not (0 <= before < load < bump < known):
-            errors.append(f"{MQTT_CPP}: csi_mqtt::init() must take destination_digest(s_active_cfg) "
+            errors.append(f"{MQTT_CPP}: open_client() must take destination_digest(s_active_cfg) "
                           "before config_load(&s_active_cfg), bump s_dest_epoch when it changed "
                           "(s_dest_known set), then set s_dest_known = true — the egress drops what "
                           "waited for the old broker on that epoch")
@@ -740,7 +751,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      lambda i, e, m: (mutate_in(i, SIG_INTEG_LOOP, r"(csi_bundler_tick\(\);)", r"\1 csi_event_egress::pump();"),
                       e, mutate_in(m, SIG_LOOP, r"\n[ \t]*csi_event_egress::pump\(\);", ""))),
     ("csi_mqtt::init calls begin() a second time",
-     on_m(SIG_MQTT_INIT, r"(teardown_client\(\);)", r"\1 csi_event_egress::begin();")),
+     on_m(SIG_MQTT_INIT, r"(return\s+open_client\(\);)", r"csi_event_egress::begin(); \1")),
     ("csi_mqtt.cpp hides the pump's caller behind a using-directive",
      lambda i, e, m: (i, e, m.replace('#include "csi_event_egress.h"',
                                       '#include "csi_event_egress.h"\nusing namespace csi_event_egress;', 1))),
@@ -752,13 +763,17 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("hand_to_queue publishes a deferred row live",
      on_e(SIG_HAND_TO_QUEUE, r"!deferred\s*&&\s*", "")),
     # Rule 11: a changed broker bumps the epoch.
-    ("init() never bumps the destination epoch",
-     on_m(SIG_MQTT_INIT, r"\n[ \t]*s_dest_epoch\.fetch_add\([^;]*;", "")),
-    ("init() reads the old destination after the load",
-     on_m(SIG_MQTT_INIT, r"(const\s+uint32_t\s+prev_dest\s*=\s*destination_digest\(s_active_cfg\);)\s*"
+    ("open_client() never bumps the destination epoch",
+     on_m(SIG_OPEN_CLIENT, r"\n[ \t]*s_dest_epoch\.fetch_add\([^;]*;", "")),
+    ("open_client() reads the old destination after the load",
+     on_m(SIG_OPEN_CLIENT, r"(const\s+uint32_t\s+prev_dest\s*=\s*destination_digest\(s_active_cfg\);)\s*"
                          r"(if\s*\(\s*!config_load\(&s_active_cfg\)\)\s*return\s+false;)", r"\2 \1")),
-    ("init() never records that a destination is known",
-     on_m(SIG_MQTT_INIT, r"\n[ \t]*s_dest_known\s*=\s*true\s*;", "")),
+    ("open_client() never records that a destination is known",
+     on_m(SIG_OPEN_CLIENT, r"\n[ \t]*s_dest_known\s*=\s*true\s*;", "")),
+    ("the boot init() opens a client without open_client()",
+     on_m(SIG_MQTT_INIT, r"return\s+open_client\(\);", "return true;")),
+    ("a loop-task re-init opens a client without open_client()",
+     on_m(SIG_SERVE_REINIT, r"\(void\)open_client\(\);", "")),
     ("destination_epoch() returns a constant",
      on_m(SIG_DEST_EPOCH, r"return\s+s_dest_epoch\.load\([^;]*;", "return 0;")),
 ]
