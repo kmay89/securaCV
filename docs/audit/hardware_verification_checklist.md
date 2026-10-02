@@ -815,7 +815,9 @@ handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
   - Expected: after the removal `peer_cnt` is 1 and only `peer_0` (B) is
     there, `replay_ctrs` holds one 16-byte entry (B's), and no value holds
     C's public key or radio address; C's 8-byte fingerprint appears only in
-    `revoked` and `rx_tombs`. After the leave there is no `peer_*` key
+    `rx_tombs` and, on a board with flash encryption on, `revoked` (without
+    it the deny-list is not stored, and neither is the opera or the member
+    list's use at boot, spec §5.5). After the leave there is no `peer_*` key
     besides `peer_cnt` (0), no `replay_ctrs`, and `tx_ctrs` is one 16-byte
     entry whose first 8 bytes are zero. Before F137 the removal left
     `peer_1` (C) and the leave left `peer_0` and `peer_1`.
