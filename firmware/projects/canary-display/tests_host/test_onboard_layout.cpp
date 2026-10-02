@@ -81,6 +81,7 @@
 #include "network/wifi_join_policy.h"
 
 #include <cmath>
+#include <utility>
 
 // The hop's reach above its seat (F157 holds the Success hop on the glass).
 #include "canary/ui/splash_layout.h"
@@ -1611,6 +1612,37 @@ static void test_scene_narrow_words() {
   }
   CHECK(seen >= 1, "no scene line has a shorter form (F65 gave PhoneJoined's "
                    "title one)");
+  // The wide Join title's shorter forms (F156) and the stuck-phone hints'
+  // (F45, and the wide one's, F156) say the same thing the same way.
+  std::vector<std::pair<std::string, std::string> > more;
+  for (int qr = 0; qr < 2; ++qr) {
+    const Forms f = wide_join_title(qr != 0);
+    CHECK(f.full != nullptr && f.narrow != nullptr,
+          "the wide Join title has no shorter form");
+    if (f.full && f.narrow) more.push_back(std::make_pair(f.full, f.narrow));
+  }
+  const std::vector<std::string>* hs[2] = {&g_minted.hint_small,
+                                           &g_minted.hint_wide};
+  for (int k = 0; k < 2; ++k)
+    if (hs[k]->size() == 2) more.push_back(std::make_pair((*hs[k])[0], (*hs[k])[1]));
+  CHECK(more.size() == 4, "%d wide titles and hints with a shorter form, want "
+        "4", (int)more.size());
+  for (size_t i = 0; i < more.size(); ++i) {
+    const std::string& whole_s = more[i].first;
+    const std::string& part_s = more[i].second;
+    CHECK(part_s.size() < whole_s.size() && part_s.find("...") == std::string::npos,
+          "\"%s\" is not a shorter form of \"%s\"", part_s.c_str(),
+          whole_s.c_str());
+    const std::vector<std::string> whole = words_of(whole_s.c_str());
+    const std::vector<std::string> part = words_of(part_s.c_str());
+    for (size_t w = 0; w < part.size(); ++w) {
+      bool found = false;
+      for (size_t v = 0; v < whole.size(); ++v) found = found || part[w] == whole[v];
+      CHECK(found, "\"%s\" says \"%s\", which \"%s\" does not",
+            part_s.c_str(), part[w].c_str(), whole_s.c_str());
+    }
+    std::printf("  \"%s\" -> \"%s\"\n", whole_s.c_str(), part_s.c_str());
+  }
 }
 
 // ── a network name that does not fit (name_line, F65) ─────────────────────
@@ -1738,6 +1770,152 @@ static void test_f66_pins() {
         "the nightstand's card was trimmed to %d", nj.stack.qr);
 }
 
+// ── the F156 glass, pinned: a dash line glass turned portrait ───────────
+static void test_f156_pins() {
+  std::printf("F156 portrait dash, pinned:\n");
+  const Face* f16 = face_of(16);
+  const Face* f20 = face_of(20);
+  const Face* f24 = face_of(24);
+  const Face* f36 = face_of(36);
+  if (!f16 || !f20 || !f24 || !f36 || g_minted.hint_wide.size() != 2) {
+    CHECK(false, "F156 pins need montserrat_16/20/24/36 and both wide hints");
+    return;
+  }
+  const int row = 480 - 2 * roundframe::kRectSidePad;  // 464
+  // The defect: on the 464 px row the Join title (36 px in both ladders),
+  // the worded credentials line (label face: 20 px, 24 under Heirloom) and
+  // the stuck-phone hint (caption: 16, 20) were wider than the row.
+  const Forms qr_t = wide_join_title(true);
+  const Forms no_t = wide_join_title(false);
+  CHECK(text_px(*f36, qr_t.full) == 553 && text_px(*f36, no_t.full) == 605,
+        "the whole Join titles are %d / %d px at 36",
+        text_px(*f36, qr_t.full), text_px(*f36, no_t.full));
+  const std::string key = slots(g_minted.key_len);
+  const Worst c20 = worst_line(*f20, fmt2(kWideScanFmt, g_minted.ssid_tagged, key),
+                               g_minted.alpha);
+  const Worst c24 = worst_line(*f24, fmt2(kWideScanFmt, g_minted.ssid_tagged, key),
+                               g_minted.alpha);
+  const char* hint = g_minted.hint_wide[0].c_str();
+  const char* narrow = g_minted.hint_wide[1].c_str();
+  CHECK(c20.w == 655 && c24.w == 773 && text_px(*f16, hint) == 513 &&
+            text_px(*f20, hint) == 644,
+        "the worded line %d / %d px, the hint %d / %d px", c20.w, c24.w,
+        text_px(*f16, hint), text_px(*f20, hint));
+  // The fix: the shorter title forms hold the row in the title face; the
+  // split rows hold it in the label face for the widest name and key; the
+  // hint's shorter form holds it, in the floor face under Heirloom.
+  CHECK(text_px(*f36, qr_t.narrow) == 404 && text_px(*f36, no_t.narrow) == 318,
+        "the shorter Join titles are %d / %d px", text_px(*f36, qr_t.narrow),
+        text_px(*f36, no_t.narrow));
+  const Worst n24 = worst_line(*f24, fmt1(kWideScanNameFmt, g_minted.ssid_tagged),
+                               g_minted.alpha);
+  const Worst k24 = worst_line(*f24, fmt1(kWidePassFmt, key), g_minted.alpha);
+  CHECK(n24.w == 397 && k24.w == 344 && n24.w <= row && k24.w <= row,
+        "the split rows are %d / %d px under Heirloom", n24.w, k24.w);
+  CHECK(text_px(*f16, narrow) == 427 && text_px(*f20, narrow) == 536,
+        "the shorter hint is %d / %d px", text_px(*f16, narrow),
+        text_px(*f20, narrow));
+  const Measure heir_c = {f24, f20};
+  const Measure heir_h = {f20, f16};
+  const JoinLines j = wide_join_lines(true, row, "SecuraCV-A7K2", "p7Rm2Kqf",
+                                      hint, narrow, heir_c, heir_h);
+  CHECK(j.split && std::strcmp(j.creds.text, "or join \"SecuraCV-A7K2\"") == 0 &&
+            !j.creds.floor &&
+            std::strcmp(j.low.text, "password  p7Rm2Kqf") == 0 &&
+            !j.low.floor && std::strcmp(j.note.text, narrow) == 0 &&
+            j.note.floor,
+        "heirloom 480 px rows \"%s\" | \"%s\" | \"%s\"", j.creds.text,
+        j.low.text, j.note.text);
+  // The 800 px glass is untouched: one row, the whole hint, the note row
+  // empty.
+  const JoinLines w = wide_join_lines(true, 800 - 2 * roundframe::kRectSidePad,
+                                      "SecuraCV-A7K2", "p7Rm2Kqf", hint,
+                                      narrow, heir_c, heir_h);
+  CHECK(!w.split && std::strcmp(w.low.text, hint) == 0 && !w.low.floor &&
+            w.note.text[0] == '\0',
+        "the 800 px rows \"%s\" | \"%s\" | \"%s\"", w.creds.text, w.low.text,
+        w.note.text);
+  // The note row sits under a credentials-tall row: 682 on the portrait
+  // glass (Heirloom 684); 442 (444) on the 800x480 one, empty there.
+  Glass port = {480, 800, false};
+  Glass land = {800, 480, false};
+  const Rows dr = {40, kWideGlassCard, 22, 18};
+  const Rows hr = {40, kWideGlassCard, 27, 22};
+  CHECK(wide_join(port, dr).stack.note_top == 682 &&
+            wide_join(port, hr).stack.note_top == 684 &&
+            wide_join(land, dr).stack.note_top == 442 &&
+            wide_join(land, dr).stack.creds_top == 398,
+        "wide note rows %d / %d / %d", wide_join(port, dr).stack.note_top,
+        wide_join(port, hr).stack.note_top, wide_join(land, dr).stack.note_top);
+}
+
+// ── the F157 glass, pinned: a nightlight turned landscape ───────────────
+static void test_f157_pins() {
+  std::printf("F157 landscape nightlight, pinned:\n");
+  Glass nl = {320, 180, false};
+  const Rows dr = {18, kSmallGlassCard, 15, 15};
+  const Rows hr = {22, kSmallGlassCard, 16, 16};
+  // The defect: the portrait rule on this glass. A 124 px halo from y 22
+  // (its inner chord a 96 px line at the Hello body's latitude), the card's
+  // corners 69.4 px from its center (the stroke from 59), the note row at
+  // 178..193 on 180 px, the bird's seat at y 6 across the stroke.
+  const Stack old = join_stack(nl, dr);
+  const Ring old_ring = halo_ring(nl, old, dr);
+  CHECK(old_ring.d == 124 && old_ring.top == 22 &&
+            old.note_top + dr.hint_h > nl.h &&
+            !card_inside_ring(nl, old_ring, old) &&
+            scene_line_w(nl, old_ring, 180 / 2 + kHelloBodyOff - 15 / 2, 15) ==
+                96 &&
+            scene_bird_top(nl, old_ring, kSmallBirdPx) == 6,
+        "the portrait rule on 320x180 no longer documents the defect: halo "
+        "%d at %d, note %d", old_ring.d, old_ring.top, old.note_top);
+  // The fix: the halo at the right (x 168..318, y 15..165), the card at its
+  // floor canvas (88 px, 104 with its pad) concentric in it, the bird at its
+  // center (223, 70), the text column x 8..166 shifted 23 px up: the Join
+  // title at 42, the rows at 93 / 108 / 123 (to 138).
+  CHECK(small_landscape(nl), "320x180 is not landscape small glass");
+  const SmallJoin j = small_join(nl, dr);
+  const Seat bird = bird_seat(nl, false, j.stack, j.halo, ObStage::Success);
+  CHECK(j.halo.d == 150 && j.halo.top == 15 &&
+            nl.w / 2 - j.halo.d / 2 + j.halo.x == 168 && j.stack.qr == 88 &&
+            j.stack.card == 104 && j.stack.card_top == 38 &&
+            j.col.w == 158 && nl.w / 2 - j.col.w / 2 + j.col.x == 8 &&
+            j.col.dy == -23 && j.stack.title_top == 42 &&
+            j.stack.creds_top == 93 && j.stack.hint_top == 108 &&
+            j.stack.note_top == 123 && bird.x == 223 && bird.y == 70 &&
+            j.stack.fits,
+        "320x180 land_join: halo %d at (%d, %d), card %d (qr %d) at %d, "
+        "column %d at %d dy %d, rows %d/%d/%d/%d, bird (%d, %d)", j.halo.d,
+        nl.w / 2 - j.halo.d / 2 + j.halo.x, j.halo.top, j.stack.card,
+        j.stack.qr, j.stack.card_top, j.col.w,
+        nl.w / 2 - j.col.w / 2 + j.col.x, j.col.dy, j.stack.title_top,
+        j.stack.creds_top, j.stack.hint_top, j.stack.note_top, bird.x,
+        bird.y);
+  // The Hello body reads whole in the column ("Let's get you connected."
+  // is 148 px in the floor face; the old line was 96).
+  const LineSeat hb = scene_line(nl, j.halo, j.col, kHelloBodyOff, 15);
+  CHECK(hb.w == 158 && hb.x == j.col.x && hb.y == kHelloBodyOff - 23,
+        "the Hello body sits %d px wide at (%d, %d)", hb.w, hb.x, hb.y);
+  // Under Heirloom: the same halo and card, the rows a px lower.
+  const SmallJoin h = small_join(nl, hr);
+  CHECK(h.halo.d == 150 && h.halo.top == 15 && h.stack.card == 104 &&
+            h.col.dy == -23 && h.stack.title_top == 40 &&
+            h.stack.creds_top == 93 && h.stack.note_top == 125 &&
+            h.stack.fits,
+        "heirloom 320x180: halo %d, dy %d, rows %d/%d/%d", h.halo.d, h.col.dy,
+        h.stack.title_top, h.stack.creds_top, h.stack.note_top);
+  // No glass a display ships is landscape small glass; every portrait and
+  // round one keeps its composition.
+  const Glass kept[] = {{240, 240, true}, {172, 320, false}, {180, 320, false},
+                        {240, 280, false}, {450, 600, false}};
+  for (size_t i = 0; i < sizeof(kept) / sizeof(kept[0]); ++i) {
+    const SmallJoin k = small_join(kept[i], dr);
+    CHECK(!small_landscape(kept[i]) && k.halo.x == 0 && !k.col.side &&
+              k.col.dy == 0 && k.stack.title_top == join_stack(kept[i], dr).title_top,
+          "%dx%d moved", kept[i].w, kept[i].h);
+  }
+}
+
 // ── degenerate glass: the lines still never cross ─────────────────────────
 static void test_short_glass() {
   std::printf("short glass:\n");
@@ -1856,6 +2034,8 @@ int main() {
   test_scene_narrow_words();
   test_name_line();
   test_f66_pins();
+  test_f156_pins();
+  test_f157_pins();
   test_short_glass();
   test_join_payload();
   if (g_fail == 0) {
