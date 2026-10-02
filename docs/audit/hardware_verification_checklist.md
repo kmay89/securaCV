@@ -634,9 +634,12 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     answers within about 2 s and the test within about 4 s (`ok:false`);
     in the serial log each `[MQTT] bridge started` follows a
     `[MQTT] previous client stopped after N ms` line, where N can reach
-    about 2000 against that IP (the client's network timeout since F112;
-    about 10000 before it) while the loop keeps running. Then enter
-    the real broker and press Test & save once: `Reached the broker`.
+    several seconds against that IP while the loop keeps running (the stop
+    waits out the rest of a connect attempt, which the client's network
+    timeout bounds at 2 s since F112, 10 s before, and then esp_mqtt's task
+    noticing the stop, up to half its 10 s reconnect wait; from esp-mqtt's
+    source). Then enter the real broker and press Test & save once:
+    `Reached the broker`.
   - Artifact: `docs/audit/repro/F106/unreachable-broker/`.
 - [ ] **A reboot from the dashboard still saves the mesh's replay counters**
   - Setup: two paired canary-wap boards exchanging heartbeats for a few
