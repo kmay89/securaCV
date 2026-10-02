@@ -124,17 +124,22 @@ uint32_t                    s_dest_epoch = 0;
 char                        s_owner_fp[17] = "";
 uint32_t                    s_replay_run = 0;  // rows replayed in the current backlog
 
-/* ── Rows that wait in RAM (backlog F104) ─────────────────────────────────
+/* ── Rows that wait in RAM (backlog F103, F104) ───────────────────────────
  * The card keeps every row the pump drains, so a row waits on the card
- * behind older ones and the backfill sends it in turn. A row committed while
- * no card log is open has nowhere to wait but RAM, and it must wait when the
- * card may hold older rows: from boot until the log first opens (a boot
- * mount that outlives its 4 s budget is adopted by a later periodic check),
- * and from a close while rows waited on it (an SD error's lost mark, which
- * the 30 s recheck remounts) until it opens again. Handed to the MQTT layer
- * then, it would go live (or drain from the offline queue) ahead of those
- * rows: Home Assistant's mark would pass them, the watermark too, and the
- * card's rows would never be sent.
+ * behind older ones and the backfill sends it in turn. A row the card does
+ * not take has nowhere to wait but RAM, and it must wait:
+ *   - committed while no card log is open, when the card may hold older
+ *     rows (F104): from boot until the log first opens (a boot mount that
+ *     outlives its 4 s budget is adopted by a later periodic check), and
+ *     from a close while rows waited on it (an SD error's lost mark, which
+ *     the 30 s recheck remounts) until it opens again;
+ *   - whose append failed while older rows wait on the card or in the hold,
+ *     or while the link is down (F103; see hold_blocked() for the link).
+ * Handed to the MQTT layer then, it would go live (or drain from the
+ * offline queue, which goes before the backfill) ahead of those rows: Home
+ * Assistant's mark would pass them, the watermark too, and the card's rows
+ * would never be sent. Its ceiling, written before the hand-over, would
+ * also read them as delivered after a reboot.
  *
  * Such a row waits in s_hold (kHeldMax, the oldest dropped first, counted)
  * and goes through the planner once nothing older waits, in id order with
@@ -236,13 +241,28 @@ class EgressPort : public csi_event_backfill::Port {
   bool flushing = false;
   bool flush_fresh = false;
   bool flush_unbuildable = false;  // that row's body did not build
+  /* route()'s link, during its commit. */
+  const csi_event_backfill::Link* link = nullptr;
+  /* The row being committed failed its card append and must wait in the
+   * hold (backlog F103): its NVS ceiling is not written now. route() clears
+   * it after the commit. */
+  bool ceiling_held = false;
 
   csi_event_backfill::AppendResult card_append(const char* line, size_t len) override {
     /* A row from the hold never goes on the card late: the log is written
      * in id order, and rows after it may be there already. Refused here,
      * so the planner takes its not-on-card route. */
     if (flushing) return csi_event_backfill::AppendResult{false, s_backfill.log_size(), 0};
-    return csi_event_log::append(line, len);
+    const csi_event_backfill::AppendResult r = csi_event_log::append(line, len);
+    /* The append failed, so the planner takes its not-on-card route, which
+     * writes the NVS ceiling for this row before hand_to_queue(). When the
+     * row must wait (rows older than it wait on the card or in the hold, or
+     * the link is down with the card open: must_wait()), that ceiling would
+     * cover the rows on the card, and a reboot before they go would skip
+     * every one of them. Hold it back; the planner writes it when the row
+     * goes (flush_held()). */
+    if (!r.ok && link && link->accepting) ceiling_held = must_wait(*link);
+    return r;
   }
   size_t card_read(uint32_t off, char* buf, size_t cap) override {
     return csi_event_log::read_at(off, buf, cap);
@@ -273,7 +293,10 @@ class EgressPort : public csi_event_backfill::Port {
   /* Not on the card: F29's path — live, or into the MQTT layer's offline
    * queue with `"replay":true` when built while the link is down. The
    * row's own count, as send_live(). A row from the hold is a replay unless
-   * it was committed while the link was up and goes out live. */
+   * it was committed while the link was up and goes out live. The offline
+   * queue drains later without asking the planner, so it is only ever given
+   * a row whose ceiling may be written now: never one older rows wait
+   * ahead of (route(), and ceiling_held below). */
   bool hand_to_queue(const csi_event_record_t& rec, bool deferred) override {
     if (flushing) {
       const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count,
@@ -281,10 +304,23 @@ class EgressPort : public csi_event_backfill::Port {
       flush_unbuildable = (n == 0);
       return n > 0 && mqtt_publish_event(m_body);
     }
+    /* A row whose append failed while it must wait (card_append): into the
+     * hold, behind the older rows, and not handed over, so the planner moves
+     * neither the watermark nor the ceiling (backlog F103). Before, it went
+     * live or into the offline queue, which drains before the backfill: Home
+     * Assistant's mark passed the card's rows, the watermark too, and they
+     * were never sent, reboot or not. */
+    if (ceiling_held) {
+      s_hold.push(rec, /*fresh=*/!deferred);
+      return false;
+    }
     const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count, deferred);
     return n > 0 && mqtt_publish_event(m_body);
   }
   bool persist_ceiling(uint32_t ceiling) override {
+    /* Not written, as if NVS had refused: the planner keeps the value it
+     * holds and writes again before the row is handed over. */
+    if (ceiling_held) return false;
     Preferences prefs;
     if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return false;
     const bool wrote = prefs.putULong(kNvsKeyDelivered, (unsigned long)ceiling) > 0;
@@ -340,16 +376,20 @@ csi_event_record_t to_record(const CommittedEvent& ev) {
 }
 
 /* One dequeued row. With the card's log open the planner logs it, then
- * sends it live or holds it on the card behind the backlog. With no log
- * open it waits in the hold while anything older waits (backlog F104), and
- * otherwise takes the planner's not-on-card route: the MQTT layer's
- * publish-or-queue path, its ceiling written first. */
+ * sends it live or holds it on the card behind the backlog; if its append
+ * fails it waits in the hold when it must (EgressPort::card_append, backlog
+ * F103). With no log open it waits in the hold while anything older waits
+ * (backlog F104), and otherwise takes the planner's not-on-card route: the
+ * MQTT layer's publish-or-queue path, its ceiling written first. */
 void route(const csi_event_record_t& rec, const csi_event_backfill::Link& link) {
   if (!s_backfill.card_ok() && link.accepting && must_wait(link)) {
     s_hold.push(rec, /*fresh=*/link.connected);
     return;
   }
+  s_port.link = &link;
   (void)s_backfill.commit(rec, link, s_port);
+  s_port.link = nullptr;
+  s_port.ceiling_held = false;
 }
 
 /* Rows in the hold, once nothing older waits (and, with a card open, the

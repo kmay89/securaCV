@@ -49,8 +49,13 @@
  *     would now refuse them, so they are not sent. So the hosts do not hand
  *     the planner such a row while older rows may wait: both egresses hold
  *     it in RAM while the card is not open but may hold older rows, for at
- *     most kCardWaitMs (backlog F78 on the canary-wap, F104 on the canary),
- *     and hand it over once nothing older waits.
+ *     most kCardWaitMs, and hand it over once nothing older waits (backlog
+ *     F78 on the canary-wap, F104 on the canary). A row whose append fails
+ *     reaches this route from inside commit(): both hosts' Ports then
+ *     decline its ceiling write (persist_ceiling() reports a failure) and
+ *     keep it in RAM instead of handing it over (hand_to_queue() returns
+ *     false: kUnsent, the watermark unmoved) while older rows wait or the
+ *     link is down, and commit it again once it can go (F78, F103).
  *
  * Backfill runs (pass()) only while the link is up; the Port's live publish
  * refuses while the MQTT offline queue still holds records, so queued

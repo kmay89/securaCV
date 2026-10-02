@@ -297,13 +297,15 @@ BACKFILL_HDRS = ../common/csi/src/csi_event_backfill.h $(EVLINE_HDRS) $(IDFLOOR_
 BACKFILL_BIN  = $(BUILD_DIR)/test_csi_event_backfill
 
 # The canary's committed-event egress itself (canary/src/csi_event_egress.cpp,
-# backlog F37, F104), REAL, with the REAL SD event log adapter
+# backlog F37, F103, F104), REAL, with the REAL SD event log adapter
 # (canary/src/csi_event_log.cpp) over a RAM card and the REAL chokepoint, the
 # planner above, the events body builder and the MQTT offline queue, against
 # a model of securacv_mqtt.cpp's event surfaces, the storage manager and Home
 # Assistant's replay gate: rows live, during an outage with and without a
-# card, across a reboot, and while a card is not open but may hold older
-# rows (at boot, after a close), held in RAM for at most kCardWaitMs.
+# card, across a reboot, a failed card append (held in RAM, its NVS ceiling
+# held back, behind the rows on the card), and while a card is not open but
+# may hold older rows (at boot, after a close), held for at most
+# kCardWaitMs.
 # stubs/canary_egress: Arduino (a clock the test
 # moves), Preferences, a FreeRTOS queue, a RAM SD card, the storage
 # manager's and the witness's calls.

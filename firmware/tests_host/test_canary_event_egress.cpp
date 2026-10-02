@@ -1,6 +1,6 @@
 /* test_canary_event_egress.cpp — the canary's committed-event egress
  * (canary/src/csi_event_egress.cpp): what reaches Home Assistant, in what
- * order, across outages, card faults and reboots (backlog F37, F104).
+ * order, across outages, card faults and reboots (backlog F37, F103, F104).
  *
  * Compiles the REAL canary/src/csi_event_egress.cpp, the REAL
  * canary/src/csi_event_log.cpp (the SD event log adapter) over a RAM card
@@ -33,8 +33,15 @@
  * checked against the NVS delivery ceiling: it must already be above the id
  * (F47), so a reboot never republishes one. main() fails on any violation.
  *
- * F104, failing on the egress before its fix (prove it by building this
- * file against the canary/src/csi_event_egress.cpp it replaced): a card
+ * F103, failing on the egress before its fix (prove it by building this
+ * file against the canary/src/csi_event_egress.cpp it replaced): a row
+ * whose card append fails during an outage, then a reboot: every card row
+ * still arrives; without a reboot the failed row waits behind them (during
+ * an outage, mid-backfill, behind a held row) instead of overtaking them;
+ * a failed append that opens an outage, or one behind a held row with the
+ * link down, writes no ceiling over the card rows after it.
+ *
+ * F104, failing on the egress before its fix (the same proof): a card
  * closed mid-backlog, a row committed while it is out, the card back:
  * nothing is skipped; a card that mounts late: a row committed first waits
  * for its rows; the wait is bounded (csi_event_backfill::kCardWaitMs); a
@@ -404,6 +411,126 @@ static void test_no_card_outage_uses_the_offline_queue() {
   CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(), "and they arrive, in order");
 }
 
+/* ── F103: a failed card append never overtakes, nor covers, the card ──── */
+
+/* The append fails once (one write error: the storage manager keeps the card
+ * mounted), then the card takes writes again. */
+static uint32_t commit_with_a_failed_append() {
+  SD.fail_writes = true;
+  const uint32_t id = emit_ping();
+  loop_pass();
+  SD.fail_writes = false;
+  return id;
+}
+
+static void test_failed_append_in_an_outage_then_a_reboot() {
+  std::printf("-- F103: a row whose append fails during an outage, then a reboot: every card row arrives\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 5; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  (void)commit_with_a_failed_append();   /* not on the card; rows wait there */
+  CHECK(W.mounted, "one failed write: the card stays mounted");
+  for (int i = 0; i < 2; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  boot();                                /* power cycle before the broker returns */
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the failed row moved no NVS ceiling past the card: all seven card rows arrive");
+}
+
+static void test_failed_append_in_an_outage_waits_its_turn() {
+  std::printf("-- F103: a row whose append fails during an outage waits behind the card's rows\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 5; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  ids.push_back(commit_with_a_failed_append());
+  for (int i = 0; i < 2; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the five card rows, then the failed row, then the two after it, each once");
+}
+
+static void test_failed_append_mid_backfill_waits_its_turn() {
+  std::printf("-- F103: a row whose append fails while the backfill runs waits behind it\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 10; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  connect();
+  loop_pass();                           /* the walk sends its first rows */
+  CHECK(!W.ha.accepted.empty() && W.ha.accepted.size() < 10, "the backfill is under way");
+  ids.push_back(commit_with_a_failed_append());
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "every card row, then the failed row, each once");
+}
+
+static void test_failed_append_that_opens_an_outage_covers_nothing() {
+  std::printf("-- F103: a failed append that opens an outage, card rows after it, a reboot: they arrive\n");
+  fresh_device();
+  connect();
+  loop_pass();
+  W.connected = false;                   /* the broker goes away */
+  (void)commit_with_a_failed_append();   /* nothing waits yet: it is the first */
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  boot();
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "its ceiling (a stride past it) did not cover the three card rows after it");
+}
+
+static void test_failed_append_with_nothing_waiting_goes_live() {
+  std::printf("-- F103: a failed append with the link up and nothing waiting goes live at once\n");
+  fresh_device();
+  connect();
+  loop_pass();
+  const uint32_t a = emit_ping(); loop_pass();
+  const uint32_t f = commit_with_a_failed_append();
+  CHECK(exactly(W.ha.accepted, {a, f}), "it goes live in its own pass");
+  const uint32_t b = emit_ping(); loop_pass();
+  CHECK(exactly(W.ha.accepted, {a, f, b}) && W.ha.refused.empty(), "and the next row after it");
+}
+
+static void test_failed_append_waits_behind_a_held_row() {
+  std::printf("-- F103: a row whose append fails does not overtake a row waiting in the hold\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }   /* an outage */
+  W.mounted = false;                          /* power cycle; the boot mount is still running */
+  boot();
+  connect();
+  loop_pass();
+  ids.push_back(emit_ping()); loop_pass();    /* held for the card */
+  card_back();                                /* the log opens with its three rows owed */
+  loop_pass();
+  ids.push_back(commit_with_a_failed_append());
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the card's rows, the held row, then the failed-append row, each once");
+}
+
+static void test_failed_append_behind_a_held_row_covers_nothing() {
+  std::printf("-- F103: a failed append behind a held row, the link down, card rows after, a reboot\n");
+  fresh_device();
+  W.mounted = false;
+  boot();
+  loop_pass();
+  (void)emit_ping(); loop_pass();             /* held for the card */
+  card_back();                                /* an empty log; the link is down: still held */
+  loop_pass();
+  (void)commit_with_a_failed_append();        /* waits behind it */
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  CHECK(g_offline.empty(), "neither waiting row was handed to the offline queue");
+  boot();                                     /* power cycle: the two RAM rows are gone */
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "no ceiling was written for them: the three card rows after them arrive");
+}
+
 /* ── F104: a card that is not open holds new rows, for a bounded time ──── */
 
 static void test_card_closed_mid_backlog_holds_new_rows() {
@@ -570,6 +697,13 @@ int main() {
   test_outage_with_a_card_backfills_in_order();
   test_reboot_in_an_outage_keeps_the_backlog_owed();
   test_no_card_outage_uses_the_offline_queue();
+  test_failed_append_in_an_outage_then_a_reboot();
+  test_failed_append_in_an_outage_waits_its_turn();
+  test_failed_append_mid_backfill_waits_its_turn();
+  test_failed_append_that_opens_an_outage_covers_nothing();
+  test_failed_append_with_nothing_waiting_goes_live();
+  test_failed_append_waits_behind_a_held_row();
+  test_failed_append_behind_a_held_row_covers_nothing();
   test_card_closed_mid_backlog_holds_new_rows();
   test_late_card_mount_holds_new_rows();
   test_card_wait_is_bounded();

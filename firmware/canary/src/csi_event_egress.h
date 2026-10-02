@@ -42,12 +42,18 @@
  * dropped first) instead of overtaking the card's: they go once the card is
  * back and its backlog sent, in id order with it, or after
  * csi_event_backfill::kCardWaitMs (45 s, the canary-wap's wait), when the
- * card is given up and its rows, if it returns later, are not sent. An
- * ambient row that would wait is dropped. A row in the hold writes no NVS
- * delivery ceiling until it goes, and with a card open it waits for the
- * link (the ceiling it would write could cover the card rows after it).
- * Rows in the hold do not survive a reboot. Host-tested on the real source
- * by firmware/tests_host/test_canary_event_egress.cpp.
+ * card is given up and its rows, if it returns later, are not sent. A row
+ * whose card append fails waits in the same hold while older rows wait on
+ * the card or in the hold, or while the link is down (backlog F103): it
+ * used to go live or into the offline queue at once, past the card's rows.
+ * An ambient row that would wait is dropped. A row in the hold writes no NVS
+ * delivery ceiling until it goes (the planner writes it then), so a reboot
+ * never reads the card's rows as delivered on its account, and with a card
+ * open it waits for the link (the ceiling it would write could cover the
+ * card rows after it). So the offline queue, which drains later without
+ * asking the planner, is never given a row older rows wait ahead of. Rows
+ * in the hold do not survive a reboot. Host-tested on the real source by
+ * firmware/tests_host/test_canary_event_egress.cpp.
  *
  * Event-id continuity: csi_event_on_id_advance writes the allocator's
  * floor to NVS (common/csi/src/csi_event_id_floor.h: before the first id
