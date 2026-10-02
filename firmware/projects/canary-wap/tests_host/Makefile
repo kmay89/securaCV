@@ -781,7 +781,8 @@ clean: clean-mesh-commands
 MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
 
-$(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(wildcard stubs/mqtt/*.h)
+$(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
+                  $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
 	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp
 

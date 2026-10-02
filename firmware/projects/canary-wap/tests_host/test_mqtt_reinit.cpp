@@ -16,10 +16,20 @@
 // serve it, the QR path only requests, and set_update_auto_state() leaves
 // the publish to loop().
 //
+// And the loop task never stops a client (the F106 review): stop takes the
+// client's API lock, which the esp_mqtt task holds across a connect attempt
+// (network_timeout_ms, 10 s by default), so a stop on the loop task could
+// outlast its 8 s panic watchdog. A re-init detaches the client on the loop
+// task and a one-shot worker ("mqtt_retire") stops and destroys it; a later
+// loop pass opens the new one. The fake's stop can be made to take as long
+// as that lock wait (fake::stop_blocks_ms), and every loop pass is timed.
+//
 // The test is one thread, so a task is a role: fake::task names the task
-// the test is playing, and delay() (stubs/mqtt/Arduino.h) is where a
-// waiting handler gives another task its turn. Host-tested only: the
-// Arduino compile of the sketch is CI's, and nothing here runs esp_mqtt.
+// the test is playing, delay() (stubs/mqtt/Arduino.h) is where a waiting
+// handler gives another task its turn, and a created task
+// (stubs/mqtt/freertos/task.h) runs when the test gives it its turn
+// (run_tasks). Host-tested only: the Arduino compile of the sketch is CI's,
+// and nothing here runs esp_mqtt.
 //
 // Run: ./test_mqtt_reinit [name]
 
@@ -27,6 +37,8 @@
 
 #include <Arduino.h>       // stubs/mqtt: the clock and delay() hook
 #include <Preferences.h>   // stubs/mqtt: the NVS
+
+#include <freertos/task.h>  // stubs/mqtt: created tasks wait for their turn
 
 #include "csi_event_egress.h"
 #include "csi_integration.h"
@@ -70,9 +82,14 @@ std::vector<esp_mqtt_client*> clients;     // every client ever made, never free
 std::vector<Call> calls;
 std::vector<std::pair<std::string, std::string>> published;   // topic, payload
 std::vector<std::string> published_on;     // the task of each publish
+std::vector<int> published_to;             // the client of each publish
 int publishes_on_dead = 0;
 int destroyed_under_publish = 0;
 std::function<void()> during_publish;      // runs inside the next publish
+std::function<void()> during_client_init;  // runs inside the next esp_mqtt_client_init
+// How long esp_mqtt_client_stop() holds its caller: the rest of a connect
+// attempt the esp_mqtt task holds the API lock across (0: returns at once).
+uint32_t stop_blocks_ms = 0;
 
 void reset() {
   task = "loop";
@@ -80,9 +97,12 @@ void reset() {
   calls.clear();
   published.clear();
   published_on.clear();
+  published_to.clear();
   publishes_on_dead = 0;
   destroyed_under_publish = 0;
   during_publish = nullptr;
+  during_client_init = nullptr;
+  stop_blocks_ms = 0;
 }
 
 esp_mqtt_client* last_client() { return clients.empty() ? nullptr : clients.back(); }
@@ -117,6 +137,11 @@ esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t* co
   c->will_topic = config->session.last_will.topic ? config->session.last_will.topic : "";
   fake::clients.push_back(c);
   fake::calls.push_back({"init", fake::task, c->id});
+  if (fake::during_client_init) {
+    std::function<void()> f = std::move(fake::during_client_init);
+    fake::during_client_init = nullptr;
+    f();
+  }
   return c;
 }
 
@@ -134,6 +159,7 @@ esp_err_t esp_mqtt_client_start(esp_mqtt_client_handle_t c) {
 }
 
 esp_err_t esp_mqtt_client_stop(esp_mqtt_client_handle_t c) {
+  stub_mqtt::now_ms += fake::stop_blocks_ms;   // the API lock, held across a connect
   c->started = false;
   fake::calls.push_back({"stop", fake::task, c->id});
   return ESP_OK;
@@ -161,10 +187,12 @@ int esp_mqtt_client_publish(esp_mqtt_client_handle_t c, const char* topic, const
   --c->in_publish;
   fake::published.emplace_back(topic, std::string(data, data + len));
   fake::published_on.push_back(fake::task);
+  fake::published_to.push_back(c->id);
   return 1;
 }
 
 int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t c, const char*, int) {
+  fake::calls.push_back({"subscribe", fake::task, c != nullptr ? c->id : 0});
   return (c != nullptr && c->alive) ? 1 : -1;
 }
 
@@ -196,7 +224,11 @@ const char* fingerprint_hex() { return "0011223344556677"; }
 
 namespace csi_event_egress {
 int g_pumps = 0;
-void pump() { ++g_pumps; }
+uint32_t g_epoch_at_pump = 0;   // destination_epoch() as the last pump saw it
+void pump() {
+  ++g_pumps;
+  g_epoch_at_pump = csi_mqtt::destination_epoch();
+}
 }  // namespace csi_event_egress
 
 // ── The test ────────────────────────────────────────────────────────────
@@ -215,13 +247,47 @@ int g_checks = 0;
 
 const char* const kDeviceId = "canary-wap-7f3a";
 
+// The loop task is fed to an 8 s panic watchdog; the project's rule is that
+// nothing that can block for more than 1 s runs on it at all
+// (firmware/LESSONS_LEARNED.md). Every loop pass is held to the rule.
+constexpr uint32_t kLoopPassBudgetMs = 1000;
+uint32_t g_longest_loop_pass_ms = 0;
+unsigned g_loop_passes = 0;
+
+void loop_pass();
+void run_tasks();
+
+// What a reboot leaves: no client. The bridge's state outlives a test (it
+// is csi_mqtt.cpp's), so whatever client the last test left is retired
+// through the bridge's own path, with the bridge switched off.
+void power_cycle() {
+  stub_nvs().clear();                                 // disabled
+  stub_mqtt::on_delay = nullptr;
+  stub_mqtt::fail_task_create = 0;
+  fake::stop_blocks_ms = 0;
+  fake::during_client_init = nullptr;
+  fake::during_publish = nullptr;
+  (void)csi_mqtt::request_reinit();
+  loop_pass();
+  run_tasks();
+  loop_pass();
+  CHECK(!csi_mqtt::connected() && stub_mqtt::tasks.empty());
+}
+
 // A device whose bridge is enabled for `host`, booted: setup() gives the
 // bridge its identity and start_http_server() runs the boot init(), both
 // on the loop task; then the esp_mqtt task connects.
 void boot_with_broker(const char* host, bool connect = true) {
+  power_cycle();
   fake::reset();
   stub_nvs().clear();
   stub_mqtt::on_delay = nullptr;
+  stub_mqtt::tasks.clear();
+  stub_mqtt::tasks_created = 0;
+  stub_mqtt::tasks_deleted = 0;
+  stub_mqtt::fail_task_create = 0;
+  g_longest_loop_pass_ms = 0;
+  g_loop_passes = 0;
   csi_mqtt::Config c;
   csi_mqtt::config_load(&c);
   c.enabled = true;
@@ -237,33 +303,62 @@ void boot_with_broker(const char* host, bool connect = true) {
   fake::calls.clear();
   fake::published.clear();
   fake::published_on.clear();
+  fake::published_to.clear();
 }
 
-// The loop task's turn: one pass of csi_mqtt::loop().
+// The loop task's turn: one pass of csi_mqtt::loop(), timed.
 void loop_pass() {
   const std::string was = fake::task;
   fake::task = "loop";
+  const uint32_t start = stub_mqtt::now_ms;
   csi_mqtt::loop();
+  const uint32_t took = stub_mqtt::now_ms - start;
+  if (took > g_longest_loop_pass_ms) g_longest_loop_pass_ms = took;
+  ++g_loop_passes;
   fake::task = was;
 }
 
-// An httpd handler's run. On the handler's `turn_at`-th delay the loop
-// task gets one pass (never when 0); `on_delay` runs on every delay after
-// that, for the esp_mqtt task's events.
+// The created tasks' turn: each runs to its end, as the task it is.
+void run_tasks() {
+  while (!stub_mqtt::tasks.empty()) {
+    const stub_mqtt::Task t = stub_mqtt::tasks.front();
+    stub_mqtt::tasks.erase(stub_mqtt::tasks.begin());
+    const std::string was = fake::task;
+    fake::task = t.name;
+    t.fn(t.arg);
+    fake::task = was;
+  }
+}
+
+// What a re-init takes when nothing stalls it: the pass that detaches the
+// open client, its worker, the pass that opens the new one.
+void reinit_turns() {
+  loop_pass();
+  run_tasks();
+  loop_pass();
+}
+
+// An httpd handler's run. From the handler's `turn_at`-th delay on (never
+// when 0) the loop task gets a pass on every delay, and then the created
+// tasks theirs (unless `workers` is false: a worker that has not finished);
+// `on_delay` runs on every delay, for the esp_mqtt task's events.
 struct Http {
   httpd_req_t req;
   unsigned delays = 0;
   uint32_t took_ms = 0;
 };
 Http http(esp_err_t (*handler)(httpd_req_t*), const std::string& body, unsigned turn_at,
-          std::function<void(unsigned)> on_delay = nullptr) {
+          std::function<void(unsigned)> on_delay = nullptr, bool workers = true) {
   Http h;
   h.req.body = body;
   const uint32_t start = stub_mqtt::now_ms;
   stub_mqtt::on_delay = [&](uint32_t ms) {
     stub_mqtt::now_ms += ms;
     ++h.delays;
-    if (turn_at != 0 && h.delays == turn_at) loop_pass();
+    if (turn_at != 0 && h.delays >= turn_at) {
+      loop_pass();
+      if (workers) run_tasks();
+    }
     if (on_delay) on_delay(h.delays);
   };
   const std::string was = fake::task;
@@ -281,17 +376,19 @@ bool has_key(const std::string& json, const char* key) {
 
 // ── The config POST ─────────────────────────────────────────────────────
 
-// A new broker saved over POST /api/mqtt/config: the old client is stopped
-// and destroyed, and the new one made, by the loop task, not the handler;
-// the handler still answers {"ok":true} once the new client is up.
+// A new broker saved over POST /api/mqtt/config: the new client is made by
+// the loop task and the old one stopped and destroyed by its worker, never
+// by the handler; the handler still answers {"ok":true} once the new client
+// is up.
 void test_a_config_post_reinits_on_the_loop_task() {
   boot_with_broker("10.0.0.1");
   const Http h = http(csi_mqtt::handle_config_post, "{\"host\":\"10.0.0.2\"}", /*turn_at=*/1);
   CHECK(h.req.status == "200 OK");
   CHECK(h.req.resp == "{\"ok\":true}");
-  CHECK(fake::count("stop") == 1 && fake::count("stop", "loop") == 1);
-  CHECK(fake::count("destroy") == 1 && fake::count("destroy", "loop") == 1);
+  CHECK(fake::count("stop") == 1 && fake::count("stop", "mqtt_retire") == 1);
+  CHECK(fake::count("destroy") == 1 && fake::count("destroy", "mqtt_retire") == 1);
   CHECK(fake::count("init") == 1 && fake::count("init", "loop") == 1);
+  CHECK(stub_mqtt::tasks_created == 1 && stub_mqtt::tasks_deleted == 1);   // the worker ended itself
   CHECK(fake::clients.size() == 2);
   CHECK(fake::last_client()->uri == "mqtt://10.0.0.2:1883");
   CHECK(!fake::clients[0]->alive && fake::clients[1]->alive);
@@ -314,10 +411,11 @@ void test_a_publish_in_flight_keeps_its_client() {
   CHECK(h.req.resp == "{\"ok\":true}");         // the save stands
   CHECK(h.took_ms >= 2000 && h.took_ms < 2100);  // bounded
   CHECK(fake::clients.size() == 1 && fake::clients[0]->alive);
-  // The loop's next pass serves the request, and publishes go to the new client.
-  loop_pass();
+  // The loop's next passes serve the request (the old client's worker
+  // between them), and publishes go to the new client.
+  reinit_turns();
   CHECK(fake::clients.size() == 2 && !fake::clients[0]->alive);
-  CHECK(fake::count("destroy", "loop") == 1 && fake::count("destroy", "httpd") == 0);
+  CHECK(fake::count("destroy", "mqtt_retire") == 1 && fake::count("destroy", "httpd") == 0);
   fake::deliver(fake::last_client(), MQTT_EVENT_CONNECTED);
   fake::published.clear();
   csi_mqtt::publish_counts(8);
@@ -335,7 +433,7 @@ void test_the_test_handler_reports_the_new_clients_connect() {
   const Http h = http(csi_mqtt::handle_test, "", /*turn_at=*/1, [](unsigned n) {
     if (n == 3) fake::deliver(fake::last_client(), MQTT_EVENT_CONNECTED);   // the esp_mqtt task
   });
-  CHECK(fake::count("destroy", "loop") == 1 && fake::count("init", "loop") == 1);
+  CHECK(fake::count("destroy", "mqtt_retire") == 1 && fake::count("init", "loop") == 1);
   CHECK(fake::count("destroy", "httpd") == 0 && fake::count("init", "httpd") == 0);
   const std::string& j = h.req.resp;
   CHECK(j.find("\"ok\":true") != std::string::npos);
@@ -355,8 +453,8 @@ void test_the_test_handler_is_bounded() {
   CHECK(h.req.resp.find("\"ok\":false") != std::string::npos);
   CHECK(h.req.resp.find("\"connected\":false") != std::string::npos);
   CHECK(fake::count("destroy") == 0);
-  loop_pass();
-  CHECK(fake::count("destroy", "loop") == 1 && fake::count("init", "loop") == 1);
+  reinit_turns();
+  CHECK(fake::count("destroy", "mqtt_retire") == 1 && fake::count("init", "loop") == 1);
   std::printf("PASS the_test_handler_is_bounded\n");
 }
 
@@ -371,14 +469,15 @@ void test_requests_coalesce_into_one_reinit() {
   const uint32_t c = csi_mqtt::request_reinit();
   CHECK(!csi_mqtt::reinit_done(a) && !csi_mqtt::reinit_done(c));
   CHECK(fake::count("init") == 0);              // nothing until the loop's turn
-  loop_pass();
+  reinit_turns();
   CHECK(fake::count("init") == 1 && fake::count("destroy") == 1);
   CHECK(csi_mqtt::reinit_done(a) && csi_mqtt::reinit_done(b) && csi_mqtt::reinit_done(c));
-  loop_pass();
+  reinit_turns();
   CHECK(fake::count("init") == 1);              // served: no second re-init
+  CHECK(stub_mqtt::tasks_created == 1);
   const uint32_t d = csi_mqtt::request_reinit();
   CHECK(!csi_mqtt::reinit_done(d));
-  loop_pass();
+  reinit_turns();
   CHECK(csi_mqtt::reinit_done(d) && fake::count("init") == 2);
   std::printf("PASS requests_coalesce_into_one_reinit\n");
 }
@@ -388,6 +487,7 @@ void test_requests_coalesce_into_one_reinit() {
 // bridge, even when no boot init() ran (the AP, and the HTTP server with
 // it, did not start).
 void test_a_qr_request_keeps_the_identity_setup_gave() {
+  power_cycle();
   fake::reset();
   stub_nvs().clear();
   csi_mqtt::set_identity(kDeviceId, "2.4.15-wap", "ab");   // setup(), loop task
@@ -425,6 +525,182 @@ void test_the_auto_update_state_is_published_by_the_loop() {
   std::printf("PASS the_auto_update_state_is_published_by_the_loop\n");
 }
 
+
+// ── The stop that can wait out a connect (the F106 review) ──────────────
+
+// The companion's "Test & save" with an unreachable broker: the config POST,
+// then POST /api/mqtt/test at once, while the esp_mqtt task is inside a
+// connect attempt and holds the API lock for the rest of it (9940 ms here).
+// No loop pass may wait for that: the worker does, and the loop keeps
+// turning (the watchdog is fed) while both handlers wait out their budgets.
+// The new client opens only once the old one is gone, and one open serves
+// both requests.
+void test_a_stop_that_blocks_never_holds_the_loop() {
+  boot_with_broker("10.0.0.1", /*connect=*/false);   // connecting, never connects
+  fake::stop_blocks_ms = 9940;
+  const Http save = http(csi_mqtt::handle_config_post, "{\"host\":\"10.0.0.2\"}", /*turn_at=*/1,
+                         nullptr, /*workers=*/false);
+  CHECK(g_longest_loop_pass_ms < kLoopPassBudgetMs);        // no pass waited for the stop
+  CHECK(save.req.resp == "{\"ok\":true}");                  // the save stands
+  CHECK(save.took_ms >= 2000 && save.took_ms < 2100);       // its 2 s, no more
+  const Http test = http(csi_mqtt::handle_test, "", /*turn_at=*/1, nullptr, /*workers=*/false);
+  CHECK(g_longest_loop_pass_ms < kLoopPassBudgetMs);
+  CHECK(test.took_ms >= 4000 && test.took_ms < 4100);       // its 4 s, no more
+  CHECK(test.req.resp.find("\"ok\":false") != std::string::npos);
+  CHECK(g_loop_passes > 100);                               // the loop kept turning
+  CHECK(fake::count("stop") == 0);                          // the worker has not had its turn
+  CHECK(fake::clients.size() == 1);                         // and nothing opened before it
+  CHECK(fake::count("init") == 0);
+  CHECK(stub_mqtt::tasks_created == 1);                     // one worker, made once
+  // The worker's turn: its stop waits out the connect, on the worker.
+  run_tasks();
+  CHECK(fake::count("stop") == 1 && fake::count("stop", "mqtt_retire") == 1);
+  CHECK(fake::count("destroy", "mqtt_retire") == 1 && !fake::clients[0]->alive);
+  loop_pass();
+  CHECK(fake::clients.size() == 2 && fake::count("init", "loop") == 1);
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.2:1883");
+  loop_pass();
+  CHECK(fake::clients.size() == 2);                         // both requests served by one open
+  CHECK(fake::count("stop", "loop") == 0 && fake::count("destroy", "loop") == 0);
+  CHECK(g_longest_loop_pass_ms < kLoopPassBudgetMs);
+  std::printf("PASS a_stop_that_blocks_never_holds_the_loop\n");
+}
+
+// A detached client runs on until its worker's stop returns: nothing on the
+// loop task publishes to it, and its events (a connect landing late, a drop,
+// an error) are not the bridge's: they leave connected() false, subscribe
+// nothing and publish nothing. The new client's are.
+void test_a_detached_clients_events_are_ignored() {
+  boot_with_broker("10.0.0.1");                       // connected
+  (void)csi_mqtt::request_reinit();
+  loop_pass();                                        // detached; the worker waits its turn
+  CHECK(!csi_mqtt::connected());
+  csi_mqtt::publish_counts(1);
+  CHECK(fake::published.empty() && fake::publishes_on_dead == 0);
+  esp_mqtt_client* old = fake::clients[0];
+  fake::deliver(old, MQTT_EVENT_CONNECTED);           // its reconnect lands late
+  CHECK(!csi_mqtt::connected());
+  CHECK(fake::published.empty() && fake::count("subscribe") == 0);
+  fake::deliver(old, MQTT_EVENT_DISCONNECTED);
+  CHECK(!csi_mqtt::connected());
+  run_tasks();
+  loop_pass();
+  CHECK(fake::clients.size() == 2 && !csi_mqtt::connected());
+  fake::deliver(old, MQTT_EVENT_CONNECTED);           // (a stale event, even now)
+  CHECK(!csi_mqtt::connected());
+  fake::deliver(fake::last_client(), MQTT_EVENT_CONNECTED);
+  CHECK(csi_mqtt::connected());
+  CHECK(!fake::published.empty());
+  for (int to : fake::published_to) CHECK(to == 2);   // "online" and discovery, on the new client
+  CHECK(fake::count("subscribe") > 0);
+  for (const fake::Call& c : fake::calls) {
+    if (c.what == "subscribe") CHECK(c.client == 2 && c.task == "mqtt");
+  }
+  std::printf("PASS a_detached_clients_events_are_ignored\n");
+}
+
+// The worker could not be created (no memory): the old client stays
+// detached and is not stopped on the loop task; a later pass makes the
+// worker, and the re-init completes.
+void test_a_worker_that_cannot_start_is_retried() {
+  boot_with_broker("10.0.0.1");
+  const uint32_t r = csi_mqtt::request_reinit();
+  stub_mqtt::fail_task_create = 1;
+  loop_pass();
+  CHECK(stub_mqtt::tasks_created == 0 && stub_mqtt::tasks.empty());
+  CHECK(fake::count("stop") == 0 && !csi_mqtt::reinit_done(r));
+  loop_pass();                                        // made this time
+  CHECK(stub_mqtt::tasks_created == 1);
+  CHECK(fake::count("stop") == 0);
+  run_tasks();
+  loop_pass();
+  CHECK(csi_mqtt::reinit_done(r) && fake::clients.size() == 2);
+  CHECK(fake::count("stop", "mqtt_retire") == 1 && fake::count("stop", "loop") == 0);
+  std::printf("PASS a_worker_that_cannot_start_is_retried\n");
+}
+
+// A second init() with a client open (the boot's is the only one the sketch
+// makes) does not stop it there; it asks loop() for the re-init.
+void test_a_second_init_asks_the_loop() {
+  boot_with_broker("10.0.0.1");
+  CHECK(csi_mqtt::init(kDeviceId, "2.4.15-wap", "ab"));
+  CHECK(fake::count("stop") == 0 && fake::clients.size() == 1);
+  reinit_turns();
+  CHECK(fake::clients.size() == 2 && fake::count("stop", "mqtt_retire") == 1);
+  std::printf("PASS a_second_init_asks_the_loop\n");
+}
+
+// ── Which requests one open serves ──────────────────────────────────────
+
+void save_host(const char* host) {
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  strcpy(c.host, host);
+  CHECK(csi_mqtt::config_save(c));
+}
+
+// A request is served by an open whose NVS read began after it was made. A
+// Save that lands while an open runs (here: inside esp_mqtt_client_init,
+// after the settings were read) is not served by it; the next re-init reads
+// its settings. Answering it from the first would report {"ok":true} with
+// the old broker still live.
+void test_a_request_made_during_the_open_waits_for_the_next() {
+  boot_with_broker("10.0.0.1");
+  save_host("10.0.0.2");
+  const uint32_t first = csi_mqtt::request_reinit();
+  uint32_t late = 0;
+  loop_pass();
+  run_tasks();
+  fake::during_client_init = [&] {
+    save_host("10.0.0.3");
+    late = csi_mqtt::request_reinit();
+  };
+  loop_pass();                                        // the open, with the Save landing inside it
+  CHECK(late != 0);
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.2:1883");
+  CHECK(csi_mqtt::reinit_done(first));
+  CHECK(!csi_mqtt::reinit_done(late));
+  reinit_turns();
+  CHECK(csi_mqtt::reinit_done(late));
+  CHECK(fake::count("init") == 2);
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.3:1883");
+  std::printf("PASS a_request_made_during_the_open_waits_for_the_next\n");
+}
+
+// A request made while the old client is still being stopped is served by
+// the open that follows: its read of NVS has not begun.
+void test_a_request_made_during_the_stop_is_served_by_the_open() {
+  boot_with_broker("10.0.0.1");
+  save_host("10.0.0.2");
+  const uint32_t first = csi_mqtt::request_reinit();
+  loop_pass();                                        // detached; worker pending
+  save_host("10.0.0.3");
+  const uint32_t second = csi_mqtt::request_reinit();
+  run_tasks();
+  loop_pass();
+  CHECK(csi_mqtt::reinit_done(first) && csi_mqtt::reinit_done(second));
+  CHECK(fake::count("init") == 1);
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.3:1883");
+  std::printf("PASS a_request_made_during_the_stop_is_served_by_the_open\n");
+}
+
+// The re-init runs before the egress pump in loop(): the pass that opens a
+// client for a new destination is the pass the pump sees its epoch, so
+// nothing that waited for the old broker goes to the new one first.
+void test_the_pump_sees_a_new_destination_the_pass_it_opens() {
+  boot_with_broker("10.0.0.1");
+  const uint32_t before = csi_mqtt::destination_epoch();
+  save_host("10.0.0.2");
+  (void)csi_mqtt::request_reinit();
+  loop_pass();
+  run_tasks();
+  loop_pass();                                        // opens the new client, then pumps
+  CHECK(fake::clients.size() == 2);
+  CHECK(csi_mqtt::destination_epoch() == before + 1);
+  CHECK(csi_event_egress::g_epoch_at_pump == before + 1);
+  std::printf("PASS the_pump_sees_a_new_destination_the_pass_it_opens\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -437,6 +713,13 @@ const Test kTests[] = {
     {"requests_coalesce_into_one_reinit", test_requests_coalesce_into_one_reinit},
     {"a_qr_request_keeps_the_identity_setup_gave", test_a_qr_request_keeps_the_identity_setup_gave},
     {"the_auto_update_state_is_published_by_the_loop", test_the_auto_update_state_is_published_by_the_loop},
+    {"a_stop_that_blocks_never_holds_the_loop", test_a_stop_that_blocks_never_holds_the_loop},
+    {"a_detached_clients_events_are_ignored", test_a_detached_clients_events_are_ignored},
+    {"a_worker_that_cannot_start_is_retried", test_a_worker_that_cannot_start_is_retried},
+    {"a_second_init_asks_the_loop", test_a_second_init_asks_the_loop},
+    {"a_request_made_during_the_open_waits_for_the_next", test_a_request_made_during_the_open_waits_for_the_next},
+    {"a_request_made_during_the_stop_is_served_by_the_open", test_a_request_made_during_the_stop_is_served_by_the_open},
+    {"the_pump_sees_a_new_destination_the_pass_it_opens", test_the_pump_sees_a_new_destination_the_pass_it_opens},
 };
 
 }  // namespace reinit

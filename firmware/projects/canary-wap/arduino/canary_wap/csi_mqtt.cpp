@@ -9,14 +9,24 @@
  *     Serial logs and the reconnect republish, so we never block the
  *     network stack.
  *   - The client itself (s_client) is the loop task's (sweep F106): the
- *     boot init() runs there (setup()), every later one too (loop(), for
- *     request_reinit()), and so do the publishers. The config POST and the
- *     test handler run on the httpd task, and a QR provisioning on the
- *     scanner's; they request a re-init instead of running one, because
- *     init() destroys the client a loop-task publish may be holding. The
- *     esp_mqtt task's own publishes are safe from it: teardown_client()
- *     stops that task (esp_mqtt_client_stop waits for it) before it
- *     destroys the client.
+ *     boot init() opens it there (setup()), every re-init is served there
+ *     (loop(), for request_reinit()), and the publishers run there. The
+ *     config POST and the test handler run on the httpd task, and a QR
+ *     provisioning on the scanner's; they request a re-init instead of
+ *     running one, because a re-init retires the client a loop-task publish
+ *     may be holding.
+ *   - The loop task never stops a client itself. esp_mqtt_client_stop()
+ *     takes the client's API lock, which the esp_mqtt task holds across a
+ *     whole connect attempt (up to network_timeout_ms, 10 s by default, for
+ *     the TCP connect and again for the CONNACK), and then waits for that
+ *     task to exit: against an unreachable broker it can take ten seconds,
+ *     and the loop task is subscribed to an 8 s panic watchdog. So a
+ *     re-init detaches the client on the loop task (s_client = nullptr:
+ *     nothing on this task can reach it again, and its events are ignored)
+ *     and a one-shot worker (retire_task) stops and destroys it; a later
+ *     loop pass opens the new client once the worker says the old one is
+ *     gone. The esp_mqtt task's own publishes, from its event handler, use
+ *     that task's own client, which its stop waits for before the destroy.
  *
  * Privacy model:
  *   - Every successful publish increments csi_integration's outbound
@@ -47,6 +57,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>       /* xTaskCreate: the retiring client's worker */
 
 extern "C" {
 #include "mqtt_client.h"
@@ -61,10 +73,14 @@ constexpr uint16_t    DEFAULT_PORT = 1883;
 constexpr uint16_t    DEFAULT_PORT_TLS = 8883;
 constexpr const char* DEFAULT_PREFIX = "securacv";
 
-esp_mqtt_client_handle_t s_client       = nullptr;
+/* The open client. Written only by the loop task (open_client, detach_client);
+ * read by it (publish_raw) and by the esp_mqtt task's event handler, which
+ * ignores every event whose client is not this one, so a detached client
+ * still being stopped never sets s_connected or publishes. */
+std::atomic<esp_mqtt_client_handle_t> s_client{nullptr};
 std::atomic<bool>        s_connected{false};
-/* A broker is configured (accepting()): written by init(), which a config
- * POST runs on the httpd task, read by the egress on the loop task. */
+/* A broker is configured (accepting()): written by open_client() on the loop
+ * task, read by the egress on the loop task and by any task. */
 std::atomic<bool>        s_accepting{false};
 /* destination_epoch(): bumped by an init() whose destination_digest differs
  * from the last one an init() loaded this boot (s_dest_known: one has). */
@@ -111,6 +127,17 @@ char                     s_public_key_hex[65]   = {};
  * made, so it reads the settings the requester saved. */
 std::atomic<uint32_t>    s_reinit_wanted{0};
 std::atomic<uint32_t>    s_reinit_served{0};
+/* A client a re-init detached, being stopped and destroyed by retire_task
+ * (loop task only), whether that worker exists yet, and the worker's word
+ * that stop and destroy returned. The new client opens only after it. */
+esp_mqtt_client_handle_t s_retiring          = nullptr;
+bool                     s_retire_started    = false;
+bool                     s_retire_create_failed_logged = false;
+std::atomic<bool>        s_retire_done{false};
+/* The worker's stack: esp_mqtt_client_stop() writes the DISCONNECT on the
+ * caller's task (a TLS write under mbedTLS), so the esp_mqtt task's own
+ * default stack (CONFIG_MQTT_TASK_STACK_SIZE, 6144) is the measure. */
+constexpr uint32_t       kRetireStackBytes   = 6144;
 /* set_update_auto_state() from any task; loop() publishes it. */
 std::atomic<bool>        s_update_auto_dirty{false};
 /* The config POST waits this long for its re-init, so the page's status
@@ -136,9 +163,12 @@ char* build_topic(char* out, size_t cap, const char* suffix) {
  * privacy-budget accounting and the disconnected-state guard live in
  * exactly one place. Returns true on enqueue success. */
 bool publish_raw(const char* topic, const char* payload, size_t len, bool retain) {
-  if (!s_client || !s_connected.load(std::memory_order_relaxed)) return false;
+  /* Read once: on the esp_mqtt task (the reconnect republish) the loop task
+   * may detach it meanwhile, and that task's own client outlives this call. */
+  esp_mqtt_client_handle_t client = s_client.load(std::memory_order_acquire);
+  if (!client || !s_connected.load(std::memory_order_relaxed)) return false;
   const int msg_id = esp_mqtt_client_publish(
-      s_client, topic, payload, (int)len, /*qos=*/0, retain ? 1 : 0);
+      client, topic, payload, (int)len, /*qos=*/0, retain ? 1 : 0);
   if (msg_id < 0) return false;
   /* Only counted on successful enqueue. esp_mqtt at QoS 0 may still
    * silently drop on the wire under network failure; the dashboard's
@@ -152,6 +182,11 @@ bool publish_raw(const char* topic, const char* payload, size_t len, bool retain
 void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
                         int32_t event_id, void* event_data) {
   esp_mqtt_event_handle_t e = (esp_mqtt_event_handle_t)event_data;
+  /* A client a re-init detached runs until its worker's stop returns: its
+   * connects, drops and errors are not the bridge's any more (they would
+   * set s_connected for a client nothing publishes to, or name the old
+   * broker's failure). */
+  if (!e || e->client != s_client.load(std::memory_order_acquire)) return;
   switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED: {
       s_connected.store(true, std::memory_order_relaxed);
@@ -188,9 +223,9 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       {
         char cmd_topic[192];
         build_topic(cmd_topic, sizeof(cmd_topic), "update/cmd");
-        esp_mqtt_client_subscribe(s_client, cmd_topic, /*qos=*/1);
+        esp_mqtt_client_subscribe(e->client, cmd_topic, /*qos=*/1);
         build_topic(cmd_topic, sizeof(cmd_topic), "update/auto/cmd");
-        esp_mqtt_client_subscribe(s_client, cmd_topic, /*qos=*/1);
+        esp_mqtt_client_subscribe(e->client, cmd_topic, /*qos=*/1);
 
         if (s_update_state_set.load(std::memory_order_relaxed)) {
           char state_topic[192];
@@ -213,7 +248,7 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       {
         char mic_cmd_topic[192];
         build_topic(mic_cmd_topic, sizeof(mic_cmd_topic), "mic/cmd");
-        esp_mqtt_client_subscribe(s_client, mic_cmd_topic, /*qos=*/1);
+        esp_mqtt_client_subscribe(e->client, mic_cmd_topic, /*qos=*/1);
 
         const int mic_state = s_last_mic_state.load(std::memory_order_relaxed);
         if (mic_state >= 0) {
@@ -350,12 +385,51 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
   }
 }
 
-void teardown_client() {
-  if (!s_client) return;
-  esp_mqtt_client_stop(s_client);
-  esp_mqtt_client_destroy(s_client);
-  s_client = nullptr;
+/* The worker a re-init hands a detached client to (sweep F106 review): the
+ * stop can wait out a connect attempt, which the loop task must not. One
+ * worker per re-init, and only one at a time (serve_reinit opens nothing
+ * until it is done). */
+void retire_task(void* arg) {
+  esp_mqtt_client_handle_t client = static_cast<esp_mqtt_client_handle_t>(arg);
+  esp_mqtt_client_stop(client);      /* waits for the client's esp_mqtt task to exit */
+  esp_mqtt_client_destroy(client);
+  s_retire_done.store(true, std::memory_order_release);
+  vTaskDelete(nullptr);
+}
+
+/* Loop task: take the open client out of service. Nothing on this task can
+ * reach it after this (s_client is what every publish reads), and its event
+ * handler ignores it; retire_finished() hands it to the worker. */
+void detach_client() {
+  esp_mqtt_client_handle_t client = s_client.exchange(nullptr, std::memory_order_acq_rel);
   s_connected.store(false, std::memory_order_relaxed);
+  if (client) {
+    s_retiring = client;
+    s_retire_started = false;
+  }
+}
+
+/* Loop task: is the client a re-init detached gone? Starts its worker (and
+ * again on a later pass, if the task could not be created) and never waits. */
+bool retire_finished() {
+  if (s_retiring == nullptr) return true;
+  if (!s_retire_started) {
+    s_retire_done.store(false, std::memory_order_relaxed);
+    if (xTaskCreate(retire_task, "mqtt_retire", kRetireStackBytes, s_retiring,
+                    /*priority=*/1, nullptr) != pdPASS) {
+      if (!s_retire_create_failed_logged) {
+        Serial.println("[MQTT] could not start the old client's stop task; retrying");
+        s_retire_create_failed_logged = true;
+      }
+      return false;
+    }
+    s_retire_started = true;
+    s_retire_create_failed_logged = false;
+  }
+  if (!s_retire_done.load(std::memory_order_acquire)) return false;
+  s_retiring = nullptr;
+  s_retire_started = false;
+  return true;
 }
 
 }  /* namespace */
@@ -482,16 +556,12 @@ void set_identity(const char* device_id,
   }
 }
 
-bool init(const char* device_id,
-          const char* firmware_version,
-          const char* public_key_hex) {
-  set_identity(device_id, firmware_version, public_key_hex);
-
-  /* Tear down any prior session so a /api/mqtt/config POST that flips
-   * enabled / changes broker comes up cleanly. Idempotent on first
-   * boot (s_client is nullptr). */
-  teardown_client();
-
+namespace {
+/* Loop task, with no client open: read the settings from NVS and open the
+ * client they name (or none: disabled, no host, a refused TLS mode). The
+ * boot init() and every served re-init run it; neither ever stops a client
+ * here (a re-init's old one is retire_task's). */
+bool open_client() {
   /* The delivery watermark is not this function's: the egress restores it
    * once per boot (csi_event_egress::begin, from csi_integration::init after
    * the event-id floor), and a re-init keeps it. A re-init that changes the
@@ -577,16 +647,23 @@ bool init(const char* device_id,
   cfg.session.last_will.retain  = 1;
   cfg.session.keepalive         = 60;
 
-  s_client = esp_mqtt_client_init(&cfg);
-  if (!s_client) {
+  esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
+  if (!client) {
     Serial.println("[MQTT] esp_mqtt_client_init returned null");
     return false;
   }
   esp_mqtt_client_register_event(
-      s_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, nullptr);
-  if (esp_mqtt_client_start(s_client) != ESP_OK) {
+      client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, nullptr);
+  /* The open client before its task starts: its handler checks it. A stale
+   * s_connected from a detached client's last event is cleared first. */
+  s_connected.store(false, std::memory_order_relaxed);
+  s_client.store(client, std::memory_order_release);
+  if (esp_mqtt_client_start(client) != ESP_OK) {
     Serial.println("[MQTT] esp_mqtt_client_start failed");
-    teardown_client();
+    s_client.store(nullptr, std::memory_order_release);
+    /* Never started: there is no esp_mqtt task to wait for, so the destroy
+     * returns at once (it stops only a running client). */
+    esp_mqtt_client_destroy(client);
     return false;
   }
   Serial.printf("[MQTT] bridge started: %s transport=%s prefix=%s\n", uri,
@@ -594,17 +671,46 @@ bool init(const char* device_id,
   return true;
 }
 
-void loop() {
-  /* A re-init another task asked for (sweep F106), here so the teardown
-   * never runs under one of this task's publishes. One init() serves
-   * every request made before it began; it reads NVS afresh and keeps
-   * the identity set_identity() stored. First, so the pump below sees a
-   * changed destination's epoch this pass. */
-  const uint32_t wanted = s_reinit_wanted.load(std::memory_order_acquire);
-  if (wanted != s_reinit_served.load(std::memory_order_relaxed)) {
-    (void)init(nullptr, nullptr, nullptr);
-    s_reinit_served.store(wanted, std::memory_order_release);
+/* Loop task: a re-init another task asked for (sweep F106). It never waits:
+ * the open client is detached and handed to retire_task, and the passes
+ * after that return at once until the worker says it is gone; then one
+ * open_client() serves every request made before it began, because it
+ * reads NVS afresh (and keeps the identity set_identity() stored). A
+ * request made while it runs waits for the next re-init. */
+void serve_reinit() {
+  if (!retire_finished()) return;                 /* the old client is still stopping */
+  if (s_reinit_wanted.load(std::memory_order_acquire) ==
+      s_reinit_served.load(std::memory_order_relaxed)) {
+    return;
   }
+  if (s_client.load(std::memory_order_relaxed) != nullptr) {
+    detach_client();
+    if (!retire_finished()) return;               /* a later pass opens the new one */
+  }
+  const uint32_t wanted = s_reinit_wanted.load(std::memory_order_acquire);
+  (void)open_client();
+  s_reinit_served.store(wanted, std::memory_order_release);
+}
+}  /* namespace */
+
+bool init(const char* device_id,
+          const char* firmware_version,
+          const char* public_key_hex) {
+  set_identity(device_id, firmware_version, public_key_hex);
+  /* The boot's open (setup()'s start_http_server, before loop() runs). A
+   * client already open, or still being retired, is never stopped here: that
+   * could wait out a connect attempt. Hand it to loop()'s re-init instead. */
+  if (s_client.load(std::memory_order_relaxed) != nullptr || s_retiring != nullptr) {
+    (void)request_reinit();
+    return true;
+  }
+  return open_client();
+}
+
+void loop() {
+  /* First, so the pump below sees a changed destination's epoch the pass the
+   * new client opens. */
+  serve_reinit();
 
   /* The committed-event egress: the SD log, the live publishes and the
    * reconnect backfill, on this (the main loop's) task. */

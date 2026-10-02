@@ -9,16 +9,21 @@
  * with arduino-esp32 — no lib_deps addition. ESP-IDF runs the MQTT
  * task internally and handles auto-reconnect.
  *
- * Threading (sweep F106): the client is the loop task's. init() and every
- * re-init (stop, destroy, a new client) run on it — at boot from setup(),
- * then from loop() when request_reinit() asked — and the publish_*()
- * functions are called from it too (and, for the reconnect republish, from
- * the esp_mqtt task's own event handler, which a teardown stops before it
- * destroys the client). Another task asks: request_reinit() for a re-init
- * (the config POST, POST /api/mqtt/test and a QR provisioning do), and
- * set_update_auto_state() for the auto-update switch (an httpd handler
- * sets it). A publish from another task could hold the old handle while
- * the loop task destroys it.
+ * Threading (sweep F106): the client is the loop task's. It opens it — at
+ * boot from setup() (init()), then from loop() when request_reinit() asked
+ * — and the publish_*() functions are called from it too (and, for the
+ * reconnect republish, from the esp_mqtt task's own event handler). Another
+ * task asks: request_reinit() for a re-init (the config POST, POST
+ * /api/mqtt/test and a QR provisioning do), and set_update_auto_state() for
+ * the auto-update switch (an httpd handler sets it). A publish from another
+ * task could hold the old handle while a re-init retires it.
+ *
+ * The loop task never STOPS a client: esp_mqtt_client_stop() can wait out a
+ * whole connect attempt (the esp_mqtt task holds the client's lock across
+ * it, network_timeout_ms, 10 s by default), past the loop task's 8 s panic
+ * watchdog. A re-init detaches the old client (no loop publish can reach it,
+ * and its events are ignored), a one-shot worker task stops and destroys it,
+ * and a later loop pass opens the new one once the worker is done.
  *
  * Topic schema (locked against custom_components/securacv/const.py +
  * docs/homeassistant_setup.md):
@@ -145,9 +150,9 @@ void set_identity(const char* device_id,
 
 /**
  * Cold-boot init, on the loop task (setup()'s start_http_server). Reads
- * NVS, opens the esp_mqtt client if enabled, and arms the LWT. A second
- * call tears down the existing client and re-opens with the new
- * credentials: only loop() makes it, for request_reinit(). Safe to call
+ * NVS, opens the esp_mqtt client if enabled, and arms the LWT. Called once;
+ * a call that finds a client open does not stop it (that can block for
+ * seconds) but asks loop() for a re-init and returns true. Safe to call
  * before WiFi STA is up; the client stays disconnected until TCP can
  * establish.
  *
@@ -163,12 +168,13 @@ bool init(const char* device_id,
 
 /**
  * Per-tick pump, main loop. esp_mqtt manages its own task and supervises
- * reconnection internally. This runs, on the loop task: a re-init
- * request_reinit() asked for (one init() serves every request made before
- * it began: they coalesce, and init() reads NVS afresh), then the
- * committed-event egress (csi_event_egress::pump): the SD event log, the
- * live publishes and the reconnect backfill; then the auto-update switch
- * state set_update_auto_state() left.
+ * reconnection internally. This runs, on the loop task, never waiting: a
+ * re-init request_reinit() asked for (detach the open client and start the
+ * worker that stops it; on a later pass, once it is gone, open the new one:
+ * one open serves every request made before it began, since it reads NVS
+ * afresh); then the committed-event egress (csi_event_egress::pump): the SD
+ * event log, the live publishes and the reconnect backfill; then the
+ * auto-update switch state set_update_auto_state() left.
  */
 void loop();
 
@@ -180,7 +186,8 @@ void loop();
  */
 uint32_t request_reinit();
 
-/** Any task: has a re-init begun after `request` was made run to its end? */
+/** Any task: has a re-init whose NVS read began after `request` was made
+ *  opened its client (or found the bridge disabled)? */
 bool reinit_done(uint32_t request);
 
 /** True iff the underlying MQTT client is connected to the broker. */
@@ -191,9 +198,10 @@ bool connected();
  * and keeps the delivery watermark; these are the publishes it asks for.
  * The egress is their only caller, on the loop task. publish_raw only
  * checks that the client exists and is connected; that is enough because
- * a re-init runs on the same task (loop(), sweep F106). Before, a config
- * POST or a test ran init() on the httpd task and could destroy the client
- * under one of these publishes. */
+ * a re-init detaches the client on the same task (loop(), sweep F106), and
+ * only a detached client is ever stopped. Before, a config POST or a test
+ * ran init() on the httpd task and could destroy the client under one of
+ * these publishes. */
 
 /* What one publish attempt did. */
 enum class EventSend : uint8_t {
