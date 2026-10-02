@@ -1184,6 +1184,8 @@ static void test_ambient_rows_are_not_held() {
 }
 
 /* ── The counters, for other tasks and the wire (sweep F149) ──────────── */
+/* Not in the older sources the two proofs above build against. */
+#ifndef EGRESS_BEFORE_REVIEW
 
 static bool same_stats(const csi_event_egress::Stats& a, const csi_event_egress::Stats& b) {
   return memcmp(&a, &b, sizeof(a)) == 0;
@@ -1253,6 +1255,7 @@ static void test_the_counters_spell_the_canarys_names() {
         "one byte short: refused, and no partial object is left behind");
   CHECK(csi_event_egress::stats_json(s, nullptr, 64) == 0, "no buffer: refused");
 }
+#endif  // !EGRESS_BEFORE_REVIEW
 
 /* ── The card adapter (csi_event_log.cpp) ──────────────────────────────── */
 
@@ -1452,8 +1455,10 @@ int main() {
   test_destination_digest();
 #endif
   test_ambient_rows_are_not_held();
+#ifndef EGRESS_BEFORE_REVIEW
   test_other_tasks_read_what_the_pump_published();
   test_the_counters_spell_the_canarys_names();
+#endif
   test_torn_tail_at_open_is_sealed();
   test_short_write_is_sealed();
   test_torn_but_whole_line_is_sent_once();
