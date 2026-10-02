@@ -709,6 +709,60 @@ void test_an_initiator_refuses_a_re_pair_onto_another_members_address() {
   std::printf("PASS an_initiator_refuses_a_re_pair_onto_another_members_address\n");
 }
 
+void test_an_initiator_refuses_a_new_member_at_another_members_address() {
+  // Sweep F98: J, a device A does not hold, pairs with A from the address A
+  // holds for C (a copied address). add_peer appended J there, so J and C
+  // shared one ESP-NOW registration and the pairing reported success; now
+  // it is refused like the re-pair above (one address, one member).
+  fresh_opera({&A, &B, &C});
+  fresh_device(J);
+  uint8_t j_mac[6];
+  memcpy(j_mac, J.mac, 6);
+  memcpy(J.mac, C.mac, 6);
+  pair_to_codes(A, J);
+  g_pair_events.clear();
+  g_health.clear();
+  confirm_initiator_first(A, J);
+  check_initiator_refused(A, J, 2);
+  CHECK(entry(A, J) == nullptr);
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  become(A);
+  A.espnow.sent.clear();
+  mn::send_heartbeat();
+  CHECK(sent_to(A, C.mac).size() == 1);           // C is still sent its frames
+  memcpy(J.mac, j_mac, 6);
+  std::printf("PASS an_initiator_refuses_a_new_member_at_another_members_address\n");
+}
+
+void test_a_joiner_refuses_a_new_initiator_at_another_members_address() {
+  // F98, the joiner's side: B, which holds A and C, joins J's new opera,
+  // and J pairs from C's address. B appended J there and took J's opera;
+  // now B refuses J and keeps the opera it had.
+  fresh_opera({&A, &B, &C});
+  fresh_device(J);
+  uint8_t j_mac[6];
+  memcpy(j_mac, J.mac, 6);
+  memcpy(J.mac, C.mac, 6);
+  become(B);
+  uint8_t opera_id[mn::OPERA_ID_SIZE];
+  memcpy(opera_id, mn::g_opera_config.opera_id, sizeof opera_id);
+  pair_to_codes(J, B);
+  g_pair_events.clear();
+  g_health.clear();
+  confirm_initiator_first(J, B);
+  CHECK(pair_frames(J, B.mac, mn::MSG_PAIR_COMPLETE) == 1);   // J completed its side
+  become(B);
+  CHECK(memcmp(mn::g_opera_config.opera_id, opera_id, sizeof opera_id) == 0);
+  CHECK(mn::g_peer_count == 2);
+  CHECK(entry(B, J) == nullptr);
+  CHECK(same_mac(entry(B, C)->mac_addr, C.mac) && B.espnow.has(C.mac));
+  const PairEvent* ev = last_event_of(B);
+  CHECK(ev != nullptr && ev->role == mn::PAIR_ROLE_JOINER && !ev->success);
+  CHECK(logged("opera: pairing failed"));
+  memcpy(J.mac, j_mac, 6);
+  std::printf("PASS a_joiner_refuses_a_new_initiator_at_another_members_address\n");
+}
+
 void test_a_joiner_with_a_full_opera_keeps_its_own() {
   // B holds 16 members and joins J's new opera. Its add_peer refuses J, so
   // B keeps the opera it had, in RAM and in NVS. The old handler replaced
@@ -1173,6 +1227,10 @@ const Test kTests[] = {
      test_an_initiator_refuses_a_partner_removed_during_the_pairing},
     {"an_initiator_refuses_a_re_pair_onto_another_members_address",
      test_an_initiator_refuses_a_re_pair_onto_another_members_address},
+    {"an_initiator_refuses_a_new_member_at_another_members_address",
+     test_an_initiator_refuses_a_new_member_at_another_members_address},
+    {"a_joiner_refuses_a_new_initiator_at_another_members_address",
+     test_a_joiner_refuses_a_new_initiator_at_another_members_address},
     {"a_joiner_with_a_full_opera_keeps_its_own", test_a_joiner_with_a_full_opera_keeps_its_own},
     {"a_joiner_refuses_an_initiator_removed_during_the_pairing",
      test_a_joiner_refuses_an_initiator_removed_during_the_pairing},

@@ -477,12 +477,33 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
 // long-term key a pairing presents (spec §11.1 item 5), so a relayed
 // pairing whose codes match can claim a member's key from another radio,
 // and this line is the owner's only sign.
+// Another member than `self` holding `mac`, or nullptr.
+static OperaPeer* other_holder_of(const uint8_t* mac, const OperaPeer* self) {
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    if (&g_peers[i] != self && memcmp(g_peers[i].mac_addr, mac, 6) == 0) {
+      return &g_peers[i];
+    }
+  }
+  return nullptr;
+}
+
+// Drop the ESP-NOW registration of an address `self` no longer uses, unless
+// another member still holds it. Since F98 add_peer gives no two members
+// one address, but NVS an older firmware wrote can hold such a pair (its
+// add_peer appended a new key at a held address), and deleting the
+// registration there stranded the other member: esp_now_send refuses an
+// address that is not registered.
+static void release_mac(const uint8_t* mac, const OperaPeer* self) {
+  if (other_holder_of(mac, self) == nullptr) {
+    esp_now_del_peer(mac);
+  }
+}
+
 static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
   if (memcmp(peer->mac_addr, mac, 6) == 0) {
     return true;
   }
-  const OperaPeer* holder = find_peer_by_mac(mac);
-  if (holder != nullptr && holder != peer) {
+  if (other_holder_of(mac, peer) != nullptr) {
     return false;
   }
   if (!esp_now_is_peer_exist(mac)) {
@@ -494,7 +515,7 @@ static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
       return false;
     }
   }
-  esp_now_del_peer(peer->mac_addr);
+  release_mac(peer->mac_addr, peer);
   memcpy(peer->mac_addr, mac, 6);
   health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
              "opera: a re-pair moved a member to a new radio address");
@@ -514,6 +535,14 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
     if (memcmp(g_peers[i].pubkey, pubkey, PUBKEY_SIZE) == 0) {
       return rebind_peer(&g_peers[i], mac);
     }
+  }
+  // One address, one member, as rebind_peer has it (sweep F98). A new key
+  // at an address another member holds was appended: the two entries shared
+  // one ESP-NOW registration, removing either deleted it for both, and the
+  // other was then sent nothing (esp_now_send refuses an unregistered
+  // address).
+  if (other_holder_of(mac, nullptr) != nullptr) {
+    return false;
   }
   if (g_peer_count >= MAX_OPERA_SIZE) {
     return false;
@@ -2202,8 +2231,9 @@ static bool remove_peer(const uint8_t* fingerprint) {
       uint8_t removed_fp[FINGERPRINT_SIZE];
       memcpy(removed_fp, g_peers[i].fingerprint, FINGERPRINT_SIZE);
 
-      // Remove from ESP-NOW
-      esp_now_del_peer(g_peers[i].mac_addr);
+      // Remove from ESP-NOW, unless another member an older firmware stored
+      // at the same address still uses it (release_mac, F98).
+      release_mac(g_peers[i].mac_addr, &g_peers[i]);
 
       // Shift remaining peers
       for (uint8_t j = i; j < g_peer_count - 1; j++) {

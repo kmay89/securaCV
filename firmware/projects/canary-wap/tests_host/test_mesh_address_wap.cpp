@@ -541,6 +541,92 @@ void test_a_re_pair_cannot_take_another_members_address() {
   std::printf("PASS a_re_pair_cannot_take_another_members_address\n");
 }
 
+// ── One address, one member (sweep F98) ─────────────────────────────────
+//
+// Only the re-pair (rebind_peer) refused an address another member holds;
+// add_peer appended a NEW key at one. The two entries then shared one
+// ESP-NOW registration, removing either deleted it for both, and A sent the
+// other nothing (host-probed with the #1761 harness: A's next heartbeat to
+// C was not sent). add_peer now refuses it too, and NVS an older firmware
+// wrote with such a pair keeps the registration while either entry holds
+// the address.
+
+// A key no device in this file holds.
+void new_key(uint8_t pub[32]) {
+  uint8_t priv[32];
+  host_sim::fill_random(priv, sizeof priv);
+  Ed25519::derivePublicKey(pub, priv);
+}
+
+void test_a_new_key_at_another_members_address_is_refused() {
+  fresh_opera();
+  uint8_t pub[32];
+  new_key(pub);
+  become(A);
+  CHECK(!mn::add_peer(pub, C.mac, "K"));
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  CHECK(A.espnow.has(C.mac));
+  CHECK(a_heartbeat_reaches(C.mac));
+  // The same key at an address no member holds is a new member as before.
+  const uint8_t free_mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0xE1};
+  become(A);
+  CHECK(mn::add_peer(pub, free_mac, "K"));
+  CHECK(mn::g_peer_count == 3);
+  CHECK(A.espnow.has(free_mac) && A.espnow.has(C.mac));
+  std::printf("PASS a_new_key_at_another_members_address_is_refused\n");
+}
+
+// A's NVS as an older firmware's add_peer could leave it: a member K at
+// C's address beside C. Returns K's key.
+void two_members_at_cs_address(uint8_t k_pub[32]) {
+  fresh_opera();
+  new_key(k_pub);
+  become(A);
+  mn::OperaPeer& k = mn::g_peers[mn::g_peer_count++];
+  memset(&k, 0, sizeof k);
+  memcpy(k.pubkey, k_pub, 32);
+  mn::compute_fingerprint(k_pub, k.fingerprint);
+  memcpy(k.mac_addr, C.mac, 6);
+  strcpy(k.name, "K");
+  k.msg_counter_tx = 1;
+  CHECK(mn::persist_peers());
+  boot(A);
+  CHECK(mn::g_peer_count == 3);
+  CHECK(A.espnow.has(C.mac));
+}
+
+void test_removing_a_member_keeps_an_address_another_member_holds() {
+  uint8_t k_pub[32];
+  two_members_at_cs_address(k_pub);
+  uint8_t fp[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(k_pub, fp);
+  become(A);
+  CHECK(mn::remove_peer(fp));
+  CHECK(A.espnow.has(C.mac));                   // C still holds it
+  CHECK(a_heartbeat_reaches(C.mac));
+  // The last holder's removal does release it.
+  mn::compute_fingerprint(C.pub, fp);
+  become(A);
+  CHECK(mn::remove_peer(fp));
+  CHECK(!A.espnow.has(C.mac));
+  std::printf("PASS removing_a_member_keeps_an_address_another_member_holds\n");
+}
+
+void test_a_re_pair_away_from_a_shared_address_keeps_it_for_the_other() {
+  // C re-pairs from a new address; K, at the address C leaves, keeps its
+  // registration. rebind_peer used to delete the old address's.
+  uint8_t k_pub[32];
+  two_members_at_cs_address(k_pub);
+  const uint8_t moved[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0xC2};
+  become(A);
+  CHECK(mn::add_peer(C.pub, moved, "C"));
+  CHECK(same_mac(entry(A, C)->mac_addr, moved));
+  CHECK(A.espnow.has(moved) && A.espnow.has(C.mac));
+  CHECK(a_heartbeat_reaches(C.mac));            // K's frames still go out
+  std::printf("PASS a_re_pair_away_from_a_shared_address_keeps_it_for_the_other\n");
+}
+
 // ── Only a pairing both owners confirmed binds an address ──────────────
 //
 // Pairing frames are unsigned (they come before membership), and a
@@ -871,6 +957,9 @@ int main() {
   test_a_re_pair_the_radio_cannot_register_moves_nothing();
   test_a_re_pair_is_not_refused_by_a_full_opera();
   test_a_re_pair_cannot_take_another_members_address();
+  test_a_new_key_at_another_members_address_is_refused();
+  test_removing_a_member_keeps_an_address_another_member_holds();
+  test_a_re_pair_away_from_a_shared_address_keeps_it_for_the_other();
   test_a_joiner_does_not_complete_before_its_owner_confirms();
   test_a_joiner_takes_the_first_offer_only();
   test_an_initiator_takes_one_accept_from_where_its_offer_went();
