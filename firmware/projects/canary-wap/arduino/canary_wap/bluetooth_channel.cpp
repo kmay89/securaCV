@@ -210,6 +210,7 @@ static bool start_scan(uint32_t duration_ms);
 static void stop_scan();
 static void clear_scan_results();
 static bool start_pairing();
+static bool answer_pending_pairing(bool accept);
 static void cancel_pairing();
 static bool confirm_pairing(uint32_t pin);
 static bool reject_pairing();
@@ -247,10 +248,12 @@ static bool set_tx_power(int8_t power);
 // wait, so a burst of advertisements or writes never takes the room kept
 // for a link's own events (up, down, a passkey, a bond). When an event
 // still finds no room (the loop task stalled for that long), it is dropped
-// and counted; update() writes the count to the health log. A passkey to
-// confirm that finds no room is answered no on this task instead (as is
-// one whose copy could not be allocated): the pairing fails closed, and
-// the phone may try again.
+// and counted by kind (loop_event_queue.h): update() logs a link's dropped
+// events as a warning (the state may be stale) and the scan results and
+// activity the lower limit refused at debug level (routine when a busy
+// room advertises through a stall). A passkey to confirm that finds no
+// room is answered no on this task instead (as is one whose copy could not
+// be allocated): the pairing fails closed, and the phone may try again.
 
 enum EventType : uint8_t {
   BT_EV_CONNECT = 0,
@@ -263,11 +266,15 @@ enum EventType : uint8_t {
   BT_EV_ACTIVITY,
 };
 
-// A link, as a server callback's NimBLEConnInfo named it.
+// A link, as a server callback's NimBLEConnInfo named it. The address is
+// the stack's own form (ble_addr_t: the type, and the bytes least
+// significant first, as getBase() holds them), so the loop task rebuilds
+// the same NimBLEAddress from it. NimBLE-Arduino 2.x's byte-array
+// constructor takes the bytes in printed order and reverses them, so
+// bytes copied out of getBase() went back through it printed backwards.
 struct LinkEvent {
   uint16_t handle;
-  uint8_t address[BLE_ADDRESS_LENGTH];
-  uint8_t address_type;
+  ble_addr_t address;
   bool encrypted;
   bool authenticated;
   bool bonded;
@@ -298,8 +305,14 @@ static const size_t EVENT_SLOTS = 24;
 static const size_t EVENT_LOSSY_LIMIT = 16;
 
 static loop_event_queue::Queue<Event, EVENT_SLOTS, loop_command_ring::PortMuxLock> g_events;
-static uint32_t g_events_dropped_seen = 0;       // the loop task's: the count last logged
-static uint32_t g_events_dropped_logged_ms = 0;
+
+// The loop task's: a drop count last logged, and when (at most once a minute).
+struct DropLog {
+  uint32_t seen;
+  uint32_t logged_ms;
+};
+static DropLog g_link_drops = {0, 0};     // a link's events (posted at the full limit)
+static DropLog g_lossy_drops = {0, 0};    // scan results and GATT activity (the lower limit)
 
 // An Event of `type`, at the callback's time, the rest zero.
 static Event make_event(EventType type) {
@@ -314,8 +327,7 @@ static Event make_event(EventType type) {
 static Event link_event(EventType type, NimBLEConnInfo& connInfo) {
   Event e = make_event(type);
   e.u.link.handle = connInfo.getConnHandle();
-  memcpy(e.u.link.address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
-  e.u.link.address_type = connInfo.getAddress().getType();
+  e.u.link.address = *connInfo.getAddress().getBase();
   e.u.link.encrypted = connInfo.isEncrypted();
   e.u.link.authenticated = connInfo.isAuthenticated();
   e.u.link.bonded = connInfo.isBonded();
@@ -434,9 +446,11 @@ static void apply_connect(const Event& e) {
   const LinkEvent& link = e.u.link;
   g_connection.connected = true;
   g_connection_handle = link.handle;
-  memcpy(g_connection.address, link.address, BLE_ADDRESS_LENGTH);
+  memcpy(g_connection.address, link.address.val, BLE_ADDRESS_LENGTH);
 
-  NimBLEAddress addr(link.address, link.address_type);
+  // The address as NimBLE prints the phone's own (the ble_addr_t
+  // constructor keeps the stack's byte order; see LinkEvent).
+  const NimBLEAddress addr(link.address);
   strncpy(g_connection.name, addr.toString().c_str(), MAX_DEVICE_NAME_LEN);
   g_connection.name[MAX_DEVICE_NAME_LEN] = '\0';
 
@@ -495,6 +509,25 @@ static void apply_connect(const Event& e) {
 }
 
 static void apply_disconnect(const Event& e) {
+  // A pairing awaiting the owner's answer on this link ends with it: the
+  // stack ended that pairing when the link went, and the copy must not
+  // outlive it, or a later confirm of its six digits would answer yes on
+  // whatever link takes the handle next (a phone whose own digits were
+  // never shown). No answer is given: there is no link to give it to.
+  if (g_pending_pair_info != nullptr &&
+      g_pending_pair_info->getConnHandle() == e.u.link.handle) {
+    (void)answer_pending_pairing(false);   // the link is gone: deleted unanswered
+    g_pairing.state = PAIR_FAILED;
+    g_pairing.pin_displayed = false;       // its digits mean nothing now
+    g_pairing.pin_code = 0;
+    g_pairing.user_confirmed = false;
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "Pairing link lost before confirmation", nullptr);
+    if (g_pair_callback) {
+      g_pair_callback(&g_pairing);
+    }
+  }
+
   // A link whose connect event was dropped (a full queue) adds no time.
   uint32_t connected_duration = 0;
   if (g_connection.connected) {
@@ -540,7 +573,7 @@ static void apply_auth_complete(const Event& e) {
       // Add to paired devices
       bool found = false;
       for (size_t i = 0; i < g_paired_count; i++) {
-        if (memcmp(g_paired_devices[i].address, link.address, BLE_ADDRESS_LENGTH) == 0) {
+        if (memcmp(g_paired_devices[i].address, link.address.val, BLE_ADDRESS_LENGTH) == 0) {
           g_paired_devices[i].last_connected_ms = e.at_ms;
           g_paired_devices[i].connection_count++;
           g_paired_devices[i].security = SEC_BONDED;
@@ -551,8 +584,8 @@ static void apply_auth_complete(const Event& e) {
 
       if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
         PairedDevice* dev = &g_paired_devices[g_paired_count++];
-        memcpy(dev->address, link.address, BLE_ADDRESS_LENGTH);
-        dev->address_type = link.address_type;
+        memcpy(dev->address, link.address.val, BLE_ADDRESS_LENGTH);
+        dev->address_type = link.address.type;
         strncpy(dev->name, g_connection.name, MAX_DEVICE_NAME_LEN);
         dev->name[MAX_DEVICE_NAME_LEN] = '\0';
         dev->paired_timestamp = e.at_ms / 1000;
@@ -1146,6 +1179,10 @@ static bool enable() {
 }
 
 static void disable() {
+  // A pairing in progress ends first: a Numeric Comparison awaiting the
+  // owner is answered no while its link is still up (it was left pending,
+  // and showing, while update() returned early for the disabled channel).
+  cancel_pairing();
   stop_advertising();
   stop_scan();
   disconnect();
@@ -1264,14 +1301,40 @@ static bool start_pairing() {
   return true;
 }
 
+// Whether the link a pending Numeric Comparison belongs to is still up: the
+// stack's own record of its handle (ble_gap_conn_find) names the same peer.
+// A link whose disconnect never reached the loop task (a full event queue)
+// fails it, and so does a new link that took the handle.
+static bool pending_link_is_up() {
+  if (g_pending_pair_info == nullptr || g_server == nullptr) return false;
+  const uint16_t handle = g_pending_pair_info->getConnHandle();
+  const NimBLEConnInfo live = g_server->getPeerInfoByHandle(handle);
+  return live.getConnHandle() == handle &&
+         live.getAddress() == g_pending_pair_info->getAddress();
+}
+
+// The one way the pending Numeric Comparison is answered: `accept` goes to
+// its link when that link is still up (pending_link_is_up()), never to
+// another; then the copy is deleted. True when the answer was given.
+static bool answer_pending_pairing(bool accept) {
+  bool answered = false;
+  if (g_pending_pair_info != nullptr) {
+    if (pending_link_is_up()) {
+      NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, accept);
+      answered = true;
+    }
+    delete g_pending_pair_info;
+    g_pending_pair_info = nullptr;
+  }
+  g_pending_pair_active = false;
+  return answered;
+}
+
 static void cancel_pairing() {
   // Drain any pending Numeric-Comparison so NimBLE doesn't sit indefinitely
   // waiting on injectConfirmPasskey. A reject closes the bond attempt cleanly.
-  if (g_pending_pair_active && g_pending_pair_info) {
-    NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, false);
-    delete g_pending_pair_info;
-    g_pending_pair_info = nullptr;
-    g_pending_pair_active = false;
+  if (g_pending_pair_active || g_pending_pair_info) {
+    (void)answer_pending_pairing(false);
   }
   if (g_pairing.state == PAIR_NONE) return;
 
@@ -1303,31 +1366,31 @@ static bool confirm_pairing(uint32_t pin) {
   if (pin != g_pairing.pin_code) {
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                "Pairing PIN mismatch — rejecting", nullptr);
-    NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, false);
-    delete g_pending_pair_info;
-    g_pending_pair_info = nullptr;
-    g_pending_pair_active = false;
+    (void)answer_pending_pairing(false);
     g_pairing.state = PAIR_FAILED;
     if (g_pair_callback) g_pair_callback(&g_pairing);
     return false;
   }
 
+  // The yes goes only to the link the six digits came from: when that link
+  // is gone, or another took its handle, nothing is answered and the
+  // confirm fails (the new link's own digits come in their own event).
+  if (!answer_pending_pairing(true)) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "Pairing link gone — confirmation not sent", nullptr);
+    g_pairing.state = PAIR_FAILED;
+    if (g_pair_callback) g_pair_callback(&g_pairing);
+    return false;
+  }
   g_pairing.user_confirmed = true;
-  NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, true);
-  delete g_pending_pair_info;
-  g_pending_pair_info = nullptr;
-  g_pending_pair_active = false;
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
              "Pairing PIN confirmed by user", nullptr);
   return true;
 }
 
 static bool reject_pairing() {
-  if (g_pending_pair_active && g_pending_pair_info) {
-    NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, false);
-    delete g_pending_pair_info;
-    g_pending_pair_info = nullptr;
-    g_pending_pair_active = false;
+  if (g_pending_pair_active || g_pending_pair_info) {
+    (void)answer_pending_pairing(false);
   }
   if (g_pairing.state == PAIR_NONE) return false;
 
@@ -1774,6 +1837,18 @@ loop_command_ring::Wait submit(const Command& cmd, Result* result, uint32_t time
   return w;
 }
 
+// A drop count in the health log when it moved, at most once a minute.
+static void log_drops(uint32_t dropped, DropLog& log, LogLevel level, const char* message,
+                      uint32_t now) {
+  if (dropped == log.seen) return;
+  if (log.logged_ms != 0 && now - log.logged_ms < 60000) return;
+  char detail[48];
+  snprintf(detail, sizeof(detail), "%lu since boot", (unsigned long)dropped);
+  log_health(level, SCV_CAT_BLUETOOTH, message, detail);
+  log.seen = dropped;
+  log.logged_ms = now != 0 ? now : 1;
+}
+
 void update() {
   // What the NimBLE host task reported since the last pass (sweep F143),
   // then the owner's commands (F111), both before the early return below:
@@ -1784,17 +1859,14 @@ void update() {
   g_events.consume(apply_event);
   g_commands.drain(run_command);
 
-  // Events a full queue refused, in the health log at most once a minute.
+  // Events a full queue refused, in the health log at most once a minute
+  // each: a link's as a warning (the connection state may be stale), scan
+  // results and GATT activity at debug level (a busy room through a stall).
   uint32_t now = millis();
-  const uint32_t dropped = g_events.dropped();
-  if (dropped != g_events_dropped_seen &&
-      (g_events_dropped_logged_ms == 0 || now - g_events_dropped_logged_ms >= 60000)) {
-    char detail[48];
-    snprintf(detail, sizeof(detail), "%lu since boot", (unsigned long)dropped);
-    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE events dropped (queue full)", detail);
-    g_events_dropped_seen = dropped;
-    g_events_dropped_logged_ms = now != 0 ? now : 1;
-  }
+  log_drops(g_events.dropped_reserved(), g_link_drops, SCV_LOG_WARNING,
+            "BLE link events dropped (queue full)", now);
+  log_drops(g_events.dropped_limited(), g_lossy_drops, SCV_LOG_DEBUG,
+            "BLE scan/activity events dropped (queue full)", now);
 
   if (!g_initialized || !g_settings.enabled) {
     publish_views();   // F138: a disabled channel's pass, as the routes show it

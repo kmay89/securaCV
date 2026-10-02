@@ -6,7 +6,8 @@
  * scan start/stop, a disconnect, a passkey answer, a bond delete) is
  * recorded with the task the test is playing (host_sim::note), and the
  * passkey answers are kept (host_sim::passkey_answers) so a test can see one
- * pending pairing answered once. */
+ * pending pairing answered once. The server keeps the links the test says
+ * are up (link_up), as the stack's getPeerInfoByHandle() answers them. */
 #ifndef STUB_BT_NIMBLE_DEVICE_H
 #define STUB_BT_NIMBLE_DEVICE_H
 
@@ -28,15 +29,27 @@ struct ble_addr_t {
   uint8_t val[6];
 };
 
+// As NimBLE-Arduino 2.5.0's (src/NimBLEAddress.cpp): the native form keeps
+// the bytes least significant first (getBase()->val, as the stack hands
+// them over), toString() prints them most significant first, and the
+// byte-array constructor takes them in the printed order, reversing them
+// into the native form (std::reverse_copy). A copy of getBase()->val put
+// back through that constructor comes out reversed; the ble_addr_t
+// constructor keeps them as they are.
 class NimBLEAddress {
  public:
   NimBLEAddress() { memset(&a_, 0, sizeof a_); }
+  NimBLEAddress(const ble_addr_t address) : a_(address) {}
   NimBLEAddress(const uint8_t* addr, uint8_t type) {
-    memcpy(a_.val, addr, 6);
+    for (int i = 0; i < 6; ++i) a_.val[i] = addr[5 - i];
     a_.type = type;
   }
   const ble_addr_t* getBase() const { return &a_; }
   uint8_t getType() const { return a_.type; }
+  bool operator==(const NimBLEAddress& o) const {
+    return a_.type == o.a_.type && memcmp(a_.val, o.a_.val, 6) == 0;
+  }
+  bool operator!=(const NimBLEAddress& o) const { return !(*this == o); }
   std::string toString() const {
     char b[18];
     snprintf(b, sizeof b, "%02x:%02x:%02x:%02x:%02x:%02x", a_.val[5], a_.val[4],
@@ -150,14 +163,39 @@ class NimBLEServer {
     services_.emplace_back(new NimBLEService());
     return services_.back().get();
   }
-  bool updateConnParams(uint16_t, uint16_t, uint16_t, uint16_t, uint16_t) { return true; }
+  bool updateConnParams(uint16_t, uint16_t, uint16_t, uint16_t, uint16_t) {
+    host_sim::note("conn_params");
+    return true;
+  }
   std::vector<uint16_t> getPeerDevices() const { return peers; }
+  // The stack's own record of a link (ble_gap_conn_find): what is up on
+  // `handle` now. NimBLE answers a handle with no link with an empty
+  // NimBLEConnInfo (handle 0, address 00:00:00:00:00:00).
+  NimBLEConnInfo getPeerInfoByHandle(uint16_t handle) const {
+    std::lock_guard<std::mutex> g(links_mu_);
+    const auto it = links_.find(handle);
+    if (it != links_.end()) return it->second;
+    NimBLEConnInfo none;
+    none.handle = 0;
+    return none;
+  }
+  // The test plays the stack: a link comes up on its handle, or goes.
+  void link_up(const NimBLEConnInfo& c) {
+    std::lock_guard<std::mutex> g(links_mu_);
+    links_[c.getConnHandle()] = c;
+  }
+  void link_down(uint16_t handle) {
+    std::lock_guard<std::mutex> g(links_mu_);
+    links_.erase(handle);
+  }
   bool disconnect(uint16_t) {
     host_sim::note("disconnect");
     return true;
   }
   std::vector<uint16_t> peers;   // the links up, as the test sets them
  private:
+  mutable std::mutex links_mu_;
+  std::map<uint16_t, NimBLEConnInfo> links_;
   NimBLEServerCallbacks* cb_ = nullptr;
   std::vector<std::unique_ptr<NimBLEService>> services_;
 };
@@ -189,12 +227,19 @@ class NimBLEAdvertisedDevice {
   NimBLEAddress address;
   int rssi = -60;
   std::string name;
+  bool connectable = true;
+  std::vector<NimBLEUUID> services;   // the service UUIDs it advertises
   NimBLEAddress getAddress() const { return address; }
   int getRSSI() const { return rssi; }
   bool haveName() const { return !name.empty(); }
   std::string getName() const { return name; }
-  bool isConnectable() const { return true; }
-  bool isAdvertisingService(const NimBLEUUID&) const { return false; }
+  bool isConnectable() const { return connectable; }
+  bool isAdvertisingService(const NimBLEUUID& u) const {
+    for (const NimBLEUUID& s : services) {
+      if (s == u) return true;
+    }
+    return false;
+  }
   bool haveAppearance() const { return false; }
   uint16_t getAppearance() const { return 0; }
 };
@@ -244,6 +289,7 @@ inline std::unique_ptr<NimBLEServer> server;
 inline NimBLEAdvertising advertising;
 inline NimBLEScan scan;
 inline std::vector<NimBLEAddress> bonds;
+inline std::vector<NimBLEAddress> bonds_deleted;   // deleteBond's arguments, in order
 }  // namespace host_sim
 
 class NimBLEDevice {
@@ -280,8 +326,9 @@ class NimBLEDevice {
     host_sim::passkey_answers.push_back({c.getConnHandle(), accept, host_sim::task});
     return true;
   }
-  static bool deleteBond(const NimBLEAddress&) {
+  static bool deleteBond(const NimBLEAddress& a) {
     host_sim::note("bond_delete");
+    host_sim::bonds_deleted.push_back(a);
     return true;
   }
   static int getNumBonds() { return (int)host_sim::bonds.size(); }
@@ -289,8 +336,12 @@ class NimBLEDevice {
   static NimBLEAddress getAddress() { return NimBLEAddress(); }
 };
 
-// NimBLE's host C API, the calls update() and onConnect() make.
-inline int ble_gap_set_prefered_le_phy(uint16_t, uint8_t, uint8_t, uint16_t) { return 0; }
+// NimBLE's host C API, the calls update() and a link's connect (applied on
+// the loop task since F143) make.
+inline int ble_gap_set_prefered_le_phy(uint16_t, uint8_t, uint8_t, uint16_t) {
+  host_sim::note("le_phy");
+  return 0;
+}
 inline int ble_gap_conn_rssi(uint16_t, int8_t* out) {
   *out = -50;
   return 0;

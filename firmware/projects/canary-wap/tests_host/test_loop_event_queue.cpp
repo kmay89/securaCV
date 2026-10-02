@@ -9,7 +9,9 @@
 //   - post order is apply order, across the wrap of the slots;
 //   - a full queue refuses an event, counts it, and keeps every event it
 //     holds; a post with a lower limit is refused once that many wait, and
-//     the room above the limit stays for the posts that may use it;
+//     the room above the limit stays for the posts that may use it; the
+//     drops are counted by kind (dropped_limited(): a lower limit's;
+//     dropped_reserved(): a full-limit post's; dropped(): both);
 //   - consume() applies only the events waiting when it starts (an apply
 //     that posts leaves its event for the next consume), with no lock held
 //     while an apply runs, and returns how many it applied;
@@ -105,6 +107,7 @@ void test_a_full_queue_refuses_and_counts() {
   CHECK(!q.post(ev(1, 4)));
   CHECK(!q.post(ev(1, 5)));
   CHECK(q.dropped() == 2 && q.waiting() == 4);
+  CHECK(q.dropped_reserved() == 2 && q.dropped_limited() == 0);   // posts at the full limit
   std::vector<uint32_t> seen;
   CHECK(q.consume([&](const Ev& e) { seen.push_back(e.seq); }) == 4);
   CHECK((seen == std::vector<uint32_t>{0, 1, 2, 3}));
@@ -120,10 +123,14 @@ void test_a_lower_limit_keeps_the_reserve() {
   for (uint32_t i = 0; i < 4; ++i) CHECK(q.post(ev(2, i), 4));
   CHECK(!q.post(ev(2, 4), 4));                    // the flooder stops at its limit
   CHECK(q.dropped() == 1);
+  CHECK(q.dropped_limited() == 1 && q.dropped_reserved() == 0);   // a burst's, not the reserve's
   CHECK(q.post(ev(3, 0)) && q.post(ev(3, 1)));    // the reserve is there
   CHECK(!q.post(ev(3, 2)));                       // and the capacity is the cap
   CHECK(!q.post(ev(3, 3), 99));                   // a limit above N is N
   CHECK(q.dropped() == 3 && q.waiting() == 6);
+  CHECK(q.dropped_limited() == 1 && q.dropped_reserved() == 2);
+  CHECK(!q.post(ev(2, 5), 4));                    // the flooder again, the queue full
+  CHECK(q.dropped_limited() == 2 && q.dropped_reserved() == 2 && q.dropped() == 4);
   std::vector<uint32_t> producers;
   q.consume([&](const Ev& e) { producers.push_back(e.producer); });
   CHECK((producers == std::vector<uint32_t>{2, 2, 2, 2, 3, 3}));
@@ -162,27 +169,28 @@ void test_threads_every_event_once_in_order() {
   static leq::Queue<Ev, kN, MutexLock> q;
   std::atomic<bool> stop{false};
   std::atomic<uint32_t> refused[3] = {{0}, {0}, {0}};
-  // The two full-limit producers post in bursts of at most kN - kFloodLimit
-  // between two consumes: then the reserve always holds them.
+  // The two full-limit producers keep at most two events each in the queue
+  // (they wait for the consumer to apply one before posting a third): then
+  // the reserve, kN - kFloodLimit = 4, always holds them. (An earlier
+  // version bounded them by one post per consume, which a producer
+  // descheduled between reading the consume count and posting could
+  // exceed; it failed now and then under ThreadSanitizer's scheduling.)
   std::atomic<uint32_t> consumes{0};
+  std::atomic<uint32_t> applied_so_far[3] = {{0}, {0}, {0}};
   std::vector<std::thread> producers;
   for (uint32_t p = 0; p < 3; ++p) {
     producers.emplace_back([&, p]() {
       const bool flooder = p == 0;
-      uint32_t burst = 0;
-      uint32_t seen_consumes = consumes.load();
+      uint32_t queued = 0;
       for (uint32_t i = 0; i < kPerProducer; ++i) {
         if (!flooder) {
-          // One event per producer per consume at most: two producers, a
-          // reserve of four.
-          while (consumes.load() == seen_consumes && burst >= 1) std::this_thread::yield();
-          if (consumes.load() != seen_consumes) {
-            seen_consumes = consumes.load();
-            burst = 0;
-          }
-          ++burst;
+          while (queued - applied_so_far[p].load() >= 2) std::this_thread::yield();
         }
-        if (!q.post(ev(p, i), flooder ? kFloodLimit : kN)) refused[p].fetch_add(1);
+        if (q.post(ev(p, i), flooder ? kFloodLimit : kN)) {
+          ++queued;
+        } else {
+          refused[p].fetch_add(1);
+        }
         if (flooder && (i & 63) == 0) std::this_thread::yield();
       }
     });
@@ -198,6 +206,7 @@ void test_threads_every_event_once_in_order() {
           in_order = in_order && (int64_t)e.seq > last[e.producer];
           last[e.producer] = e.seq;
           ++applied[e.producer];
+          applied_so_far[e.producer].fetch_add(1);
         }
       });
       consumes.fetch_add(1);
@@ -215,6 +224,8 @@ void test_threads_every_event_once_in_order() {
   CHECK(all_whole && in_order);
   for (uint32_t p = 0; p < 3; ++p) CHECK(applied[p] + refused[p].load() == kPerProducer);
   CHECK(q.dropped() == refused[0].load() + refused[1].load() + refused[2].load());
+  CHECK(q.dropped_limited() == refused[0].load());     // only the flooder posts under a limit
+  CHECK(q.dropped_reserved() == refused[1].load() + refused[2].load());
   CHECK(refused[1].load() == 0 && refused[2].load() == 0);   // the reserve held them
   CHECK(q.waiting() == 0);
   std::printf("  flooder refused %u of %u; consumes %u\n", (unsigned)refused[0].load(),

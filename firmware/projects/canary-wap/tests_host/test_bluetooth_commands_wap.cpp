@@ -52,6 +52,7 @@
 #error "BLUETOOTH_CHANNEL_CPP (absolute path to bluetooth_channel.cpp) must be defined"
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -140,22 +141,41 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 #include "http_status_line.h"   // the status line a Bluetooth not-run answer sends
 
 // What the sketch links in on a device (canary_wap.ino and the BLE modules).
+// The health log keeps each line's message, detail, level and the task that
+// wrote it; the presence sensor's calls are recorded with their task too, so
+// a test can see that none is the NimBLE host task's (sweep F143).
 std::vector<std::string> g_health;
+struct HealthLine {
+  LogLevel level;
+  std::string message;
+  std::string detail;
+  std::string task;
+};
+std::vector<HealthLine> g_health_lines;
 std::mutex g_health_mu;   // the device's health log takes its own lock
-void log_health(LogLevel, LogCategory, const char* message, const char*) {
+void log_health(LogLevel level, LogCategory, const char* message, const char* detail) {
   std::lock_guard<std::mutex> g(g_health_mu);
   g_health.push_back(message);
+  g_health_lines.push_back({level, message, detail ? detail : "", host_sim::task});
 }
 namespace ble_ota {
 bool init(NimBLEServer*, const uint8_t[32]) { return true; }
 }  // namespace ble_ota
+namespace host_sim {
+inline std::mutex presence_mu;
+inline std::vector<Call> presence_calls;   // ble_presence's, with their task
+inline void presence(const char* what) {
+  std::lock_guard<std::mutex> g(presence_mu);
+  presence_calls.push_back({what, task});
+}
+}  // namespace host_sim
 namespace ble_presence {
 bool init() { return true; }
 void deinit() {}
 bool start() { return true; }
-void pause_for_user_scan() {}
-void resume_continuous_scan() {}
-void notify_console_connected(bool) {}
+void pause_for_user_scan() { host_sim::presence("pause"); }
+void resume_continuous_scan() { host_sim::presence("resume"); }
+void notify_console_connected(bool on) { host_sim::presence(on ? "console_on" : "console_off"); }
 }  // namespace ble_presence
 namespace ble_console {
 bool init(NimBLEServer*) { return true; }
@@ -200,7 +220,11 @@ void boot(bool bring_up = true, bool wipe = true) {
   host_sim::advertising = NimBLEAdvertising();
   host_sim::scan = NimBLEScan();
   host_sim::bonds.clear();
+  host_sim::bonds_deleted.clear();
   host_sim::passkey_answers.clear();
+  host_sim::presence_calls.clear();
+  g_health.clear();
+  g_health_lines.clear();
   host_sim::calls.clear();
   host_sim::task = "loop";
   host_sim::on_task_delay = nullptr;
@@ -229,8 +253,8 @@ void boot(bool bring_up = true, bool wipe = true) {
     if (e.type == bc::BT_EV_CONFIRM_PASSKEY) delete e.u.passkey.conn;
   });
   bc::g_events = decltype(bc::g_events)();
-  bc::g_events_dropped_seen = 0;
-  bc::g_events_dropped_logged_ms = 0;
+  bc::g_link_drops = {0, 0};
+  bc::g_lossy_drops = {0, 0};
   bc::g_status_view = decltype(bc::g_status_view)();       // nothing published yet
   bc::g_scan_view = decltype(bc::g_scan_view)();
   bc::g_paired_view = decltype(bc::g_paired_view)();
@@ -309,19 +333,24 @@ void loop_pass() {
   host_sim::task = was;
 }
 
-NimBLEConnInfo link(uint16_t handle, uint8_t last_byte) {
+// A phone's link on `handle`: its address prints "<last_byte>:22:33:44:55:66"
+// (NimBLE's byte-array constructor takes the printed order), of `type`
+// (0 public, 1 random).
+NimBLEConnInfo link(uint16_t handle, uint8_t last_byte, uint8_t type = 0) {
   NimBLEConnInfo c;
   c.handle = handle;
   const uint8_t addr[6] = {last_byte, 0x22, 0x33, 0x44, 0x55, 0x66};
-  c.address = NimBLEAddress(addr, 0);
+  c.address = NimBLEAddress(addr, type);
   return c;
 }
 
 // A phone pairing: the owner started pairing mode (over REST), the phone
-// connected, and the stack asks to confirm `pin` (Numeric Comparison).
+// connected (the stack holds its link), and the stack asks to confirm `pin`
+// (Numeric Comparison).
 void pairing_awaiting_confirm(uint32_t pin, const NimBLEConnInfo& phone) {
   const Rest start = rest(cmd_of(bc::BT_CMD_PAIR_START));
   CHECK(start.wait == lcr::Wait::kDone && start.r.ok);
+  host_sim::server->link_up(phone);
   NimBLEConnInfo c = phone;
   on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(c, pin); });
   loop_pass();
@@ -708,6 +737,39 @@ size_t health_says(const char* message) {
   return n;
 }
 
+// The level and the detail of the last health-log line saying `message`.
+LogLevel health_level(const char* message) {
+  LogLevel level = SCV_LOG_TAMPER;
+  for (const HealthLine& l : g_health_lines) {
+    if (l.message == message) level = l.level;
+  }
+  return level;
+}
+std::string health_detail(const char* message) {
+  std::string detail = "(none)";
+  for (const HealthLine& l : g_health_lines) {
+    if (l.message == message) detail = l.detail;
+  }
+  return detail;
+}
+
+// Health-log lines and presence-sensor calls made on `task`.
+size_t health_on(const char* task) {
+  size_t n = 0;
+  for (const HealthLine& l : g_health_lines) n += l.task == task;
+  return n;
+}
+size_t presence_on(const char* task, const char* what = "") {
+  size_t n = 0;
+  for (const host_sim::Call& c : host_sim::presence_calls) {
+    n += c.task == task && (what[0] == '\0' || c.what == what);
+  }
+  return n;
+}
+
+const char* const kLinkDrops = "BLE link events dropped (queue full)";
+const char* const kLossyDrops = "BLE scan/activity events dropped (queue full)";
+
 // A link up, a bond, a scan's results and its end, a link down: each
 // callback, on the NimBLE host task, changes none of the channel's state
 // and makes no radio, bond or NVS call; the loop task's next pass applies
@@ -770,6 +832,12 @@ void test_a_callback_changes_nothing_until_the_loop_task_applies_it() {
   CHECK(bc::g_scanned_devices[0].type == bc::DEV_WEARABLE);
   CHECK(!bc::g_scanning && bc::g_state == bc::BT_IDLE);
   CHECK(host_sim::count("", "nimble") == 0);
+  // The health log's lines and the presence sensor's calls are the loop
+  // task's too (a link up and down, the scan handed back).
+  CHECK(health_on("nimble") == 0 && health_on("loop") > 0);
+  CHECK(presence_on("nimble") == 0);
+  CHECK(presence_on("loop", "console_on") == 1 && presence_on("loop", "console_off") == 1);
+  CHECK(presence_on("loop", "resume") == 1);
   none_on_httpd();
   std::printf("PASS a_callback_changes_nothing_until_the_loop_task_applies_it\n");
 }
@@ -786,6 +854,7 @@ void test_the_pending_pairing_has_one_owner() {
   boot();
   CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
   NimBLEConnInfo phone = link(31, 0xF1);
+  host_sim::server->link_up(phone);
   on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 111111); });
   CHECK(bc::g_pending_pair_info == nullptr && !bc::g_pending_pair_active);
   CHECK(bc::g_pairing.state == bc::PAIR_INITIATED);
@@ -828,6 +897,7 @@ void test_the_pending_pairing_has_one_owner() {
   // then answered no by the timeout, once.
   boot();
   CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  host_sim::server->link_up(phone);
   host_sim::now_ms += bc::PAIRING_TIMEOUT_MS;
   on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 444444); });
   loop_pass();
@@ -842,9 +912,10 @@ void test_the_pending_pairing_has_one_owner() {
 // The queue full (the loop task stalled): a scan result or a link's
 // activity is posted only while fewer than EVENT_LOSSY_LIMIT wait, so the
 // rest of the room is a link's; an event that finds no room is dropped and
-// counted, the count goes to the health log once a minute at most, and a
-// passkey to confirm that finds no room is answered no on the NimBLE host
-// task (fails closed) with its copy deleted there.
+// counted by kind, each count goes to the health log once a minute at most
+// (a link's as a warning, the lower limit's at debug level), and a passkey
+// to confirm that finds no room is answered no on the NimBLE host task
+// (fails closed) with its copy deleted there.
 void test_a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed() {
   boot();
   CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
@@ -861,6 +932,7 @@ void test_a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed() {
     on_nimble([&] { host_sim::scan.callbacks()->onResult(&d); });
   }
   CHECK(bc::g_events.waiting() == bc::EVENT_LOSSY_LIMIT && bc::g_events.dropped() == 4);
+  CHECK(bc::g_events.dropped_limited() == 4 && bc::g_events.dropped_reserved() == 0);
   // A phone connects and the stack asks for a passkey: the reserve holds them.
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 555555); });
@@ -871,7 +943,7 @@ void test_a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed() {
   }
   NimBLEConnInfo other = link(42, 0xA5);
   on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(other, 666666); });
-  CHECK(bc::g_events.dropped() == 5);
+  CHECK(bc::g_events.dropped() == 5 && bc::g_events.dropped_reserved() == 1);
   CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
   CHECK(host_sim::passkey_answers[0].task == "nimble" && host_sim::passkey_answers[0].handle == 42);
   CHECK(host_sim::conn_heap == 1);                           // only the queued one's copy
@@ -881,16 +953,17 @@ void test_a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed() {
   CHECK(bc::g_scanned_count == bc::EVENT_LOSSY_LIMIT);       // the sixteen that fit
   CHECK(bc::g_connection.connected);                         // the link's events kept
   CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 555555);
-  CHECK(health_says("BLE events dropped (queue full)") == 1);
+  CHECK(health_says(kLinkDrops) == 1 && health_says(kLossyDrops) == 1);
+  CHECK(health_level(kLinkDrops) == SCV_LOG_WARNING && health_level(kLossyDrops) == SCV_LOG_DEBUG);
   // More drops within the minute: counted, not logged again; after it, logged.
   for (int i = 0; i < 30; ++i) {
     on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0); });
   }
   loop_pass();
-  CHECK(health_says("BLE events dropped (queue full)") == 1);
+  CHECK(health_says(kLinkDrops) == 1);
   host_sim::now_ms += 60000;
   loop_pass();
-  CHECK(health_says("BLE events dropped (queue full)") == 2);
+  CHECK(health_says(kLinkDrops) == 2 && health_says(kLossyDrops) == 1);
   CHECK(rest(cmd_of(bc::BT_CMD_PAIR_CANCEL)).r.ok);
   CHECK(host_sim::conn_heap == 0);
   std::printf("PASS a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed\n");
@@ -933,6 +1006,494 @@ void test_a_scan_end_is_applied_once() {
   std::printf("PASS a_scan_end_is_applied_once\n");
 }
 
+// ── Review of F143: a link's address, its pairing, the queue's kinds ────
+
+// The GATT characteristics' callbacks, as the stack calls them.
+NimBLECharacteristicCallbacks* char_cb() { return &bc::g_char_callbacks; }
+
+// A link is named by its address as NimBLE prints it: the connection's
+// name, and a newly paired phone's (saved, and shown by GET /paired), are
+// the phone's getAddress().toString(). The link's event carries the
+// stack's own ble_addr_t; bytes copied out of getBase() and put back
+// through NimBLE-Arduino 2.x's byte-array constructor (which takes the
+// printed order and reverses it) printed the name backwards. And the
+// address type (a random address, as phones use) reaches the paired list
+// and the bond delete.
+void test_a_link_is_named_by_its_address() {
+  boot();
+  NimBLEConnInfo phone = link(91, 0xA1, /*type=*/1);
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  const std::string printed = phone.getAddress().toString();
+  CHECK(printed == "a1:22:33:44:55:66");                    // as NimBLE prints it
+  host_sim::server->peers = {91};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
+  CHECK(strcmp(bc::g_connection.name, printed.c_str()) == 0);
+  CHECK(memcmp(bc::g_connection.address, phone.getAddress().getBase()->val, 6) == 0);
+  CHECK(bc::g_paired_count == 1);
+  CHECK(strcmp(bc::g_paired_devices[0].name, printed.c_str()) == 0);
+  CHECK(memcmp(bc::g_paired_devices[0].address, phone.getAddress().getBase()->val, 6) == 0);
+  CHECK(bc::g_paired_devices[0].address_type == 1);
+  CHECK(health_detail("New device paired") == printed);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(strcmp(st.connection.name, printed.c_str()) == 0);
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(paired.count == 1 && strcmp(paired.devices[0].name, printed.c_str()) == 0);
+  CHECK(paired.devices[0].address_type == 1);
+  bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  memcpy(remove.address, phone.getAddress().getBase()->val, 6);
+  CHECK(rest(remove).r.ok);
+  CHECK(host_sim::bonds_deleted.size() == 1 && host_sim::bonds_deleted[0].getType() == 1);
+  std::printf("PASS a_link_is_named_by_its_address\n");
+}
+
+// A pairing awaiting the owner's answer ends with its link: when the phone
+// walks away mid-confirm, the loop task applies the link's end, the
+// pending copy goes unanswered (there is no link to answer), the pairing
+// reads failed and stops showing the dead link's digits, and a confirm of
+// them afterwards answers nothing. Before, the copy and the confirming
+// state outlived the link, and the confirm answered yes into its handle.
+void test_a_pairing_ends_with_its_link() {
+  boot();
+  NimBLEConnInfo a = link(7, 0xA1);
+  host_sim::server->peers = {7};
+  host_sim::server->link_up(a);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), a); });
+  loop_pass();
+  pairing_awaiting_confirm(482913, a);
+  host_sim::server->link_down(7);                           // the stack ends it, then says so
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), a, 0x13); });
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_FAILED);
+  CHECK(!bc::g_pending_pair_active && bc::g_pending_pair_info == nullptr);
+  CHECK(host_sim::conn_heap == 0 && host_sim::passkey_answers.empty());
+  CHECK(health_says("Pairing link lost before confirmation") == 1);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.pairing.state == bc::PAIR_FAILED && !st.pairing.pin_displayed && !st.connected);
+  bc::Command c = cmd_of(bc::BT_CMD_PAIR_CONFIRM);
+  c.pin = 482913;
+  const Rest r = rest(c);
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
+  CHECK(host_sim::passkey_answers.empty());
+  none_on_httpd();
+  std::printf("PASS a_pairing_ends_with_its_link\n");
+}
+
+// Phone A walks away mid-confirm and phone B connects on the handle A had;
+// B's stack asks its own Numeric Comparison while the loop task is
+// applying B's link (so B's passkey waits for the next pass). The owner's
+// confirm of A's six digits, drained in that same pass, must not answer
+// yes on the handle B now holds: B's digits were never shown. They are, on
+// the next pass, and the owner's confirm of them goes to B.
+NimBLEConnInfo g_phone_b;
+bool g_b_asks_on_connect = false;
+void b_asks_when_it_connects(const bc::ConnectionInfo*, bool connected) {
+  if (!connected || !g_b_asks_on_connect) return;
+  g_b_asks_on_connect = false;
+  on_nimble([] { host_sim::server->callbacks()->onConfirmPassKey(g_phone_b, 999999); });
+}
+void test_a_reused_handle_never_takes_the_old_yes() {
+  boot();
+  NimBLEConnInfo a = link(7, 0xA1);
+  host_sim::server->peers = {7};
+  pairing_awaiting_confirm(482913, a);
+  g_phone_b = link(7, 0xBB);
+  bc::set_connection_callback(b_asks_when_it_connects);
+  host_sim::server->link_down(7);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), a, 0x13); });
+  host_sim::server->link_up(g_phone_b);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), g_phone_b); });
+  g_b_asks_on_connect = true;
+  bc::Command c = cmd_of(bc::BT_CMD_PAIR_CONFIRM);
+  c.pin = 482913;
+  Rest r = rest(c);                                         // A's end, B's link, then the confirm
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
+  CHECK(host_sim::passkey_answers.empty());
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 7);
+  loop_pass();                                              // B's own digits
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 999999);
+  CHECK(bc::g_pending_pair_info != nullptr && bc::g_pending_pair_info->getAddress() == g_phone_b.getAddress());
+  bc::set_connection_callback(nullptr);
+  c.pin = 999999;
+  r = rest(c);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(host_sim::passkey_answers.size() == 1 && host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].handle == 7 && host_sim::passkey_answers[0].task == "loop");
+  CHECK(host_sim::conn_heap == 0);
+  std::printf("PASS a_reused_handle_never_takes_the_old_yes\n");
+}
+
+// The answer goes only to the link the digits came from, as the stack
+// holds it now: when A's end never reached the loop task (its event lost
+// to a full queue) and B took the handle, or the handle has no link at
+// all, a confirm (or a no) answers nothing, the copy is deleted and the
+// pairing reads failed.
+void test_an_answer_goes_only_to_its_own_link() {
+  boot();
+  pairing_awaiting_confirm(482913, link(7, 0xA1));
+  host_sim::server->link_up(link(7, 0xBB));                 // B on A's handle; no event for A's end
+  bc::Command c = cmd_of(bc::BT_CMD_PAIR_CONFIRM);
+  c.pin = 482913;
+  Rest r = rest(c);
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
+  CHECK(host_sim::passkey_answers.empty());
+  CHECK(bc::g_pending_pair_info == nullptr && !bc::g_pending_pair_active && host_sim::conn_heap == 0);
+  CHECK(bc::g_pairing.state == bc::PAIR_FAILED && !bc::g_pairing.user_confirmed);
+  CHECK(health_says("Pairing link gone — confirmation not sent") == 1);
+
+  boot();
+  pairing_awaiting_confirm(111222, link(9, 0xB2));
+  host_sim::server->link_down(9);                           // no link on the handle at all
+  c.pin = 111222;
+  r = rest(c);
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && host_sim::passkey_answers.empty());
+
+  boot();
+  pairing_awaiting_confirm(333444, link(5, 0xC5));
+  host_sim::server->link_down(5);
+  r = rest(cmd_of(bc::BT_CMD_PAIR_REJECT));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && host_sim::passkey_answers.empty());
+  CHECK(host_sim::conn_heap == 0);
+  std::printf("PASS an_answer_goes_only_to_its_own_link\n");
+}
+
+// Turning Bluetooth off ends a pairing awaiting the owner: the pending
+// Numeric Comparison is answered no while its link is still up (before the
+// link is dropped), the pairing reads none, and a disabled channel's passes
+// leave nothing pending. Before, the copy and the confirming state stayed
+// (update() returns early while disabled) until Bluetooth came back on.
+void test_turning_bluetooth_off_ends_a_pairing() {
+  for (const bool by_settings : {true, false}) {
+    boot();
+    NimBLEConnInfo a = link(13, 0xE1);
+    host_sim::server->peers = {13};
+    host_sim::server->link_up(a);
+    on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), a); });
+    loop_pass();
+    pairing_awaiting_confirm(222333, a);
+    host_sim::calls.clear();
+    bc::Command off = cmd_of(bc::BT_CMD_SETTINGS);
+    off.set_mask = bc::BT_SET_ENABLED;                      // enabled: false
+    const Rest r = rest(by_settings ? off : cmd_of(bc::BT_CMD_DISABLE));
+    CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+    CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+    CHECK(host_sim::passkey_answers[0].handle == 13 && host_sim::passkey_answers[0].task == "loop");
+    CHECK(bc::g_pairing.state == bc::PAIR_NONE && !bc::g_pending_pair_active);
+    CHECK(bc::g_pending_pair_info == nullptr && host_sim::conn_heap == 0);
+    std::vector<std::string> order;
+    for (const host_sim::Call& call : host_sim::calls) order.push_back(call.what);
+    const auto answered = std::find(order.begin(), order.end(), "passkey_answer");
+    const auto dropped = std::find(order.begin(), order.end(), "disconnect");
+    CHECK(answered != order.end() && dropped != order.end() && answered < dropped);
+    CHECK(bc::g_state == bc::BT_DISABLED);
+    host_sim::server->link_down(13);
+    on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), a, 0x16); });
+    host_sim::now_ms += 10 * bc::PAIRING_TIMEOUT_MS;
+    loop_pass();
+    loop_pass();
+    CHECK(host_sim::passkey_answers.size() == 1 && bc::g_state == bc::BT_DISABLED);
+    CHECK(bc::g_pairing.state == bc::PAIR_NONE);
+  }
+  std::printf("PASS turning_bluetooth_off_ends_a_pairing\n");
+}
+
+// GATT activity is posted under EVENT_LOSSY_LIMIT, as scan results are: a
+// burst of writes, then of reads, with no pass between fills the queue to
+// the limit and no further, and a link's own events after each burst (a
+// link down, a link up, a passkey) are all kept, none dropped.
+void test_gatt_activity_never_takes_the_links_room() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo phone = link(44, 0xA4);
+  host_sim::server->peers = {44};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  const uint32_t total_before = bc::g_total_bytes_received;
+  bc::g_command_char->setValue((const uint8_t*)"hello", 5);
+  for (int i = 0; i < 20; ++i) {
+    on_nimble([&] { char_cb()->onWrite(bc::g_command_char, phone); });
+  }
+  CHECK(bc::g_events.waiting() == bc::EVENT_LOSSY_LIMIT);
+  CHECK(bc::g_events.dropped_limited() == 4 && bc::g_events.dropped_reserved() == 0);
+  NimBLEConnInfo next = link(45, 0xA5);
+  host_sim::server->link_down(44);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  host_sim::server->link_up(next);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), next); });
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(next, 777777); });
+  CHECK(bc::g_events.waiting() == bc::EVENT_LOSSY_LIMIT + 3);
+  CHECK(bc::g_events.dropped_reserved() == 0 && host_sim::passkey_answers.empty());
+  loop_pass();
+  CHECK(bc::g_total_bytes_received == total_before + 16 * 5);    // the sixteen that fit
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 45);
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 777777);
+
+  for (int i = 0; i < 20; ++i) {
+    on_nimble([&] { char_cb()->onRead(bc::g_status_char, next); });
+  }
+  CHECK(bc::g_events.waiting() == bc::EVENT_LOSSY_LIMIT);
+  CHECK(bc::g_events.dropped_limited() == 8 && bc::g_events.dropped_reserved() == 0);
+  host_sim::server->link_down(45);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), next, 0x13); });
+  CHECK(bc::g_events.waiting() == bc::EVENT_LOSSY_LIMIT + 1 && bc::g_events.dropped_reserved() == 0);
+  loop_pass();
+  CHECK(!bc::g_connection.connected && bc::g_pairing.state == bc::PAIR_FAILED);
+  CHECK(host_sim::conn_heap == 0);
+  std::printf("PASS gatt_activity_never_takes_the_links_room\n");
+}
+
+// The drops are logged by kind: a busy room advertising through a stall
+// (scan results the lower limit refused) is a debug line, never the
+// warning; a link's event that found no room is the warning (the
+// connection state may now be stale), with the count.
+void test_a_busy_room_is_no_warning() {
+  boot();
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok);
+  for (int i = 0; i < 40; ++i) {
+    NimBLEAdvertisedDevice d;
+    const uint8_t a[6] = {(uint8_t)(i % 3), 9, 9, 9, 9, 9};  // three devices, heard over and over
+    d.address = NimBLEAddress(a, 0);
+    on_nimble([&] { host_sim::scan.callbacks()->onResult(&d); });
+  }
+  loop_pass();
+  CHECK(bc::g_scanned_count == 3);
+  CHECK(health_says(kLinkDrops) == 0);
+  CHECK(health_says(kLossyDrops) == 1 && health_level(kLossyDrops) == SCV_LOG_DEBUG);
+  CHECK(health_detail(kLossyDrops) == "24 since boot");
+  NimBLEConnInfo phone = link(46, 0xA6);
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  CHECK(bc::g_events.dropped_reserved() == 1);
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(health_says(kLinkDrops) == 1 && health_level(kLinkDrops) == SCV_LOG_WARNING);
+  CHECK(health_detail(kLinkDrops) == "1 since boot");
+  CHECK(health_says(kLossyDrops) == 1);                     // nothing new of that kind
+  std::printf("PASS a_busy_room_is_no_warning\n");
+}
+
+// What the stack said of a link's security reaches the connection and the
+// paired list as it said it: encrypted only, authenticated, none; a bond
+// that completes authenticated but unbonded is no paired device (nothing
+// saved); one that fails authentication is a failed pairing.
+void test_a_links_security_is_what_the_stack_said() {
+  boot();
+  host_sim::server->peers = {51};
+  NimBLEConnInfo enc = link(51, 0xB1);
+  enc.encrypted = true;
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), enc); });
+  loop_pass();
+  CHECK(bc::g_connection.security == bc::SEC_ENCRYPTED);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), enc, 0x13); });
+  NimBLEConnInfo plain = link(52, 0xB2);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), plain); });
+  loop_pass();
+  CHECK(bc::g_connection.security == bc::SEC_NONE);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), plain, 0x13); });
+  NimBLEConnInfo auth = link(53, 0xB3);
+  auth.encrypted = auth.authenticated = true;
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), auth); });
+  loop_pass();
+  CHECK(bc::g_connection.security == bc::SEC_AUTHENTICATED);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);          // the owner's pairing mode: no timeout due
+  host_sim::calls.clear();
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(auth); });   // not bonded
+  loop_pass();
+  CHECK(bc::g_connection.security == bc::SEC_AUTHENTICATED && bc::g_paired_count == 0);
+  CHECK(host_sim::main_nvs.count("bt_paired") == 0);
+  CHECK(bc::g_pairing.state == bc::PAIR_COMPLETE);
+  NimBLEConnInfo failed = auth;
+  failed.authenticated = false;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(failed); });
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_FAILED && health_says("Pairing failed") == 1);
+  CHECK(bc::g_paired_count == 0);
+  std::printf("PASS a_links_security_is_what_the_stack_said\n");
+}
+
+// A GATT write counts its bytes (the link's and the totals) and, like a
+// read, marks the link active when the stack saw it, so the inactivity
+// timeout counts from there, not from the link's start or the pass.
+void test_gatt_activity_counts_and_keeps_a_link() {
+  boot();
+  bc::g_settings.inactivity_timeout_ms = 60000;
+  NimBLEConnInfo phone = link(54, 0xB4);
+  host_sim::server->peers = {54};
+  const uint32_t t0 = host_sim::now_ms;
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  CHECK(bc::g_connection.last_activity_ms == t0);
+  const uint32_t total_before = bc::g_total_bytes_received;
+  host_sim::now_ms = t0 + 59000;
+  bc::g_command_char->setValue((const uint8_t*)"1234567", 7);
+  on_nimble([&] { char_cb()->onWrite(bc::g_command_char, phone); });
+  host_sim::now_ms = t0 + 59500;                            // the pass comes later
+  loop_pass();
+  CHECK(bc::g_connection.bytes_received == 7 && bc::g_total_bytes_received == total_before + 7);
+  CHECK(bc::g_connection.last_activity_ms == t0 + 59000);
+  host_sim::now_ms = t0 + 59000 + 30000;
+  on_nimble([&] { char_cb()->onRead(bc::g_status_char, phone); });
+  host_sim::now_ms = t0 + 59000 + 30500;
+  loop_pass();
+  CHECK(bc::g_connection.last_activity_ms == t0 + 89000 && bc::g_connection.bytes_received == 7);
+  host_sim::calls.clear();
+  host_sim::now_ms = t0 + 89000 + 59000;
+  loop_pass();
+  CHECK(host_sim::count("disconnect") == 0);                // a minute since the read: not yet
+  host_sim::now_ms = t0 + 89000 + 60000;
+  loop_pass();
+  CHECK(host_sim::count("disconnect", "loop") == 1);
+  std::printf("PASS gatt_activity_counts_and_keeps_a_link\n");
+}
+
+// A passkey the stack asks this device to show (onPassKeyDisplay, the
+// passkey-entry flow) reaches the owner on the loop task's next pass: the
+// pairing reads pin_displayed with the digits the callback returned.
+void test_a_passkey_to_show_reaches_the_owner() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  uint32_t shown = 0;
+  on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  CHECK(shown < 1000000);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED);         // nothing yet
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED && bc::g_pairing.pin_code == shown);
+  CHECK(bc::g_pairing.pin_displayed);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.pairing.state == bc::PAIR_PIN_DISPLAYED && st.pairing.pin_code == shown);
+  char six[16];
+  snprintf(six, sizeof six, "%06lu", (unsigned long)shown);
+  CHECK(health_detail("Pairing PIN displayed") == six);
+  CHECK(health_on("nimble") == 0);
+  std::printf("PASS a_passkey_to_show_reaches_the_owner\n");
+}
+
+// A scan result keeps what its advertisement said: connectable or not,
+// the SecuraCV service or not (and so its type), its name and RSSI.
+void test_a_scan_result_keeps_what_the_advertisement_said() {
+  boot();
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok);
+  NimBLEAdvertisedDevice canary;
+  const uint8_t ca[6] = {0xC1, 1, 1, 1, 1, 1};
+  canary.address = NimBLEAddress(ca, 0);
+  canary.connectable = false;
+  canary.services = {NimBLEUUID(bc::SERVICE_UUID)};
+  canary.rssi = -71;
+  NimBLEAdvertisedDevice pixel;
+  const uint8_t pa[6] = {0xC2, 2, 2, 2, 2, 2};
+  pixel.address = NimBLEAddress(pa, 0);
+  pixel.name = "Pixel 8";
+  pixel.rssi = -48;
+  on_nimble([&] { host_sim::scan.callbacks()->onResult(&canary); });
+  on_nimble([&] { host_sim::scan.callbacks()->onResult(&pixel); });
+  loop_pass();
+  CHECK(bc::g_scanned_count == 2);
+  const bc::ScannedDevice& c = bc::g_scanned_devices[0];
+  const bc::ScannedDevice& p = bc::g_scanned_devices[1];
+  CHECK(memcmp(c.address, canary.address.getBase()->val, 6) == 0);
+  CHECK(!c.connectable && c.has_securacv_service && c.type == bc::DEV_SECURACV);
+  CHECK(c.rssi == -71 && c.name[0] == '\0');
+  CHECK(p.connectable && !p.has_securacv_service && p.type == bc::DEV_PHONE);
+  CHECK(p.rssi == -48 && strcmp(p.name, "Pixel 8") == 0);
+  bc::ScanView view;
+  bc::read_scan(&view);
+  CHECK(view.count == 2 && memcmp(view.devices, bc::g_scanned_devices, 2 * sizeof(bc::ScannedDevice)) == 0);
+  std::printf("PASS a_scan_result_keeps_what_the_advertisement_said\n");
+}
+
+// The times a link, a bond, a re-bond and a re-heard device carry are the
+// callback's (the stack's moment), not the pass's that applies them; a
+// link's end counts its time from them, and the health log carries the
+// stack's disconnect reason.
+void test_times_are_the_callbacks() {
+  boot();
+  NimBLEConnInfo phone = link(55, 0xB5);
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::server->peers = {55};
+  host_sim::now_ms = 400000;
+  const uint32_t t0 = host_sim::now_ms;
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  host_sim::now_ms += 300;
+  loop_pass();
+  const uint32_t t1 = host_sim::now_ms;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  host_sim::now_ms += 700;
+  loop_pass();
+  CHECK(bc::g_paired_count == 1 && bc::g_paired_devices[0].last_connected_ms == t1);
+  CHECK(bc::g_paired_devices[0].paired_timestamp == t1 / 1000);
+  const uint32_t t2 = host_sim::now_ms;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });   // a re-bond
+  host_sim::now_ms += 900;
+  loop_pass();
+  CHECK(bc::g_paired_devices[0].last_connected_ms == t2 && bc::g_paired_devices[0].connection_count == 2);
+  const uint32_t connected_before = bc::g_connected_total_ms;
+  host_sim::now_ms = t0 + 5000;
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  host_sim::now_ms = t0 + 9000;
+  loop_pass();
+  CHECK(bc::g_connected_total_ms == connected_before + 5000);
+  CHECK(health_detail("BLE device disconnected") == "Duration: 5s, Reason: 19");
+
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 60000;
+  CHECK(rest(scan).r.ok);
+  NimBLEAdvertisedDevice d;
+  const uint8_t a[6] = {0xD1, 3, 3, 3, 3, 3};
+  d.address = NimBLEAddress(a, 0);
+  const uint32_t t3 = host_sim::now_ms;
+  on_nimble([&] { host_sim::scan.callbacks()->onResult(&d); });
+  host_sim::now_ms += 100;
+  loop_pass();
+  CHECK(bc::g_scanned_count == 1 && bc::g_scanned_devices[0].last_seen_ms == t3);
+  const uint32_t t4 = host_sim::now_ms;
+  d.rssi = -40;
+  on_nimble([&] { host_sim::scan.callbacks()->onResult(&d); });   // heard again
+  host_sim::now_ms += 400;
+  loop_pass();
+  CHECK(bc::g_scanned_devices[0].last_seen_ms == t4 && bc::g_scanned_devices[0].rssi == -40);
+  std::printf("PASS times_are_the_callbacks\n");
+}
+
+// A link's connection-parameter request, and in long-range mode its LE
+// Coded PHY request, go out from the loop task when it applies the link's
+// connect (they read the settings there), and the PHY request only in
+// long-range mode.
+void test_a_links_requests_go_out_from_the_loop_task() {
+  boot();
+  host_sim::server->peers = {56};
+  NimBLEConnInfo phone = link(56, 0xB6);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  CHECK(host_sim::count("conn_params") == 0);
+  loop_pass();
+  CHECK(host_sim::count("conn_params", "loop") == 1 && host_sim::count("conn_params") == 1);
+  CHECK(host_sim::count("le_phy") == 0);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  loop_pass();
+  bc::Command lr = cmd_of(bc::BT_CMD_SETTINGS);
+  lr.settings.long_range_mode = true;
+  lr.set_mask = bc::BT_SET_LONG_RANGE;
+  CHECK(rest(lr).r.ok && bc::g_settings.long_range_mode);
+  host_sim::calls.clear();
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  CHECK(host_sim::count("conn_params", "loop") == 1 && host_sim::count("le_phy", "loop") == 1);
+  CHECK(host_sim::count("le_phy") == 1);
+  std::printf("PASS a_links_requests_go_out_from_the_loop_task\n");
+}
+
 // ── Two tasks at once (sweep F143), for ThreadSanitizer ─────────────────
 
 // The NimBLE host task's callbacks on one thread, the loop task's passes on
@@ -966,6 +1527,7 @@ void test_threads_callbacks_loop_and_commands() {
     NimBLEConnInfo phone = link(61, 0xC6);
     phone.encrypted = phone.authenticated = phone.bonded = true;
     for (int i = 0; i < kRounds; ++i) {
+      host_sim::server->link_up(phone);                      // the stack's own record
       server_cb->onConnect(host_sim::server.get(), phone);
       (void)server_cb->onPassKeyDisplay();
       passkeys_asked.fetch_add(1);
@@ -978,6 +1540,7 @@ void test_threads_callbacks_loop_and_commands() {
       d.address = NimBLEAddress(a, 0);
       scan_cb->onResult(&d);
       scan_cb->onScanEnd(NimBLEScanResults(), 0);
+      host_sim::server->link_down(61);
       server_cb->onDisconnect(host_sim::server.get(), phone, 0x13);
       // A radio's pace: wait while the loop task is behind, so its passes
       // and these callbacks interleave rather than the queue filling.
@@ -1506,6 +2069,20 @@ const Test kTests[] = {
     {"a_link_that_ends_after_bluetooth_is_off_leaves_it_off",
      test_a_link_that_ends_after_bluetooth_is_off_leaves_it_off},
     {"a_scan_end_is_applied_once", test_a_scan_end_is_applied_once},
+    {"a_link_is_named_by_its_address", test_a_link_is_named_by_its_address},
+    {"a_pairing_ends_with_its_link", test_a_pairing_ends_with_its_link},
+    {"a_reused_handle_never_takes_the_old_yes", test_a_reused_handle_never_takes_the_old_yes},
+    {"an_answer_goes_only_to_its_own_link", test_an_answer_goes_only_to_its_own_link},
+    {"turning_bluetooth_off_ends_a_pairing", test_turning_bluetooth_off_ends_a_pairing},
+    {"gatt_activity_never_takes_the_links_room", test_gatt_activity_never_takes_the_links_room},
+    {"a_busy_room_is_no_warning", test_a_busy_room_is_no_warning},
+    {"a_links_security_is_what_the_stack_said", test_a_links_security_is_what_the_stack_said},
+    {"gatt_activity_counts_and_keeps_a_link", test_gatt_activity_counts_and_keeps_a_link},
+    {"a_passkey_to_show_reaches_the_owner", test_a_passkey_to_show_reaches_the_owner},
+    {"a_scan_result_keeps_what_the_advertisement_said",
+     test_a_scan_result_keeps_what_the_advertisement_said},
+    {"times_are_the_callbacks", test_times_are_the_callbacks},
+    {"a_links_requests_go_out_from_the_loop_task", test_a_links_requests_go_out_from_the_loop_task},
     {"threads_callbacks_loop_and_commands", test_threads_callbacks_loop_and_commands},
     {"a_route_reads_the_last_published_pass", test_a_route_reads_the_last_published_pass},
     {"a_read_right_after_a_post_shows_what_it_did", test_a_read_right_after_a_post_shows_what_it_did},
