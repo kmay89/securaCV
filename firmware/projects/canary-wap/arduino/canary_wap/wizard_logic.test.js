@@ -151,3 +151,83 @@ describe('tzNotice (what the success card says about the zone, repo sweep F28)',
     }
   });
 });
+
+describe('closeOutHost (the host the close-out link opens, repo sweep F129)', () => {
+  it('is the mdns_host /api/device-info names: canary-<4 hex> unnamed, canary-<name> once named', () => {
+    // the repo test key: device id canary-s3-4dC2, fp 7916ca48... -> canary-7916
+    assert.equal(L.closeOutHost({ device_id: 'canary-s3-4dC2', mdns_host: 'canary-7916' }), 'canary-7916');
+    assert.equal(L.closeOutHost({ device_id: 'canary-s3-4dC2', mdns_host: 'canary-kitchen' }), 'canary-kitchen');
+  });
+  it('never builds a host from the device id', () => {
+    assert.equal(L.closeOutHost({ device_id: 'canary-s3-4dC2' }), '');
+  });
+  it('takes one RFC 1123 label and nothing else, so the static canary.local link stays', () => {
+    for (const bad of [undefined, null, {}, { mdns_host: '' }, { mdns_host: 42 },
+                       { mdns_host: 'Canary-7916' }, { mdns_host: 'canary-7916.local' },
+                       { mdns_host: 'http://canary-7916' }, { mdns_host: '-canary' }, { mdns_host: 'canary-' },
+                       { mdns_host: 'canary 7916' }, { mdns_host: 'a'.repeat(64) }]) {
+      assert.equal(L.closeOutHost(bad), '', JSON.stringify(bad));
+    }
+    assert.equal(L.closeOutHost({ mdns_host: 'a'.repeat(63) }), 'a'.repeat(63));
+  });
+});
+
+describe('the close-out link, on the routes the device serves (repo sweep F129)', () => {
+  const INO = path.join(__dirname, 'canary_wap.ino');
+
+  // updateMdnsLinkFromDevice exactly as companion_pwa.h ships it, run against
+  // a fake device that answers the way canary_wap.ino's routes do: the page
+  // holds no API token, so the auth-wrapped /api/status answers 401, and the
+  // public /api/device-info answers with handle_device_info's JSON.
+  function linkAfter(info, { status = 200, throws = false } = {}) {
+    const src = fs.readFileSync(PWA, 'utf8');
+    const m = src.match(/\n {2}async function updateMdnsLinkFromDevice\(\) \{[\s\S]*?\n {2}\}\n/);
+    if (!m) throw new Error('updateMdnsLinkFromDevice not found in companion_pwa.h');
+    const link = { href: 'http://canary.local/', textContent: 'Open canary.local' };
+    const asked = [];
+    const fetch = async (url, opts) => {
+      asked.push(url);
+      if (throws) throw new Error('network blip');
+      const authed = !!(opts && opts.headers && opts.headers.Authorization);
+      if (url === '/api/status' && !authed) return { ok: false, status: 401, json: async () => ({ error: 'unauthorized' }) };
+      if (url === '/api/device-info') return { ok: status === 200, status, json: async () => info };
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+    const ctx = { $w: (id) => (id === 'wiz-link-mdns' ? link : null), fetch, WizardLogic: L };
+    const fn = vm.runInNewContext(m[0] + '\n;updateMdnsLinkFromDevice', ctx, { filename: 'close_out_link.extracted.js' });
+    return fn().then(() => ({ link, asked }));
+  }
+
+  // handle_device_info's own JSON, as the unnamed test-key device sends it
+  const INFO = { device_id: 'canary-s3-4dC2', device_name: '', mdns_host: 'canary-7916',
+                 firmware: '2.4.15', pubkey_fp: '7916ca487912fa1b', auth_required: true };
+
+  it('the device serves mdns_host on a public route and gates /api/status', () => {
+    const ino = fs.readFileSync(INO, 'utf8');
+    assert.match(ino, /\.uri = "\/api\/device-info", \.method = HTTP_GET, \.handler = handle_device_info \}/);
+    assert.match(ino, /\.uri = "\/api\/status", \.method = HTTP_GET, \.handler = handle_status_auth \}/);
+    const body = ino.split('static esp_err_t handle_device_info(httpd_req_t* req) {')[1].split('\n}\n')[0];
+    assert.ok(!/api_auth_check/.test(body), 'handle_device_info takes no token');
+    assert.match(body, /"\\"mdns_host\\":\\"%s\\","/);
+    assert.match(body, /g_device\.mdns_hostname,/);
+  });
+  it('opens the host the device advertises, not its device id', async () => {
+    const { link, asked } = await linkAfter(INFO);
+    assert.deepEqual(asked, ['/api/device-info'], 'one public fetch, no token needed');
+    assert.equal(link.href, 'http://canary-7916.local/');
+    assert.equal(link.textContent, 'Open canary-7916.local');
+    assert.notEqual(link.href, 'http://' + INFO.device_id.toLowerCase() + '.local/');
+  });
+  it('a named Canary opens canary-<name>.local', async () => {
+    const { link } = await linkAfter({ ...INFO, device_name: 'Kitchen', mdns_host: 'canary-kitchen' });
+    assert.equal(link.href, 'http://canary-kitchen.local/');
+  });
+  it('keeps the static canary.local link on an error, a blip or an unusable host', async () => {
+    for (const [info, opts] of [[INFO, { status: 500 }], [INFO, { throws: true }],
+                                [{ ...INFO, mdns_host: '' }, {}], [{ device_id: INFO.device_id }, {}]]) {
+      const { link } = await linkAfter(info, opts);
+      assert.equal(link.href, 'http://canary.local/', JSON.stringify([info, opts]));
+      assert.equal(link.textContent, 'Open canary.local');
+    }
+  });
+});

@@ -122,13 +122,11 @@ SOURCE_ROOTS = ("firmware/projects/canary-wap/", "firmware/common/", "canary-loc
                 "custom_components/", "tools/")
 
 # (file, the line's text that may stay, why). Each must match exactly one line.
-SOURCE_EXEMPT = (
-    ("firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h",
-     "// from the device's actual per-device hostname (canary-s3-XXXX.local) so",
-     "describes what updateMdnsLinkFromDevice does: it builds the close-out link "
-     "from /api/status's device_id, a host no WAP advertises (filed as a bug, not "
-     "a comment to correct here: the comment is true to the code)"),
-)
+# None today. The last one was companion_pwa.h's close-out comment
+# "(canary-s3-XXXX.local)", true to updateMdnsLinkFromDevice while it built
+# the setup wizard's link from the device id; the wizard now links the host
+# /api/device-info's mdns_host names (sweep F129), and the comment says so.
+SOURCE_EXEMPT: tuple[tuple[str, str, str], ...] = ()
 
 
 def source_files(root: Path) -> list[str]:
