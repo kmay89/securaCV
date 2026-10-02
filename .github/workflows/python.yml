@@ -41,6 +41,12 @@ on:
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_egress.h'
       - 'firmware/common/csi/src/csi_event_backfill.h'
       - 'firmware/common/mqtt/mqtt_offline_queue.h'
+      # test_replay_one_id_space.py reads the id space's bounds from the
+      # allocator's floor policy; test_canary_events.py and test_signature.py
+      # hold their goldens to the host tests that pin the firmware's bytes.
+      - 'firmware/common/csi/src/csi_event_id_floor.h'
+      - 'firmware/tests_host/test_csi_event_wire.cpp'
+      - 'firmware/tests_host/test_device_signature_common.cpp'
   pull_request:
     branches: [main]
     paths:
@@ -78,6 +84,12 @@ on:
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_egress.h'
       - 'firmware/common/csi/src/csi_event_backfill.h'
       - 'firmware/common/mqtt/mqtt_offline_queue.h'
+      # test_replay_one_id_space.py reads the id space's bounds from the
+      # allocator's floor policy; test_canary_events.py and test_signature.py
+      # hold their goldens to the host tests that pin the firmware's bytes.
+      - 'firmware/common/csi/src/csi_event_id_floor.h'
+      - 'firmware/tests_host/test_csi_event_wire.cpp'
+      - 'firmware/tests_host/test_device_signature_common.cpp'
 
 permissions:
   contents: read
