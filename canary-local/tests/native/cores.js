@@ -289,15 +289,20 @@ function open() {
 }
 
 // One request to the worker; the test's thread waits for the answer.
-function rpc(msg, what) {
+function rpc(msg, what, pid) {
   const ch = open();
   Atomics.store(ch.ctl, 0, 0);
   ch.worker.postMessage(msg);
   if (Atomics.wait(ch.ctl, 0, 0, TIMEOUT_MS) === "timed-out") {
-    // A late answer would land on the next request: start over instead.
+    // The core is stuck (it would outlive the test: a loop never reads the
+    // stdin that closes when the test exits), so it is killed; and a late
+    // answer would land on the next request, so the channel starts over.
+    if (pid) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
     ch.worker.terminate();
     channel = null;
-    throw new Error(`native core: no answer to ${what} in ${TIMEOUT_MS / 1000} s`);
+    throw new Error(`native core: no answer to ${what} in ${TIMEOUT_MS / 1000} s (core killed)`);
   }
   const text = Buffer.from(ch.data.subarray(0, Atomics.load(ch.ctl, 1))).toString("utf8");
   if (Atomics.load(ch.ctl, 0) !== 1) throw new Error(text);
@@ -312,10 +317,10 @@ const hexOf = (bytes) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteL
 // One instance: what `await factory()` resolves to on the dist.
 function instance({ plan, bin }) {
   const ch = open();
-  const id = Number(rpc({ op: "spawn", bin }, `starting ${plan.name}`));
+  const [id, pid] = rpc({ op: "spawn", bin }, `starting ${plan.name}`).split(" ").map(Number);
   const ask = (line) => {
     if (channel !== ch) throw new Error(`native core ${plan.name}: torn down after an earlier timeout`);
-    const reply = rpc({ op: "call", id, line }, line.slice(0, 60));
+    const reply = rpc({ op: "call", id, line }, line.slice(0, 60), pid);
     if (reply.startsWith("! ")) throw new Error(`native core ${plan.name}: ${reply.slice(2)} (asked: ${line.slice(0, 60)})`);
     return reply;
   };

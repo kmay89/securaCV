@@ -51,7 +51,8 @@ frame, which the test writes through `HEAP16` at `audio_emu_frame_ptr()`,
 is a window the harness sends to the core before each call and reads back
 after it. A pointer export needs that window declared in `CORES` in
 `cores.js`, or the build refuses it. If the core crashes, the call throws
-with the exit status, and a call with no answer throws after 30 s.
+with the exit status. A call with no answer throws after 30 s, and the
+stuck core is killed so it cannot outlive the test.
 
 ## What a pass does and does not say
 

@@ -70,7 +70,7 @@ parentPort.on("message", (msg) => {
       child.on("error", (e) => gone(kid, `could not start: ${e.message}`));
       // "close", not "exit": a reply written just before exiting is read first
       child.on("close", (code, signal) => gone(kid, `exited (${signal || "code " + code})`));
-      return answer(true, String(id));
+      return answer(true, `${id} ${child.pid || 0}`);
     }
     const kid = kids.get(msg.id);
     if (!kid) return answer(false, `no native core instance ${msg.id}`);

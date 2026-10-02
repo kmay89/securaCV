@@ -46,10 +46,11 @@ struct Ret {
   const void* ptr;
 };
 
-Ret ret_void() { return Ret{'v', 0, nullptr, nullptr}; }
-Ret ret_num(int32_t v) { return Ret{'n', v, nullptr, nullptr}; }
-Ret ret_str(const char* s) { return Ret{'s', 0, s, nullptr}; }
-Ret ret_ptr(const void* p) { return Ret{'p', 0, nullptr, p}; }
+// A core uses the ones its exports return (the Vision core returns no pointer).
+[[maybe_unused]] Ret ret_void() { return Ret{'v', 0, nullptr, nullptr}; }
+[[maybe_unused]] Ret ret_num(int32_t v) { return Ret{'n', v, nullptr, nullptr}; }
+[[maybe_unused]] Ret ret_str(const char* s) { return Ret{'s', 0, s, nullptr}; }
+[[maybe_unused]] Ret ret_ptr(const void* p) { return Ret{'p', 0, nullptr, p}; }
 
 struct Export {
   const char* name;
@@ -109,7 +110,7 @@ const Export* find_export(const char* name) {
   return nullptr;
 }
 
-void do_call(std::vector<char*>& tok) {
+void do_call(const std::vector<char*>& tok) {
   if (tok.size() < 2) return fail("c needs an export name");
   const Export* e = find_export(tok[1]);
   if (!e) return fail(std::string("no export ") + tok[1]);
@@ -144,7 +145,7 @@ void do_call(std::vector<char*>& tok) {
   fail("unknown return kind");
 }
 
-void do_window(std::vector<char*>& tok) {
+void do_window(const std::vector<char*>& tok) {
   uintptr_t addr = 0;
   size_t len = 0;
   if (tok.size() != 3 || !parse_address(tok[1], &addr) || !parse_size(tok[2], &len)) {
@@ -155,16 +156,16 @@ void do_window(std::vector<char*>& tok) {
   reply("=v");
 }
 
-void do_write(std::vector<char*>& tok) {
+void do_write(const std::vector<char*>& tok) {
   uintptr_t addr = 0;
   if (tok.size() != 3 || !parse_address(tok[1], &addr)) return fail("w needs <address> <hex>");
   const size_t hex = strlen(tok[2]);
   if (hex % 2) return fail("w: odd hex length");
   const size_t len = hex / 2;
   if (!in_window(addr, len)) return fail("w: outside every open window");
-  unsigned char* dst = (unsigned char*)addr;
+  unsigned char* dst = reinterpret_cast<unsigned char*>(addr);
   for (size_t i = 0; i < len; ++i) {
-    char pair[3] = {tok[2][2 * i], tok[2][2 * i + 1], 0};
+    const char pair[3] = {tok[2][2 * i], tok[2][2 * i + 1], 0};
     char* end = nullptr;
     const unsigned long b = strtoul(pair, &end, 16);
     if (*end) return fail("w: not hex");
@@ -173,7 +174,7 @@ void do_write(std::vector<char*>& tok) {
   reply("=v");
 }
 
-void do_read(std::vector<char*>& tok) {
+void do_read(const std::vector<char*>& tok) {
   uintptr_t addr = 0;
   size_t len = 0;
   if (tok.size() != 3 || !parse_address(tok[1], &addr) || !parse_size(tok[2], &len)) {
@@ -183,7 +184,7 @@ void do_read(std::vector<char*>& tok) {
   static const char kHex[] = "0123456789abcdef";
   std::string out = "=b ";
   out.reserve(3 + 2 * len);
-  const unsigned char* src = (const unsigned char*)addr;
+  const unsigned char* src = reinterpret_cast<const unsigned char*>(addr);
   for (size_t i = 0; i < len; ++i) {
     out += kHex[src[i] >> 4];
     out += kHex[src[i] & 15];
