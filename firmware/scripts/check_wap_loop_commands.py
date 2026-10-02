@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Hold the canary-wap's loop-task ownership: mesh commands and MQTT re-inits.
+"""Hold the canary-wap's loop-task ownership: mesh commands, mesh status reads
+and MQTT re-inits.
 
 Sweep F96: `canary_wap.ino`'s `handle_mesh_*` REST handlers called
 `remove_peer`, `leave_opera`, `start_pairing_*`, `cancel_pairing`,
@@ -22,8 +23,17 @@ lock across it, 10 s by default), past the loop task's 8 s panic watchdog.
 The loop task detaches the client and a one-shot worker (`retire_task`)
 stops and destroys it; a later pass opens the new one.
 
-`test_mesh_commands_wap.cpp`, `test_mqtt_reinit.cpp` and
-`test_loop_command_ring.cpp` run the real code on the host. No host test can
+Sweep F110: `GET /api/mesh`, `/api/mesh/peers` and `/api/mesh/alerts` read
+the peer table, the pairing session, the opera config and the alert history
+on the httpd task while `update()` writes them on the loop task. Now
+`update()` publishes a `StatusView` at the end of every pass (and `init()`
+the first), the alert history is a log the loop task changes under its lock,
+and the three routes read whole copies through `read_status()` and
+`read_alerts()` (`loop_snapshot.h`).
+
+`test_mesh_commands_wap.cpp`, `test_mqtt_reinit.cpp`,
+`test_loop_command_ring.cpp` and `test_loop_snapshot.cpp` run the real code
+on the host. No host test can
 compile `canary_wap.ino`, and none can see which task a call will run on;
 this check holds the sources to the shape those tests assume.
 
@@ -63,6 +73,25 @@ Mesh (F96):
    which saves in place only on the loop task (`xTaskGetCurrentTaskHandle()`
    against the one `init()` recorded) and otherwise hands
    `MESH_CMD_SAVE_REPLAY` to `submit(`.
+
+Mesh status reads (F110):
+
+9. No HTTP handler anywhere in the sketch names a live mesh reader
+   (`mesh_network::get_status(`, `get_peer(`, `get_peer_count(`,
+   `get_alerts(`, `get_opera_config(`, `get_pairing_session(`, `is_enabled(`,
+   `has_opera(` and the rest of `LIVE_READERS`): those read what `update()`
+   writes. `handle_mesh_status` and `handle_mesh_peers` each call
+   `mesh_network::read_status(` once, and `handle_mesh_alerts` calls
+   `mesh_network::read_alerts(` once. In `mesh_network.cpp`:
+   `publish_view(` is called only from `update()`, `init()` and `deinit()`,
+   and `update()` calls it right before its every `return` and as its last
+   statement; `g_status_view.publish(` only in `publish_view()`,
+   `g_status_view.read(` only in `read_status()`, `g_alert_log.read(` only in
+   `read_alerts()`, `.append(` only in `store_alert()`, `.clear(` only in
+   `clear_alerts()`, `.attach(` only in `init()` and `clear_alerts()`, and
+   `.storage(` only there and in `get_alerts()`; and `read_status()` and
+   `read_alerts()` name none of the live state (`LIVE_STATE`). The rule sees
+   a handler's own body, not what the functions it calls read.
 
 MQTT (F106):
 
@@ -393,6 +422,97 @@ def check_mesh_sketch(ino: str, others: dict[str, str], errors: list[str]) -> No
                       f"loop() (found {total}) — its drain is the loop task's (F96)")
 
 
+# ── Mesh status reads (F110) ─────────────────────────────────────────────
+
+STATUS_HANDLERS = (("handle_mesh_status", "read_status"), ("handle_mesh_peers", "read_status"),
+                   ("handle_mesh_alerts", "read_alerts"))
+# What reads the loop task's live mesh state (mesh_network.h): the loop task's.
+LIVE_READERS = ("get_status", "get_peer", "get_peer_count", "get_peer_by_fingerprint",
+                "get_online_peer_count", "get_alerts", "get_opera_config", "get_pairing_session",
+                "is_pairing", "is_active", "is_enabled", "has_opera", "get_message_stats",
+                "get_self_fingerprint")
+LIVE_READER_RE = r"\bmesh_network::(" + "|".join(LIVE_READERS) + r")\s*\("
+# What the view's readers may not name.
+LIVE_STATE = ("g_peers", "g_peer_count", "g_pairing", "g_opera_config", "g_mesh_state",
+              "fill_status", "get_status", "get_alerts", "publish_view", "storage")
+# Who may touch the published copies and the alert log, in mesh_network.cpp.
+VIEW_CALLS = (
+    (r"\bpublish_view\s*\(", ("update", "init", "deinit"), "publish_view()",
+     "the loop task publishes: update()'s passes, init() and deinit()"),
+    (r"\bg_status_view\s*\.\s*publish\s*\(", ("publish_view",), "g_status_view.publish(",
+     "publish_view() builds the one view"),
+    (r"\bg_status_view\s*\.\s*read\s*\(", ("read_status",), "g_status_view.read(",
+     "read_status() is the view's one reader"),
+    (r"\bg_alert_log\s*\.\s*read\s*\(", ("read_alerts",), "g_alert_log.read(",
+     "read_alerts() is the history's one cross-task reader"),
+    (r"\bg_alert_log\s*\.\s*append\s*\(", ("store_alert",), "g_alert_log.append(",
+     "store_alert() records an alert, under the log's lock"),
+    (r"\bg_alert_log\s*\.\s*clear\s*\(", ("clear_alerts",), "g_alert_log.clear(",
+     "clear_alerts() empties the history, under the log's lock"),
+    (r"\bg_alert_log\s*\.\s*attach\s*\(", ("init", "clear_alerts"), "g_alert_log.attach(",
+     "the history's storage is allocated by init() (or clear_alerts() after a failed one)"),
+    (r"\bg_alert_log\s*\.\s*storage\s*\(", ("init", "clear_alerts", "get_alerts"),
+     "g_alert_log.storage(", "a write through the storage would bypass the log's lock"),
+)
+SIG_PUBLISH_VIEW = r"\bstatic\s+void\s+publish_view\s*\(\s*\)"
+SIG_READ_STATUS = r"\bvoid\s+read_status\s*\([^)]*\)"
+SIG_READ_ALERTS = r"\bsize_t\s+read_alerts\s*\([^)]*\)"
+
+
+@functools.lru_cache(maxsize=1024)
+def live_read_findings(name: str, code: str) -> tuple[str, ...]:
+    out = []
+    for hname, s, e in handler_spans(code):
+        m = re.search(LIVE_READER_RE, code[s:e])
+        if m:
+            out.append(f"{name}: HTTP handler {hname}() reads mesh_network::{m.group(1)}( — the live "
+                       "mesh state is update()'s, written on the loop task; read the view "
+                       "(mesh_network::read_status / read_alerts) (F110)")
+    return tuple(out)
+
+
+def check_mesh_status_reads(ino: str, others: dict[str, str], mesh_cpp: str, errors: list[str]) -> None:
+    files = dict(others)
+    files[INO] = ino
+    for name, src in files.items():
+        errors.extend(live_read_findings(name, blank_comments_and_strings(src)))
+    ino_code = blank_comments_and_strings(ino)
+    for h, reader in STATUS_HANDLERS:
+        body = body_of(ino_code, r"\bstatic\s+esp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                       f"{INO}: {h}()", errors)
+        if body is not None and len(re.findall(r"\bmesh_network::" + reader + r"\s*\(", body)) != 1:
+            errors.append(f"{INO}: {h}() must read the published view with mesh_network::{reader}( "
+                          "once (F110)")
+    code = blank_comments_and_strings(mesh_cpp)
+    spans = named_bodies(code)
+    for pattern, allowed, label, why in VIEW_CALLS:
+        for m in re.finditer(pattern, code):
+            where = enclosing_function(spans, m.start())
+            if where is None:
+                continue                      # a declaration or the definition's own header
+            if where not in allowed:
+                errors.append(f"{MESH_CPP}: {where}() names {label} — {why} (F110)")
+    update = body_of(code, SIG_UPDATE, f"{MESH_CPP}: update()", errors)
+    if update is not None:
+        s = squash(update)
+        rets = [m.start() for m in re.finditer(r"\breturn\b", s)]
+        if not s.endswith("publish_view();") or any(not s[:r].endswith("publish_view();") for r in rets):
+            errors.append(f"{MESH_CPP}: update() must call publish_view() right before every return "
+                          "and as its last statement — the status routes show the pass it ends, "
+                          "a disabled mesh's included (F110)")
+    for sig, what, reads in ((SIG_READ_STATUS, "read_status()", "g_status_view.read("),
+                             (SIG_READ_ALERTS, "read_alerts()", "g_alert_log.read(")):
+        body = body_of(code, sig, f"{MESH_CPP}: {what}", errors)
+        if body is None:
+            continue
+        if reads not in squash(body):
+            errors.append(f"{MESH_CPP}: {what} must copy the published view ({reads}) (F110)")
+        hit = re.search(r"\b(" + "|".join(LIVE_STATE) + r")\b", body)
+        if hit:
+            errors.append(f"{MESH_CPP}: {what} names {hit.group(1)} — it runs on the httpd task and "
+                          "reads only what the loop task published (F110)")
+
+
 # ── MQTT (F106) ──────────────────────────────────────────────────────────
 
 # Who may call what in csi_mqtt.cpp (rule 6): the call, the functions it may
@@ -627,6 +747,7 @@ def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str
     check_mesh_internal(mesh_h, mesh_cpp, errors)
     check_mesh_callers(mesh_cpp, errors)
     check_mesh_sketch(ino, rest, errors)
+    check_mesh_status_reads(ino, rest, mesh_cpp, errors)
     check_mqtt_reinit(mqtt, errors)
     check_httpd_paths(files, errors)
     check_mqtt_sketch(ino, rest, errors)
@@ -726,6 +847,50 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on("mesh_cpp", SIG_SUBMIT, r"(bool\s+result\s*=\s*false;)", r"\1 g_commands.drain(run_command);")),
     ("the ESP-NOW receive callback drains the ring",
      on("mesh_cpp", SIG_RECV_CB, r"(g_rx_pending\s*=\s*true;)", r"\1 g_commands.drain(run_command);")),
+    # Rule 9: the status routes read the published view (F110).
+    ("the status handler reads mesh_network::get_status() again",
+     on("ino", ino_handler("handle_mesh_status"), r"(mesh_network::read_status\(&v\);)",
+        r"\1 v.status = mesh_network::get_status();")),
+    ("the peers handler walks the live peer table",
+     on("ino", ino_handler("handle_mesh_peers"), r"(mesh_network::read_status\(&v\);)",
+        r"\1 (void)mesh_network::get_peer(0);")),
+    ("the peers handler takes its count from mesh_network::get_peer_count()",
+     on("ino", ino_handler("handle_mesh_peers"),
+        r"mesh_network::StatusView\s+v;\s*mesh_network::read_status\(&v\);",
+        "mesh_network::StatusView v = {}; v.peer_count = mesh_network::get_peer_count();")),
+    ("the alerts handler reads the live history",
+     on("ino", ino_handler("handle_mesh_alerts"),
+        r"mesh_network::read_alerts\(alerts,\s*mesh_network::MAX_ALERT_HISTORY\)",
+        "0; size_t live_n = 0; (void)mesh_network::get_alerts(&live_n)")),
+    ("the status handler takes the code from the live pairing session",
+     on("ino", ino_handler("handle_mesh_status"), r"doc\[\"pairing_code\"\]\s*=\s*v\.pairing_code;",
+        'doc["pairing_code"] = mesh_network::get_pairing_session()->confirmation_code;')),
+    ("another handler reads mesh_network::is_enabled() live",
+     on("ino", ino_handler("handle_mesh_leave"), r"(bool\s+ok\s*=\s*false;)",
+        r"\1 if (!mesh_network::is_enabled()) {}")),
+    ("update() returns early without publishing",
+     on("mesh_cpp", SIG_UPDATE, r"\n[ \t]*publish_view\(\);[^\n]*\n([ \t]*return;)", r"\n\1")),
+    ("update() does not publish at the end of its pass",
+     on("mesh_cpp", SIG_UPDATE, r"\n[ \t]*publish_view\(\);\s*$", "\n")),
+    ("send_heartbeat publishes the view",
+     on("mesh_cpp", r"\bvoid\s+send_heartbeat\s*\(\s*\)", r"(if\s*\(!g_opera_config\.configured\)\s*return;)",
+        r"\1 publish_view();")),
+    ("read_status() builds the view from the live peer table",
+     on("mesh_cpp", SIG_READ_STATUS, r"(out->status\.uptime_ms\s*=)",
+        r"out->peer_count = g_peer_count; \1")),
+    ("read_status() publishes before it reads",
+     on("mesh_cpp", SIG_READ_STATUS, r"(if\s*\(!g_status_view\.read\(out\)\))", r"publish_view(); \1")),
+    ("read_alerts() copies the live history",
+     on("mesh_cpp", SIG_READ_ALERTS, r"return\s+g_alert_log\.read\(out,\s*cap\);",
+        "size_t n = 0; const MeshAlert* a = get_alerts(&n); if (n > cap) n = cap; "
+        "memcpy(out, a, n * sizeof(MeshAlert)); return n;")),
+    ("store_alert() writes the history past the log's lock",
+     on("mesh_cpp", r"\bstatic\s+void\s+store_alert\s*\([^)]*\)",
+        r"\(void\)g_alert_log\.append\(\*alert\);",
+        "if (g_alert_log.storage()) g_alert_log.storage()[0] = *alert;")),
+    ("a second place publishes the view",
+     on("mesh_cpp", SIG_UPDATE, r"(g_commands\.drain\(run_command\);)",
+        r"\1 { StatusView v = {}; (void)g_status_view.publish(v); }")),
     # Rule 6: the loop task serves a re-init without ever stopping a client;
     # only the worker stops one.
     ("the config POST runs init() itself",
@@ -869,7 +1034,8 @@ def main() -> int:
     if errors or problems:
         return 1
     print(f"canary-wap loop-task ownership holds: the mesh's owner commands are internal to "
-          f"mesh_network.cpp and run from update()'s drain, the REST handlers only submit, and the "
+          f"mesh_network.cpp and run from update()'s drain, the REST handlers only submit, the "
+          f"status routes read only what update() published, and the "
           f"MQTT client is replaced only by loop()'s re-init, which never stops a client (the "
           f"retire_task worker does) "
           f"({len(MUTATIONS)} mutations refused).")

@@ -785,22 +785,24 @@ fi
 
 echo ""
 
-# ── Check: canary-wap loop-task ownership (sweep F96, F106) ────
+# ── Check: canary-wap loop-task ownership (sweep F96, F106, F110) ────
 # The mesh's owner commands (pair, confirm, cancel, leave, remove, rename,
 # enable, clear alerts) and the MQTT client's teardown and rebuild belong to
 # the loop task. The REST handlers ran them on esp_http_server's task (and a
 # QR provisioning on the scanner's), racing mesh_network::update() and the
-# loop task's publishes. The host tests run the hand-over
-# (test_mesh_commands_wap, test_mqtt_reinit, test_loop_command_ring); this
-# holds the sketch's source to it, and mutates it in memory to prove it bites.
+# loop task's publishes. The mesh status routes read the state update()
+# writes; they read the copies it publishes instead (F110). The host tests
+# run the hand-over and the copies (test_mesh_commands_wap, test_mqtt_reinit,
+# test_loop_command_ring, test_loop_snapshot); this holds the sketch's
+# source to them, and mutates it in memory to prove it bites.
 section "Reliability: canary-wap loop-task ownership"
 
 LOOP_CMD_CHECK="$SCRIPT_DIR/check_wap_loop_commands.py"
 if [ -f "$LOOP_CMD_CHECK" ]; then
   if LOOP_CMD_OUT=$(python3 "$LOOP_CMD_CHECK" 2>&1); then
-    check_pass "mesh commands and MQTT re-inits run on the loop task"
+    check_pass "mesh commands and MQTT re-inits run on the loop task; mesh status routes read its copies"
   else
-    check_fail "a canary-wap HTTP path changes the mesh or the MQTT client off the loop task"
+    check_fail "a canary-wap HTTP path changes, or reads live, what the loop task owns"
     echo "$LOOP_CMD_OUT" | sed 's/^/    /'
   fi
 else
