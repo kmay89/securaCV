@@ -156,6 +156,10 @@ _WORST = {
         },
     },
     "event_id_space_low": False,
+    # The MQTT layer's offline queue's drops (sweep F109's review).
+    "offline_queue": {
+        "dropped_overflow": _U32, "dropped_oversize": _U32, "dropped_flushed": _U32,
+    },
 }
 
 
@@ -174,6 +178,8 @@ def test_the_largest_canary_health_packet_fits_the_mqtt_buffer() -> None:
     planner_keys = set(re.findall(r'\bplo\["([a-z0-9_]+)"\]', body))
     assert egress_keys == set(_WORST["csi_event_egress"])
     assert planner_keys == set(_WORST["csi_event_egress"]["planner"])
+    queue_keys = set(re.findall(r'\boqo\["([a-z0-9_]+)"\]', body))
+    assert queue_keys == set(_WORST["offline_queue"])
     payload = json.dumps(_WORST, separators=(",", ":"))
     # PubSubClient's packet: fixed header (5) + topic length (2) + topic +
     # payload, all in one buffer. Take the topic at its buffer's limit.
@@ -228,3 +234,32 @@ def test_canary_health_names_its_egress_counters_as_the_wap_does() -> None:
     assert 'doc["csi_event_egress"].to<JsonObject>()' in body
     # Sweep F82: the flag comes from the allocator, through the egress.
     assert 'doc["event_id_space_low"] = csi_event_egress_id_space_low();' in body
+
+
+_OFFLINE_QUEUE_H = _FW / "common" / "mqtt" / "mqtt_offline_queue.h"
+
+
+@_monorepo_only
+def test_canary_health_carries_the_offline_queue_drops() -> None:
+    """Sweep F109's review: on a canary with no card the MQTT layer's
+    offline queue is where an outage loses rows (it evicts the oldest event
+    once its slots are full), after the egress counted them handed over. Its
+    drop counters reach the health publish as `offline_queue`, each key
+    filled from the queue's Stats field of the same name."""
+    body = _health_body()
+    fields = _struct_fields(_OFFLINE_QUEUE_H.read_text(encoding="utf-8"), "struct Stats")
+    drops = [f for f in fields if f.startswith("dropped_")]
+    assert len(drops) >= 3, "mqtt_offline_queue::Stats lost its drop counters; update this test"
+    oqo = dict(re.findall(r'\boqo\["([a-z0-9_]+)"\]\s*=\s*qs\.(\w+);', body))
+    assert oqo == {f: f for f in drops}, (
+        "the health's offline_queue object must carry every drop counter of "
+        "mqtt_offline_queue::Stats under its own name"
+    )
+    assert 'doc["offline_queue"].to<JsonObject>()' in body
+    assert "mqtt_offline_queue_stats();" in body
+    mqtt_cpp = _CANARY_MQTT_CPP.read_text(encoding="utf-8")
+    assert re.search(r"mqtt_offline_queue::Stats mqtt_offline_queue_stats\(\)\s*\{\s*"
+                     r"return s_offline_q\.stats\(\);\s*\}", mqtt_cpp), (
+        "mqtt_offline_queue_stats() must return the queue the event and tamper "
+        "surfaces push into"
+    )

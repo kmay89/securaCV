@@ -3073,6 +3073,20 @@ static void mqtt_publish_health_update() {
   doc["power_loss_detected"] = canary_pe::health_power_flag(millis());
   doc["unexpected_reboot"] = canary_pe::health_fault_flag(millis());
 
+  /* What the MQTT layer's offline queue dropped this boot (sweep F109's
+   * review), events and tamper alerts together, under its Stats names
+   * (mqtt_offline_queue.h). On a canary with no card an outage longer than
+   * its twelve slots evicts the oldest events here, after the egress
+   * counted them handed over (csi_event_egress.planner.queued); before,
+   * only the drain's health-log line said so. Loop task, as the queue. */
+  {
+    const mqtt_offline_queue::Stats qs = mqtt_offline_queue_stats();
+    JsonObject oqo = doc["offline_queue"].to<JsonObject>();
+    oqo["dropped_overflow"] = qs.dropped_overflow;
+    oqo["dropped_oversize"] = qs.dropped_oversize;
+    oqo["dropped_flushed"] = qs.dropped_flushed;
+  }
+
 #if FEATURE_CSI
   /* What the committed-event egress did this boot (sweep F109): rows it
    * dropped (a full egress queue, the RAM hold's oldest, ambient rows that

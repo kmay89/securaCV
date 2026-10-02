@@ -1041,6 +1041,10 @@ uint32_t mqtt_destination_epoch() {
   return s_destination_epoch;
 }
 
+mqtt_offline_queue::Stats mqtt_offline_queue_stats() {
+  return s_offline_q.stats();
+}
+
 bool mqtt_publish_health(const char* json_payload) {
   if (!s_mqtt.connected()) return false;
   return s_mqtt.publish(s_topic_health, json_payload);
