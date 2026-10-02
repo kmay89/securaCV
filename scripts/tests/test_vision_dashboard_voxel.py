@@ -17,7 +17,7 @@ off the same state row (the best person box's score, 0 when that frame had
 none: PresenceFSM::tick's confidence_), marks the cell 🟧 while someone is
 in frame and 🔲 once the frame is empty, and says "-1,-1" means nobody seen
 since the device started. (It does not read the Presence binary sensor: see
-the sweep's NEW item on that sensor's discovery payload.)
+sweep HA25, that sensor's discovery payload.)
 
 This renders the card with jinja2 (Home Assistant's template engine) when it
 is installed, and pins the firmware lines the card relies on either way.

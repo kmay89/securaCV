@@ -1838,7 +1838,7 @@ void test_the_complete_is_not_sent_again_once_it_is_not_the_operas() {
 // only). Started as an initiator, the device kept that opera instead of
 // founding one, and its joiner, which derives the opera_id from the secret
 // it is sent, held another id than the initiator's stored zero one: each
-// dropped the other's frames (host-probed on #<W10>'s code). Now the id and
+// dropped the other's frames (host-probed on wave 10's code, #1762). Now the id and
 // secret keys are removed while no opera is configured, and an all-zero id
 // or secret is not loaded, so NVS an older firmware's leave wrote heals too.
 
@@ -1928,8 +1928,8 @@ void test_an_empty_opera_older_firmware_stored_is_not_loaded() {
 // same opera after a leave), every frame the member had signed before was
 // fresh again, and one of them, replayed from its address at the re-pair,
 // counted as the joiner heard and ended F100's COMPLETE resend: the
-// joiner, which had lost the COMPLETE, timed out (host-probed on #<W10>'s
-// code). A dropped member's last-seen counter is now kept as a tombstone
+// joiner, which had lost the COMPLETE, timed out (host-probed on wave 10's
+// code, #1762). A dropped member's last-seen counter is now kept as a tombstone
 // (the PlatformIO tree's CounterTombstone), at most eight, persisted, and
 // a re-add starts there. Only a re-add into the opera the member was
 // dropped from: its old frames carry that opera_id, and every other opera
