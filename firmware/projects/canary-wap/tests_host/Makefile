@@ -793,6 +793,30 @@ clean-chirp-commands:
 run: run-chirp-commands
 clean: clean-chirp-commands
 
+# The owner's Bluetooth commands run on the loop task (sweep F111): the REAL
+# bluetooth_channel.cpp, #included and compiled on the host against
+# stubs/bt (a NimBLE-Arduino 2.x stand-in that records each radio, bond and
+# passkey call with the task that made it, and an in-memory main NVS). A PIN
+# confirm, reject and cancel answer the pending pairing once, on the loop
+# task, the timeout's pass included; every command's radio, bond and NVS
+# calls are the loop task's; settings apply only the fields named; no
+# command brings the stack up (init() is the handler's or the worker's);
+# withdrawn, busy and post order through the real submit() and update().
+BT_CMD_BIN = test_bluetooth_commands_wap
+BT_CMD_SRC = test_bluetooth_commands_wap.cpp
+
+$(BT_CMD_BIN): $(BT_CMD_SRC) $(wildcard stubs/bt/*.h stubs/bt/freertos/*.h) $(SRC_DIR)/bluetooth_channel.cpp $(SRC_DIR)/bluetooth_channel.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/ble_standard_profiles.h $(SRC_DIR)/bt_defaults.h $(SRC_DIR)/ble_heap_guard.h
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $@ $(BT_CMD_SRC)
+
+.PHONY: run-bt-commands clean-bt-commands
+run-bt-commands: $(BT_CMD_BIN)
+	$(call run_marked,$(BT_CMD_BIN))
+clean-bt-commands:
+	rm -f $(BT_CMD_BIN)
+
+run: run-bt-commands
+clean: clean-bt-commands
+
 # The MQTT bridge re-inits on the loop task (sweep F106): the REAL
 # csi_mqtt.cpp over stubs/mqtt (an in-memory NVS, a request/response httpd,
 # and a fake esp_mqtt client the test defines, which records the task of

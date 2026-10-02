@@ -43,6 +43,8 @@
 #endif
 
 #include "health_log.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>       // vTaskDelay: submit() waits for the loop task
 #include "ble_ota.h"
 #include "ble_presence.h"
 #include "ble_console.h"
@@ -151,6 +153,14 @@ static uint32_t g_advertising_start_ms = 0;
 static uint32_t g_advertising_total_ms = 0;
 static uint32_t g_connected_total_ms = 0;
 
+// The owner's commands on their way to the loop task (sweep F111): posted by
+// submit() on esp_http_server's task (bluetooth_api.h's handlers), drained by
+// update() on the loop task (run_command). A portMUX spinlock guards the
+// slots; it is held only to copy a command or a result in or out, never
+// while one runs.
+static loop_command_ring::Ring<Command, Result, COMMAND_SLOTS, loop_command_ring::PortMuxLock>
+    g_commands;
+
 // Callbacks
 static ConnectionCallback g_conn_callback = nullptr;
 static PairingCallback g_pair_callback = nullptr;
@@ -181,6 +191,30 @@ static void update_status_characteristic();
 static void handle_inactivity_timeout();
 static void handle_scan_timeout();
 static DeviceType detect_device_type(const NimBLEAdvertisedDevice* device);
+// The owner's commands' bodies (sweep F111): they change what update() reads
+// and writes, so a REST handler hands a Command to submit() and the loop task
+// runs them through run_command(). Inside this file the bring-up (init()'s
+// own auto-advertise), update()'s timeouts and the NimBLE callbacks call some
+// of them too, as they always did. deinit() has no caller.
+static bool enable();
+static void disable();
+static bool start_advertising();
+static void stop_advertising();
+static bool start_scan(uint32_t duration_ms);
+static void stop_scan();
+static void clear_scan_results();
+static bool start_pairing();
+static void cancel_pairing();
+static bool confirm_pairing(uint32_t pin);
+static bool reject_pairing();
+static bool disconnect();
+static bool remove_paired_device(const uint8_t* address);
+static bool clear_all_paired_devices();
+static bool set_device_trusted(const uint8_t* address, bool trusted);
+static bool set_device_blocked(const uint8_t* address, bool blocked);
+static bool set_settings(const BluetoothSettings& settings);
+static bool set_device_name(const char* name);
+static bool set_tx_power(int8_t power);
 
 // ════════════════════════════════════════════════════════════════════════════
 // BLE CALLBACKS
@@ -848,7 +882,7 @@ bool init() {
   return true;
 }
 
-void deinit() {
+[[maybe_unused]] static void deinit() {
   if (!g_initialized) return;
 
   // Tear down the presence sensor before NimBLE goes away so its scanner
@@ -899,10 +933,11 @@ void set_device_metadata(const char* fw_revision, const char* serial) {
   }
 }
 
-bool enable() {
-  if (!g_initialized) {
-    if (!init()) return false;
-  }
+static bool enable() {
+  // Never brings the stack up: NimBLE init can block past the loop task's
+  // watchdog, and this runs there (BT_CMD_ENABLE). init() calls this once it
+  // is up; a REST handler calls init() first, on its own task (sweep F111).
+  if (!g_initialized) return false;
 
   g_settings.enabled = true;
   save_settings();
@@ -915,7 +950,7 @@ bool enable() {
   return true;
 }
 
-void disable() {
+static void disable() {
   stop_advertising();
   stop_scan();
   disconnect();
@@ -931,7 +966,7 @@ bool is_enabled() {
   return g_settings.enabled;
 }
 
-bool start_advertising() {
+static bool start_advertising() {
   if (!g_initialized || !g_settings.enabled) return false;
   if (g_connection.connected) return false;  // Can't advertise while connected
 
@@ -945,7 +980,7 @@ bool start_advertising() {
   return true;
 }
 
-void stop_advertising() {
+static void stop_advertising() {
   if (g_advertising && g_advertising->isAdvertising()) {
     g_advertising->stop();
     g_advertising_total_ms += millis() - g_advertising_start_ms;
@@ -960,7 +995,7 @@ bool is_advertising() {
   return g_advertising && g_advertising->isAdvertising();
 }
 
-bool start_scan(uint32_t duration_ms) {
+static bool start_scan(uint32_t duration_ms) {
   if (!g_initialized || !g_settings.enabled) return false;
   if (g_scanning) return false;
 
@@ -993,7 +1028,7 @@ bool start_scan(uint32_t duration_ms) {
   return true;
 }
 
-void stop_scan() {
+static void stop_scan() {
   if (g_scanner && g_scanning) {
     g_scanner->stop();
     g_scanning = false;
@@ -1015,12 +1050,12 @@ const ScannedDevice* get_scanned_devices(size_t* count) {
   return g_scanned_devices;
 }
 
-void clear_scan_results() {
+static void clear_scan_results() {
   memset(g_scanned_devices, 0, sizeof(g_scanned_devices));
   g_scanned_count = 0;
 }
 
-bool start_pairing() {
+static bool start_pairing() {
   if (!g_initialized || !g_settings.enabled) return false;
   if (!g_settings.allow_pairing) return false;
 
@@ -1043,7 +1078,7 @@ bool start_pairing() {
   return true;
 }
 
-void cancel_pairing() {
+static void cancel_pairing() {
   // Drain any pending Numeric-Comparison so NimBLE doesn't sit indefinitely
   // waiting on injectConfirmPasskey. A reject closes the bond attempt cleanly.
   if (g_pending_pair_active && g_pending_pair_info) {
@@ -1064,7 +1099,7 @@ void cancel_pairing() {
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Pairing canceled", nullptr);
 }
 
-bool confirm_pairing(uint32_t pin) {
+static bool confirm_pairing(uint32_t pin) {
   if (g_pairing.state != PAIR_CONFIRMING) return false;
   if (!g_pending_pair_active) return false;
   // The heap copy can be null if the `new` in onConfirmPassKey failed (ESP32
@@ -1101,7 +1136,7 @@ bool confirm_pairing(uint32_t pin) {
   return true;
 }
 
-bool reject_pairing() {
+static bool reject_pairing() {
   if (g_pending_pair_active && g_pending_pair_info) {
     NimBLEDevice::injectConfirmPasskey(*g_pending_pair_info, false);
     delete g_pending_pair_info;
@@ -1129,7 +1164,7 @@ uint32_t get_pairing_pin() {
   return g_pairing.pin_code;
 }
 
-bool disconnect() {
+static bool disconnect() {
   if (!g_connection.connected) return false;
 
   if (g_server) {
@@ -1155,7 +1190,7 @@ const PairedDevice* get_paired_devices(size_t* count) {
   return g_paired_devices;
 }
 
-bool remove_paired_device(const uint8_t* address) {
+static bool remove_paired_device(const uint8_t* address) {
   for (size_t i = 0; i < g_paired_count; i++) {
     if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
       // Store address type before removing from our list
@@ -1179,7 +1214,7 @@ bool remove_paired_device(const uint8_t* address) {
   return false;
 }
 
-bool clear_all_paired_devices() {
+static bool clear_all_paired_devices() {
   // Clear local storage
   memset(g_paired_devices, 0, sizeof(g_paired_devices));
   g_paired_count = 0;
@@ -1195,7 +1230,7 @@ bool clear_all_paired_devices() {
   return true;
 }
 
-bool set_device_trusted(const uint8_t* address, bool trusted) {
+static bool set_device_trusted(const uint8_t* address, bool trusted) {
   for (size_t i = 0; i < g_paired_count; i++) {
     if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
       g_paired_devices[i].trusted = trusted;
@@ -1206,7 +1241,7 @@ bool set_device_trusted(const uint8_t* address, bool trusted) {
   return false;
 }
 
-bool set_device_blocked(const uint8_t* address, bool blocked) {
+static bool set_device_blocked(const uint8_t* address, bool blocked) {
   for (size_t i = 0; i < g_paired_count; i++) {
     if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
       g_paired_devices[i].blocked = blocked;
@@ -1221,7 +1256,7 @@ BluetoothSettings get_settings() {
   return g_settings;
 }
 
-bool set_settings(const BluetoothSettings& settings) {
+static bool set_settings(const BluetoothSettings& settings) {
   g_settings = settings;
   // The settings struct comes from a JSON POST — the API parser doesn't
   // range-check tx_power, so clamp here before it goes to NVS or the radio.
@@ -1243,7 +1278,7 @@ bool set_settings(const BluetoothSettings& settings) {
   return true;
 }
 
-bool set_device_name(const char* name) {
+static bool set_device_name(const char* name) {
   if (!name || strlen(name) == 0 || strlen(name) > MAX_DEVICE_NAME_LEN) {
     return false;
   }
@@ -1256,7 +1291,7 @@ bool set_device_name(const char* name) {
   return true;
 }
 
-bool set_tx_power(int8_t power) {
+static bool set_tx_power(int8_t power) {
   if (power < -12 || power > 9) return false;
 
   g_settings.tx_power = power;
@@ -1351,7 +1386,134 @@ void set_data_callback(DataCallback cb) {
   g_data_callback = cb;
 }
 
+// One owner command, on the loop task (update()'s drain of g_commands). The
+// Result is read here, right after the command, so a REST answer describes
+// the state the command left.
+static Result run_command(const Command& cmd) {
+  Result r;
+  memset(&r, 0, sizeof(r));
+  switch (cmd.type) {
+    case BT_CMD_ENABLE:
+      r.ok = enable();
+      if (!r.ok) r.refusal = BT_REFUSED_NOT_ENABLED;
+      break;
+    case BT_CMD_DISABLE:
+      disable();
+      r.ok = true;
+      break;
+    case BT_CMD_ADVERTISE_START:
+      // Auto-enable: "Start Advertising" is unambiguous user intent.
+      if (!is_enabled() && !enable()) {
+        r.refusal = BT_REFUSED_NOT_ENABLED;
+        break;
+      }
+      if (g_connection.connected) {
+        r.refusal = BT_REFUSED_CONNECTED;
+        break;
+      }
+      r.ok = start_advertising();
+      break;
+    case BT_CMD_ADVERTISE_STOP:
+      stop_advertising();
+      r.ok = true;
+      break;
+    case BT_CMD_SCAN_START:
+      r.ok = start_scan(cmd.duration_ms);
+      break;
+    case BT_CMD_SCAN_STOP:
+      stop_scan();
+      r.ok = true;
+      break;
+    case BT_CMD_SCAN_CLEAR:
+      clear_scan_results();
+      r.ok = true;
+      break;
+    case BT_CMD_PAIR_START:
+      if (!is_enabled() && !enable()) {
+        r.refusal = BT_REFUSED_NOT_ENABLED;
+        break;
+      }
+      r.ok = start_pairing();
+      r.allow_pairing = g_settings.allow_pairing;
+      break;
+    case BT_CMD_PAIR_CANCEL:
+      cancel_pairing();
+      r.ok = true;
+      break;
+    case BT_CMD_PAIR_CONFIRM:
+      r.ok = confirm_pairing(cmd.pin);
+      break;
+    case BT_CMD_PAIR_REJECT:
+      r.ok = reject_pairing();
+      break;
+    case BT_CMD_DISCONNECT:
+      r.ok = disconnect();
+      break;
+    case BT_CMD_PAIRED_REMOVE:
+      r.ok = remove_paired_device(cmd.address);
+      break;
+    case BT_CMD_PAIRED_CLEAR:
+      r.ok = clear_all_paired_devices();
+      break;
+    case BT_CMD_PAIRED_TRUST:
+      r.ok = set_device_trusted(cmd.address, cmd.flag);
+      break;
+    case BT_CMD_PAIRED_BLOCK:
+      r.ok = set_device_blocked(cmd.address, cmd.flag);
+      break;
+    case BT_CMD_SETTINGS: {
+      // The fields the POST named, over the settings as they stand here.
+      BluetoothSettings s = g_settings;
+      const BluetoothSettings& in = cmd.settings;
+      if (cmd.set_mask & BT_SET_ENABLED) s.enabled = in.enabled;
+      if (cmd.set_mask & BT_SET_AUTO_ADVERTISE) s.auto_advertise = in.auto_advertise;
+      if (cmd.set_mask & BT_SET_ALLOW_PAIRING) s.allow_pairing = in.allow_pairing;
+      if (cmd.set_mask & BT_SET_REQUIRE_PIN) s.require_pin = in.require_pin;
+      if (cmd.set_mask & BT_SET_DEVICE_NAME) {
+        memcpy(s.device_name, in.device_name, sizeof(s.device_name));
+        s.device_name[MAX_DEVICE_NAME_LEN] = '\0';
+      }
+      if (cmd.set_mask & BT_SET_TX_POWER) s.tx_power = in.tx_power;
+      if (cmd.set_mask & BT_SET_INACTIVITY) s.inactivity_timeout_ms = in.inactivity_timeout_ms;
+      if (cmd.set_mask & BT_SET_NOTIFY_ON_CONNECT) s.notify_on_connect = in.notify_on_connect;
+      if (cmd.set_mask & BT_SET_LONG_RANGE) s.long_range_mode = in.long_range_mode;
+      r.ok = set_settings(s);
+      break;
+    }
+    case BT_CMD_NAME: {
+      char name[sizeof(cmd.name)];
+      memcpy(name, cmd.name, sizeof(name));
+      name[sizeof(name) - 1] = '\0';
+      r.ok = set_device_name(name);
+      break;
+    }
+    case BT_CMD_POWER:
+      r.ok = set_tx_power(cmd.power);
+      break;
+  }
+  return r;
+}
+
+loop_command_ring::Wait submit(const Command& cmd, Result* result, uint32_t timeout_ms) {
+  Result r;
+  memset(&r, 0, sizeof(r));
+  const loop_command_ring::Wait w = loop_command_ring::submit(
+      g_commands, cmd, &r, timeout_ms, COMMAND_POLL_MS,
+      []() { return (uint32_t)millis(); },
+      [](uint32_t ms) {
+        const TickType_t ticks = pdMS_TO_TICKS(ms);
+        vTaskDelay(ticks > 0 ? ticks : 1);
+      });
+  if (w != loop_command_ring::Wait::kDone) memset(&r, 0, sizeof(r));
+  if (result != nullptr) *result = r;
+  return w;
+}
+
 void update() {
+  // The owner's commands first, and before the early return below: a
+  // disabled channel still runs BT_CMD_ENABLE (sweep F111).
+  g_commands.drain(run_command);
+
   if (!g_initialized || !g_settings.enabled) return;
 
   static uint32_t last_status_update = 0;

@@ -5,6 +5,21 @@
  * Enables mobile app connectivity and device management.
  *
  * All handlers follow the same pattern as other API handlers.
+ *
+ * Sweep F111: the handlers run on esp_http_server's task, and the state a
+ * POST or DELETE changes (the pairing session and the pending
+ * Numeric-Comparison pairing, the scan, the connection, the settings) is
+ * also bluetooth_channel::update()'s, on the loop task, with no lock. So no
+ * handler here changes it: each validates its body as before, hands a
+ * bluetooth_channel::Command to bluetooth_channel::submit() and waits (up
+ * to 2 s for the loop task to start it), then answers from the Result in
+ * the shape it always had. A command that did not run answers 409
+ * bluetooth_busy or 503 bluetooth_timeout (send_not_run). The one call a
+ * handler still makes itself is bluetooth_channel::init() (bring_up), when
+ * the owner turns Bluetooth on before it is up: it can block past the loop
+ * task's watchdog, so it never runs there. firmware/scripts/
+ * check_wap_loop_commands.py holds every handler here to that. The GET
+ * routes still read the loop task's state from this task.
  */
 
 #ifndef SECURACV_BLUETOOTH_API_H
@@ -14,6 +29,7 @@
 #include "bluetooth_channel.h"
 #include "ble_ota.h"
 #include "api_auth.h"
+#include "http_status_line.h"
 #include <ArduinoJson.h>
 
 namespace bluetooth_api {
@@ -194,9 +210,36 @@ inline esp_err_t send_bt_error(httpd_req_t* req, const char* fallback) {
   return send_error(req, fallback);
 }
 
+// ── The loop task's answer (sweep F111) ────────────────────────────────
+
+// A command the loop task did not run: every slot was taken (409
+// bluetooth_busy), or it did not start within its wait and was withdrawn
+// (503 bluetooth_timeout). Nothing changed. The body is the routes' error
+// shape, which the dashboard reads.
+inline esp_err_t send_not_run(httpd_req_t* req, loop_command_ring::Wait w) {
+  httpd_resp_set_status(req, http_status_line(bluetooth_channel::not_run_status(w)));
+  return send_error(req, bluetooth_channel::not_run_error(w));
+}
+
+// The stack, brought up on this task when the owner turns Bluetooth on
+// before it is up: the init() bluetooth_channel::enable() ran here before
+// F111. A command never runs it: NimBLE init can block past the loop task's
+// watchdog (the BLE bring-up worker's note in canary_wap.ino). init() admits
+// one caller at a time (the bring-up worker may be inside it).
+inline bool bring_up() {
+  return bluetooth_channel::is_initialized() || bluetooth_channel::init();
+}
+
 // POST /api/bluetooth/enable - Enable Bluetooth
 inline esp_err_t handle_bluetooth_enable(httpd_req_t* req) {
-  if (bluetooth_channel::enable()) {
+  if (!bring_up()) {
+    return send_bt_error(req, "Failed to enable Bluetooth");
+  }
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_ENABLE), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, "Bluetooth enabled");
   }
   return send_bt_error(req, "Failed to enable Bluetooth");
@@ -204,7 +247,10 @@ inline esp_err_t handle_bluetooth_enable(httpd_req_t* req) {
 
 // POST /api/bluetooth/disable - Disable Bluetooth
 inline esp_err_t handle_bluetooth_disable(httpd_req_t* req) {
-  bluetooth_channel::disable();
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_DISABLE), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
   return send_success(req, "Bluetooth disabled");
 }
 
@@ -212,17 +258,23 @@ inline esp_err_t handle_bluetooth_disable(httpd_req_t* req) {
 inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
   // Auto-enable: clicking "Start Advertising" is unambiguous user intent.
   // Without this the call silently returns false when enabled=false in NVS.
-  if (!bluetooth_channel::is_enabled()) {
-    if (!bluetooth_channel::enable()) {
-      return send_bt_error(req, "Bluetooth init failed");
-    }
+  // The stack comes up here; the enable itself is the command's.
+  if (!bluetooth_channel::is_enabled() && !bring_up()) {
+    return send_bt_error(req, "Bluetooth init failed");
   }
-  // Check pre-conditions before issuing the start call so the error message
-  // is specific and we avoid a no-op state transition.
-  if (bluetooth_channel::is_connected()) {
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_ADVERTISE_START), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_ENABLED) {
+    return send_bt_error(req, "Bluetooth init failed");
+  }
+  // The pre-condition, checked by the command before the start call so the
+  // error message is specific and we avoid a no-op state transition.
+  if (r.refusal == bluetooth_channel::BT_REFUSED_CONNECTED) {
     return send_error(req, "Cannot advertise while a device is connected");
   }
-  if (bluetooth_channel::start_advertising()) {
+  if (r.ok) {
     return send_success(req, "Advertising started");
   }
   return send_error(req, "Failed to start advertising");
@@ -230,7 +282,10 @@ inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
 
 // POST /api/bluetooth/advertise/stop - Stop advertising
 inline esp_err_t handle_bluetooth_advertise_stop(httpd_req_t* req) {
-  bluetooth_channel::stop_advertising();
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_ADVERTISE_STOP), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
   return send_success(req, "Advertising stopped");
 }
 
@@ -251,7 +306,12 @@ inline esp_err_t handle_bluetooth_scan_start(httpd_req_t* req) {
     }
   }
 
-  if (bluetooth_channel::start_scan(duration_ms)) {
+  bluetooth_channel::Command cmd = bluetooth_channel::make_command(bluetooth_channel::BT_CMD_SCAN_START);
+  cmd.duration_ms = duration_ms;
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     JsonDocument doc;
     doc["success"] = true;
     doc["message"] = "Scan started";
@@ -266,7 +326,10 @@ inline esp_err_t handle_bluetooth_scan_start(httpd_req_t* req) {
 
 // POST /api/bluetooth/scan/stop - Stop scanning
 inline esp_err_t handle_bluetooth_scan_stop(httpd_req_t* req) {
-  bluetooth_channel::stop_scan();
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_SCAN_STOP), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
   return send_success(req, "Scan stopped");
 }
 
@@ -309,23 +372,30 @@ inline esp_err_t handle_bluetooth_scan_results(httpd_req_t* req) {
 
 // DELETE /api/bluetooth/scan/results - Clear scan results
 inline esp_err_t handle_bluetooth_scan_clear(httpd_req_t* req) {
-  bluetooth_channel::clear_scan_results();
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_SCAN_CLEAR), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
   return send_success(req, "Scan results cleared");
 }
 
 // POST /api/bluetooth/pair/start - Start pairing mode
 inline esp_err_t handle_bluetooth_pair_start(httpd_req_t* req) {
   // Auto-enable: same rationale as advertise/start.
-  if (!bluetooth_channel::is_enabled()) {
-    if (!bluetooth_channel::enable()) {
-      return send_bt_error(req, "Bluetooth init failed");
-    }
+  if (!bluetooth_channel::is_enabled() && !bring_up()) {
+    return send_bt_error(req, "Bluetooth init failed");
   }
-  if (bluetooth_channel::start_pairing()) {
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_PAIR_START), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_ENABLED) {
+    return send_bt_error(req, "Bluetooth init failed");
+  }
+  if (r.ok) {
     return send_success(req, "Pairing mode started");
   }
-  bluetooth_channel::BluetoothSettings s = bluetooth_channel::get_settings();
-  if (!s.allow_pairing) {
+  if (!r.allow_pairing) {
     return send_error(req, "Pairing disabled in settings — toggle 'Allow new pairings' first");
   }
   return send_error(req, "Failed to start pairing");
@@ -333,7 +403,10 @@ inline esp_err_t handle_bluetooth_pair_start(httpd_req_t* req) {
 
 // POST /api/bluetooth/pair/cancel - Cancel pairing
 inline esp_err_t handle_bluetooth_pair_cancel(httpd_req_t* req) {
-  bluetooth_channel::cancel_pairing();
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_PAIR_CANCEL), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
   return send_success(req, "Pairing canceled");
 }
 
@@ -355,8 +428,12 @@ inline esp_err_t handle_bluetooth_pair_confirm(httpd_req_t* req) {
     return send_error(req, "Missing 'pin' field");
   }
 
-  uint32_t pin = input["pin"].as<uint32_t>();
-  if (bluetooth_channel::confirm_pairing(pin)) {
+  bluetooth_channel::Command cmd = bluetooth_channel::make_command(bluetooth_channel::BT_CMD_PAIR_CONFIRM);
+  cmd.pin = input["pin"].as<uint32_t>();
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, "Pairing confirmed");
   }
   return send_error(req, "Invalid PIN");
@@ -364,7 +441,11 @@ inline esp_err_t handle_bluetooth_pair_confirm(httpd_req_t* req) {
 
 // POST /api/bluetooth/pair/reject - Reject pairing
 inline esp_err_t handle_bluetooth_pair_reject(httpd_req_t* req) {
-  if (bluetooth_channel::reject_pairing()) {
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_PAIR_REJECT), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, "Pairing rejected");
   }
   return send_error(req, "No active pairing to reject");
@@ -420,12 +501,15 @@ inline esp_err_t handle_bluetooth_paired_remove(httpd_req_t* req) {
     return send_error(req, "Missing 'address' field");
   }
 
-  uint8_t addr[6];
-  if (!bluetooth_channel::parse_address(input["address"].as<const char*>(), addr)) {
+  bluetooth_channel::Command cmd = bluetooth_channel::make_command(bluetooth_channel::BT_CMD_PAIRED_REMOVE);
+  if (!bluetooth_channel::parse_address(input["address"].as<const char*>(), cmd.address)) {
     return send_error(req, "Invalid address format");
   }
 
-  if (bluetooth_channel::remove_paired_device(addr)) {
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, "Device removed");
   }
   return send_error(req, "Device not found");
@@ -433,7 +517,11 @@ inline esp_err_t handle_bluetooth_paired_remove(httpd_req_t* req) {
 
 // DELETE /api/bluetooth/paired/all - Clear all paired devices
 inline esp_err_t handle_bluetooth_paired_clear(httpd_req_t* req) {
-  if (bluetooth_channel::clear_all_paired_devices()) {
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_PAIRED_CLEAR), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, "All paired devices cleared");
   }
   return send_error(req, "Failed to clear paired devices");
@@ -457,13 +545,17 @@ inline esp_err_t handle_bluetooth_paired_trust(httpd_req_t* req) {
     return send_error(req, "Missing 'address' or 'trusted' field");
   }
 
-  uint8_t addr[6];
-  if (!bluetooth_channel::parse_address(input["address"].as<const char*>(), addr)) {
+  bluetooth_channel::Command cmd = bluetooth_channel::make_command(bluetooth_channel::BT_CMD_PAIRED_TRUST);
+  if (!bluetooth_channel::parse_address(input["address"].as<const char*>(), cmd.address)) {
     return send_error(req, "Invalid address format");
   }
 
   bool trusted = input["trusted"].as<bool>();
-  if (bluetooth_channel::set_device_trusted(addr, trusted)) {
+  cmd.flag = trusted;
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, trusted ? "Device trusted" : "Device untrusted");
   }
   return send_error(req, "Device not found");
@@ -487,13 +579,17 @@ inline esp_err_t handle_bluetooth_paired_block(httpd_req_t* req) {
     return send_error(req, "Missing 'address' or 'blocked' field");
   }
 
-  uint8_t addr[6];
-  if (!bluetooth_channel::parse_address(input["address"].as<const char*>(), addr)) {
+  bluetooth_channel::Command cmd = bluetooth_channel::make_command(bluetooth_channel::BT_CMD_PAIRED_BLOCK);
+  if (!bluetooth_channel::parse_address(input["address"].as<const char*>(), cmd.address)) {
     return send_error(req, "Invalid address format");
   }
 
   bool blocked = input["blocked"].as<bool>();
-  if (bluetooth_channel::set_device_blocked(addr, blocked)) {
+  cmd.flag = blocked;
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, blocked ? "Device blocked" : "Device unblocked");
   }
   return send_error(req, "Device not found");
@@ -501,7 +597,11 @@ inline esp_err_t handle_bluetooth_paired_block(httpd_req_t* req) {
 
 // POST /api/bluetooth/disconnect - Disconnect current connection
 inline esp_err_t handle_bluetooth_disconnect(httpd_req_t* req) {
-  if (bluetooth_channel::disconnect()) {
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(
+      bluetooth_channel::make_command(bluetooth_channel::BT_CMD_DISCONNECT), &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, "Disconnected");
   }
   return send_error(req, "No active connection");
@@ -541,39 +641,55 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
     return send_error(req, "Invalid JSON");
   }
 
-  bluetooth_channel::BluetoothSettings settings = bluetooth_channel::get_settings();
+  // The fields the POST names; the loop task applies them to the settings
+  // it holds (sweep F111).
+  bluetooth_channel::Command cmd = bluetooth_channel::make_command(bluetooth_channel::BT_CMD_SETTINGS);
+  bluetooth_channel::BluetoothSettings& settings = cmd.settings;
 
   if (input["enabled"].is<JsonVariant>()) {
     settings.enabled = input["enabled"].as<bool>();
+    cmd.set_mask |= bluetooth_channel::BT_SET_ENABLED;
   }
   if (input["auto_advertise"].is<JsonVariant>()) {
     settings.auto_advertise = input["auto_advertise"].as<bool>();
+    cmd.set_mask |= bluetooth_channel::BT_SET_AUTO_ADVERTISE;
   }
   if (input["allow_pairing"].is<JsonVariant>()) {
     settings.allow_pairing = input["allow_pairing"].as<bool>();
+    cmd.set_mask |= bluetooth_channel::BT_SET_ALLOW_PAIRING;
   }
   if (input["require_pin"].is<JsonVariant>()) {
     settings.require_pin = input["require_pin"].as<bool>();
+    cmd.set_mask |= bluetooth_channel::BT_SET_REQUIRE_PIN;
   }
   if (input["device_name"].is<JsonVariant>()) {
-    strncpy(settings.device_name, input["device_name"].as<const char*>(),
+    const char* name = input["device_name"].as<const char*>();
+    strncpy(settings.device_name, name != nullptr ? name : "",
             bluetooth_channel::MAX_DEVICE_NAME_LEN);
     settings.device_name[bluetooth_channel::MAX_DEVICE_NAME_LEN] = '\0';
+    cmd.set_mask |= bluetooth_channel::BT_SET_DEVICE_NAME;
   }
   if (input["tx_power"].is<JsonVariant>()) {
     settings.tx_power = input["tx_power"].as<int8_t>();
+    cmd.set_mask |= bluetooth_channel::BT_SET_TX_POWER;
   }
   if (input["inactivity_timeout_sec"].is<JsonVariant>()) {
     settings.inactivity_timeout_ms = input["inactivity_timeout_sec"].as<uint32_t>() * 1000;
+    cmd.set_mask |= bluetooth_channel::BT_SET_INACTIVITY;
   }
   if (input["notify_on_connect"].is<JsonVariant>()) {
     settings.notify_on_connect = input["notify_on_connect"].as<bool>();
+    cmd.set_mask |= bluetooth_channel::BT_SET_NOTIFY_ON_CONNECT;
   }
   if (input["long_range_mode"].is<JsonVariant>()) {
     settings.long_range_mode = input["long_range_mode"].as<bool>();
+    cmd.set_mask |= bluetooth_channel::BT_SET_LONG_RANGE;
   }
 
-  if (bluetooth_channel::set_settings(settings)) {
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, "Settings updated");
   }
   return send_error(req, "Failed to update settings");
@@ -597,8 +713,16 @@ inline esp_err_t handle_bluetooth_name_set(httpd_req_t* req) {
     return send_error(req, "Missing 'name' field");
   }
 
+  // One byte past the longest name kept, so a name too long stays too long
+  // and the command refuses it, as set_device_name() always did.
   const char* name = input["name"].as<const char*>();
-  if (bluetooth_channel::set_device_name(name)) {
+  bluetooth_channel::Command cmd = bluetooth_channel::make_command(bluetooth_channel::BT_CMD_NAME);
+  strncpy(cmd.name, name != nullptr ? name : "", sizeof(cmd.name) - 1);
+  cmd.name[sizeof(cmd.name) - 1] = '\0';
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     return send_success(req, "Device name updated");
   }
   return send_error(req, "Invalid name");
@@ -623,7 +747,12 @@ inline esp_err_t handle_bluetooth_power_set(httpd_req_t* req) {
   }
 
   int8_t power = input["power"].as<int8_t>();
-  if (bluetooth_channel::set_tx_power(power)) {
+  bluetooth_channel::Command cmd = bluetooth_channel::make_command(bluetooth_channel::BT_CMD_POWER);
+  cmd.power = power;
+  bluetooth_channel::Result r;
+  const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
+  if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.ok) {
     JsonDocument doc;
     doc["success"] = true;
     doc["message"] = "TX power updated";
