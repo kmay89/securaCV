@@ -575,6 +575,59 @@ is CI's. Owner: U1. The serial lines below are the egress's own.
     still does.
   - Artifact: `docs/audit/repro/F104/no-card/`.
 
+## canary-wap loop-task ownership (F96, F106) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
+(`submit()` posts a mesh owner command to a four-slot
+`loop_command_ring.h`; `update()` drains it first on every pass) and
+`csi_mqtt.cpp` (`request_reinit()`; `csi_mqtt::loop()` runs the re-init).
+The `handle_mesh_*` handlers, the MQTT config and test handlers and the QR
+scanner hand their work to the loop task instead of doing it on their own.
+Host-tested (`tests_host/test_loop_command_ring.cpp`,
+`test_mesh_commands_wap.cpp`, `test_mqtt_reinit.cpp`) and held by
+`firmware/scripts/check_wap_loop_commands.py`; two real tasks on two cores
+are not something a host test can run. Compile is CI's. Owner: U1.
+
+- [ ] **Pairing, removal and the other mesh routes still answer as before**
+  - Setup: two canary-wap boards on this firmware, each with the web UI
+    open.
+  - Repro: pair them from the web UI (Create Opera on one, Join on the
+    other), confirming the code on the joiner first; rename the opera;
+    clear the alerts; turn the mesh off and on again; remove the other
+    board; leave the opera.
+  - Expected: every step answers as it did before (`{"ok":true}`, or the
+    same 400 errors for a refused step); no `mesh_busy` (409) or
+    `mesh_timeout` (503) in normal use; the removal starts the rekey (the
+    serial log's `opera: rekey transaction started after peer removal`).
+  - Artifact: `docs/audit/repro/F96/rest-routes/`.
+- [ ] **A busy loop answers `mesh_timeout`, and the command does not run**
+  - Setup: one board, mesh on.
+  - Repro: while the loop task is held (an SD card remount, or a debug
+    build with a deliberate 3 s stall in `loop()`), send
+    `POST /api/mesh/name` with a new name.
+  - Expected: `503 {"ok":false,"error":"mesh_timeout"}` within about 2 s;
+    after the stall, `GET /api/mesh` still shows the old name.
+  - Artifact: `docs/audit/repro/F96/timeout/`.
+- [ ] **Saving and testing the broker under publish load**
+  - Setup: a board paired to Home Assistant's broker, events committing
+    (walk in front of the sensor), the `/mqtt` page open.
+  - Repro: press Save and Test connection repeatedly, about once a second
+    for a minute, changing the topic prefix back and forth.
+  - Expected: no reboot, Guru Meditation or task watchdog; the page shows
+    `Saved.` and `Reached the broker (plain)` (or the TLS transport); HA
+    keeps receiving events between the reconnects; the serial log shows one
+    `[MQTT] bridge started` per re-init (presses that land while one waits
+    share it).
+  - Artifact: `docs/audit/repro/F106/save-under-load/`.
+- [ ] **A QR hub provision still joins the fleet**
+  - Setup: an unprovisioned canary-wap with a camera; a canary-display
+    showing its provisioning QR with a hub.
+  - Repro: scan the code.
+  - Expected: the canary-wap joins Wi-Fi and comes up on the hub's broker
+    (its `status` topic says online) without a reboot, and the display
+    celebrates it.
+  - Artifact: `docs/audit/repro/F106/qr-hub/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at

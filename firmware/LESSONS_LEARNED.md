@@ -2549,6 +2549,41 @@
   `test_wap_event_egress.cpp` each run the scenario on both paths out of
   the hold, through a fake card that lands all but a line's last byte
   (`SD.short_by_next`); each fails on the egress before the fix.
+
+## Tasks: work that changes a module's state runs on the task that owns it
+
+### A comment that promises a serializer is not a serializer, and "idempotent" is not "thread-safe"
+- **What happened:** canary-wap's mesh REST handlers called
+  `remove_peer`, `leave_opera`, `start_pairing_*`, `cancel_pairing`,
+  `confirm_pairing`, `set_enabled`, `set_opera_name` and `clear_alerts` on
+  esp_http_server's task, while `mesh_network::update()` read and wrote the
+  same peer table, pairing session, opera config (and its one `g_prefs` NVS
+  object) and alert history on the loop task. A note in `mesh_network.cpp`
+  said a "wifi_provision serializer" put those calls on the main task; it
+  did not exist (sweep F96). The MQTT bridge's `init()`, documented as
+  idempotent, ran from the config POST and the test handler (the httpd task)
+  and from the QR scanner, and tore the esp_mqtt client down under a
+  loop-task publish holding the old handle (sweep F106).
+- **Root cause:** a public mutator is callable from any task, and nothing
+  but a comment said which one owned it. Idempotent described what a second
+  call does, not what a concurrent one does.
+- **Fix:** the other task asks and the owner acts. The mesh's mutators are
+  internal to `mesh_network.cpp` (so the compiler refuses a new caller), a
+  handler hands a `Command` to `submit()`, which waits a bounded time on a
+  small lock-protected ring (`loop_command_ring.h`), and `update()` drains
+  it first on every pass (before its early return, or a disabled mesh could
+  never be enabled again). A command the loop task never reached is
+  withdrawn, so the 503 is true. The MQTT re-init is a coalescing request
+  `csi_mqtt::loop()` serves; the handlers wait for it, bounded.
+- **Regression check:** `test_loop_command_ring.cpp` (including two real
+  threads, clean under `make tsan-loop-ring`), `test_mesh_commands_wap.cpp`
+  and `test_mqtt_reinit.cpp` (a fake esp_mqtt that records each call's task
+  and notices a client destroyed under a publish), and
+  `firmware/scripts/check_wap_loop_commands.py` in `regression_check.sh`,
+  which holds the handlers, the drain and the re-init path in the source and
+  proves each rule with a mutation it must refuse. When a handler on another
+  task must change what a loop owns, make the change unreachable from it and
+  give it a way to ask.
 - **Date learned:** 2026-10
 
 ## How to Add an Entry
