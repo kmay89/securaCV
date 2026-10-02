@@ -1738,10 +1738,14 @@ void setup() {
   csi_config_t csi_cfg = CSI_CONFIG_DEFAULT;
   if (csi::init(csi_cfg)) {
     /* Register the v1 module pipeline (presence, breathing, activity
-     * ribbon, daily summary, anomaly baseline) BEFORE arming the
-     * features callback. The HAL won't deliver windows until start()
+     * ribbon, daily summary, anomaly baseline) and run each module's
+     * init() with its stored settings (sweep F93), AFTER
+     * csi_event_egress_begin() above restored the event-id floor and
+     * BEFORE arming the features callback, so no window ticks a module
+     * before its init. The HAL won't deliver windows until start()
      * succeeds, but registering early means a deferred-start retry
-     * doesn't race the first feature window. */
+     * doesn't race the first feature window. check_event_egress_order.py
+     * (rule 8) holds this order. */
     securacv_csi_modules_init();
 
     csi::set_features_callback([](const csi_features_t* f) {

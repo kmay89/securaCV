@@ -107,14 +107,17 @@ typedef struct {
  * ────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Opaque settings handle passed to a module's init(). The host application
- * fills it from NVS (and the Tuning Lab UI) before calling init(). Modules
- * read fields by name via the helpers below; they don't need to know the
- * underlying storage format.
+ * Opaque settings handle passed to a module's init(). Modules read fields
+ * by name via the helpers below; they don't need to know the underlying
+ * storage format. Both firmware trees pass NULL: their strong overrides of
+ * the helpers read NVS by key (csi_module_settings_nvs.h, one key map and
+ * one read rule for both), so the handle carries nothing today.
  */
 typedef struct csi_module_settings csi_module_settings_t;
 
-/* Read a typed setting; returns the default if the key is absent. */
+/* Read a typed setting; returns the default if the key is absent. The
+ * library's own definitions are weak and return the default; a host that
+ * stores settings overrides all three. */
 int32_t  csi_module_settings_int(const csi_module_settings_t*, const char* key, int32_t default_value);
 float    csi_module_settings_float(const csi_module_settings_t*, const char* key, float default_value);
 bool     csi_module_settings_bool(const csi_module_settings_t*, const char* key, bool default_value);
@@ -126,8 +129,12 @@ bool     csi_module_settings_bool(const csi_module_settings_t*, const char* key,
 /**
  * Lifecycle and per-window callbacks. All function pointers may be NULL
  * except `tick`. The runtime guarantees:
- *   - init() is called exactly once before any tick(), with the module's
- *     persisted settings (or defaults if first boot).
+ *   - init() is called once at boot, by csi_module_init_all(), before any
+ *     tick(), and reads the module's persisted settings (or its defaults on
+ *     a device that never stored one). csi_module_tick_all() does not tick
+ *     a module whose boot init has not run. init() must not emit: it runs
+ *     during the host's boot, before the SD event log refills the Today
+ *     ring (which it does only while no row is live).
  *   - tick() is called from the main loop (NOT an ISR) at most once per
  *     CSI window (~1 Hz). Modules MUST NOT block.
  *   - on_event_dismissed() is called when the user swipes "That was nothing"
@@ -184,13 +191,37 @@ size_t csi_module_count(void);
 /** Lookup by id (returns NULL if absent). */
 const csi_module_t* csi_module_find(const char* id);
 
-/** Drive every registered module's tick() with the current features. The
- *  CSI HAL features callback should call this. */
+/**
+ * Run init() once for every registered module whose boot init has not run
+ * yet, in registration order, passing `settings` through (both trees pass
+ * NULL; see csi_module_settings_t). A module with no init() counts as
+ * initialized. A second call runs nothing for a module already initialized,
+ * so it initializes only modules registered since. Returns how many init()
+ * calls it made.
+ *
+ * Registration alone does not initialize a module (sweep F93: neither tree
+ * called init() at boot, so every stored setting was ignored until a
+ * settings change in that boot on the canary-wap, and always on the
+ * canary). Each host calls this once at boot, after its modules register
+ * and after NVS is readable, the event-id floor is restored and the events
+ * egress has begun, and before the first CSI window can tick a module.
+ * A later settings change re-runs one module's init() directly (the
+ * canary-wap's reinit_module()); that does not go through here.
+ */
+size_t csi_module_init_all(const csi_module_settings_t* settings);
+
+/** Drive the tick() of every registered module whose boot init has run
+ *  (csi_module_init_all) with the current features. The CSI HAL features
+ *  callback should call this. */
 void csi_module_tick_all(const csi_features_t* features);
 
 /** Notify modules of a user dismissal. The runtime routes the call to the
  *  module that originally emitted `event_id`. */
 void csi_module_dispatch_dismiss(uint32_t event_id);
+
+/** Forget every registration, boot init and dismiss route, as a reboot
+ *  does. Used by tests. Module-internal state is the modules' own. */
+void csi_module_test_reset(void);
 
 #ifdef __cplusplus
 }

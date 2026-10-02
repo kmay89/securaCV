@@ -51,6 +51,7 @@
 #include <csi_traffic.h>
 #include <csi_types.h>
 #include <csi_module.h>
+#include "csi_module_settings_nvs.h"  // the module settings' NVS rule, shared with the canary (F93)
 #include <csi_event.h>
 #include "csi_event_id_floor.h"   // when to write the id floor (common/csi, host-tested)
 #include <csi_bundler.h>          // snapshot_open() — live rows for /api/events/today
@@ -401,89 +402,31 @@ void on_csi_window(const csi_features_t* features, void* /*user*/) {
 /* ──────────────────────────────────────────────────────────────────────────
  * SETTINGS — NVS-backed module settings
  *
- * The library declares csi_module_settings_int/bool/float with weak
- * default symbols that just return the supplied default. We override
- * them here with a thin Preferences-backed reader so the dashboard's
- * Pet Mode toggle (and future preset / sensitivity controls) actually
- * change what the modules do at run-time.
- *
- * NVS key length limit is 15 chars, so we shorten the dotted module
- * keys to a stable abbreviation:
- *
- *   core.presence.pet_mode -> cp.pet_mode   (cp + dot + 8 = 11)
- *   core.presence.motion_threshold -> cp.mt (still valid, mapped below)
- *   ...
- *
- * The dashboard speaks in dotted keys; this map is the only place that
- * knows about the abbreviation, so future setting-key additions touch
- * one table.
+ * The dashboard, the calibration and the Tuning Lab speak in dotted module
+ * keys ("core.presence.pet_mode"); NVS keys are at most 15 characters, so
+ * each is stored under a short key ("cp.pet_mode"). That map, and the read
+ * rule the modules' csi_module_settings_* calls follow, are
+ * csi_module_settings_nvs.h's: one table both trees read by, so a new
+ * setting is a row there.
  *
  * Defined here (above HTTP HANDLERS) so the GET / POST handlers below
  * can reference SETTINGS_NS, nvs_key_for(), and reinit_module() without
  * forward declarations.
  * ────────────────────────────────────────────────────────────────────────── */
 
-constexpr const char* SETTINGS_NS = "csi";
+/* The module settings' namespace and key map are
+ * csi_module_settings_nvs.h's, the one rule the canary reads them by too
+ * (sweep F93). This TU's other "csi" keys (the time zone, the transmitter
+ * filter, the event-id floor) share the namespace. The csi_module_settings_*
+ * overrides that read them for the modules are in csi_settings_nvs.cpp. */
+constexpr const char* SETTINGS_NS = csi_module_settings_nvs::kNamespace;
 
-struct SettingKey {
-  const char* full;   // "core.presence.pet_mode"
-  const char* nvs;    // "cp.pet_mode" — must be ≤ 15 chars
-};
-const SettingKey SETTING_KEYS[] = {
-  { "core.presence.pet_mode",            "cp.pet_mode"   },
-  /* Tier-3 dashboard surface: preset (0=sensitive, 1=balanced,
-   * 2=quiet) + sensitivity slider (0..100). Module reads these and
-   * computes the three thresholds below; users who change the
-   * dashboard's preset / slider land here. */
-  { "core.presence.preset",              "cp.preset"     },
-  { "core.presence.sensitivity",         "cp.sens"       },
-  /* Per-coefficient overrides (Tuning Lab path, Tier 4): if any of
-   * these are explicitly set in NVS they win over the preset
-   * baseline. Default value supplied at init() is the
-   * preset+sensitivity-derived baseline so common-case users
-   * never trip these. */
-  { "core.presence.motion_threshold",    "cp.mt"         },
-  { "core.presence.active_threshold",    "cp.at"         },
-  { "core.presence.breathing_threshold", "cp.bt"         },
-  { "core.presence.pet_mode_seconds",    "cp.ps"         },
-  /* shimmer filter */
-  { "core.presence.shimmer_rssi_swing",  "cp.srs"        },
-  { "core.presence.shimmer_doppler_floor","cp.sdf"       },
-  { "core.presence.shimmer_enabled",     "cp.se"         },
-  { "core.breathing.lock_threshold",     "cb.lt"         },
-  { "core.breathing.confirm_seconds",    "cb.cs"         },
-  /* Quiet Hours — a single time range (minutes-of-day, 0..1439) that
-   * the dashboard renders as dimmed ribbon cells and that future
-   * notification / anomaly modules can consult to suppress alerts.
-   * The setting is forward-compat scaffolding for PR 7 and beyond;
-   * today its only visible effect is the dimmed ribbon. */
-  { "core.quiet_hours.enabled",          "qh.en"         },
-  { "core.quiet_hours.start_min",        "qh.start"      },
-  { "core.quiet_hours.end_min",          "qh.end"        },
-  /* Privacy ceiling. P0 (default, anti-snitch) blocks anything more
-   * detailed than coarse state names. P1 lets per-event scores leave
-   * the device. P2 unlocks the raw 32-dim feature window and the
-   * Tuning Lab. Stored as int (0/1/2) so the apply_*_from_nvs helper
-   * can use Preferences::getInt with a sane fallback. */
-  { "core.privacy_ceiling",              "cp.pc"         },
-  /* Anomaly baseline — out-of-pattern detector tunables. Defaults
-   * cover a quiet home; Tuning Lab (PR 10) exposes them as sliders. */
-  { "anomaly.baseline.spike_ratio",      "ab.sr"         },
-  { "anomaly.baseline.min_motion",       "ab.mm"         },
-  { "anomaly.baseline.min_breathing",    "ab.mb"         },
-  { "anomaly.baseline.cooldown_sec",     "ab.cd"         },
-};
+using csi_module_settings_nvs::nvs_key_for;
 
-const char* nvs_key_for(const char* full_key) {
-  for (const SettingKey& k : SETTING_KEYS) {
-    if (strcmp(k.full, full_key) == 0) return k.nvs;
-  }
-  return nullptr;
-}
-
-/* Reinit modules whose settings changed. Cheap — modules are stateless
- * apart from a few static counters that init() resets, and there are
- * only four registered. Called once after each /api/settings POST. */
+/* Reinit a module whose settings changed: its init() re-reads them. Cheap
+ * — modules are stateless apart from a few static counters that init()
+ * resets. Called after a settings POST, a calibration apply or a Tuning
+ * Lab change; the boot's init is csi_module_init_all() in init() below. */
 void reinit_module(const char* module_id) {
   const csi_module_t* m = csi_module_find(module_id);
   if (!m) return;
@@ -2721,57 +2664,9 @@ void register_v1_modules() {
  * records the snapshot for /api/csi/stream.
  * ────────────────────────────────────────────────────────────────────────── */
 
-/* ──────────────────────────────────────────────────────────────────────────
- * STRONG OVERRIDES — csi_module_settings_*
- *
- * The library's weak defaults return whatever default the caller passes;
- * here we look up the canonical full key, map to the short NVS key, and
- * read the persisted value. Falls back to the caller's default when the
- * key is absent or this is the first boot.
- *
- * Read-only Preferences handle is opened per call. Settings reads are
- * infrequent (boot + post-POST reinit), so the small open/close cost
- * is fine and avoids holding an NVS handle across the firmware lifetime.
- * ────────────────────────────────────────────────────────────────────────── */
-
-extern "C" int32_t csi_module_settings_int(const csi_module_settings_t*,
-                                           const char* key,
-                                           int32_t default_value) {
-  if (!key) return default_value;
-  const char* nvs_key = nvs_key_for(key);
-  if (!nvs_key) return default_value;
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
-  int32_t v = prefs.getInt(nvs_key, default_value);
-  prefs.end();
-  return v;
-}
-
-extern "C" bool csi_module_settings_bool(const csi_module_settings_t*,
-                                         const char* key,
-                                         bool default_value) {
-  if (!key) return default_value;
-  const char* nvs_key = nvs_key_for(key);
-  if (!nvs_key) return default_value;
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
-  bool v = prefs.getBool(nvs_key, default_value);
-  prefs.end();
-  return v;
-}
-
-extern "C" float csi_module_settings_float(const csi_module_settings_t*,
-                                           const char* key,
-                                           float default_value) {
-  if (!key) return default_value;
-  const char* nvs_key = nvs_key_for(key);
-  if (!nvs_key) return default_value;
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
-  float v = prefs.getFloat(nvs_key, default_value);
-  prefs.end();
-  return v;
-}
+/* The csi_module_settings_* overrides (NVS-backed, by
+ * csi_module_settings_nvs.h's rule) are in csi_settings_nvs.cpp, a
+ * TU the host tests compile (sweep F93). */
 
 /* ──────────────────────────────────────────────────────────────────────────
  * STRONG OVERRIDE — csi_event_commit_witness
@@ -2994,6 +2889,16 @@ bool init(httpd_handle_t server, const char* api_token) {
   csi_event_egress::begin();
 
   register_v1_modules();
+
+  /* Run every registered module's init() once, with its stored settings
+   * (sweep F93). Registration alone initializes nothing, so until this
+   * call every saved preset, threshold, pet mode and anomaly cooldown
+   * applied only after a settings change in the same boot. After the floor
+   * and the egress (no init() emits, and one that did would allocate from
+   * the restored floor) and the modules; before the HAL installs the
+   * features callback, the first tick (csi_module_tick_all ticks no module
+   * before its init). check_wap_event_egress.py's rule 3 holds the order. */
+  csi_module_init_all(nullptr);
 
   /* Restore persisted privacy ceiling (defaults to P0 — privacy-first).
    * Done before HAL start so the very first /api/csi/window request after

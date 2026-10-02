@@ -16,6 +16,7 @@
 #include "csi_module.h"
 #include "csi_event.h"
 #include "csi_bundler.h"
+#include "csi_module_settings_nvs.h"
 
 /* v1 modules — same set the canary-wap Arduino build registers. */
 #include "core_presence.h"
@@ -72,56 +73,6 @@
 namespace {
 
 bool s_initialized = false;
-
-/* ──────────────────────────────────────────────────────────────────────────
- * SETTINGS — NVS-backed, mapped through the same short-key convention the
- * canary-wap Arduino build uses. ESP32 Preferences imposes a 15-char key
- * limit, so module-style "core.presence.preset" maps to "cp.preset" etc.
- * Keeping the same NVS layout means a device flashed with canary-wap and
- * later re-flashed with canary PIO retains its tunables.
- * ────────────────────────────────────────────────────────────────────────── */
-
-constexpr const char* SETTINGS_NS = "csi";
-
-struct SettingKey {
-  const char* full;
-  const char* nvs;
-};
-
-const SettingKey SETTING_KEYS[] = {
-  /* core.presence */
-  { "core.presence.pet_mode",            "cp.pet_mode"   },
-  { "core.presence.preset",              "cp.preset"     },
-  { "core.presence.sensitivity",         "cp.sens"       },
-  { "core.presence.motion_threshold",    "cp.mt"         },
-  { "core.presence.active_threshold",    "cp.at"         },
-  { "core.presence.breathing_threshold", "cp.bt"         },
-  { "core.presence.pet_mode_seconds",    "cp.ps"         },
-  /* shimmer filter */
-  { "core.presence.shimmer_rssi_swing",  "cp.srs"        },
-  { "core.presence.shimmer_doppler_floor","cp.sdf"       },
-  { "core.presence.shimmer_enabled",     "cp.se"         },
-  /* core.breathing */
-  { "core.breathing.lock_threshold",     "cb.lt"         },
-  { "core.breathing.confirm_seconds",    "cb.cs"         },
-  /* core.quiet_hours */
-  { "core.quiet_hours.enabled",          "qh.en"         },
-  { "core.quiet_hours.start_min",        "qh.start"      },
-  { "core.quiet_hours.end_min",          "qh.end"        },
-  /* anomaly.baseline */
-  { "anomaly.baseline.spike_ratio",      "ab.sr"         },
-  { "anomaly.baseline.min_motion",       "ab.mm"         },
-  { "anomaly.baseline.min_breathing",    "ab.mb"         },
-  { "anomaly.baseline.cooldown_sec",     "ab.cd"         },
-};
-
-const char* nvs_key_for(const char* full_key) {
-  if (!full_key) return nullptr;
-  for (const SettingKey& k : SETTING_KEYS) {
-    if (strcmp(k.full, full_key) == 0) return k.nvs;
-  }
-  return nullptr;
-}
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 static void format_fingerprint(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
@@ -393,49 +344,30 @@ static void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
  * STRONG OVERRIDES — csi_module_settings_*
  *
  * The library declares each accessor `__attribute__((weak))` returning the
- * caller's default. Here we look up the canonical full key, map to the
- * short NVS key, and read the persisted value. Read-only Preferences
- * handles are opened per call — settings reads are infrequent (boot +
- * post-POST reinit) so the small open/close cost is fine.
+ * caller's default. Here they read NVS by the one rule both trees share
+ * (csi_module_settings_nvs.h: namespace "csi", the same short keys, the
+ * same typed reads, an unmapped key or a closed namespace reads as the
+ * default), so a row the canary-wap stored reads the same here. Nothing on
+ * the canary writes these rows today. Read at boot, by
+ * securacv_csi_modules_init()'s csi_module_init_all() (sweep F93).
  * ────────────────────────────────────────────────────────────────────────── */
 
 extern "C" int32_t csi_module_settings_int(const csi_module_settings_t*,
                                            const char* key,
                                            int32_t default_value) {
-  if (!key) return default_value;
-  const char* nvs_key = nvs_key_for(key);
-  if (!nvs_key) return default_value;
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
-  int32_t v = prefs.getInt(nvs_key, default_value);
-  prefs.end();
-  return v;
+  return csi_module_settings_nvs::read_int<Preferences>(key, default_value);
 }
 
 extern "C" bool csi_module_settings_bool(const csi_module_settings_t*,
                                          const char* key,
                                          bool default_value) {
-  if (!key) return default_value;
-  const char* nvs_key = nvs_key_for(key);
-  if (!nvs_key) return default_value;
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
-  bool v = prefs.getBool(nvs_key, default_value);
-  prefs.end();
-  return v;
+  return csi_module_settings_nvs::read_bool<Preferences>(key, default_value);
 }
 
 extern "C" float csi_module_settings_float(const csi_module_settings_t*,
                                            const char* key,
                                            float default_value) {
-  if (!key) return default_value;
-  const char* nvs_key = nvs_key_for(key);
-  if (!nvs_key) return default_value;
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return default_value;
-  float v = prefs.getFloat(nvs_key, default_value);
-  prefs.end();
-  return v;
+  return csi_module_settings_nvs::read_float<Preferences>(key, default_value);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -443,11 +375,11 @@ extern "C" float csi_module_settings_float(const csi_module_settings_t*,
  * ────────────────────────────────────────────────────────────────────────── */
 
 extern "C" bool securacv_csi_modules_init(void) {
-  if (s_initialized) {
-    /* Re-running init re-reads NVS — it's a deliberate path used after a
-     * /api/settings POST. The module dispatcher tolerates a second
-     * register_module() of the same id by replacing the prior entry. */
-  }
+  /* main.cpp calls this once, in setup(), after csi_event_egress_begin()
+   * (the event-id floor) and before it installs the features callback. A
+   * second call changes nothing a module sees: the registry refuses an id
+   * it already holds, and csi_module_init_all() runs no module's init()
+   * twice. */
 
   csi_event_set_privacy_ceiling(CSI_PRIVACY_P0);
 
@@ -523,6 +455,14 @@ extern "C" bool securacv_csi_modules_init(void) {
    * knows the coordinator and de-dups the first redundant election. */
   restore_elected_hub_from_nvs();
 #endif
+
+  /* Every module registered above runs its init() now, once, with its
+   * stored settings (sweep F93). Registration alone initializes nothing,
+   * and csi_module_tick_all() ticks no module before this. After every
+   * csi_module_register() and ble_scout_init(); no init() emits, and the
+   * floor is already restored (csi_event_egress_begin() runs first in
+   * main.cpp's setup()). */
+  csi_module_init_all(nullptr);
 
   csi_hal::set_watchdog(csi_hal::WATCHDOG_DEFAULT_TIMEOUT_MS,
                         &on_csi_watchdog);

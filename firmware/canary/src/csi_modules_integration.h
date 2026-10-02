@@ -38,17 +38,22 @@ extern "C" {
 #endif
 
 /**
- * Initialize the module pipeline once at boot, after the canary CSI
- * HAL has been started. Registers the v1 modules — core.presence,
- * core.breathing, core.activity_ribbon, meta.daily_summary,
- * anomaly.baseline — with the common chokepoint, opens any persisted
- * settings from NVS, and primes per-module state.
+ * Initialize the module pipeline once at boot, after csi::init() and
+ * after csi_event_egress_begin() has restored the event-id floor, and
+ * before the features callback is installed. Registers the v1 modules
+ * (core.presence, core.breathing, core.activity_ribbon,
+ * meta.daily_summary, anomaly.baseline and the rest) with the common
+ * chokepoint, then runs each one's init() once through
+ * csi_module_init_all(), which reads its stored settings from NVS by the
+ * rule both trees share (csi_module_settings_nvs.h; sweep F93). A
+ * setting that is not stored, or a namespace that will not open, reads as
+ * the module's built-in default.
  *
- * Idempotent: a second call is a no-op (re-registering the same module
- * id replaces the prior registration in place; settings are re-read).
+ * A second call changes nothing a module sees: the registry refuses an id
+ * it already holds, and no module's init() runs twice. Settings are read
+ * at boot only; nothing on the canary changes them while it runs.
  *
- * @return true on success; false if init failed (e.g. settings open
- *         failure mid-init — modules then run with built-in defaults).
+ * @return true.
  */
 bool securacv_csi_modules_init(void);
 

@@ -33,6 +33,7 @@
     "csi_subcarriers.h",
     "csi_idf_compat.h",
     "csi_module.h",
+    "csi_module_settings_nvs.h",
     "csi_event.h",
     "csi_bundler.h",
     "csi_witness_payload.h",

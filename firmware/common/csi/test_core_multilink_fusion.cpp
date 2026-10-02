@@ -97,10 +97,15 @@ void csi_event_on_committed(uint32_t /*event_id*/,
 
 namespace {
 
+/* Register, then run the boot init a host runs (csi_module_init_all):
+ * csi_module_tick_all ticks no module whose init has not run (sweep F93). */
 void register_module_once() {
   static bool registered = false;
   if (!registered) {
     assert(csi_module_register(core_multilink_fusion_module()));
+    const size_t ran = csi_module_init_all(nullptr);
+    assert(ran == 1);
+    (void)ran;
     registered = true;
   }
 }
@@ -133,10 +138,9 @@ void fresh_world() {
   core_multilink_fusion_test_reset();
   core_multilink_fusion_test_set_now_ms(10000);
   register_module_once();
-  /* re-init the module via tick path — call its init via the registered
-   * manifest. csi_module_register already invoked init(). Our
-   * core_multilink_fusion::on_init wipes state, so a fresh reset is
-   * enough. */
+  /* The boot init (csi_module_init_all, in register_module_once) ran once
+   * for the whole run; on_init only wipes state, so a fresh reset per test
+   * is the same thing. */
   core_multilink_fusion_test_reset();
 }
 
