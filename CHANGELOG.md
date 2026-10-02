@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The Canary keeps its card's backlog, canary-wap runs its mesh commands and MQTT re-inits on its main loop and keeps one member per radio address, the PIO mesh pairs in either confirm order, saved CSI settings apply at boot, and the Lab's MQTT panes publish the firmware's whole payloads (#<W10>)
+### The Canary keeps its card's backlog, canary-wap runs its mesh commands and MQTT re-inits on its main loop and keeps one member per radio address, the PIO mesh pairs in either confirm order, saved CSI settings apply at boot, and the Lab's MQTT panes publish the firmware's whole payloads (#1762)
 
 - **The Canary keeps its card's backlog when an append fails or the card is
   briefly out (sweep F103, F104).** On the Canary, two kinds of row went live
@@ -147,7 +147,7 @@
   pages reach users with the next Lab and Flasher release, and the comment
   reaches a device with the next canary-wap firmware build.
 
-### canary-wap's mesh is heard after a reboot and pairs in either confirm order, the PIO mesh takes a member's frame only from its own address, the Canary bundles its presence rows and the hourly limit counts every row, canary-wap's new events wait behind its backlog, and the Lab's examples match the firmware (#<W9>)
+### canary-wap's mesh is heard after a reboot and pairs in either confirm order, the PIO mesh takes a member's frame only from its own address, the Canary bundles its presence rows and the hourly limit counts every row, canary-wap's new events wait behind its backlog, and the Lab's examples match the firmware (#1762)
 
 - **canary-wap's mesh is heard after a reboot, pairs in either confirm order,
   and finds its members (sweep F71, F73-F76).** A rebooted canary-wap's frames
@@ -165,7 +165,7 @@
   another member holds) now fails, sends and stores nothing, and is logged.
   Before, it reported success, and the initiator sealed the opera key to a
   partner it then refused. A new member at an address another member holds was
-  still taken (F98; refused since #<W10>). The pairing DISCOVER registers the
+  still taken (F98; now refused, see above). The pairing DISCOVER registers the
   ESP-NOW broadcast peer
   itself, and a channel change re-adds it instead of deleting it. An opera
   whose members it has not heard, after a fresh pairing or after every member
