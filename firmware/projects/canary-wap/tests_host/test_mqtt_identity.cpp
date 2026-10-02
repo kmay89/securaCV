@@ -25,12 +25,14 @@
  *     OpenSSL's deterministic Ed25519 over device_signature's own event
  *     canonical, is byte for byte the lowercase body test_fingerprint_case.py
  *     runs through Home Assistant.
- *  3. Source pins (beacon_source_scan.h): canary_wap.ino feeds both
- *     csi_mqtt::init calls and its one device_signature::init call from the
- *     encoder, and csi_mqtt.cpp takes every published fp from
+ *  3. Source pins (beacon_source_scan.h): canary_wap.ino feeds the MQTT
+ *     bridge's identity calls (setup()'s csi_mqtt::set_identity and the
+ *     boot csi_mqtt::init) and its one device_signature::init call from
+ *     the encoder, and csi_mqtt.cpp takes every published fp from
  *     device_signature::fingerprint_hex() and the health key only from what
- *     csi_mqtt::init was handed. The Makefile passes both paths, and every
- *     pin fails closed when a file cannot be read.
+ *     csi_mqtt::set_identity was handed (init() hands it its arguments).
+ *     The Makefile passes both paths, and every pin fails closed when a
+ *     file cannot be read.
  *
  * Host-tested only: the sketch itself compiles in CI's Arduino leg, and
  * nothing here has run on a unit.
@@ -265,15 +267,25 @@ void test_sketch_feeds_both_strings_from_the_encoder() {
   const std::string code =
       beacon_source_scan::squeeze(beacon_source_scan::strip_comments(raw));
 
-  // Both csi_mqtt::init calls (at boot, and after a QR hub provision) take
-  // the health key the encoder spelled on the line before.
+  // The bridge is handed its identity twice: setup() stores it before the
+  // network starts (csi_mqtt::set_identity), and the boot init() hands it
+  // again. Both take the health key the encoder spelled on the line before.
+  // A QR hub provision only asks the loop task for a re-init, which keeps
+  // that identity (sweep F106); it used to call init() itself.
   const std::string fed_init =
       "mqtt_identity::public_key_hex(pubkey_hex,g_device.pubkey);"
       "csi_mqtt::init(g_device.device_id,FIRMWARE_VERSION,pubkey_hex);";
-  check(beacon_source_scan::count(code, "csi_mqtt::init(") == 2,
-        "canary_wap.ino calls csi_mqtt::init twice (boot, QR hub provision)");
-  check(beacon_source_scan::count(code, fed_init) == 2,
-        "every csi_mqtt::init call takes the key mqtt_identity::public_key_hex spelled");
+  const std::string fed_identity =
+      "mqtt_identity::public_key_hex(mqtt_pubkey_hex,g_device.pubkey);"
+      "csi_mqtt::set_identity(g_device.device_id,FIRMWARE_VERSION,mqtt_pubkey_hex);";
+  check(beacon_source_scan::count(code, "csi_mqtt::init(") == 1,
+        "canary_wap.ino calls csi_mqtt::init once (boot)");
+  check(beacon_source_scan::count(code, fed_init) == 1,
+        "the csi_mqtt::init call takes the key mqtt_identity::public_key_hex spelled");
+  check(beacon_source_scan::count(code, "csi_mqtt::set_identity(") == 1,
+        "canary_wap.ino calls csi_mqtt::set_identity once (setup)");
+  check(beacon_source_scan::count(code, fed_identity) == 1,
+        "the csi_mqtt::set_identity call takes the key mqtt_identity::public_key_hex spelled");
 
   // The one device_signature::init call takes the fp the encoder spelled:
   // the fp every signed publish carries.
@@ -302,19 +314,22 @@ void test_csi_mqtt_publishes_only_those_strings() {
         "chain, counts and the events Signer take device_signature::fingerprint_hex()");
 
   // Two health formats (with and without a battery) print the key, and the
-  // stored key is only ever copied from csi_mqtt::init's argument: erase the
-  // reads and that one copy, and nothing may be left.
+  // stored key is only ever copied from csi_mqtt::set_identity's argument
+  // (init() passes it its own): erase the reads and that one copy, and
+  // nothing may be left.
   check(beacon_source_scan::count(code, "\\\"public_key\\\":\\\"%s\\\"") == 2,
         "csi_mqtt.cpp writes the health key into two formats");
   check(beacon_source_scan::count(
             code, "strncpy(s_public_key_hex,public_key_hex,sizeof(s_public_key_hex)-1);") == 1,
-        "csi_mqtt::init copies the key it was handed");
+        "csi_mqtt::set_identity copies the key it was handed");
   std::string rest = code;
   for (const char* known : {
            "chars_public_key_hex[65]={};",
            "strncpy(s_public_key_hex,public_key_hex,sizeof(s_public_key_hex)-1);",
            "s_public_key_hex[sizeof(s_public_key_hex)-1]='\\0';",
-           // both health snprintf calls and both re-inits end this way
+           // set_identity's guard against copying the key onto itself
+           "if(public_key_hex&&public_key_hex!=s_public_key_hex){",
+           // both health snprintf calls end this way
            "s_firmware_version,s_public_key_hex);",
        }) {
     const std::string k = known;
@@ -323,7 +338,7 @@ void test_csi_mqtt_publishes_only_those_strings() {
     }
   }
   check(rest.find("s_public_key_hex") == std::string::npos,
-        "nothing but csi_mqtt::init's copy writes the published health key");
+        "nothing but csi_mqtt::set_identity's copy writes the published health key");
 }
 
 }  // namespace

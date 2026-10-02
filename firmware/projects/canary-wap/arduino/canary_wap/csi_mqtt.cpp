@@ -4,9 +4,19 @@
  *
  * Threading model:
  *   - esp_mqtt_client maintains its own task. publishes are posted to
- *     that task's queue and the HTTP / main-loop callers return
- *     immediately. Event callbacks fire on the MQTT task; we keep them
- *     to flag-flips + Serial logs so we never block the network stack.
+ *     that task's queue and the main-loop callers return immediately.
+ *     Event callbacks fire on the MQTT task; we keep them to flag-flips,
+ *     Serial logs and the reconnect republish, so we never block the
+ *     network stack.
+ *   - The client itself (s_client) is the loop task's (sweep F106): the
+ *     boot init() runs there (setup()), every later one too (loop(), for
+ *     request_reinit()), and so do the publishers. The config POST and the
+ *     test handler run on the httpd task, and a QR provisioning on the
+ *     scanner's; they request a re-init instead of running one, because
+ *     init() destroys the client a loop-task publish may be holding. The
+ *     esp_mqtt task's own publishes are safe from it: teardown_client()
+ *     stops that task (esp_mqtt_client_stop waits for it) before it
+ *     destroys the client.
  *
  * Privacy model:
  *   - Every successful publish increments csi_integration's outbound
@@ -95,6 +105,20 @@ char                          s_last_error[192]  = {};
 char                     s_device_id[33]      = {};
 char                     s_firmware_version[24] = {};
 char                     s_public_key_hex[65]   = {};
+/* Re-inits another task asked for (request_reinit, sweep F106): the
+ * number of the newest request, and of the newest one a loop-task init()
+ * has served. A request is served by an init() that began after it was
+ * made, so it reads the settings the requester saved. */
+std::atomic<uint32_t>    s_reinit_wanted{0};
+std::atomic<uint32_t>    s_reinit_served{0};
+/* set_update_auto_state() from any task; loop() publishes it. */
+std::atomic<bool>        s_update_auto_dirty{false};
+/* The config POST waits this long for its re-init, so the page's status
+ * refresh sees the new client; the test handler's whole answer, re-init
+ * and connect, comes within kTestBudgetMs (its connect wait always was). */
+constexpr uint32_t       kReinitWaitMs  = 2000;
+constexpr uint32_t       kTestBudgetMs  = 4000;
+constexpr uint32_t       kReinitPollMs  = 10;
 
 /* Build "{prefix}/{device_id}/{suffix}" into out. Returns out for
  * call-site composability. Out must be sized for prefix + device_id +
@@ -441,21 +465,27 @@ const char* last_error() { return s_last_error; }
  * Lifecycle
  * ────────────────────────────────────────────────────────────────────────── */
 
-bool init(const char* device_id,
-          const char* firmware_version,
-          const char* public_key_hex) {
-  if (device_id) {
+void set_identity(const char* device_id,
+                  const char* firmware_version,
+                  const char* public_key_hex) {
+  if (device_id && device_id != s_device_id) {
     strncpy(s_device_id, device_id, sizeof(s_device_id) - 1);
     s_device_id[sizeof(s_device_id) - 1] = '\0';
   }
-  if (firmware_version) {
+  if (firmware_version && firmware_version != s_firmware_version) {
     strncpy(s_firmware_version, firmware_version, sizeof(s_firmware_version) - 1);
     s_firmware_version[sizeof(s_firmware_version) - 1] = '\0';
   }
-  if (public_key_hex) {
+  if (public_key_hex && public_key_hex != s_public_key_hex) {
     strncpy(s_public_key_hex, public_key_hex, sizeof(s_public_key_hex) - 1);
     s_public_key_hex[sizeof(s_public_key_hex) - 1] = '\0';
   }
+}
+
+bool init(const char* device_id,
+          const char* firmware_version,
+          const char* public_key_hex) {
+  set_identity(device_id, firmware_version, public_key_hex);
 
   /* Tear down any prior session so a /api/mqtt/config POST that flips
    * enabled / changes broker comes up cleanly. Idempotent on first
@@ -565,10 +595,53 @@ bool init(const char* device_id,
 }
 
 void loop() {
+  /* A re-init another task asked for (sweep F106), here so the teardown
+   * never runs under one of this task's publishes. One init() serves
+   * every request made before it began; it reads NVS afresh and keeps
+   * the identity set_identity() stored. First, so the pump below sees a
+   * changed destination's epoch this pass. */
+  const uint32_t wanted = s_reinit_wanted.load(std::memory_order_acquire);
+  if (wanted != s_reinit_served.load(std::memory_order_relaxed)) {
+    (void)init(nullptr, nullptr, nullptr);
+    s_reinit_served.store(wanted, std::memory_order_release);
+  }
+
   /* The committed-event egress: the SD log, the live publishes and the
    * reconnect backfill, on this (the main loop's) task. */
   csi_event_egress::pump();
+
+  /* The auto-update switch's state, set from any task. */
+  if (s_update_auto_dirty.exchange(false, std::memory_order_acq_rel)) {
+    const int state = s_last_update_auto.load(std::memory_order_relaxed);
+    if (state >= 0) {
+      char topic[192];
+      build_topic(topic, sizeof(topic), "update/auto");
+      const char* pl = state ? "ON" : "OFF";
+      publish_raw(topic, pl, strlen(pl), /*retain=*/true);
+    }
+  }
 }
+
+uint32_t request_reinit() {
+  return s_reinit_wanted.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+bool reinit_done(uint32_t request) {
+  return (int32_t)(s_reinit_served.load(std::memory_order_acquire) - request) >= 0;
+}
+
+namespace {
+/* Any task but the loop task (it would wait for itself): wait up to
+ * timeout_ms for the loop task to serve `request`. True when it has. */
+bool wait_reinit(uint32_t request, uint32_t timeout_ms) {
+  const uint32_t start = millis();
+  while (!reinit_done(request)) {
+    if ((uint32_t)(millis() - start) >= timeout_ms) return false;
+    delay(kReinitPollMs);
+  }
+  return true;
+}
+}  /* namespace */
 
 bool accepting() {
   return s_accepting.load(std::memory_order_relaxed);
@@ -830,12 +903,12 @@ void publish_update_state(const char* json_payload) {
               /*retain=*/true);
 }
 
-void publish_update_auto_state(bool enabled) {
+void set_update_auto_state(bool enabled) {
+  /* Cached for the reconnect republish; loop() publishes it (an httpd
+   * handler sets it, and a publish from there could hold a client the
+   * loop task's re-init destroys: sweep F106). */
   s_last_update_auto.store(enabled ? 1 : 0, std::memory_order_relaxed);
-  char topic[192];
-  build_topic(topic, sizeof(topic), "update/auto");
-  const char* pl = enabled ? "ON" : "OFF";
-  publish_raw(topic, pl, strlen(pl), /*retain=*/true);
+  s_update_auto_dirty.store(true, std::memory_order_release);
 }
 
 bool take_pending_install() {
@@ -1875,9 +1948,12 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  /* Reinit so the new credentials take effect immediately. init()
-   * tears down any prior client and re-opens. */
-  init(s_device_id, s_firmware_version, s_public_key_hex);
+  /* The new credentials take effect on the loop task, which tears the old
+   * client down and opens the new one (sweep F106: init() here destroyed
+   * the client under a loop-task publish). Wait a moment for it so the
+   * page's status refresh sees the new client; the save stands either
+   * way, and the re-init runs when the loop task gets to it. */
+  (void)wait_reinit(request_reinit(), kReinitWaitMs);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, "{\"ok\":true}", -1);
@@ -1893,18 +1969,20 @@ esp_err_t handle_test(httpd_req_t* req) {
     httpd_resp_sendstr(req, "{\"error\":\"unauthorized\"}");
     return ESP_OK;
   }
-  /* esp_mqtt's connect is async — give it a couple of seconds to
-   * either flip s_connected or return an error event. The MQTT task
-   * runs on its own core so this poll doesn't block the network
-   * stack; we just yield often enough that the WiFi worker stays
-   * responsive. */
-  init(s_device_id, s_firmware_version, s_public_key_hex);
-  uint32_t waited = 0;
-  while (!s_connected.load(std::memory_order_relaxed) && waited < 4000) {
+  /* A fresh connect, run by the loop task (sweep F106: init() here
+   * destroyed the client under a loop-task publish), then esp_mqtt's
+   * async connect: s_connected flips, or an error event lands. Both
+   * within the 4 s this always waited for the connect, polling with
+   * delay() so the WiFi worker stays responsive. The old client's
+   * s_connected is not read: only after the re-init has torn it down. */
+  const uint32_t start = millis();
+  const bool reinit = wait_reinit(request_reinit(), kTestBudgetMs);
+  uint32_t waited = (uint32_t)(millis() - start);
+  while (reinit && !s_connected.load(std::memory_order_relaxed) && waited < kTestBudgetMs) {
     delay(100);
-    waited += 100;
+    waited = (uint32_t)(millis() - start);
   }
-  const bool ok = s_connected.load(std::memory_order_relaxed);
+  const bool ok = reinit && s_connected.load(std::memory_order_relaxed);
   httpd_resp_set_type(req, "application/json");
   char body[320];
   snprintf(body, sizeof(body),

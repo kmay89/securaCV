@@ -7353,20 +7353,19 @@ static void qr_scan_task_fn(void* param) {
           strlcpy(pass, prov.pass, sizeof(pass));
           if (!prov.wifi_only && prov.host[0]) {
             // The display told us where the hub lives: point the MQTT
-            // bridge there and re-init (idempotent) so the fleet sees
-            // this canary the moment WiFi comes up — the display's
-            // "it's in the fleet" celebration keys on that.
+            // bridge there and re-init so the fleet sees this canary the
+            // moment WiFi comes up — the display's "it's in the fleet"
+            // celebration keys on that. The re-init runs on the loop task
+            // (sweep F106): this is the scanner's task, and init() tears
+            // down the client a loop-task publish may hold. setup() gave
+            // the bridge its identity (csi_mqtt::set_identity).
             csi_mqtt::Config mc;
             if (csi_mqtt::config_load(&mc)) {
               strlcpy(mc.host, prov.host, sizeof(mc.host));
               mc.port = prov.port;
               mc.enabled = true;
               if (csi_mqtt::config_save(mc)) {
-                // The same lowercase key as the boot init (HA20).
-                char pubkey_hex[mqtt_identity::KEY_HEX_CAP];
-                mqtt_identity::public_key_hex(pubkey_hex, g_device.pubkey);
-                csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION,
-                               pubkey_hex);
+                (void)csi_mqtt::request_reinit();
                 hub_saved = true;
               }
             }
@@ -10633,7 +10632,7 @@ static esp_err_t handle_ota_config(httpd_req_t* req) {
   if (input["auto_update"].is<bool>()) {
     const bool enabled = input["auto_update"].as<bool>();
     securacv_ota_set_auto_update(enabled);
-    csi_mqtt::publish_update_auto_state(enabled);
+    csi_mqtt::set_update_auto_state(enabled);   // the loop task publishes it (F106)
   }
 
   return http_send_json(req, "{\"ok\":true,\"message\":\"Update settings saved.\"}");
@@ -11095,6 +11094,16 @@ void setup() {
   }
   #endif
 
+  // The MQTT bridge's identity, before anything can ask it to re-init:
+  // a QR provisioning's request runs on the loop task with it (sweep
+  // F106), even when the AP, and the HTTP server whose boot init() sets
+  // it again, do not start. The same lowercase key as that init (HA20).
+  {
+    char mqtt_pubkey_hex[mqtt_identity::KEY_HEX_CAP];
+    mqtt_identity::public_key_hex(mqtt_pubkey_hex, g_device.pubkey);
+    csi_mqtt::set_identity(g_device.device_id, FIRMWARE_VERSION, mqtt_pubkey_hex);
+  }
+
   // Start WiFi Access Point
   #if FEATURE_WIFI_AP
   boot_stage("wifi-ap-start");
@@ -11428,7 +11437,7 @@ void setup() {
     }
 
     // Seed the HA auto-update switch state (csi_mqtt caches + retains it).
-    csi_mqtt::publish_update_auto_state(securacv_ota_get_auto_update());
+    csi_mqtt::set_update_auto_state(securacv_ota_get_auto_update());
 
     // Witness the outcome of an install reboot. The engine (and the BLE
     // OTA path) recorded the install target the moment the boot partition
@@ -11787,7 +11796,7 @@ void loop() {
     const int ota_auto_cmd = csi_mqtt::take_pending_auto();
     if (ota_auto_cmd >= 0) {
       securacv_ota_set_auto_update(ota_auto_cmd == 1);
-      csi_mqtt::publish_update_auto_state(ota_auto_cmd == 1);
+      csi_mqtt::set_update_auto_state(ota_auto_cmd == 1);
       log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM,
                  ota_auto_cmd == 1 ? "Auto-update turned on"
                                    : "Auto-update turned off", nullptr);

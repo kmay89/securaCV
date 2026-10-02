@@ -7,8 +7,18 @@
  *
  * Backed by ESP-IDF's native esp_mqtt client (mqtt_client.h). Bundled
  * with arduino-esp32 — no lib_deps addition. ESP-IDF runs the MQTT
- * task internally and handles auto-reconnect, so callers publish from
- * any context without thinking about threading.
+ * task internally and handles auto-reconnect.
+ *
+ * Threading (sweep F106): the client is the loop task's. init() and every
+ * re-init (stop, destroy, a new client) run on it — at boot from setup(),
+ * then from loop() when request_reinit() asked — and the publish_*()
+ * functions are called from it too (and, for the reconnect republish, from
+ * the esp_mqtt task's own event handler, which a teardown stops before it
+ * destroys the client). Another task asks: request_reinit() for a re-init
+ * (the config POST, POST /api/mqtt/test and a QR provisioning do), and
+ * set_update_auto_state() for the auto-update switch (an httpd handler
+ * sets it). A publish from another task could hold the old handle while
+ * the loop task destroys it.
  *
  * Topic schema (locked against custom_components/securacv/const.py +
  * docs/homeassistant_setup.md):
@@ -124,11 +134,22 @@ const char* transport_name();
 const char* last_error();
 
 /**
- * Cold-boot init. Reads NVS, opens the esp_mqtt client if enabled, and
- * arms the LWT. Idempotent — a second call (e.g. after a config POST)
- * tears down the existing client and re-opens with the new credentials.
- * Safe to call before WiFi STA is up; the client stays disconnected
- * until TCP can establish.
+ * The identity every publish carries (copied). setup() calls it before the
+ * network starts, so a re-init a QR provisioning asks for has it even if
+ * the HTTP server (and the boot init() in it) never started. Loop task,
+ * before any re-init is requested; init() takes the same three again.
+ */
+void set_identity(const char* device_id,
+                  const char* firmware_version,
+                  const char* public_key_hex);
+
+/**
+ * Cold-boot init, on the loop task (setup()'s start_http_server). Reads
+ * NVS, opens the esp_mqtt client if enabled, and arms the LWT. A second
+ * call tears down the existing client and re-opens with the new
+ * credentials: only loop() makes it, for request_reinit(). Safe to call
+ * before WiFi STA is up; the client stays disconnected until TCP can
+ * establish.
  *
  *   device_id        the canary's device_id (g_device.device_id) — copied
  *   firmware_version the FIRMWARE_VERSION literal — copied
@@ -142,11 +163,25 @@ bool init(const char* device_id,
 
 /**
  * Per-tick pump, main loop. esp_mqtt manages its own task and supervises
- * reconnection internally; this runs the committed-event egress
- * (csi_event_egress::pump): the SD event log, the live publishes and the
- * reconnect backfill, all on this task.
+ * reconnection internally. This runs, on the loop task: a re-init
+ * request_reinit() asked for (one init() serves every request made before
+ * it began: they coalesce, and init() reads NVS afresh), then the
+ * committed-event egress (csi_event_egress::pump): the SD event log, the
+ * live publishes and the reconnect backfill; then the auto-update switch
+ * state set_update_auto_state() left.
  */
 void loop();
+
+/**
+ * Any task: ask the loop task to re-run init() (the broker settings in
+ * NVS changed, or the owner asked for a fresh connect). Returns the
+ * request's number for reinit_done(). Sweep F106: init() ran on the httpd
+ * task here, and destroyed the client under a publish on the loop task.
+ */
+uint32_t request_reinit();
+
+/** Any task: has a re-init begun after `request` was made run to its end? */
+bool reinit_done(uint32_t request);
 
 /** True iff the underlying MQTT client is connected to the broker. */
 bool connected();
@@ -155,10 +190,10 @@ bool connected();
  * csi_event_egress.cpp decides which committed csi_event goes out when,
  * and keeps the delivery watermark; these are the publishes it asks for.
  * The egress is their only caller, on the loop task. publish_raw only
- * checks that the client exists and is connected: a runtime init() (a
- * config POST or a test on the httpd task) destroys the client under it,
- * so a publish racing that re-init can use a freed handle (pre-existing;
- * every publish in this file shares it). */
+ * checks that the client exists and is connected; that is enough because
+ * a re-init runs on the same task (loop(), sweep F106). Before, a config
+ * POST or a test ran init() on the httpd task and could destroy the client
+ * under one of these publishes. */
 
 /* What one publish attempt did. */
 enum class EventSend : uint8_t {
@@ -431,8 +466,9 @@ int take_pending_mic_mute();
  * (installed_version / latest_version / in_progress / update_percentage /
  * release_summary / release_url) to {prefix}/{device_id}/update/state —
  * retained and republished on reconnect so HA stays in sync across
- * broker restarts. publish_update_auto_state mirrors the auto-update
- * switch the same way ("ON"/"OFF" on {prefix}/{device_id}/update/auto).
+ * broker restarts (loop task). set_update_auto_state mirrors the
+ * auto-update switch the same way ("ON"/"OFF" on
+ * {prefix}/{device_id}/update/auto), from any task.
  *
  * Inbound commands arrive on the esp_mqtt task, so they are NOT
  * delivered via callback — csi_mqtt parses them into pending flags the
@@ -441,7 +477,11 @@ int take_pending_mic_mute();
  * matching the module's "caller owns the cadence" contract.
  */
 void publish_update_state(const char* json_payload);
-void publish_update_auto_state(bool enabled);
+
+/* The auto-update switch's state, from any task (an httpd handler sets it):
+ * cached for the reconnect republish, and published by loop() on the loop
+ * task (sweep F106). */
+void set_update_auto_state(bool enabled);
 
 /** True exactly once after HA pressed Install on the update entity. */
 bool take_pending_install();
@@ -461,10 +501,12 @@ void set_api_token_provider(const char* (*fn)());
 /* HTTP handlers — registered by csi_integration::init alongside the
  * other CSI routes. Auth-gated by either the cv_session cookie or a
  * Bearer header carrying the api_token (the same dual-mode
- * CSI_AUTH_OR_RETURN uses). The /test handler forces a reconnect with
- * current NVS settings and reports the broker's reachability
- * synchronously, so the dashboard's "Test connection" button gives a
- * real signal rather than a spinner. */
+ * CSI_AUTH_OR_RETURN uses). The /test handler asks the loop task for a
+ * reconnect with current NVS settings (request_reinit), waits for it, and
+ * reports the broker's reachability within about 4 s, so the dashboard's
+ * "Test connection" button gives a real signal rather than a spinner. The
+ * config POST saves, asks for the same re-init and waits up to 2 s for it,
+ * so the page's status refresh sees the new client. */
 esp_err_t handle_config_get(httpd_req_t* req);
 esp_err_t handle_config_post(httpd_req_t* req);
 esp_err_t handle_test(httpd_req_t* req);

@@ -770,6 +770,30 @@ clean-mesh-commands:
 run: run-mesh-commands
 clean: clean-mesh-commands
 
+# The MQTT bridge re-inits on the loop task (sweep F106): the REAL
+# csi_mqtt.cpp over stubs/mqtt (an in-memory NVS, a request/response httpd,
+# and a fake esp_mqtt client the test defines, which records the task of
+# every call and notices a client destroyed under a publish). The config
+# POST, the test handler and a QR provisioning only request a re-init;
+# loop() runs one per batch of requests; a publish in flight keeps its
+# client; the waits are bounded; the auto-update switch set from the httpd
+# task is published by loop().
+MQTT_REINIT_BIN = test_mqtt_reinit
+MQTT_REINIT_SRC = test_mqtt_reinit.cpp
+
+$(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(wildcard stubs/mqtt/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp
+
+.PHONY: run-mqtt-reinit clean-mqtt-reinit
+run-mqtt-reinit: $(MQTT_REINIT_BIN)
+	$(call run_marked,$(MQTT_REINIT_BIN))
+clean-mqtt-reinit:
+	rm -f $(MQTT_REINIT_BIN)
+
+run: run-mqtt-reinit
+clean: clean-mqtt-reinit
+
 # The hand-over from a requesting task to the loop task (sweep F96, F106):
 # the REAL loop_command_ring.h. Commands run in post order across the ticket
 # wrap, a full ring refuses, each waiter collects its own result once, a
