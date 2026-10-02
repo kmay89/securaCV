@@ -2629,6 +2629,60 @@
   waits on.
 - **Date learned:** 2026-10
 
+### A publish is not a post: esp_mqtt writes the socket on the task that publishes
+- **What happened:** `csi_mqtt.cpp`'s threading note said publishes "are
+  posted to that task's queue and the main-loop callers return
+  immediately". They are not. While connected, `esp_mqtt_client_publish()`
+  takes the client's API lock and writes the message on the calling task
+  (`esp_mqtt_write()`), and the esp_mqtt task holds the same lock across its
+  own socket operations. Each wait is bounded by the client's network
+  timeout, which the bridge never set, so it was esp_mqtt's 10 s default,
+  past the loop task's 8 s panic watchdog: one publish over a stalled link
+  (Wi-Fi gone, the broker hung, the TCP send buffer full) was enough
+  (sweep F112; from esp-mqtt's source at the commit ESP-IDF 5.5.4 pins and a
+  host model, not bench-probed).
+- **Root cause:** a library's threading was described from memory, and the
+  description became the reason nobody looked at its timeouts.
+- **Fix:** every client carries `network.timeout_ms` = `kNetworkTimeoutMs`
+  (2 s, `csi_mqtt.h`), and the sketch `static_assert`s that three of them
+  (the esp_mqtt task's connect: the TCP/TLS connect, the CONNECT write, the
+  CONNACK wait) fit under the watchdog. A write that sends nothing in 2 s
+  fails and aborts the connection, so the rest of the pass returns at once.
+  `esp_mqtt_client_enqueue()` was not the fix: it takes the same lock, and
+  the event egress reads `publish()`'s result as "written while connected".
+  The loop task can still wait out one timeout (2 s) on a stalled link; that
+  is over this file's 1 s rule, and a publishing worker would be the full
+  answer.
+- **Regression check:** `test_mqtt_reinit.cpp`'s F112 tests (a fake that
+  follows esp-mqtt's write path: a stalled link costs a busy pass one
+  timeout, not 10 s) and `check_wap_loop_commands.py`'s rule M1 (the config
+  line, the constants and the `static_assert`). Before you call a library
+  "asynchronous", find where it writes.
+- **Date learned:** 2026-10
+
+### A command that can bring a stack up cannot run on the loop task
+- **What happened:** canary-wap's Bluetooth handlers changed the pairing,
+  scan and settings state on esp_http_server's task while
+  `bluetooth_channel::update()` changed it on the loop task (sweep F111): a
+  PIN confirm and the pairing timeout's cancel could both answer and delete
+  the one pending Numeric-Comparison pairing. Moving the handlers' calls to
+  the loop task, as the mesh's were, would have moved `enable()` there too,
+  and `enable()` brought the NimBLE stack up when it was not up yet: the
+  call that, run inline from `loop()`, once tripped the loop task's panic
+  watchdog about 21 s after boot (the BLE bring-up entry above).
+- **Root cause:** one function did two jobs with different owners: a state
+  change (the loop task's) and a blocking bring-up (any task's but the
+  loop's).
+- **Fix:** split them again. The commands never bring the stack up
+  (`enable()` refuses until `init()` has run); a handler that turns
+  Bluetooth on calls `init()` on its own task first (`bring_up()`, the call
+  `enable()` made there before), then submits the command.
+- **Regression check:** `test_bluetooth_commands_wap.cpp`'s
+  `no_command_brings_the_stack_up` and `check_wap_loop_commands.py`'s rules
+  C2 and C4 (no bare `init(` in `bluetooth_channel.cpp`;
+  `bluetooth_channel::init(` only in `bring_up()` and the boot worker).
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

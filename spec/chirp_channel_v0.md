@@ -731,6 +731,15 @@ COOLDOWN ──timeout(5min)──→ ACTIVE
 | `/api/chirp/ack` | POST | Acknowledge a chirp |
 | `/api/chirp/mute` | POST | Mute for duration |
 
+On the canary-wap the POST routes (`enable`, `disable`, `send`, `ack`,
+`dismiss`, `mute`, `unmute`, `confirm`, `settings`) change the channel on
+its own task: the handler hands the command to `chirp_channel::submit()`
+and the loop task's `update()` runs it (sweep F111). A command the loop
+task has not started within 2 s is withdrawn and answers `503
+{"success":false,"error":"chirp_timeout"}`; one refused because four
+others are waiting answers `409 {"success":false,"error":"chirp_busy"}`.
+Neither changed anything. Every other answer keeps its shape.
+
 ### 8.2 Response Formats
 
 ```json

@@ -634,7 +634,8 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     answers within about 2 s and the test within about 4 s (`ok:false`);
     in the serial log each `[MQTT] bridge started` follows a
     `[MQTT] previous client stopped after N ms` line, where N can reach
-    about 10000 against that IP while the loop keeps running. Then enter
+    about 2000 against that IP (the client's network timeout since F112;
+    about 10000 before it) while the loop keeps running. Then enter
     the real broker and press Test & save once: `Reached the broker`.
   - Artifact: `docs/audit/repro/F106/unreachable-broker/`.
 - [ ] **A reboot from the dashboard still saves the mesh's replay counters**
@@ -701,6 +702,69 @@ handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
   - Expected: after each re-pair B shows connected on A within about a
     minute, and A's serial log shows no `pairing COMPLETE never answered`.
   - Artifact: `docs/audit/repro/F116/re-pair/`.
+
+## canary-wap Chirp and Bluetooth commands, MQTT network timeout (F111, F112) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+and `bluetooth_channel.cpp` (`submit()` posts an owner command to a
+four-slot `loop_command_ring.h`; each channel's `update()` drains it first
+on every pass), `chirp_api.h` and `bluetooth_api.h` (the POST handlers
+submit and answer from the result; a Bluetooth handler that turns
+Bluetooth on calls `init()` on its own task first), and `csi_mqtt.cpp`
+(`open_client()` sets the client's `network.timeout_ms` to
+`kNetworkTimeoutMs`, 2 s). Host-tested (`tests_host/test_chirp_commands_wap.cpp`,
+`test_bluetooth_commands_wap.cpp` over a NimBLE stand-in,
+`test_mqtt_reinit.cpp` over a fake esp_mqtt) and held by
+`firmware/scripts/check_wap_loop_commands.py`; the real radio stacks, two
+tasks on two cores and a real stalled TCP link are not something a host
+test can run. Compile is CI's. Owner: U1.
+
+- [ ] **The Chirp routes still answer as before**
+  - Setup: one canary-wap with the web UI open on Community > Chirp; a
+    synced clock.
+  - Repro: turn Chirp on and off and on again; wait ten minutes; send a
+    template; send another at once; mute 30 minutes, unmute; untick
+    "relay"; with a second board nearby on Chirp, confirm and dismiss one of
+    its chirps.
+  - Expected: each step answers as before (`success:true` with the session
+    emoji on enable; the second send `cooldown` with its seconds; mute,
+    unmute and settings `success:true`, settings showing `relay_enabled:
+    false`); no `chirp_busy` (409) or `chirp_timeout` (503) in normal use.
+  - Artifact: `docs/audit/repro/F111/chirp-routes/`.
+- [ ] **Bluetooth pairing from the web UI, the PIN confirmed near the timeout**
+  - Setup: one canary-wap; a phone with nRF Connect (or the companion app).
+  - Repro: Bluetooth > Pair; connect from the phone; when the six digits
+    show on both screens, confirm in the web UI (once promptly; once about
+    58 s after pairing mode started, so the confirm meets the 60 s pairing
+    timeout). Then Disconnect, Clear scan results, trust / block / remove
+    the paired phone, rename the device, set TX power to -6, Disable and
+    Enable.
+  - Expected: no Guru Meditation, heap-poisoning abort or watchdog reset
+    (the near-timeout confirm used to race the timeout's cancel); each
+    route answers as before; the phone's bond is removed with the device.
+  - Artifact: `docs/audit/repro/F111/bt-pairing/`.
+- [ ] **Turning Bluetooth on before the bring-up still works, off the loop task**
+  - Setup: a canary-wap just provisioned onto Wi-Fi (the BLE bring-up is
+    deferred until the join window clears).
+  - Repro: within that window, press Bluetooth > Enable (or Pair) in the
+    web UI.
+  - Expected: `Bluetooth enabled` (or the init-failed reason the stack
+    gives) within a few seconds; no `task_wdt` on `loopTask` and no
+    reboot (the stack comes up on the HTTP request's task, as before).
+  - Artifact: `docs/audit/repro/F111/bt-early-enable/`.
+- [ ] **A stalled broker link does not trip the loop watchdog**
+  - Setup: a board connected to Home Assistant's broker, events committing.
+  - Repro: block the broker's traffic without closing the TCP connection
+    (an iptables DROP on the broker host for the board's IP, or pull the
+    broker host's network cable), keep walking in front of the sensor for
+    two minutes, then restore the link.
+  - Expected: no `task_wdt` / Guru Meditation and no reboot; the serial log
+    shows `[MQTT] disconnected (will retry)` once the link gives out: about
+    2 s after the publish that finds the TCP send buffer full, or when the
+    60 s keepalive goes unanswered, whichever comes first; events committed
+    meanwhile reach HA after the reconnect (from the card or the RAM hold,
+    per F78).
+  - Artifact: `docs/audit/repro/F112/stalled-broker/`.
 
 ## One event-id space (F46) — on-device verification
 
