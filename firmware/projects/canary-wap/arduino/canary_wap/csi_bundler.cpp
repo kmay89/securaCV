@@ -36,6 +36,11 @@
 #ifdef ARDUINO
   #include <Arduino.h>
   static inline uint32_t bundler_now_ms() { return millis(); }
+#elif defined(CSI_TEST_CLOCK)
+  /* Host tests that need to move time (a 2-minute gap, an hour of emits)
+   * supply the clock; csi_event.cpp reads the same one. */
+  extern "C" uint32_t csi_test_now_ms(void);
+  static inline uint32_t bundler_now_ms() { return csi_test_now_ms(); }
 #else
   #include <time.h>
   static inline uint32_t bundler_now_ms() {
@@ -266,7 +271,7 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
        * up-to-date bundle row. */
       *values = open->values;
       if (handle_out) *handle_out = open->handle;
-      outcome = CSI_BUNDLER_BUFFERED;
+      outcome = CSI_BUNDLER_MERGED;   /* no new row: the chokepoint refunds its ceiling slot */
     } else {
       /* New bundle. */
       Slot* fresh = find_free_slot(pending, &npending);
