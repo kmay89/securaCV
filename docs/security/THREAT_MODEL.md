@@ -948,10 +948,19 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   5-minute save, `tx_ctrs` for good once no member was left). A save now
   removes every slot at or above the count, the last-seen record is saved
   at each removal and leave, and the send-counter record with no member
-  left keeps its one counter under no fingerprint. What a dropped member
-  leaves on purpose, by fingerprint only: its deny-list entry (spec §5.6,
-  seven days, flash-encryption gated) when it was removed, and its
-  last-seen tombstone (F116) when it was heard. Host-tested only.
+  left keeps its one counter under no fingerprint. The save stores the
+  live slots and the count before it removes anything, so a full NVS
+  that refuses a write leaves a list a boot reads whole (it used to leave
+  a count over removed slots: the removed member back, a survivor lost,
+  an all-zero member). A device updated with an older firmware's leftovers
+  loses them at its first boot: the slots above the count, and, with
+  flash encryption on and no opera, every slot an older leave kept. On an
+  FE-off board the stored members stay until the next membership change
+  (no opera loads there, so nothing reads them; sweep F141 decides what a
+  boot does with them). What a dropped member leaves on purpose, by
+  fingerprint only: its deny-list entry (spec §5.6, seven days,
+  flash-encryption gated) when it was removed, and its last-seen
+  tombstone (F116) when it was heard. Host-tested only.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused

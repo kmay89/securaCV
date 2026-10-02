@@ -209,9 +209,11 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
   restarted at 1 dropped there until it climbed back. The new member is
   recorded as covered up to that counter, so a reboot before its first
   frame resumes above it too. A removal holds every survivor's reservation
-  to it before the record is rewritten, the record is not rewritten when
-  no member is left, and a boot reads it with no member loaded too (an
-  opera emptied, or not loaded because flash encryption is off). Past what
+  to it before the record is rewritten; when no member is left the record
+  is rewritten once, as one entry under an all-zero fingerprint holding
+  the highest counter signed (F137, §12.3), and a boot reads it with no
+  member loaded too (an opera emptied, or not loaded because flash
+  encryption is off). Past what
   was signed, not past what was reserved: a reservation runs up to a block
   ahead, and F99 first started a new member there, a block ahead of every
   other member's counter until the next boot, which widened the gap below.
@@ -1797,7 +1799,17 @@ canary-wap (NVS namespace `mesh`) stores its member list as `peer_cnt`
 and `peer_0`..`peer_<n-1>` (each a public key, radio address and name;
 not gated), and removes every `peer_<i>` at or above the count at each
 save, so a removal, a leave or a fold leaves no former member's entry
-behind (F137; before it, the freed slots stayed). It stores the same
+behind (F137; before it, the freed slots stayed). A save writes the live
+slots, then the count, and removes only once both are stored, so a write
+NVS refuses leaves a list a boot reads as it was or as it is now (a
+shift stopped part way leaves one duplicate, which the boot folds), and a
+boot loads no slot it cannot read. A boot also removes the slots above
+the count that an older firmware's removal left, and, with flash
+encryption on and no opera to load, every slot an older firmware's leave
+left (with its records by fingerprint, as a leave saves them now): once,
+with nothing written when none is there. On an FE-off board the stored
+members stay as they are (no opera loads, so nothing reads them; what a
+boot does with them is an open decision). It stores the same
 deny-list blob under
 `revoked` (F33), behind its flash-encryption gate, and — F71 — `tx_ctrs`
 (up to 16 × (8 B fingerprint + u64)), each member's send-counter

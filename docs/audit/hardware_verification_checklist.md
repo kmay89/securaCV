@@ -764,8 +764,9 @@ command, `read_status()` and
 `read_alerts()` for the status routes through `loop_snapshot.h`;
 `persist_opera_config()` / `load_opera_config()` for a leave; `retire_rx()`
 and the `rx_tombs` NVS record for a re-added member; `persist_peers()`,
-which removes every `peer_<i>` at or above `peer_cnt`, and
-`persist_tx_floor_without_members()`, F137) and the three status
+which removes every `peer_<i>` at or above `peer_cnt` once the list is
+stored, `load_peers()` and `init()`, which remove what an older firmware
+left, and `persist_tx_floor_without_members()`, F137) and the three status
 handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
 `test_mesh_commands_wap.cpp`, `test_mesh_liveness_wap.cpp`) and held by
 `firmware/scripts/check_wap_loop_commands.py`. Compile is CI's. Owner: U1.
@@ -822,6 +823,23 @@ handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
     entry whose first 8 bytes are zero. Before F137 the removal left
     `peer_1` (C) and the leave left `peer_0` and `peer_1`.
   - Artifact: `docs/audit/repro/F137/nvs-after-removal-and-leave/`.
+- [ ] **An older firmware's leftover member entries go at the first boot
+  after the update**
+  - Setup: two canary-wap boards with flash encryption on, A on a firmware
+    from before F137 (7f45142 or older) paired with B and C; the same tools.
+  - Repro: on A, remove C, and read A's NVS (`peer_1` holds C). Update A to
+    this firmware, let it boot, read it again. Then, on a second A paired
+    the same way on the older firmware, Leave the opera, update it, boot,
+    and read it.
+  - Expected: after the first boot on this firmware the removed member's
+    slot is gone (only `peer_0`, B) and the serial health log shows `opera:
+    removed stored member entries above the member count`; the left board
+    holds no `peer_*` slot, no `replay_ctrs`, a `tx_ctrs` of one 16-byte
+    entry whose first 8 bytes are zero, and logs `opera: removed stored
+    member entries no opera holds`. A second boot logs neither line. (On a
+    board with flash encryption off the stored members stay until its next
+    membership change; sweep F141.)
+  - Artifact: `docs/audit/repro/F137/older-firmware-leftovers/`.
 
 ## canary-wap Chirp and Bluetooth commands, MQTT network timeout (F111, F112) — on-device verification
 
@@ -1143,9 +1161,13 @@ error-level line is from IDF's source as read (F125). Compile is CI's.
 Owner: U1.
 
 - [ ] **A first boot after an erase logs no `nvs_open failed` line for `csi`**
-  - Setup: a canary-wap board; `esptool.py erase_region` over its `nvs`
-    partition (or `erase_flash` and a reflash); serial monitor at the
-    release envs' log level (`CORE_DEBUG_LEVEL=1` keeps error lines).
+  - Setup: a canary-wap board flashed from the `canary-wap-debug`
+    PlatformIO env (`CORE_DEBUG_LEVEL=4`), or an arduino-cli build with
+    Core Debug Level Error or above; `esptool.py erase_region` over its
+    `nvs` partition (or `erase_flash` and a reflash); a serial monitor.
+    Not the release image: it is built with Core Debug Level None
+    (`CORE_DEBUG_LEVEL=0`, as `canary-wap-default` is), which compiles
+    Arduino's error lines out, so it printed none before F150 either.
   - Repro: boot it and let it reach the dashboard; reboot it once more.
   - Expected: neither boot logs `[E][Preferences.cpp:...] begin(): nvs_open
     failed: NOT_FOUND` for the CSI start-up (before F150 the first boot
