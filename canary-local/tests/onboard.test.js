@@ -195,6 +195,41 @@ test("build compiles the real portal against the shims — no stub left behind",
   assert.ok(PROVISION.includes("case WL_CONNECT_FAILED: return canary::net::JoinFailure::BadPassword;"));
 });
 
+test("bird seat (F89): the probe holds the drawn bird to the seat onboard_layout.h names", async () => {
+  const { birdOnSeat } = await import("./bird_perch.mjs");
+  const seat = { x: 100, y: 36, w: 40, h: 40, breath: 2 };
+  const bird = (dx, dy, extra = {}) => ({ x: 100 + dx, y: 36 + dy, w: 40, h: 40, shown: true, ...extra });
+  for (const dy of [-2, -1, 0, 1, 2]) {
+    assert.strictEqual(birdOnSeat({ bird: bird(0, dy), seat }), null, `breathing ${dy} px is on the seat`);
+  }
+  // Off the seat: past the breath, beside it, another size, off stage, no seat.
+  // The round watch's bird before F64: at the panel's center, y 98.
+  assert.match(birdOnSeat({ bird: bird(0, 62), seat }), /drawn at 100,98/);
+  assert.match(birdOnSeat({ bird: bird(0, 3), seat }), /seats it at 100,36/);
+  assert.match(birdOnSeat({ bird: bird(0, -3), seat }), /drawn at 100,33/);
+  assert.match(birdOnSeat({ bird: bird(1, 0), seat }), /drawn at 101,36/);
+  assert.match(birdOnSeat({ bird: bird(0, 0, { w: 64, h: 64 }), seat }), /\(64x64\)/);
+  assert.match(birdOnSeat({ bird: bird(0, 0, { shown: false }), seat }), /none is on stage/);
+  assert.match(birdOnSeat({ bird: null, seat }), /none is on stage/);
+  assert.match(birdOnSeat({ bird: bird(0, 0), seat: null }), /no onboarding scene names a seat/);
+  // The seat is the firmware's: the binding asks onboard_ui (which asks
+  // onboard_layout.h's bird_seat), the shell reads it, the probe uses it in
+  // the Hello and PhoneJoined scenes.
+  const binding = read(join(ROOT, "emulator/src/emu_bindings.cpp"));
+  assert.match(binding, /EMSCRIPTEN_KEEPALIVE const char\* emu_onboard_seat\(void\)/);
+  assert.ok(binding.includes("canary::ui::onboard_ui_bird_seat(&x, &y, &d)"));
+  assert.ok(binding.includes("canary::ui::onboardlayout::kBirdBreath"));
+  const ui = read(join(REPO, "firmware/projects/canary-display/src/ui/onboard_ui.cpp"));
+  assert.strictEqual((ui.match(/onboardlayout::bird_seat\(s_glass, WIDE, s_join, s_halo, (st|s_stage)\)/g) || []).length, 2,
+    "onboard_ui.cpp seats the bird and reports the seat through the same bird_seat() call");
+  const shellSrc = read(join(ROOT, "emulator/web/emu-shell.js"));
+  assert.ok(shellSrc.includes('M.cwrap("emu_onboard_seat", "number", [])'));
+  const probe = read(join(__dirname, "onboard_probe.mjs"));
+  assert.ok(probe.includes("const helloSeat = birdOnSeat(hello);"), "the probe holds the Hello scene's bird");
+  assert.ok(probe.includes("const onSeat = birdOnSeat(perchAt);"), "the probe holds the PhoneJoined scene's bird");
+  assert.ok(probe.includes("const helloPerch = birdPerch(hello);"), "the Hello bird is on the glass and clear of text");
+});
+
 test("CI runs the generator check, this test and the browser probe", () => {
   const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
   for (const needle of [

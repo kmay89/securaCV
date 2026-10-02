@@ -11,8 +11,11 @@
 
 #include <string>
 
+#include <config.h>  // FEATURE_ONBOARDING (emu_onboard_seat)
 #include "emu_bus.h"
 #include "canary/ui/canary_mark.h"
+#include "canary/ui/onboard_layout.h"
+#include "canary/ui/onboard_ui.h"
 #include "canary/ui/character.h"
 #include "canary/glass_settings.h"
 
@@ -180,5 +183,26 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* emu_mark_box(void) {
         ",\"w\":" + std::to_string(lv_area_get_width(&a)) +
         ",\"h\":" + std::to_string(lv_area_get_height(&a)) +
         ",\"shown\":" + (shown(b) ? "1" : "0") + "}";
+  return out.c_str();
+}
+
+// Where the onboarding scene on the glass seats the canary mark (F89): the
+// box onboard_layout.h's bird_seat() names for this glass, these faces and
+// this scene (onboard_ui_bird_seat), as {x,y,w,h,breath}; "null" while no
+// onboarding screen is up. The probe holds emu_mark_box() to it — the seat
+// is the layout header's, evaluated by the firmware's own code, not a
+// second table in the page. Read-only.
+extern "C" EMSCRIPTEN_KEEPALIVE const char* emu_onboard_seat(void) {
+  static std::string out;
+  out = "null";
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+  int x = 0, y = 0, d = 0;
+  if (canary::ui::onboard_ui_bird_seat(&x, &y, &d)) {
+    out = "{\"x\":" + std::to_string(x) + ",\"y\":" + std::to_string(y) +
+          ",\"w\":" + std::to_string(d) + ",\"h\":" + std::to_string(d) +
+          ",\"breath\":" +
+          std::to_string(canary::ui::onboardlayout::kBirdBreath) + "}";
+  }
+#endif
   return out.c_str();
 }

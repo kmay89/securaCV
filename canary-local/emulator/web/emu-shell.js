@@ -258,6 +258,9 @@ export class CanaryEmulator {
       screenLabels: M.cwrap("emu_screen_labels", "number", []),
       // Where the canary mark is drawn (emu_bindings.cpp, F64), the same way.
       markBox: M.cwrap("emu_mark_box", "number", []),
+      // Where the onboarding scene seats it (onboard_layout.h's bird_seat,
+      // F89). Absent from a dist built before it: onboardSeat() says so.
+      onboardSeat: M._emu_onboard_seat ? M.cwrap("emu_onboard_seat", "number", []) : null,
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
@@ -438,6 +441,19 @@ export class CanaryEmulator {
     if (!ptr) return null;
     const b = JSON.parse(this.module.UTF8ToString(ptr));
     return b && { ...b, shown: b.shown === 1 };
+  }
+
+  /** Where the onboarding scene on the glass seats the bird: {x, y, w, h,
+   *  breath} — the box onboard_layout.h's bird_seat() names for this glass
+   *  and scene, evaluated by the firmware (emu_onboard_seat) — or null while
+   *  no onboarding screen is up. Throws on a dist built before the binding
+   *  existed, so a probe cannot mistake "not exported" for "no scene" (F89). */
+  async onboardSeat() {
+    if (!this.c || this.dead) return null;
+    if (!this.c.onboardSeat) throw new Error("this emulator dist has no emu_onboard_seat (rebuild it)");
+    const ptr = await this.c.onboardSeat();
+    if (!ptr) return null;
+    return JSON.parse(this.module.UTF8ToString(ptr));
   }
 
   /** The phone asks the AP to associate: 1 joined · 0 no such network ·

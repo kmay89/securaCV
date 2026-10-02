@@ -9,7 +9,12 @@
 //
 //  1. The harness, per committed display flavor (?meet=1): the firmware says
 //     its first-boot line on serial and raises "SecuraCV-XXXX" with the key it
-//     printed; the glass's Join scene shows its QR card with nothing painted
+//     printed; the Hello scene before it (read on a clock slowed tenfold, as
+//     it stands for 2.6 s) and the PhoneJoined scene after it show the bird
+//     on the glass, clear of every line and drawn at the seat
+//     onboard_layout.h names for that glass and scene, which the firmware
+//     reports itself (F64, F89: birdPerch, birdOnSeat; --shots saves
+//     onboard_hello_<flavor>.png); the glass's Join scene shows its QR card with nothing painted
 //     over it (read off the framebuffer — F43, see joinCard; --shots saves
 //     onboard_join_<flavor>.png), no line cut to an ellipsis, and the network
 //     name and key it printed readable on the glass, before and after the
@@ -41,7 +46,7 @@ import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { birdPerch } from "./bird_perch.mjs";
+import { birdPerch, birdOnSeat } from "./bird_perch.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -294,6 +299,18 @@ function coachOnGlass(lines, forms) {
     texts.some((t, i) => i + 1 < texts.length && `${t} ${texts[i + 1]}` === f));
 }
 
+// What the bird probes read in the page (F64, F89): the bird's drawn box,
+// every label, the glass, and the seat the onboarding scene names for the
+// bird (onboard_layout.h's bird_seat, from the firmware). Runs in the page.
+async function birdState() {
+  return {
+    bird: await window.__emu.markBox(),
+    labels: await window.__emu.screenLabels(),
+    glass: { w: document.getElementById("glass").width, h: document.getElementById("glass").height },
+    seat: await window.__emu.onboardSeat(),
+  };
+}
+
 // ── 1. the harness, per flavor ──────────────────────────────────────────────
 async function walkHarness(flavor) {
   const page = await browser.newPage({ viewport: { width: 1000, height: 620 } });
@@ -344,6 +361,25 @@ async function walkHarness(flavor) {
 
     // First boot: the firmware's own line, and the radio it configured.
     await until(async () => (await serial()).includes('First boot - onboarding AP "SecuraCV-'), "the first-boot serial line");
+    // F89: the Hello scene, which stands only for the welcome beat (2.6 s)
+    // before the AP comes up — the emulated clock runs at a tenth of its
+    // speed while the probe reads it. The bird is on stage, on the glass,
+    // clear of every line, and drawn at the seat onboard_layout.h names.
+    await E(() => window.__emu.setTimeScale(0.1));
+    try {
+      const hello = await until(async () => {
+        const st = await E(birdState);
+        const said = st.labels.some((l) => l.shown && l.opa > 0 && l.text === "Hello.");
+        return said && st.bird && st.bird.shown && st.seat ? st : null;
+      }, "the Hello scene with its bird", 20000);
+      await shotAs("onboard_hello");
+      const helloPerch = birdPerch(hello);
+      check(helloPerch === null, `Hello: ${helloPerch}`);
+      const helloSeat = birdOnSeat(hello);
+      check(helloSeat === null, `Hello: ${helloSeat}`);
+    } finally {
+      await E(() => window.__emu.setTimeScale(1));
+    }
     const ap = await until(() => E(() => window.__emu.softAp()), "the SoftAP to come up");
     const s0 = await serial();
     check(/^SecuraCV-[2-9A-HJ-NP-Za-km-z]{4}$/.test(ap.ssid), `SoftAP SSID ${ap.ssid} is not SecuraCV-XXXX`);
@@ -428,15 +464,14 @@ async function walkHarness(flavor) {
     // F64: the PhoneJoined scene puts the bird on stage, and it sits where
     // the scene placed it: on the glass, clear of every line of text.
     // Before F64 it sat behind the title; after #1755 re-seated it per
-    // scene, it left the glass.
-    const perchAt = await E(async () => ({
-      bird: await window.__emu.markBox(),
-      labels: await window.__emu.screenLabels(),
-      glass: { w: document.getElementById("glass").width, h: document.getElementById("glass").height },
-    }));
+    // scene, it left the glass. F89: and exactly at the seat
+    // onboard_layout.h names for this glass and scene.
+    const perchAt = await E(birdState);
     check(perchAt.bird && perchAt.bird.shown, "the PhoneJoined scene shows no bird (F64)");
     const perch = birdPerch(perchAt);
     check(perch === null, `PhoneJoined: ${perch}`);
+    const onSeat = birdOnSeat(perchAt);
+    check(onSeat === null, `PhoneJoined: ${onSeat}`);
 
     // Captive DNS: the firmware's dns_build_response.
     const dns = await E(async () => {
