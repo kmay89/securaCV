@@ -2898,9 +2898,15 @@ void test_rest_request_slot() {
   mesh_session::process(1201);
   assert(mesh_session::take_request_result(&res));
 
-  /* LEAVE through the slot forgets the opera and the radio peer table. */
-  const uint8_t mac[6] = {0x02, 0x93, 0x93, 0x93, 0x93, 0x93};
+  /* LEAVE through the slot forgets the opera and the radio peer table:
+   * the member's bound address (forgetting the member takes that one out
+   * anyway) and a bare transport address no member holds, which only the
+   * slot's clear_peers() removes. The member is there because only a bound
+   * member is sent the LEAVE (F101), and `notified` needs one. */
+  const uint8_t mac[6]   = {0x02, 0x93, 0x93, 0x93, 0x93, 0x93};
+  const uint8_t other[6] = {0x02, 0x93, 0x93, 0x93, 0x93, 0x94};
   add_bound_member(mac);
+  assert(mesh_transport::add_peer(other));
   assert(mesh_session::submit_request(make_request(mesh_session::RequestType::LEAVE)));
   mesh_session::process(1300);
   assert(mesh_session::take_request_result(&res));
@@ -2908,6 +2914,7 @@ void test_rest_request_slot() {
   assert(res.notified);                              /* the peer took the LEAVE */
   assert(!mesh_session::has_opera());
   assert(!mesh_transport::has_peer(mac));
+  assert(!mesh_transport::has_peer(other));
   std::printf("PASS test_rest_request_slot\n");
 }
 
@@ -4076,6 +4083,77 @@ void test_refused_repair_bind_is_not_persisted_across_reboot() {
   std::printf("PASS test_refused_repair_bind_is_not_persisted_across_reboot\n");
 }
 
+/* The other side of F102: a re-pair the session DOES bind is persisted.
+ * J paired at X, then re-paired from a free address Z (a swapped radio
+ * module): the bound callback reports (J, Z, true) and NVS holds J at Z,
+ * one entry, J's own, updated in place. A second re-pair from Z (the
+ * address it already holds) reports true and changes nothing. After a
+ * reboot binding the stored addresses, J is heard from Z and not from X.
+ * Fails if a successful re-pair of an already-trusted member reads as
+ * refused (main.cpp would then warn and keep X, and J would go unheard
+ * after the reboot). */
+void test_successful_repair_is_persisted_across_reboot() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x22 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x02, 0x20, 0x01};
+  const uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x02, 0x20, 0x0A};
+  const uint8_t mac_z[6] = {0x24, 0x0A, 0xC4, 0x02, 0x20, 0x0F};
+  uint8_t j_pub[32], j_priv[32], j_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_crypto::compute_fingerprint(j_pub, j_fp);
+
+  pair_from(S, me, mac_x, j_pub, j_priv, 100);
+  assert(g_bound_calls.size() == 1 && g_bound_calls[0].bound);
+
+  /* The re-pair from the free address Z: bound, reported, persisted. */
+  pair_from(S, me, mac_z, j_pub, j_priv, 200);
+  assert(g_bound_calls.size() == 2);
+  assert(g_bound_calls[1].bound && g_bound_calls[1].after_paired_cb);
+  assert(std::memcmp(g_bound_calls[1].fp, j_fp, 8) == 0);
+  assert(std::memcmp(g_bound_calls[1].mac, mac_z, 6) == 0);
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(transport_has(mac_z) && !transport_has(mac_x));
+
+  /* Again from Z, the address it holds: still bound, nothing moves. */
+  pair_from(S, me, mac_z, j_pub, j_priv, 300);
+  assert(g_bound_calls.size() == 3 && g_bound_calls[2].bound);
+
+  mesh_state::PeerMac stored[mesh_state::MAX_TRUSTED_PEERS];
+  size_t n_stored = 0;
+  assert(mesh_state::peer_mac_blob::decode(g_nvs_macs, g_nvs_macs_len, stored,
+                                           mesh_state::MAX_TRUSTED_PEERS, &n_stored));
+  assert(n_stored == 1);
+  assert(std::memcmp(stored[0].fingerprint, j_fp, 8) == 0);
+  assert(std::memcmp(stored[0].mac, mac_z, 6) == 0);
+
+  /* Reboot as main.cpp's setup does (see the test above). */
+  reset_world();
+  mesh_session::deinit();
+  assert(mesh_session::init(pub, priv) && mesh_session::start());
+  assert(mesh_session::set_opera_secret(S));
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  g_alerts_rx.clear();
+  for (const auto& p : g_nvs_pubs) assert(mesh_session::register_trusted_peer(p.data()));
+  for (size_t i = 0; i < n_stored; ++i) {
+    assert(mesh_session::bind_peer_mac(stored[i].fingerprint, stored[i].mac));
+  }
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_alert_frame(j_pub, j_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 1,
+                                     frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_x, frame, n, -40);   /* its old address */
+  mesh_transport::process();
+  assert(g_alerts_rx.empty());
+  mesh_transport::test::inject_recv(mac_z, frame, n, -40);   /* its new one */
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 1 && std::memcmp(g_alerts_rx[0].fp, j_fp, 8) == 0);
+  std::printf("PASS test_successful_repair_is_persisted_across_reboot\n");
+}
+
 /* ── F70 — a member's frame is taken only from the member's own binding ──
  *
  * The transport table holds more addresses than a member's own: every
@@ -4581,6 +4659,56 @@ void test_opera_sends_reach_bound_members_only() {
   assert(sent_of_type(mesh_envelope::MsgType::LEAVE_OPERA) == 1);
   assert(sent_to(mac_b) == 1 && sent_to(mac_o) == 0);
   std::printf("PASS test_opera_sends_reach_bound_members_only\n");
+}
+
+/* A send hook that records every attempt (in g_outs) and refuses those to
+ * the addresses in g_refuse_to, as a driver whose send failed would. */
+std::vector<std::vector<uint8_t>> g_refuse_to;
+bool refusing_send(const uint8_t* mac, const uint8_t* data, size_t len) {
+  capture_send(mac, data, len);
+  for (const auto& r : g_refuse_to) {
+    if (std::memcmp(r.data(), mac, 6) == 0) return false;
+  }
+  return true;
+}
+
+/* Only the sends the transport took count as sent. Two bound members, B and
+ * C: with B's sends refused, every sender still reports sent (C's copy was
+ * taken); with both refused, none does, though one copy per member was
+ * tried, and leave_opera() reports not notified. Fails when send_to_members
+ * counts attempts instead of successes: the senders then report sent with
+ * nothing sent, the false "sent" F101 removed. */
+void test_opera_sends_count_only_what_the_transport_took() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x31 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  const uint8_t mac_b[6] = {0x24, 0x0A, 0xC4, 0x01, 0x03, 0x0B};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x01, 0x03, 0x0C};
+  add_bound_member(mac_b);
+  add_bound_member(mac_c);
+  mesh_transport::test::set_send_hook(refusing_send);
+  uint8_t fp[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+
+  for (int refuse_both = 0; refuse_both < 2; ++refuse_both) {
+    g_refuse_to.clear();
+    g_refuse_to.push_back(std::vector<uint8_t>(mac_b, mac_b + 6));
+    if (refuse_both) g_refuse_to.push_back(std::vector<uint8_t>(mac_c, mac_c + 6));
+    const bool expect = !refuse_both;
+    const uint32_t t = 30 + 10 * (uint32_t)refuse_both;
+    g_outs.clear();
+    assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 1, t) == expect);
+    assert(mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED, "door", t + 1) == expect);
+    assert(mesh_session::send_channel_lock(6, mesh_channel_hop::Reason::UTILIZATION, t + 2) == expect);
+    assert(mesh_session::send_hub_election(mesh_hub_election::Event::HUB_ELECTED, fp, t + 3) == expect);
+    assert(g_outs.size() == 8 && sent_to(mac_b) == 4 && sent_to(mac_c) == 4);   /* all tried */
+  }
+  g_outs.clear();
+  assert(!mesh_session::leave_opera(100));
+  assert(sent_to(mac_b) == 1 && sent_to(mac_c) == 1);
+  g_refuse_to.clear();
+  mesh_transport::test::set_send_hook(capture_send);
+  std::printf("PASS test_opera_sends_count_only_what_the_transport_took\n");
 }
 
 /* ── F33 part 3 — the outbound counter survives a reboot ──────────────── */
@@ -5336,6 +5464,7 @@ int main() {
   test_repair_moves_a_trusted_peers_address();
   test_paired_peer_bound_reports_the_bind();
   test_refused_repair_bind_is_not_persisted_across_reboot();
+  test_successful_repair_is_persisted_across_reboot();
   /* F70 */
   test_pair_contact_replay_records_nothing_and_gets_no_accept();
   test_copied_member_address_moves_no_link();
@@ -5343,6 +5472,7 @@ int main() {
   test_unbound_member_frame_is_never_taken();
   test_opera_sends_with_only_a_pairing_partner_reach_nobody();
   test_opera_sends_reach_bound_members_only();
+  test_opera_sends_count_only_what_the_transport_took();
   /* F33 part 3 — the outbound counter survives a reboot. */
   test_outbound_counter_reserve_ahead();
   test_outbound_counter_without_reservation_restarts();
