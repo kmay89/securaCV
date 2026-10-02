@@ -38,7 +38,16 @@ the egress's own rules the test reaches only through behavior.
    registers (ble_scout_init() reports its init) must allocate from the
    restored floor, never write a floor from the id space's base over the
    persisted one, and must find the egress's queue there. The canary does
-   the same in `csi_event_egress_begin()`, before its modules.
+   the same in `csi_event_egress_begin()`, before its modules. Then
+   (sweep F93) the modules' boot init: `csi_module_init_all(nullptr);`
+   once, a statement of `init()`'s own body (no `if`, no block, no `#if`
+   around it), after `register_v1_modules();` and before
+   `csi_set_features_callback(`, the first CSI window's tick (the library
+   ticks no module before its init, so a late init is a dead pipeline and
+   a skipped one a device on defaults). It is the sketch's only call: one
+   in `register_v1_modules()`, `reinit_module()` or a handler would run a
+   module's boot init on another path (`reinit_module()` re-runs one
+   module's `init()` directly).
 4. The loop task. `csi_mqtt::loop()` calls `csi_event_egress::pump();`.
    The esp_mqtt event handler (`mqtt_event_handler`) names nothing from
    `csi_event_egress::` and publishes no row, `publish_event_row(`
@@ -103,6 +112,7 @@ from __future__ import annotations
 
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
@@ -119,6 +129,11 @@ from check_event_egress_order import (  # noqa: E402  (shared C++ scanning helpe
     top_level_terms,
     unwrap,
 )
+
+# The sketch-wide rules blank every sketch file on every check() call, and
+# the self-test calls check() once per mutation; the other files never change
+# between calls, so blank each distinct source once.
+blank_cached = lru_cache(maxsize=None)(blank_comments_and_strings)
 
 REPO = Path(__file__).resolve().parents[2]
 SKETCH = "firmware/projects/canary-wap/arduino/canary_wap"
@@ -144,6 +159,8 @@ SIG_MQTT_INIT = r"\bbool\s+init\s*\(\s*const\s+char\s*\*\s*device_id[^)]*\)"
 SIG_DEST_EPOCH = r"\buint32_t\s+destination_epoch\s*\(\s*\)"
 SIG_DISMISS = r"\besp_err_t\s+handle_events_dismiss\s*\([^)]*\)"
 SIG_INTEG_LOOP = r"\bvoid\s+loop\s*\(\s*bool\s+run_csi\s*\)"
+SIG_REINIT = r"\bvoid\s+reinit_module\s*\(\s*const\s+char\s*\*\s*module_id\s*\)"
+SIG_REGISTER = r"\bvoid\s+register_v1_modules\s*\(\s*\)"
 
 CONTROL_FLOW = r"\b(?:if|else|for|while|do|switch|return|continue|break|goto)\b"
 PUMP_LOOP = "for(intbudget=kPumpBudget;budget>0;--budget)"
@@ -171,6 +188,46 @@ def ifs_returning(text: str, ret: str) -> list[str]:
         if re.match(r"\s*\{?\s*" + ret, text[close + 1:]):
             conds.append(unwrap(text[m.end():close]))
     return conds
+
+
+def top_level_statement(body: str, pos: int) -> bool:
+    """`pos` starts a statement of `body` itself: inside no nested `{}`
+    block or open `#if`, and not the statement an unbraced `if`, `else`,
+    `for` or `while` controls (the code before it ends in `;`, `{` or `}`)."""
+    head = body[:pos]
+    if head.count("{") != head.count("}"):
+        return False
+    depth = 0
+    for line in head.splitlines():
+        directive = line.strip()
+        if re.match(r"#\s*if", directive):
+            depth += 1
+        elif re.match(r"#\s*endif\b", directive):
+            depth -= 1
+    if depth != 0:
+        return False
+    code = "\n".join(l for l in head.splitlines() if not l.strip().startswith("#")).rstrip()
+    return code == "" or code[-1] in ";{}"
+
+
+def check_boot_init_callers(integ: str, others: dict[str, str], errors: list[str]) -> None:
+    """Rule 3, F93: the modules' boot init has one caller in the sketch."""
+    files = dict(others)
+    files[INTEG_CPP] = integ
+    sites = []
+    for name, src in files.items():
+        code = blank_cached(src)
+        for m in re.finditer(r"\bcsi_module_init_all\s*\(", code):
+            # The staged library's own declaration and definition are not calls.
+            if re.search(r"\bsize_t\s+$", code[:m.start()]):
+                continue
+            sites.append(name)
+    if sites != [INTEG_CPP]:
+        errors.append(f"{SKETCH}: `csi_module_init_all(` must be called exactly once in the sketch, "
+                      f"in csi_integration::init() (found {len(sites)}: "
+                      f"{', '.join(sorted(set(sites))) or 'none'}) — a second caller runs a "
+                      "module's boot init on another path; a settings change re-runs one "
+                      "module's init() through reinit_module() (F93)")
 
 
 def check_hook(integ: str, errors: list[str]) -> None:
@@ -236,6 +293,26 @@ def check_boot_order(integ: str, errors: list[str]) -> None:
                       f"(apply_event_id_floor_from_nvs()) and call `{begin}` before `{modules}` — "
                       "a module that commits while it registers would allocate from the id "
                       "space's base and write that floor over the persisted one (F83)")
+    boot_init = "csi_module_init_all(nullptr);"
+    callback = body.find("csi_set_features_callback(")
+    if body.count("csi_module_init_all(") != 1 or body.count(boot_init) != 1:
+        errors.append(f"{INTEG_CPP}: csi_integration::init() must run the modules' boot init, "
+                      f"`{boot_init}`, exactly once — registration initializes nothing, so a "
+                      "saved preset, threshold or cooldown applies only after a settings change "
+                      "(F93)")
+    else:
+        at = body.find(boot_init)
+        if body.find(modules) < 0 or at < body.find(modules):
+            errors.append(f"{INTEG_CPP}: csi_integration::init() must call `{boot_init}` after "
+                          f"`{modules}` — it initializes only the modules registered so far (F93)")
+        if callback < 0 or at > callback:
+            errors.append(f"{INTEG_CPP}: csi_integration::init() must call `{boot_init}` before "
+                          "csi_set_features_callback( installs the first tick — the library "
+                          "ticks no module before its init (F93)")
+        if not top_level_statement(body, at):
+            errors.append(f"{INTEG_CPP}: `{boot_init}` must be a statement of "
+                          "csi_integration::init()'s own body — no `if`, block or `#if` "
+                          "around it: every boot initializes the modules (F93)")
 
 
 def check_loop_task(mqtt: str, errors: list[str]) -> None:
@@ -394,7 +471,7 @@ def check_single_callers(integ: str, mqtt: str, others: dict[str, str], errors: 
     files = dict(others)
     files[INTEG_CPP] = integ
     files[MQTT_CPP] = mqtt
-    code = {name: blank_comments_and_strings(src) for name, src in files.items()}
+    code = {name: blank_cached(src) for name, src in files.items()}
     for name, c in code.items():
         if re.search(r"\busing\s+namespace\s+csi_event_egress\b", c):
             errors.append(f"{name}: `using namespace csi_event_egress` hides the egress's callers "
@@ -483,6 +560,7 @@ def check(integ: str, egress: str, mqtt: str, others: dict[str, str] | None = No
     check_pump_order(egress, errors)
     check_route_hold(egress, errors)
     check_single_callers(integ, mqtt, others or {}, errors)
+    check_boot_init_callers(integ, others or {}, errors)
     check_hand_over(egress, errors)
     check_destination_epoch(mqtt, errors)
     return errors
@@ -510,6 +588,15 @@ def moved_begin(i: str, e: str, m: str) -> "tuple[str, str, str]":
     i = mutate_in(i, SIG_INIT, r"\n[ \t]*csi_event_egress::begin\(\);", "")
     i = mutate_in(i, SIG_INIT, r"(const\s+bool\s+floor_restored)", r"csi_event_egress::begin(); \1")
     return i, e, m
+
+
+def boot_init_before(anchor: str) -> Mutation:
+    """csi_module_init_all(nullptr); moved to just before `anchor` in init()."""
+    def mutate(i: str, e: str, m: str) -> "tuple[str, str, str]":
+        i = mutate_in(i, SIG_INIT, r"\n[ \t]*csi_module_init_all\(nullptr\);", "")
+        i = mutate_in(i, SIG_INIT, "(" + anchor + ")", r"csi_module_init_all(nullptr); \1")
+        return i, e, m
+    return mutate
 
 
 def modules_before(anchor: str) -> Mutation:
@@ -548,6 +635,29 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      modules_before(r"csi_event_egress::begin\(\);")),
     ("the modules also register before the floor",
      on_i(SIG_INIT, r"(g_api_token\s*=\s*api_token\s*;)", r"\1 register_v1_modules();")),
+    # Rule 3, F93: the modules' boot init, once, after they register.
+    ("the modules are never initialized at boot",
+     on_i(SIG_INIT, r"\n[ \t]*csi_module_init_all\(nullptr\);", "")),
+    ("the boot init runs before the modules register",
+     boot_init_before(r"register_v1_modules\(\);")),
+    ("the boot init runs before the floor is restored",
+     boot_init_before(r"const\s+bool\s+floor_restored")),
+    ("the boot init runs after the first tick is installed",
+     lambda i, e, m: (mutate_in(mutate_in(i, SIG_INIT, r"\n[ \t]*csi_module_init_all\(nullptr\);", ""),
+                                SIG_INIT, r"(csi_set_features_callback\([^;]*;)",
+                                r"\1 csi_module_init_all(nullptr);"), e, m)),
+    ("the boot init runs only when the floor was read",
+     on_i(SIG_INIT, r"(csi_module_init_all\(nullptr\);)", r"if (floor_restored) \1")),
+    ("the boot init sits in a block",
+     on_i(SIG_INIT, r"(csi_module_init_all\(nullptr\);)", r"{ if (g_api_token) { \1 } }")),
+    ("the boot init is compiled out",
+     on_i(SIG_INIT, r"(csi_module_init_all\(nullptr\);)", r"\n#if CSI_BOOT_INIT\n  \1\n#endif\n")),
+    ("reinit_module() runs the boot init too",
+     on_i(SIG_REINIT, r"(if\s*\(\s*m->init\s*\))", r"csi_module_init_all(nullptr); \1")),
+    ("register_v1_modules() initializes the modules instead",
+     lambda i, e, m: (mutate_in(mutate_in(i, SIG_INIT, r"\n[ \t]*csi_module_init_all\(nullptr\);", ""),
+                                SIG_REGISTER, r"(apply_quiet_hours_from_nvs\(\);)",
+                                r"csi_module_init_all(nullptr); \1"), e, m)),
     ("the esp_mqtt handler pumps the egress",
      on_m(SIG_HANDLER, r"(s_connected\.store\(true,[^;]*;)", r"\1 csi_event_egress::pump();")),
     ("the esp_mqtt handler publishes a row",
@@ -685,7 +795,8 @@ def main() -> int:
         return 1
     print(f"canary-wap event egress holds: the commit hook only enqueues, after the privacy gate; "
           f"the egress runs once, on the loop task, after the id floor and before the modules "
-          f"register; live rows wait behind the "
+          f"register; the modules' boot init runs once, after they register and before the "
+          f"first tick; live rows wait behind the "
           f"card and RAM backlog; the tamper bridge goes first; a changed broker bumps the epoch "
           f"({len(MUTATIONS)} mutations refused).")
     return 0
