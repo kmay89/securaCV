@@ -49,6 +49,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 9 (PR #1762) | a wave that worked the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) rather than this list, taking items PR #1761 filed; it closes none of the rows here and changes one sentence of §2's Wi-Fi sensing row. canary-wap's mesh is heard after a reboot, pairs in either confirm order, refuses a partner it cannot hold and finds members it has not heard (F71, F73-F76); the PIO mesh takes a member's frame only from its own bound address (F70); the Canary ticks its CSI bundles instead of flushing them every window, and a reopened bundle spends the hourly ceiling (F81, F80; #1763 landed both first, and #1762 merges onto its code with tests, a static check and the body's real `bundled` count); canary-wap's new events wait behind its SD backlog, with one writer on the loop task (F78, F83 hardened); and the Lab's WAP, Sense, Vision and Hub examples are derived from the firmware and held to it by tests (A26-A29). It files F90-F106, A30-A37 and D10. Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 9" |
 | Landed in wave 10 (PR #1762) | another wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items wave 9 filed; it closes none of the rows here and adds one clause to §2's Wi-Fi sensing row (F93). The Canary's egress holds a row whose card append failed behind the card's backlog, and rows committed while its card is not open for up to 45 s, as the canary-wap's does, and both egresses drop a held row the card already sent (F103, F104); canary-wap's mesh owner commands and MQTT re-inits run on its loop task, with the MQTT client's stop on a one-shot worker (F96, F106); canary-wap's mesh keeps one member per radio address, starts a re-paired member's counter above everything it signed, keeps counters across a rotation and resends a lost pairing COMPLETE (F98-F100; F95 in part: the AUTH exchange cannot complete as it stands, so its rotation waits on F48); the PIO mesh pairs in either confirm order, sends Opera frames to bound members only and stores a paired member's address only once it is bound (F97, F101, F102); saved CSI module settings apply at boot on both trees (F93); and the Lab's WAP, Sense, Vision and Hub panes publish the firmware's whole payloads and say what they stage (A30-A32, A35-A37). It files F107-F131, A38, A39 and D11. Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 10" |
 | Landed in wave 11 (PR #1762) | a third wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items PR #1761 and waves 9 and 10 filed; it closes none of the rows here and changes no sentence of §2. The PIO mesh refuses a pairing it cannot keep before anything is sealed, pairs a pre-F97 initiator in either confirm order and drops shared or stale stored member addresses at boot (F117-F120); canary-wap's mesh status routes read a view the loop task publishes, a leave stores no opera, and a re-added member starts at its last-seen tombstone (F110, F113, F116); canary-wap's Chirp and Bluetooth commands run on the loop task, and every MQTT client's network timeout sits under the loop watchdog (F111, F112); the Canary's egress reports its counters, both devices warn before the event-id space runs out, and the offline queue's publish order is one shared function (F107, F109; F82's warning half); the Tuning Lab's Quiet Hours match the device and apply at once, and a clean Canary boot logs no NVS error (F123, F125, F128, D11); the Vision reports the dwell it closed, the Lab's core returns its settled cell and `visit_ms`, and the WAP wizard links the host the WAP advertises (F129, F130, A39); and the wide display's setup screens fit their ring, the landscape nightlight's splash bird stays on the glass, and the emulator probe holds the setup bird to its seat (F84, F88, F89). The Vision core and the five display flavors move the emulator dist, which CI's pinned emsdk rebuilds in the PR. It files F133-F160, HA24-HA26 and A40. Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 11" |
+| Landed in wave 12 (PR #1762) | a fourth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items wave 11 filed; it closes none of the rows here and changes no sentence of §2. The PIO initiator resends a lost pairing COMPLETE, a late cancel leaves a finished pairing alone, and the web UI tells a failed pairing from a finished one (F133-F135); canary-wap's mesh saves leave no former member's key in NVS, a debug build's first boot logs no `csi` NOT_FOUND line, and the presence settings go through the key map (F137, F150, F151); canary-wap's Bluetooth settings turn the radio off and on, its NimBLE callbacks post events the loop task applies, and its Bluetooth and Chirp status routes read published views (F144, F143, F138); a Chirp send before the clock is set says `clock_unsynced` (F146); the canary-wap's egress counters reach a retained topic and its diagnostics, and Home Assistant reads them and the event-id warning (F149, HA24); the Vision judges each visit on its own, its dwell grace works, and three products' presence binary sensors can turn on (F152, F154, HA25, HA26); the turned panels' onboarding and the narrow glass's splash bubble fit (F156-F158, F160); and the Lab's core-driving page tests can run on the tree's sources (A40). The Vision core and the five display flavors move the emulator dist, which CI's pinned emsdk rebuilds in the PR. It files F161-F185, HA27 and A41-A44, among them F171 (on the default FULL profile a phone's Bluetooth pairing is accepted with no owner confirm, read from code). Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 12" |
 | Still open | 0 in full, 1 in part (21's Parametrize leftovers — the 7" frame's panel record, the render-plan package's selector half and the C6 manifest's `figure`; see row 21 and §4); row 20 carries one new open clause (a signed head for the sealed-log document, without which the Wall's "Verified" cannot say the tail is current or complete). Decisions taken and waiting on the maintainer's confirmation: row 30's version spread and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §3, "Landed in wave 4"), both decided on 2026-09-22 and landed in PR #1704; the two wave-5 questions, landed in PR #1703 — the render-plan package's Lab-card half (option B; the selector half, option A, is not built) and `canary-local/devices/registry.json`'s hand-typed `body_mm` (retired and derived; row 21); and, landed in PR #1704, the sidecar's bind (option (3), row 1) and the Wall's viewer token (option (a), row 20) |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -918,6 +919,112 @@ merged into it. Seven packages:
   the five display flavors move the emulator dist, which CI's pinned emsdk
   rebuilds in the PR, and the probe needs the rebuilt dist; not bench-tested.
   Files F155-F160.
+
+### Landed in wave 12
+
+A twelfth pass on 2026-10-02 (monorepo PR #1762) worked the 2026-09-20 sweep's
+backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md))
+again, taking items wave 11 filed. It closes none of the rows above and
+changes no sentence of §2. Each package was built in its own worktree,
+reviewed adversarially and fixed before it joined the PR. Eight packages:
+
+- **The PIO initiator resends a lost COMPLETE, a late cancel leaves a finished
+  pairing alone, and the web UI reads the pairing's outcome (sweep
+  F133-F135).** `mesh_pairing` keeps the CONFIRM and sealed COMPLETE it sent
+  and sends both again every 2 s to its partner for at most the 5-minute
+  pairing timeout; the session ends the copies on the joiner's first verified
+  fresh frame from its own address, or when the joiner is no longer a member
+  bound where it paired from, or the opera is left or rotated. `cancel()` is a
+  no-op on IDLE, PAIRED and FAILED. `GET /api/mesh` adds `pairing_seq`,
+  `pairing_result` and `pairing_fail_reason` (the status buffer grows to 640
+  bytes), and the page's poll reports a failure as one. Host-tested on the
+  mesh suites, a node test of the page and a source pin of the handlers (30
+  C++ mutants, all killed), the mixed versions also against older libraries in
+  a scratch probe; the `[env:full]` compile is CI's; not bench-verified. Files
+  F161-F163, among them a PIO joiner that sends nothing after it pairs, so the
+  copies run their whole window (F162).
+- **canary-wap's NVS: a removal leaves no key, a debug build's first boot is
+  quiet for `csi`, and the presence settings go through the key map (sweep
+  F137, F150, F151).** `persist_peers()` writes the slots, then the count, and
+  removes the stale `peer_<i>` slots only when both are stored; a boot loads
+  no unreadable slot and sweeps older firmware's leftovers with flash
+  encryption on (a board without it keeps its stored members, for F141). Every
+  read-only open of `csi` goes through `begin_read_only()`, the F125 probe
+  (the item's premise corrected: two lines, on debug builds only). The
+  dashboard's and the calibration's presence rows are stored and read in
+  host-tested `csi_settings_nvs.cpp` by `nvs_key_for()`, with source pins on
+  the handlers. Host-tested; the compiles are CI's; not bench-tested. Files
+  F164-F166.
+- **canary-wap Bluetooth: the settings turn it off and on, NimBLE's callbacks
+  post events, and the status routes read views (sweep F144, F143, F138's
+  Bluetooth half).** `set_settings()` decides from the setting it had; a
+  bounded event queue (`loop_event_queue.h`) carries the NimBLE host task's
+  callbacks to `update()`, which applies them before the owner's commands; a
+  Numeric Comparison answer goes only to the link the stack still holds on
+  that handle; the four GET routes read views the loop task publishes.
+  Host-tested (`test_bluetooth_commands_wap`, 38 tests, and
+  `test_loop_event_queue`, both also run under ThreadSanitizer locally, not in
+  CI) and held by rules BV1-BV3; the compiles are CI's; not bench-tested. The
+  link and pairing parts hold on the DEV profile: on the default FULL profile
+  Opera's server callbacks replace the channel's, so a phone's pairing is
+  accepted with no owner confirm (read from code, F171). Files F167-F173 and
+  F177.
+- **canary-wap Chirp: the status routes read views, and a send before the
+  clock is set says so (sweep F138's Chirp half, F146).** `chirp_channel`
+  publishes its status every pass and its tables only when they change, the
+  tables' copies in a PSRAM block through the new
+  `loop_snapshot::AttachedValue` (about 0.1 KB of internal DRAM, guarded by
+  `ram_audit.yml`); a refused send answers `clock_unsynced` and the dashboard
+  waits for GPS time. Host-tested (`test_chirp_commands_wap`, 20 tests over
+  real signed frames) and held by rules CV1-CV7 (with BV1-BV3,
+  `check_wap_loop_commands.py` now refuses 217 mutations); the compiles and
+  the RAM audit's ELF run are CI's; not bench-tested. Files F174-F176 and F178
+  (the send cooldown is a state a mute ends).
+- **The canary-wap's egress counters reach a surface, and Home Assistant reads
+  them and the event-id warning (sweep F149, HA24).**
+  `csi_mqtt::publish_egress()` sends the thirteen counters, in the canary's
+  names, retained on `{prefix}/{id}/egress` right after each health publish,
+  with that health's version and uptime; `GET /api/diagnostics` carries them
+  through a pure builder (`wap_diagnostics.h`). Home Assistant gains an Event
+  ID Space Low diagnostic binary sensor and egress and offline-queue
+  attributes on the Health sensor, shown for a canary-wap only while the topic
+  pairs with its latest health. Host-tested (`test_mqtt_reinit`,
+  `test_wap_diagnostics`, `check_wap_event_egress.py` rule 12, HA's
+  `test_egress_health.py`); the compiles and hassfest are CI's; not
+  bench-tested; the HACS mirror needs its resync (sweep U6). Files F179, F180
+  and HA27.
+- **The Vision judges each visit on its own, its dwell grace works, and the
+  discovery binary sensors can turn on (sweep F152, F154, HA25, HA26).**
+  `PresenceFSM` resets its voxel tracker at each visit's start and owes a
+  back-to-back visit its `interaction_likely`; a nonzero `DWELL_END_GRACE_MS`
+  ends a dwell with `dwell_ended` (0 in every shipped build, tested at 4 s);
+  seven binary sensors across the Vision, Sense and Sentinel render the
+  `'true'`/`'false'` payloads Home Assistant compares, held by render tests in
+  Home Assistant's own template environment, which CI now runs
+  (`jinja2==3.1.6`); the interaction alerts drop a confidence that never
+  described the visit. The Vision core moves the emulator dist, which CI's
+  pinned emsdk rebuilds in the PR (until then one `vision.test.js` test fails
+  on the old dist and passes with `LAB_CORES=native`); firmware is
+  compile-tested by CI; not bench-tested. Files F181 and F182.
+- **The turned panels' setup screens fit, and the splash bubble fits the
+  narrow glass (sweep F156, F157, F158, F160).** A dash or 7" glass turned
+  portrait (480x800) uses shorter forms of the Join title and stuck-phone hint
+  and splits the credentials line; the 320x180 landscape nightlight composes
+  its scenes sideways (`land_join()`); the bubble is the canvas less 4 px a
+  side, and its tail is re-aligned as the line wraps (drawn only on the LVGL
+  9.5 builds). Host-tested (`test_onboard_layout` and `test_onboard_scenes`
+  now hold the turned panels) and measured in a native LVGL 8.4 harness; the
+  five display flavors move the emulator dist, which CI's pinned emsdk
+  rebuilds in the PR; not bench-tested. Files F183-F185 and A44.
+- **The Lab's core-driving page tests can run on the tree's sources (sweep
+  A40).** With `LAB_CORES=native`, `canary-local/tests/native/cores.js` reads
+  `build.sh`'s flavor block, builds the Vision or WAP audio core with g++ and
+  serves it to `vision.test.js`, `eyes.test.js` and `audio.test.js` in the
+  dist's shape over a synchronous pipe; `canary-local.yml` runs them both
+  ways, the native step even when the dist step is red. Before CI's dist
+  rebuild this PR shows the expected split: 46 of 47 on the old dist, 47 of 47
+  natively. Test tooling, host-tested; the CI step's first run is CI's. Files
+  A41-A43.
 
 ### The documentation wave
 
