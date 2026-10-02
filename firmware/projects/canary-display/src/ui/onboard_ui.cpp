@@ -28,16 +28,19 @@ namespace canary::ui {
 namespace {
 
 // Geometry per glass. The QR card is asked for here; where it and the
-// Join scene's lines sit is onboard_layout.h's call (s_join below), and on
-// small glass so is the halo ring (s_halo: onboardlayout::small_join, F66).
+// Join scene's lines sit is onboard_layout.h's call (s_join below), and so
+// are the halo ring (s_halo: onboardlayout::small_join on small glass, F66;
+// wide_ring on wide glass, F84) and the bird's seat (bird_seat).
 #ifdef CD_FLAVOR_WATCH
 constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kSmallGlassCard;
-constexpr lv_coord_t RING_W = onboardlayout::kRingStroke;
-constexpr int BIRD_PX = 40;  // the brand mark's square, this glass family
+constexpr int BIRD_PX = onboardlayout::kSmallBirdPx;
+constexpr bool WIDE = false;
 #else
 constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kWideGlassCard;
-constexpr lv_coord_t RING_D = 300, RING_W = 3;
+constexpr int BIRD_PX = onboardlayout::kWideBirdPx;
+constexpr bool WIDE = true;
 #endif
+constexpr lv_coord_t RING_W = onboardlayout::kRingStroke;
 
 constexpr uint32_t FADE_MS = 260;      // scene fade-in
 constexpr uint32_t BREATH_MS = 2400;   // waiting pulse period
@@ -58,22 +61,23 @@ lv_obj_t* s_hint = nullptr;
 lv_obj_t* s_note = nullptr;            // small glass: the note row (join_lines)
 lv_obj_t* s_bird = nullptr;            // the brand mark (its seat moves, F50)
 onboardlayout::Stack s_join = {};      // the Join scene's rows (see join_rows)
-#ifdef CD_FLAVOR_WATCH
-// The Join scene's text rows' faces and widths (see refresh_bottom): the
-// Character's caption, and the default Character's — the floor a row that
-// would be cut steps down to. Widths are what rf_fit_top sized each label to.
-// The scenes' bodies set the same pair; their titles set the body face and
-// the default Character's body face (scene_text, F65).
+// The scenes' title and body faces (scene_text, F65; every glass since
+// F84): the title in the Character's body face, the body in its caption
+// face, each stepping down to the default Character's face of the role.
+// On small glass the Join scene's text rows set the caption pair too (see
+// refresh_bottom).
 const lv_font_t* s_row_font = nullptr;
 const lv_font_t* s_floor_font = nullptr;
 const lv_font_t* s_title_font = nullptr;
 const lv_font_t* s_title_floor = nullptr;
+onboardlayout::Glass s_glass = {};     // this panel (this_glass)
+onboardlayout::Ring s_halo = {};       // the halo's size and seat (F66, F84)
+#ifdef CD_FLAVOR_WATCH
+// The Join scene's text rows' widths: what rf_fit_top sized each label to.
 int s_creds_w = 0;
 int s_low_w = 0;
 int s_note_w = 0;
-onboardlayout::Glass s_glass = {};     // this panel, as join_rows saw it
 onboardlayout::Rows s_rows = {};       // the Join scene's line heights
-onboardlayout::Ring s_halo = {};       // the halo's size and seat (F66)
 #endif
 
 ObStage s_stage = ObStage::Hello;
@@ -117,12 +121,35 @@ void set_join_title() {
   rf_fit_top(s_title, s_join.title_top);
   lv_label_set_text(s_title, line.text);
 }
+#else
+// The wide Join title, in the title face on the stack's title row (above
+// the halo), fitted to the panel's row like every line here.
+void set_join_title() {
+  const lv_font_t* own_f = font_title();
+  const lv_font_t* floor_f = character_def(Character::QuietGlass).type.title;
+  auto measure = [own_f, floor_f](const char* t, bool fl) {
+    return text_w(t, fl ? floor_f : own_f);
+  };
+  const int w = s_glass.w - 2 * roundframe::kRectSidePad;
+  const char* forms[1] = {onboardlayout::wide_join_title(s_qr_ok)};
+  onboardlayout::Line line;
+  onboardlayout::fit_line(line, forms, 1, w, measure);
+  const lv_font_t* f = line.floor ? floor_f : own_f;
+  lv_obj_set_style_text_font(s_title, f, 0);
+  lv_label_set_long_mode(s_title, LV_LABEL_LONG_DOT);
+  lv_obj_set_size(s_title, w, (lv_coord_t)lv_font_get_line_height(f));
+  lv_obj_set_style_text_align(s_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_text(s_title, line.text);
+  lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, s_join.title_top);
+}
+#endif
 
-// A scene's centered line (F65): its forms through fit_line on the width at
-// its own latitude (onboardlayout::scene_line_w: the disc's chord on round
-// glass, the panel less its pads and inside the halo on rectangular glass),
-// in the role's face or the default Character's; a network name through
-// name_line. Never LONG_DOT's cut: the label is as wide as the line's row.
+// A scene's centered line (F65; wide glass too since F84): its forms
+// through fit_line on the width at its own latitude
+// (onboardlayout::scene_line_w: the disc's chord on round glass, the panel
+// less its pads and inside the halo on rectangular glass), in the role's
+// face or the default Character's; a network name through name_line. Never
+// LONG_DOT's cut: the label is as wide as the line's row.
 void set_center_line(lv_obj_t* label, const char* full, const char* narrow,
                      int off, const lv_font_t* own_f,
                      const lv_font_t* floor_f, bool name) {
@@ -149,7 +176,6 @@ void set_center_line(lv_obj_t* label, const char* full, const char* narrow,
   lv_label_set_text(label, line.text);
   lv_obj_align(label, LV_ALIGN_CENTER, 0, off);
 }
-#endif
 
 // The Join scene's text, owned in one place. On the round glass the old
 // single "ssid  •  pass" line at -34 outran its chord (152 px against
@@ -324,18 +350,23 @@ int line_h(lv_obj_t* label) {
 // The old per-glass offsets placed the card from the center and the captions
 // from the bottom edge independently, and on the dash and the round watch
 // the credentials line landed inside the card (F43).
-onboardlayout::Stack join_rows() {
+// This panel, as onboard_layout.h's functions take it.
+onboardlayout::Glass this_glass() {
   onboardlayout::Glass g;
   g.w = (int)lv_disp_get_hor_res(NULL);
   g.h = (int)lv_disp_get_ver_res(NULL);
   g.round = RF_GLASS_ROUND != 0;
+  return g;
+}
+
+onboardlayout::Stack join_rows() {
+  const onboardlayout::Glass g = s_glass;
   onboardlayout::Rows r;
   r.title_h = line_h(s_title);
   r.card = QR_SPEC;
   r.creds_h = line_h(s_creds);
   r.hint_h = line_h(s_hint);
 #ifdef CD_FLAVOR_WATCH
-  s_glass = g;
   s_rows = r;
   // The halo: the rim's ring on round glass; on rectangular glass the band
   // between the stack's title and credentials rows, with the card's corners
@@ -344,6 +375,8 @@ onboardlayout::Stack join_rows() {
   s_halo = j.halo;
   return j.stack;
 #else
+  // The dash line's 300 px halo, centered (wide_ring, F84).
+  s_halo = onboardlayout::wide_ring(g);
   return onboardlayout::join_stack(g, r);
 #endif
 }
@@ -361,47 +394,16 @@ void scene_text(ObStage st, const char* detail, const char* narrow) {
   }
   const bool name = c.body.full == nullptr;
   const char* body = name ? (detail ? detail : "your network") : c.body.full;
-#ifdef CD_FLAVOR_WATCH
   if (st == ObStage::Join) {
     set_join_title();
     lv_label_set_text(s_body, "");
     return;
   }
+  // Every glass, the wide one too (F84): fitted inside the halo's chord.
   set_center_line(s_title, title, title_narrow, c.title_off, s_title_font,
                   s_title_floor, false);
   set_center_line(s_body, body, c.body.narrow, c.body_off, s_row_font,
                   s_floor_font, name);
-#else
-  (void)title_narrow;
-  if (st == ObStage::Join) {
-    lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, s_join.title_top);
-    lv_label_set_text(s_title, s_qr_ok ? "Scan with your phone camera"
-                                       : "On your phone, join this network");
-    lv_label_set_text(s_body, "");
-    return;
-  }
-  lv_obj_align(s_title, LV_ALIGN_CENTER, 0, c.title_off);
-  lv_label_set_text(s_title, title);
-  // The network name is the one line here whose words are not ours: the
-  // same rule as small glass (name_line), on the panel's row.
-  const lv_font_t* own_f = font_body();
-  const lv_font_t* floor_f = character_def(Character::QuietGlass).type.body;
-  onboardlayout::Line line;
-  if (name) {
-    auto measure = [own_f, floor_f](const char* t, bool fl) {
-      return text_w(t, fl ? floor_f : own_f);
-    };
-    onboardlayout::name_line(
-        line, body,
-        (int)lv_disp_get_hor_res(NULL) - 2 * roundframe::kRectSidePad,
-        measure);
-  } else {
-    onboardlayout::set_line(line, body, false, true);
-  }
-  lv_obj_set_style_text_font(s_body, line.floor ? floor_f : own_f, 0);
-  lv_obj_align(s_body, LV_ALIGN_CENTER, 0, c.body_off);
-  lv_label_set_text(s_body, line.text);
-#endif
 }
 
 void show_qr(bool show) {
@@ -424,14 +426,12 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   lv_obj_set_style_bg_opa(s_scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
 
+  s_glass = this_glass();
+
   // Halo ring — the one persistent element across every scene, so the eye
-  // has continuity while text changes. On small glass its size and seat
-  // wait for the Join stack (below): it sits clear of the stack's rows.
+  // has continuity while text changes. Its size and seat wait for the Join
+  // stack (below): on small glass it sits clear of the stack's rows.
   s_ring = lv_arc_create(s_scr);
-#ifndef CD_FLAVOR_WATCH
-  lv_obj_set_size(s_ring, RING_D, RING_D);
-  lv_obj_center(s_ring);
-#endif
   lv_arc_set_rotation(s_ring, 270);
   lv_obj_set_style_arc_width(s_ring, RING_W, LV_PART_MAIN);
   lv_obj_set_style_arc_width(s_ring, RING_W, LV_PART_INDICATOR);
@@ -456,14 +456,9 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   };
 
   // The brand canary welcomes — the first thing anyone meets on first
-  // boot. Hidden while the QR needs the room, hops once on success.
-#ifdef CD_FLAVOR_WATCH
+  // boot. Hidden while the QR needs the room, hops once on success. Its
+  // seat is onboard_layout.h's (bird_seat), set per scene below.
   s_bird = canary_mark_create(s_content, BIRD_PX);
-  lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, onboardlayout::kSceneBirdOff);
-#else
-  s_bird = canary_mark_create(s_content, 64);
-  lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -104);
-#endif
 
 #ifdef CD_FLAVOR_WATCH
   s_title = mk(font_body(), col_text());
@@ -480,28 +475,30 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   rf_fit_top(s_creds, s_join.creds_top);
   rf_fit_top(s_hint, s_join.hint_top);
   rf_fit_top(s_note, s_join.note_top);
-  s_row_font = font_caption();
-  s_floor_font = character_def(Character::QuietGlass).type.caption;
-  s_title_font = font_body();
-  s_title_floor = character_def(Character::QuietGlass).type.body;
-  // The halo, as join_rows() placed it (small_join).
-  lv_obj_set_size(s_ring, s_halo.d, s_halo.d);
-  lv_obj_align(s_ring, LV_ALIGN_TOP_MID, 0, s_halo.top);
   s_creds_w = rf_row_width(s_join.creds_top, line_h(s_creds));
   s_low_w = rf_row_width(s_join.hint_top, line_h(s_hint));
   s_note_w = rf_row_width(s_join.note_top, line_h(s_note));
 #else
+  // The Join title rides the stack's title row in the title face (the
+  // stack is sized from it); every other scene's title and body are fitted
+  // inside the halo (scene_text, F84).
   s_title = mk(font_title(), col_text());
-  lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 96);
   s_qr_card = lv_obj_create(s_content);
-  s_body = mk(font_body(), col_muted());
-  lv_obj_align(s_body, LV_ALIGN_CENTER, 0, 10);
+  s_body = mk(font_caption(), col_muted());
   s_creds = mk(font_label(), col_muted());
   s_hint = mk(font_caption(), col_faint());
   s_join = join_rows();
   lv_obj_align(s_creds, LV_ALIGN_TOP_MID, 0, s_join.creds_top);
   lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, s_join.hint_top);
 #endif
+  // The scenes' title and body faces, and their floors (F65, F84).
+  s_row_font = font_caption();
+  s_floor_font = character_def(Character::QuietGlass).type.caption;
+  s_title_font = font_body();
+  s_title_floor = character_def(Character::QuietGlass).type.body;
+  // The halo, as join_rows() placed it (small_join, wide_ring).
+  lv_obj_set_size(s_ring, s_halo.d, s_halo.d);
+  lv_obj_align(s_ring, LV_ALIGN_TOP_MID, 0, s_halo.top);
   lv_obj_set_size(s_qr_card, s_join.card, s_join.card);
   lv_obj_align(s_qr_card, LV_ALIGN_TOP_MID, 0, s_join.card_top);
 
@@ -543,30 +540,25 @@ void onboard_ui_stage(ObStage st, const char* detail, const char* narrow) {
   s_hint_text[0] = '\0';  // a scene change retires the coach line
   s_hint_narrow[0] = '\0';
 
-#ifdef CD_FLAVOR_WATCH
   // The bird's seat, BEFORE any mood below runs: the mark records its base
   // at the first on-stage mood after a placement (canary_mark_rebase), so
   // the seat must be set first or the pose snaps back to the old one on
-  // the next animation frame (review catch on F50). On the Join scene the
-  // bird is only visible while the QR is away (mood Hidden otherwise), and
-  // its old center-relative perch put its top 12 px inside the round
-  // watch's title band — so there it takes the hidden card's empty seat,
-  // which the stack keeps clear of the title and the credentials on every
-  // glass by construction (join_bird_top). Every other scene centers its
-  // text, well under the usual perch, inside the halo (scene_bird_top). The
-  // mark draws the bird at exactly this seat (its base is the align's
-  // offset, F64).
+  // the next animation frame (review catch on F50). The seat is
+  // onboard_layout.h's (bird_seat). On small glass's Join scene the bird is
+  // only visible while the QR is away (mood Hidden otherwise), and its old
+  // center-relative perch put its top 12 px inside the round watch's title
+  // band — so there it takes the hidden card's empty seat, which the stack
+  // keeps clear of the title and the credentials on every glass by
+  // construction (join_bird_top). Every other scene centers its text, well
+  // under the usual perch, inside the halo (scene_bird_top). Wide glass
+  // keeps one seat, inside its halo over the title. The mark draws the bird
+  // at exactly this seat (its base is the align's offset, F64).
   if (s_bird) {
-    if (st == ObStage::Join) {
-      lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0,
-                   onboardlayout::join_bird_top(s_join, BIRD_PX));
-    } else {
-      lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0,
-                   onboardlayout::scene_bird_top(s_glass, s_halo, BIRD_PX));
-    }
+    const onboardlayout::Seat seat =
+        onboardlayout::bird_seat(s_glass, WIDE, s_join, s_halo, st);
+    lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0, seat.y);
     canary_mark_rebase();
   }
-#endif
 
   switch (st) {
     case ObStage::Hello:
@@ -632,6 +624,16 @@ void onboard_ui_stage(ObStage st, const char* detail, const char* narrow) {
   }
   refresh_bottom();
   content_enter();
+}
+
+bool onboard_ui_bird_seat(int* x, int* y, int* side) {
+  if (!s_scr || !s_bird) return false;
+  const onboardlayout::Seat seat =
+      onboardlayout::bird_seat(s_glass, WIDE, s_join, s_halo, s_stage);
+  if (x) *x = seat.x;
+  if (y) *y = seat.y;
+  if (side) *side = seat.d;
+  return true;
 }
 
 void onboard_ui_hint(const char* line, const char* narrow) {

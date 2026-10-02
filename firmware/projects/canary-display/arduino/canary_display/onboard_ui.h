@@ -49,4 +49,11 @@ void onboard_ui_tick(uint32_t now_ms);
 // Cross-fade to the normal UI screen and auto-delete the onboarding scene.
 void onboard_ui_finish();
 
+// Where the current scene seats the brand mark: its box's top-left on the
+// panel and its side, as onboard_layout.h's bird_seat() names them for this
+// glass (the bird draws there, breathing onboardlayout::kBirdBreath px
+// either way, or hops from there). False while no onboarding screen is up.
+// The emulator's onboarding probe holds the drawn bird to it (F89).
+bool onboard_ui_bird_seat(int* x, int* y, int* side);
+
 }  // namespace canary::ui

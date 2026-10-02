@@ -302,7 +302,7 @@ struct Minted {
   // The PhoneJoined hint's forms: small glass (the hint, then its narrow
   // form), wide glass.
   std::vector<std::string> phone_small, phone_wide;
-  int bird_px;               // onboard_ui.cpp's watch-family brand mark
+  int bird_px;               // the small-glass brand mark (kSmallBirdPx)
 };
 static Minted g_minted;
 
@@ -434,12 +434,17 @@ inline void load_minted_core() {
         "form), %d wide", (int)g_minted.phone_small.size(),
         (int)g_minted.phone_wide.size());
 
-  // The brand mark's watch-family square, for the Join-scene seat check.
+  // The brand mark's square per glass family (onboard_layout.h's, F84):
+  // onboard_ui.cpp must create the mark at it on both branches.
   const std::string obui =
       slurp(fw + "/projects/canary-display/src/ui/onboard_ui.cpp");
-  g_minted.bird_px = -1;
-  const size_t bat = obui.find("constexpr int BIRD_PX = ");
-  if (bat != std::string::npos)
-    g_minted.bird_px = std::atoi(obui.c_str() + bat + 24);
-  CHECK(g_minted.bird_px > 0, "onboard_ui.cpp's BIRD_PX not found");
+  CHECK(obui.find("constexpr int BIRD_PX = onboardlayout::kSmallBirdPx;") !=
+                std::string::npos &&
+            obui.find("constexpr int BIRD_PX = onboardlayout::kWideBirdPx;") !=
+                std::string::npos &&
+            obui.find("canary_mark_create(s_content, BIRD_PX)") !=
+                std::string::npos,
+        "onboard_ui.cpp no longer creates the mark at onboard_layout.h's "
+        "kSmallBirdPx / kWideBirdPx");
+  g_minted.bird_px = kSmallBirdPx;
 }

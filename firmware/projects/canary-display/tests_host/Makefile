@@ -317,19 +317,20 @@ clean-mark-seat:
 run: run-mark-seat
 clean: clean-mark-seat
 
-# What the onboarding scenes DRAW on small glass (F64, F65, F66): the REAL
+# What the onboarding scenes DRAW (F64, F65, F66, F84): the REAL
 # src/ui/onboard_ui.cpp, round_frame.cpp and canary_mark.cpp against
 # fake_lvgl/lvgl.h, driven through every scene the way provision.cpp drives
-# them, on every small-glass env with both type ladders, QR or not. Every
+# them, on every display env with both type ladders, QR or not. Every
 # label reads whole (its text no wider than the label, in the font it
 # carries, measured with LVGL's own glyph data), nothing overlaps, and the
 # labels, the QR card and the bird's breath are clear of the halo's stroke,
-# which is small_join()'s; the bird draws at onboard_layout.h's seat.
-# test_onboard_layout holds the rules, this holds the glass to them. Two
-# builds, because round vs rectangular glass is the config's call: the
-# watch's (the round watch) and the nightstand's (the 172/180x320 portrait
-# glass, the touch169, the AMOLED). Hooked into `run` and `clean` by
-# prerequisite.
+# which is small_join()'s (wide_ring()'s on wide glass); the bird draws at
+# onboard_layout.h's seat (bird_seat). test_onboard_layout holds the rules,
+# this holds the glass to them. Three builds, because round, rectangular
+# small and wide glass are the config's call: the watch's (the round
+# watch), the nightstand's (the 172/180x320 portrait glass, the touch169,
+# the AMOLED) and the dash's (the 800x480 dash, dash7 and nightstand7).
+# Hooked into `run` and `clean` by prerequisite.
 SCENES_SRC = test_onboard_scenes.cpp ../src/ui/onboard_ui.cpp \
   ../src/ui/round_frame.cpp ../src/ui/canary_mark.cpp
 SCENES_DEPS = $(SCENES_SRC) onboard_test_env.h montserrat_metrics.h \
@@ -346,13 +347,16 @@ test_onboard_scenes_round: $(SCENES_DEPS)
 	$(CXX) $(SCENES_FLAGS) -I ../../../configs/canary-display/watch -o $@ $(SCENES_SRC)
 test_onboard_scenes_rect: $(SCENES_DEPS)
 	$(CXX) $(SCENES_FLAGS) -I ../../../configs/canary-display/nightstand -o $@ $(SCENES_SRC)
+test_onboard_scenes_wide: $(SCENES_DEPS)
+	$(CXX) $(SCENES_FLAGS) -I ../../../configs/canary-display/dash -o $@ $(SCENES_SRC)
 
 .PHONY: run-onboard-scenes clean-onboard-scenes
-run-onboard-scenes: test_onboard_scenes_round test_onboard_scenes_rect
+run-onboard-scenes: test_onboard_scenes_round test_onboard_scenes_rect test_onboard_scenes_wide
 	$(call run_marked,test_onboard_scenes_round)
 	$(call run_marked,test_onboard_scenes_rect)
+	$(call run_marked,test_onboard_scenes_wide)
 clean-onboard-scenes:
-	rm -f test_onboard_scenes_round test_onboard_scenes_rect
+	rm -f test_onboard_scenes_round test_onboard_scenes_rect test_onboard_scenes_wide
 
 run: run-onboard-scenes
 clean: clean-onboard-scenes

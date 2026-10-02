@@ -186,6 +186,14 @@ inline int join_bird_top(const Stack& s, int bird) {
 constexpr int kSceneBirdOff = -64;
 constexpr int kBirdBreath = 2;  // canary_mark's breath, either way of the seat
 
+// The brand mark's square: small glass (the watch branch of onboard_ui.cpp)
+// and wide glass (the dash line), whose bird keeps one seat in every scene,
+// its center kWideBirdOff above the panel's center: inside its halo, over
+// the scene's title (bird_seat below).
+constexpr int kSmallBirdPx = 40;
+constexpr int kWideBirdPx = 64;
+constexpr int kWideBirdOff = -104;
+
 // ── What the text rows say (F45) ──────────────────────────────────────────
 //
 // Round glass has always split the credentials: the network name on the
@@ -636,8 +644,8 @@ inline int scene_bird_top(const Glass& g, const Ring& ring, int bird) {
 //    the ladder reaches the shorter form in the Character's face before
 //    the whole line in the default face. The host test pins where each
 //    shows, and proves every line of every scene reads whole on every
-//    small-glass env with both ladders. (Wide glass sets its titles and
-//    bodies content-sized; only its network name is fitted.)
+//    small-glass env with both ladders. Wide glass follows the same rule
+//    inside its own halo (F84, wide_ring below).
 //  * Nothing is cut — except a network name, the user's own words, which
 //    no shorter form can say: name_line.
 
@@ -715,6 +723,12 @@ inline const char* join_title(bool qr) {
   return qr ? "Scan me" : "On your phone";
 }
 
+// The wide glass's Join title (the dash line), on its stack's title row in
+// the title face, with the room for the whole instruction.
+inline const char* wide_join_title(bool qr) {
+  return qr ? "Scan with your phone camera" : "On your phone, join this network";
+}
+
 // The width a centered scene line may take, its top at y_top with line
 // height h (see the rule above).
 inline int scene_line_w(const Glass& g, const Ring& ring, int y_top, int h) {
@@ -731,6 +745,66 @@ inline int scene_line_w(const Glass& g, const Ring& ring, int y_top, int h) {
   const int b = roundframe::iabs(y_top + h - cy);
   const int chord = 2 * roundframe::half_chord_at(r, a > b ? a : b);
   return chord < w ? chord : w;
+}
+
+// ── The scenes on wide glass (F84) ───────────────────────────────────────
+//
+// The 800x480 glass (the dash, dash7 and nightstand7 envs; the wide branch
+// of onboard_ui.cpp) keeps one 300 px halo, centered: concentric with its
+// Join card, between the Join title row and the credentials row (the host
+// test holds it clear of both). Its scene titles and bodies used to be
+// content-sized in the title and body faces (36 px, and 24 or 28), so they
+// ran through it: "No address from the router" spanned x 150..650 where the
+// ring's sides are near 254 and 546, "Let's get you connected." and
+// "looking for your canaries" touched them, a long network name ran through
+// both, and every scene's title box overlapped its body's by 4 px (6 in
+// Hello) (F84, measured in native LVGL 8.4).
+//
+// The rule is the small glass's (F65): every centered line is fitted by
+// fit_line (a network name by name_line) to scene_line_w at its latitude,
+// inside this ring's inner chord, in the same faces — the title in the
+// Character's body face, the body in its caption face, each stepping down
+// to the default Character's face of the same role. No title face could
+// do it: the chord is about 284 px at a title's latitude, and at 36 px only
+// "Hello.", "Joining", "You're in." and "No address" are that narrow. So
+// the two shorter forms show here too ("Check your phone", "No address"),
+// at both ladders, for the halo's chord: the trade F86 names for the
+// touch169 and the AMOLED. The Join title keeps the title face on its row
+// (it sits above the ring).
+constexpr int kWideRingD = 300;
+
+inline Ring wide_ring(const Glass& g) {
+  Ring ring;
+  ring.d = kWideRingD;
+  ring.top = (g.h - ring.d) / 2;  // lv_obj_center
+  return ring;
+}
+
+// The bird's seat in a scene: its box's top-left on the panel (it is
+// aligned TOP_MID) and its side. Small glass: the Join scene's
+// (join_bird_top, while no QR is up) or every other scene's
+// (scene_bird_top, in the halo `ring`); wide glass: one seat for every
+// scene. onboard_ui.cpp seats the bird here, and the emulator's onboarding
+// probe holds the box the bird is drawn in to it (F89).
+struct Seat {
+  int x;
+  int y;
+  int d;
+};
+
+inline Seat bird_seat(const Glass& g, bool wide, const Stack& s,
+                      const Ring& ring, ObStage st) {
+  Seat seat;
+  seat.d = wide ? kWideBirdPx : kSmallBirdPx;
+  seat.x = g.w / 2 - seat.d / 2;
+  if (wide) {
+    seat.y = g.h / 2 - seat.d / 2 + kWideBirdOff;
+  } else if (st == ObStage::Join) {
+    seat.y = join_bird_top(s, seat.d);
+  } else {
+    seat.y = scene_bird_top(g, ring, seat.d);
+  }
+  return seat;
 }
 
 // The Connecting scene's body: the network name the phone just sent. Whole
