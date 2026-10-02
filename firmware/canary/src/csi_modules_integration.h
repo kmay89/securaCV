@@ -96,6 +96,16 @@ void securacv_csi_modules_tamper_watch(int reset_was_crash,
 void securacv_csi_modules_tamper_watch_contact(int enclosure_open);
 
 /**
+ * Close the CSI bundles that are due (their 10-minute window or 2-minute
+ * quiet gap has elapsed) — csi_bundler_tick(). Call once per main loop,
+ * OUTSIDE the CSI power/degrade gates: the feature callback stops while
+ * they skip csi::process(), and an open bundle (presence, or a
+ * system.integrity tamper) must still close and commit on time. Safe to
+ * call before init().
+ */
+void securacv_csi_modules_tick(void);
+
+/**
  * Tear down the pipeline. Optional — only needed if the host wants
  * to disable module dispatch at runtime (e.g. user toggled a feature
  * flag mid-session). Releases any per-module state; safe to call

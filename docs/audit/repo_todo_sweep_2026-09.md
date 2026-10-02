@@ -1326,9 +1326,12 @@ so — see D2 below.)
   the canary they still do. Switch to
   `csi_bundler_tick()` together with F80, since the flush is what hides
   that leak on the canary. Found by F46 (#1761).
-  *Done (#1763):* the canary calls `csi_bundler_tick()` after each
-  module tick, as the canary-wap does, so a bundle closes for its window or
-  its quiet gap only and a refresh merges. Both trees now spend one ceiling
+  *Done (#1763):* the canary calls `csi_bundler_tick()` once per main
+  loop (`securacv_csi_modules_tick()`), as the canary-wap does, so a bundle
+  closes for its window or its quiet gap only and a refresh merges. The
+  tick sits outside the CSI power and heap gates: the feature callback
+  stops while they skip `csi::process()`, and an open bundle must still
+  close on time then (Codex review on #1763). Both trees now spend one ceiling
   slot per bundle, which F90 follows up. Built for the canary, not run on
   one (U1).
 - [ ] **F82 [code+decision] Nothing warns before the event-id space runs

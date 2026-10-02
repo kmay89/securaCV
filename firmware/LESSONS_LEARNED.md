@@ -2371,7 +2371,9 @@
 - **Fix:** Admit reports what it did, decided under its own lock after its
   own expiry: `CSI_BUNDLER_MERGED` (no new row) or `CSI_BUNDLER_BUFFERED`
   (a new bundle). Only a merge is refunded. The canary ticks the bundler
-  (`csi_bundler_tick()`) instead of flushing it.
+  (`csi_bundler_tick()`) once per main loop instead of flushing it in the
+  CSI callback; the tick sits outside the CSI power and heap gates, since
+  that callback stops while they hold and a bundle must still close.
 - **Regression check:** `firmware/tests_host/test_csi_bundler_ceiling.cpp`
   runs the real library on a clock the test moves (`CSI_TEST_CLOCK`): the
   121 s probe stays at 144 rows a day (714 on the old library), no hour
