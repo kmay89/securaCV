@@ -231,6 +231,13 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_events = decltype(bc::g_events)();
   bc::g_events_dropped_seen = 0;
   bc::g_events_dropped_logged_ms = 0;
+  bc::g_status_view = decltype(bc::g_status_view)();       // nothing published yet
+  bc::g_scan_view = decltype(bc::g_scan_view)();
+  bc::g_paired_view = decltype(bc::g_paired_view)();
+  bc::g_local_address[0] = '\0';
+  memcpy(bc::g_settings.device_name, bc::kDefaultSettings.device_name, sizeof bc::g_settings.device_name);
+  bc::g_settings.inactivity_timeout_ms = bc::kDefaultSettings.inactivity_timeout_ms;
+  bc::g_settings.notify_on_connect = bc::kDefaultSettings.notify_on_connect;
   CHECK(host_sim::conn_heap == 0);                   // every pending copy was deleted once
   if (bring_up) {
     host_sim::task = "bringup";
@@ -929,8 +936,9 @@ void test_a_scan_end_is_applied_once() {
 // ── Two tasks at once (sweep F143), for ThreadSanitizer ─────────────────
 
 // The NimBLE host task's callbacks on one thread, the loop task's passes on
-// another (this one) and the HTTP server's commands on a third, as on the
-// device, where the NimBLE host task runs beside the loop task. A link, a
+// another (this one) and the HTTP server's commands and GET reads (F138) on
+// a third, as on the device, where the NimBLE host task runs beside the
+// loop task. A link, a
 // passkey shown and one to confirm, a bond, a GATT write, a scan result and
 // a scan's end, a link down, over and over, while update() runs and the
 // owner's commands arrive. What must hold: no crash; every pending
@@ -984,6 +992,8 @@ void test_threads_callbacks_loop_and_commands() {
                                    bc::BT_CMD_PAIR_CANCEL,  bc::BT_CMD_ADVERTISE_START,
                                    bc::BT_CMD_PAIRED_CLEAR, bc::BT_CMD_SCAN_CLEAR};
   std::atomic<uint32_t> commands_done{0};
+  std::atomic<uint32_t> reads_done{0};
+  std::atomic<bool> reads_whole{true};
   std::thread httpd([&] {
     host_sim::task = "httpd";
     for (uint32_t i = 0; !nimble_done.load(); ++i) {
@@ -992,6 +1002,22 @@ void test_threads_callbacks_loop_and_commands() {
       c.duration_ms = 1000;
       bc::Result r;
       if (bc::submit(c, &r, 40) == lcr::Wait::kDone) commands_done.fetch_add(1);
+      // The GET routes' reads (sweep F138), while the loop task publishes.
+      bc::BluetoothStatus st;
+      bc::read_status(&st);
+      bc::ScanView scan;
+      bc::read_scan(&scan);
+      bc::PairedView paired;
+      bc::read_paired(&paired);
+      const bc::BluetoothSettings set = bc::read_settings();
+      const bool whole = st.scanned_count <= bc::MAX_SCANNED_DEVICES &&
+                         st.paired_count <= bc::MAX_PAIRED_DEVICES &&
+                         scan.count <= bc::MAX_SCANNED_DEVICES &&
+                         paired.count <= bc::MAX_PAIRED_DEVICES &&
+                         memchr(set.device_name, '\0', sizeof set.device_name) != nullptr &&
+                         (st.connected == st.connection.connected);
+      if (!whole) reads_whole.store(false);
+      reads_done.fetch_add(1);
     }
   });
 
@@ -1016,9 +1042,255 @@ void test_threads_callbacks_loop_and_commands() {
   CHECK(host_sim::count("", "nimble") == host_sim::count("passkey_answer", "nimble"));
   CHECK(bc::g_paired_count <= bc::MAX_PAIRED_DEVICES && bc::g_scanned_count <= bc::MAX_SCANNED_DEVICES);
   CHECK(host_sim::mux_depth == 0);
-  std::printf("PASS threads_callbacks_loop_and_commands (%u commands ran, %zu passkey answers, "
-              "%u events dropped)\n", (unsigned)commands_done.load(), answers,
-              (unsigned)bc::g_events.dropped());
+  CHECK(reads_whole.load() && reads_done.load() > 0);
+  std::printf("PASS threads_callbacks_loop_and_commands (%u commands ran, %u view reads, "
+              "%zu passkey answers, %u events dropped)\n", (unsigned)commands_done.load(),
+              (unsigned)reads_done.load(), answers, (unsigned)bc::g_events.dropped());
+}
+
+// ── What the status routes read (sweep F138) ────────────────────────────
+
+// GET /api/bluetooth, /scan/results, /paired and /settings read
+// read_status(), read_scan(), read_paired() and read_settings(): what the
+// last pass published, not the state the loop task is changing. Here the
+// test plays the loop task mid-pass (it changes the live state, as update()
+// and the events it applies do): a read shows the pass before, whole, until
+// the pass ends and publishes. Before F138 the routes read get_status(), the
+// scan and paired tables and the settings in place.
+void test_a_route_reads_the_last_published_pass() {
+  boot();
+  loop_pass();
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.state == bc::BT_ADVERTISING && st.enabled && st.advertising && !st.scanning);
+  // Mid-pass: a scan list being filled, a paired device appended, a new name.
+  bc::g_scanned_devices[0].rssi = -40;
+  strcpy(bc::g_scanned_devices[0].name, "Pixel");
+  bc::g_scanned_count = 1;
+  bc::g_scanning = true;
+  bc::g_state = bc::BT_SCANNING;
+  bc::g_paired_devices[0].connection_count = 4;
+  bc::g_paired_count = 1;
+  strcpy(bc::g_settings.device_name, "Mid-pass");
+  bc::ScanView scan;
+  bc::read_scan(&scan);
+  CHECK(scan.count == 0 && !scan.scanning);
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(paired.count == 0);
+  bc::read_status(&st);
+  CHECK(st.state == bc::BT_ADVERTISING && !st.scanning && st.scanned_count == 0);
+  CHECK(strcmp(st.device_name, "SecuraCV-Canary") == 0);
+  CHECK(strcmp(bc::read_settings().device_name, "SecuraCV-Canary") == 0);
+  // The pass ends: all of it at once.
+  bc::g_scanning = false;                                   // update()'s early work
+  loop_pass();
+  bc::read_scan(&scan);
+  CHECK(scan.count == 1 && scan.devices[0].rssi == -40 && strcmp(scan.devices[0].name, "Pixel") == 0);
+  bc::read_paired(&paired);
+  CHECK(paired.count == 1 && paired.devices[0].connection_count == 4);
+  bc::read_status(&st);
+  CHECK(st.scanned_count == 1 && st.paired_count == 1 && strcmp(st.device_name, "Mid-pass") == 0);
+  CHECK(strcmp(bc::read_settings().device_name, "Mid-pass") == 0);
+  // A disabled channel's pass publishes too (update()'s early return).
+  CHECK(rest(cmd_of(bc::BT_CMD_DISABLE)).r.ok);
+  bc::g_paired_count = 0;
+  loop_pass();
+  bc::read_paired(&paired);
+  bc::read_status(&st);
+  CHECK(paired.count == 0 && st.state == bc::BT_DISABLED && !st.enabled);
+  std::printf("PASS a_route_reads_the_last_published_pass\n");
+}
+
+// The loop task drains the commands at the start of its pass; a command's
+// handler answers as soon as its result is posted, and the dashboard reads
+// the status right after (it reloads the paired list after a removal, the
+// status after Start/Stop Advertising). The view already shows what the
+// command did, before the rest of that pass.
+void test_a_read_right_after_a_post_shows_what_it_did() {
+  boot();
+  NimBLEConnInfo phone = link(71, 0xD7);
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::server->peers = {71};
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(paired.count == 1);
+  // The loop task's turn runs only the drain (the start of its pass).
+  auto drain_only = [](const bc::Command& c) {
+    bc::Result r;
+    host_sim::on_task_delay = [](uint32_t ms) {
+      host_sim::now_ms += ms;
+      const std::string was = host_sim::task;
+      host_sim::task = "loop";
+      bc::g_commands.drain(bc::run_command);
+      host_sim::task = was;
+    };
+    host_sim::task = "httpd";
+    const lcr::Wait w = bc::submit(c, &r);
+    host_sim::task = "loop";
+    host_sim::on_task_delay = nullptr;
+    return w == lcr::Wait::kDone && r.ok;
+  };
+  bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  memcpy(remove.address, phone.address.getBase()->val, 6);
+  CHECK(drain_only(remove));
+  bc::read_paired(&paired);
+  CHECK(paired.count == 0);
+  bc::Command name = cmd_of(bc::BT_CMD_NAME);
+  strcpy(name.name, "Garage");
+  CHECK(drain_only(name));
+  CHECK(strcmp(bc::read_settings().device_name, "Garage") == 0);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(strcmp(st.device_name, "Garage") == 0 && st.paired_count == 0);
+  std::printf("PASS a_read_right_after_a_post_shows_what_it_did\n");
+}
+
+// Before the loop task's first pass publishes (the HTTP server starts in
+// setup(), before loop() runs): what the channel holds at boot, as
+// get_status() and get_settings() answered then, whatever the live state
+// says in the meantime.
+void test_reads_before_the_first_pass_show_the_boot_state() {
+  boot(/*bring_up=*/false);
+  strcpy(bc::g_settings.device_name, "Loaded");             // as if init() were loading NVS
+  bc::g_settings.tx_power = -6;
+  bc::g_paired_count = 2;
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.state == bc::BT_DISABLED && st.enabled == bt_defaults::ENABLED);
+  CHECK(strcmp(st.device_name, "SecuraCV-Canary") == 0 && st.tx_power == 9);
+  CHECK(st.mtu == 23 && st.battery_pct == 100 && st.paired_count == 0 && !st.connected);
+  CHECK(st.pairing.state == bc::PAIR_NONE && st.local_address[0] == '\0');
+  const bc::BluetoothSettings s = bc::read_settings();
+  CHECK(strcmp(s.device_name, "SecuraCV-Canary") == 0 && s.tx_power == 9);
+  CHECK(s.enabled == bt_defaults::ENABLED && s.auto_advertise == bt_defaults::AUTO_ADVERTISE);
+  CHECK(s.allow_pairing == bt_defaults::ALLOW_PAIRING && s.require_pin == bt_defaults::REQUIRE_PIN);
+  CHECK(s.inactivity_timeout_ms == bc::INACTIVITY_TIMEOUT_MS && s.notify_on_connect && !s.long_range_mode);
+  bc::ScanView scan;
+  bc::read_scan(&scan);
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(scan.count == 0 && !scan.scanning && paired.count == 0);
+  bc::g_paired_count = 0;
+  std::printf("PASS reads_before_the_first_pass_show_the_boot_state\n");
+}
+
+// The advertising and connected times are counted to the read, as
+// get_status() counted them, with no pass in between.
+void test_the_status_read_counts_the_times_to_now() {
+  boot();
+  host_sim::now_ms = 200000;
+  CHECK(rest(cmd_of(bc::BT_CMD_ADVERTISE_STOP)).r.ok);
+  CHECK(rest(cmd_of(bc::BT_CMD_ADVERTISE_START)).r.ok);      // advertising since 200000-ish
+  const uint32_t since = bc::g_advertising_start_ms;
+  const uint32_t total = bc::g_advertising_total_ms;
+  host_sim::now_ms = since + 5000;
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.advertising && st.advertising_time_ms == total + 5000);
+  NimBLEConnInfo phone = link(81, 0xE8);
+  host_sim::server->peers = {81};
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  const uint32_t connected_at = bc::g_connection.connected_since_ms;
+  const uint32_t connected_total = bc::g_connected_total_ms;
+  host_sim::now_ms = connected_at + 7000;
+  bc::read_status(&st);
+  CHECK(st.connected && st.connected_time_ms == connected_total + 7000);
+  CHECK(st.connection.connected_since_ms == connected_at);  // the route counts connected_sec from it
+  std::printf("PASS the_status_read_counts_the_times_to_now\n");
+}
+
+// Every field each route shows reaches it: the live state set field by
+// field to values of its own, one pass, and each reader's copy compared.
+void test_each_view_field_reaches_the_route() {
+  boot();
+  bc::g_state = bc::BT_PAIRING;
+  bc::g_scanning = true;
+  bc::g_connection.connected = true;
+  const uint8_t ca[6] = {9, 8, 7, 6, 5, 4};
+  memcpy(bc::g_connection.address, ca, 6);
+  strcpy(bc::g_connection.name, "Kitchen tablet");
+  bc::g_connection.rssi = -61;
+  bc::g_connection.security = bc::SEC_BONDED;
+  bc::g_connection.connected_since_ms = 777;
+  bc::g_connection.last_activity_ms = 888;
+  bc::g_connection.bytes_sent = 1234;
+  bc::g_connection.bytes_received = 4321;
+  bc::g_pairing.state = bc::PAIR_PIN_DISPLAYED;
+  memcpy(bc::g_pairing.peer_address, ca, 6);
+  strcpy(bc::g_pairing.peer_name, "Peer");
+  bc::g_pairing.pin_code = 13579;
+  bc::g_pairing.started_ms = host_sim::now_ms;
+  bc::g_pairing.pin_displayed = true;
+  bc::g_connection_mtu = 185;
+  bc::g_total_connections = 11;
+  bc::g_total_bytes_sent = 22;
+  bc::g_total_bytes_received = 33;
+  bc::g_connected_total_ms = 44000;
+  strcpy(bc::g_settings.device_name, "Porch");
+  bc::g_settings.tx_power = -3;
+  bc::g_settings.auto_advertise = false;
+  bc::g_settings.allow_pairing = false;
+  bc::g_settings.require_pin = false;
+  bc::g_settings.inactivity_timeout_ms = 123000;
+  bc::g_settings.notify_on_connect = false;
+  bc::g_settings.long_range_mode = true;
+  for (size_t i = 0; i < 3; ++i) {
+    bc::ScannedDevice& d = bc::g_scanned_devices[i];
+    memset(&d, 0, sizeof d);
+    d.address[0] = (uint8_t)(0x10 + i);
+    snprintf(d.name, sizeof d.name, "dev-%u", (unsigned)i);
+    d.rssi = (int8_t)(-50 - (int)i);
+    d.type = bc::DEV_WEARABLE;
+    d.connectable = i != 1;
+    d.has_securacv_service = i == 2;
+    d.last_seen_ms = 1000u + (uint32_t)i;
+  }
+  bc::g_scanned_count = 3;
+  for (size_t i = 0; i < 2; ++i) {
+    bc::PairedDevice& p = bc::g_paired_devices[i];
+    memset(&p, 0, sizeof p);
+    p.address[5] = (uint8_t)(0x20 + i);
+    p.address_type = 1;
+    snprintf(p.name, sizeof p.name, "phone-%u", (unsigned)i);
+    p.paired_timestamp = 5000u + (uint32_t)i;
+    p.last_connected_ms = 6000u + (uint32_t)i;
+    p.connection_count = 7u + (uint32_t)i;
+    p.security = bc::SEC_AUTHENTICATED;
+    p.trusted = i == 0;
+    p.blocked = i == 1;
+  }
+  bc::g_paired_count = 2;
+  // update() itself must not move them: run the end of a pass only.
+  bc::publish_views();
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.state == bc::BT_PAIRING && st.enabled && st.scanning && st.connected);
+  CHECK(st.advertising == host_sim::advertising.isAdvertising());
+  CHECK(strcmp(st.device_name, "Porch") == 0 && strcmp(st.local_address, "00:00:00:00:00:00") == 0);
+  CHECK(st.tx_power == -3 && st.mtu == 185 && st.battery_pct == 100);
+  CHECK(st.paired_count == 2 && st.scanned_count == 3);
+  CHECK(memcmp(&st.connection, &bc::g_connection, sizeof st.connection) == 0);
+  CHECK(memcmp(&st.pairing, &bc::g_pairing, sizeof st.pairing) == 0);
+  CHECK(st.total_connections == 11 && st.total_bytes_sent == 22 && st.total_bytes_received == 33);
+  CHECK(st.connected_time_ms == 44000 + (host_sim::now_ms - 777));
+  const bc::BluetoothSettings s = bc::read_settings();
+  CHECK(memcmp(&s, &bc::g_settings, sizeof s) == 0);
+  bc::ScanView scan;
+  bc::read_scan(&scan);
+  CHECK(scan.scanning && scan.count == 3);
+  CHECK(memcmp(scan.devices, bc::g_scanned_devices, 3 * sizeof(bc::ScannedDevice)) == 0);
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(paired.count == 2);
+  CHECK(memcmp(paired.devices, bc::g_paired_devices, 2 * sizeof(bc::PairedDevice)) == 0);
+  memset(&bc::g_connection, 0, sizeof bc::g_connection);
+  memset(&bc::g_pairing, 0, sizeof bc::g_pairing);
+  std::printf("PASS each_view_field_reaches_the_route\n");
 }
 
 // ── The settings' "enabled" (sweep F144) ────────────────────────────────
@@ -1235,6 +1507,11 @@ const Test kTests[] = {
      test_a_link_that_ends_after_bluetooth_is_off_leaves_it_off},
     {"a_scan_end_is_applied_once", test_a_scan_end_is_applied_once},
     {"threads_callbacks_loop_and_commands", test_threads_callbacks_loop_and_commands},
+    {"a_route_reads_the_last_published_pass", test_a_route_reads_the_last_published_pass},
+    {"a_read_right_after_a_post_shows_what_it_did", test_a_read_right_after_a_post_shows_what_it_did},
+    {"reads_before_the_first_pass_show_the_boot_state", test_reads_before_the_first_pass_show_the_boot_state},
+    {"the_status_read_counts_the_times_to_now", test_the_status_read_counts_the_times_to_now},
+    {"each_view_field_reaches_the_route", test_each_view_field_reaches_the_route},
     {"settings_enabled_false_turns_bluetooth_off", test_settings_enabled_false_turns_bluetooth_off},
     {"settings_enabled_true_turns_bluetooth_on_as_enable_does",
      test_settings_enabled_true_turns_bluetooth_on_as_enable_does},

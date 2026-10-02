@@ -18,8 +18,13 @@
  * handler still makes itself is bluetooth_channel::init() (bring_up), when
  * the owner turns Bluetooth on before it is up: it can block past the loop
  * task's watchdog, so it never runs there. firmware/scripts/
- * check_wap_loop_commands.py holds every handler here to that. The GET
- * routes still read the loop task's state from this task.
+ * check_wap_loop_commands.py holds every handler here to that.
+ *
+ * Sweep F138: the GET routes read what the loop task last published
+ * (bluetooth_channel::read_status, read_settings, read_scan, read_paired),
+ * never the live state, which the loop task changes (and, before F143, the
+ * NimBLE host task did): a read in place could mix two passes. They never
+ * wait for the loop task. Every answer keeps its shape.
  */
 
 #ifndef SECURACV_BLUETOOTH_API_H
@@ -104,9 +109,10 @@ static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
 // API HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
 
-// GET /api/bluetooth - Bluetooth status
+// GET /api/bluetooth - Bluetooth status (the last pass published, F138)
 inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
-  bluetooth_channel::BluetoothStatus status = bluetooth_channel::get_status();
+  bluetooth_channel::BluetoothStatus status;
+  bluetooth_channel::read_status(&status);
 
   JsonDocument doc;
 
@@ -333,13 +339,15 @@ inline esp_err_t handle_bluetooth_scan_stop(httpd_req_t* req) {
   return send_success(req, "Scan stopped");
 }
 
-// GET /api/bluetooth/scan/results - Get scan results
+// GET /api/bluetooth/scan/results - Get scan results (the last pass published, F138)
 inline esp_err_t handle_bluetooth_scan_results(httpd_req_t* req) {
-  size_t count;
-  const bluetooth_channel::ScannedDevice* devices = bluetooth_channel::get_scanned_devices(&count);
+  bluetooth_channel::ScanView view;
+  bluetooth_channel::read_scan(&view);
+  const size_t count = view.count;
+  const bluetooth_channel::ScannedDevice* devices = view.devices;
 
   JsonDocument doc;
-  doc["scanning"] = bluetooth_channel::is_scanning();
+  doc["scanning"] = view.scanning;
   doc["count"] = count;
 
   JsonArray arr = doc["devices"].to<JsonArray>();
@@ -451,10 +459,12 @@ inline esp_err_t handle_bluetooth_pair_reject(httpd_req_t* req) {
   return send_error(req, "No active pairing to reject");
 }
 
-// GET /api/bluetooth/paired - Get paired devices
+// GET /api/bluetooth/paired - Get paired devices (the last pass published, F138)
 inline esp_err_t handle_bluetooth_paired_list(httpd_req_t* req) {
-  size_t count;
-  const bluetooth_channel::PairedDevice* devices = bluetooth_channel::get_paired_devices(&count);
+  bluetooth_channel::PairedView view;
+  bluetooth_channel::read_paired(&view);
+  const size_t count = view.count;
+  const bluetooth_channel::PairedDevice* devices = view.devices;
 
   JsonDocument doc;
   doc["count"] = count;
@@ -607,9 +617,9 @@ inline esp_err_t handle_bluetooth_disconnect(httpd_req_t* req) {
   return send_error(req, "No active connection");
 }
 
-// GET /api/bluetooth/settings - Get Bluetooth settings
+// GET /api/bluetooth/settings - Get Bluetooth settings (the last pass published, F138)
 inline esp_err_t handle_bluetooth_settings_get(httpd_req_t* req) {
-  bluetooth_channel::BluetoothSettings settings = bluetooth_channel::get_settings();
+  bluetooth_channel::BluetoothSettings settings = bluetooth_channel::read_settings();
 
   JsonDocument doc;
   doc["enabled"] = settings.enabled;

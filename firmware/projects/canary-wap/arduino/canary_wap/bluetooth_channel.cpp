@@ -13,6 +13,7 @@
 #include "bluetooth_channel.h"
 #include "bt_defaults.h"
 #include "loop_event_queue.h"   // F143: what the NimBLE host task reports, applied by update()
+#include "loop_snapshot.h"      // F138: what the status routes show, published by update()
 #include "ble_heap_guard.h"
 #include "nvs_store.h"
 
@@ -91,8 +92,10 @@ static NimBLECharacteristic* g_notify_char = nullptr;
 static NimBLEAdvertising* g_advertising = nullptr;
 static NimBLEScan* g_scanner = nullptr;
 
-// Settings (persisted to NVS)
-static BluetoothSettings g_settings = {
+// Settings (persisted to NVS). The defaults: what a device holds until
+// init() loads its saved settings, and what the status routes show before
+// the loop task's first pass publishes (sweep F138).
+static constexpr BluetoothSettings kDefaultSettings = {
   // Radio on out of the box — see bt_defaults.h. Pairing still needs an
   // explicit on-device PIN confirmation (require_pin), so this is not
   // "open by default", just "reachable by default".
@@ -112,6 +115,7 @@ static BluetoothSettings g_settings = {
   .notify_on_connect = true,
   .long_range_mode = false
 };
+static BluetoothSettings g_settings = kDefaultSettings;
 
 // Connection state
 static ConnectionInfo g_connection = {};
@@ -1231,15 +1235,6 @@ static void stop_scan() {
   }
 }
 
-bool is_scanning() {
-  return g_scanning;
-}
-
-const ScannedDevice* get_scanned_devices(size_t* count) {
-  if (count) *count = g_scanned_count;
-  return g_scanned_devices;
-}
-
 static void clear_scan_results() {
   memset(g_scanned_devices, 0, sizeof(g_scanned_devices));
   g_scanned_count = 0;
@@ -1346,14 +1341,6 @@ static bool reject_pairing() {
   return true;
 }
 
-PairingState get_pairing_state() {
-  return g_pairing.state;
-}
-
-uint32_t get_pairing_pin() {
-  return g_pairing.pin_code;
-}
-
 static bool disconnect() {
   if (!g_connection.connected) return false;
 
@@ -1365,19 +1352,6 @@ static bool disconnect() {
   }
 
   return true;
-}
-
-bool is_connected() {
-  return g_connection.connected;
-}
-
-const ConnectionInfo* get_connection_info() {
-  return &g_connection;
-}
-
-const PairedDevice* get_paired_devices(size_t* count) {
-  if (count) *count = g_paired_count;
-  return g_paired_devices;
 }
 
 static bool remove_paired_device(const uint8_t* address) {
@@ -1442,10 +1416,6 @@ static bool set_device_blocked(const uint8_t* address, bool blocked) {
   return false;
 }
 
-BluetoothSettings get_settings() {
-  return g_settings;
-}
-
 static bool set_settings(const BluetoothSettings& settings) {
   // Whether Bluetooth was on, read before the assignment (sweep F144): the
   // old test compared the new value with is_enabled() after it, which read
@@ -1505,9 +1475,41 @@ static bool set_tx_power(int8_t power) {
   return true;
 }
 
-BluetoothStatus get_status() {
-  BluetoothStatus status = {};
+// ════════════════════════════════════════════════════════════════════════════
+// WHAT THE STATUS ROUTES SHOW (sweep F138)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// GET /api/bluetooth, /scan/results, /paired and /settings (bluetooth_api.h)
+// run on esp_http_server's task and read get_status(), the scan and paired
+// tables and the settings in place, while the loop task wrote them (and,
+// before F143, the NimBLE host task). Now the loop task publishes copies:
+// publish_views() at the end of every update() pass (its early return
+// included) and after each owner command (run_command(), before the drain
+// posts the result the handler answers from); the readers copy the last
+// one whole (loop_snapshot.h: a publish of unchanged bytes takes no lock).
+// Only the loop task publishes; init() (the bring-up worker's, or a
+// handler's bring_up()) never does.
 
+// The status, as GET /api/bluetooth shows it, and the settings.
+struct StatusView {
+  BluetoothStatus status;            // advertising_time_ms, connected_time_ms: the runs that ended
+  uint32_t advertising_since_ms;     // when the current run started (status.advertising)
+  BluetoothSettings settings;
+};
+
+static loop_snapshot::Value<StatusView, loop_command_ring::PortMuxLock> g_status_view;
+static loop_snapshot::Value<ScanView, loop_command_ring::PortMuxLock> g_scan_view;
+static loop_snapshot::Value<PairedView, loop_command_ring::PortMuxLock> g_paired_view;
+// The stack's own address, read once it is up (it is the public address,
+// fixed: no own-address type is set). The loop task's.
+static char g_local_address[18] = "";
+
+// Each built zeroed (padding included) so a pass that changed nothing
+// compares equal and takes no lock.
+static void publish_status_view() {
+  StatusView v;
+  memset(&v, 0, sizeof(v));
+  BluetoothStatus& status = v.status;
   status.state = g_state;
   status.enabled = g_settings.enabled;
   status.advertising = is_advertising();
@@ -1519,9 +1521,12 @@ BluetoothStatus get_status() {
 
   // Get local address
   if (g_initialized) {
-    NimBLEAddress addr = NimBLEDevice::getAddress();
-    strncpy(status.local_address, addr.toString().c_str(), 17);
-    status.local_address[17] = '\0';
+    if (g_local_address[0] == '\0') {
+      NimBLEAddress addr = NimBLEDevice::getAddress();
+      strncpy(g_local_address, addr.toString().c_str(), 17);
+      g_local_address[17] = '\0';
+    }
+    memcpy(status.local_address, g_local_address, sizeof(status.local_address));
   }
 
   status.tx_power = g_settings.tx_power;
@@ -1533,26 +1538,78 @@ BluetoothStatus get_status() {
   status.battery_pct = ble_standard_profiles::get_battery_level();
   status.paired_count = g_paired_count;
   status.scanned_count = g_scanned_count;
-  status.connection = g_connection;
-  status.pairing = g_pairing;
+  memcpy(&status.connection, &g_connection, sizeof(status.connection));
+  memcpy(&status.pairing, &g_pairing, sizeof(status.pairing));
 
   status.total_connections = g_total_connections;
   status.total_bytes_sent = g_total_bytes_sent;
   status.total_bytes_received = g_total_bytes_received;
   status.advertising_time_ms = g_advertising_total_ms;
-  if (is_advertising()) {
-    status.advertising_time_ms += millis() - g_advertising_start_ms;
-  }
   status.connected_time_ms = g_connected_total_ms;
-  if (g_connection.connected) {
-    status.connected_time_ms += millis() - g_connection.connected_since_ms;
-  }
-
-  return status;
+  v.advertising_since_ms = g_advertising_start_ms;
+  memcpy(&v.settings, &g_settings, sizeof(v.settings));
+  (void)g_status_view.publish(v);
 }
 
-BluetoothState get_state() {
-  return g_state;
+static void publish_scan_view() {
+  ScanView v;
+  memset(&v, 0, sizeof(v));
+  v.scanning = g_scanning;
+  v.count = (uint8_t)g_scanned_count;
+  memcpy(v.devices, g_scanned_devices, g_scanned_count * sizeof(ScannedDevice));
+  (void)g_scan_view.publish(v);
+}
+
+static void publish_paired_view() {
+  PairedView v;
+  memset(&v, 0, sizeof(v));
+  v.count = (uint8_t)g_paired_count;
+  memcpy(v.devices, g_paired_devices, g_paired_count * sizeof(PairedDevice));
+  (void)g_paired_view.publish(v);
+}
+
+// The loop task: update()'s passes and each owner command (run_command()).
+static void publish_views() {
+  publish_status_view();
+  publish_scan_view();
+  publish_paired_view();
+}
+
+void read_status(BluetoothStatus* out) {
+  StatusView v;
+  if (!g_status_view.read(&v)) {
+    // Before the first pass publishes: what the channel holds at boot.
+    memset(&v, 0, sizeof(v));
+    v.status.state = BT_DISABLED;
+    v.status.enabled = kDefaultSettings.enabled;
+    memcpy(v.status.device_name, kDefaultSettings.device_name, sizeof(v.status.device_name));
+    v.status.tx_power = kDefaultSettings.tx_power;
+    v.status.mtu = 23;
+    v.status.battery_pct = ble_standard_profiles::get_battery_level();
+  }
+  *out = v.status;
+  // The runs going on, counted to now (get_status() counted them at the read).
+  const uint32_t now = millis();
+  if (out->advertising) {
+    out->advertising_time_ms += now - v.advertising_since_ms;
+  }
+  if (out->connected) {
+    out->connected_time_ms += now - out->connection.connected_since_ms;
+  }
+}
+
+BluetoothSettings read_settings() {
+  StatusView v;
+  if (!g_status_view.read(&v)) return kDefaultSettings;
+  return v.settings;
+}
+
+void read_scan(ScanView* out) {
+  if (!g_scan_view.read(out)) memset(out, 0, sizeof(*out));
+}
+
+void read_paired(PairedView* out) {
+  if (!g_paired_view.read(out)) memset(out, 0, sizeof(*out));
 }
 
 const char* state_name(BluetoothState state) {
@@ -1697,6 +1754,7 @@ static Result run_command(const Command& cmd) {
       r.ok = set_tx_power(cmd.power);
       break;
   }
+  publish_views();   // F138: what this command did, before its handler answers
   return r;
 }
 
@@ -1737,7 +1795,10 @@ void update() {
     g_events_dropped_logged_ms = now != 0 ? now : 1;
   }
 
-  if (!g_initialized || !g_settings.enabled) return;
+  if (!g_initialized || !g_settings.enabled) {
+    publish_views();   // F138: a disabled channel's pass, as the routes show it
+    return;
+  }
 
   static uint32_t last_status_update = 0;
 
@@ -1789,6 +1850,9 @@ void update() {
       cancel_pairing();
     }
   }
+
+  // F138: the status routes see this pass whole, from here until the next.
+  publish_views();
 }
 
 // ════════════════════════════════════════════════════════════════════════════

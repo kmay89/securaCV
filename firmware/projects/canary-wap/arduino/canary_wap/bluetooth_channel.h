@@ -236,18 +236,14 @@ const char* init_fail_reason();
 // (manufacturer="SecuraCV", model="Canary WAP", fw="unknown", etc.).
 void set_device_metadata(const char* fw_revision, const char* serial);
 
-// Readers (any task; a reader on another task than the loop's can see a
-// field mid-change, never a freed one)
+// Two flags another task may read live. is_enabled(): whether the setting
+// says on (a REST handler decides from it whether to bring the stack up
+// first, F111). is_advertising(): NimBLE's own advertising state, which it
+// keeps under its own lock (the self-test reads it). What the status routes
+// show is read from the view below (read_status, read_settings, read_scan,
+// read_paired), never live (sweep F138).
 bool is_enabled();
 bool is_advertising();
-bool is_scanning();
-const ScannedDevice* get_scanned_devices(size_t* count);
-PairingState get_pairing_state();
-uint32_t get_pairing_pin();
-bool is_connected();
-const ConnectionInfo* get_connection_info();
-const PairedDevice* get_paired_devices(size_t* count);
-BluetoothSettings get_settings();
 
 // ──────────────────────────────────────────────────────────────────────────
 // The owner's commands (sweep F111)
@@ -378,9 +374,47 @@ inline const char* not_run_error(loop_command_ring::Wait w) {
   return w == loop_command_ring::Wait::kBusy ? "bluetooth_busy" : "bluetooth_timeout";
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// What the status routes show (sweep F138)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// GET /api/bluetooth, /scan/results, /paired and /settings run on
+// esp_http_server's task. What they show is the loop task's: update(), the
+// owner's commands and the NimBLE host task's events, which update()
+// applies (F143), change it. Read in place, one answer could mix two
+// passes: a paired device's name read mid-shift after a removal, a scan
+// list read while a result is added, a pairing PIN read while a cancel
+// wipes it. update() publishes what the routes show at the end of every
+// pass (its early return included) and after each owner command it runs
+// (before the command's handler answers, so a GET right after a POST shows
+// what it did); the readers below copy the last one whole
+// (loop_snapshot.h) and never wait for the loop task. Before the first
+// pass publishes, they answer what the channel holds at boot: Bluetooth
+// disabled, the default settings, no devices.
+
+// The scan list, as GET /api/bluetooth/scan/results shows it.
+struct ScanView {
+  bool scanning;
+  uint8_t count;
+  ScannedDevice devices[MAX_SCANNED_DEVICES];
+};
+
+// The paired devices, as GET /api/bluetooth/paired shows them.
+struct PairedView {
+  uint8_t count;
+  PairedDevice devices[MAX_PAIRED_DEVICES];
+};
+
+// Any task. The status the last pass published, its advertising and
+// connected times counted to the read (as get_status() counted them).
+void read_status(BluetoothStatus* out);
+// Any task. The settings the last pass published.
+BluetoothSettings read_settings();
+// Any task. The scan list and the paired devices the last pass published.
+void read_scan(ScanView* out);
+void read_paired(PairedView* out);
+
 // Status
-BluetoothStatus get_status();
-BluetoothState get_state();
 const char* state_name(BluetoothState state);
 
 // Callbacks
