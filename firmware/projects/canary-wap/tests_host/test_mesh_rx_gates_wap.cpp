@@ -133,10 +133,12 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   CHECK(count(sq, "staticuint64_tg_tx_high_signed=0;") == 1);
   // Peers restored from NVS take the same convention (Codex P1 on #1752):
   // a static-zeroed tx would sign counter 0 and the strict gate drops it.
+  // The receiver's last-seen starts at 0, or since F116 at the tombstone
+  // a member this device dropped left (test_mesh_liveness_wap runs it).
   const std::string ld = squeeze(function_body(code, "load_peers"));
   CHECK(count(ld, "g_peers[i].msg_counter_tx=1;") == 1);
-  CHECK(count(ld, "g_peers[i].msg_counter_rx=0;") == 1);
-  CHECK(count(add, "peer->msg_counter_rx=0;") == 1);
+  CHECK(count(ld, "g_peers[i].msg_counter_rx=tomb!=nullptr?tomb->last_seen:0;") == 1);
+  CHECK(count(add, "peer->msg_counter_rx=tomb!=nullptr?tomb->last_seen:0;") == 1);
   CHECK(count(sq, "msg_counter_tx=0;") == 0);
   CHECK(count(sq, "msg_counter_tx=1;") == 1);  // load_peers
   const std::string fin = squeeze(function_body(code, "maybe_finalize_rekey"));
