@@ -1022,7 +1022,7 @@ three GET handlers and the send handler in `chirp_api.h`, and the Chirp card
 in `web_ui.h` (`WebUiLogic.chirpSendGate`). Host-tested
 (`tests_host/test_chirp_commands_wap.cpp`, over real presence, witness and
 confirmation frames; `web_ui_logic.test.js`) and held by
-`firmware/scripts/check_wap_loop_commands.py` (rules CV1-CV6). The real
+`firmware/scripts/check_wap_loop_commands.py` (rules CV1-CV7). The real
 radio, two tasks on two cores and the device's GPS clock are not something
 a host test can run. Compile is CI's. Owner: U1.
 
@@ -1038,7 +1038,9 @@ a host test can run. Compile is CI's. Owner: U1.
     shows (validated after the confirmation) and is gone from the list the
     page reloads right after the dismiss; the mute shows at once; the other
     board drops off nearby within about 3.5 minutes; no Guru Meditation or
-    watchdog reset.
+    watchdog reset. The boot log's `[HEAP] ... internal free=` lines read
+    within about 150 bytes of a build before F138 (only the 68-byte status
+    copy and two locks are static; the tables' copies are in PSRAM).
   - Artifact: `docs/audit/repro/F138/chirp-status-routes/`.
 - [ ] **A send before the clock is set says so**
   - Setup: a canary-wap with no GPS fix since boot (antenna off, or

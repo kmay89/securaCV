@@ -145,6 +145,8 @@ inline esp_err_t handle_chirp_nearby(httpd_req_t* req) {
     dev["listening"] = devices[i].listening;
   }
 
+  // The copy is freed only once serialized: ArduinoJson 7 keeps a const
+  // char array (the copy's emoji) by pointer until then (rule CV7).
   char buffer[3072];
   serializeJson(doc, buffer);
   free(t);
@@ -210,7 +212,7 @@ inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
   }
 
   serializeJson(doc, buffer, 4096);
-  free(t);
+  free(t);   // after the serialize: the doc points into the copy (rule CV7)
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   esp_err_t ret = httpd_resp_sendstr(req, buffer);

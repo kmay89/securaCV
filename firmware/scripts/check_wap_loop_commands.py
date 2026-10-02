@@ -241,6 +241,19 @@ CV5. Every change to the tables is marked for the view: `on_espnow_recv()`
      `update()` (`CHIRP_TABLE_CALLERS`). Commands are rule C2's.
 CV6. Each Chirp GET handler answers exactly the keys it always did
      (`CHIRP_GET_KEYS`): the dashboard parses them.
+CV7. What the routes put under each key (`chirp_api.h` is not host-compiled:
+     ArduinoJson is not on the host, so this is what holds the glue). Each
+     GET key is set once, from its field of the copy (`CHIRP_STATUS_FIELDS`,
+     `CHIRP_NEARBY_FIELDS`, `CHIRP_RECENT_FIELDS`); `cannot_send_reason`
+     only from one `chirp_channel::cannot_send_reason(v)` (F146:
+     `clock_unsynced`); the rows from the copy's own count and array, the
+     recent route skipping a dismissed row first (`CHIRP_ROUTE_SHAPE`);
+     `free(t)` right after `serializeJson()` (ArduinoJson keeps a `const`
+     char array, the copy's emoji, by pointer until it serializes) and
+     before every `return` that follows the read. `POST /api/chirp/send`
+     answers a refusal exactly as `CHIRP_SEND_ANSWER` says: `error` and
+     `message` from `send_refusal_error()` and `send_refusal_message()`
+     (host-tested), the cooldown's two fields only for a cooldown.
 
 MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
@@ -1479,6 +1492,86 @@ CHIRP_READER_SIGS = {
 }
 CHIRP_READER_VIEW = {"read_status": "g_status_view.read(", "read_nearby": "g_nearby_view.read(",
                      "read_recent": "g_recent_view.read("}
+# Rule CV7: what each GET key is set from (squashed right-hand sides), once.
+CHIRP_STATUS_FIELDS = {
+    "state": "chirp_channel::state_name(v.state)",
+    "session_emoji": "v.session_emoji",
+    "nearby_count": "v.nearby_count",
+    "recent_chirps": "v.recent_chirp_count",
+    "last_chirp_sent_ms": "v.last_chirp_sent_ms",
+    "cooldown_remaining_sec": "v.cooldown_remaining_ms/1000",
+    "cooldown_tier": "v.cooldown_tier",
+    "presence_met": "v.presence_met",
+    "night_mode": "v.night_mode",
+    "relay_enabled": "v.relay_enabled",
+    "muted": "v.muted",
+    "mute_remaining_sec": "v.mute_remaining_ms/1000",
+    "can_send": "v.can_send",
+    "cannot_send_reason": "why",
+}
+CHIRP_NEARBY_FIELDS = {
+    "count": "count",
+    "emoji": "devices[i].emoji",
+    "age_sec": "(millis()-devices[i].last_seen_ms)/1000",
+    "rssi": "devices[i].rssi",
+    "listening": "devices[i].listening",
+}
+CHIRP_RECENT_FIELDS = {
+    "emoji": "chirps[i].sender_emoji",
+    "template_id": "(uint8_t)chirps[i].template_id",
+    "template_text": "chirp_channel::get_template_text(chirps[i].template_id)",
+    "detail": "chirp_channel::get_detail_text(chirps[i].detail)",
+    "category": "chirp_channel::category_name(cat)",
+    "urgency": "chirp_channel::urgency_name(chirps[i].urgency)",
+    "hop_count": "chirps[i].hop_count",
+    "age_sec": "(millis()-chirps[i].received_ms)/1000",
+    "confirm_count": "chirps[i].confirm_count",
+    "validated": "chirps[i].validated",
+    "status": "chirp_channel::get_validation_status(&chirps[i])",
+    "relayed": "chirps[i].relayed",
+    "suppressed": "chirps[i].suppressed",
+    "nonce": "nonce_hex",
+}
+CHIRP_ROUTE_FIELDS = {"handle_chirp_status": CHIRP_STATUS_FIELDS, "handle_chirp_nearby": CHIRP_NEARBY_FIELDS,
+                      "handle_chirp_recent": CHIRP_RECENT_FIELDS}
+# Statements each GET handler must hold once (squashed, strings kept): where
+# the rows and the reason come from.
+CHIRP_ROUTE_SHAPE = {
+    "handle_chirp_status": (
+        'constchar*why=chirp_channel::cannot_send_reason(v);if(why!=nullptr){doc["cannot_send_reason"]=why;}',
+    ),
+    "handle_chirp_nearby": (
+        "chirp_channel::read_nearby(t);constsize_tcount=t->count;"
+        "constchirp_channel::NearbyView*devices=t->devices;",
+        "for(size_ti=0;i<count&&i<chirp_channel::MAX_NEARBY_CACHE;i++){JsonObjectdev=arr.add<JsonObject>();",
+    ),
+    "handle_chirp_recent": (
+        "chirp_channel::read_recent(t);constsize_tcount=t->count;"
+        "constchirp_channel::RecentView*chirps=t->chirps;",
+        "for(size_ti=0;i<count;i++){if(chirps[i].dismissed)continue;JsonObjectc=arr.add<JsonObject>();",
+        "chirp_channel::ChirpCategorycat=(chirp_channel::ChirpCategory)((uint8_t)chirps[i].template_id>>4);",
+        'charnonce_hex[17];for(intj=0;j<8;j++){sprintf(nonce_hex+j*2,"%02x",chirps[i].nonce[j]);}',
+    ),
+}
+# Where the nearby and recent handlers free their copy: right after the
+# serialize, the doc holding pointers into it until then.
+CHIRP_ROUTE_FREE = {"handle_chirp_nearby": "serializeJson(doc,buffer);free(t);",
+                    "handle_chirp_recent": "serializeJson(doc,buffer,4096);free(t);"}
+CHIRP_FREE_EARLY = ('free(t);httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Memoryallocationfailed");'
+                    "returnESP_FAIL;}")
+# How POST /api/chirp/send answers once its command ran (F146), from
+# `bool success = r.ok;` to its buffer.
+CHIRP_SEND_ANSWER = (
+    'boolsuccess=r.ok;JsonDocumentdoc;doc["success"]=success;'
+    'if(success){doc["template_text"]=chirp_channel::get_template_text(template_id);'
+    'doc["cooldown_tier"]=r.cooldown_tier;}'
+    'elseif(r.refusal!=chirp_channel::SEND_REFUSED_NONE){'
+    'doc["error"]=chirp_channel::send_refusal_error(r.refusal);'
+    'doc["message"]=chirp_channel::send_refusal_message(r.refusal);'
+    'if(r.refusal==chirp_channel::SEND_REFUSED_COOLDOWN){'
+    'doc["cooldown_remaining_sec"]=r.cooldown_remaining_ms/1000;doc["cooldown_tier"]=r.cooldown_tier;}}'
+    "charbuffer[384];"
+)
 
 
 @functools.lru_cache(maxsize=1024)
@@ -1497,7 +1590,7 @@ def chirp_live_read_findings(name: str, code: str) -> tuple[str, ...]:
 
 
 def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]) -> None:
-    """Rules CV1-CV6: the Chirp GET routes read only what the loop task published."""
+    """Rules CV1-CV7: the Chirp GET routes read only what the loop task published."""
     files = dict(others)
     files[INO] = ino
     for name, src in files.items():
@@ -1529,6 +1622,8 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
             errors.append(f"{CHIRP_API}: {h}() answers a different shape (missing {missing}, new "
                           f"{extra}) — the routes answer what they always did; the dashboard parses "
                           "them (F138)")
+    # CV7: what the routes answer under each key.
+    check_chirp_route_answers(files[CHIRP_API], errors)
     # CV3, CV4, CV5: chirp_channel.cpp.
     code = blank_comments_and_strings(files[CHIRP_CPP])
     spans = named_bodies(code)
@@ -1617,6 +1712,62 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
         if hit:
             errors.append(f"{CHIRP_CPP}: {fn}() names {hit.group(1)} — it runs on the httpd task and "
                           "reads only what the loop task published (F138)")
+
+
+def check_chirp_route_answers(api_src: str, errors: list[str]) -> None:
+    """Rule CV7: what the Chirp routes answer under each key, and when the GET
+    routes free the copy they read (chirp_api.h is not host-compiled)."""
+    code = blank_comments_and_strings(api_src)
+    kept = blank_comments_only(api_src)
+    for h, fields in CHIRP_ROUTE_FIELDS.items():
+        span = the_body(code, r"\besp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                        f"{CHIRP_API}: {h}()", errors)
+        if span is None:
+            continue
+        body = squash(kept[span[0]:span[1]])
+        sets: dict[str, list[str]] = {}
+        for _obj, key, rhs in re.findall(r'\b(\w+)\["(\w+)"\]=(?!=)([^;]*);', body):
+            sets.setdefault(key, []).append(rhs)
+        for key, rhs in fields.items():
+            if sets.get(key) != [rhs]:
+                errors.append(f"{CHIRP_API}: {h}() must set \"{key}\" once, from `{rhs}` (found "
+                              f"{sets.get(key, [])}) — the route answers the copy's own field "
+                              "(F138, F146)")
+        for key in sorted(set(sets) - set(fields)):
+            errors.append(f"{CHIRP_API}: {h}() sets \"{key}\", which this check does not know (F138)")
+        for shape in CHIRP_ROUTE_SHAPE[h]:
+            if body.count(shape) != 1:
+                errors.append(f"{CHIRP_API}: {h}() must hold `{shape}` once — where its rows and its "
+                              "reason come from (F138, F146)")
+        if h not in CHIRP_ROUTE_FREE:
+            continue
+        read = body.find("chirp_channel::read_")
+        after = body[read:] if read >= 0 else body
+        if after.count(CHIRP_ROUTE_FREE[h]) != 1:
+            errors.append(f"{CHIRP_API}: {h}() must free its copy right after it serializes "
+                          f"(`{CHIRP_ROUTE_FREE[h]}`) — ArduinoJson keeps the copy's const char "
+                          "arrays (an emoji) by pointer until then (F138)")
+        ser = after.find("serializeJson(")
+        for m in re.finditer(r"free\(t\);", after):
+            if m.start() < ser and not after.startswith(CHIRP_FREE_EARLY, m.start()):
+                errors.append(f"{CHIRP_API}: {h}() frees its copy before it serializes, outside an "
+                              "allocation failure's early return — the doc still points into it (F138)")
+        for m in re.finditer(r"\breturn\b", after):
+            if "free(t);" not in after[:m.start()]:
+                errors.append(f"{CHIRP_API}: {h}() returns without freeing its copy (F138)")
+                break
+    span = the_body(code, r"\besp_err_t\s+handle_chirp_send\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                    f"{CHIRP_API}: handle_chirp_send()", errors)
+    if span is not None:
+        body = squash(kept[span[0]:span[1]])
+        at = body.find("boolsuccess=r.ok;")
+        tail = body[at:] if at >= 0 else ""
+        if not tail.startswith(CHIRP_SEND_ANSWER):
+            errors.append(f"{CHIRP_API}: handle_chirp_send() must answer its command as "
+                          "CHIRP_SEND_ANSWER says — a refusal's error and message from "
+                          "send_refusal_error()/send_refusal_message() (a clock not set is "
+                          "clock_unsynced, not a cooldown with 0 seconds left), the cooldown's fields "
+                          "only for a cooldown (F146)")
 
 
 # ── MQTT network timeout (F112) ──────────────────────────────────────────
@@ -2548,6 +2699,52 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the Chirp recent route answers a new key",
      on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"(c\[\"nonce\"\]\s*=\s*nonce_hex;)",
               r'\1 c["hop_limit"] = 3;')),
+    # Rule CV7: what the routes put under each key (the reviewers' h01-h07).
+    ("the send route answers every refusal as a cooldown (h01)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"doc\[\"error\"\]\s*=\s*chirp_channel::send_refusal_error\(r\.refusal\);",
+              'doc["error"] = "cooldown";')),
+    ("the send route puts the cooldown's fields on every refusal (h02)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"if\s*\(r\.refusal\s*==\s*chirp_channel::SEND_REFUSED_COOLDOWN\)\s*\{", "{")),
+    ("the send route's message is its own string again",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"doc\[\"message\"\]\s*=\s*chirp_channel::send_refusal_message\(r\.refusal\);",
+              'doc["message"] = "Please wait before sending another chirp";')),
+    ("the status route names its reason inline, without the clock (h03)",
+     on_other(CHIRP_API, api_handler("handle_chirp_status"),
+              r"const\s+char\s*\*\s*why\s*=\s*chirp_channel::cannot_send_reason\(v\);\s*"
+              r"if\s*\(why\s*!=\s*nullptr\)\s*\{\s*doc\[\"cannot_send_reason\"\]\s*=\s*why;\s*\}",
+              'if (!v.can_send) { if (v.state == chirp_channel::CHIRP_DISABLED) { '
+              'doc["cannot_send_reason"] = "disabled"; } else if (v.state == chirp_channel::CHIRP_COOLDOWN) { '
+              'doc["cannot_send_reason"] = "cooldown"; } else if (!v.presence_met) { '
+              'doc["cannot_send_reason"] = "presence_required"; } }')),
+    ("the status route answers can_send from the presence requirement (h04)",
+     on_other(CHIRP_API, api_handler("handle_chirp_status"), r"=\s*v\.can_send;", "= v.presence_met;")),
+    ("the status route answers the tier's whole cooldown as what is left (h05)",
+     on_other(CHIRP_API, api_handler("handle_chirp_status"), r"v\.cooldown_remaining_ms\s*/\s*1000",
+              "v.cooldown_ms / 1000")),
+    ("the recent route shows dismissed chirps (h06)",
+     on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"\n[ \t]*if\s*\(chirps\[i\]\.dismissed\)\s*continue;",
+              "")),
+    ("the nearby route frees its copy before it serializes (h07)",
+     on_other(CHIRP_API, api_handler("handle_chirp_nearby"), r"(serializeJson\(doc,\s*buffer\);)(\s*)free\(t\);",
+              r"free(t);\2\1")),
+    ("the recent route frees its copy only after it answers",
+     on_other(CHIRP_API, api_handler("handle_chirp_recent"),
+              r"(serializeJson\(doc,\s*buffer,\s*4096\);)\s*free\(t\);", r"\1")),
+    ("the recent route reads past the copy's count",
+     on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"const\s+size_t\s+count\s*=\s*t->count;",
+              "const size_t count = chirp_channel::MAX_RECENT_CHIRPS;")),
+    ("the nearby route answers a row's RSSI from its listening flag",
+     on_other(CHIRP_API, api_handler("handle_chirp_nearby"), r"=\s*devices\[i\]\.rssi;",
+              "= devices[i].listening;")),
+    ("the recent route answers validated from suppressed",
+     on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"=\s*chirps\[i\]\.validated;",
+              "= chirps[i].suppressed;")),
+    ("the status route answers the session emoji twice",
+     on_other(CHIRP_API, api_handler("handle_chirp_status"), r"(doc\[\"session_emoji\"\]\s*=\s*v\.session_emoji;)",
+              r'\1 doc["session_emoji"] = "";')),
 ]
 
 # Rules BV1..: the Bluetooth channel's settings enable (F144).
