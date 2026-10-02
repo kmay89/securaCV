@@ -27,8 +27,8 @@
  *     IDF's nvs_open() first, which answers ESP_ERR_NVS_NOT_FOUND without
  *     logging, and the boot then opens nothing: Arduino's
  *     Preferences::begin() logs every failed open at error level ("nvs_open
- *     failed: NOT_FOUND"), and the release envs keep error logs (sweep
- *     F125). Any other answer still tries the open, so a real NVS fault
+ *     failed: NOT_FOUND"), and the canary's release envs keep error logs
+ *     (sweep F125). Any other answer still tries the open, so a real NVS fault
  *     keeps its log line;
  *   - outside a session (a NULL handle: the canary-wap's re-init after a
  *     settings change), one read-only handle per read, closed before it
@@ -39,10 +39,12 @@
  *     an NVS erase read the event-id floor and the events egress's delivery
  *     ceiling through a read-only begin() before the egress's first ceiling
  *     record created the namespace, and each logged "nvs_open failed:
- *     NOT_FOUND"; its later reads (Quiet Hours, the privacy ceiling, the
- *     transmitter filter, the MQTT bridge, the time zone, the HTTP
- *     handlers) log the same way on a boot where that record was not
- *     written, and go through it too;
+ *     NOT_FOUND" on a build that keeps Arduino's error log (the
+ *     canary-wap-debug env; its release image is built at Core Debug
+ *     Level None, which compiles the line out); its later reads (Quiet
+ *     Hours, the privacy ceiling, the transmitter filter, the MQTT bridge,
+ *     the time zone, the HTTP handlers) log the same way on a boot where
+ *     that record was not written, and go through it too;
  *   - the value is returned as stored, typed as asked (getInt / getBool /
  *     getFloat); range checks are the module's own (anomaly.baseline clamps
  *     on read, for one).

@@ -143,7 +143,9 @@ bool store_privacy_ceiling_from_settings(Preferences& prefs, const char* body);
  * touches "csi". On the first boot after an NVS erase nothing has created
  * the namespace yet (the events egress's first delivery-ceiling record,
  * right after, is what does), and a read-only Preferences::begin() of it
- * logged "nvs_open failed: NOT_FOUND" at error level. */
+ * logged "nvs_open failed: NOT_FOUND" at error level (on a build that keeps
+ * Arduino's error log: canary-wap-debug; the release image compiles it
+ * out). */
 
 /** Read the persisted event-id floor (`floor_key`) and the events egress's
  *  delivery ceiling (`ceiling_key`), each 0 when absent, through one
