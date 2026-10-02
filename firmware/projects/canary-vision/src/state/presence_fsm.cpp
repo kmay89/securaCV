@@ -12,6 +12,7 @@ void PresenceFSM::reset() {
   dwell_start_ms_=0;
   last_leave_ms_=0;
   last_visit_ms_=0;
+  ended_dwell_ms_=0;
 
   interaction_candidate_=false;
 
@@ -39,6 +40,8 @@ static inline bool emit(EventMsg& out, const char* name, const char* reason=null
 
 bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_event) {
   out_event = EventMsg{};
+  // Only the tick that ends a dwell reports its length (dwell_ended).
+  ended_dwell_ms_ = 0;
 
   bbox_ = vs.bbox;
   confidence_ = vs.person_now ? vs.bbox.score : 0;
@@ -83,6 +86,9 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
   if (presence_ && (now_ms - last_seen_ms_) > canary::cfg::detect().lost_timeout_ms) {
     if (dwelling_) {
       if (DWELL_END_GRACE_MS == 0 || (now_ms - last_seen_ms_) >= DWELL_END_GRACE_MS) {
+        // Latch the finished dwell, on the clock the running dwell used, so
+        // the dwell_ended row says how long it lasted.
+        ended_dwell_ms_ = now_ms - dwell_start_ms_;
         dwelling_ = false;
         return emit(out_event, "dwell_ended");
       }
@@ -127,7 +133,9 @@ StateSnapshot PresenceFSM::snapshot(uint32_t now_ms, const char* last_event) con
   s.presence = presence_;
   s.dwelling = dwelling_;
   s.presence_ms = presence_ ? (now_ms - presence_start_ms_) : 0;
-  s.dwell_ms    = dwelling_ ? (now_ms - dwell_start_ms_) : 0;
+  // The running dwell; on the tick that ended one (dwell_ended), its length;
+  // otherwise 0. dwell_started's own tick reads 0: the dwell starts there.
+  s.dwell_ms    = dwelling_ ? (now_ms - dwell_start_ms_) : ended_dwell_ms_;
   s.visit_ms    = last_visit_ms_;
 
   s.confidence = confidence_;

@@ -22,6 +22,11 @@ private:
   uint32_t dwell_start_ms_=0;
   uint32_t last_leave_ms_=0;
   uint32_t last_visit_ms_=0;  // duration of the last completed stay
+  // Length of the dwell the latest tick ended, for dwell_ended's rows (sweep
+  // F130). tick() clears dwelling_ before the snapshot publish_event_json
+  // reads, so without it the dwell_ended row reported dwell_ms 0. Held until
+  // the next tick, which zeroes it first.
+  uint32_t ended_dwell_ms_=0;
 
   bool interaction_candidate_=false;
 

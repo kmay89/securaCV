@@ -139,6 +139,24 @@ Base:
 - `securacv/<device_id>/cfg/state` (retained; live detection settings + watch profile)
 - `securacv/<device_id>/cfg/{target,score,lost,dwell,profile}/set` (commands)
 
+### The clocks on an event row
+
+Every `events` row, and the `state` row published on the same tick, is read
+from the presence FSM's snapshot right after the frame that emitted the
+event (`publish_event_json` in `src/main.cpp`, `PresenceFSM::snapshot` in
+`src/state/presence_fsm.cpp`). So the three clocks mean:
+
+| Field | On which rows | Value |
+|---|---|---|
+| `presence_ms` | every row | how long the current stay has lasted; 0 on `presence_started` (it starts on that frame) and once the stay has ended |
+| `dwell_ms` | every row | the running dwell while dwelling; on `dwell_ended`, how long the dwell it closed lasted (held until the next frame); otherwise 0. `dwell_started` reads 0 because the dwell starts on that frame |
+| `visit_ms` | every row | how long the last **completed** stay lasted, latched at `presence_ended` and kept until the next one ends; 0 before any stay has ended |
+
+A running dwell is therefore on the `state` rows (each heartbeat republishes
+one) and the dwell's final length on its `dwell_ended` row. The behavior is
+host-tested in
+[`firmware/tests_host/test_vision_presence_fsm.cpp`](../../tests_host/test_vision_presence_fsm.cpp).
+
 Discovery (retained):
 - `homeassistant/binary_sensor/<device_id>/presence/config`
 - `homeassistant/binary_sensor/<device_id>/dwelling/config`

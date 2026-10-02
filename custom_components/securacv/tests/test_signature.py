@@ -130,41 +130,86 @@ def test_verify_sense_event_vision_shaped_payload():
     """canary-vision signs the SAME locked sense canonical (its optical
     presence/occupants fit; range is honestly 'unknown'), so its events
     verify through verify_sense_event with zero HA-side changes. The
-    extra vision-only fields (device_type, reason, ts_ms, bbox…) are
-    outside the canonical and must not disturb verification."""
+    extra vision-only fields (device_type, profile, reason, the clocks,
+    voxel, bbox…) are outside the canonical and must not disturb
+    verification.
+
+    Both rows are keyed and valued as canary-vision's publish_event_json
+    writes them (main.cpp: the reason right after the event when there is
+    one, the FSM snapshot's clocks, then the envelope). A dwell_ended row
+    carries the length of the dwell it closed (sweep F130: before the
+    latch it said 0) while presence_ended has yet to follow; dwell_started
+    carries dwell_ms 0, because the dwell starts on that tick, and has no
+    reason. The old fixture, a dwell_started with reason "dwell" and
+    dwell_ms 5000, was a row no device sends."""
     priv, pub = _make_keypair()
     hass = HomeAssistant()
     ts = TrustStore(hass, entry_id="abc")
     run(ts.async_load())
     _pin(ts, "vision01", pub)
 
-    canonical = build_sense_event_canonical(
-        "vision01", 12, "dwell_started", "present", "1", "unknown", 600
-    )
-    sig = _b64url_nopad(priv.sign(canonical))
-    payload = {
-        "device_id": "vision01",
-        "device_type": "vision",
-        "event": "dwell_started",
-        "reason": "dwell",
-        "seq": 12,
-        "bucket_uptime_s": 600,
+    def row(seq, event, presence, occupants, bucket, body):
+        canonical = build_sense_event_canonical(
+            "vision01", seq, event, presence, occupants, "unknown", bucket
+        )
+        sig = _b64url_nopad(priv.sign(canonical))
+        return {
+            **body,
+            "v": 1,
+            "alg": "ed25519",
+            "fp": ts.get("vision01").fingerprint_hex,
+            "sig": sig,
+        }
+
+    head = {"device_id": "vision01", "device_type": "canary-vision",
+            "profile": "room_presence"}
+    dwell_ended = row(14, "dwell_ended", "present", "1", 0, {
+        **head,
+        "event": "dwell_ended",
+        "seq": 14,
+        "bucket_uptime_s": 0,
         "presence": "present",
         "occupants": "1",
         "range": "unknown",
         "signed": True,
-        "ts_ms": 654321,
-        "presence_ms": 12000,
-        "dwell_ms": 5000,
-        "confidence": 87,
-        "v": 1,
-        "alg": "ed25519",
-        "fp": ts.get("vision01").fingerprint_hex,
-        "sig": sig,
-    }
-    verdict = verify_sense_event(ts, "vision01", payload)
-    assert verdict.trusted is True
-    assert verdict.reason == "ok"
+        "ts_ms": 57850,
+        "presence_ms": 16600,
+        "dwell_ms": 6600,
+        "visit_ms": 0,
+        "confidence": 0,
+        "voxel": {"rows": 3, "cols": 3, "r": 1, "c": 1},
+        "bbox": {"x": 0, "y": 0, "w": 0, "h": 0},
+        "occupancy": "none",
+        "posture": "unknown",
+        "proximity": "unknown",
+        "occ_mask": 0,
+    })
+    interaction = row(16, "interaction_likely", "clear", "0", 0, {
+        **head,
+        "event": "interaction_likely",
+        "reason": "dwell_then_left",
+        "seq": 16,
+        "bucket_uptime_s": 0,
+        "presence": "clear",
+        "occupants": "0",
+        "range": "unknown",
+        "signed": True,
+        "ts_ms": 58050,
+        "presence_ms": 0,
+        "dwell_ms": 0,
+        "visit_ms": 16700,
+        "confidence": 0,
+        "voxel": {"rows": 3, "cols": 3, "r": 1, "c": 1},
+        "bbox": {"x": 0, "y": 0, "w": 0, "h": 0},
+        "occupancy": "none",
+        "posture": "unknown",
+        "proximity": "unknown",
+        "occ_mask": 0,
+    })
+    for payload in (dwell_ended, interaction):
+        verdict = verify_sense_event(ts, "vision01", payload)
+        assert verdict.trusted is True, payload["event"]
+        assert verdict.reason == "ok"
 
 
 def test_verify_sense_event_missing_required_field():
