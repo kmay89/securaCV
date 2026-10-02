@@ -245,7 +245,8 @@ those bodies `"replay":true`. On the canary base
   `event_id_space_low` (sweep F82), true once the allocator's next id
   reaches 0xF0000000 (2^28 ids before the wrap, about four years at the
   most a device can commit) and after a wrap. It only warns: what recovers
-  the device is still a decision. At boot the id floor is held at or above the delivery ceiling (NVS
+  the device is still a decision. Home Assistant shows it as the device's
+  Event ID Space Low diagnostic binary sensor (HA24). At boot the id floor is held at or above the delivery ceiling (NVS
   `csi.evsent`), unless that ceiling is past 0xF0000000 (an older firmware
   wrote one for a forged card line): the floor and the backfill both treat
   such a ceiling as no record. A card line at or above the allocator's next
@@ -302,9 +303,11 @@ those bodies `"replay":true`. On the canary base
   `csi_event_egress::stats()` uses, beside an `offline_queue` object (the
   MQTT layer's queue). They count paths, not a ledger of rows: a row can
   pass through two of them, and some rows pass through none (below). They
-  start over at every boot. The canary-wap keeps the same `csi_event_egress`
-  counters but publishes none of them yet, and the Home Assistant
-  integration reads neither. Each one counts:
+  start over at every boot. The canary-wap publishes the same
+  `csi_event_egress` object on a retained `egress` topic of its own and in
+  `GET /api/diagnostics` (sweep F149, below). The Home Assistant
+  integration shows both objects as attributes of the device's Health
+  sensor (HA24). Each one counts:
   - `dropped`: commits the full egress queue refused (the loop task was
     stuck). The row is on neither the card nor the wire.
   - `held_dropped`: rows the RAM hold dropped to make room, oldest first,
@@ -360,7 +363,7 @@ rows per pass, and never below the delivered watermark, which survives a
 reboot through the same NVS ceiling. As on the canary base, with no broker
 configured, or after the broker changes (host, port, user or topic prefix),
 the rows waiting are owed to nobody and the new broker is not sent them. It
-differs from the canary base in four ways:
+differs from the canary base in five ways:
 
 - the commit hook only queues the row (16 deep; a full queue drops and
   counts). Logging, publishing and the watermark all happen on the loop
@@ -384,7 +387,18 @@ differs from the canary base in four ways:
   broker is unreachable;
 - it writes no owner file and leaves a card that has one alone;
 - the tamper-topic bridge publishes when the loop task takes the row from
-  the queue, before the row itself, whatever the backfill is doing.
+  the queue, before the row itself, whatever the backfill is doing;
+- its counters (the same `csi_event_egress` object as the canary's health,
+  name for name, built by `csi_event_egress::stats_json()`; sweep F149) do
+  not ride its health: that body has 34 of its 384 bytes spare at worst and
+  the object is up to 319. They go on a retained topic of their own,
+  `{prefix}/{device_id}/egress`, published beside health at its cadence
+  (about every 60 s, stretched on battery), and in the token-gated
+  `GET /api/diagnostics` as `csi_event_egress` (`null` before the loop
+  task's first pass). The diagnostics route runs on the HTTP server's task,
+  so it reads a copy the loop task publishes at the end of every pass
+  (`read_stats()`, `loop_snapshot.h`): at most one pass old, and never torn.
+  It has no `offline_queue` object (no offline queue).
 
 A dismissal line on its card (`"dismissed":1`) is the owner's local record
 and is never replayed. A dismissal the log cannot take yet (no open log, or

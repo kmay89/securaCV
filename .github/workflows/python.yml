@@ -32,7 +32,10 @@ on:
       # test_canary_health_trust.py holds the canary's health publish
       # (main.cpp) to its MQTT buffer (securacv_mqtt.h, the topic size in
       # securacv_mqtt.cpp), its egress counters to the canary-wap's Stats and
-      # the planner's, and its offline-queue keys to the queue's Stats.
+      # the planner's, and its offline-queue keys to the queue's Stats;
+      # test_egress_health.py holds Home Assistant's counter names (const.py)
+      # to the same structs, to main.cpp's health objects and to the
+      # canary-wap's egress topic body (csi_event_egress.h, csi_mqtt.cpp).
       - 'firmware/canary/src/main.cpp'
       - 'firmware/canary/src/csi_event_egress.h'
       - 'firmware/canary/src/csi_event_egress.cpp'
@@ -75,7 +78,10 @@ on:
       # test_canary_health_trust.py holds the canary's health publish
       # (main.cpp) to its MQTT buffer (securacv_mqtt.h, the topic size in
       # securacv_mqtt.cpp), its egress counters to the canary-wap's Stats and
-      # the planner's, and its offline-queue keys to the queue's Stats.
+      # the planner's, and its offline-queue keys to the queue's Stats;
+      # test_egress_health.py holds Home Assistant's counter names (const.py)
+      # to the same structs, to main.cpp's health objects and to the
+      # canary-wap's egress topic body (csi_event_egress.h, csi_mqtt.cpp).
       - 'firmware/canary/src/main.cpp'
       - 'firmware/canary/src/csi_event_egress.h'
       - 'firmware/canary/src/csi_event_egress.cpp'

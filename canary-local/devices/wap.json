@@ -504,7 +504,14 @@
         "retained": true,
         "cadence": "~60 s",
         "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.15-wap\",\"public_key\":\"\u2026\",\"event_id_space_low\":false,\"sd_mounted\":true}",
-        "note": "event_id_space_low turns true once the event-id allocator nears the end of its space (sweep F82); Home Assistant does not read it yet"
+        "note": "event_id_space_low turns true once the event-id allocator nears the end of its space (sweep F82); Home Assistant shows it as the Event ID Space Low binary sensor"
+      },
+      {
+        "suffix": "egress",
+        "retained": true,
+        "cadence": "~60 s, after health",
+        "payload": "{\"dropped\":0,\"held_dropped\":0,\"ambient_dropped\":0,\"unsent_dropped\":0,\"planner\":{\"live\":12,\"held\":0,\"queued\":3,\"replayed\":0,\"skipped\":0,\"untrusted\":0,\"unsendable\":0,\"truncated_unsent\":0,\"read_giveups\":0}}",
+        "note": "what the committed-event egress dropped and sent since boot (sweep F149); its own topic because the health body has no room; Home Assistant shows it as the Health sensor's csi_event_egress"
       },
       {
         "suffix": "counts",

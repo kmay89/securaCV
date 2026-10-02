@@ -530,7 +530,7 @@
     },
     {
       "name": "Health",
-      "desc": "`healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version (`health_status`; `health` topic, unsigned)"
+      "desc": "`healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version, and the committed-event egress's counters (`csi_event_egress`, `offline_queue`) as attributes when the firmware sends them (`health_status`; `health` and `egress` topics, unsigned)"
     },
     {
       "name": "GPS Fix",
@@ -599,6 +599,10 @@
     {
       "name": "SD Replacement Recommended",
       "desc": "the device recommends replacing its SD card (`sd_replace`; `health` topic, unsigned)"
+    },
+    {
+      "name": "Event ID Space Low",
+      "desc": "ON once the device's event-id counter nears the end of its space, and after it wraps (Home Assistant then refuses its events); only for devices whose health carries the flag, the Canary base and the canary-wap (`event_id_space_low`; `health` topic, unsigned; diagnostic)"
     },
     {
       "name": "Motion",
@@ -703,6 +707,11 @@
       "topic": "securacv/{device_id}/health",
       "direction": "Device \u2192 HA",
       "content": "System metrics (every 60s)"
+    },
+    {
+      "topic": "securacv/{device_id}/egress",
+      "direction": "Device \u2192 HA",
+      "content": "canary-wap only: its committed-event egress counters, beside health (retained)"
     },
     {
       "topic": "securacv/{device_id}/events",

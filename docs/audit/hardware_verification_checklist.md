@@ -627,6 +627,48 @@ does, is in `docs/csi_developer_api.md`.
     is past them) until the re-pin.
   - Artifact: `docs/audit/repro/F82/id-space-low/`.
 
+## The canary-wap's egress counters, and Home Assistant reading both devices' (F149, HA24) — on-device verification
+
+Code: the canary-wap's `csi_event_egress.cpp` (`pump()` publishes the
+counters through `loop_snapshot.h` as its last step; `read_stats()`;
+`stats_json()` in `csi_event_egress.h`), `csi_mqtt.cpp`'s
+`publish_egress()` (the retained `egress` topic, called after
+`publish_health()` in `canary_wap.ino`'s loop) and `handle_diagnostics()`
+(`GET /api/diagnostics`); Home Assistant's `binary_sensor.py` (Event ID
+Space Low) and `sensor.py` (the Health sensor's `csi_event_egress` and
+`offline_queue` attributes). Host-tested (`test_wap_event_egress.cpp`,
+`test_mqtt_reinit.cpp`, `check_wap_event_egress.py` rule 12,
+`tests/test_egress_health.py`); the canary-wap's compiles are CI's. Owner: U1.
+
+- [ ] **The canary-wap's counters reach the broker and its diagnostics**
+  - Setup: a canary-wap (FULL build) with a card in, its MQTT bridge
+    pointed at a broker you can stop; `mosquitto_sub -v -t
+    'securacv/+/egress'` on the broker host; the device's API token.
+  - Repro: commit a few events with the broker up; stop the broker, commit
+    a few more, start it again and wait for the backfill to finish; wait for
+    the next health publish (once a minute on mains). Then
+    `curl -H 'Authorization: Bearer <token>' http://<wap>/api/diagnostics`.
+  - Expected: right after each health publish, a retained `egress` publish
+    whose body is one JSON object with `dropped`, `held_dropped`,
+    `ambient_dropped`, `unsent_dropped` and a `planner` object
+    (`planner.live` counts the first rows, `planner.held` and
+    `planner.replayed` the outage's). The diagnostics response carries the
+    same object as `csi_event_egress` (equal to the topic's, or newer by
+    what the device did since), and its HTTP request does not stall the
+    device (no watchdog reset).
+  - Artifact: `docs/audit/repro/F149/egress-topic/`.
+- [ ] **Home Assistant shows the flag and the counters**
+  - Setup: the integration with a canary (`release_ha`) and a canary-wap
+    paired, both on firmware that carries the keys above.
+  - Repro: open each device's page; then run the F82 row's floor write on
+    one of them and wait for its next health publish.
+  - Expected: each device shows an **Event ID Space Low** diagnostic binary
+    sensor, off; the Health sensor's attributes carry `csi_event_egress` on
+    both (the canary-wap's from its `egress` topic, after a Home Assistant
+    restart too) and `offline_queue` on the canary only. After the floor
+    write that device's Event ID Space Low turns on.
+  - Artifact: `docs/audit/repro/HA24/ha-entities/`.
+
 ## canary-wap loop-task ownership (F96, F106) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`

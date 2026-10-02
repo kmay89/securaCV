@@ -408,8 +408,8 @@ struct MqttTamperLevels {
  *   sd_mounted / enclosure_open when `tamper` reports them
  *   (binary_sensor.py's per-type tamper sensors). event_id_space_low
  *   (sweep F82) is true once the event-id allocator reaches
- *   csi_event_id_floor::kHoldLimit, and after it wraps; Home Assistant
- *   does not read it yet.
+ *   csi_event_id_floor::kHoldLimit, and after it wraps; Home Assistant's
+ *   Event ID Space Low binary sensor follows it (binary_sensor.py, HA24).
  * The HA sensor derives "healthy/warning/critical" from battery +
  * memory_free; charging devices and mains-powered devices (battery
  * nullptr → battery=100) never trip the battery thresholds.

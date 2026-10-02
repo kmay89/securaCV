@@ -37,6 +37,7 @@ trust boundary.
 | `{prefix}/{device}/health` | No (carries pubkey for TOFU) | — |
 | `{prefix}/{device}/status` | No (used for availability only) | — |
 | `{prefix}/{device}/mesh` | No (operational telemetry) | — |
+| `{prefix}/{device}/egress` | No (operational telemetry: the canary-wap's event egress counters) | — |
 
 The signature is over a fixed canonical message per topic. For chain:
 

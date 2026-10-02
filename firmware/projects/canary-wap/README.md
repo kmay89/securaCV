@@ -192,7 +192,7 @@ make help               # Show all targets
 | `/` | GET | Web dashboard |
 | `/api/status` | GET | Device status JSON |
 | `/api/system` | GET | System metrics (`FEATURE_SYS_MONITOR` builds) |
-| `/api/diagnostics` | GET | Heap snapshot, SD health, degradation level (`FEATURE_SYS_MONITOR` builds) |
+| `/api/diagnostics` | GET | Heap snapshot, SD health, degradation level, and the committed-event egress's counters as `csi_event_egress` (`FEATURE_SYS_MONITOR` builds) |
 | `/api/config` | GET/POST | Configuration |
 | `/api/logs` | GET | Log export |
 | `/api/witness` | GET | The newest witness record (sequence, time bucket, type, chain hash); the signed page is `/api/v1/witness` |

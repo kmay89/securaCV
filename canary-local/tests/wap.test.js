@@ -30,6 +30,7 @@ const setupWizardH = read(join(FW, "setup_wizard.h"));
 const setupPageH = read(join(FW, "setup_page_html.h"));
 const bootBannerCpp = read(join(FW, "boot_banner.cpp"));
 const csiMqttCpp = read(join(FW, "csi_mqtt.cpp"));
+const egressH = read(join(FW, "csi_event_egress.h"));
 const companionH = read(join(FW, "companion_pwa.h"));
 const doc = read(join(REPO, "docs/getting_started_canary.md"));
 
@@ -168,7 +169,16 @@ function firmwareKeys() {
     beacon: keysOf(fnBody(csiMqttCpp, "void publish_beacon_state(")),
     "update/state": [...new Set([...fnBody(ino, "static void ota_publish_update_state() {")
       .matchAll(/doc\["([a-z_]+)"\]/g)].map((m) => m[1]))],
+    // csi_event_egress::stats_json(), through `planner` (sweep F149); its
+    // nested keys are the next test's
+    egress: egressKeys().top,
   };
+}
+function egressKeys() {
+  const all = keysOf(slice(egressH, "inline size_t stats_json(", "(unsigned long)s.dropped"));
+  const at = all.indexOf("planner");
+  assert.ok(at > 0, "stats_json() no longer nests the planner under `planner`");
+  return { top: all.slice(0, at + 1), planner: all.slice(at + 1) };
 }
 const OPTIONAL_KEYS = { health: ["sd_mounted", "enclosure_open"], "update/state": ["release_url", "release_summary"] };
 
@@ -187,6 +197,17 @@ test("every MQTT topic example is keyed as the firmware publishes it (sweep A32)
   // the bare strings are csi_mqtt.cpp's own
   assert.ok(csiMqttCpp.includes('const char* pl = state ? "ON" : "OFF";'));
   assert.ok(csiMqttCpp.includes('const char* pl = muted ? "muted" : "live";'));
+});
+
+test("the egress example is the body csi_mqtt::publish_egress() sends (sweep F149)", () => {
+  const t = data.mqtt.topics.find((x) => x.suffix === "egress");
+  assert.ok(t && t.retained, "the egress topic is retained, beside health");
+  const body = JSON.parse(t.payload);
+  assert.deepStrictEqual(Object.keys(body.planner), egressKeys().planner, "the planner's counters, in stats_json()'s order");
+  const pub = fnBody(csiMqttCpp, "void publish_egress(");
+  assert.ok(pub.includes('build_topic(topic, sizeof(topic), "egress");'));
+  assert.ok(pub.includes("csi_event_egress::stats_json(csi_event_egress::stats(), body, sizeof(body));"));
+  assert.ok(pub.includes("/*retain=*/true"));
 });
 
 test("the events example is a row the WAP commits: its module, type, state and id space", () => {
