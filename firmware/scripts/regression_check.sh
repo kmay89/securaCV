@@ -804,7 +804,7 @@ section "Reliability: canary-wap loop-task ownership"
 LOOP_CMD_CHECK="$SCRIPT_DIR/check_wap_loop_commands.py"
 if [ -f "$LOOP_CMD_CHECK" ]; then
   if LOOP_CMD_OUT=$(python3 "$LOOP_CMD_CHECK" 2>&1); then
-    check_pass "mesh, Chirp and Bluetooth commands and MQTT re-inits run on the loop task; mesh status routes read its copies; MQTT network waits sit under its watchdog"
+    check_pass "mesh, Chirp and Bluetooth commands and MQTT re-inits run on the loop task; mesh and Chirp status routes read its copies; MQTT network waits sit under its watchdog"
   else
     check_fail "a canary-wap HTTP path changes the mesh, Chirp, Bluetooth or the MQTT client off the loop task, reads live what the loop task owns, or an MQTT wait can outlast the watchdog"
     echo "$LOOP_CMD_OUT" | sed 's/^/    /'

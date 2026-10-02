@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hold the canary-wap's loop-task ownership: mesh, Chirp and Bluetooth
-commands, mesh status reads, MQTT re-inits, and the MQTT client's network
-timeout.
+commands, mesh and Chirp status reads, MQTT re-inits, and the MQTT client's
+network timeout.
 
 Sweep F96: `canary_wap.ino`'s `handle_mesh_*` REST handlers called
 `remove_peer`, `leave_opera`, `start_pairing_*`, `cancel_pairing`,
@@ -191,6 +191,46 @@ C4. Across the sketch (comments and strings blanked), no file but the
     `bluetooth_channel::init(` is called only by `bluetooth_api.h`'s
     `bring_up()` (an HTTP handler's, as `enable()` did there before) and the
     sketch's `ble_bringup_task()`.
+
+Chirp status reads (F138, the Chirp half): `GET /api/chirp`, `/nearby` and
+`/recent` (`chirp_api.h`) read the session, cooldowns, mute and the recent
+and nearby tables on the httpd task while `chirp_channel::update()` and the
+chirp frames `mesh_network::update()` hands it rewrite them on the loop
+task. Now `chirp_channel.cpp` publishes a `StatusView` every pass, after
+each command and from `init()`, and the two tables whenever a frame, the
+prune, a command or `init()` changed them (`g_tables_changed`), and the
+routes read whole copies through `read_status()`, `read_nearby()` and
+`read_recent()` (`loop_snapshot.h`; `test_chirp_commands_wap.cpp`).
+
+CV1. No HTTP handler anywhere in the sketch names a live Chirp reader
+     (`chirp_channel::get_status(`, `get_recent_chirps(`,
+     `get_nearby_devices(`, `can_send_chirp(`, `has_presence_requirement(`
+     and the rest of `CHIRP_LIVE_READERS`).
+CV2. `handle_chirp_status`, `handle_chirp_nearby` and `handle_chirp_recent`
+     each call their reader (`read_status(`, `read_nearby(`,
+     `read_recent(`) once, and nothing else on the channel but pure lookups
+     of the copy (`CHIRP_VIEW_LOOKUPS`).
+CV3. In `chirp_channel.cpp`, `publish_view(` is called only from
+     `update()`, `run_command()` and `init()`: `update()` calls it right
+     before its every `return` and as its last statement, `run_command()`
+     returns once, right after `g_tables_changed = true; publish_view();`
+     (a read right after a POST's answer shows the command), and `init()`
+     ends `g_tables_changed = true; publish_view(); return true;` (the
+     HTTP server can answer before a pass runs).
+CV4. Each view's `.publish(` is in `publish_view()` alone and its `.read(`
+     in its own reader alone; `g_tables_changed = false` only in
+     `publish_view()`, `= true` only in the four places that change the
+     tables, `g_view_scratch` only in `init()` and `publish_view()`; the
+     readers and `cannot_send_reason()` copy their view and name none of the
+     live state (`CHIRP_LIVE_STATE`).
+CV5. Every change to the tables is marked for the view: `on_espnow_recv()`
+     sets `g_tables_changed = true;` once, right before its dispatch switch;
+     `update()` sets it right after its prune; the functions that name the
+     tables are `CHIRP_TABLE_FUNCS` (a new one is a new path to them), and
+     the frame and prune paths are called only from the frame dispatch and
+     `update()` (`CHIRP_TABLE_CALLERS`). Commands are rule C2's.
+CV6. Each Chirp GET handler answers exactly the keys it always did
+     (`CHIRP_GET_KEYS`): the dashboard parses them.
 
 MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
@@ -1322,6 +1362,221 @@ def check_channels(ino: str, others: dict[str, str], errors: list[str]) -> None:
                               "never runs on the loop task (F111)")
 
 
+# ── Chirp status reads (F138) ────────────────────────────────────────────
+
+# Each Chirp GET handler in chirp_api.h and the reader of the published view
+# it reads (mesh_network.h's namespace chirp_channel).
+CHIRP_STATUS_HANDLERS = (("handle_chirp_status", "read_status"), ("handle_chirp_nearby", "read_nearby"),
+                         ("handle_chirp_recent", "read_recent"))
+CHIRP_VIEW_READERS = tuple(r for _h, r in CHIRP_STATUS_HANDLERS)
+# What reads the loop task's live Chirp state: the loop task's (rule CV1).
+CHIRP_LIVE_READERS = ("get_status", "get_recent_chirps", "get_pending_chirps", "get_nearby_devices",
+                      "get_nearby_count", "get_cooldown_tier", "get_cooldown_remaining_ms",
+                      "has_presence_requirement", "can_send_chirp", "is_active", "is_enabled",
+                      "is_muted", "is_relay_enabled", "get_urgency_filter", "get_session_emoji",
+                      "get_session_id")
+CHIRP_LIVE_READER_RE = r"\bchirp_channel::(" + "|".join(CHIRP_LIVE_READERS) + r")\s*\("
+# What a Chirp GET handler may call on the channel besides its one reader:
+# pure lookups of the copy it read (rule CV2).
+CHIRP_VIEW_LOOKUPS = ("state_name", "category_name", "urgency_name", "get_template_text",
+                      "get_detail_text", "get_validation_status", "cannot_send_reason")
+# What the readers may not name: the live state and its readers (rule CV4).
+CHIRP_LIVE_STATE = ("g_state", "g_session", "g_cooldown", "g_recent_chirps", "g_recent_chirp_count",
+                    "g_nearby_devices", "g_nearby_count", "g_muted", "g_mute_until_ms", "g_relay_enabled",
+                    "g_urgency_filter", "g_session_start_ms", "g_last_chirp_sent_ms", "g_view_scratch",
+                    "g_tables_changed", "publish_view") + CHIRP_LIVE_READERS
+CHIRP_READER_FUNCS = CHIRP_VIEW_READERS + ("cannot_send_reason",)
+# Who may touch the published copies, in chirp_channel.cpp (rules CV3, CV4).
+CHIRP_VIEW_CALLS = (
+    (r"\bpublish_view\s*\(", ("update", "run_command", "init"), "publish_view()",
+     "the loop task publishes: update()'s passes, each command run_command() runs, and init()"),
+    (r"\bg_status_view\s*\.\s*publish\s*\(", ("publish_view",), "g_status_view.publish(",
+     "publish_view() builds the one view"),
+    (r"\bg_nearby_view\s*\.\s*publish\s*\(", ("publish_view",), "g_nearby_view.publish(",
+     "publish_view() builds the one view"),
+    (r"\bg_recent_view\s*\.\s*publish\s*\(", ("publish_view",), "g_recent_view.publish(",
+     "publish_view() builds the one view"),
+    (r"\bg_status_view\s*\.\s*read\s*\(", ("read_status",), "g_status_view.read(",
+     "read_status() is the status view's one reader"),
+    (r"\bg_nearby_view\s*\.\s*read\s*\(", ("read_nearby",), "g_nearby_view.read(",
+     "read_nearby() is the nearby view's one reader"),
+    (r"\bg_recent_view\s*\.\s*read\s*\(", ("read_recent",), "g_recent_view.read(",
+     "read_recent() is the recent view's one reader"),
+    (r"\bg_tables_changed\s*=\s*false\b", ("publish_view",), "g_tables_changed = false",
+     "only the publish that copied the tables clears it"),
+    (r"\bg_tables_changed\s*=\s*true\b", ("on_espnow_recv", "update", "run_command", "init"),
+     "g_tables_changed = true", "the tables change in a frame, the prune, a command and init()"),
+    (r"\bg_view_scratch\b", ("publish_view", "init"), "g_view_scratch",
+     "init() allocates the tables' scratch and publish_view() alone builds in it"),
+)
+# The recent and nearby tables (rule CV5), and every function that names
+# them today. The view shows them only when g_tables_changed says a pass
+# changed them, so each change must come through a path that sets it: a chirp
+# frame (on_espnow_recv), update()'s prune, an owner command (run_command:
+# confirm_chirp, dismiss_chirp, disable, clear_chirps, which rule C2 holds
+# there) or init(). A new function that names a table is a new path: add it
+# here once it is reached only from one of those.
+CHIRP_TABLE_STATE = ("g_recent_chirps", "g_recent_chirp_count", "g_nearby_devices", "g_nearby_count")
+CHIRP_TABLE_FUNCS = ("handle_presence", "handle_witness", "handle_ack", "handle_suppress_vote",
+                     "relay_chirp", "priority_heap_insert", "nearby_has_pubkey_with_presence",
+                     "prune_stale_nearby", "prune_old_chirps", "confirm_chirp", "dismiss_chirp",
+                     "disable", "clear_chirps", "init", "publish_view", "get_status",
+                     "get_recent_chirps", "get_pending_chirps", "get_nearby_count", "get_nearby_devices")
+# Who may call the frame and prune paths: the frame dispatch and update().
+CHIRP_TABLE_CALLERS = {
+    "on_espnow_recv": ("dispatch_espnow_message",),
+    "handle_presence": ("on_espnow_recv",),
+    "handle_witness": ("on_espnow_recv",),
+    "handle_ack": ("on_espnow_recv",),
+    "handle_suppress_vote": ("on_espnow_recv",),
+    "relay_chirp": ("handle_ack",),
+    "priority_heap_insert": ("handle_witness",),
+    "nearby_has_pubkey_with_presence": ("handle_ack",),
+    "prune_stale_nearby": ("update",),
+    "prune_old_chirps": ("update",),
+}
+# The keys each GET route has always answered (rule CV6): the dashboard reads
+# them, and a view that dropped or renamed one would answer a different shape.
+CHIRP_GET_KEYS = {
+    "handle_chirp_status": ("state", "session_emoji", "nearby_count", "recent_chirps",
+                            "last_chirp_sent_ms", "cooldown_remaining_sec", "cooldown_tier",
+                            "presence_met", "night_mode", "relay_enabled", "muted",
+                            "mute_remaining_sec", "can_send", "cannot_send_reason"),
+    "handle_chirp_nearby": ("count", "devices", "emoji", "age_sec", "rssi", "listening"),
+    "handle_chirp_recent": ("chirps", "emoji", "template_id", "template_text", "detail", "category",
+                            "urgency", "hop_count", "age_sec", "confirm_count", "validated", "status",
+                            "relayed", "suppressed", "nonce"),
+}
+SIG_CHIRP_INIT = r"\bbool\s+init\s*\(\s*\)"
+SIG_CHIRP_RUN = r"\bstatic\s+Result\s+run_command\s*\([^)]*\)"
+SIG_CHIRP_RECV = r"\bstatic\s+void\s+on_espnow_recv\s*\([^)]*\)"
+SIG_CHIRP_PUBLISH = r"\bstatic\s+void\s+publish_view\s*\(\s*\)"
+CHIRP_READER_SIGS = {
+    "read_status": r"\bvoid\s+read_status\s*\([^)]*\)",
+    "read_nearby": r"\bvoid\s+read_nearby\s*\([^)]*\)",
+    "read_recent": r"\bvoid\s+read_recent\s*\([^)]*\)",
+    "cannot_send_reason": r"\bconst\s+char\s*\*\s*cannot_send_reason\s*\([^)]*\)",
+}
+CHIRP_READER_VIEW = {"read_status": "g_status_view.read(", "read_nearby": "g_nearby_view.read(",
+                     "read_recent": "g_recent_view.read("}
+
+
+@functools.lru_cache(maxsize=1024)
+def chirp_live_read_findings(name: str, code: str) -> tuple[str, ...]:
+    """Rule CV1 for one blanked file."""
+    if "chirp_channel::" not in code:
+        return ()
+    out = []
+    for hname, s, e in handler_spans(code):
+        m = re.search(CHIRP_LIVE_READER_RE, code[s:e])
+        if m:
+            out.append(f"{name}: HTTP handler {hname}() reads chirp_channel::{m.group(1)}( — the live "
+                       "Chirp state is update()'s, written on the loop task; read the view "
+                       "(chirp_channel::read_status / read_nearby / read_recent) (F138)")
+    return tuple(out)
+
+
+def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]) -> None:
+    """Rules CV1-CV6: the Chirp GET routes read only what the loop task published."""
+    files = dict(others)
+    files[INO] = ino
+    for name, src in files.items():
+        errors.extend(chirp_live_read_findings(name, blank_comments_and_strings(src)))
+    if CHIRP_API not in files or CHIRP_CPP not in files:
+        errors.append(f"{SKETCH}: the Chirp sources ({CHIRP_API}, {CHIRP_CPP}) are missing")
+        return
+    # CV2, CV6: the three GET handlers.
+    api_code = blank_comments_and_strings(files[CHIRP_API])
+    api_kept = blank_comments_only(files[CHIRP_API])
+    for h, reader in CHIRP_STATUS_HANDLERS:
+        span = the_body(api_code, r"\besp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                        f"{CHIRP_API}: {h}()", errors)
+        if span is None:
+            continue
+        body = api_code[span[0]:span[1]]
+        calls = re.findall(r"\bchirp_channel::(\w+)\s*\(", body)
+        if calls.count(reader) != 1:
+            errors.append(f"{CHIRP_API}: {h}() must read the published view with "
+                          f"chirp_channel::{reader}( once (found {calls.count(reader)}) (F138)")
+        for fn in sorted(set(calls) - {reader} - set(CHIRP_VIEW_LOOKUPS)):
+            errors.append(f"{CHIRP_API}: {h}() calls chirp_channel::{fn}( — a Chirp GET route answers "
+                          f"from the copy {reader}() returned, through pure lookups only "
+                          f"({', '.join(CHIRP_VIEW_LOOKUPS)}) (F138)")
+        keys = re.findall(r'\[\s*"(\w+)"\s*\]', api_kept[span[0]:span[1]])
+        want = set(CHIRP_GET_KEYS[h])
+        if set(keys) != want:
+            missing, extra = sorted(want - set(keys)), sorted(set(keys) - want)
+            errors.append(f"{CHIRP_API}: {h}() answers a different shape (missing {missing}, new "
+                          f"{extra}) — the routes answer what they always did; the dashboard parses "
+                          "them (F138)")
+    # CV3, CV4, CV5: chirp_channel.cpp.
+    code = blank_comments_and_strings(files[CHIRP_CPP])
+    spans = named_bodies(code)
+    for pattern, allowed, label, why in CHIRP_VIEW_CALLS:
+        for m in re.finditer(pattern, code):
+            where = enclosing_function(spans, m.start())
+            if where is None:
+                continue                      # a declaration or the definition's own header
+            if where not in allowed:
+                errors.append(f"{CHIRP_CPP}: {where}() names {label} — {why} (F138)")
+    update = body_of(code, SIG_UPDATE, f"{CHIRP_CPP}: update()", errors)
+    if update is not None:
+        s = squash(update)
+        rets = [m.start() for m in re.finditer(r"\breturn\b", s)]
+        if not s.endswith("publish_view();") or any(not s[:r].endswith("publish_view();") for r in rets):
+            errors.append(f"{CHIRP_CPP}: update() must call publish_view() right before every return "
+                          "and as its last statement — the status route shows the pass it ends, a "
+                          "disabled channel's included (F138)")
+        if "prune_old_chirps();g_tables_changed=true;" not in s:
+            errors.append(f"{CHIRP_CPP}: update() must set `g_tables_changed = true;` right after its "
+                          "prune — the pass that drops a stale neighbor or an old chirp publishes the "
+                          "shorter tables (F138)")
+    run = body_of(code, SIG_CHIRP_RUN, f"{CHIRP_CPP}: run_command()", errors)
+    if run is not None:
+        rets = [m.start() for m in re.finditer(r"\breturn\b", run)]
+        if len(rets) != 1 or not squash(run[:rets[0]]).endswith("g_tables_changed=true;publish_view();"):
+            errors.append(f"{CHIRP_CPP}: run_command() must return once, right after `g_tables_changed = "
+                          "true; publish_view();` — the drain posts the result when it returns and the "
+                          "handler answers at once, so a read right after the POST (the dashboard's "
+                          "status, its recent list after a dismiss) must already show it (F138)")
+    init = body_of(code, SIG_CHIRP_INIT, f"{CHIRP_CPP}: init()", errors)
+    if init is not None and not squash(init).endswith("g_tables_changed=true;publish_view();returntrue;"):
+        errors.append(f"{CHIRP_CPP}: init() must end `g_tables_changed = true; publish_view(); return "
+                      "true;` — the HTTP server can answer before loop() runs a pass, and the first "
+                      "view carries the settings init() loaded (F138)")
+    recv = body_of(code, SIG_CHIRP_RECV, f"{CHIRP_CPP}: on_espnow_recv()", errors)
+    if recv is not None:
+        s = squash(recv)
+        at = s.find("g_tables_changed=true;switch(")
+        if s.count("g_tables_changed=true;") != 1 or at < 0 or "return" in s[at:s.find("{", at)]:
+            errors.append(f"{CHIRP_CPP}: on_espnow_recv() must set `g_tables_changed = true;` once, right "
+                          "before its dispatch switch — a chirp frame changes the tables, and the pass "
+                          "that handled it publishes them (F138)")
+    for m in re.finditer(r"\b(" + "|".join(CHIRP_TABLE_STATE) + r")\b", code):
+        where = enclosing_function(spans, m.start())
+        if where is not None and where not in CHIRP_TABLE_FUNCS:
+            errors.append(f"{CHIRP_CPP}: {where}() names {m.group(1)} — the view republishes the tables "
+                          "only on a frame, the prune, a command or init(); a new path to them must be "
+                          "reached only from one of those (CHIRP_TABLE_FUNCS) (F138)")
+    for fn, allowed in CHIRP_TABLE_CALLERS.items():
+        for m in re.finditer(r"(?<![\w:.>])" + fn + r"\s*\(", code):
+            where = enclosing_function(spans, m.start())
+            if where is not None and where not in allowed:
+                errors.append(f"{CHIRP_CPP}: {where}() calls {fn}() — it changes the tables, and only "
+                              f"{', '.join(allowed)} marks them for the view (F138)")
+    for fn, sig in CHIRP_READER_SIGS.items():
+        body = body_of(code, sig, f"{CHIRP_CPP}: {fn}()", errors)
+        if body is None:
+            continue
+        if fn in CHIRP_READER_VIEW and CHIRP_READER_VIEW[fn] not in squash(body):
+            errors.append(f"{CHIRP_CPP}: {fn}() must copy the published view ({CHIRP_READER_VIEW[fn]}) "
+                          "(F138)")
+        hit = re.search(r"\b(" + "|".join(CHIRP_LIVE_STATE) + r")\b", body)
+        if hit:
+            errors.append(f"{CHIRP_CPP}: {fn}() names {hit.group(1)} — it runs on the httpd task and "
+                          "reads only what the loop task published (F138)")
+
+
 # ── MQTT network timeout (F112) ──────────────────────────────────────────
 
 def int_constant(code: str, name: str) -> int | None:
@@ -1715,6 +1970,7 @@ def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str
     check_httpd_paths(files, errors)
     check_mqtt_sketch(ino, rest, errors)
     check_channels(ino, rest, errors)
+    check_chirp_status_reads(ino, rest, errors)
     check_mqtt_timeout(ino, files.get(MQTT_H), mqtt, errors)
     check_bluetooth_views(files, errors)
     return errors
@@ -2153,6 +2409,79 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw_other(MQTT_H, "constexpr uint32_t kNetworkOpsBudget = 3;", "constexpr uint32_t kNetworkOpsBudget = 1;")),
     ("the sketch drops its static_assert of the MQTT timeout budget",
      raw("ino", "static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&", "static_assert(true ||")),
+    # Rule CV1: no HTTP handler reads the live Chirp state (F138).
+    ("the Chirp status handler reads chirp_channel::get_status() again",
+     on_other(CHIRP_API, api_handler("handle_chirp_status"), r"(chirp_channel::read_status\(&v\);)",
+              r"\1 v.state = chirp_channel::get_status().state;")),
+    ("the Chirp nearby handler reads the live table",
+     on_other(CHIRP_API, api_handler("handle_chirp_nearby"), r"(chirp_channel::read_nearby\(t\);)",
+              r"\1 size_t live_n = 0; (void)chirp_channel::get_nearby_devices(&live_n);")),
+    ("the Chirp recent handler reads the live table",
+     on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"(chirp_channel::read_recent\(t\);)",
+              r"\1 size_t live_n = 0; (void)chirp_channel::get_recent_chirps(&live_n);")),
+    ("the mesh status handler reads chirp_channel::can_send_chirp()",
+     on("ino", ino_handler("handle_mesh_status"), r"(doc\[\"uptime_ms\"\]\s*=\s*status\.uptime_ms;)",
+        r'\1 doc["chirp_ready"] = chirp_channel::can_send_chirp();')),
+    # Rule CV2: each GET handler reads its view once and answers through lookups.
+    ("the Chirp status handler reads the view twice",
+     on_other(CHIRP_API, api_handler("handle_chirp_status"), r"(chirp_channel::read_status\(&v\);)",
+              r"\1 chirp_channel::read_status(&v);")),
+    ("the Chirp status handler asks the channel for night mode itself",
+     on_other(CHIRP_API, api_handler("handle_chirp_status"), r"=\s*v\.night_mode;",
+              "= chirp_channel::is_night_mode();")),
+    ("the Chirp nearby handler never reads the view",
+     on_other(CHIRP_API, api_handler("handle_chirp_nearby"), r"chirp_channel::read_nearby\(t\);",
+              "memset(t, 0, sizeof(*t));")),
+    # Rule CV3: when the loop task publishes.
+    ("chirp update() no longer publishes at the end of its pass",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"\n[ \t]*publish_view\(\);\n\}?$", "\n")),
+    ("chirp update()'s disabled return publishes nothing",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"\{\s*publish_view\(\);\s*return;\s*\}", "{ return; }")),
+    ("chirp run_command() answers before it publishes",
+     on_other(CHIRP_CPP, SIG_CHIRP_RUN, r"publish_view\(\);\s*return\s+r;", "return r;")),
+    ("chirp run_command() publishes the status but not the tables",
+     on_other(CHIRP_CPP, SIG_CHIRP_RUN, r"g_tables_changed\s*=\s*true;\s*(publish_view\(\);\s*return\s+r;)",
+              r"\1")),
+    ("chirp init() publishes nothing",
+     on_other(CHIRP_CPP, SIG_CHIRP_INIT, r"publish_view\(\);\s*(return\s+true;\s*)$", r"\1")),
+    ("chirp send_presence() publishes the view",
+     on_other(CHIRP_CPP, r"\bstatic\s+void\s+send_presence\s*\(\s*\)", r"(ChirpHeader\*\s+hdr\s*=)",
+              r"publish_view(); \1")),
+    # Rule CV4: the published copies and their readers.
+    ("chirp read_status() reads the live state",
+     on_other(CHIRP_CPP, CHIRP_READER_SIGS["read_status"], r"(const\s+uint32_t\s+now\s*=\s*millis\(\);)",
+              r"\1 out->state = g_state;")),
+    ("chirp read_recent() counts the live table",
+     on_other(CHIRP_CPP, CHIRP_READER_SIGS["read_recent"], r"(memset\(out,\s*0,\s*sizeof\(\*out\)\);)",
+              r"\1 out->count = (uint8_t)g_recent_chirp_count;")),
+    ("chirp read_nearby() reads nothing published",
+     on_other(CHIRP_CPP, CHIRP_READER_SIGS["read_nearby"], r"if\s*\(!g_nearby_view\.read\(out\)\)\s*", "")),
+    ("chirp unmute() publishes a status of its own",
+     on_other(CHIRP_CPP, r"\bstatic\s+void\s+unmute\s*\(\s*\)", r"(g_muted\s*=\s*false;)",
+              r"\1 { StatusView z; memset(&z, 0, sizeof z); (void)g_status_view.publish(z); }")),
+    ("chirp update() clears the tables' flag before it publishes them",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(g_commands\.drain\(run_command\);)", r"\1 g_tables_changed = false;")),
+    # Rule CV5: every change to the tables is marked for the view.
+    ("a chirp frame no longer marks the tables",
+     on_other(CHIRP_CPP, SIG_CHIRP_RECV, r"g_tables_changed\s*=\s*true;\s*(switch)", r"\1")),
+    ("the prune no longer marks the tables",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(prune_old_chirps\(\);)\s*g_tables_changed\s*=\s*true;", r"\1")),
+    ("chirp send_presence() empties the recent table",
+     on_other(CHIRP_CPP, r"\bstatic\s+void\s+send_presence\s*\(\s*\)", r"(ChirpHeader\*\s+hdr\s*=)",
+              r"g_recent_chirp_count = 0; \1")),
+    ("chirp update() handles a presence frame itself",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+              r"\1 handle_presence(nullptr, 0, 0);")),
+    # Rule CV6: the routes answer the keys they always did.
+    ("the Chirp status route renames recent_chirps",
+     raw_other(CHIRP_API, 'doc["recent_chirps"] = v.recent_chirp_count;',
+               'doc["recent_count"] = v.recent_chirp_count;')),
+    ("the Chirp nearby route drops listening",
+     on_other(CHIRP_API, api_handler("handle_chirp_nearby"),
+              r"\n[ \t]*dev\[\"listening\"\]\s*=\s*devices\[i\]\.listening;", "")),
+    ("the Chirp recent route answers a new key",
+     on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"(c\[\"nonce\"\]\s*=\s*nonce_hex;)",
+              r'\1 c["hop_limit"] = 3;')),
 ]
 
 # Rules BV1..: the Bluetooth channel's settings enable (F144).
@@ -2352,7 +2681,8 @@ def main() -> int:
         return 1
     print(f"canary-wap loop-task ownership holds: the mesh's, Chirp's and Bluetooth's owner "
           f"commands are internal to their channels and run from update()'s drain, the REST "
-          f"handlers only submit, the mesh status routes read only what update() published, "
+          f"handlers only submit, the mesh and Chirp status routes read only what the loop task "
+          f"published, "
           f"the MQTT client is replaced only by loop()'s re-init, which never stops a client "
           f"(the retire_task worker does), and every client's network timeout keeps a "
           f"loop-task publish under the watchdog "
