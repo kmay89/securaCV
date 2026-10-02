@@ -80,9 +80,11 @@ constexpr size_t ALERTS_JSON_CAP  = 3072;
  * pairing_code is the 6-digit confirmation code; it is only serialized
  * when pairing_state maps to PAIRING_CONFIRM.
  *
- * F133 — the last pairing's outcome, when `last_pairing` is given (the
- * handler always gives it): three fields added after the others, so a
- * page that reads only the old ones parses the body as before:
+ * F133 — the last pairing's outcome, when `last_pairing` is given: three
+ * fields added after the others, so a page that reads only the old ones
+ * parses the body as before. The parameter has no default: the handler
+ * must pass its report, and a call that leaves it out does not compile
+ * (only the tests of the old body pass nullptr, by name):
  *   pairing_seq          pairings started since boot (0: none); the POST
  *                        pair/start and pair/join answers name theirs;
  *   pairing_result       "none" | "running" | "paired" | "failed"
@@ -111,7 +113,7 @@ bool build_mesh_status_json(char*  out,
                             size_t   peers_online,
                             uint32_t alerts_received,
                             uint32_t pairing_code,
-                            const PairingReport* last_pairing = nullptr);
+                            const PairingReport* last_pairing);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/peers — peer list

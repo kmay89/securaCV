@@ -1100,7 +1100,7 @@ void test_build_mesh_status_json_active() {
   assert(mesh_api::build_mesh_status_json(
       buf, sizeof(buf), /*enabled=*/true, /*has_opera=*/true,
       opera_id, "Home", mesh_pairing::State::IDLE,
-      /*peers_total=*/3, /*peers_online=*/2, /*alerts=*/7, /*code=*/123456));
+      /*peers_total=*/3, /*peers_online=*/2, /*alerts=*/7, /*code=*/123456, /*last_pairing=*/nullptr));
 
   /* Field presence + the exact strings the UI reads. */
   assert(std::strstr(buf, "\"ok\":true") != nullptr);
@@ -1122,14 +1122,14 @@ void test_build_mesh_status_json_pairing_code_only_in_confirm() {
   /* PAIRING_CONFIRM → code present. */
   assert(mesh_api::build_mesh_status_json(
       buf, sizeof(buf), true, true, nullptr, "X",
-      mesh_pairing::State::AWAITING_CONFIRM, 1, 0, 0, /*code=*/42));
+      mesh_pairing::State::AWAITING_CONFIRM, 1, 0, 0, /*code=*/42, /*last_pairing=*/nullptr));
   assert(std::strstr(buf, "\"state\":\"PAIRING_CONFIRM\"") != nullptr);
   assert(std::strstr(buf, "\"pairing_code\":42") != nullptr);
 
   /* PAIRING_INIT → NO code (early-leak guard). */
   assert(mesh_api::build_mesh_status_json(
       buf, sizeof(buf), true, true, nullptr, "X",
-      mesh_pairing::State::DISCOVERING_INITIATOR, 1, 0, 0, /*code=*/42));
+      mesh_pairing::State::DISCOVERING_INITIATOR, 1, 0, 0, /*code=*/42, /*last_pairing=*/nullptr));
   assert(std::strstr(buf, "\"state\":\"PAIRING_INIT\"") != nullptr);
   assert(std::strstr(buf, "pairing_code") == nullptr);
   std::printf("PASS test_build_mesh_status_json_pairing_code_only_in_confirm\n");
@@ -1140,7 +1140,7 @@ void test_build_mesh_status_json_escapes_name() {
   /* A name with a quote must not break the JSON envelope. */
   assert(mesh_api::build_mesh_status_json(
       buf, sizeof(buf), true, false, nullptr, "Evil\"name",
-      mesh_pairing::State::IDLE, 0, 0, 0, 0));
+      mesh_pairing::State::IDLE, 0, 0, 0, 0, /*last_pairing=*/nullptr));
   assert(std::strstr(buf, "\"opera_name\":\"Evil\\\"name\"") != nullptr);
   std::printf("PASS test_build_mesh_status_json_escapes_name\n");
 }
@@ -1149,7 +1149,7 @@ void test_build_mesh_status_json_no_opera_empty_id() {
   char buf[512];
   assert(mesh_api::build_mesh_status_json(
       buf, sizeof(buf), true, false, nullptr, "",
-      mesh_pairing::State::IDLE, 0, 0, 0, 0));
+      mesh_pairing::State::IDLE, 0, 0, 0, 0, /*last_pairing=*/nullptr));
   assert(std::strstr(buf, "\"state\":\"NO_OPERA\"") != nullptr);
   assert(std::strstr(buf, "\"opera_id\":\"\"") != nullptr);
   assert(std::strstr(buf, "\"has_opera\":false") != nullptr);
@@ -1196,7 +1196,7 @@ void test_build_mesh_json_buffer_too_small() {
    * scribble past the buffer. */
   assert(!mesh_api::build_mesh_status_json(
       tiny, sizeof(tiny), true, true, nullptr, "name",
-      mesh_pairing::State::IDLE, 0, 0, 0, 0));
+      mesh_pairing::State::IDLE, 0, 0, 0, 0, /*last_pairing=*/nullptr));
   assert(!mesh_api::build_mesh_peers_json(tiny, sizeof(tiny), nullptr, 0));
   std::printf("PASS test_build_mesh_json_buffer_too_small\n");
 }
@@ -1528,7 +1528,7 @@ void test_enable_disable() {
   char buf[512];
   assert(mesh_api::build_mesh_status_json(
       buf, sizeof(buf), mesh_session::is_enabled(), mesh_session::has_opera(),
-      nullptr, "", mesh_session::pairing_state(), 1, 1, 0, 0));
+      nullptr, "", mesh_session::pairing_state(), 1, 1, 0, 0, /*last_pairing=*/nullptr));
   assert(std::strstr(buf, "\"state\":\"DISABLED\"") != nullptr);
   assert(std::strstr(buf, "\"enabled\":false") != nullptr);
 
@@ -2226,7 +2226,7 @@ void test_build_mesh_status_json_disabled() {
   char buf[512];
   assert(mesh_api::build_mesh_status_json(
       buf, sizeof(buf), /*enabled=*/false, /*has_opera=*/true, nullptr, "Home",
-      mesh_pairing::State::IDLE, 2, 2, 5, 0));
+      mesh_pairing::State::IDLE, 2, 2, 5, 0, /*last_pairing=*/nullptr));
   assert(std::strstr(buf, "\"state\":\"DISABLED\"") != nullptr);
   assert(std::strstr(buf, "\"enabled\":false") != nullptr);
   assert(std::strstr(buf, "\"alerts_received\":5") != nullptr);
@@ -5999,7 +5999,7 @@ void test_build_mesh_status_json_reports_the_last_pairing() {
   for (size_t i = 0; i < sizeof(opera_id); ++i) opera_id[i] = (uint8_t)(0x30 + i);
   char old_body[mesh_api::STATUS_JSON_CAP], body[mesh_api::STATUS_JSON_CAP];
   assert(mesh_api::build_mesh_status_json(old_body, sizeof(old_body), true, true, opera_id,
-                                          "Home", mesh_pairing::State::FAILED, 2, 1, 0, 0));
+                                          "Home", mesh_pairing::State::FAILED, 2, 1, 0, 0, /*last_pairing=*/nullptr));
   assert(std::strstr(old_body, "pairing_") == nullptr);
   struct Case { mesh_pairing::Outcome o; mesh_pairing::FailReason r; const char* tail; };
   const Case cases[] = {
