@@ -1785,7 +1785,8 @@ so — see D2 below.)
   lifecycle step, `csi_mqtt::loop`, `mesh_network::update` or a publish; the
   boot `init()` is held to one call, and the QR scanner to requesting.
   `test_mqtt_identity.cpp`'s HA20 pins follow the identity to
-  `set_identity()`. Residual: `GET /api/mqtt/config` still reads the
+  `set_identity()`, and `check_wap_event_egress.py`'s broker-epoch rule (F78)
+  reads `open_client()`, where the epoch bump now lives. Residual: `GET /api/mqtt/config` still reads the
   transport name and last error while a re-init may be writing them; both are
   constants, so a torn read is a stale word. The loop task's own publishes can
   still block inside esp-mqtt (F112). Host-tested; the Arduino and PlatformIO
@@ -4438,6 +4439,8 @@ so — see D2 below.)
   and relies on RFC 6762 renaming. Decide whether the table is per product or
   the common subset, and say which; A36 is the same question for the Hub
   page's demo. Found by A27 (#<W9>).
+  *Since A36 (#<W10>):* the Hub demo shows the WAP's own discovery entities,
+  so the demo is per product. The guide's table is still this item's call.
 - [ ] **A34 [decision] The Sense Lab page's fingerprint is not the repo test
   key's.** The WAP page, the Hub page and the Vision pane show the seed-0x42
   key (fp `7916ca487912fa1b`). The Sense page shows `b7e2c49a11f03d5c`, which
