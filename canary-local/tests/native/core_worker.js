@@ -60,7 +60,7 @@ function take(kid) {
 parentPort.on("message", (msg) => {
   try {
     if (msg.op === "spawn") {
-      const child = spawn(msg.bin, [], { stdio: ["pipe", "pipe", "inherit"] });
+      const child = spawn(msg.bin, msg.args || [], { stdio: ["pipe", "pipe", "inherit"] });
       const kid = { child, buf: "", waiting: false, gone: null };
       const id = nextId++;
       kids.set(id, kid);

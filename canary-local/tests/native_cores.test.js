@@ -148,6 +148,72 @@ test("a signature a wasm call cannot carry is refused by name, never guessed", (
   }
 });
 
+// The pipe itself, with a stand-in core (native/fake_core.js speaks
+// core_server.cpp's protocol and misbehaves on request), so the default run
+// holds it with no compiler.
+const FAKE_PLAN = { name: "fake-core", sources: [], runtime: ["cwrap"], memory: {}, exports: [
+  { name: "num", ret: "int", kind: "n", params: ["int"] },
+  { name: "str", ret: "const char*", kind: "s", params: [] },
+  { name: "die", ret: "void", kind: "v", params: [] },
+  { name: "noise", ret: "int", kind: "n", params: [] },
+  { name: "spin", ret: "void", kind: "v", params: [] },
+] };
+const fakeCore = () => cores.instance({ plan: FAKE_PLAN, bin: process.execPath, args: [join(__dirname, "native/fake_core.js")] });
+
+test("the pipe answers synchronously, with the i32s a wasm call would pass", () => {
+  const m = fakeCore();
+  const num = m.cwrap("num", "number", ["number"]);
+  // ToInt32, as wasm applies to a JS number passed to an int parameter
+  assert.deepStrictEqual([num(41.9), num(-1.5), num(2 ** 32 + 5), num(2 ** 31), num(NaN), num(true)],
+    [41, -1, 5, -(2 ** 31), 0, 1]);
+  assert.strictEqual(m.cwrap("str", "string", [])(), "hello from the fake core");
+  assert.throws(() => m.cwrap("str", "number", [])(), /returns a C string: cwrap it as "string"/);
+  assert.throws(() => m.cwrap("num", "string", ["number"])(1), /returns int, not a C string/);
+  assert.throws(() => m.cwrap("gone", "number", []), /no export gone/);
+  assert.throws(() => m.cwrap("num", "number", ["string"]), /passes number arguments only, not string/);
+});
+
+test("a core that dies or answers twice fails the call that saw it, and every call after", () => {
+  const m = fakeCore();
+  assert.throws(() => m.cwrap("die", null, [])(), /native core exited \(code 3\)/);
+  assert.throws(() => m.cwrap("num", "number", ["number"])(1), /native core exited \(code 3\)/);
+  const n = fakeCore();
+  const said = [];
+  for (const call of [() => n.cwrap("noise", "number", [])(), () => n.cwrap("num", "number", ["number"])(2)]) {
+    try { said.push(call()); } catch (e) { said.push(e.message); }
+  }
+  assert.ok(said.some((x) => /wrote a line it was not asked for/.test(x)), JSON.stringify(said));
+  assert.strictEqual(fakeCore().cwrap("num", "number", ["number"])(7), 7, "a fresh instance is unaffected");
+});
+
+test("a core that stops answering is killed when its call times out, not left running", () => {
+  const m = fakeCore();
+  const pid = m.nativeCore.pid;
+  assert.ok(pid > 0, "the worker reports the core's pid");
+  assert.strictEqual(m.cwrap("num", "number", ["number"])(3), 3, "it answers before it is stuck");
+  const saved = cores.limits.timeoutMs;
+  cores.limits.timeoutMs = 400;
+  try {
+    assert.throws(() => m.cwrap("spin", null, [])(), /no answer to c spin in 0\.4 s \(core killed\)/);
+    assert.throws(() => m.cwrap("num", "number", ["number"])(1), /torn down after an earlier timeout/);
+    // gone, or a zombie nobody reaps until the test exits: either way not running
+    const deadline = Date.now() + 5000;
+    const state = () => {
+      try { return fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1][0]; } catch { return "gone"; }
+    };
+    if (process.platform === "linux") {
+      while (!["gone", "Z", "X"].includes(state()) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      assert.ok(["gone", "Z", "X"].includes(state()), `the stuck core (pid ${pid}) is still running: ${state()}`);
+    } else {
+      const ps = require("node:child_process").spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+      assert.match(ps.stdout.trim() || "gone", /^(gone|Z)/, `the stuck core (pid ${pid}) is still running`);
+    }
+  } finally {
+    cores.limits.timeoutMs = saved;
+  }
+  assert.strictEqual(fakeCore().cwrap("num", "number", ["number"])(9), 9, "the next instance gets a fresh channel");
+});
+
 // ── LAB_CORES=native only: the native core next to its committed dist ──────
 
 const native = { skip: cores.mode() !== "native" && "LAB_CORES=native only (builds with g++)" };

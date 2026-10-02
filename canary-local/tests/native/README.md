@@ -69,7 +69,10 @@ Vision ticks, and the audio cadences plus noise), and the two agree while
 the dist is current. Without the variable, the same file checks the loader
 itself without compiling anything. It checks what the default returns, how
 `build.sh` is read, that it finds every export and runtime method the dist
-has, and that a signature a wasm call can't carry is refused.
+has, and that a signature a wasm call can't carry is refused. It also drives
+the pipe with a stand-in core, [`fake_core.js`](fake_core.js), to check that
+answers come back synchronously with wasm's i32 conversion, and that a core
+that dies, answers twice or hangs fails its call (a hung core is also killed).
 
 CI runs both. `canary-local.yml`'s page logic job runs the three tests on
 the committed dist, then again with `LAB_CORES=native`. Its runner has g++

@@ -275,7 +275,9 @@ async function compile(plan) {
 // ── the pipe, kept synchronous ──────────────────────────────────────────────
 
 const REPLY_CAP = 1 << 20;
-const TIMEOUT_MS = 30000;
+// How long a call may go unanswered (native_cores.test.js shortens it to
+// test the stuck-core path).
+const limits = { timeoutMs: 30000 };
 let channel = null;
 
 function open() {
@@ -293,7 +295,7 @@ function rpc(msg, what, pid) {
   const ch = open();
   Atomics.store(ch.ctl, 0, 0);
   ch.worker.postMessage(msg);
-  if (Atomics.wait(ch.ctl, 0, 0, TIMEOUT_MS) === "timed-out") {
+  if (Atomics.wait(ch.ctl, 0, 0, limits.timeoutMs) === "timed-out") {
     // The core is stuck (it would outlive the test: a loop never reads the
     // stdin that closes when the test exits), so it is killed; and a late
     // answer would land on the next request, so the channel starts over.
@@ -302,7 +304,7 @@ function rpc(msg, what, pid) {
     }
     ch.worker.terminate();
     channel = null;
-    throw new Error(`native core: no answer to ${what} in ${TIMEOUT_MS / 1000} s (core killed)`);
+    throw new Error(`native core: no answer to ${what} in ${limits.timeoutMs / 1000} s (core killed)`);
   }
   const text = Buffer.from(ch.data.subarray(0, Atomics.load(ch.ctl, 1))).toString("utf8");
   if (Atomics.load(ch.ctl, 0) !== 1) throw new Error(text);
@@ -315,9 +317,9 @@ const HEAP_VIEWS = { HEAP8: Int8Array, HEAPU8: Uint8Array, HEAP16: Int16Array, H
 const hexOf = (bytes) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("hex");
 
 // One instance: what `await factory()` resolves to on the dist.
-function instance({ plan, bin }) {
+function instance({ plan, bin, args = [] }) {
   const ch = open();
-  const [id, pid] = rpc({ op: "spawn", bin }, `starting ${plan.name}`).split(" ").map(Number);
+  const [id, pid] = rpc({ op: "spawn", bin, args }, `starting ${plan.name}`).split(" ").map(Number);
   const ask = (line) => {
     if (channel !== ch) throw new Error(`native core ${plan.name}: torn down after an earlier timeout`);
     const reply = rpc({ op: "call", id, line }, line.slice(0, 60), pid);
@@ -325,7 +327,7 @@ function instance({ plan, bin }) {
     return reply;
   };
   const byName = new Map(plan.exports.map((e) => [e.name, e]));
-  const mod = { nativeCore: { name: plan.name, sources: plan.sources.map((s) => relative(REPO, s)) } };
+  const mod = { nativeCore: { name: plan.name, pid, sources: plan.sources.map((s) => relative(REPO, s)) } };
 
   // The heap the HEAP views see: one window per pointer an export returned,
   // pushed to the core before every call and read back after it.
@@ -420,4 +422,6 @@ function nativeFactory(name) {
   return async () => instance(await build(plan));
 }
 
-module.exports = { coreFactory, buildPlan, exportsOf, exportTable, mode, CORES };
+// instance and limits are exported for native_cores.test.js, which drives the
+// pipe with a stand-in core (fake_core.js) instead of a compiled one.
+module.exports = { coreFactory, buildPlan, exportsOf, exportTable, mode, CORES, instance, limits };
