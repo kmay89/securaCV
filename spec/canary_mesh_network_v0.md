@@ -570,7 +570,11 @@ already sent; the pairing key stays wiped. Until F100 the COMPLETE went
 once and its send was not checked, so one lost on the air, or refused by
 the storm gate, left the initiator holding a member that never joined while
 the joiner timed out. The pairing still reports success at the first
-COMPLETE.
+COMPLETE. On the joiner, a COMPLETE that does not open under its pairing
+key is dropped and the pairing goes on (to its timeout, if no good one
+comes): it used to end the pairing, from any address, so any radio could
+cancel a confirmed pairing, and the copies of an earlier pairing's
+COMPLETE would end the same joiner's next pairing with that initiator.
 
 ### 5.3 Pairing Security
 
@@ -1571,4 +1575,5 @@ An implementation conforms to this specification if it:
   leave hears it at once (§3.3, §12.3); a new key at an address another
   member holds is refused (§5.2, §8.3); and the initiator sends its
   `PAIR_COMPLETE` again until it hears the joiner, for at most the pairing
-  timeout (§5.2).
+  timeout, while a joiner drops a COMPLETE it cannot open instead of ending
+  its pairing (§5.2).

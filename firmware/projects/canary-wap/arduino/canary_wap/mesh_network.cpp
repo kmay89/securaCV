@@ -1692,9 +1692,15 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
   uint8_t opera_secret[OPERA_SECRET_SIZE];
   const uint8_t* tag = complete->encrypted_secret + OPERA_SECRET_SIZE;
 
+  // One that does not open under this pairing's key is dropped, and the
+  // pairing waits for one that does (or its timeout). It used to end the
+  // pairing, which let any radio cancel a confirmed pairing with 61 bytes
+  // of anything, and since F100 the copies an initiator sends of an earlier
+  // pairing's COMPLETE would end a later pairing of the same joiner: a
+  // COMPLETE sealed under another key is not this pairing's, whoever sent it.
   if (!decrypt_message(g_pairing.session_key, complete->encrypted_secret, OPERA_SECRET_SIZE,
                        complete->nonce, tag, opera_secret)) {
-    cancel_pairing();
+    secure_wipe(opera_secret, sizeof(opera_secret));
     return;
   }
 

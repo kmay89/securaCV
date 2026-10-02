@@ -241,12 +241,12 @@ void pair_to_codes(Device& ini, Device& joi) {
   const auto disc = sent_to(joi, BROADCAST);
   CHECK(!disc.empty());
   deliver(ini, joi.mac, disc.back());
-  const auto offer = sent_to(ini, joi.mac);
-  CHECK(offer.size() == 1);
-  deliver(joi, ini.mac, offer.back());
-  const auto accept = sent_to(joi, ini.mac);
-  CHECK(accept.size() == 1);
-  deliver(ini, joi.mac, accept.back());
+  // By type: an initiator still sending an earlier pairing's COMPLETE
+  // (F100) can send a copy of it in the same pass.
+  CHECK(pair_frames(ini, joi.mac, mn::MSG_PAIR_OFFER) == 1);
+  deliver(joi, ini.mac, last_pair(ini, joi.mac, mn::MSG_PAIR_OFFER));
+  CHECK(pair_frames(joi, ini.mac, mn::MSG_PAIR_ACCEPT) == 1);
+  deliver(ini, joi.mac, last_pair(joi, ini.mac, mn::MSG_PAIR_ACCEPT));
   become(ini);
   CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
   const uint32_t code = mn::g_pairing.confirmation_code;
@@ -1481,8 +1481,7 @@ void test_a_rotation_that_reaches_a_member_keeps_every_counter() {
 // The pairing up to the initiator's COMPLETE (both owners confirmed, the
 // initiator's first), which is then lost: nothing the initiator sent from
 // the joiner's CONFIRM on reaches the joiner.
-void complete_lost(Device& ini, Device& joi) {
-  pair_to_codes(ini, joi);
+void complete_lost_after_codes(Device& ini, Device& joi) {
   become(ini);
   CHECK(mn::confirm_pairing());
   become(joi);
@@ -1492,6 +1491,11 @@ void complete_lost(Device& ini, Device& joi) {
   CHECK(pair_frames(ini, joi.mac, mn::MSG_PAIR_COMPLETE) == 1);   // sent, and lost
   become(joi);
   CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+}
+
+void complete_lost(Device& ini, Device& joi) {
+  pair_to_codes(ini, joi);
+  complete_lost_after_codes(ini, joi);
 }
 
 void test_a_lost_complete_is_sent_again_until_the_joiner_is_heard() {
@@ -1581,6 +1585,67 @@ void test_a_complete_that_never_went_out_is_logged_as_that() {
   CHECK(times_logged("opera: pairing COMPLETE never answered") == 0);
   host_sim::now_ms += 60000;                        // let the gate settle for later tests
   std::printf("PASS a_complete_that_never_went_out_is_logged_as_that\n");
+}
+
+void test_a_complete_that_does_not_open_does_not_end_the_pairing() {
+  // A COMPLETE the joiner cannot open under its pairing key is dropped, and
+  // the pairing goes on. It used to end the pairing, from any address: any
+  // radio could cancel a confirmed pairing with 61 bytes of anything.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  become(J);
+  CHECK(mn::confirm_pairing());
+  mn::PairCompletePayload junk;
+  host_sim::fill_random(&junk, sizeof junk);
+  Frame f(1 + sizeof junk);
+  f[0] = mn::MSG_PAIR_COMPLETE;
+  memcpy(f.data() + 1, &junk, sizeof junk);
+  deliver(J, E_MAC, f);
+  deliver(J, A.mac, f);
+  become(J);
+  CHECK(mn::is_pairing() && mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  become(A);
+  CHECK(mn::confirm_pairing());
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
+  CHECK(completed(J, A) && completed(A, J));
+  std::printf("PASS a_complete_that_does_not_open_does_not_end_the_pairing\n");
+}
+
+void test_an_earlier_pairings_complete_does_not_end_a_later_one() {
+  // F100's copies meet the joiner's next pairing. J's first pairing with A
+  // loses its COMPLETE; the owners took a minute, so J times out a minute
+  // after it, while A's copies run two minutes from it. J's owner starts
+  // again with A, and a copy of the first COMPLETE (sealed under the first
+  // pairing's key, from A's own address) reaches J after J's owner
+  // confirmed: it is dropped, and the second pairing completes.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  host_sim::now_ms += 60000;                        // the owners take a minute
+  complete_lost_after_codes(A, J);
+  host_sim::now_ms += 60000;
+  become(J);
+  mn::update();                                     // J's 2-minute timeout
+  CHECK(!mn::is_pairing());
+  pair_to_codes(A, J);                              // J's owner tries again
+  become(J);
+  CHECK(mn::confirm_pairing());
+  A.espnow.sent.clear();
+  host_sim::now_ms += 2001;
+  become(A);
+  mn::update();
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);   // a copy of the first
+  deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
+  become(J);
+  CHECK(mn::is_pairing() && mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  become(A);
+  CHECK(mn::confirm_pairing());
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
+  CHECK(completed(J, A) && completed(A, J));
+  std::printf("PASS an_earlier_pairings_complete_does_not_end_a_later_one\n");
 }
 
 void test_the_complete_is_not_sent_again_once_it_is_not_the_operas() {
@@ -1682,6 +1747,10 @@ const Test kTests[] = {
      test_a_complete_the_storm_gate_refused_goes_out_when_it_reopens},
     {"a_complete_that_never_went_out_is_logged_as_that",
      test_a_complete_that_never_went_out_is_logged_as_that},
+    {"a_complete_that_does_not_open_does_not_end_the_pairing",
+     test_a_complete_that_does_not_open_does_not_end_the_pairing},
+    {"an_earlier_pairings_complete_does_not_end_a_later_one",
+     test_an_earlier_pairings_complete_does_not_end_a_later_one},
     {"the_complete_is_not_sent_again_once_it_is_not_the_operas",
      test_the_complete_is_not_sent_again_once_it_is_not_the_operas},
 };

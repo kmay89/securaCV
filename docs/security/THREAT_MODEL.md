@@ -666,7 +666,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   other. Since F100 the initiator sends its COMPLETE again every 2 s until
   it hears the joiner, for at most the 2-minute pairing timeout, and logs
   one never answered (it went once, unchecked); the copies are the frame
-  already on the air, and the pairing key stays wiped. Host-tested only.
+  already on the air, and the pairing key stays wiped. A joiner drops a
+  COMPLETE it cannot open under its pairing key instead of ending the
+  pairing, which any radio could do with 61 bytes from any address.
+  Host-tested only.
 - **Still open on canary-wap: a radio copying a member's own address.**
   ESP-NOW does not authenticate a source, so a radio that copies member
   B's bound address passes canary-wap's address check. It can deliver B's
