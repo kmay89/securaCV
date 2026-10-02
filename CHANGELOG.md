@@ -2,6 +2,162 @@
 
 ## [Unreleased]
 
+### The PIO mesh refuses a pairing it cannot keep, canary-wap's mesh status, Chirp and Bluetooth routes stop racing its main loop and its MQTT writes stay under the watchdog, the Canary reports its event losses and both devices warn before their event ids run out, the Tuning Lab shows and applies the Quiet Hours the device runs, the Vision reports its dwell, and the wide display's setup screens fit their ring (#1762, wave 11)
+
+- **The PIO Canary's mesh refuses a pairing it cannot keep, pairs a Canary on
+  older firmware in either confirm order, and cleans up its stored member
+  addresses at boot (sweep F117-F120).** A pairing whose partner the Canary
+  cannot hold as a member (another member already uses its radio address, or
+  the opera is full) now fails when the owner presses confirm, before anything
+  is sent: the confirm answers `partner_refused` and the refusal is in the
+  health log. Before, the pairing reported success and the partner became a
+  member that was never heard and never sent anything. An updated Canary
+  joining an opera whose Canary runs older firmware now completes whichever
+  owner confirms first: it sends its confirmation again, at most three times,
+  once it has seen the other side's; two updated Canaries exchange the same
+  frames as before. At boot, a stored radio address that belongs to two
+  members (which older firmware could store) is no longer given to whichever
+  was stored first: neither member gets it, both entries are dropped and
+  logged, and both members re-pair. A stored address of a device that is no
+  longer a member is dropped too; kept, it stopped the next member that paired
+  from that address from being remembered across a reboot. Host tests that
+  fail without each fix pin all four, and a source pin covers the Canary's
+  wiring. **Host-tested only**: the `[env:full]` compile is CI's, and it is
+  not bench-tested.
+- **canary-wap: the mesh status routes read a whole copy, a leave stores no
+  opera, and a re-added member's old frames stay replays (sweep F110, F113,
+  F116).** `GET /api/mesh`, `/api/mesh/peers` and `/api/mesh/alerts` read the
+  peer table, pairing session and alert history from the HTTP server's task
+  while the main loop wrote them, so one response could mix two passes. They
+  now read a copy the main loop publishes at the end of every pass and after
+  each change an owner asks for (so the page a POST reloads shows what it
+  did), and the alert history whole, under a lock; they never wait for the
+  main loop and answer as before (the alerts route answers `500 out_of_memory`
+  if it cannot allocate its 3 KB copy). Leaving an opera stored it as all
+  zeros, which the next boot loaded as an opera: a new pairing then kept it,
+  sealed its zero secret to the joiner, and the two never heard each other. A
+  leave now removes the stored opera, and a boot ignores an all-zero one an
+  older firmware left. A member removed (or left behind at a leave) and paired
+  again into the same opera started with no memory of the frames it had
+  signed, so one recorded and replayed at the re-pair ended the pairing's
+  COMPLETE resend. Its last-seen counter is now kept for that opera (eight at
+  most, in NVS) and restored at the re-pair; removing such a member again
+  before it is heard releases it, so a device that kept its key but lost its
+  send counters is not shut out for good. A member still on firmware from
+  before the F71 counter fix restarts its counters at every boot, so after a
+  removal and a re-pair into the same opera it stays unheard until it is
+  updated: update it before re-pairing it. Not covered: a frame the member
+  signed after its removal can still end the resend (F140), and a board
+  without flash encryption keeps no tombstone across a boot (F141).
+  **Host-tested only** (`test_loop_snapshot.cpp`, also under ThreadSanitizer,
+  `test_mesh_commands_wap.cpp`, `test_mesh_liveness_wap.cpp`; each fix's tests
+  fail with it reverted): the Arduino compile is CI's, and nothing is
+  bench-tested.
+- **canary-wap: the Chirp and Bluetooth REST commands run on the main loop,
+  and an MQTT write can no longer hold the loop past its watchdog (sweep F111,
+  F112).** Each Chirp and Bluetooth POST hands its command to the channel's
+  loop-task ring and answers from the result as before; a command that did not
+  run answers 409 `chirp_busy`/`bluetooth_busy` or 503
+  `chirp_timeout`/`bluetooth_timeout`. A Bluetooth PIN confirm and the pairing
+  timeout can no longer both answer and delete one pending pairing, and no
+  command brings the NimBLE stack up on the main loop. Every MQTT client now
+  gives up a socket operation that makes no progress after 2 s instead of
+  esp-mqtt's 10 s, so one publish over a dead link can no longer hold the main
+  loop past its 8 s watchdog, and the bridge reports the link up only after
+  its reconnect burst (status, discovery, cached states), which esp-mqtt sends
+  under the lock a main-loop publish would wait for. With the shorter timeout,
+  a send buffer that stays full for 2 s now drops the connection: Home
+  Assistant shows the board unavailable until it reconnects, and QoS 0 event
+  rows already in the buffer are lost, as they were after 10 s before (F147).
+  A broker that takes over 2 s to accept a login fails that attempt and
+  retries 10 s later (F148). Pinned by `test_chirp_commands_wap.cpp`,
+  `test_bluetooth_commands_wap.cpp` and `test_mqtt_reinit.cpp`, and held in
+  the source by `check_wap_loop_commands.py`. **Host-tested only**: the
+  Arduino and PlatformIO compiles are CI's, and nothing is bench-tested.
+- **The Canary's event egress reports its counters, both devices warn before
+  the event-id space runs out, and the offline queue's publish order is held
+  (sweep F107, F109; F82 in part).** The Canary's MQTT health carries a
+  `csi_event_egress` object under the canary-wap's `stats()` names (`dropped`,
+  `held_dropped`, and the newly counted `ambient_dropped` and
+  `unsent_dropped`, a row no card kept that the MQTT layer refused, plus the
+  backfill planner's counters under `planner`) and an `offline_queue` object
+  with the MQTT offline queue's drops, so a card-less Canary's outage loss
+  shows. They count paths, not rows; the CSI developer API defines each and
+  lists what none counts. The Canary and the canary-wap both carry
+  `event_id_space_low`, true once the event-id allocator reaches 0xF0000000
+  and after a wrap (a warning only; the recovery is undecided).
+  `MQTT_BUFFER_SIZE` grows from 1280 to 1792 (+512 B of heap; the worst-case
+  health packet is 1745 B). The publish-or-queue branch (while the offline
+  queue drains, a new record joins its back) moved into
+  `mqtt_offline_queue.h`, which the egress host tests now compile instead of
+  transcribing, and `check_event_egress_order.py` rule 9 holds the firmware to
+  it. `python.yml` now runs the HA tests that read firmware files when those
+  files change. Home Assistant reads none of the new keys yet (HA24). Two HA
+  tests changed, which the HACS mirror carries. **Host-tested only**: the
+  PlatformIO and Arduino compiles are CI's, and nothing is bench-tested.
+- **canary-wap's Tuning Lab shows the Quiet Hours the device runs and applies
+  a change at once, the dashboard and the Lab save Quiet Hours to the same
+  place, and the Canary's boot read of CSI settings logs no error (sweep F123,
+  F128, F125, D11).** The Tuning Lab declared Quiet Hours as 00:00 to 08:00
+  while a device with none saved ran 23:00 to 07:00, so a fresh device showed
+  and exported the wrong window, and the Lab's reset buttons (or that file
+  loaded back) saved it. The Lab, the dashboard, `GET /api/settings` and the
+  device now share one default: off, 23:00 to 07:00. A Quiet Hours change made
+  in the Lab, or by loading a tuning file, was saved but took effect only at
+  the next reboot or the next dashboard Quiet Hours change; it now applies at
+  once, as the dashboard's does. The dashboard now saves Quiet Hours through
+  the same table of setting names the Lab and the device read by (the names
+  agreed before, but only by hand), so each reads what the other saves. The
+  Canary's boot read of these settings (sweep F93, below) now asks NVS first,
+  so it logs no error for a settings area the Canary never created (a
+  canary-wap's first boot after an erase gets the same check for its modules'
+  settings). The developer API page now calls the Lab's tuning file what it
+  is: one flat, unsigned JSON object of knob values, not a signed
+  witness-chain export. `test_wap_tune_lab.cpp` runs the Lab's table and POST
+  and the dashboard's Quiet Hours store with the CSI library, and
+  `test_csi_module_boot.cpp` and `test_wap_module_boot.cpp` the quiet boot;
+  each fix's test fails on the code before it, and source pins hold the
+  dashboard's settings handler to the tested store. **Host-tested only**: the
+  PlatformIO and arduino-cli compiles are CI's, and nothing is bench-tested.
+- **Canary Vision reports the dwell it closed, the Lab's Vision page shows the
+  cell and visit length the device publishes, and the WAP setup wizard links
+  the WAP it set up (sweep F130, A39, F129).** A `dwell_ended` event now
+  carries the dwell's length (`dwell_ms`; it used to say 0), counted, like
+  `visit_ms`, to the frame that declared the person gone, so it includes the
+  lost timeout. The Vision lingering alert recipe reports time in view or
+  visit length instead of an always-zero dwell, and the Vision dashboard's
+  voxel card says when nobody is in frame instead of showing the last cell as
+  live. The Lab's Vision page shows the voxel cell and last-visit length the
+  device publishes, computed by the same firmware code; that moves the
+  emulator dist's Vision core, which CI's pinned emsdk rebuilds in this PR
+  (until then two Lab page tests fail on the old dist, by design). The Canary
+  WAP setup wizard's final link now opens the name the device advertises
+  (`canary-<name>.local`, or `canary-<4 hex>.local` while unnamed) instead of
+  the shared `canary.local`, which on a network with several Canaries can open
+  another one (or, after the recovery-kit save, a device-id host no Canary
+  advertises). Host-tested; firmware compile-tested by CI, not bench-tested.
+  One HA test changed, which the HACS mirror carries.
+- **The 7" and dash setup screens fit inside their ring, a landscape
+  nightlight's first meeting keeps the bird on the glass, and the emulator
+  checks where the setup bird sits (sweep F84, F88, F89).** On the 800x480
+  glass (dash, dash7, nightstand7) the first-boot scenes' titles and bodies
+  ran through the 300 px ring around them, a long network name ran past both
+  of its sides, and each title overlapped its body by a few pixels. They are
+  now fitted inside the ring the way the small glass's are: titles at 24 px
+  (28 under Heirloom), bodies at 16 (20), and "Check your phone" and "No
+  address" in place of the two longer lines, as on the touch169 and the
+  AMOLED. A network name too long for the ring now shows its head and tail
+  around "..." inside it, where the old full-width row read it whole. A
+  nightlight whose first meeting boots in landscape (320x180) drew the bird
+  with its head off the top edge; the bird now drops just enough to stay on
+  the glass, and the speech bubble hangs under it. Every other glass's splash
+  is unchanged, and a new host test plays the real splash code on every canvas
+  to check where the bird and the bubble land. The emulator's onboarding probe
+  now also reads the Hello scene and holds the bird to the seat the layout
+  names over a whole breath. Host-tested and measured in a native LVGL 8.4
+  harness; the ESP32 builds are CI's, the emulator dist's five display flavors
+  are rebuilt in this PR by CI's pinned emsdk, and nothing is bench-tested.
+
 ### The Canary keeps its card's backlog, canary-wap runs its mesh commands and MQTT re-inits on its main loop and keeps one member per radio address, the PIO mesh pairs in either confirm order, saved CSI settings apply at boot, and the Lab's MQTT panes publish the firmware's whole payloads (#1762)
 
 - **The Canary keeps its card's backlog when an append fails or the card is
@@ -72,30 +228,30 @@
   change, F115). **Host-tested only**: the Arduino compile is CI's, and it is
   not bench-tested.
 - **The PIO Canary's mesh pairs in either confirm order, sends its Opera
-  frames to members only, and stores a paired member's address only once it
-  is bound (sweep F97, F101, F102).** A PIO pairing now completes whichever
-  owner confirms first. Before, with frames delivered as they are sent, it
-  completed in neither order: the joiner's owner first timed out both sides,
-  and the initiator's owner first left the initiator reporting success with a
-  member whose joiner had dropped the COMPLETE. canary-wap's F75 rules now
-  hold here too: a CONFIRM counts only from the pairing partner's address and
-  once the code is shown, and the joiner takes the COMPLETE only after its own
-  owner confirmed. Unlike canary-wap, the initiator also sends its own CONFIRM
-  in front of the COMPLETE, so a Canary on older firmware joins in either
-  order when the Canary already in the opera runs this one. The other way
-  round, an older Canary in the opera pairs an updated one only when its own
-  owner confirms first (F117). Tamper alerts, beacon events, channel locks,
-  hub elections, LEAVE and rekey OFFERs now go only to the members' bound
-  radio addresses, and only the sends the radio took count as sent; before, a
-  running pairing's partner got them too, so with no member at all a tamper
-  alert reported sent and a leave reported `notified`. A just-paired member's
-  radio address is now stored only once the session has bound it, and the
-  stored list refuses a second member at one address; before, a re-pair the
-  session refused to bind was stored anyway, and after a reboot the member
-  that owned the address went unheard. Host tests that fail on the code
-  before each fix pin all three, and a source pin covers the Canary's wiring.
-  Not closed: a reflected CONFIRM still counts (F94). **Host-tested only**:
-  the `[env:full]` compile is CI's, and it is not bench-tested.
+  frames to members only, and stores a paired member's address only once it is
+  bound (sweep F97, F101, F102).** A PIO pairing now completes whichever owner
+  confirms first. Before, with frames delivered as they are sent, it completed
+  in neither order: the joiner's owner first timed out both sides, and the
+  initiator's owner first left the initiator reporting success with a member
+  whose joiner had dropped the COMPLETE. canary-wap's F75 rules now hold here
+  too: a CONFIRM counts only from the pairing partner's address and once the
+  code is shown, and the joiner takes the COMPLETE only after its own owner
+  confirmed. Unlike canary-wap, the initiator also sends its own CONFIRM in
+  front of the COMPLETE, so a Canary on older firmware joins in either order
+  when the Canary already in the opera runs this one. The other way round, an
+  older Canary in the opera pairs an updated one in either order too (F117,
+  above). Tamper alerts, beacon events, channel locks, hub elections, LEAVE
+  and rekey OFFERs now go only to the members' bound radio addresses, and only
+  the sends the radio took count as sent; before, a running pairing's partner
+  got them too, so with no member at all a tamper alert reported sent and a
+  leave reported `notified`. A just-paired member's radio address is now
+  stored only once the session has bound it, and the stored list refuses a
+  second member at one address; before, a re-pair the session refused to bind
+  was stored anyway, and after a reboot the member that owned the address went
+  unheard. Host tests that fail on the code before each fix pin all three, and
+  a source pin covers the Canary's wiring. Not closed: a reflected CONFIRM
+  still counts (F94). **Host-tested only**: the `[env:full]` compile is CI's,
+  and it is not bench-tested.
 - **Saved CSI settings apply from the first minute after a restart (sweep
   F93).** On the Canary WAP you could save the presence preset and
   sensitivity, calibrated thresholds, Pet Mode, and the Tuning Lab's breathing
@@ -104,21 +260,19 @@
   again. Now every saved value applies from the first CSI window of every
   boot. So after this update, a setting you saved long ago takes effect at
   boot: a calibrated or raised threshold, Pet Mode, a 30 s anomaly cooldown.
-  Presence and anomaly rows can differ from what the device reported after
-  its earlier restarts. One thing this does not change: once a presence
-  threshold is stored, it wins over the preset and the sensitivity slider. A
-  calibration stores all three thresholds, and so does the Tuning Lab when you
-  change one, press a row's reset or "Reset all" (they store the defaults as
-  values), or load a preset file. On such a board the dashboard's preset and
-  slider still change nothing, at boot or at once, though the dashboard keeps
-  showing them (F127). A Tuning Lab Quiet Hours change still applies from the
-  next restart (F128). The Canary had the same gap, but no screen on it saves
-  these settings, so a freshly flashed Canary behaves as before; a board that
-  kept settings from a Canary WAP image now uses them. Both read the settings
-  by one rule, with one storage read per boot. A Canary logs one
-  `nvs_open failed: NOT_FOUND` line at boot, for the settings area it never
-  created. The activity ribbon's first 15-minute block now starts when the
-  sensing modules start, not at power-on. For module authors:
+  Presence and anomaly rows can differ from what the device reported after its
+  earlier restarts. One thing this does not change: once a presence threshold
+  is stored, it wins over the preset and the sensitivity slider. A calibration
+  stores all three thresholds, and so does the Tuning Lab when you change one,
+  press a row's reset or "Reset all" (they store the defaults as values), or
+  load a preset file. On such a board the dashboard's preset and slider still
+  change nothing, at boot or at once, though the dashboard keeps showing them
+  (F127). A Tuning Lab Quiet Hours change applies at once too (F128). The
+  Canary had the same gap, but no screen on it saves these settings, so a
+  freshly flashed Canary behaves as before; a board that kept settings from a
+  Canary WAP image now uses them. Both read the settings by one rule, with one
+  storage read per boot. The activity ribbon's first 15-minute block now
+  starts when the sensing modules start, not at power-on. For module authors:
   `csi_module_tick_all()` no longer ticks a module until
   `csi_module_init_all()` has run its `init()`. **Host-tested only**: the
   firmware compiles are CI's, and it is not bench-tested.
@@ -131,21 +285,22 @@
   undone by the retained snapshot. The silent-panic scene is gone, because the
   WAP has no touch pad. The Sense radar lab now publishes the state row when
   the device would (on a change and every heartbeat), its live events and
-  chain rows come from the generated data, and nothing is published before
-  the bench connects. Both panes' notes say which topics are not retained and
-  what is elided or staged, instead of claiming the exact strings. Every WAP
-  topic example is keyed as its firmware publishes it; the events example is
-  a whole `core.presence` row with an id from the WAP's id space. The Vision
-  pane's clocks, posture and proximity follow the sandbox, and its note says
-  `dwell_ms` is 0 on every event row, as the device sends it, and which two
-  values stay illustrative. The Hub page's demo card shows the entities the
-  WAP announces, not firmware/canary's. Two firmware comments and a Lab test
-  fixture now show WAP names a Canary can print, and the repo lint that holds
-  WAP names to the firmware's recipe reads the WAP's sources and the Lab as
-  well as the docs. Lab page data, page scripts and two firmware comments
-  (`web_assets_gz.h` regenerated); host-tested, not browser-checked here. The
-  pages reach users with the next Lab and Flasher release, and the comment
-  reaches a device with the next canary-wap firmware build.
+  chain rows come from the generated data, and nothing is published before the
+  bench connects. Both panes' notes say which topics are not retained and what
+  is elided or staged, instead of claiming the exact strings. Every WAP topic
+  example is keyed as its firmware publishes it; the events example is a whole
+  `core.presence` row with an id from the WAP's id space. The Vision pane's
+  clocks, posture and proximity follow the sandbox, and its note says which
+  values stay illustrative (since F130 and A39, `dwell_ended` carries the
+  dwell it closed and the voxel is the device's settled cell). The Hub page's
+  demo card shows the entities the WAP announces, not firmware/canary's. Two
+  firmware comments and a Lab test fixture now show WAP names a Canary can
+  print, and the repo lint that holds WAP names to the firmware's recipe reads
+  the WAP's sources and the Lab as well as the docs. Lab page data, page
+  scripts and two firmware comments (`web_assets_gz.h` regenerated);
+  host-tested, not browser-checked here. The pages reach users with the next
+  Lab and Flasher release, and the comment reaches a device with the next
+  canary-wap firmware build.
 
 ### canary-wap's mesh is heard after a reboot and pairs in either confirm order, the PIO mesh takes a member's frame only from its own address, the Canary bundles its presence rows and the hourly limit counts every row, canary-wap's new events wait behind its backlog, and the Lab's examples match the firmware (#1762)
 
