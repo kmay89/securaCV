@@ -199,8 +199,9 @@ static DeviceType detect_device_type(const NimBLEAdvertisedDevice* device);
 // The owner's commands' bodies (sweep F111): they change what update() reads
 // and writes, so a REST handler hands a Command to submit() and the loop task
 // runs them through run_command(). Inside this file the bring-up (init()'s
-// own auto-advertise), update()'s timeouts and the NimBLE callbacks call some
-// of them too, as they always did. deinit() has no caller.
+// own auto-advertise), update()'s timeouts and a link's end as update()
+// applies it (apply_disconnect(): the NimBLE callback only reports it, sweep
+// F143) call some of them too. deinit() has no caller.
 static bool enable();
 static void disable();
 static bool start_advertising();
