@@ -59,6 +59,13 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     snprintf(out, n, "%s/%s/%s/%s/config", HA_DISCOVERY_PREFIX, component, DEVICE_ID, objectId);
   };
 
+  // Binary sensors render payload_on/payload_off themselves (sweep HA25):
+  // HA compares the rendered text to "true"/"false" with plain equality, and
+  // `{{ value_json.x | default(false) }}` over a JSON boolean renders "True" /
+  // "False", which matched neither, so the entity stayed unknown. The
+  // default(false) inside the test reads a row without the field as off,
+  // with no template warning. scripts/tests/test_ha_discovery_binary_sensors.py
+  // renders every one the way HA does.
   // Presence — the fused level at present / confirmed / loiter.
   {
     char t[192], p[1024];
@@ -68,7 +75,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "\"name\":\"Presence\","
              "\"unique_id\":\"%s_presence\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.presence | default(false) }}\","
+             "\"value_template\":\"{{ 'true' if value_json.presence | default(false) else 'false' }}\","
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
              "\"device_class\":\"occupancy\","
@@ -89,7 +96,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "\"name\":\"Anomaly\","
              "\"unique_id\":\"%s_anomaly\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.anomaly_active | default(false) }}\","
+             "\"value_template\":\"{{ 'true' if value_json.anomaly_active | default(false) else 'false' }}\","
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
              "\"icon\":\"mdi:shield-alert\","
@@ -221,7 +228,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "\"name\":\"Channel blinded\","
              "\"unique_id\":\"%s_channel_denied\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.channel_denied | default(false) }}\","
+             "\"value_template\":\"{{ 'true' if value_json.channel_denied | default(false) else 'false' }}\","
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
              "\"device_class\":\"problem\","

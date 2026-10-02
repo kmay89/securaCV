@@ -45,14 +45,16 @@ views:
       # -----------------------------------------------------------------------
       # Voxel heat grid — where in the frame the person settled (3×3 default).
       # The voxel sensor reports "row,col" of the cell the person last settled
-      # in (the firmware's voxel tracker, not the raw frame): it stays put
-      # after they leave and carries into the next visit until the new cell
-      # settles, and reads "-1,-1" only until someone has been seen since the
-      # device started (firmware/projects/canary-vision/README.md, "The
-      # clocks and the cell on an event row"). So whether anyone is in frame
-      # comes from the confidence sensor, read off the same state row: it is
-      # the best person box's score, and 0 when that frame had none. The
-      # cell is 🟧 while someone is in frame and 🔲 once the frame is empty.
+      # in (the firmware's voxel tracker, not the raw frame): each visit
+      # starts on the cell the person was first seen in, it stays put after
+      # they leave, and it reads "-1,-1" only until someone has been seen
+      # since the device started (firmware/projects/canary-vision/README.md,
+      # "The clocks and the cell on an event row"). So whether anyone is here
+      # comes from the Presence binary sensor, read off the same state row:
+      # the cell is 🟧 while the device holds someone present (through its
+      # lost timeout) and 🔲 once the visit has ended. (Before sweep HA25 the
+      # Presence sensor's discovery template never matched its payloads, so
+      # this card read the confidence sensor instead.)
       # The grid renders top row first, matching the camera's view.
       # -----------------------------------------------------------------------
       - type: markdown
@@ -62,13 +64,13 @@ views:
           {% set p = v.split(',') %}
           {% set r = p[0] | int(-1) if p | count == 2 else -1 %}
           {% set c = p[1] | int(-1) if p | count == 2 else -1 %}
-          {% set in_frame = states('sensor.securacv_canary_vision_DEVICE_ID_confidence') | int(0) > 0 %}
+          {% set present = states('binary_sensor.securacv_canary_vision_DEVICE_ID_presence') == 'on' %}
           {% for row in range(3) -%}
           {% for col in range(3) -%}
-          {{ ('🟧' if in_frame else '🔲') if (row == r and col == c) else '▫️' }}
+          {{ ('🟧' if present else '🔲') if (row == r and col == c) else '▫️' }}
           {%- endfor %}{{ '\n\n' }}
           {%- endfor %}
-          {% if r < 0 %}_Nobody seen since the device started._{% elif not in_frame %}_No person in frame. 🔲 is where they last settled._{% endif %}
+          {% if r < 0 %}_Nobody seen since the device started._{% elif not present %}_Nobody present. 🔲 is where they last settled._{% endif %}
 
       # -----------------------------------------------------------------------
       # Aim camera — boxes-only live view (never pixels). Flip the card's

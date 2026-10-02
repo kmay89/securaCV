@@ -50,16 +50,23 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     snprintf(out, n, "%s/%s/%s/%s/config", HA_DISCOVERY_PREFIX, component, DEVICE_ID, objectId);
   };
 
+  // Binary sensors render payload_on/payload_off themselves (sweep HA25):
+  // HA compares the rendered text to "true"/"false" with plain equality, and
+  // `{{ value_json.x | default(false) }}` over a JSON boolean renders "True" /
+  // "False", which matched neither, so the entity stayed unknown. The
+  // default(false) inside the test reads a row without the field as off,
+  // with no template warning. scripts/tests/test_ha_discovery_binary_sensors.py
+  // renders every one the way HA does.
   // Presence
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("binary_sensor", "presence", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
              "\"name\":\"Presence\","
              "\"unique_id\":\"%s_presence\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.presence | default(false) }}\","
+             "\"value_template\":\"{{ 'true' if value_json.presence | default(false) else 'false' }}\","
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
              "\"device_class\":\"occupancy\","
@@ -72,14 +79,14 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
 
   // Dwelling
   {
-    char t[192], p[768];
+    char t[192], p[1024];
     topic_for("binary_sensor", "dwelling", t, sizeof(t));
     snprintf(p, sizeof(p),
              "{"
              "\"name\":\"Dwelling\","
              "\"unique_id\":\"%s_dwelling\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.dwelling | default(false) }}\","
+             "\"value_template\":\"{{ 'true' if value_json.dwelling | default(false) else 'false' }}\","
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
              "\"icon\":\"mdi:timer-sand\","

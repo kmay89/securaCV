@@ -7,20 +7,24 @@ comment said the sensor reads "-1,-1" when nobody is present, and the card
 said "No person in frame" only then. But the row's voxel is the voxel
 tracker's settled cell (PresenceFSM::snapshot: s.voxel =
 voxel_tracker_.stable()), which keeps the last cell after the person leaves
-and is reset only by PresenceFSM::reset() at boot (sweep A39 and its review;
-firmware/tests_host/test_vision_core_bindings.cpp pins the carry-over). So
-after the first visit the card painted the last cell forever and never said
-nobody was there.
+(sweep A39). So after the first visit the card painted the last cell
+forever and never said nobody was there.
 
-The card now reads whether anyone is in frame from the confidence sensor,
-off the same state row (the best person box's score, 0 when that frame had
-none: PresenceFSM::tick's confidence_), marks the cell 🟧 while someone is
-in frame and 🔲 once the frame is empty, and says "-1,-1" means nobody seen
-since the device started. (It does not read the Presence binary sensor: see
-sweep HA25, that sensor's discovery payload.)
+A39 made the card read whether anyone was in frame from the confidence
+sensor, because the Presence binary sensor could not turn on: its discovery
+template rendered "True"/"False" against payloads "true"/"false" (sweep
+HA25). With that fixed (scripts/tests/test_ha_discovery_binary_sensors.py),
+the card reads the Presence sensor, off the same state row: the cell is 🟧
+while the device holds someone present and 🔲 once the visit has ended. The
+confidence sensor is one frame's best box score, so it read 0, and the card
+said nobody was there, on rows where the device still held a person
+present: dwell_ended's row, the rows through the lost timeout, a heartbeat
+taken on a frame that missed them. Each visit now starts its own tracker
+(sweep F152), so while Presence is on the cell is this visit's.
 
-This renders the card with jinja2 (Home Assistant's template engine) when it
-is installed, and pins the firmware lines the card relies on either way.
+This renders the card with jinja2 (Home Assistant's template engine; lint.yml
+installs it at HA's pin, so it is imported unconditionally) and pins the
+firmware lines the card relies on.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_vision_dashboard_voxel.py' -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests)
@@ -31,6 +35,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import jinja2
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
@@ -38,6 +43,7 @@ DASH = REPO / "homeassistant/lovelace/securacv-vision-dashboard.yaml"
 FW = REPO / "firmware/projects/canary-vision"
 
 VOXEL = "sensor.securacv_canary_vision_DEVICE_ID_voxel"
+PRESENCE = "binary_sensor.securacv_canary_vision_DEVICE_ID_presence"
 CONFIDENCE = "sensor.securacv_canary_vision_DEVICE_ID_confidence"
 
 
@@ -47,10 +53,8 @@ def card() -> dict:
     return next(c for c in live["cards"] if c.get("title") == "Position (voxel grid)")
 
 
-def render(voxel: str, confidence: str) -> list[str]:
-    import jinja2
-
-    states = {VOXEL: voxel, CONFIDENCE: confidence}
+def render(voxel: str, presence: str, confidence: str = "0") -> list[str]:
+    states = {VOXEL: voxel, PRESENCE: presence, CONFIDENCE: confidence}
     tmpl = jinja2.Environment().from_string(card()["content"])
     text = tmpl.render(states=lambda entity: states.get(entity, "unknown"))
     return [line.strip() for line in text.splitlines() if line.strip()]
@@ -64,7 +68,7 @@ def cell(lines: list[str], r: int, c: int) -> str:
 
 
 class TheFirmwareSaysWhatTheCardAssumes(unittest.TestCase):
-    def test_the_state_row_publishes_the_settled_cell_and_the_frames_score(self):
+    def test_the_state_row_publishes_the_settled_cell_and_presence(self):
         fsm = (FW / "src/state/presence_fsm.cpp").read_text(encoding="utf-8")
         self.assertIn("s.voxel = voxel_tracker_.stable();", fsm)
         self.assertIn("confidence_ = vs.person_now ? vs.bbox.score : 0;", fsm)
@@ -78,44 +82,57 @@ class TheFirmwareSaysWhatTheCardAssumes(unittest.TestCase):
         self.assertEqual(main.count("fsm.reset();"), 1)
         disc = (FW / "src/ha/ha_discovery.cpp").read_text(encoding="utf-8")
         self.assertIn('\\"value_template\\":\\"{{ value_json.voxel.r }},{{ value_json.voxel.c }}\\",', disc)
-        self.assertIn('\\"value_template\\":\\"{{ value_json.confidence }}\\",', disc)
+        # the Presence sensor the card reads renders its own payloads (HA25)
+        self.assertIn('\\"value_template\\":\\"{{ \'true\' if value_json.presence | default(false) '
+                      'else \'false\' }}\\",', disc)
+        mqtt = (FW / "src/net/mqtt_mgr.cpp").read_text(encoding="utf-8")
+        state_row = mqtt[mqtt.index("void publish_state_retained("):]
+        self.assertLess(state_row.index('\\"presence\\":%s,'), state_row.index('\\"voxel\\":{'),
+                        "presence and the voxel ride the same state row")
 
     def test_the_comment_no_longer_says_minus_one_means_nobody_present(self):
         text = DASH.read_text(encoding="utf-8")
         self.assertNotIn('("-1,-1" when nobody is present)', text)
         self.assertIn("it stays put", text)
-        self.assertIn(CONFIDENCE, card()["content"])
+        self.assertIn(PRESENCE, card()["content"])
+        self.assertNotIn(CONFIDENCE, card()["content"], "one frame's score is not whether anyone is here")
 
 
 class TheCardRenders(unittest.TestCase):
-    def setUp(self):
-        try:
-            import jinja2  # noqa: F401  (Home Assistant's template engine)
-        except ImportError:
-            self.skipTest("jinja2 not installed")
-
     def test_nobody_seen_since_boot(self):
-        lines = render("-1,-1", "0")
+        lines = render("-1,-1", "off")
         self.assertEqual(lines[-1], "_Nobody seen since the device started._")
         self.assertNotIn("🟧", "".join(lines))
         self.assertNotIn("🔲", "".join(lines))
 
-    def test_someone_in_frame_marks_their_cell(self):
-        lines = render("2,0", "88")
+    def test_someone_present_marks_their_cell(self):
+        lines = render("2,0", "on", "88")
         self.assertEqual(cell(lines, 2, 0), "🟧")
         self.assertEqual(sum(line.count("🟧") for line in lines), 1)
-        self.assertFalse(any("No person" in line or "Nobody" in line for line in lines))
+        self.assertFalse(any("Nobody" in line for line in lines))
+
+    def test_present_on_a_frame_with_no_box_still_marks_their_cell(self):
+        # dwell_ended's row, a row in the lost timeout, a heartbeat on a frame
+        # that missed them: presence true, confidence 0. The confidence-gated
+        # card said nobody was there; the device says someone is.
+        lines = render("1,2", "on", "0")
+        self.assertEqual(cell(lines, 1, 2), "🟧")
+        self.assertFalse(any("Nobody" in line or "No person" in line for line in lines))
 
     def test_after_they_leave_the_card_says_so_and_keeps_the_cell(self):
-        # the presence_ended row: the settled cell stays, the frame is empty
-        lines = render("2,0", "0")
+        # the presence_ended row: the settled cell stays, presence is off
+        lines = render("2,0", "off")
         self.assertEqual(cell(lines, 2, 0), "🔲")
         self.assertNotIn("🟧", "".join(lines))
-        self.assertEqual(lines[-1], "_No person in frame. 🔲 is where they last settled._")
+        self.assertEqual(lines[-1], "_Nobody present. 🔲 is where they last settled._")
 
     def test_an_unavailable_sensor_reads_as_nobody_seen(self):
         lines = render("unavailable", "unavailable")
         self.assertEqual(lines[-1], "_Nobody seen since the device started._")
+
+    def test_an_unknown_presence_is_not_someone_present(self):
+        lines = render("2,0", "unknown", "91")
+        self.assertEqual(cell(lines, 2, 0), "🔲")
 
 
 if __name__ == "__main__":
