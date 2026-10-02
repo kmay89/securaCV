@@ -822,6 +822,33 @@ clean-loop-ring:
 run: run-loop-ring
 clean: clean-loop-ring
 
+# What the loop task publishes for other tasks to read whole (sweep F110):
+# the REAL loop_snapshot.h, which the mesh status routes read through. A
+# Value read is the last publish, whole, and the same bytes take no lock; a
+# Log read is one moment's records in storage order, and starts over when
+# the loop task changes the log between two of its copies (driven
+# deterministically by a lock that runs the loop task's step there), or ends
+# with one copy under one hold; with real threads (one writer, four
+# readers) no read is torn. `make tsan-loop-snapshot` runs it under
+# -fsanitize=thread (not part of `run`: it needs a sanitizer runtime).
+LOOP_SNAP_BIN = test_loop_snapshot
+LOOP_SNAP_SRC = test_loop_snapshot.cpp
+
+$(LOOP_SNAP_BIN): $(LOOP_SNAP_SRC) $(SRC_DIR)/loop_snapshot.h
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I $(SRC_DIR) -o $@ $(LOOP_SNAP_SRC)
+
+.PHONY: run-loop-snapshot clean-loop-snapshot tsan-loop-snapshot
+run-loop-snapshot: $(LOOP_SNAP_BIN)
+	$(call run_marked,$(LOOP_SNAP_BIN))
+tsan-loop-snapshot: $(LOOP_SNAP_SRC) $(SRC_DIR)/loop_snapshot.h
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_SNAP_BIN)_tsan $(LOOP_SNAP_SRC)
+	./$(LOOP_SNAP_BIN)_tsan
+clean-loop-snapshot:
+	rm -f $(LOOP_SNAP_BIN) $(LOOP_SNAP_BIN)_tsan
+
+run: run-loop-snapshot
+clean: clean-loop-snapshot
+
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,
 # CSI_TEST_HOST_BUILD), the REAL airtime_governor and the gate body the WAP
