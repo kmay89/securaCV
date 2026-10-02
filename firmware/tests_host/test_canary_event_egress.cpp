@@ -49,6 +49,17 @@
  * never held; a broker change before the card opens drops what it holds.
  * The rest pin the hold's own rules, each proven by a mutation of the fix.
  *
+ * Both proofs build this file, with this directory's Makefile and stubs,
+ * against an older egress source: for F104 the one from the commit that
+ * added this test ("test(canary): host-test the real canary event egress"),
+ * for F103 the one from the F104 fix. From the repo root, with <rev> that
+ * commit:
+ *   d=$(mktemp -d); git archive HEAD firmware | tar -x -C "$d"
+ *   git show <rev>:firmware/canary/src/csi_event_egress.cpp \
+ *     > "$d/firmware/canary/src/csi_event_egress.cpp"
+ *   make -C "$d/firmware/tests_host" build/test_canary_event_egress
+ *   "$d/firmware/tests_host/build/test_canary_event_egress"
+ *
  * What it does not pin: the real SD driver and storage manager, PubSubClient,
  * FreeRTOS scheduling (the commit hook runs on the committing task in the
  * firmware; here everything is one thread), and main.cpp itself
