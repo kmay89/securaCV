@@ -30,7 +30,8 @@
 //    wraps a line more).
 // The bird/bubble overlap on the canvases whose seats did not move is
 // printed, not held: on the AMOLED the centered bubble's tallest form
-// reaches into the bird's box (filed).
+// reaches into the bird's box (filed), and on the 172 px glass under
+// Heirloom the narrowed bubble's does by more (F160's cost, filed).
 //
 // This test holds the header. test_splash_scenes.cpp holds splash.cpp to it:
 // it compiles the real splash.cpp against fake_lvgl and reads where the bird

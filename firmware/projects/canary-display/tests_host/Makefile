@@ -321,7 +321,8 @@ clean: clean-mark-seat
 # What the onboarding scenes DRAW (F64, F65, F66, F84): the REAL
 # src/ui/onboard_ui.cpp, round_frame.cpp and canary_mark.cpp against
 # fake_lvgl/lvgl.h, driven through every scene the way provision.cpp drives
-# them, on every display env with both type ladders, QR or not. Every
+# them, on every display env with both type ladders, QR or not, and on the
+# panels main.cpp turns before provision_run() (F156, F157). Every
 # label reads whole (its text no wider than the label, in the font it
 # carries, measured with LVGL's own glyph data), nothing overlaps, and the
 # labels, the QR card and the bird's breath are clear of the halo's stroke,
@@ -450,7 +451,8 @@ clean: clean-io-cores
 # it move (the landscape nightlight's first meeting), and where the bird
 # moved the speech bubble hangs under it, its tallest form (the script's
 # lines wrapped the way LVGL 8.4 wraps a label, held to the heights a native
-# harness drew) on the canvas and clear of the bird. The test is C++17
+# harness drew) on the canvas and clear of the bird; the bubble is as wide
+# as bubble_w() gives each canvas (F160). The test is C++17
 # (story_scripts.h's inline variables); the header alone is held to gnu++11
 # first, since the core-2.0.17 sketch compiles it there. Hooked into `run`
 # and `clean` by prerequisite.
@@ -480,8 +482,9 @@ clean: clean-splash-layout
 # build's glass with both type ladders. The bird breathes down to exactly
 # the seat splash_layout.h names and hops under kHopReach, on the canvas;
 # the bubble sits where seat() says (hung under a moved bird, centered
-# otherwise) in whatever height its typed line wraps to, on the canvas and
-# clear of a moved bird; its tallest is test_splash_layout's measure. Three
+# otherwise) in whatever height its typed line wraps to, on the canvas, its
+# sides too (F160), and clear of a moved bird, with its tail on its top edge
+# at every refresh (F158); its tallest is test_splash_layout's measure. Three
 # builds, because the glass family is the config's call: the watch's (the
 # round watch), the nightstand's (every CD_FLAVOR_NIGHTSTAND canvas,
 # the nightlight's turned one included) and the dash's (the wide glass).
