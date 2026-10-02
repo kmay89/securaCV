@@ -686,9 +686,19 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
     cmd.set_mask |= bluetooth_channel::BT_SET_LONG_RANGE;
   }
 
+  // "enabled": true turns Bluetooth on the way POST /api/bluetooth/enable
+  // does (sweep F144): the stack comes up here, on this task, and the
+  // command turns it on. A command never brings the stack up.
+  if ((cmd.set_mask & bluetooth_channel::BT_SET_ENABLED) && settings.enabled && !bring_up()) {
+    return send_bt_error(req, "Bluetooth init failed");
+  }
+
   bluetooth_channel::Result r;
   const loop_command_ring::Wait w = bluetooth_channel::submit(cmd, &r);
   if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
+  if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_ENABLED) {
+    return send_bt_error(req, "Bluetooth init failed");
+  }
   if (r.ok) {
     return send_success(req, "Settings updated");
   }

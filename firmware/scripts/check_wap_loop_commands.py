@@ -207,6 +207,22 @@ M1. `open_client()` sets `cfg.network.timeout_ms = (int)kNetworkTimeoutMs;`
     `WATCHDOG_TIMEOUT_SEC` in milliseconds; the sketch static_asserts the
     same.
 
+Bluetooth settings, events and views (F144, F143, F138): rules of their own,
+in their own block below (`check_bluetooth_views`, `BV_MUTATIONS`).
+
+BV1. A settings POST that turns Bluetooth on does it the way
+     POST /api/bluetooth/enable does (F144). `handle_bluetooth_settings_set`
+     brings the stack up on its own task before it submits, when the POST
+     names `enabled: true`
+     (`if ((cmd.set_mask & bluetooth_channel::BT_SET_ENABLED) && settings.enabled
+     && !bring_up()) { return ...`), and answers a command refused for a stack
+     that is not up with the init error, right after the not-run guard
+     (`if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_ENABLED) { return
+     send_bt_error(req, ...`). In `bluetooth_channel.cpp`, `set_settings()`
+     reads `const bool was_enabled = g_settings.enabled;` before it assigns
+     `g_settings = settings;` and names no `is_enabled(`: the reader returns
+     the value just assigned, which is how both of its branches were dead.
+
 ## It proves it bites
 
 Each run applies mutations to the sources in memory and requires the check
@@ -1299,6 +1315,56 @@ def check_mqtt_timeout(ino: str, mqtt_h: str | None, mqtt: str, errors: list[str
                       "WATCHDOG_TIMEOUT_SEC * 1000u, ...) — the device build's own pin (F112)")
 
 
+# ── Bluetooth settings, events and views (F144, F143, F138) ──────────────
+
+SIG_BT_SETTINGS_SET = r"\besp_err_t\s+handle_bluetooth_settings_set\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)"
+SIG_BT_SET_SETTINGS = r"\bstatic\s+bool\s+set_settings\s*\([^)]*\)"
+# BV1: what the settings POST does before and after its submit when it turns
+# Bluetooth on (squashed text).
+BV1_BRING_UP = "if((cmd.set_mask&bluetooth_channel::BT_SET_ENABLED)&&settings.enabled&&!bring_up()){return"
+BV1_REFUSED = "if(r.refusal==bluetooth_channel::BT_REFUSED_NOT_ENABLED){returnsend_bt_error(req,"
+
+
+def check_bluetooth_settings_enable(api_src: str, cpp_src: str, errors: list[str]) -> None:
+    """Rule BV1 (F144)."""
+    code = blank_comments_and_strings(api_src)
+    body = body_of(code, SIG_BT_SETTINGS_SET, f"{BT_API}: handle_bluetooth_settings_set()", errors)
+    if body is not None:
+        s = squash(body)
+        at = s.find("bluetooth_channel::submit(")
+        guard = "if(w!=loop_command_ring::Wait::kDone)returnsend_not_run(req,w);"
+        after_guard = s.find(guard, at) + len(guard) if at >= 0 and s.find(guard, at) >= 0 else -1
+        if at < 0 or s.count(BV1_BRING_UP) != 1 or s.find(BV1_BRING_UP) > at:
+            errors.append(f"{BT_API}: handle_bluetooth_settings_set() must bring the stack up before it "
+                          f"submits when the POST turns Bluetooth on (`{BV1_BRING_UP} ...`): a command "
+                          "never runs init(), so the enable would be refused on a device whose stack "
+                          "is down (F144)")
+        if after_guard < 0 or not s[after_guard:].startswith(BV1_REFUSED):
+            errors.append(f"{BT_API}: handle_bluetooth_settings_set() must answer a refused enable with "
+                          f"`{BV1_REFUSED} ...` right after its not-run guard — nothing was applied, "
+                          "so \"Settings updated\" would be false (F144)")
+    cpp = blank_comments_and_strings(cpp_src)
+    setter = body_of(cpp, SIG_BT_SET_SETTINGS, f"{BT_CPP}: set_settings()", errors)
+    if setter is not None:
+        s = squash(setter)
+        read_at = s.find("constboolwas_enabled=g_settings.enabled;")
+        assign_at = s.find("g_settings=settings;")
+        if read_at < 0 or assign_at < 0 or read_at > assign_at or \
+                re.search(r"(?<![\w:.>])is_enabled\s*\(", setter):
+            errors.append(f"{BT_CPP}: set_settings() must read `const bool was_enabled = "
+                          "g_settings.enabled;` before `g_settings = settings;` and decide the on/off "
+                          "change from it, never from is_enabled() (which reads the value just "
+                          "assigned: both branches were dead) (F144)")
+
+
+def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
+    """Rules BV1..: the Bluetooth channel's settings enable (F144)."""
+    if BT_API not in files or BT_CPP not in files:
+        errors.append(f"{SKETCH}: the Bluetooth channel's sources ({BT_API}, {BT_CPP}) are missing")
+        return
+    check_bluetooth_settings_enable(files[BT_API], files[BT_CPP], errors)
+
+
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
     errors: list[str] = []
     files = dict(others)
@@ -1316,6 +1382,7 @@ def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str
     check_mqtt_sketch(ino, rest, errors)
     check_channels(ino, rest, errors)
     check_mqtt_timeout(ino, files.get(MQTT_H), mqtt, errors)
+    check_bluetooth_views(files, errors)
     return errors
 
 
@@ -1753,6 +1820,32 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the sketch drops its static_assert of the MQTT timeout budget",
      raw("ino", "static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&", "static_assert(true ||")),
 ]
+
+# Rules BV1..: the Bluetooth channel's settings enable (F144).
+BV_MUTATIONS: list[tuple[str, Mutation]] = [
+    ("the Bluetooth settings handler no longer brings the stack up for enabled:true",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+              r"if\s*\(\(cmd\.set_mask\s*&\s*bluetooth_channel::BT_SET_ENABLED\)\s*&&\s*settings\.enabled"
+              r"\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
+    ("the Bluetooth settings handler brings the stack up after the command ran",
+     lambda s: on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+                        r"(if\s*\(r\.ok\))", r"if (!bring_up()) { return send_bt_error(req, \"x\"); } \1")(
+         on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+                  r"if\s*\(\(cmd\.set_mask\s*&\s*bluetooth_channel::BT_SET_ENABLED\)\s*&&\s*settings\.enabled"
+                  r"\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")(s))),
+    ("the Bluetooth settings handler answers a refused enable as updated",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+              r"if\s*\(r\.refusal\s*==\s*bluetooth_channel::BT_REFUSED_NOT_ENABLED\)\s*\{[^}]*\}", "")),
+    ("set_settings() decides from the setting it just assigned (F144's dead branches)",
+     on_other(BT_CPP, SIG_BT_SET_SETTINGS, r"g_settings\.enabled\s*&&\s*!was_enabled",
+              "g_settings.enabled && !is_enabled()")),
+    ("set_settings() reads the old setting after the assignment",
+     lambda s: on_other(BT_CPP, SIG_BT_SET_SETTINGS, r"(g_settings\s*=\s*settings;)",
+                        r"\1 const bool was_enabled = g_settings.enabled;")(
+         on_other(BT_CPP, SIG_BT_SET_SETTINGS, r"const\s+bool\s+was_enabled\s*=\s*g_settings\.enabled;",
+                  "")(s))),
+]
+MUTATIONS += BV_MUTATIONS
 
 
 def self_test(srcs: dict, others: dict[str, str]) -> list[str]:

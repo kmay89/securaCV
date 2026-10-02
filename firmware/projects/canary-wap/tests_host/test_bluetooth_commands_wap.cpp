@@ -27,6 +27,11 @@
 // firmware/scripts/check_wap_loop_commands.py (ArduinoJson, which they build
 // their answers with, is not on the host).
 //
+// And POST /api/bluetooth/settings's "enabled" (sweep F144): set_settings()
+// decided the change after assigning the new settings, so both of its
+// branches were dead; it now turns Bluetooth off as a disable does and on as
+// an enable does (a command still never brings the stack up).
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs). The
 // NimBLE host task's own writes to this state (a connect, a passkey to
@@ -647,6 +652,114 @@ void test_advertise_and_pair_turn_bluetooth_on() {
   std::printf("PASS advertise_and_pair_turn_bluetooth_on\n");
 }
 
+// ── The settings' "enabled" (sweep F144) ────────────────────────────────
+
+// The saved value of a bool NVS key ("bt_enabled").
+bool nvs_bool(const char* key) {
+  const auto it = host_sim::main_nvs.find(key);
+  CHECK(it != host_sim::main_nvs.end() && it->second.size() == sizeof(bool));
+  bool v = false;
+  memcpy(&v, it->second.data(), sizeof v);
+  return v;
+}
+
+std::vector<std::string> call_names() {
+  std::vector<std::string> out;
+  for (const host_sim::Call& c : host_sim::calls) out.push_back(c.what + "@" + c.task);
+  return out;
+}
+
+// POST /api/bluetooth/settings {"enabled": false} turns Bluetooth off as
+// POST /api/bluetooth/disable does: advertising and a scan stop, a link is
+// dropped, the state reads disabled and the setting is saved, all on the
+// loop task. Before F144 set_settings() compared the new value with
+// is_enabled() after assigning it, so it stored false and left the radio
+// running until the next boot.
+void test_settings_enabled_false_turns_bluetooth_off() {
+  boot();
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok && bc::g_scanning);
+  CHECK(host_sim::advertising.isAdvertising());
+  host_sim::calls.clear();
+  bc::Command off = cmd_of(bc::BT_CMD_SETTINGS);
+  off.settings.enabled = false;
+  off.set_mask = bc::BT_SET_ENABLED;
+  Rest r = rest(off);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.refusal == bc::BT_REFUSED_NONE);
+  CHECK(r.calls_before_turn == 0);
+  CHECK(host_sim::count("adv_stop", "loop") == 1 && !host_sim::advertising.isAdvertising());
+  CHECK(host_sim::count("scan_stop", "loop") == 1 && !bc::g_scanning);
+  CHECK(!bc::g_settings.enabled && bc::g_state == bc::BT_DISABLED);
+  CHECK(!nvs_bool("bt_enabled"));
+  bc::update();                                             // a later pass starts nothing
+  CHECK(!host_sim::advertising.isAdvertising() && bc::g_state == bc::BT_DISABLED);
+  none_on_httpd();
+
+  // A phone connected: the same POST drops the link.
+  boot();
+  NimBLEConnInfo phone = link(11, 0xD1);
+  host_sim::server->peers = {11};
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  bc::update();                                             // the loop task's pass
+  CHECK(bc::g_connection.connected);
+  host_sim::calls.clear();
+  r = rest(off);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(host_sim::count("disconnect", "loop") == 1);
+  CHECK(!bc::g_settings.enabled && bc::g_state == bc::BT_DISABLED);
+  none_on_httpd();
+  std::printf("PASS settings_enabled_false_turns_bluetooth_off\n");
+}
+
+// {"enabled": true} turns Bluetooth on the way POST /api/bluetooth/enable
+// does: the same state, the same calls, the setting saved; with the stack
+// down it is refused like an enable and applies nothing, since a command
+// never brings the stack up (the handler's bring_up() does, first, as the
+// enable handler's does: check_wap_loop_commands.py rule C3).
+void test_settings_enabled_true_turns_bluetooth_on_as_enable_does() {
+  // POST /api/bluetooth/enable, for comparison.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_DISABLE)).r.ok && bc::g_state == bc::BT_DISABLED);
+  host_sim::calls.clear();
+  Rest r = rest(cmd_of(bc::BT_CMD_ENABLE));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  const bc::BluetoothState state_by_enable = bc::g_state;
+  const std::vector<std::string> calls_by_enable = call_names();
+  CHECK(state_by_enable == bc::BT_IDLE);
+
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_DISABLE)).r.ok && bc::g_state == bc::BT_DISABLED);
+  host_sim::calls.clear();
+  bc::Command on = cmd_of(bc::BT_CMD_SETTINGS);
+  on.settings.enabled = true;
+  on.set_mask = bc::BT_SET_ENABLED;
+  r = rest(on);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.refusal == bc::BT_REFUSED_NONE);
+  CHECK(r.state_before_turn == bc::BT_DISABLED && r.calls_before_turn == 0);
+  CHECK(bc::g_settings.enabled && bc::g_state == state_by_enable);
+  CHECK(call_names() == calls_by_enable);
+  CHECK(nvs_bool("bt_enabled"));
+  CHECK(host_sim::count("nimble_init") == 0);
+  r = rest(cmd_of(bc::BT_CMD_ADVERTISE_START));             // on, as after an enable
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && host_sim::advertising.isAdvertising());
+  none_on_httpd();
+
+  // The stack never came up: refused, and none of the POST's fields applied.
+  boot(/*bring_up=*/false);
+  bc::g_settings.enabled = false;
+  on.settings.allow_pairing = !bc::g_settings.allow_pairing;
+  on.set_mask = bc::BT_SET_ENABLED | bc::BT_SET_ALLOW_PAIRING;
+  const bc::BluetoothSettings before = bc::g_settings;
+  r = rest(on);
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == bc::BT_REFUSED_NOT_ENABLED);
+  CHECK(bc::g_settings.enabled == before.enabled && !bc::g_settings.enabled);
+  CHECK(bc::g_settings.allow_pairing == before.allow_pairing);
+  CHECK(bc::g_state == bc::BT_DISABLED);
+  CHECK(host_sim::count("nimble_init") == 0 && host_sim::count("nvs_write") == 0);
+  std::printf("PASS settings_enabled_true_turns_bluetooth_on_as_enable_does\n");
+}
+
 // ── The stack is init()'s, never a command's ────────────────────────────
 
 // The owner turns Bluetooth on before the bring-up worker has run: the
@@ -744,6 +857,9 @@ const Test kTests[] = {
     {"trust_and_block_take_the_owners_flag", test_trust_and_block_take_the_owners_flag},
     {"paired_clear_forgets_every_device", test_paired_clear_forgets_every_device},
     {"advertise_and_pair_turn_bluetooth_on", test_advertise_and_pair_turn_bluetooth_on},
+    {"settings_enabled_false_turns_bluetooth_off", test_settings_enabled_false_turns_bluetooth_off},
+    {"settings_enabled_true_turns_bluetooth_on_as_enable_does",
+     test_settings_enabled_true_turns_bluetooth_on_as_enable_does},
     {"no_command_brings_the_stack_up", test_no_command_brings_the_stack_up},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},

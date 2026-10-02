@@ -861,6 +861,8 @@ clean: clean-chirp-commands
 # calls are the loop task's; settings apply only the fields named; no
 # command brings the stack up (init() is the handler's or the worker's);
 # withdrawn, busy and post order through the real submit() and update().
+# And a settings POST's "enabled" turns Bluetooth off and on the way
+# POST /disable and /enable do (sweep F144).
 BT_CMD_BIN = test_bluetooth_commands_wap
 BT_CMD_SRC = test_bluetooth_commands_wap.cpp
 

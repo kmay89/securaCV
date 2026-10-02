@@ -1257,17 +1257,26 @@ BluetoothSettings get_settings() {
 }
 
 static bool set_settings(const BluetoothSettings& settings) {
+  // Whether Bluetooth was on, read before the assignment (sweep F144): the
+  // old test compared the new value with is_enabled() after it, which read
+  // the value just assigned, so neither branch ever ran and enabled:false
+  // left advertising, scans and links running until the next boot.
+  const bool was_enabled = g_settings.enabled;
   g_settings = settings;
   // The settings struct comes from a JSON POST — the API parser doesn't
   // range-check tx_power, so clamp here before it goes to NVS or the radio.
   g_settings.tx_power = clamp_tx_power(g_settings.tx_power);
-  save_settings();
 
-  // Apply changes
-  if (g_settings.enabled && !is_enabled()) {
-    enable();
-  } else if (!g_settings.enabled && is_enabled()) {
+  // Apply the change of state the way BT_CMD_ENABLE and BT_CMD_DISABLE do;
+  // each saves the settings. enable() never brings the stack up: a POST
+  // that turns Bluetooth on has the handler do that first (bring_up()), and
+  // run_command() refuses it while the stack is down.
+  if (g_settings.enabled && !was_enabled) {
+    if (!enable()) save_settings();
+  } else if (!g_settings.enabled && was_enabled) {
     disable();
+  } else {
+    save_settings();
   }
 
   // Update device name if changed
@@ -1477,6 +1486,13 @@ static Result run_command(const Command& cmd) {
       if (cmd.set_mask & BT_SET_INACTIVITY) s.inactivity_timeout_ms = in.inactivity_timeout_ms;
       if (cmd.set_mask & BT_SET_NOTIFY_ON_CONNECT) s.notify_on_connect = in.notify_on_connect;
       if (cmd.set_mask & BT_SET_LONG_RANGE) s.long_range_mode = in.long_range_mode;
+      // Turning Bluetooth on is an enable (sweep F144), and a command never
+      // brings the stack up: refused, with nothing applied, as BT_CMD_ENABLE
+      // is, while init() has not run.
+      if (s.enabled && !g_settings.enabled && !g_initialized) {
+        r.refusal = BT_REFUSED_NOT_ENABLED;
+        break;
+      }
       r.ok = set_settings(s);
       break;
     }

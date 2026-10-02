@@ -271,8 +271,9 @@ BluetoothSettings get_settings();
 // can turn it on), and waits for its Result.
 //
 // A command never brings the stack up (that is init()'s, off the loop
-// task): BT_CMD_ENABLE, and the auto-enable of ADVERTISE_START and
-// PAIR_START, fail with BT_REFUSED_NOT_ENABLED when init() has not run.
+// task): BT_CMD_ENABLE, the auto-enable of ADVERTISE_START and PAIR_START,
+// and a BT_CMD_SETTINGS that turns Bluetooth on (sweep F144) fail with
+// BT_REFUSED_NOT_ENABLED when init() has not run.
 //
 // The wait is bounded for a command the loop task has not started: after
 // timeout_ms it is withdrawn and never runs. kDone: it ran, and *result is
@@ -302,7 +303,8 @@ enum CommandType : uint8_t {
   BT_CMD_PAIRED_CLEAR,
   BT_CMD_PAIRED_TRUST,     // address, flag: trusted
   BT_CMD_PAIRED_BLOCK,     // address, flag: blocked
-  BT_CMD_SETTINGS,         // the fields set_mask names, from settings
+  BT_CMD_SETTINGS,         // the fields set_mask names, from settings; enabled
+                           // turns Bluetooth on or off as ENABLE / DISABLE do
   BT_CMD_NAME,             // name
   BT_CMD_POWER,            // power
 };
@@ -336,10 +338,12 @@ struct Command {
   BluetoothSettings settings;
 };
 
-// Why ADVERTISE_START or PAIR_START did not start.
+// Why ENABLE, ADVERTISE_START, PAIR_START or a SETTINGS that turns
+// Bluetooth on did not run.
 enum Refusal : uint8_t {
   BT_REFUSED_NONE = 0,     // it ran (ok says how it went)
-  BT_REFUSED_NOT_ENABLED,  // Bluetooth off and not brought up (init() has not run)
+  BT_REFUSED_NOT_ENABLED,  // Bluetooth off and not brought up (init() has not run);
+                           // a refused SETTINGS applied none of its fields
   BT_REFUSED_CONNECTED,    // ADVERTISE_START: a device is connected
 };
 
