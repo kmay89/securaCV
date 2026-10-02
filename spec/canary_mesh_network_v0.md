@@ -609,8 +609,8 @@ splits that member from the opera until F48 (§5.6, F95; host-tested).
 PlatformIO tree (F118, host-tested, not bench-verified): the session asks
 whether it can hold the partner — the same refusals its trusted-peer table
 and its address binding make: a deny-listed key, a new member for a full
-opera (8), an address another member is bound to, a broadcast or zero
-address, no room in the transport table — at this side's owner's confirm,
+opera (8), an address another member is bound to, a broadcast, group or
+zero address, no room in the transport table — at this side's owner's confirm,
 before any `PAIR_CONFIRM` goes out (both roles); on the initiator again
 before it seals the `opera_secret` into the `PAIR_COMPLETE`; on the joiner
 again before it opens one. A refusal ends the pairing: nothing is sent,
@@ -1322,9 +1322,12 @@ before it binds any:
   would be unheard again;
 - every other entry is bound as before.
 Entries are dropped only when the pubkey list was read: a failed read
-registers nobody, and every entry would look stale. Host-tested
-(`test_mesh_session`, the `scripts/tests` source pin on `main.cpp`'s
-restore); not bench-verified.
+registers nobody, and every entry would look stale. Which entries go is
+`mesh_session::stored_mac_must_drop(verdict, peers_loaded)` (true exactly for
+the two kinds above, and only when the list was read), and `main.cpp` drops
+what it says and nothing else. Host-tested (`test_mesh_session`, every
+verdict against both values of `peers_loaded`; the `scripts/tests` source pin
+holds `main.cpp`'s restore to its exact form); not bench-verified.
 
 **No address learning from opera frames (v0.3, F49 part 3 — withdrawn).**
 A trusted peer's radio MAC can change without a new identity (a module

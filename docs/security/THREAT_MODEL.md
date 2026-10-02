@@ -853,8 +853,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     address was unheard after every reboot. Nothing is dropped when the
     pubkey list could not be read.
   Pinned by host tests in `test_mesh_pairing` and `test_mesh_session`
-  that fail with each check removed, and the `main.cpp` source pin; the
-  canary build is CI's; not bench-verified.
+  that fail with each check removed (each of the partner gate's refusals,
+  each place it is asked, the boot restore's drop decision for every
+  verdict), and the `main.cpp` source pin, which holds its restore loop and
+  its refusal log to their exact form; the canary build is CI's; not
+  bench-verified.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused
