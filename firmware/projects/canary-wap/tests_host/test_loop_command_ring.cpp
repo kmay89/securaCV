@@ -19,6 +19,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -220,7 +221,13 @@ static void test_submit_withdraws_an_unstarted_command_at_the_timeout() {
   Res r = {99, 99};
   const lcr::Wait w = lcr::submit(
       ring, Cmd{5, 21}, &r, 2000, 5, [&] { return t.now; },
-      [&](uint32_t ms) { t.now += ms; ++t.sleeps; });   // the loop task never runs
+      [&](uint32_t ms) {                                 // the loop task never runs
+        t.now += ms;
+        if (++t.sleeps > 10000) {                        // a waiter that never stops
+          std::printf("  FAIL %s:%d: the waiter never gave up\n", __FILE__, __LINE__);
+          std::exit(1);
+        }
+      });
   CHECK(w == lcr::Wait::kWithdrawn);
   CHECK(t.now - start == 2000);                   // bounded by the timeout, not more
   CHECK(r.id == 99 && r.value == 99);             // no result was written
