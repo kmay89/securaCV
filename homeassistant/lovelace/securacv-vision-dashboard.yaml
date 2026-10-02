@@ -58,7 +58,9 @@ views:
       # unknown. While it is neither on nor off the card falls back to the
       # confidence sensor (the best person box's score; 🟧 while it is above
       # 0, which also reads 🔲 on a frame that missed someone), says so, and
-      # never claims nobody is present.
+      # never claims nobody is present. Nor does it while the voxel sensor
+      # itself has no value (the device offline, or no state row yet): it
+      # says the Vision has not reported.
       # The grid renders top row first, matching the camera's view.
       # -----------------------------------------------------------------------
       - type: markdown
@@ -76,7 +78,7 @@ views:
           {{ ('🟧' if present else '🔲') if (row == r and col == c) else '▫️' }}
           {%- endfor %}{{ '\n\n' }}
           {%- endfor %}
-          {% if r < 0 %}_Nobody seen since the device started._{% elif not known %}_Presence is unknown, so this follows the confidence: {{ 'someone in frame now' if present else 'no person in frame, and 🔲 is where they last settled' }}. If Presence stays unknown, update the Vision's firmware._{% elif not present %}_Nobody present. 🔲 is where they last settled._{% endif %}
+          {% if v in ['unknown', 'unavailable'] %}_The Vision has not reported a position (offline, or no state row yet)._{% elif r < 0 %}_Nobody seen since the device started._{% elif not known %}_Presence is unknown, so this follows the confidence: {{ 'someone in frame now' if present else 'no person in frame, and 🔲 is where they last settled' }}. If Presence stays unknown, update the Vision's firmware._{% elif not present %}_Nobody present. 🔲 is where they last settled._{% endif %}
 
       # -----------------------------------------------------------------------
       # Aim camera — boxes-only live view (never pixels). Flip the card's

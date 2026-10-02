@@ -139,9 +139,15 @@ class TheCardRenders(unittest.TestCase):
         self.assertNotIn("🟧", "".join(lines))
         self.assertEqual(lines[-1], "_Nobody present. 🔲 is where they last settled._")
 
-    def test_an_unavailable_sensor_reads_as_nobody_seen(self):
-        lines = render("unavailable", "unavailable")
-        self.assertEqual(lines[-1], "_Nobody seen since the device started._")
+    def test_a_device_that_has_not_reported_is_not_nobody_seen(self):
+        # offline (availability says so) or no state row yet: the card has
+        # nothing to say about who is there, so it does not say nobody
+        for state in ("unavailable", "unknown"):
+            with self.subTest(state=state):
+                lines = render(state, state)
+                self.assertEqual(lines[-1], "_The Vision has not reported a position (offline, or no state row yet)._")
+                self.assertNotIn("🟧", "".join(lines))
+                self.assertNotIn("🔲", "".join(lines))
 
     def test_off_is_off_whatever_the_confidence(self):
         lines = render("2,0", "off", "91")
