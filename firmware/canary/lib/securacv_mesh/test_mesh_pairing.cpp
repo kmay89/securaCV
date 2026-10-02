@@ -19,6 +19,10 @@
  *   6. Wire-format struct sizes match the static_asserts in the header
  *      (a runtime check duplicating the compile-time assert so a CI
  *      log surface flags this loudly if the header gets edited).
+ *   7. The owners confirm in either order (F97): the initiator keeps a
+ *      joiner's early CONFIRM and sends the COMPLETE alone, the joiner
+ *      takes the COMPLETE once its own owner confirmed, and a CONFIRM
+ *      counts only from the partner's address and once the code is shown.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
