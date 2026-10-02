@@ -46,7 +46,11 @@
  *   - not on the card (no card, append failed): the MQTT layer's
  *     publish-or-queue path, as before F37. That raises the watermark past
  *     any rows still waiting on the card: they stay on the card, but HA
- *     would now refuse them, so they are not sent.
+ *     would now refuse them, so they are not sent. So the hosts do not hand
+ *     the planner such a row while older rows may wait: both egresses hold
+ *     it in RAM while the card is not open but may hold older rows, for at
+ *     most kCardWaitMs (backlog F78 on the canary-wap, F104 on the canary),
+ *     and hand it over once nothing older waits.
  *
  * Backfill runs (pass()) only while the link is up; the Port's live publish
  * refuses while the MQTT offline queue still holds records, so queued
@@ -107,6 +111,16 @@ constexpr size_t   kFreshIds       = 8;
 constexpr uint8_t  kReadFailLimit  = 3;
 /* How much of the log's tail the host reads to find its last id. */
 constexpr size_t   kTailRead       = 1024;
+/* How long a host holds rows the card cannot take behind a card that is not
+ * open but may hold older rows (backlog F78, F104): from boot until the
+ * card's log first opens, and from a close while rows waited on it until it
+ * opens again. The planner does not hold rows (pending() is false while the
+ * card is closed); both hosts' egresses do, in RAM, and give up the card
+ * after this long. Both trees' storage managers re-probe a lost or absent
+ * card every 30 s and give the boot mount 4 s before a later pass adopts
+ * it, so 45 s covers one remount. A device with no card waits this long once
+ * per boot. */
+constexpr uint32_t kCardWaitMs     = 45000;
 
 static_assert(kReadChunk >= csi_event_log_line::kLineMax,
               "one read must hold a whole line");

@@ -6,7 +6,11 @@ pure `firmware/common/csi/src/csi_event_backfill.h`, and
 `firmware/tests_host/test_csi_event_backfill.cpp` replays whole outages
 against it. That test runs the planner inside a model world, and two of the
 properties it asserts are properties of the model, not of the planner
-(rules 1-3 below; the model also supplies three glue values, rules 4-6):
+(rules 1-3 below; the model also supplies three glue values, rules 4-6).
+`firmware/tests_host/test_canary_event_egress.cpp` (backlog F103, F104)
+compiles the egress itself, so its RAM hold and card wait are held by
+behavior; it still models `securacv_mqtt.cpp` and `main.cpp`, which this
+check holds. The two model properties:
 
 - the model's live publish refuses while the MQTT offline queue still holds
   records, and
@@ -38,12 +42,15 @@ and a deleted epoch bump or `not_owed()` call; rules 3-6 refuse those.
    through the buffering `mqtt_publish_event()`.
 3. In `csi_event_egress_pump()`, each dequeued row (`xQueueReceive(`)
    publishes its tamper bridge (`mqtt_publish_tamper(`, once in the pump)
-   BEFORE the planner commits it (`s_backfill.commit(`). Between the
-   dequeue and that publish there is no control flow (no `if`, `continue`,
-   `return`, ...) and nothing reads the backfill's state (`s_backfill`,
-   `s_replay_run`, `s_dest_epoch`, `s_port`, `csi_event_log::`) or the link
-   state (`link.connected`, `mqtt_connected(`); `s_backfill.pending(` is
-   not read anywhere before it. The `if` around the publish tests only
+   BEFORE it is routed (`route(`, whose body commits it to the planner
+   through one `s_backfill.commit(`, or holds it in RAM; the pump never
+   calls `s_backfill.commit(` itself). Between the dequeue and that publish
+   there is no control flow (no `if`, `continue`, `return`, ...) and
+   nothing reads the backfill's state (`s_backfill`, `s_replay_run`,
+   `s_dest_epoch`, `s_port`, `csi_event_log::`, the RAM hold `s_hold`, the
+   card wait `s_card_wait`, `s_not_owed_at_open`) or the link state
+   (`link.connected`, `mqtt_connected(`); `s_backfill.pending(` is not read
+   anywhere before it. The `if` around the publish tests only
    `link.accepting`, that the body built, and the boot-story filter — so an
    `if (false ...` decoy, or a gate on the backlog, is refused. So a tamper
    alert never waits on the card or the backlog, and it queues through an
@@ -74,7 +81,10 @@ cannot check for itself:
    `if` whose `||` condition holds `!link.accepting` and a comparison of
    `s_dest_epoch` with `mqtt_destination_epoch()` calls
    `s_backfill.not_owed(` and stores the new epoch. Without it a new broker
-   is sent the old one's backlog.
+   is sent the old one's backlog. The one other term it may hold is
+   `opened_unowed` (a change made before the card's log opened, applied
+   when it opens, backlog F104): any other term could drop the backlog
+   every pass.
 6. The epoch itself, in securacv_mqtt.cpp. `apply_pending_reload()` bumps
    `s_destination_epoch` under an `if` on the same flag that guards the
    offline queue's flush (`s_offline_q.clear(`), and
@@ -91,10 +101,12 @@ queue and drops them. So:
 7. The pump's prefix. Its link is `const` and comes from `current_link()`.
    The dequeue loop's header is exactly
    `for (int budget = kPumpBudget; budget > 0; --budget)`. Before that
-   loop, outside the card-poll `switch` and the epoch `if` (rule 5), no
-   statement reads the backfill's or the link's state (the rule-3 list),
-   and nothing leaves or loops (`return`, `continue`, `break`, `goto`,
-   `for`, `while`, `do`) but the opening `if (!s_queue) return;`.
+   loop, outside the card-poll `switch`, the card wait's expiry (an `if`
+   on `s_card_wait` and `kCardWaitMs` that neither leaves nor loops) and
+   the epoch `if` (rule 5), no statement reads the backfill's or the link's
+   state (the rule-3 list), and nothing leaves or loops (`return`,
+   `continue`, `break`, `goto`, `for`, `while`, `do`) but the opening
+   `if (!s_queue) return;`.
    `boot_story_bridged_elsewhere()` is one `return` of
    `strcmp(kind, "...") == 0` terms, naming exactly the three boot kinds
    the system.integrity story already narrates (`power_loss`, `watchdog`,
@@ -273,6 +285,7 @@ SIG_RELOAD = r"\bvoid\s+apply_pending_reload\s*\(\s*(?:void)?\s*\)"
 SIG_EPOCH = r"\buint32_t\s+mqtt_destination_epoch\s*\(\s*(?:void)?\s*\)"
 SIG_BOOT_STORY = r"\bbool\s+boot_story_bridged_elsewhere\s*\(\s*const\s+char\s*\*\s*kind\s*\)"
 SIG_RESTORE = r"\bvoid\s+restore_event_id_floor\s*\(\s*(?:void)?\s*\)"
+SIG_ROUTE = r"\bvoid\s+route\s*\([^)]*\)"
 
 # What the tamper bridge's `if` may test (each `&&` term, squashed).
 BRIDGE_TERMS = (
@@ -283,6 +296,7 @@ BRIDGE_TERMS = (
 # The backfill's and the link's state: none of it may stand between a
 # dequeued row and its tamper bridge.
 BACKLOG_STATE = ("s_backfill", "s_replay_run", "s_dest_epoch", "s_port", "csi_event_log::",
+                 "s_hold", "s_card_wait", "s_not_owed_at_open",
                  "link.connected", "mqtt_connected(")
 CONTROL_FLOW = r"\b(?:if|else|for|while|do|switch|return|continue|break|goto)\b"
 # The allocator's floor as NVS holds it, read atomically or plainly.
@@ -365,17 +379,21 @@ def check_pump_order(egress_src: str, errors: list[str]) -> None:
     where = f"{EGRESS_CPP}: csi_event_egress_pump()"
     deq = body.find("xQueueReceive(")
     tamper = body.find("mqtt_publish_tamper(", deq)
-    commit = body.find("s_backfill.commit(", deq)
+    routes = [m.start() for m in re.finditer(r"\broute\s*\(", body)]
+    commit = routes[0] if len(routes) == 1 and routes[0] > deq else -1
     if body.count("xQueueReceive(") != 1:
         errors.append(f"{where}: expected one row dequeue (xQueueReceive), "
                       f"found {body.count('xQueueReceive(')}")
         return
+    if "s_backfill.commit(" in body:
+        errors.append(f"{where}: the pump commits a row itself (s_backfill.commit) — every "
+                      "dequeued row goes through route(), after its tamper bridge")
     if tamper < 0 or commit < 0:
         errors.append(f"{where}: each dequeued row must publish its tamper bridge "
-                      "(mqtt_publish_tamper) and be committed (s_backfill.commit)")
+                      "(mqtt_publish_tamper) and then be routed, once (route)")
         return
     if tamper > commit:
-        errors.append(f"{where}: the tamper bridge must publish BEFORE the row is committed "
+        errors.append(f"{where}: the tamper bridge must publish BEFORE the row is routed "
                       "to the planner — a tamper alert never waits on the card or the backlog")
     bridge_args = call_args(body, "mqtt_publish_tamper(")
     if bridge_args is None or len(bridge_args) != 2 or bridge_args[1] != "false":
@@ -391,7 +409,19 @@ def check_pump_order(egress_src: str, errors: list[str]) -> None:
         if gate in between:
             errors.append(f"{where}: the tamper bridge must not be gated on `{gate}` — it "
                           "publishes (or queues through an outage) whatever the backfill is doing")
-    if "s_backfill.pending(" in body[:tamper]:
+    # The card poll may read it (a close while rows wait starts the card wait,
+    # backlog F104); rule 7 holds that switch to never leave the pump.
+    before = body[:tamper]
+    sw = re.search(r"\bswitch\s*\(\s*csi_event_log::poll\(", before)
+    if sw:
+        open_b = before.find("{", matching_paren(before, before.find("(", sw.start())))
+        depth = 0
+        for j in range(open_b, len(before)):
+            depth += {"{": 1, "}": -1}.get(before[j], 0)
+            if depth == 0:
+                before = before[:sw.start()] + before[j + 1:]
+                break
+    if "s_backfill.pending(" in before:
         errors.append(f"{where}: s_backfill.pending() is read before the tamper bridge — "
                       "the bridge must not depend on the backlog")
     # Nothing between the dequeue statement and the bridge's `if` may branch
@@ -418,6 +448,10 @@ def check_pump_order(egress_src: str, errors: list[str]) -> None:
     if passes < 0:
         errors.append(f"{where}: the backfill pass (s_backfill.pass) must run after the rows "
                       "are committed")
+    span = the_body(code, SIG_ROUTE, f"{EGRESS_CPP}: route()", errors)
+    if span is not None and code[span[0]:span[1]].count("s_backfill.commit(") != 1:
+        errors.append(f"{EGRESS_CPP}: route() must commit the row to the planner through one "
+                      "s_backfill.commit() (or hold it in RAM)")
 
 
 def check_floor_glue(egress_src: str, errors: list[str]) -> None:
@@ -502,11 +536,17 @@ def check_epoch_glue(egress_src: str, errors: list[str]) -> None:
     epochs = ["mqtt_destination_epoch()"] + [
         m.group(1) for m in re.finditer(r"\b(\w+)\s*=\s*mqtt_destination_epoch\s*\(\s*\)", body)]
     terms = [unwrap(t) for t in top_level_terms(unwrap(guard[1]), "||")]
-    compares = any(t in (f"{e}!=s_dest_epoch", f"s_dest_epoch!={e}") for t in terms for e in epochs)
-    if "!link.accepting" not in terms or not compares:
+    is_compare = [any(t in (f"{e}!=s_dest_epoch", f"s_dest_epoch!={e}") for e in epochs)
+                  for t in terms]
+    if "!link.accepting" not in terms or not any(is_compare):
         errors.append(f"{where}: s_backfill.not_owed() must run when no broker is configured "
                       "(!link.accepting) OR the destination epoch moved (s_dest_epoch != "
                       "mqtt_destination_epoch()), as one `||` condition")
+    for t, cmp in zip(terms, is_compare):
+        if not cmp and t not in ("!link.accepting", "opened_unowed"):
+            errors.append(f"{where}: s_backfill.not_owed() also runs on `{t}` — beyond no broker "
+                          "and a changed one, only a change seen before the card's log opened "
+                          "(opened_unowed) may drop the backlog")
     if not re.search(r"\bs_dest_epoch\s*=(?!=)", body[guard[2]:guard[3]]):
         errors.append(f"{where}: the not_owed() branch must store the new epoch in s_dest_epoch, "
                       "or it drops the backlog on every pass after a broker change")
@@ -596,6 +636,21 @@ def check_pump_prefix(egress_src: str, errors: list[str]) -> None:
     epoch_if = enclosing_if(body, call) if 0 <= call < loop.start() else None
     if epoch_if:
         blank(epoch_if[0], epoch_if[3])
+    # The card wait's expiry (backlog F104): an `if` on s_card_wait and
+    # kCardWaitMs, which may only end the wait and log, never leave or loop.
+    for m in re.finditer(r"\bif\s*\(", body[:loop.start()]):
+        close = matching_paren(body, m.end() - 1)
+        cond = squash(body[m.end():close]) if close > 0 else ""
+        if not cond.startswith("s_card_wait&&") or "kCardWaitMs" not in cond:
+            continue
+        expiry = enclosing_if(body, m.end())
+        if expiry is None or expiry[3] > loop.start():
+            continue
+        flow = re.search(PREFIX_FLOW, body[expiry[2]:expiry[3]])
+        if flow:
+            errors.append(f"{where}: `{flow.group(0)}` in the card wait's expiry — it may only "
+                          "end the wait, never hold the rows back")
+        blank(expiry[0], expiry[3])
     rest = "".join(prefix)
     for gate in BACKLOG_STATE:
         if gate in rest:
@@ -686,10 +741,17 @@ MUTATIONS: list[tuple[str, Mutation]] = [
                                 "if (link.connected &&", need="xQueueReceive("))),
     ("row committed before its tamper bridge",
      lambda m, e: (m, mutate_in(
-         mutate_in(e, SIG_PUMP, r"\n[ \t]*\(void\)\s*s_backfill\.commit\([^;]*\);", "",
+         mutate_in(e, SIG_PUMP, r"\n[ \t]*route\(to_record\(ev\),\s*link\);", "",
                    need="xQueueReceive("),
          SIG_PUMP, r"(xQueueReceive\([^;]*;)",
-         r"\1 (void)s_backfill.commit(to_record(ev), link, s_port);", need="xQueueReceive("))),
+         r"\1 route(to_record(ev), link);", need="xQueueReceive("))),
+    ("the pump commits a row directly, ahead of its bridge",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(xQueueReceive\([^;]*;)",
+                                r"\1 (void)s_backfill.commit(to_record(ev), link, s_port);",
+                                need="xQueueReceive("))),
+    ("route() never commits a row",
+     lambda m, e: (m, mutate_in(e, SIG_ROUTE, r"\(void\)\s*s_backfill\.commit\(([^;]*)\);",
+                                r"s_hold.push(\1);"))),
     ("backfill pass before the rows",
      lambda m, e: (m, mutate_in(
          mutate_in(e, SIG_PUMP, r"s_backfill\.pass\(", "s_backfill.stats(",
@@ -705,7 +767,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      lambda m, e: (m, mutate_in(
          e, SIG_PUMP,
          r"(if\s*\(\s*link\.accepting\s*&&.*?mqtt_publish_tamper\([^;]*;\s*\})"
-         r"(.*?\(void\)\s*s_backfill\.commit\([^;]*;)",
+         r"(.*?route\([^;]*;)",
          r"if (false) mqtt_publish_tamper(tb, false);\2 \1", need="xQueueReceive("))),
     ("a dequeued row can skip its tamper bridge",
      lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(char\s+tb\[128\]\s*;)",
@@ -744,6 +806,15 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("a broker change keeps the old backlog",
      lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\n[ \t]*s_backfill\.not_owed\([^;]*;", "",
                                 need="xQueueReceive("))),
+    ("the backlog is dropped on every pass",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\|\|\s*opened_unowed\s*\)", "|| true)",
+                                need="xQueueReceive("))),
+    ("the tamper bridge waits for the card",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"if\s*\(\s*link\.accepting\s*&&",
+                                "if (link.accepting && !s_card_wait &&", need="xQueueReceive("))),
+    ("the card wait's expiry holds the rows back",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(kCardWaitMs\)\s*\{)",
+                                r"\1 if (s_hold.count > 0) return;", need="xQueueReceive("))),
     ("the destination epoch is never compared",
      lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\s*\|\|\s*epoch\s*!=\s*s_dest_epoch", "",
                                 need="xQueueReceive("))),

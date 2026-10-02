@@ -35,6 +35,20 @@
  * `"replay":true`. The tamper-topic bridge publishes at commit either way,
  * so a backlog never delays a tamper alert.
  *
+ * A card that is not open may still hold older rows (backlog F104): from
+ * boot until its log first opens, and after it closes with rows waiting
+ * (an SD error's lost mark, remounted by the storage manager's 30 s
+ * recheck). Rows committed then wait in a RAM hold (8 rows, the oldest
+ * dropped first) instead of overtaking the card's: they go once the card is
+ * back and its backlog sent, in id order with it, or after
+ * csi_event_backfill::kCardWaitMs (45 s, the canary-wap's wait), when the
+ * card is given up and its rows, if it returns later, are not sent. An
+ * ambient row that would wait is dropped. A row in the hold writes no NVS
+ * delivery ceiling until it goes, and with a card open it waits for the
+ * link (the ceiling it would write could cover the card rows after it).
+ * Rows in the hold do not survive a reboot. Host-tested on the real source
+ * by firmware/tests_host/test_canary_event_egress.cpp.
+ *
  * Event-id continuity: csi_event_on_id_advance writes the allocator's
  * floor to NVS (common/csi/src/csi_event_id_floor.h: before the first id
  * of each boot and every 10 ids after) and begin() restores it, so ids

@@ -1,6 +1,6 @@
 /* test_canary_event_egress.cpp — the canary's committed-event egress
  * (canary/src/csi_event_egress.cpp): what reaches Home Assistant, in what
- * order, across outages, card faults and reboots (backlog F37).
+ * order, across outages, card faults and reboots (backlog F37, F104).
  *
  * Compiles the REAL canary/src/csi_event_egress.cpp, the REAL
  * canary/src/csi_event_log.cpp (the SD event log adapter) over a RAM card
@@ -32,6 +32,15 @@
  * Every hand-over (a live send, a backfill send, a buffered record) is
  * checked against the NVS delivery ceiling: it must already be above the id
  * (F47), so a reboot never republishes one. main() fails on any violation.
+ *
+ * F104, failing on the egress before its fix (prove it by building this
+ * file against the canary/src/csi_event_egress.cpp it replaced): a card
+ * closed mid-backlog, a row committed while it is out, the card back:
+ * nothing is skipped; a card that mounts late: a row committed first waits
+ * for its rows; the wait is bounded (csi_event_backfill::kCardWaitMs); a
+ * held row writes no ceiling over the card rows after it; ambient rows are
+ * never held; a broker change before the card opens drops what it holds.
+ * The rest pin the hold's own rules, each proven by a mutation of the fix.
  *
  * What it does not pin: the real SD driver and storage manager, PubSubClient,
  * FreeRTOS scheduling (the commit hook runs on the committing task in the
@@ -308,9 +317,9 @@ static void fresh_device(bool card = true) {
 static void connect() { W.connected = true; }
 
 /* The card leaves (a pull, an SD error's lost mark, a remount in flight). */
-[[maybe_unused]] static void card_out() { W.mounted = false; }
+static void card_out() { W.mounted = false; }
 /* The storage manager's periodic check mounts it again: a new generation. */
-[[maybe_unused]] static void card_back() {
+static void card_back() {
   SD.present = true;
   W.mounted = true;
   W.write_errors = 0;
@@ -395,6 +404,160 @@ static void test_no_card_outage_uses_the_offline_queue() {
   CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(), "and they arrive, in order");
 }
 
+/* ── F104: a card that is not open holds new rows, for a bounded time ──── */
+
+static void test_card_closed_mid_backlog_holds_new_rows() {
+  std::printf("-- F104: the card closes mid-backlog, a row commits, the card comes back: nothing skipped\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 10; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  connect();
+  for (int i = 0; i < 2; ++i) loop_pass();   /* the walk starts */
+  CHECK(W.ha.accepted.size() < 10, "rows still wait on the card");
+  card_out();                                 /* an SD error's lost mark, or a pull */
+  loop_pass();
+  ids.push_back(emit_ping());
+  drain(4);
+  CHECK(W.ha.accepted.size() < 10, "the new row waits while the card may come back");
+  card_back();                                /* the storage manager remounts it */
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "every card row, then the row committed while it was out, each once");
+}
+
+static void test_late_card_mount_holds_new_rows() {
+  std::printf("-- F104: a reboot with rows on a card that mounts late: a row committed first waits\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 5; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  W.mounted = false;                          /* power cycle; the boot mount is still running */
+  boot();
+  connect();
+  loop_pass();
+  ids.push_back(emit_ping());
+  drain(4);
+  CHECK(W.ha.accepted.empty(), "the row waits in RAM for the card");
+  card_back();                                /* the mount worker's result is adopted */
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the card's rows, then the row, each once");
+  ids.push_back(emit_ping());
+  loop_pass();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the hold is empty: the next row goes live in its own pass, nothing sent twice");
+}
+
+static void test_card_wait_is_bounded() {
+  std::printf("-- F104: a card that never opens: rows wait kCardWaitMs, then go\n");
+  fresh_device(/*card=*/false);               /* a canary with no card at all */
+  connect();
+  loop_pass();
+  const uint32_t a = emit_ping();
+  drain(4);
+  CHECK(W.ha.accepted.empty(), "a row committed just after boot waits for a card that may mount");
+  drain();
+  CHECK(exactly(W.ha.accepted, {a}), "and goes once the wait is over");
+  const uint32_t b = emit_ping();
+  loop_pass();
+  CHECK(exactly(W.ha.accepted, {a, b}), "after that, rows go live at once");
+  /* a card closed mid-backlog that stays out */
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 10; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  connect();
+  for (int i = 0; i < 2; ++i) loop_pass();
+  card_out();
+  loop_pass();
+  const uint32_t r = emit_ping();
+  drain(4);
+  CHECK(!has(W.ha.accepted, r), "the row waits while the card may come back");
+  drain();
+  CHECK(has(W.ha.accepted, r) && W.ha.refused.empty(),
+        "past kCardWaitMs it goes; the rows still on the card are given up");
+}
+
+static void test_rows_held_for_a_card_ride_the_queue_once_it_is_given_up() {
+  std::printf("-- F104: no card and no link: rows held for the card go to the offline queue after the wait\n");
+  fresh_device(/*card=*/false);
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  drain();                                    /* the wait ends with the link still down */
+  for (int i = 0; i < 2; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  CHECK(g_offline.size() == 5, "all five in the MQTT layer's offline queue, in order");
+  connect();
+  drain(20);
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(), "and they arrive, in order");
+}
+
+static void test_held_row_goes_before_a_newer_card_row() {
+  std::printf("-- F104: a row held for a late card goes before a row committed once it opens\n");
+  fresh_device();
+  W.mounted = false;
+  boot();
+  connect();
+  loop_pass();
+  const uint32_t r = emit_ping();
+  drain(4);
+  card_back();                                /* an empty log: nothing older on it */
+  const uint32_t g = emit_ping();             /* committed in the pass the card opens */
+  drain();
+  CHECK(exactly(W.ha.accepted, {r, g}) && W.ha.refused.empty(), "the held row first, then the card row");
+}
+
+static void test_ambient_rows_are_not_held() {
+  std::printf("-- F104: ambient rows are never held, so they never evict a real row from the hold\n");
+  fresh_device(/*card=*/false);
+  connect();
+  loop_pass();
+  const uint32_t real = emit_ping(); loop_pass();
+  int ambient = 0;
+  for (int i = 0; i < 9; ++i) {
+    if (emit_ambient()) ambient++;
+    loop_pass();
+  }
+  CHECK(ambient == 9, "nine ambient rows committed during the card wait");
+  drain();
+  CHECK(exactly(W.ha.accepted, {real}), "the real row arrives; no ambient row was held");
+  const uint32_t live = emit_ambient();
+  loop_pass();
+  CHECK(live != 0 && !W.ha.accepted.empty() && W.ha.accepted.back() == live, "after the wait an ambient row goes live");
+}
+
+static void test_broker_change_before_the_card_opens() {
+  std::printf("-- F104: the broker changes before a late card opens: its rows are not the new broker's\n");
+  fresh_device();
+  for (int i = 0; i < 4; ++i) { (void)emit_ping(); loop_pass(); }   /* owed to broker A */
+  W.mounted = false;
+  boot();
+  loop_pass();
+  W.epoch++;                                  /* reprovisioned to broker B */
+  loop_pass();
+  card_back();
+  loop_pass();
+  connect();
+  const uint32_t b = emit_ping();
+  drain();
+  CHECK(exactly(W.ha.accepted, {b}), "only the row committed for broker B goes to it");
+}
+
+static void test_held_rows_cover_no_card_rows_after_them() {
+  std::printf("-- F104: rows held for a late card, the link down: the card rows after them stay owed\n");
+  fresh_device();
+  W.mounted = false;                          /* a card in, its boot mount still running */
+  boot();
+  loop_pass();
+  (void)emit_ping(); loop_pass();             /* held: the card may hold older rows */
+  card_back();                                /* an empty log: nothing older on it after all */
+  loop_pass();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  boot();                                     /* power cycle before the broker returns */
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the held row wrote no ceiling over the three card rows committed after it");
+}
+
 /* ── main ──────────────────────────────────────────────────────────────── */
 
 int main() {
@@ -407,6 +570,14 @@ int main() {
   test_outage_with_a_card_backfills_in_order();
   test_reboot_in_an_outage_keeps_the_backlog_owed();
   test_no_card_outage_uses_the_offline_queue();
+  test_card_closed_mid_backlog_holds_new_rows();
+  test_late_card_mount_holds_new_rows();
+  test_card_wait_is_bounded();
+  test_rows_held_for_a_card_ride_the_queue_once_it_is_given_up();
+  test_held_row_goes_before_a_newer_card_row();
+  test_held_rows_cover_no_card_rows_after_them();
+  test_ambient_rows_are_not_held();
+  test_broker_change_before_the_card_opens();
 
   CHECK(g_ceiling_violations_total == 0,
         "in every scenario, each id was under the NVS ceiling before it was handed over (F47)");

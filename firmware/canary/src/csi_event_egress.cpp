@@ -17,6 +17,7 @@
 #if FEATURE_HA_MQTT
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "csi_event_backfill.h"
@@ -123,6 +124,99 @@ uint32_t                    s_dest_epoch = 0;
 char                        s_owner_fp[17] = "";
 uint32_t                    s_replay_run = 0;  // rows replayed in the current backlog
 
+/* ── Rows that wait in RAM (backlog F104) ─────────────────────────────────
+ * The card keeps every row the pump drains, so a row waits on the card
+ * behind older ones and the backfill sends it in turn. A row committed while
+ * no card log is open has nowhere to wait but RAM, and it must wait when the
+ * card may hold older rows: from boot until the log first opens (a boot
+ * mount that outlives its 4 s budget is adopted by a later periodic check),
+ * and from a close while rows waited on it (an SD error's lost mark, which
+ * the 30 s recheck remounts) until it opens again. Handed to the MQTT layer
+ * then, it would go live (or drain from the offline queue) ahead of those
+ * rows: Home Assistant's mark would pass them, the watermark too, and the
+ * card's rows would never be sent.
+ *
+ * Such a row waits in s_hold (kHeldMax, the oldest dropped first, counted)
+ * and goes through the planner once nothing older waits, in id order with
+ * the card's rows (EgressPort::send_held_below). Its NVS delivery ceiling is
+ * written then, by the planner, never while it waits. The wait for the card
+ * is bounded (csi_event_backfill::kCardWaitMs, the canary-wap's): past it the
+ * held rows go, and rows still on a card that comes back later are below the
+ * watermark (HA would refuse them). An ambient row is never held (csi_event.h:
+ * "never persisted, drives live UI only"): one that cannot go at once is
+ * dropped, so a burst of them never evicts a real event. Held rows
+ * do not survive a reboot, as the offline queue's do not. The canary-wap's
+ * egress keeps the same hold (its csi_event_egress.cpp); the one difference
+ * is the canary's offline queue, which takes a held row once nothing older
+ * waits and no card is open, while the link is down. Loop task only. */
+constexpr size_t kHeldMax = 8;   // the canary-wap's
+
+struct Held {
+  csi_event_record_t rec;
+  bool               fresh;  // committed while the link was up: not a replay
+};
+
+struct Hold {
+  Held*    slots = nullptr;    // kHeldMax of them, allocated by begin()
+  size_t   head = 0;
+  size_t   count = 0;
+  uint32_t dropped = 0;          // the oldest, dropped to make room (or no hold)
+  uint32_t dropped_said = 0;     // what the log last reported
+
+  const Held& front() const { return slots[head]; }
+  void pop() {
+    head = (head + 1) % kHeldMax;
+    --count;
+  }
+  /* Rows arrive in id order (the commit lock orders the egress queue), so
+   * the hold stays in id order. */
+  void push(const csi_event_record_t& rec, bool fresh) {
+    if (rec.category == CSI_CATEGORY_AMBIENT) return;
+    if (!slots) {  // no memory for a hold: the row is lost, counted
+      ++dropped;
+      return;
+    }
+    if (count == kHeldMax) {
+      pop();
+      ++dropped;
+    }
+    Held& h = slots[(head + count) % kHeldMax];
+    h.rec = rec;
+    h.fresh = fresh;
+    ++count;
+  }
+  void clear() {
+    head = 0;
+    count = 0;
+  }
+};
+Hold     s_hold;
+/* A card that may hold rows older than the ones committed now is not open
+ * (see above). Set by begin() on a build with a card slot, by a close while
+ * rows wait; cleared when the log opens, after kCardWaitMs, and when nothing
+ * is owed. */
+bool     s_card_wait = false;
+uint32_t s_card_wait_since = 0;
+/* The broker changed (or none is configured) before the card's log opened:
+ * not_owed() can only credit rows it has seen, so it runs again at open. */
+bool     s_not_owed_at_open = false;
+
+/* The hold may not hand a row over now: rows older than it wait on the card,
+ * or on a card that is not open now, or the link is down while a card is
+ * open. In that last case the rows after it land on the card, and the
+ * planner's hand-over would write a ceiling up to kStride ids past it, so a
+ * reboot before the broker returns would read them as delivered. With no
+ * card open the MQTT layer's offline queue takes it, as before F37. */
+bool hold_blocked(const csi_event_backfill::Link& link) {
+  return s_backfill.pending() || s_card_wait || (!link.connected && s_backfill.card_ok());
+}
+
+/* A row that is not on the card must wait now: behind the rows already in
+ * the hold, or for what holds them. */
+bool must_wait(const csi_event_backfill::Link& link) {
+  return s_hold.count > 0 || hold_blocked(link);
+}
+
 size_t build_body(char* body, size_t cap, const csi_event_record_t& rec,
                   uint16_t bundled, bool replay) {
   const csi_event_wire::Signer signer = {
@@ -138,7 +232,16 @@ size_t build_body(char* body, size_t cap, const csi_event_record_t& rec,
 
 class EgressPort : public csi_event_backfill::Port {
  public:
+  /* flush_held() is handing a row from the hold to the planner. */
+  bool flushing = false;
+  bool flush_fresh = false;
+  bool flush_unbuildable = false;  // that row's body did not build
+
   csi_event_backfill::AppendResult card_append(const char* line, size_t len) override {
+    /* A row from the hold never goes on the card late: the log is written
+     * in id order, and rows after it may be there already. Refused here,
+     * so the planner takes its not-on-card route. */
+    if (flushing) return csi_event_backfill::AppendResult{false, s_backfill.log_size(), 0};
     return csi_event_log::append(line, len);
   }
   size_t card_read(uint32_t off, char* buf, size_t cap) override {
@@ -147,8 +250,11 @@ class EgressPort : public csi_event_backfill::Port {
   /* A row committed just now: F29's live body, not a replay. Its count is
    * the row's own (a closed bundle's roll-ins; 1 for a direct row, which
    * csi_event_wire::bundled_on_wire() makes of a 0), the same count the
-   * card line and its replay carry (sweep F81 made canary rows bundles). */
+   * card line and its replay carry (sweep F81 made canary rows bundles).
+   * Rows waiting in the hold are older: they go first, from send_backfill()
+   * once the walk reaches this row. */
   csi_event_backfill::Sent send_live(const csi_event_record_t& rec) override {
+    if (s_hold.count > 0) return csi_event_backfill::Sent::kNotNow;
     const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count, /*replay=*/false);
     if (n == 0) return csi_event_backfill::Sent::kNever;
     return mqtt_publish_event_live(m_body) ? csi_event_backfill::Sent::kYes
@@ -156,8 +262,9 @@ class EgressPort : public csi_event_backfill::Port {
   }
   /* A row from the card: the canary-wap's backfill body (the logged bundle
    * count, the committed time), a replay unless it was committed while the
-   * link was up. */
+   * link was up. Rows waiting in the hold below it go first. */
   csi_event_backfill::Sent send_backfill(const csi_event_record_t& rec, bool fresh) override {
+    if (!send_held_below(rec.event_id)) return csi_event_backfill::Sent::kNotNow;
     const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count, !fresh);
     if (n == 0) return csi_event_backfill::Sent::kNever;
     return mqtt_publish_event_live(m_body) ? csi_event_backfill::Sent::kYes
@@ -165,8 +272,15 @@ class EgressPort : public csi_event_backfill::Port {
   }
   /* Not on the card: F29's path — live, or into the MQTT layer's offline
    * queue with `"replay":true` when built while the link is down. The
-   * row's own count, as send_live(). */
+   * row's own count, as send_live(). A row from the hold is a replay unless
+   * it was committed while the link was up and goes out live. */
   bool hand_to_queue(const csi_event_record_t& rec, bool deferred) override {
+    if (flushing) {
+      const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count,
+                                  deferred || !flush_fresh);
+      flush_unbuildable = (n == 0);
+      return n > 0 && mqtt_publish_event(m_body);
+    }
     const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count, deferred);
     return n > 0 && mqtt_publish_event(m_body);
   }
@@ -179,6 +293,20 @@ class EgressPort : public csi_event_backfill::Port {
   }
 
  private:
+  /* Rows in the hold older than `id` go first, live (the planner wrote the
+   * ceiling for `id` before this send, and every held id is below it, so NVS
+   * already covers them). False = one could not go now: it stays, and so
+   * does the card row. A held row whose body never builds is dropped. */
+  bool send_held_below(uint32_t id) {
+    while (s_hold.count > 0 && s_hold.front().rec.event_id < id) {
+      const Held& h = s_hold.front();
+      const size_t n = build_body(m_body, sizeof(m_body), h.rec, h.rec.bundled_count, !h.fresh);
+      if (n > 0 && !mqtt_publish_event_live(m_body)) return false;
+      s_hold.pop();
+    }
+    return true;
+  }
+
   char m_body[768];  // static storage via the static port below, not the loop stack
 };
 EgressPort s_port;
@@ -209,6 +337,36 @@ csi_event_record_t to_record(const CommittedEvent& ev) {
   memcpy(rec.module_id, ev.module_id, sizeof(rec.module_id));
   memcpy(rec.type_name, ev.type_name, sizeof(rec.type_name));
   return rec;
+}
+
+/* One dequeued row. With the card's log open the planner logs it, then
+ * sends it live or holds it on the card behind the backlog. With no log
+ * open it waits in the hold while anything older waits (backlog F104), and
+ * otherwise takes the planner's not-on-card route: the MQTT layer's
+ * publish-or-queue path, its ceiling written first. */
+void route(const csi_event_record_t& rec, const csi_event_backfill::Link& link) {
+  if (!s_backfill.card_ok() && link.accepting && must_wait(link)) {
+    s_hold.push(rec, /*fresh=*/link.connected);
+    return;
+  }
+  (void)s_backfill.commit(rec, link, s_port);
+}
+
+/* Rows in the hold, once nothing older waits (and, with a card open, the
+ * link is up): through the planner, so each is under the NVS ceiling before
+ * it is handed over and the watermark follows it. A row the MQTT layer
+ * refuses stays for the next pass; one whose body never builds is dropped. */
+void flush_held(const csi_event_backfill::Link& link) {
+  while (s_hold.count > 0 && link.accepting && !hold_blocked(link)) {
+    const Held h = s_hold.front();
+    s_port.flushing = true;
+    s_port.flush_fresh = h.fresh;
+    s_port.flush_unbuildable = false;
+    const csi_event_backfill::Route r = s_backfill.commit(h.rec, link, s_port);
+    s_port.flushing = false;
+    if (r != csi_event_backfill::Route::kQueued && !s_port.flush_unbuildable) break;
+    s_hold.pop();
+  }
 }
 #endif  // FEATURE_HA_MQTT
 
@@ -284,6 +442,24 @@ extern "C" void csi_event_egress_begin(void) {
   }
   s_backfill.begin(ceiling, __atomic_load_n(&s_id_floor_stored, __ATOMIC_RELAXED), s_port);
   s_dest_epoch = mqtt_destination_epoch();
+
+  /* The hold for rows that must wait in RAM (backlog F104): PSRAM first,
+   * heap otherwise, as the MQTT layer's offline queue. Without it a row
+   * that must wait is dropped, counted. */
+  if (!s_hold.slots) {
+    void* mem = psramFound() ? ps_malloc(kHeldMax * sizeof(Held)) : nullptr;
+    if (!mem) mem = malloc(kHeldMax * sizeof(Held));
+    s_hold.slots = static_cast<Held*>(mem);
+    if (!s_hold.slots) {
+      Serial.println("[WARN] CSI event egress hold unavailable - rows that must wait are dropped");
+    }
+  }
+#if FEATURE_SD_STORAGE
+  /* Until the card's log first opens this boot, rows wait for it: it may
+   * hold older ones, and the boot mount can be adopted after setup(). */
+  s_card_wait = true;
+  s_card_wait_since = millis();
+#endif
 #endif
 }
 
@@ -295,20 +471,51 @@ extern "C" void csi_event_egress_pump(void) {
   /* The card, under the storage owner's rule (csi_event_log.h). */
   uint32_t log_size = 0;
   uint32_t tail_id = 0;
+  bool opened_unowed = false;   // nothing was owed when this log had not opened yet
   switch (csi_event_log::poll(s_owner_fp, &log_size, &tail_id)) {
-    case csi_event_log::Card::kOpened: s_backfill.card_open(log_size, tail_id, link); break;
-    case csi_event_log::Card::kClosed: s_backfill.card_close(); break;
+    case csi_event_log::Card::kOpened:
+      s_backfill.card_open(log_size, tail_id, link);
+      s_card_wait = false;
+      opened_unowed = s_not_owed_at_open;
+      break;
+    case csi_event_log::Card::kClosed:
+      /* Rows still waiting on the card are owed when it comes back (the
+       * storage manager remounts a lost card on its 30 s recheck): rows
+       * committed meanwhile wait in the hold behind them (backlog F104). */
+      if (s_backfill.pending()) {
+        s_card_wait = true;
+        s_card_wait_since = link.now_ms;
+      }
+      s_backfill.card_close();
+      break;
     case csi_event_log::Card::kUnchanged: break;
+  }
+  /* Bounded: a card that does not open within kCardWaitMs is given up on,
+   * and the rows in the hold go (the rows on it, if it comes back later,
+   * are then below the watermark: HA would refuse them). */
+  if (s_card_wait &&
+      (uint32_t)(link.now_ms - s_card_wait_since) >= csi_event_backfill::kCardWaitMs) {
+    s_card_wait = false;
+    if (s_hold.count > 0) {
+      Serial.printf("[CSI] event log card not open after %lu s: %u event(s) waiting in RAM go out\n",
+                    (unsigned long)(csi_event_backfill::kCardWaitMs / 1000),
+                    (unsigned)s_hold.count);
+    }
   }
 
   /* With no broker configured the rows are logged and owed to nobody, so a
    * broker configured later is not flooded with stale history; a changed
    * broker drops the backlog for the same reason the MQTT layer flushes its
-   * offline queue. */
+   * offline queue. not_owed() credits only rows it has seen, so a change
+   * made before the card's log opened is applied again when it opens. What
+   * waited in the hold, or for the card, is owed to nobody either. */
   const uint32_t epoch = mqtt_destination_epoch();
-  if (!link.accepting || epoch != s_dest_epoch) {
+  if (!link.accepting || epoch != s_dest_epoch || opened_unowed) {
     s_dest_epoch = epoch;
     s_backfill.not_owed(link, s_port);
+    s_not_owed_at_open = !s_backfill.card_ok();
+    s_hold.clear();
+    s_card_wait = false;
   }
 
   const uint32_t dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
@@ -334,14 +541,21 @@ extern "C" void csi_event_egress_pump(void) {
       mqtt_publish_tamper(tb, /*retained=*/false);
     }
     /* Then the row: onto the card, and live when nothing older waits there;
-     * behind the backlog otherwise; through the offline queue when there
-     * is no card (csi_event_backfill.h). */
-    (void)s_backfill.commit(to_record(ev), link, s_port);
+     * behind the backlog otherwise; with no card open, in the hold while
+     * anything older waits, else through the offline queue (route()). */
+    route(to_record(ev), link);
   }
 
   /* Backfill: rows the broker has not seen, from the card, in id order,
-   * a bounded amount per pass, only after the offline queue has drained. */
+   * a bounded amount per pass, only after the offline queue has drained;
+   * then rows in the hold, once nothing older waits. */
   const size_t replayed = s_backfill.pass(link, s_port);
+  flush_held(link);
+  if (s_hold.dropped != s_hold.dropped_said) {
+    s_hold.dropped_said = s_hold.dropped;
+    Serial.printf("[CSI] %lu event(s) dropped from the RAM hold\n",
+                  (unsigned long)s_hold.dropped);
+  }
   if (replayed > 0) {
     s_replay_run += (uint32_t)replayed;
   } else if (s_replay_run > 0 && !s_backfill.pending()) {
@@ -369,6 +583,12 @@ extern "C" void csi_event_egress_test_reset(void) {
   s_dest_epoch = 0;
   s_owner_fp[0] = '\0';
   s_replay_run = 0;
+  s_hold.clear();
+  s_hold.dropped = 0;
+  s_hold.dropped_said = 0;
+  s_card_wait = false;
+  s_card_wait_since = 0;
+  s_not_owed_at_open = false;
 #endif
 }
 #endif

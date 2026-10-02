@@ -76,8 +76,10 @@ namespace csi_event_egress {
  * may hold older rows (see Order above). An SD error's remount comes up to
  * SD_RECHECK_INTERVAL_MS (30 s, hardware_state.h) later, plus the mount
  * itself; a boot-time mount that outlives its 4 s budget is adopted on a
- * later loop pass. A device with no card waits this long once per boot. */
-constexpr uint32_t kCardWaitMs = 45000;
+ * later loop pass. A device with no card waits this long once per boot. The
+ * value is the planner header's, which the canary's egress waits too
+ * (backlog F104). */
+constexpr uint32_t kCardWaitMs = csi_event_backfill::kCardWaitMs;
 
 /* Setup, loop task: csi_integration::init calls it once the event-id floor
  * is back from NVS (it reads csi_integration::event_id_floor_stored) and

@@ -1085,6 +1085,17 @@ static int test_broker_change_drops_the_backlog() {
 }
 
 static int test_card_lost_while_rows_wait() {
+  // The rule since backlog F104: a card that closes while rows wait on it is
+  // waited for. Neither host hands the planner a row committed meanwhile:
+  // both egresses hold it in RAM for up to kCardWaitMs (the canary's
+  // csi_event_egress.cpp, test_canary_event_egress.cpp; the canary-wap's,
+  // test_wap_event_egress.cpp), so a card back within the wait loses
+  // nothing. This pins what is left of the old rule, the planner's side once
+  // the host has given the card up: rows handed over with the card closed
+  // take the not-on-card route, and the rows still on the card are given
+  // up. Before F104 the canary handed every such row over at once, so this
+  // was the rule for any close, however short.
+  static_assert(kCardWaitMs == 45000, "the hosts' card wait (both egresses use this constant)");
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
@@ -1094,6 +1105,8 @@ static int test_card_lost_while_rows_wait() {
   for (int i = 0; i < 8; ++i) h.tick(1);      // held on the card
   w.card_in = false;
   p.card_close();
+  CHECK(!p.pending());                         // the planner cannot see the card's rows now
+  h.now += kCardWaitMs;                        // the host's wait is over
   for (int i = 0; i < 4; ++i) h.tick(1);      // no card: the offline queue
   w.connected = true;
   h.drain();
