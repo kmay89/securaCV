@@ -5786,15 +5786,16 @@ so — see D2 below.)
   not take. The shipped grace is 0, so no device does this today. Make the
   grace extend the dwell past the lost timeout and still emit `dwell_ended`,
   or drop the knob and the diagram edge. Found by F130 (#1762).
-  *Done (#1762):* made to do what the diagram says rather than dropped: only
-  this way can the grace be tested nonzero. A dweller is held present and
-  dwelling until unseen for longer than the lost timeout or
+  *Done (#1762):* made to do what the diagram says rather than dropped, as
+  the brief asked for host tests with a nonzero grace. A dweller is held
+  present and dwelling until unseen for longer than the lost timeout or
   `DWELL_END_GRACE_MS`, whichever is longer: a dweller seen again within the
   grace keeps the dwell with no event, and once it has passed `dwell_ended`
   fires with the dwell's length (which then includes the grace),
-  `presence_ended` follows on the next frame and `interaction_likely`
-  (`dwell_then_left`) after it. A stay that never dwelled is still let go at
-  the lost timeout, and a lost timeout longer than the grace governs. The
+  `presence_ended` follows on the next frame if nobody is seen on it, and
+  `interaction_likely` (`dwell_then_left`) after it. A stay that never
+  dwelled is still let go at the lost timeout, and a lost timeout longer than
+  the grace governs. The
   grace stays compile-time and 0 in every shipped build, so no device changes;
   `include/canary/config.h` takes `-DVISION_DWELL_END_GRACE_MS=<ms>`, and
   `firmware/tests_host` builds `test_vision_presence_fsm.cpp` a second time
@@ -5803,10 +5804,13 @@ so — see D2 below.)
   first two fail on the old FSM, which sent `presence_ended` at the lost
   timeout and no `dwell_ended`. The README's diagram names each edge's event,
   takes Dwelling to Present on unseen > max(lost_timeout, dwell_end_grace)
-  with `dwell_ended`, and drops the direct Dwelling to Idle edge the code
-  never took. The flavor config's `CONFIG_DWELL_END_GRACE_MS` is still read by
-  nothing (F182). Host-tested, compile-tested by CI, not bench-tested. Found
-  here: F182.
+  with `dwell_ended`, and drops the direct Dwelling to Idle edge, which the
+  code no longer takes (it took it with a grace longer than the lost timeout:
+  the defect). The flavor config's `CONFIG_DWELL_END_GRACE_MS` is still read by
+  nothing (F182). Not changed: a dweller seen on the frame between
+  `dwell_ended` and `presence_ended` starts a second dwell in the same visit
+  (F186, found by the review, as old as the FSM). Host-tested, compile-tested
+  by CI, not bench-tested. Found here: F182 and F186.
 - [ ] **F131 [code+decision] The Sense count follows every radar frame, so a
   room that empties records an `occupancy_changed` to 0 while still
   Present.** `mr60_presence.cpp` sets `count_` from each presence frame
@@ -5848,6 +5852,23 @@ so — see D2 below.)
   have a reader, `gen_flash.py`, and those seed values duplicate the project's
   too). Decide which file owns them, then wire the project constants to the
   flavor macros or drop the dead ones. Found by F154 (#1762).
+- [ ] **F186 [code] A Vision dweller seen on the frame between `dwell_ended`
+  and `presence_ended` starts a second dwell in the same visit, so the
+  lingering alert pages twice.** After `dwell_ended`, `PresenceFSM::tick`
+  clears `dwelling_` and leaves `presence_` set until the next frame ends the
+  stay. A sighting on that frame keeps the visit and, the visit being older
+  than `DWELL_START_MS`, takes the `dwell_started` branch again
+  (`presence_fsm.cpp`). A scratch probe linking the real FSM, with the
+  shipped grace of 0, shows it (probe P8, on the probe's clock):
+  `dwell_started` at 11.0 s, `dwell_ended` at 13.5 s, a second
+  `dwell_started` at 13.6 s and a second `dwell_ended` at 15.6 s, then one
+  `presence_ended` and one `interaction_likely`.
+  `homeassistant/automations/securacv_vision_presence.yaml` pages "Lingering
+  detected" on each `dwell_started`. As old as the FSM: the same probe on the
+  base gives the same events. A nonzero grace (F154) leaves the same one-frame
+  gap. Fix: let a sighting on that frame either resume the ended dwell or
+  end the visit first, and hold the choice with a host test. Not probed on a
+  device. Found by F154's review (#1762).
 
 ---
 

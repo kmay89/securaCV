@@ -17,8 +17,9 @@
   nothing again. `GET /api/mesh` adds `pairing_seq`, `pairing_result` and
   `pairing_fail_reason` after its other fields, `pair/start` and `pair/join`
   answer their `pairing_seq`, and the pairing screen reports a timeout, a
-  refusal or a cancel as a failure where it used to say "Successfully joined
-  opera!"; it also shows a 000000 code. A joiner sends nothing after it pairs,
+  refusal or a cancel as a failure where it used to call them complete
+  ("Successfully joined opera!" on a Canary already ACTIVE); it also shows a
+  000000 code. A joiner sends nothing after it pairs,
   so the copies usually run their whole window and the new member reads
   offline until it sends something (F162). **Host-tested only** (the page also
   in Chromium against a mocked API): the `[env:full]` compile is CI's, and
