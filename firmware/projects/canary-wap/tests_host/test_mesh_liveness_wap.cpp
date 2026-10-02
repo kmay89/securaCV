@@ -8,8 +8,8 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep items F71, F73-F76, F98 and F99: each was a way the opera went
-// quiet, or a pairing went wrong, with nothing reporting it.
+// Sweep items F71, F73-F76, F95, F98 and F99: each was a way the opera
+// went quiet, or a pairing went wrong, with nothing reporting it.
 //   F71  a rebooted device's frames dropped as replays at every member
 //        that had heard it (its send counters restarted at 1);
 //   F73  a pairing whose partner add_peer refused still persisted, went
@@ -22,7 +22,12 @@
 //   F98  a pairing from an address another member holds added a second
 //        member there (test_mesh_address_wap has the add_peer side);
 //   F99  a device re-paired after a removal dropped its remover's frames
-//        (the remover's counter for a new member started at 1).
+//        (the remover's counter for a new member started at 1);
+//   F95  a removal's rotation reaches no member (open: no session opens,
+//        and the AUTH exchange cannot open one as it stands, pinned here),
+//        and the rotation set every counter back, so the re-pair that
+//        rejoins a survivor, or a reboot before the last-seen save, cost
+//        frames until they climbed back (fixed: they carry on).
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -1329,6 +1334,140 @@ void test_a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters() {
   std::printf("PASS a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters\n");
 }
 
+// ── F95: a removal's rotation reaches no member; counters across it ────
+//
+// remove_peer rotates the opera_secret and sends MSG_OPERA_REKEY, sealed
+// under a session key, to each member holding a session. Nothing opens a
+// session (no code sends MSG_AUTH_CHALLENGE), so the rotation reaches no
+// one: the remover commits at once and every survivor stays on the old
+// opera_id, split from it until it re-pairs. Starting the AUTH exchange
+// does not fix that as the exchange stands, which the first test pins (the
+// fix is F48's, a wire and crypto change). What changes here is the
+// counters across a rotation: they carry on, as on the PlatformIO tree.
+
+// The opera_id `d` holds now.
+std::vector<uint8_t> opera_id_of(Device& d) {
+  become(d);
+  return std::vector<uint8_t>(mn::g_opera_config.opera_id,
+                              mn::g_opera_config.opera_id + mn::OPERA_ID_SIZE);
+}
+
+void test_no_session_opens_and_a_removal_splits_the_opera() {
+  // Evidence for F95, pinned so it fails the day it stops being true:
+  // this is the state F48 has to change, not a requirement.
+  fresh_opera({&A, &B, &C});
+  run({&A, &B, &C}, 600000, 1000);
+  int sessions = 0;
+  for (Device* d : {&A, &B, &C}) {
+    for (Device* o : {&A, &B, &C}) {
+      if (o != d) sessions += entry(*d, *o)->session_established ? 1 : 0;
+    }
+  }
+  CHECK(sessions == 0);                            // nothing opens one
+  // Started by hand, the exchange cannot finish. The AUTH_RESPONSE is a
+  // 160 B payload: 38 B header + 160 + 64 B signature is 262 B, over the
+  // 250 B an ESP-NOW frame carries, and send_to_peer refuses it. So the
+  // responder holds a session the challenger never gets.
+  CHECK(mn::signed_frame_bytes(sizeof(mn::AuthResponsePayload)) > mn::MAX_MESSAGE_SIZE);
+  mn::AuthChallengePayload ch;
+  host_sim::fill_random(ch.nonce, sizeof ch.nonce);
+  memcpy(ch.pubkey, A.pub, 32);
+  host_sim::now_ms += 20;
+  CHECK(mn::send_to_peer(entry(A, B), mn::MSG_AUTH_CHALLENGE, reinterpret_cast<const uint8_t*>(&ch),
+                         sizeof ch));
+  B.espnow.sent.clear();
+  deliver(B, A.mac, sent_to(A, B.mac).back());
+  for (const Frame& f : sent_to(B, A.mac)) CHECK(f.size() < 2 || f[1] != mn::MSG_AUTH_RESPONSE);
+  CHECK(entry(B, A)->session_established);
+  CHECK(!entry(A, B)->session_established);
+  // Nor would the keys agree if it were sent: the exchange runs X25519
+  // over the long-term Ed25519 keys, so each side computes an unrelated
+  // number (here OpenSSL's X25519, which clamps the scalar; rweather's on
+  // the device does not, and they differ there too).
+  uint8_t k_ab[32], k_ba[32];
+  become(A);
+  CHECK(mn::derive_session_key(A.priv, B.pub, k_ab));
+  CHECK(mn::derive_session_key(B.priv, A.pub, k_ba));
+  CHECK(memcmp(k_ab, k_ba, sizeof k_ab) != 0);
+  // So a removal splits the opera: the REKEY goes to no member (A holds
+  // no session), A commits at once, B and C stay on the old opera_id.
+  const std::vector<uint8_t> old_id = opera_id_of(A);
+  remove_member(A, C);
+  become(A);
+  CHECK(mn::g_rekey.pending_acks == 0);
+  run({&A, &B}, 120000, 1000);
+  CHECK(opera_id_of(A) != old_id);
+  CHECK(opera_id_of(B) == old_id);
+  std::printf("PASS no_session_opens_and_a_removal_splits_the_opera\n");
+}
+
+void test_a_survivor_re_paired_after_a_rotation_hears_the_remover_at_once() {
+  // The way back from that split is a re-pair with the remover, which
+  // re-binds each side at the other with its counters. The rotation had
+  // set the remover's counters for every member back to 1, so the
+  // survivor dropped the remover's frames until they climbed back past
+  // the last one it heard. A rotation now leaves the counters alone.
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 5; ++i) deliver(B, A.mac, heartbeat_to(A, B));
+  for (int i = 0; i < 5; ++i) deliver(A, B.mac, heartbeat_to(B, A));
+  remove_member(A, C);
+  become(A);
+  mn::update();                                    // commits: it reached no one
+  CHECK(entry(A, B)->msg_counter_tx > 5);          // was set back to 1
+  CHECK(entry(A, B)->msg_counter_rx >= 5);         // was set back to 0
+  re_pair(A, B);
+  CHECK(opera_id_of(A) == opera_id_of(B));
+  CHECK(hears_next_heartbeat(B, A));
+  CHECK(hears_next_heartbeat(A, B));
+  std::printf("PASS a_survivor_re_paired_after_a_rotation_hears_the_remover_at_once\n");
+}
+
+void test_a_rotation_that_reaches_a_member_keeps_every_counter() {
+  // What a rotation does once it can reach a member, which needs a working
+  // AUTH exchange (F48). The test stands in for one by giving A and B one
+  // session key. Both sides reset their counters for each other: in RAM
+  // only for the last-seen ("replay_ctrs" kept the old value until the
+  // sketch's next 5-minute save), so a member that rebooted in between
+  // restored it and dropped the other's restarted frames until they climbed
+  // back. Now every counter carries on, and RAM and the stored copy agree.
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 5; ++i) deliver(B, A.mac, heartbeat_to(A, B));
+  for (int i = 0; i < 5; ++i) deliver(A, B.mac, heartbeat_to(B, A));
+  become(A);
+  CHECK(mn::save_replay_counters());               // the sketch's 5-minute saves
+  become(B);
+  CHECK(mn::save_replay_counters());
+  uint8_t key[mn::SESSION_KEY_SIZE];
+  host_sim::fill_random(key, sizeof key);
+  for (const auto& side : {std::make_pair(&A, &B), std::make_pair(&B, &A)}) {
+    mn::OperaPeer* p = entry(*side.first, *side.second);
+    memcpy(p->session_key, key, sizeof key);
+    p->session_established = true;
+  }
+  const std::vector<uint8_t> old_id = opera_id_of(A);
+  remove_member(A, C);
+  const Frame rekey = sent_to(A, B.mac).back();
+  CHECK(rekey.size() >= 102 && rekey[1] == mn::MSG_OPERA_REKEY);
+  B.espnow.sent.clear();
+  deliver(B, A.mac, rekey);                        // B ACKs, then switches
+  Frame ack;
+  for (const Frame& f : sent_to(B, A.mac)) {
+    if (f.size() >= 102 && f[1] == mn::MSG_OPERA_REKEY_ACK) ack = f;
+  }
+  CHECK(!ack.empty());
+  deliver(A, B.mac, ack);                          // every ACK in: A commits
+  CHECK(opera_id_of(A) != old_id);
+  CHECK(opera_id_of(B) == opera_id_of(A));
+  CHECK(entry(A, B)->msg_counter_rx >= 5);         // were set back to 0
+  CHECK(entry(B, A)->msg_counter_rx >= 5);
+  CHECK(hears_next_heartbeat(A, B));               // B's were set back to 1
+  boot(B);                                         // before the next save
+  CHECK(opera_id_of(B) == opera_id_of(A));
+  CHECK(hears_next_heartbeat(B, A));               // A's were set back to 1
+  CHECK(hears_next_heartbeat(A, B));
+  std::printf("PASS a_rotation_that_reaches_a_member_keeps_every_counter\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1385,6 +1524,11 @@ const Test kTests[] = {
      test_a_device_re_paired_after_its_partner_held_no_one_hears_it},
     {"a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters",
      test_a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters},
+    {"no_session_opens_and_a_removal_splits_the_opera", test_no_session_opens_and_a_removal_splits_the_opera},
+    {"a_survivor_re_paired_after_a_rotation_hears_the_remover_at_once",
+     test_a_survivor_re_paired_after_a_rotation_hears_the_remover_at_once},
+    {"a_rotation_that_reaches_a_member_keeps_every_counter",
+     test_a_rotation_that_reaches_a_member_keeps_every_counter},
 };
 
 }  // namespace liveness

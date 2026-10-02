@@ -9,7 +9,8 @@
 // runs the same mesh_network.cpp on host stubs, for behavior. This pins:
 //
 //   1. The replay counter convention, the same in both trees: the first
-//      counter a sender signs is 1 (add_peer, and both rekey resets), and
+//      counter a sender signs is 1 (add_peer on a device that has signed
+//      none; a rotation resets no counter since F95), and
 //      the receiver drops counter <= last-seen with NO exemption. The old
 //      gate, `counter <= rx && rx > 0`, existed so the old counter-0 first
 //      frame could pass a fresh rx of 0 — and passed a counter-0 frame
@@ -117,9 +118,11 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   const std::string sq   = squeeze(code);
 
   // The sender: add_peer starts at 1 on a device that has reserved no
-  // counter (F99: one past its highest reservation otherwise), and so do the
-  // two rekey resets (the rekey-apply branch of handle_received_message, and
-  // maybe_finalize_rekey).
+  // counter (F99: one past its highest reservation otherwise), and so does
+  // load_peers before the reservations are read. A rotation resets no
+  // counter since F95 (the rekey-apply branch of handle_received_message
+  // and maybe_finalize_rekey set them back to tx 1, rx 0; they carry on
+  // now, as on the PIO tree, and test_mesh_liveness_wap runs it).
   // No reset to 0 remains anywhere in the file.
   // Since F99 a new member starts one past the highest reservation the
   // device stored for anyone: 1 on a device that has stored none
@@ -135,11 +138,11 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   CHECK(count(ld, "g_peers[i].msg_counter_rx=0;") == 1);
   CHECK(count(add, "peer->msg_counter_rx=0;") == 1);
   CHECK(count(sq, "msg_counter_tx=0;") == 0);
-  CHECK(count(sq, "msg_counter_tx=1;") == 3);  // rekey apply, maybe_finalize_rekey, load_peers
+  CHECK(count(sq, "msg_counter_tx=1;") == 1);  // load_peers
   const std::string fin = squeeze(function_body(code, "maybe_finalize_rekey"));
   CHECK(!fin.empty());
-  CHECK(count(fin, "g_peers[j].msg_counter_tx=1;") == 1);
-  CHECK(count(fin, "g_peers[j].msg_counter_rx=0;") == 1);
+  CHECK(count(fin, "msg_counter_tx=") == 0);
+  CHECK(count(fin, "msg_counter_rx=") == 0);
   const std::string tx = squeeze(function_body(code, "send_to_peer"));
   CHECK(!tx.empty());
   CHECK(count(tx, "uint64_tcounter=peer->msg_counter_tx++;") == 1);  // signs the stored value: 1 first
@@ -152,10 +155,10 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   CHECK(count(rx, "msg_counter_rx>0") == 0);
   CHECK(count(sq, "msg_counter_rx>0") == 0);
   CHECK(count(rx, "&&peer->msg_counter_rx") == 0);
-  // The rekey-apply branch resets the session's counters to the same
-  // convention (tx 1, rx 0) as add_peer.
-  CHECK(count(rx, "peer->msg_counter_tx=1;") == 1);
-  CHECK(count(rx, "peer->msg_counter_rx=0;") == 1);
+  // The rekey-apply branch leaves the counters alone (F95): the only
+  // write to one in the receive path is the replay gate's record.
+  CHECK(count(rx, "peer->msg_counter_tx=") == 0);
+  CHECK(count(rx, "peer->msg_counter_rx=") == 1);
 
   // The PIO tree says the same thing: its outbound counter starts at 0 and
   // the first one it hands out is +1, and its receive gate is `<=` with no

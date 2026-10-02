@@ -717,8 +717,9 @@ static bool send_pair_frame(const uint8_t* mac, MessageType type,
 // rewritten, and a boot reads it with no member loaded too.
 //
 // Counting stays per member (one counter per sender is sweep F72's
-// option): the rekey resets below set a member's counter back to 1 for
-// the new session, under the reservation it already has.
+// option). A rotation leaves every counter where it is (sweep F95, see
+// maybe_finalize_rekey); it used to set them back to 1, under the
+// reservation each already had.
 static constexpr uint64_t TX_COUNTER_RESERVE_BLOCK = 1024;
 static const char* NVS_TX_RESERVED = "tx_ctrs";
 static constexpr size_t TX_RESERVE_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
@@ -1083,10 +1084,9 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
         persist_opera_config();  // FE-gated; logs alert if refused
 
         // ── 3. Invalidate the session so both sides re-auth ──
+        // The counters carry on (sweep F95; see maybe_finalize_rekey).
         peer->session_established = false;
         memset(peer->session_key, 0, SESSION_KEY_SIZE);
-        peer->msg_counter_tx = 1;   // first counter of the new session (add_peer)
-        peer->msg_counter_rx = 0;
         health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
                    "opera: rekey applied (ACK sent under old opera_id); awaiting re-auth");
       }
@@ -2363,12 +2363,25 @@ static void maybe_finalize_rekey() {
   memcpy(g_opera_config.opera_id, g_rekey.pending_opera_id, OPERA_ID_SIZE);
 
   // Invalidate sessions everywhere; mark unacked peers stale.
+  //
+  // Every counter carries on across the rotation (sweep F95), in both
+  // directions and on both sides (the REKEY handler too), as the PlatformIO
+  // tree's rotation keeps its outbound counter (spec §5.6). They were reset
+  // here (tx 1, rx 0) "for the new session", but a frame is signed with
+  // the long-term key, which a rotation does not change, and the opera_id
+  // in its signed bytes is what kills a frame from before the rotation; the
+  // reset bought nothing and cost two things. A member the rotation did not
+  // reach (today every member: nothing opens an AUTH session, F95) kept its
+  // last-seen counter for this device, so after the re-pair that rejoins it
+  // it dropped this device's restarted frames until they climbed back. And
+  // the last-seen reset was in RAM only: "replay_ctrs" kept the old value
+  // until the next 5-minute save, so a reboot in between restored it, and
+  // the member's restarted counters dropped the same way. Kept, every
+  // counter only climbs, and RAM and the stored copy agree.
   for (uint8_t j = 0; j < g_peer_count; j++) {
     bool unacked = (g_rekey.pending_acks & (uint16_t)(1u << j)) != 0;
     g_peers[j].session_established = false;
     memset(g_peers[j].session_key, 0, SESSION_KEY_SIZE);
-    g_peers[j].msg_counter_tx = 1;   // first counter of the new session (add_peer)
-    g_peers[j].msg_counter_rx = 0;
     g_peers[j].state = unacked ? PEER_STALE : PEER_AUTHENTICATING;
   }
 
