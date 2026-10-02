@@ -1793,7 +1793,12 @@ it would make "off" silently revert to "on" at every reboot of an FE-off
 board — and `mesh_out_ctr` (u64, F33, §3.3), the outbound counter's
 reserve-ahead high-water mark, not gated either: a count, not a secret, and
 gating it would restart the counter at every reboot of an FE-off board. The `opera_id` is not stored; it is derived from the secret at boot.
-canary-wap (NVS namespace `mesh`) stores the same deny-list blob under
+canary-wap (NVS namespace `mesh`) stores its member list as `peer_cnt`
+and `peer_0`..`peer_<n-1>` (each a public key, radio address and name;
+not gated), and removes every `peer_<i>` at or above the count at each
+save, so a removal, a leave or a fold leaves no former member's entry
+behind (F137; before it, the freed slots stayed). It stores the same
+deny-list blob under
 `revoked` (F33), behind its flash-encryption gate, and — F71 — `tx_ctrs`
 (up to 16 × (8 B fingerprint + u64)), each member's send-counter
 reservation (§3.3; 0 for a member nothing was signed to yet on a device
@@ -1801,10 +1806,14 @@ that has reserved none, written with the member list too, so members
 stored with no record mean NVS from an older firmware; since F99 a new
 member is recorded as covered up to the highest counter the device can
 have signed, a removal holds every survivor's reservation to that counter
-before the rewrite, the record is not rewritten when no member is left, and
-a boot reads it with no member loaded too), not gated, like the last-seen counters it keeps under
-`replay_ctrs`: counts, not secrets, and a gate would restart the counters
-at every boot of an FE-off board. Since F116 it also stores `rx_tombs` (up
+before the rewrite, and a boot reads it with no member loaded too; when no
+member is left the record is kept for that counter alone, as one entry
+under an all-zero fingerprint, F137, where it used to keep every former
+member's), not gated, like the last-seen counters it keeps under
+`replay_ctrs` (rewritten at the sketch's 5-minute save, before a reboot,
+and — F137 — at each removal and leave, so a dropped member's entry goes
+at once; removed when no member is left): counts, not secrets, and a gate
+would restart the counters at every boot of an FE-off board. Since F116 it also stores `rx_tombs` (up
 to 8 × (8 B fingerprint + 16 B `opera_id` + u64), oldest first), the
 last-seen counters of members it dropped and the opera each was dropped
 from (§4.2), written at each removal or leave that changes them and

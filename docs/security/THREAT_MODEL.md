@@ -939,6 +939,19 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   other; host-probed). The id and secret are now removed while no opera
   is configured, and a boot loads no all-zero id or secret, so NVS an
   older firmware's leave wrote is refused too. Host-tested only.
+- **canary-wap kept its former members in NVS (F137).** Its member list is
+  `peer_cnt` and `peer_0`..`peer_<n-1>`, each a public key, radio address
+  and name, and a save removed no slot: after a removal the freed slot
+  stayed, and after a leave every one did (host-probed), plaintext on the
+  flash (next bullet), though nothing loaded them. The two counter
+  records named them by fingerprint as well (`replay_ctrs` until the next
+  5-minute save, `tx_ctrs` for good once no member was left). A save now
+  removes every slot at or above the count, the last-seen record is saved
+  at each removal and leave, and the send-counter record with no member
+  left keeps its one counter under no fingerprint. What a dropped member
+  leaves on purpose, by fingerprint only: its deny-list entry (spec §5.6,
+  seven days, flash-encryption gated) when it was removed, and its
+  last-seen tombstone (F116) when it was heard. Host-tested only.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused

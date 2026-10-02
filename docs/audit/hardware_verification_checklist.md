@@ -756,14 +756,16 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     celebrates it.
   - Artifact: `docs/audit/repro/F106/qr-hub/`.
 
-## canary-wap mesh status reads and membership (F110, F113, F116) — on-device verification
+## canary-wap mesh status reads and membership (F110, F113, F116, F137) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
 (`publish_view()` at the end of every `update()` pass and after each owner
 command, `read_status()` and
 `read_alerts()` for the status routes through `loop_snapshot.h`;
 `persist_opera_config()` / `load_opera_config()` for a leave; `retire_rx()`
-and the `rx_tombs` NVS record for a re-added member) and the three status
+and the `rx_tombs` NVS record for a re-added member; `persist_peers()`,
+which removes every `peer_<i>` at or above `peer_cnt`, and
+`persist_tx_floor_without_members()`, F137) and the three status
 handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
 `test_mesh_commands_wap.cpp`, `test_mesh_liveness_wap.cpp`) and held by
 `firmware/scripts/check_wap_loop_commands.py`. Compile is CI's. Owner: U1.
@@ -802,6 +804,22 @@ handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
   - Expected: after each re-pair B shows connected on A within about a
     minute, and A's serial log shows no `pairing COMPLETE never answered`.
   - Artifact: `docs/audit/repro/F116/re-pair/`.
+- [ ] **A removed member, and every member after a leave, is gone from NVS**
+  - Setup: a canary-wap A paired with B and C, exchanging heartbeats for a
+    few minutes; `esptool.py` and ESP-IDF's `nvs_tool.py` on the bench
+    machine.
+  - Repro: on A, remove C; read A's NVS partition (`esptool.py read_flash`
+    at the `nvs` partition's offset and size) and list the `mesh`
+    namespace with `nvs_tool.py`. Then Leave the opera on A and read it
+    again.
+  - Expected: after the removal `peer_cnt` is 1 and only `peer_0` (B) is
+    there, `replay_ctrs` holds one 16-byte entry (B's), and no value holds
+    C's public key or radio address; C's 8-byte fingerprint appears only in
+    `revoked` and `rx_tombs`. After the leave there is no `peer_*` key
+    besides `peer_cnt` (0), no `replay_ctrs`, and `tx_ctrs` is one 16-byte
+    entry whose first 8 bytes are zero. Before F137 the removal left
+    `peer_1` (C) and the leave left `peer_0` and `peer_1`.
+  - Artifact: `docs/audit/repro/F137/nvs-after-removal-and-leave/`.
 
 ## canary-wap Chirp and Bluetooth commands, MQTT network timeout (F111, F112) — on-device verification
 
