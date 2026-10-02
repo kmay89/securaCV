@@ -257,13 +257,14 @@ void test_no_frame_moves_a_members_address() {
   const std::string add = squeeze(function_body(code, "add_peer"));
   CHECK(count(add, "returnrebind_peer(&g_peers[i],mac);") == 1);
   // Since F98 a new key at an address another member holds is refused too,
-  // ahead of the append (test_mesh_address_wap runs it).
-  CHECK(count(add, "if(other_holder_of(mac,nullptr)!=nullptr){returnfalse;}") == 1);
-  CHECK(before(add, "returnrebind_peer(&g_peers[i],mac);", "if(other_holder_of(mac,nullptr)!=nullptr){returnfalse;}"));
-  CHECK(before(add, "if(other_holder_of(mac,nullptr)!=nullptr){returnfalse;}", "esp_now_add_peer(&peer_info)"));
+  // ahead of the append, and both refusals say so on a line of their own
+  // (test_mesh_address_wap and test_mesh_liveness_wap run them).
+  CHECK(count(add, "if(other_holder_of(mac,nullptr)!=nullptr){log_held_address();returnfalse;}") == 1);
+  CHECK(before(add, "returnrebind_peer(&g_peers[i],mac);", "if(other_holder_of(mac,nullptr)!=nullptr){log_held_address();returnfalse;}"));
+  CHECK(before(add, "if(other_holder_of(mac,nullptr)!=nullptr){log_held_address();returnfalse;}", "esp_now_add_peer(&peer_info)"));
   const std::string rb = squeeze(function_body(code, "rebind_peer"));
   CHECK(!rb.empty());
-  CHECK(count(rb, "if(other_holder_of(mac,peer)!=nullptr){returnfalse;}") == 1);
+  CHECK(count(rb, "if(other_holder_of(mac,peer)!=nullptr){log_held_address();returnfalse;}") == 1);
   // The old address is released (its registration dropped unless another
   // member an older firmware stored there still holds it, F98) after the
   // new one is registered, and before the member moves.
