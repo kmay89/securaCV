@@ -981,6 +981,39 @@ void test_the_prune_shows_in_the_tables() {
   std::printf("PASS the_prune_shows_in_the_tables\n");
 }
 
+// The tables publish on change, not every pass (the brief: not a whole-table
+// copy every loop pass). A pass that nothing marked (no chirp frame, no
+// prune, no command) leaves the published tables as they were, even when
+// the live rows differ: it never read them. The live rows are written here
+// behind the channel's back, which nothing on a device does, so the only
+// way a read can show the write is a pass that rebuilt the tables anyway.
+// The next frame's pass, which is marked, shows it.
+void test_an_idle_pass_does_not_rebuild_the_tables() {
+  boot();
+  enabled_channel();
+  const Neighbor N = neighbor_of(6, BEE);
+  deliver(N, presence_of(N), -50);
+  deliver(N, witness_of(N, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x55));
+  cc::update();                                        // marked: publishes both tables
+  CHECK(!cc::g_tables_changed);
+  CHECK(recent_read().chirps[0].hop_count == 0 && nearby_read().devices[0].rssi == -50);
+
+  cc::g_recent_chirps[0].hop_count = 2;                // unmarked writes
+  cc::g_nearby_devices[0].rssi = -90;
+  for (int pass = 0; pass < 3; ++pass) {
+    host_sim::now_ms += 1000;                           // well inside the 30-second prune
+    cc::update();
+    CHECK(!cc::g_tables_changed);
+    CHECK(recent_read().chirps[0].hop_count == 0);
+    CHECK(nearby_read().devices[0].rssi == -50);
+  }
+
+  deliver(N, presence_of(N), -60);                     // a frame marks them
+  cc::update();
+  CHECK(recent_read().chirps[0].hop_count == 2 && nearby_read().devices[0].rssi == -60);
+  std::printf("PASS an_idle_pass_does_not_rebuild_the_tables\n");
+}
+
 // What counts in time is counted at the read, from what the loop task
 // published: the cooldown and mute left, the presence requirement, the wall
 // clock (and with it night mode and can_send), as the live readers counted
@@ -1158,6 +1191,7 @@ const Test kTests[] = {
     {"the_pass_publishes_what_it_changed", test_the_pass_publishes_what_it_changed},
     {"a_frame_shows_in_the_tables_after_its_pass", test_a_frame_shows_in_the_tables_after_its_pass},
     {"the_prune_shows_in_the_tables", test_the_prune_shows_in_the_tables},
+    {"an_idle_pass_does_not_rebuild_the_tables", test_an_idle_pass_does_not_rebuild_the_tables},
     {"a_status_read_counts_time_at_the_read", test_a_status_read_counts_time_at_the_read},
     {"cannot_send_reason_names_the_clock", test_cannot_send_reason_names_the_clock},
     {"every_field_the_routes_show_is_the_live_one", test_every_field_the_routes_show_is_the_live_one},
