@@ -8,7 +8,7 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep items F71, F73, F74, F75 and F76: each was a way the opera went
+// Sweep items F71, F73-F76, F98 and F99: each was a way the opera went
 // quiet, or a pairing went wrong, with nothing reporting it.
 //   F71  a rebooted device's frames dropped as replays at every member
 //        that had heard it (its send counters restarted at 1);
@@ -18,7 +18,11 @@
 //        was gone (mesh_network relied on other modules to register it,
 //        and its own channel-change listener deleted it);
 //   F75  a pairing finished only if the initiator's owner confirmed first;
-//   F76  an opera whose members it had not heard sent nothing at all.
+//   F76  an opera whose members it had not heard sent nothing at all;
+//   F98  a pairing from an address another member holds added a second
+//        member there (test_mesh_address_wap has the add_peer side);
+//   F99  a device re-paired after a removal dropped its remover's frames
+//        (the remover's counter for a new member started at 1).
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -1203,6 +1207,128 @@ void test_an_opera_nobody_answers_keeps_the_heartbeat_cadence() {
   std::printf("PASS an_opera_nobody_answers_keeps_the_heartbeat_cadence\n");
 }
 
+// ── F99: a device re-paired after a removal hears its remover at once ───
+//
+// A removal is one-sided: the removed device keeps its last-seen counter
+// for the remover, and a re-pair re-binds the remover there, counters and
+// all. The remover added it back as a new member, whose send counter
+// started at 1 (F71's record holds current members only), so the re-paired
+// device dropped the remover's frames until that counter climbed back
+// (host-probed with the #1761 harness: B dropped A's frames 1..5 and heard
+// 6). A new member now starts one past the highest reservation the device
+// stored for anyone, a removed member's included, as a boot resumes every
+// member.
+
+// `self` takes `from`'s next heartbeat (a verified, fresh frame).
+bool hears_next_heartbeat(Device& self, Device& from) {
+  const Frame f = heartbeat_to(from, self);
+  become(self);
+  const uint32_t received = mn::g_messages_received;
+  deliver(self, from.mac, f);
+  become(self);
+  return mn::g_messages_received == received + 1;
+}
+
+void remove_member(Device& self, const Device& gone) {
+  uint8_t fp[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(gone.pub, fp);
+  become(self);
+  CHECK(mn::remove_peer(fp));
+}
+
+// The deny-list's grace runs out on `self` (spec §5.6: 7 days), so it pairs
+// with the device it removed again.
+void past_the_grace(Device& self) {
+  host_sim::now_ms += mesh_revocation::REVOCATION_GRACE_MS + 1000;
+  become(self);
+  mn::update();
+}
+
+void re_pair(Device& ini, Device& joi) {
+  pair_to_codes(ini, joi);
+  confirm_initiator_first(ini, joi);
+  CHECK(completed(ini, joi) && completed(joi, ini));
+}
+
+void test_a_re_paired_removed_member_hears_its_remover_at_once() {
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 5; ++i) deliver(B, A.mac, heartbeat_to(A, B));
+  CHECK(entry(B, A)->msg_counter_rx == 5);
+  remove_member(A, B);
+  past_the_grace(A);
+  re_pair(A, B);
+  CHECK(entry(B, A)->msg_counter_rx >= 5);         // B kept what it had heard
+  CHECK(entry(A, B)->msg_counter_tx > 5);          // was 1
+  CHECK(hears_next_heartbeat(B, A));
+  std::printf("PASS a_re_paired_removed_member_hears_its_remover_at_once\n");
+}
+
+void test_a_removed_members_reservation_outlives_it_and_a_reboot() {
+  // The removed member held the highest reservation (A sent B 3072
+  // frames, and C none: C's reservation is the first block's), and A
+  // reboots before the re-pair. The removal's save dropped B's entry from
+  // the record, so the boot resumed C one past the first block, and the
+  // re-pair started B a block above that (C's first heartbeats reserved
+  // one), below what B had heard. A removal now holds every survivor to
+  // the highest reservation.
+  fresh_opera({&A, &B, &C});
+  for (uint64_t i = 0; i < 3 * kBlock; ++i) CHECK(frame_to(A, B));
+  deliver(B, A.mac, sent_to(A, B.mac).back());
+  CHECK(entry(B, A)->msg_counter_rx == 3 * kBlock);
+  CHECK(entry(A, C)->msg_counter_tx_reserved == kBlock);   // C's never moved
+  remove_member(A, B);
+  boot(A);
+  past_the_grace(A);
+  re_pair(A, B);
+  CHECK(entry(A, B)->msg_counter_tx > 3 * kBlock);
+  CHECK(hears_next_heartbeat(B, A));
+  std::printf("PASS a_removed_members_reservation_outlives_it_and_a_reboot\n");
+}
+
+void test_a_device_re_paired_after_its_partner_held_no_one_hears_it() {
+  // Two ways A ends up holding no member while B keeps A: A removes its
+  // last member (the record is not rewritten with no member; a boot reads
+  // it all the same), or A leaves (B is not told: canary-wap acts on no
+  // LEAVE_OPERA).
+  for (int leave = 0; leave < 2; ++leave) {
+    fresh_opera({&A, &B});
+    for (int i = 0; i < 5; ++i) deliver(B, A.mac, heartbeat_to(A, B));
+    if (leave) {
+      become(A);
+      CHECK(mn::leave_opera());
+    } else {
+      remove_member(A, B);
+      boot(A);
+      become(A);
+      CHECK(mn::g_peer_count == 0);
+      past_the_grace(A);
+    }
+    re_pair(A, B);
+    CHECK(entry(A, B)->msg_counter_tx > 5);
+    CHECK(hears_next_heartbeat(B, A));
+  }
+  std::printf("PASS a_device_re_paired_after_its_partner_held_no_one_hears_it\n");
+}
+
+void test_a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters() {
+  // Flash encryption off: a boot loads no opera and no member (spec §5.5),
+  // while a member that keeps A keeps what it last heard. init() reads the
+  // send-counter record anyway (it is not flash-encryption gated), so the
+  // re-pair starts above it. (The switch is one per image here: B's own
+  // saves are refused too during the re-pair, and it pairs in RAM.)
+  fresh_opera({&A, &B});
+  for (int i = 0; i < 5; ++i) deliver(B, A.mac, heartbeat_to(A, B));
+  host_sim::flash_encrypted = false;
+  boot(A);
+  become(A);
+  CHECK(!mn::g_opera_config.configured && mn::g_peer_count == 0);
+  re_pair(A, B);
+  CHECK(entry(A, B)->msg_counter_tx > 5);
+  CHECK(hears_next_heartbeat(B, A));
+  host_sim::flash_encrypted = true;
+  std::printf("PASS a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1251,6 +1377,14 @@ const Test kTests[] = {
     {"the_announce_keeps_the_heartbeat_cadence", test_the_announce_keeps_the_heartbeat_cadence},
     {"an_opera_nobody_answers_keeps_the_heartbeat_cadence",
      test_an_opera_nobody_answers_keeps_the_heartbeat_cadence},
+    {"a_re_paired_removed_member_hears_its_remover_at_once",
+     test_a_re_paired_removed_member_hears_its_remover_at_once},
+    {"a_removed_members_reservation_outlives_it_and_a_reboot",
+     test_a_removed_members_reservation_outlives_it_and_a_reboot},
+    {"a_device_re_paired_after_its_partner_held_no_one_hears_it",
+     test_a_device_re_paired_after_its_partner_held_no_one_hears_it},
+    {"a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters",
+     test_a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters},
 };
 
 }  // namespace liveness

@@ -116,12 +116,18 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   const std::string code = load(MESH_NETWORK_CPP);
   const std::string sq   = squeeze(code);
 
-  // The sender: add_peer starts at 1, and so do the two rekey resets (the
-  // rekey-apply branch of handle_received_message, and maybe_finalize_rekey).
+  // The sender: add_peer starts at 1 on a device that has reserved no
+  // counter (F99: one past its highest reservation otherwise), and so do the
+  // two rekey resets (the rekey-apply branch of handle_received_message, and
+  // maybe_finalize_rekey).
   // No reset to 0 remains anywhere in the file.
+  // Since F99 a new member starts one past the highest reservation the
+  // device stored for anyone: 1 on a device that has stored none
+  // (g_tx_high_reserved starts at 0; test_mesh_liveness_wap runs both).
   const std::string add = squeeze(function_body(code, "add_peer"));
   CHECK(!add.empty());
-  CHECK(count(add, "peer->msg_counter_tx=1;") == 1);
+  CHECK(count(add, "peer->msg_counter_tx=(g_tx_high_reserved==UINT64_MAX)?0:g_tx_high_reserved+1;") == 1);
+  CHECK(count(sq, "staticuint64_tg_tx_high_reserved=0;") == 1);
   // Peers restored from NVS take the same convention (Codex P1 on #1752):
   // a static-zeroed tx would sign counter 0 and the strict gate drops it.
   const std::string ld = squeeze(function_body(code, "load_peers"));
@@ -129,7 +135,7 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   CHECK(count(ld, "g_peers[i].msg_counter_rx=0;") == 1);
   CHECK(count(add, "peer->msg_counter_rx=0;") == 1);
   CHECK(count(sq, "msg_counter_tx=0;") == 0);
-  CHECK(count(sq, "msg_counter_tx=1;") == 4);  // add_peer, rekey apply, maybe_finalize_rekey, load_peers
+  CHECK(count(sq, "msg_counter_tx=1;") == 3);  // rekey apply, maybe_finalize_rekey, load_peers
   const std::string fin = squeeze(function_body(code, "maybe_finalize_rekey"));
   CHECK(!fin.empty());
   CHECK(count(fin, "g_peers[j].msg_counter_tx=1;") == 1);
