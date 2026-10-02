@@ -25,7 +25,11 @@
  *      rules completes too), the joiner takes the COMPLETE once its own
  *      owner confirmed, and a CONFIRM counts only from the partner's
  *      address and once the code is shown.
- *   8. A partner the PartnerGate refuses fails the pairing (F118): at the
+ *   8. An updated joiner re-sends its CONFIRM, bounded, once it has read
+ *      the initiator's CONFIRM after its own owner confirmed (F117), so a
+ *      pre-F97 initiator completes in either order and two updated devices
+ *      exchange the same frames as before.
+ *   9. A partner the PartnerGate refuses fails the pairing (F118): at the
  *      owner's confirm, before the initiator seals, before the joiner
  *      opens; and every NOTIFY_FAILED carries its reason.
  *
@@ -953,6 +957,187 @@ void test_a_pre_f97_joiner_completes_in_either_order() {
   std::printf("PASS test_a_pre_f97_joiner_completes_in_either_order\n");
 }
 
+/* ── F117 — an updated joiner pairs a pre-F97 initiator in either order ──
+ *
+ * An initiator on firmware before F97 (c6a305b's rules) reads a CONFIRM only
+ * once its own owner confirmed (AWAITING_CONFIRM_PEER) and answers it with a
+ * COMPLETE alone; one that arrives earlier it drops unread. The updated
+ * joiner sends its CONFIRM at its owner's confirm, so when the joiner's
+ * owner confirmed first that CONFIRM was dropped, and both sides timed out.
+ * Now the joiner re-sends it once it has read the initiator's CONFIRM after
+ * its own owner confirmed: CONFIRM_RESEND_FIRST_MS later, then every
+ * CONFIRM_RESEND_INTERVAL_MS, at most CONFIRM_RESEND_MAX, only to the
+ * partner, only while it waits for the COMPLETE. */
+
+/* The pre-F97 initiator, modeled on the current one: a CONFIRM before its
+ * owner's confirm is dropped unread, and its COMPLETE goes alone (the old
+ * Action had no leading CONFIRM). On the honest path that is exactly the
+ * old handlers' behavior; the scratch probe for F117 also ran the real
+ * c6a305b library against this one. */
+mesh_pairing::Action pre_f97_initiator_receive(mesh_pairing::PairingContext& ci,
+                                               const uint8_t from[6], const InFlight& f,
+                                               uint32_t now) {
+  if (f.type == mesh_pairing::MsgType::CONFIRM &&
+      ci.state != mesh_pairing::State::AWAITING_CONFIRM_PEER) {
+    return mesh_pairing::Action{};
+  }
+  return deliver(ci, from, f, now);
+}
+
+/* Both orders with a pre-F97 initiator. Joiner's owner first: its CONFIRM is
+ * dropped; the initiator's owner confirms and its CONFIRM moves the joiner
+ * to AWAITING_COMPLETE; the joiner's tick re-sends its CONFIRM after
+ * CONFIRM_RESEND_FIRST_MS (not before); the initiator answers with the
+ * COMPLETE alone, and both are PAIRED with the secret. Initiator's owner
+ * first: completes on the first CONFIRM, nothing re-sent. Fails with the
+ * re-send not armed (both sides then time out, as before F117). */
+void test_a_pre_f97_initiator_completes_in_either_order() {
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::Action a;
+    InFlight cfj;
+    if (joiner_first) {
+      a = mesh_pairing::confirm_code(p.cj, 50);
+      must(action_to_inflight(a, &cfj));
+      assert(pre_f97_initiator_receive(p.ci, p.mac_j, cfj, 55).type ==
+             mesh_pairing::ActionType::NONE);              /* dropped unread */
+      assert(!p.ci.peer_confirmed);
+      a = mesh_pairing::confirm_code(p.ci, 1000);
+      assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+      InFlight cfi; must(action_to_inflight(a, &cfi));
+      assert(deliver(p.cj, p.mac_i, cfi, 1010).type == mesh_pairing::ActionType::NONE);
+      assert(p.cj.state == mesh_pairing::State::AWAITING_COMPLETE);
+      /* Nothing before the delay; then the same CONFIRM, to the partner. */
+      assert(mesh_pairing::tick(p.cj, 1010 + mesh_pairing::CONFIRM_RESEND_FIRST_MS - 1).type ==
+             mesh_pairing::ActionType::NONE);
+      a = mesh_pairing::tick(p.cj, 1010 + mesh_pairing::CONFIRM_RESEND_FIRST_MS);
+      assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+      InFlight again; must(action_to_inflight(a, &again));
+      assert(std::memcmp(again.to, p.mac_i, 6) == 0);
+      assert(again.bytes == cfj.bytes);
+      a = pre_f97_initiator_receive(p.ci, p.mac_j, again, 2020);
+    } else {
+      a = mesh_pairing::confirm_code(p.ci, 50);
+      InFlight cfi; must(action_to_inflight(a, &cfi));
+      assert(deliver(p.cj, p.mac_i, cfi, 55).type == mesh_pairing::ActionType::NONE);
+      a = mesh_pairing::confirm_code(p.cj, 60);
+      must(action_to_inflight(a, &cfj));
+      a = pre_f97_initiator_receive(p.ci, p.mac_j, cfj, 70);
+    }
+    assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+    InFlight cp; must(action_to_inflight(a, &cp));    /* alone: no leading CONFIRM */
+    a = deliver(p.cj, p.mac_i, cp, 2030);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    expect_both_paired(p, 2040);
+    /* PAIRED: the re-send is over. */
+    assert(mesh_pairing::tick(p.cj, 2040 + 10 * mesh_pairing::CONFIRM_RESEND_INTERVAL_MS).type ==
+           mesh_pairing::ActionType::NONE);
+  }
+  std::printf("PASS test_a_pre_f97_initiator_completes_in_either_order\n");
+}
+
+/* The re-send is bounded and goes only where it should: with nobody
+ * answering, a joiner in AWAITING_COMPLETE sends exactly
+ * CONFIRM_RESEND_MAX copies, at FIRST then INTERVAL spacing, all to the
+ * partner, then nothing until the timeout. A joiner whose owner confirmed
+ * but that has not read the initiator's CONFIRM (AWAITING_CONFIRM_PEER)
+ * re-sends nothing, and neither does an initiator. Fails with the bound
+ * removed. */
+void test_the_joiners_confirm_resend_is_bounded() {
+  Pair p;
+  pair_to_code(p);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+  InFlight cfj; must(action_to_inflight(a, &cfj));
+  assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
+  a = mesh_pairing::confirm_code(p.ci, 60);   /* the joiner's CONFIRM was never delivered */
+  InFlight cfi; must(action_to_inflight(a, &cfi));
+  for (uint32_t t = 60; t < 60 + 60000; t += 100) {
+    assert(mesh_pairing::tick(p.cj, t).type == mesh_pairing::ActionType::NONE);
+    assert(mesh_pairing::tick(p.ci, t).type == mesh_pairing::ActionType::NONE);
+  }
+  const uint32_t t0 = 70000;
+  assert(deliver(p.cj, p.mac_i, cfi, t0).type == mesh_pairing::ActionType::NONE);
+  std::vector<uint32_t> sent_at;
+  for (uint32_t t = t0; t < 10 + mesh_pairing::PAIRING_TIMEOUT_MS; t += 50) {
+    a = mesh_pairing::tick(p.cj, t);
+    if (a.type == mesh_pairing::ActionType::SEND_CONFIRM) {
+      InFlight f; must(action_to_inflight(a, &f));
+      assert(std::memcmp(f.to, p.mac_i, 6) == 0 && f.bytes == cfj.bytes);
+      sent_at.push_back(t - t0);
+    } else {
+      assert(a.type == mesh_pairing::ActionType::NONE);
+    }
+    assert(mesh_pairing::tick(p.ci, t).type == mesh_pairing::ActionType::NONE);
+  }
+  assert(sent_at.size() == mesh_pairing::CONFIRM_RESEND_MAX);
+  for (size_t i = 0; i < sent_at.size(); ++i) {
+    assert(sent_at[i] == mesh_pairing::CONFIRM_RESEND_FIRST_MS +
+                         (uint32_t)i * mesh_pairing::CONFIRM_RESEND_INTERVAL_MS);
+  }
+  a = mesh_pairing::tick(p.cj, 10 + mesh_pairing::PAIRING_TIMEOUT_MS);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+  std::printf("PASS test_the_joiners_confirm_resend_is_bounded  (%zu copies)\n", sent_at.size());
+}
+
+/* Two updated devices are unchanged by the re-send: in both orders, every
+ * frame delivered as sent and both sides ticked every 50 ms, the joiner
+ * sends one CONFIRM and the initiator one COMPLETE (with its CONFIRM in
+ * front), as before F117: the COMPLETE lands before a re-send is due. A
+ * copy that did go out would reach an initiator already PAIRED, which
+ * drops it (checked at the end). */
+void test_two_updated_devices_resend_nothing() {
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    Pair p;
+    pair_to_code(p);
+    struct Q { bool to_j; InFlight f; };
+    std::vector<Q> air;
+    int confirms_from_j = 0, completes = 0;
+    auto put = [&](bool from_i, const mesh_pairing::Action& a) {
+      InFlight lead, f;
+      if (leading_confirm_to_inflight(a, &lead)) air.push_back(Q{from_i, lead});
+      if (action_to_inflight(a, &f)) {
+        if (!from_i && f.type == mesh_pairing::MsgType::CONFIRM) ++confirms_from_j;
+        if (f.type == mesh_pairing::MsgType::COMPLETE) ++completes;
+        air.push_back(Q{from_i, f});
+      }
+    };
+    auto drain = [&](uint32_t t) {
+      for (size_t k = 0; k < air.size(); ++k) {
+        const Q q = air[k];
+        put(!q.to_j, q.to_j ? deliver(p.cj, p.mac_i, q.f, t) : deliver(p.ci, p.mac_j, q.f, t));
+      }
+      air.clear();
+    };
+    const uint32_t first = 100, second = 3100;
+    for (uint32_t t = 100; t < 20000; t += 50) {
+      if (t == first)  put(!joiner_first, mesh_pairing::confirm_code(joiner_first ? p.cj : p.ci, t));
+      if (t == second) put(joiner_first, mesh_pairing::confirm_code(joiner_first ? p.ci : p.cj, t));
+      drain(t);
+      mesh_pairing::Action ti = mesh_pairing::tick(p.ci, t);
+      if (ti.type == mesh_pairing::ActionType::NOTIFY_PAIRED) continue;
+      put(true, ti);
+      put(false, mesh_pairing::tick(p.cj, t));
+      drain(t);
+    }
+    assert(p.ci.state == mesh_pairing::State::PAIRED && p.cj.state == mesh_pairing::State::PAIRED);
+    assert(confirms_from_j == 1 && completes == 1);
+    uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+    assert(mesh_pairing::consume_opera_secret(p.cj, got));
+    assert(std::memcmp(got, p.secret, sizeof(got)) == 0);
+  }
+  /* A late copy reaches a PAIRED initiator: dropped. */
+  Pair p;
+  pair_to_code(p);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+  InFlight cfj; must(action_to_inflight(a, &cfj));
+  assert(deliver(p.ci, p.mac_j, cfj, 60).type == mesh_pairing::ActionType::NONE);
+  assert(mesh_pairing::confirm_code(p.ci, 70).type == mesh_pairing::ActionType::SEND_COMPLETE);
+  assert(deliver(p.ci, p.mac_j, cfj, 80).type == mesh_pairing::ActionType::NONE);
+  assert(p.ci.state == mesh_pairing::State::PAIRED);
+  std::printf("PASS test_two_updated_devices_resend_nothing  (both orders)\n");
+}
+
 /* ── F118 — a device that cannot hold its partner fails the pairing ──────
  *
  * The integration layer's PartnerGate (mesh_session::can_hold_partner on a
@@ -1176,6 +1361,9 @@ int main() {
   test_a_bad_confirm_from_the_partner_ends_the_pairing_in_either_order();
   test_the_joiner_takes_a_complete_only_after_its_owner_confirms();
   test_a_pre_f97_joiner_completes_in_either_order();
+  test_a_pre_f97_initiator_completes_in_either_order();
+  test_the_joiners_confirm_resend_is_bounded();
+  test_two_updated_devices_resend_nothing();
   test_a_refused_partner_fails_at_the_owners_confirm();
   test_the_initiator_seals_nothing_to_a_refused_partner();
   test_the_joiner_opens_nothing_from_a_refused_partner();

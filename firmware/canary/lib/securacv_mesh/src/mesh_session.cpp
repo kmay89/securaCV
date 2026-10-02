@@ -969,12 +969,13 @@ static bool handle_pair_frame(const uint8_t mac[6],
     mesh_crypto::compute_fingerprint(partner, fp);
     if (mesh_revocation::contains(s_revoked, fp, s_last_process_ms)) return false;
   }
-  /* now_ms isn't readily available in this callback context, but
-   * mesh_pairing::receive uses it only for the tamper-path nothing-
-   * else, so 0 is acceptable. The tick() path supplies a real now_ms
-   * for timeout enforcement. */
+  /* The receive path's clock: the latest process() call's now_ms (the
+   * transport callback carries no timestamp), the clock tick() runs on.
+   * The joiner arms its CONFIRM re-send from it (F117); it used to be 0,
+   * which nothing read. */
   mesh_pairing::Action a = mesh_pairing::receive(s_ctx, mac, pair_type,
-                                                  payload, payload_len, 0);
+                                                  payload, payload_len,
+                                                  s_last_process_ms);
   dispatch_action(a);
   return true;
 }

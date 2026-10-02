@@ -454,7 +454,6 @@ Action either_handle_confirm(PairingContext& ctx,
                              const uint8_t from_mac[6],
                              const uint8_t* payload, size_t payload_len,
                              uint32_t now_ms) {
-  (void)now_ms;
   if (ctx.state != State::AWAITING_CONFIRM &&
       ctx.state != State::AWAITING_CONFIRM_PEER) {
     return make_action(ActionType::NONE);
@@ -479,8 +478,17 @@ Action either_handle_confirm(PairingContext& ctx,
   }
   /* Joiner: the hash matched. After its own owner's confirm it now waits
    * for the COMPLETE only; before it, nothing changes (the COMPLETE is
-   * still taken only after this owner confirms). */
-  if (ctx.state == State::AWAITING_CONFIRM_PEER) ctx.state = State::AWAITING_COMPLETE;
+   * still taken only after this owner confirms). Reading the initiator's
+   * CONFIRM here also says the initiator's owner has confirmed, so a
+   * pre-F97 initiator now waits for a CONFIRM it reads after that, and
+   * dropped this side's earlier one if it came first: arm the re-send
+   * (F117; tick() sends it, unless the COMPLETE comes first). */
+  if (ctx.state == State::AWAITING_CONFIRM_PEER) {
+    ctx.state = State::AWAITING_COMPLETE;
+    ctx.confirm_resend_armed = true;
+    ctx.confirm_resends      = 0;
+    ctx.confirm_resend_ms    = now_ms;
+  }
   return make_action(ActionType::NONE);
 }
 
@@ -567,6 +575,25 @@ Action tick(PairingContext& ctx, uint32_t now_ms) {
   }
   if ((now_ms - ctx.started_ms) >= PAIRING_TIMEOUT_MS) {
     return fail(ctx, FailReason::TIMEOUT);
+  }
+  /* F117: the joiner's CONFIRM again, for an initiator on firmware before
+   * F97 (mesh_pairing.h, STATE MACHINE). Only in AWAITING_COMPLETE — its
+   * owner confirmed and it read the initiator's CONFIRM since — only to the
+   * partner, and bounded. Signed elapsed time: a receive() stamped a little
+   * after this tick's clock reads as not yet due. */
+  if (ctx.role == ROLE_JOINER && ctx.state == State::AWAITING_COMPLETE &&
+      ctx.confirm_resend_armed && ctx.confirm_resends < CONFIRM_RESEND_MAX) {
+    const uint32_t gap = ctx.confirm_resends == 0 ? CONFIRM_RESEND_FIRST_MS
+                                                  : CONFIRM_RESEND_INTERVAL_MS;
+    if ((int32_t)(now_ms - ctx.confirm_resend_ms) >= (int32_t)gap) {
+      ++ctx.confirm_resends;
+      ctx.confirm_resend_ms = now_ms;
+      PairConfirmPayload confirm{};
+      compute_confirmation_hash(ctx.session_key, ctx.confirmation_code,
+                                confirm.confirmation_hash);
+      return make_send_action(ActionType::SEND_CONFIRM, ctx.peer_mac,
+                              &confirm, sizeof(confirm));
+    }
   }
   return make_action(ActionType::NONE);
 }

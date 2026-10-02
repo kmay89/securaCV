@@ -233,10 +233,33 @@ static_assert(sizeof(PairCompletePayload) ==
  *   in either order; without it, the initiator would report PAIRED and the
  *   joiner drop the COMPLETE. canary-wap (F75) sends the COMPLETE alone,
  *   because its receive buffer holds one frame; this tree's transport ring
- *   holds eight. A pre-F97 initiator still drops an updated joiner's early
- *   CONFIRM, so that pair completes only when the initiator's owner
- *   confirms first; in the other order both sides time out, as two pre-F97
- *   devices did.
+ *   holds eight.
+ *
+ *   The other mix (F117): an initiator on firmware before F97 drops a
+ *   CONFIRM that arrives before its own owner confirms, and answers only a
+ *   CONFIRM read after it, with a COMPLETE alone. So when the joiner's
+ *   owner confirms first, the joiner's one CONFIRM was dropped and both
+ *   sides timed out. An updated joiner now re-sends its CONFIRM once it has
+ *   read the initiator's CONFIRM after its own owner confirmed (moving to
+ *   AWAITING_COMPLETE): that CONFIRM is the sign the initiator's owner has
+ *   confirmed too, so a pre-F97 initiator is now waiting for exactly this.
+ *   tick() sends it CONFIRM_RESEND_FIRST_MS after that, then every
+ *   CONFIRM_RESEND_INTERVAL_MS, at most CONFIRM_RESEND_MAX times, only to
+ *   the partner and only while no COMPLETE has come. An updated initiator
+ *   sends its COMPLETE right behind its CONFIRM, so between two updated
+ *   devices the COMPLETE lands first and nothing is re-sent; one that came
+ *   late would reach an initiator already PAIRED, which drops it.
+ *
+ *   Joiner's owner first, initiator on firmware before F97:
+ *
+ *                                            confirm_code() [after user OK]
+ *   (dropped: owner not confirmed) ◄────────  → SEND_CONFIRM (hash)
+ *   confirm_code() [after user OK]
+ *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — hash checked
+ *                                              → AWAITING_COMPLETE
+ *                                            tick() [+CONFIRM_RESEND_FIRST_MS]
+ *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash) again
+ *     → SEND_COMPLETE (alone) ───────────►   handle (COMPLETE) → NOTIFY_PAIRED
  *
  * On any failure or 5-minute timeout, both sides transition to FAILED
  * and the integration layer is told via NOTIFY_FAILED, with the reason
@@ -382,6 +405,16 @@ struct Action {
  * a FAILED transition + NOTIFY_FAILED action. */
 constexpr uint32_t PAIRING_TIMEOUT_MS = 5 * 60 * 1000;
 
+/* The joiner's CONFIRM re-send (F117, above): the first one this long after
+ * it read the initiator's CONFIRM in AWAITING_CONFIRM_PEER, then one every
+ * interval, at most CONFIRM_RESEND_MAX in all, while it waits in
+ * AWAITING_COMPLETE. The delay lets an updated initiator's COMPLETE, sent
+ * right behind its CONFIRM, land first; the bound keeps a joiner whose
+ * initiator never answers from repeating itself to the timeout. */
+constexpr uint32_t CONFIRM_RESEND_FIRST_MS    = 1000;
+constexpr uint32_t CONFIRM_RESEND_INTERVAL_MS = 2000;
+constexpr uint8_t  CONFIRM_RESEND_MAX         = 3;
+
 /* Per-context state. Treat as opaque from the integration side — only
  * the API below should touch fields. Sized so multiple contexts can sit
  * on the stack without pressure (~250 B). */
@@ -437,6 +470,14 @@ struct PairingContext {
    * signal on the initiator side (the joiner gets it inline when
    * COMPLETE decrypts). */
   bool     pending_notify_paired;
+
+  /* Joiner only (F117): the CONFIRM re-send to a pre-F97 initiator. Armed
+   * when the initiator's CONFIRM is read in AWAITING_CONFIRM_PEER;
+   * confirm_resend_ms is when it was armed or last re-sent, and
+   * confirm_resends how many went. tick() sends them. */
+  bool     confirm_resend_armed;
+  uint8_t  confirm_resends;
+  uint32_t confirm_resend_ms;
 
   /* F118: the integration layer's admission check, set at start_* (see
    * PartnerGate). nullptr admits. */
@@ -504,7 +545,9 @@ Action receive(PairingContext& ctx,
 
 /* Periodic tick from the main loop. now_ms is the current monotonic
  * time. Returns NOTIFY_FAILED if the 5-minute timeout has elapsed
- * since start_*, NONE otherwise. */
+ * since start_*; on an initiator the deferred NOTIFY_PAIRED; on a joiner
+ * waiting for its COMPLETE a due CONFIRM re-send (SEND_CONFIRM, F117);
+ * NONE otherwise. receive()'s now_ms must come from the same clock. */
 Action tick(PairingContext& ctx, uint32_t now_ms);
 
 /* User-driven confirmation that the 6-digit code matches on both
