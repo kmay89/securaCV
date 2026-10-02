@@ -1572,6 +1572,32 @@ void test_a_lost_complete_is_sent_again_until_the_joiner_is_heard() {
   std::printf("PASS a_lost_complete_is_sent_again_until_the_joiner_is_heard\n");
 }
 
+void test_a_lost_complete_on_a_re_pair_is_sent_again() {
+  // The joiner is a member already, heard before: here a survivor rejoins
+  // its remover after the removal split them (F95), the way back today.
+  // "Heard" is judged against the joiner's last-seen counter when the
+  // COMPLETE went out, not against 0, or the copies would stop at once for
+  // every re-pair (spec §8.3's address change included).
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 5; ++i) deliver(B, A.mac, heartbeat_to(A, B));
+  for (int i = 0; i < 5; ++i) deliver(A, B.mac, heartbeat_to(B, A));
+  CHECK(entry(A, B)->msg_counter_rx >= 5);          // A has heard B
+  remove_member(A, C);
+  become(A);
+  mn::update();                                     // the rotation commits (F95)
+  CHECK(opera_id_of(A) != opera_id_of(B));
+  pair_to_codes(A, B);
+  complete_lost_after_codes(A, B);
+  run({&A, &B}, 40000);
+  CHECK(pair_frames(A, B.mac, mn::MSG_PAIR_COMPLETE) >= 2);
+  CHECK(completed(B, A));
+  CHECK(opera_id_of(A) == opera_id_of(B));
+  CHECK(hears_next_heartbeat(B, A));
+  become(A);
+  CHECK(!mn::g_complete_resend.active);
+  std::printf("PASS a_lost_complete_on_a_re_pair_is_sent_again\n");
+}
+
 void test_an_unanswered_complete_stops_at_the_pairing_timeout_and_says_so() {
   // The joiner never answers (switched off, or it refused the initiator,
   // F73): one copy per 2 s for 120 s, then a WARNING, once.
@@ -1637,6 +1663,35 @@ void test_a_complete_that_never_went_out_is_logged_as_that() {
   CHECK(times_logged("opera: pairing COMPLETE never answered") == 0);
   host_sim::now_ms += 60000;                        // let the gate settle for later tests
   std::printf("PASS a_complete_that_never_went_out_is_logged_as_that\n");
+}
+
+void test_a_complete_first_refused_then_sent_is_logged_as_unanswered() {
+  // The storm gate refuses the first COMPLETE, the copies go out once it
+  // reopens, and the joiner never answers. The log says the COMPLETE was
+  // never answered: copies went out. "Could not be sent" would send the
+  // owner after the radio, not after the joiner.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  become(A);
+  CHECK(mn::confirm_pairing());
+  become(J);
+  CHECK(mn::confirm_pairing());
+  become(A);
+  mn::g_storm_pause_until_ms = host_sim::now_ms + 5000;
+  A.espnow.sent.clear();
+  g_health.clear();
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);   // refused
+  for (uint32_t t = 0; t < 150000; t += 500) {
+    host_sim::now_ms += 500;
+    become(A);
+    mn::update();
+  }
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) >= 50);  // and then sent
+  CHECK(times_logged("opera: pairing COMPLETE never answered") == 1);
+  CHECK(times_logged("opera: pairing COMPLETE could not be sent") == 0);
+  std::printf("PASS a_complete_first_refused_then_sent_is_logged_as_unanswered\n");
 }
 
 void test_a_complete_that_does_not_open_does_not_end_the_pairing() {
@@ -1797,12 +1852,15 @@ const Test kTests[] = {
      test_a_rotation_that_reaches_a_member_keeps_every_counter},
     {"a_lost_complete_is_sent_again_until_the_joiner_is_heard",
      test_a_lost_complete_is_sent_again_until_the_joiner_is_heard},
+    {"a_lost_complete_on_a_re_pair_is_sent_again", test_a_lost_complete_on_a_re_pair_is_sent_again},
     {"an_unanswered_complete_stops_at_the_pairing_timeout_and_says_so",
      test_an_unanswered_complete_stops_at_the_pairing_timeout_and_says_so},
     {"a_complete_the_storm_gate_refused_goes_out_when_it_reopens",
      test_a_complete_the_storm_gate_refused_goes_out_when_it_reopens},
     {"a_complete_that_never_went_out_is_logged_as_that",
      test_a_complete_that_never_went_out_is_logged_as_that},
+    {"a_complete_first_refused_then_sent_is_logged_as_unanswered",
+     test_a_complete_first_refused_then_sent_is_logged_as_unanswered},
     {"a_complete_that_does_not_open_does_not_end_the_pairing",
      test_a_complete_that_does_not_open_does_not_end_the_pairing},
     {"an_earlier_pairings_complete_does_not_end_a_later_one",
