@@ -47,13 +47,35 @@
  * for its rows; the wait is bounded (csi_event_backfill::kCardWaitMs); a
  * held row writes no ceiling over the card rows after it; ambient rows are
  * never held; a broker change before the card opens drops what it holds.
- * The rest pin the hold's own rules, each proven by a mutation of the fix.
  *
- * Both proofs build this file, with this directory's Makefile and stubs,
+ * F103's review added a line that lands without its newline: its append
+ * fails, so the row waits in the hold, and the next append seals the line,
+ * which the walk then sends. It reaches HA once, not from the card and again
+ * from the hold, by either path out of the hold (failing on the egress
+ * before that fix: the same proof, with <rev> the parent of "fix(csi): a
+ * held row the walk already sent from the card is not sent again"). And the
+ * card wait's timing: a close long after boot is timed from the close, a
+ * 30 s remount is inside the wait, and the wait ends exactly kCardWaitMs
+ * after it began.
+ *
+ * The rest pin the hold's own rules: a close with nothing owed does not
+ * wait; a broker change drops the hold and ends the wait, and one made with
+ * the card open is not applied again at a remount; held rows keep their
+ * replay flag; a held row's failed publish is retried, ahead of the card
+ * row; a refused flush keeps its row; past kHeldMax the oldest goes; a row
+ * routed in the pass the wait ends, or whose append fails in the pass the
+ * card opens, waits behind the hold. Each fails on at least one mutation of
+ * the fix that nothing else here catches. Two mutations change nothing a
+ * host can see and have no scenario: a failed append that takes the hold
+ * when nothing waits (the same pass's flush hands it over, ceiling first),
+ * and the flush run before the backfill pass instead of after it (a held
+ * row goes one pass later, in the same order).
+ *
+ * The proofs build this file, with this directory's Makefile and stubs,
  * against an older egress source: for F104 the one from the commit that
  * added this test ("test(canary): host-test the real canary event egress"),
- * for F103 the one from the F104 fix. From the repo root, with <rev> that
- * commit:
+ * for F103 the one from the F104 fix, for the review's line without its
+ * newline the one named above. From the repo root, with <rev> that commit:
  *   d=$(mktemp -d); git archive HEAD firmware | tar -x -C "$d"
  *   git show <rev>:firmware/canary/src/csi_event_egress.cpp \
  *     > "$d/firmware/canary/src/csi_event_egress.cpp"
@@ -738,6 +760,277 @@ static void test_held_rows_cover_no_card_rows_after_them() {
         "the held row wrote no ceiling over the three card rows committed after it");
 }
 
+/* ── F104: how long the card wait lasts, and from when ─────────────────── */
+
+static void test_card_closes_long_after_boot() {
+  std::printf("-- F104: the card closes mid-backlog a minute after boot, a row, the card back: nothing skipped\n");
+  fresh_device();
+  stub_millis() += 60000;                     /* uptime well past kCardWaitMs */
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 10; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  connect();
+  for (int i = 0; i < 2; ++i) loop_pass();
+  card_out();
+  loop_pass();
+  ids.push_back(emit_ping());
+  drain(4);
+  CHECK(!has(W.ha.accepted, ids.back()), "the row waits: the wait is timed from the close, not from boot");
+  card_back();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "every card row, then the row committed while it was out, each once");
+}
+
+static void test_card_out_for_a_remount() {
+  std::printf("-- F104: the card is out 30 s mid-backlog (the storage manager's recheck): nothing skipped\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 10; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  connect();
+  for (int i = 0; i < 2; ++i) loop_pass();
+  card_out();
+  loop_pass();
+  ids.push_back(emit_ping());
+  drain((int)(30000 / kPassMs));
+  CHECK(!has(W.ha.accepted, ids.back()), "after 30 s the row still waits for the card");
+  card_back();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the card back after one recheck: every card row, then the row, each once");
+}
+
+/* Passes until the next one is the first at or past kCardWaitMs since `t0`. */
+static void run_to_the_last_waiting_pass(uint32_t t0) {
+  while ((uint32_t)(stub_millis() + kPassMs - t0) < csi_event_backfill::kCardWaitMs) loop_pass();
+}
+
+static void test_card_wait_ends_at_kCardWaitMs() {
+  std::printf("-- F104: the wait ends exactly kCardWaitMs after it began; a row committed then waits its turn\n");
+  fresh_device(/*card=*/false);               /* the wait began in begin(), at boot */
+  const uint32_t t0 = stub_millis();
+  connect();
+  loop_pass();
+  const uint32_t a = emit_ping(); loop_pass();
+  run_to_the_last_waiting_pass(t0);
+  CHECK(W.ha.accepted.empty(), "one pass short of kCardWaitMs after boot the row still waits");
+  const uint32_t b = emit_ping();             /* routed in the pass the wait ends */
+  loop_pass();
+  drain(4);
+  CHECK(exactly(W.ha.accepted, {a, b}) && W.ha.refused.empty(),
+        "the next pass ends it: the held row goes, then the row routed in that pass behind it");
+  /* a close long after boot: timed from the pass that saw the close */
+  fresh_device();
+  stub_millis() += 60000;
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 10; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  connect();
+  for (int i = 0; i < 2; ++i) loop_pass();
+  card_out();
+  loop_pass();
+  const uint32_t t_close = stub_millis();
+  const uint32_t r = emit_ping(); loop_pass();
+  run_to_the_last_waiting_pass(t_close);
+  CHECK(!has(W.ha.accepted, r), "one pass short of kCardWaitMs after the close the row still waits");
+  loop_pass();
+  CHECK(has(W.ha.accepted, r) && W.ha.refused.empty(), "the next pass gives the card up and the row goes");
+}
+
+/* ── F104: the hold's own rules ────────────────────────────────────────── */
+
+static void test_close_with_nothing_waiting_does_not_wait() {
+  std::printf("-- F104: the card closes with nothing waiting on it: the next row goes at once\n");
+  fresh_device();
+  connect();
+  loop_pass();
+  const uint32_t a = emit_ping(); loop_pass();
+  card_out();
+  loop_pass();
+  const uint32_t b = emit_ping(); loop_pass();
+  CHECK(exactly(W.ha.accepted, {a, b}), "no card wait after a close that left nothing owed");
+}
+
+static void test_broker_change_drops_the_hold() {
+  std::printf("-- F104: the broker changes while a row waits in the hold: it is not the new broker's\n");
+  fresh_device();
+  W.mounted = false;                          /* a card in, its boot mount still running */
+  boot();
+  connect();
+  loop_pass();
+  const uint32_t r = emit_ping(); loop_pass();   /* held for the card */
+  W.epoch++;                                  /* reprovisioned to broker B */
+  loop_pass();
+  card_back();
+  const uint32_t g = emit_ping();
+  drain();
+  CHECK(!has(W.ha.accepted, r) && has(W.ha.accepted, g) && W.ha.refused.empty(),
+        "the held row owed to broker A is dropped; broker B gets its own row");
+}
+
+static void test_broker_change_ends_the_card_wait() {
+  std::printf("-- F104: a broker change ends the card wait: rows for the new broker go at once\n");
+  fresh_device(/*card=*/false);
+  connect();
+  loop_pass();
+  W.epoch++;                                  /* nothing on any card is owed to broker B */
+  loop_pass();
+  const uint32_t g = emit_ping(); loop_pass();
+  CHECK(exactly(W.ha.accepted, {g}), "broker B's row goes in its own pass");
+}
+
+static void test_broker_change_with_the_card_open_survives_a_remount() {
+  std::printf("-- F104: the broker changes with the card open; rows for it wait on the card, which remounts\n");
+  fresh_device();
+  connect();
+  loop_pass();
+  W.epoch++;                                  /* applied at once: the card's log is open */
+  loop_pass();
+  W.connected = false;
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }   /* owed to broker B */
+  card_out();
+  loop_pass();
+  card_back();
+  loop_pass();
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the change is not applied again when the log reopens: broker B gets its three rows");
+}
+
+static void test_held_rows_keep_their_replay_flag() {
+  std::printf("-- F104: a row held with the link up arrives as news; one held with it down as a replay\n");
+  fresh_device();
+  W.mounted = false;
+  boot();
+  connect();
+  loop_pass();
+  const uint32_t r = emit_ping(); loop_pass();   /* the link up: news */
+  card_back();                                /* an empty log: the hold flushes */
+  drain();
+  CHECK(exactly(W.ha.accepted, {r}) && W.ha.replay.size() == 1 && !W.ha.replay[0],
+        "flushed from the hold: not a replay");
+  fresh_device();
+  W.mounted = false;
+  boot();
+  connect();
+  loop_pass();
+  const uint32_t r2 = emit_ping(); drain(4);
+  card_back();
+  const uint32_t g2 = emit_ping();            /* on the card; the held row goes ahead of it */
+  drain();
+  CHECK(exactly(W.ha.accepted, {r2, g2}) && W.ha.replay.size() == 2 && !W.ha.replay[0] &&
+        !W.ha.replay[1], "sent ahead of a card row: not a replay, nor is the card row");
+  fresh_device();
+  W.mounted = false;
+  boot();
+  loop_pass();
+  const uint32_t r3 = emit_ping(); loop_pass();  /* the link down: a replay when it goes */
+  card_back();
+  loop_pass();
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, {r3}) && W.ha.replay.size() == 1 && W.ha.replay[0],
+        "held while the link was down: a replay");
+}
+
+static void test_held_row_publish_failure_is_retried() {
+  std::printf("-- F104: a held row's publish fails ahead of a card row: it is retried, then the card row\n");
+  fresh_device();
+  W.mounted = false;
+  boot();
+  connect();
+  loop_pass();
+  const uint32_t r = emit_ping();
+  drain(4);
+  card_back();
+  W.fail_next_sends = 1;                      /* the held row's live publish fails once */
+  const uint32_t g = emit_ping();
+  drain();
+  CHECK(exactly(W.ha.accepted, {r, g}) && W.ha.refused.empty(),
+        "the held row is kept and goes first; the card row waits for it");
+}
+
+/* As tamper_events_module.cpp declares it: system.integrity's "tamper",
+ * whose rows also ride the tamper topic (the bridge), and a bundle. */
+static const csi_event_decl_t TAMPER_EVENTS[] = {
+  { "tamper", CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET, CSI_PRIVACY_P0, 0 },
+};
+static const csi_module_t TAMPER_MODULE = {
+  "system.integrity", CSI_PRIVACY_P0, TAMPER_EVENTS, 1, noop_init, noop_tick, nullptr, nullptr,
+};
+static uint32_t commit_tamper() {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET;
+  std::strcpy(v.state_name, "sd_removed");
+  (void)csi_event_emit("system.integrity", "tamper", &v);
+  csi_event_flush_bundles();
+  return csi_event_get_next_event_id() - 1;
+}
+
+/* The MQTT layer refuses an event only when its offline queue is full of
+ * tamper alerts (it never displaces one; an event pushed into a full queue
+ * otherwise displaces the oldest event). Twelve tamper rows committed in the
+ * card wait with the link down: their twelve bridge alerts fill the queue,
+ * and the hold keeps the newest eight rows. The wait ends with the link
+ * still down, so every flush is refused, pass after pass, and must keep its
+ * row. Once the link is back, mqtt_loop() sends four alerts a pass and the
+ * flush puts the eight rows behind the eight alerts left: four fit, and the
+ * queue's own overflow rule keeps the newest four. */
+static void test_hold_flush_refused_by_a_full_queue_is_kept() {
+  std::printf("-- F104: the offline queue is full of tamper alerts when the hold flushes: the rows are kept\n");
+  fresh_device(/*card=*/false);
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < (int)kOfflineSlots; ++i) { ids.push_back(commit_tamper()); loop_pass(); }
+  CHECK(g_offline.size() == kOfflineSlots, "twelve tamper alerts fill the offline queue");
+  drain();                                    /* the wait ends with the link down: the flush is refused */
+  CHECK(W.ha.accepted.empty() && g_offline.size() == kOfflineSlots,
+        "no event displaced a tamper alert");
+  connect();
+  drain(40);
+  CHECK(W.tampers == (int)kOfflineSlots, "the tamper alerts go first");
+  const std::vector<uint32_t> want(ids.end() - 4, ids.end());
+  CHECK(exactly(W.ha.accepted, want) && W.ha.refused.empty(),
+        "then the held rows the queue had room for, in order: the refused flushes kept them");
+}
+
+static void test_hold_overflow_drops_the_oldest() {
+  std::printf("-- F104: ten rows wait for a late card: the oldest two are dropped\n");
+  fresh_device();
+  W.mounted = false;
+  boot();
+  connect();
+  loop_pass();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 10; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  card_back();
+  drain();
+  const std::vector<uint32_t> want(ids.begin() + 2, ids.end());
+  CHECK(exactly(W.ha.accepted, want) && W.ha.refused.empty(), "the newest eight, in order");
+}
+
+static void test_failed_append_as_the_card_opens_waits_behind_the_hold() {
+  std::printf("-- F103: a row whose append fails in the pass a late card opens waits behind the held row\n");
+  fresh_device();
+  connect();
+  loop_pass();
+  const uint32_t a = emit_ping(); loop_pass();   /* live: the card is claimed, nothing owed on it */
+  W.mounted = false;                          /* power cycle; the boot mount is still running */
+  boot();
+  connect();
+  loop_pass();
+  const uint32_t r = emit_ping(); drain(4);   /* held for the card */
+  card_back();                                /* opening it writes nothing: it is ours already */
+  SD.fail_writes = true;
+  const uint32_t f = emit_ping();
+  loop_pass();                                /* the log opens, nothing waits on it, then f's append fails */
+  SD.fail_writes = false;
+  drain();
+  CHECK(exactly(W.ha.accepted, {a, r, f}) && W.ha.refused.empty(),
+        "the held row first, then the failed-append row, each once");
+}
+
 /* ── main ──────────────────────────────────────────────────────────────── */
 
 int main() {
@@ -745,6 +1038,7 @@ int main() {
   csi_event_test_reset();
   csi_module_register(&MODULE);
   csi_module_register(&AMBIENT_MODULE);
+  csi_module_register(&TAMPER_MODULE);
 
   test_steady_state_is_live();
   test_outage_with_a_card_backfills_in_order();
@@ -767,6 +1061,18 @@ int main() {
   test_held_rows_cover_no_card_rows_after_them();
   test_ambient_rows_are_not_held();
   test_broker_change_before_the_card_opens();
+  test_card_closes_long_after_boot();
+  test_card_out_for_a_remount();
+  test_card_wait_ends_at_kCardWaitMs();
+  test_close_with_nothing_waiting_does_not_wait();
+  test_broker_change_drops_the_hold();
+  test_broker_change_ends_the_card_wait();
+  test_broker_change_with_the_card_open_survives_a_remount();
+  test_held_rows_keep_their_replay_flag();
+  test_held_row_publish_failure_is_retried();
+  test_hold_flush_refused_by_a_full_queue_is_kept();
+  test_hold_overflow_drops_the_oldest();
+  test_failed_append_as_the_card_opens_waits_behind_the_hold();
 
   CHECK(g_ceiling_violations_total == 0,
         "in every scenario, each id was under the NVS ceiling before it was handed over (F47)");
