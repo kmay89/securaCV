@@ -811,8 +811,9 @@ const WizardLogic = (function () {
   // The host the close-out link opens, from /api/device-info's mdns_host:
   // the label this Canary advertises over mDNS (canary_wap.ino's
   // generate_mdns_hostname: canary-<name> once named, canary-<4 hex> of
-  // the key fingerprint until then). Repo sweep F129: the link used to be
-  // built from the device id, a host no Canary advertises. Only a single
+  // the key fingerprint until then). Repo sweep F129: the link used to stay
+  // on the shared canary.local, or after the recovery-kit save be built from
+  // the device id, a host no Canary advertises. Only a single
   // RFC 1123 label is taken as-is; anything else returns '' and the static
   // canary.local link stays.
   function closeOutHost(info) {
@@ -1724,9 +1725,11 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     requestAnimationFrame(() => focusActiveStepHeading());
   }
 
-  // /api/device-info is the public route (no token, which this page does not
-  // hold) that names the host the device advertises; /api/status, which the
-  // link used to read, answers 401 here.
+  // /api/device-info is the public route that names the host the device
+  // advertises; it needs no token, and this page holds none. /api/status,
+  // which the link used to read, answers 401 unless the page holds the
+  // session cookie the recovery-kit save issues, and even then it names the
+  // device id, a host no Canary advertises.
   async function updateMdnsLinkFromDevice() {
     const link = $w('wiz-link-mdns');
     if (!link) return;
