@@ -1305,7 +1305,7 @@ so — see D2 below.)
   F46's id-space headroom counts the leak. Fix: decide the refund from
   admit's outcome (merged or opened), not from `has_open()` before it.
   Found by F46's review (#1761).
-  *Done (this PR):* `csi_bundler_admit()` now names a merge
+  *Done (#1763):* `csi_bundler_admit()` now names a merge
   (`CSI_BUNDLER_MERGED`: rolled into a bundle still open after admit's own
   expiry, no new row) apart from an opening (`CSI_BUNDLER_BUFFERED`), and
   `csi_event_emit` refunds the ceiling slot on a merge only;
@@ -1326,7 +1326,7 @@ so — see D2 below.)
   the canary they still do. Switch to
   `csi_bundler_tick()` together with F80, since the flush is what hides
   that leak on the canary. Found by F46 (#1761).
-  *Done (this PR):* the canary calls `csi_bundler_tick()` after each
+  *Done (#1763):* the canary calls `csi_bundler_tick()` after each
   module tick, as the canary-wap does, so a bundle closes for its window or
   its quiet gap only and a refresh merges. Both trees now spend one ceiling
   slot per bundle, which F90 follows up. Built for the canary, not run on
@@ -1348,7 +1348,7 @@ so — see D2 below.)
   `csi.evsent` then limits the reissued ids. It is rare (it needs a
   key-store failure) and older than F46. Restore the floor first, as the
   canary does (`csi_event_egress_begin`). Found by F46 (#1761).
-  *Done (this PR):* `csi_integration::init` restores the floor before
+  *Done (#1763):* `csi_integration::init` restores the floor before
   `register_v1_modules()`. Built, not run on a device (U1).
 - [ ] **F48 [code+decision] canary-wap's mesh crypto and its interop with the
   PIO tree.** Found by F33 (#1718). canary-wap's AUTH exchange still runs
@@ -2164,7 +2164,7 @@ so — see D2 below.)
   Options: a window rollover of a bundle still inside its quiet gap counts
   as the same presence; or the ceiling reserves room for a change of state;
   or `core.presence`'s ceiling rises. Whichever is chosen, extend
-  `test_csi_bundler_ceiling.cpp`. Found doing F80 (this PR).
+  `test_csi_bundler_ceiling.cpp`. Found doing F80 (#1763).
 
 ---
 
