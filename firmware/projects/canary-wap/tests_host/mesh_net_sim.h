@@ -36,6 +36,8 @@ struct Device {
   uint8_t peer_count = 0;
   mesh_revocation::List revoked = {};
   bool revoked_stored = false;
+  mn::RxTombstone rx_tombs[mn::MAX_RX_TOMBSTONES] = {};
+  uint8_t rx_tomb_count = 0;
   uint64_t tx_high_signed = 0;
   mn::MeshState state = mn::MESH_DISABLED;
   bool espnow_initialized = false;
@@ -67,6 +69,8 @@ inline void save(Device& d) {
   d.peer_count = mn::g_peer_count;
   d.revoked = mn::g_revoked;
   d.revoked_stored = mn::g_revoked_stored;
+  memcpy(d.rx_tombs, mn::g_rx_tombs, sizeof d.rx_tombs);
+  d.rx_tomb_count = mn::g_rx_tomb_count;
   d.tx_high_signed = mn::g_tx_high_signed;
   d.state = mn::g_mesh_state;
   d.espnow_initialized = mn::g_espnow_initialized;
@@ -100,6 +104,8 @@ inline void load(Device& d) {
   mn::g_peer_count = d.peer_count;
   mn::g_revoked = d.revoked;
   mn::g_revoked_stored = d.revoked_stored;
+  memcpy(mn::g_rx_tombs, d.rx_tombs, sizeof d.rx_tombs);
+  mn::g_rx_tomb_count = d.rx_tomb_count;
   mn::g_tx_high_signed = d.tx_high_signed;
   mn::g_mesh_state = d.state;
   mn::g_espnow_initialized = d.espnow_initialized;

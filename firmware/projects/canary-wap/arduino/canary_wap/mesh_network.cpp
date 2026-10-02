@@ -113,6 +113,26 @@ static uint8_t g_peer_count = 0;
 static mesh_revocation::List g_revoked;
 static bool g_revoked_stored = false;
 
+// Last-seen tombstones (sweep F116; the PlatformIO tree's CounterTombstone in
+// mesh_session.cpp). A member dropped from the table (remove_peer,
+// leave_opera) used to take its last-seen counter with it, and add_peer
+// started a re-added member's at 0: every frame it had signed before, in an
+// opera whose id had not changed (a removal of the last member rotates
+// nothing; a leave and a re-pair into the same opera), verified once more
+// as fresh, and one such frame, replayed from its address at the re-pair,
+// counted as the joiner heard and ended F100's COMPLETE resend. Now its
+// counter is parked here by fingerprint and add_peer starts it there. At
+// most MAX_RX_TOMBSTONES, oldest first (the oldest goes when a new one does
+// not fit), persisted as NVS_RX_TOMBS at every change; see retire_rx() for
+// which removal keeps one and which releases it.
+static constexpr size_t MAX_RX_TOMBSTONES = 8;
+struct RxTombstone {
+  uint8_t fingerprint[FINGERPRINT_SIZE];
+  uint64_t last_seen;
+};
+static RxTombstone g_rx_tombs[MAX_RX_TOMBSTONES];   // oldest first
+static uint8_t g_rx_tomb_count = 0;
+
 // The highest send counter this device can have signed, to any member, a
 // removed one included (sweep F99; see TX_COUNTER_RESERVE_BLOCK): every
 // counter send_to_peer spends since the boot, above the highest reservation
@@ -330,6 +350,10 @@ static void load_tx_reservations();
 static void persist_revocations();
 static void load_revocations();
 static bool is_revoked_pubkey(const uint8_t* pubkey);
+static const RxTombstone* find_rx_tombstone(const uint8_t* fingerprint);
+static bool retire_rx(const OperaPeer* peer);
+static void persist_rx_tombstones();
+static void load_rx_tombstones();
 static void store_alert(const MeshAlert* alert);
 // The owner's commands (sweep F96). Internal: they change what update()
 // owns, so only the loop task runs them, through run_command() (update()'s
@@ -617,7 +641,11 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
   // (a reboot before its first send resumes above it), and its first send
   // stores a block above it (reserve_tx_counter).
   peer->msg_counter_tx = (g_tx_high_signed == UINT64_MAX) ? 0 : g_tx_high_signed + 1;
-  peer->msg_counter_rx = 0;
+  // Last-seen: where this device left it when it last dropped this key
+  // (sweep F116: a tombstone), so nothing the device signed before is fresh
+  // again; 0 for a key never held, or held and never heard.
+  const RxTombstone* tomb = find_rx_tombstone(peer->fingerprint);
+  peer->msg_counter_rx = tomb != nullptr ? tomb->last_seen : 0;
   peer->msg_counter_tx_reserved = g_tx_high_signed;
   peer->last_seen_ms = 0;
   peer->session_established = false;
@@ -1946,10 +1974,14 @@ static bool load_peers() {
       // boot signs carries counter 1, never the static-zeroed 0 a strict
       // receiver drops — unless any counter was signed before, and then one
       // past the highest reservation stored (load_tx_reservations, below).
-      // rx starts at 0 here; load_replay_counters() raises it to the
-      // persisted high-water mark right after.
+      // rx starts at the member's last-seen tombstone, if it has one (a
+      // member re-added since its removal: sweep F116; its counter may not
+      // be in "replay_ctrs" until the next 5-minute save), else at 0;
+      // load_replay_counters() raises it to the persisted high-water mark
+      // right after.
       g_peers[i].msg_counter_tx = 1;
-      g_peers[i].msg_counter_rx = 0;
+      const RxTombstone* tomb = find_rx_tombstone(g_peers[i].fingerprint);
+      g_peers[i].msg_counter_rx = tomb != nullptr ? tomb->last_seen : 0;
       g_peers[i].msg_counter_tx_reserved = 0;
 
       // Register with ESP-NOW
@@ -2043,6 +2075,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   // Load persisted config
   load_opera_config();
   load_revocations();   // F33: the §5.6 deny-list
+  load_rx_tombstones(); // F116: before load_peers, which starts a member at its own
   if (g_opera_config.configured) {
     load_peers();
   } else {
@@ -2399,6 +2432,9 @@ static bool remove_peer(const uint8_t* fingerprint) {
       uint8_t removed_fp[FINGERPRINT_SIZE];
       memcpy(removed_fp, g_peers[i].fingerprint, FINGERPRINT_SIZE);
 
+      // F116: its last-seen counter outlives the entry (retire_rx).
+      if (retire_rx(&g_peers[i])) persist_rx_tombstones();
+
       // Remove from ESP-NOW, unless another member an older firmware stored
       // at the same address still uses it (release_mac, F98).
       release_mac(g_peers[i].mac_addr, &g_peers[i]);
@@ -2551,11 +2587,16 @@ static bool leave_opera() {
   // Clear opera config
   memset(&g_opera_config, 0, sizeof(g_opera_config));
 
-  // Remove all peers
+  // Remove all peers. Their last-seen counters outlive them (F116,
+  // retire_rx): a re-pair into the same opera (as a joiner of a member that
+  // kept it) re-adds them under the same opera_id.
+  bool tombs_changed = false;
   for (uint8_t i = 0; i < g_peer_count; i++) {
+    tombs_changed |= retire_rx(&g_peers[i]);
     esp_now_del_peer(g_peers[i].mac_addr);
   }
   g_peer_count = 0;
+  if (tombs_changed) persist_rx_tombstones();
 
   // Persist: with no opera configured, the id and secret keys are removed
   // (sweep F113; they were stored as zeros and loaded back as an opera).
@@ -2901,8 +2942,119 @@ static void load_revocations() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// REPLAY COUNTER PERSISTENCE
+// LAST-SEEN TOMBSTONES (F116 — see g_rx_tombs)
+//
+// NVS key "rx_tombs": fingerprint (8 B) || last-seen counter (u64) per
+// tombstone, oldest first, at most MAX_RX_TOMBSTONES (128 B). Removed when
+// none is left. Not flash-encryption gated, like "replay_ctrs" and
+// "tx_ctrs" beside it: counts by fingerprint, the same pairs "replay_ctrs"
+// held for those devices while they were members, and a gate would reopen
+// the window at every boot of an FE-off board. (Which devices a household
+// threw out is the deny-list's to keep, FE-gated; a tombstone does not say
+// whether its device was removed or left with everyone else.)
 // ════════════════════════════════════════════════════════════════════════════
+
+static const char* NVS_RX_TOMBS = "rx_tombs";
+static constexpr size_t RX_TOMB_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
+
+static const RxTombstone* find_rx_tombstone(const uint8_t* fingerprint) {
+  for (uint8_t i = 0; i < g_rx_tomb_count; i++) {
+    if (memcmp(g_rx_tombs[i].fingerprint, fingerprint, FINGERPRINT_SIZE) == 0) {
+      return &g_rx_tombs[i];
+    }
+  }
+  return nullptr;
+}
+
+static void drop_rx_tombstone_at(uint8_t at) {
+  for (uint8_t i = at; i + 1 < g_rx_tomb_count; i++) g_rx_tombs[i] = g_rx_tombs[i + 1];
+  g_rx_tomb_count--;
+  memset(&g_rx_tombs[g_rx_tomb_count], 0, sizeof(RxTombstone));
+}
+
+// A member leaves the table: keep its last-seen counter for a re-add, as
+// the newest tombstone. Returns whether the tombstones changed.
+//
+// - Its key holds a tombstone already (it was re-added since one was kept):
+//   a member heard above it since then raises it; one never heard above it
+//   (its last-seen is still the one the re-add restored) releases it. That
+//   release is the way out for a device whose own send counters went back
+//   while it kept its key (its send-counter record, "tx_ctrs", lost while
+//   the identity key stayed): re-added at its tombstone, its frames drop
+//   here until its counter climbs past it, which from a floor such as
+//   F71's 2^40 is never; removed again before it is heard, it leaves no
+//   tombstone, and the next re-pair starts it at 0, as every re-add did
+//   before F116. The cost is the window F116 closes: a frame it signed
+//   before that tombstone is fresh once more after that second re-add.
+//   (A device whose NVS was erased has a new key, hence a new fingerprint:
+//   no tombstone applies to it. A device that kept its NVS resumes its
+//   counters above everything it signed, F71, so above its tombstone.)
+// - Otherwise, a member heard at all leaves one; when all are taken, the
+//   oldest goes. A member never heard needs none.
+static bool retire_rx(const OperaPeer* peer) {
+  const uint64_t seen = peer->msg_counter_rx;
+  for (uint8_t i = 0; i < g_rx_tomb_count; i++) {
+    if (memcmp(g_rx_tombs[i].fingerprint, peer->fingerprint, FINGERPRINT_SIZE) != 0) continue;
+    const uint64_t kept = g_rx_tombs[i].last_seen;
+    if (seen < kept) return false;   // keep the higher (add_peer and load_peers start it there)
+    drop_rx_tombstone_at(i);
+    if (seen == kept) return true;   // not heard above it since its re-add: released
+    break;                           // heard above it: kept again below, as the newest
+  }
+  if (seen == 0) return false;       // never heard: nothing to keep
+  if (g_rx_tomb_count == MAX_RX_TOMBSTONES) drop_rx_tombstone_at(0);   // the oldest
+  memcpy(g_rx_tombs[g_rx_tomb_count].fingerprint, peer->fingerprint, FINGERPRINT_SIZE);
+  g_rx_tombs[g_rx_tomb_count].last_seen = seen;
+  g_rx_tomb_count++;
+  return true;
+}
+
+// Every change, from remove_peer and leave_opera on the loop task: one
+// write of at most 128 B per removal or leave. A write NVS refuses leaves
+// the last stored set: the change holds until the next boot.
+static void persist_rx_tombstones() {
+  uint8_t blob[MAX_RX_TOMBSTONES * RX_TOMB_ENTRY_SIZE];
+  size_t n = 0;
+  for (uint8_t i = 0; i < g_rx_tomb_count; i++) {
+    memcpy(blob + n, g_rx_tombs[i].fingerprint, FINGERPRINT_SIZE);
+    memcpy(blob + n + FINGERPRINT_SIZE, &g_rx_tombs[i].last_seen, sizeof(uint64_t));
+    n += RX_TOMB_ENTRY_SIZE;
+  }
+  g_prefs.begin(NVS_NS, false);
+  if (n == 0) {
+    if (g_prefs.isKey(NVS_RX_TOMBS)) g_prefs.remove(NVS_RX_TOMBS);
+  } else {
+    g_prefs.putBytes(NVS_RX_TOMBS, blob, n);
+  }
+  g_prefs.end();
+}
+
+// At init(), before load_peers. A record that is not whole entries, or
+// holds more than MAX_RX_TOMBSTONES (getBytes refuses a value longer than
+// the buffer), is ignored and logged: the window F116 closes is open again
+// for the devices it named, as it was before F116, until it is rewritten.
+static void load_rx_tombstones() {
+  g_rx_tomb_count = 0;
+  memset(g_rx_tombs, 0, sizeof(g_rx_tombs));
+  g_prefs.begin(NVS_NS, true);
+  if (!g_prefs.isKey(NVS_RX_TOMBS)) {
+    g_prefs.end();
+    return;
+  }
+  uint8_t blob[MAX_RX_TOMBSTONES * RX_TOMB_ENTRY_SIZE];
+  const size_t got = g_prefs.getBytes(NVS_RX_TOMBS, blob, sizeof(blob));
+  g_prefs.end();
+  if (got == 0 || (got % RX_TOMB_ENTRY_SIZE) != 0) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               "opera: last-seen tombstones unreadable; ignored");
+    return;
+  }
+  for (size_t off = 0; off < got; off += RX_TOMB_ENTRY_SIZE) {
+    memcpy(g_rx_tombs[g_rx_tomb_count].fingerprint, blob + off, FINGERPRINT_SIZE);
+    memcpy(&g_rx_tombs[g_rx_tomb_count].last_seen, blob + off + FINGERPRINT_SIZE, sizeof(uint64_t));
+    g_rx_tomb_count++;
+  }
+}
 
 static const char* NVS_REPLAY_KEY = "replay_ctrs";
 constexpr size_t REPLAY_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);

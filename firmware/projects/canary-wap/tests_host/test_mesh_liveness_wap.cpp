@@ -8,8 +8,8 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep items F71, F73-F76, F95, F98-F100 and F113: each was a way the
-// opera went quiet, or a pairing went wrong, with nothing reporting it.
+// Sweep items F71, F73-F76, F95, F98-F100, F113 and F116: each was a way
+// the opera went quiet, or a pairing went wrong, with nothing reporting it.
 //   F71  a rebooted device's frames dropped as replays at every member
 //        that had heard it (its send counters restarted at 1);
 //   F73  a pairing whose partner add_peer refused still persisted, went
@@ -32,7 +32,10 @@
 //        was never sent again, and the joiner timed out;
 //   F113 a device that left its opera stored it as all zeros, loaded that
 //        back as an opera at the next boot, and paired into it a joiner
-//        that held another opera_id.
+//        that held another opera_id;
+//   F116 a re-added member's last-seen counter started at 0, so a frame it
+//        signed before its removal, replayed at the re-pair, counted as the
+//        joiner heard and ended F100's COMPLETE resend.
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -1917,6 +1920,199 @@ void test_an_empty_opera_older_firmware_stored_is_not_loaded() {
   std::printf("PASS an_empty_opera_older_firmware_stored_is_not_loaded\n");
 }
 
+// ── F116: a re-added member starts at its last-seen counter ─────────────
+//
+// remove_peer and leave_opera dropped a member with its last-seen counter,
+// and add_peer started a re-added one at 0. In an opera whose id had not
+// changed (removing the last member rotates nothing; a re-pair into the
+// same opera after a leave), every frame the member had signed before was
+// fresh again, and one of them, replayed from its address at the re-pair,
+// counted as the joiner heard and ended F100's COMPLETE resend: the
+// joiner, which had lost the COMPLETE, timed out (host-probed on #<W10>'s
+// code). A dropped member's last-seen counter is now kept as a tombstone
+// (the PlatformIO tree's CounterTombstone), at most eight, persisted, and
+// a re-add starts there.
+
+uint64_t tombstone_of(Device& self, const Device& other) {
+  become(self);
+  uint8_t fp[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(other.pub, fp);
+  const mn::RxTombstone* t = mn::find_rx_tombstone(fp);
+  return t == nullptr ? 0 : t->last_seen;
+}
+
+// `from`'s next `n` heartbeats to `self`, each heard there; returns them.
+std::vector<Frame> heard_heartbeats(Device& self, Device& from, int n) {
+  std::vector<Frame> out;
+  for (int i = 0; i < n; ++i) {
+    out.push_back(heartbeat_to(from, self));
+    deliver(self, from.mac, out.back());
+  }
+  return out;
+}
+
+// `self` takes none of `frames`, replayed from `from`'s address.
+bool drops_all(Device& self, const Device& from, const std::vector<Frame>& frames) {
+  become(self);
+  const uint32_t received = mn::g_messages_received;
+  for (const Frame& f : frames) deliver(self, from.mac, f);
+  become(self);
+  return mn::g_messages_received == received;
+}
+
+void test_a_replayed_frame_does_not_end_a_re_added_members_complete_resend() {
+  fresh_opera({&A, &B});
+  const std::vector<Frame> recorded = heard_heartbeats(A, B, 5);
+  remove_member(A, B);                              // the last member: nothing rotates
+  CHECK(tombstone_of(A, B) == 5);
+  past_the_grace(A);
+  pair_to_codes(A, B);
+  complete_lost_after_codes(A, B);                  // B is still waiting for it
+  CHECK(entry(A, B)->msg_counter_rx == 5);          // was 0
+  CHECK(drops_all(A, B, recorded));                 // recorded, replayed from B's address
+  become(A);
+  CHECK(mn::g_complete_resend.active);              // B not taken as heard
+  run({&A, &B}, 40000);
+  CHECK(completed(B, A));                           // a copy reached it
+  CHECK(hears_next_heartbeat(A, B));                // B kept its counters: above 5
+  become(A);
+  CHECK(!mn::g_complete_resend.active);
+  std::printf("PASS a_replayed_frame_does_not_end_a_re_added_members_complete_resend\n");
+}
+
+void test_a_removed_members_last_seen_outlives_a_reboot() {
+  // Kept in NVS: a boot between the removal and the re-pair, and one after
+  // the re-pair before the sketch's 5-minute last-seen save (load_peers
+  // starts the member at its tombstone).
+  fresh_opera({&A, &B});
+  const std::vector<Frame> recorded = heard_heartbeats(A, B, 5);
+  remove_member(A, B);
+  CHECK(nvs_value(A, "mesh/rx_tombs").size() == mn::FINGERPRINT_SIZE + 8);
+  boot(A);
+  past_the_grace(A);
+  re_pair(A, B);
+  CHECK(entry(A, B)->msg_counter_rx >= 5);
+  boot(A);
+  CHECK(entry(A, B)->msg_counter_rx >= 5);
+  CHECK(drops_all(A, B, recorded));
+  CHECK(hears_next_heartbeat(A, B));
+  std::printf("PASS a_removed_members_last_seen_outlives_a_reboot\n");
+}
+
+void test_a_device_that_left_keeps_its_members_last_seen() {
+  // A leaves, then joins the same opera again through C, which kept it (and
+  // A): the opera_id is the one C's recorded frames carry. A's re-added
+  // entry for C starts at what A last heard from C, on the joiner's side.
+  fresh_opera({&A, &B, &C});
+  const std::vector<Frame> recorded = heard_heartbeats(A, C, 5);
+  const std::vector<uint8_t> opera = opera_id_of(C);
+  become(A);
+  CHECK(mn::leave_opera());
+  CHECK(tombstone_of(A, C) == 5);
+  CHECK(tombstone_of(A, B) == 0);                   // never heard: none kept
+  re_pair(C, A);
+  CHECK(opera_id_of(A) == opera);
+  CHECK(entry(A, C)->msg_counter_rx >= 5);          // was 0
+  CHECK(drops_all(A, C, recorded));
+  CHECK(hears_next_heartbeat(A, C));
+  std::printf("PASS a_device_that_left_keeps_its_members_last_seen\n");
+}
+
+void test_the_tombstones_are_bounded_and_the_oldest_goes() {
+  // Eight at most, in RAM and in NVS (128 B); the ninth removal drops the
+  // oldest. A member never heard leaves none.
+  fresh_opera({&A, &B});
+  fill_opera(A);
+  become(A);
+  std::vector<std::vector<uint8_t>> fps;
+  for (uint8_t i = 0; i < mn::g_peer_count; ++i) {
+    mn::g_peers[i].msg_counter_rx = 100 + i;
+    fps.emplace_back(mn::g_peers[i].fingerprint, mn::g_peers[i].fingerprint + mn::FINGERPRINT_SIZE);
+  }
+  mn::g_peers[9].msg_counter_rx = 0;                // never heard
+  for (size_t k = 0; k < 10; ++k) {
+    become(A);
+    CHECK(mn::remove_peer(fps[k].data()));
+  }
+  become(A);
+  CHECK(mn::g_rx_tomb_count == mn::MAX_RX_TOMBSTONES);
+  CHECK(mn::find_rx_tombstone(fps[0].data()) == nullptr);   // the oldest went
+  CHECK(mn::find_rx_tombstone(fps[9].data()) == nullptr);   // never heard
+  for (size_t k = 1; k < 9; ++k) {
+    const mn::RxTombstone* t = mn::find_rx_tombstone(fps[k].data());
+    CHECK(t != nullptr && t->last_seen == 100 + k);
+  }
+  CHECK(nvs_value(A, "mesh/rx_tombs").size() == mn::MAX_RX_TOMBSTONES * (mn::FINGERPRINT_SIZE + 8));
+  boot(A);
+  become(A);
+  CHECK(mn::g_rx_tomb_count == mn::MAX_RX_TOMBSTONES);
+  CHECK(mn::find_rx_tombstone(fps[1].data())->last_seen == 101);
+  std::printf("PASS the_tombstones_are_bounded_and_the_oldest_goes\n");
+}
+
+void test_a_tombstone_is_raised_by_what_was_heard_since_the_re_add() {
+  fresh_opera({&A, &B});
+  heard_heartbeats(A, B, 5);
+  remove_member(A, B);
+  past_the_grace(A);
+  re_pair(A, B);
+  heard_heartbeats(A, B, 3);
+  const uint64_t seen = entry(A, B)->msg_counter_rx;
+  CHECK(seen > 5);
+  remove_member(A, B);
+  CHECK(tombstone_of(A, B) == seen);
+  std::printf("PASS a_tombstone_is_raised_by_what_was_heard_since_the_re_add\n");
+}
+
+void test_a_device_whose_counters_went_back_is_released_by_a_second_removal() {
+  // B keeps its key but loses its send-counter record (its mesh namespace
+  // is gone; the identity key lives in another): its counters start at 1
+  // again, below the tombstone A keeps for it, here from F71's floor
+  // (2^40: the first boot after that update). Re-added, B is never heard
+  // at A. Removed again before it is heard, it leaves no tombstone, and
+  // the next re-pair starts it at 0: that is the way out.
+  fresh_opera({&A, &B});
+  mn::OperaPeer* b_to_a = entry(B, A);
+  b_to_a->msg_counter_tx = (1ULL << 40) + 1;
+  heard_heartbeats(A, B, 1);
+  CHECK(entry(A, B)->msg_counter_rx == (1ULL << 40) + 1);
+  remove_member(A, B);
+  for (auto it = B.nvs.begin(); it != B.nvs.end();) {
+    it = it->first.rfind("mesh/", 0) == 0 ? B.nvs.erase(it) : std::next(it);
+  }
+  boot(B);
+  past_the_grace(A);
+  re_pair(A, B);
+  CHECK(!hears_next_heartbeat(A, B));               // B's counter 1.. is below it
+  remove_member(A, B);
+  CHECK(tombstone_of(A, B) == 0);                   // released
+  CHECK(nvs_value(A, "mesh/rx_tombs").empty());
+  past_the_grace(A);
+  re_pair(A, B);
+  CHECK(entry(A, B)->msg_counter_rx == 0);
+  CHECK(hears_next_heartbeat(A, B));
+  std::printf("PASS a_device_whose_counters_went_back_is_released_by_a_second_removal\n");
+}
+
+void test_a_reflashed_device_with_a_new_key_is_heard_at_once() {
+  // An NVS erase gives a device a new key, so a new fingerprint: no
+  // tombstone applies to it (a guard: this held before F116 too). It comes
+  // back at its old radio address, which the old entry holds until it is
+  // removed (F98).
+  fresh_opera({&A, &B});
+  heard_heartbeats(A, B, 5);
+  remove_member(A, B);
+  Device B2;
+  make_device(B2, "B2", 0xB1);                      // the same radio address, a new key
+  CHECK(same_mac(B2.mac, B.mac));
+  fresh_device(B2);
+  re_pair(A, B2);
+  CHECK(entry(A, B2)->msg_counter_rx == 0);
+  CHECK(hears_next_heartbeat(A, B2));
+  if (g_cur == &B2) g_cur = nullptr;                // B2 is going out of scope
+  std::printf("PASS a_reflashed_device_with_a_new_key_is_heard_at_once\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2006,6 +2202,17 @@ const Test kTests[] = {
     {"a_setting_saved_after_a_leave_stores_no_opera", test_a_setting_saved_after_a_leave_stores_no_opera},
     {"an_empty_opera_older_firmware_stored_is_not_loaded",
      test_an_empty_opera_older_firmware_stored_is_not_loaded},
+    {"a_replayed_frame_does_not_end_a_re_added_members_complete_resend",
+     test_a_replayed_frame_does_not_end_a_re_added_members_complete_resend},
+    {"a_removed_members_last_seen_outlives_a_reboot", test_a_removed_members_last_seen_outlives_a_reboot},
+    {"a_device_that_left_keeps_its_members_last_seen", test_a_device_that_left_keeps_its_members_last_seen},
+    {"the_tombstones_are_bounded_and_the_oldest_goes", test_the_tombstones_are_bounded_and_the_oldest_goes},
+    {"a_tombstone_is_raised_by_what_was_heard_since_the_re_add",
+     test_a_tombstone_is_raised_by_what_was_heard_since_the_re_add},
+    {"a_device_whose_counters_went_back_is_released_by_a_second_removal",
+     test_a_device_whose_counters_went_back_is_released_by_a_second_removal},
+    {"a_reflashed_device_with_a_new_key_is_heard_at_once",
+     test_a_reflashed_device_with_a_new_key_is_heard_at_once},
 };
 
 }  // namespace liveness
