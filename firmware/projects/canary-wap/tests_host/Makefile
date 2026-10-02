@@ -356,6 +356,41 @@ clean-wap-egress:
 run: run-wap-egress
 clean: clean-wap-egress
 
+# The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
+# sketch's csi_module_settings_* readers, by the shared
+# csi_module_settings_nvs.h rule), the staged CSI library and modules over a
+# typed NVS that outlives a modeled reboot (stubs/module_boot), booted in
+# csi_integration::init()'s order: a saved preset, threshold, pet mode and
+# anomaly cooldown apply from the boot's first windows, each module's
+# init() runs once per boot and commits nothing, and a settings change
+# still applies at once. It reads csi_integration.cpp's register_v1_modules()
+# to keep its module list the device's.
+MODBOOT_BIN = test_wap_module_boot
+MODBOOT_SRC = test_wap_module_boot.cpp
+MODBOOT_LIB = $(SRC_DIR)/csi_settings_nvs.cpp $(SRC_DIR)/csi_event.cpp $(SRC_DIR)/csi_bundler.cpp \
+              $(SRC_DIR)/csi_module.cpp $(SRC_DIR)/core_presence.cpp $(SRC_DIR)/core_breathing.cpp \
+              $(SRC_DIR)/core_activity_ribbon.cpp $(SRC_DIR)/meta_daily_summary.cpp \
+              $(SRC_DIR)/meta_quiet_hours.cpp $(SRC_DIR)/anomaly_baseline.cpp \
+              $(SRC_DIR)/wifi_channel_activity.cpp $(SRC_DIR)/core_multilink_fusion.cpp \
+              $(SRC_DIR)/meta_empty_room_baseline.cpp $(SRC_DIR)/ble_events_module.cpp \
+              $(SRC_DIR)/tamper_events_module.cpp
+
+$(MODBOOT_BIN): $(MODBOOT_SRC) $(MODBOOT_LIB) $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_module_settings_nvs.h \
+                $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_bundler.h $(SRC_DIR)/csi_integration.cpp \
+                $(SRC_DIR)/acoustic_events_module.cpp $(SRC_DIR)/vault_events_module.cpp $(SRC_DIR)/ble_scout.cpp \
+                $(wildcard stubs/module_boot/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(MODBOOT_SRC) $(MODBOOT_LIB)
+
+.PHONY: run-wap-module-boot clean-wap-module-boot
+run-wap-module-boot: $(MODBOOT_BIN)
+	$(call run_marked,$(MODBOOT_BIN))
+clean-wap-module-boot:
+	rm -f $(MODBOOT_BIN)
+run: run-wap-module-boot
+clean: clean-wap-module-boot
+
 # The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
 # closed: all-or-nothing reservations, value-independent refusals, exact
 # exhaustion, a refill only on the 4 h uptime clock (never on a manual
