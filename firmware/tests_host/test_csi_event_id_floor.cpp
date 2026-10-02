@@ -27,6 +27,7 @@ using csi_event_id_floor::kHoldLimit;
 using csi_event_id_floor::kIdSpaceBase;
 using csi_event_id_floor::kStride;
 using csi_event_id_floor::must_persist;
+using csi_event_id_floor::space_low;
 
 static int g_checks = 0;
 #define CHECK(cond)                                                     \
@@ -336,6 +337,59 @@ static int test_boot_loop_cost_and_headroom() {
   return 0;
 }
 
+// Backlog F82: the health flag that warns before the space runs out. It is
+// up from the moment the allocator's next id reaches kHoldLimit, through the
+// wrap (ids from 1 again, below the space), and on every boot after it (the
+// floor saturates at 0xFFFFFFFF, which each boot reissues first). It is
+// down everywhere a healthy device's allocator can be.
+static int test_space_low_warns_before_the_wrap() {
+  CHECK(!space_low(kIdSpaceBase));
+  CHECK(!space_low(kIdSpaceBase + 1));
+  CHECK(!space_low(kHoldLimit - 1));
+  CHECK(space_low(kHoldLimit));
+  CHECK(space_low(0xFFFFFFFFu));
+  CHECK(space_low(1));                       // wrapped
+  CHECK(space_low(kIdSpaceBase - 1));
+  // At the most a device can commit (178,200 a day), the flag comes up
+  // about four years before the wrap.
+  CHECK((0x100000000ull - kHoldLimit) / 178200 / 365 == 4);
+  // A device run to the end, booting every 100 ids.
+  Device d;
+  d.nvs = kHoldLimit - 250;
+  bool flagged = false;
+  uint32_t flagged_at = 0;
+  bool wrapped = false;
+  for (int b = 0; b < 3000 && !wrapped; ++b) {
+    boot(&d);
+    if (space_low(d.next_id) && !flagged) {
+      flagged = true;
+      flagged_at = d.next_id;
+    }
+    for (int i = 0; i < 100; ++i) {
+      const uint32_t id = allocate(&d);
+      if (id < kIdSpaceBase) wrapped = true;
+      if (!flagged && space_low(d.next_id)) {
+        flagged = true;
+        flagged_at = id;
+      }
+      // Once up, it stays up, wrap included.
+      if (flagged && !space_low(d.next_id)) CHECK(false);
+    }
+    if (!flagged) CHECK(d.next_id < kHoldLimit);
+  }
+  CHECK(flagged && flagged_at == kHoldLimit - 1);   // the id that brings next to kHoldLimit
+  d.nvs = 0xFFFFFFF0u;                                // skip ahead to the wrap
+  boot(&d);
+  for (int i = 0; i < 40; ++i) {
+    (void)allocate(&d);
+    CHECK(space_low(d.next_id));
+  }
+  CHECK(d.next_id < kIdSpaceBase);                    // it wrapped
+  boot(&d);
+  CHECK(d.next_id == 0xFFFFFFFFu && space_low(d.next_id));
+  return 0;
+}
+
 int main() {
   if (test_reboot_before_a_full_stride_reuses_nothing()) return 1;
   if (test_the_old_scheme_fails_the_same_schedule()) return 1;
@@ -350,6 +404,7 @@ int main() {
   if (test_boot_floor_rules()) return 1;
   if (test_the_ceiling_covers_a_failed_floor_write()) return 1;
   if (test_boot_loop_cost_and_headroom()) return 1;
+  if (test_space_low_warns_before_the_wrap()) return 1;
   std::printf("test_csi_event_id_floor: %d checks passed\n", g_checks);
   return 0;
 }

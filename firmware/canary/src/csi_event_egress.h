@@ -46,8 +46,9 @@
  * whose card append fails waits in the same hold while older rows wait on
  * the card or in the hold, or while the link is down (backlog F103): it
  * used to go live or into the offline queue at once, past the card's rows.
- * An ambient row that would wait is dropped. A row in the hold writes no NVS
- * delivery ceiling until it goes (the planner writes it then), so a reboot
+ * An ambient row that would wait is dropped, counted (csi_event_egress_stats
+ * below). A row in the hold writes no NVS delivery ceiling until it goes
+ * (the planner writes it then), so a reboot
  * never reads the card's rows as delivered on its account, and with a card
  * open it waits for the link (the ceiling it would write could cover the
  * card rows after it). So the offline queue, which drains later without
@@ -94,6 +95,43 @@ void csi_event_egress_test_reset(void);
 
 #ifdef __cplusplus
 }
+#endif
+
+#ifdef __cplusplus
+#include "csi_event_backfill.h"   /* the planner's Stats */
+
+/* What the egress did this boot (backlog F109), in the canary-wap's
+ * csi_event_egress::Stats shape, field for field, so a bench run or a field
+ * report reads both devices' counters by the same names. main.cpp's MQTT
+ * health publish carries them as its `csi_event_egress` object. Counted
+ * from boot (RAM; a reboot starts them over):
+ *   dropped          commits the full egress queue refused (the loop task
+ *                    was stuck; the row is on neither the card nor the wire);
+ *   held_dropped     rows the RAM hold dropped, the oldest first (kHeldMax),
+ *                    or every row that had to wait when the hold has no
+ *                    memory;
+ *   ambient_dropped  ambient rows that had to wait (they are never held);
+ *   planner          the backfill planner's own counters
+ *                    (csi_event_backfill::Stats: live, held, queued,
+ *                    replayed, skipped, untrusted, unsendable,
+ *                    truncated_unsent, read_giveups).
+ * Loop task (the pump's), as the health publish is. All zero without
+ * FEATURE_HA_MQTT, where nothing leaves the device. */
+struct CsiEventEgressStats {
+  uint32_t                  dropped;
+  uint32_t                  held_dropped;
+  uint32_t                  ambient_dropped;
+  csi_event_backfill::Stats planner;
+};
+CsiEventEgressStats csi_event_egress_stats();
+
+/* The event-id space is running out (backlog F82): the allocator's next id
+ * is at or past csi_event_id_floor::kHoldLimit, or the counter has wrapped
+ * (csi_event_id_floor::space_low). Home Assistant refuses a wrapped device's
+ * events, so the health publish says so (`event_id_space_low`) before that.
+ * What recovers the device (a re-pin in HA and a reset of the floor and the
+ * delivery ceiling) is not decided yet; this only warns. Any task. */
+bool csi_event_egress_id_space_low();
 #endif
 
 #endif /* SECURACV_CSI_EVENT_EGRESS_H */

@@ -770,9 +770,12 @@ static void test_ambient_rows_are_not_held() {
   CHECK(ambient == 9, "nine ambient rows committed during the card wait");
   drain();
   CHECK(exactly(W.ha.accepted, {real}), "the real row arrives; no ambient row was held");
+  CHECK(csi_event_egress_stats().ambient_dropped == 9,
+        "each ambient row that had to wait is counted (F109): health's ambient_dropped");
   const uint32_t live = emit_ambient();
   loop_pass();
   CHECK(live != 0 && !W.ha.accepted.empty() && W.ha.accepted.back() == live, "after the wait an ambient row goes live");
+  CHECK(csi_event_egress_stats().ambient_dropped == 9, "one that went live is not counted");
 }
 
 static void test_broker_change_before_the_card_opens() {
@@ -1058,6 +1061,76 @@ static void test_hold_overflow_drops_the_oldest() {
   drain();
   const std::vector<uint32_t> want(ids.begin() + 2, ids.end());
   CHECK(exactly(W.ha.accepted, want) && W.ha.refused.empty(), "the newest eight, in order");
+  CHECK(csi_event_egress_stats().held_dropped == 2,
+        "and the two it dropped are counted (F109): health's held_dropped");
+}
+
+/* ── F82: a warning before the event-id space runs out ──────────────────── */
+
+static void test_id_space_low_is_flagged() {
+  std::printf("-- F82: the egress says the id space is low from kHoldLimit on, and after a wrap\n");
+  using csi_event_id_floor::kHoldLimit;
+  fresh_device();
+  connect();
+  loop_pass();
+  (void)emit_ping(); loop_pass();
+  CHECK(!csi_event_egress_id_space_low(), "a fresh device's ids are far from the end");
+  csi_event_set_event_id_floor(kHoldLimit - 1);
+  CHECK(!csi_event_egress_id_space_low(), "one id short of kHoldLimit: not yet");
+  const uint32_t last_before = emit_ping(); loop_pass();
+  CHECK(last_before == kHoldLimit - 1 && csi_event_egress_id_space_low(),
+        "the allocator reaches kHoldLimit: the health flag is up");
+  /* A reboot restores the floor from NVS, past kHoldLimit: up before any row. */
+  boot();
+  CHECK(csi_event_get_next_event_id() > kHoldLimit && csi_event_egress_id_space_low(),
+        "after a reboot it is up before the boot's first row");
+  /* The wrap: ids restart at 1, below the id space. */
+  csi_event_set_event_id_floor(0xFFFFFFFEu);
+  uint32_t id = 0;
+  for (int i = 0; i < 3; ++i) { id = emit_ping(); loop_pass(); }
+  CHECK(id == 1 && csi_event_egress_id_space_low(), "after the wrap (ids from 1 again) it stays up");
+  /* Each later boot first reissues 0xFFFFFFFF (the floor saturates). */
+  boot();
+  CHECK(csi_event_get_next_event_id() == 0xFFFFFFFFu && csi_event_egress_id_space_low(),
+        "and after the next reboot too");
+}
+
+/* ── F109: what the egress did, where a host can read it ───────────────── */
+
+static void test_egress_counts_what_it_did() {
+  std::printf("-- F109: the egress counts its live, held, replayed and queued rows and its drops\n");
+  fresh_device();
+  connect();
+  loop_pass();
+  for (int i = 0; i < 3; ++i) { (void)emit_ping(); loop_pass(); }
+  W.connected = false;
+  for (int i = 0; i < 4; ++i) { (void)emit_ping(); loop_pass(); }
+  CsiEventEgressStats st = csi_event_egress_stats();
+  CHECK(st.planner.live == 3 && st.planner.held == 4 && st.planner.replayed == 0,
+        "three rows went live, four wait on the card");
+  connect();
+  drain(40);
+  st = csi_event_egress_stats();
+  CHECK(st.planner.replayed == 4 && W.ha.accepted.size() == 7, "the backfill sent the four");
+  /* The loop task stalls: ten commits, no pump. The egress queue holds eight. */
+  for (int i = 0; i < 10; ++i) (void)emit_ping();
+  drain(10);
+  st = csi_event_egress_stats();
+  CHECK(st.dropped == 2, "the two commits the full egress queue refused are counted");
+  CHECK(st.planner.live == 11 && W.ha.accepted.size() == 15, "the eight it kept went live");
+  CHECK(st.held_dropped == 0 && st.ambient_dropped == 0, "nothing else was dropped");
+
+  /* No card: rows the planner hands to the MQTT layer are counted queued. */
+  fresh_device(/*card=*/false);
+  drain();   /* past the wait for a card that is not there */
+  for (int i = 0; i < 3; ++i) { (void)emit_ping(); loop_pass(); }
+  st = csi_event_egress_stats();
+  CHECK(st.planner.queued == 3 && st.planner.live == 0, "with no card, three rows queued");
+  /* A power cycle starts every counter over (they are this boot's). */
+  boot();
+  st = csi_event_egress_stats();
+  CHECK(st.dropped == 0 && st.held_dropped == 0 && st.ambient_dropped == 0 &&
+        st.planner.queued == 0 && st.planner.live == 0, "a reboot starts the counters over");
 }
 
 static void test_failed_append_as_the_card_opens_waits_behind_the_hold() {
@@ -1125,6 +1198,8 @@ int main() {
   test_hold_flush_refused_by_a_full_queue_is_kept();
   test_hold_overflow_drops_the_oldest();
   test_failed_append_as_the_card_opens_waits_behind_the_hold();
+  test_egress_counts_what_it_did();
+  test_id_space_low_is_flagged();
 
   CHECK(g_ceiling_violations_total == 0,
         "in every scenario, each id was under the NVS ceiling before it was handed over (F47)");

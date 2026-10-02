@@ -64,8 +64,10 @@
  * under 17,280 + 15 x 60 x 24 = 38,880 a day: about 75 years. At
  * exhaustion the counter wraps. Ids restart at 1 (0 is never handed out),
  * and each later boot first reissues 0xFFFFFFFF (floor_for saturates).
- * From then on Home Assistant refuses the device's events, and nothing on
- * the device says so. A boot loop costs what it cost before
+ * From then on Home Assistant refuses the device's events. Both trees' MQTT
+ * health says `event_id_space_low` from kHoldLimit on (space_low() below,
+ * backlog F82); what recovers the device is still a decision. A boot loop
+ * costs what it cost before
  * F46: one floor write per boot that allocates (one write, not more, even
  * when boot_floor() holds the floor above the delivery ceiling: the boot's
  * first allocation is the write), and up to kStride skipped ids. A boot
@@ -132,6 +134,21 @@ inline uint32_t boot_floor(uint32_t persisted_floor, uint32_t delivered_ceiling)
 // read as delivered (csi_event_backfill::restore treats it as no record).
 inline bool ceiling_ignored(uint32_t persisted_floor, uint32_t delivered_ceiling) {
   return delivered_ceiling > boot_floor(persisted_floor, delivered_ceiling);
+}
+
+// Is the id space running out (backlog F82)? `next_id` is the allocator's
+// next id (csi_event_get_next_event_id()). True from the moment it reaches
+// kHoldLimit, 2^28 ids short of the wrap (about four years before it at the
+// most a device can commit, 178,200 a day; about 19 at the shipped
+// defaults), and after the counter has wrapped: ids
+// restart at 1, below kIdSpaceBase, where no allocation reaches before the
+// wrap, and each later boot first reissues 0xFFFFFFFF (floor_for saturates),
+// at or past kHoldLimit again. Home Assistant refuses a wrapped device's
+// events, so both trees' MQTT health publishes this as `event_id_space_low`.
+// It only warns: the recovery (a re-pin in HA, then a reset of the floor
+// and of the delivery ceiling csi.evsent) is still a decision.
+inline bool space_low(uint32_t next_id) {
+  return next_id >= kHoldLimit || next_id < kIdSpaceBase;
 }
 
 // Must the allocation of `new_id` write the floor before the id goes out?

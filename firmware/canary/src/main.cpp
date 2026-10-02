@@ -3073,6 +3073,36 @@ static void mqtt_publish_health_update() {
   doc["power_loss_detected"] = canary_pe::health_power_flag(millis());
   doc["unexpected_reboot"] = canary_pe::health_fault_flag(millis());
 
+#if FEATURE_CSI
+  /* What the committed-event egress did this boot (sweep F109): rows it
+   * dropped (a full egress queue, the RAM hold's oldest, ambient rows that
+   * had to wait) and the backfill planner's counters, under the names the
+   * canary-wap's csi_event_egress::stats() uses (csi_event_egress.h). They
+   * reached only Serial before. Same task as the pump, so no torn read. */
+  {
+    const CsiEventEgressStats st = csi_event_egress_stats();
+    JsonObject ego = doc["csi_event_egress"].to<JsonObject>();
+    ego["dropped"] = st.dropped;
+    ego["held_dropped"] = st.held_dropped;
+    ego["ambient_dropped"] = st.ambient_dropped;
+    JsonObject plo = ego["planner"].to<JsonObject>();
+    plo["live"] = st.planner.live;
+    plo["held"] = st.planner.held;
+    plo["queued"] = st.planner.queued;
+    plo["replayed"] = st.planner.replayed;
+    plo["skipped"] = st.planner.skipped;
+    plo["untrusted"] = st.planner.untrusted;
+    plo["unsendable"] = st.planner.unsendable;
+    plo["truncated_unsent"] = st.planner.truncated_unsent;
+    plo["read_giveups"] = st.planner.read_giveups;
+  }
+  /* The event-id space is running out (sweep F82): true once the allocator
+   * reaches csi_event_id_floor::kHoldLimit, and after it wraps, when Home
+   * Assistant starts refusing this device's events. A warning only: the
+   * recovery is not decided yet. */
+  doc["event_id_space_low"] = csi_event_egress_id_space_low();
+#endif
+
   /* SD endurance metrics: lifetime write counters (NVS-persisted), wear
    * estimate against the configured TBW rating, and the replacement
    * recommendation latch. HA's SD Wear / SD Replacement sensors read

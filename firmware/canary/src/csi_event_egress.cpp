@@ -149,7 +149,8 @@ uint32_t                    s_replay_run = 0;  // rows replayed in the current b
  * held rows go, and rows still on a card that comes back later are below the
  * watermark (HA would refuse them). An ambient row is never held (csi_event.h:
  * "never persisted, drives live UI only"): one that cannot go at once is
- * dropped, so a burst of them never evicts a real event. Held rows do not
+ * dropped (counted, backlog F109), so a burst of them never evicts a real
+ * event. Held rows do not
  * survive a reboot or a broker change, as the offline queue's do not: with
  * a card slot and no usable card, the rows of the first kCardWaitMs after
  * boot are lost to a reboot that comes sooner. The canary-wap's
@@ -169,6 +170,7 @@ struct Hold {
   size_t   count = 0;
   uint32_t dropped = 0;          // the oldest, dropped to make room (or no hold)
   uint32_t dropped_said = 0;     // what the log last reported
+  uint32_t ambient_dropped = 0;  // ambient rows that had to wait (never held)
 
   const Held& front() const { return slots[head]; }
   void pop() {
@@ -178,7 +180,10 @@ struct Hold {
   /* Rows arrive in id order (the commit lock orders the egress queue), so
    * the hold stays in id order. */
   void push(const csi_event_record_t& rec, bool fresh) {
-    if (rec.category == CSI_CATEGORY_AMBIENT) return;
+    if (rec.category == CSI_CATEGORY_AMBIENT) {  // dropped, counted (backlog F109)
+      ++ambient_dropped;
+      return;
+    }
     if (!slots) {  // no memory for a hold: the row is lost, counted
       ++dropped;
       return;
@@ -635,6 +640,21 @@ extern "C" void csi_event_egress_pump(void) {
 #endif
 }
 
+CsiEventEgressStats csi_event_egress_stats() {
+  CsiEventEgressStats s = {};
+#if FEATURE_HA_MQTT
+  s.dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
+  s.held_dropped = s_hold.dropped;
+  s.ambient_dropped = s_hold.ambient_dropped;
+  s.planner = s_backfill.stats();
+#endif
+  return s;
+}
+
+bool csi_event_egress_id_space_low() {
+  return csi_event_id_floor::space_low(csi_event_get_next_event_id());
+}
+
 #ifdef CSI_TEST_HOST_BUILD
 extern "C" void csi_event_egress_test_reset(void) {
   __atomic_store_n(&s_id_floor_stored, 0u, __ATOMIC_RELAXED);
@@ -652,6 +672,7 @@ extern "C" void csi_event_egress_test_reset(void) {
   s_hold.clear();
   s_hold.dropped = 0;
   s_hold.dropped_said = 0;
+  s_hold.ambient_dropped = 0;
   s_card_wait = false;
   s_card_wait_since = 0;
   s_not_owed_at_open = false;
@@ -663,5 +684,7 @@ extern "C" void csi_event_egress_test_reset(void) {
 
 extern "C" void csi_event_egress_begin(void) {}
 extern "C" void csi_event_egress_pump(void) {}
+CsiEventEgressStats csi_event_egress_stats() { return CsiEventEgressStats{}; }
+bool csi_event_egress_id_space_low() { return false; }
 
 #endif  // FEATURE_CSI
