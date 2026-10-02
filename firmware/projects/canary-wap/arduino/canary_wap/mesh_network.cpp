@@ -484,20 +484,6 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
   return nullptr;
 }
 
-// A pairing with a device this one already holds moves that member to the
-// address the pairing completed from (spec §8.3: a re-pair is how a member
-// whose radio address changed is heard again). Only a pairing this
-// device's owner confirmed gets here: the initiator acts on the joiner's
-// CONFIRM only after its own owner's, and the joiner takes COMPLETE only
-// after its owner's (handle_pair_confirm, handle_pair_complete). The new
-// address is registered before the old one is dropped, so a refused add
-// leaves the member where it was (the PlatformIO tree's bind_peer_mac
-// order), and an address another member holds is refused: one address,
-// one member. The counters, state and name stay; a re-pair re-opens no
-// replay window. The move is logged: the 6-digit code does not cover the
-// long-term key a pairing presents (spec §11.1 item 5), so a relayed
-// pairing whose codes match can claim a member's key from another radio,
-// and this line is the owner's only sign.
 // Another member than `self` holding `mac`, or nullptr.
 static OperaPeer* other_holder_of(const uint8_t* mac, const OperaPeer* self) {
   for (uint8_t i = 0; i < g_peer_count; i++) {
@@ -520,6 +506,20 @@ static void release_mac(const uint8_t* mac, const OperaPeer* self) {
   }
 }
 
+// A pairing with a device this one already holds moves that member to the
+// address the pairing completed from (spec §8.3: a re-pair is how a member
+// whose radio address changed is heard again). Only a pairing this
+// device's owner confirmed gets here: the initiator acts on the joiner's
+// CONFIRM only after its own owner's, and the joiner takes COMPLETE only
+// after its owner's (handle_pair_confirm, handle_pair_complete). The new
+// address is registered before the old one is dropped, so a refused add
+// leaves the member where it was (the PlatformIO tree's bind_peer_mac
+// order), and an address another member holds is refused: one address,
+// one member. The counters, state and name stay; a re-pair re-opens no
+// replay window. The move is logged: the 6-digit code does not cover the
+// long-term key a pairing presents (spec §11.1 item 5), so a relayed
+// pairing whose codes match can claim a member's key from another radio,
+// and this line is the owner's only sign.
 static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
   if (memcmp(peer->mac_addr, mac, 6) == 0) {
     return true;
