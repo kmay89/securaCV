@@ -990,6 +990,12 @@ bool init() {
     NimBLEDevice::deinit(true);
     return false;
   }
+  // NimBLE keeps one set of server callbacks per server. On the FULL
+  // profile ble_opera::init() (ble_manager.h, after this init()) takes the
+  // same server and installs its own, so these never run there: no link,
+  // passkey or bond reaches the channel, and the library's default answers
+  // a Numeric Comparison (a NEW item of the F143 review). The GATT and
+  // scan callbacks below are this file's on every profile.
   g_server->setCallbacks(&g_server_callbacks);
 
   // Create service

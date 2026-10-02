@@ -43,8 +43,20 @@
 // task, the HTTP server's), which `make tsan-bt-commands` runs under
 // ThreadSanitizer.
 //
+// And the review of F143: a pairing awaiting the owner's answer ends with
+// its link, and an answer goes only to the link the stack still holds on
+// that handle (a reused handle never takes another phone's yes); turning
+// Bluetooth off ends a pairing first; a link's event carries the stack's
+// ble_addr_t whole, so its name prints as NimBLE prints the phone's address
+// (the stand-in's byte-array constructor reverses, as NimBLE-Arduino 2.5.0's
+// does); GATT activity and scan results are posted under the lossy limit
+// and their drops are logged apart from a link's; and each field an event
+// carries reaches the state it did.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
-// radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
+// radio; the Arduino compile is CI's (firmware.yml's canary-wap legs). On
+// the FULL profile Opera's server callbacks replace the channel's (see
+// init()), so the link, passkey and bond tests describe the DEV profile.
 //
 // Run: ./test_bluetooth_commands_wap [name]
 
