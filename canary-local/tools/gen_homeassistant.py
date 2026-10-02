@@ -346,50 +346,52 @@ def fleet_chapter(wap):
     return chapter, device_id, payloads
 
 
-def _duration(seconds):
-    d, rem = divmod(int(seconds), 86400)
-    h, rem = divmod(rem, 3600)
-    m, s = divmod(rem, 60)
-    parts = [f"{d}d"] if d else []
-    parts += [f"{h}h"] if h or d else []
-    parts += [f"{m}m"]
-    if not d:
-        parts += [f"{s}s"]
-    return " ".join(parts)
-
-# ── §4 the HA demo (curated subset of the doc-parsed entity catalog) ─────
-# name must match a name parsed from docs/homeassistant_setup.md §Step 4
-# (or the OTA section for the update entities) — generation FAILS otherwise,
-# so the demo can never show an entity the doc stopped promising.
+# ── §4 the HA demo: the fleet step's WAP, as Home Assistant shows it ─────
+# Sweep A36: the demo used to draw the setup guide's §Step 4 entity set,
+# which is firmware/canary's (Die Temperature, SD Card Healthy, Tamper
+# Detected), under the WAP the fleet step above prints, and csi_mqtt.cpp's
+# discovery table announces none of them. The demo now draws a curated
+# subset of the WAP's own discovery table, by object_id, through wap.json
+# (gen_wap.py holds every object_id to csi_mqtt.cpp's ENTITIES and its
+# update/switch builders); the name, component and unit are the table's,
+# and generation FAILS on an object_id the WAP does not announce. Initial
+# values are read off the fleet step's wire lines where a line carries one
+# ({counts_total}, {chain_length}, {uptime_s}, {rssi}): the state each
+# entity's value template reads, with the table's unit. The integration's own
+# entities (Chain Valid, the per-type tamper sensors) belong to the device it
+# registers ("SecuraCV Canary <id>"), not to this card, and are not drawn.
+# Whether the setup guide's table is per product is sweep A33's decision.
 DEMO_ENTITIES = [
-    {"name": "Witness Count", "kind": "sensor", "initial": "{counts_total}", "unit": "records", "icon": "▦"},
-    {"name": "Chain Valid", "kind": "binary_sensor", "initial": "on", "icon": "✓",
-     "attributes": {"verified": "true", "trust_reason": "ok"}},
-    {"name": "Online", "kind": "binary_sensor", "initial": "on", "icon": "●"},
-    {"name": "Uptime", "kind": "sensor", "initial": "{uptime}", "icon": "⏱"},
-    {"name": "Die Temperature", "kind": "sensor", "initial": "41", "unit": "°C", "icon": "🌡"},
-    {"name": "SD Card Healthy", "kind": "binary_sensor", "initial": "on", "icon": "▤"},
-    {"name": "Tamper Detected", "kind": "binary_sensor", "initial": "off", "icon": "⚠"},
-    {"name": "Smoke Alarm Heard", "kind": "binary_sensor", "initial": "off", "icon": "🔥"},
-    {"name": "CO Alarm Heard", "kind": "binary_sensor", "initial": "off", "icon": "☁"},
-    {"name": "Microphone Mute", "kind": "switch", "initial": "off", "icon": "🎙",
+    {"object_id": "witness_count", "initial": "{counts_total}", "icon": "▦"},
+    {"object_id": "chain_length", "initial": "{chain_length}", "icon": "⛓"},
+    {"object_id": "online", "initial": "on", "icon": "●"},
+    {"object_id": "uptime", "initial": "{uptime_s}", "icon": "⏱"},
+    {"object_id": "rssi", "initial": "{rssi}", "icon": "📶"},
+    {"object_id": "smoke_alarm", "initial": "off", "icon": "🔥"},
+    {"object_id": "co_alarm", "initial": "off", "icon": "☁"},
+    {"object_id": "mic_mute", "initial": "off", "icon": "🎙",
      "note": "every toggle is signed into the witness chain with its source"},
-    {"name": "Firmware", "kind": "update", "initial": "up to date", "icon": "⬆",
-     "from_section": "ota"},
+    {"object_id": "firmware", "initial": "up to date", "icon": "⬆"},
 ]
+# the entity the card's liveness tick counts up, and the drill's trigger
+TICK_ENTITY = "witness_count"
+CHAIN_ENTITY = "chain_length"
+DRILL_ENTITY = "smoke_alarm"
 
-# {device_id}, {counts_total} and {uptime} are the fleet step's WAP (its
-# device id, its counts total, its health uptime), filled in main() so the
-# demo below shows the device whose wire the step above printed.
+# {device_id}, {counts_total}, {chain_length}, {uptime_s} and {rssi} are the
+# fleet step's WAP (its device id and its wire lines), filled in main() so
+# the demo below shows the device whose wire the step above printed.
 HA_DEMO = {
-    "device_name": "SecuraCV Canary {device_id}",
+    "device_name": "{device_name}",
     "device_id": "{device_id}",
-    "note": "A faithful sketch of Home Assistant, not its real frontend — "
-            "but the entity names, topics, and behaviors are the drift-gated "
-            "real ones from the setup guide.",
+    "note": "A faithful sketch of Home Assistant, not its real frontend — but the "
+            "device card is the one a Canary WAP announces: its name, and entities "
+            "from its own MQTT discovery table, with the values its retained topics "
+            "carry above. The integration's own entities (Chain Valid, the tamper "
+            "sensors) belong to the device it registers, SecuraCV Canary {device_id}, "
+            "and are not drawn here.",
     "drill": {
         "label": "Play the smoke-alarm drill",
-        "trigger_entity": "Smoke Alarm Heard",
         "automation": "SecuraCV Alerts (blueprint)",
         "notification": {
             "title": "🔥 Smoke alarm heard — Garage",
@@ -401,6 +403,26 @@ HA_DEMO = {
                      "about 30 seconds after the alarm stops",
     },
 }
+
+
+def demo_entities(wap, fill):
+    """DEMO_ENTITIES, each named, typed and united by the WAP's discovery table."""
+    disc = wap["mqtt"]["discovery"]
+    table = {e["object_id"]: e for e in disc["entities"] + disc["switches"]}
+    out = []
+    for d in DEMO_ENTITIES:
+        e = table.get(d["object_id"])
+        if not e:
+            sys.exit(f"gen_homeassistant: demo entity {d['object_id']!r} is not one the WAP announces "
+                     f"(wap.json's discovery table: {sorted(table)})")
+        ent = {"object_id": d["object_id"], "name": e["name"], "kind": e["component"],
+               "initial": fill(d["initial"]), "icon": d["icon"]}
+        if e.get("unit"):
+            ent["unit"] = e["unit"]
+        if d.get("note"):
+            ent["note"] = d["note"]
+        out.append(ent)
+    return out
 
 
 # ── parsing helpers ──────────────────────────────────────────────────────
@@ -523,9 +545,17 @@ def main():
     wap = json.loads(WAP_JSON.read_text(encoding="utf-8"))
     fleet, wap_id, wire = fleet_chapter(wap)
     terminal = {**TERMINAL, "chapters": TERMINAL["chapters"] + [fleet]}
+    disc = wap["mqtt"]["discovery"]
+    # csi_mqtt.cpp's discovery device block names the card "Canary %s"
+    if disc["device"]["name"] != "Canary <id>":
+        sys.exit(f"gen_homeassistant: the WAP's discovery device name moved: {disc['device']['name']!r}")
+    status = json.loads(next(t for t in wap["mqtt"]["topics"] if t["suffix"] == "status")["payload"])
     fill = {"{device_id}": wap_id,
+            "{device_name}": disc["device"]["name"].replace("<id>", wap_id),
             "{counts_total}": f"{wire['counts']['total']:,}",
-            "{uptime}": _duration(wire["health"]["uptime"])}
+            "{chain_length}": f"{wire['chain']['length']:,}",
+            "{uptime_s}": str(wire["health"]["uptime"]),
+            "{rssi}": str(status["rssi"])}
 
     def filled(node):
         if isinstance(node, str):
@@ -539,18 +569,16 @@ def main():
         return node
 
     entities = parse_entities(doc_text)
-    entity_names = {e["name"] for e in entities}
-    desc_of = {e["name"]: e["desc"] for e in entities}
-
-    # validate the curated demo against the doc's promises
-    for d in DEMO_ENTITIES:
-        if d.get("from_section") == "ota":
-            if f"**{d['name']}**" not in doc_text:
-                sys.exit(f"gen_homeassistant: demo entity '{d['name']}' no longer in the doc")
-        elif d["name"] not in entity_names:
-            sys.exit(f"gen_homeassistant: demo entity '{d['name']}' not in §Step 4 "
-                     f"of docs/homeassistant_setup.md — demo and doc drifted")
-        d.setdefault("desc", desc_of.get(d["name"], ""))
+    demo = demo_entities(wap, filled)
+    name_of = {e["object_id"]: e["name"] for e in demo}
+    # the drill's trigger reads the WAP's sensing topic's acoustic_event, and
+    # turns on at the word the WAP's own smoke scene publishes there (gen_wap.py
+    # pins both to csi_mqtt.cpp's template and securacv_audio.cpp's name)
+    drill_ent = next(e for e in disc["entities"] if e["object_id"] == DRILL_ENTITY)
+    smoke = next(p for sc in wap["sandbox"] if sc["id"] == "smoke" for p in sc["mqtt"] if p["suffix"] == "sensing")
+    drill_word = smoke["set"].get("acoustic_event")
+    if drill_ent["state_topic"] != "sensing" or drill_word != "smoke_alarm_t3":
+        sys.exit("gen_homeassistant: the drill's sensor no longer reads the sensing topic's smoke_alarm_t3")
 
     out = {
         "$note": "GENERATED by canary-local/tools/gen_homeassistant.py — do not edit by hand. "
@@ -571,7 +599,13 @@ def main():
         "why": WHY,
         "hardware": HARDWARE,
         "terminal": terminal,
-        "ha_demo": filled({**HA_DEMO, "entities": DEMO_ENTITIES}),
+        "ha_demo": {**filled(HA_DEMO), "entities": demo,
+                    "config_topic": disc["config_topic"].replace("<id>", wap_id),
+                    "tick_entity": name_of[TICK_ENTITY],
+                    "chain_entity": name_of[CHAIN_ENTITY],
+                    "chain_length": wire["chain"]["length"],
+                    "drill": {**filled(HA_DEMO["drill"]), "trigger_entity": name_of[DRILL_ENTITY],
+                              "acoustic_event": drill_word}},
         "entity_catalog": entities,
         "topics": parse_topics(doc_text),
         "docs": {

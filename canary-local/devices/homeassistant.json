@@ -426,107 +426,94 @@
     ]
   },
   "ha_demo": {
-    "device_name": "SecuraCV Canary canary-s3-4dC2",
+    "device_name": "Canary canary-s3-4dC2",
     "device_id": "canary-s3-4dC2",
-    "note": "A faithful sketch of Home Assistant, not its real frontend \u2014 but the entity names, topics, and behaviors are the drift-gated real ones from the setup guide.",
+    "note": "A faithful sketch of Home Assistant, not its real frontend \u2014 but the device card is the one a Canary WAP announces: its name, and entities from its own MQTT discovery table, with the values its retained topics carry above. The integration's own entities (Chain Valid, the tamper sensors) belong to the device it registers, SecuraCV Canary canary-s3-4dC2, and are not drawn here.",
     "drill": {
       "label": "Play the smoke-alarm drill",
-      "trigger_entity": "Smoke Alarm Heard",
       "automation": "SecuraCV Alerts (blueprint)",
       "notification": {
         "title": "\ud83d\udd25 Smoke alarm heard \u2014 Garage",
         "body": "Canary canary-s3-4dC2 matched an NFPA 72 T3 smoke cadence. Critical alert: bypasses silent mode."
       },
       "clear_after_s": 8,
-      "time_note": "time compressed \u2014 on a real device the sensor clears about 30 seconds after the alarm stops"
+      "time_note": "time compressed \u2014 on a real device the sensor clears about 30 seconds after the alarm stops",
+      "trigger_entity": "Smoke Alarm Heard",
+      "acoustic_event": "smoke_alarm_t3"
     },
     "entities": [
       {
-        "name": "Witness Count",
+        "object_id": "witness_count",
+        "name": "Witness Records",
         "kind": "sensor",
         "initial": "312",
-        "unit": "records",
-        "icon": "\u25a6",
-        "desc": "total witness records created (`witness_count`; signed `counts` topic)"
+        "icon": "\u25a6"
       },
       {
-        "name": "Chain Valid",
-        "kind": "binary_sensor",
-        "initial": "on",
-        "icon": "\u2713",
-        "attributes": {
-          "verified": "true",
-          "trust_reason": "ok"
-        },
-        "desc": "ON only when the device reports its chain intact and the chain publish verified against the pinned key; unknown until a chain publish has been checked (`chain_valid`; signed `chain` topic)"
+        "object_id": "chain_length",
+        "name": "Chain Length",
+        "kind": "sensor",
+        "initial": "312",
+        "icon": "\u26d3",
+        "unit": "blocks"
       },
       {
+        "object_id": "online",
         "name": "Online",
         "kind": "binary_sensor",
         "initial": "on",
-        "icon": "\u25cf",
-        "desc": "device connectivity, from the `status` topic (`online`; unsigned)"
+        "icon": "\u25cf"
       },
       {
+        "object_id": "uptime",
         "name": "Uptime",
         "kind": "sensor",
-        "initial": "5m 12s",
+        "initial": "312",
         "icon": "\u23f1",
-        "desc": "device uptime"
+        "unit": "s"
       },
       {
-        "name": "Die Temperature",
+        "object_id": "rssi",
+        "name": "Signal Strength",
         "kind": "sensor",
-        "initial": "41",
-        "unit": "\u00b0C",
-        "icon": "\ud83c\udf21",
-        "desc": "chip die temperature, whole degrees (silicon, not room)"
+        "initial": "-58",
+        "icon": "\ud83d\udcf6",
+        "unit": "dBm"
       },
       {
-        "name": "SD Card Healthy",
-        "kind": "binary_sensor",
-        "initial": "on",
-        "icon": "\u25a4",
-        "desc": "storage health"
-      },
-      {
-        "name": "Tamper Detected",
-        "kind": "binary_sensor",
-        "initial": "off",
-        "icon": "\u26a0",
-        "desc": "tamper event status"
-      },
-      {
+        "object_id": "smoke_alarm",
         "name": "Smoke Alarm Heard",
         "kind": "binary_sensor",
         "initial": "off",
-        "icon": "\ud83d\udd25",
-        "desc": "binary sensors that latch ON when the mic matches an NFPA 72 T3 smoke or UL 2034 CO cadence, and clear about 30 seconds after the alarm stops"
+        "icon": "\ud83d\udd25"
       },
       {
+        "object_id": "co_alarm",
         "name": "CO Alarm Heard",
         "kind": "binary_sensor",
         "initial": "off",
-        "icon": "\u2601",
-        "desc": "binary sensors that latch ON when the mic matches an NFPA 72 T3 smoke or UL 2034 CO cadence, and clear about 30 seconds after the alarm stops"
+        "icon": "\u2601"
       },
       {
+        "object_id": "mic_mute",
         "name": "Microphone Mute",
         "kind": "switch",
         "initial": "off",
         "icon": "\ud83c\udf99",
-        "note": "every toggle is signed into the witness chain with its source",
-        "desc": "a switch entity for the hard mute"
+        "note": "every toggle is signed into the witness chain with its source"
       },
       {
+        "object_id": "firmware",
         "name": "Firmware",
         "kind": "update",
         "initial": "up to date",
-        "icon": "\u2b06",
-        "from_section": "ota",
-        "desc": ""
+        "icon": "\u2b06"
       }
-    ]
+    ],
+    "config_topic": "homeassistant/<component>/canary_canary-s3-4dC2/<object_id>/config",
+    "tick_entity": "Witness Records",
+    "chain_entity": "Chain Length",
+    "chain_length": 312
   },
   "entity_catalog": [
     {

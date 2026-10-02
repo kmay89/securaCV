@@ -726,12 +726,11 @@ test("the Hub page's fleet wire lines are the WAP page's retained topics, verbat
   assert.ok(demo.device_name.endsWith(` ${WAP_NAMES.id}`), demo.device_name);
   assert.ok(demo.drill.notification.body.includes(`Canary ${WAP_NAMES.id} `), demo.drill.notification.body);
   const payload = (sfx) => JSON.parse(wap.mqtt.topics.find((t) => t.suffix === sfx).payload);
-  const entity = (name) => demo.entities.find((e) => e.name === name).initial;
-  assert.strictEqual(entity("Witness Count"), payload("counts").total.toLocaleString("en-US"));
-  const up = payload("health").uptime;
-  const d = Math.floor(up / 86400), h = Math.floor((up % 86400) / 3600), m = Math.floor((up % 3600) / 60);
-  assert.strictEqual(entity("Uptime"),
-    [d ? `${d}d` : "", h || d ? `${h}h` : "", `${m}m`, d ? "" : `${up % 60}s`].filter(Boolean).join(" "));
+  const entity = (id) => demo.entities.find((e) => e.object_id === id).initial;
+  // the WAP's own Witness Records and Uptime (sweep A36), the states their
+  // value templates read off these lines
+  assert.strictEqual(entity("witness_count"), payload("counts").total.toLocaleString("en-US"));
+  assert.strictEqual(entity("uptime"), String(payload("health").uptime));
 });
 
 test("the Vision pane's fp and key are the test key's (canary-vision derives its fp the WAP's way)", () => {
