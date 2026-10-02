@@ -660,7 +660,13 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   deny-listed key, a full opera, an address another member holds) fails
   and is logged: the initiator adds the joiner before anything is sent, so
   it no longer seals the `opera_secret` to a partner it then refuses, and a
-  refusing joiner keeps its own opera. Host-tested only.
+  refusing joiner keeps its own opera. Since F98 that includes a new key at
+  an address another member holds, which `add_peer` used to append: the two
+  entries shared one ESP-NOW registration, and removing either stranded the
+  other. Since F100 the initiator sends its COMPLETE again every 2 s until
+  it hears the joiner, for at most the 2-minute pairing timeout, and logs
+  one never answered (it went once, unchecked); the copies are the frame
+  already on the air, and the pairing key stays wiped. Host-tested only.
 - **Still open on canary-wap: a radio copying a member's own address.**
   ESP-NOW does not authenticate a source, so a radio that copies member
   B's bound address passes canary-wap's address check. It can deliver B's
@@ -675,8 +681,13 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   rebooted canary-wap no longer restarts its per-member send counters at 1:
   each is reserved ahead in NVS, and a boot resumes every member above the
   highest counter it reserved for any of them (spec §3.3), and no counter
-  is signed twice under one key (a rekey restarts them at 1 under the new
-  key). The first boot after the update finds no record and resumes above
+  is signed twice. A rotation keeps the counters (since F95's counter fix;
+  it used to restart them at 1, and a member that had not switched, or
+  rebooted before its 5-minute last-seen save, dropped the restarted
+  frames), and a new member starts above every reservation the device
+  stored, a removed member's included (F99: a device re-paired after a
+  removal or a leave kept its last-seen counter and dropped a counter that
+  restarted at 1). The first boot after the update finds no record and resumes above
   2^40, which no older boot reached, so it is heard at once too. An
   unreadable record resumes above 2^48, above anything signed since the
   update; a second unreadable record resumes below the device's own
@@ -768,6 +779,19 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   (v0.2 audit O3; on canary-wap that is now spec v0.3's transactional flow,
   #454, and on the PlatformIO tree the variant below — "Outstanding work"
   has what neither has proven yet).
+  - **canary-wap: the rotation reaches no member (sweep F95, open;
+    host-probed).** Its `MSG_OPERA_REKEY` is sealed under a per-member AUTH
+    session key, and nothing opens a session: no code sends
+    `AUTH_CHALLENGE`, and the exchange cannot complete as it stands (its
+    `AUTH_RESPONSE` makes a 262 B signed frame against ESP-NOW's 250 B, and
+    it runs X25519 over the long-term Ed25519 keys, so the two sides' keys
+    would not agree; spec §3.1). So a removal moves the remover alone to a
+    new `opera_id`; every survivor stays on the old one, split from the
+    remover until it re-pairs with it, and keeps trusting the removed
+    device, which only the remover now drops. The §5.6 caveat that the
+    removed device cannot impersonate a member after the rotation does not
+    hold on canary-wap yet. The fix is a wire and derivation change, with
+    the crypto review (F48).
   - PlatformIO tree (spec §5.6 PlatformIO subsection, `mesh_rekey.{h,cpp}`):
     no per-peer session keys exist there, so the rotation runs an
     ephemeral X25519 exchange per removal inside signed envelopes, the ACK
