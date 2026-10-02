@@ -78,13 +78,17 @@
   page test fails on any fingerprint or public-key example in a Lab page's
   generated data whose length or case differs from what that product
   prints. Page data only; it reaches users with the next Lab and Flasher
-  release.
+  release. #1760 landed a first fix on main, a 16-digit example that is no
+  key's fingerprint; this one replaces it with the test key's.
 - **The display's onboarding bird sits where its host placed it, and on
   small glass no onboarding line is cut and the halo clears the text rows
   and the QR card (sweep F64-F66).** canary_mark took the bird's base from
   LVGL's laid-out box, which reads 0 before the first layout pass and the
   anchor plus the offset after it. It now reads the host's own offset from
-  its anchor (`lv_obj_get_style_x/y`). A native LVGL 8.4 harness showed
+  its anchor (`lv_obj_get_style_x/y`). #1760 landed the same fix on main first
+  (`record_base()`, with the wing and eye reads and an emulator check that
+  fails a bird drawn off the glass or over a line of text); this PR keeps
+  that code and adds the host tests below. A native LVGL 8.4 harness showed
   every face's bird off its seat: the onboarding bird walked off the round
   watch a scene at a time, and the 7" portrait column's sat over the clock.
   Each now draws at its anchor plus its offset. On rectangular small glass
