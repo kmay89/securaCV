@@ -35,7 +35,9 @@ const guide = read(join(REPO, "docs/hardware/grove_vision_ai_v2_guide.md"));
 const gettingStarted = read(join(REPO, "docs/hardware/canary_vision_getting_started.md"));
 const detectionPipelineH = read(join(FW, "include/canary/vision/detection_pipeline.h"));
 const visionBuild = read(join(ROOT, "emulator/build.sh"));
-const visionFactory = require(join(ROOT, "emulator/dist/canary-vision-core.js"));
+// The committed emulator/dist/canary-vision-core.js; LAB_CORES=native builds
+// this tree's sources instead (tests/native/README.md, sweep A40).
+const visionFactory = require("./native/cores.js").coreFactory("canary-vision-core");
 
 async function firmwareCore() {
   const { createVisionFirmwareCore } = await import("../emulator/web/vision-core.js");

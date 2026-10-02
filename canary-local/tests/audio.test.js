@@ -11,10 +11,10 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { join } = require("node:path");
 
-const ROOT = join(__dirname, "..");
-const factory = require(join(ROOT, "emulator/dist/canary-wap-audio.js"));
+// The committed emulator/dist/canary-wap-audio.js; LAB_CORES=native builds
+// this tree's sources instead (tests/native/README.md, sweep A40).
+const factory = require("./native/cores.js").coreFactory("canary-wap-audio");
 
 async function core() {
   const m = await factory();
