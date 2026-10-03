@@ -26,7 +26,11 @@ two-thread run; and the alert history newest first after the log wraps, a
 cap, a clear, a leave, deinit, and a two-thread run of stores and clears.
 No host test compiles `securacv_network.cpp` or `main.cpp` (only CI's
 `[env:full]` build does), and none can see which task a call runs on; this
-check holds the sources to the shape those tests assume.
+check holds the sources to the shape those tests assume. Nor does a test
+see the device's lock, and CI builds the two-thread runs without a
+sanitizer, where a host lock that does nothing usually still passes (11
+of 12 such runs did; a local ThreadSanitizer build catches it every time);
+rule 7 holds both locks' shape.
 
 ## The rules
 
@@ -64,6 +68,28 @@ check holds the sources to the shape those tests assume.
    declaration and that attach; `read_alerts()` names no live state; and no
    in-place history is left (`s_alert_ring`, `s_alert_head`,
    `s_alert_count`, `get_alerts`).
+7. The locks those snapshots copy under are real, and the alert log has one
+   writer (F197's review). In `mesh_session.cpp`, `AlertLogLock` and
+   `StatusViewLock` are each defined twice, under `#ifdef
+   CSI_TEST_HOST_BUILD` (a `std::mutex m` whose `lock()` / `unlock()` are
+   `m.lock()` / `m.unlock()`, the lock a two-thread host test runs) and in
+   its `#else` (`portENTER_CRITICAL(&mux)` / `portEXIT_CRITICAL(&mux)` on
+   its own `static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;`,
+   declared once in that branch and named nowhere else: `s_alert_log_mux`,
+   `s_status_view_mux`); `s_alert_log` is a `loop_snapshot::Log<AlertEntry,
+   MAX_ALERT_HISTORY, AlertLogLock>` and `s_status_view` a
+   `loop_snapshot::Value<StatusView, StatusViewLock>`. `Log::clear()` zeroes
+   the records after it drops the lock, so it relies on no append running on
+   another task: `clear_alerts()` is called only in `execute_request()`
+   (the `RequestType::CLEAR_ALERTS` case, run by the main loop's request
+   drain) and `reset_alerts()` only in `deinit()` and `leave_opera()`; no
+   other file under `firmware/canary` calls either; in
+   `securacv_network.cpp` no HTTP handler names them,
+   `RequestType::CLEAR_ALERTS` is posted only by `handle_mesh_alerts_clear`,
+   once, before its one `mesh_call(req, r, &res, &rc)`, and a `#pragma GCC
+   poison` ahead of the first mesh handler still names `clear_alerts` and
+   the other main-loop mutators (the compile error `[env:full]` gives a
+   direct call).
 
 Each rule is proved to bite: `self_test()` mutates the real sources in
 memory and requires the check to fail on every mutation.
@@ -119,6 +145,21 @@ ALERT_LOG_USES = {
 }
 ALERT_READER_LIVE = LIVE_STATE + ("s_alert_store", "s_alert_seq")
 OLD_ALERT_RING = ("s_alert_ring", "s_alert_head", "s_alert_count", "get_alerts")
+
+# Rule 7: each lock, its device portMUX, and the snapshot that locks with it.
+LOCKS = (
+    ("AlertLogLock", "s_alert_log_mux",
+     r"\bstatic\s+loop_snapshot::Log\s*<\s*AlertEntry\s*,\s*MAX_ALERT_HISTORY\s*,\s*"
+     r"AlertLogLock\s*>\s*s_alert_log\s*;"),
+    ("StatusViewLock", "s_status_view_mux",
+     r"\bstatic\s+loop_snapshot::Value\s*<\s*StatusView\s*,\s*StatusViewLock\s*>\s*"
+     r"s_status_view\s*;"),
+)
+HOST_LOCK_BODY = "{std::mutexm;voidlock(){m.lock();}voidunlock(){m.unlock();}}"
+ALERT_CLEARERS = {"clear_alerts": ("execute_request",), "reset_alerts": ("deinit", "leave_opera")}
+MAIN_LOOP_MUTATORS = ("leave_opera", "set_opera_name", "set_enabled", "clear_alerts", "remove_peer",
+                      "start_pairing_initiator", "start_pairing_joiner", "confirm_pairing_code",
+                      "cancel_pairing")
 
 HANDLER_SIG = re.compile(r"\bstatic\s+esp_err_t\s+(\w+)\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)\s*\{")
 
@@ -255,6 +296,7 @@ def check_network(net_src: str, errors: list[str]) -> None:
             errors.append(f"{NETWORK}: handle_mesh_alerts() must read the alert log once "
                           f"(`mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY);`, "
                           f"found {len(reads)}) (F197)")
+    check_alert_clear_route(code, errors)
     peers = bodies.get("handle_mesh_peers")
     if peers is not None:
         joins = re.findall(r"\bmesh_api::peer_views_from_status\s*\(\s*view\s*,", peers)
@@ -262,6 +304,44 @@ def check_network(net_src: str, errors: list[str]) -> None:
             errors.append(f"{NETWORK}: handle_mesh_peers() must join its rows against the view "
                           f"once (`mesh_api::peer_views_from_status(view, ...)`, found "
                           f"{len(joins)}) (F161)")
+
+
+def check_alert_clear_route(code: str, errors: list[str]) -> None:
+    """Rule 7 (F197's review): the alert log's one writer is the main loop."""
+    handlers = handler_bodies(code)
+    for name, body in handlers:
+        hit = re.search(r"\b(clear_alerts|reset_alerts)\s*\(", body)
+        if hit:
+            errors.append(f"{NETWORK}: HTTP handler {name}() calls {hit.group(1)}( — the alert log "
+                          "is cleared on the main loop only; post RequestType::CLEAR_ALERTS through "
+                          "mesh_call (F197)")
+        if name != "handle_mesh_alerts_clear" and re.search(r"\bRequestType::CLEAR_ALERTS\b", body):
+            errors.append(f"{NETWORK}: HTTP handler {name}() posts RequestType::CLEAR_ALERTS — only "
+                          "DELETE /api/mesh/alerts clears the history (F197)")
+    body = dict(handlers).get("handle_mesh_alerts_clear")
+    if body is None:
+        errors.append(f"{NETWORK}: handle_mesh_alerts_clear() is missing")
+    else:
+        posts = [m.start() for m in re.finditer(
+            r"\br\.type\s*=\s*mesh_session::RequestType::CLEAR_ALERTS\s*;", body)]
+        calls = [m.start() for m in re.finditer(r"\bmesh_call\s*\(\s*req\s*,\s*r\s*,\s*&\s*res\s*,"
+                                                  r"\s*&\s*rc\s*\)", body)]
+        if len(posts) != 1 or len(calls) != 1 or calls[0] < posts[0] or \
+                len(re.findall(r"\bmesh_call\s*\(", body)) != 1:
+            errors.append(f"{NETWORK}: handle_mesh_alerts_clear() must post "
+                          "`r.type = mesh_session::RequestType::CLEAR_ALERTS;` once and then hand it "
+                          "to the main loop once (`mesh_call(req, r, &res, &rc)`) (F197)")
+    poisoned: set[str] = set()
+    first = None
+    for m in re.finditer(r"^[ \t]*#[ \t]*pragma[ \t]+GCC[ \t]+poison[ \t]+([^\n]*)$", code, re.M):
+        poisoned.update(m.group(1).split())
+        first = m.start() if first is None else first
+    mesh_handlers = [m.start() for m in HANDLER_SIG.finditer(code) if m.group(1).startswith("handle_mesh_")]
+    missing = [n for n in MAIN_LOOP_MUTATORS if n not in poisoned]
+    if missing or first is None or not mesh_handlers or first > min(mesh_handlers):
+        errors.append(f"{NETWORK}: a `#pragma GCC poison` ahead of the first mesh handler must name "
+                      f"every main-loop mutator (missing: {', '.join(missing) or 'none'}) — a direct "
+                      "call from a handler is then a compile error (F33 part 5, F197)")
 
 
 SIG_PROCESS = r"\bvoid\s+process\s*\(\s*uint32_t\s+\w+\s*\)\s*\{"
@@ -322,6 +402,61 @@ def check_session(sess_src: str, errors: list[str]) -> None:
     if one_body(code, SIG_PUBLISH, f"{SESSION}: publish_status()", errors) is None:
         pass
     check_alert_log(code, errors)
+    check_locks(code, errors)
+    for name, allowed in ALERT_CLEARERS.items():
+        for m in re.finditer(r"(?<![\w:.>])" + name + r"\s*\(\s*\)\s*;", code):
+            if code[max(0, m.start() - 40):m.start()].rstrip().endswith("void"):
+                continue   # its definition's forward declaration
+            where = enclosing(code, m.start())
+            if where not in allowed:
+                errors.append(f"{SESSION}: {where}() calls {name}() — only "
+                              f"{' / '.join(a + '()' for a in allowed)} may: Log::clear() relies on "
+                              "no append on another task (F197)")
+
+
+def check_locks(code: str, errors: list[str]) -> None:
+    """Rule 7 (F197's review): each snapshot's lock is a real lock — a
+    std::mutex on the host, its own portMUX critical section on the device."""
+    directives = [(m.start(), squash(m.group(1)))
+                  for m in re.finditer(r"^[ \t]*#[ \t]*(\w[^\n]*)$", code, re.M)]
+    for name, mux, decl in LOCKS:
+        defs = [(m.start(), block_at(code, m.end() - 1))
+                for m in re.finditer(r"\bstruct\s+" + name + r"\s*\{", code)]
+        if len(defs) != 2:
+            errors.append(f"{SESSION}: struct {name} is defined {len(defs)} time(s); expected two, "
+                          "the host's and the device's (F197)")
+            continue
+        (h0, (ha, hb)), (d0, (da, db)) = defs
+        if squash(code[ha:hb]) != HOST_LOCK_BODY:
+            errors.append(f"{SESSION}: the host {name} must hold a std::mutex m and lock and unlock "
+                          "it (m.lock() / m.unlock()) — the two-thread test runs this lock (F197)")
+        want = ("{voidlock(){portENTER_CRITICAL(&%s);}voidunlock(){portEXIT_CRITICAL(&%s);}}"
+                % (mux, mux))
+        if squash(code[da:db]) != want:
+            errors.append(f"{SESSION}: the device {name} must take portENTER_CRITICAL(&{mux}) in "
+                          f"lock() and portEXIT_CRITICAL(&{mux}) in unlock() (F197)")
+        before = [d for d in directives if d[0] < h0]
+        between = [d for d in directives if hb <= d[0] < d0]
+        after = [d for d in directives if d[0] >= db]
+        framed = (before and before[-1][1] == "ifdefCSI_TEST_HOST_BUILD"
+                  and [d[1] for d in between] == ["else"]
+                  and after and after[0][1].startswith("endif"))
+        if not framed:
+            errors.append(f"{SESSION}: the host {name} must sit under #ifdef CSI_TEST_HOST_BUILD "
+                          "and the device one in its #else (F197)")
+        decls = list(re.finditer(r"\bstatic\s+portMUX_TYPE\s+" + mux +
+                                 r"\s*=\s*portMUX_INITIALIZER_UNLOCKED\s*;", code))
+        if len(decls) != 1 or not between or not (between[0][0] < decls[0].start() < d0):
+            errors.append(f"{SESSION}: `static portMUX_TYPE {mux} = portMUX_INITIALIZER_UNLOCKED;` "
+                          f"must be declared once, in the #else branch ahead of the device {name} "
+                          "(F197)")
+        names = len(re.findall(r"\b" + mux + r"\b", code))
+        if names != 3:
+            errors.append(f"{SESSION}: {mux} is named {names} time(s); expected three (its "
+                          f"declaration and {name}'s lock() and unlock()) (F197)")
+        if len(re.findall(decl, code)) != 1:
+            errors.append(f"{SESSION}: the snapshot {name} guards must be declared once with it as "
+                          "its lock (F197)")
 
 
 SIG_READ_ALERTS = (r"\bsize_t\s+read_alerts\s*\(\s*mesh_alert::Record\s*\*\s*\w+\s*,"
@@ -392,6 +527,11 @@ def check_main(main_src: str, others: dict[str, str], errors: list[str]) -> None
             errors.append(f"{MAIN}: setup()'s mesh_session::publish_status() must follow "
                           "mesh_session::set_opera_create_handler( — the end of the mesh "
                           "restore, so the view it publishes is the restored opera (F161)")
+    for path, src in list(others.items()) + [(MAIN, main_src)]:
+        code = re.sub(r"\bvoid\s+clear_alerts\s*\(\s*\)\s*;", "", blank(src))   # its declaration
+        if re.search(r"\b(clear_alerts|reset_alerts)\s*\(", code):
+            errors.append(f"{path}: calls clear_alerts()/reset_alerts() — the alert log is cleared "
+                          "only by mesh_session.cpp's main-loop paths (F197)")
     for path, src in others.items():
         code = re.sub(r"\bvoid\s+publish_status\s*\(\s*\)\s*;", "", blank(src))   # its declaration
         if re.search(r"(?<![\w.>])(?:mesh_session::)?publish_status\s*\(\s*\)", code):
@@ -473,6 +613,13 @@ ALERT_CLEAR = ("  /* History only — the lifetime counters keep counting (WAP p
 ALERT_RESET = "  s_alert_log.clear();   /* F197: under the log's lock; zeroes the records */"
 ALERT_READ = "  const size_t n = s_alert_log.read(held, MAX_ALERT_HISTORY);"
 ALERT_ATTACH = "  if (s_alert_log.storage() == nullptr) s_alert_log.attach(s_alert_store);"
+HOST_ALERT_LOCK = ("struct AlertLogLock {\n  std::mutex m;\n  void lock()   { m.lock(); }\n"
+                   "  void unlock() { m.unlock(); }\n};")
+HOST_VIEW_LOCK = ("struct StatusViewLock {\n  std::mutex m;\n  void lock()   { m.lock(); }\n"
+                  "  void unlock() { m.unlock(); }\n};")
+ALERTS_CLEAR_POST = ("  r.type = mesh_session::RequestType::CLEAR_ALERTS;\n"
+                     "  mesh_session::RequestResult res;\n  esp_err_t rc = ESP_OK;\n"
+                     "  if (!mesh_call(req, r, &res, &rc)) return rc;")
 
 MUTATIONS: list[tuple[str, Mutation]] = [
     ("status handler reads pairing_seq live",
@@ -568,6 +715,55 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw("session", "void clear_alerts() {",
          "size_t get_alerts(mesh_alert::Record* out, size_t cap) { return read_alerts(out, cap); }\n\n"
          "void clear_alerts() {")),
+    ("the device alert lock is a no-op",
+     raw("session", "  void lock()   { portENTER_CRITICAL(&s_alert_log_mux); }", "  void lock()   { }")),
+    ("the device alert lock never unlocks",
+     raw("session", "  void unlock() { portEXIT_CRITICAL(&s_alert_log_mux); }", "  void unlock() { }")),
+    ("the device alert lock takes the status view's portMUX",
+     raw("session", "  void lock()   { portENTER_CRITICAL(&s_alert_log_mux); }\n"
+                    "  void unlock() { portEXIT_CRITICAL(&s_alert_log_mux); }",
+         "  void lock()   { portENTER_CRITICAL(&s_status_view_mux); }\n"
+         "  void unlock() { portEXIT_CRITICAL(&s_status_view_mux); }")),
+    ("the host alert lock is a no-op",
+     raw("session", HOST_ALERT_LOCK, HOST_ALERT_LOCK.replace("{ m.lock(); }", "{ }")
+                                                    .replace("{ m.unlock(); }", "{ }"))),
+    ("the host alert lock holds no mutex",
+     raw("session", HOST_ALERT_LOCK, HOST_ALERT_LOCK.replace("  std::mutex m;\n", "  int m = 0;\n")
+                                                    .replace("{ m.lock(); }", "{ ++m; }")
+                                                    .replace("{ m.unlock(); }", "{ --m; }"))),
+    ("the device build gets the host's alert lock",
+     raw("session", "#ifdef CSI_TEST_HOST_BUILD\n" + HOST_ALERT_LOCK,
+         "#ifndef CSI_TEST_HOST_BUILD\n" + HOST_ALERT_LOCK)),
+    ("the alert log locks with a no-op struct",
+     raw("session", "static loop_snapshot::Log<AlertEntry, MAX_ALERT_HISTORY, AlertLogLock> s_alert_log;",
+         "struct NoLock { void lock() {} void unlock() {} };\n"
+         "static loop_snapshot::Log<AlertEntry, MAX_ALERT_HISTORY, NoLock> s_alert_log;")),
+    ("the alert portMUX taken somewhere else too",
+     raw("session", ALERT_READ, "  portENTER_CRITICAL(&s_alert_log_mux);\n" + ALERT_READ)),
+    ("the device status view lock is a no-op",
+     raw("session", "  void lock()   { portENTER_CRITICAL(&s_status_view_mux); }", "  void lock()   { }")),
+    ("the host status view lock is a no-op",
+     raw("session", HOST_VIEW_LOCK, HOST_VIEW_LOCK.replace("{ m.lock(); }", "{ }"))),
+    ("the DELETE handler clears on the httpd task",
+     raw("network", ALERTS_CLEAR_POST, "  mesh_session::clear_alerts();\n"
+                                       "  mesh_session::RequestResult res;\n  esp_err_t rc = ESP_OK;\n"
+                                       "  (void)res; (void)rc;")),
+    ("the DELETE handler posts nothing",
+     raw("network", ALERTS_CLEAR_POST, ALERTS_CLEAR_POST.replace(
+         "  if (!mesh_call(req, r, &res, &rc)) return rc;", "  (void)res; (void)rc;"))),
+    ("another handler posts CLEAR_ALERTS",
+     raw("network", "  r.type = mesh_session::RequestType::LEAVE;",
+         "  r.type = mesh_session::RequestType::CLEAR_ALERTS;")),
+    ("the poison pragma no longer names clear_alerts",
+     raw("network", "#pragma GCC poison leave_opera set_opera_name set_enabled clear_alerts remove_peer",
+         "#pragma GCC poison leave_opera set_opera_name set_enabled remove_peer")),
+    ("clear_alerts() called from read_alerts() (the httpd task)",
+     raw("session", ALERT_READ, "  clear_alerts();\n" + ALERT_READ)),
+    ("reset_alerts() called from process()",
+     raw("session", PROC_END, PROC_END.replace("  publish_status();\n}", "  reset_alerts();\n  publish_status();\n}"))),
+    ("main.cpp clears the alert log",
+     raw("main", "  mesh_session::process((uint32_t)millis());\n",
+         "  mesh_session::process((uint32_t)millis());\n  mesh_session::clear_alerts();\n")),
     ("another canary file publishes",
      other("firmware/canary/src/csi_modules_integration.cpp",
            "  mesh_session::set_beacon_event_handler(&on_peer_beacon_event_inbound);",
@@ -611,7 +807,9 @@ def main() -> int:
     print(f"canary mesh status routes hold: GET /api/mesh and /peers read only the view the main "
           f"loop publishes (each pass, its early return, each request before its result, "
           f"deinit, and setup's restore), GET /api/mesh/alerts reads only the log the main loop "
-          f"changes under its lock, no HTTP handler reads the session's live state "
+          f"changes under its lock, both locks are real (a std::mutex on the host, each its "
+          f"own portMUX on the device), only the main loop clears the alert log, no HTTP "
+          f"handler reads the session's live state "
           f"({len(MUTATIONS)} mutations refused).")
     return 0
 

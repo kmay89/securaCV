@@ -5294,7 +5294,8 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // live state either (F161): they copy the view the main loop publishes
 // after each pass and each request it runs (mesh_session::read_status), so
 // one body is one pass, and they never wait for the main loop.
-// (GET /api/mesh/alerts still reads the alert history in place.)
+// GET /api/mesh/alerts copies the alert history the main loop changes under
+// its lock (F197: mesh_session::read_alerts), and does not wait either.
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on

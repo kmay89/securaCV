@@ -1226,7 +1226,11 @@ and the route still answers newest first; every field of the body is
 unchanged. Cost: 4 bytes a record (the order) and, per request, a
 384-byte copy of the log on the HTTP task's stack beside the 320 bytes of
 records it already held. Host-tested (`test_mesh_session.cpp`, a two-thread
-run of stores and clears included, clean under ThreadSanitizer); the
+run of stores and clears included; a local ThreadSanitizer build of it is
+clean, CI builds it without one); `check_canary_mesh_status.py` holds the
+lock itself (a `std::mutex` on the host, the log's own portMUX critical
+section on the device) and the one writer (only the main loop clears the
+log; the `DELETE` posts its request through the request slot); the
 `[env:full]` compile is CI's; not bench-tested.
 
 ### 8.2 Response Formats
