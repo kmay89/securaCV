@@ -458,6 +458,17 @@ BV5. The bond store never evicts behind the owner, and the paired list takes
      does, over NimBLE's store as the stand-in models it, is
      `test_bluetooth_commands_wap.cpp`'s.
 
+BV6. Every Bluetooth REST answer goes out at its own length (F196). The
+     routes serialized into fixed char buffers (128, 320, 512 bytes) sized
+     by eye; a document that filled one is left unterminated by
+     `serializeJson()`, and `httpd_resp_sendstr()` sends what follows it.
+     `bluetooth_api.h` serializes in one function, `send_doc()`, whose body
+     is exactly `String out; if (!out.reserve(measureJson(doc) + 1)) {
+     return send_json_response(req, "..."); } serializeJson(doc, out);
+     return send_json_response(req, out.c_str());` (a failed reservation
+     answers the fixed allocation error), and no other function of the file
+     calls `serializeJson(`, `serializeJsonPretty(` or `serializeMsgPack(`.
+
 ## It proves it bites
 
 Each run applies mutations to the sources in memory and requires the check
@@ -2822,6 +2833,36 @@ def check_bluetooth_bond_store(files: dict[str, str], errors: list[str]) -> None
                           "bonded whether or not the bond was kept (F189)")
 
 
+# BV6 (F196, bluetooth_api.h): every answer goes out at its own length.
+SIG_BT_SEND_DOC = r"\bstatic\s+inline\s+esp_err_t\s+send_doc\s*\([^)]*\)"
+BT_SEND_DOC_BODY = ("Stringout;if(!out.reserve(measureJson(doc)+1)){returnsend_json_response(req,\"\");}"
+                    "serializeJson(doc,out);returnsend_json_response(req,out.c_str());")
+
+
+def check_bluetooth_answer_lengths(api_src: str, errors: list[str]) -> None:
+    """Rule BV6 (F196): every answer bluetooth_api.h sends is serialized in
+    one place, send_doc(), into a String reserved to measureJson()'s length.
+    A fixed char buffer that a longer answer fills is left unterminated by
+    serializeJson() and httpd_resp_sendstr() then sends whatever follows it;
+    a measured String cannot be outgrown. A failed reservation answers the
+    fixed allocation error rather than a truncated document."""
+    code = blank_comments_and_strings(api_src)
+    spans = named_bodies(code)
+    body = body_of(code, SIG_BT_SEND_DOC, f"{BT_API}: send_doc()", errors)
+    if body is not None and squash(body) != BT_SEND_DOC_BODY:
+        errors.append(f"{BT_API}: send_doc() must measure the answer and serialize it into a String "
+                      "reserved to that length, answering a failed allocation with its fixed error "
+                      "(`String out; if (!out.reserve(measureJson(doc) + 1)) { return "
+                      "send_json_response(req, \"...\"); } serializeJson(doc, out); return "
+                      "send_json_response(req, out.c_str());`) — serializeJson() into a char array "
+                      "leaves a full one unterminated and httpd_resp_sendstr() sends what follows (F196)")
+    for m in re.finditer(r"\bserialize(?:Json|JsonPretty|MsgPack)\s*\(", code):
+        where = enclosing_function(spans, m.start())
+        if where != "send_doc":
+            errors.append(f"{BT_API}: {where or 'file scope'}() serializes an answer itself — every "
+                          "Bluetooth answer goes out through send_doc(), at its own measured length (F196)")
+
+
 def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
     """Rules BV1..BV3 and BD1: the Bluetooth channel's settings enable (F144),
     the NimBLE host task's events (F143), the status routes' reads (F138) and
@@ -2835,6 +2876,7 @@ def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
     check_bluetooth_dispatch(files, errors)
     check_bluetooth_bringup(files[BT_CPP], errors)
     check_bluetooth_bond_store(files, errors)
+    check_bluetooth_answer_lengths(files[BT_API], errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -3808,6 +3850,27 @@ BV_MUTATIONS += [
      on_other(BT_CPP, SIG_BT_INIT, r"\n[ \t]*ble_server_dispatch::attach\(server\);", "")),
     ("install() puts the dispatcher on the server without recording the owner",
      on_other(BT_DISPATCH_H, SIG_DISPATCH_INSTALL, r"g_dispatcher\.set\(role, owner\);", "")),
+]
+# Rule BV6 (F196): every Bluetooth answer at its own length.
+BV_MUTATIONS += [
+    ("send_success() serializes into a 128-byte buffer again",
+     on_other(BT_API, r"\bstatic\s+inline\s+esp_err_t\s+send_success\s*\([^)]*\)", r"return send_doc\(req, doc\);",
+              "char buffer[128]; serializeJson(doc, buffer); return send_json_response(req, buffer);")),
+    ("the settings route serializes into its own buffer",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_get"), r"return send_doc\(req, doc\);",
+              "char buffer[512]; serializeJson(doc, buffer, sizeof(buffer)); return send_json_response(req, buffer);")),
+    ("the status route goes back to a 2048-byte reserve",
+     on_other(BT_API, api_handler("handle_bluetooth_status"), r"return send_doc\(req, doc\);",
+              "String buffer; if (!buffer.reserve(2048)) { return send_error(req, \"x\"); } "
+              "serializeJson(doc, buffer); return send_json_response(req, buffer.c_str());")),
+    ("send_doc() reserves a fixed size",
+     on_other(BT_API, SIG_BT_SEND_DOC, r"out\.reserve\(measureJson\(doc\) \+ 1\)", "out.reserve(128)")),
+    ("send_doc() goes on after a failed allocation",
+     on_other(BT_API, SIG_BT_SEND_DOC, r"if \(!out\.reserve\(measureJson\(doc\) \+ 1\)\) \{[^}]*\}",
+              "(void)out.reserve(measureJson(doc) + 1);")),
+    ("send_doc() serializes into a stack buffer of the measured size",
+     on_other(BT_API, SIG_BT_SEND_DOC, r"serializeJson\(doc, out\);\s*return send_json_response\(req, out\.c_str\(\)\);",
+              "char small[64]; serializeJson(doc, small); return send_json_response(req, small);")),
 ]
 # Rule BV5 (F189): the bond store's status.
 BV_MUTATIONS += [

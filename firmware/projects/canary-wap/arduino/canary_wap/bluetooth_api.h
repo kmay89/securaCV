@@ -85,24 +85,41 @@ static inline esp_err_t send_json_response(httpd_req_t* req, const char* json) {
   return httpd_resp_sendstr(req, json);
 }
 
+// Every answer here goes out at its own length (sweep F196). serializeJson()
+// into a char array writes no further than the array, but terminates only an
+// answer shorter than it (ArduinoJson 7.4.1), and httpd_resp_sendstr() then
+// sends a cut answer and whatever memory follows it, up to the next zero
+// byte: the Chirp confirm and mute refusals went out that way (F174). The
+// fixed buffers this file had all held their longest answers (an ArduinoJson
+// 7.4.1 scratch harness of these handlers: the init error at most 112 of 128
+// bytes, the OTA status 261 of 320 with a 63-byte error of escaped bytes, the
+// settings 261 of 512 with a 32-byte name of escaped bytes), but a longer
+// message or a new key would not have said so. So each answer is measured
+// (measureJson()) and serialized into a String reserved to that length, a
+// failed allocation answered with the fixed error below, never a cut one.
+// firmware/scripts/check_wap_loop_commands.py (rule BV6) holds every
+// serializeJson() of this file to send_doc().
+static inline esp_err_t send_doc(httpd_req_t* req, const JsonDocument& doc) {
+  String out;
+  if (!out.reserve(measureJson(doc) + 1)) {
+    return send_json_response(req, "{\"success\":false,\"error\":\"Memory allocation failed\"}");
+  }
+  serializeJson(doc, out);
+  return send_json_response(req, out.c_str());
+}
+
 static inline esp_err_t send_success(httpd_req_t* req, const char* message = nullptr) {
   JsonDocument doc;
   doc["success"] = true;
   if (message) doc["message"] = message;
-
-  char buffer[128];
-  serializeJson(doc, buffer);
-  return send_json_response(req, buffer);
+  return send_doc(req, doc);
 }
 
 static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
   JsonDocument doc;
   doc["success"] = false;
   doc["error"] = error;
-
-  char buffer[128];
-  serializeJson(doc, buffer);
-  return send_json_response(req, buffer);
+  return send_doc(req, doc);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -174,12 +191,7 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   stats["advertising_time_sec"] = status.advertising_time_ms / 1000;
   stats["connected_time_sec"] = status.connected_time_ms / 1000;
 
-  String buffer;
-  if (!buffer.reserve(2048)) {
-    return send_error(req, "Memory allocation failed");
-  }
-  serializeJson(doc, buffer);
-  return send_json_response(req, buffer.c_str());
+  return send_doc(req, doc);
 }
 
 // GET /api/bluetooth/ota - BLE OTA session status
@@ -196,12 +208,9 @@ inline esp_err_t handle_bluetooth_ota_status(httpd_req_t* req) {
   // reading the dashboard should not have to find the health log first.
   doc["break_glass"] = ble_ota::last_break_glass();
 
-  // Worst case (state "receiving", two 32-bit sizes, a 63-byte last_error,
-  // break_glass) is ~195 bytes; 320 keeps real headroom now that the
-  // document has grown, and matches handle_test's buffer.
-  char buffer[320];
-  serializeJson(doc, buffer);
-  return send_json_response(req, buffer);
+  // At its own length (send_doc(), F196): with the widest numbers and a
+  // 63-byte error of bytes JSON escapes it is 261 bytes.
+  return send_doc(req, doc);
 }
 
 // Compose an operator-actionable error. When the radio never initialized,
@@ -322,10 +331,7 @@ inline esp_err_t handle_bluetooth_scan_start(httpd_req_t* req) {
     doc["success"] = true;
     doc["message"] = "Scan started";
     doc["duration_sec"] = duration_ms / 1000;
-
-    char buffer[128];
-    serializeJson(doc, buffer);
-    return send_json_response(req, buffer);
+    return send_doc(req, doc);
   }
   return send_bt_error(req, "Failed to start scan");
 }
@@ -370,12 +376,7 @@ inline esp_err_t handle_bluetooth_scan_results(httpd_req_t* req) {
     dev["age_sec"] = (millis() - devices[i].last_seen_ms) / 1000;
   }
 
-  String buffer;
-  if (!buffer.reserve(4096)) {
-    return send_error(req, "Memory allocation failed");
-  }
-  serializeJson(doc, buffer);
-  return send_json_response(req, buffer.c_str());
+  return send_doc(req, doc);
 }
 
 // DELETE /api/bluetooth/scan/results - Clear scan results
@@ -485,12 +486,7 @@ inline esp_err_t handle_bluetooth_paired_list(httpd_req_t* req) {
     dev["blocked"] = devices[i].blocked;
   }
 
-  String buffer;
-  if (!buffer.reserve(2048)) {
-    return send_error(req, "Memory allocation failed");
-  }
-  serializeJson(doc, buffer);
-  return send_json_response(req, buffer.c_str());
+  return send_doc(req, doc);
 }
 
 // DELETE /api/bluetooth/paired - Remove a paired device
@@ -637,10 +633,7 @@ inline esp_err_t handle_bluetooth_settings_get(httpd_req_t* req) {
   doc["inactivity_timeout_sec"] = settings.inactivity_timeout_ms / 1000;
   doc["notify_on_connect"] = settings.notify_on_connect;
   doc["long_range_mode"] = settings.long_range_mode;
-
-  char buffer[512];
-  serializeJson(doc, buffer);
-  return send_json_response(req, buffer);
+  return send_doc(req, doc);
 }
 
 // POST /api/bluetooth/settings - Update Bluetooth settings
@@ -783,10 +776,7 @@ inline esp_err_t handle_bluetooth_power_set(httpd_req_t* req) {
     doc["success"] = true;
     doc["message"] = "TX power updated";
     doc["power"] = power;
-
-    char buffer[128];
-    serializeJson(doc, buffer);
-    return send_json_response(req, buffer);
+    return send_doc(req, doc);
   }
   return send_error(req, "Invalid power level (-12 to +9 dBm)");
 }
