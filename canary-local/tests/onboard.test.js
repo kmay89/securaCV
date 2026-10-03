@@ -30,6 +30,9 @@
 //     reading the turned splash (laid out or inked) or booting a
 //     turned glass, or a turned boot passes with no bird read  → "splash and turned boots (F206)"
 //   · the drift check passes a new flavor's uncommitted bundle → "dist drift (F204)"
+//   · the native runtime-turn boot stops compiling what build.sh
+//     compiles for the nightlight, stops turning it through the
+//     app's mailbox, or falls out of CI                        → "runtime turn (F222)"
 //   · the gates fall out of CI                                 → "CI runs"
 //
 // The browser half (the real wasm answering) is tests/onboard_probe.mjs, in
@@ -1080,6 +1083,89 @@ test("dist drift (F204): the drift check fails on a bundle this tree builds that
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The entries of every `NAME=(` / `NAME+=(` array block in a bash script, one
+// per line, comments dropped; `when` picks blocks by the `if` line guarding
+// them (an unguarded block passes it the empty string).
+function bashArrays(text, name, when = () => true) {
+  const out = [];
+  const lines = text.split("\n");
+  let guard = "";
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^if \[\[/.test(line)) {
+      guard = line;
+      while (/\\$/.test(lines[i]) && i + 1 < lines.length) guard += lines[++i];
+    }
+    if (/^fi$/.test(line)) guard = "";
+    if (!new RegExp(`^\\s*${name}\\+?=\\($`).test(line)) continue;
+    const take = when(guard);
+    for (i++; i < lines.length && !/^\s*\)$/.test(lines[i]); i++) {
+      const entry = lines[i].replace(/#.*$/, "").trim();
+      if (entry && take) out.push(entry);
+    }
+  }
+  return out;
+}
+
+test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively, turns it through the app's mailbox, and runs in CI", () => {
+  const buildSh = read(join(ROOT, "emulator/build.sh"));
+  const rt = read(join(ROOT, "emulator/test/runtime_turn.sh"));
+  // The TUs: build.sh's base list and every block guarded for the nightlight,
+  // in order; build.sh's Crypto list by file; its emulator globs.
+  const forNightlight = (g) => g === "" || g.includes('"nightlight"');
+  const want = bashArrays(buildSh, "FIRMWARE_SRCS", forNightlight);
+  assert.ok(want.includes('"$PROJ/src/main.cpp"') && want.includes('"$FW/common/color/look_engine.cpp"'),
+    "build.sh's nightlight list was read (main.cpp and the color TUs)");
+  assert.ok(!want.includes('"$PROJ/src/io/rtc.cpp"'), "...without the touch169/AMOLED-only RTC block");
+  assert.deepStrictEqual(bashArrays(rt, "FIRMWARE_SRCS"), want,
+    "runtime_turn.sh compiles exactly build.sh's nightlight FIRMWARE_SRCS");
+  const file = (e) => e.replace(/^"[^"]*\/|"$/g, "").replace(/^.*\//, "");
+  assert.deepStrictEqual(bashArrays(rt, "CRYPTO_SRCS").map(file), bashArrays(buildSh, "CRYPTO_SRCS").map(file),
+    "...and build.sh's Crypto TUs");
+  assert.deepStrictEqual(bashArrays(buildSh, "EMU_SRCS"), ['"$EMU_DIR"/src/*.cpp']);
+  assert.ok(rt.includes('EMU_SRCS=("$EMU"/src/*.cpp)') && rt.includes('EMU_C_SRCS=("$EMU"/src/*.c)'),
+    "...and every emulator source build.sh globs");
+  // The nightlight's wiring and flags, as build.sh hands them to em++.
+  assert.ok(buildSh.includes('PINS_DIR="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
+    buildSh.includes('CFG_DIR="$FW/configs/canary-display/nightlight"') && buildSh.includes("DEFINES+=(-DCD_LEAN_BUILD=1)"));
+  assert.ok(rt.includes('PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
+    rt.includes('CFG="$FW/configs/canary-display/nightlight"') && rt.includes("-DCD_LEAN_BUILD=1)"),
+  "runtime_turn.sh builds the nightlight's pin map, config and lean budget");
+  for (const flag of ["-DARDUINO=10812", "-DLV_CONF_INCLUDE_SIMPLE", "-DCONFIG_CANARY_DISPLAY", "-DFEATURE_CHIME=1",
+    "-DARDUINOJSON_ENABLE_ARDUINO_STRING=0", "-DARDUINOJSON_ENABLE_PROGMEM=0", "-Wl,--wrap=time"]) {
+    assert.ok(buildSh.includes(flag) && rt.includes(flag), `both builds pass ${flag}`);
+  }
+  // Third-party: build.sh's own pins, fetched where build.sh will find them.
+  for (const pin of ["LVGL_TAG", "ARDUINOJSON_VER", "ARDUINOLIBS_COMMIT"]) {
+    assert.match(buildSh, new RegExp(`^${pin}="[^"]+"$`, "m"));
+    assert.ok(rt.includes(`$(pin ${pin})`), `runtime_turn.sh fetches at build.sh's ${pin}`);
+  }
+  assert.ok(rt.includes('"$TP/lvgl"') && rt.includes('"$TP/ArduinoJson"') && rt.includes('"$TP/arduinolibs"') &&
+    rt.includes('TP="$EMU/third_party"'), "...into build.sh's third_party checkouts");
+  // The driver: reference boots at each rotation, turned boots through the
+  // mailbox the app's picker writes (glass_web.cpp), which main.cpp drains.
+  const drv = read(join(ROOT, "emulator/test/runtime_turn_test.cpp"));
+  assert.ok(drv.includes("canary::care::nightlight_request_rotation((uint8_t)g_case.to);") &&
+    drv.includes("emu_preset_rotation(c.from)") && drv.includes("emu_mark_box()"));
+  assert.ok(drv.includes("if (!run_case({r, -1}, &ref[r]))") && /for \(int from = 0; from < 4; \+\+from\) \{\s*for \(int to = 0; to < 4; \+\+to\) \{/.test(drv),
+    "a reference boot at every rotation, and a turn from every rotation to every other");
+  const web = read(join(REPO, "firmware/projects/canary-display/src/net/glass_web.cpp"));
+  assert.ok(web.includes("canary::care::nightlight_request_rotation((uint8_t)v);"), "the app's picker writes the same mailbox");
+  const mainCpp = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
+  assert.ok(mainCpp.includes("const int req = canary::care::nightlight_take_rotation_request();\n      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now);"),
+    "main.cpp's loop drains it into the one apply path");
+  // CI: beside glass_turn.sh — after the third-party cache, before every step
+  // that reads the committed dist — unconditional and bounded.
+  const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
+  const at = wf.indexOf("run: bash canary-local/emulator/test/runtime_turn.sh");
+  assert.ok(at > wf.indexOf("- name: Cache third-party sources"), "runtime_turn.sh runs after the third-party cache");
+  for (const later of ["node canary-local/tests/boot_probe.mjs", "node canary-local/tests/onboard_probe.mjs", "./build.sh all", "Dist drift check"]) {
+    assert.ok(wf.indexOf(later) > at, `runtime_turn.sh runs before ${later}`);
+  }
+  const step = /- name: Runtime turn[\s\S]*?run: bash canary-local\/emulator\/test\/runtime_turn\.sh\n/.exec(wf)?.[0] || "";
+  assert.ok(step && !/^\s+if:/m.test(step) && /^\s+timeout-minutes: \d+$/m.test(step), "the step runs unconditionally, with a time bound");
 });
 
 test("CI runs the generator check, this test and the browser probe", () => {

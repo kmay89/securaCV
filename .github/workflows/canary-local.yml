@@ -883,6 +883,19 @@ jobs:
         # turns the probes below red and skips every later step, and this is
         # the one proof of these sources that does not need the dist.
         run: bash canary-local/emulator/test/glass_turn.sh
+      - name: Runtime turn — the nightlight turned while it runs seats its companion on the perch (native g++, F222)
+        # build.sh's whole nightlight TU list (the real main.cpp and firmware,
+        # the emulator's sources) with g++ against build.sh's pinned LVGL 8.4,
+        # Crypto and ArduinoJson (the cached checkouts, or fetched into them at
+        # build.sh's pins on a cold cache, which the dist build then reuses),
+        # booted natively on a virtual clock: a unit turned at 7 s from each
+        # rotation to each other through nightlight_request_rotation() (the
+        # app's picker) must seat its companion where a boot at that rotation
+        # seats it. Proves the sources, not the dist's bytes. Before every step
+        # that reads the committed dist, for the step above's reason; bounded,
+        # since a firmware loop that stops yielding would never end.
+        timeout-minutes: 10
+        run: bash canary-local/emulator/test/runtime_turn.sh
       # Weekly key: playwright (installed unpinned below) moves its pinned
       # Chromium build over time; a weekly rotation keeps the ~150 MB
       # browser download to at most one run per week while never letting
