@@ -196,6 +196,59 @@ test("canary-wap: wap_server.h's route list is the route table (F237)", () => {
   assert.deepStrictEqual(unnamed, [], "a gated registration's list entry names its #if");
 });
 
+// firmware/FEATURES.md's REST API table (sweep F240): one canary-wap column
+// (the PlatformIO lane builds the Arduino sketch, so the old Arduino IDE and
+// PlatformIO (canary-wap/) columns were one tree), and each canary-wap and
+// canary (PIO) cell says what that tree registers: a cell starts with ❌
+// exactly when the row's request reaches no registration that means it (a
+// catch-all answer is not one), and a served route under an #if every
+// registration of the tree does not share names each of its macros. Rows that
+// name no single request are listed here, so a new one is read or named.
+test("firmware/FEATURES.md's REST API table says what each tree serves (F240)", () => {
+  const md = readFileSync(join(R.FW, "FEATURES.md"), "utf8");
+  const a = md.indexOf("\n## REST API Endpoints\n");
+  const b = md.indexOf("\n## ", a + 5);
+  assert.ok(a >= 0 && b > a, "FEATURES.md has the REST API table");
+  const lines = md.slice(a, b).split("\n").filter((l) => l.startsWith("|"));
+  const split = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  assert.deepStrictEqual(split(lines[0]), ["Endpoint", "WAP Snapshot", "canary-wap", "canary (PIO)"],
+    "one canary-wap column beside the snapshot and the PlatformIO canary");
+  const trees = { 2: R.wapTable(), 3: R.pioTable() };
+  const shared = {};
+  for (const [col, table] of Object.entries(trees)) {
+    shared[col] = table[0].conds.filter((c) => table.every((g) => g.conds.includes(c)));
+  }
+  const skipped = [];
+  const wrong = [];
+  let read = 0;
+  for (const line of lines.slice(2)) {
+    const cells = split(line);
+    const m = cells[0].match(/^`(GET|POST|DELETE|PUT|OPTIONS) (\/[^`\s]*)`/);
+    if (!m) { skipped.push(cells[0]); continue; }
+    read++;
+    const target = m[2].replace(/<[^>]+>/g, "7");
+    for (const [col, table] of Object.entries(trees)) {
+      const { answers } = R.route(table, [{ method: m[1], target }]);
+      const hit = typeof answers[0] === "number" && !catchAll(table[answers[0]]) ? table[answers[0]] : null;
+      const cell = cells[+col];
+      const says = !cell.startsWith("❌");
+      if (says !== !!hit) {
+        wrong.push(`${m[1]} ${m[2]} (${col === "2" ? "canary-wap" : "canary (PIO)"}): the cell says ` +
+          `${says ? "served" : "not served"}, the table ${hit ? `registers ${hit.uri}` : `answers ${answers[0] === undefined ? "" : typeof answers[0] === "number" ? table[answers[0]].uri : answers[0]}`}`);
+        continue;
+      }
+      if (!hit) continue;
+      const macros = [...new Set(hit.conds.filter((c) => !shared[col].includes(c))
+        .flatMap((c) => c.match(/\b[A-Z][A-Z0-9_]{2,}\b/g) || []))];
+      const unnamed = macros.filter((mac) => !new RegExp(`\\b${mac}\\b`).test(cell));
+      if (unnamed.length) wrong.push(`${m[1]} ${m[2]} (${col === "2" ? "canary-wap" : "canary (PIO)"}): served under ${unnamed.join(", ")}, which the cell does not name`);
+    }
+  }
+  assert.ok(read > 30, `the table's rows were read (${read})`);
+  assert.deepStrictEqual(skipped, ["Mesh pair/leave/remove endpoints"], "every row but these names one request");
+  assert.deepStrictEqual(wrong, []);
+});
+
 // The #if reader the gated-route test stands on (sweep F238), on a source
 // with every shape it must read: an include guard (no condition), #ifdef,
 // #if / #elif / #else, nesting, a continued line, a comment on a directive,
