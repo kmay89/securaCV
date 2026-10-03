@@ -83,14 +83,16 @@ test("lookup answers from the index: never a path the request spells", async () 
 //
 //   0. It names node:fs and node:path only in ways the scan sees called:
 //      fs and path imported or required whole under a name it knows (fs, fsp,
-//      path, posix, win32, promises), or their functions under their own
-//      names. Refused by name: a renamed import, require or destructuring
-//      (readFile as rf, { promises: p }), a require or import(…) chained,
-//      handed on or under another name, a module it cannot read, an alias of
-//      a read or path function or of fs or path (const crs =
-//      fs.createReadStream), such a function handed itself to a call
-//      (Reflect.apply(readFile, …)), its .call/.apply/.bind, eval,
-//      Function, createRequire, and a computed member of fs or path.
+//      path, posix, win32, promises), their functions under their own names,
+//      or one function that is not a path function called on the module at
+//      once ((await import("node:fs/promises")).mkdir(…), render_probe's).
+//      Refused by name: a renamed import, require or destructuring (readFile
+//      as rf, { promises: p }), any other require or import(…) of them, a
+//      module it cannot read, an alias of a read, write or path function or
+//      of fs or path (const crs = fs.createReadStream), such a function
+//      handed itself to a call (Reflect.apply(readFile, …)), its .call,
+//      .apply or .bind, eval, Function, createRequire, and a computed member
+//      of fs or path.
 //   1. It can find every handler: a server's (its last argument) or a page
 //      route's (its second), inline or a function the file defines by that
 //      name, whose request (or route) parameter is a plain name. A "request"
@@ -108,19 +110,21 @@ test("lookup answers from the index: never a path the request spells", async () 
 //      holds; so is route.fulfill() handed a path or anything but an object
 //      literal.
 //   3. Nothing derived from the request reaches a path function (join,
-//      resolve, normalize, relative, bare or on path/posix/win32) or a read.
-//      Derived means: the request; every name written (declared, assigned,
+//      resolve, normalize, relative, bare or on path/posix/win32) or a
+//      filesystem read or write (bare or a method of anything). Derived
+//      means: the request; every name written (declared, assigned,
 //      destructured, a loop's variable, a member of it) from an expression
 //      that mentions it or another such name, the index's answer excepted;
 //      the object a method call hands one of those to (parts.push(req.url)
 //      taints parts) when the file declares it, unless the method only reads
-//      (get, has) or is itself a read, write or path function; each parameter of an inline
-//      function handed to a call that one of those reaches; and each
-//      parameter of a function the file defines that a call hands one of
-//      those, followed into that function. A name the handler (or such a
-//      function) does not declare that comes to hold the request carries it
-//      out: it is then followed through the whole file, every function and
-//      the top level alike.
+//      (get, has) or is itself a read, write or path function; each
+//      parameter of an inline function handed to a call that one of those
+//      reaches; and each parameter of a function the file defines that a
+//      call hands one of those (or that is handed by name to such a call),
+//      followed into that function. A name the handler (or such a function)
+//      does not declare that comes to hold the request carries it out: it is
+//      then followed through the whole file, every function and the top
+//      level alike, until no new name escapes.
 //   4. Every `listen` in it is a .listen(…) the scan can read, on loopback:
 //      listen(port, "127.0.0.1") (or "::1"), or an options object whose host
 //      is one of those. "listen" spelled as a string is refused.
