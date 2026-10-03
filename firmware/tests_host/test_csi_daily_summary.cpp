@@ -26,7 +26,7 @@
 // The latch is keyed on the household's local date, which the updater
 // passes beside the minute: one row per date however the clock reaches it.
 // The DST, zone and clock-step tests change TZ the way the device's
-// set_timezone path does (setenv + tzset) and fail on a latch that let go on
+// setup_apply_tz() does (setenv + tzset) and fail on a latch that let go on
 // the minute alone (a minute before 00:30): a spring-forward at midnight, a
 // zone moved east after the row and a step from 23:58 to 00:45 lost the next
 // date's row, and a zone moved west after midnight committed a second row
@@ -322,7 +322,7 @@ static int test_what_the_summary_row_carries() {
   return 0;
 }
 
-// The household's zone, as the device's set_timezone path applies it.
+// The household's zone, as setup_apply_tz() applies it.
 static void set_zone(const char* posix) {
   setenv("TZ", posix, 1);
   tzset();
