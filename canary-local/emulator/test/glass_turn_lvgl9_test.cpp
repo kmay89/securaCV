@@ -31,6 +31,14 @@
 //     270: (W-1-ly, lx), the arithmetic glass_settings.h states and the
 //     library's own lv_display_rotate_area() computes (held here too); the
 //     turn's own refresh, with nothing rebuilt, repaints the whole panel;
+//  2b. the partial update: a few objects change (the card's color, a label's
+//     text, the halo arc's angle) and LVGL flushes only their areas —
+//     sub-rectangles right of logical x 0, narrower than the canvas, each
+//     over a buffer whose stride is the AREA's width — and the whole panel
+//     still equals the changed scene rendered afresh on the plain display;
+//     putting the objects back leaves it equal to the scene again. The full
+//     frames above only ever hand the flush full-width bands from x 0, where
+//     an area's offset and its stride cannot be told from the canvas's;
 //  3. the finger: rotation_map_touch() (display_dash.cpp's GT911 path) sends
 //     every native pixel to the logical pixel drawn there, and a logical
 //     point fed through lvgl_port_touch_feed() comes out of LVGL's own
@@ -146,11 +154,22 @@ void size_reference(int w, int h) {
 // has room: its box's top-left corner.
 constexpr int kTailX = 420, kTailY = 60, kTailSide = 12;
 constexpr uint32_t kBg = 0x101418;
+constexpr uint32_t kCardColor = 0xF4EEDC;
+constexpr int kRingEnd = 290;
+const char* const kBodyText = "Basement-Mesh-Extender-Office-5G";
+
+// The objects the partial update changes (2b), kept per display.
+struct Scene {
+  lv_obj_t* card = nullptr;
+  lv_obj_t* ring = nullptr;
+  lv_obj_t* body = nullptr;
+};
+Scene s_ref_scene, s_port_scene;
 
 // Every kind of pixel the onboarding and the splash draw, inside the 480 px
 // both of the dash's shapes share and off-center, so a wrong turn or a
 // mirrored axis cannot read as equal.
-void build_scene(lv_obj_t* scr) {
+Scene build_scene(lv_obj_t* scr) {
   lv_obj_clean(scr);
   lv_obj_set_style_bg_color(scr, lv_color_hex(kBg), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
@@ -159,7 +178,7 @@ void build_scene(lv_obj_t* scr) {
   lv_obj_remove_style_all(card);
   lv_obj_set_size(card, 170, 110);
   lv_obj_set_pos(card, 14, 22);
-  lv_obj_set_style_bg_color(card, lv_color_hex(0xF4EEDC), 0);
+  lv_obj_set_style_bg_color(card, lv_color_hex(kCardColor), 0);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(card, 10, 0);
   lv_obj_set_style_border_width(card, 2, 0);
@@ -170,7 +189,7 @@ void build_scene(lv_obj_t* scr) {
   lv_obj_align(ring, LV_ALIGN_TOP_LEFT, 90, 150);
   lv_arc_set_rotation(ring, 270);
   lv_arc_set_bg_angles(ring, 0, 360);
-  lv_arc_set_angles(ring, 0, 290);
+  lv_arc_set_angles(ring, 0, kRingEnd);
   lv_obj_set_style_arc_width(ring, 3, LV_PART_MAIN);
   lv_obj_set_style_arc_width(ring, 3, LV_PART_INDICATOR);
   lv_obj_set_style_arc_color(ring, lv_color_hex(0x5A6470), LV_PART_MAIN);
@@ -189,7 +208,7 @@ void build_scene(lv_obj_t* scr) {
   lv_obj_set_style_text_color(body, lv_color_hex(0x9AA4AE), 0);
   lv_label_set_long_mode(body, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_width(body, 190);
-  lv_label_set_text(body, "Basement-Mesh-Extender-Office-5G");
+  lv_label_set_text(body, kBodyText);
   lv_obj_set_pos(body, 200, 40);
 
   lv_obj_t* small = lv_label_create(scr);
@@ -225,6 +244,23 @@ void build_scene(lv_obj_t* scr) {
   lv_obj_set_style_transform_rotation(tail, 450, 0);
   lv_obj_clear_flag(tail, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_pos(tail, kTailX, kTailY);
+  return Scene{card, ring, body};
+}
+
+// 2b's change, made the same way on either display; changed = false puts
+// back what build_scene() drew.
+void change_scene(const Scene& sc, bool changed) {
+  lv_obj_set_style_bg_color(sc.card, lv_color_hex(changed ? 0x20A040 : kCardColor), 0);
+  lv_label_set_text(sc.body, changed ? "Office" : kBodyText);
+  lv_arc_set_angles(sc.ring, 0, changed ? 130 : kRingEnd);
+}
+
+// The logical areas LVGL hands the port's flush: LV_EVENT_FLUSH_START
+// carries the area flush_cb receives next (lv_refr.c, call_flush_cb()).
+std::vector<lv_area_t> s_flushed;
+void record_flush(lv_event_t* e) {
+  const lv_area_t* a = static_cast<const lv_area_t*>(lv_event_get_param(e));
+  if (a != nullptr) s_flushed.push_back(*a);
 }
 
 void refresh(lv_display_t* d) {
@@ -290,6 +326,75 @@ void check_tail(const char* tag) {
          y1, kTailX, kTailY);
 }
 
+// The whole native panel against the reference, under the turn the port
+// draws; the first differing logical pixel is kept for the failure.
+long panel_diff(lv_display_rotation_t lr, int lw, int lh, int* fx, int* fy) {
+  long diff = 0;
+  for (int ly = 0; ly < lh; ly++) {
+    for (int lx = 0; lx < lw; lx++) {
+      int px = 0, py = 0;
+      native_of(lr, lx, ly, &px, &py);
+      if (g_panel.fb[(size_t)py * PW + px] != s_ref_fb[(size_t)ly * lw + lx]) {
+        if (diff == 0) {
+          *fx = lx;
+          *fy = ly;
+        }
+        diff++;
+      }
+    }
+  }
+  return diff;
+}
+
+// ── 2b: a partial update at one quarter turn ────────────────────────────
+// The port's display holds the scene and the panel shows it (check_turn
+// just held that). The reference is re-rendered WHOLE after each change,
+// so it does not share the sub-area flush it is judging.
+void check_partial(const char* tag, lv_display_rotation_t lr, int lw, int lh) {
+  const std::vector<uint16_t> scene = s_ref_fb;
+  for (bool changed : {true, false}) {
+    const char* what = changed ? "changed" : "put back";
+    change_scene(s_ref_scene, changed);
+    refresh(s_ref);
+    change_scene(s_port_scene, changed);
+    g_panel.clear_marks();
+    s_flushed.clear();
+    lv_refr_now(s_port);  // only what the change invalidated
+
+    long painted = 0;
+    for (uint8_t p : g_panel.painted) painted += p;
+    int sub_areas = 0, full_width = 0, x_lo = lw, x_hi = -1;
+    for (const lv_area_t& a : s_flushed) {
+      if (a.x1 > 0 && lv_area_get_width(&a) < lw) sub_areas++;
+      if (lv_area_get_width(&a) >= lw) full_width++;
+      if (a.x1 < x_lo) x_lo = (int)a.x1;
+      if (a.x2 > x_hi) x_hi = (int)a.x2;
+    }
+    CHECK(sub_areas > 0 && full_width == 0,
+          "%s, %s: LVGL hands the flush %d areas right of x 0 and narrower than the %d px "
+          "canvas, and %d full-width ones (the pass needs only the former)",
+          tag, what, sub_areas, lw, full_width);
+    CHECK(g_panel.blits > 0 && painted > 0 && painted < (long)PW * PH,
+          "%s, %s: a partial update paints some of the panel, not all (%ld blits, %ld of %d "
+          "native px)",
+          tag, what, g_panel.blits, painted, PW * PH);
+    CHECK(g_panel.off_panel == 0, "%s, %s: %ld flushed pixels fall off the panel", tag, what,
+          g_panel.off_panel);
+    int fx = -1, fy = -1;
+    const long diff = panel_diff(lr, lw, lh, &fx, &fy);
+    CHECK(diff == 0,
+          "%s, %s: after a partial update %ld pixels on the glass differ from the scene rendered "
+          "whole on a plain %dx%d display (first at logical %d,%d)",
+          tag, what, diff, lw, lh, fx, fy);
+    printf("  %-17s partial (%s): %zu areas at logical x %d..%d, %ld blits, %ld px painted, "
+           "%ld off the panel, %ld px differ\n",
+           tag, what, s_flushed.size(), x_lo, x_hi, g_panel.blits, painted, g_panel.off_panel,
+           diff);
+  }
+  // Put back is the scene again, so the next turn compares like with like.
+  CHECK(s_ref_fb == scene, "%s: putting the objects back does not redraw the scene", tag);
+}
+
 // ── 1 + 2: the turn and the glass at one quarter turn ───────────────────
 void check_turn(uint8_t rot) {
   const char* tag = rotation_name(rot);
@@ -330,7 +435,7 @@ void check_turn(uint8_t rot) {
 
   // The same scene on a plain display of the logical size.
   size_reference(lw, lh);
-  build_scene(lv_display_get_screen_active(s_ref));
+  s_ref_scene = build_scene(lv_display_get_screen_active(s_ref));
   refresh(s_ref);
 
   // The turn alone repaints the whole glass: the panel keeps scanning the
@@ -358,7 +463,7 @@ void check_turn(uint8_t rot) {
 
   // Then the scene built afresh through the port onto a panel whose marks
   // are cleared, so this frame alone counts.
-  build_scene(lv_display_get_screen_active(s_port));
+  s_port_scene = build_scene(lv_display_get_screen_active(s_port));
   s_scene_up = true;
   g_panel.clear_marks();
   refresh(s_port);
@@ -416,6 +521,7 @@ void check_turn(uint8_t rot) {
   printf("  %-17s canvas %dx%d, %ld blits, %ld off the panel, %ld unpainted, %ld px differ\n",
          tag, lw, lh, g_panel.blits, g_panel.off_panel, unpainted, diff);
   check_tail(tag);
+  check_partial(tag, lr, lw, lh);
 }
 
 // ── 3: the finger through LVGL's own pointer processing ─────────────────
@@ -522,6 +628,7 @@ int main() {
   CHECK(lv_display_get_horizontal_resolution(s_port) == PW &&
             lv_display_get_vertical_resolution(s_port) == PH,
         "the port's display is the panel's native %dx%d", PW, PH);
+  lv_display_add_event_cb(s_port, record_flush, LV_EVENT_FLUSH_START, nullptr);
 
   // A landscape boot (main.cpp hands rotation 0 straight through) leaves
   // LVGL unturned.
