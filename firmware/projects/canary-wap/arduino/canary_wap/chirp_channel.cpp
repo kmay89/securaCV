@@ -1015,16 +1015,23 @@ static void handle_suppress_vote(const uint8_t* data, size_t len) {
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     ReceivedChirp& c = g_recent_chirps[i];
     if (memcmp(c.nonce, payload->original_nonce, 8) != 0) continue;
+    // Spec §2.5.6: a vote counts within SUPPRESS_WINDOW_MS of the chirp's
+    // arrival here, and is dropped after it. No window was read, so a vote
+    // counted at any age until the chirp left the table (sweep F233).
+    if (millis() - c.received_ms > SUPPRESS_WINDOW_MS) return;
     if (pubkey_set_contains(c.suppressed_by, c.suppress_count,
                             payload->voter_session_pubkey)) return;
-    if (c.suppress_count < MAX_CONFIRMERS_PER_CHIRP) {
+    // The set holds the most votes any table size asks for, so this cap
+    // never stands below the threshold. It was MAX_CONFIRMERS_PER_CHIRP (8)
+    // under a threshold of 9 from 18 rows on (sweep F233).
+    if (c.suppress_count < MAX_SUPPRESS_VOTERS) {
       memcpy(c.suppressed_by[c.suppress_count],
              payload->voter_session_pubkey, SESSION_PUBKEY_SIZE);
       c.suppress_count++;
     }
-    uint8_t threshold = (uint8_t)(g_nearby_count / 2);
-    if (threshold < 3) threshold = 3;
-    if (c.suppress_count >= threshold) {
+    // More than half of the nearby rows, and at least three (spec §2.5.6);
+    // it was at least half, rounded down (F233).
+    if (c.suppress_count >= suppress_votes_needed(g_nearby_count)) {
       c.suppressed = true;
       health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: community-suppressed");
     }

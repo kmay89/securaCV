@@ -785,9 +785,26 @@ static const uint8_t CONFIRMATIONS_SAFETY = 1;         // Safety templates need 
 static const uint8_t NIGHT_START_HOUR = 22;            // 10 PM
 static const uint8_t NIGHT_END_HOUR = 6;               // 6 AM
 
-// Community mute threshold
-static const uint8_t SUPPRESS_THRESHOLD_PERCENT = 50;  // >50% dismiss = suppress
-static const uint32_t SUPPRESS_WINDOW_MS = 120000;     // Within 2 minutes
+// Community mute threshold (spec §2.5.6)
+static const uint8_t SUPPRESS_THRESHOLD_PERCENT = 50;  // more than 50% of the nearby rows vote
+static const uint8_t SUPPRESS_MIN_VOTES = 3;           // and never fewer than 3 voters
+static const uint32_t SUPPRESS_WINDOW_MS = 120000;     // a vote counts within 2 minutes of the chirp's arrival
+
+// The distinct voters that suppress a chirp with `nearby_count` rows in the
+// nearby table (spec §2.5.6): more than SUPPRESS_THRESHOLD_PERCENT of the
+// rows, and at least SUPPRESS_MIN_VOTES. The receiver took at least half,
+// rounded down (7 rows suppressed at 3 votes, 43%) (sweep F233).
+constexpr size_t suppress_votes_needed(size_t nearby_count) {
+  return (nearby_count * SUPPRESS_THRESHOLD_PERCENT / 100 + 1 > SUPPRESS_MIN_VOTES)
+             ? nearby_count * SUPPRESS_THRESHOLD_PERCENT / 100 + 1
+             : SUPPRESS_MIN_VOTES;
+}
+// The voters a chirp's suppress set holds: the most any table size asks for
+// (17, with MAX_NEARBY_CACHE rows), so a full set meets the threshold at
+// every table size. It held MAX_CONFIRMERS_PER_CHIRP (8), and the threshold
+// passed 8 from 18 rows on, so no chirp could be suppressed there (F233).
+static const size_t MAX_SUPPRESS_VOTERS = suppress_votes_needed(MAX_NEARBY_CACHE);
+static_assert(MAX_SUPPRESS_VOTERS <= 255, "suppress_count is a uint8_t");
 
 // ────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -970,8 +987,9 @@ struct ReceivedChirp {
   uint8_t  confirmed_by[MAX_CONFIRMERS_PER_CHIRP][SESSION_PUBKEY_SIZE];
   uint8_t  confirm_count;                       // = number of valid entries in confirmed_by[]
   // Suppress vote set: distinct session_pubkeys that have signed a
-  // CHIRP_MSG_SUPPRESS_VOTE for this nonce.
-  uint8_t  suppressed_by[MAX_CONFIRMERS_PER_CHIRP][SESSION_PUBKEY_SIZE];
+  // CHIRP_MSG_SUPPRESS_VOTE for this nonce within SUPPRESS_WINDOW_MS of
+  // received_ms. Sized to the largest threshold (MAX_SUPPRESS_VOTERS).
+  uint8_t  suppressed_by[MAX_SUPPRESS_VOTERS][SESSION_PUBKEY_SIZE];
   uint8_t  suppress_count;
   bool     validated;                           // ≥ threshold confirmations (from pubkeys ≠ originator) received
   bool     suppressed;                          // Community voted to suppress
@@ -985,6 +1003,10 @@ struct ReceivedChirp {
   uint8_t  origin_signature[64];
   bool     has_origin_signature;
 };
+// A full suppress set meets the threshold whatever the table holds (F233).
+static_assert(sizeof(ReceivedChirp::suppressed_by) / sizeof(ReceivedChirp::suppressed_by[0]) >=
+                  suppress_votes_needed(MAX_NEARBY_CACHE),
+              "the suppress set must hold the votes the fullest nearby table asks for");
 
 // Outgoing chirp (for send queue)
 struct OutgoingChirp {

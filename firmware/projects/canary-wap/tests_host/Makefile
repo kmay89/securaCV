@@ -1107,6 +1107,27 @@ clean-chirp-commands:
 run: run-chirp-commands
 clean: clean-chirp-commands
 
+# Community suppression (spec §2.5.6, sweep F233): the REAL chirp_channel.cpp
+# over stubs/mesh_net, with real signed presence beacons, a signed witness
+# and signed suppress votes. A chirp is suppressed once its distinct voters
+# are more than half of the nearby rows and at least three, counting votes
+# heard within 120 s of its arrival: at every table size from 3 to 32 rows
+# (from 18 on it never was), a repeated voter, votes across the window.
+CHIRP_SUP_BIN = test_chirp_suppress_wap
+CHIRP_SUP_SRC = test_chirp_suppress_wap.cpp
+
+$(CHIRP_SUP_BIN): $(CHIRP_SUP_SRC) $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/chirp_channel.cpp $(SRC_DIR)/mesh_network.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/airtime_governor.cpp
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_SUP_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
+
+.PHONY: run-chirp-suppress clean-chirp-suppress
+run-chirp-suppress: $(CHIRP_SUP_BIN)
+	$(call run_marked,$(CHIRP_SUP_BIN))
+clean-chirp-suppress:
+	rm -f $(CHIRP_SUP_BIN)
+
+run: run-chirp-suppress
+clean: clean-chirp-suppress
+
 # The owner's Bluetooth commands run on the loop task (sweep F111): the REAL
 # bluetooth_channel.cpp, #included and compiled on the host against
 # stubs/bt (a NimBLE-Arduino 2.x stand-in that records each radio, bond and
