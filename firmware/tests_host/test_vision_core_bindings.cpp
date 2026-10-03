@@ -26,7 +26,10 @@
 // ABI, counted to the frame that declared the person gone, so it includes
 // the lost timeout. And (sweep F186) a dweller seen on the frame after
 // dwell_ended starts no second dwell: that frame sends presence_ended and the
-// next visit opens on the frame after, as the device does.
+// next visit opens on the frame after, as the device does, from the next
+// frame's own sighting when it has one; and vision_emu_reset, which the Lab
+// calls on every scene change and camera start, forgets an owed
+// presence_ended and a held sighting (F186's review).
 //
 // Before A39 the fsm object had neither key, and this suite fails on it.
 
@@ -325,6 +328,80 @@ void test_seen_after_dwell_ended_through_the_abi() {
               dwell);
 }
 
+// Seen on the frame after dwell_ended in one cell and on the next frame in
+// another: the next frame's own sighting opens the visit, so its
+// presence_started names the cell the person is in on that frame.
+void test_seen_in_the_gap_then_elsewhere_through_the_abi() {
+  vision_emu_reset();
+  vision_emu_set_config(PERSON_TARGET, SCORE_MIN, 500, 1000);
+  unsigned int t = 0;
+  Tick k = frame(t, 1, 1);
+  for (t += 100; t <= 1900; t += 100) frame(t, 1, 1);
+  for (;; t += 100) {
+    k = frame(t);
+    if (event_is(k, "dwell_ended")) break;
+    assert(t < 4000);
+  }
+  k = frame(t += 100, 0, 2);
+  assert(event_is(k, "presence_ended"));
+  k = frame(t += 100, 2, 0);
+  assert(event_is(k, "presence_started"));
+  assert(int_at(k.fsm_voxel, "r") == 2 && int_at(k.fsm_voxel, "c") == 0);
+  const unsigned int last_seen = t;
+  k = frame(t += 100);
+  assert(event_is(k, "interaction_likely"));
+  // held present through the lost timeout (500 ms here) from that sighting
+  for (;; ) {
+    k = frame(t += 100);
+    if (event_is(k, "presence_ended")) break;
+    assert(t - last_seen <= 500);
+  }
+  assert(t - last_seen > 500 && t - last_seen <= 600);
+  assert(int_at(k.fsm_voxel, "r") == 2 && int_at(k.fsm_voxel, "c") == 0);
+  std::printf("  seen in the gap in (0,2), then in (2,0): the visit opens on (2,0)\n");
+}
+
+// The Lab resets this core on every scene change and camera start
+// (vision-ui.js and eyes-bench.js call vision_emu_reset), so a reset can
+// land right after dwell_ended, while the stay's presence_ended is owed, or
+// right after a sighting on the frame after it, while that sighting is held
+// for the next visit (sweep F186). Through the ABI, in both places: the
+// empty frames after the reset send nothing, and the next sighting opens a
+// visit on its own frame and cell.
+void test_reset_after_dwell_ended_through_the_abi() {
+  for (const bool seen_in_the_gap : {false, true}) {
+    vision_emu_reset();
+    vision_emu_set_config(PERSON_TARGET, SCORE_MIN, 500, 1000);
+    unsigned int t = 0;
+    Tick k = frame(t, 1, 1);
+    for (t += 100; t <= 1900; t += 100) frame(t, 1, 1);
+    for (;; t += 100) {
+      k = frame(t);
+      if (event_is(k, "dwell_ended")) break;
+      assert(t < 4000);
+    }
+    if (seen_in_the_gap) {
+      k = frame(t += 100, 0, 2);
+      assert(event_is(k, "presence_ended"));
+    }
+    vision_emu_reset();
+    for (const unsigned int stop = t + 500 + INTERACTION_AFTER_LEAVE_WINDOW_MS + 1000; t < stop;) {
+      k = frame(t += 100);
+      if (!has(k.json, "\"event\":null")) {
+        std::fprintf(stderr, "reset after dwell_ended%s, then an empty frame sent: %s\n",
+                     seen_in_the_gap ? " and a sighting" : "", k.json.c_str());
+        std::abort();
+      }
+      assert(has(k.fsm, "\"presence\":false"));
+    }
+    k = frame(t += 100, 2, 0);
+    assert(event_is(k, "presence_started"));
+    assert(has(k.fsm, "\"presence\":true") && int_at(k.fsm, "presence_ms") == 0);
+    assert(int_at(k.fsm_voxel, "r") == 2 && int_at(k.fsm_voxel, "c") == 0);
+  }
+  std::printf("  reset after dwell_ended, and after a sighting on the frame after it: nothing owed\n");
+}
+
 }  // namespace
 
 int main() {
@@ -335,6 +412,8 @@ int main() {
   test_back_to_back_visit_through_the_abi();
   test_dwell_ended_through_the_abi();
   test_seen_after_dwell_ended_through_the_abi();
+  test_seen_in_the_gap_then_elsewhere_through_the_abi();
+  test_reset_after_dwell_ended_through_the_abi();
   std::printf("ALL VISION CORE BINDING TESTS PASSED\n");
   return 0;
 }
