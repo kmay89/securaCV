@@ -260,10 +260,12 @@ CV8. The send cooldown is a timer, not a state (F178): in
      `chirp_channel.cpp`, `CHIRP_COOLDOWN` is named only by `shown_state()`
      (what an active channel reads as while the timer runs) and
      `state_name()`. Nothing stores it, so a mute cannot overwrite it, and
-     nothing gates on it: `can_send_chirp()`, the send's refusal,
-     `read_status()` and `cannot_send_reason()` read the timer
-     (`test_chirp_commands_wap.cpp`'s `a_mute_does_not_end_the_cooldown`,
-     `a_send_just_after_the_cooldown_goes_out`).
+     nothing gates on it: `send_gate()` (what `can_send_chirp()` answers
+     and the send refuses on), `read_status()` and `cannot_send_reason()`
+     read the timer (`test_chirp_commands_wap.cpp`'s
+     `a_mute_does_not_end_the_cooldown`,
+     `a_send_just_after_the_cooldown_goes_out`,
+     `a_send_at_an_edge_names_why`).
 CV9. A refused confirm says why, and a dismiss whether its suppress vote
      went out (F174). `send_confirm_answer()` and `send_dismiss_answer()`
      are exactly `CHIRP_CONFIRM_ANSWER` and `CHIRP_DISMISS_ANSWER`: the
@@ -2921,10 +2923,10 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("a send stores the cooldown as the state again (a mute overwrites it)",
      on_other(CHIRP_CPP, r"\bstatic\s+bool\s+send_chirp\s*\([^)]*\)", r"(cache_nonce\(hdr->nonce\);)",
               r"\1 set_state(CHIRP_COOLDOWN);")),
-    ("can_send_chirp() gates on the cooldown state again",
-     on_other(CHIRP_CPP, r"\bbool\s+can_send_chirp\s*\(\s*\)",
-              r"if\s*\(get_cooldown_remaining_ms\(\)\s*>\s*0\)\s*return\s+false;",
-              "if (g_state == CHIRP_COOLDOWN) return false;")),
+    ("the send's gate refuses on the cooldown state again",
+     on_other(CHIRP_CPP, r"\bstatic\s+SendRefusal\s+send_gate\s*\([^)]*\)",
+              r"if\s*\(left\s*>\s*0\)\s*return\s+SEND_REFUSED_COOLDOWN;",
+              "if (g_state == CHIRP_COOLDOWN) return SEND_REFUSED_COOLDOWN;")),
     ("cannot_send_reason() names the cooldown from the state again",
      on_other(CHIRP_CPP, r"\bconst\s+char\s*\*\s*cannot_send_reason\s*\([^)]*\)",
               r"if\s*\(v\.cooldown_remaining_ms\s*>\s*0\)", "if (v.state == CHIRP_COOLDOWN)")),

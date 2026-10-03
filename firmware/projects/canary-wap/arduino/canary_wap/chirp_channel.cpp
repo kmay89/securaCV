@@ -334,7 +334,8 @@ static uint32_t wall_clock_now_seconds();
 static bool enable();
 static void disable();
 static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
-                       ChirpDetailSlot detail, uint8_t ttl_minutes);
+                       ChirpDetailSlot detail, uint8_t ttl_minutes,
+                       SendRefusal* why, uint32_t* cooldown_left);
 static bool confirm_chirp(const uint8_t* nonce, ConfirmRefusal* why);
 static bool dismiss_chirp(const uint8_t* nonce, bool* vote_sent, ConfirmRefusal* vote_refusal);
 static bool mute(uint8_t duration_minutes);
@@ -1376,26 +1377,16 @@ static Result run_command(const Command& cmd) {
       r.ok = true;
       break;
     case CHIRP_CMD_SEND:
-      r.ok = send_chirp(cmd.template_id, cmd.urgency, cmd.detail, cmd.ttl_minutes);
+      // Why it was refused is the check that refused it, read once in the
+      // send: the channel off, the presence requirement, the cooldown (the
+      // timer, not the state, sweep F178, with its time left), a wall clock
+      // not set yet (answered as a cooldown with 0 s left until sweep F146),
+      // or night. Named after the send from fresh reads, a gate that opened
+      // in between was missed: a send refused as the cooldown ran out
+      // answered no reason, or a cooldown with 0 s left.
+      r.ok = send_chirp(cmd.template_id, cmd.urgency, cmd.detail, cmd.ttl_minutes,
+                        &r.refusal, &r.cooldown_remaining_ms);
       r.cooldown_tier = get_cooldown_tier();
-      if (!r.ok) {
-        if (!is_enabled()) {
-          r.refusal = SEND_REFUSED_DISABLED;
-        } else if (!has_presence_requirement()) {
-          r.refusal = SEND_REFUSED_PRESENCE;
-        } else if (get_cooldown_remaining_ms() > 0) {
-          // The timer, not the state (sweep F178): a mute no longer hides
-          // it, and a send after it ran out is not refused with 0 s left.
-          r.refusal = SEND_REFUSED_COOLDOWN;
-          r.cooldown_remaining_ms = get_cooldown_remaining_ms();
-        } else if (!wall_clock_is_synced()) {
-          // can_send_chirp()'s other refusal, which was answered as a
-          // cooldown with 0 seconds left (sweep F146).
-          r.refusal = SEND_REFUSED_CLOCK_UNSYNCED;
-        } else if (is_night_mode()) {
-          r.refusal = SEND_REFUSED_NIGHT;
-        }
-      }
       break;
     case CHIRP_CMD_CONFIRM:
       // Why it was refused, by name (sweep F174: the handler answered every
@@ -1532,13 +1523,24 @@ bool has_presence_requirement() {
   return (millis() - g_session_start_ms) >= PRESENCE_REQUIRED_MS;
 }
 
-bool can_send_chirp() {
-  if (g_state == CHIRP_DISABLED) return false;
-  if (get_cooldown_remaining_ms() > 0) return false;   // the timer (sweep F178)
-  if (!has_presence_requirement()) return false;
-  if (!wall_clock_is_synced()) return false;
-  return true;
+// Why a send cannot go out now, or SEND_REFUSED_NONE: the gate
+// can_send_chirp() answers and send_chirp() refuses on, each condition read
+// once, in the order a refusal is named (the channel off, the presence
+// requirement, the cooldown, a wall clock not set yet; a cooldown needs a
+// send, and a send needs the presence requirement met, so the order is
+// can_send_chirp()'s old one too). `cooldown_left`, when given, is the
+// timer's reading this gate used.
+static SendRefusal send_gate(uint32_t* cooldown_left) {
+  const uint32_t left = get_cooldown_remaining_ms();
+  if (cooldown_left != nullptr) *cooldown_left = left;
+  if (g_state == CHIRP_DISABLED) return SEND_REFUSED_DISABLED;
+  if (!has_presence_requirement()) return SEND_REFUSED_PRESENCE;
+  if (left > 0) return SEND_REFUSED_COOLDOWN;   // the timer (sweep F178)
+  if (!wall_clock_is_synced()) return SEND_REFUSED_CLOCK_UNSYNCED;
+  return SEND_REFUSED_NONE;
 }
+
+bool can_send_chirp() { return send_gate(nullptr) == SEND_REFUSED_NONE; }
 
 bool is_night_mode() {
   if (!wall_clock_is_synced()) return true;  // conservative when unsynced
@@ -1586,15 +1588,31 @@ const char* get_validation_status(const RecentView* chirp) {
   return "awaiting_confirmation";
 }
 
+// `why` (when given) is the check that refused the send, and
+// `cooldown_left` the timer's reading when that was the cooldown: read once,
+// here, not again after the send came back false, when a gate could have
+// opened since and the answer named the next one, or none (the reviewers of
+// sweep F178: a send refused as the cooldown ran out answered no reason, or
+// a cooldown with 0 s left). Neither is written for a send that went out,
+// an unknown template (the handler refuses one first) or a frame that could
+// not be signed.
 static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
-                       ChirpDetailSlot detail, uint8_t ttl_minutes) {
-  if (!can_send_chirp()) return false;
+                       ChirpDetailSlot detail, uint8_t ttl_minutes,
+                       SendRefusal* why, uint32_t* cooldown_left) {
+  uint32_t left = 0;
+  const SendRefusal gate = send_gate(&left);
+  if (gate != SEND_REFUSED_NONE) {
+    if (why != nullptr) *why = gate;
+    if (cooldown_left != nullptr && gate == SEND_REFUSED_COOLDOWN) *cooldown_left = left;
+    return false;
+  }
   const TemplateEntry* entry = find_template(template_id);
   if (!entry) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK, "chirp: invalid template");
     return false;
   }
   if (is_night_mode() && !entry->night_allowed) {
+    if (why != nullptr) *why = SEND_REFUSED_NIGHT;
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: template not allowed at night");
     return false;
   }
@@ -1648,7 +1666,7 @@ static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   if (clear_type != TPL_CLR_RESOLVED &&
       clear_type != TPL_CLR_SAFE &&
       clear_type != TPL_CLR_FALSE_ALARM) clear_type = TPL_CLR_RESOLVED;
-  return send_chirp(clear_type, CHIRP_URG_INFO, DETAIL_NONE, 15);
+  return send_chirp(clear_type, CHIRP_URG_INFO, DETAIL_NONE, 15, nullptr, nullptr);
 }
 
 const ReceivedChirp* get_recent_chirps(size_t* count) {

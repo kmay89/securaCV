@@ -2,6 +2,11 @@
  * millis() reads a clock the test sets; esp_fill_random is a fixed-seed
  * xorshift, so every run draws the same keys and nonces.
  *
+ * millis_step_ms: a test that sets it makes every millis() call move that
+ * clock on by that much after it reads it, so two reads in one pass differ
+ * as they can on a device (test_chirp_commands_wap's edge tests). 0, the
+ * default, keeps the clock where the test put it.
+ *
  * on_httpd_task: a test sets it while it plays the HTTP server's task
  * (test_mesh_commands_wap, sweep F96). Every NVS write and ESP-NOW peer or
  * send call made meanwhile is counted in httpd_side_effects: those belong
@@ -19,6 +24,7 @@
 namespace host_sim {
 inline uint32_t now_ms = 1000;
 inline uint64_t rng_state = 0x9E3779B97F4A7C15ull;
+inline uint32_t millis_step_ms = 0;
 inline bool on_httpd_task = false;
 inline unsigned httpd_side_effects = 0;
 inline void note_side_effect() {
@@ -35,7 +41,11 @@ inline void fill_random(void* buf, size_t len) {
 }
 }  // namespace host_sim
 
-inline uint32_t millis() { return host_sim::now_ms; }
+inline uint32_t millis() {
+  const uint32_t t = host_sim::now_ms;
+  host_sim::now_ms += host_sim::millis_step_ms;
+  return t;
+}
 inline void esp_fill_random(void* buf, size_t len) { host_sim::fill_random(buf, len); }
 
 struct HostSerial {

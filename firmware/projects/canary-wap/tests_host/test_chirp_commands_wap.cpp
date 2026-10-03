@@ -36,7 +36,10 @@
 //
 // The send cooldown is a timer, not a state (sweep F178): a mute no longer
 // ends it, a send drained in the pass after it ran out goes out, and the
-// status route reads it over at once and its last second as 1 s, not 0.
+// status route reads it over at once and its last second as 1 s, not 0. A
+// refused send names the check that refused it, read once, so a gate that
+// opens at that moment is not answered with no reason (the reviewers of
+// F178).
 //
 // The harness is one thread, so "the HTTP server's task" is a role the test
 // plays: rest() sets host_sim::on_httpd_task and calls submit() the way a
@@ -91,13 +94,18 @@
 #include "freertos/task.h"
 
 // The wall clock chirp_channel.cpp reads: synced (past MIN_UNIX_TIME), UTC.
+// wall_step_s, when a test sets it, moves it on by that much after each
+// read (as host_sim::millis_step_ms does the uptime clock).
 namespace host_sim {
 inline time_t wall_now = 1760000000;   // 2025-10-09 08:53:20 UTC: day, synced
+inline time_t wall_step_s = 0;
 inline struct tm wall_tm;
 }  // namespace host_sim
 inline time_t host_sim_time(time_t* out) {
-  if (out != nullptr) *out = host_sim::wall_now;
-  return host_sim::wall_now;
+  const time_t t = host_sim::wall_now;
+  host_sim::wall_now += host_sim::wall_step_s;
+  if (out != nullptr) *out = t;
+  return t;
 }
 inline struct tm* host_sim_localtime(const time_t* t) {
   return gmtime_r(t, &host_sim::wall_tm);
@@ -167,6 +175,8 @@ void boot(bool wipe = true) {
   if (wipe) host_sim::nvs->clear();
   *host_sim::espnow = host_sim::EspNow();
   host_sim::wall_now = 1760000000;
+  host_sim::wall_step_s = 0;
+  host_sim::millis_step_ms = 0;
   cc::g_state = cc::CHIRP_DISABLED;
   cc::g_initialized = false;
   cc::g_relay_enabled = true;
@@ -1367,6 +1377,97 @@ void test_a_send_just_after_the_cooldown_goes_out() {
   std::printf("PASS a_send_just_after_the_cooldown_goes_out\n");
 }
 
+// A send at a gate's edge goes out or names that gate (the reviewers of
+// F178). run_command() named a refused send's reason after send_chirp()
+// came back false, from fresh reads of the clocks, so a gate that opened
+// between the send's own check and those reads left the answer naming the
+// next gate, or none: a cooldown that ran out read as no reason at all (the
+// route answers {"success":false} alone, the card "Failed: undefined") or
+// as a cooldown with 0 s left; the presence requirement met a millisecond
+// late as no reason; a clock set in between as night (MIN_UNIX_TIME is
+// 22:13 UTC); 06:00 striking in between as no reason. The refusal is now
+// the check that refused the send, read once. Here each millis() call moves
+// the uptime clock 1 ms on and each time() call the wall clock 1 s on, and
+// the send runs on the loop task (run_command(), as update()'s drain runs
+// it) 1 to 8 steps before each edge.
+cc::Result send_while_the_clocks_run(cc::ChirpTemplate tpl) {
+  host_sim::millis_step_ms = 1;
+  host_sim::wall_step_s = 1;
+  const cc::Result r = cc::run_command(send_of(tpl));
+  host_sim::millis_step_ms = 0;
+  host_sim::wall_step_s = 0;
+  return r;
+}
+
+void test_a_send_at_an_edge_names_why() {
+  unsigned refused[4] = {0, 0, 0, 0};
+  for (uint32_t n = 1; n <= 8; ++n) {
+    // The cooldown's end: tier 1's five minutes, n ms short.
+    boot();
+    enabled_channel();
+    CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);
+    host_sim::now_ms = cc::g_cooldown.last_chirp_ms + cc::COOLDOWN_TIER_1_MS - n;
+    size_t before = host_sim::espnow->sent.size();
+    cc::Result r = send_while_the_clocks_run(cc::TPL_INFRA_POWER_OUT);
+    if (r.ok) {
+      CHECK(r.refusal == cc::SEND_REFUSED_NONE && r.cooldown_tier == 2);
+      CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_WITNESS});
+    } else {
+      ++refused[0];
+      CHECK(r.refusal == cc::SEND_REFUSED_COOLDOWN && r.cooldown_tier == 1);
+      CHECK(r.cooldown_remaining_ms > 0 && r.cooldown_remaining_ms <= n);
+      CHECK(cc::seconds_left(r.cooldown_remaining_ms) == 1 && no_witness_since(before));
+    }
+
+    // The presence requirement: ten minutes on, n ms short.
+    boot();
+    enabled_channel(/*present=*/false);
+    host_sim::now_ms = cc::g_session_start_ms + cc::PRESENCE_REQUIRED_MS - n;
+    before = host_sim::espnow->sent.size();
+    r = send_while_the_clocks_run(cc::TPL_INFRA_POWER_OUT);
+    if (r.ok) {
+      CHECK(r.refusal == cc::SEND_REFUSED_NONE && r.cooldown_tier == 1);
+    } else {
+      ++refused[1];
+      CHECK(r.refusal == cc::SEND_REFUSED_PRESENCE && r.cooldown_remaining_ms == 0);
+      CHECK(no_witness_since(before));
+    }
+
+    // The wall clock set: n s before MIN_UNIX_TIME (a template allowed at
+    // night: MIN_UNIX_TIME is 22:13 UTC).
+    boot();
+    enabled_channel();
+    host_sim::wall_now = cc::MIN_UNIX_TIME - n;
+    before = host_sim::espnow->sent.size();
+    r = send_while_the_clocks_run(cc::TPL_INFRA_POWER_OUT);
+    if (r.ok) {
+      CHECK(r.refusal == cc::SEND_REFUSED_NONE);
+    } else {
+      ++refused[2];
+      CHECK(r.refusal == cc::SEND_REFUSED_CLOCK_UNSYNCED && r.cooldown_remaining_ms == 0);
+      CHECK(no_witness_since(before));
+    }
+
+    // Night's end: n s before 06:00 UTC, a template not allowed at night.
+    boot();
+    enabled_channel();
+    host_sim::wall_now = 1760076000 - (time_t)n;          // 2025-10-10 06:00:00 UTC, n s short
+    before = host_sim::espnow->sent.size();
+    r = send_while_the_clocks_run(cc::TPL_INFRA_INTERNET_DOWN);
+    if (r.ok) {
+      CHECK(r.refusal == cc::SEND_REFUSED_NONE);
+    } else {
+      ++refused[3];
+      CHECK(r.refusal == cc::SEND_REFUSED_NIGHT && r.cooldown_remaining_ms == 0);
+      CHECK(no_witness_since(before));
+    }
+  }
+  // Each edge was met shut at least once (the sweep straddles it).
+  for (unsigned k : refused) CHECK(k > 0);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_send_at_an_edge_names_why\n");
+}
+
 // ── A refused confirm says why; a dismiss says if its vote went (F174) ──
 
 // The confirm route's answer to a refusal (chirp_api.h's send_confirm_answer
@@ -1537,6 +1638,7 @@ const Test kTests[] = {
     {"a_refused_send_names_why", test_a_refused_send_names_why},
     {"a_mute_does_not_end_the_cooldown", test_a_mute_does_not_end_the_cooldown},
     {"a_send_just_after_the_cooldown_goes_out", test_a_send_just_after_the_cooldown_goes_out},
+    {"a_send_at_an_edge_names_why", test_a_send_at_an_edge_names_why},
     {"a_refused_confirm_names_why", test_a_refused_confirm_names_why},
     {"a_dismiss_says_whether_its_vote_went", test_a_dismiss_says_whether_its_vote_went},
     {"a_send_carries_the_owners_fields", test_a_send_carries_the_owners_fields},
