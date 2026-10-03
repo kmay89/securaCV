@@ -147,7 +147,7 @@ What is *replaced* is exactly the silicon boundary, one shim per wire:
 |---|---|---|
 | GC9A01 / RGB panel via Arduino_GFX | RGB565 flush → RGBA framebuffer → canvas/3D texture | `src/emu_hal_display.cpp` |
 | CST816S / GT911 touch | pointer events, polled by the firmware's own gesture machine | same |
-| LEDC backlight PWM (day 8-bit, night 13-bit) | brightness of the on-page glass + 3D glow | same |
+| LEDC backlight PWM (day 8-bit, night 13-bit); the C3-LCD-1.47's expander PWM byte, clipped at `CD_BL_MAX_PCT` | brightness of the on-page glass + 3D glow, clipped where the board's HAL clips it (sweep A61) | same |
 | LEDC piezo tone | Web Audio | `shim/Arduino.h` + app |
 | NVS (Preferences) | in-memory map, mirrored to JS; preseed/wipe = provisioned vs first-boot; survives emulated reboots | `src/emu_support.cpp` |
 | millis()/time() | virtual clock — scenario can scale (×60 staleness demos) or stage the local hour | same (+ `--wrap=time`) |
@@ -903,7 +903,11 @@ fails on byte drift.
   touch comes back out of LVGL's pointer where it went in, and the HAL tells
   the page each turn it wears with the glass's shape (A64: 1, 3 and 2 for
   the dash's portrait, portrait flipped and landscape flipped, 1 and 3 for
-  the nightlight's R90 and R270). With no argument
+  the nightlight's R90 and R270). Beside it,
+  `backlight_cap_test.cpp` holds the same HAL's backlight to the board's
+  (sweep A61): built in the nightlight's config, every day level and night
+  duty is clipped where the C3-LCD-1.47's expander path clips it, and in the
+  dash's every one passes through as asked. With no argument
   it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
   absent, so CI runs it before any step that reads the committed dist (a
   stale dist turns those red and skips every later step).
@@ -993,8 +997,10 @@ fails on byte drift.
   nightlight flavor, Try it shows the firmware's Character ring, and its
   bench is the C3-LCD-1.47's as `devices/registry.json` states it (USB-C
   the only power, so a pull drops the rail at once; no lights listed; the
-  backlight row names the 50% cap the board's HAL enforces and the twin's
-  does not). A bench block that names no `power.battery` is a board with no
+  backlight row names the 50% cap the board's HAL enforces, and on a dist
+  built since sweep A61, whose display HAL clips there too, says the twin
+  clips at it and reads no level past its byte, where an older dist's row
+  says the twin does not). A bench block that names no `power.battery` is a board with no
   battery path (the Nightlight, the Nightstand stick): its battery chip is
   inert and reads "none on this board", `BenchPower` refuses to fit a cell
   there, and the troubleshooter leaves out every step that stages one

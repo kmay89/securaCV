@@ -99,6 +99,20 @@ async function main() {
   if (dev) openSheet(dev);
 }
 
+// The bench's backlight row, on a ceiling: the board's (`boardCap`, the
+// bench block's cap_pct — the percent of full duty its own HAL clips at) beside
+// the twin's (`twinCap`, what the emulator's display HAL clips at, read from
+// emu_backlight_cap_pct; null from a dist built before sweep A61, whose HAL set
+// the level as asked, and 100 where it clips nothing). A level the twin reads
+// is the glass's only when the two agree.
+function backlightCapNote(boardCap, twinCap) {
+  const twin = Number.isFinite(twinCap) && twinCap < 100 ? twinCap : null;
+  if (!boardCap) return twin === null ? "" : ` · this twin caps it at ${twin}% duty`;
+  if (twin === boardCap) return ` · capped at ${boardCap}% duty, as the board's HAL caps it`;
+  if (twin === null) return ` · the board caps it at ${boardCap}% duty, this twin does not`;
+  return ` · the board caps it at ${boardCap}% duty, this twin at ${twin}%`;
+}
+
 // the finish picker rides in the hero, above the fineprint line
 function mountFinishPicker() {
   const hero = $("#hero");
@@ -975,9 +989,10 @@ function benchView(ctx, guideCtx, noteLine) {
   const dMode = diagRow("mode");
   const dUp = diagRow("uptime");
   const dBl = diagRow("backlight");
-  // A cap the board's own HAL enforces and the twin's does not (the
-  // nightlight's heat budget): say it beside the level, so the twin's
-  // brighter glow is not read as the glass's (sweep A54).
+  // A cap the board's own HAL enforces (the nightlight's heat budget, sweep
+  // A54), said beside the level with whether this twin's HAL clips at it too
+  // (backlightCapNote; a dist built since sweep A61 does), so a twin glowing
+  // brighter than the glass is never read as the glass.
   const blCap = profile.backlight?.cap_pct;
   if (blCap) dBl.title = profile.backlight.note || "";
   const dFlush = diagRow("frames flushed");
@@ -1032,10 +1047,10 @@ function benchView(ctx, guideCtx, noteLine) {
     try {
       const night = await ctx.emu.c.nightDuty();
       const level = await ctx.emu.c.backlight();
+      const twinCap = ctx.emu.c.backlightCap ? await ctx.emu.c.backlightCap() : null;
       dBl.textContent = (night >= 0
         ? `night floor · 13-bit duty ${night}/8191`
-        : `day ladder · ${level}/255`) +
-        (blCap ? ` · the board caps it at ${blCap}% duty, this twin does not` : "");
+        : `day ladder · ${level}/255`) + backlightCapNote(blCap, twinCap);
       dFlush.textContent = String(await ctx.emu.c.flushCount());
       dMqtt.textContent = (await ctx.emu.c.mqttConnected()) ? "connected" : "down / reconnecting";
     } catch {

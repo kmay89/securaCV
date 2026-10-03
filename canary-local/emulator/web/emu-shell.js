@@ -217,6 +217,10 @@ export class CanaryEmulator {
       flushCount: M.cwrap("emu_flush_count", "number", []),
       backlight: M.cwrap("emu_backlight_level", "number", []),
       nightDuty: M.cwrap("emu_backlight_night_duty", "number", []),
+      // The ceiling the twin clips the backlight at, as the board's HAL
+      // clips it (sweep A61: 50 on the nightlight, 100 where none applies).
+      // Absent from a dist built before it, whose HAL set the level as asked.
+      backlightCap: M._emu_backlight_cap_pct ? M.cwrap("emu_backlight_cap_pct", "number", []) : null,
       setWifi: M.cwrap("emu_set_wifi", null, ["number", "number"]),
       setBroker: M.cwrap("emu_set_broker", null, ["number"]),
       setTz: M.cwrap("emu_set_tz", null, ["string"]),

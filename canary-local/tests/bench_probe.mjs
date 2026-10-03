@@ -5,7 +5,8 @@
 // park the ROM in download mode with BOOT+RESET and recover. Then the
 // Nightlight's card (sweep A54): its twin boots, Try it shows the firmware's
 // Character ring, and its bench is the C3-LCD-1.47's (USB the only power, no
-// battery or switch, no lights listed, the backlight cap stated).
+// battery or switch, no lights listed, the backlight cap stated, and on a dist
+// built since sweep A61 the twin clipping its backlight there too).
 //
 //   node canary-local/tests/bench_probe.mjs [--shots DIR]
 //
@@ -53,6 +54,17 @@ await allow("canary-local/emulator/web");
 await allow("canary-local/emulator/dist");
 await allow("canary-local/models");
 await allow("docs/hardware/enclosure");
+
+// Sweep A61: a nightlight dist built since the twin's display HAL clips the
+// backlight where the board's does exports emu_backlight_cap_pct, and on it
+// the bench row must say the twin clips at the board's 50% and read no level
+// past the cap's byte; on a dist built before it, the row must say the twin
+// does not. The bundle names its exports, so the probe asks the bytes it
+// serves which kind they are.
+const NL_BUNDLE = await readFile(join(ROOT, "canary-local/emulator/dist/canary-display-nightlight.js"), "latin1");
+const TWIN_CLIPS = NL_BUNDLE.includes("_emu_backlight_cap_pct");
+const NL_CAP_PCT = 50;                          // the bench block's cap_pct (bench.test.js holds it to config.h)
+const NL_CAP_BYTE = Math.floor((255 * NL_CAP_PCT) / 100);
 
 const server = createServer(async (req, res) => {
   const path = lookup(SERVABLE, req.url);   // decodes inside its own try: /%E0 is a 404 (A52)
@@ -266,13 +278,31 @@ if (nlFixes.some((t) => /unplugged the cable/.test(t))) await fail("the Nightlig
 if (/rides the battery|ride-through/.test(await page.locator(".bench-trouble").textContent()))
   await fail("a Nightlight troubleshooting step still talks of riding a battery");
 if (!(await chip("— (no battery path)").count())) await fail("the Nightlight's bench offers a switch with a battery path to gate");
-await page
+const capRow = TWIN_CLIPS
+  ? "^(?:day ladder · (\\d+)/255|night floor · 13-bit duty (\\d+)/8191) · capped at 50% duty, as the board's HAL caps it$"
+  : " · the board caps it at 50% duty, this twin does not$";
+const capRead = await page
   .waitForFunction(
-    () => [...document.querySelectorAll(".bench-diag dd")].some((d) => / · the board caps it at 50% duty, this twin does not$/.test(d.textContent)),
-    null,
+    (src) => [...document.querySelectorAll(".bench-diag dd")].map((d) => d.textContent).find((t) => new RegExp(src).test(t)) || null,
+    capRow,
     { timeout: 10000 }
   )
-  .catch(() => fail("the Nightlight's backlight row does not say the board's 50% cap"));
+  .then((h) => h.jsonValue())
+  .catch(() => null);
+if (!capRead) {
+  await fail(TWIN_CLIPS ? "the Nightlight's backlight row does not say the twin clips at the board's 50% cap"
+    : "the Nightlight's backlight row does not say the board's 50% cap");
+} else if (TWIN_CLIPS) {
+  // the level the twin reads is the byte the board would write: never past the cap
+  const m = new RegExp(capRow).exec(capRead);
+  const day = m[1] !== undefined ? Number(m[1]) : null;
+  const night = m[2] !== undefined ? Number(m[2]) : null;
+  if (day !== null && day > NL_CAP_BYTE) await fail(`the Nightlight's twin glows at ${day}/255, past the board's cap byte ${NL_CAP_BYTE}`);
+  if (night !== null && night >> 5 > NL_CAP_BYTE) await fail(`the Nightlight's twin's night duty ${night} writes past the board's cap byte ${NL_CAP_BYTE}`);
+  console.log(`bench_probe: the Nightlight twin clips its backlight (${capRead.trim()})`);
+} else {
+  console.log("bench_probe: this nightlight dist was built before the twin clipped its backlight (no emu_backlight_cap_pct); the row says so");
+}
 await chip("USB-C cable").click();
 await page
   .waitForFunction(() => document.querySelector(".glass-shade")?.classList.contains("on"), null, { timeout: 5000 })

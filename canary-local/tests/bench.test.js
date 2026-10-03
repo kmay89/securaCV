@@ -107,17 +107,86 @@ test("bench facts cite files that still say them; the Nightlight's says what its
   assert.ok(cap > 0 && cap < 100, "the nightlight config caps the backlight");
   assert.strictEqual(b.backlight.cap_pct, cap, "the bench states the config's cap");
   assert.ok(cites("firmware/configs/canary-display/nightlight/config.h"));
+  // the twin's HAL clips where the board's does (sweep A61; the behavior is
+  // held natively by emulator/test/backlight_cap_test.cpp, below), and the
+  // note says so, and that an emulator built before it does not
   const emuHal = readFileSync(join(ROOT, "emulator/src/emu_hal_display.cpp"), "utf8");
-  assert.ok(!emuHal.includes("CD_BL_MAX_PCT"), "the twin's HAL does not model the cap, as the bench says");
-  assert.match(b.backlight.note, /twin/, "the note says the twin does not clip");
-  // and the Lab shows it: the bench's backlight row reads the cap off the profile
+  assert.ok(emuHal.includes("constexpr int kBacklightCapPct = CD_BL_MAX_PCT;"), "the twin's HAL takes the config's cap");
+  assert.ok(cites("canary-local/emulator/src/emu_hal_display.cpp"), "the bench cites the twin's HAL for what it does");
+  assert.match(b.backlight.note, /twin's display HAL clips it at the same register byte/, "the note says the twin clips");
+  assert.match(b.backlight.note, /built before it set the level as asked/, "...and what an older emulator did");
+  // and the Lab shows it: the bench's backlight row reads the cap off the
+  // profile and the twin's own cap off the emulator, and says which
   const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
   assert.match(app, /const blCap = profile\.backlight\?\.cap_pct;/);
-  assert.match(app, /blCap \? ` · the board caps it at \$\{blCap\}% duty, this twin does not` : ""/);
+  assert.match(app, /const twinCap = ctx\.emu\.c\.backlightCap \? await ctx\.emu\.c\.backlightCap\(\) : null;/);
+  assert.match(app, /: `day ladder · \$\{level\}\/255`\) \+ backlightCapNote\(blCap, twinCap\);/);
   // lights: the board's files disagree (the case file names an RGB LED and a
   // charge LED; the board README and pins.h a board with neither), so the
   // bench lists none until a bench look settles it
   assert.strictEqual(b.leds, undefined, "no light is listed whose wiring no file settles");
+});
+
+// Sweep A61: the twin's display HAL clips the backlight where the board's
+// does. The behavior is held natively — emulator/test/backlight_cap_test.cpp,
+// which glass_turn.sh builds against the real emu_hal_display.cpp in the
+// nightlight's config and the dash's, holds every day level and every night
+// duty to the C3-LCD-1.47's expander path — so this holds what that test
+// leans on: its restatement of the board's path is the board's source, the
+// script runs it in both configs, and the page says what the emulator in use
+// does (backlightCapNote, run as app.js ships it).
+test("A61: the twin clips the Nightlight's backlight where the board's HAL does, and the bench row says which", () => {
+  const REPO = join(ROOT, "..");
+  const board = readFileSync(join(REPO, "firmware/projects/canary-display/src/hal/display_1in47.cpp"), "utf8");
+  const native = readFileSync(join(ROOT, "emulator/test/backlight_cap_test.cpp"), "utf8");
+  const hal = readFileSync(join(ROOT, "emulator/src/emu_hal_display.cpp"), "utf8");
+  // the board's expander path, line for line, and the test's restatement of it
+  for (const line of ["#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n#define CD_1IN47_EXIO 1",
+                      "#ifndef CD_BL_MAX_PCT\n#define CD_BL_MAX_PCT 100\n#endif",
+                      "constexpr uint8_t kCap = (uint8_t)((255u * CD_BL_MAX_PCT) / 100u);",
+                      "exio_write_reg(EXIO_REG_PWM, duty8 > kCap ? kCap : duty8);",
+                      "if (duty13 > NIGHT_DUTY_MAX) duty13 = NIGHT_DUTY_MAX;",
+                      "uint8_t d8 = (uint8_t)(duty13 >> 5);\n  if (d8 == 0 && duty13 > 0) d8 = 1;\n  exio_backlight(d8);",
+                      "#ifdef CD_1IN47_EXIO\n  // Expander PWM: plain 0..255 duty; the CD_BL_MAX_PCT heat cap is applied\n  // inside exio_backlight, under every caller.\n  exio_backlight(level);"]) {
+    assert.ok(board.includes(line), `display_1in47.cpp no longer says ${JSON.stringify(line)}: restate it in backlight_cap_test.cpp`);
+  }
+  for (const line of ["#if defined(TFT_USE_EXIO) && TFT_USE_EXIO", "constexpr unsigned kCap = (255u * kCapPct) / 100u;",
+                      "unsigned exio(unsigned duty8) { return duty8 > kCap ? kCap : duty8; }",
+                      "if (duty13 > 8191) duty13 = 8191;", "unsigned d8 = duty13 >> 5;", "if (d8 == 0 && duty13 > 0) d8 = 1;"]) {
+    assert.ok(native.includes(line), `backlight_cap_test.cpp no longer restates ${JSON.stringify(line)}`);
+  }
+  // the twin's HAL: the board's gate, the board's byte, both sinks through it,
+  // and the binding the page asks
+  assert.ok(hal.includes("#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n#ifndef CD_BL_MAX_PCT\n#define CD_BL_MAX_PCT 100"));
+  assert.ok(hal.includes("g_backlight_level = capped_level(level);") && hal.includes("js_backlight_apply(g_backlight_level, -1);"));
+  assert.ok(hal.includes("g_night_duty13 = capped_night(duty13);") && hal.includes("js_backlight_apply(-1, g_night_duty13);"));
+  assert.ok(hal.includes("EMSCRIPTEN_KEEPALIVE int emu_backlight_cap_pct(void) { return kBacklightCapPct; }"));
+  const shell = readFileSync(join(ROOT, "emulator/web/emu-shell.js"), "utf8");
+  assert.ok(shell.includes('backlightCap: M._emu_backlight_cap_pct ? M.cwrap("emu_backlight_cap_pct", "number", []) : null,'),
+    "the shell asks the twin's cap only of a dist that has it");
+  // CI's native glass step runs the test in both configs
+  const gt = readFileSync(join(ROOT, "emulator/test/glass_turn.sh"), "utf8");
+  assert.ok(gt.includes('"${CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/backlight_cap_test.o"') &&
+    gt.includes('\n"$OUT/backlight_cap_test"\n'), "glass_turn.sh runs the backlight test in the dash config");
+  assert.ok(gt.includes('"${NL_CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/nl_backlight_cap_test.o"') &&
+    gt.includes('\n"$OUT/nl_backlight_cap_test"\n'), "...and in the nightlight's");
+  // the bench row's word, as app.js ships it
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  const at = app.indexOf("function backlightCapNote(");
+  assert.ok(at >= 0, "app.js has backlightCapNote()");
+  let depth = 0, end = -1;
+  for (let k = app.indexOf("{", app.indexOf(")", at)); k < app.length; k++) {
+    if (app[k] === "{") depth++;
+    else if (app[k] === "}" && --depth === 0) { end = k + 1; break; }
+  }
+  const note = new Function(`${app.slice(at, end)}\nreturn backlightCapNote;`)();
+  assert.strictEqual(note(50, 50), " · capped at 50% duty, as the board's HAL caps it", "a twin that clips where the board does");
+  assert.strictEqual(note(50, null), " · the board caps it at 50% duty, this twin does not", "a dist built before A61");
+  assert.strictEqual(note(50, 100), " · the board caps it at 50% duty, this twin does not", "a twin that clips nothing");
+  assert.strictEqual(note(50, 40), " · the board caps it at 50% duty, this twin at 40%", "a twin that clips elsewhere");
+  assert.strictEqual(note(undefined, 100), "", "no cap on the board, none on the twin");
+  assert.strictEqual(note(undefined, null), "");
+  assert.strictEqual(note(undefined, 60), " · this twin caps it at 60% duty", "a twin cap the bench block does not state is said");
 });
 
 test("the Nightlight's bench: USB is its only power, so pulling it kills the rail", async () => {

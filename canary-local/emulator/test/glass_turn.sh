@@ -3,7 +3,10 @@
 # (F184, F204): builds glass_turn_test.cpp with g++ against the REAL
 # ui/lvgl_port.cpp, the emulator's REAL display HAL and LVGL 8.4, and runs
 # it twice: in the dash config (LVGL's software rotation) and in the
-# nightlight config (the panel's hardware turn). No emsdk: this proves the sources the dist is built from,
+# nightlight config (the panel's hardware turn). Beside each run,
+# backlight_cap_test.cpp holds the same HAL object's backlight to the board's
+# ceiling (sweep A61: clipped as the C3-LCD-1.47 clips it in the nightlight
+# config, passed through as asked in the dash's). No emsdk: this proves the sources the dist is built from,
 # not the dist's bytes (the browser probe, onboard_probe.mjs, reads those).
 #
 #   bash canary-local/emulator/test/glass_turn.sh [LVGL_DIR]
@@ -74,6 +77,13 @@ CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
 g++ -o "$OUT/glass_turn_test" "$OUT/glass_turn_test.o" "$OUT/lvgl_port.o" \
   "$OUT/emu_hal_display.o" "$OUT"/lvgl/*.o -lm
 "$OUT/glass_turn_test"
+# The board's backlight ceiling (sweep A61), against the same HAL object: the
+# dash has no expander and no ceiling, so every level passes through as asked
+# (backlight_cap_test.cpp; its nightlight run is below).
+"${CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/backlight_cap_test.o"
+g++ -o "$OUT/backlight_cap_test" "$OUT/backlight_cap_test.o" "$OUT/emu_hal_display.o" \
+  "$OUT"/lvgl/*.o -lm
+"$OUT/backlight_cap_test"
 
 # The nightlight's wiring (F204), as build.sh hands it to em++: the same
 # test, now holding the hardware turn (display_set_rotation and
@@ -90,4 +100,11 @@ NL_CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-paramet
 "${NL_CXX[@]}" -c "$HERE/glass_turn_test.cpp" -o "$OUT/nl_glass_turn_test.o"
 g++ -o "$OUT/nl_glass_turn_test" "$OUT/nl_glass_turn_test.o" "$OUT/nl_lvgl_port.o" \
   "$OUT/nl_emu_hal_display.o" "$OUT"/lvgl/*.o -lm
+# ...and the nightlight's backlight ceiling (sweep A61): the C3-LCD-1.47's HAL
+# clips its expander's PWM byte at CD_BL_MAX_PCT (50%), and the twin's HAL
+# must clip every day level and night duty where the board's does.
+"${NL_CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/nl_backlight_cap_test.o"
+g++ -o "$OUT/nl_backlight_cap_test" "$OUT/nl_backlight_cap_test.o" "$OUT/nl_emu_hal_display.o" \
+  "$OUT"/lvgl/*.o -lm
+"$OUT/nl_backlight_cap_test"
 "$OUT/nl_glass_turn_test"

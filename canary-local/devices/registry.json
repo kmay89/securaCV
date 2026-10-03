@@ -568,7 +568,7 @@
         ],
         "backlight": {
           "cap_pct": 50,
-          "note": "the board's HAL clips the backlight at 50% duty, the nightlight's heat budget in the closed pocket case; this twin's display HAL sets the level as asked, so its glow can read brighter than the glass"
+          "note": "the board's HAL clips the backlight at 50% duty, the nightlight's heat budget in the closed pocket case; the twin's display HAL clips it at the same register byte, and the row says so only when the emulator in use does (one built before it set the level as asked)"
         },
         "sources": [
           {
@@ -607,9 +607,14 @@
             "quote": "exio_write_reg(EXIO_REG_PWM, duty8 > kCap ? kCap : duty8);"
           },
           {
-            "fact": "the twin's HAL sets the level as asked",
+            "fact": "the twin's HAL clips the day level at the board's byte",
             "file": "canary-local/emulator/src/emu_hal_display.cpp",
-            "quote": "g_backlight_level = level;"
+            "quote": "return level > kBacklightCap8 ? kBacklightCap8 : level;"
+          },
+          {
+            "fact": "the twin's HAL takes the board's ceiling, (255 * CD_BL_MAX_PCT) / 100, on the expander board only",
+            "file": "canary-local/emulator/src/emu_hal_display.cpp",
+            "quote": "constexpr int kBacklightCap8 = (255 * kBacklightCapPct) / 100;"
           }
         ]
       }
