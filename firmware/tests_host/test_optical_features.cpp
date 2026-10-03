@@ -63,6 +63,8 @@ void test_proximity() {
 // multiplied in long, 32 bits on the ESP32 and on the emulator's wasm32
 // build and 64 on a host, so an out-of-range box read differently on each
 // (and box_area * 100 overflowed even a 64-bit long past INT64_MAX / 100).
+// A product put back in long passes here, because this host's long holds
+// it; vision.test.js's A42 test catches that on the wasm32 dist.
 void test_out_of_range() {
   const int64_t frame = 240 * 240;
   // an area past the frame's is over 100%: near, however large

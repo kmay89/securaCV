@@ -55,19 +55,22 @@ static_assert(OPT_PROXIMITY_NEAR_PCT <= 100, "a box covering the whole frame mus
 // Posture from box width/height. Non-positive dims -> Unknown.
 inline Posture classify_posture(int w, int h) {
   if (w <= 0 || h <= 0) return Posture::Unknown;
-  // h*100 >= w*RATIO  ==  h/w >= RATIO/100, in int64_t: a 32-bit long (the
-  // ESP32's, wasm32's) overflowed once a side passed INT32_MAX / 130 (sweep
-  // A42); every positive int side fits here.
+  // h*100 >= w*RATIO  ==  h/w >= RATIO/100, in int64_t: a 32-bit long
+  // (wasm32's) overflowed once a side passed INT32_MAX / 130 (sweep A42),
+  // which only the Lab's int boxes reach (the device's sides are uint16);
+  // every positive int side fits here.
   if ((int64_t)h * 100 >= (int64_t)w * OPT_POSTURE_UPRIGHT_RATIO_X100) return Posture::Upright;
   if ((int64_t)w * 100 >= (int64_t)h * OPT_POSTURE_HORIZONTAL_RATIO_X100) return Posture::Horizontal;
   return Posture::Ambiguous;
 }
 
 // Proximity from box area vs frame area. Non-positive frame -> Unknown.
-// The areas are int64_t (sweep A42): a 32-bit long overflowed in the
-// caller's w * h and here in box_area * 100, so the ESP32 and the wasm32
-// emulator read an out-of-range box's proximity differently from a 64-bit
-// host, whose long overflowed only once box_area * 100 passed INT64_MAX.
+// The areas are int64_t (sweep A42): a 32-bit long (the ESP32's and
+// wasm32's) overflowed in the caller's w * h past INT32_MAX and here in
+// box_area * 100 past about 21.5 million, so the wasm32 emulator read an
+// out-of-range box's proximity differently from a 64-bit host, whose long
+// overflowed only once box_area * 100 passed INT64_MAX. The device's uint16
+// boxes could reach both, though a 240x240 model does not return one.
 inline Proximity classify_proximity(int64_t box_area, int64_t frame_area) {
   if (frame_area <= 0 || box_area <= 0) return Proximity::Unknown;
   // A box covers at most the whole frame: an area past the frame's counts

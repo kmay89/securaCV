@@ -4,14 +4,19 @@
 // Pinned (sweep A42): a box anywhere in the int range lands in the cell, and
 // reads the posture and proximity, that exact arithmetic says, in every
 // build. The pipeline took the box's center (x + w/2) and the cell
-// (px * cols / FRAME_W) in int and the area in long, so an out-of-range box
-// overflowed: undefined behavior, which the ESP32's gcc, the emulator's
-// wasm32 clang and a 64-bit host resolved differently (a box two billion
-// pixels wide read proximity "unknown" on the wasm32 dist and "near" on a
-// 64-bit host, and landed in different cells). The oracle below computes
-// each answer in __int128, where nothing these ints make can overflow, and
-// the Makefile also builds this suite under -fsanitize=undefined, so an
-// overflow fails it on any host whatever value the compiler made of it.
+// (px * cols / FRAME_W) in int and the area in long, so a box near the int
+// range's ends, which the Lab's sandbox and the core's ABI can send,
+// overflowed. The signed overflows were undefined, and a 64-bit host and the
+// emulator's wasm32 clang resolved them differently; long is 32 bits in
+// wasm32 and 64 on the host. A box two billion pixels wide read proximity
+// "unknown" on the wasm32 dist and "near" on a 64-bit host, and landed in
+// different cells. The device's SSCMA boxes have uint16 fields, which reach
+// only the area overflows in its 32-bit long. The oracle below computes each
+// answer in __int128, where nothing these ints make can overflow, and the
+// Makefile also builds this suite under -fsanitize=undefined, so an overflow
+// fails it on any host whatever value the compiler made of it. A product put
+// back in a 32-bit long passes here, because this host's long holds it;
+// vision.test.js's A42 test catches that on the wasm32 dist.
 
 #include <cassert>
 #include <climits>
