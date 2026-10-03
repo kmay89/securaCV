@@ -1370,11 +1370,13 @@ bool init() {
 
   // Concurrency latch: init() can now be entered from the boot bring-up
   // worker task AND the HTTP task (a user tapping Enable/Advertise/Pair
-  // during the bring-up window has the handler bring the stack up, F111).
+  // during the bring-up window has the handler bring the stack up, F111;
+  // since F235 whenever the stack is down, whatever the saved setting).
   // NimBLE init is not reentrant, so exactly one caller may run the body;
-  // the loser backs off with false and the handler answers with the init
-  // error, while GET /api/bluetooth reads "initializing" (the loop task's
-  // view, from init_running()). Cleared on every exit path (RAII).
+  // the loser backs off with false and the handler answers that Bluetooth
+  // is still starting (bring_up_starting()), while GET /api/bluetooth reads
+  // "initializing" (the loop task's view, from init_running()). Cleared on
+  // every exit path (RAII), after the last write of the body.
   bool expected = false;
   if (!__atomic_compare_exchange_n(&g_init_in_progress, &expected, true,
                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
@@ -1818,6 +1820,16 @@ const char* init_fail_reason() {
 // bring-up only.
 void hold_scanners_on_init(bool held) {
   __atomic_store_n(&g_meta_hold_scanners, held, __ATOMIC_RELEASE);
+}
+
+// Any task, after a tap's bring_up() answered false (sweep F235): another
+// task's bring-up, not a refusal. The latch first: init() publishes
+// g_stack_up before its latch clears (release), so a latch read clear
+// (acquire) sees the stack up when that bring-up brought it up; read the
+// other way round, a bring-up that came up between the two reads would
+// answer its predecessor's refusal.
+bool bring_up_starting() {
+  return init_running() || is_initialized();
 }
 
 void set_device_metadata(const char* fw_revision, const char* serial) {

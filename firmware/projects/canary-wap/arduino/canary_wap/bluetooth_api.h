@@ -16,9 +16,10 @@
  * the shape it always had. A command that did not run answers 409
  * bluetooth_busy or 503 bluetooth_timeout (send_not_run). The one call a
  * handler still makes itself is bluetooth_channel::init() (bring_up), when
- * the owner turns Bluetooth on before it is up: it can block past the loop
- * task's watchdog, so it never runs there. firmware/scripts/
- * check_wap_loop_commands.py holds every handler here to that.
+ * a tap that needs the stack finds it down (sweep F235: whatever the saved
+ * setting says): it can block past the loop task's watchdog, so it never
+ * runs there. firmware/scripts/check_wap_loop_commands.py holds every
+ * handler here to that.
  *
  * Sweep F138: the GET routes read what the loop task last published
  * (bluetooth_channel::read_status, read_settings, read_scan, read_paired),
@@ -236,19 +237,40 @@ inline esp_err_t send_not_run(httpd_req_t* req, loop_command_ring::Wait w) {
   return send_error(req, bluetooth_channel::not_run_error(w));
 }
 
-// The stack, brought up on this task when the owner turns Bluetooth on
-// before it is up: the init() bluetooth_channel::enable() ran here before
-// F111. A command never runs it: NimBLE init can block past the loop task's
-// watchdog (the BLE bring-up worker's note in canary_wap.ino). init() admits
-// one caller at a time (the bring-up worker may be inside it).
+// The stack, brought up on this task when a tap that needs it (Enable,
+// Start Advertising, Pair, a settings POST turning Bluetooth on) finds it
+// down: the init() bluetooth_channel::enable() ran here before F111. A
+// command never runs it: NimBLE init can block past the loop task's
+// watchdog (the BLE bring-up worker's note in canary_wap.ino). Whether the
+// stack is up, not whether Bluetooth is saved on, decides it (sweep F235):
+// Start Advertising and Pair called it only when the published setting said
+// off, so on a device saved on (the default) whose boot bring-up failed or
+// the heap guard refused, every tap answered a failed start and none ever
+// brought the stack up. init() admits one caller at a time (the bring-up
+// worker may be inside it) and checks the heap guard again on every call.
 inline bool bring_up() {
   return bluetooth_channel::is_initialized() || bluetooth_channel::init();
+}
+
+// A tap whose bring_up() left the stack down (sweep F235), before anything
+// is submitted: while another task's init() holds its latch (the boot
+// worker's, or an earlier tap's) or has just brought the stack up, 503
+// "Bluetooth is still starting; try again in a moment" (GET /api/bluetooth
+// reads "initializing" meanwhile); otherwise init()'s refusal by name (the
+// heap guard's measured RAM, NimBLE's init, the server), send_bt_error()'s
+// answer, or `fallback` when none was recorded.
+inline esp_err_t send_bring_up_refused(httpd_req_t* req, const char* fallback) {
+  if (bluetooth_channel::bring_up_starting()) {
+    httpd_resp_set_status(req, http_status_line(503));
+    return send_error(req, bluetooth_channel::bring_up_starting_error());
+  }
+  return send_bt_error(req, fallback);
 }
 
 // POST /api/bluetooth/enable - Enable Bluetooth
 inline esp_err_t handle_bluetooth_enable(httpd_req_t* req) {
   if (!bring_up()) {
-    return send_bt_error(req, "Failed to enable Bluetooth");
+    return send_bring_up_refused(req, "Failed to enable Bluetooth");
   }
   bluetooth_channel::Result r;
   const loop_command_ring::Wait w = bluetooth_channel::submit(
@@ -272,12 +294,12 @@ inline esp_err_t handle_bluetooth_disable(httpd_req_t* req) {
 // POST /api/bluetooth/advertise/start - Start advertising
 inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
   // Auto-enable: clicking "Start Advertising" is unambiguous user intent.
-  // Without this the call silently returns false when enabled=false in NVS.
-  // The stack comes up here; the enable itself is the command's. Whether
-  // Bluetooth is on is read from the view the loop task published, not its
-  // flag in place (sweep F210).
-  if (!bluetooth_channel::read_enabled() && !bring_up()) {
-    return send_bt_error(req, "Bluetooth init failed");
+  // The stack comes up here whenever it is down, whatever the saved setting
+  // (sweep F235; before, only when the published setting said off, so a
+  // device saved on whose boot bring-up failed never came up); the enable
+  // itself is the command's.
+  if (!bring_up()) {
+    return send_bring_up_refused(req, "Bluetooth init failed");
   }
   bluetooth_channel::Result r;
   const loop_command_ring::Wait w = bluetooth_channel::submit(
@@ -392,9 +414,9 @@ inline esp_err_t handle_bluetooth_scan_clear(httpd_req_t* req) {
 
 // POST /api/bluetooth/pair/start - Start pairing mode
 inline esp_err_t handle_bluetooth_pair_start(httpd_req_t* req) {
-  // Auto-enable: same rationale as advertise/start (the published read too).
-  if (!bluetooth_channel::read_enabled() && !bring_up()) {
-    return send_bt_error(req, "Bluetooth init failed");
+  // Auto-enable: same rationale as advertise/start (sweep F235 too).
+  if (!bring_up()) {
+    return send_bring_up_refused(req, "Bluetooth init failed");
   }
   bluetooth_channel::Result r;
   const loop_command_ring::Wait w = bluetooth_channel::submit(
@@ -707,7 +729,7 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
   // does (sweep F144): the stack comes up here, on this task, and the
   // command turns it on. A command never brings the stack up.
   if ((cmd.set_mask & bluetooth_channel::BT_SET_ENABLED) && settings.enabled && !bring_up()) {
-    return send_bt_error(req, "Bluetooth init failed");
+    return send_bring_up_refused(req, "Bluetooth init failed");
   }
 
   bluetooth_channel::Result r;

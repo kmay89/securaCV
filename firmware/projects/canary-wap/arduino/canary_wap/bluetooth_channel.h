@@ -219,8 +219,10 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 // Initialization. init() brings the NimBLE stack up, which can block its
 // caller past the loop task's 8 s watchdog (canary_wap.ino's BLE bring-up
 // note), so it never runs on the loop task: the bring-up worker calls it,
-// and a REST handler (bluetooth_api.h) calls it, on esp_http_server's task,
-// when the owner turns Bluetooth on before it is up. Nothing else here may
+// and a REST handler (bluetooth_api.h's bring_up()) calls it, on
+// esp_http_server's task, whenever a tap that needs the stack (Enable,
+// Start Advertising, Pair, a settings POST turning Bluetooth on) finds it
+// down, whatever the saved setting says (sweep F235). Nothing else here may
 // run off the loop task but the readers below and submit().
 //
 // init() writes none of the loop task's state (sweep F167): it brings the
@@ -271,6 +273,20 @@ void bringup_worker_finished();
 // written again until several later refusals have gone by: safe to hold
 // for an answer's length.
 const char* init_fail_reason();
+
+// Any task, after a tap's bring_up() answered false (sweep F235): whether
+// that was another task's bring-up, not a refusal. init() admits one caller
+// at a time and turns the others away at once, so a tap made while the boot
+// worker's init() runs (or an earlier tap's) gets false with nothing
+// refused; true then, and also when that bring-up has finished with the
+// stack up since. False means init() refused, and init_fail_reason() names
+// why (the heap guard, NimBLE's init, the server). The tap answers
+// bring_up_starting_error() with a 503 for the first and the refusal for
+// the second; it submits nothing either way.
+bool bring_up_starting();
+inline const char* bring_up_starting_error() {
+  return "Bluetooth is still starting; try again in a moment";
+}
 
 // Push device metadata into the BLE Device Information Service. Optional;
 // must be called BEFORE init() to take effect (init reads the cached
@@ -467,12 +483,15 @@ struct PairedView {
 void read_status(BluetoothStatus* out);
 // Any task. The settings the last pass published.
 BluetoothSettings read_settings();
-// Any task. Whether the settings the last pass published say on: the Start
-// Advertising and Pair handlers decide from it whether to bring the stack up
-// before they submit (F111). They read the loop task's flag in place before
-// (sweep F210), a data race with its commands and its first pass's load of
-// the saved settings; a read a pass stale costs what a stale one always
-// did, a bring_up() that finds the stack up or a refusal the owner retries.
+// Any task. Whether the settings the last pass published say on (sweep
+// F210: the setting is the loop task's flag, which its commands and its
+// first pass's load of the saved settings write, so another task reads it
+// here, never in place). The Start Advertising and Pair handlers decided
+// from it whether to bring the stack up before they submit, which left a
+// device saved on whose boot bring-up failed or was refused with the stack
+// down for good; whether Bluetooth is saved on says nothing about whether
+// the stack is up, and since sweep F235 no handler decides a bring-up from
+// it (bring_up() asks is_initialized()).
 bool read_enabled();
 // Any task. The scan list and the paired devices the last pass published.
 void read_scan(ScanView* out);
