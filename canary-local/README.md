@@ -899,8 +899,11 @@ fails on byte drift.
 - `emulator/test/glass_turn.sh` — the turned dash glass, natively (F184):
   the real `ui/lvgl_port.cpp` and the emulator's real display HAL built with
   g++ against the pinned LVGL 8.4; at every quarter turn the framebuffer the
-  page reads equals the scene rendered unturned, pixel for pixel, and a fed
-  touch comes back out of LVGL's pointer where it went in. With no argument
+  page reads equals the scene rendered unturned, pixel for pixel, a fed
+  touch comes back out of LVGL's pointer where it went in, and the HAL tells
+  the page each turn it wears with the glass's shape (A64: 1, 3 and 2 for
+  the dash's portrait, portrait flipped and landscape flipped, 1 and 3 for
+  the nightlight's R90 and R270). With no argument
   it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
   absent, so CI runs it before any step that reads the committed dist (a
   stale dist turns those red and skips every later step).
@@ -932,7 +935,17 @@ fails on byte drift.
   LVGL flushes only their areas, right of logical x 0 and narrower than the
   canvas); nothing falls off the panel or goes unpainted, a raw touch lands
   on the pixel drawn there, the splash's turned tail square draws, and a
-  glass with no turn buffer stays landscape. It first holds
+  glass with no turn buffer stays landscape. It builds the same test again
+  in nightstand-c6's config (F248: its lean `lv_conf`, LVGL compiled lean,
+  the C6 pin map's 172x320 and the port's static buffer, never turned) and
+  holds its whole and partial flushes against a plain 172x320 display. In
+  both configs it also builds `emulator/test/glass_splash_lvgl9_test.cpp`
+  (F246): the real `ui/splash.cpp` and `canary_mark.cpp` play the first
+  meeting on the dash's 800x480 and 480x800 and nightstand-c6's 172x320,
+  and the speech bubble's tail, read off the frame at each new line, sits on
+  the bubble and draws where its box and transform styles put it (where
+  F185's options would land is printed, not held). Every suite runs and the
+  script fails at the end if any did. It first holds
   `tests_host/fake_lvgl9/lvgl.h`'s quotes of LVGL 9.5 to the fetched source
   (`emulator/test/check_lvgl9_quotes.py`). It reads no dist; CI runs it as
   the wasm job's last step, whether the steps before it passed or failed

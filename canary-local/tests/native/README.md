@@ -242,7 +242,9 @@ natively. (Three native proofs of display sources are narrower.
 emulator's display HAL with g++, in the dash and the nightlight configs, and
 holds the turned glass pixel for pixel; `emulator/test/glass_turn_lvgl9.sh`
 builds the same port's LVGL 9 branch against the LVGL 9.5 the dash builds
-ship and holds its turned flushes the same way; neither boots firmware.
+ship, in the dash and nightstand-c6 configs, and holds its flushes the same
+way, and plays the real `splash.cpp`'s first meeting through it to read the
+speech bubble's tail off the frame; neither boots firmware.
 `emulator/test/runtime_turn.sh` boots the nightlight's whole firmware with
 g++, the TU list `build.sh` hands em++, its driver playing the page on a
 virtual clock, and holds three things: a unit turned while it runs seats
