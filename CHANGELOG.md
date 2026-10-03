@@ -2,12 +2,12 @@
 
 ## [Unreleased]
 
-### canary-wap's Bluetooth keeps the owner's commands through its bring-up and fits its bond store, Chirp refuses a mute it cannot keep and every REST answer fits its buffer, the PIO alert list reads whole and the kernel wizard frees a Canary it leaves pairing, the daily summary emits, the Vision's box math cannot overflow, the Lab's probes serve an index on loopback, the emulator builds the nightlight, and the LVGL 9.5 dash turns what it draws (#1762, wave 14)
+### canary-wap's Bluetooth keeps the owner's commands through its bring-up and fits its bond store, Chirp refuses a mute it cannot keep and every `serializeJson()` REST answer fits its buffer, the PIO alert list reads whole and the kernel wizard frees a Canary it leaves pairing, the daily summary emits, the Vision's box math cannot overflow, the Lab's probes serve an index on loopback, the emulator builds the nightlight, and the LVGL 9.5 dash turns what it draws (#1762, wave 14)
 
 - **canary-wap Bluetooth: pairing mode reads pairing, the bring-up keeps the
   owner's commands and hands its result to the loop task, the paired list fits
-  the bond store, and every REST answer goes out at its own length (sweep
-  F190, F167, F189, F196).** Pairing mode started with advertising stopped now
+  the bond store, and every Bluetooth REST answer goes out at its own length
+  (sweep F190, F167, F189, F196).** Pairing mode started with advertising stopped now
   reads `pairing` in GET /api/bluetooth. The saved Bluetooth settings and
   paired list are loaded by the loop task at its first pass, so a setting
   changed before or during the BLE bring-up (about 21 s on a device) is kept:
@@ -29,8 +29,8 @@
   rules BV4 to BV7; the Arduino and PlatformIO compiles are CI's; nothing is
   bench-tested with a phone.
 - **canary-wap Chirp: a mute needs a channel that is on, the beacon says
-  listening through a cooldown, and REST answers fit their buffers (sweep
-  F192, F194, F196).** A mute or an unmute on a Chirp channel that is off is
+  listening through a cooldown, and `serializeJson()` answers fit their
+  buffers (sweep F192, F194, F196).** A mute or an unmute on a Chirp channel that is off is
   refused (`409 chirp_disabled`, shown under the Community Activity list): it
   turned the channel on with no session, and a later enable answered an empty
   emoji. A disable now ends a running mute. The presence beacon's `listening`
@@ -42,7 +42,9 @@
   length. The new `check_wap_json_answers.py` measures every fixed REST answer
   buffer left in the canary-wap's `*_api.h` files and `canary_wap.ino` against
   its longest answer: 86 `serializeJson()` calls in 11 files,
-  `bluetooth_api.h` included, and 29 mutations refused. With the Bluetooth
+  `bluetooth_api.h` included, and 29 mutations refused. The sketch's
+  `snprintf`-built answers are another shape and are not measured (F212), and
+  a cut fleet-scan cache still answers an empty list (F211). With the Bluetooth
   rules above, `check_wap_loop_commands.py` now refuses 318 mutations.
   **Host-tested** and statically checked, the handlers' JSON in a scratch
   ArduinoJson 7.4.1 harness; the compiles are CI's; not bench-tested.

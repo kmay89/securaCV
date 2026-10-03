@@ -4839,7 +4839,7 @@ so — see D2 below.)
   `send_doc()` (`bluetooth_api.h`), which reserves a `String` to
   `measureJson() + 1` and answers the fixed allocation error when the
   reservation fails; no Bluetooth answer had gone out cut (the closest, the
-  OTA status, 261 of 320), and the harness gave byte-identical answers before
+  init error, at most 112 of 128), and the harness gave byte-identical answers before
   and after. The rest was measured and kept: the sketch's other serializations
   write a `String` or a `File`, except the fleet scan's cache (F211), and the
   21 fixed buffers left fit their longest answers (the closest, the mute
@@ -4852,7 +4852,8 @@ so — see D2 below.)
   reads 86 `serializeJson()` calls in 11 files, `bluetooth_api.h` included
   (the Chirp package left that file out until the Bluetooth half landed;
   integration dropped the exclusion), measures 21 fixed buffers and refuses 29
-  mutations; it failed 5 sites on the base tree. `check_wap_loop_commands.py`
+  mutations; on the base tree it fails 8 sites, 3 of them in
+  `bluetooth_api.h` (the Chirp package counted 5 with that file left out). `check_wap_loop_commands.py`
   rule BV6 keeps every `serializeJson()` of `bluetooth_api.h` inside
   `send_doc()` (the base file fails it at ten sites), and CV7's
   free-after-serialize pins follow the measured form. The check is a static
