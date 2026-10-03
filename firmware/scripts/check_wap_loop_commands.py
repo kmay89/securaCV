@@ -2680,8 +2680,8 @@ def check_bluetooth_dispatch(files: dict[str, str], errors: list[str]) -> None:
     for path, code in blanked.items():
         if path == BT_DISPATCH_H:
             continue
-        n_set = len(re.findall(r"\bble_server_dispatch::set_owner\s*\(", code))
-        n_install = len(re.findall(r"\bble_server_dispatch::install\s*\(", code))
+        n_set = len(call_starts(code, "ble_server_dispatch::set_owner"))
+        n_install = len(call_starts(code, "ble_server_dispatch::install"))
         if path == BT_CPP and n_install:
             errors.append(f"{BT_CPP}: calls ble_server_dispatch::install() — the channel's init() "
                           "attached the dispatcher; the loop task only names its owner with set_owner(), "
@@ -2920,11 +2920,19 @@ BT_STORE_EVICTS = (r"\bble_gap_unpair\w*\s*\(", r"\bdeleteBond\s*\(", r"\bdelete
                    r"\bble_store_util_delete\w*\s*\(")
 
 
+# BV5 and BV7 read every file of the sketch on every self-test mutation, and
+# a mutation changes one file: find each call in each distinct text once.
+@functools.lru_cache(maxsize=None)
+def call_starts(code: str, name: str) -> tuple[int, ...]:
+    """Where each `name(` starts in blanked `code` (a word boundary first)."""
+    return tuple(m.start() for m in re.finditer(r"\b" + name + r"\s*\(", code))
+
+
 def check_bluetooth_bond_store(files: dict[str, str], errors: list[str]) -> None:
     """Rule BV5 (F189)."""
     blanked = {path: blank_comments_and_strings(src) for path, src in files.items()}
     for path, code in blanked.items():
-        n = len(re.findall(r"\bsetDeviceCallbacks\s*\(", code))
+        n = len(call_starts(code, "setDeviceCallbacks"))
         if path == BT_CPP:
             init = body_of(code, SIG_BT_INIT, f"{BT_CPP}: init()", errors)
             if n != 1 or init is None or squash(init).count(BT_STORE_INSTALL) != 1:
@@ -3059,9 +3067,12 @@ def check_bluetooth_bringup_worker(files: dict[str, str], errors: list[str]) -> 
             if path in (BT_CPP, BT_H):
                 continue
             blanked = ino if path == INO else blank_comments_and_strings(src)
+            starts = call_starts(blanked, call)
+            if not starts:
+                continue
             pspans = ino_spans if path == INO else named_bodies(blanked)
-            for m in re.finditer(r"\b" + call + r"\s*\(", blanked):
-                where = enclosing_function(pspans, m.start())
+            for at in starts:
+                where = enclosing_function(pspans, at)
                 if path != INO or where not in allowed:
                     errors.append(f"{path}: {where or 'file scope'}() calls bluetooth_channel::{call}() — "
                                   f"only canary_wap.ino's {', '.join(allowed)} may, on the loop task "
