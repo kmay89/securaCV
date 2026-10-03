@@ -22,23 +22,33 @@ J1. Each `serializeJson(` serializes into a `String` or a `File` (they grow),
     into a heap buffer of `measureJson(doc) + 1` bytes (allocated from that
     length, serialized with it), or into a fixed buffer behind a
     `measureJson(doc) >= sizeof(buf)` refusal (the answer is refused whole,
-    never cut). Anything else is a fixed buffer, J2's.
-J2. A fixed buffer (`char buf[N]`, or a constant-size allocation with the
-    sized form) is held to the longest answer this check computes from the
-    document's own statements: every `x["key"] = value;` into the document
-    and the objects and arrays it hands out, each value bounded by what it
-    is (a literal by its escaped bytes, a lookup function by the longest
-    string it returns, a char array by twice its length, since ArduinoJson
-    escapes `"`, `\\`, `\\b`, `\\f`, `\\n`, `\\r` and `\\t` with two bytes and
-    writes every other byte as it is, a number by its type's widest
-    spelling, a float by 26 bytes). N must exceed it. The bound is computed,
-    never typed: a key or a longer message added to an answer moves it.
+    never cut). The measure must be of the answer that goes out: between a
+    `needed = measureJson(doc) + 1;` and its serialize stand only the one
+    allocation from `needed`, constants, and `if`s on `needed` or on the
+    allocation whose bodies return; a refusal's body must return, with
+    nothing between it and the serialize. A key written after the measure
+    would fill the measured buffer, unterminated. Anything else is a fixed
+    buffer, J2's.
+J2. A fixed buffer (`char buf[N]`, the declaration in scope at the
+    serialize, or a constant-size allocation with the sized form) is held
+    to the longest answer this check computes from the document's own
+    statements: every `x["key"] = value;` into the document and the objects
+    and arrays it hands out, each value bounded by what it is (a literal by
+    its escaped bytes, a lookup function by the longest string it returns,
+    a `const char*` by every value assigned to it before the answer, a char
+    array by twice its length, since ArduinoJson escapes `"`, `\\`, `\\b`,
+    `\\f`, `\\n`, `\\r` and `\\t` with two bytes and writes every other byte
+    as it is, a number by its type's widest spelling, a float by 26 bytes).
+    N must exceed it. The bound is computed, never typed: a key or a longer
+    message added to an answer moves it.
 J3. What the check cannot bound fails: an array built in a loop, a value
-    whose type it cannot find, a `const char*` whose strings it cannot see,
-    a document it cannot follow. Such an answer serializes to
-    `measureJson()`'s length (J1), which needs no bound. A helper whose
-    document carries a `const char*` parameter (`send_err(req, msg)`) is
-    measured at every call of it in its file.
+    whose type it cannot find, a `const char*` whose strings it cannot see
+    (one handed out by address, stepped, or written through), a `char*`
+    anything may write, a document it cannot follow. Such an answer
+    serializes to `measureJson()`'s length (J1), which needs no bound. A
+    helper whose document carries a `const char*` parameter
+    (`send_err(req, msg)`) is measured at every call of it in its file, and
+    at every value the helper assigns it.
 J4. A site exempt from J1-J3 is named in `EXEMPT` with its reason, and must
     still use the sized form (it writes no further than the buffer; the one
     exempt site terminates a cut cache itself).
@@ -300,56 +310,69 @@ FN_DEF = re.compile(
     re.M)
 
 
+@functools.lru_cache(maxsize=256)
+def index_file(name: str, src: str) -> Index:
+    """One file's declarations (cached: each mutation of the self-test re-reads only the file it
+    changed)."""
+    idx = Index({})
+    code = blank_comments_and_strings(src)
+    spans = namespace_spans(code)
+    # Functions: a return type, a name, a parameter list, then a body or `;`.
+    for m in FN_DEF.finditer(code):
+        fname = m.group("name")
+        ret = (m.group("ret") + (m.group("ptr") or "")).strip()
+        if fname in KEYWORDS or ret.split()[-1] in KEYWORDS | {"else", "return"}:
+            continue
+        open_at = m.end() - 1
+        close = matching_paren(code, open_at)
+        if close < 0:
+            continue
+        rest = code[close + 1:close + 120]
+        tail = re.match(r"\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?([{;])", rest)
+        if not tail:
+            continue
+        body = None
+        if tail.group(1) == "{":
+            b_open = close + 1 + tail.end() - 1
+            b_close = close_brace(code, b_open)
+            if b_close < 0:
+                continue
+            body = (b_open + 1, b_close)
+        fn = Fn(fname, ns_at(spans, m.start()), re.sub(r"\s+", " ", ret), code[open_at + 1:close],
+                name, body)
+        idx.fns.setdefault(fname, []).append(fn)
+    # Structs and classes, and typedef'd anonymous ones.
+    for m in re.finditer(r"\b(?:struct|class)\s+(\w+)\s*(?::[^{;]*)?\{", code):
+        end = close_brace(code, m.end() - 1)
+        if end > 0:
+            st = Struct(m.group(1), ns_at(spans, m.start()))
+            parse_fields(code[m.end():end], st)
+            idx.structs.setdefault(st.name, []).append(st)
+    for m in re.finditer(r"\btypedef\s+struct\s*\w*\s*\{", code):
+        end = close_brace(code, m.end() - 1)
+        after = re.match(r"\s*(\w+)\s*;", code[end + 1:]) if end > 0 else None
+        if after:
+            st = Struct(after.group(1), ns_at(spans, m.start()))
+            parse_fields(code[m.end():end], st)
+            idx.structs.setdefault(st.name, []).append(st)
+    for m in re.finditer(r"\benum\s+(?:class\s+)?(\w+)\s*(?::\s*([\w:]+))?\s*\{", code):
+        idx.enums.setdefault(m.group(1), []).append((ns_at(spans, m.start()), m.group(2) or "int"))
+    for m in re.finditer(r"\b(?:static\s+)?(?:constexpr|const)\s+(?:unsigned\s+)?[\w:]+\s+(\w+)\s*=\s*([^;{}]+);",
+                         code):
+        idx.consts.setdefault(m.group(1), []).append((ns_at(spans, m.start()), m.group(2).strip()))
+    for m in re.finditer(r"^[ \t]*#\s*define\s+(\w+)[ \t]+([^\n]+)$", code, re.M):
+        idx.consts.setdefault(m.group(1), []).append(((), m.group(2).strip()))
+    return idx
+
+
 def build_index(files: dict[str, str]) -> Index:
     idx = Index(files)
     for name, src in files.items():
-        code = blank_comments_and_strings(src)
-        spans = namespace_spans(code)
-        # Functions: a return type, a name, a parameter list, then a body or `;`.
-        for m in FN_DEF.finditer(code):
-            fname = m.group("name")
-            ret = (m.group("ret") + (m.group("ptr") or "")).strip()
-            if fname in KEYWORDS or ret.split()[-1] in KEYWORDS | {"else", "return"}:
-                continue
-            open_at = m.end() - 1
-            close = matching_paren(code, open_at)
-            if close < 0:
-                continue
-            rest = code[close + 1:close + 120]
-            tail = re.match(r"\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?([{;])", rest)
-            if not tail:
-                continue
-            body = None
-            if tail.group(1) == "{":
-                b_open = close + 1 + tail.end() - 1
-                b_close = close_brace(code, b_open)
-                if b_close < 0:
-                    continue
-                body = (b_open + 1, b_close)
-            fn = Fn(fname, ns_at(spans, m.start()), re.sub(r"\s+", " ", ret), code[open_at + 1:close],
-                    name, body)
-            idx.fns.setdefault(fname, []).append(fn)
-        # Structs and classes, and typedef'd anonymous ones.
-        for m in re.finditer(r"\b(?:struct|class)\s+(\w+)\s*(?::[^{;]*)?\{", code):
-            end = close_brace(code, m.end() - 1)
-            if end > 0:
-                st = Struct(m.group(1), ns_at(spans, m.start()))
-                parse_fields(code[m.end():end], st)
-                idx.structs.setdefault(st.name, []).append(st)
-        for m in re.finditer(r"\btypedef\s+struct\s*\w*\s*\{", code):
-            end = close_brace(code, m.end() - 1)
-            after = re.match(r"\s*(\w+)\s*;", code[end + 1:]) if end > 0 else None
-            if after:
-                st = Struct(after.group(1), ns_at(spans, m.start()))
-                parse_fields(code[m.end():end], st)
-                idx.structs.setdefault(st.name, []).append(st)
-        for m in re.finditer(r"\benum\s+(?:class\s+)?(\w+)\s*(?::\s*([\w:]+))?\s*\{", code):
-            idx.enums.setdefault(m.group(1), []).append((ns_at(spans, m.start()), m.group(2) or "int"))
-        for m in re.finditer(r"\b(?:static\s+)?(?:constexpr|const)\s+(?:unsigned\s+)?[\w:]+\s+(\w+)\s*=\s*([^;{}]+);",
-                             code):
-            idx.consts.setdefault(m.group(1), []).append((ns_at(spans, m.start()), m.group(2).strip()))
-        for m in re.finditer(r"^[ \t]*#\s*define\s+(\w+)[ \t]+([^\n]+)$", code, re.M):
-            idx.consts.setdefault(m.group(1), []).append(((), m.group(2).strip()))
+        part = index_file(name, src)
+        for mine, theirs in ((idx.fns, part.fns), (idx.structs, part.structs), (idx.enums, part.enums),
+                             (idx.consts, part.consts)):
+            for key, vals in theirs.items():
+                mine.setdefault(key, []).extend(vals)
     return idx
 
 
@@ -641,11 +664,26 @@ def bound_returns(ctx: Ctx, fn: Fn) -> int:
     return best
 
 
-def decl_type(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
-    """The declared type (and array dims) of `name` in ctx's function, before `pos`, or its parameter."""
+def block_end(code: str, lo: int, hi: int, p: int) -> int:
+    """The `}` closing the innermost block around offset `p` of a function body [lo, hi), or hi."""
+    depth = 0
+    for j in range(p - 1, lo - 1, -1):
+        c = code[j]
+        if c == "}":
+            depth += 1
+        elif c == "{":
+            if depth == 0:
+                end = close_brace(code, j)
+                return end if 0 <= end < hi else hi
+            depth -= 1
+    return hi
+
+
+def local_decl(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
+    """The declaration of `name` in ctx's function that is in scope at `pos` (the innermost)."""
     lo, hi = ctx.fn.body
     region = ctx.code[lo:pos]
-    pat = re.compile(r"(?:^|[;{}(,])\s*(?:static\s+)?(?:const\s+)?(?P<type>(?:unsigned\s+)?[A-Za-z_][\w:]*"
+    pat = re.compile(r"(?:^|[;{}(,])\s*(?:static\s+)?(?P<const>const\s+)?(?P<type>(?:unsigned\s+)?[A-Za-z_][\w:]*"
                      r"(?:\s*<[^;(){}]*?>)?)\s*(?P<ptr>[*&]*)\s*\b" + re.escape(name) +
                      r"\b\s*(?P<dims>(?:\[[^\]]*\]\s*)*)\s*(?:=|;|\{|\)|,)", re.M)
     found = None
@@ -653,14 +691,27 @@ def decl_type(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
         t = m.group("type")
         if t in KEYWORDS or t in ("return", "else"):
             continue
-        found = (t + m.group("ptr"), re.findall(r"\[([^\]]*)\]", ctx.kept[lo + m.start("dims"):lo + m.end("dims")]))
+        # A declaration in a block that closed before `pos` is another
+        # variable of the same name, out of scope here (`{ char buf[768]; }`
+        # beside the 64-byte buf the answer is written into).
+        if block_end(ctx.code, lo, hi, lo + m.start("type")) < pos:
+            continue
+        found = (("const " if m.group("const") else "") + t + m.group("ptr"),
+                 re.findall(r"\[([^\]]*)\]", ctx.kept[lo + m.start("dims"):lo + m.end("dims")]))
+    return found
+
+
+def decl_type(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
+    """The declared type (and array dims) of `name` in scope at `pos` of ctx's function, or its parameter."""
+    found = local_decl(ctx, name, pos)
     if found is not None:
         return found
     for p in split_top(ctx.fn.params):
-        m = re.match(r"^(?:const\s+)?(?P<type>(?:unsigned\s+)?[A-Za-z_][\w:]*(?:\s*<[^>]*>)?)\s*(?P<ptr>[*&]*)\s*"
+        m = re.match(r"^(?P<const>const\s+)?(?P<type>(?:unsigned\s+)?[A-Za-z_][\w:]*(?:\s*<[^>]*>)?)\s*(?P<ptr>[*&]*)\s*"
                      + re.escape(name) + r"\s*(?P<dims>(?:\[[^\]]*\])*)\s*(?:=.*)?$", p.strip(), re.S)
         if m:
-            return (m.group("type") + m.group("ptr"), re.findall(r"\[([^\]]*)\]", m.group("dims")))
+            return (("const " if m.group("const") else "") + m.group("type") + m.group("ptr"),
+                    re.findall(r"\[([^\]]*)\]", m.group("dims")))
     return None
 
 
@@ -744,18 +795,29 @@ def bound_name(ctx: Ctx, name: str, pos: int) -> int:
         raise Unbounded(f"{name}: no declaration found")
     typ, dims = t
     base = typ.replace(" ", "")
-    if base in ("constchar*", "char*"):
-        # A local with one initializer, or a parameter measured at its callers.
+    if base == "char*" and not dims:
+        raise Unbounded(f"{name}: a char* whose bytes anything may write")
+    if base == "constchar*" and not dims:
+        # Every value it holds before `pos`: each assignment in the function
+        # (its initializer, one in an if, an else or a case alike), and a
+        # parameter's value at every call too.
         lo = ctx.fn.body[0]
-        assigns = list(re.finditer(r"(?:^|[;{}(])\s*(?:const\s+)?(?:char\s*\*\s*)?\b" + re.escape(name) +
-                                   r"\s*=(?!=)", ctx.code[lo:pos], re.M))
-        if assigns:
-            vals = []
-            for a in assigns:
-                start = lo + a.end()
-                vals.append(bound_value(ctx, ctx.kept[start:statement_end(ctx.kept, start)], start))
-            return max(vals)
-        return bound_param(ctx, name)
+        region = ctx.code[lo:pos]
+        esc = re.escape(name)
+        other = re.search(r"(?<![\w.>:&])&\s*" + esc + r"\b|(?<![\w.>:])" + esc + r"\s*(?:\[[^\]]*\]\s*)?"
+                          r"(?:[-+*/%&|^]|<<|>>)=|(?:\+\+|--)\s*" + esc + r"\b|(?<![\w.>:])" + esc + r"\s*(?:\+\+|--)"
+                          r"|(?<![\w.>:])" + esc + r"\s*\[[^\]]*\]\s*=(?!=)", region)
+        if other:
+            raise Unbounded(f"{name}: changed in a way the check does not follow ({other.group(0).strip()})")
+        vals = []
+        for a in re.finditer(r"(?<![\w.>:])" + esc + r"\s*=(?!=)", region):
+            start = lo + a.end()
+            vals.append(bound_value(ctx, ctx.kept[start:statement_end(ctx.kept, start)], start))
+        if local_decl(ctx, name, pos) is None:
+            vals.append(bound_param(ctx, name))
+        elif not vals:
+            raise Unbounded(f"{name}: a local given no value the check can see")
+        return max(vals)
     return type_width(ctx.idx, typ, ctx.fn.ns, dims)
 
 
@@ -946,6 +1008,84 @@ def fn_containing(idx: Index, file: str, pos: int) -> Fn | None:
     return best
 
 
+def body_always_returns(body: str) -> bool:
+    """An if-body (braces stripped, or one statement) whose last statement is a `return` it always
+    reaches: nothing in it jumps out another way."""
+    if re.search(r"\b(?:break|continue|goto)\b", body):
+        return False
+    text = body.strip()
+    if not text.endswith(";"):
+        return False
+    depth, last = 0, 0
+    for i, c in enumerate(text[:-1]):
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0 and c == "}":
+                last = i + 1
+        elif c == ";" and depth == 0:
+            last = i + 1
+    return re.match(r"\s*return\b", text[last:]) is not None
+
+
+def if_statement(code: str, at: int) -> tuple[str, str, int] | None:
+    """`if (cond) body` at `at`: (cond, body, offset past it), or None when it has an `else`."""
+    p_open = code.find("(", at)
+    p_close = matching_paren(code, p_open)
+    j = p_close + 1
+    while j < len(code) and code[j].isspace():
+        j += 1
+    if code[j] == "{":
+        end = close_brace(code, j)
+        body, nxt = code[j + 1:end], end + 1
+    else:
+        end = statement_end(code, j)
+        body, nxt = code[j:end + 1], end + 1
+    if re.match(r"\s*else\b", code[nxt:]):
+        return None
+    return code[p_open + 1:p_close], body, nxt
+
+
+def nothing_but_alloc(code: str, kept: str, start: int, end: int, target: str, size: str) -> str | None:
+    """What stands between a `size = measureJson(doc) + 1;` and its serializeJson(): only the
+    allocation of `target` from `size` (once), constants, and `if`s on the size or the
+    allocation whose bodies return. Anything else may grow the document (or change the size)
+    after it was measured: the answer would fill its measured buffer, unterminated. Returns
+    what does not belong (from `kept`, the same text with its literals), or None."""
+    t, n = re.escape(target), re.escape(size)
+    alloc = re.compile(r"(?:char\s*\*\s*)?" + t + r"\s*=\s*(?:\(\s*char\s*\*\s*\)\s*)?"
+                       r"(?:malloc\s*\(\s*" + n + r"\s*\)|calloc\s*\(\s*1\s*,\s*" + n + r"\s*\))\s*$")
+    const = re.compile(r"(?:static\s+)?const(?:expr)?\s+(?:size_t|int|unsigned|uint32_t)\s+\w+\s*=\s*\d+[uUlL]*\s*$")
+    cond = re.compile(r"\s*(?:!\s*" + t + r"|" + t + r"\s*==\s*(?:nullptr|NULL)|(?:nullptr|NULL)\s*==\s*" + t
+                      + r"|" + n + r"\s*>=?\s*(?:[A-Za-z_]\w*|\d+[uUlL]*))\s*$")
+    allocs, i = 0, start
+    while True:
+        while i < end and code[i].isspace():
+            i += 1
+        if i >= end:
+            break
+        if re.match(r"if\s*\(", code[i:end]):
+            parsed = if_statement(code, i)
+            if parsed is None or parsed[2] > end:
+                return kept[i:end].strip()[:60]
+            c, body, nxt = parsed
+            if not cond.match(c) or not body_always_returns(body):
+                return kept[i:nxt].strip()[:60]
+            i = nxt
+            continue
+        e = statement_end(code, i)
+        if e < 0 or e >= end:
+            return kept[i:end].strip()[:60]
+        stmt = code[i:e]
+        if alloc.match(stmt):
+            allocs += 1
+        elif not const.match(stmt):
+            return kept[i:e].strip()[:60]
+        i = e + 1
+    return None if allocs == 1 else f"{allocs} allocations of {target} from {size}"
+
+
 def judge_site(ctx: Ctx, call_at: int) -> Site:
     kept, code = ctx.kept, ctx.code
     open_at = code.find("(", call_at)
@@ -974,10 +1114,21 @@ def judge_site(ctx: Ctx, call_at: int) -> Site:
     size_expr = None
     if base == "char" and len(dims) == 1:
         size_expr = dims[0]
-        guard = re.search(r"if\s*\(\s*measureJson\s*\(\s*" + re.escape(doc) + r"\s*\)\s*>=\s*sizeof\s*\(\s*"
-                          + re.escape(target) + r"\s*\)\s*\)", before)
-        if guard and len(args) == 3 and re.fullmatch(r"sizeof\s*\(\s*" + re.escape(target) + r"\s*\)", args[2]):
-            site.verdict = "guarded"
+        guards = list(re.finditer(r"if\s*\(\s*measureJson\s*\(\s*" + re.escape(doc) + r"\s*\)\s*>=\s*sizeof\s*\(\s*"
+                                  + re.escape(target) + r"\s*\)\s*\)", before))
+        if guards and len(args) == 3 and re.fullmatch(r"sizeof\s*\(\s*" + re.escape(target) + r"\s*\)", args[2]):
+            # The refusal must refuse (its body returns) and be the last
+            # thing before the serialize: a document written after it is
+            # an answer it never measured.
+            parsed = if_statement(code, lo + guards[-1].start())
+            if parsed is None or not body_always_returns(parsed[1]):
+                site.verdict = (f"{target}: the measureJson() refusal before it does not return (an else, or a "
+                                "body that falls through to the serialize) (J1)")
+            elif code[parsed[2]:call_at].strip():
+                site.verdict = (f"{target}: something stands between the measureJson() refusal and the "
+                                f"serialize ({kept[parsed[2]:call_at].strip()[:60]}) (J1)")
+            else:
+                site.verdict = "guarded"
             return site
     elif base == "char*":
         alloc = list(re.finditer(r"\b" + re.escape(target) + r"\s*=\s*(?:\(\s*char\s*\*\s*\)\s*)?"
@@ -986,10 +1137,14 @@ def judge_site(ctx: Ctx, call_at: int) -> Site:
             site.verdict = f"{target}: a char* the check cannot size (J3)"
             return site
         size_expr = (alloc[-1].group(1) or alloc[-1].group(2)).strip()
-        measured = re.search(r"\b" + re.escape(size_expr) + r"\s*=\s*measureJson\s*\(\s*" + re.escape(doc)
-                             + r"\s*\)\s*\+\s*1\s*;", before) if re.fullmatch(r"\w+", size_expr) else None
+        measured = list(re.finditer(r"\b" + re.escape(size_expr) + r"\s*=\s*measureJson\s*\(\s*" + re.escape(doc)
+                                    + r"\s*\)\s*\+\s*1\s*;", before)) if re.fullmatch(r"\w+", size_expr) else []
         if measured and len(args) == 3 and args[2] == size_expr:
-            site.verdict = "measured"
+            stray = nothing_but_alloc(code, kept, lo + measured[-1].end(), call_at, target, size_expr)
+            site.verdict = "measured" if stray is None else (
+                f"{target}: between its measureJson() and the serialize stands {stray!r}; only the allocation "
+                "from the measured size, a constant, and an if on the size or the allocation that returns "
+                "may (J1)")
             return site
         if len(args) != 3:
             site.verdict = f"{target}: a heap buffer serialized without its size (J3)"
@@ -1068,6 +1223,12 @@ MESH_H = f"{SKETCH}/mesh_network.h"
 HOUSEHOLD = f"{SKETCH}/household_api.h"
 RF = f"{SKETCH}/rf_presence_api.h"
 BEACON = f"{SKETCH}/beacon_api.h"
+
+def both(first: Mutation, second: Mutation) -> Mutation:
+    def mutate(files: dict[str, str]) -> dict[str, str]:
+        return second(first(files))
+    return mutate
+
 
 def add_file(path: str, text: str) -> Mutation:
     def mutate(files: dict[str, str]) -> dict[str, str]:
@@ -1159,6 +1320,50 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     # J4: the exempt site keeps the sized form.
     ("the fleet scan cache drops its size",
      raw_in(INO, "serializeJson(doc, staging, FLEET_SCAN_CACHE_SIZE);", "serializeJson(doc, staging);")),
+    # J2: every value a const char* holds before the answer, wherever it is
+    # assigned (the review's P1 and P3: an assignment after `)` or `case 3:`).
+    ("the status reason is reassigned on an if's own line",
+     raw_in(CHIRP_API, "  const char* why = chirp_channel::cannot_send_reason(v);\n",
+            "  const char* why = chirp_channel::cannot_send_reason(v);\n"
+            f'  if (v.muted) why = "{LONG * 3}";\n')),
+    ("the status reason is reassigned in a one-line case",
+     raw_in(CHIRP_API, "  const char* why = chirp_channel::cannot_send_reason(v);\n",
+            "  const char* why = chirp_channel::cannot_send_reason(v);\n"
+            f'  switch (v.cooldown_tier) {{ case 3: why = "{LONG * 3}"; break; default: break; }}\n')),
+    ("the status reason is handed out by address",
+     raw_in(CHIRP_API, "  const char* why = chirp_channel::cannot_send_reason(v);\n",
+            "  const char* why = chirp_channel::cannot_send_reason(v);\n  pick_reason(v, &why);\n")),
+    ("a household error from a local reassigned on an if's line (the review's P6)",
+     raw_in(HOUSEHOLD, '    return send_err(req, "slot empty or role invalid");',
+            f'    {{ const char* m = "slot empty or role invalid"; if (len) m = "{LONG}"; return send_err(req, m); }}')),
+    ("a helper that assigns its own parameter is still measured at its callers",
+     both(raw_in(HOUSEHOLD, '  JsonDocument d; d["success"] = false; d["error"] = msg;',
+                 '  if (!msg)\n    msg = "none";\n  JsonDocument d; d["success"] = false; d["error"] = msg;'),
+          raw_in(HOUSEHOLD, '    return send_err(req, "slot empty or role invalid");',
+                 f'    return send_err(req, "{LONG}");'))),
+    # J2: the buffer in scope at the serialize, not one of the same name in
+    # a block that closed (the review's P7).
+    ("the status answer's buffer is shadowed by a closed block's 768 bytes",
+     raw_in(CHIRP_API, "  char buffer[768];\n  serializeJson(doc, buffer);\n",
+            "  char buffer[64];\n  { char buffer[768]; (void)buffer; }\n  serializeJson(doc, buffer);\n")),
+    # J1: nothing writes the document after it was measured (the review's P4
+    # and its recent-route twin), and a refusal refuses (P5).
+    ("the nearby list gains a key after its measureJson()",
+     raw_in(CHIRP_API, "  // (the copy's emoji) by pointer until then (rule CV7).\n  const size_t needed = measureJson(doc) + 1;\n",
+            "  // (the copy's emoji) by pointer until then (rule CV7).\n  const size_t needed = measureJson(doc) + 1;\n"
+            '  doc["late"] = 1;\n')),
+    ("the recent list gains a key after its allocation",
+     raw_in(CHIRP_API, "  }\n\n  serializeJson(doc, buffer, needed);\n  free(t);   // after the serialize",
+            '  }\n  doc["extra"] = "0123456789";\n  serializeJson(doc, buffer, needed);\n  free(t);   // after the serialize')),
+    ("the RF status grows between its measure and its allocation",
+     raw_in(RF, "  const size_t needed = measureJson(doc) + 1;\n  char* buffer = (char*)malloc(needed);\n",
+            '  const size_t needed = measureJson(doc) + 1;\n  doc["late"] = 1;\n  char* buffer = (char*)malloc(needed);\n')),
+    ("the beacon reply's refusal only logs",
+     raw_in(BEACON, "  if (measureJson(doc) >= sizeof(buf)) {\n    return send_json(req, \"{\\\"success\\\":false,\\\"error\\\":\\\"reply_too_long\\\"}\");\n  }\n",
+            "  if (measureJson(doc) >= sizeof(buf)) {\n    (void)0;\n  }\n")),
+    ("the beacon reply is written after its refusal",
+     raw_in(BEACON, "  }\n  serializeJson(doc, buf, sizeof(buf));\n  return send_json(req, buf);",
+            '  }\n  doc["late"] = 1;\n  serializeJson(doc, buf, sizeof(buf));\n  return send_json(req, buf);')),
 ]
 
 
