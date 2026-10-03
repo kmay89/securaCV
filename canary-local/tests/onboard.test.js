@@ -26,8 +26,9 @@
 //   · the turned splash read misses the splash or half of it   → "splash coverage (F206)"
 //   · the nightlight flavor's wiring, HAL turn, preset or the
 //     emulator's flavor lists drift apart                      → "nightlight flavor (F204)"
-//   · the clock slows after the splash began, or a probe stops
-//     reading the turned splash or booting a turned glass      → "splash and turned boots (F206)"
+//   · the clock slows after the splash began, a probe stops
+//     reading the turned splash (laid out or inked) or booting a
+//     turned glass, or a turned boot passes with no bird read  → "splash and turned boots (F206)"
 //   · the drift check passes a new flavor's uncommitted bundle → "dist drift (F204)"
 //   · the gates fall out of CI                                 → "CI runs"
 //
@@ -975,7 +976,7 @@ test("splash and turned boots (F206): the harness slows the clock from power-on;
   // The turned walk reads the splash from the first frame to the first-boot
   // line, holds every read, and must have seen it whole.
   const probe = read(join(__dirname, "onboard_probe.mjs"));
-  const splash = /let splashRead = null;\n    if \(turn\) \{([\s\S]*?)\n    \}\n/.exec(probe)?.[1] || "";
+  const splash = /let splashRead = null, splashInked = null;\n    if \(turn\) \{([\s\S]*?)\n    \}\n/.exec(probe)?.[1] || "";
   assert.ok(splash.includes("window.__state.flushes > 0"), "from the firmware's first frame");
   assert.ok(splash.includes("while (!(await serial()).includes('First boot - onboarding AP \"SecuraCV-')) {"));
   assert.ok(splash.includes("check(st.glass.w === turn.glass.w && st.glass.h === turn.glass.h,"));
@@ -983,6 +984,15 @@ test("splash and turned boots (F206): the harness slows the clock from power-on;
   assert.ok(splash.includes("splashRead = splashCoverage(reads, HELLO_LINES);") &&
     splash.includes("check(splashRead.bird > 0 && splashRead.missing.length === 0,"), "the splash must have been read whole");
   assert.ok(splash.includes("await E(() => window.__emu.setTimeScale(1));"), "the clock is restored after the splash");
+  // ...and off the framebuffer: each whole line at full strength is read on
+  // the canvas a frame after (its ink inside the firmware's box), and every
+  // line must have been seen inked.
+  assert.ok(splash.includes('whole = (await onCanvas(linesInk, [], "window.__emu.screenLabels()"))') &&
+    splash.includes("while (Date.now() - tw < 2000 && (await E(() => window.__state.flushes)) < f0 + 2) {") &&
+    splash.includes("const dark = await inkSplash();") && splash.includes("check(dark === null, `the splash: ${dark} (F206)`);"),
+  "the splash's whole lines are read on the canvas, a frame after");
+  assert.ok(splash.includes("splashInked = splashInk(inkReads, HELLO_LINES);") &&
+    splash.includes("check(splashInked.missing.length === 0,"), "every splash line must have been seen inked");
   assert.ok(probe.includes('const HELLO_LINES = helloLines(await readFile(join(ROOT, "firmware/common/story/story_scripts.h"), "utf8"));'));
   assert.match(probe, /const SPLASH_SCALE = 0\.\d+;/);
   // boot_probe boots each turned glass whose flavor it boots, and holds the
@@ -996,6 +1006,42 @@ test("splash and turned boots (F206): the harness slows the clock from power-on;
     once.includes("const frames = framesOnGlass(st.shapes, st.flushes, turn.glass);") &&
     once.indexOf("const perch = birdPerch(st);") > once.indexOf("const frames = framesOnGlass("),
   "a turned boot holds its glass, its frames and its face's bird");
+  // ...and the bird must be there: birdPerch passes a bird off stage, so a
+  // turned boot whose face showed none passed with no bird read at all.
+  const turnedBlock = /\n  if \(turn\) \{([\s\S]*?)\n  \}\n/.exec(once)?.[1] || "";
+  assert.ok(turnedBlock.includes("const stage = birdOnStage(st, `the ${turn.name} ${flavor} face 6.5 s on`);") &&
+    turnedBlock.includes("if (stage) { fail(name, stage); return; }"),
+  "a turned boot fails when its face shows no bird");
+});
+
+test("splash coverage (F206): splashInk names the lines never seen drawn, and a whole line drawn nowhere", async () => {
+  const { splashInk } = await import("./turned_glass.mjs");
+  const lines = ["Oh! Hello.", "I'm %s.", "Nothing."];
+  const r = (text, ink) => ({ text, box: [10, 20, 100, 16], ink });
+  const all = splashInk([r("Oh! Hello.", 120), r("I'm pale-finch.", 80), r("Nothing.", 40), r("Noth", 0)], lines);
+  assert.deepStrictEqual(all.inked, lines);
+  assert.deepStrictEqual(all.missing, []);
+  assert.deepStrictEqual(all.dark, [], "a line still typing is not a whole line");
+  // A whole line laid out but drawn nowhere (no ink in its box): dark, and
+  // missing unless another read saw it inked.
+  const off = splashInk([r("Oh! Hello.", 120), r("I'm pale-finch.", 0)], lines);
+  assert.deepStrictEqual(off.missing, ["I'm %s.", "Nothing."]);
+  assert.deepStrictEqual(off.dark.map((d) => d.text), ["I'm pale-finch."]);
+  assert.deepStrictEqual(splashInk([], lines).missing, lines, "no canvas read sees nothing");
+});
+
+test("splash and turned boots (F206): birdOnStage fails a read with no bird on stage", async () => {
+  const { birdOnStage, birdPerch } = await import("./bird_perch.mjs");
+  const glass = { w: 480, h: 800 };
+  const bird = { x: 176, y: 361, w: 128, h: 128, shown: true };
+  assert.strictEqual(birdOnStage({ bird, labels: [], glass }, "the face"), null);
+  // birdPerch passes both of these unread; birdOnStage names them.
+  for (const [st, why] of [[{ bird: null, labels: [], glass }, /no mark alive/],
+                           [{ bird: { ...bird, shown: false }, labels: [], glass }, /the mark is hidden/]]) {
+    assert.strictEqual(birdPerch(st), null);
+    assert.match(birdOnStage(st, "the portrait dash face 6.5 s on"), why);
+    assert.match(birdOnStage(st, "the portrait dash face 6.5 s on"), /^the portrait dash face 6\.5 s on: no bird on stage/);
+  }
 });
 
 test("dist drift (F204): the drift check fails on a bundle this tree builds that the committed dist lacks", () => {

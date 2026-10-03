@@ -63,7 +63,9 @@
 //     first-boot line on a clock slowed to half speed from power-on
 //     (?timescale=): every read on the turned glass, every line on it and
 //     none cut, the bird clear of every line (birdPerch), and the run must
-//     have seen the bird and every line kHello types whole (splashCoverage);
+//     have seen the bird and every line kHello types whole (splashCoverage)
+//     and each of those lines inked on the canvas inside the box the
+//     firmware reports for it, once a frame has landed (splashInk);
 //     the glass is the turned size, and on the Join scene the QR card and
 //     the halo stand where onboard_layout.h's stack seats them
 //     (onboardJoin; cardAtLayout within the anti-aliased edge, haloAtLayout
@@ -90,7 +92,7 @@ import {
   linesOnGlass, linesCut, haloOf, cardInHalo, framesOnGlass, cardAtLayout, haloAtLayout,
   qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked,
 } from "./onboard_glass.mjs";
-import { turnedGlasses, readTurnedSources, helloLines, splashCoverage } from "./turned_glass.mjs";
+import { turnedGlasses, readTurnedSources, helloLines, splashCoverage, splashInk, isWholeLine } from "./turned_glass.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -502,10 +504,40 @@ async function walkHarness(flavor, turn = null) {
     // none cut (linesOnGlass, linesCut), and the bird, where it is on stage,
     // on the glass and clear of every line (birdPerch). The run must have
     // seen the bird and every line kHello types whole, so a walk that missed
-    // the splash fails instead of passing on nothing.
-    let splashRead = null;
+    // the splash fails instead of passing on nothing. Those reads are the
+    // firmware's own account (its object tree); the framebuffer is read too:
+    // each whole line, the first time a read shows it at full strength, is
+    // read again on the canvas once a frame has landed after it (linesInk:
+    // ink inside the box the firmware reports), and every line must have
+    // been seen inked so — a HAL that laid the splash out right and drew it
+    // somewhere else fails here.
+    let splashRead = null, splashInked = null;
     if (turn) {
       const reads = [];
+      const inkReads = [];
+      const inkedTexts = new Set();
+      // the canvas after a frame or two has landed past the read (or 2 s
+      // without one: nothing has changed to draw), the labels and the
+      // pixels read in one turn of the page; a whole line dark there is read
+      // once more after another frame before it fails
+      const inkSplash = async () => {
+        let whole = [];
+        for (let pass = 0; pass < 2; pass++) {
+          const f0 = await E(() => window.__state.flushes);
+          const tw = Date.now();
+          while (Date.now() - tw < 2000 && (await E(() => window.__state.flushes)) < f0 + 2) {
+            await new Promise((r) => setTimeout(r, 10));
+          }
+          whole = (await onCanvas(linesInk, [], "window.__emu.screenLabels()"))
+            .filter((r) => HELLO_LINES.some((line) => isWholeLine(r.text, line)));
+          if (splashInk(whole, HELLO_LINES).dark.length === 0) break;
+        }
+        inkReads.push(...whole);
+        for (const r of whole) if (r.ink > 0) inkedTexts.add(r.text);
+        const dark = splashInk(whole, HELLO_LINES).dark;
+        return dark.length ? `${dark.length} whole line(s) of the splash show no ink where the firmware says ` +
+          `they are, a frame after: ${JSON.stringify(dark.map((r) => ({ text: r.text, box: r.box })))}` : null;
+      };
       const t0 = Date.now();
       // From the firmware's first frame: before it, the canvas is the page's,
       // not yet the glass the firmware announced (framesOnGlass holds that
@@ -520,12 +552,21 @@ async function walkHarness(flavor, turn = null) {
         const bad = linesOnGlass(st.labels, st.glass) || linesCut(st.labels) || birdPerch(st);
         check(bad === null, `the splash: ${bad} (F206)`);
         reads.push(st);
+        if (st.labels.some((l) => l.shown && l.opa >= 250 && !inkedTexts.has(l.text) &&
+            HELLO_LINES.some((line) => isWholeLine(l.text, line)))) {
+          const dark = await inkSplash();
+          check(dark === null, `the splash: ${dark} (F206)`);
+        }
         await new Promise((r) => setTimeout(r, 30));
       }
       splashRead = splashCoverage(reads, HELLO_LINES);
       check(splashRead.bird > 0 && splashRead.missing.length === 0,
         `the splash was not read whole: ${splashRead.reads} reads, the bird on stage in ${splashRead.bird}, ` +
         `never seen whole: ${JSON.stringify(splashRead.missing)} (F206)`);
+      splashInked = splashInk(inkReads, HELLO_LINES);
+      check(splashInked.missing.length === 0,
+        `the splash was not seen drawn: ${inkReads.length} canvas reads, never inked whole at full strength: ` +
+        `${JSON.stringify(splashInked.missing)} (F206)`);
       await E(() => window.__emu.setTimeScale(1));
     }
 
@@ -821,7 +862,8 @@ async function walkHarness(flavor, turn = null) {
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
     const turned = turn
       ? `${turn.glass.w}x${turn.glass.h} glass from the first frame, the splash read whole (${splashRead.reads} ` +
-        `reads, the bird in ${splashRead.bird}, all ${splashRead.seen.length} lines), the QR card and halo where ` +
+        `reads, the bird in ${splashRead.bird}, all ${splashRead.seen.length} lines, each inked on the canvas ` +
+        `in its box: ${splashInked.inked.length} lines), the QR card and halo where ` +
         `the layout seats them (offset ${inHalo.offset.join(",")}, sides ${inHalo.sides} px from the center, inner ` +
         `edge ${inHalo.inner}; corners reach ${inHalo.reach}${turn.corners ? ", held inside" : ", F155"}), `
       : "";

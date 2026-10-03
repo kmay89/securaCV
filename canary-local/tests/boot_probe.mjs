@@ -13,15 +13,17 @@
 // (?rotation=, staged before power-on; turned_glass.mjs reads the turns and
 // panels from the sources). There the same checks hold, and the glass is the
 // turned size, every frame the firmware drew landed on it from the first
-// (framesOnGlass), and the face's bird, where it is on stage, sits on that
-// glass and clear of every line (birdPerch).
+// (framesOnGlass), and the face's bird is on stage (a turned face at 10:00
+// always shows it; birdOnStage) and sits on that glass and clear of every
+// line (birdPerch). On a native boot the bird is held where it is on stage
+// (the landscape dash's face hides it).
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { birdPerch } from "./bird_perch.mjs";
+import { birdPerch, birdOnStage } from "./bird_perch.mjs";
 import { framesOnGlass } from "./onboard_glass.mjs";
 import { turnedGlasses, readTurnedSources } from "./turned_glass.mjs";
 
@@ -156,11 +158,14 @@ async function bootOnce(flavor, turn = null) {
     }
     const frames = framesOnGlass(st.shapes, st.flushes, turn.glass);
     if (frames) { fail(name, frames); return; }
+    // and the face's bird is there to read: birdPerch passes a bird off stage
+    const stage = birdOnStage(st, `the ${turn.name} ${flavor} face 6.5 s on`);
+    if (stage) { fail(name, stage); return; }
   }
   const perch = birdPerch(st);
   if (perch) { fail(name, perch); return; }
   console.log(`BOOT_PROBE_OK[${name}] flushes=${st.flushes} mqtt=${st.mqtt.length}` +
-    (turn ? ` glass=${st.glass.w}x${st.glass.h} shapes=${st.shapes.length}` : ""));
+    (turn ? ` glass=${st.glass.w}x${st.glass.h} shapes=${st.shapes.length} bird=${st.bird.w}x${st.bird.h}@${st.bird.x},${st.bird.y}` : ""));
 }
 
 const booted = [];

@@ -124,3 +124,23 @@ export function splashCoverage(reads, lines) {
   return { reads: reads.length, bird, seen: lines.filter((l) => seen.has(l)),
     missing: lines.filter((l) => !seen.has(l)) };
 }
+
+/**
+ * F206: the splash off the framebuffer. inkReads: linesInk() reads the
+ * turned walk took during the splash ({text, box, ink} each, read in the
+ * page with the canvas as drawn). Returns {inked: [line...], missing:
+ * [line...], dark: [read...]}: which of kHello's lines some read showed
+ * whole with ink inside the box the firmware reports, which none did, and
+ * the whole-line reads that showed no ink there.
+ */
+export function splashInk(inkReads, lines) {
+  const inked = new Set();
+  const dark = [];
+  for (const r of inkReads) {
+    const line = lines.find((l) => isWholeLine(r.text, l));
+    if (!line) continue;
+    if (r.ink > 0) inked.add(line);
+    else dark.push(r);
+  }
+  return { inked: lines.filter((l) => inked.has(l)), missing: lines.filter((l) => !inked.has(l)), dark };
+}

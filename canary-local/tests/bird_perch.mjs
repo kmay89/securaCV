@@ -32,6 +32,22 @@ export function birdPerch(st) {
 }
 
 /**
+ * F206: the bird on stage at all. birdPerch answers null for a bird off
+ * stage (hidden, or none alive), which is right where a face may hide it
+ * and wrong where a probe has come to read it: a turned boot's face at
+ * 10:00 always shows its bird (the portrait dash's 128x128, the landscape
+ * nightlight's 93x93), so there no bird is a failure, not a pass. st: as
+ * birdPerch takes it; where: what was read. Returns a failure message, or
+ * null when the bird is on stage.
+ */
+export function birdOnStage(st, where) {
+  const b = st.bird;
+  if (b && b.shown) return null;
+  return `${where}: no bird on stage to read (${b ? "the mark is hidden" : "no mark alive"}), ` +
+    "so birdPerch would have passed it unread (F206)";
+}
+
+/**
  * The bird, when on stage, drawn whole on the glass — the half of birdPerch
  * that holds while it moves: the Success scene's earned hop crosses the
  * scene's lines as they fade in (F184 reads it there). st: as birdPerch
