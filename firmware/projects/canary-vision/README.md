@@ -171,11 +171,14 @@ ends every stay on a device today.
 frame shows: `dwell_ended` has already declared the person gone, and the
 stay waits that one frame only because a frame sends one event. Someone
 seen on that frame starts the next visit, whose `presence_started` follows
-on the frame after (from that sighting's cell, held present through the
-lost timeout from it), exactly as if they had come back one frame later. So
-a stay has at most one dwell, and the lingering alert, which pages on
-`dwell_started`, pages once per stay. Before this the sighting kept the
-stay and started a second dwell in it at once, with a second `dwell_ended`.
+on the frame after, with the same events a return one frame later sends.
+When that next frame is empty, the visit opens from the sighting's cell and
+is held present through the lost timeout from it; when the next frame has a
+sighting of its own, the visit opens from that one (its cell, and the lost
+timeout from it), as any sighting opens a visit. So a stay has at most one
+dwell, and the lingering alert, which pages on `dwell_started`, pages once
+per stay. Before this the sighting kept the stay and started a second
+dwell in it at once, with a second `dwell_ended`.
 
 ### When `interaction_likely` fires
 
