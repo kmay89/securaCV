@@ -1,6 +1,6 @@
 // Host test for the kernel wizard's "Add another Canary" pairing
 // (privacy_witness_kernel/wizard/index.html: meshStartPairing,
-// meshPollForCodes, meshConfirm) — repo sweep F163.
+// meshPollForCodes, meshConfirm) — repo sweeps F163 and F200.
 //
 // After both confirms, meshConfirm() waited up to 60 s for both Canaries'
 // GET /api/mesh `state` to read ACTIVE and otherwise said "Pairing did not
@@ -27,7 +27,13 @@
 //   - a Canary whose answers carry no number (from before F133, or a
 //     canary-wap) is read the old way, done once it reads ACTIVE, also beside
 //     a Canary that reports its outcome;
-//   - the code-wait poll ends early the same way.
+//   - the code-wait poll ends early the same way;
+//   - (F200) a confirmation either Canary rejects, a confirm that fails on
+//     the network, and five unreadable polls in either wait each read both
+//     Canaries' status once and cancel a side that reports this wizard's
+//     pairing still running, and nothing else: a Canary starts a pairing
+//     only when none runs, so left alone it refuses the retry those
+//     messages invite until its own 5-minute timeout.
 // The mesh section of the page's script is lifted out by literal markers
 // and run against a stub DOM, a scripted api() (the add-on proxy's routes,
 // told apart by the device address in the body) and an immediate delay(),
@@ -65,9 +71,13 @@ const JOIN = "10.0.0.22";
 //   script.start / script.join: the pair/start and pair/join answers;
 //   script.codes / script.confirm: { init: [bodies], join: [bodies] } for
 //   GET /api/mesh in each phase, the last body repeated once a queue runs
-//   out; script.confirmAnswer: { init, join } (default {ok: true}).
+//   out; script.confirmAnswer: { init, join } (default {ok: true}). THROW in
+//   place of a body or an answer makes that request fail on the network
+//   (api() rejects, as fetch() does for an unreachable Canary).
 // The page's elements that start hidden (class="hidden" in its markup).
 const STARTS_HIDDEN = ["mesh-progress", "mesh-codes", "mesh-done", "mesh-done-note", "mesh-error"];
+const THROW = Symbol("network error");
+const answer = (a) => { if (a === THROW) throw new TypeError("Failed to fetch"); return a; };
 
 function page(script) {
   const els = {};
@@ -102,12 +112,12 @@ function page(script) {
       if (route === "api/mesh/pair/cancel") return { ok: true };
       if (route === "api/mesh/pair/confirm") {
         phase = "confirm";
-        return (script.confirmAnswer && script.confirmAnswer[who]) || { ok: true };
+        return answer((script.confirmAnswer && script.confirmAnswer[who]) || { ok: true });
       }
       if (route === "api/mesh/status") {
         const q = script[phase][who];
         const n = polls[phase][who]++;
-        return q[Math.min(n, q.length - 1)];
+        return answer(q[Math.min(n, q.length - 1)]);
       }
       throw new Error(`unscripted route ${route}`);
     },
@@ -391,4 +401,128 @@ test("a 0 is no pairing number: that Canary is read the old way", async () => {
   await p.t.meshConfirm();
   assert.ok(visible(p, "mesh-done"), p.el("mesh-error").textContent);
   assert.strictEqual(p.polls.confirm.init, 1);
+});
+
+// ── F200: the paths that end the pairing without a read of both sides ────
+
+const cancels = (p) => p.calls.filter((c) => c.startsWith("api/mesh/pair/cancel"));
+
+test("a confirmation the existing Canary rejects cancels the new one still running", async () => {
+  // The existing Canary refused at the confirm (409 partner_refused): its
+  // pairing has failed; the new one confirmed and waits on it for 5 minutes.
+  const p = await toCodes(Object.assign({}, F133, {
+    confirmAnswer: { init: { ok: false, error: "partner_refused" } },
+    confirm: { init: [piom("CONNECTING", 3, "failed", "partner_refused")],
+               join: [piom("PAIRING_CONFIRM", 1, "running")] },
+  }));
+  await p.t.meshConfirm();
+  assert.strictEqual(p.el("mesh-error").textContent,
+    "The existing Canary rejected the confirmation: partner_refused");
+  assert.deepStrictEqual(p.polls.confirm, { init: 1, join: 1 }, "each side is read once");
+  assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel join"]);
+  assert.ok(visible(p, "mesh-form"), "back to the form for the retry");
+  assert.ok(!p.el("mesh-start-btn").disabled);
+});
+
+test("a confirmation the new Canary rejects cancels the existing one still running", async () => {
+  // The new Canary restarted after the codes showed (a power pull): its
+  // confirm answers not_pairing and its body is about no pairing of ours.
+  let p = await toCodes(Object.assign({}, F133, {
+    confirmAnswer: { join: { ok: false, error: "not_pairing" } },
+    confirm: { init: [piom("PAIRING_CONFIRM", 3, "running")],
+               join: [piom("NO_OPERA", 0, "none")] },
+  }));
+  await p.t.meshConfirm();
+  assert.strictEqual(p.el("mesh-error").textContent,
+    "The new Canary rejected the confirmation: not_pairing");
+  assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel init"]);
+
+  // Both finished as they finished (one paired, one failed): nothing to end.
+  p = await toCodes(Object.assign({}, F133, {
+    confirmAnswer: { join: { ok: false, error: "bad_confirm" } },
+    confirm: { init: [piom("CONNECTING", 3, "paired")],
+               join: [piom("CONNECTING", 1, "failed", "bad_confirm")] },
+  }));
+  await p.t.meshConfirm();
+  assert.match(p.el("mesh-error").textContent, /^The new Canary rejected the confirmation/);
+  assert.deepStrictEqual(cancels(p), [], "a side that finished is left as it finished");
+});
+
+test("a confirm that fails on the network reads each side once and cancels the one running", async () => {
+  // The existing Canary lost power after the codes showed: its confirm never
+  // answers, the new one's is never sent, and the new one still runs #1.
+  const p = await toCodes(Object.assign({}, F133, {
+    confirmAnswer: { init: THROW },
+    confirm: { init: [THROW], join: [piom("PAIRING_CONFIRM", 1, "running")] },
+  }));
+  await p.t.meshConfirm();
+  assert.match(p.el("mesh-error").textContent, /^Network error during confirm: Failed to fetch/);
+  assert.ok(!p.calls.includes("api/mesh/pair/confirm join"), "the second confirm was never sent");
+  assert.deepStrictEqual(p.polls.confirm, { init: 1, join: 1 },
+    "the unreachable side does not stop the other side's read");
+  assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel join"]);
+  assert.ok(visible(p, "mesh-form"));
+});
+
+test("five unreadable polls in the code wait cancel the side still running", async () => {
+  // Unreachable (fetch rejects): the existing Canary never answers again.
+  let p = page(Object.assign({}, F133, {
+    codes: { init: [piom("PAIRING_INIT", 3, "running"), THROW],
+             join: [piom("PAIRING_JOIN", 1, "running")] },
+  }));
+  await p.t.meshStartPairing();
+  await settle();
+  assert.strictEqual(p.el("mesh-error").textContent,
+    "A Canary became unreachable. Check the network and try again.");
+  assert.strictEqual(p.polls.codes.init, 7, "one good poll, five failed, then the one read");
+  assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel join"]);
+
+  // Answering, but not ok (the add-on proxy's error body): the same.
+  p = page(Object.assign({}, F133, {
+    codes: { init: [piom("PAIRING_INIT", 3, "running")],
+             join: [piom("PAIRING_JOIN", 1, "running"), { ok: false, error: "timeout" }] },
+  }));
+  await p.t.meshStartPairing();
+  await settle();
+  assert.strictEqual(p.el("mesh-error").textContent, "A Canary stopped responding. Try again.");
+  assert.strictEqual(p.polls.codes.join, 7);
+  assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel init"]);
+});
+
+test("five unreadable polls in the confirm wait cancel the side still running", async () => {
+  const p = await toCodes(Object.assign({}, F133, {
+    confirm: { init: [THROW], join: [piom("PAIRING_CONFIRM", 1, "running")] },
+  }));
+  await p.t.meshConfirm();
+  assert.strictEqual(p.el("mesh-error").textContent,
+    "A Canary became unreachable while completing. Try again.");
+  assert.strictEqual(p.polls.confirm.init, 6, "five failed polls, then the one read");
+  assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel join"]);
+});
+
+test("on those paths a Canary that reports no number, or another pairing, is not canceled", async () => {
+  // Canaries from before F133 (or canary-wap): no number to tell this
+  // pairing by, so nothing is canceled, as before F200.
+  const old = {
+    start: { ok: true, state: "PAIRING_INIT" },
+    join: { ok: true, state: "PAIRING_JOIN" },
+    codes: { init: [legacy("PAIRING_CONFIRM", { pairing_code: 7 })],
+             join: [legacy("PAIRING_CONFIRM", { pairing_code: 7 })] },
+  };
+  let p = await toCodes(Object.assign({}, old, {
+    confirmAnswer: { init: { ok: false, error: "nope" } },
+    confirm: { init: [legacy("PAIRING_CONFIRM")], join: [legacy("PAIRING_CONFIRM")] },
+  }));
+  await p.t.meshConfirm();
+  assert.match(p.el("mesh-error").textContent, /^The existing Canary rejected the confirmation: nope/);
+  assert.deepStrictEqual(cancels(p), []);
+
+  // A Canary on a later pairing (someone else's) is left alone.
+  p = await toCodes(Object.assign({}, F133, {
+    confirmAnswer: { init: THROW },
+    confirm: { init: [piom("PAIRING_INIT", 4, "running")], join: [piom("CONNECTING", 1, "paired")] },
+  }));
+  await p.t.meshConfirm();
+  assert.match(p.el("mesh-error").textContent, /^Network error during confirm/);
+  assert.deepStrictEqual(cancels(p), [], "pairing #4 is not this wizard's; #1 finished");
 });
