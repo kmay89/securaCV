@@ -30,7 +30,24 @@
  * discovery does (this scanner's, or the presence loop's on the same
  * scanner, host_sim::presence_disc). Before the F172 review it deleted
  * every bond and answered true, so no test could see the refusal a device
- * meets. */
+ * meets.
+ *
+ * And the bond store's size and its store-full path (sweep F189), as
+ * NimBLE-Arduino 2.3.8 and 2.5.0 have them (the same ble_sm.c, ble_store.c,
+ * ble_store_util.c and ble_gap.c in both): the store holds
+ * CONFIG_BT_NIMBLE_MAX_BONDS bonds (nimconfig.h's default, 3, which no WAP
+ * build overrides; host_sim::max_bonds). A pairing that starts while the
+ * bonds stored and the pairings under way fill it asks the device callbacks
+ * first (BLE_STORE_EVENT_FULL, ble_sm_chk_store_overflow(); a nonzero answer
+ * refuses the pairing before it starts: host_sim::pairing_starts()); a bond
+ * that then finds no room asks again (BLE_STORE_EVENT_OVERFLOW, from
+ * ble_store_write(); a nonzero answer leaves it unstored:
+ * host_sim::persist_bond()). NimBLE's default answer
+ * (NimBLEDeviceCallbacks::onStoreStatus() = ble_store_util_status_rr())
+ * lets FULL proceed and answers OVERFLOW by ble_gap_unpair_oldest_peer(),
+ * which goes through ble_gap_unpair()'s busy guard like deleteBond(). The
+ * stack persists a bond before it reports the link's authentication, so a
+ * test pairs a phone through pairing_starts() and persist_bond() first. */
 #ifndef STUB_BT_NIMBLE_DEVICE_H
 #define STUB_BT_NIMBLE_DEVICE_H
 
@@ -109,6 +126,41 @@ enum : uint16_t {
 }  // namespace NIMBLE_PROPERTY
 
 #define BLE_HS_IO_DISPLAY_YESNO 1
+
+// NimBLE's store status codes (host/ble_store.h, host/ble_hs.h; the same in
+// NimBLE-Arduino 2.3.8 and 2.5.0), which NimBLEDevice.h brings in.
+#define BLE_STORE_OBJ_TYPE_OUR_SEC   1
+#define BLE_STORE_OBJ_TYPE_PEER_SEC  2
+#define BLE_STORE_OBJ_TYPE_CCCD      3
+#define BLE_STORE_OBJ_TYPE_PEER_ADDR 6
+#define BLE_STORE_EVENT_OVERFLOW     1
+#define BLE_STORE_EVENT_FULL         2
+#define BLE_HS_ENOENT                5
+#define BLE_HS_EBUSY                 15
+#define BLE_HS_EUNKNOWN              17
+#define BLE_HS_ESTORE_CAP            27
+union ble_store_value;
+struct ble_store_status_event {
+  int event_code;
+  union {
+    struct {
+      int obj_type;
+      const union ble_store_value* value;
+    } overflow;
+    struct {
+      int obj_type;
+      uint16_t conn_handle;
+    } full;
+  };
+};
+
+// NimBLE-Arduino 2.x's device callbacks: the store's status. The default
+// (defined below NimBLEDevice) is ble_store_util_status_rr().
+class NimBLEDeviceCallbacks {
+ public:
+  virtual ~NimBLEDeviceCallbacks() = default;
+  virtual int onStoreStatus(struct ble_store_status_event* event, void* arg);
+};
 
 namespace host_sim {
 // Heap copies of a NimBLEConnInfo alive (the pending Numeric Comparison's,
@@ -411,6 +463,20 @@ inline void store_bond(const NimBLEAddress& identity, bool irk) {
 inline bool radio_busy() {
   return advertising.isAdvertising() || scan.isScanning() || presence_disc.load();
 }
+// The bond store's size (CONFIG_BT_NIMBLE_MAX_BONDS, nimconfig.h's default).
+inline size_t max_bonds = 3;
+// Pairings under way (ble_sm_num_procs()), counted into the store-full check.
+inline int sm_procs = 0;
+// NimBLEDevice::setDeviceCallbacks()'s (nullptr: NimBLE's defaults).
+inline NimBLEDeviceCallbacks default_device_callbacks;
+inline NimBLEDeviceCallbacks* device_callbacks = &default_device_callbacks;
+// The store's status events, by code, as the stack raised them.
+inline unsigned full_events = 0;
+inline unsigned overflow_events = 0;
+}  // namespace host_sim
+
+namespace host_sim {
+int gap_unpair(const NimBLEAddress& a);   // ble_gap_unpair() (below NimBLEDevice)
 }  // namespace host_sim
 
 class NimBLEDevice {
@@ -461,20 +527,10 @@ class NimBLEDevice {
   static bool deleteBond(const NimBLEAddress& a) {
     host_sim::note("bond_delete");
     host_sim::bonds_deleted.push_back(a);
-    if (host_sim::before_unpair) host_sim::before_unpair();
-    if (host_sim::server) host_sim::server->unpair_ends_link(a);
-    if (!isBonded(a)) return false;
-    if (host_sim::has_irk(a) && host_sim::radio_busy()) {
-      host_sim::note("bond_delete_busy");
-      host_sim::bonds_busy.push_back(a);
-      return false;
-    }
-    host_sim::bonds.erase(std::remove(host_sim::bonds.begin(), host_sim::bonds.end(), a),
-                          host_sim::bonds.end());
-    host_sim::bond_irks.erase(
-        std::remove(host_sim::bond_irks.begin(), host_sim::bond_irks.end(), a),
-        host_sim::bond_irks.end());
-    return true;
+    return host_sim::gap_unpair(a) == 0;
+  }
+  static void setDeviceCallbacks(NimBLEDeviceCallbacks* cb) {
+    host_sim::device_callbacks = cb != nullptr ? cb : &host_sim::default_device_callbacks;
   }
   static bool isBonded(const NimBLEAddress& a) {
     return std::find(host_sim::bonds.begin(), host_sim::bonds.end(), a) != host_sim::bonds.end();
@@ -492,6 +548,95 @@ inline void NimBLEServerCallbacks::onPassKeyEntry(NimBLEConnInfo& connInfo) {
 inline void NimBLEServerCallbacks::onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t) {
   NimBLEDevice::injectConfirmPasskey(connInfo, true);
 }
+
+// ble_gap_unpair() itself, its answer (0, the store's BLE_HS_ENOENT, or
+// BLE_HS_EBUSY): deleteBond()'s and the store-full path's.
+inline int host_sim::gap_unpair(const NimBLEAddress& a) {
+  if (before_unpair) before_unpair();
+  if (server) server->unpair_ends_link(a);
+  if (!NimBLEDevice::isBonded(a)) return BLE_HS_ENOENT;
+  if (has_irk(a) && radio_busy()) {
+    note("bond_delete_busy");
+    bonds_busy.push_back(a);
+    return BLE_HS_EBUSY;
+  }
+  bonds.erase(std::remove(bonds.begin(), bonds.end(), a), bonds.end());
+  bond_irks.erase(std::remove(bond_irks.begin(), bond_irks.end(), a), bond_irks.end());
+  return 0;
+}
+
+// ble_store_util_status_rr() (ble_store_util.c), NimBLE-Arduino's default
+// onStoreStatus(): FULL proceeds; OVERFLOW of a bond's keys unpairs the
+// oldest bond (ble_gap_unpair_oldest_peer(): the store's first, through
+// ble_gap_unpair()'s busy guard), and its answer is the write's.
+inline int NimBLEDeviceCallbacks::onStoreStatus(struct ble_store_status_event* event, void*) {
+  switch (event->event_code) {
+    case BLE_STORE_EVENT_OVERFLOW:
+      switch (event->overflow.obj_type) {
+        case BLE_STORE_OBJ_TYPE_OUR_SEC:
+        case BLE_STORE_OBJ_TYPE_PEER_SEC:
+        case BLE_STORE_OBJ_TYPE_PEER_ADDR:
+          if (host_sim::bonds.empty()) return BLE_HS_ENOENT;
+          host_sim::note("unpair_oldest");
+          return host_sim::gap_unpair(host_sim::bonds.front());
+        default:
+          return BLE_HS_EUNKNOWN;
+      }
+    case BLE_STORE_EVENT_FULL:
+      return 0;
+    default:
+      return BLE_HS_EUNKNOWN;
+  }
+}
+
+namespace host_sim {
+// The phone's Pairing Request on `handle` (the WAP is the responder):
+// ble_sm_pair_req_rx()'s ble_sm_chk_store_overflow(), for the peer's keys
+// and then this side's. With the bonds stored and the pairings under way
+// at the store's size, the device callbacks hear BLE_STORE_EVENT_FULL; a
+// nonzero answer refuses the pairing before it starts (Pairing Failed: no
+// keys, no bond, no authentication event), and is returned. 0: the pairing
+// is under way.
+inline int pairing_starts(uint16_t handle) {
+  for (const int type : {BLE_STORE_OBJ_TYPE_PEER_SEC, BLE_STORE_OBJ_TYPE_OUR_SEC}) {
+    if (bonds.size() + (size_t)sm_procs < max_bonds) continue;
+    ble_store_status_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.event_code = BLE_STORE_EVENT_FULL;
+    ev.full.obj_type = type;
+    ev.full.conn_handle = handle;
+    ++full_events;
+    const int rc = device_callbacks->onStoreStatus(&ev, nullptr);
+    if (rc != 0) return rc;
+  }
+  ++sm_procs;
+  return 0;
+}
+// That pairing ends bonded: ble_sm_persist_keys() writes the bond under the
+// peer's identity (ble_store_write()). A record the store holds is
+// rewritten in place; a new one that finds no room raises
+// BLE_STORE_EVENT_OVERFLOW until the device callbacks make room (0) or give
+// up (nonzero: not stored, that answer returned). The stack reports the
+// link's authentication after this, bonded either way.
+inline int persist_bond(const NimBLEAddress& identity, bool irk) {
+  if (sm_procs > 0) --sm_procs;
+  if (NimBLEDevice::isBonded(identity)) {
+    store_bond(identity, irk);
+    return 0;
+  }
+  while (bonds.size() >= max_bonds) {
+    ble_store_status_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.event_code = BLE_STORE_EVENT_OVERFLOW;
+    ev.overflow.obj_type = BLE_STORE_OBJ_TYPE_OUR_SEC;
+    ++overflow_events;
+    const int rc = device_callbacks->onStoreStatus(&ev, nullptr);
+    if (rc != 0) return rc;
+  }
+  store_bond(identity, irk);
+  return 0;
+}
+}  // namespace host_sim
 
 // NimBLE's host C API, the calls update() and a link's connect (applied on
 // the loop task since F143) make.

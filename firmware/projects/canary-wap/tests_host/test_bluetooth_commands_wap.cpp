@@ -276,6 +276,11 @@ void boot(bool bring_up = true, bool wipe = true) {
   host_sim::bonds_deleted.clear();
   host_sim::bonds_busy.clear();
   host_sim::before_unpair = nullptr;
+  host_sim::max_bonds = 3;                 // NimBLE's store (F189), as at power-up
+  host_sim::sm_procs = 0;
+  host_sim::device_callbacks = &host_sim::default_device_callbacks;
+  host_sim::full_events = 0;
+  host_sim::overflow_events = 0;
   host_sim::presence_disc = false;         // the presence loop starts in init()
   host_sim::presence_paused = false;
   host_sim::passkey_answers.clear();
@@ -547,6 +552,7 @@ void test_every_command_runs_on_the_loop_task() {
   // A phone connects and bonds (the NimBLE host task's callbacks).
   NimBLEConnInfo phone = link(11, 0xD1);
   phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   host_sim::server->peers = {11};
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
@@ -729,6 +735,7 @@ void test_trust_and_block_take_the_owners_flag() {
   boot();
   NimBLEConnInfo phone = link(11, 0xD1);
   phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   host_sim::server->peers = {11};
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
@@ -759,6 +766,7 @@ void test_paired_clear_forgets_every_device() {
   boot();
   NimBLEConnInfo phone = link(11, 0xD1);
   phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   host_sim::server->peers = {11};
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
@@ -872,6 +880,7 @@ void test_a_callback_changes_nothing_until_the_loop_task_applies_it() {
   CHECK(host_sim::advertising.isAdvertising() && bc::g_state == bc::BT_ADVERTISING);
   NimBLEConnInfo phone = link(21, 0xE1);
   phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   host_sim::server->peers = {21};
   host_sim::now_ms = 50000;
   const uint32_t connections_before = bc::g_total_connections;
@@ -1117,6 +1126,7 @@ void test_a_link_is_named_by_its_address() {
   boot();
   NimBLEConnInfo phone = link(91, 0xA1, /*type=*/1);
   phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   const std::string printed = phone.getAddress().toString();
   CHECK(printed == "a1:22:33:44:55:66");                    // as NimBLE prints it
   host_sim::server->peers = {91};
@@ -1530,6 +1540,7 @@ void test_times_are_the_callbacks() {
   boot();
   NimBLEConnInfo phone = link(55, 0xB5);
   phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   host_sim::server->peers = {55};
   host_sim::now_ms = 400000;
   const uint32_t t0 = host_sim::now_ms;
@@ -1782,6 +1793,7 @@ void test_a_read_right_after_a_post_shows_what_it_did() {
   boot();
   NimBLEConnInfo phone = link(71, 0xD7);
   phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   host_sim::server->peers = {71};
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
@@ -2439,6 +2451,7 @@ void test_full_profile_the_owner_answers_every_pairing() {
   CHECK(host_sim::passkey_answers[0].task == "loop" && host_sim::passkey_answers[0].handle == 7);
 
   phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
   loop_pass();
   CHECK(bc::g_paired_count == 1 && bc::g_pairing.state == bc::PAIR_COMPLETE);
@@ -2709,12 +2722,14 @@ void test_an_old_paired_list_is_rebuilt_from_the_bond_store() {
   CHECK(rest(remove).r.ok && bc::g_paired_count == 2);
   CHECK(!NimBLEDevice::isBonded(a.getIdAddress()) && host_sim::bonds.size() == 2);
 
-  // Once: the next boot loads the saved list as it is, even with a bond
-  // the store no longer has.
+  // Once: the next boot does not rebuild the saved list. An entry whose
+  // bond the store no longer has is dropped (F189: before, it stayed
+  // listed for good), the rest kept as saved.
   host_sim::bonds = {b};
   boot(/*bring_up=*/true, /*wipe=*/false);
-  CHECK(bc::g_paired_count == 2);
+  CHECK(bc::g_paired_count == 1 && strcmp(bc::g_paired_devices[0].name, "kitchen tablet") == 0);
   CHECK(health_says("Paired list rebuilt from the bond store") == 0);
+  CHECK(health_detail("Paired list: entries without a bond dropped") == "1 dropped");
   std::printf("PASS an_old_paired_list_is_rebuilt_from_the_bond_store\n");
 }
 
@@ -2958,6 +2973,7 @@ void test_another_links_encryption_leaves_the_record() {
   CHECK(bc::g_pairing.state == bc::PAIR_INITIATED);         // the owner's pairing mode goes on
 
   a.encrypted = a.authenticated = a.bonded = true;           // then bonds
+  host_sim::store_bond(a.getIdAddress(), /*irk=*/false);   // the stack stores it first (F189)
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(a); });
   loop_pass();
   CHECK(bc::g_paired_count == 1);
@@ -3310,6 +3326,188 @@ void test_full_profile_remove_brings_the_beacon_back() {
   std::printf("PASS full_profile_remove_brings_the_beacon_back\n");
 }
 
+// ── The paired list fits the bond store (F189) ──────────────────────────
+
+// A phone pairs and bonds through the stack: its link up, the stack's
+// store-full check at its Pairing Request (host_sim::pairing_starts()), its
+// bond persisted under its identity (host_sim::persist_bond()), then the
+// link's authentication reported (bonded either way, as NimBLE reports it),
+// and the loop task applies it. False when the stack refused the pairing at
+// its start (no authentication event follows).
+bool pair_through_stack(NimBLEConnInfo& phone, bool irk) {
+  host_sim::server->peers = {phone.getConnHandle()};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  int rc = 0;
+  on_nimble([&] { rc = host_sim::pairing_starts(phone.getConnHandle()); });
+  if (rc != 0) {
+    loop_pass();
+    return false;
+  }
+  on_nimble([&] { (void)host_sim::persist_bond(phone.getIdAddress(), irk); });
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
+  return true;
+}
+
+void link_ends(NimBLEConnInfo& phone) {
+  host_sim::server->link_down(phone.getConnHandle());
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  loop_pass();
+}
+
+// A public-address phone (no private addresses: its bond carries no IRK).
+NimBLEConnInfo public_phone(uint16_t handle, uint8_t tag) {
+  NimBLEConnInfo c;
+  c.handle = handle;
+  const uint8_t addr[6] = {0x00, 0x1B, 0x2C, 0x3D, 0x4E, tag};
+  c.address = NimBLEAddress(addr, 0);
+  return c;
+}
+
+// NimBLE keeps 3 bonds (CONFIG_BT_NIMBLE_MAX_BONDS, which no WAP build
+// raises) where the paired list keeps 8. Before F189 a fourth phone's
+// pairing went ahead, and when its bond found the store full NimBLE's
+// default made room by unpairing the oldest bond through ble_gap_unpair()'s
+// busy guard: with the oldest phone's IRK and the radio busy (advertising,
+// the presence scan) the new bond was not stored and the list took the
+// fourth phone anyway (4 listed, 3 stored); with an oldest bond without an
+// IRK it was evicted while the list kept it. Now the store refuses a new
+// pairing at its start while it is full (the Pairing Request, before any
+// key): no bond is evicted behind the owner, nothing is listed, the health
+// log says so, and Remove makes room. A phone the store already holds may
+// pair again over its own record.
+void test_a_full_bond_store_refuses_a_new_pairing() {
+  boot();
+  CHECK(host_sim::advertising.isAdvertising() && host_sim::presence_disc);   // the radio is busy
+  NimBLEConnInfo first = rpa_phone(31, 0x31);                // its bond carries an IRK
+  CHECK(pair_through_stack(first, /*irk=*/true));
+  link_ends(first);
+  NimBLEConnInfo second = public_phone(32, 0x02);
+  CHECK(pair_through_stack(second, /*irk=*/false));
+  link_ends(second);
+  NimBLEConnInfo third = public_phone(33, 0x03);
+  CHECK(pair_through_stack(third, /*irk=*/false));
+  link_ends(third);
+  CHECK(bc::g_paired_count == 3 && host_sim::bonds.size() == 3 && host_sim::full_events == 0);
+
+  // A fourth, in the owner's pairing mode: refused before it starts, every
+  // bond kept, nothing listed, and the owner's pairing reads failed.
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo fourth = public_phone(34, 0x04);
+  CHECK(!pair_through_stack(fourth, /*irk=*/false));
+  CHECK(bc::g_pairing.state == bc::PAIR_FAILED);
+  CHECK(host_sim::full_events == 1 && host_sim::overflow_events == 0);
+  CHECK(host_sim::bonds.size() == 3 && NimBLEDevice::isBonded(first.getIdAddress()));
+  CHECK(host_sim::bonds_busy.empty() && host_sim::count("unpair_oldest") == 0);
+  CHECK(bc::g_paired_count == 3);
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(paired.count == 3);
+  CHECK(health_says("BLE pairing refused: the bond store is full") == 1);
+  CHECK(health_detail("BLE pairing refused: the bond store is full") == "1 since boot");
+  link_ends(fourth);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_CANCEL)).r.ok);
+
+  // The second phone lost its keys and pairs again: over its own record.
+  NimBLEConnInfo again = public_phone(35, 0x02);
+  CHECK(pair_through_stack(again, /*irk=*/false));
+  CHECK(host_sim::bonds.size() == 3 && bc::g_paired_count == 3);
+  CHECK(bc::g_paired_devices[1].connection_count == 2);
+  link_ends(again);
+
+  // The owner removes the third: the fourth pairs, stored and listed.
+  bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  memcpy(remove.address, third.getIdAddress().getBase()->val, 6);
+  CHECK(rest(remove).r.ok && host_sim::bonds.size() == 2 && bc::g_paired_count == 2);
+  NimBLEConnInfo fourth_again = public_phone(36, 0x04);
+  CHECK(pair_through_stack(fourth_again, /*irk=*/false));
+  CHECK(host_sim::bonds.size() == 3 && bc::g_paired_count == 3);
+  for (size_t i = 0; i < bc::g_paired_count; ++i) {
+    CHECK(NimBLEDevice::isBonded(bc::paired_identity(bc::g_paired_devices[i])));
+  }
+  std::printf("PASS a_full_bond_store_refuses_a_new_pairing\n");
+}
+
+// A bond that finds the store full after its pairing started (a phone the
+// store held paired again but handed over a new identity, so its keys are a
+// new record): NimBLE's default evicted the oldest bond to make room (the
+// list kept the evicted phone: 4 listed, 3 stored) or, the oldest carrying
+// an IRK on a busy radio, left the new bond unstored and the list took it.
+// Now the store keeps every bond and leaves the new record unstored, and
+// the list takes only a bond the store holds.
+void test_the_store_never_evicts_a_listed_bond() {
+  boot();
+  NimBLEConnInfo phones[3] = {public_phone(41, 0x11), public_phone(42, 0x12), public_phone(43, 0x13)};
+  for (NimBLEConnInfo& p : phones) {
+    CHECK(pair_through_stack(p, /*irk=*/false));
+    link_ends(p);
+  }
+  CHECK(bc::g_paired_count == 3 && host_sim::bonds.size() == 3);
+  // The third pairs again; the stack lets it start (the store holds it).
+  NimBLEConnInfo again = public_phone(44, 0x13);
+  host_sim::server->peers = {44};
+  host_sim::server->link_up(again);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), again); });
+  loop_pass();
+  int rc = -1;
+  on_nimble([&] { rc = host_sim::pairing_starts(44); });
+  CHECK(rc == 0);
+  // Its keys name a new identity: a new record, and the store is full.
+  const uint8_t new_id[6] = {0xC0, 0x11, 0x22, 0x33, 0x44, 0x55};
+  again.id_address = NimBLEAddress(new_id, 1);
+  again.id_known = true;
+  on_nimble([&] { rc = host_sim::persist_bond(again.getIdAddress(), /*irk=*/false); });
+  CHECK(rc != 0 && host_sim::overflow_events == 1);
+  CHECK(host_sim::bonds.size() == 3 && host_sim::count("unpair_oldest") == 0);
+  for (NimBLEConnInfo& p : phones) CHECK(NimBLEDevice::isBonded(p.getIdAddress()));
+  again.encrypted = again.authenticated = again.bonded = true;   // NimBLE reports it bonded anyway
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(again); });
+  loop_pass();
+  CHECK(bc::g_paired_count == 3);                            // not listed: the store does not hold it
+  CHECK(health_says("Paired device not listed: the bond store did not keep it") == 1);
+  CHECK(health_says("BLE bond store full: a record was not kept") == 1);
+  CHECK(health_says("New device paired") == 3);
+  std::printf("PASS the_store_never_evicts_a_listed_bond\n");
+}
+
+// A list saved by a firmware whose store evicted bonds behind it (F189):
+// each boot, once the stack is up, the loop task drops an entry whose bond
+// the store no longer holds (no phone can use it), saves the list, and says
+// so; an entry the store holds keeps what it says.
+void test_the_paired_list_follows_the_bond_store_at_boot() {
+  boot(/*bring_up=*/false);
+  const uint8_t kept_addr[6] = {0x00, 0x1A, 0x7D, 0xDA, 0x71, 0x21};
+  const uint8_t gone_addr[6] = {0x00, 0x1A, 0x7D, 0xDA, 0x71, 0x22};
+  const NimBLEAddress kept(kept_addr, 0);
+  const NimBLEAddress gone(gone_addr, 0);
+  bc::PairedDevice saved[2];
+  memset(saved, 0, sizeof saved);
+  memcpy(saved[0].address, gone.getBase()->val, 6);
+  strcpy(saved[0].name, "evicted phone");
+  memcpy(saved[1].address, kept.getBase()->val, 6);
+  strcpy(saved[1].name, "kept phone");
+  saved[1].trusted = true;
+  FakeMainNvs nvs;
+  nvs.putBytes("bt_paired", saved, sizeof saved);
+  nvs.putBool("bt_paired_id", true);
+  host_sim::store_bond(kept, /*irk=*/false);
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  CHECK(bc::g_paired_count == 1 && strcmp(bc::g_paired_devices[0].name, "kept phone") == 0);
+  CHECK(bc::g_paired_devices[0].trusted);
+  CHECK(host_sim::main_nvs["bt_paired"].size() == sizeof(bc::PairedDevice));
+  CHECK(health_detail("Paired list: entries without a bond dropped") == "1 dropped");
+  // A list that matches the store saves nothing at the next boot.
+  boot(/*bring_up=*/true, /*wipe=*/false);
+  CHECK(bc::g_paired_count == 1 && health_says("Paired list: entries without a bond dropped") == 0);
+  std::printf("PASS the_paired_list_follows_the_bond_store_at_boot\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -3385,6 +3583,9 @@ const Test kTests[] = {
     {"a_bond_the_stack_keeps_keeps_its_entry", test_a_bond_the_stack_keeps_keeps_its_entry},
     {"a_remove_during_a_scan_ends_the_scan_first", test_a_remove_during_a_scan_ends_the_scan_first},
     {"full_profile_remove_brings_the_beacon_back", test_full_profile_remove_brings_the_beacon_back},
+    {"a_full_bond_store_refuses_a_new_pairing", test_a_full_bond_store_refuses_a_new_pairing},
+    {"the_store_never_evicts_a_listed_bond", test_the_store_never_evicts_a_listed_bond},
+    {"the_paired_list_follows_the_bond_store_at_boot", test_the_paired_list_follows_the_bond_store_at_boot},
 };
 
 }  // namespace bt_commands

@@ -440,6 +440,24 @@ BV4. `init()` hands its result to the loop task (F167). It runs on the BLE
      the loop task's moves on the bring-up's task, and the threads under
      TSAN, are `test_bluetooth_commands_wap.cpp`'s.
 
+BV5. The bond store never evicts behind the owner, and the paired list takes
+     only a bond the store holds (F189). NimBLE keeps 3 bonds by default
+     where the list keeps 8, and its default store-status answer unpaired
+     the oldest bond through `ble_gap_unpair()`'s busy guard when a new one
+     found the store full. `bluetooth_channel.cpp`'s `init()` installs
+     `NimBLEDevice::setDeviceCallbacks(&g_store_callbacks);` once, and no
+     other file of the sketch sets the device callbacks;
+     `StoreCallbacks::onStoreStatus()` calls nothing that deletes a bond
+     (`BT_STORE_EVICTS`: `ble_gap_unpair*`, `deleteBond`, NimBLE's default
+     answer, the store's deletes) and answers `BLE_STORE_EVENT_FULL` and
+     `BLE_STORE_EVENT_OVERFLOW` with `return BLE_HS_ESTORE_CAP;`, 0 only for
+     a peer the store already holds; it posts under `EVENT_LOSSY_LIMIT`
+     (BV2). `apply_auth_complete()` adds a new entry only behind
+     `if (!found && !NimBLEDevice::isBonded(identity)) { ... } else if
+     (!found && g_paired_count < MAX_PAIRED_DEVICES) {`. What a full store
+     does, over NimBLE's store as the stand-in models it, is
+     `test_bluetooth_commands_wap.cpp`'s.
+
 ## It proves it bites
 
 Each run applies mutations to the sources in memory and requires the check
@@ -2146,12 +2164,13 @@ def check_bluetooth_settings_enable(api_src: str, cpp_src: str, errors: list[str
 # BV2 (F143): the NimBLE host task's callbacks, the helpers they build and
 # post their events with, and what the loop task's side of the queue is.
 BT_CALLBACKS = ("onConnect", "onDisconnect", "onAuthenticationComplete", "onPassKeyDisplay",
-                "onConfirmPassKey", "onWrite", "onRead", "onResult", "onScanEnd")
+                "onConfirmPassKey", "onWrite", "onRead", "onResult", "onScanEnd",
+                "onStoreStatus")   # F189: the bond store's status, on the NimBLE host task
 BT_EVENT_HELPERS = ("make_event", "link_event", "post_event")
 BT_CALLBACK_CALLS = BT_EVENT_HELPERS + ("detect_device_type",)
 BT_EVENT_APPLIERS = ("apply_connect", "apply_disconnect", "apply_auth_complete",
                      "apply_passkey_display", "apply_confirm_passkey", "apply_scan_result",
-                     "apply_scan_end", "apply_activity")
+                     "apply_scan_end", "apply_activity", "apply_store_full", "apply_store_overflow")
 # Who applies each event: apply_event(), the consume's runner; and, for a
 # link's start and end, reconcile_link() (F169: after a link's event was
 # dropped, the loop task asks the stack and applies what the lost event
@@ -2179,7 +2198,9 @@ BT_CALLBACK_GLOBALS = {"g_events": ("post_event",), "g_data_callback": ("onWrite
 # What a callback hands the loop task, by kind: GATT activity and scan
 # results are posted under EVENT_LOSSY_LIMIT (a burst of them never takes
 # the room a link's events are kept), a link's own at the full limit.
-BT_LOSSY_CALLBACKS = ("onWrite", "onRead", "onResult")
+# The bond store's refusals (F189) too: a stranger's repeated pairing
+# attempts must not take the room kept for a link's own events.
+BT_LOSSY_CALLBACKS = ("onWrite", "onRead", "onResult", "onStoreStatus")
 BT_LINK_CALLBACKS = ("onConnect", "onDisconnect", "onAuthenticationComplete", "onPassKeyDisplay",
                      "onConfirmPassKey", "onScanEnd")
 
@@ -2624,7 +2645,7 @@ SIG_BT_DEINIT = r"\bstatic\s+void\s+deinit\s*\(\s*\)"
 # publishes, the device metadata pushed to it before it runs (on its own
 # task), and the GATT and scan callbacks objects it hands the stack.
 BT_INIT_GLOBALS = ("g_init_in_progress", "g_stack_up", "g_bringup", "g_bringup_ready",
-                   "g_char_callbacks", "g_scan_callbacks")
+                   "g_char_callbacks", "g_scan_callbacks", "g_store_callbacks")
 BT_INIT_GLOBAL_PREFIXES = ("g_meta_",)
 # What init() may call of the file: its loaders (into the handoff) and the
 # refusal's publisher. Not set_state(), not enable() / start_advertising(),
@@ -2747,6 +2768,60 @@ def check_bluetooth_bringup(cpp_src: str, errors: list[str]) -> None:
                           "`adopt_init_result();` once, before it applies an event or runs a command (F167)")
 
 
+# BV5 (F189): the bond store never evicts behind the owner, and the paired
+# list takes only a bond the store holds.
+SIG_BT_STORE_STATUS = r"\bint\s+onStoreStatus\s*\([^)]*\)\s*override"
+SIG_BT_AUTH_COMPLETE = r"\bstatic\s+void\s+apply_auth_complete\s*\([^)]*\)"
+BT_STORE_INSTALL = "NimBLEDevice::setDeviceCallbacks(&g_store_callbacks);"
+BT_STORE_EVICTS = (r"\bble_gap_unpair\w*\s*\(", r"\bdeleteBond\s*\(", r"\bdeleteAllBonds\s*\(",
+                   r"\bble_store_util_status_rr\s*\(", r"\bNimBLEDeviceCallbacks\s*::\s*onStoreStatus\s*\(",
+                   r"\bble_store_util_delete\w*\s*\(")
+
+
+def check_bluetooth_bond_store(files: dict[str, str], errors: list[str]) -> None:
+    """Rule BV5 (F189)."""
+    blanked = {path: blank_comments_and_strings(src) for path, src in files.items()}
+    for path, code in blanked.items():
+        n = len(re.findall(r"\bsetDeviceCallbacks\s*\(", code))
+        if path == BT_CPP:
+            init = body_of(code, SIG_BT_INIT, f"{BT_CPP}: init()", errors)
+            if n != 1 or init is None or squash(init).count(BT_STORE_INSTALL) != 1:
+                errors.append(f"{BT_CPP}: init() must answer the bond store's status itself, once, "
+                              f"`{BT_STORE_INSTALL}`, and nothing else in the file sets the device "
+                              "callbacks — NimBLE's default evicts the oldest bond behind the owner when "
+                              "the store is full (F189)")
+        elif n:
+            errors.append(f"{path}: sets NimBLE's device callbacks — one object per stack, the pairing "
+                          "channel's (StoreCallbacks); another would put the store's eviction back (F189)")
+    code = blanked.get(BT_CPP, "")
+    status = body_of(code, SIG_BT_STORE_STATUS, f"{BT_CPP}: StoreCallbacks::onStoreStatus()", errors)
+    if status is not None:
+        for pattern in BT_STORE_EVICTS:
+            m = re.search(pattern, status)
+            if m:
+                errors.append(f"{BT_CPP}: onStoreStatus() calls {m.group(0).rstrip('(').strip()} — the "
+                              "store-full path evicts no bond (it would go through ble_gap_unpair()'s busy "
+                              "guard, behind the owner): a full store refuses (F189)")
+                break
+        sq = squash(status)
+        if sq.count("returnBLE_HS_ESTORE_CAP;") != 2 or "return0;" in sq.replace(
+                "if(peer.getConnHandle()==event->full.conn_handle&&NimBLEDevice::isBonded(peer.getIdAddress())){"
+                "return0;", ""):
+            errors.append(f"{BT_CPP}: onStoreStatus() answers BLE_STORE_EVENT_FULL and "
+                          "BLE_STORE_EVENT_OVERFLOW with `return BLE_HS_ESTORE_CAP;` (refused, not kept), "
+                          "and 0 only for a peer the store already holds (F189)")
+    auth = body_of(code, SIG_BT_AUTH_COMPLETE, f"{BT_CPP}: apply_auth_complete()", errors)
+    if auth is not None:
+        sq = squash(auth)
+        gate = sq.find("if(!found&&!NimBLEDevice::isBonded(identity)){")
+        add = sq.find("g_paired_devices[g_paired_count++]")
+        if gate < 0 or add < 0 or add < gate or "}elseif(!found&&g_paired_count<MAX_PAIRED_DEVICES){" not in sq:
+            errors.append(f"{BT_CPP}: apply_auth_complete() lists a new phone only when the bond store "
+                          "holds its bond (`if (!found && !NimBLEDevice::isBonded(identity)) { ... } else "
+                          "if (!found && g_paired_count < MAX_PAIRED_DEVICES) {`) — NimBLE reports the link "
+                          "bonded whether or not the bond was kept (F189)")
+
+
 def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
     """Rules BV1..BV3 and BD1: the Bluetooth channel's settings enable (F144),
     the NimBLE host task's events (F143), the status routes' reads (F138) and
@@ -2759,6 +2834,7 @@ def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
     check_bluetooth_reads(files, errors)
     check_bluetooth_dispatch(files, errors)
     check_bluetooth_bringup(files[BT_CPP], errors)
+    check_bluetooth_bond_store(files, errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -3732,6 +3808,30 @@ BV_MUTATIONS += [
      on_other(BT_CPP, SIG_BT_INIT, r"\n[ \t]*ble_server_dispatch::attach\(server\);", "")),
     ("install() puts the dispatcher on the server without recording the owner",
      on_other(BT_DISPATCH_H, SIG_DISPATCH_INSTALL, r"g_dispatcher\.set\(role, owner\);", "")),
+]
+# Rule BV5 (F189): the bond store's status.
+BV_MUTATIONS += [
+    ("init() leaves the bond store's status to NimBLE's default (it evicts)",
+     on_other(BT_CPP, SIG_BT_INIT, r"\n[ \t]*NimBLEDevice::setDeviceCallbacks\(&g_store_callbacks\);", "")),
+    ("another module sets the device callbacks",
+     raw_other(f"{SKETCH}/ble_status_api.h", "static NimBLEServer* g_server = nullptr;",
+               "static NimBLEServer* g_server = nullptr;\n"
+               "static void hook() { NimBLEDevice::setDeviceCallbacks(nullptr); }")),
+    ("a full store makes room by unpairing the oldest bond",
+     on_other(BT_CPP, SIG_BT_STORE_STATUS, r"(if \(event->event_code == BLE_STORE_EVENT_OVERFLOW\) \{)",
+              r"\1 if (ble_gap_unpair_oldest_peer() == 0) return 0;")),
+    ("a full store defers to NimBLE's default answer",
+     on_other(BT_CPP, SIG_BT_STORE_STATUS, r"return BLE_HS_EUNKNOWN;",
+              "return NimBLEDeviceCallbacks::onStoreStatus(event, nullptr);")),
+    ("a full store lets a new pairing start",
+     on_other(BT_CPP, SIG_BT_STORE_STATUS, r"(e\.u\.store\.obj_type = event->full\.obj_type;\s*"
+              r"\(void\)post_event\(e, EVENT_LOSSY_LIMIT\);\s*)return BLE_HS_ESTORE_CAP;", r"\1return 0;")),
+    ("the list takes a bond the store did not keep",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"if \(!found && !NimBLEDevice::isBonded\(identity\)\) \{",
+              "if (false) {")),
+    ("a store refusal posts at the full limit",
+     on_other(BT_CPP, SIG_BT_STORE_STATUS, r"(e\.u\.store\.obj_type = event->overflow\.obj_type;\s*"
+              r"\(void\)post_event\(e), EVENT_LOSSY_LIMIT\)", r"\1)")),
 ]
 MUTATIONS += BV_MUTATIONS
 

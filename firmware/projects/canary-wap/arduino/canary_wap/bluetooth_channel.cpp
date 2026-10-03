@@ -252,6 +252,8 @@ static void save_settings();
 static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity);
 static void save_paired_devices();
 static void migrate_paired_devices();
+static void drop_entries_without_bond();
+static NimBLEAddress paired_identity(const PairedDevice& dev);
 static void update_status_characteristic();
 static void handle_inactivity_timeout();
 static void handle_scan_timeout();
@@ -327,6 +329,8 @@ enum EventType : uint8_t {
   BT_EV_SCAN_RESULT,
   BT_EV_SCAN_END,
   BT_EV_ACTIVITY,
+  BT_EV_STORE_FULL,      // F189: a pairing refused at its start, the bond store full
+  BT_EV_STORE_OVERFLOW,  // F189: a record the bond store had no room for, not kept
 };
 
 // A link, as a server callback's NimBLEConnInfo named it. The addresses
@@ -359,6 +363,14 @@ struct ActivityEvent {
   uint32_t rx_bytes;
 };
 
+// The bond store's status (sweep F189): NimBLE's BLE_STORE_EVENT_FULL (the
+// link whose pairing was refused) or BLE_STORE_EVENT_OVERFLOW (the kind of
+// record not kept).
+struct StoreEvent {
+  uint16_t conn_handle;
+  int obj_type;
+};
+
 struct Event {
   EventType type;
   uint32_t at_ms;                           // millis() when the callback ran
@@ -367,6 +379,7 @@ struct Event {
     PasskeyEvent passkey;
     ScannedDevice scan;                     // BT_EV_SCAN_RESULT: last_seen_ms is at_ms
     ActivityEvent activity;
+    StoreEvent store;
   } u;
 };
 
@@ -382,6 +395,13 @@ struct DropLog {
 };
 static DropLog g_link_drops = {0, 0};     // a link's events (posted at the full limit)
 static DropLog g_lossy_drops = {0, 0};    // scan results and GATT activity (the lower limit)
+// The loop task's (sweep F189): pairings the full bond store refused, and
+// records it had no room for, since boot, with their logs (as the drops'
+// are: at most once a minute each).
+static uint32_t g_store_full_count = 0;
+static uint32_t g_store_overflow_count = 0;
+static DropLog g_store_full_log = {0, 0};
+static DropLog g_store_overflow_log = {0, 0};
 // The loop task's: the count of a link's dropped events reconcile_link()
 // last answered (sweep F169).
 static uint32_t g_link_drops_reconciled = 0;
@@ -509,9 +529,62 @@ class ScanCallbacks : public NimBLEScanCallbacks {
   }
 };
 
+// The bond store's status (sweep F189), on the NimBLE host task. NimBLE
+// keeps CONFIG_BT_NIMBLE_MAX_BONDS bonds (nimconfig.h's default, 3: no WAP
+// build overrides it, and a define in the sketch does not reach the
+// library's own compile), where the paired list keeps MAX_PAIRED_DEVICES
+// (8). Its default answer, ble_store_util_status_rr() (NimBLE-Arduino 2.3.8
+// and 2.5.0, ble_store_util.c), lets a pairing start on a full store and,
+// when its bond then finds no room, unpairs the oldest bond
+// (ble_gap_unpair_oldest_peer()) through ble_gap_unpair()'s busy guard: the
+// oldest phone lost its bond while the list kept it, or, its bond carrying
+// an IRK while the WAP advertised or scanned (nearly always), the new bond
+// was not stored and the list took it anyway. Here no bond is ever evicted
+// behind the owner:
+//   - BLE_STORE_EVENT_FULL (ble_sm_chk_store_overflow(), at the phone's
+//     Pairing Request, before any key; it counts the pairings under way
+//     too): refused, unless the peer on that link is one the store already
+//     holds (a phone that lost its keys pairs again over its own record).
+//     The owner removes a paired phone to make room.
+//   - BLE_STORE_EVENT_OVERFLOW (ble_store_write(), a record with no room
+//     after all: a bond whose pairing was let start as a held peer but that
+//     handed over a new identity, a CCCD, an address record): not kept.
+//     NimBLE ignores a CCCD write's failure (ble_gatts.c), so a subscription
+//     is then held only for the link.
+// So the store-full path calls no ble_gap_unpair() and cannot fail on its
+// busy guard. Each posts its event (the log is the loop task's) under the
+// lossy limit: a stranger's repeated pairing attempts never take the room
+// kept for a link's own events.
+class StoreCallbacks : public NimBLEDeviceCallbacks {
+  int onStoreStatus(struct ble_store_status_event* event, void* /*arg*/) override {
+    if (event->event_code == BLE_STORE_EVENT_FULL) {
+      NimBLEServer* server = NimBLEDevice::getServer();
+      if (server != nullptr) {
+        const NimBLEConnInfo peer = server->getPeerInfoByHandle(event->full.conn_handle);
+        if (peer.getConnHandle() == event->full.conn_handle && NimBLEDevice::isBonded(peer.getIdAddress())) {
+          return 0;   // over its own record: no room needed
+        }
+      }
+      Event e = make_event(BT_EV_STORE_FULL);
+      e.u.store.conn_handle = event->full.conn_handle;
+      e.u.store.obj_type = event->full.obj_type;
+      (void)post_event(e, EVENT_LOSSY_LIMIT);
+      return BLE_HS_ESTORE_CAP;
+    }
+    if (event->event_code == BLE_STORE_EVENT_OVERFLOW) {
+      Event e = make_event(BT_EV_STORE_OVERFLOW);
+      e.u.store.obj_type = event->overflow.obj_type;
+      (void)post_event(e, EVENT_LOSSY_LIMIT);
+      return BLE_HS_ESTORE_CAP;
+    }
+    return BLE_HS_EUNKNOWN;
+  }
+};
+
 static ServerCallbacks g_server_callbacks;
 static CharacteristicCallbacks g_char_callbacks;
 static ScanCallbacks g_scan_callbacks;
+static StoreCallbacks g_store_callbacks;
 
 // ── The loop task applies them ─────────────────────────────────────────
 
@@ -713,7 +786,15 @@ static void apply_auth_complete(const Event& e) {
         }
       }
 
-      if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
+      // Only a bond the store holds (sweep F189): NimBLE reports the link
+      // bonded whether or not the bond was stored (a record the full store
+      // did not keep, StoreCallbacks), and an entry no bond backs is one no
+      // phone can use and Remove cannot forget. So the list never outgrows
+      // the store.
+      if (!found && !NimBLEDevice::isBonded(identity)) {
+        log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                   "Paired device not listed: the bond store did not keep it", nullptr);
+      } else if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
         PairedDevice* dev = &g_paired_devices[g_paired_count++];
         memcpy(dev->address, link.id_address.val, BLE_ADDRESS_LENGTH);
         dev->address_type = link.id_address.type;
@@ -842,6 +923,27 @@ static void apply_activity(const Event& e) {
   g_total_bytes_received += e.u.activity.rx_bytes;
 }
 
+// A pairing the full bond store refused at its start (sweep F189): counted
+// for the health log (update(), at most once a minute), and, on the
+// recorded link, the owner's pairing session reads failed, as a failed
+// authentication's does.
+static void apply_store_full(const Event& e) {
+  g_store_full_count++;
+  if (g_connection.connected && g_connection_handle == e.u.store.conn_handle &&
+      g_pairing.state != PAIR_NONE && g_pairing.state != PAIR_COMPLETE) {
+    g_pairing.state = PAIR_FAILED;
+    if (g_pair_callback) {
+      g_pair_callback(&g_pairing);
+    }
+  }
+}
+
+// A record the full bond store did not keep (sweep F189): counted for the
+// health log.
+static void apply_store_overflow(const Event& /*e*/) {
+  g_store_overflow_count++;
+}
+
 // After a link's event was dropped (sweep F169). The queue keeps room for a
 // link's own events, but a loop task stalled long enough fills that too,
 // and a dropped disconnect left the connection recorded (no advertising
@@ -896,6 +998,8 @@ static void apply_event(const Event& e) {
     case BT_EV_SCAN_RESULT:     apply_scan_result(e); break;
     case BT_EV_SCAN_END:        apply_scan_end(e); break;
     case BT_EV_ACTIVITY:        apply_activity(e); break;
+    case BT_EV_STORE_FULL:      apply_store_full(e); break;
+    case BT_EV_STORE_OVERFLOW:  apply_store_overflow(e); break;
   }
 }
 
@@ -1071,6 +1175,33 @@ static void migrate_paired_devices() {
   snprintf(detail, sizeof(detail), "%u kept, %u added, %u dropped", (unsigned)kept,
            (unsigned)(count - kept), (unsigned)dropped);
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Paired list rebuilt from the bond store", detail);
+}
+
+// The paired list follows the bond store (sweep F189): each boot, once the
+// loop task holds the stack (adopt_init_result()), an entry whose bond the
+// store no longer holds is dropped, and the list saved when one was. Since
+// F189 the store evicts no bond (StoreCallbacks) and only Remove and Clear
+// delete one, keeping the list in step; this heals a list saved while the
+// store's default evicted bonds behind it (F172's rebuild ran once, on the
+// first boot after it). A list that matches the store saves nothing.
+static void drop_entries_without_bond() {
+  size_t kept = 0;
+  for (size_t i = 0; i < g_paired_count; i++) {
+    if (NimBLEDevice::isBonded(paired_identity(g_paired_devices[i]))) {
+      if (kept != i) g_paired_devices[kept] = g_paired_devices[i];
+      kept++;
+    }
+  }
+  if (kept == g_paired_count) return;
+  const size_t dropped = g_paired_count - kept;
+  for (size_t i = kept; i < MAX_PAIRED_DEVICES; i++) {
+    memset(&g_paired_devices[i], 0, sizeof(PairedDevice));
+  }
+  g_paired_count = kept;
+  save_paired_devices();
+  char detail[24];
+  snprintf(detail, sizeof(detail), "%u dropped", (unsigned)dropped);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Paired list: entries without a bond dropped", detail);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1256,6 +1387,10 @@ bool init() {
     set_init_fail_reason("%s", "NimBLE stack init failed (controller/host bring-up)");
     return false;
   }
+  // The bond store's status is the channel's to answer (sweep F189): a full
+  // store refuses a new pairing instead of evicting a bond behind the owner
+  // (StoreCallbacks). Before any server exists, so before any pairing.
+  NimBLEDevice::setDeviceCallbacks(&g_store_callbacks);
   // NimBLE 2.x takes the dBm value directly (int8_t). Don't pass the
   // ESP_PWR_LVL_* enum here — those values are indexes (e.g. P3 == 7), not
   // dBm, and would set the radio to a different power than intended. This is
@@ -1463,8 +1598,9 @@ static void adopt_init_result() {
   set_state(rest_state());
 
   // A paired list saved before sweep F172 is rebuilt from the bond store
-  // (once; it needs the stack up).
+  // (once; it needs the stack up). Then the list follows the store (F189).
   migrate_paired_devices();
+  drop_entries_without_bond();
 
   ble_server_dispatch::install(g_server, ble_server_dispatch::kPairing, &g_server_callbacks);
 
@@ -2346,6 +2482,11 @@ void update() {
             "BLE link events dropped (queue full)", now);
   log_drops(g_events.dropped_limited(), g_lossy_drops, SCV_LOG_DEBUG,
             "BLE scan/activity events dropped (queue full)", now);
+  // The bond store's refusals (sweep F189), at most once a minute each.
+  log_drops(g_store_full_count, g_store_full_log, SCV_LOG_WARNING,
+            "BLE pairing refused: the bond store is full", now);
+  log_drops(g_store_overflow_count, g_store_overflow_log, SCV_LOG_WARNING,
+            "BLE bond store full: a record was not kept", now);
 
   if (!g_initialized || !g_settings.enabled) {
     publish_views();   // F138: a disabled channel's pass, as the routes show it
