@@ -912,6 +912,20 @@ fails on byte drift.
   `build.sh`'s pins when absent, and CI runs it right after `glass_turn.sh`.
   `tests/onboard.test.js` holds its TU lists, defines and language flags to
   what `build.sh` hands em++ for the nightlight.
+
+- `emulator/test/glass_turn_lvgl9.sh` — the same turned dash glass on the
+  LVGL the dash builds ship (F225): the real `ui/lvgl_port.cpp` (its LVGL 9
+  branch, dash config) built with g++ against the LVGL 9.x release
+  `sketch.yaml`'s `dash-core3` profile pins (fetched into the gitignored
+  `emulator/test/third_party/lvgl`, which CI caches under its own key) and
+  the display's own `lv_conf.h`. At every quarter turn each native pixel the
+  port flushes equals the scene rendered on a plain display of the logical
+  size, nothing falls off the panel or goes unpainted, a raw touch lands on
+  the pixel drawn there, the splash's turned tail square draws, and a glass
+  with no turn buffer stays landscape. It first holds
+  `tests_host/fake_lvgl9/lvgl.h`'s quotes of LVGL 9.5 to the fetched source
+  (`emulator/test/check_lvgl9_quotes.py`). It reads no dist; CI runs it
+  right after `glass_turn.sh`.
 - `tests/canary_local.test.js` — Node tests for the DOM-free logic:
   the witness signing canonical is pinned against `trust.cpp`'s locked
   format (and a WebCrypto round-trip verifies a real signature over

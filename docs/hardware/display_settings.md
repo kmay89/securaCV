@@ -197,7 +197,10 @@ portrait column, `portrait7_ui`.
 > `lvgl_port.cpp` against LVGL 9.5's quoted rotation code and holds, at every
 > quarter turn, that each native pixel shows the logical pixel LVGL's turn
 > puts there and that a raw touch on any pixel maps to the pixel drawn there;
-> a native LVGL 9.5 run of the same port agreed. No turned panel has been
+> CI renders a scene through the same port and the real LVGL 9.5.0 at every
+> quarter turn (`canary-local/emulator/test/glass_turn_lvgl9.sh`, natively on
+> a 64-bit host) and holds the panel pixel for pixel against the scene drawn
+> on a plain display of the logical size. No turned panel has been
 > confirmed on real glass, nor the GT911's axes against the panel's.
 > Landscape (rotation 0) is the default and a no-op, so boot is never
 > sideways.
