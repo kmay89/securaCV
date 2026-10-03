@@ -2,6 +2,167 @@
 
 ## [Unreleased]
 
+### canary-wap's FULL builds wait for the owner's Bluetooth confirm and Remove forgets the phone, Chirp's cooldown is a timer and a refused confirm says why, the PIO mesh status reads one pass and the kernel wizard reads each pairing's outcome, the canary's diagnostics carry its egress counters and the WAP reports the presence thresholds it runs, the Vision keeps one dwell per stay, the Lab's probes run on the sources, and the emulator walks a turned dash (#1762, wave 13)
+
+- **canary-wap Bluetooth: a FULL build now waits for the owner's confirm
+  before a phone pairs, Remove forgets the phone, a link that comes up while
+  Bluetooth is off is dropped, a lost link event heals, and the state says
+  what runs (sweep F171, F172, F173, F169, F170).** A security fix for the
+  default FULL profile. There, Opera's BLE Discovery replaced the pairing
+  channel's NimBLE server callbacks, so NimBLE-Arduino's default accepted
+  every phone's Numeric Comparison with no confirm in the web UI and no
+  protection against a man in the middle, and a Passkey Entry took the
+  library's fixed 123456. What an owner of a FULL build gets now: a phone that
+  shows six digits and a yes/no, as current phones do, bonds only after the
+  owner presses "Numbers match" in the web UI, and such a pairing asked before
+  the pairing channel is up is refused. One dispatcher gives the channel every
+  callback and Opera a link's start and end, whichever starts first. Not every
+  pairing asks the owner: NimBLE pairs a device with no display or no yes/no
+  by Just Works (unauthenticated and unlisted, though NimBLE keeps the bond),
+  and a keyboard-only one by Passkey Entry with the digits the web UI shows
+  (filed for a decision, F191). The connection card, the PIN box, the paired
+  list, the inactivity timeout and Disconnect work on FULL builds for the
+  first time; the timeout drops only the idle link the card shows, and Opera's
+  fleet beacon stays on the air while a phone is connected. Remove now deletes
+  the phone's bond under its identity address with the radio quiet for the
+  call: it named a byte-reversed, often long-gone private address, and NimBLE
+  also refuses to forget a phone's bond while the WAP advertises or scans,
+  which it nearly always does, so the phone kept its bond and came back
+  without pairing again. Remove (and Remove all) ends a running scan; if
+  NimBLE still keeps a bond, the phone stays listed and the API answers that
+  its bond was not removed. A paired list saved before is rebuilt from the
+  bond store on the first boot. Addresses in `GET /api/bluetooth/paired`, the
+  connection and the scan list print most significant byte first, as the phone
+  shows its own, and the health log no longer records a phone's address. A
+  link that comes up as Bluetooth is turned off is dropped and a pairing asked
+  meanwhile refused (on FULL, Bluetooth off refuses every BLE link, Opera's
+  clients included); a link event lost to a full queue is reconciled with the
+  stack on the next pass; after a scan, a canceled pairing or a disconnect,
+  `"state"` names what still runs (it read `"idle"` beside `"advertising":
+  true`). **Host-tested only** (the channel's and Opera's inits over a NimBLE
+  stand-in with the library's default callbacks and `ble_gap_unpair()`'s
+  refusals, 58 tests): the Arduino and PlatformIO compiles are CI's, and
+  nothing is bench-tested with a phone.
+- **canary-wap Chirp: the send cooldown is a timer a mute cannot end, and a
+  refused send or confirm says why (sweep F174, F178).** The cooldown was the
+  channel's state, which a mute replaced, so a send right after muting went
+  out a tier up; the device also ended it only after the commands it had
+  queued, so a send then was refused with 0 seconds left. It is now the tier's
+  cooldown counted from the last send, read by every check: muting, unmuting
+  or a mute that runs out leaves it running, and it ends the moment it runs
+  out. `GET /api/chirp` keeps its `state` words, except that a send made while
+  muted now leaves the channel `muted` until the mute ends (it read
+  `cooldown`, then `active`, with the device saying it was listening while it
+  still dropped every chirp). `cooldown_remaining_sec` rounds up, and the
+  dashboard's Chirp card turns Send off for anything that stops a send. A
+  refused send names the check that refused it, read once, so a send refused
+  just as a gate opened no longer answers no reason or `cooldown` with 0
+  seconds. A refused confirmation (`POST /api/chirp/confirm`, or
+  `/api/chirp/ack` with "confirmed") answers why: `chirp_disabled`,
+  `presence_required`, `clock_unsynced` or `own_chirp` (409), or `not_found`
+  (404). Every one used to answer `not_found` with a 200, from a buffer too
+  small for it, so the answer went out cut short and followed by stack bytes;
+  the mute route's refusal had the same buffer bug, now fixed. A dismiss says
+  whether its signed suppress vote went out, and why not; the dashboard shows
+  both under the list. With the Bluetooth rules above,
+  `check_wap_loop_commands.py` now refuses 252 mutations. **Host-tested**,
+  with the handlers' JSON checked in a scratch harness over ArduinoJson: the
+  Arduino compile is CI's, and nothing is bench-tested.
+- **The PlatformIO Canary's mesh status reads one pass, the kernel's pairing
+  wizard reads each pairing's outcome, and the dashboard hides a Community tab
+  nothing serves (sweep F161, F163, F176).** `GET /api/mesh` and
+  `/api/mesh/peers` now read a view the main loop publishes after each pass
+  and each request it runs (through canary-wap's `loop_snapshot.h`, now
+  shared), so one body is one pass: no pairing number with another pairing's
+  outcome, no half-renamed opera; every field is unchanged and neither route
+  waits for the loop. The Home Assistant add-on's "Add another Canary" wizard
+  reads each Canary's pairing outcome (F133) instead of waiting a minute for
+  ACTIVE, which a PlatformIO Canary does not read until it hears a member: it
+  says a finished pairing finished and a failed one failed, on which Canary
+  and why, cancels a Canary still running the pairing when it gives up (so the
+  retry is not refused for five minutes), and still reads older Canaries and
+  canary-wap the old way. The PlatformIO dashboard's Community tab, whose
+  Chirp routes nothing in that firmware serves, stays hidden until one
+  answers. Host-tested (the mesh C++ suites, a two-thread run clean under
+  ThreadSanitizer, node page tests, a static check with 25 self-test
+  mutations); the `[env:full]` compile is CI's; not bench-tested.
+- **Diagnostics and quiet boots: the canary's diagnostics carry its egress
+  counters, and the canary-wap reports the presence thresholds it runs (sweep
+  F179, F180, F164, F166).** The canary's token-gated `GET /api/diagnostics`
+  now carries its committed-event egress counters as `csi_event_egress`, under
+  the MQTT health's names (`null` before the loop's first pass), read from a
+  copy the loop task publishes every pass, beside the keys the route already
+  had; a host-tested builder now makes the route's body. The canary-wap no
+  longer logs `nvs_open failed: NOT_FOUND` for the `mesh` namespace on a build
+  that keeps Arduino's error log, at its first boot after an NVS erase or at
+  any boot before it has once stayed up five minutes or rebooted through the
+  API (the release image compiles those lines out). Its calibration status and
+  its Tuning Lab report the presence thresholds the module actually runs: the
+  preset and sensitivity baseline for a threshold nothing stores, not the
+  balanced 35 / 75 / 30 whatever the preset, and the status says which with
+  `current_source`. A Tuning Lab bundle exported and loaded back keeps the
+  thresholds the device ran (it used to store the balanced ones as rows, which
+  then won over the preset). `csi_event_egress::watermark()`'s comment no
+  longer claims a diagnostics reader. Host-tested; the PlatformIO and Arduino
+  compiles are CI's; not bench-tested.
+- **canary-vision: one dwell per stay, and discovery fits every legal device
+  id (sweep F186, F181).** A dweller seen on the frame between `dwell_ended`
+  and `presence_ended` used to start a second dwell in the same stay, so the
+  lingering alert paged twice; that frame now ends the stay, and the sighting
+  opens the next visit on the frame after (`presence_started`, then the ended
+  stay's `interaction_likely`), the events a return one frame later always
+  gave. The device object every Home Assistant discovery payload embeds was
+  cut mid-JSON for long device ids (from 46 characters on canary-vision, 44 on
+  canary-sense and 39 on its wellbeing build), which made every entity's
+  config invalid; it is now sized for the longest id the firmware accepts and
+  each build's model, with a compile-time check, on canary-vision,
+  canary-sense and canary-sentinel. The Lab's Vision core changes with the
+  FSM, so the emulator dist moves (`canary-vision-core` only): CI's pinned
+  emsdk rebuilds it in this PR, and until then `vision.test.js`'s new test
+  fails on the committed dist and passes with `LAB_CORES=native`. Host-tested;
+  firmware compile-tested by CI; not bench-tested.
+- **The Lab's Vision, eyes and audio browser probes can run on the tree's core
+  sources, and the harness wait the CSP could refuse is gone (sweep A41,
+  A44).** `vision_probe.mjs`, `eyes_probe.mjs` and `audio_probe.mjs` drive
+  pages that load their core with a `<script>` tag, so `LAB_CORES=native`
+  (A40) never reached them. With it, each probe builds its core with g++ as
+  the Node page tests do, and its server answers the dist URL, under any
+  spelling, with a stand-in that forwards each call to that build over
+  synchronous same-origin requests; a native run fails unless the stand-in was
+  both served and called. The page and its policy are served as committed, and
+  unset nothing changes. CI's wasm job runs each probe both ways, the native
+  step even when the dist step is red. `boot_probe.mjs` and `csp_probe.mjs`
+  waited for the emulator harness with a string predicate, which Playwright
+  re-evaluates through eval every frame and the harness's policy refuses
+  whenever the wasm boots slower than the page loads; they wait with a
+  function now, and `csp.test.js` refuses any predicate it cannot follow to a
+  function within the probe's file, through parentheses, names and wrapper
+  calls. See `canary-local/tests/native/README.md`. Test tooling only: no
+  firmware or page behavior changes, and the emulator dist does not move for
+  it. **Host-tested** and run in local Chromium; the CI steps' first run is
+  CI's.
+- **The emulator runs a turned dash glass, and the onboarding probe walks it
+  (sweep F184, in part).** The harness takes `?rotation=0..3`, staged in the
+  firmware's own settings flash before power-on. `lvgl_port_set_rotation()`
+  now turns LVGL 8.4, the emulator's pin, on the dash glass, and the
+  emulator's framebuffer turns with it. `onboard_probe.mjs` walks the whole
+  first-boot portal again on the 480x800 portrait dash: the first frame is
+  already turned, and the QR card and the halo stand where
+  `onboard_layout.h`'s stack seats them, read off the framebuffer and LVGL's
+  arc, the halo's stroke inked where its circle says. On every walk, native
+  and turned, each scene the probe reads (Hello, Join, PhoneJoined, both
+  failures, Connecting, Success, the face) keeps every line on the glass, none
+  cut and inked where the firmware says; the bird stays on the glass, the join
+  QR stands upright, and every frame is on one glass. Not done: the splash is
+  not read in a browser, and the nightlight is not walked (no emulator flavor
+  builds it); both are filed (F206, F204), as is the finding that the shipped
+  LVGL 9.5 dash builds most likely do not turn what they draw (F205).
+  `emulator/test/glass_turn.sh` holds the turn natively, pixel for pixel, and
+  runs in CI before anything that reads the dist. The emulator dist moves for
+  the five display flavors: CI's pinned emsdk rebuilds it in this PR, and
+  until then the turned walk fails on the committed dist by design. The
+  rebuilt dist was not run here. Not bench-tested.
+
 ### The PIO mesh resends a lost pairing COMPLETE and tells a failed pairing from a finished one, a canary-wap mesh removal leaves no key in NVS and its Bluetooth and Chirp routes read what its main loop published, its egress counters reach MQTT and Home Assistant, the Vision judges each visit on its own and Home Assistant's presence sensors turn on, the turned panels' setup screens fit, and the Lab's core tests run on the sources (#1762, wave 12)
 
 - **The PIO Canary's mesh sends a lost pairing COMPLETE again, a late cancel
@@ -68,9 +229,9 @@
   link, pairing and bond parts apply where the channel's own server callbacks
   run, the DEV profile: on the default FULL profile Opera's BLE Discovery
   replaces them, and read from the code a phone's pairing there is accepted
-  with no owner confirm, a pre-existing gap filed as F171. **Host-tested
-  only** (ThreadSanitizer included): the Arduino and PlatformIO compiles are
-  CI's, and nothing is bench-tested.
+  with no owner confirm, a pre-existing gap filed as F171 and fixed in wave 13
+  (above). **Host-tested only** (ThreadSanitizer included): the Arduino and
+  PlatformIO compiles are CI's, and nothing is bench-tested.
 - **canary-wap Chirp: the status routes read what the main loop published, and
   a send before the clock is set says so (sweep F138's Chirp half, F146).**
   `GET /api/chirp`, `/api/chirp/nearby` and `/api/chirp/recent` read whole
