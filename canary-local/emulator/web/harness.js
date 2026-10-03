@@ -71,11 +71,28 @@ document.getElementById("controls").addEventListener("click", (e) => {
   CONTROLS[b.dataset.emu](Number(b.dataset.arg));
 });
 
-await emu.start({
-  provisioned: q.get("provisioned") !== "0",
-  firstMeeting: q.get("meet") === "1",
-  seed: 1234,
-});
+// ?rotation=0..3: a saved rotation (canary::glass::Rotation) staged before
+// power-on, so the dash glass boots turned the way main.cpp brings up a unit
+// that saved it (F184: 1 is the 480x800 portrait). Only those four values.
+const ROTATIONS = { 0: 0, 1: 1, 2: 2, 3: 3 };
+const rotationParam = q.get("rotation");
+if (rotationParam !== null && !Object.hasOwn(ROTATIONS, rotationParam)) {
+  throw new Error("rotation must be 0, 1, 2 or 3");
+}
+// A boot the shell refuses (a dist without a binding the query asks for) is
+// named on window.__harnessError, so a probe fails on the reason at once
+// instead of waiting out __ready.
+try {
+  await emu.start({
+    provisioned: q.get("provisioned") !== "0",
+    firstMeeting: q.get("meet") === "1",
+    seed: 1234,
+    rotation: rotationParam === null ? null : ROTATIONS[rotationParam],
+  });
+} catch (e) {
+  window.__harnessError = String((e && e.message) || e);
+  throw e;
+}
 if (q.get("hour") !== null) emu.setLocalHour(Number(q.get("hour")));
 state.booted = true;
 

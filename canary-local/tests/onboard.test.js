@@ -12,6 +12,12 @@
 //   · a provisioned boot drops into onboarding (key typo)      → "preseed keys"
 //   · the build stops compiling the real portal                → "build compiles"
 //   · the DNS plumbing misreads the firmware's reply shape     → "DNS"
+//   · the turned glass's reads pass a line off it, or a card
+//     outside its halo                                         → "turned glass (F184)"
+//   · a saved rotation lands after power-on, or a dist without
+//     the binding boots unturned                               → "saved rotation (F184)"
+//   · the turned walk falls out of the probe or the glass test
+//     out of CI                                                → "turned wiring (F184)"
 //   · the gates fall out of CI                                 → "CI runs"
 //
 // The browser half (the real wasm answering) is tests/onboard_probe.mjs, in
@@ -321,6 +327,187 @@ test("bird breath (F89): breathOnSeat holds a scene's bird to its seat exactly, 
   assert.match(breathOnSeat(hopped), /drawn at 100,28/);
   for (const dy of [-5, -3, -1, 0, 1, 3, 7]) assert.ok(!flourishHop(reads(dy, 0, 3000)), `${dy} px off is no hop`);
   assert.ok(flourishHop(reads(-10, 0, 3000)), "a bird 10 px high on every read is re-read, and fails again");
+});
+
+test("turned glass (F184): linesOnGlass fails a line that leaves the glass, and only that", async () => {
+  const { linesOnGlass } = await import("./onboard_glass.mjs");
+  const glass = { w: 480, h: 800 };
+  const line = (x, y, w, h, extra = {}) => ({ x, y, w, h, shown: true, opa: 255, text: "Scan with your phone", ...extra });
+  assert.strictEqual(linesOnGlass([line(8, 120, 464, 43), line(0, 0, 480, 800)], glass), null);
+  // Off any edge, by a pixel: named with its box.
+  assert.match(linesOnGlass([line(8, 120, 473, 43)], glass), /1 line\(s\) leave the 480x800 glass: .*Scan with your phone.*\[8,120,473,43\]/);
+  assert.match(linesOnGlass([line(-1, 120, 100, 20)], glass) || "", /F184/);
+  assert.match(linesOnGlass([line(10, -1, 100, 20)], glass) || "", /F184/);
+  assert.match(linesOnGlass([line(10, 790, 100, 11)], glass) || "", /F184/);
+  // The 800x480 glass's own row on the turned glass: the old F156 cut.
+  assert.match(linesOnGlass([line(8, 300, 784, 43)], glass) || "", /784/);
+  // A line that does not draw is not held: hidden, faded out, or empty.
+  for (const extra of [{ shown: false }, { opa: 0 }, { text: "" }, { text: "   " }]) {
+    assert.strictEqual(linesOnGlass([line(-50, -50, 900, 900, extra)], glass), null, JSON.stringify(extra));
+  }
+});
+
+test("turned glass (F184): linesCut fails a line LVGL cut to an ellipsis, as its own text says", async () => {
+  const { linesCut } = await import("./onboard_glass.mjs");
+  const line = (text, extra = {}) => ({ x: 8, y: 122, w: 464, h: 40, shown: true, opa: 255, text, ...extra });
+  assert.strictEqual(linesCut([line("Scan with your phone"), line("password  p7Rm2Kqf")]), null);
+  // The portrait dash's Join title before F156, in the 36 px face whose dots
+  // the framebuffer read takes for letters.
+  assert.match(linesCut([line("Scan with your phone...")]), /1 line\(s\) cut to an ellipsis: \["Scan with your phone\.\.\."\]/);
+  // A network name shortened around "..." on purpose keeps its tail.
+  assert.strictEqual(linesCut([line("Basement-Mesh-E...nder-Office-5G")]), null);
+  // Only a line that draws.
+  assert.strictEqual(linesCut([line("cut...", { shown: false }), line("cut...", { opa: 0 })]), null);
+});
+
+test("turned glass (F184): cardInHalo holds the QR card over its halo's center, sides inside the stroke", async () => {
+  const { cardInHalo, haloOf } = await import("./onboard_glass.mjs");
+  // The 800 px glass's Join card (232 px, 10 px corners) in its 300 px ring,
+  // as on the portrait dash: the card's box is its white pixels, inclusive.
+  const halo = { cx: 240, cy: 300, r: 150, stroke: 3, shown: true };
+  const card = (side, dx = 0, dy = 0) => {
+    const x0 = 240 - side / 2 + dx, y0 = 300 - side / 2 + dy;
+    return { box: [x0, y0, x0 + side - 1, y0 + side - 1] };
+  };
+  const dash = cardInHalo(card(232), halo);
+  assert.strictEqual(dash.fail, null);
+  assert.deepStrictEqual([dash.sides, dash.reach, dash.inner], [116, 159.9, 147]);
+  // Its corners reach past the ring (F155): failed only when held.
+  assert.match(cardInHalo(card(232), halo, { corners: true }).fail, /corners reach 159\.9 px .* past its stroke/);
+  // Under Heirloom the Join stack sets the card 5 px above the ring's center
+  // (F155): still over it, its sides 121 px out, inside the stroke.
+  const heir = cardInHalo(card(232, 0, -5), halo);
+  assert.strictEqual(heir.fail, null);
+  assert.deepStrictEqual([heir.offset, heir.sides], [[0, -5], 121]);
+  // Beside the center, or past the stroke at a side, it fails.
+  assert.match(cardInHalo(card(100, 60, 0), halo).fail, /does not stand over its halo's center/);
+  assert.match(cardInHalo(card(100, 0, -51), halo).fail, /does not stand over its halo's center/);
+  assert.match(cardInHalo(card(232, 0, -32), halo).fail, /sides reach 148 px/);
+  assert.match(cardInHalo(card(296), halo).fail, /sides reach 148 px/);
+  assert.strictEqual(cardInHalo(card(294), halo).fail, null);
+  // The landscape nightlight's 150 px ring and 104 px card (F157): corners
+  // inside the stroke, so held there.
+  const night = { cx: 243, cy: 90, r: 75, stroke: 3, shown: true };
+  const nightCard = { box: [243 - 52, 90 - 52, 243 + 51, 90 + 51] };
+  const n = cardInHalo(nightCard, night, { corners: true });
+  assert.strictEqual(n.fail, null);
+  assert.ok(n.inner - n.reach > 2 && n.inner - n.reach < 3, `corners ${n.inner - n.reach} px inside`);
+  // Nothing to hold is a failure, not a pass.
+  assert.match(cardInHalo(null, halo).fail, /no QR card/);
+  assert.match(cardInHalo(card(232), null).fail, /no halo/);
+  // The halo is the scene's largest shown arc.
+  assert.deepStrictEqual(haloOf([{ ...halo, r: 40 }, halo, { ...halo, r: 400, shown: false }]), halo);
+  assert.strictEqual(haloOf([]), null);
+  assert.strictEqual(haloOf([{ ...halo, shown: false }]), null);
+});
+
+// A stand-in for the emulator module the shell drives: every export a cwrap
+// that records its call (and what a real one would return), and the
+// framebuffer/strings it reads.
+function fakeModule({ preset = true, arcs = true, presetAnswer = null } = {}) {
+  const calls = [];
+  const factory = async () => ({
+    cwrap: (name) => (...args) => {
+      calls.push([name, ...args]);
+      if (name === "emu_preset_rotation") return presetAnswer ?? (args[0] >= 0 && args[0] <= 3 ? 1 : 0);
+      if (name === "emu_screen_arcs") return 8;
+      return 0;
+    },
+    _emu_preset_rotation: preset ? () => 0 : undefined,
+    _emu_screen_arcs: arcs ? () => 0 : undefined,
+    HEAPU8: new Uint8Array(16),
+    UTF8ToString: () => JSON.stringify([{ x: 90, y: 250, w: 300, h: 300, cx: 240, cy: 400, r: 150, stroke: 3, shown: 1 }]),
+  });
+  const canvas = { getContext: () => ({}), addEventListener: () => {} };
+  return { calls, factory, canvas };
+}
+
+test("saved rotation (F184): the shell stages it before power-on, and a dist without the binding refuses", async () => {
+  const { CanaryEmulator } = await shell();
+  const order = (calls) => calls.map((c) => c[0]).filter((n) => n === "emu_preset_rotation" || n === "emu_power_on");
+  // Staged with the value asked, before the power button.
+  let m = fakeModule();
+  await new CanaryEmulator(m.factory, { canvas: m.canvas }).start({ firstMeeting: true, rotation: 1 });
+  assert.deepStrictEqual(order(m.calls), ["emu_preset_rotation", "emu_power_on"]);
+  assert.deepStrictEqual(m.calls.find((c) => c[0] === "emu_preset_rotation"), ["emu_preset_rotation", 1]);
+  // After every NVS preseed, too: the firmware stores it over the staged flash.
+  const names = m.calls.map((c) => c[0]);
+  assert.ok(names.lastIndexOf("emu_nvs_preseed_hex") < names.indexOf("emu_preset_rotation"));
+  // No rotation asked, none staged (the native walks and the Lab boot as before).
+  m = fakeModule();
+  await new CanaryEmulator(m.factory, { canvas: m.canvas }).start({});
+  assert.deepStrictEqual(order(m.calls), ["emu_power_on"]);
+  // A dist built before the binding, or a refused value: no boot at all.
+  m = fakeModule({ preset: false });
+  await assert.rejects(new CanaryEmulator(m.factory, { canvas: m.canvas }).start({ rotation: 1 }),
+    /no emu_preset_rotation \(rebuild it\)/);
+  assert.ok(!m.calls.some((c) => c[0] === "emu_power_on"), "an old dist must not boot unturned");
+  m = fakeModule({ presetAnswer: 0 });
+  await assert.rejects(new CanaryEmulator(m.factory, { canvas: m.canvas }).start({ rotation: 1 }), /refused rotation 1/);
+  assert.ok(!m.calls.some((c) => c[0] === "emu_power_on"));
+  // The halo's circle, decoded; absent from an old dist, it throws.
+  m = fakeModule();
+  let emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  assert.deepStrictEqual(await emu.screenArcs(),
+    [{ x: 90, y: 250, w: 300, h: 300, cx: 240, cy: 400, r: 150, stroke: 3, shown: true }]);
+  m = fakeModule({ arcs: false });
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await assert.rejects(emu.screenArcs(), /no emu_screen_arcs \(rebuild it\)/);
+});
+
+test("turned wiring (F184): the firmware wears the saved rotation, the glass turns with LVGL, the probe walks it", () => {
+  // The firmware: LVGL 8's dash branch turns the display; the emulator stores
+  // the rotation through the settings store before setup() reads it back.
+  const port = read(join(REPO, "firmware/projects/canary-display/src/ui/lvgl_port.cpp"));
+  const v8 = /#if defined\(CD_FLAVOR_DASH\) && LVGL_VERSION_MAJOR < 9([\s\S]*?)#endif/.exec(port)?.[1] || "";
+  assert.ok(v8.includes("s_disp_drv.sw_rotate = 1;") && v8.includes("lv_disp_set_rotation(d, r);"),
+    "lvgl_port_set_rotation turns LVGL 8's display on the dash glass");
+  assert.ok(v8.includes("case canary::glass::ROT_PORTRAIT:      r = LV_DISP_ROT_90;"));
+  const emuMain = read(join(ROOT, "emulator/src/emu_main.cpp"));
+  assert.match(emuMain, /EMSCRIPTEN_KEEPALIVE int emu_preset_rotation\(int rot\)/);
+  const body = /int main\(\) \{([\s\S]*?)\n\}/.exec(emuMain)?.[1] || "";
+  assert.ok(body.indexOf("save_rotation(g_saved_rotation)") > body.indexOf("while (!g_power)") &&
+    body.indexOf("save_rotation(g_saved_rotation)") < body.indexOf("setup();"),
+  "the saved rotation is stored after power-on and before setup()");
+  for (const step of ["settings_init();", "settings_mut().rotation = (uint8_t)rot;", "settings_mark_dirty();", "settings_loop("]) {
+    assert.ok(emuMain.includes(step), `save_rotation goes through the settings store: ${step}`);
+  }
+  const mainCpp = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
+  assert.ok(mainCpp.includes("canary::ui::lvgl_port_set_rotation(canary::glass::settings().rotation);"),
+    "main.cpp wears the saved rotation before the splash (what the preset relies on)");
+  // The glass follows what LVGL did to the pixels, and tells the page its shape.
+  const hal = read(join(ROOT, "emulator/src/emu_hal_display.cpp"));
+  assert.ok(hal.includes("_lv_refr_get_disp_refreshing()") && hal.includes("d->driver->sw_rotate"));
+  assert.ok(hal.includes("js_display_ready(g_view_w, g_view_h, kRoundMask);"));
+  assert.match(hal, /int emu_fb_width\(void\) \{ return g_view_w; \}/);
+  const binding = read(join(ROOT, "emulator/src/emu_bindings.cpp"));
+  assert.match(binding, /EMSCRIPTEN_KEEPALIVE const char\* emu_screen_arcs\(void\)/);
+  assert.ok(binding.includes("lv_obj_check_type(obj, &lv_arc_class)"));
+  // The page: the harness passes only 0..3 and the shell stages it.
+  const harness = read(join(ROOT, "emulator/web/harness.js"));
+  assert.ok(harness.includes("const ROTATIONS = { 0: 0, 1: 1, 2: 2, 3: 3 };") &&
+    harness.includes("rotation: rotationParam === null ? null : ROTATIONS[rotationParam],"));
+  // The probe walks the turned dash and holds the new reads on it.
+  const probe = read(join(__dirname, "onboard_probe.mjs"));
+  assert.ok(probe.includes('{ flavor: "dash", rotation: 1, name: "portrait", glass: { w: 480, h: 800 }, corners: false }'));
+  assert.ok(probe.includes("const turnArg = turn ? `&rotation=${turn.rotation}` : \"\";"));
+  assert.ok(probe.includes("check(cv[0] === turn.glass.w && cv[1] === turn.glass.h,"), "the turned walk checks the glass's size");
+  assert.ok(probe.includes("inHalo = cardInHalo(card, haloOf(await E(() => window.__emu.screenArcs())),"));
+  assert.ok(probe.includes("const helloLines = linesOnGlass(st.labels, st.glass) || linesCut(st.labels);") &&
+    probe.includes("const pjLines = linesOnGlass(st.labels, st.glass) || linesCut(st.labels);"),
+  "every bird read also holds the lines");
+  assert.ok(probe.includes("const off = linesOnGlass(ls, glass) || linesCut(ls);"), "every scene read holds the lines");
+  for (const scene of ['await holdLines("the join scene");', 'await holdLines("the join scene with the stuck-phone hint");',
+    'await holdLines("the phone-joined scene");', "await holdLines(`after a ${reason} failure`);"]) {
+    assert.ok(probe.includes(scene), `the probe holds the lines: ${scene}`);
+  }
+  assert.ok(probe.includes('if (WALK !== "native") for (const t of TURNED) { await walkHarness(t.flavor, t);'));
+  // CI: the native glass test runs after the dist build fetched LVGL.
+  const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
+  assert.ok(wf.indexOf("./build.sh all") < wf.indexOf("bash canary-local/emulator/test/glass_turn.sh"),
+    "glass_turn.sh runs after build.sh fetched the pinned LVGL");
 });
 
 test("CI runs the generator check, this test and the browser probe", () => {

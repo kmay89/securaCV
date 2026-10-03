@@ -177,7 +177,7 @@ export class CanaryEmulator {
   }
 
   async start({ provisioned = true, firstMeeting = false, seed = null,
-                nvsImage = null } = {}) {
+                nvsImage = null, rotation = null } = {}) {
     const shell = this;
     this.module = await this.factory({
       onSerial: (t) => shell.opts.onSerial?.(t),
@@ -261,6 +261,11 @@ export class CanaryEmulator {
       // Where the onboarding scene seats it (onboard_layout.h's bird_seat,
       // F89). Absent from a dist built before it: onboardSeat() says so.
       onboardSeat: M._emu_onboard_seat ? M.cwrap("emu_onboard_seat", "number", []) : null,
+      // Every arc on the glass as the circle it draws (F184: the onboarding
+      // halo), and a saved rotation staged before power-on. Absent from a
+      // dist built before them: screenArcs() and start({rotation}) say so.
+      screenArcs: M._emu_screen_arcs ? M.cwrap("emu_screen_arcs", "number", []) : null,
+      presetRotation: M._emu_preset_rotation ? M.cwrap("emu_preset_rotation", "number", ["number"]) : null,
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
@@ -291,6 +296,16 @@ export class CanaryEmulator {
     // over the defaults above — setup() must read the restored flash no
     // matter how the event loop schedules the firmware's resume.
     if (nvsImage) this.nvsRestore(nvsImage);
+    // A saved rotation (0..3, canary::glass::Rotation; F184): the firmware
+    // stores it in its own settings flash on the way to setup(), so the dash
+    // glass boots turned — splash, onboarding and face — the way main.cpp
+    // brings up a unit that saved it. The other flavors' firmware ignores it,
+    // as their glass does. A dist built before the binding cannot do this,
+    // and says so rather than booting unturned.
+    if (rotation !== null && rotation !== undefined) {
+      if (!this.c.presetRotation) throw new Error("this emulator dist has no emu_preset_rotation (rebuild it)");
+      if (this.c.presetRotation(rotation) !== 1) throw new Error(`the firmware refused rotation ${rotation} (0..3)`);
+    }
 
     this._wireInput();
     this.c.power();
@@ -454,6 +469,19 @@ export class CanaryEmulator {
     const ptr = await this.c.onboardSeat();
     if (!ptr) return null;
     return JSON.parse(this.module.UTF8ToString(ptr));
+  }
+
+  /** Every arc on the glass, as the circle lv_arc draws its indicator on:
+   *  {x, y, w, h, cx, cy, r, stroke, shown} — the stroke covers r - stroke
+   *  .. r about (cx, cy) (emu_screen_arcs). The onboarding halo is one; the
+   *  probe holds the Join scene's QR card inside it (F184). Throws on a dist
+   *  built before the binding existed, as onboardSeat() does. */
+  async screenArcs() {
+    if (!this.c || this.dead) return [];
+    if (!this.c.screenArcs) throw new Error("this emulator dist has no emu_screen_arcs (rebuild it)");
+    const ptr = await this.c.screenArcs();
+    if (!ptr) return [];
+    return JSON.parse(this.module.UTF8ToString(ptr)).map(({ shown, ...a }) => ({ ...a, shown: shown === 1 }));
   }
 
   /** The phone asks the AP to associate: 1 joined · 0 no such network ·
