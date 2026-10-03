@@ -491,10 +491,10 @@ footer a{color:var(--accent);text-decoration:none}
       <div id="wiz-ha-block" style="display:none;margin-top:.85rem">
         <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Use Home Assistant? (optional)</h3>
         <p class="wiz-sub" style="margin:0 0 .6rem">Your Canary can send its alerts to Home Assistant over MQTT. Type your broker's address and it appears there on its own. You can also do this later from the dashboard.</p>
-        <input type="text" class="wiz-input" id="wiz-ha-host" placeholder="Broker address (like 192.168.1.10)" autocomplete="off" spellcheck="false" aria-describedby="wiz-ha-err">
+        <input type="text" class="wiz-input" id="wiz-ha-host" maxlength="128" placeholder="Broker address (like 192.168.1.10)" autocomplete="off" spellcheck="false" aria-describedby="wiz-ha-err">
         <input type="number" class="wiz-input" id="wiz-ha-port" placeholder="Port (1883)" min="1" max="65535" style="margin-top:.4rem">
-        <input type="text" class="wiz-input" id="wiz-ha-user" placeholder="Username (optional)" autocomplete="off" spellcheck="false" style="margin-top:.4rem">
-        <input type="text" class="wiz-input pw-masked" id="wiz-ha-pass" placeholder="Password (optional)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" style="margin-top:.4rem">
+        <input type="text" class="wiz-input" id="wiz-ha-user" maxlength="64" placeholder="Username (optional)" autocomplete="off" spellcheck="false" style="margin-top:.4rem">
+        <input type="text" class="wiz-input pw-masked" id="wiz-ha-pass" maxlength="128" placeholder="Password (optional)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" style="margin-top:.4rem">
         <div class="err" id="wiz-ha-err" role="alert"></div>
         <p class="wiz-sub" id="wiz-ha-done" style="display:none;margin:.4rem 0 .6rem">✓ Connected. Your Canary will show up in Home Assistant on its own.</p>
         <div class="wiz-btnrow">

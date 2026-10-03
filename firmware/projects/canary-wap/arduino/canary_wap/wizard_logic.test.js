@@ -267,3 +267,29 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
     }
   });
 });
+
+// Sweep F241: POST /api/mqtt/config refuses a host, user or password longer
+// than its csi_mqtt::Config member holds (csi_mqtt.h's MAX_*_LEN), which is
+// what config_load() reads back. The Home Assistant step's inputs stop there
+// first, so the step never sends a value the device refuses with a 400 the
+// step can only show as "HTTP 400". (The /mqtt page's inputs are held to the
+// same limits through the real handler in tests_host/test_mqtt_reinit.cpp.)
+describe('the Home Assistant step stops each field at what the device takes', () => {
+  const header = fs.readFileSync(path.join(__dirname, 'csi_mqtt.h'), 'utf8');
+  const limit = (name) => {
+    const m = header.match(new RegExp('constexpr size_t ' + name + '\\s*=\\s*(\\d+);'));
+    if (!m) throw new Error(name + ' not found in csi_mqtt.h');
+    return Number(m[1]);
+  };
+  for (const [id, name] of [['wiz-ha-host', 'MAX_HOST_LEN'], ['wiz-ha-user', 'MAX_USER_LEN'],
+                            ['wiz-ha-pass', 'MAX_PASS_LEN']]) {
+    it(`#${id} has maxlength ${name}`, () => {
+      const src = fs.readFileSync(PWA, 'utf8');
+      const tags = src.match(new RegExp('<input[^>]*\\bid="' + id + '"[^>]*>', 'g')) || [];
+      assert.equal(tags.length, 1, 'one #' + id + ' input');
+      const ml = tags[0].match(/\bmaxlength="(\d+)"/);
+      assert.ok(ml, '#' + id + ' has no maxlength: ' + tags[0]);
+      assert.equal(Number(ml[1]), limit(name));
+    });
+  }
+});
