@@ -37,9 +37,9 @@
 // The send cooldown is a timer, not a state (sweep F178): a mute no longer
 // ends it, a send drained in the pass after it ran out goes out, and the
 // status route reads it over at once and its last second as 1 s, not 0. A
-// refused send names the check that refused it, read once, so a gate that
-// opens at that moment is not answered with no reason (the reviewers of
-// F178).
+// send made while muted leaves the channel muted, and a refused send names
+// the check that refused it, read once, so a gate that opens at that moment
+// is not answered with no reason (the reviewers of F178).
 //
 // The harness is one thread, so "the HTTP server's task" is a role the test
 // plays: rest() sets host_sim::on_httpd_task and calls submit() the way a
@@ -1330,6 +1330,59 @@ void test_a_mute_does_not_end_the_cooldown() {
   std::printf("PASS a_mute_does_not_end_the_cooldown\n");
 }
 
+// A send made while muted leaves the channel muted (the reviewers of F178).
+// A mute silences what comes in (handle_witness() drops chirps while
+// g_muted), not the owner, so the send goes out. send_chirp() then stored
+// CHIRP_COOLDOWN over CHIRP_MUTED: GET /api/chirp's state and MQTT's
+// chirp_state (state_name(get_status().state), canary_wap.ino) read
+// "cooldown", and when update() ended the cooldown it set CHIRP_ACTIVE, so
+// with the mute still running and chirps still dropped the channel read
+// "active" and its presence beacon said "listening". Now the state stays
+// CHIRP_MUTED until the mute runs out: "muted" over the running cooldown
+// (cannot_send_reason "cooldown"), "muted" and "not listening" after it,
+// then "active" and "listening".
+void test_a_send_while_muted_stays_muted() {
+  boot();
+  enabled_channel();
+  cc::Command m120 = cmd_of(cc::CHIRP_CMD_MUTE);
+  m120.duration_minutes = 120;
+  CHECK(rest(m120).r.ok && cc::g_state == cc::CHIRP_MUTED);
+  const uint32_t mute_ends = cc::g_mute_until_ms;
+  size_t before = host_sim::espnow->sent.size();
+  Rest r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(r.r.ok && r.r.cooldown_tier == 1);
+  CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_WITNESS});
+  const uint32_t sent_at = cc::g_cooldown.last_chirp_ms;
+
+  // Right after it: muted, over the cooldown it started.
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.muted && !v.can_send && reason_of(v) == "cooldown");
+  CHECK(v.cooldown_remaining_ms > 0);
+  CHECK(cc::get_status().state == cc::CHIRP_MUTED);
+  CHECK(std::string(cc::state_name(cc::get_status().state)) == "muted");   // MQTT's chirp_state
+
+  // The cooldown over, the mute not: muted still, and not listening.
+  host_sim::now_ms = sent_at + cc::COOLDOWN_TIER_1_MS;
+  before = host_sim::espnow->sent.size();
+  cc::update();
+  CHECK(cc::g_muted && cc::g_state == cc::CHIRP_MUTED && cc::get_status().state == cc::CHIRP_MUTED);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.muted && v.cooldown_remaining_ms == 0);
+  CHECK(v.can_send && reason_of(v) == "(none)");
+  CHECK(presence_listening(before) == std::vector<uint8_t>{0});
+
+  // The mute runs out: active, and listening.
+  host_sim::now_ms = mute_ends;
+  before = host_sim::espnow->sent.size();
+  cc::update();
+  CHECK(!cc::g_muted && cc::g_state == cc::CHIRP_ACTIVE && cc::get_status().state == cc::CHIRP_ACTIVE);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted && v.can_send);
+  CHECK(presence_listening(before) == std::vector<uint8_t>{1});
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_send_while_muted_stays_muted\n");
+}
+
 // The cooldown is over the moment its timer runs out, whatever pass the
 // loop task is at. update() drains the owner's commands first and ended
 // CHIRP_COOLDOWN only after them, so a send drained in the pass after the
@@ -1637,6 +1690,7 @@ const Test kTests[] = {
     {"every_command_runs_on_the_loop_task", test_every_command_runs_on_the_loop_task},
     {"a_refused_send_names_why", test_a_refused_send_names_why},
     {"a_mute_does_not_end_the_cooldown", test_a_mute_does_not_end_the_cooldown},
+    {"a_send_while_muted_stays_muted", test_a_send_while_muted_stays_muted},
     {"a_send_just_after_the_cooldown_goes_out", test_a_send_just_after_the_cooldown_goes_out},
     {"a_send_at_an_edge_names_why", test_a_send_at_an_edge_names_why},
     {"a_refused_confirm_names_why", test_a_refused_confirm_names_why},

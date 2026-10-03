@@ -263,7 +263,7 @@ CV8. The send cooldown is a timer, not a state (F178): in
      nothing gates on it: `send_gate()` (what `can_send_chirp()` answers
      and the send refuses on), `read_status()` and `cannot_send_reason()`
      read the timer (`test_chirp_commands_wap.cpp`'s
-     `a_mute_does_not_end_the_cooldown`,
+     `a_mute_does_not_end_the_cooldown`, `a_send_while_muted_stays_muted`,
      `a_send_just_after_the_cooldown_goes_out`,
      `a_send_at_an_edge_names_why`).
 CV9. A refused confirm says why, and a dismiss whether its suppress vote
