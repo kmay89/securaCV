@@ -201,7 +201,8 @@ def every_announcement(product: str, ids: dict[str, str]) -> tuple[dict[str, tup
     for obj, (text, _) in device_objects(product, ids).items():
         values[obj] = text
     found, table = {}, []
-    for m in re.finditer(r'char t\[\d+\], p\[(\d+)\][^;]*;\s*(?:[^\n]*\n\s*)*?'
+    # one line per repetition, so a run of blank lines has one way to match
+    for m in re.finditer(r'char t\[\d+\], p\[(\d+)\][^;]*;(?:[^\n]*\n)*?[ \t]*'
                          r'topic_for\("([a-z_]+)", ("[a-z_]+"|[\w.]+), t, sizeof\(t\)\);', src):
         component, oid = m.group(2), m.group(3).strip('"')
         fmt, args = snprintf_call(src, m.end())
