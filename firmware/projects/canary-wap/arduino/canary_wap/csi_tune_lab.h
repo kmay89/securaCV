@@ -45,7 +45,12 @@ struct TuneCoeff {
   TuneKind    kind;       /* INT | BOOL | MINUTES (HH:MM render) */
   int32_t     min_v;
   int32_t     max_v;
-  int32_t     default_v;  /* what the device runs with the row absent */
+  int32_t     default_v;  /* what the device runs with the row absent; for
+                             core.presence's three thresholds, what it runs
+                             then at the balanced preset and sensitivity 50
+                             (with another preset or slider position it runs
+                             that baseline, which tune_read_value() reports).
+                             The Lab's reset stores it as a row (sweep F127). */
   TuneApply   apply;
 };
 
@@ -59,8 +64,13 @@ const TuneCoeff* tune_coeff_for(const char* full_key);
 /** `v` clamped into the knob's [min, max]. */
 int32_t tune_clamp(const TuneCoeff& c, int32_t v);
 
-/** The stored value of one knob, or its declared default when the row (or
- *  its key-map row) is absent. `prefs` is open on the "csi" namespace. */
+/** The value the device runs for one knob (GET /api/tune/coefficients'
+ *  "value", and what GET /api/tune/preset exports): the stored row, or, with
+ *  the row absent, its declared default; for core.presence's three
+ *  thresholds, what core.presence runs, the stored preset and sensitivity's
+ *  baseline for a threshold no row stores (read_presence_thresholds_in_use(),
+ *  sweep F166). The declared default when its key-map row is absent.
+ *  `prefs` is open on the "csi" namespace. */
 int32_t tune_read_value(Preferences& prefs, const TuneCoeff& c);
 
 /** Store one knob, clamped, typed as its kind (putBool / putInt). */

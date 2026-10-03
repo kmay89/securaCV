@@ -466,7 +466,15 @@ to the chokepoint at once, as a Quiet Hours change through
 `POST /api/settings` does (sweep F128), and every boot applies it too.
 Their declared defaults are the device's own, off and 23:00 to 07:00
 (sweep F123), so a device that never stored them shows the Lab, and
-exports, the window it runs. A bundle import is the same handler,
+exports, the window it runs. Each knob's `value` (and what a bundle
+exports) is what the device runs: its stored row, or, with none, its
+declared `default`, except for `core.presence`'s three thresholds. For a
+threshold no row stores, the Lab reports the preset and sensitivity
+baseline `core.presence` runs, the calibration status's `current` below.
+Before F166's review it reported their declared balanced 35 / 75 / 30
+whatever the preset, so a bundle exported and loaded back stored those as
+rows, which moved the thresholds. Their declared `default` is still the
+balanced 35 / 75 / 30, and that is what the reset buttons store. A bundle import is the same handler,
 so it stores every coefficient in the bundle, the three presence
 thresholds included. So do the Lab's per-row **reset** and **Reset all**,
 which POST each coefficient's default as a stored value. A stored

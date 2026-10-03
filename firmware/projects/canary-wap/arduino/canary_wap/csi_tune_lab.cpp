@@ -72,11 +72,33 @@ int32_t tune_clamp(const TuneCoeff& c, int32_t v) {
   return v;
 }
 
-/* Read the persisted value for one coefficient, or fall back to its
- * declared default. The declared default mirrors what the device runs with
- * the row absent (each module's `csi_module_settings_int default` argument;
- * for Quiet Hours, csi_settings_nvs.h's constants), so GET returns the
- * value the device would actually use and the slider sits there.
+/* core.presence's three direct thresholds: what the module runs, as the
+ * calibration's status reports it (read_presence_thresholds_in_use(), sweep
+ * F166). Their declared defaults are the balanced baseline at sensitivity
+ * 50, while init() reads an absent row as the stored preset and
+ * sensitivity's baseline, so a declared default would be a value the module
+ * does not use on a device that saved "sensitive" or "quiet" or moved the
+ * slider. False for every other knob. */
+static bool presence_threshold_in_use(Preferences& prefs, const char* full_key, int32_t* v) {
+  const bool motion    = strcmp(full_key, "core.presence.motion_threshold") == 0;
+  const bool active    = strcmp(full_key, "core.presence.active_threshold") == 0;
+  const bool breathing = strcmp(full_key, "core.presence.breathing_threshold") == 0;
+  if (!motion && !active && !breathing) return false;
+  const PresenceThresholds t = read_presence_thresholds_in_use(prefs).thresholds;
+  *v = motion ? t.motion : active ? t.active : t.breathing;
+  return true;
+}
+
+/* The value the device runs for one coefficient, which GET returns and the
+ * slider sits at: the stored row, or with the row absent what the device
+ * runs then. For every knob but the three presence thresholds that is its
+ * declared default (each module's `csi_module_settings_int default`
+ * argument; for Quiet Hours, csi_settings_nvs.h's constants). For the three
+ * thresholds it is the stored preset and sensitivity's baseline
+ * (presence_threshold_in_use() above); before, it was the declared balanced
+ * 35 / 75 / 30 whatever the preset, so the Lab and an exported bundle
+ * showed thresholds the module did not use, and a bundle loaded back stored
+ * them as rows that then won over the preset.
  *
  * Defensive guard: if a TuneCoeff is ever added without a matching
  * key-map row, nvs_key_for() returns nullptr and we fall back to
@@ -84,6 +106,8 @@ int32_t tune_clamp(const TuneCoeff& c, int32_t v) {
 int32_t tune_read_value(Preferences& prefs, const TuneCoeff& c) {
   const char* nvs = nvs_key_for(c.full_key);
   if (!nvs) return c.default_v;
+  int32_t in_use = 0;
+  if (presence_threshold_in_use(prefs, c.full_key, &in_use)) return in_use;
   if (c.kind == TK_BOOL) {
     return prefs.getBool(nvs, c.default_v != 0) ? 1 : 0;
   }

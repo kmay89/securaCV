@@ -163,8 +163,9 @@ static void reboot_and_boot() {
   g_last_summary_count = 0;
 }
 
-// The stored rows, read as GET /api/tune/coefficients and
-// GET /api/tune/preset read them (tune_read_value over a read-only handle).
+// What the Lab reports for one knob, read as GET /api/tune/coefficients and
+// GET /api/tune/preset read it (tune_read_value over a read-only handle): the
+// stored row, or what the device runs with it absent.
 static int32_t lab_value(const char* full_key) {
   const TuneCoeff* c = tune_coeff_for(full_key);
   if (c == nullptr) return -1;
@@ -694,6 +695,109 @@ static int test_the_calibration_status_reports_the_thresholds_in_use() {
   return 0;
 }
 
+// ── F166's class in the Tuning Lab (F166's review) ─────────────────────
+//
+// GET /api/tune/coefficients and the bundle export GET /api/tune/preset read
+// each knob with tune_read_value(), whose answer for an absent cp.mt / cp.at
+// / cp.bt was TUNE_COEFFS' balanced 35 / 75 / 30 whatever the preset. On a
+// device that saved "sensitive" and stores no threshold, the Lab's sliders
+// sat at 35 / 75 / 30 while the calibration's status (F166) said 25 / 60 /
+// 20, and a bundle exported and loaded back (POST /api/tune/preset stores
+// every knob) stored 35 / 75 / 30 as rows, which then won over the preset:
+// the thresholds moved without anyone choosing them. The Lab now reports
+// what the module runs, read_presence_thresholds_in_use(), so a round trip
+// keeps them. (That the round trip stores rows at all, and the Lab's reset
+// storing each declared default as a row, are sweep F127's.)
+
+// The bundle GET /api/tune/preset streams: every knob, read as the handler
+// reads it (the pins below hold the handler to this).
+static std::string exported_bundle() {
+  Preferences prefs;
+  const bool prefs_ok = csi_module_settings_nvs::begin_read_only(prefs);
+  std::string b = "{";
+  for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) {
+    const TuneCoeff& c = TUNE_COEFFS[i];
+    const int32_t v = prefs_ok ? tune_read_value(prefs, c) : c.default_v;
+    if (i) b += ",";
+    b += "\"" + std::string(c.full_key) + "\":" + std::to_string(v);
+  }
+  b += "}";
+  if (prefs_ok) prefs.end();
+  return b;
+}
+
+// The Lab's three threshold values are the status's, and are (m, a, b).
+static bool lab_reads(int32_t m, int32_t a, int32_t b) {
+  const PresenceThresholds t = status_current().thresholds;
+  return lab_value("core.presence.motion_threshold") == m &&
+         lab_value("core.presence.active_threshold") == a &&
+         lab_value("core.presence.breathing_threshold") == b &&
+         t.motion == m && t.active == a && t.breathing == b;
+}
+
+static int test_the_lab_reports_the_thresholds_in_use() {
+  host_prefs().clear();
+  reboot_and_boot();
+  // NVS that does not open: the handlers answer each declared default, and
+  // for the three thresholds that is what init() runs then.
+  const PresenceThresholds unread = presence_thresholds_in_use_unread().thresholds;
+  CHECK(tune_coeff_for("core.presence.motion_threshold")->default_v == unread.motion);
+  CHECK(tune_coeff_for("core.presence.active_threshold")->default_v == unread.active);
+  CHECK(tune_coeff_for("core.presence.breathing_threshold")->default_v == unread.breathing);
+  CHECK(lab_reads(35, 75, 30));
+
+  // Each preset and slider position the dashboard stores, no threshold row:
+  // the Lab reports the baseline the module runs, as the status does.
+  host_prefs().created.insert("csi");
+  CHECK(lab_reads(35, 75, 30));
+  CHECK(presence_post("{\"preset\":\"sensitive\"}"));
+  CHECK(lab_reads(25, 60, 20));
+  CHECK(presence_post("{\"preset\":\"quiet\"}"));
+  CHECK(lab_reads(50, 90, 40));
+  CHECK(presence_post("{\"preset\":\"sensitive\",\"sensitivity\":100}"));
+  CHECK(lab_reads(5, 40, 5));
+  CHECK(presence_post("{\"preset\":\"quiet\",\"sensitivity\":0}"));
+  CHECK(lab_reads(70, 110, 60));
+  // Every other knob still reads its row or its declared default.
+  CHECK(lab_value("core.presence.preset") == 2);
+  CHECK(lab_value("core.presence.sensitivity") == 0);
+  CHECK(lab_value("core.breathing.lock_threshold") ==
+        tune_coeff_for("core.breathing.lock_threshold")->default_v);
+  // A stored row wins, as it does for the module; the others stay the
+  // baseline.
+  CHECK(tune_post("{\"core.presence.active_threshold\":99}", reinit_module_model).changed == 1);
+  CHECK(lab_reads(70, 99, 60));
+  // A row of another type is no row to the module, nor to the Lab.
+  host_prefs().clear();
+  host_prefs().created.insert("csi");
+  CHECK(presence_post("{\"preset\":\"sensitive\"}"));
+  host_prefs().flag["csi/cp.mt"] = true;
+  CHECK(lab_reads(25, 60, 20));
+
+  // The round trip: a device on "sensitive" with no threshold row exports
+  // its bundle and loads it back. It runs 25 / 60 / 20 before and after
+  // (stored now, F127's); before the fix it ran 35 / 75 / 30 after.
+  host_prefs().clear();
+  host_prefs().created.insert("csi");
+  CHECK(presence_post("{\"preset\":\"sensitive\"}"));
+  reboot_and_boot();
+  CHECK(reads(status_current(), 25, 60, 20, "preset"));
+  const std::string bundle = exported_bundle();
+  CHECK(bundle.find("\"core.presence.motion_threshold\":25,") != std::string::npos);
+  CHECK(bundle.find("\"core.presence.active_threshold\":60,") != std::string::npos);
+  CHECK(bundle.find("\"core.presence.breathing_threshold\":20,") != std::string::npos);
+  const TunePost post = tune_post(bundle.c_str(), reinit_module_model);
+  CHECK(post.nvs_ok && post.changed == (int)TUNE_COEFF_COUNT && post.reinit_presence);
+  CHECK(reads(status_current(), 25, 60, 20, "stored"));
+  reboot_and_boot();
+  CHECK(csi_module_settings_int(nullptr, "core.presence.motion_threshold", -1) == 25);
+  CHECK(csi_module_settings_int(nullptr, "core.presence.active_threshold", -1) == 60);
+  CHECK(csi_module_settings_int(nullptr, "core.presence.breathing_threshold", -1) == 20);
+  CHECK(exported_bundle() == bundle);          // a second export is the first
+  host_prefs().clear();
+  return 0;
+}
+
 static int test_the_privacy_ceiling_is_one_row() {
   host_prefs().clear();
   reboot_and_boot();
@@ -916,6 +1020,8 @@ static const char* const kSettingsGet = R"(\besp_err_t\s+handle_settings_get\s*\
 static const char* const kSettingsPost = R"(\besp_err_t\s+handle_settings_post\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kTunePost = R"(\besp_err_t\s+handle_tune_post_coefficients\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kTunePreset = R"(\besp_err_t\s+handle_tune_post_preset\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
+static const char* const kTuneGetCoeffs = R"(\besp_err_t\s+handle_tune_get_coefficients\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
+static const char* const kTuneGetPreset = R"(\besp_err_t\s+handle_tune_get_preset\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kRegister = R"(\bvoid\s+register_v1_modules\s*\(\s*\)\s*\{)";
 static const char* const kReinit = R"(\bvoid\s+reinit_module\s*\(\s*const\s+char\s*\*\s*module_id\s*\)\s*\{)";
 
@@ -961,6 +1067,24 @@ static std::vector<std::string> pin_problems(const std::string& integ) {
   const std::string preset = code_body(integ, kTunePreset);
   if (preset.find("returnhandle_tune_post_coefficients(req);") == std::string::npos) {
     out.push_back("the bundle import is not the Tuning Lab POST");
+  }
+  // The Lab's two GETs report each knob as tune_read_value() reads it, the
+  // value the device runs (F166's review: the three thresholds read as the
+  // balanced defaults whatever the preset), its declared default only with
+  // NVS not open, and send that value, nothing read by hand.
+  const std::string get_coeffs = code_body(integ, kTuneGetCoeffs);
+  const std::string get_preset = code_body(integ, kTuneGetPreset);
+  for (const std::string* g : {&get_coeffs, &get_preset}) {
+    if (g->empty() || count_of(*g, "int32_tv=prefs_ok?tune_read_value(prefs,c):c.default_v;") != 1 ||
+        count_of(*g, "tune_read_value(") != 1 || g->find("getInt") != std::string::npos ||
+        g->find("getBool") != std::string::npos || count_of(*g, "(long)v") != 1) {
+      out.push_back("a Tuning Lab GET reports a knob other than as tune_read_value() reads it");
+    }
+  }
+  if (count_of(get_coeffs, "\\\"default\\\":%ld,\\\"value\\\":%ld,") != 1 ||
+      count_of(get_coeffs, "(long)c.default_v,(long)v);") != 1 ||
+      count_of(get_preset, "first?\"\":\",\",c.full_key,(long)v);") != 1) {
+    out.push_back("a Tuning Lab GET sends the value it read under another name, or not at all");
   }
   const std::string reg = code_body(integ, kRegister);
   if (count_of(reg, "apply_quiet_hours_from_nvs();") != 1) {
@@ -1179,6 +1303,20 @@ static int test_csi_integration_is_thin_around_the_tested_code() {
      "    (int32_t)g_calibration.proposed_motion, (int32_t)g_calibration.proposed_breathing};\n"},
     {"a local threshold default comes back", "void reinit_module(const char* module_id) {",
      "PresenceThresholdsInUse presence_thresholds_in_use_unread(void) { return {{35, 75, 30}, false, false, false}; }\nvoid reinit_module(const char* module_id) {"},
+    // F166's review: the Lab's GETs report what the device runs.
+    {"the Lab GET reads a threshold by hand",
+     "int32_t v = prefs_ok ? tune_read_value(prefs, c) : c.default_v;\n    char buf[320];",
+     "int32_t v = prefs_ok ? prefs.getInt(\"cp.mt\", c.default_v) : c.default_v;\n    char buf[320];"},
+    {"the export reads a threshold by hand",
+     "int32_t v = prefs_ok ? tune_read_value(prefs, c) : c.default_v;\n    char buf[160];",
+     "int32_t v = prefs_ok ? prefs.getInt(\"cp.mt\", c.default_v) : c.default_v;\n    char buf[160];"},
+    {"the Lab GET reports every declared default",
+     "int32_t v = prefs_ok ? tune_read_value(prefs, c) : c.default_v;\n    char buf[320];",
+     "int32_t v = c.default_v;\n    char buf[320];"},
+    {"the export ignores what it read", "first ? \"\" : \",\", c.full_key, (long)v);",
+     "first ? \"\" : \",\", c.full_key, (long)c.default_v); (void)v;"},
+    {"the Lab GET sends the default as the value", "(long)c.default_v, (long)v);",
+     "(long)v, (long)c.default_v);"},
     {"a local ceiling apply comes back", "void reinit_module(const char* module_id) {",
      "void apply_privacy_ceiling_from_nvs() {}\nvoid reinit_module(const char* module_id) {"},
   };
@@ -1277,6 +1415,7 @@ int main(int argc, char** argv) {
      test_the_calibration_writes_the_thresholds_the_module_reads},
     {"the_calibration_status_reports_the_thresholds_in_use",
      test_the_calibration_status_reports_the_thresholds_in_use},
+    {"the_lab_reports_the_thresholds_in_use", test_the_lab_reports_the_thresholds_in_use},
     {"the_privacy_ceiling_is_one_row", test_the_privacy_ceiling_is_one_row},
     {"no_sketch_source_spells_a_module_settings_key", test_no_sketch_source_spells_a_module_settings_key},
     {"csi_integration_is_thin_around_the_tested_code", test_csi_integration_is_thin_around_the_tested_code},
