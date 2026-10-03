@@ -29,6 +29,20 @@
 // and the failed-provisioning test three; with any one of the three sites
 // put back as a plain open, a test or the pin fails.
 //
+// And the "chirp" namespace (sweep F220): chirp_channel::init(), in setup(),
+// reads the relay and urgency-filter settings (load_settings(), two
+// nvs_get_u8() calls), and the loop's first pass reads the self-test chirp's
+// stamp (nvs_get_u32("st_chirp_at")), each a read-only NvsSession, before
+// anything writes the namespace: only a relay or filter change
+// (save_settings()) and the self-test's first stamp, once the clock is set,
+// do. So a first boot after an erase logged three lines, and so did every
+// boot after it until the clock synced or the owner changed a Chirp
+// setting. load_settings() and save_settings() are cut verbatim from
+// chirp_channel.cpp and the stamp read from loop() (its block, by line),
+// over the real nvs_store.h, whose NvsSession now opens read-only through
+// begin_read_only(): a first boot logs none of them. Against the plain
+// read-only open the chirp first-boot test counts three lines.
+//
 // Build/run: make -C firmware/projects/canary-wap/tests_host run
 
 #include <cstdint>
@@ -97,6 +111,23 @@ static PowerState s_state = {};
 static PowerHistory s_history = {};
 #include "test_wap_first_boot_nvs_power.inc"
 }  // namespace power_monitor
+
+// ── chirp_channel.cpp's settings load and save, cut verbatim ────────────
+namespace chirp_channel {
+enum ChirpUrgency : uint8_t { CHIRP_URG_INFO = 0, CHIRP_URG_CAUTION, CHIRP_URG_URGENT };
+static bool g_relay_enabled = true;                   // chirp_channel.cpp's defaults
+static ChirpUrgency g_urgency_filter = CHIRP_URG_INFO;
+#include "test_wap_first_boot_nvs_chirp.inc"
+}  // namespace chirp_channel
+
+// ── canary_wap.ino's self-test stamp read (in loop()), cut verbatim ─────
+namespace selftest {
+static uint32_t s_last_selftest_unix = 0;             // the block's own statics
+static bool s_selftest_nvs_loaded = false;
+static void load_stamp() {
+#include "test_wap_first_boot_nvs_stamp.inc"
+}
+}  // namespace selftest
 
 // ── A boot, in setup()'s order ──────────────────────────────────────────
 struct BootResult {
@@ -238,6 +269,78 @@ static int test_an_nvs_fault_keeps_its_lines() {
   return 0;
 }
 
+// ── The "chirp" namespace (F220) ────────────────────────────────────────
+// A boot's chirp reads, in their order: setup()'s chirp_channel::init()
+// (load_settings()), then loop()'s first pass (the self-test stamp). RAM
+// gone, NVS kept.
+static void chirp_boot() {
+  chirp_channel::g_relay_enabled = true;
+  chirp_channel::g_urgency_filter = chirp_channel::CHIRP_URG_INFO;
+  selftest::s_last_selftest_unix = 0;
+  selftest::s_selftest_nvs_loaded = false;
+  host_nvs().reset_counts();
+  chirp_channel::load_settings();
+  selftest::load_stamp();
+}
+
+// The first boot after an erase: nothing opened, no line, every default; a
+// boot whose clock never synced writes nothing, so the next is as quiet;
+// the self-test's first stamp makes the namespace, and the boot after reads
+// it with three opens and still no line.
+static int test_a_first_boot_logs_no_chirp_line() {
+  host_nvs().clear();
+  chirp_boot();
+  CHECK(host_nvs().error_logs == 0);
+  CHECK(host_nvs().opens == 0);
+  CHECK(host_nvs().probes == 3);                 // relay, filter, stamp
+  CHECK(!host_nvs().has_namespace("chirp"));
+  CHECK(chirp_channel::g_relay_enabled);
+  CHECK(chirp_channel::g_urgency_filter == chirp_channel::CHIRP_URG_INFO);
+  CHECK(selftest::s_selftest_nvs_loaded && selftest::s_last_selftest_unix == 0);
+
+  chirp_boot();                                  // no clock yet: nothing was written
+  CHECK(host_nvs().error_logs == 0 && host_nvs().opens == 0);
+
+  CHECK(nvs_set_u32("st_chirp_at", 1760000000u));   // the loop's first stamp, clock set
+  CHECK(host_nvs().has_namespace("chirp"));
+  chirp_boot();
+  CHECK(host_nvs().error_logs == 0);
+  CHECK(host_nvs().opens == 3);
+  CHECK(selftest::s_last_selftest_unix == 1760000000u);
+  CHECK(chirp_channel::g_relay_enabled);         // the settings' keys are absent: defaults
+  CHECK(chirp_channel::g_urgency_filter == chirp_channel::CHIRP_URG_INFO);
+  return 0;
+}
+
+// A relay or filter change writes the namespace; the next boot reads both
+// back, as before.
+static int test_stored_chirp_settings_read_as_before() {
+  host_nvs().clear();
+  chirp_channel::g_relay_enabled = false;
+  chirp_channel::g_urgency_filter = chirp_channel::CHIRP_URG_URGENT;
+  chirp_channel::save_settings();
+  CHECK(host_nvs().has_namespace("chirp"));
+  chirp_boot();
+  CHECK(host_nvs().error_logs == 0);
+  CHECK(host_nvs().opens == 3);
+  CHECK(!chirp_channel::g_relay_enabled);
+  CHECK(chirp_channel::g_urgency_filter == chirp_channel::CHIRP_URG_URGENT);
+  CHECK(selftest::s_last_selftest_unix == 0);    // no stamp stored: the clock seeds it
+  return 0;
+}
+
+// An NVS fault still goes to Preferences and keeps its three lines.
+static int test_an_nvs_fault_keeps_its_chirp_lines() {
+  host_nvs().clear();
+  host_nvs().fail_begin = true;
+  chirp_boot();
+  CHECK(host_nvs().error_logs == 3);
+  CHECK(chirp_channel::g_relay_enabled);
+  CHECK(selftest::s_selftest_nvs_loaded && selftest::s_last_selftest_unix == 0);
+  host_nvs().fail_begin = false;
+  return 0;
+}
+
 // ── Source pins: the order these tests run in is setup()'s ──────────────
 static std::string read_file(const std::string& path) {
   std::ifstream in(path);
@@ -302,9 +405,42 @@ static int test_the_boot_runs_these_opens_in_this_order() {
   return 0;
 }
 
+// The chirp reads (F220): setup() calls chirp_channel::init(), which loads
+// the settings, before loop() runs; the stamp read the cut took is loop()'s;
+// NvsSession's read-only open is the quiet one, and the convenience readers
+// open read-only through it; no sketch source opens "chirp" read-only any
+// other way.
+static int test_the_chirp_reads_are_the_quiet_ones() {
+  const std::string dir = WAP_SKETCH_DIR;
+  const std::string ino = read_file(dir + "/canary_wap.ino");
+  const std::string chirp = read_file(dir + "/chirp_channel.cpp");
+  const std::string store = read_file(dir + "/nvs_store.h");
+  CHECK(!ino.empty() && !chirp.empty() && !store.empty());
+  CHECK(body_of(ino, "void setup() {").find("chirp_channel::init()") != std::string::npos);
+  CHECK(body_of(chirp, "bool init() {").find("\n  load_settings();") != std::string::npos);
+  CHECK(body_of(ino, "void loop() {").find("nvs_get_u32(\"st_chirp_at\", &persisted)") !=
+        std::string::npos);
+  const size_t cls = store.find("\nclass NvsSession {");
+  const size_t cls_end = store.find("\n};\n", cls);
+  CHECK(cls != std::string::npos && cls_end != std::string::npos);
+  const std::string session = store.substr(cls, cls_end - cls);
+  CHECK(session.find("if (readOnly) return csi_module_settings_nvs::begin_read_only(m_prefs, ns);") !=
+        std::string::npos);
+  CHECK(session.find("m_open = m_prefs.begin(") == std::string::npos);
+  CHECK(body_of(store, "inline bool nvs_get_u8(const char* key, uint8_t* out_val) {")
+            .find("NvsSession nvs(NVS_CHIRP_NS, true);") != std::string::npos);
+  CHECK(body_of(store, "inline bool nvs_get_u32(const char* key, uint32_t* out_val) {")
+            .find("NvsSession nvs(NVS_CHIRP_NS, true);") != std::string::npos);
+  for (const char* plain : {"begin(NVS_CHIRP_NS, true)", "begin(\"chirp\", true)"}) {
+    CHECK(ino.find(plain) == std::string::npos);
+    CHECK(chirp.find(plain) == std::string::npos);
+    CHECK(store.find(plain) == std::string::npos);
+  }
+  return 0;
+}
+
 int main() {
-  // nvs_store.h names every namespace the sketch uses; this suite opens one.
-  (void)NVS_CHIRP_NS;
+  // nvs_store.h names every namespace the sketch uses; this suite opens two.
   (void)NVS_MESH_NS;
   int rc = 0;
   rc |= test_a_first_boot_after_an_erase_logs_no_securacv_line();
@@ -312,6 +448,10 @@ int main() {
   rc |= test_a_boot_that_stored_no_key_logs_nothing();
   rc |= test_an_nvs_fault_keeps_its_lines();
   rc |= test_the_boot_runs_these_opens_in_this_order();
+  rc |= test_a_first_boot_logs_no_chirp_line();
+  rc |= test_stored_chirp_settings_read_as_before();
+  rc |= test_an_nvs_fault_keeps_its_chirp_lines();
+  rc |= test_the_chirp_reads_are_the_quiet_ones();
   if (rc != 0) {
     std::fprintf(stderr, "test_wap_first_boot_nvs: FAILED\n");
     return 1;

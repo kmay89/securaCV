@@ -1933,6 +1933,34 @@ read (F125). Compile is CI's. Owner: U1.
     opens it while the Beacon runtime is unwired (F31).
   - Artifact: `docs/audit/repro/F201/first-boot-log/`.
 
+## canary-wap first boot after an NVS erase: the chirp namespace (F220) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/nvs_store.h`
+(`NvsSession`'s read-only open asks IDF's `nvs_open()` first, through
+`csi_module_settings_nvs::begin_read_only()`), which `chirp_channel.cpp`'s
+`load_settings()` (from `chirp_channel::init()` in `setup()`) and the loop's
+self-test stamp read (`nvs_get_u32("st_chirp_at")` in `canary_wap.ino`) open
+through. Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`: the two
+functions and the stamp's block cut verbatim, over the real `nvs_store.h` and
+`stubs/first_boot`, which counts the error line `Preferences::begin()` logs
+for each refused open). Compile is CI's. Owner: U1.
+
+- [ ] **A first boot after an erase logs no `nvs_open failed` line for `chirp`**
+  - Setup: as the F150 row above (a `canary-wap-debug` build, NVS erased, a
+    serial monitor), with no GPS fix, so the clock stays unset.
+  - Repro: boot it past `[OK] Community chirp channel ready`; reboot it;
+    then give it a fix (or set the clock) and reboot once more; then change
+    the Chirp relay switch on the dashboard and reboot.
+  - Expected: no boot logs `[E][Preferences.cpp:...] begin(): nvs_open
+    failed: NOT_FOUND` around the Chirp init or in the loop's first pass
+    (before F220 each boot logged three until the clock was set or a Chirp
+    setting changed: the relay and filter reads and the self-test stamp
+    read; a minimal-profile build, which has no audible chirp, makes no
+    stamp read); after the clock is set the stamp is stored (the self-test
+    chirp does not play at once), and after the relay change the reboot
+    keeps it.
+  - Artifact: `docs/audit/repro/F220/first-boot-log/`.
+
 ## Daily summary at 23:55 (F121) — on-device verification
 
 Code: `firmware/common/csi/src/meta_daily_summary.cpp` (staged into the

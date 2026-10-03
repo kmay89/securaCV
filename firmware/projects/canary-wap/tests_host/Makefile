@@ -503,13 +503,19 @@ clean: clean-wap-daily-summary
 # the canary suite's stubs/nvs_manager). Run in setup()'s order, which the
 # suite's source pins hold: a first boot logs no line, a provisioned boot
 # reads as before, an NVS fault keeps its lines. Hooked into `run` and
-# `clean` by prerequisite so it adds no hunk to their lists.
+# `clean` by prerequisite so it adds no hunk to their lists. And the "chirp"
+# namespace (sweep F220): chirp_channel.cpp's load_settings() and
+# save_settings(), and the loop()'s self-test stamp read in canary_wap.ino
+# (its `if (!s_selftest_nvs_loaded) {` block, cut by line), through the real
+# nvs_store.h's NvsSession, whose read-only open now asks IDF first.
 FIRSTBOOT_BIN    = test_wap_first_boot_nvs
 FIRSTBOOT_SRC    = test_wap_first_boot_nvs.cpp
 FIRSTBOOT_WIZ    = test_wap_first_boot_nvs_wizard.inc
 FIRSTBOOT_KEY    = test_wap_first_boot_nvs_key.inc
 FIRSTBOOT_PWR    = test_wap_first_boot_nvs_power.inc
-FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR)
+FIRSTBOOT_CHIRP  = test_wap_first_boot_nvs_chirp.inc
+FIRSTBOOT_STAMP  = test_wap_first_boot_nvs_stamp.inc
+FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR) $(FIRSTBOOT_CHIRP) $(FIRSTBOOT_STAMP)
 FIRSTBOOT_CUT    = ../../../tests_host/cut_functions.awk
 
 $(FIRSTBOOT_WIZ): $(SRC_DIR)/setup_wizard.h $(FIRSTBOOT_CUT) Makefile
@@ -525,6 +531,19 @@ $(FIRSTBOOT_KEY): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
 	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
 	awk -v 'sigs=static bool nvs_load_key(|static bool nvs_store_key(' -f $(FIRSTBOOT_CUT) \
 	  $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_CHIRP): $(SRC_DIR)/chirp_channel.cpp $(FIRSTBOOT_CUT) Makefile
+	awk -v 'sigs=static void load_settings() {|static void save_settings() {' -f $(FIRSTBOOT_CUT) \
+	  $(SRC_DIR)/chirp_channel.cpp > $@.tmp && mv $@.tmp $@
+
+# The stamp read is a block inside loop(), not a function: cut from its one
+# opening line to the first line that closes it at the same depth, or fail.
+$(FIRSTBOOT_STAMP): $(SRC_DIR)/canary_wap.ino Makefile
+	awk -v 'start=    if (!s_selftest_nvs_loaded) {' -v 'stop=    }' \
+	  '$$0 == start { n++; if (n == 1) { printf "#line %d \"%s\"\n", FNR, FILENAME; on = 1 } } \
+	   on { print } on && $$0 == stop { on = 0; done = 1 } \
+	   END { if (n != 1 || on || !done) { print "canary_wap.ino: the self-test stamp read is not one block" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(FIRSTBOOT_BIN): $(FIRSTBOOT_SRC) $(FIRSTBOOT_INCS) $(SRC_DIR)/nvs_store.h $(SRC_DIR)/nvs_session_depth.h \
                   $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/first_boot/*.h) \
@@ -1362,6 +1381,7 @@ NVSLOCK_SRC        = test_nvs_store_lock.cpp
 NVSBAL_SRC         = test_nvs_session_balance.cpp
 NVSLOCK_FREERTOS   = ../../../tests_host/stubs/nvs_manager
 NVSLOCK_DEPS       = $(NVSLOCK_SRC) $(SRC_DIR)/nvs_store.h $(SRC_DIR)/nvs_session_depth.h \
+                     $(SRC_DIR)/csi_module_settings_nvs.h \
                      $(SRC_DIR)/canary_wap.ino $(wildcard stubs/nvs_store/*.h) \
                      $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
 NVSLOCK_FLAGS      = -Werror -I stubs/nvs_store -I $(NVSLOCK_FREERTOS) -I $(SRC_DIR) \
