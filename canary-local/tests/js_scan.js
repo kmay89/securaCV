@@ -6,8 +6,9 @@
 // holds every probe's server to the tree's index (A46). Both need to cut a
 // call into its arguments and to find the functions a file defines, past
 // strings, template literals, comments and regex literals. This is that
-// reader: bracket pairs and top-level commas, not a parser. What it cannot
-// see, each scan refuses by name rather than trusts.
+// reader: bracket pairs and top-level commas, not a parser. Each scan says,
+// in its own header, which shapes it refuses because it cannot follow them
+// and which it cannot see at all.
 
 "use strict";
 
@@ -20,16 +21,19 @@ function readJs(src) {
   const pairs = new Map();             // open index → close index
   const commas = new Map([[-1, []]]);  // open index (-1: top level) → its commas
   const semis = new Map([[-1, []]]);   // same, for semicolons
+  const text = [];                     // [from, to) of every comment, string, template text, regex body
   const stack = [];                    // [kind, index]; kind "${" is a template substitution
   const REGEX_AFTER = "(,=:[!&|?{};+-*%<>~^";
   const REGEX_WORDS = new Set(["return", "typeof", "case", "void", "yield", "await", "in", "of", "delete", "throw", "else", "do"]);
   let prev = "", word = "";
   const template = (j) => {            // template text from j; the index code resumes at
+    const from = j;
     for (; j < src.length; j++) {
       if (src[j] === "\\") j++;
-      else if (src[j] === "`") return j + 1;
-      else if (src[j] === "$" && src[j + 1] === "{") { stack.push(["${", j + 1]); return j + 2; }
+      else if (src[j] === "`") { text.push([from, j]); return j + 1; }
+      else if (src[j] === "$" && src[j + 1] === "{") { text.push([from, j]); stack.push(["${", j + 1]); return j + 2; }
     }
+    text.push([from, src.length]);
     return src.length;
   };
   const quoted = (j, q) => {
@@ -54,13 +58,13 @@ function readJs(src) {
   const top = () => (stack.length ? stack[stack.length - 1][1] : -1);
   for (let i = 0; i < src.length;) {
     const c = src[i], n = src[i + 1];
-    if (c === "/" && n === "/") { const e = src.indexOf("\n", i); i = e < 0 ? src.length : e; continue; }
-    if (c === "/" && n === "*") { const e = src.indexOf("*/", i + 2); i = e < 0 ? src.length : e + 2; continue; }
-    if (c === '"' || c === "'") { i = quoted(i, c); prev = c; word = ""; continue; }
+    if (c === "/" && n === "/") { const e = src.indexOf("\n", i); text.push([i, e < 0 ? src.length : e]); i = e < 0 ? src.length : e; continue; }
+    if (c === "/" && n === "*") { const e = src.indexOf("*/", i + 2); text.push([i, e < 0 ? src.length : e + 2]); i = e < 0 ? src.length : e + 2; continue; }
+    if (c === '"' || c === "'") { const e = quoted(i, c); text.push([i + 1, Math.max(i + 1, e - 1)]); i = e; prev = c; word = ""; continue; }
     if (c === "`") { i = template(i + 1); prev = "`"; word = ""; continue; }
     if (c === "/" && (prev === "" || REGEX_AFTER.includes(prev) || REGEX_WORDS.has(word))) {
       const e = regex(i);
-      if (e > i) { i = e; prev = "x"; word = ""; continue; }
+      if (e > i) { text.push([i + 1, e]); i = e; prev = "x"; word = ""; continue; }
     }
     if (c === "(" || c === "[" || c === "{") {
       stack.push([c, i]);
@@ -77,9 +81,22 @@ function readJs(src) {
     if (!/\s/.test(c)) prev = c;
     i++;
   }
-  const read = { pairs, commas, semis };
+  const read = { pairs, commas, semis, text };
   readJsMemo.set(src, read);
   return read;
+}
+
+// src with every comment, string, template literal's text and regex body
+// blanked to spaces (newlines and the quotes kept, ${…} code kept), so a
+// regex over it sees only code, at the same indices as src.
+const codeMemo = new Map();
+function codeOnly(src) {
+  if (codeMemo.has(src)) return codeMemo.get(src);
+  const out = src.split("");
+  for (const [from, to] of readJs(src).text) for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  const code = out.join("");
+  codeMemo.set(src, code);
+  return code;
 }
 
 const IDENT = String.raw`[A-Za-z_$][\w$]*`;
@@ -175,4 +192,4 @@ function argSpansAt(src, open) {
   return spans;
 }
 
-module.exports = { readJs, IDENT, esc, lineOf, trivia, argsAt, argSpansAt, functionsIn };
+module.exports = { readJs, codeOnly, IDENT, esc, lineOf, trivia, argsAt, argSpansAt, functionsIn };
