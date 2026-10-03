@@ -418,6 +418,15 @@ test("flash.json: the display boards are flashable products now", () => {
   // heard of, which lands on the generic gallery while the copy promises
   // "the same firmware, in the browser".
   const twinIds = new Set(catalog.displays.map((d) => d.id));
+  // A product's own Lab card: the one its device manifest names in
+  // `lab.card` (the Nightlight's product is …-nightlight-c3, its card
+  // canary-nightlight, sweep A54), else its id without the prefix.
+  const { readdirSync } = require("node:fs");
+  const ownCard = new Map();
+  for (const slug of readdirSync(join(ROOT, "../devices"), { withFileTypes: true }).filter((e) => e.isDirectory())) {
+    const m = JSON.parse(readFileSync(join(ROOT, "../devices", slug.name, "device.json"), "utf8"));
+    if (m.flasher?.product && m.lab?.card) ownCard.set(m.flasher.product, m.lab.card);
+  }
   for (const p of displays) {
     const emu = p.prove && p.prove.emulated;
     if (!emu) continue;                       // honest silence is allowed
@@ -426,7 +435,7 @@ test("flash.json: the display boards are flashable products now", () => {
     assert.ok(twinIds.has(hash),
       `${p.id}: links twin '${hash}' which is not in catalog.displays`);
     // An aliased twin (a sibling's build) must not claim to be the 1:1 one.
-    const own = p.id.replace(/^securacv-/, "");
+    const own = ownCard.get(p.id) || p.id.replace(/^securacv-/, "");
     if (hash !== own) {
       assert.ok(!/1:1/.test(emu.label),
         `${p.id}: borrows ${hash}'s twin, so it must not say "1:1"`);
@@ -437,6 +446,18 @@ test("flash.json: the display boards are flashable products now", () => {
     const p = displays.find((d) => d.id === id);
     assert.ok(p.prove.emulated.href.endsWith(id.replace(/^securacv-/, "")),
       `${id}: the flagship displays keep their own 1:1 twin`);
+  }
+  // The Nightlight links its own twin (its own flavor, F204) through the card
+  // its manifest names, and that twin's card links back to the product.
+  const nl = displays.find((d) => d.id === "securacv-canary-display-nightlight-c3");
+  assert.strictEqual(ownCard.get(nl.id), "canary-nightlight");
+  assert.strictEqual(nl.prove.emulated?.href, "fleet.html#canary-nightlight", "the Nightlight's flasher card offers its twin");
+  assert.match(nl.prove.emulated.label, /1:1/, "its own build, so the 1:1 twin");
+  const twin = catalog.displays.find((d) => d.id === "canary-nightlight");
+  assert.strictEqual(twin.flash_product, nl.id, "the twin's card names the product it previews");
+  assert.strictEqual(twin.emulator.factory, "createCanaryEmuNightlight");
+  for (const d of catalog.displays) {
+    assert.ok(catalog.products.some((q) => q.id === d.flash_product), `${d.id}: flash_product ${d.flash_product} is a product`);
   }
 });
 

@@ -995,10 +995,11 @@ def emulator_twin_ids() -> set:
 # clock, not the wall dashboard), so the dash7 twin would misrepresent it.
 # It gets a link when its own emulator target lands.
 #
-# Same reasoning for canary-display-nightlight-c3: it shares the 1.47"
+# canary-display-nightlight-c3 needs no alias either: it shares the 1.47"
 # portrait format with the nightstand sticks but wears the nightlight face
 # (7-segment clock + companion + lamp), so the nightstand twin would
-# misrepresent it. No alias until its own emulator flavor lands.
+# misrepresent it — and since sweep A54 it has its own flavor, linked
+# through the Lab card its manifest names (`lab.card: canary-nightlight`).
 TWIN_ALIASES = {
     # the modes build is the dash plus its bench/demo/debug gears
     "canary-display-dash-modes": "canary-display-dash",
@@ -1007,19 +1008,22 @@ TWIN_ALIASES = {
 }
 
 
-def prove_block(role: str, product_id: str) -> dict:
+def prove_block(role: str, product_id: str, lab_card: str | None = None) -> dict:
     p = {k: dict(v) for k, v in PROVE[role].items()}  # deep-ish copy per product
     if role == "display":
         # Deep-link straight to THIS display's sheet (registry ids drop the
-        # securacv- prefix: canary-display-watch / canary-display-dash) —
-        # but ONLY to a twin that actually exists. `fleet.html#<id>` with no
+        # securacv- prefix: canary-display-watch / canary-display-dash, or
+        # the card the claiming manifest names in `lab.card` where the two
+        # differ: the Nightlight's product is
+        # securacv-canary-display-nightlight-c3, its card canary-nightlight)
+        # — but ONLY to a twin that actually exists. `fleet.html#<id>` with no
         # registry entry silently lands on the generic gallery while the copy
         # promises "the same firmware, in the browser": an overclaim (brief
         # §4: don't oversell). Three honest outcomes instead of one lie:
         #   own twin  -> the 1:1 link, unchanged
         #   alias     -> the sibling's twin, and the copy SAYS it's a sibling
         #   neither   -> no emulated link at all; the glass is still the proof
-        rid = product_id.replace("securacv-", "")
+        rid = lab_card or product_id.replace("securacv-", "")
         twins = emulator_twin_ids()
         if rid in twins:
             p["emulated"]["href"] = "fleet.html#" + rid
@@ -1412,10 +1416,23 @@ def displays_block() -> list:
     preview of the glass. Facts from registry.json + the committed
     emulator build's own meta."""
     reg = json.loads(read(REGISTRY))
+    # The flashable product a card presents: the flasher.product of the
+    # manifest whose Lab card it is (`lab.card`, else the manifest's own
+    # slug) — the same join prove_block() makes the other way, so a card
+    # whose id is not its product's (the Nightlight) still links its own.
+    presents: dict[str, list[str]] = {}
+    for slug, m in load_manifests(REPO).items():
+        product = (m.get("flasher") or {}).get("product")
+        if product:
+            presents.setdefault((m.get("lab") or {}).get("card") or slug, []).append(product)
     out = []
     for d in reg["devices"]:
         if d.get("kind") != "display" or not d.get("emulator"):
             continue
+        products = presents.get(d["id"], [])
+        if len(products) != 1:
+            die(f"registry card {d['id']} has a twin, but {len(products)} device manifests present it "
+                f"({', '.join(products) or 'none'}) — its flash_product needs exactly one")
         meta_path = CANARY_LOCAL / (d["emulator"]["module"].replace(".js", ".meta.json"))
         meta = json.loads(read(meta_path))
         g = d.get("glass", {})
@@ -1437,8 +1454,8 @@ def displays_block() -> list:
                           "firmware release train now. The emulator is the SAME "
                           "firmware compiled for the browser: try the glass before "
                           "(or after) you flash it.",
-            # Cross-link to the flashable product card (same id, securacv- prefix).
-            "flash_product": f"securacv-{d['id']}",
+            # Cross-link to the flashable product card the manifests name.
+            "flash_product": products[0],
         })
     if not out:
         die("no display devices found in registry.json — displays block would lie")
@@ -2330,7 +2347,7 @@ def main() -> None:
             "hatch": hatch,
             "serial_receipt": supports_serial_receipt(project),
             "role": role,
-            "prove": prove_block(role, p["id"]),
+            "prove": prove_block(role, p["id"], (manifest.get("lab") or {}).get("card")),
         }
         if p.get("pick_label"):
             entry["pick_label"] = p["pick_label"]

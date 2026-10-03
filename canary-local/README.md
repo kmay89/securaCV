@@ -963,7 +963,13 @@ fails on byte drift.
   Chromium: USB pull with battery ride-through (the firmware never
   notices), switch-off rail death (honest-dark glass + serial), power
   restore (ROM banner, then a true re-boot), BOOT+RESET into download
-  mode and back.
+  mode and back. Then the Nightlight's card (sweep A54): its twin boots the
+  nightlight flavor, Try it shows the firmware's Character ring, and its
+  bench is the C3-LCD-1.47's as `devices/registry.json` states it (USB-C
+  the only power, so a pull drops the rail at once; no lights listed; the
+  backlight row names the 50% cap the board's HAL enforces and the twin's
+  does not). Each fact in a bench block may cite its file (`sources`), and
+  `tests/bench.test.js` holds every cited file to its quoted words.
 - `tests/wap.test.js` + `tests/wap_probe.mjs` — the WAP bench (§4i): the
   honesty test pins every SSID, route, MQTT topic, HA entity, boot line and
   wizard label to its firmware source and exercises the DOM-free serial/MQTT

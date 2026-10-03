@@ -2160,6 +2160,11 @@
           "kind": "glass",
           "label": "Watch the glass — it comes alive",
           "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-nightlight",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
         }
       },
       "pick_label": "Nightlight — the 1.47″ pocket clock + lamp",
@@ -2343,6 +2348,33 @@
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
       "flash_product": "securacv-canary-display-dash7"
+    },
+    {
+      "id": "canary-nightlight",
+      "name": "Canary Nightlight",
+      "tagline": "The pocket clock-lamp — a canary companion at a kid's bedside, watching nothing.",
+      "board": "Waveshare ESP32-C3-LCD-1.47 (pocket board)",
+      "match": "display",
+      "panel": "ST7789T 1.47\" IPS · 180×320",
+      "glass": {
+        "w": 180,
+        "h": 320,
+        "round": false
+      },
+      "shows": [
+        "7-segment clock",
+        "lamp wash",
+        "living canary",
+        "honest night"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-nightlight.js",
+        "factory": "createCanaryEmuNightlight",
+        "fw_version": "2.4.15",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-nightlight-c3"
     }
   ],
   "settings_help": {

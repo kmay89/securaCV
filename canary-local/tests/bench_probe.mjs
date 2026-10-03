@@ -2,7 +2,10 @@
 // serve the repo, open the watch's device sheet, and work the power plane
 // like a hand would — pull USB and ride the battery, flip the switch and
 // watch the rail die, restore power and watch the ROM banner + real boot,
-// park the ROM in download mode with BOOT+RESET and recover.
+// park the ROM in download mode with BOOT+RESET and recover. Then the
+// Nightlight's card (sweep A54): its twin boots, Try it shows the firmware's
+// Character ring, and its bench is the C3-LCD-1.47's (USB the only power, no
+// battery or switch, no lights listed, the backlight cap stated).
 //
 //   node canary-local/tests/bench_probe.mjs [--shots DIR]
 //
@@ -218,6 +221,60 @@ await openTab("Bench");
 if (await shade()) await fail("glass still shaded after recovery from download mode");
 
 if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench_ok.png` });
+
+// ── The Nightlight's twin (sweep A54) ───────────────────────────────────
+// Its card boots the nightlight flavor CI built (F204), offers Try it with
+// the firmware's own Character ring, and its bench is the C3-LCD-1.47's:
+// USB-C the only power (no battery, no switch to gate one), so pulling the
+// cable drops the rail at once, and the backlight row says the cap the
+// board's HAL enforces and this twin's does not. A fresh document: the
+// page reads its #card only at load.
+await page.goto("about:blank");
+await page.goto(`http://127.0.0.1:${port}/canary-local/fleet.html#canary-nightlight`);
+await page.waitForSelector(".tabs .tab", { timeout: 30000 });
+const tabs = await page.locator(".tabs .tab").allTextContents();
+for (const t of ["Try it", "Bench"]) {
+  if (!tabs.includes(t)) await fail(`the Nightlight's sheet offers no "${t}" tab (tabs: ${tabs.join(", ")})`);
+}
+await openTab("Wire");
+const nlBoots0 = await sings();
+await waitSerial("The canary is singing");
+await waitSerial("backlight duty capped at 50%");   // the firmware's own boot line, on the twin
+await openTab("Try it");
+await page.waitForSelector(".style-chip.on", { timeout: 15000 })
+  .catch(() => fail("the Nightlight's Try it never showed the firmware's Character ring"));
+await openTab("Bench");
+await page
+  .waitForFunction(
+    () => [...document.querySelectorAll(".bench-diag dd")].some((d) => d.textContent === "app running"),
+    null,
+    { timeout: 10000 }
+  )
+  .catch(() => fail("the Nightlight's bench never reported the app running"));
+if (await page.locator(".bench-led-dot").count()) await fail("the Nightlight's bench lists a light no file settles");
+if (!/removed/.test(await chip("battery").textContent())) await fail("the Nightlight's bench fitted a battery the board has not got");
+if (!(await chip("— (no battery path)").count())) await fail("the Nightlight's bench offers a switch with a battery path to gate");
+await page
+  .waitForFunction(
+    () => [...document.querySelectorAll(".bench-diag dd")].some((d) => / · the board caps it at 50% duty, this twin does not$/.test(d.textContent)),
+    null,
+    { timeout: 10000 }
+  )
+  .catch(() => fail("the Nightlight's backlight row does not say the board's 50% cap"));
+await chip("USB-C cable").click();
+await page
+  .waitForFunction(() => document.querySelector(".glass-shade")?.classList.contains("on"), null, { timeout: 5000 })
+  .catch(() => fail("USB pulled from a board with no battery, and the rail stayed up"));
+await openTab("Wire");
+if (!(await serial()).includes("rail down (usb-out)")) await fail("the Nightlight's rail-down never hit the serial log");
+const nlBoots1 = await sings();
+if (nlBoots1 <= nlBoots0) await fail("the Nightlight's firmware never booted on its card");
+await openTab("Bench");
+await chip("USB-C cable").click();
+await openTab("Wire");
+await waitSings(nlBoots1);
+if (await shade()) await fail("the Nightlight's glass still shaded after USB came back");
+if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench_nightlight_ok.png` });
 await browser.close();
 server.close();
 
@@ -225,5 +282,5 @@ if (errors.length) {
   console.error("BENCH_PROBE_FAIL: page errors:\n" + errors.slice(0, 8).join("\n"));
   process.exit(1);
 }
-console.log("BENCH_PROBE_OK power-pull, ride-through, brown-down, download-mode all behaved");
+console.log("BENCH_PROBE_OK power-pull, ride-through, brown-down, download-mode all behaved; the Nightlight twin booted on its card, USB its only power");
 process.exit(0);

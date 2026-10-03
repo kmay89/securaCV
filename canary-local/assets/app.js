@@ -81,7 +81,7 @@ async function main() {
   renderCards();
   // The models cross-fade to the active finish live (role-tagged shell parts
   // read it per-frame — no rebuild). On a first visit, run the ambient
-  // showcase: a slow, calm cycle through the palette that demos customisation
+  // showcase: a slow, calm cycle through the palette that demos customization
   // until the visitor picks a swatch. Honor a saved choice and reduced motion.
   if (!hasUserChoice() && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
     startFinishShowcase();
@@ -960,6 +960,11 @@ function benchView(ctx, guideCtx, noteLine) {
   const dMode = diagRow("mode");
   const dUp = diagRow("uptime");
   const dBl = diagRow("backlight");
+  // A cap the board's own HAL enforces and the twin's does not (the
+  // nightlight's heat budget): say it beside the level, so the twin's
+  // brighter glow is not read as the glass's (sweep A54).
+  const blCap = profile.backlight?.cap_pct;
+  if (blCap) dBl.title = profile.backlight.note || "";
   const dFlush = diagRow("frames flushed");
   const dLink = diagRow("Wi-Fi / broker");
   const dMqtt = diagRow("MQTT session");
@@ -1011,9 +1016,10 @@ function benchView(ctx, guideCtx, noteLine) {
     try {
       const night = await ctx.emu.c.nightDuty();
       const level = await ctx.emu.c.backlight();
-      dBl.textContent = night >= 0
+      dBl.textContent = (night >= 0
         ? `night floor · 13-bit duty ${night}/8191`
-        : `day ladder · ${level}/255`;
+        : `day ladder · ${level}/255`) +
+        (blCap ? ` · the board caps it at ${blCap}% duty, this twin does not` : "");
       dFlush.textContent = String(await ctx.emu.c.flushCount());
       dMqtt.textContent = (await ctx.emu.c.mqttConnected()) ? "connected" : "down / reconnecting";
     } catch {

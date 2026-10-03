@@ -75,6 +75,64 @@ test("dash wears PWR/CHG/DONE; watch wears CHG (flickers batteryless) + USER", (
     "the USER LED is the one firmware-drivable light");
 });
 
+// Sweep A54: the Nightlight's twin carries a bench, and every fact in it is
+// one a file in this repository states. A bench block may cite its facts
+// (`sources`: fact, file, quote); each cited file must exist and still say
+// the quoted words, so a fact whose source changes fails here, not on a desk.
+test("bench facts cite files that still say them; the Nightlight's says what its board is", async () => {
+  const REPO = join(ROOT, "..");
+  for (const dev of registry().devices) {
+    for (const s of dev.bench?.sources || []) {
+      assert.ok(s.fact && s.file && s.quote, `${dev.id}: a source names its fact, file and quote`);
+      const text = readFileSync(join(REPO, s.file), "utf8");
+      assert.ok(text.includes(s.quote), `${dev.id}: ${s.file} no longer says ${JSON.stringify(s.quote)} (${s.fact})`);
+    }
+  }
+  const nl = registry().devices.find((d) => d.id === "canary-nightlight");
+  assert.deepStrictEqual(nl.emulator, { module: "emulator/dist/canary-display-nightlight.js", factory: "createCanaryEmuNightlight" },
+    "the Lab boots the nightlight flavor CI built (F204)");
+  const b = nl.bench;
+  assert.ok(b.sources.length >= 5, "the Nightlight's bench cites where its facts come from");
+  const cites = (file) => b.sources.some((s) => s.file === file);
+  // power: USB-C only — no battery, no charger (pins.h says so; the board
+  // README says it too, but this job may read only the pin maps of boards/)
+  const pins = readFileSync(join(REPO, "firmware/boards/waveshare-esp32c3-lcd147/pins/pins.h"), "utf8");
+  assert.match(pins, /#define HAS_BATTERY\s+0\b/, "pins.h: the C3-LCD-1.47 has no battery");
+  assert.strictEqual(b.power.battery, undefined, "no battery on the bench the board does not have");
+  assert.match(b.power.usb, /^USB-C/);
+  assert.ok(cites("firmware/boards/waveshare-esp32c3-lcd147/pins/pins.h"));
+  // the panel's backlight cap: the nightlight config's, enforced in the board's HAL only
+  const cfg = readFileSync(join(REPO, "firmware/configs/canary-display/nightlight/config.h"), "utf8");
+  const cap = Number(/#define CD_BL_MAX_PCT\s+(\d+)/.exec(cfg)?.[1]);
+  assert.ok(cap > 0 && cap < 100, "the nightlight config caps the backlight");
+  assert.strictEqual(b.backlight.cap_pct, cap, "the bench states the config's cap");
+  assert.ok(cites("firmware/configs/canary-display/nightlight/config.h"));
+  const emuHal = readFileSync(join(ROOT, "emulator/src/emu_hal_display.cpp"), "utf8");
+  assert.ok(!emuHal.includes("CD_BL_MAX_PCT"), "the twin's HAL does not model the cap, as the bench says");
+  assert.match(b.backlight.note, /twin/, "the note says the twin does not clip");
+  // and the Lab shows it: the bench's backlight row reads the cap off the profile
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.match(app, /const blCap = profile\.backlight\?\.cap_pct;/);
+  assert.match(app, /blCap \? ` · the board caps it at \$\{blCap\}% duty, this twin does not` : ""/);
+  // lights: the board's files disagree (the case file names an RGB LED and a
+  // charge LED; the board README and pins.h a board with neither), so the
+  // bench lists none until a bench look settles it
+  assert.strictEqual(b.leds, undefined, "no light is listed whose wiring no file settles");
+});
+
+test("the Nightlight's bench: USB is its only power, so pulling it kills the rail", async () => {
+  const { BenchPower } = await importBench();
+  const { bench, events } = rig(benchProfile("canary-nightlight"), BenchPower);
+  assert.strictEqual(bench.batteryFitted, false, "no battery fitted where the board has none");
+  bench.setSwitch(false);
+  assert.ok(bench.powered(), "the listed-as-none switch gates nothing: USB keeps the board up");
+  bench.setSwitch(true);
+  bench.setUsb(false);
+  assert.strictEqual(bench.mode, "off");
+  assert.deepStrictEqual(events.filter(([k]) => k === "power").pop(), ["power", false, "usb-out"]);
+  assert.deepStrictEqual(bench.leds(), {}, "no lights listed, none lit");
+});
+
 // ── the power truth table ───────────────────────────────────────────────
 
 test("the switch gates only the battery: USB keeps the board up", async () => {
