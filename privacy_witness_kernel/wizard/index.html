@@ -1031,9 +1031,20 @@ function meshFailText(reason) {
   }
 }
 
-// Act on a verdict that ends the wait; false for "wait". A failure cancels,
-// best effort, only a side still running, so a side that finished is left
-// as it finished.
+// Cancel, best effort, each side whose latest read shows this wizard's
+// pairing still running, so a retry is not refused until that Canary's own
+// 5-minute timeout (a Canary starts a pairing only when none is running). A
+// side is canceled only on a read that carries this pairing's number, and a
+// Canary runs one pairing at a time, so the cancel can end no one else's; a
+// side that finished is left as it finished, and a Canary that reports no
+// number ("legacy") is not canceled here, as before F163.
+async function meshCancelRunning(vi, vj) {
+  if (vi && vi.kind === "running") { try { await api("api/mesh/pair/cancel", meshInit); } catch (e) {} }
+  if (vj && vj.kind === "running") { try { await api("api/mesh/pair/cancel", meshJoin); } catch (e) {} }
+}
+
+// Act on a verdict that ends the wait; false for "wait". A failure, or a
+// body about another pairing, cancels a side still running.
 async function meshEndOnVerdict(v, vi, vj) {
   if (v.action === "paired") {
     meshShowSuccess(vi.kind === "paired" || vj.kind === "paired");
@@ -1041,12 +1052,13 @@ async function meshEndOnVerdict(v, vi, vj) {
   }
   if (v.action === "failed") {
     meshPolling = false;
-    if (vi.kind === "running") { try { await api("api/mesh/pair/cancel", meshInit); } catch (e) {} }
-    if (vj.kind === "running") { try { await api("api/mesh/pair/cancel", meshJoin); } catch (e) {} }
+    await meshCancelRunning(vi, vj);
     meshPollFailed("Pairing failed on the " + v.side + " Canary: " + meshFailText(v.reason));
     return true;
   }
   if (v.action === "other") {
+    meshPolling = false;
+    await meshCancelRunning(vi, vj);
     meshPollFailed("The " + v.side + " Canary restarted or started another pairing, so this " +
       "pairing's outcome is unknown. Check both Canaries and retry.");
     return true;
@@ -1145,8 +1157,10 @@ function meshPollFailed(msg) {
 async function meshPollForCodes() {
   meshPolling = true;
   let fails = 0;  // consecutive unreachable/non-ok status reads
+  let last = null;  // this poll's verdicts [existing, new], when both reads answered
   for (let i = 0; i < 60 && meshPolling; i++) {
     await delay(2000);
+    last = null;
     let si, sj;
     try {
       si = await api("api/mesh/status", meshInit);
@@ -1186,9 +1200,14 @@ async function meshPollForCodes() {
     // each side's own outcome where it reports one (F163), else ACTIVE.
     const vi = meshSideVerdict(si, meshInitSeq);
     const vj = meshSideVerdict(sj, meshJoinSeq);
+    last = [vi, vj];
     if (await meshEndOnVerdict(meshPairVerdict(vi, vj), vi, vj)) return;
   }
   if (meshPolling) {
+    // Giving up: end what the last poll saw still running, or "Try again"
+    // is refused until that Canary's own timeout.
+    meshPolling = false;
+    if (last) await meshCancelRunning(last[0], last[1]);
     meshPollFailed("Timed out waiting for the pairing code. Try again.");
   }
 }
@@ -1223,8 +1242,10 @@ async function meshConfirm() {
   // ACTIVE, as before.
   meshPolling = true;
   let fails = 0;
+  let last = null;  // this poll's verdicts [existing, new], when both reads answered
   for (let i = 0; i < 30 && meshPolling; i++) {
     await delay(2000);
+    last = null;
     let si, sj;
     try {
       si = await api("api/mesh/status", meshInit);
@@ -1236,9 +1257,13 @@ async function meshConfirm() {
     if (!si.ok || !sj.ok) continue;
     const vi = meshSideVerdict(si, meshInitSeq);
     const vj = meshSideVerdict(sj, meshJoinSeq);
+    last = [vi, vj];
     if (await meshEndOnVerdict(meshPairVerdict(vi, vj), vi, vj)) return;
   }
   if (meshPolling) {
+    // As the code wait does: end what the last poll saw still running.
+    meshPolling = false;
+    if (last) await meshCancelRunning(last[0], last[1]);
     meshPollFailed("Pairing did not complete. Check both Canaries and retry.");
   }
 }
