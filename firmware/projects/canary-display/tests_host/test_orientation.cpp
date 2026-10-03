@@ -46,8 +46,9 @@ static void test_four_orientations() {
   m.begin(G, Orient::R0);
   uint32_t t = 10000;
 
-  // +y is down the glass: upright = gravity along +y. Turn it CW onto its
-  // left edge: gravity now pulls along +x (screen right edge down) = R90.
+  // +y is down the glass: upright = gravity along +y. Turn it a quarter
+  // clockwise, onto its right edge: gravity now pulls along +x (the glass's
+  // right edge down) = R90.
   CHECK(feed(m, G, 0, 0, t, 2000), "turn to R90 commits");
   CHECK(m.current() == Orient::R90, "R90 seen");
   t += 2000;  // idle past the cooldown

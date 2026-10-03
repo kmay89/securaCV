@@ -350,9 +350,21 @@ void backlight_night_set(uint16_t duty13) {
 //   ours:  r0=MX|BGR=0x48 r1=MV|BGR=0x28  r2=MY|BGR=0x88  r3=MX|MY|MV|BGR=0xE8
 //
 // Consistency proof: the r0 entry reproduces the vendor init's own MADCTL
-// byte (TFT_MADCTL_ROT0) exactly. Bench-verify the two landscapes on first
-// rotation — if they come up mirrored, the fix is swapping the r1/r3 bytes
-// here, nothing structural.
+// byte (TFT_MADCTL_ROT0) exactly. Which way round each landscape reads is
+// still a bench check (U1), and by this same model the two landscapes most
+// likely sit the other way round from the turns io/orientation.h asks
+// for. MV hands the host's column to the panel's rows and MX then mirrors
+// the panel's columns, so our r1 (0x28) puts the host's top-left at the
+// panel's top-right and runs its x down the glass: the face drawn a
+// quarter turn clockwise, as the stock
+// rotation 1 draws it, which reads upright on a device turned a quarter
+// counter-clockwise, onto its left edge. io/orientation.h names the
+// opposite turn (gravity along +x, the right edge down) Orient::R90 and
+// asks for rotation 1, so unless pins.h's seed-guess IMU mapping has x
+// backwards as well (the two would cancel), a side turn shows the face
+// upside down. Once the bench has the IMU mapping right, the fix is
+// swapping the r1/r3 bytes here, nothing structural; a face that comes up
+// mirrored instead is an MX/MY fault, not this one.
 void display_set_rotation(uint8_t rot) {
   if (!s_panel || !s_bus) return;
   rot &= 3;

@@ -36,13 +36,24 @@
 
 namespace canary::io {
 
-// Screen rotations, matching Arduino_GFX's numbering: the value is how
-// far the FACE must rotate clockwise so "up" is up again.
+// The glass's rotation in quarter turns, numbered as Arduino_GFX's
+// setRotation() takes them: main.cpp hands the value to
+// display_set_rotation() as it is. Each value names the turn the DEVICE has
+// made from upright, clockwise as its front is seen, the way step() reads
+// it off gravity in the native-portrait frame: gravity along +x (the
+// glass's right edge down) is R90, along -x (its left edge down) is R270.
+// To read upright on a device turned a quarter clockwise, the face must be
+// drawn a quarter turn counter-clockwise on the panel. Whether
+// display_1in47.cpp's MADCTL byte for each landscape draws it that way
+// round is a bench check (U1), and that file says why it may not; the
+// IMU's axis signs in pins.h are a seed guess awaiting the same bench.
 enum class Orient : uint8_t {
   R0 = 0,    // upright portrait (USB down, per the pocket case's keyhole)
-  R90 = 1,   // turned clockwise onto its left edge -> landscape
-  R180 = 2,  // upside down portrait
-  R270 = 3,  // turned counter-clockwise -> the other landscape
+  R90 = 1,   // turned a quarter clockwise, onto its right edge (USB to
+             // the left) -> landscape
+  R180 = 2,  // upside down portrait (USB up)
+  R270 = 3,  // turned a quarter counter-clockwise, onto its left edge
+             // (USB to the right) -> the other landscape
 };
 
 class OrientationModel {
@@ -123,7 +134,8 @@ class OrientationModel {
       return false;
     }
 
-    // +y is DOWN the glass, so gravity along +y = upright.
+    // +y is DOWN the glass, so gravity along +y = upright; +x is its right
+    // edge, so gravity along +x = turned a quarter clockwise onto it (R90).
     const Orient seen =
         axa > aya ? (ax > 0 ? Orient::R90 : Orient::R270)
                   : (ay > 0 ? Orient::R0 : Orient::R180);
