@@ -1448,7 +1448,16 @@ static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&
                       WATCHDOG_TIMEOUT_SEC * 1000u,
               "the MQTT client's network timeout must keep a publish under the loop's task watchdog");
 
+// The key read is the first session on "securacv" (setup_wizard::init() only
+// probes it), and on a first boot after an NVS erase it comes before
+// nvs_store_key() creates the namespace. An absent namespace answers "no key"
+// without a Preferences open and its NOT_FOUND line, as the refused open did
+// (sweep F201).
 static bool nvs_load_key(uint8_t priv[32]) {
+  if (csi_module_settings_nvs::probe_namespace(NVS_MAIN_NS) ==
+      csi_module_settings_nvs::NamespaceState::kAbsent) {
+    return false;
+  }
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return false;
   if (nvs->getBytesLength(NVS_KEY_PRIV) != 32) return false;

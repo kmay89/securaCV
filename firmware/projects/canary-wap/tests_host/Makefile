@@ -490,6 +490,52 @@ clean-wap-daily-summary:
 run: run-wap-daily-summary
 clean: clean-wap-daily-summary
 
+# A first boot after an NVS erase and the "securacv" namespace (sweep F201):
+# setup_wizard.h's init(), canary_wap.ino's nvs_load_key() / nvs_store_key()
+# (with its NVS_KEY_PRIV line) over the real nvs_store.h, and power_monitor.h's
+# load_nvs_state(), each cut verbatim (firmware/tests_host/cut_functions.awk),
+# over a fake NVS that models namespaces and counts Preferences' error line
+# (stubs/first_boot; Arduino.h from stubs/nvs_store, the recursive mutex from
+# the canary suite's stubs/nvs_manager). Run in setup()'s order, which the
+# suite's source pins hold: a first boot logs no line, a provisioned boot
+# reads as before, an NVS fault keeps its lines. Hooked into `run` and
+# `clean` by prerequisite so it adds no hunk to their lists.
+FIRSTBOOT_BIN    = test_wap_first_boot_nvs
+FIRSTBOOT_SRC    = test_wap_first_boot_nvs.cpp
+FIRSTBOOT_WIZ    = test_wap_first_boot_nvs_wizard.inc
+FIRSTBOOT_KEY    = test_wap_first_boot_nvs_key.inc
+FIRSTBOOT_PWR    = test_wap_first_boot_nvs_power.inc
+FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR)
+FIRSTBOOT_CUT    = ../../../tests_host/cut_functions.awk
+
+$(FIRSTBOOT_WIZ): $(SRC_DIR)/setup_wizard.h $(FIRSTBOOT_CUT) Makefile
+	awk -v 'sigs=inline bool init() {' -f $(FIRSTBOOT_CUT) $(SRC_DIR)/setup_wizard.h > $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_PWR): $(SRC_DIR)/power_monitor.h $(FIRSTBOOT_CUT) Makefile
+	awk -v 'sigs=inline void load_nvs_state() {' -f $(FIRSTBOOT_CUT) $(SRC_DIR)/power_monitor.h > $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_KEY): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
+	@test "$$(grep -cE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single NVS_KEY_PRIV line for nvs_load_key()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
+	awk -v 'sigs=static bool nvs_load_key(|static bool nvs_store_key(' -f $(FIRSTBOOT_CUT) \
+	  $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_BIN): $(FIRSTBOOT_SRC) $(FIRSTBOOT_INCS) $(SRC_DIR)/nvs_store.h $(SRC_DIR)/nvs_session_depth.h \
+                  $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/first_boot/*.h) \
+                  stubs/nvs_store/Arduino.h $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/first_boot -I stubs/nvs_store -I $(NVSLOCK_FREERTOS) \
+	  -I $(SRC_DIR) -I . -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(FIRSTBOOT_SRC)
+
+.PHONY: run-wap-first-boot-nvs clean-wap-first-boot-nvs
+run-wap-first-boot-nvs: $(FIRSTBOOT_BIN)
+	$(call run_marked,$(FIRSTBOOT_BIN))
+clean-wap-first-boot-nvs:
+	rm -f $(FIRSTBOOT_BIN) $(FIRSTBOOT_INCS)
+run: run-wap-first-boot-nvs
+clean: clean-wap-first-boot-nvs
+
 # The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
 # closed: all-or-nothing reservations, value-independent refusals, exact
 # exhaustion, a refill only on the 4 h uptime clock (never on a manual

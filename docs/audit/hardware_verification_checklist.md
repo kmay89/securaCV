@@ -1618,6 +1618,33 @@ CI's. Owner: U1.
     opera, as before.
   - Artifact: `docs/audit/repro/F164/first-boot-log/`.
 
+## canary-wap first boot after an NVS erase: the securacv namespace (F201) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/setup_wizard.h`
+(`init()`), `canary_wap.ino` (`nvs_load_key()`) and `power_monitor.h`
+(`load_nvs_state()`): each read-only open of `securacv` that can come before
+`provision_device()`'s key store creates the namespace asks IDF's
+`nvs_open()` first (`csi_module_settings_nvs::begin_read_only()` /
+`probe_namespace()`). Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`,
+whose `stubs/first_boot` NVS counts the error line Arduino-ESP32's
+`Preferences::begin()` logs for a namespace that is not there, with source
+pins holding `setup()`'s order); that IDF's `nvs_open()` answers
+`ESP_ERR_NVS_NOT_FOUND` without an error-level line is from IDF's source as
+read (F125). Compile is CI's. Owner: U1.
+
+- [ ] **A first boot after an erase logs no `nvs_open failed` line for `securacv`**
+  - Setup: as the F150 row above (a `canary-wap-debug` build, NVS erased, a
+    serial monitor).
+  - Repro: boot it and let it reach the setup page; reboot it once more.
+  - Expected: neither boot logs `[E][Preferences.cpp:...] begin(): nvs_open
+    failed: NOT_FOUND` before or during `[PROV] Generating Ed25519 keypair`
+    (before F201 the first boot logged two, from the setup wizard's read and
+    the key read); the first boot opens the setup wizard and generates and
+    stores a key, as before, and the second loads it (`[PROV] Loaded existing
+    keypair from NVS`). The `beacon` namespace is outside this row: nothing
+    opens it while the Beacon runtime is unwired (F31).
+  - Artifact: `docs/audit/repro/F201/first-boot-log/`.
+
 ## Daily summary at 23:55 (F121) — on-device verification
 
 Code: `firmware/common/csi/src/meta_daily_summary.cpp` (staged into the
