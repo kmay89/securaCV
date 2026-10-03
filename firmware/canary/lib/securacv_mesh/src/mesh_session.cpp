@@ -26,10 +26,13 @@
 #include "mesh_session.h"
 #include "mesh_envelope.h"
 #include "mesh_revocation.h"
+#include "loop_snapshot.h"
 
 #include <string.h>
 
-#ifndef CSI_TEST_HOST_BUILD
+#ifdef CSI_TEST_HOST_BUILD
+  #include <mutex>
+#else
   #include <Arduino.h>
 #endif
 
@@ -247,6 +250,27 @@ enum SlotState : uint8_t {
 static uint8_t       s_slot_state = SLOT_IDLE;
 static Request       s_slot_req;
 static RequestResult s_slot_result;
+
+/* The status view the REST GETs read (F161; mesh_session.h STATUS VIEW).
+ * Written only by publish_status() on the main loop, read whole by
+ * read_status() on any task, under this lock: on the device the portMUX
+ * critical section the other canary libs take (securacv_witness,
+ * ble_scout), on the host a std::mutex, so a two-thread test runs the
+ * real locking. Each critical section copies the one view. */
+#ifdef CSI_TEST_HOST_BUILD
+struct StatusViewLock {
+  std::mutex m;
+  void lock()   { m.lock(); }
+  void unlock() { m.unlock(); }
+};
+#else
+static portMUX_TYPE s_status_view_mux = portMUX_INITIALIZER_UNLOCKED;
+struct StatusViewLock {
+  void lock()   { portENTER_CRITICAL(&s_status_view_mux); }
+  void unlock() { portEXIT_CRITICAL(&s_status_view_mux); }
+};
+#endif
+static loop_snapshot::Value<StatusView, StatusViewLock> s_status_view;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * INTERNAL HELPERS
@@ -1183,6 +1207,7 @@ void deinit() {
   mesh_revocation::init(s_revoked);
   s_running = false;
   s_initialized = false;
+  publish_status();   /* F161: no view of the session it just wiped */
 }
 
 bool start() {
@@ -1375,7 +1400,10 @@ void process(uint32_t now_ms) {
   /* A queued REST request runs first, and even while stopped: enabling
    * and leaving must work on a disabled mesh. */
   drain_request(now_ms);
-  if (!s_running) return;
+  if (!s_running) {
+    publish_status();   /* F161: a stopped or disabled session's view too */
+    return;
+  }
   mesh_revocation::expire(s_revoked, now_ms);
   end_complete_copies_unless_wanted();   /* F134: before the tick sends one */
   mesh_pairing::Action a = mesh_pairing::tick(s_ctx, now_ms);
@@ -1391,6 +1419,9 @@ void process(uint32_t now_ms) {
     apply_rekey_action(r, now_ms);
   }
   reannounce_if_due(now_ms);
+  /* F161: the pass's last act. The receive path ran in the transport pass
+   * just before this call (main.cpp), so the view is this whole pass. */
+  publish_status();
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1715,6 +1746,77 @@ bool can_hold_partner(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN],
     return false;
   }
   return true;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * STATUS VIEW (F161) — see mesh_session.h
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Main loop: the live state as GET /api/mesh and /api/mesh/peers show it.
+ * The member rows are get_peer_links() joined against the transport table,
+ * exactly as handle_mesh_peers joined them on the httpd task before F161. */
+static void build_status_view(StatusView* v) {
+  memset(v, 0, sizeof(*v));   /* padding compares equal (loop_snapshot.h) */
+  v->enabled   = s_enabled;
+  v->has_opera = s_opera_id_set;
+  if (s_opera_id_set) memcpy(v->opera_id, s_opera_id, sizeof(v->opera_id));
+  memcpy(v->opera_name, s_opera_name, sizeof(v->opera_name));
+  v->opera_name[sizeof(v->opera_name) - 1] = '\0';
+  v->pairing_state       = s_ctx.state;
+  v->pairing_seq         = s_pairing_seq;
+  v->pairing_outcome     = pairing_outcome();
+  v->pairing_fail_reason = pairing_fail_reason();
+  v->peers_total         = (uint32_t)trusted_peer_count();
+  v->peers_online        = (uint32_t)online_peer_count();
+  v->alerts_received     = s_alerts_received;
+  /* The code only while the status shows it: the state the JSON builder
+   * resolves from these same fields reads PAIRING_CONFIRM. */
+  if (strcmp(mesh_pairing::mesh_state_name(v->enabled, v->has_opera, v->pairing_state,
+                                           v->peers_online),
+             "PAIRING_CONFIRM") == 0) {
+    v->pairing_code = s_ctx.confirmation_code;
+  }
+
+  PeerLink links[MAX_TRUSTED_PEERS];
+  const size_t n_links = get_peer_links(links, MAX_TRUSTED_PEERS);
+  mesh_transport::Peer live[mesh_transport::MESH_TRANSPORT_MAX_PEERS];
+  const size_t n_live = mesh_transport::list_peers(live, mesh_transport::MESH_TRANSPORT_MAX_PEERS);
+  for (size_t l = 0; l < n_links; ++l) {
+    MemberView& m = v->members[l];
+    memcpy(m.fp, links[l].fp, mesh_crypto::FINGERPRINT_LEN);
+    m.alerts_received = links[l].alerts_received;
+    if (!links[l].mac_known) continue;   /* not heard this boot: OFFLINE, never */
+    for (size_t t = 0; t < n_live; ++t) {
+      if (!live[t].in_use ||
+          memcmp(live[t].mac, links[l].mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
+        continue;
+      }
+      m.live         = true;
+      m.link_state   = live[t].state;
+      m.rssi_dbm     = live[t].rssi_dbm;
+      m.last_seen_ms = live[t].last_seen_ms;
+      break;
+    }
+  }
+  v->member_count = (uint32_t)n_links;
+}
+
+void publish_status() {
+  StatusView v;
+  build_status_view(&v);
+  s_status_view.publish(v);
+}
+
+void read_status(StatusView* out) {
+  if (out == nullptr) return;
+  if (s_status_view.read(out)) return;
+  /* Nothing published yet (the HTTP server is up before the mesh): what the
+   * session reads before init(). */
+  memset(out, 0, sizeof(*out));
+  out->enabled             = true;
+  out->pairing_state       = mesh_pairing::State::IDLE;
+  out->pairing_outcome     = mesh_pairing::Outcome::NONE;
+  out->pairing_fail_reason = mesh_pairing::FailReason::NONE;
 }
 
 size_t online_peer_count() {
@@ -2128,6 +2230,10 @@ static void drain_request(uint32_t now_ms) {
   memset(&res, 0, sizeof(res));
   execute_request(req, now_ms, &res);
   secure_zero(&req, sizeof(req));
+  /* F161: before the handler can collect the result (DONE below), so a GET
+   * right after the POST's answer shows what the request did, not the pass
+   * before it. */
+  publish_status();
   s_slot_result = res;
   secure_zero(&res, sizeof(res));
   if (!slot_cas(SLOT_RUNNING, SLOT_DONE)) {

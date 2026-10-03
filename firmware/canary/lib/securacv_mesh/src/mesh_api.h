@@ -38,6 +38,7 @@
 #include "mesh_crypto.h"    /* OPERA_ID_LEN, FINGERPRINT_LEN */
 #include "mesh_pairing.h"   /* mesh_pairing::State, mesh_state_name */
 #include "mesh_alert.h"     /* mesh_alert::Record (F10) */
+#include "mesh_session.h"   /* mesh_session::StatusView (F161) */
 
 #include <stdint.h>
 #include <stddef.h>
@@ -115,6 +116,13 @@ bool build_mesh_status_json(char*  out,
                             uint32_t pairing_code,
                             const PairingReport* last_pairing);
 
+/* F161 — GET /api/mesh's body from the view the main loop published
+ * (mesh_session::read_status): build_mesh_status_json() with every field
+ * taken from that one view, the last pairing's report included, so one
+ * body is one main-loop pass. What handle_mesh_status sends. */
+bool build_mesh_status_json_from_view(char* out, size_t cap,
+                                      const mesh_session::StatusView& view);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/peers — peer list
  *
@@ -124,7 +132,9 @@ bool build_mesh_status_json(char*  out,
  * does not read it today, but HA and the spec do.
  *
  * The handler builds an array of PeerView from the persisted trusted-peer
- * set, best-effort-joined against the live transport peer table. `state`
+ * set, best-effort-joined against the published view's members
+ * (peer_views_from_status, F161), which carry the transport table's
+ * liveness as the main loop last saw it. `state`
  * is one of the strings the UI styles: "CONNECTED" / "STALE" / "OFFLINE"
  * (a peer with no live match defaults to "OFFLINE"). fingerprint is the
  * 16-hex-char (FINGERPRINT_LEN*2) lowercase fingerprint.
@@ -143,6 +153,23 @@ bool build_mesh_peers_json(char*  out,
                            size_t cap,
                            const PeerView* peers,
                            size_t          count);
+
+/* F161 — the rows of GET /api/mesh/peers: one per persisted member pubkey
+ * (`count` of them, PUBKEY_LEN bytes each, in their NVS order), joined by
+ * fingerprint against the members of the view the main loop published.
+ * A member the view lists takes its alerts_received from it; one the view
+ * marks live takes its state ("CONNECTED" for an ACTIVE transport entry,
+ * "STALE", else "OFFLINE"), RSSI and last_seen_sec, the age of its
+ * last_seen_ms at `now_ms` (uptime, counted at the read). Any other row is
+ * "OFFLINE", last_seen_sec 0xFFFFFFFF ("never"), RSSI 0, no alerts. Names
+ * are "" (the handler has no name source). Writes `count` rows to `out`
+ * (the caller's array holds them) and returns `count`; 0 for a null `out`,
+ * or null `pubkeys` with a count. Until F161 handle_mesh_peers did this
+ * join itself on the httpd task, against the session's peer links and the
+ * transport table read live. */
+size_t peer_views_from_status(const mesh_session::StatusView& view,
+                              const uint8_t* pubkeys, size_t count,
+                              uint32_t now_ms, PeerView* out);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/alerts — received alert history (F10)

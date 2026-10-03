@@ -58,7 +58,9 @@
  *     at any reasonable cadence (>= 10 Hz).
  *   • Every mutator belongs to that same task. Another task (the REST
  *     handlers on the httpd task) reaches the F10 mutators only through
- *     the request slot at the end of this header, which process() drains.
+ *     the request slot near the end of this header, which process()
+ *     drains, and reads the status only through the view the main loop
+ *     publishes (STATUS VIEW, the last section; F161).
  */
 
 #ifndef SECURACV_MESH_SESSION_H
@@ -228,9 +230,9 @@ mesh_pairing::FailReason pairing_fail_reason();
  * started pairing N reads its own result while pairing_seq() is N, and
  * knows a later pairing (or a reboot, which starts the count again)
  * replaced it once it is not. The POST pair/start and pair/join answers
- * carry the N they started (RequestResult::pairing_seq). The httpd task
- * reads these the way GET /api/mesh reads the rest of the session's
- * state: without a lock, each value whole. */
+ * carry the N they started (RequestResult::pairing_seq). Main-loop task:
+ * GET /api/mesh reads them from the view the main loop publishes (STATUS
+ * VIEW below, F161), never live. */
 uint32_t              pairing_seq();
 mesh_pairing::Outcome pairing_outcome();
 
@@ -451,10 +453,11 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
  * Best-effort liveness, not proof of presence: a peer that moves to an
  * address it did not pair from is not heard there at all until it re-pairs.
  *
- * Returns the number of in-use entries written (≤ cap). Threading: the
- * table is mutated on the main loop; the REST handlers read it from the
- * httpd task, same as trusted_peer_count() — a torn 6-byte MAC read can
- * at worst garble one row of a status view for one poll. */
+ * Returns the number of in-use entries written (≤ cap). Main-loop task:
+ * the table is mutated there, and GET /api/mesh/peers reads each member's
+ * row from the view the main loop publishes (STATUS VIEW below, F161).
+ * Until F161 the handler called this from the httpd task, so one row could
+ * mix two passes. */
 struct PeerLink {
   uint8_t  fp [mesh_crypto::FINGERPRINT_LEN];
   uint8_t  mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
@@ -589,7 +592,8 @@ size_t trusted_peer_count();
  * is one re-bound and not yet heard at the new address. GET /api/mesh uses
  * it.
  * Threading: bind_peer_mac is main-loop only (it mutates both tables);
- * online_peer_count only reads, like get_peer_links().
+ * online_peer_count only reads, like get_peer_links(), on the main loop
+ * too (the status routes read it from the published view, F161).
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool   bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
@@ -1077,6 +1081,82 @@ bool submit_request(const Request& req);
 bool take_request_result(RequestResult* out);
 bool withdraw_request();
 void abandon_request();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * STATUS VIEW (F161)
+ *
+ * GET /api/mesh and /api/mesh/peers run on the httpd task, and what they
+ * show (the enable switch, the opera's id and name, the pairing state, code,
+ * number, outcome and reason, the member table and each member's liveness
+ * from the transport table) is the main loop's, written by process(), the
+ * receive path it runs and the REST requests it executes. Until F161 the
+ * handlers read it in place, without a lock: each 32-bit value whole, but
+ * one body could mix two passes (a pairing number with the outcome of a
+ * pairing started between the reads, a name read mid-rename, a member's MAC
+ * half rewritten). canary-wap's routes had the same gap (F110).
+ *
+ * Now the main loop builds a whole StatusView and publishes it
+ * (loop_snapshot.h's Value<T>, the header canary-wap's routes read through
+ * too): process() publishes before every return, the pass's last act, a
+ * stopped or disabled session's included; the drain publishes after the
+ * REST request it executed and before the handler can collect the result,
+ * so a GET right after a POST's answer shows what the POST did; deinit()
+ * publishes the wiped state; and main.cpp's setup() publishes once after
+ * it has restored the opera, its members and their addresses, so a page
+ * read before the first loop pass does not show an empty opera. Before the
+ * first publish (the HTTP server is up before the mesh) a read answers the
+ * state before init(), which is also the state init() leaves, so init()
+ * publishes nothing.
+ * A publish of the same bytes takes no lock, so publishing every pass costs
+ * a compare. The handlers read the view with read_status() and nothing
+ * else of the session's: a read is one copy under the lock, never torn, and
+ * never waits for the main loop (no mesh_busy, no mesh_timeout).
+ *
+ * The view holds the pairing code only while GET /api/mesh shows it (its
+ * state reads PAIRING_CONFIRM), so no second copy of a code outlives its
+ * screen. It holds no key: members by fingerprint, with their liveness.
+ *
+ *   publish_status()  main-loop task (process(), the drain, deinit(), and
+ *                     main.cpp's setup() once). Builds the view from the
+ *                     live state and publishes it.
+ *   read_status()     any task. A whole copy of the last view published; the
+ *                     state before init() (enabled, no opera, no pairing, no
+ *                     member) until the first publish.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* One trusted member as the status routes show it. */
+struct MemberView {
+  uint8_t  fp[mesh_crypto::FINGERPRINT_LEN];
+  /* Verified TAMPER_ALERT frames from it since it was registered (F11). */
+  uint32_t alerts_received;
+  /* Heard from its binding this boot (get_peer_links' mac_known) and that
+   * address is in the transport table: the three fields below are the
+   * table's entry. False: the peer list shows it OFFLINE, "never". */
+  bool                      live;
+  mesh_transport::PeerState link_state;
+  int8_t                    rssi_dbm;
+  uint32_t                  last_seen_ms;   /* the transport's clock (millis) */
+};
+
+struct StatusView {
+  bool                     enabled;
+  bool                     has_opera;
+  uint8_t                  opera_id[mesh_crypto::OPERA_ID_LEN];   /* zero without an opera */
+  char                     opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_pairing::State      pairing_state;
+  uint32_t                 pairing_code;    /* 0 unless the state reads PAIRING_CONFIRM */
+  uint32_t                 pairing_seq;     /* F133 */
+  mesh_pairing::Outcome    pairing_outcome;
+  mesh_pairing::FailReason pairing_fail_reason;
+  uint32_t                 peers_total;     /* trusted_peer_count() */
+  uint32_t                 peers_online;    /* online_peer_count() */
+  uint32_t                 alerts_received; /* alerts_received() */
+  uint32_t                 member_count;    /* rows used in members[] */
+  MemberView               members[MAX_TRUSTED_PEERS];
+};
+
+void publish_status();
+void read_status(StatusView* out);
 
 }  /* namespace mesh_session */
 

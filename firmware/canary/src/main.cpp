@@ -1621,6 +1621,12 @@ void setup() {
     mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
     /* F33 part 4: pair/start with no opera founds one; persisted first. */
     mesh_session::set_opera_create_handler(&on_mesh_opera_create);
+    /* F161: GET /api/mesh and /api/mesh/peers read the view the main loop
+     * publishes, and the HTTP server is already up. The first loop pass is
+     * still behind the camera, GPS and sensor setup below, so publish the
+     * opera, its members and their addresses restored above now, rather
+     * than show the empty session init() published until then. */
+    mesh_session::publish_status();
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }

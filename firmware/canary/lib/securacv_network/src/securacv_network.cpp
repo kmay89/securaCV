@@ -5290,15 +5290,20 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // request to mesh_session's request slot and waits, bounded, for loop() to
 // execute it (mesh_call below). The pragma after this comment makes a
 // direct call to any of those nine a compile error in the rest of this
-// file. The GET handlers only read.
+// file. GET /api/mesh and /api/mesh/peers read nothing of the session's
+// live state either (F161): they copy the view the main loop publishes
+// after each pass and each request it runs (mesh_session::read_status), so
+// one body is one pass, and they never wait for the main loop.
+// (GET /api/mesh/alerts still reads the alert history in place.)
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
-// MAC. mesh_session bridges them — get_peer_links reports each peer's
-// bound radio MAC once a FULLY VERIFIED opera-authenticated frame has
-// arrived from it (a peer's frame from any other address is not taken,
-// F70), so per-peer state / last_seen / rssi below are the transport
-// table's real numbers once a peer has spoken this boot. A peer that has
+// MAC. mesh_session bridges them — each member's row in the view carries
+// its bound radio MAC's transport entry once a FULLY VERIFIED
+// opera-authenticated frame has arrived from it (a peer's frame from any
+// other address is not taken, F70), so per-peer state / last_seen / rssi
+// below are the transport table's real numbers, as of the main loop's last
+// pass, once a peer has spoken this boot. A peer that has
 // not yet sent a verified frame reports OFFLINE/never — best-effort by
 // design, documented in spec/canary_mesh_network_v0.md §8. (The table
 // itself is filled by mesh_session from each peer's persisted radio MAC —
@@ -5319,43 +5324,16 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  const bool has_opera = mesh_session::has_opera();
-
-  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
-  const bool have_id = mesh_session::get_opera_id(opera_id);
-
-  char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
-  mesh_session::get_opera_name(opera_name, sizeof(opera_name));
-
-  const mesh_pairing::State pstate = mesh_session::pairing_state();
-  const size_t peers_total  = mesh_session::trusted_peer_count();
-  // Trusted peers heard this boot (verified frame) whose transport entry is
-  // in the ACTIVE window. Not the raw transport table any more: since F33
-  // the table holds every bound peer from boot, fresh entries start ACTIVE,
-  // and a peer that has said nothing is not online.
-  const size_t peers_online = mesh_session::online_peer_count();
-
-  // alerts_received: verified TAMPER_ALERT frames from any peer this boot
-  // (F10/F11 — counted only after signature + opera_id + replay checks).
-  const uint32_t alerts_received = mesh_session::alerts_received();
-  const uint32_t pairing_code    = mesh_session::pairing_confirmation_code();
-
-  // F133: the last pairing's outcome and number, so the web UI's pairing
-  // poll tells a failed pairing from a finished one (the state alone reads
-  // ACTIVE or CONNECTING after both on a device already in an opera).
-  mesh_api::PairingReport last_pairing;
-  last_pairing.seq         = mesh_session::pairing_seq();
-  last_pairing.outcome     = mesh_session::pairing_outcome();
-  last_pairing.fail_reason = mesh_session::pairing_fail_reason();
+  // F161: the view the main loop published at the end of its last pass (or
+  // after the request it last ran), copied whole: the enable switch, the
+  // opera, the pairing state and code, F133's pairing number, outcome and
+  // reason, the member counts and alerts_received all come from one pass.
+  // Never the live session state, which process() writes while this runs.
+  mesh_session::StatusView view;
+  mesh_session::read_status(&view);
 
   char body[mesh_api::STATUS_JSON_CAP];
-  if (!mesh_api::build_mesh_status_json(
-          body, sizeof(body),
-          mesh_session::is_enabled(), has_opera,
-          have_id ? opera_id : nullptr,
-          opera_name, pstate,
-          peers_total, peers_online, alerts_received, pairing_code,
-          &last_pairing)) {
+  if (!mesh_api::build_mesh_status_json_from_view(body, sizeof(body), view)) {
     return http_send_error(req, 500, "encode_failed");
   }
   return http_send_json(req, body);
@@ -5366,10 +5344,12 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  // Trusted peers are the durable membership set (pubkeys); liveness
-  // comes from joining each fingerprint's bound MAC, once heard
-  // (mesh_session::get_peer_links), against the live transport table
-  // (see section header + spec §8).
+  // Trusted peers are the durable membership set (pubkeys, NVS); liveness
+  // comes from the view the main loop published (F161): each member's row
+  // there carries its alerts and, once heard from its binding, the
+  // transport table's state, RSSI and last-seen time as that pass saw them
+  // (see section header + spec §8). The join and the uptime (last_seen_sec
+  // is counted here, at the read) are mesh_api::peer_views_from_status.
   uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
   size_t  count = 0;
   if (!mesh_state::load_trusted_peers(pubkeys, sizeof(pubkeys), &count)) {
@@ -5377,59 +5357,11 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   }
   if (count > mesh_state::MAX_TRUSTED_PEERS) count = mesh_state::MAX_TRUSTED_PEERS;
 
-  mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
-  const size_t n_links = mesh_session::get_peer_links(
-      links, sizeof(links) / sizeof(links[0]));
-
-  mesh_transport::Peer live[16];
-  const size_t n_live = mesh_transport::list_peers(
-      live, sizeof(live) / sizeof(live[0]));
-
-  const uint32_t now_ms = millis();
+  mesh_session::StatusView view;
+  mesh_session::read_status(&view);
 
   mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];
-  for (size_t i = 0; i < count; ++i) {
-    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
-    mesh_crypto::compute_fingerprint(pubkeys + i * mesh_crypto::PUBKEY_LEN, fp);
-    static const char kHex[] = "0123456789abcdef";
-    for (size_t b = 0; b < mesh_crypto::FINGERPRINT_LEN; ++b) {
-      views[i].fingerprint[2 * b]     = kHex[(fp[b] >> 4) & 0xF];
-      views[i].fingerprint[2 * b + 1] = kHex[fp[b] & 0xF];
-    }
-    views[i].fingerprint[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
-    views[i].name[0]      = '\0';          // best-effort: name unknown
-    views[i].state        = "OFFLINE";     // until a verified frame joins it
-    views[i].last_seen_sec = 0xFFFFFFFFu;  // "never" (UI shows 'never')
-    views[i].rssi          = 0;
-    views[i].alerts_received = 0;          // until the session has a link row
-
-    // fp → bound MAC (once heard) → live transport entry. A peer that has
-    // not sent a verified frame this boot, or whose MAC has left the
-    // transport table, keeps the OFFLINE/never defaults above.
-    for (size_t l = 0; l < n_links; ++l) {
-      if (memcmp(links[l].fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) {
-        continue;
-      }
-      // Per-peer alert attribution (F11) does not depend on liveness.
-      views[i].alerts_received = links[l].alerts_received;
-      if (!links[l].mac_known) break;
-      for (size_t t = 0; t < n_live; ++t) {
-        if (!live[t].in_use ||
-            memcmp(live[t].mac, links[l].mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
-          continue;
-        }
-        switch (live[t].state) {
-          case mesh_transport::PeerState::ACTIVE: views[i].state = "CONNECTED"; break;
-          case mesh_transport::PeerState::STALE:  views[i].state = "STALE";     break;
-          default:                                views[i].state = "OFFLINE";   break;
-        }
-        views[i].last_seen_sec = (now_ms - live[t].last_seen_ms) / 1000u;
-        views[i].rssi          = live[t].rssi_dbm;
-        break;
-      }
-      break;
-    }
-  }
+  mesh_api::peer_views_from_status(view, pubkeys, count, (uint32_t)millis(), views);
 
   // Sized for 8 worst-case rows (host-test pinned, mesh_api.h). 1024 held
   // the pre-F11 row; the alerts_received field needs the headroom.

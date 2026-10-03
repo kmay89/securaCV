@@ -44,11 +44,13 @@
 #include "mesh_rekey.h"
 #include "mesh_revocation.h"
 
+#include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef CSI_TEST_HOST_BUILD
@@ -5968,23 +5970,14 @@ mesh_session::RequestStatus rest_cancel(uint32_t now) {
   return res.status;
 }
 
-/* GET /api/mesh's body, built from the same session calls
- * securacv_network.cpp's handle_mesh_status makes. */
+/* GET /api/mesh's body, built the way securacv_network.cpp's
+ * handle_mesh_status builds it since F161: from the view the main loop last
+ * published (read_status), never from the live state. */
 std::string status_body() {
-  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
-  const bool have_id = mesh_session::get_opera_id(opera_id);
-  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
-  mesh_session::get_opera_name(name, sizeof(name));
-  mesh_api::PairingReport last;
-  last.seq         = mesh_session::pairing_seq();
-  last.outcome     = mesh_session::pairing_outcome();
-  last.fail_reason = mesh_session::pairing_fail_reason();
+  mesh_session::StatusView view;
+  mesh_session::read_status(&view);
   char body[mesh_api::STATUS_JSON_CAP];
-  assert(mesh_api::build_mesh_status_json(
-      body, sizeof(body), mesh_session::is_enabled(), mesh_session::has_opera(),
-      have_id ? opera_id : nullptr, name, mesh_session::pairing_state(),
-      mesh_session::trusted_peer_count(), mesh_session::online_peer_count(),
-      mesh_session::alerts_received(), mesh_session::pairing_confirmation_code(), &last));
+  assert(mesh_api::build_mesh_status_json_from_view(body, sizeof(body), view));
   return body;
 }
 
@@ -6077,6 +6070,7 @@ void test_get_mesh_tells_each_pairing_outcome() {
   const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x13, 0x30, 0x02};
   const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x13, 0x30, 0x0C};
   add_bound_member(mac_c);
+  mesh_session::publish_status();   /* main.cpp's setup() publish (F161) */
   std::string b = status_body();
   assert(has(b, "\"pairing_seq\":0,\"pairing_result\":\"none\",\"pairing_fail_reason\":\"none\""));
   assert(has(b, "\"state\":\"CONNECTING\""));
@@ -6086,6 +6080,7 @@ void test_get_mesh_tells_each_pairing_outcome() {
   assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
   mesh_pairing::PairingContext cj;
   initiator_to_code(S, me, mac_j, j_pub, j_priv, 1000, cj);
+  mesh_session::process(1002);   /* the loop's session pass publishes (F161) */
   b = status_body();
   assert(has(b, "\"state\":\"PAIRING_CONFIRM\"") &&
          has(b, "\"pairing_seq\":1,\"pairing_result\":\"running\""));
@@ -6175,6 +6170,7 @@ void test_get_mesh_tells_each_pairing_outcome() {
   feed_pure(ci, me, last_to(mac_i), 1040, &a);
   a = mesh_pairing::confirm_code(ci, 1050);
   inject_all(mac_i, wire_all(a));
+  mesh_session::process(1060);   /* the loop's session pass publishes (F161) */
   b = status_body();
   assert(has(b, "\"pairing_seq\":5,\"pairing_result\":\"paired\",\"pairing_fail_reason\":\"none\""));
   /* A reboot starts the count again. */
@@ -6939,8 +6935,489 @@ void test_concurrent_offer_propagates_and_yields() {
   std::printf("PASS test_concurrent_offer_propagates_and_yields\n");
 }
 
+/* ── F161 — the status routes read a view the main loop publishes ───────
+ *
+ * GET /api/mesh and /api/mesh/peers run on the httpd task. Until F161 they
+ * read the session's state in place while process() wrote it on the main
+ * loop; now they copy the view the main loop last published
+ * (mesh_session::read_status), status_body() and peers_body() building
+ * each body the way the two handlers do. live_status_body() and
+ * live_peers_body() are the pre-F161 handlers' bodies, from the live state:
+ * what a read must equal right after a pass, and must not show between
+ * passes. */
+
+/* GET /api/mesh/peers as handle_mesh_peers builds it since F161: the
+ * persisted pubkeys (passed in; the host's NVS is empty) joined against the
+ * published view at `now_ms`. */
+std::string peers_body(const uint8_t* pubkeys, size_t count, uint32_t now_ms) {
+  mesh_session::StatusView view;
+  mesh_session::read_status(&view);
+  mesh_api::PeerView rows[mesh_session::MAX_TRUSTED_PEERS];
+  assert(count <= mesh_session::MAX_TRUSTED_PEERS);
+  assert(mesh_api::peer_views_from_status(view, pubkeys, count, now_ms, rows) == count);
+  char body[mesh_api::PEERS_JSON_CAP];
+  assert(mesh_api::build_mesh_peers_json(body, sizeof(body), rows, count));
+  return body;
+}
+
+/* GET /api/mesh as handle_mesh_status built it before F161: every field
+ * read live. */
+std::string live_status_body() {
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  const bool have_id = mesh_session::get_opera_id(opera_id);
+  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(name, sizeof(name));
+  mesh_api::PairingReport last;
+  last.seq         = mesh_session::pairing_seq();
+  last.outcome     = mesh_session::pairing_outcome();
+  last.fail_reason = mesh_session::pairing_fail_reason();
+  char body[mesh_api::STATUS_JSON_CAP];
+  assert(mesh_api::build_mesh_status_json(
+      body, sizeof(body), mesh_session::is_enabled(), mesh_session::has_opera(),
+      have_id ? opera_id : nullptr, name, mesh_session::pairing_state(),
+      mesh_session::trusted_peer_count(), mesh_session::online_peer_count(),
+      mesh_session::alerts_received(), mesh_session::pairing_confirmation_code(), &last));
+  return body;
+}
+
+/* GET /api/mesh/peers as handle_mesh_peers built it before F161: the
+ * session's peer links and the transport table read live, joined in the
+ * handler. */
+std::string live_peers_body(const uint8_t* pubkeys, size_t count, uint32_t now_ms) {
+  mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
+  const size_t n_links = mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS);
+  mesh_transport::Peer live[16];
+  const size_t n_live = mesh_transport::list_peers(live, 16);
+  mesh_api::PeerView views[mesh_session::MAX_TRUSTED_PEERS];
+  for (size_t i = 0; i < count; ++i) {
+    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+    mesh_crypto::compute_fingerprint(pubkeys + i * mesh_crypto::PUBKEY_LEN, fp);
+    static const char kHex[] = "0123456789abcdef";
+    for (size_t b = 0; b < mesh_crypto::FINGERPRINT_LEN; ++b) {
+      views[i].fingerprint[2 * b]     = kHex[(fp[b] >> 4) & 0xF];
+      views[i].fingerprint[2 * b + 1] = kHex[fp[b] & 0xF];
+    }
+    views[i].fingerprint[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
+    views[i].name[0] = '\0';
+    views[i].state = "OFFLINE";
+    views[i].last_seen_sec = 0xFFFFFFFFu;
+    views[i].rssi = 0;
+    views[i].alerts_received = 0;
+    for (size_t l = 0; l < n_links; ++l) {
+      if (std::memcmp(links[l].fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) continue;
+      views[i].alerts_received = links[l].alerts_received;
+      if (!links[l].mac_known) break;
+      for (size_t t = 0; t < n_live; ++t) {
+        if (!live[t].in_use || std::memcmp(live[t].mac, links[l].mac, 6) != 0) continue;
+        switch (live[t].state) {
+          case mesh_transport::PeerState::ACTIVE: views[i].state = "CONNECTED"; break;
+          case mesh_transport::PeerState::STALE:  views[i].state = "STALE";     break;
+          default:                                views[i].state = "OFFLINE";   break;
+        }
+        views[i].last_seen_sec = (now_ms - live[t].last_seen_ms) / 1000u;
+        views[i].rssi = live[t].rssi_dbm;
+        break;
+      }
+      break;
+    }
+  }
+  char body[mesh_api::PEERS_JSON_CAP];
+  assert(mesh_api::build_mesh_peers_json(body, sizeof(body), views, count));
+  return body;
+}
+
+std::string fp_hex_of(const uint8_t pub[mesh_crypto::PUBKEY_LEN]) {
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(pub, fp);
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+  for (size_t b = 0; b < mesh_crypto::FINGERPRINT_LEN; ++b) {
+    std::snprintf(hex + 2 * b, 3, "%02x", fp[b]);
+  }
+  return hex;
+}
+
+/* A trusted member with its keys kept, bound to `mac`. */
+struct TestMember {
+  uint8_t pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t priv[mesh_crypto::PRIVKEY_LEN];
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  uint8_t mac[6];
+  uint64_t counter;
+};
+void make_member(TestMember& m, const uint8_t mac[6], bool bind = true) {
+  assert(mesh_crypto::ed25519_generate_keypair(m.pub, m.priv));
+  mesh_crypto::compute_fingerprint(m.pub, m.fp);
+  std::memcpy(m.mac, mac, 6);
+  m.counter = 0;
+  assert(mesh_session::register_trusted_peer(m.pub));
+  if (bind) assert(mesh_session::bind_peer_mac(m.fp, mac));
+}
+/* The member sends a verified TAMPER_ALERT from its binding, in a transport
+ * pass at transport time `t`. */
+void member_speaks(TestMember& m, const uint8_t S[32], uint32_t t, int rssi) {
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_alert_frame(m.pub, m.priv, S, ++m.counter,
+                                     mesh_alert::Kind::CAMERA_TAMPER, 3, 7, frame, sizeof(frame));
+  assert(n > 0);
+  mesh_transport::test::set_now_ms(t);
+  mesh_transport::test::inject_recv(m.mac, frame, n, (int8_t)rssi);
+  mesh_transport::process();
+}
+
+/* Runs first in main(), before any test has published a view: a read is
+ * what the session reads before init() — the HTTP server is up before the
+ * mesh starts — and the body is the one the live state gave then, byte for
+ * byte. */
+void test_a_read_before_any_publish_is_the_state_before_init() {
+  mesh_session::StatusView v;
+  std::memset(&v, 0xA5, sizeof(v));
+  mesh_session::read_status(&v);
+  assert(v.enabled && !v.has_opera);
+  for (size_t i = 0; i < sizeof(v.opera_id); ++i) assert(v.opera_id[i] == 0);
+  assert(v.opera_name[0] == '\0');
+  assert(v.pairing_state == mesh_pairing::State::IDLE && v.pairing_code == 0);
+  assert(v.pairing_seq == 0 && v.pairing_outcome == mesh_pairing::Outcome::NONE &&
+         v.pairing_fail_reason == mesh_pairing::FailReason::NONE);
+  assert(v.peers_total == 0 && v.peers_online == 0 && v.alerts_received == 0 &&
+         v.member_count == 0);
+  assert(status_body() == live_status_body());
+  assert(has(status_body(), "\"state\":\"NO_OPERA\""));
+  std::printf("PASS test_a_read_before_any_publish_is_the_state_before_init\n");
+}
+
+/* Between two passes the main loop renames the opera, starts a pairing and
+ * adds a member. A read in between is the last pass, whole; the old
+ * handler's live read already showed the new name, the pairing and two
+ * members. After the next pass the read is the new state, equal to the live
+ * body. */
+void test_a_status_read_is_the_last_published_pass() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x16 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_opera_name("Home");
+  const uint8_t mac_a[6] = {0x24, 0x0A, 0xC4, 0x16, 0x00, 0x0A};
+  add_bound_member(mac_a);
+  mesh_session::process(1000);
+  const std::string before = status_body();
+  assert(before == live_status_body());
+  assert(has(before, "\"opera_name\":\"Home\"") && has(before, "\"peers_total\":1") &&
+         has(before, "\"state\":\"CONNECTING\"") &&
+         has(before, "\"pairing_seq\":0,\"pairing_result\":\"none\""));
+
+  mesh_session::set_opera_name("Renamed");
+  assert(mesh_session::start_pairing_joiner(1001));
+  const uint8_t mac_b[6] = {0x24, 0x0A, 0xC4, 0x16, 0x00, 0x0B};
+  add_bound_member(mac_b);
+  assert(status_body() == before);
+  assert(live_status_body() != before);
+
+  mesh_session::process(1002);
+  const std::string after = status_body();
+  assert(after == live_status_body());
+  assert(has(after, "\"opera_name\":\"Renamed\"") && has(after, "\"peers_total\":2") &&
+         has(after, "\"state\":\"PAIRING_JOIN\"") &&
+         has(after, "\"pairing_seq\":1,\"pairing_result\":\"running\""));
+  std::printf("PASS test_a_status_read_is_the_last_published_pass\n");
+}
+
+/* The handler collects a request's result as soon as the drain posts it
+ * (DONE), which is before the rest of the pass runs; its page then reads
+ * GET /api/mesh. The FailedCallback below plays that handler: the pass's
+ * pairing tick times a pairing out after the drain ran the rename, so the
+ * callback runs between the two, takes the result and reads the status.
+ * It must already show the new name: the drain publishes before it posts.
+ * Without that publish it read the pass before (the old name). */
+bool        g_f161_took = false;
+std::string g_f161_read;
+void f161_read_like_the_handler(mesh_pairing::FailReason, const uint8_t*) {
+  mesh_session::RequestResult res;
+  g_f161_took = mesh_session::take_request_result(&res) &&
+                res.type == mesh_session::RequestType::SET_NAME &&
+                res.status == mesh_session::RequestStatus::OK;
+  g_f161_read = status_body();
+}
+
+void test_a_read_right_after_a_post_shows_what_it_did() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x17 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_opera_name("Before");
+  assert(mesh_session::start_pairing_joiner(100));
+  mesh_session::process(200);
+  assert(has(status_body(), "\"opera_name\":\"Before\""));
+  g_f161_took = false;
+  g_f161_read.clear();
+  mesh_session::set_failed_callback(f161_read_like_the_handler);
+  mesh_session::Request r = make_request(mesh_session::RequestType::SET_NAME);
+  std::strcpy(r.name, "After");
+  assert(mesh_session::submit_request(r));
+  mesh_session::process(100 + mesh_pairing::PAIRING_TIMEOUT_MS);
+  assert(g_f161_took);
+  assert(has(g_f161_read, "\"opera_name\":\"After\""));
+  /* The pass then ends with the timeout in the view too. */
+  const std::string end = status_body();
+  assert(has(end, "\"opera_name\":\"After\"") &&
+         has(end, "\"pairing_seq\":1,\"pairing_result\":\"failed\",\"pairing_fail_reason\":\"timeout\""));
+  assert(end == live_status_body());
+  std::printf("PASS test_a_read_right_after_a_post_shows_what_it_did\n");
+}
+
+/* A disabled session still publishes every pass: process() returns early
+ * while stopped, but the radio keeps running and the transport table keeps
+ * ageing, so a member heard before the switch went off reads STALE once
+ * its entry is (the live read showed it; a view published only by running
+ * passes still said CONNECTED). The switch itself shows at once: the drain
+ * published it. */
+void test_a_disabled_session_still_publishes_each_pass() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x18 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  TestMember a;
+  const uint8_t mac_a[6] = {0x24, 0x0A, 0xC4, 0x18, 0x00, 0x0A};
+  make_member(a, mac_a);
+  member_speaks(a, S, 1000, -48);
+  mesh_session::process(1000);
+  assert(has(peers_body(a.pub, 1, 2000), "\"state\":\"CONNECTED\",\"last_seen_sec\":1,\"rssi\":-48"));
+  assert(has(status_body(), "\"state\":\"ACTIVE\""));
+
+  mesh_session::Request off = make_request(mesh_session::RequestType::SET_ENABLED);
+  off.enabled = false;
+  assert(mesh_session::submit_request(off));
+  mesh_session::process(1100);
+  mesh_session::RequestResult res;
+  assert(mesh_session::take_request_result(&res) && !res.enabled);
+  assert(has(status_body(), "\"state\":\"DISABLED\"") && has(status_body(), "\"enabled\":false"));
+
+  const uint32_t later = 1000 + mesh_transport::PEER_STALE_AFTER_MS + 5000;
+  mesh_transport::test::set_now_ms(later);
+  mesh_transport::process();
+  mesh_session::process(later);
+  const std::string rows = peers_body(a.pub, 1, later);
+  assert(has(rows, "\"state\":\"STALE\""));
+  assert(rows == live_peers_body(a.pub, 1, later));
+  assert(status_body() == live_status_body());
+  std::printf("PASS test_a_disabled_session_still_publishes_each_pass\n");
+}
+
+/* deinit() wipes the session and publishes what it left: no opera, no
+ * members, no pairing — not the opera it had. */
+void test_deinit_publishes_the_wiped_session() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x19 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_opera_name("Home");
+  const uint8_t mac_a[6] = {0x24, 0x0A, 0xC4, 0x19, 0x00, 0x0A};
+  add_bound_member(mac_a);
+  assert(mesh_session::start_pairing_joiner(10));
+  mesh_session::process(20);
+  assert(has(status_body(), "\"opera_name\":\"Home\""));
+  mesh_session::deinit();
+  const std::string b = status_body();
+  assert(b == live_status_body());
+  assert(has(b, "\"state\":\"NO_OPERA\",\"opera_id\":\"\",\"opera_name\":\"\"") &&
+         has(b, "\"peers_total\":0") && has(b, "\"pairing_seq\":0,\"pairing_result\":\"none\""));
+  std::printf("PASS test_deinit_publishes_the_wiped_session\n");
+}
+
+/* The view keeps the pairing code only while GET /api/mesh shows it. A
+ * joiner that paired still holds its code in the pairing context (live
+ * pairing_confirmation_code() is not 0), and the body never showed it in
+ * that state; the view holds 0 there, so no second copy outlives the
+ * code's screen. */
+void test_the_view_holds_the_code_only_while_it_is_shown() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x1A + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x1A, 0x00, 0x01};
+  const uint8_t mac_i[6] = {0x24, 0x0A, 0xC4, 0x1A, 0x00, 0x11};
+  mesh_session::set_paired_callback(on_paired_register);
+  assert(mesh_session::start_pairing_joiner(1000));
+  mesh_pairing::PairingContext ci;
+  mesh_pairing::context_init(ci);
+  uint8_t i_pub[32], i_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  mesh_pairing::Action a = mesh_pairing::start_initiator(ci, i_pub, i_priv, S, "Home", 1000);
+  feed_pure(ci, me, last_to((const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}), 1010, &a);
+  const std::vector<uint8_t> offer = wire(a);
+  mesh_transport::test::inject_recv(mac_i, offer.data(), offer.size(), -40);
+  mesh_transport::process();
+  mesh_session::process(1015);
+  mesh_session::StatusView v;
+  mesh_session::read_status(&v);
+  assert(v.pairing_state == mesh_pairing::State::AWAITING_CONFIRM);
+  assert(v.pairing_code == mesh_session::pairing_confirmation_code());
+  char code_field[40];
+  std::snprintf(code_field, sizeof(code_field), "\"pairing_code\":%u", (unsigned)v.pairing_code);
+  assert(has(status_body(), code_field));
+
+  feed_pure(ci, me, last_to(mac_i), 1020, &a);
+  assert(mesh_session::confirm_pairing_code(1030));
+  feed_pure(ci, me, last_to(mac_i), 1040, &a);
+  a = mesh_pairing::confirm_code(ci, 1050);
+  inject_all(mac_i, wire_all(a));
+  mesh_session::process(1060);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  assert(mesh_session::pairing_confirmation_code() != 0);
+  mesh_session::read_status(&v);
+  assert(v.pairing_code == 0);
+  assert(!has(status_body(), "pairing_code") && status_body() == live_status_body());
+  std::printf("PASS test_the_view_holds_the_code_only_while_it_is_shown\n");
+}
+
+/* GET /api/mesh/peers: one row per persisted pubkey, in the NVS order
+ * given, joined against the published members. A member heard a second
+ * ago reads CONNECTED with its RSSI; one heard 97 s ago STALE; one bound
+ * but never heard OFFLINE, "never"; one heard whose address left the
+ * transport table OFFLINE, "never", with its alert still counted; a stored
+ * pubkey the session does not trust OFFLINE, "never", no alerts. Each row
+ * equals the pre-F161 handler's join of the live state after the same pass
+ * (every field kept), and the age is counted at the read. */
+void test_the_peer_list_joins_each_member_from_the_view() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x1B + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  TestMember a, b, c, d, e;
+  const uint8_t mac_a[6] = {0x24, 0x0A, 0xC4, 0x1B, 0x00, 0x0A};
+  const uint8_t mac_b[6] = {0x24, 0x0A, 0xC4, 0x1B, 0x00, 0x0B};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x1B, 0x00, 0x0C};
+  const uint8_t mac_d[6] = {0x24, 0x0A, 0xC4, 0x1B, 0x00, 0x0D};
+  make_member(a, mac_a);
+  make_member(b, mac_b);
+  make_member(c, mac_c);
+  make_member(d, mac_d);
+  assert(mesh_crypto::ed25519_generate_keypair(e.pub, e.priv));   /* stored, not trusted */
+  member_speaks(b, S, 1000, -67);
+  member_speaks(d, S, 1000, -55);
+  mesh_transport::remove_peer(mac_d);
+  member_speaks(a, S, 95000, -41);
+  member_speaks(a, S, 95500, -42);
+  mesh_transport::test::set_now_ms(96000);
+  mesh_transport::process();
+  mesh_session::process(96000);
+
+  uint8_t keys[5 * mesh_crypto::PUBKEY_LEN];
+  const TestMember* order[5] = {&e, &a, &b, &c, &d};
+  for (size_t i = 0; i < 5; ++i) std::memcpy(keys + i * 32, order[i]->pub, 32);
+  const std::string rows = peers_body(keys, 5, 98500);
+  const std::string want =
+      "{\"ok\":true,\"peers\":["
+      "{\"fingerprint\":\"" + fp_hex_of(e.pub) + "\",\"name\":\"\",\"state\":\"OFFLINE\","
+      "\"last_seen_sec\":4294967295,\"rssi\":0,\"alerts_received\":0},"
+      "{\"fingerprint\":\"" + fp_hex_of(a.pub) + "\",\"name\":\"\",\"state\":\"CONNECTED\","
+      "\"last_seen_sec\":3,\"rssi\":-42,\"alerts_received\":2},"
+      "{\"fingerprint\":\"" + fp_hex_of(b.pub) + "\",\"name\":\"\",\"state\":\"STALE\","
+      "\"last_seen_sec\":97,\"rssi\":-67,\"alerts_received\":1},"
+      "{\"fingerprint\":\"" + fp_hex_of(c.pub) + "\",\"name\":\"\",\"state\":\"OFFLINE\","
+      "\"last_seen_sec\":4294967295,\"rssi\":0,\"alerts_received\":0},"
+      "{\"fingerprint\":\"" + fp_hex_of(d.pub) + "\",\"name\":\"\",\"state\":\"OFFLINE\","
+      "\"last_seen_sec\":4294967295,\"rssi\":0,\"alerts_received\":1}"
+      "]}";
+  assert(rows == want);
+  assert(rows == live_peers_body(keys, 5, 98500));
+  /* Counted at the read: the same view a minute later is a minute older. */
+  assert(has(peers_body(keys + 32, 1, 158500), "\"last_seen_sec\":63,"));
+  assert(has(status_body(), "\"peers_total\":4,\"peers_online\":1,\"alerts_received\":4"));
+  assert(status_body() == live_status_body());
+
+  /* Between passes the view stands: B speaks again in a transport pass, and
+   * until the session pass the row still shows its old sighting. */
+  member_speaks(b, S, 97000, -60);
+  assert(has(peers_body(keys + 64, 1, 98500), "\"state\":\"STALE\",\"last_seen_sec\":97,\"rssi\":-67"));
+  mesh_session::process(97000);
+  assert(has(peers_body(keys + 64, 1, 98500), "\"state\":\"CONNECTED\",\"last_seen_sec\":1,\"rssi\":-60"));
+
+  /* Null rows or keys answer nothing. */
+  mesh_session::StatusView v;
+  mesh_session::read_status(&v);
+  mesh_api::PeerView one[1];
+  assert(mesh_api::peer_views_from_status(v, keys, 1, 0, nullptr) == 0);
+  assert(mesh_api::peer_views_from_status(v, nullptr, 1, 0, one) == 0);
+  assert(mesh_api::peer_views_from_status(v, nullptr, 0, 0, one) == 0);
+  std::printf("PASS test_the_peer_list_joins_each_member_from_the_view\n");
+}
+
+/* Two threads, as on the device: the main loop starts or cancels a pairing
+ * and renames the opera after it, then runs a pass, over and over; the
+ * httpd task reads the status meanwhile. Each step's name says which step
+ * it was: "R" and the pairing number for a start (the pairing running),
+ * "C" and the number for a cancel (canceled), 32 characters either way. A
+ * read that mixes two passes shows a name of two steps, or a name whose
+ * letter or number is not the pairing it was read with. Every read through
+ * read_status() is one pass. (Reading the live state instead mixes them
+ * here on a multi-core host; the host lock is a std::mutex, so
+ * ThreadSanitizer sees the real locking.) */
+void test_status_reads_stay_whole_while_the_main_loop_runs() {
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::set_opera_name("C0000000000000000000000000000000");
+  mesh_session::process(1);
+
+  std::atomic<bool> done(false);
+  std::atomic<long> reads(0), torn(0);
+  std::thread reader([&] {
+    while (!done.load(std::memory_order_acquire)) {
+      mesh_session::StatusView v;
+      mesh_session::read_status(&v);
+      bool ok = std::strlen(v.opera_name) == mesh_pairing::MAX_OPERA_NAME_LEN;
+      unsigned long n = 0;
+      for (size_t i = 1; ok && i < mesh_pairing::MAX_OPERA_NAME_LEN; ++i) {
+        const char c = v.opera_name[i];
+        ok = c >= '0' && c <= '9';
+        n = n * 10 + (unsigned long)(c - '0');
+      }
+      if (ok && v.opera_name[0] == 'R') {
+        ok = n == v.pairing_seq && v.pairing_outcome == mesh_pairing::Outcome::RUNNING &&
+             v.pairing_state == mesh_pairing::State::DISCOVERING_JOINER;
+      } else if (ok && v.opera_name[0] == 'C') {
+        ok = n == v.pairing_seq &&
+             (n == 0 ? v.pairing_outcome == mesh_pairing::Outcome::NONE
+                     : v.pairing_outcome == mesh_pairing::Outcome::FAILED &&
+                       v.pairing_fail_reason == mesh_pairing::FailReason::CANCELED &&
+                       v.pairing_state == mesh_pairing::State::FAILED);
+      } else {
+        ok = false;
+      }
+      if (!ok) torn.fetch_add(1);
+      reads.fetch_add(1);
+    }
+  });
+  uint32_t t = 10;
+  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  for (int step = 0; step < 600; ++step) {
+    if (step % 2 == 0) {
+      assert(mesh_session::start_pairing_joiner(t));
+    } else {
+      mesh_session::cancel_pairing();
+    }
+    std::snprintf(name, sizeof(name), "%c%031lu", step % 2 == 0 ? 'R' : 'C',
+                  (unsigned long)mesh_session::pairing_seq());
+    mesh_session::set_opera_name(name);
+    mesh_session::process(t);
+    t += 1;
+    if (g_outs.size() > 64) g_outs.clear();
+  }
+  done.store(true, std::memory_order_release);
+  reader.join();
+  assert(reads.load() > 0);
+  if (torn.load() != 0) {
+    std::printf("FAIL: %ld of %ld status reads mixed two passes\n", torn.load(), reads.load());
+    std::fflush(stdout);
+  }
+  assert(torn.load() == 0);
+  std::printf("PASS test_status_reads_stay_whole_while_the_main_loop_runs (%ld reads)\n",
+              reads.load());
+}
+
 int main() {
   std::srand(0xC51F0);
+  /* F161: first, before anything publishes a status view. */
+  test_a_read_before_any_publish_is_the_state_before_init();
   test_start_initiator_emits_discover_init();
   test_start_joiner_emits_discover_join();
   test_joiner_offer_surfaces_code_with_accept();
@@ -7055,6 +7532,14 @@ int main() {
   /* F33 part 6 — the revocation deny-list; concurrent removals. */
   test_revocation_deny_list();
   test_concurrent_offer_propagates_and_yields();
+  /* F161 — the status routes read a view the main loop publishes. */
+  test_a_status_read_is_the_last_published_pass();
+  test_a_read_right_after_a_post_shows_what_it_did();
+  test_a_disabled_session_still_publishes_each_pass();
+  test_deinit_publishes_the_wiped_session();
+  test_the_view_holds_the_code_only_while_it_is_shown();
+  test_the_peer_list_joins_each_member_from_the_view();
+  test_status_reads_stay_whole_while_the_main_loop_runs();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }
