@@ -2161,6 +2161,46 @@ not run on a device. Owner: U1.
     `"current_source":"stored"`. Before, the load stored 35 / 75 / 30.
   - Artifact: `docs/audit/repro/F166/tuning-lab-values/`.
 
+## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244) — on-device verification
+
+Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`
+(`display_set_rotation()`'s MADCTL table), `include/canary/io/orientation.h`
+(the classifier), `firmware/boards/waveshare-esp32c3-lcd147/pins/pins.h`
+(`IMU_AXES_SWAP_XY`, `IMU_X_SIGN`, `IMU_Y_SIGN`: a seed guess),
+`src/ui/nightlight_ui.cpp` (the tumble's Startle) and `src/ui/canary_mark.cpp`
+(the hop). Host-tested (`test_orientation`, `test_nightlight_tumble`,
+`test_canary_mark_seat`) and run natively on LVGL 8.4
+(`canary-local/emulator/test/runtime_turn.sh`); what the panel draws for each
+turn is not. Compile is CI's. Owner: U1.
+
+- [ ] **Each side turn reads upright**
+  - Setup: a `canary-display-nightlight` build on the C3-LCD-1.47,
+    provisioned, "turn with the room" on, a serial monitor, daytime.
+  - Repro: stand it upright (USB down) for 3 s; turn it a quarter clockwise
+    onto its right edge (USB to the left) and hold it still for 3 s; stand
+    it upright again; turn it a quarter counter-clockwise onto its left edge
+    (USB to the right); then stand it upside down (USB up).
+  - Expected: each turn commits about 1.2 s after the device comes to rest,
+    and the clock reads upright every time. By `display_1in47.cpp`'s own
+    model of its bytes, both side turns most likely show the face upside
+    down: if they do, swap the r1/r3 bytes in `kMadctl`. If upright reads
+    upside down, or a side turn commits as the other landscape, fix the IMU
+    mapping in `pins.h` first and then recheck the bytes; a mirrored face is
+    an MX/MY fault, not this one.
+  - Artifact: `docs/audit/repro/F250/side-turns/` (a photo per orientation).
+
+- [ ] **The companion startles with each turn, and its hop is smooth**
+  - Setup: as above, more than 8 s after power-on (the mark refuses Tilt and
+    Startle for the first 8 s of uptime).
+  - Repro: turn it a quarter, wait 10 s, turn it back; then once more during
+    quiet hours.
+  - Expected: the companion tumbles in from the edge that was up and hops
+    once as it lands (a Startle: the eye widens and the bird rises about
+    12 px), then breathes on its perch; the hop rises and falls without
+    dropping back to the perch for a frame mid-air. In quiet hours it
+    tumbles in without the hop (asleep).
+  - Artifact: `docs/audit/repro/F242/tumble-video/`.
+
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 
 Code: `firmware/common/network/ap_security_policy.h` (host-tested), applied
