@@ -1,22 +1,26 @@
 // The fleet scan's cache (sweep F211), through the REAL fleet_scan_cache.h the
-// worker task writes it with, at the sketch's own FLEET_SCAN_CACHE_SIZE (read
-// from canary_wap.ino, its path passed in, so the read fails closed).
+// worker task writes it with (fleet_scan_cache::fill(), the task's whole
+// browse), at the sketch's own FLEET_SCAN_CACHE_SIZE (read from
+// canary_wap.ino, its path passed in, so the read fails closed).
 //
-// Before, fleet_scan_task() serialized every advert it browsed with
-// ArduinoJson's sized form into the 2560-byte cache and, when they did not
-// fit, terminated the cut text by hand: handle_fleet_scan()'s deserializeJson()
-// failed on it and GET /api/fleet/scan answered an empty `canaries` list. Each
-// advert carries seven TXT values of up to 255 bytes that the advertising
-// device chose, and `"` or `\` cost two bytes each, so eight adverts with long
-// values never fit. This suite feeds such adverts and holds the cache to what
-// a reader must get: a document a strict parser (JSON.parse's rules) reads,
-// the adverts that fit kept whole and in browse order, every value exactly as
-// advertised, and an advert that does not fit skipped without hiding the ones
-// after it.
+// Before, fleet_scan_task() serialized the first eight adverts it browsed
+// with ArduinoJson's sized form into the 2560-byte cache and, when they did
+// not fit, terminated the cut text by hand: handle_fleet_scan()'s
+// deserializeJson() failed on it and GET /api/fleet/scan answered an empty
+// `canaries` list (the Fleet sheet showed this device and no other Canary).
+// Each advert carries seven TXT values of up to 255 bytes that the
+// advertising device chose, and `"` or `\` cost two bytes each, so eight
+// adverts with long values never fit. This suite feeds such adverts and holds
+// the cache to what a reader must get: a document a strict parser
+// (JSON.parse's rules) reads, every value exactly as advertised, and the
+// shortest adverts that fit kept whole, in browse order, so a long advert
+// never costs a shorter one its row, wherever it falls in the browse.
 //
-// The expected rows come from an oracle written here (std::string, the JSON
-// spec's escapes), not from the header: an advert is kept exactly when its
-// row fits in what is left of the cache when its turn comes.
+// The expected rows come from oracles written here (std::string, the JSON
+// spec's escapes), not from the header: the shortest rows taken while they
+// fit together (at most eight; of two equally long, the one browsed first),
+// and, independently, a brute force over every subset for the most adverts
+// that can fit at all.
 
 // Arduino.h's global names first, as the sketch has them in front of every
 // header it includes: a header that collides with one (the first
@@ -24,6 +28,8 @@
 // in CI's ESP32 compiles.
 #include "arduino_globals.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -133,20 +139,72 @@ std::string oracle_row(const Ad& a) {
          ",\"port\":" + std::to_string(a.port) + "}";
 }
 
-// The cache a reader must get for `ads` in `cap` bytes, and which were kept.
+// The bytes a cache of `cap` bytes has for rows and the commas between them.
+size_t rows_room(size_t cap) {
+  const size_t frame = std::string("{\"canaries\":[]}").size() + 1;   // and its NUL
+  return cap >= frame ? cap - frame : 0;
+}
+
+// The cache a reader must get for `ads` in `cap` bytes, and which were kept:
+// the shortest rows (of two equally long, the one browsed first) taken while
+// they fit together, at most eight, written in browse order.
 std::string oracle_cache(const std::vector<Ad>& ads, size_t cap, std::vector<size_t>* kept) {
+  std::vector<size_t> order(ads.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+    return oracle_row(ads[a]).size() < oracle_row(ads[b]).size();
+  });
+  std::vector<size_t> pick;
+  size_t used = 0;
+  for (size_t i : order) {
+    if (pick.size() == fleet_scan_cache::kMaxAdverts) break;
+    const size_t need = used + (pick.empty() ? 0 : 1) + oracle_row(ads[i]).size();
+    if (need > rows_room(cap)) break;   // every row after it is as long or longer
+    used = need;
+    pick.push_back(i);
+  }
+  std::sort(pick.begin(), pick.end());
   std::string rows;
-  size_t n = 0;
-  for (size_t i = 0; i < ads.size() && n < fleet_scan_cache::kMaxAdverts; ++i) {
-    const std::string row = (n ? "," : "") + oracle_row(ads[i]);
-    const std::string doc = "{\"canaries\":[" + rows + row + "]}";
-    if (doc.size() + 1 <= cap) {   // the text and its NUL
-      rows += row;
-      ++n;
-      if (kept) kept->push_back(i);
+  for (size_t r = 0; r < pick.size(); ++r) rows += (r ? "," : "") + oracle_row(ads[pick[r]]);
+  if (kept) *kept = pick;
+  return "{\"canaries\":[" + rows + "]}";
+}
+
+// add()'s own rule, one advert after another: kept exactly when its row fits
+// in what is left when its turn comes.
+std::vector<size_t> oracle_add_in_order(const std::vector<Ad>& ads, size_t cap) {
+  std::vector<size_t> kept;
+  size_t used = 0;
+  for (size_t i = 0; i < ads.size() && kept.size() < fleet_scan_cache::kMaxAdverts; ++i) {
+    const size_t need = used + (kept.empty() ? 0 : 1) + oracle_row(ads[i]).size();
+    if (need <= rows_room(cap)) {
+      used = need;
+      kept.push_back(i);
     }
   }
-  return "{\"canaries\":[" + rows + "]}";
+  return kept;
+}
+
+// The most adverts that fit in `cap` together, by trying every subset of
+// rows `len` bytes long.
+size_t brute_force_most(const std::vector<size_t>& len, size_t cap) {
+  size_t best = 0;
+  for (uint32_t m = 0; m < (1u << len.size()); ++m) {
+    size_t count = 0, used = 0;
+    for (size_t i = 0; i < len.size(); ++i) {
+      if (!(m & (1u << i))) continue;
+      used += (count ? 1 : 0) + len[i];
+      ++count;
+    }
+    if (count <= fleet_scan_cache::kMaxAdverts && used <= rows_room(cap) && count > best) best = count;
+  }
+  return best;
+}
+
+std::vector<size_t> row_lens(const std::vector<Ad>& ads) {
+  std::vector<size_t> len;
+  for (const Ad& a : ads) len.push_back(oracle_row(a).size());
+  return len;
 }
 
 // ── Running the header ──────────────────────────────────────────────────
@@ -156,19 +214,24 @@ struct Built {
   bool guard_intact = true;   // nothing written past cap
 };
 
-Built build(const std::vector<Ad>& ads, size_t cap) {
+// The task's browse over `ads`, through fill(); each read returns the
+// advert's view, as the sketch's reader returns MDNS.txt()'s strings.
+Built build(const std::vector<Ad>& ads, size_t cap, size_t* reads = nullptr) {
   std::vector<char> buf(cap + 16, '\x7f');
   fleet_scan_cache::Cache c;
   fleet_scan_cache::begin(c, buf.data(), cap);
-  for (const Ad& a : ads) {
-    if (fleet_scan_cache::full(c)) break;   // the task's loop condition
-    fleet_scan_cache::add(c, a.view());
-  }
+  size_t n_reads = 0;
+  auto read = [&](int i) {
+    ++n_reads;
+    return ads[(size_t)i].view();
+  };
+  fleet_scan_cache::fill(c, (int)ads.size(), read);
   Built b;
   for (size_t i = cap; i < buf.size(); ++i) b.guard_intact = b.guard_intact && buf[i] == '\x7f';
   if (cap > 0) b.text = std::string(buf.data(), strnlen(buf.data(), cap));
   b.kept = c.kept;
   b.skipped = c.skipped;
+  if (reads) *reads = n_reads;
   return b;
 }
 
@@ -200,8 +263,8 @@ const size_t kCap = sketch_cache_size();
 
 // The item's case: eight adverts whose 255-byte values hold `"` and `\`.
 // Each carries one such value (a different TXT key each time) with a
-// different share of escaping bytes, so the cache fills part way, an advert
-// too long for what is left is skipped, and a shorter one after it still fits.
+// different share of escaping bytes, so not every advert fits: the shortest
+// rows are kept, in browse order, and the longest are the ones left out.
 void test_eight_adverts_with_long_escaping_values() {
   const size_t quotes[8] = {255, 200, 160, 255, 40, 255, 10, 120};
   std::vector<Ad> ads;
@@ -212,23 +275,157 @@ void test_eight_adverts_with_long_escaping_values() {
   }
   std::vector<size_t> want;
   const std::string expect = oracle_cache(ads, kCap, &want);
-  // The case discriminates: some kept, some skipped, and one kept after a skip.
-  CHECK(!want.empty() && want.size() < ads.size());
-  bool kept_after_skip = false;
-  for (size_t r = 1; r < want.size(); ++r) kept_after_skip = kept_after_skip || want[r] != want[r - 1] + 1;
-  CHECK(kept_after_skip);
-  // As the oracle computes it at 2560 bytes: the first three rows (670, 624
-  // and 578 bytes), not the fourth (681 with its comma, 670 left), the fifth
-  // (458), and none after it (211 bytes left).
-  CHECK((want == std::vector<size_t>{0, 1, 2, 4}));
+  // As the oracle computes it at 2560 bytes (2544 for rows and commas): the
+  // rows are 670, 624, 578, 680, 458, 675, 433 and 535 bytes, and the four
+  // shortest (433, 458, 535 and 578: 2007 with their commas) fit where a
+  // fifth (624) does not. Kept in browse order instead, the first three and
+  // the fifth would have filled it, the same count with longer rows.
+  CHECK((want == std::vector<size_t>{2, 4, 6, 7}));
+  CHECK((oracle_add_in_order(ads, kCap) == std::vector<size_t>{0, 1, 2, 4}));
+  CHECK(brute_force_most(row_lens(ads), kCap) == want.size());
 
-  const Built b = build(ads, kCap);
+  size_t reads = 0;
+  const Built b = build(ads, kCap, &reads);
   CHECK(b.guard_intact);
   CHECK(b.text == expect);
   CHECK(rows_match(b.text, ads, want));
   CHECK(b.kept == want.size());
   CHECK(b.skipped == ads.size() - want.size());
   CHECK(b.text.size() < kCap);
+  CHECK(reads == ads.size() + want.size());   // each measured once, each kept one read again to write
+}
+
+// One long advert and seven ordinary Canaries: wherever the long one falls in
+// the browse, the seven are kept and the long one is the advert left out. In
+// browse order, a long advert answered first used to crowd out the rows
+// after it (the review's case: six 200-byte values of `"` kept it alone; six
+// 255-byte plain values kept it and five of the seven).
+void test_one_long_advert_costs_only_its_own_row() {
+  for (int kind = 0; kind < 2; ++kind) {
+    Ad long_ad = ordinary(100);
+    for (int k = 1; k < 7; ++k) *long_ad.field(k) = kind == 0 ? std::string(200, '"') : std::string(255, 'p');
+    for (size_t at = 0; at < 8; ++at) {
+      std::vector<Ad> ads;
+      std::vector<size_t> canaries;
+      for (int i = 0, o = 0; i < 8; ++i) {
+        if ((size_t)i == at) {
+          ads.push_back(long_ad);
+        } else {
+          ads.push_back(ordinary(o++));
+          canaries.push_back((size_t)i);
+        }
+      }
+      if (at == 0) {   // the case discriminates: in browse order the Canaries lost rows
+        const std::vector<size_t> in_order = oracle_add_in_order(ads, kCap);
+        CHECK(in_order.size() == (kind == 0 ? 1u : 6u) && in_order[0] == 0);
+      }
+      std::vector<size_t> want;
+      const std::string expect = oracle_cache(ads, kCap, &want);
+      CHECK(want == canaries);
+      const Built b = build(ads, kCap);
+      CHECK(b.text == expect);
+      CHECK(rows_match(b.text, ads, canaries));
+      CHECK(b.kept == 7 && b.skipped == 1);
+    }
+  }
+}
+
+// The browse is read to its end: results after the eighth are offered too,
+// and an advert skipped for size does not hide a shorter one after it.
+void test_past_the_eighth_result() {
+  std::vector<Ad> ads;
+  for (int i = 0; i < 8; ++i) {
+    Ad a = ordinary(i);
+    for (int k = 0; k < 7; ++k) *a.field(k) = long_value(255);   // too long even alone
+    ads.push_back(a);
+  }
+  for (int i = 8; i < 12; ++i) ads.push_back(ordinary(i));
+  Built b = build(ads, kCap);
+  CHECK(rows_match(b.text, ads, {8, 9, 10, 11}));
+  CHECK(b.kept == 4 && b.skipped == 8);
+
+  // Twenty results, the eight shortest at the end: those eight are kept.
+  ads.clear();
+  for (int i = 0; i < 20; ++i) {
+    Ad a = ordinary(i);
+    if (i < 12) a.model = std::string(40, 'm');
+    ads.push_back(a);
+  }
+  b = build(ads, kCap);
+  CHECK(rows_match(b.text, ads, {12, 13, 14, 15, 16, 17, 18, 19}));
+  CHECK(b.kept == 8 && b.skipped == 12);
+}
+
+// Of two equally long rows, the one browsed first is kept: when a shorter
+// row arrives after eight equal ones it displaces the last of them, and when
+// equal rows compete for the room the earliest win.
+void test_equal_rows_keep_the_first_browsed() {
+  std::vector<Ad> ads;
+  for (int i = 0; i < 8; ++i) ads.push_back(ordinary(i));   // eight rows of one length
+  Ad shorter = ordinary(8);
+  shorter.model.clear();
+  ads.push_back(shorter);
+  Built b = build(ads, kCap);
+  CHECK(rows_match(b.text, ads, {0, 1, 2, 3, 4, 5, 6, 8}));
+
+  ads.clear();
+  for (int i = 0; i < 3; ++i) {   // three rows of one length, two fit
+    Ad a = ordinary(i);
+    a.model = std::string(1000, 'm');
+    ads.push_back(a);
+  }
+  CHECK(2 * oracle_row(ads[0]).size() + 1 <= rows_room(kCap));
+  CHECK(3 * oracle_row(ads[0]).size() + 2 > rows_room(kCap));
+  b = build(ads, kCap);
+  CHECK(rows_match(b.text, ads, {0, 1}));
+}
+
+// Many browses, made up from a fixed seed: the answer parses, holds exactly
+// the oracle's rows, as many as could fit at all (a brute force over every
+// subset), and no advert left out has a shorter row than one kept (of two
+// equally long, the one browsed first is kept).
+void test_the_most_that_fit_and_never_a_longer_one() {
+  uint32_t seed = 0x5eed2110u;
+  auto next = [&](uint32_t bound) {
+    seed = seed * 1664525u + 1013904223u;
+    return (seed >> 8) % bound;
+  };
+  const char pool[] = {'a', 'b', '"', '\\', 'z', '\xc3', '\xa9', '-', '"', '\\'};
+  int cases = 0, left_out = 0;
+  for (int round = 0; round < 400; ++round) {
+    const size_t n = 1 + next(12);
+    std::vector<Ad> ads;
+    for (size_t i = 0; i < n; ++i) {
+      Ad a = ordinary((int)i);
+      for (int k = 0; k < 7; ++k) {
+        if (next(3) != 0) continue;
+        const size_t len = next(256);
+        std::string v;
+        for (size_t j = 0; j < len; ++j) v.push_back(pool[next(sizeof(pool))]);
+        *a.field(k) = v;
+      }
+      ads.push_back(a);
+    }
+    std::vector<size_t> want;
+    const std::string expect = oracle_cache(ads, kCap, &want);
+    const std::vector<size_t> len = row_lens(ads);
+    size_t reads = 0;
+    const Built b = build(ads, kCap, &reads);
+    bool ok = b.guard_intact && b.text == expect && rows_match(b.text, ads, want) &&
+              b.kept == want.size() && b.kept + b.skipped == n && reads == n + want.size() &&
+              want.size() == brute_force_most(len, kCap);
+    for (size_t i = 0; i < n && ok; ++i) {
+      if (std::find(want.begin(), want.end(), i) != want.end()) continue;
+      for (size_t k : want) ok = ok && (len[i] > len[k] || (len[i] == len[k] && i > k));
+    }
+    CHECK(ok);
+    cases += ok ? 1 : 0;
+    left_out += want.size() < n ? 1 : 0;
+  }
+  // The seed makes browses that do not all fit: the rule is exercised.
+  CHECK(left_out >= 100);
+  std::printf("  %d made-up browses held to the oracle and the brute force (%d left adverts out)\n",
+              cases, left_out);
 }
 
 // Eight adverts whose seven values are all 255 bytes of `"` and `\`: no row
@@ -273,9 +470,7 @@ void test_a_complete_document_after_every_add() {
     if (fleet_scan_cache::add(c, ads[i].view())) kept.push_back(i);
     CHECK(rows_match(buf.data(), ads, kept));
   }
-  std::vector<size_t> want;
-  oracle_cache(ads, kCap, &want);
-  CHECK(kept == want);
+  CHECK(kept == oracle_add_in_order(ads, kCap));
 }
 
 // The boundary, to the byte: a row that leaves the document exactly one byte
@@ -309,13 +504,15 @@ void test_the_last_byte() {
   CHECK(rows_match(b.text, ads, {0}));
 }
 
-// At most eight are kept, the first eight that fit, as the browse cap was.
+// At most eight are kept, as the browse cap was: of twelve rows of nearly one
+// length, the eight shortest (the first ten are equally long, the last two
+// two bytes longer), the eight browsed first among equals.
 void test_at_most_eight() {
   std::vector<Ad> ads;
   for (int i = 0; i < 12; ++i) ads.push_back(ordinary(i));
   const Built b = build(ads, kCap);
   CHECK(rows_match(b.text, ads, {0, 1, 2, 3, 4, 5, 6, 7}));
-  CHECK(b.kept == 8 && b.skipped == 0);
+  CHECK(b.kept == 8 && b.skipped == 4);
 
   std::vector<char> buf(kCap, '\0');
   fleet_scan_cache::Cache c;
@@ -376,6 +573,10 @@ int main() {
   }
   test_eight_adverts_with_long_escaping_values();
   test_none_fits_alone_and_the_next_one_is_kept();
+  test_one_long_advert_costs_only_its_own_row();
+  test_past_the_eighth_result();
+  test_equal_rows_keep_the_first_browsed();
+  test_the_most_that_fit_and_never_a_longer_one();
   test_a_complete_document_after_every_add();
   test_the_last_byte();
   test_at_most_eight();

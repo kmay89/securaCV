@@ -382,14 +382,18 @@ clean: clean-wap-diagnostics
 
 # The fleet scan's cache (sweep F211): the REAL fleet_scan_cache.h (on the
 # REAL wap_json_writer.h) the worker task writes GET /api/fleet/scan's cache
-# with, at the sketch's own FLEET_SCAN_CACHE_SIZE, read from canary_wap.ino
-# (its path passed in, so the read fails closed). Eight adverts whose 255-byte
-# TXT values hold `"` and `\`: the cache parses under JSON.parse's rules
-# (json_strict.h), keeps exactly the adverts that fit (an oracle in the test
-# says which), each value as advertised, and is a complete document after
-# every advert; never a cut list. Both this suite and the identity one include
-# arduino_globals.h (Arduino.h's global names, from arduino-esp32 3.3.8) before
-# the header they test, so a header that collides with one fails here.
+# with, through fill(), the task's whole browse, at the sketch's own
+# FLEET_SCAN_CACHE_SIZE, read from canary_wap.ino (its path passed in, so the
+# read fails closed). Eight adverts whose 255-byte TXT values hold `"` and `\`:
+# the cache parses under JSON.parse's rules (json_strict.h) and keeps exactly
+# the shortest adverts that fit (an oracle in the test says which, and a brute
+# force that no more could fit), in browse order, each value as advertised; a
+# long advert never costs a shorter one its row, wherever it falls in the
+# browse; results past the eighth are offered too; and the cache is a
+# complete document after every advert, never a cut list. Both this suite and
+# the identity one include arduino_globals.h (Arduino.h's global names, from
+# arduino-esp32 3.3.8) before the header they test, so a header that collides
+# with one fails here.
 FSCACHE_BIN = test_fleet_scan_cache
 FSCACHE_SRC = test_fleet_scan_cache.cpp
 

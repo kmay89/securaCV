@@ -58,13 +58,17 @@ J3. What the check cannot bound fails: an array built in a loop, a value
     at every value the helper assigns it.
 J4. The fleet scan's cache is not an answer but the handler answers from it
     (F211): `fleet_scan_task()` writes it only through `fleet_scan_cache.h`
-    (host-tested: the adverts that fit, whole, and a complete document at
-    every step). The task begins a `fleet_scan_cache::Cache` over the
-    staging buffer it allocated with `FLEET_SCAN_CACHE_SIZE` bytes, with that
-    size, adds the adverts with `fleet_scan_cache::add()`, and copies the
-    buffer into the cache with that size; nothing else writes the staging
-    buffer. No site is exempt from J1-J3: the one that was, the cut cache's
-    `serializeJson()`, is gone.
+    (host-tested: the shortest adverts that fit, whole, in browse order, and
+    a complete document at every step). The task begins a
+    `fleet_scan_cache::Cache` over the staging buffer it allocated with
+    `FLEET_SCAN_CACHE_SIZE` bytes, with that size; reads the browse's count
+    once (`const int n = MDNS.queryService(...)`, never assigned again) and
+    hands that count, unchanged, to `fleet_scan_cache::fill()` once, which
+    offers every result (the loop and its bound are the header's, where the
+    host test holds them); calls no `fleet_scan_cache::add()` of its own; and
+    copies the buffer into the cache with that size. Nothing else writes the
+    staging buffer. No site is exempt from J1-J3: the one that was, the cut
+    cache's `serializeJson()`, is gone.
 
 J5. An answer spelled with `snprintf()` (F212): a call whose format is a JSON
     object (its first byte `{`), into a buffer the same function sends
@@ -1237,9 +1241,33 @@ def check_fleet_cache(files: dict[str, str], idx: Index) -> list[str]:
         if target != buf or size != FLEET_SIZE:
             errors.append(f"{where}: fleet_scan_cache::begin({cache}, {target}, {size}) is not over {buf} with "
                           f"{FLEET_SIZE} bytes (J4)")
-        adds = re.findall(r"\bfleet_scan_cache\s*::\s*add\s*\(\s*(\w+)\s*,", body)
-        if not adds or any(a != cache for a in adds):
-            errors.append(f"{where}: the adverts are not added to {cache} with fleet_scan_cache::add() (J4)")
+        # The browse's count, read once and handed to fill() unchanged: the
+        # loop over the results, and its bound, are the header's.
+        counts = re.findall(r"\bconst\s+int\s+(\w+)\s*=\s*MDNS\s*\.\s*queryService\s*\(\s*\"securacv\"\s*,"
+                            r"\s*\"tcp\"\s*\)\s*;", kept[fn.body[0]:fn.body[1]])
+        fills = re.findall(r"\bfleet_scan_cache\s*::\s*fill\s*\(\s*([^;]*?)\s*\)\s*;", body)
+        if len(counts) != 1:
+            errors.append(f"{where}: the browse's count is not read once as `const int n = "
+                          f"MDNS.queryService(\"securacv\", \"tcp\");` (J4)")
+        else:
+            # Every write of the count after its declaration (an assignment,
+            # a compound assignment, ++ or --) caps the browse.
+            rest = re.sub(r"\bconst\s+int\s+" + counts[0] + r"\s*=\s*MDNS\s*\.\s*queryService\s*\([^;]*;", "", body)
+            if re.search(r"(?<![\w.>])" + counts[0] + r"\s*(?:[-+*/%&|^]?=(?!=)|\+\+|--)", rest) or \
+                    re.search(r"(?:\+\+|--)\s*" + counts[0] + r"\b", rest):
+                errors.append(f"{where}: the browse's count {counts[0]} is changed after it is read; fill() "
+                              f"offers every result (J4)")
+        if len(fills) != 1:
+            errors.append(f"{where}: fleet_scan_cache::fill() {len(fills)} times; the browse is handed to it once (J4)")
+        else:
+            args = [a.strip() for a in fills[0].split(",")]
+            if len(args) != 3 or args[0] != cache or not counts or args[1] != counts[0] \
+                    or not re.fullmatch(r"\w+", args[2]):
+                errors.append(f"{where}: fleet_scan_cache::fill({fills[0]}) is not ({cache}, <the browse's "
+                              f"count, unchanged>, <reader>): every result is offered (J4)")
+    if re.search(r"\bfleet_scan_cache\s*::\s*(?:add|pick_\w+)\s*\(", code):
+        errors.append(f"{INO}: calls fleet_scan_cache::add() or a pick_*() step itself; fill() is the browse, "
+                      f"whole (J4)")
     if not re.search(r"\bmemcpy\s*\(\s*g_fleet_scan_cache\s*,\s*" + re.escape(buf) + r"\s*,\s*" + FLEET_SIZE
                      + r"\s*\)", body):
         errors.append(f"{where}: {buf} is not copied whole ({FLEET_SIZE} bytes) into g_fleet_scan_cache (J4)")
@@ -1817,8 +1845,23 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw_in(INO, "fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);",
             "fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE + 512);")),
     ("an advert is copied into the cache around the builder",
-     raw_in(INO, "      fleet_scan_cache::add(cache, advert);",
-            "      strcat(staging, name.c_str());")),
+     raw_in(INO, "      fleet_scan_cache::fill(cache, n, read_advert);",
+            "      fleet_scan_cache::fill(cache, n, read_advert);\n      strcat(staging, name.c_str());")),
+    ("the task hands fill() only the first eight results (the review's G2)",
+     raw_in(INO, "      fleet_scan_cache::fill(cache, n, read_advert);",
+            "      fleet_scan_cache::fill(cache, n < 8 ? n : 8, read_advert);")),
+    ("the task puts back its own loop, bounded at eight",
+     raw_in(INO, "      fleet_scan_cache::fill(cache, n, read_advert);",
+            "      for (int i = 0; i < n && i < 8; i++) fleet_scan_cache::add(cache, read_advert(i));")),
+    ("the browse's count is capped where it is read",
+     raw_in(INO, '    const int n = MDNS.queryService("securacv", "tcp");',
+            '    const int n = std::min(MDNS.queryService("securacv", "tcp"), 8);')),
+    ("the browse's count is cut after it is read",
+     raw_in(INO, '    const int n = MDNS.queryService("securacv", "tcp");',
+            '    int n = MDNS.queryService("securacv", "tcp");\n    if (n > 8) n = 8;')),
+    ("the browse is handed to fill() twice",
+     raw_in(INO, "      fleet_scan_cache::fill(cache, n, read_advert);",
+            "      fleet_scan_cache::fill(cache, n, read_advert);\n      fleet_scan_cache::fill(cache, n, read_advert);")),
     ("the fleet scan's cache is copied short",
      raw_in(INO, "memcpy(g_fleet_scan_cache, staging, FLEET_SCAN_CACHE_SIZE);",
             "memcpy(g_fleet_scan_cache, staging, strlen(staging));")),

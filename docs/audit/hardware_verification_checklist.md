@@ -1618,11 +1618,12 @@ Compile is CI's. Owner: U1.
     the host test covers it.
   - Artifact: `docs/audit/repro/F213/nearby-emoji/`.
 
-## canary-wap: the fleet scan keeps the adverts that fit, the identity answers escape what a person typed (F211, F212) — on-device verification
+## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed (F211, F212) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/fleet_scan_cache.h`
-(`fleet_scan_task()`'s cache: each advert whole or not at all, in browse
-order, at most eight, a complete document after every advert),
+(`fleet_scan_task()`'s cache, through `fill()`: every result of the browse
+offered, the shortest rows that fit together kept whole, at most eight,
+written in browse order, a complete document after every row),
 `identity_json.h` (GET `/api/device-info` and the provisioning receipt, every
 string escaped, each answer measured and written into a heap buffer of its own
 length), both on `wap_json_writer.h`, and their glue in `canary_wap.ino`.
@@ -1634,7 +1635,7 @@ measured form). The old cache's failure was shown only in a scratch harness
 over ArduinoJson 7.4.1 (the library is not in the repo). Compile is CI's.
 Owner: U1.
 
-- [ ] **Long mDNS adverts cost their own rows, not the whole list**
+- [ ] **Long mDNS adverts cost their own rows, not the other Canaries'**
   - Setup: a canary-wap on a LAN with at least one other Canary, and a
     laptop on the same LAN that can publish a `_securacv._tcp` service
     (`avahi-publish-service` on Linux, `dns-sd -R` on macOS).
@@ -1642,13 +1643,18 @@ Owner: U1.
     bytes each, half of them `"` and `\`; open the Fleet sheet; read
     `curl -s -H "Authorization: Bearer <token>" http://<wap>/api/fleet/scan
     | python3 -m json.tool` twice, 15 seconds apart (the first read starts
-    the browse); then publish six more such services and read it again.
-  - Expected: every answer parses; `canaries` lists the other Canary, and
-    each long advert whose row still fits in the 2560-byte cache in browse
-    order (one such row is a little under 1 KB), each value as published; with
-    eight long adverts the list is not empty (before F211 it was, whichever
-    device sent the long values). An advert missing from the list is one
-    that did not fit when its turn came.
+    the browse); then publish six more such services and read it again;
+    then stop them and publish one service with six 255-byte values of `"`
+    and read it again.
+  - Expected: every answer parses; `canaries` always lists the other Canary
+    (its row is short, and the shortest rows that fit in the 2560-byte cache
+    are the ones kept, whatever order mDNS answers in), and as many long
+    adverts as fit beside it (one such row is a little under 1 KB), each
+    value as published; with eight long adverts the list is not empty
+    (before F211 the cut cache emptied it, and the sheet showed only this
+    device, whichever device sent the long values); the single advert with
+    six long values is the row left out, never the Canary. An advert missing
+    from the list is one longer than the rows kept.
   - Artifact: `docs/audit/repro/F211/long-adverts/`.
 - [ ] **A device name holding a quote or a backslash keeps /api/device-info whole**
   - Setup: a canary-wap with its API token.

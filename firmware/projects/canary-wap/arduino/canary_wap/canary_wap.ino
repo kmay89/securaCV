@@ -6964,9 +6964,9 @@ static bool              g_fleet_scan_have    = false;  // guarded by mux
 // Sized for eight ordinary adverts (a 32-byte name, a 30-byte hostname and
 // short TXT values make a row of about 200 B, so eight are about 1.7 KB).
 // Adverts are other devices' bytes: each TXT value can be 255 bytes, so a
-// list can need several times this. fleet_scan_cache.h keeps the adverts
-// that fit, whole and in browse order, and the cache is a complete document
-// at every step (sweep F211); it never holds a cut list.
+// list can need several times this. fleet_scan_cache.h keeps the shortest
+// adverts that fit, whole, written in browse order, and the cache is a
+// complete document at every step (sweep F211); it never holds a cut list.
 //
 // Cache + handler snapshot live in PSRAM (csi_mem.h), allocated in setup():
 // 2 x 2.5 KB of internal DRAM back for the BLE budget. Both are only
@@ -6988,32 +6988,39 @@ static void fleet_scan_task(void*) {
   // bytes past the document's NUL must be zeros, not heap garbage.
   char* staging = (char*)calloc(1, FLEET_SCAN_CACHE_SIZE);
   if (staging && g_fleet_scan_cache) {
-    // The adverts that fit, whole, in browse order: an advert too long for
-    // what is left is skipped and the next is still tried (sweep F211).
+    // The shortest adverts that fit, whole, written in browse order; a long
+    // advert never costs a shorter one its row (sweep F211).
     fleet_scan_cache::Cache cache;
     fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);
 
     // Blocking browse (~2 s). The mDNS component is internally thread-safe.
     const int n = MDNS.queryService("securacv", "tcp");
-    for (int i = 0; i < n && !fleet_scan_cache::full(cache); i++) {
-      // One advert's values, alive only for this pass: vTaskDelete(NULL)
-      // below never returns, so nothing that owns heap may outlive the loop.
-      const String device_id = MDNS.txt(i, "device_id");
-      const String name      = MDNS.txt(i, "name");
-      const String mdns_host = MDNS.txt(i, "host");
-      const String fw        = MDNS.txt(i, "fw");
-      const String model     = MDNS.txt(i, "model");
-      // Device type + role (canonical TXT schema) — the SPA branches its
-      // per-type wizard steps and badges off dt ("canary-vision",
-      // "canary-sense", "canary-wap"); older firmware adverts return "".
-      const String dt        = MDNS.txt(i, "dt");
-      const String role      = MDNS.txt(i, "role");
-      const String ip        = MDNS.address(i).toString();
-      const fleet_scan_cache::Advert advert = {
-          device_id.c_str(), name.c_str(), mdns_host.c_str(), fw.c_str(),
-          model.c_str(), dt.c_str(), role.c_str(), ip.c_str(),
-          (uint16_t)MDNS.port(i)};
-      fleet_scan_cache::add(cache, advert);
+    {
+      // One advert at a time, read from the browse's results by index (they
+      // stay readable until the next query); fill() reads a kept one twice,
+      // to measure it and to write it. The values live here until the next
+      // read, and this scope closes before vTaskDelete(NULL) below, which
+      // never returns, so nothing that owns heap outlives it.
+      String device_id, name, mdns_host, fw, model, dt, role, ip;
+      auto read_advert = [&](int i) -> fleet_scan_cache::Advert {
+        device_id = MDNS.txt(i, "device_id");
+        name      = MDNS.txt(i, "name");
+        mdns_host = MDNS.txt(i, "host");
+        fw        = MDNS.txt(i, "fw");
+        model     = MDNS.txt(i, "model");
+        // Device type + role (canonical TXT schema) — the SPA branches its
+        // per-type wizard steps and badges off dt ("canary-vision",
+        // "canary-sense", "canary-wap"); older firmware adverts return "".
+        dt        = MDNS.txt(i, "dt");
+        role      = MDNS.txt(i, "role");
+        ip        = MDNS.address(i).toString();
+        const fleet_scan_cache::Advert advert = {
+            device_id.c_str(), name.c_str(), mdns_host.c_str(), fw.c_str(),
+            model.c_str(), dt.c_str(), role.c_str(), ip.c_str(),
+            (uint16_t)MDNS.port(i)};
+        return advert;
+      };
+      fleet_scan_cache::fill(cache, n, read_advert);
     }
 
     portENTER_CRITICAL(&g_fleet_scan_mux);
