@@ -910,6 +910,8 @@ fails on byte drift.
   `nightlight_request_rotation()` must seat the companion where a boot at
   that rotation seats it. Fetches LVGL, Crypto and ArduinoJson at
   `build.sh`'s pins when absent, and CI runs it right after `glass_turn.sh`.
+  `tests/onboard.test.js` holds its TU lists, defines and language flags to
+  what `build.sh` hands em++ for the nightlight.
 - `tests/canary_local.test.js` — Node tests for the DOM-free logic:
   the witness signing canonical is pinned against `trust.cpp`'s locked
   format (and a WebCrypto round-trip verifies a real signature over

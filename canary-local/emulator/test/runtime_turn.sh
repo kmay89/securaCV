@@ -81,7 +81,11 @@ mkdir -p "$OUT/lvgl" "$OUT/fw"
 # The nightlight flavor's wiring, as build.sh hands it to em++ (its pin map,
 # its config, the lean budget its env sets), with runtime_turn/ first on the
 # path: its emscripten.h hands every call into the page to the driver, and its
-# lv_conf.h is the display's with a pool sized for 64-bit objects.
+# lv_conf.h is the display's with a pool sized for 64-bit objects. DEFS is
+# build.sh's DEFINES for the nightlight, word for word and in its order, less
+# the words that only keep the dist's bytes reproducible (the __DATE__ /
+# __TIME__ stand-ins and the source-path maps): onboard.test.js expands both
+# with bash and holds them equal.
 CFG="$FW/configs/canary-display/nightlight"
 PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"
 DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE -DCONFIG_CANARY_DISPLAY

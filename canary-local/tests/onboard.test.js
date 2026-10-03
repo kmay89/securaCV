@@ -31,7 +31,8 @@
 //     turned glass, or a turned boot passes with no bird read  → "splash and turned boots (F206)"
 //   · the drift check passes a new flavor's uncommitted bundle → "dist drift (F204)"
 //   · the native runtime-turn boot stops compiling what build.sh
-//     compiles for the nightlight, stops turning it through the
+//     compiles for the nightlight, or with the defines and
+//     language flags it hands em++, stops turning it through the
 //     app's mailbox, or falls out of CI                        → "runtime turn (F222)"
 //   · the dash face is picked from the saved rotation again,
 //     not from the turn the port wore                         → "dash face (F223)"
@@ -1087,28 +1088,72 @@ test("dist drift (F204): the drift check fails on a bundle this tree builds that
   }
 });
 
-// The entries of every `NAME=(` / `NAME+=(` array block in a bash script, one
-// per line, comments dropped; `when` picks blocks by the `if` line guarding
-// them (an unguarded block passes it the empty string).
-function bashArrays(text, name, when = () => true) {
+// Every `NAME=(` / `NAME+=(` assignment in a bash script, with the top-level
+// `if`/`elif` line guarding it ("else" under an else, "" when unguarded) and
+// its entries: one per line for a block (`NAME=(` alone on its line),
+// comments dropped; the raw words, as one entry, for an assignment that opens
+// with them (`NAME+=(-DX)`, or `NAME=(-DA -DB` running on to the line that
+// ends in `)`).
+function bashAssignments(text, name) {
   const out = [];
   const lines = text.split("\n");
+  const open = new RegExp(`^\\s*${name}\\+?=\\((.*)$`);
   let guard = "";
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/^if \[\[/.test(line)) {
+    if (/^(?:el)?if \[\[/.test(line)) {
       guard = line;
       while (/\\$/.test(lines[i]) && i + 1 < lines.length) guard += lines[++i];
     }
+    if (/^else$/.test(line)) guard = "else";
     if (/^fi$/.test(line)) guard = "";
-    if (!new RegExp(`^\\s*${name}\\+?=\\($`).test(line)) continue;
-    const take = when(guard);
-    for (i++; i < lines.length && !/^\s*\)$/.test(lines[i]); i++) {
-      const entry = lines[i].replace(/#.*$/, "").trim();
-      if (entry && take) out.push(entry);
+    const m = open.exec(line);
+    if (!m) continue;
+    const entries = [];
+    if (m[1].trim() === "") {
+      for (i++; i < lines.length && !/^\s*\)$/.test(lines[i]); i++) {
+        const entry = lines[i].replace(/#.*$/, "").trim();
+        if (entry) entries.push(entry);
+      }
+    } else {
+      let words = m[1].replace(/#.*$/, "").trim();
+      while (!words.endsWith(")") && i + 1 < lines.length) words += " " + lines[++i].replace(/#.*$/, "").trim();
+      words = words.slice(0, -1).trim();
+      if (words) entries.push(words);
     }
+    out.push({ guard, entries });
   }
   return out;
+}
+
+// The entries of every assignment of NAME whose guard `when` takes.
+function bashArrays(text, name, when = () => true) {
+  return bashAssignments(text, name).filter((a) => when(a.guard)).flatMap((a) => a.entries);
+}
+
+// A guard predicate for one flavor: an `if`/`elif` line that only tests
+// `"$FLAVOR" == "<name>"`, joined by ||, takes the flavors it names; no guard
+// takes every flavor. Any other guard (an else, a !=, a test of anything but
+// the flavor) is one this file cannot place, and fails the test that meets it.
+function guardTakes(flavor) {
+  return (g) => {
+    if (g === "") return true;
+    const names = [...g.matchAll(/"\$FLAVOR" == "([^"]+)"/g)].map((m) => m[1]);
+    const rest = g.replace(/"\$FLAVOR" == "[^"]+"/g, "").replace(/^(?:el)?if |then$|\[\[|\]\]|\|\||\\|;/g, "").trim();
+    assert.ok(names.length > 0 && rest === "",
+      `a guard this test cannot place (name its flavors as "$FLAVOR" == "<name>", joined by ||): ${g}`);
+    return names.includes(flavor);
+  };
+}
+
+// The words bash makes of array entries, with only `vars` set: `set -u`, so
+// an entry naming any other variable fails here, loudly; `set -f`, so no
+// entry globs against the working directory.
+function bashWords(entries, vars) {
+  const script = `set -uf\nA=(\n${entries.join("\n")}\n)\nprintf '%s\\0' "\${A[@]}"\n`;
+  const r = spawnSync("bash", ["-c", script], { encoding: "utf8", env: { PATH: process.env.PATH, ...vars } });
+  assert.strictEqual(r.status, 0, `bash could not expand ${JSON.stringify(entries)}:\n${r.stderr}`);
+  return r.stdout.split("\0").slice(0, -1);
 }
 
 test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively, turns it through the app's mailbox, and runs in CI", () => {
@@ -1116,7 +1161,7 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   const rt = read(join(ROOT, "emulator/test/runtime_turn.sh"));
   // The TUs: build.sh's base list and every block guarded for the nightlight,
   // in order; build.sh's Crypto list by file; its emulator globs.
-  const forNightlight = (g) => g === "" || g.includes('"nightlight"');
+  const forNightlight = guardTakes("nightlight");
   const want = bashArrays(buildSh, "FIRMWARE_SRCS", forNightlight);
   assert.ok(want.includes('"$PROJ/src/main.cpp"') && want.includes('"$FW/common/color/look_engine.cpp"'),
     "build.sh's nightlight list was read (main.cpp and the color TUs)");
@@ -1129,16 +1174,48 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   assert.deepStrictEqual(bashArrays(buildSh, "EMU_SRCS"), ['"$EMU_DIR"/src/*.cpp']);
   assert.ok(rt.includes('EMU_SRCS=("$EMU"/src/*.cpp)') && rt.includes('EMU_C_SRCS=("$EMU"/src/*.c)'),
     "...and every emulator source build.sh globs");
-  // The nightlight's wiring and flags, as build.sh hands them to em++.
+  // The nightlight's wiring, as build.sh hands it to em++.
   assert.ok(buildSh.includes('PINS_DIR="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
-    buildSh.includes('CFG_DIR="$FW/configs/canary-display/nightlight"') && buildSh.includes("DEFINES+=(-DCD_LEAN_BUILD=1)"));
+    buildSh.includes('CFG_DIR="$FW/configs/canary-display/nightlight"'));
   assert.ok(rt.includes('PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
-    rt.includes('CFG="$FW/configs/canary-display/nightlight"') && rt.includes("-DCD_LEAN_BUILD=1)"),
-  "runtime_turn.sh builds the nightlight's pin map, config and lean budget");
-  for (const flag of ["-DARDUINO=10812", "-DLV_CONF_INCLUDE_SIMPLE", "-DCONFIG_CANARY_DISPLAY", "-DFEATURE_CHIME=1",
-    "-DARDUINOJSON_ENABLE_ARDUINO_STRING=0", "-DARDUINOJSON_ENABLE_PROGMEM=0", "-Wl,--wrap=time"]) {
-    assert.ok(buildSh.includes(flag) && rt.includes(flag), `both builds pass ${flag}`);
+    rt.includes('CFG="$FW/configs/canary-display/nightlight"'),
+  "runtime_turn.sh builds the nightlight's pin map and config");
+  // Its defines: build.sh's DEFINES block and every addition guarded for the
+  // nightlight, as bash expands them for that flavor, less the words that only
+  // keep the dist's bytes reproducible (the date and time stand-ins and the
+  // source-path maps; a native boot ships no bytes). runtime_turn.sh's DEFS
+  // must be exactly those words, in build.sh's order (a later -D of the same
+  // macro wins), and every compile it runs must be handed them.
+  const defines = bashAssignments(buildSh, "DEFINES");
+  assert.strictEqual(defines.length, (buildSh.match(/\bDEFINES\+?=/g) || []).length,
+    "every DEFINES assignment in build.sh has a form this test reads");
+  const paths = { FLAVOR: "nightlight", REPO_ROOT: "/repo", EMU_DIR: "/emu", PROJ: "/proj", FW: "/fw", TP: "/tp" };
+  const reproducible = (w) => w === "-Wno-builtin-macro-redefined" || /^-D__(?:DATE|TIME)__=/.test(w) ||
+    w.startsWith("-ffile-prefix-map=");
+  const wantDefs = bashWords(defines.filter((a) => forNightlight(a.guard)).flatMap((a) => a.entries), paths)
+    .filter((w) => !reproducible(w));
+  assert.ok(wantDefs.includes('-DEMU_BUILD_FLAVOR="nightlight"') && wantDefs.includes("-DCD_LEAN_BUILD=1") &&
+    wantDefs.includes("-DARDUINOJSON_ENABLE_ARDUINO_PRINT=0"),
+  "build.sh's nightlight defines were read (the common block, the flavor's name, its lean budget)");
+  const rtDefs = bashAssignments(rt, "DEFS");
+  assert.ok(rtDefs.length === 1 && rtDefs[0].guard === "", "runtime_turn.sh sets DEFS once, unguarded");
+  assert.deepStrictEqual(bashWords(rtDefs[0].entries, {}), wantDefs,
+    "runtime_turn.sh's DEFS are exactly the defines build.sh hands em++ for the nightlight");
+  // ...and the language flags build.sh's CFLAGS / CXXFLAGS name (its -O level
+  // and warnings are not mirrored: the native build is -O1 -w).
+  const literal = (n) => bashArrays(buildSh, n).join(" ").split(/\s+/).filter((w) => w && !w.startsWith('"$'));
+  const cxx = /^CXX=\(g\+\+ .*\)$/m.exec(rt)?.[0] || "";
+  const lvgl = /^export LVGL_FLAGS=".*"$/m.exec(rt)?.[0] || "";
+  const cc = /^\s*gcc -std=.* -c "\$src" -o "\$obj"$/m.exec(rt)?.[0] || "";
+  assert.ok(cxx.includes('"${DEFS[@]}"') && lvgl.includes("${DEFS[*]}") && cc.includes('"${DEFS[@]}"'),
+    "runtime_turn.sh hands DEFS to its C++, LVGL and C compiles");
+  assert.ok(literal("CXXFLAGS").includes("-std=gnu++17") && literal("CFLAGS").includes("-std=gnu11"),
+    "build.sh's CXXFLAGS and CFLAGS were read");
+  for (const w of literal("CXXFLAGS")) assert.ok(cxx.split(/\s+/).includes(w), `runtime_turn.sh's C++ compile passes ${w}`);
+  for (const w of literal("CFLAGS")) {
+    assert.ok(lvgl.split(/[\s"]+/).includes(w) && cc.split(/\s+/).includes(w), `runtime_turn.sh's C compiles pass ${w}`);
   }
+  assert.ok(buildSh.includes("-Wl,--wrap=time") && rt.includes("-Wl,--wrap=time"), "both builds link the time() wrap");
   // Third-party: build.sh's own pins, fetched where build.sh will find them.
   for (const pin of ["LVGL_TAG", "ARDUINOJSON_VER", "ARDUINOLIBS_COMMIT"]) {
     assert.match(buildSh, new RegExp(`^${pin}="[^"]+"$`, "m"));
