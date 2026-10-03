@@ -1932,19 +1932,68 @@ so — see D2 below.)
   `hardware_verification_checklist.md`. Host-tested; the canary-wap's
   PlatformIO and Arduino compiles are CI's; not bench-tested (U1). Found here:
   F179 and F180.
-- [ ] **F179 [code] The canary's `GET /api/diagnostics` does not carry its
+- [x] **F179 [code] The canary's `GET /api/diagnostics` does not carry its
   egress counters.** F109 kept them to its MQTT health because the route runs
   on the HTTP server's task. Since F149 the canary-wap's route reads them
   through a copy its loop task publishes each pass (`loop_snapshot.h`), and
   the canary could do the same, so a bench run without a broker would see
   them. Found by F149 (#1762).
-- [ ] **F180 [code] canary-wap's `csi_event_egress::watermark()` names a
+  *Done (#1762):* the canary's token-gated `GET /api/diagnostics`
+  (FEATURE_DIAGNOSTICS builds) carries `csi_event_egress`, the thirteen
+  counters its MQTT health carries, under the health's names, `null` before
+  the loop's first pass and on a build with no egress.
+  `csi_event_egress_pump()` publishes a whole copy of
+  `csi_event_egress_stats()` as its last step every pass, under a FreeRTOS
+  spinlock (an unchanged copy takes no lock), and
+  `csi_event_egress_read_stats()` copies it out on any task: at most one pass
+  old, never torn (the canary-wap's `loop_snapshot.h` Value<T>, written out in
+  `csi_event_egress.cpp`, since that header is the sketch's).
+  `csi_event_egress_stats_json()` spells it (319 bytes at the widest; static
+  asserts on both Stats sizes fail the build until a new counter is spelled).
+  The route, in `lib/securacv_network`, reaches it through
+  `include/csi_event_egress_diagnostics.h`, since no library here includes a
+  `src/` header, and now builds its body with the pure
+  `lib/securacv_diagnostics/src/diagnostics_json.h`: every key it had (`heap`,
+  `sd`, `selftest`, `system`), byte for byte (compared against the old
+  snprintf chain on four snapshots), then `csi_event_egress`. The old chain
+  appended with `pos += snprintf(...)`, which past the buffer would have
+  handed the next call a wrapped size, and dropped self-test rows to stay
+  inside it; the builder holds the widest body (1352 bytes) inside the route's
+  2048-byte buffer and refuses one that does not fit whole (500
+  `diagnostics_too_large`). No `offline_queue` object (the health carries it).
+  Tests: `test_canary_event_egress.cpp`'s
+  `test_other_tasks_read_what_the_pump_published` and
+  `test_the_diagnostics_object_is_refused_whole`, and the new
+  `test_canary_diagnostics.cpp` (27 checks: the spelling with every counter
+  distinct, each of the thirteen names `main.cpp`'s health publish uses
+  carrying that field's counter, the widest object and body, and the handler
+  held to the builder, its buffers and the published copy, against seven
+  mutations). With `publish_stats()` taken out of the pump 10 checks fail,
+  moved to the pump's start 5; the base handler, two swapped counters or a
+  renamed health key each fail `test_canary_diagnostics`. Docs:
+  `csi_developer_api.md` (the route's keys and where the counters come from),
+  `homeassistant_setup.md`, and a bench row in
+  `hardware_verification_checklist.md` ("The canary's diagnostics carry its
+  egress counters (F179)"). Host-tested; the PlatformIO compiles are CI's; not
+  bench-tested (U1).
+- [x] **F180 [code] canary-wap's `csi_event_egress::watermark()` names a
   diagnostics reader it does not have.** Its header says "The delivery
   watermark (diagnostics and host tests)", but only
   `test_wap_event_egress.cpp` calls it; `GET /api/diagnostics` carries the
   counters (F149), not the watermark. Add the watermark to the copy the pump
   publishes and to the route's builder (`wap_diagnostics.h`), or correct the
   comment. Found by F149 (#1762).
+  *Done (#1762), by correcting the comment:* `csi_event_egress::watermark()`'s
+  header now says what it is (the highest event id handed to the MQTT layer or
+  given up, restored at boot to just under the NVS ceiling, so after a reboot
+  up to kStride ids past the last row handed over), that it is the loop
+  task's, and that only the host tests read it: no route or topic carries it,
+  and `GET /api/diagnostics` and the `egress` topic carry the counters. Not
+  added to the published copy and the route: nothing reads it today, its
+  meaning after a reboot is not "what Home Assistant has", and a
+  canary-wap-only key would break the one-object-on-both-devices shape F149
+  and F179 give the diagnostics (if a bench run needs it, it belongs in both
+  devices' diagnostics). Comment only; no behavior changed, so no test.
 - [ ] **F105 [code+decision] Ambient rows reach the SD event log and the
   `events` topic.** Ambient rows reach the SD event log and the `events`
   topic, though `csi_event.h` says `CSI_CATEGORY_AMBIENT` is "never persisted,
@@ -2488,6 +2537,13 @@ so — see D2 below.)
   override it. Pinned as it stands by `test_a_stored_threshold_wins_over_the_saved_preset`
   (canary-wap) and `test_a_stored_threshold_wins_over_the_stored_preset`
   (canary), which a fix would update. Found reviewing F93 (#1762).
+  *Since F166 (#1762, wave 13):* the calibration status and the Tuning Lab
+  report the thresholds the module runs, and the status says whether they are
+  stored, from the preset or mixed (`current_source`, which this item's third
+  option could show). So a bundle exported and loaded back stores the
+  thresholds the device ran rather than the balanced ones, but they still win
+  over a later preset change, and the Lab's per-row reset and Reset all still
+  store the balanced default as a row.
 - [x] **F128 [code] A Quiet Hours change from the Tuning Lab applies only after
   a reboot.** `TUNE_COEFFS` gives `core.quiet_hours.enabled`, `start_min` and
   `end_min` an empty reinit module, and `handle_tune_post_coefficients()`
@@ -2627,7 +2683,7 @@ so — see D2 below.)
   are CI's; not bench-tested (U1: "canary-wap dashboard presence settings and
   calibration (F151)" in `hardware_verification_checklist.md`). Found here:
   F166.
-- [ ] **F164 [code] canary-wap's first boot after an NVS erase still logs
+- [x] **F164 [code] canary-wap's first boot after an NVS erase still logs
   `nvs_open failed: NOT_FOUND` for the mesh namespace, on a build that keeps
   Arduino's error log.** From reading: `mesh_network::init()` opens `mesh`
   read-only for the opera config and the deny-list (on a board with flash
@@ -2637,11 +2693,57 @@ so — see D2 below.)
   up to five lines (three without flash encryption) on a `canary-wap-debug`
   build or an arduino-cli build at Core Debug Level Error or above; the
   release image (Core Debug Level None) compiles them out. A device with no
-  opera that never turns the mesh on keeps no `mesh` namespace, so such a
-  build logs them at every boot. `csi_module_settings_nvs::begin_read_only()`
+  opera that never turns the mesh on keeps no `mesh` namespace only until the
+  sketch's replay save first runs (every five minutes of uptime, and before a
+  reboot through the API), which opens it read-write even with no peers and so
+  creates it; such a build logs them at each boot before its first five
+  minutes up or its first API reboot, not at every boot (corrected by F164's
+  review, #1762, wave 13). `csi_module_settings_nvs::begin_read_only()`
   (F150) takes any namespace and would quiet them; the mesh_net host stub's
   `begin()` succeeds on any namespace, so no harness counts these lines today.
   Not counted on a device. Found by F150 (#1762).
+  *Done (#1762):* a canary-wap boot that finds no `mesh` namespace logs no
+  `nvs_open failed` line for it. Those boots are the first after an NVS erase
+  and any later one before the sketch's replay save first opens the namespace
+  read-write: that save runs every five minutes of uptime (`canary_wap.ino`'s
+  `REPLAY_SAVE_INTERVAL_MS`) and before a reboot through the API (the
+  pre-reboot hook), whatever the mesh's state, and with no peers
+  `save_replay_counters()` still opens `mesh` read-write, which creates it.
+  Every boot after that finds it, and logged nothing before F164 either (the
+  item's "at every boot" is corrected in place). Every read-only open of
+  `mesh` in `mesh_network.cpp`, six sites (`load_opera_config()`,
+  `load_peers()`, `load_revocations()`, `load_rx_tombstones()`,
+  `load_tx_reservations()` and `load_replay_counters()`, which the sketch
+  calls right after `init()`), goes through F150's
+  `csi_module_settings_nvs::begin_read_only(prefs, NVS_NS)`: an absent
+  namespace is not handed to `Preferences::begin()`, so every read returns its
+  default, as the refused open made it; a namespace that is there, or an NVS
+  fault, goes to Preferences as before. Nothing else in the mesh changes. The
+  `stubs/mesh_net` Preferences now models NVS namespaces (a read-write open or
+  a stored key creates one; only clearing the whole store removes it), refuses
+  a read-only open of an absent namespace and counts its error line in
+  `host_sim::nvs_error_logs`, refuses a second `begin()` on a begun handle as
+  Arduino does, and gains an `nvs.h` answering the probe from the same store;
+  the address, liveness, command and Chirp suites on it pass on the old mesh
+  code too. Tests (`test_mesh_liveness_wap.cpp`):
+  `a_first_boot_with_no_mesh_namespace_logs_nothing` (no error line, no
+  Preferences open, with flash encryption on and off, nothing created),
+  `a_device_up_five_minutes_holds_the_mesh_namespace` (the reach: after the
+  five-minute or the pre-reboot save the namespace exists, empty, and the next
+  boot opens it with no line),
+  `a_boot_that_finds_the_mesh_namespace_opens_it_as_before`,
+  `an_nvs_fault_at_boot_keeps_its_error_lines` and
+  `every_read_only_open_of_mesh_is_the_quiet_one` (a source pin; each of the
+  six put back as a plain open is caught). On the base `mesh_network.cpp` the
+  harness counts five error lines (three without flash encryption), the item's
+  count, and the first test, the reach test's first-boot check and the pin
+  fail. The F150 pin in `test_wap_module_boot.cpp` now counts only the quiet
+  opens of `csi`. That IDF's `nvs_open()` answers NOT_FOUND without an
+  error-level line is from IDF's source as read (F125). Docs: a bench row in
+  `hardware_verification_checklist.md` ("canary-wap boot with no mesh
+  namespace (F164)", on a `canary-wap-debug` build, the second boot a power
+  cycle inside the first five minutes). Host-tested; the ESP32 compiles are
+  CI's; not bench-tested (U1). Found here: F201.
 - [ ] **F165 [decision] canary-wap's first boot after an NVS erase says its
   event-id floor is unreadable and skips the card log's reload.**
   `apply_event_id_floor_from_nvs()` reports NVS unread when the `csi`
@@ -2654,7 +2756,7 @@ so — see D2 below.)
   restored floor, so only rows below the one id space would load) or keep the
   answer and reword the line. F150 kept the answer as it was. From reading.
   Found by F150 (#1762).
-- [ ] **F166 [code] canary-wap's calibration status reports the balanced
+- [x] **F166 [code] canary-wap's calibration status reports the balanced
   thresholds as current whatever the preset.** `handle_calibrate_status()`
   shows `current` as the stored `core.presence.*_threshold` rows, or
   `presence_threshold_defaults()` (35 / 75 / 30) when none is stored, while
@@ -2665,6 +2767,64 @@ so — see D2 below.)
   the baseline the module derives (from `read_presence_settings()`), or say
   the value is a default. Related to F127's precedence decision. From reading
   core_presence.cpp's `on_init()`. Found by F151 (#1762).
+  *Done (#1762):* the calibration status (`GET /api/csi/calibrate/status`, a
+  ready run) reports as `current` the thresholds core.presence runs, and says
+  where they come from. The baseline derivation moved out of `on_init()` into
+  `core_presence_baseline_thresholds(preset, sensitivity)`
+  (`firmware/common/csi/src/core_presence.{h,cpp}`, staged byte-identical,
+  `check_csi_sync.sh` green; the preset rows keep their text, which
+  `canary-local/tools/gen_wap.py` reads, so `wap.json` is unchanged), which
+  `on_init()` still passes as each threshold row's default. The canary-wap's
+  `read_presence_thresholds_in_use()` (`csi_settings_nvs.cpp`) reads each row
+  as `init()` does (a row of another type counts as absent, as it does for the
+  module), else takes the baseline from `read_presence_settings()`;
+  `presence_thresholds_in_use_unread()` answers what `init()` runs when NVS
+  does not open. The status reports those numbers and adds `"current_source"`:
+  `"stored"` (all three rows), `"preset"` (none) or `"mixed"`.
+  `read_presence_thresholds()` and `presence_threshold_defaults()`, whose
+  balanced fallback was the bug, are gone. The precedence (a stored row wins
+  over a later preset or slider change) is unchanged and still F127's
+  decision; the dashboard renders the numbers, not `current_source`. The
+  status reads NVS, not the module's runtime state, so a dismissal's one-point
+  nudge (until the next `init()`) does not show, as before. Tests:
+  `test_wap_tune_lab.cpp`'s
+  `the_calibration_status_reports_the_thresholds_in_use` and
+  `test_wap_module_boot.cpp`'s
+  `test_the_calibration_status_reports_what_the_module_runs` (for six ways the
+  rows can stand, the booted module reads one below the reported motion
+  threshold as "empty" and the threshold itself as "subtle"); both fail with
+  the reader ignoring the stored preset (the old answer: 35 where "sensitive"
+  runs 25) or counting every row as stored. The Tuning Lab had the same bug
+  (found by F166's review): `GET /api/tune/coefficients` and the bundle export
+  `GET /api/tune/preset` answered an absent `cp.mt` / `cp.at` / `cp.bt` with
+  `TUNE_COEFFS`' balanced 35 / 75 / 30, so on a device set to "sensitive" with
+  no threshold row the Lab's sliders said 35 / 75 / 30 while the status said
+  25 / 60 / 20, and a bundle exported and loaded back stored 35 / 75 / 30 as
+  rows, which then won over the preset. `tune_read_value()`
+  (`csi_tune_lab.cpp`) now answers those three with
+  `read_presence_thresholds_in_use()`, and every other knob as before; their
+  declared `default` stays the balanced numbers (the Lab's reset stores it as
+  a row, and changing that is F127's). `the_lab_reports_the_thresholds_in_use`
+  covers NVS not open, each preset and two slider positions, a stored row, a
+  row of another type and the export/import round trip (25 / 60 / 20 before
+  and after); it fails with the new line taken out. Two new pins hold both GET
+  handlers to `tune_read_value()`. Docs: `csi_developer_api.md` and two bench
+  rows in `hardware_verification_checklist.md` (the calibration's
+  before/after, and the Lab's values with a bundle round trip). Host-tested;
+  the ESP32 compiles are CI's; not bench-tested (U1).
+- [ ] **F201 [code] canary-wap's first boot after an NVS erase may still log
+  `nvs_open failed: NOT_FOUND` for the `beacon` and `securacv` namespaces, on
+  a build that keeps Arduino's error log.** From reading, not counted:
+  `beacon_channel.cpp` opens `beacon` read-only on a board with flash
+  encryption (`load_beacon_set()` and `load_audit_log()` from its init,
+  `ensure_x25519_keypair()` on first use) before anything writes it, and
+  `setup_wizard.h`'s `init()` and `power_monitor.h`'s `load_nvs_state()` open
+  `securacv` read-only, which may come before the first write of that
+  namespace on such a boot (not traced). F150 and F164 quieted `csi` and
+  `mesh` with `csi_module_settings_nvs::begin_read_only()`, which takes any
+  namespace; the `beacon` opens would need the harness work F164 did for
+  `mesh` (its stub's `begin()` succeeds on any namespace). Found by F164
+  (#1762).
 - [ ] **F48 [code+decision] canary-wap's mesh crypto and its interop with the
   PIO tree.** Found by F33 (#1718). canary-wap's AUTH exchange still runs
   X25519 over long-term Ed25519 keys, the bug class F33 part 2 fixed for
@@ -3678,7 +3838,8 @@ so — see D2 below.)
   applied once. The queue takes about 1.4 KB of internal SRAM. Scope: the
   link, passkey and bond events reach the channel only where its server
   callbacks are installed, the DEV profile; on the default FULL profile
-  `ble_opera::init()` replaces them on the shared server (F171). The GATT
+  `ble_opera::init()` replaces them on the shared server (F171; since
+  F171, #1762, wave 13, they reach it on every profile). The GATT
   activity and scan events are the channel's on both profiles. Pinned by
   `test_loop_event_queue.cpp` (106 checks; three producers and a consumer on
   real threads, clean under `make tsan-loop-events`) and
@@ -3730,7 +3891,8 @@ so — see D2 below.)
   its link is still up; before, it stayed pending and on show. The dashboard
   never sends `enabled` to this route (its switch uses /enable and /disable),
   so the fix reaches API clients. Dropping a link and ending a phone's pairing
-  hold where the channel's server callbacks run, the DEV profile (F171).
+  hold where the channel's server callbacks run, the DEV profile (F171; every
+  profile since F171, #1762, wave 13).
   Pinned by `test_bluetooth_commands_wap.cpp`'s
   `settings_enabled_false_turns_bluetooth_off` and
   `settings_enabled_true_turns_bluetooth_on_as_enable_does` (both fail with
@@ -3769,9 +3931,9 @@ so — see D2 below.)
   by F143; `test_bluetooth_commands_wap.cpp`'s full-queue and security tests
   start pairing mode first for that reason. Decide whether a pairing outside
   pairing mode is refused on purpose (then refuse it by name, with a test) or
-  gets its own 60 s. On the default FULL profile the channel never sees the
-  passkey at all (F171). Found by F143 (#1762).
-- [ ] **F169 [code] A dropped Bluetooth link event leaves the connection state
+  gets its own 60 s. Since F171 (#1762, wave 13) the same holds on the FULL
+  profile. Found by F143 (#1762).
+- [x] **F169 [code] A dropped Bluetooth link event leaves the connection state
   stale.** F143's event queue keeps 8 of its 24 slots for a link's own events,
   but if the loop task stalls long enough for those to fill, the rest are
   dropped (logged as `BLE link events dropped (queue full)`). A dropped
@@ -3783,14 +3945,56 @@ so — see D2 below.)
   `BLE_HS_ENOTCONN`) and apply the disconnect itself. From code; the host
   tests show only that the reserve holds a link's events through a burst of
   scan results, writes or reads. Found by F143 (#1762).
-- [ ] **F170 [code] canary-wap's Bluetooth state and advertising flag disagree
+  *Done (#1762):* the item's remedy. When the count of a link's dropped events
+  (`dropped_reserved()`) has moved, `update()` calls `reconcile_link()` once,
+  after it applies the events and before the owner's commands: a recorded link
+  the stack no longer holds on its handle, or holds for another address
+  (`getPeerInfoByHandle`), is ended as its disconnect would have been (a
+  warning, `BLE link gone, its end dropped: ended from the stack's record`);
+  then, with no link recorded, a link the stack holds (`getPeerDevices`) is
+  recorded as its connect would have been (`BLE link up, its start dropped:
+  recorded from the stack's record`). A pass with no new drop asks the stack
+  nothing. A disconnect now ends the record only when it names the recorded
+  link (handle and over-the-air address), so a second link (F188) or a stale
+  report never ends the link recorded in its place. Pinned by
+  `a_dropped_disconnect_heals`,
+  `a_dropped_connect_is_recorded_from_the_stack`,
+  `only_the_recorded_links_end_ends_it` and, from the review (three mutants
+  survived the first tests), `a_reconcile_leaves_a_live_record_alone` (the
+  stand-in counts the stack calls); 7 mutations each fail the suite. Rule BV2
+  lets `reconcile_link()` apply a link's start and end and holds its call to
+  `update()`, once, between the consume and the drain (5 self-test mutations).
+  Host-tested (`make tsan-bt-commands` is clean but does not exercise a drop);
+  the compiles are CI's; not bench-tested (U1: the F169-F170 row).
+- [x] **F170 [code] canary-wap's Bluetooth state and advertising flag disagree
   after a scan ends.** `stop_scan()` and a scan's end set the state idle (or
   connected) whatever it was, so when a disconnect restarted advertising
   during a scan, GET /api/bluetooth then reads `"state": "idle"` with
   `"advertising": true` (and `start_scan()` sets scanning while advertising
   goes on). Pre-existing, the same on the base and now (seen in F138's
   response comparison). Found by F138 (#1762).
-- [ ] **F171 [code] FULL-profile canary-wap: `ble_opera::init()` replaces
+  *Done (#1762):* the premise holds. `rest_state()` names what still runs:
+  disabled when Bluetooth is off, then a link, a scan, pairing mode and
+  advertising, in that order, else idle. `stop_scan()` (the owner's, the scan
+  timeout's and a bond delete's), a scan's end, a pairing's cancel (the
+  owner's and the 60 s timeout's) and a link's end set it; the starts still
+  set their own. So a scan that ends while advertising reads `"state":
+  "advertising"`, a scan in pairing mode ends back in `pairing`, a scan
+  stopped while connected reads `connected`, and a link that ends during a
+  scan reads `scanning`. On FULL, Opera's onDisconnect restarts advertising
+  before the loop task applies the end, so once F171 let the channel see
+  disconnects the state would have read idle beside `"advertising": true`
+  after every one; it reads advertising. One existing test pinned the old idle
+  after a scan and now expects advertising. Pinned by
+  `the_state_after_a_scan_is_what_runs`,
+  `the_state_after_pairing_or_a_link_is_what_runs`,
+  `a_link_ends_on_full_into_advertising` and
+  `a_remove_during_a_scan_ends_the_scan_first`; reverting each of the four
+  call sites fails a test, and 6 `rest_state()` mutations each fail the suite.
+  Not changed: pairing mode started with advertising off reads advertising
+  (F190). Host-tested; the compiles are CI's; not bench-tested (U1: the
+  F169-F170 row). Found here: F190.
+- [x] **F171 [code] FULL-profile canary-wap: `ble_opera::init()` replaces
   `bluetooth_channel`'s server callbacks, so on shipping builds a phone's
   pairing is accepted with no owner confirm.** `build_config.h` makes FULL the
   default profile and sets `FEATURE_BLUETOOTH` and `FEATURE_BLE`;
@@ -3814,7 +4018,72 @@ so — see D2 below.)
   `canary_wap.ino:11588, :11632`; `ble_opera.h:85-108, :259-264`; the
   NimBLE-Arduino 2.5.0 source); not probed on a device. Found by F143's review
   (#1762).
-- [ ] **F172 [code] canary-wap's Bluetooth "Remove" leaves the phone's bond in
+  *Done (#1762):* the premise holds: NimBLE-Arduino 2.3.8 and 2.5.0 both keep
+  one `m_pServerCallbacks` per server, and both default `onConfirmPassKey` to
+  yes. New `ble_server_dispatch.h`: one `Dispatcher` is the server's only
+  callbacks object. `bluetooth_channel::init()` and `ble_opera::init()` hand
+  theirs to `ble_server_dispatch::install()` with a role instead of calling
+  `setCallbacks()`, in whichever order they run (the boot worker runs the
+  channel's first; a REST handler's `bring_up()` can run it after Opera's).
+  The pairing channel (`kPairing`) gets every callback the 2.3.8 floor
+  declares (connect, disconnect, MTU, passkey display, Numeric Comparison,
+  authentication, identity, connection parameters, PHY); Opera (`kLink`) gets
+  onConnect and onDisconnect only, never the security callbacks its object
+  would answer with the library's defaults. With no pairing owner (before the
+  channel is up) a Numeric Comparison is answered no and the passkey shown is
+  a random one, not 123456; a build without the channel pairs by Just Works
+  under NimBLE's defaults, so no Numeric Comparison reaches anyone there.
+  `onPassKeyEntry` is not overridden: 2.3.8 does not declare it, and the WAP's
+  DISPLAY_YESNO capability never asks this side to type one. The dispatcher is
+  installed with deleteCallbacks false. What the owner's confirm covers, from
+  NimBLE 2.3.8's pairing tables (read, not probed): every Numeric Comparison,
+  which is what a phone offering a display and a yes/no gets. A DisplayOnly or
+  NoInputNoOutput initiator (and on legacy pairing a DisplayYesNo one) pairs
+  by Just Works with no owner (unauthenticated: the channel neither lists the
+  bond nor gives the link the authenticated characteristics, but NimBLE stores
+  it), and a keyboard-only initiator by Passkey Entry with the digits the PIN
+  box shows, in or out of pairing mode (F191). F171 also closed FULL's Passkey
+  Entry with the library's fixed 123456, which gave anyone who knew it an
+  authenticated bond. Follow-ons, because the channel now sees FULL's every
+  link: the channel's connect no longer stops the shared advertiser while
+  Opera is registered (`ble_server_dispatch::link_observed()`), so FULL keeps
+  Opera's fleet-link beacon on the air through a phone's link (DEV still stops
+  advertising while connected); from the review, only the recorded link's
+  events set the connection card's security and the pairing's state (another
+  link's bonded encryption had marked the recorded link bonded), and the
+  inactivity timeout drops only the recorded link (it called `disconnect()`,
+  which drops every link on the server, Opera's GATT clients and a BLE OTA or
+  provisioning session among them). The owner's Disconnect (POST /disconnect)
+  still drops every link on the server, stated and pinned. Behavior change on
+  FULL beyond the fix: the owner's PIN confirm, the PIN box, the connection
+  card, the paired list, the inactivity timeout, POST /disconnect and turning
+  Bluetooth off dropping a link work there for the first time. Pinned by
+  `test_bluetooth_commands_wap.cpp`'s
+  `full_profile_the_owner_answers_every_pairing`,
+  `full_profile_either_init_order`, `no_pairing_owner_fails_closed`,
+  `another_links_encryption_leaves_the_record` and
+  `full_profile_the_timeout_ends_the_recorded_link_only`, which build both
+  inits (Opera's real header) over the stand-in, whose server callbacks are
+  NimBLE-Arduino 2.5.0's with its defaults: with the old `setCallbacks()`
+  calls the first fails at the library's yes, the second at Opera never
+  counting a link, the third at the library's 123456; reverting the
+  recorded-link check or the timeout's reach fails the last two; 18 mutations
+  (12 of the dispatcher, 2 of the advertising guard, 4 of the recorded-link
+  and timeout code) each fail the suite. `check_wap_loop_commands.py` rule BD1
+  (12 self-test mutations) allows a `setCallbacks(` outside `install()` only
+  with an object of a `NimBLECharacteristicCallbacks` class (followed through
+  any number of derivations), so a server callbacks object of any derived
+  class, a pointer variable and `nullptr` / `NULL` / `0` (each puts NimBLE's
+  default yes back; the review found the first version passed them) are
+  refused; it holds `install()` to deleteCallbacks false and each owner to one
+  install with its own role, and rule C2 no longer lets the inactivity timeout
+  call `disconnect()`. `docs/security/THREAT_MODEL.md` (the fail-secure
+  table's pairing row, naming what asks no owner) and the hardware checklist
+  (the Bluetooth rows run on FULL; a new F171 row with the timeout's reach)
+  say the same; `firmware/LESSONS_LEARNED.md` has the lesson. Host-tested; the
+  Arduino and PlatformIO compiles are CI's; not bench-tested (U1: the F171 row
+  in `hardware_verification_checklist.md`). Found here: F187, F188 and F191.
+- [x] **F172 [code] canary-wap's Bluetooth "Remove" leaves the phone's bond in
   NimBLE.** `remove_paired_device()` deletes `NimBLEAddress(address,
   addr_type)`, built from the bytes the paired list keeps. Those are the
   native order (least significant first, from `getBase()`), and NimBLE-Arduino
@@ -3835,7 +4104,61 @@ so — see D2 below.)
   `test_bluetooth_commands_wap.cpp` asserts only its address type, so a test
   can hold the fix when it lands. From a host probe against 2.5.0's
   constructor; not bench-tested. Found by F143's review (#1762).
-- [ ] **F173 [code] A Bluetooth link that comes up just after Bluetooth is
+  *Done (#1762):* the premise holds, and it was worse than the item said.
+  NimBLE's `ble_gap_unpair()` (ble_gap.c, the same in NimBLE-Arduino 2.3.8 and
+  2.5.0) answers the store's error for an address it holds no bond for, and
+  for a bond that carries the peer's IRK (a phone using private addresses
+  hands its IRK over) it answers `BLE_HS_EBUSY` and keeps the bond while the
+  advertiser or a discovery runs, which on the WAP is nearly always (the
+  presence scan never ends, advertising is on by default, Opera's beacon on
+  FULL); `remove_paired_device()` and `clear_all_paired_devices()` threw the
+  answer away. A link's event now carries `getIdAddress()` beside
+  `getAddress()`, both as the stack's `ble_addr_t`; `apply_auth_complete()`
+  keeps the identity address and its type in the paired list and finds an
+  existing entry by it (a phone back on a new private address is the same
+  entry, its count up). Remove deletes `NimBLEAddress(ble_addr_t)` with the
+  stored type, on the loop task, with the radio quiet for the call (from the
+  review): the owner's scan ends (`stop_scan()`), the presence scan pauses
+  (`ble_presence::pause_for_user_scan()`), the shared advertiser stops
+  (Opera's beacon with it), and both come back after; `ble_gap_unpair()` also
+  ends a live link to that address. Clear-all does the same once for every
+  bond. A bond the stack keeps anyway (another task restarted the advertiser
+  inside the call: Opera's onConnect, a chirp) keeps its entry, nothing is
+  saved, the health log says `Paired device not removed: the stack kept its
+  bond`, and the command answers `BT_REFUSED_BOND_KEPT`, which DELETE
+  /api/bluetooth/paired sends as `The phone's bond was not removed; try again`
+  (Clear-all: `Not every phone's bond was removed; try again`); the
+  dashboard's buttons ignore the message, and their reload still lists the
+  phone. An entry no bond backs is removed. A list saved before is rebuilt
+  once, the first time the stack is up (NVS key `bt_paired_id`, written by
+  every save, marks a list of identity addresses): an entry that names a bond
+  keeps its fields and takes the bond's type, a bond with no entry is added,
+  an entry that names no bond is dropped, and the health log says `Paired list
+  rebuilt from the bond store` with the three counts; a fresh device writes
+  nothing. An old private-address entry cannot be matched to its bond (that
+  needs the phone's IRK), so its trust and block flags start over.
+  `format_address()` prints the stored bytes most significant first and
+  `parse_address()` reads them back the same way, so GET /paired's `address`
+  (and the connection's and the scan list's) reads as the phone shows its own,
+  and DELETE /paired, trust and block still find the entry a GET printed;
+  `parse_address()` also refuses a non-hex field. No health-log line names a
+  peer's address (the review): `New device paired` had logged the phone's
+  stable identity address, and it and `BLE device connected` now carry no
+  detail. The stand-in models a resolvable private address over an identity, a
+  bond store keyed by identity, and `deleteBond()` as `ble_gap_unpair()`
+  answers; before the review it deleted every bond and answered true, which is
+  how the build stage's Remove passed. Pinned by
+  `remove_forgets_the_bond_by_its_identity`,
+  `a_bond_the_stack_keeps_keeps_its_entry`,
+  `a_remove_during_a_scan_ends_the_scan_first`,
+  `full_profile_remove_brings_the_beacon_back`,
+  `an_address_prints_most_significant_first_and_round_trips` and
+  `an_old_paired_list_is_rebuilt_from_the_bond_store`: with the review's
+  stand-in the build stage's code fails the first and the rebuild's Remove;
+  reverting each part fails a test, and 12 delete, rebuild and refusal
+  mutations each fail the suite. Host-tested; the compiles are CI's; not
+  bench-tested (U1: the F172 row). Found here: F189.
+- [x] **F173 [code] A Bluetooth link that comes up just after Bluetooth is
   turned off stays up.** `disable()` stops advertising and drops the link it
   knows of. A phone whose connection was already in flight connects anyway;
   its connect event is applied (F143), and since `update()` returns early
@@ -3845,6 +4168,22 @@ so — see D2 below.)
   link while disabled (disconnect its handle, record nothing). Pre-existing,
   the same on the base, which wrote the connection from the callback. Seen by
   F143's review in a harness probe, not on a device (#1762).
+  *Done (#1762):* the premise holds (the harness showed a connect applied
+  while disabled reading `"state": "connected"` with `"enabled": false`).
+  `apply_connect()` refuses a link while Bluetooth is off: it drops the handle
+  (`NimBLEServer::disconnect`), records nothing and logs `BLE link refused:
+  Bluetooth is off`; the link's end leaves the state disabled. A Numeric
+  Comparison asked while Bluetooth is off is answered no on the loop task
+  (`BLE pairing refused: Bluetooth is off`), since no pairing timeout runs
+  while disabled. The reach on FULL, stated after the F171 review: the channel
+  sees every link there, so Bluetooth off refuses every BLE link, whatever
+  service it came for (Opera's GATT clients, BLE OTA, provisioning), including
+  each one Opera's advertising lets in while the channel is off (F187). Pinned
+  by `a_link_while_bluetooth_is_off_is_refused` (DEV wiring) and
+  `full_profile_off_refuses_every_link` (FULL wiring: Opera counts the client,
+  the channel drops it); reverting the refusal or the passkey's no fails them,
+  and 4 mutations of the refusal each fail the suite. Host-tested; the
+  compiles are CI's; not bench-tested (U1: the F173 row). Found here: F187.
 - [ ] **F177 [decision] canary-wap's Bluetooth status views sit in internal
   DRAM.** The views F138's Bluetooth half publishes (`bluetooth_channel.cpp`'s
   `g_status_view`, `g_scan_view` with up to 16 scanned devices,
@@ -3857,6 +4196,76 @@ so — see D2 below.)
   view that carries key material stays on-die, as mesh `g_peers` does), and
   add any that stays static and reaches 256 bytes to the RAM audit's guard.
   Found by F138's review (#1762).
+- [ ] **F187 [decision] FULL-profile canary-wap: Opera's advertising and Chirp
+  ignore the Bluetooth switch.** `disable()` (POST /disable, or the settings'
+  `"enabled": false`) stops the shared NimBLE advertiser, but on FULL Opera's
+  onConnect and onDisconnect (`ble_opera.h`) and `ble_chirp.h`'s
+  `restoreOperaAdvertising()` after every chirp (the heartbeat chirp comes
+  every 5 minutes) start it again, connectable, whatever the pairing channel's
+  `enabled` says. Since F173 each link that advertising lets in while
+  Bluetooth is off is dropped at once, whatever service it came for (on FULL
+  no BLE client can stay connected while Bluetooth is off), so a phone or
+  Canary set to reconnect can loop connect-and-drop. Decide whether "Bluetooth
+  off" on FULL silences Opera's discovery advertising and the chirps, or the
+  web UI says BLE Discovery stays on and which services Bluetooth off refuses.
+  From code and the host harness (`full_profile_off_refuses_every_link`); not
+  probed. Found by F173 (#1762).
+- [ ] **F188 [decision] FULL-profile canary-wap: a second BLE client can
+  connect while one is linked, and the pairing channel tracks only the
+  newest.** Opera re-advertises (connectable) after every connect, and since
+  F171 the channel leaves that advertising on through a link on FULL (stopping
+  it would take the fleet-link beacon off the air), so with NimBLE-Arduino's
+  default of 3 connections a second phone, Canary or app session connects
+  beside the first. The channel records only the newest link, whatever service
+  it came for: the status and connection card describe that one; its
+  inactivity timeout (5 minutes by default) counts only the channel's own
+  characteristics' activity (Opera's, BLE OTA's, provisioning's, the console's
+  and the log export's post none), so a recorded OTA, provisioning or Opera
+  session idle on the channel's characteristics for that long is dropped; and
+  a second phone's Numeric Comparison replaces the first's on show. Since the
+  F171 review another link's encryption no longer labels the recorded one,
+  only the recorded link's end clears it (F169), and the timeout drops only
+  it; the owner's Disconnect drops every link. Decide whether FULL keeps one
+  link (a non-connectable beacon while linked, or Opera not re-advertising) or
+  the channel tracks every link and counts every service's activity. From code
+  and the host harness; not probed. Found by F171 (#1762).
+- [ ] **F189 [code] canary-wap's paired list outgrows NimBLE's bond store.**
+  `MAX_PAIRED_DEVICES` is 8, but NimBLE-Arduino's default
+  `CONFIG_BT_NIMBLE_MAX_BONDS` is 3 (no build overrides it), and its
+  store-full callback (`ble_store_util_status_rr`, installed by
+  `NimBLEDevice::init()`) calls `ble_gap_unpair_oldest_peer()`, which goes
+  through `ble_gap_unpair()`'s busy guard: a fourth phone's pairing evicts the
+  oldest bond while GET /api/bluetooth/paired keeps listing it (F172's rebuild
+  drops such an entry only on the first boot after the update), or, when that
+  oldest bond carries an IRK while the WAP advertises or scans (nearly
+  always), fails to store the new one. Raise the bond store to the list's size
+  (or cap the list at it), or drop an entry when its bond is evicted, and make
+  the store-full path quiet the radio as Remove does. From code (nimconfig.h,
+  NimBLEDevice.cpp, ble_gap.c, 2.3.8); not probed. Found by F172 (#1762).
+- [ ] **F190 [code] canary-wap's Bluetooth pairing mode reads "advertising"
+  when it has to start advertising.** `start_pairing()` sets `BT_PAIRING`,
+  then its `start_advertising()` sets `BT_ADVERTISING` whenever it starts the
+  advertiser (the owner had stopped it), so GET /api/bluetooth hides pairing
+  mode until it ends. `start_advertising()` could set the state from
+  `rest_state()` (F170), as the ends now do. From code; not probed. Found by
+  F170 (#1762).
+- [ ] **F191 [code+decision] canary-wap Bluetooth pairs outside Numeric
+  Comparison with no owner.** A DisplayOnly or NoInputNoOutput initiator (or a
+  legacy DisplayYesNo one) pairs Just Works (NimBLE 2.3.8's
+  `ble_sm_sc_resp_ioa` and `ble_sm_lgcy_resp_ioa` for the WAP's DISPLAY_YESNO;
+  `BLE_SM_LVL` 0 and SC-only off refuse neither): the channel does not list
+  the bond and its link does not get the authenticated characteristics, but
+  NimBLE keeps the bond in its 3-bond store (and its store-full path acts on
+  it, F189). A keyboard-only initiator gets Passkey Entry: the WAP shows the
+  passkey and writes it to the health log (`Pairing PIN displayed`, the six
+  digits), and neither pairing mode nor `allow_pairing` gates it, so whoever
+  reads the dashboard's PIN box or the log can complete an authenticated,
+  listed bond. Decide whether to refuse both, for example by deleting an
+  unauthenticated bond and dropping its link in `apply_auth_complete()` (with
+  the radio quiet, as Remove does), by refusing a passkey display outside
+  pairing mode, and by keeping the digits out of the health log. From NimBLE
+  2.3.8 source and the host harness; not probed. Found by F171's security
+  review (#1762).
 - [x] **F146 [code] A canary-wap Chirp send refused for an unsynced clock
   answers `cooldown`.** `can_send_chirp()` is false both in the cooldown and
   while `time()` is below `MIN_UNIX_TIME`, and the send's refusal (checked in
@@ -3900,7 +4309,7 @@ so — see D2 below.)
   Arduino compile is CI's; not bench-tested (U1: the F146 row in
   `hardware_verification_checklist.md`). Found here: F174-F176, and by its
   review F178.
-- [ ] **F174 [code] canary-wap `POST /api/chirp/confirm` answers `not_found`
+- [x] **F174 [code] canary-wap `POST /api/chirp/confirm` answers `not_found`
   for a confirmation refused for the presence requirement or an unset clock.**
   `confirm_chirp()` returns false for all of them (presence not met, clock not
   set, no such chirp, the device's own chirp), and `handle_chirp_confirm`
@@ -3910,6 +4319,41 @@ so — see D2 below.)
   sends its signed suppress vote only with presence met and the clock set, and
   says nothing when it does not. F146's shape fits: a refusal in the `Result`,
   named by the handler. Found by F146 (#1762).
+  *Done (#1762):* the premise holds: a scratch harness of the real handlers
+  over ArduinoJson 7.4.1 (the library is not in the repo) answered every
+  refused confirm `200` `not_found` and the ack's "confirmed" a bare `200
+  {"success":false}`, and showed worse: the confirm refusal's 85 bytes went
+  out of a 64-byte buffer, which `serializeJson()` fills without a terminator,
+  so `httpd_resp_sendstr()` sent cut JSON and the stack bytes after it (the
+  mute route's 101-byte `invalid_duration` refusal the same).
+  `confirm_chirp()` reports why it refused into the command `Result` (a
+  `ConfirmRefusal`), in the order it checks: the channel off (new, first, as
+  for a send), the presence requirement, the wall clock, then the chirp (none
+  with that nonce, or this device's own). `send_confirm_answer()` in
+  `chirp_api.h` answers each from host-tested lookups in `mesh_network.h`:
+  `chirp_disabled`, `presence_required`, `clock_unsynced` and `own_chirp` as
+  409, `not_found` as 404, never 403 (the dashboard reads a 403 as a bad
+  token); `/api/chirp/ack` with "confirmed" answers the same. A dismiss
+  reports `vote_sent` and, when its signed suppress vote stayed home, why
+  (`vote_error` `presence_required` or `clock_unsynced`, with "Dismissed on
+  this device only: ..."), and a dismiss of a chirp that is not there (the
+  dismiss route and the ack's "resolved") answers 404 `not_found` where it
+  answered `200 {"success":false}`. The dashboard shows either answer under
+  the Community Activity list (`WebUiLogic.chirpActionNote`, `role=status`; it
+  threw the answer away; `web_assets_gz.h` regenerated). The mute route's
+  buffer is 160 bytes. Pinned by `test_chirp_commands_wap.cpp`'s
+  `a_refused_confirm_names_why` and `a_dismiss_says_whether_its_vote_went`
+  (and the named refusals in `every_command_runs_on_the_loop_task`; 14 single
+  reverts each fail one), by `web_ui_logic.test.js`'s `chirpActionNote` suite
+  (4 tests, all failing on the old page), and by `check_wap_loop_commands.py`
+  rules CV9 (the two answers, and that the confirm, dismiss and ack routes
+  answer through them right after the not-run guard), CV10 (no buffer under
+  160 bytes for a `chirp_api.h` answer with a message; the longest is 161
+  bytes, in CV9's 256) and CV11 (the dashboard glue). Spec §8.1 says so.
+  Host-tested, with the handlers' JSON checked only in that scratch harness
+  (`chirp_api.h` is not compiled on the host); the Arduino compile is CI's;
+  not bench-tested (U1: the two F174 rows in
+  `hardware_verification_checklist.md`). Found here: F195 and F196.
 - [ ] **F175 [decision] A canary-wap with no GPS fix can never originate on
   Chirp.** The sketch has no SNTP; GPS is its one wall-clock source (F8, F28),
   and a send, a confirmation and a suppress vote all wait for `time()` to pass
@@ -3919,7 +4363,7 @@ so — see D2 below.)
   time from somewhere else (SNTP over the uplink, the hub, the phone in the
   companion wizard, as F28 takes the zone) or the Chirp page says up front
   that sending needs GPS. Found by F146 (#1762).
-- [ ] **F176 [code] The PlatformIO canary's dashboard has a Community (Chirp)
+- [x] **F176 [code] The PlatformIO canary's dashboard has a Community (Chirp)
   panel whose routes nothing in its tree serves.**
   `firmware/canary/lib/securacv_webui/src/securacv_webui.cpp`'s page calls
   `GET /api/chirp`, `/api/chirp/recent`, `POST /api/chirp/send` and the rest,
@@ -3927,7 +4371,26 @@ so — see D2 below.)
   `/api/chirp` route (`firmware/common/chirp/` holds only a header). From a
   grep; not run on a device. Serve them or hide the panel. Found by F146
   (#1762).
-- [ ] **F178 [code] canary-wap Chirp's send cooldown is a state, so a mute
+  *Done (#1762):* hidden until a route answers; no Chirp server built. The
+  premise holds: no file under `firmware/canary` or `firmware/common`
+  registers an `/api/chirp` route. The Community nav button starts hidden, and
+  the page load's one `GET /api/chirp` shows it only when the answer is a
+  Chirp status (it carries `state`), so on today's firmware the 404 (which
+  `api()` returns as `{ok: false, error}`) keeps it hidden and nothing polls
+  Chirp again; a firmware that serves the routes gets the tab back with no
+  page change. The 5 s panel poll also asks for Chirp only once a status has
+  answered (`chirpServed`).
+  `firmware/tests_host/test_canary_community_panel.test.js` (5 cases, run by
+  the tests_host Makefile) lifts the code out of the raw string: the markup
+  starts hidden, a 404 keeps it hidden with no further request, a status shows
+  it and loads the recent list, the poll asks nothing while no route has
+  answered, and a scan of `firmware/canary` and `firmware/common` fails the
+  day an `/api/chirp` route is registered, so the gate can go then. Three
+  cases fail on the page before this change; five mutations each fail it. The
+  Bluetooth tab has the same gap (F198). Host-tested (node); not run on a
+  device (U1: the F176 row in `hardware_verification_checklist.md`). Found
+  here: F198.
+- [x] **F178 [code] canary-wap Chirp's send cooldown is a state, so a mute
   ends it and a send just after it says `cooldown` with 0 s.** `mute()` sets
   CHIRP_MUTED over CHIRP_COOLDOWN, `update()` expires only CHIRP_COOLDOWN,
   `unmute()` and the mute's timeout return to CHIRP_ACTIVE, and
@@ -3946,6 +4409,100 @@ so — see D2 below.)
   mute-in-cooldown tests compare the view to the live readers and pass
   whichever way this goes. Found by F146's review (#1762), which asked for it
   to be filed.
+  *Done (#1762):* the premise holds: on the base, through the real handlers in
+  a scratch ArduinoJson harness, a send one second after the first, muted in
+  between, went out at tier 2; a send drained as the timer ran out answered
+  `cooldown` with `cooldown_remaining_sec` 0, and `GET /api/chirp` 5 ms before
+  the end read `cooldown` with 0 s. The cooldown is a timer
+  (`cooldown_left_ms()`: the tier's cooldown counted from the last send, none
+  at tier 0), and every gate reads it: `send_gate()` (what `can_send_chirp()`
+  answers and the send refuses on), `read_status()` (at the read, so the route
+  says it is over the moment it is) and `cannot_send_reason()` (`cooldown`
+  exactly while the timer runs, muted or not). A refused send names the check
+  that refused it, read once: `send_chirp()` reports `send_gate()`'s refusal,
+  with the timer reading that gate used, or night from its own check.
+  `run_command()` used to re-read the gate after the send, so a gate that
+  opened in between was answered with no reason or `cooldown` with 0 s; found
+  in review, and the presence, clock and 06:00 edges, which predate this PR,
+  are fixed with it. `g_state` never holds `CHIRP_COOLDOWN`: `shown_state()`
+  makes an active channel read `cooldown` while the timer runs. The route's
+  `state` and the MQTT `chirp_state` read as before, except after a send made
+  while muted: that read `cooldown`, then `active` with the presence beacon
+  saying listening while the mute still dropped every chirp, and it now reads
+  `muted` until the mute ends. A mute shows `muted` over a running cooldown,
+  and an unmute or the mute's timeout reads `cooldown` again. The beacon still
+  says not listening during a cooldown (kept and pinned; F194). `update()` no
+  longer ends a cooldown after its drain. `cooldown_remaining_sec`, in the
+  status and in a send refused for the cooldown, is rounded up
+  (`seconds_left()`), so the last second reads 1, not 0. The Chirp card turns
+  Send off for any `can_send` that is not true (`WebUiLogic.chirpSendGate`;
+  `web_assets_gz.h` regenerated). Pinned by `test_chirp_commands_wap.cpp`'s
+  `a_mute_does_not_end_the_cooldown` (the mute, the unmute, a 15-minute mute
+  timing out inside tier 3's hour), `a_send_while_muted_stays_muted`,
+  `a_send_just_after_the_cooldown_goes_out` and `a_send_at_an_edge_names_why`
+  (each `millis()` call moves the uptime clock 1 ms on and each `time()` call
+  the wall clock 1 s on, so every edge is reproducible);
+  `the_pass_publishes_what_it_changed`, `cannot_send_reason_names_the_clock`
+  and `every_command_runs_on_the_loop_task` moved to the timer. The new tests
+  fail against the base `chirp_channel.cpp`, the muted-send test with F178
+  reverted, and each edge of the edge test against the code before the review
+  fix; single reverts in the new code each fail at least one test.
+  `web_ui_logic.test.js` adds 2 `chirpSendGate` tests (both fail with the new
+  branch removed). `check_wap_loop_commands.py` rule CV8 holds that only
+  `shown_state()` and `state_name()` name `CHIRP_COOLDOWN` in
+  `chirp_channel.cpp`, and CV7 pins the rounding in both routes. Spec §2.5.4,
+  §7.1, §7.2 and §8.1 say so. Host-tested; the Arduino compile is CI's; not
+  bench-tested (U1: the two F178 rows in
+  `hardware_verification_checklist.md`). Found here: F192, F193 and F194.
+- [ ] **F192 [code] canary-wap Chirp: a mute on a disabled channel turns it on
+  with no session.** `mute()` sets CHIRP_MUTED whatever the state, so `POST
+  /api/chirp/mute` on a channel that is off makes `is_enabled()` true: `GET
+  /api/chirp` reads `muted`, then `active` once the mute runs out, with an
+  empty session emoji, and a later `POST /api/chirp/enable` answers success
+  with an empty emoji, because `enable()` returns at once for any state but
+  DISABLED; no session is made until a disable and an enable, or a reboot. On
+  a device the passes would then send presence beacons with an all-zero
+  session id (not probed: the host stub's ESP-NOW refused the frames). Refuse
+  a mute (and an unmute) on a channel that is off, or have `enable()` check
+  for a session. From a scratch harness of the real handlers, the same before
+  this wave's changes and after them. Found by F178 (#1762).
+- [ ] **F193 [code+decision] canary-wap Chirp's cooldown tiers reset 24 hours
+  after the first chirp of a run, not after 24 hours without one.**
+  `reset_cooldown_if_stale()` clears the tiers 24 hours after
+  `first_chirp_today_ms` whatever was sent since, where spec 2.5.4 says
+  "Reset: 24 hours of no chirps", and the reset also ends a running cooldown
+  (a 4-hour one started 22 hours into the run is over 2 hours later).
+  Separately `enable()` zeroes the tiers and they live in RAM, so a disable
+  and an enable, or a reboot, costs the 10-minute presence requirement instead
+  of the tier's 15 minutes, 1 hour or 4 hours. Decide which reset the spec
+  means and whether the tiers survive a re-enable and a reboot (a new session
+  is a new identity on the wire; the tiers are local). From code. Found by
+  F178 (#1762).
+- [ ] **F194 [code] canary-wap Chirp's presence beacon says "not listening"
+  while the send cooldown runs.** `send_presence()` sets `listening` from what
+  the state reads as, and an active channel in its cooldown reads
+  CHIRP_COOLDOWN, but such a device still takes chirps (`handle_witness()`
+  drops them only while muted), so neighbors' nearby lists show it as not
+  listening. F178 kept the wire as it was (`a_mute_does_not_end_the_cooldown`
+  pins it); setting the flag from the mute alone would fix it. From code.
+  Found by F178 (#1762).
+- [ ] **F195 [decision] canary-wap Chirp's POST routes answer refusals with
+  different statuses.** Since F174 a refused confirm answers 409 or 404, while
+  a refused send (F146's `chirp_disabled`, `presence_required`, `cooldown`,
+  `clock_unsynced`, `night_restricted`), a send with an unknown template, a
+  refused mute (`invalid_duration`) and a failed enable still answer 200 with
+  `success:false`. Decide whether every Chirp refusal carries a status (the
+  dashboard reads the body either way, and must never get a 403, which it
+  takes for a bad token). Found by F174 (#1762).
+- [ ] **F196 [code] canary-wap: other REST answers may outgrow the char
+  buffers they are serialized into.** The Chirp confirm and mute refusals did
+  (F174): `serializeJson()` fills a char array without a terminator when the
+  answer does not fit, and `httpd_resp_sendstr()` then sends whatever follows
+  on the stack. Rule CV10 holds only `chirp_api.h`; a crude scan of the other
+  `*_api.h` files and `canary_wap.ino` for the same shape found nothing, but
+  their answers were not measured. Measure each fixed buffer against its
+  longest answer, or serialize to the length `measureJson()` gives. Found by
+  F174 (#1762).
 - [x] **F97 [code] The PIO pairing has F75's deadlock.**
   `either_handle_confirm` acts only in `AWAITING_CONFIRM_PEER`, so it drops a
   peer's CONFIRM that arrives before this device's owner confirms, and
@@ -4678,7 +5235,9 @@ so — see D2 below.)
   has no default, so a handler call without it does not compile. Each check
   fails by mutation (nine in the C++, seven in the page; one more page mutant
   is equivalent). The fields are read from the HTTP task without a lock, as
-  the rest of this tree's status is (F161). Spec §8.3 and THREAT_MODEL are
+  the rest of this tree's status is (F161). *Since F161 (#1762, wave 13):*
+  they come, with the rest of the body, from a view the main loop publishes
+  after each pass and each request it runs. Spec §8.3 and THREAT_MODEL are
   updated. Host-tested, and the page in Chromium against a mocked API; the
   `[env:full]` compile is CI's; not bench-verified (U1). Found here: F161 and
   F163.
@@ -4794,7 +5353,7 @@ so — see D2 below.)
   opera, as the web UI's join button suggests) or replaces the opera (clear
   the old members and their addresses). From code; not probed. Found while
   fixing F118 (#1762).
-- [ ] **F161 [code] PIO: `GET /api/mesh` and `/api/mesh/peers` read
+- [x] **F161 [code] PIO: `GET /api/mesh` and `/api/mesh/peers` read
   `mesh_session`'s state from the HTTP task.** canary-wap's F110 counterpart.
   `handle_mesh_status` and `handle_mesh_peers` (`securacv_network.cpp`) read
   the pairing state and code, F133's pairing number, outcome and reason, the
@@ -4804,6 +5363,62 @@ so — see D2 below.)
   outcome of a pairing started between the reads, a name read mid-rename).
   canary-wap reads a view its loop publishes (`loop_snapshot.h`, F110). From
   code; not probed. Found by F133 (#1762).
+  *Done (#1762):* a view the main loop publishes, F110's shape through F110's
+  header. `loop_snapshot.h` is shared, not ported: the PIO lib's copy
+  (`firmware/canary/lib/securacv_mesh/src/loop_snapshot.h`) is canonical,
+  `check_mesh_sync.sh` holds canary-wap's byte-identical, and each tree brings
+  its own lock (on the device a portMUX critical section, the one
+  `securacv_witness` and `ble_scout` take; on the host a `std::mutex`).
+  `mesh_session` builds a `StatusView` (the enable switch, the opera's id and
+  name, the pairing state, number, outcome and reason, the code only while
+  `GET /api/mesh` shows it, `peers_total`, `peers_online`, `alerts_received`,
+  and each trusted member by fingerprint with its alerts and, once heard from
+  its binding, its transport entry's state, RSSI and last-seen time; no key)
+  and publishes it (`publish_status()`): at the end of every `process()` pass
+  and before its early return, in the drain after each REST request it ran and
+  before the result is posted (so a GET right after a POST's answer shows the
+  POST), in `deinit()`, and once from `main.cpp`'s `setup()` after the mesh
+  restore, since the HTTP server is up before the first loop pass. Before any
+  publish a read answers the state before `init()`, which is also what
+  `init()` leaves. `handle_mesh_status` and `handle_mesh_peers` copy the view
+  (`read_status()`) and read nothing else of the session or the transport: the
+  status body is `mesh_api::build_mesh_status_json_from_view`, and the peers
+  join moved out of the handler into the host-tested
+  `mesh_api::peer_views_from_status`, the members still the persisted pubkeys
+  (F199) and the age still counted at the read. Every field of both bodies is
+  unchanged; after a pass they equal the old handlers' bodies byte for byte.
+  Neither route waits for the main loop. Cost: 240 B of internal SRAM for the
+  view plus its lock, and per pass a build of the view and a 240 B compare
+  (the lock is taken only when the view changed). Pinned by eight new
+  `test_mesh_session` tests:
+  `test_a_read_before_any_publish_is_the_state_before_init`,
+  `test_a_status_read_is_the_last_published_pass`,
+  `test_a_read_right_after_a_post_shows_what_it_did`,
+  `test_a_disabled_session_still_publishes_each_pass`,
+  `test_deinit_publishes_the_wiped_session` (no byte of a cleared name
+  copied), `test_the_view_holds_the_code_only_while_it_is_shown`,
+  `test_the_peer_list_joins_each_member_from_the_view` (a member unheard past
+  the transport's 5-minute threshold reads OFFLINE with its real age and RSSI,
+  never CONNECTED) and the two-thread
+  `test_status_reads_stay_whole_while_the_main_loop_runs`;
+  `test_get_mesh_tells_each_pairing_outcome` now builds its body as the
+  handler does. With `read_status()` answering the live state the last-pass
+  test fails 3/3 and the two-thread test 5/5; each publish point removed alone
+  fails a test; of 30 mutations of the view, the join and the builder, 29 are
+  killed and the survivor is equivalent; the suite is clean under
+  ThreadSanitizer, which flags the view with its lock removed.
+  `firmware/scripts/check_canary_mesh_status.py` (25 self-test mutations, run
+  by `regression_check.sh`) holds that no canary HTTP handler names a live
+  session or transport reader (one allowance, `handle_mesh_alerts`'
+  `get_alerts`: F197), that the two routes read the view once and the peers
+  route joins it, where `mesh_session.cpp` publishes and reads, and
+  `main.cpp`'s one publish in `setup()`;
+  `scripts/tests/test_canary_mesh_status_wiring.py` pins the status handler's
+  view read and its one from-view builder call. The two handlers, compiled
+  verbatim on the host against stubs in scratch, answer the expected bodies;
+  the `[env:full]` compile is CI's. Spec §8.1 says so. Host-tested; not
+  bench-tested (U1: the F161 row in `hardware_verification_checklist.md`).
+  Found here: F197 and F199.
 - [ ] **F162 [code+decision] PIO: a joiner sends nothing after it pairs, so
   its initiator never hears it.** F134's COMPLETE copies end when the joiner
   is heard, and PIO members send no frame on a timer, so after a pairing that
@@ -4815,7 +5430,7 @@ so — see D2 below.)
   after it pairs, once or on a timer; the registry's HEARTBEAT (16) is one a
   PIO receiver already verifies and drops, marking its sender heard. From code
   and the F134 tests; not probed on a radio. Found by F134 (#1762).
-- [ ] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
+- [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s
   `meshConfirm()` polls `/api/mesh/status` (the Canary's `GET /api/mesh`)
   every 2 s for 60 s for both `state`s to be ACTIVE, and says "Pairing did not
@@ -4824,6 +5439,86 @@ so — see D2 below.)
   a finished pairing reads as not completed. It can read `pairing_seq` and
   `pairing_result` now (F133). From code; not probed. Found by F133 and F134
   (#1762).
+  *Done (#1762):* the wizard keeps the pairing number each Canary's
+  `pair/start` or `pair/join` answered (F133; the add-on proxy passes the
+  answers and the status bodies through unchanged) and reads that pairing's
+  `pairing_result` from `GET /api/mesh`: both `paired` is a success whatever
+  `state` reads, and the done screen adds that the two may not show each other
+  connected until each hears from the other (F162); either `failed` stops the
+  wait at once and names that Canary (existing or new) and the reason in words
+  (a timeout, a cancel, `partner_refused`, `bad_confirm`, `bad_complete`,
+  `crypto`, else the reason named); a body about another pairing (another
+  number, or 0 after a restart) stops the wait claiming neither. Each of
+  those, and either wait's timeout, cancels (best effort) a side whose latest
+  read shows the wizard's pairing number still `running`, so the retry is not
+  refused until that Canary's own 5-minute timeout (a Canary runs one pairing
+  at a time, so that cancel ends no one else's); a side that finished is left
+  as it finished, a timeout acts only on its final poll's reads, and a Canary
+  that reports no number is not canceled. A Canary whose answer carries no
+  number (from before F133, or a canary-wap, whose routes have no
+  `pairing_seq`) is read the old way, done once it reads ACTIVE, also beside
+  one that reports its outcome; a 0 is no number. The code-wait poll
+  (`meshPollForCodes`) ends early the same way (a failure, or a pairing both
+  owners confirmed on the Canaries themselves). The wizard's JS had no test:
+  `privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js` (11 cases;
+  `pwk-wizard-tests.yml` runs it) lifts the page's mesh section out by literal
+  markers and drives it against a scripted proxy and an immediate `delay()`.
+  Nine cases fail on the page before this change (the two that pass pin the
+  old ACTIVE path), and 24 mutations of the new code each fail it. Not
+  changed: a pre-F133 PlatformIO Canary still reads as not completed after a
+  finished pairing (it reports no outcome and reads ACTIVE only once it hears
+  a member, F162); a rejected confirmation, a confirm that fails on the
+  network and five unreadable polls still leave the other side running (F200).
+  Host-tested (node); not run against a Canary (U1: the F163 row in
+  `hardware_verification_checklist.md`). Found here: F200.
+- [ ] **F197 [code] PIO `GET /api/mesh/alerts` reads the alert history from
+  the HTTP task.** `handle_mesh_alerts` copies `mesh_session::get_alerts()`
+  (the 16-record ring `store_alert()` writes on the main loop's receive path
+  and `clear_alerts()` empties through the request slot) in place, so a body
+  can hold a record half overwritten by a newer alert or straddle a clear.
+  F161 moved only `GET /api/mesh` and `/peers` to the published view;
+  canary-wap's alerts route reads a `loop_snapshot::Log` its loop task changes
+  under its lock (F110), and the PIO tree now has that header (the route's
+  newest-first order has to survive the move: the `Log` reads in storage
+  order). `check_canary_mesh_status.py` allows exactly this read (`ALLOWED`)
+  until it moves. From code; not probed. Found by F161 (#1762).
+- [ ] **F198 [code] The PlatformIO dashboard's Bluetooth tab calls routes
+  nothing in its tree serves.** `securacv_webui.cpp` calls `/api/bluetooth`
+  and eleven routes under it (power, scan start and results, pair start and
+  cancel, paired devices, trust, forget all, disconnect, name, settings),
+  three of them at every page load (`/api/bluetooth`, `/settings`, `/paired`)
+  and `/api/bluetooth` every 5 s on that tab, but no file under
+  `firmware/canary` or `firmware/common` registers an `/api/bluetooth` route
+  (a grep of every `.uri =`). The same grep finds no route for the page's
+  `POST /api/logs/rotate`, `GET /api/wifi` and `POST /api/wifi/forget` (the
+  server has `/api/logs/*/ack`, `/api/logs/ack-all` and `/api/wifi/status`,
+  `/scan`, `/connect`, `/disconnect`). F176's shape fits: hide what nothing
+  serves until it answers, or point the calls at routes that exist. From a
+  grep; not run on a device. Found by F176 (#1762).
+- [ ] **F199 [code+decision] PIO `GET /api/mesh/peers` lists its members from
+  NVS, so a board without flash encryption answers 500 `load_failed`, and the
+  list can disagree with `GET /api/mesh`'s `peers_total`.** The rows are the
+  persisted pubkeys (`mesh_state::load_trusted_peers`, flash-encryption
+  gated), while `peers_total` and `peers_online` count the session's trusted
+  table; on a dev board without flash encryption every peers read fails, and
+  after an NVS save or removal that failed the two disagree until a reboot.
+  F161 kept the NVS membership so the response would not change; the published
+  view holds every member the session trusts, so the rows could come from it.
+  Decide whether the list is the durable set or the session's. From code; not
+  probed. Found by F161 (#1762).
+- [ ] **F200 [code] The kernel wizard leaves a Canary pairing when the other
+  rejects the confirmation or stops answering.** `meshConfirm()` stops on a
+  rejected or failed `pair/confirm` ("The ... Canary rejected the
+  confirmation", "Network error during confirm"), and both of the wizard's
+  waits stop after five unreadable polls, all without canceling a Canary still
+  running the wizard's pairing; a Canary starts a pairing only when none runs,
+  so the retry those messages invite is refused until that pairing's 5-minute
+  timeout (a power pull after the codes show reaches the first path). F163's
+  review fix cancels on a failure, on a body about another pairing and at
+  either wait's timeout, each from a read that carries the wizard's pairing
+  number; these paths have no such read, so a fix reads each side's status
+  once and cancels a side that reports the wizard's number still running. From
+  code; not run against a Canary. Found by F163's review (#1762).
 - [x] **F50 [code] The display's other join hints still cut on narrow glass.**
   (#1755, #1727) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
@@ -5632,6 +6327,77 @@ so — see D2 below.)
   rotation before the first boot, the way `main.cpp` does, would let the
   probes read the turned scenes off the framebuffer: no line cut or off the
   glass, the bird on `bird_seat()`'s seat. Found by F156 and F157 (#1762).
+  *Partly done (#1762): the turned dash glass; its splash in a browser and the
+  nightlight are F206 and F204.* The emulator runs a turned panel, and the
+  onboarding probe walks it. On LVGL 8.4, the emulator's pin,
+  `lvgl_port_set_rotation()` used to change only its own logical size, so a
+  saved portrait rotation laid a 480x800 face out on LVGL's 800x480 canvas.
+  Its 8.4 dash branch now turns the display through v8's API (sw_rotate and
+  `lv_disp_set_rotation()` with the 9.x branch's quarter turns, the screen
+  invalidated and the touch layer told, touching the driver only on a change),
+  and `fill_indev_data()` re-encodes the fed pointer sample on both majors
+  (`test_display_settings` holds `rotation_to_lvgl_indev()` against v8's
+  arithmetic). No shipped env builds the dash on LVGL 8. The emulator's
+  display HAL holds its framebuffer in the frame the glass's viewer reads: it
+  reads the turn off the refreshing display's driver, maps each native pixel
+  back through the inverse of `lv_refr.c`'s `draw_buf_rotate`, reports the
+  turned size and re-announces the glass's shape. `emu_preset_rotation()`
+  stages a saved rotation before power-on, through the glass settings store
+  after every preseed and before `setup()`, so `main.cpp` wears it from the
+  first frame; the harness takes `?rotation=0..3` and logs every shape the
+  firmware announces, and the shell refuses to boot a dist without the binding
+  rather than boot it unturned. `emu_screen_arcs()` reports every arc as the
+  circle `lv_arc` draws, and `emu_onboard_join()` reports the halo's and the
+  QR card's boxes as `onboard_layout.h`'s stack seats them, through the new
+  read-only `onboard_ui_join_layout()`, which `test_onboard_scenes` holds on
+  every glass, scene, ladder and QR state. On every walk, native and turned,
+  `onboard_probe.mjs` reads Hello, Join with and without the stuck-phone hint,
+  PhoneJoined, both failures, Connecting after the wrong-key and the right-key
+  joins, Success until the screen goes, and the face the boot ends on: every
+  line on the glass, none cut as the label's own text says, and each settled
+  line inked inside the box the firmware reports (`tests/onboard_glass.mjs`:
+  `linesOnGlass`, `linesCut`, `linesInked`); the bird on the glass and, where
+  it sits, clear of the lines (through Success's hop only its on-glass half,
+  `birdOnGlass`); the join QR upright, its finder patterns at top-left,
+  top-right and bottom-left (`qrUpright`: a glass drawn mirrored, flipped or
+  upside down moves one to bottom-right); and every frame the firmware drew on
+  one glass (`framesOnGlass`). The turned walk (`dash@portrait`, the panel and
+  turn read from build.sh's pin map and `glass_settings.h`) also holds that
+  the firmware's first frame was already 480x800, so the splash ran turned;
+  that on both Join reads the QR card and the halo stand where the layout
+  seats them (`cardAtLayout`, `haloAtLayout`); that the halo's stroke is inked
+  where its circle says, with nothing 3 px outside it (`haloInked`); and that
+  the card stands over the halo's center with its sides inside the stroke
+  (`cardInHalo`). Its corners reach past the 800 px glass's ring (159.9 px
+  from the center against a 147 px inner edge, F155) and are printed, not
+  held. `onboard.test.js` pins `setup()`'s order: the rotation is worn once,
+  after `lvgl_port_init()` and before `splash_play(` and `provision_run(`.
+  `emulator/test/glass_turn.sh` builds the real `lvgl_port.cpp` and the real
+  HAL against LVGL 8.4 with g++: at every quarter turn the glass equals the
+  scene rendered unturned at the logical size, pixel for pixel; the HAL
+  announces each change of shape; a landscape boot leaves the driver
+  untouched; and a fed touch comes back out of LVGL's pointer where it went
+  in. Against the old `lvgl_port.cpp` it fails 6 checks. CI runs it right
+  after the third-party cache, before any step that reads the committed dist,
+  so a stale dist cannot skip it. In a native full boot outside CI (build.sh's
+  whole dash TU list, the real `main.cpp` included, built with g++), the
+  probe's own holds pass at both portrait turns and unturned, at both ladders,
+  and nine breaks each fail them (the old holds missed six). On the committed
+  dist, which predates the bindings, the five native walks with every new read
+  pass, as do `fleet.html`, `boot_probe.mjs` and `csp_probe.mjs`;
+  `dash@portrait` fails at once ("this emulator dist has no
+  emu_preset_rotation"). The emulator dist moves for the five display flavors:
+  CI's pinned emsdk rebuilds it in this PR after this ledger lands, the
+  rebuilt dist must pass the whole probe, `dash@portrait` included, and none
+  of it was run against a rebuilt dist here. Until then the onboard probe on
+  the committed artifacts goes red in `canary-local.yml`'s wasm job and that
+  job's later steps are skipped (`glass_turn.sh` runs before them). Still
+  open: no emulator flavor builds the 320x180 landscape nightlight, so only
+  the portrait dash is walked turned (F204), and no browser probe reads the
+  turned splash (F206). The emulator's turned glass is LVGL 8.4's software
+  rotation; the shipped dash builds run LVGL 9.5, which does not turn what it
+  flushes (F205). Not bench-tested. Found here: F204-F206 and A47; the display
+  flavors' missing native stand-in is merged into A43.
 - [ ] **F185 [code+decision] The LVGL 8.4 glass's speech bubble has no tail.**
   splash.cpp turns its 12 px tail square 45 degrees with rounded corners; LVGL
   8.4 renders a turned object through a transform layer, a rounded one needs
@@ -5647,6 +6413,56 @@ so — see D2 below.)
   drawable on 8.4 (radius 0 passes natively; a centered pivot would center
   it), or drop it on 8.4. `test_splash_scenes` holds the tail object's box,
   not what is drawn. Found by F158's review (#1762).
+- [ ] **F204 [code] No emulator flavor builds the nightlight.**
+  `canary-local/emulator/build.sh` builds the watch, dash, nightstand,
+  touch169 and amoled241 glasses; none defines `CD_NIGHTLIGHT`, so the
+  nightlight's hardware rotation (`display_set_rotation()`'s MADCTL table,
+  `lvgl_port_set_panel_rotation()`) never runs in the emulator, and the
+  320x180 landscape onboarding F157 composes is held only on the host and in a
+  native harness outside CI. A nightlight flavor (its config and 180x320
+  pins), the emulator HAL's `display_set_rotation()` and
+  `emu_preset_rotation()` staging the nightlight's own NVS key would let
+  `onboard_probe.mjs` add a landscape nightlight entry to its `TURNED` table,
+  where the turned walk's holds would apply: the card and halo at the layout's
+  seats (`onboard_ui_join_layout()` already returns the halo's x offset beside
+  the text) and the QR card's corners inside the stroke (`cardInHalo`'s
+  `corners` option, which F157's 2 px clearance passes). Found by F184
+  (#1762).
+- [ ] **F205 [code] On LVGL 9.5 the dash glass's rotation does not turn what
+  it draws.** LVGL 9.5's `lv_display_set_rotation()` swaps the logical
+  resolution and "will not perform the actual rotation" (its docs,
+  main-modules/display/rotation.rst): in partial render mode `refr_area()`
+  renders logical areas and `call_flush_cb()` hands them on as they are, and
+  the in-tree drivers turn them with `lv_draw_sw_rotate()` in their flush.
+  `lvgl_port.cpp`'s 9.x `flush_cb` blits `px_map` at the area unturned, and
+  matrix rotation is off. In a native LVGL 9.5 run of the real `lvgl_port.cpp`
+  (dash config, a recording `Arduino_GFX`), after
+  `lvgl_port_set_rotation(ROT_PORTRAIT)` the logical canvas is 480x800 and the
+  flushes span x 0..479, y 0..799 into the 800x480 RGB framebuffer, so a
+  portrait dash, dash7 or nightstand7 most likely shows the turned face's top
+  480 rows unturned in the panel's left 480 columns and loses the rest (read
+  from source and that native run; not bench-tested). The emulator (LVGL 8.4,
+  sw_rotate since F184) shows what the firmware intends, not this. A fix
+  rotates each flushed area in `flush_cb` (`lv_display_rotate_area()` and
+  `lv_draw_sw_rotate()`, the docs' partial-mode example) or enables matrix
+  rotation; `rotation_map_touch()` and its host oracle
+  (`test_display_settings.cpp`'s `forward()`, 90 degrees to (W-1-ly, lx)) must
+  then follow the quarter turn drawn, and they assume the opposite of LVGL's
+  own (`lv_display_rotate_area()` and LVGL 8's `draw_buf_rotate`, 90 degrees
+  to (ly, H-1-lx)). Found by F184 (#1762).
+- [ ] **F206 [code] No browser probe reads the turned glass's splash, and
+  `boot_probe.mjs` boots no turned glass.** `onboard_probe.mjs`'s
+  `dash@portrait` walk boots through the first-meeting splash on 480x800, but
+  its reads start at the first-boot line; `framesOnGlass` holds only that the
+  splash's first frame was already turned, so the splash's lines and bird are
+  read in no browser, and `boot_probe.mjs` boots the five native panels only.
+  The splash on 480x800 is held on the host (`test_splash_layout`,
+  `test_splash_scenes`) and was measured in a native full boot outside CI (653
+  reads at both portrait turns and both ladders, no line off the glass or cut,
+  the bird on the glass). Reading the splash in the turned walk, on a clock
+  slowed from power-on, and a turned boot in `boot_probe.mjs` with its face's
+  bird read by `birdPerch` would hold both off the framebuffer. Found by F184
+  (#1762).
 - [ ] **F67 [code] The C6 builds most likely send `Serial` to UART0 on the
   radar's pins, not to USB.** `firmware/envs/platformio/canary-sense.ini`
   :78 and `canary-sentinel.ini` :67 add `-UARDUINO_USB_CDC_ON_BOOT` (so do
@@ -5827,7 +6643,7 @@ so — see D2 below.)
   the debounced state; the Lab's radar lab keeps the count until Clear and its
   MQTT note names the omission. A firmware change: host-testable against
   `mr60_presence.cpp`, compile-tested by CI. Found by A30's review (#1762).
-- [ ] **F181 [code] Discovery's device object truncates for long device ids,
+- [x] **F181 [code] Discovery's device object truncates for long device ids,
   which makes every entity's config invalid.** `publish_discovery` builds
   `devObj` (256 bytes in canary-vision and canary-sense, 384 in
   canary-sentinel) with the device id twice plus the model string, and the NVS
@@ -5842,6 +6658,31 @@ so — see D2 below.)
   `scripts/tests/test_ha_discovery_binary_sensors.py` cuts `devObj` at its
   declared size the way snprintf does, so it holds the payload buffers around
   it, not this. Found by HA25 (#1762).
+  *Done (#1762):* sized, not refused, so an id the flasher and NVS already
+  accept stays valid. Each product's `src/ha/ha_discovery.cpp` names its
+  device object format (`kDeviceObjectFormat`) and derives
+  `kDeviceObjectMost`, the most the object can take: the format without its
+  five `%s`, the longest id `runtime_config.h` accepts (47 characters) twice,
+  that build's manufacturer, model and firmware version, and the terminator.
+  `devObj` is 320 bytes on canary-vision and canary-sense (worst 259 and 273,
+  the latter on the wellbeing build) and stays 384 on canary-sentinel (worst
+  293, the Perimeter Demo model), each with a `static_assert` against
+  `kDeviceObjectMost`, so a flavor whose model would overrun it fails its own
+  build (checked on the host with g++ against every flavor's config: the
+  assert fires one byte below each product's worst case and holds at it).
+  `scripts/tests/test_ha_discovery_binary_sensors.py` formats `devObj` and
+  `availObj` whole, with their real format strings, for a 47-character id and
+  every flavor's model, parses them and holds each to its declared size (on
+  the old sizes three subtests fail: 259, 263 and 273 bytes needed against
+  256), and formats every announcement whose arguments are the id, a topic
+  (read from `topics.h`) or those objects (15, 16 and 15 announcements),
+  holding each to its buffer and to valid JSON; the tightest is the Vision's
+  Uptime sensor, 19 bytes to spare in its 768. The table-driven number
+  entities and the Vision's watch profile select are not formatted there
+  (F203). The availability object needs at most 200 of its 256. Measured by
+  formatting the real format strings and by the compile-time assert on the
+  host, not on a device; the three firmware compiles are CI's; not
+  bench-tested. Found here: F203.
 - [ ] **F182 [code+decision] canary-vision's flavor config names interaction
   settings nothing reads.** `firmware/configs/canary-vision/default/config.h`
   defines `CONFIG_DWELL_END_GRACE_MS`,
@@ -5852,7 +6693,7 @@ so — see D2 below.)
   have a reader, `gen_flash.py`, and those seed values duplicate the project's
   too). Decide which file owns them, then wire the project constants to the
   flavor macros or drop the dead ones. Found by F154 (#1762).
-- [ ] **F186 [code] A Vision dweller seen on the frame between `dwell_ended`
+- [x] **F186 [code] A Vision dweller seen on the frame between `dwell_ended`
   and `presence_ended` starts a second dwell in the same visit, so the
   lingering alert pages twice.** After `dwell_ended`, `PresenceFSM::tick`
   clears `dwelling_` and leaves `presence_` set until the next frame ends the
@@ -5869,6 +6710,80 @@ so — see D2 below.)
   gap. Fix: let a sighting on that frame either resume the ended dwell or
   end the visit first, and hold the choice with a host test. Not probed on a
   device. Found by F154's review (#1762).
+  *Done (#1762):* the visit ends first. The frame after `dwell_ended` now
+  sends `presence_ended` whatever it shows (`PresenceFSM`'s `leave_owed_`, set
+  by `dwell_ended`), and a sighting on it is held and opens the next visit on
+  the frame after: `presence_started` there, then the ended stay's owed
+  `interaction_likely` (`dwell_then_left`, F152's path) on the frame after
+  that, the same events a return one frame later always gave. Chosen over
+  resuming the ended dwell, which would have left a `dwell_ended` row whose
+  `dwell_ms` named an end that did not happen and sent a second `dwell_ended`
+  for the same dwell: ending the visit keeps one dwell per stay and every
+  `dwell_ended`'s `dwell_ms` the final length of its dwell, and treats a
+  dweller unseen past the lost timeout (or the grace) as gone, as a walk-by
+  always was. When the next frame is empty, the held sighting opens the visit
+  (presence true with that frame's confidence, 0, and the sighting's cell,
+  held through the lost timeout counted from the sighting); when the next
+  frame has a sighting of its own, that sighting opens it and the held one is
+  dropped. The new visit's clocks start on the frame that sends its
+  `presence_started`, one frame after the sighting (F153 asks whether lengths
+  should follow sightings). `reset()` clears the owed `presence_ended` and the
+  held sighting with everything else. Probe P8 now reads `dwell_started` 11.0
+  s, `dwell_ended` 13.5 s, `presence_ended` 13.6 s, `presence_started` 13.7 s,
+  `interaction_likely` 13.8 s, `presence_ended` 15.6 s. The visit boundaries
+  move into `open_visit` and `end_visit`, so the source pins in
+  `gen_vision.py`, `vision.test.js` and `test_vision_dashboard_voxel.py`
+  follow the new form with the same intent (`vision.json` unchanged).
+  `test_vision_presence_fsm.cpp` drops the test that pinned the second dwell
+  and, in both builds (grace 0 and 4000 ms), gains P8, the one-frame case, the
+  back-for-good case (a second dwell only in the next stay), a gap sighting
+  followed by one in another cell, `reset()` right after `dwell_ended` and
+  right after a gap sighting, and a table of every way back after a dwell (80
+  walks with grace 0, 180 with the grace). Every one fails on the FSM before
+  it, each run alone in both builds. Ten mutations of the fix each fail one of
+  them; three of those (the held branch's guard forced true, either new
+  `reset()` line dropped) were found by review and passed the first version of
+  these tests, and in the Lab, which resets its core on every scene change and
+  camera start, they would have shown a cell the person had left, a
+  `presence_ended` with no visit open, or a phantom visit at cell -1,-1.
+  `test_vision_core_bindings.cpp` drives P8, the gap-then-elsewhere case and
+  `vision_emu_reset` at both points through the Lab core's ABI. The README's
+  FSM diagram gains a Leaving state, and its text says what that frame does
+  and which sighting opens the next visit. HA's Presence sensor and the fleet
+  beacon now go off and on at that boundary, as for any new visit. The
+  emulator dist moves (`dist/canary-vision-core.js` only): CI's pinned emsdk
+  rebuilds it in this PR after this ledger lands, and the rebuilt dist was not
+  run here. Until then `vision.test.js`'s F186 test fails on the committed
+  dist (31 of 32, rerun on the integrated tree) and passes with
+  `LAB_CORES=native` (32 of 32); `eyes.test.js` and `audio.test.js` pass both
+  ways, and `native_cores.test.js`'s opt-in parity names the stale dist at
+  Vision tick 77. A firmware change: host-tested, compile-tested by CI, not
+  bench-tested. Found here: F202.
+- [ ] **F202 [code] A Vision dwell whose subject is last seen on the
+  `dwell_started` frame reports no `dwell_then_left`.** `PresenceFSM::tick`
+  returns on the frame that sends `dwell_started` before `if (dwelling_)
+  dwell_latch_ = true;`, and the latch is set only on later sighted frames, so
+  a subject gone right after the dwell starts leaves it false. A probe linking
+  the tree's FSM (the same before F186), 100 ms frames, seen until the
+  `dwell_started` frame: settled in one cell, the visit sends `dwell_started`,
+  `dwell_ended`, `presence_ended` and `interaction_likely` with reason
+  `zone_interaction_then_left`; with its settled cell changing every few
+  frames it sends no `interaction_likely` at all, although it dwelled and
+  `dwell_ended` fired; seen one frame longer, it reports `dwell_then_left`.
+  Latch the dwell where it starts (or read the ended dwell at the leave) and
+  hold it in `test_vision_presence_fsm.cpp`; the lingering alert and the
+  litter-box visit-completed recipe page on that event. A firmware change:
+  host-testable, moves the emulator dist. Found by F186 (#1762).
+- [ ] **F203 [code] The discovery fit test does not format the table-driven
+  announcements.** `scripts/tests/test_ha_discovery_binary_sensors.py` holds
+  every fixed announcement of canary-vision, canary-sense and canary-sentinel
+  to its buffer for a 47-character id (F181), but the Vision's and the Sense's
+  number entities and the Vision's watch profile select take their fields from
+  tables inside `publish_discovery` that the test does not parse. Those check
+  their own `snprintf` result and skip a payload that does not fit, so an
+  entity would go missing from Home Assistant with only a serial log line.
+  Parse the tables (or move them where the test can read them) and hold those
+  payloads too. Found by F181 (#1762).
 
 ---
 
@@ -6922,7 +7837,7 @@ so — see D2 below.)
   `canary-local/tests/native/README.md` and the Lab README's testing list.
   Test tooling, host-tested; the emulator dist does not move for it; the CI
   step's first run is CI's. Found here: A41-A43.
-- [ ] **A41 [code] The Lab's browser probes run only the committed Vision and
+- [x] **A41 [code] The Lab's browser probes run only the committed Vision and
   audio cores.** `vision_probe.mjs`, `eyes_probe.mjs` and `audio_probe.mjs`
   load `emulator/dist/canary-vision-core.js` and `canary-wap-audio.js` through
   each page's `<script>` tag, so `LAB_CORES=native` (A40) does not reach them,
@@ -6930,6 +7845,50 @@ so — see D2 below.)
   rebuild. The probe server could serve a stand-in factory that forwards each
   call to the natively built core (`canary-local/tests/native/`) over
   synchronous requests. Found by A40 (#1762).
+  *Done (#1762):* `vision_probe.mjs`, `eyes_probe.mjs` and `audio_probe.mjs`
+  take `LAB_CORES`. Unset (or `dist`) nothing changes:
+  `tests/native/probe_cores.js`'s `probeCores` returns null and the probe
+  serves the committed bytes. Under `LAB_CORES=native` it builds the probe's
+  core with `cores.js` (A40) before Chromium starts, and the probe's server
+  answers the core's dist URL with `tests/native/core_standin.js`, under every
+  spelling of that URL the server would read as the file, and refuses any
+  other method on it, so a native run never serves the committed core. The
+  stand-in is a factory of the dist's export name and module shape (`cwrap`,
+  `ccall`, `UTF8ToString` and the `HEAP` views where the dist has them); its
+  every call is a synchronous same-origin `XMLHttpRequest` to the probe
+  server, which runs it on the native core through `cores.js`'s own module, so
+  the return conversions and the refusals (`cwrap`'s at `cwrap` time) are one
+  implementation for the Node tests and the probes. A pointer export's window
+  (the audio frame) is mirrored in a heap the stand-in keeps in the page,
+  carried to the core before each call and back after it; the heap grows with
+  the old buffer detached, as wasm memory growth detaches it. The pages are
+  served as committed: the stand-in is a `'self'` script and its requests are
+  `'self'` connects, with no eval and no inline code. Two allowances: each
+  core call is a request, so `vision.html` (which calls its core every
+  animation frame) never reaches Playwright's `networkidle`, and the native
+  probes wait instead for 500 ms of quiet not counting the core's own
+  requests; and a native run fails unless every core it asked for had its
+  stand-in both served and called, and prints the call count when it passes.
+  Run locally three times each way, each probe passed on the dist and
+  natively. A scratch rename of `presence_started` in `presence_fsm.cpp`
+  failed the native Vision and eyes probes while their dist runs passed, and
+  removing the audio tone gate in `securacv_audio.cpp` failed the native audio
+  probe while its dist run passed. `native_cores.test.js` holds the bridge in
+  the default run with no compiler and no Chromium: the stand-in as served, in
+  a `vm` context over `fake_core.js`; the HTTP handling, raw URL spellings
+  included; the no-silent-fallback guard (served but never called, called but
+  never served, one core of two); the quiet wait, over a fake page; the
+  stand-in's needs against the pages' policy; that every probe opening a core
+  page takes the bridge before its file lookup; and the CI wiring. Twenty-one
+  mutations of the stand-in, the bridge and the probe wiring each fail one of
+  those tests. `canary-local.yml`'s wasm job runs each of the three probes
+  again under `LAB_CORES=native` right after its dist step, whenever that step
+  ran, red or green, with the runner's g++ and no emsdk. A native pass in
+  Chromium says what one in Node says: this tree's sources pass, built by
+  64-bit g++ rather than wasm32 clang (A42 still applies). Documented in
+  `tests/native/README.md` and the Lab README's testing list. Test tooling,
+  host-tested and run in local Chromium; the emulator dist does not move; the
+  CI steps' first run is CI's.
 - [ ] **A42 [code] The native Lab cores are not the wasm build, and disagree
   with it on out-of-range input.** `canary-local/tests/native/cores.js` (A40)
   compiles the Vision and audio cores with the host compiler for its 64-bit
@@ -6952,7 +7911,18 @@ so — see D2 below.)
   pipe cannot stand in for a page. Decide whether a host build of the display
   firmware's page-checked logic is worth having, or whether CI's rebuild stays
   the only path. Found by A40 (#1762).
-- [ ] **A44 [code] `boot_probe.mjs`'s ready wait can be refused by the harness
+  *Merged here (#1762, wave 13), from F184's review:* a native stand-in is
+  cheap. F184's review built `build.sh`'s whole dash translation-unit list
+  natively (the real `main.cpp`, the emulator's `src/` and `shim/`, LVGL 8.4,
+  Ed25519) with g++ in seconds; a driver standing in for the page (the EM_JS
+  calls as C functions, a virtual clock) walked the first-boot portal in about
+  2 s per run and evaluated the probe's own holds on dumped framebuffers and
+  bindings, catching each of nine mutations. Committed and run in the page
+  logic tests job beside `LAB_CORES=native`, it would prove the display
+  sources on every PR, stale dist or not. Until then F184's turned walk
+  (`dash@portrait`) fails on the committed dist until CI's rebuild, and its
+  reads ran only in that scratch harness.
+- [x] **A44 [code] `boot_probe.mjs`'s ready wait can be refused by the harness
   page's CSP.** It waits with a string predicate
   (`page.waitForFunction("window.__ready === true", ...)`), which Playwright
   evaluates through `eval` in the page, and harness.html's policy (`script-src
@@ -6965,6 +7935,70 @@ so — see D2 below.)
   Playwright passes without `eval`, would most likely remove it; check
   `onboard_probe.mjs` and the other probes for the same string form. Found
   while fixing F156-F160 (#1762).
+  *Done (#1762):* the premise held, and the mechanism is Playwright's:
+  `waitForFunctionExpression` (server/frames.js, read at 1.56.1) re-evaluates
+  a string predicate through `globalThis.eval` on every animation frame in the
+  page, while a function predicate is evaluated once, inside the DevTools
+  call, which the page's policy does not govern, and is then only called. So
+  the string form failed whenever `window.__ready` was still false at the
+  first poll, that is, whenever the wasm boot outlasted the page's load event.
+  `boot_probe.mjs` and `csp_probe.mjs` now wait with `() => window.__ready ===
+  true` (in `csp_probe.mjs` the harness targets had waited on the same string
+  through `t.ready`, where a refused eval would also have counted as the
+  page's own violation). Every other `waitForFunction`, and every
+  `page.evaluate`, in `canary-local/tests` already passed a function. With
+  every wasm compile delayed 2.5 s by an init script, the string form failed
+  all five flavors in both probes with that EvalError and the function form
+  passed all five; on the committed dist the fixed `boot_probe.mjs` passed
+  three runs of five flavors and `csp_probe.mjs` three runs of 31 pages (the
+  unfixed `boot_probe.mjs` also passed three local runs: the race needs a boot
+  slower than the load event). `csp.test.js` now refuses a `waitForFunction`
+  predicate it cannot follow to a function within the probe's own file: a
+  string at the call, through any parentheses; a name the file gives a string,
+  directly or through another name; a wrapper's parameter whose calls in the
+  file pass one (as in `operator_probe.mjs`'s `wait`); and, since it cannot
+  see what they hold, a name the file never writes (an import, a loop
+  variable), a parameter of an unnamed callback, a wrapper the file never
+  calls and a call it cannot cut into arguments. A second test holds the scan
+  to 24 refused and 11 accepted fixtures, and eleven mutations of the scan
+  each fail it. The rule fails on the old two probes and on the review's
+  wrapper and parenthesized-string forms, which the first version let through.
+  What it cannot follow is a value a written name gets some other way, such as
+  a ternary's arm or a call's return. Test tooling; the emulator dist does not
+  move. Found here: A45 and A46.
+- [ ] **A45 [code] Twelve probe waits pass their options as the predicate's
+  argument.** `page.waitForFunction(fn, arg, options)` takes its options
+  third, and `boardroom_probe.mjs` (lines 84, 91, 137, 153), `eyes_probe.mjs`
+  (129), `kiri_slice_probe.mjs` (80, 111) and `workshop_probe.mjs` (83, 122,
+  131, 162, 214) pass `{ timeout: N }` second, so Playwright hands the object
+  to the predicate and waits its 30 s default instead: kiri's slice wait is
+  cut from the stated 40 s to 30 s, and the others wait up to six times longer
+  than they say before failing. Moving each to `null, { timeout: N }` shortens
+  most of those waits to the stated value, which may expose real slowness on
+  CI's runners, so each value should be checked against a CI run as it moves;
+  `csp.test.js`'s `waitForFunction` scan (A44) could then hold the argument
+  order too. Found while fixing A44 (#1762).
+- [ ] **A46 [code] Twelve browser probes still turn a request URL into a
+  filesystem path.** `audio_probe.mjs`, `csp_probe.mjs`, `eyes_probe.mjs`,
+  `flash_probe.mjs`, `kiri_slice_probe.mjs`, `operator_probe.mjs`,
+  `radar_dev_probe.mjs`, `sense_probe.mjs`, `senselab_probe.mjs`,
+  `vault_probe.mjs`, `vision_probe.mjs` and `wap_probe.mjs` serve the
+  repository with resolve-then-check (`resolve(join(ROOT, rel))` and a
+  `startsWith(ROOT + sep)` test), the shape CodeQL's path-injection query
+  flagged twice on #1737; `probe_server.mjs` was written to replace it (the
+  tree indexed once, a request a Map lookup) and only `render_probe.mjs` and
+  `scene_lifecycle_probe.mjs` use it. Moving the twelve onto
+  `indexTree`/`lookup` keeps the probes loopback-only and taint-free. Found
+  while wiring A41 (#1762).
+- [ ] **A47 [code] The Lab's 3D dash shows a turned glass's canvas on its
+  landscape screen.** Since F184 the emulator's canvas turns with the glass
+  (480x800 for a portrait dash), and the Lab textures its 3D screen from that
+  canvas (`ctx.scene.src = glass` in `canary-local/assets/app.js`), so a
+  visitor who turns the dash from its on-glass Settings gets the portrait
+  canvas on the model's landscape screen, the model unturned (before F184 that
+  choice laid a portrait face out on an 800x480 canvas). Not run in the Lab
+  here. Turn the model with the glass, or keep the Lab's dash landscape. Found
+  by F184 (#1762).
 
 ---
 
