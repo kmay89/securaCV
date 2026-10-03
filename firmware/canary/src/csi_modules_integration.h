@@ -116,6 +116,16 @@ void securacv_csi_modules_tamper_watch_contact(int enclosure_open);
 void securacv_csi_modules_tick(void);
 
 /**
+ * Hand meta.daily_summary the household minute of day (0..1439), the same
+ * local wall time the chokepoint's clock offset is derived from (sweep F28).
+ * main.cpp's updateCsiClockOffset() calls it on every loop pass with a
+ * synced wall clock and never before one, so an unsynced canary commits no
+ * daily summary (sweep F121). Plain-typed, like the calls above, to keep
+ * main.cpp free of the module headers. Loop task only.
+ */
+void securacv_csi_modules_set_clock(uint16_t local_minute_of_day);
+
+/**
  * Tear down the pipeline. Optional — only needed if the host wants
  * to disable module dispatch at runtime (e.g. user toggled a feature
  * flag mid-session). Releases any per-module state; safe to call

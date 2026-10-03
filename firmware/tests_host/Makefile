@@ -809,6 +809,36 @@ $(MODBOOT_BIN): test_csi_module_boot.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile |
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
 	    test_csi_module_boot.cpp $(MODINT_SRC) -o $@
 
+# meta.daily_summary on the canary (sweep F121): main.cpp's clock feed,
+# updateCsiClockOffset() cut verbatim (cut_functions.awk) with the
+# WALL_CLOCK_FLOOR line it guards on, over the same REAL bridge, library and
+# modules. A synced day crossing 23:55 commits exactly one row, a reboot
+# after it commits no second, an unsynced clock commits none, a first clock
+# inside the window waits for the next day, and the row carries what
+# docs/csi_modules.md says. Hooked into `run` and `clean` by prerequisite so
+# it adds no hunk to their lists.
+DAILY_MAIN = ../canary/src/main.cpp
+DAILY_INC  = $(BUILD_DIR)/canary_clock_feed.inc
+DAILY_BIN  = $(BUILD_DIR)/test_csi_daily_summary
+
+$(DAILY_INC): $(DAILY_MAIN) cut_functions.awk Makefile | $(BUILD_DIR)
+	@test "$$(grep -cE '^static const time_t WALL_CLOCK_FLOOR = ' $(DAILY_MAIN))" = 1 || { \
+	  echo "main.cpp: no single WALL_CLOCK_FLOOR line for updateCsiClockOffset's guard" >&2; exit 1; }
+	@grep -nE '^static const time_t WALL_CLOCK_FLOOR = ' $(DAILY_MAIN) | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(DAILY_MAIN)"\n\2|' > $@.tmp
+	awk -v 'sigs=static void updateCsiClockOffset(' -f cut_functions.awk $(DAILY_MAIN) >> $@.tmp && mv $@.tmp $@
+
+$(DAILY_BIN): test_csi_daily_summary.cpp $(DAILY_INC) $(MODINT_SRC) $(MODINT_HDRS) \
+              ../common/time/tz_rule.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src -I ../common \
+	    -I $(BUILD_DIR) test_csi_daily_summary.cpp $(MODINT_SRC) -o $@
+
+.PHONY: run-daily-summary
+run-daily-summary: $(DAILY_BIN)
+	./$(DAILY_BIN)
+run: run-daily-summary
+
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
 

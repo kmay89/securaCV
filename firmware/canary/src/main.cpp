@@ -281,10 +281,17 @@ static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 // without a flag, and stays aligned across millis() rollover because the
 // offset and csi_event's own millis()-based consumer wrap together. Loop
 // task only — the offset is loop-owned (csi_event.h).
+//
+// The same household minute of day feeds meta.daily_summary, whose 23:55
+// row needs it (sweep F121). Both callers pass a synced clock; the guard
+// says so here too, so an unsynced clock feeds neither: no offset, and no
+// daily summary, rather than one at boot + 23 h 55 min.
 static void updateCsiClockOffset(time_t wall_now) {
+  if (wall_now < WALL_CLOCK_FLOOR) return;  // unsynced: feed nothing
   const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
   const int32_t mono_min = (int32_t)(millis() / 60000UL);
   csi_event_set_clock_offset_minutes(wall_min - mono_min);
+  securacv_csi_modules_set_clock((uint16_t)wall_min);
 }
 
 static void syncClockFromGps() {
