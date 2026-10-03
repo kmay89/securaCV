@@ -2,6 +2,185 @@
 
 ## [Unreleased]
 
+### canary-wap's Bluetooth keeps the owner's commands through its bring-up and fits its bond store, Chirp refuses a mute it cannot keep and every REST answer fits its buffer, the PIO alert list reads whole and the kernel wizard frees a Canary it leaves pairing, the daily summary emits, the Vision's box math cannot overflow, the Lab's probes serve an index on loopback, the emulator builds the nightlight, and the LVGL 9.5 dash turns what it draws (#1762, wave 14)
+
+- **canary-wap Bluetooth: pairing mode reads pairing, the bring-up keeps the
+  owner's commands and hands its result to the loop task, the paired list fits
+  the bond store, and every REST answer goes out at its own length (sweep
+  F190, F167, F189, F196).** Pairing mode started with advertising stopped now
+  reads `pairing` in GET /api/bluetooth. The saved Bluetooth settings and
+  paired list are loaded by the loop task at its first pass, so a setting
+  changed before or during the BLE bring-up (about 21 s on a device) is kept:
+  it could come back undone, or save the defaults over the stored settings.
+  `init()`, which runs on the bring-up worker or an HTTP handler's task, now
+  fills a hand-over the loop task takes, so none of the loop task's state is
+  written from another task (tested under ThreadSanitizer, which also found
+  and fixed a battery-level race). Advertising waits until the bring-up worker
+  has registered its GATT services; Remove and Clear all answer `Bluetooth is
+  not up yet` before the stack is up; a device saved with Bluetooth off reads
+  `disabled` after the bring-up. A new phone that finds NimBLE's 3-bond store
+  full is refused (health log `BLE pairing refused: the bond store is full`)
+  instead of evicting the oldest bond; a full subscription (CCCD) store no
+  longer evicts another phone's bond; a phone is listed only when the store
+  kept its bond; and listed entries without a bond are dropped at boot. The
+  store sizes stay as they are, filed for a decision (F207, F208). Every
+  Bluetooth REST answer is serialized at its measured length. **Host-tested**
+  over a NimBLE stand-in (70 tests) and held by `check_wap_loop_commands.py`
+  rules BV4 to BV7; the Arduino and PlatformIO compiles are CI's; nothing is
+  bench-tested with a phone.
+- **canary-wap Chirp: a mute needs a channel that is on, the beacon says
+  listening through a cooldown, and REST answers fit their buffers (sweep
+  F192, F194, F196).** A mute or an unmute on a Chirp channel that is off is
+  refused (`409 chirp_disabled`, shown under the Community Activity list): it
+  turned the channel on with no session, and a later enable answered an empty
+  emoji. A disable now ends a running mute. The presence beacon's `listening`
+  is the mute alone, so a device in its send cooldown no longer tells its
+  neighbors it is deaf. `GET /api/chirp/nearby` (32 neighbors with escaped
+  emoji) and `/recent` (a full list, about 4.8 KB) outgrew their buffers and
+  went out cut and unterminated, with the memory after them. They,
+  `/templates` and `GET /api/rf/status` now serialize to `measureJson()`'s
+  length. The new `check_wap_json_answers.py` measures every fixed REST answer
+  buffer left in the canary-wap's `*_api.h` files and `canary_wap.ino` against
+  its longest answer: 86 `serializeJson()` calls in 11 files,
+  `bluetooth_api.h` included, and 29 mutations refused. With the Bluetooth
+  rules above, `check_wap_loop_commands.py` now refuses 318 mutations.
+  **Host-tested** and statically checked, the handlers' JSON in a scratch
+  ArduinoJson 7.4.1 harness; the compiles are CI's; not bench-tested.
+- **The PlatformIO Canary's alert list reads whole, its dashboard asks only
+  for routes the firmware serves, and the kernel's pairing wizard frees a
+  Canary it leaves pairing (sweep F197, F198, F200).** `GET /api/mesh/alerts`
+  now copies an alert history the main loop changes under its lock, so a body
+  never holds an alert half overwritten by a newer one or straddles a clear;
+  it is still newest first and every field is unchanged. The PlatformIO
+  dashboard's Bluetooth tab, whose routes nothing in that firmware serves,
+  stays hidden until one answers, as the Community tab does (both ask again
+  when you unlock with a token). The Wi-Fi card reads `/api/wifi/status`,
+  which the firmware serves, instead of a `/api/wifi` that answered 404 every
+  five seconds, and polls it only while Settings is open; Forget Network uses
+  the route that clears the saved network; and the Rotate Old Logs button,
+  which nothing served, is gone. The Home Assistant add-on's "Add another
+  Canary" wizard now also cancels a Canary still running its pairing after a
+  rejected confirmation, a confirm lost on the network or five unreadable
+  polls, so the retry is not refused for five minutes. It leaves alone a
+  Canary finishing a pairing whose confirm answer was lost, never touches a
+  pairing started after you pressed Cancel, and its retry gets a working
+  confirm button. Host-tested (the mesh C++ suites, a two-thread run whose
+  local ThreadSanitizer build is clean, node page tests, a static check now at
+  57 self-test mutations that also holds the locks); the `[env:full]` compile
+  is CI's; not bench-tested.
+- **The daily summary emits, and a canary-wap's first boot logs no `securacv`
+  NVS error (sweep F121, F201).** Both trees now hand `meta.daily_summary` the
+  household minute of day and its local date from the loop pass that keeps the
+  CSI clock offset, once GPS has synced the clock, so one `daily_summary` row
+  commits per local date at 23:55: none from an unsynced clock; no second
+  after a reboot inside the window, or after a DST fall-back or westward zone
+  change that passes 23:55 again; and no date's row lost to a night without
+  CSI windows, a DST change at midnight, an eastward zone change or a clock
+  step. `docs/csi_modules.md` now says what the row carries (counts of
+  committed ring rows, in a note no published surface carries), not active
+  minutes; what it should report is filed (F219). On the canary-wap, the setup
+  wizard's read, the key read and the battery-history read of `securacv` ask
+  IDF first, so a first boot after an NVS erase logs no `nvs_open failed:
+  NOT_FOUND` for it on a debug build; the `beacon` namespace is never opened
+  while the Beacon runtime is unwired (F31). Host-tested; the ESP32 compiles
+  are CI's; not bench-tested.
+- **canary-vision: a dweller gone on the frame its dwell starts still reports
+  `dwell_then_left`, the detection core does its box arithmetic in 64 bits,
+  and the discovery fit test formats the table-driven announcements (sweep
+  F202, A42, F203).** The presence FSM latched a dwell for the leave only on a
+  sighted frame after it started, so a person last seen on the frame that sent
+  `dwell_started` left a stay that had dwelled reporting
+  `zone_interaction_then_left`, or no `interaction_likely` at all when their
+  settled cell kept moving. The lingering alert and the litter-box
+  visit-completed recipe page on that event. The dwell is now latched where it
+  starts. The detection pipeline that the ESP32 build and the Lab's
+  WebAssembly core share took a box's center, cell and area in `int` and
+  `long`. A box near the int range's ends, which the Lab's sandbox can send,
+  overflowed them, and the Lab's wasm32 core and a host build came out
+  differently: a box two billion pixels wide read proximity unknown in the Lab
+  and near on a host build. The device's uint16 boxes could reach only the
+  area overflows, and a 240x240 model does not return a box that large. The
+  pipeline now takes them in `int64_t`, and no in-range box reads differently.
+  An exact-arithmetic host test (also run under UBSan) holds the sources, and
+  a `vision.test.js` test holds the wasm32 dist CI runs, the only CI gate that
+  sees the 32-bit `long` half. The Home Assistant discovery test now formats
+  the Vision's and the Sense's number entities and the Vision's watch profile
+  select from their tables, and holds each to its buffer for the longest
+  device id; all fit. The Lab's Vision core changes, so the emulator dist
+  moves (`canary-vision-core` only): CI's pinned emsdk rebuilds it in this PR,
+  and until then `vision.test.js`'s two new core tests fail on the committed
+  dist (32 of 34) and pass with `LAB_CORES=native` (34 of 34). The rebuilt
+  dist was not run here. Host-tested; firmware compile-tested by CI; not
+  bench-tested.
+- **The Lab's browser probes wait as long as they say, and serve only from an
+  index built before their server starts, on loopback (sweep A45, A46).**
+  Twelve `waitForFunction` waits in the Board Room, eyes, Kiri and workshop
+  probes handed `{ timeout }` to the predicate instead of to Playwright, which
+  then waited its own 30 s (Kiri's stated 40 s slice wait was cut to 30 s; the
+  others failed up to six times later than they said); each now passes its
+  options third, and `csp.test.js` refuses a wait whose options Playwright
+  would not read. Twelve probes turned each request URL into a filesystem
+  path, the shape CodeQL flagged on #1737, and listened on all interfaces,
+  serving the whole working tree, `.git` included, to the network while they
+  ran; five allowlist probes (bench, Board Room, workshop, boot, onboard) also
+  listened on all interfaces, exposing the directories on their lists. The
+  twelve now answer from `probe_server.mjs`'s index of the tree, and they and
+  the bench, Board Room and workshop probes bind 127.0.0.1. The new
+  `probe_server.test.js` holds every probe server to an answer from an index
+  or allowlist built before it starts and to loopback; the boot and onboard
+  probes, owned elsewhere this wave, still bind every interface and are
+  excused from that one rule by name (filed, A51). Test tooling only, run
+  locally in Chromium (the core probes on the dist and natively); the emulator
+  dist does not move.
+- **The emulator builds the nightlight and walks its landscape glass, the
+  turned glasses' splash is read in a browser, and the Lab's 3D dash turns
+  with its glass (sweep F204 in part, F206, A47; the rest of F184).**
+  `canary-local/emulator/build.sh nightlight` builds the Canary Nightlight's
+  firmware on its 180x320 panel; its glass turns in hardware, as on the board,
+  and a saved landscape turn is staged in its own settings before power-on.
+  The onboarding probe walks the 320x180 landscape nightlight beside the
+  portrait dash, with the QR card's rounded corners held inside the halo's
+  ring, and on both turned glasses reads the first-meeting splash from
+  power-on on a half-speed clock: every line on the glass and none cut, the
+  bird clear of the lines, the bird and every line seen whole, and each line
+  drawn on the canvas where the firmware says it is. `boot_probe.mjs` boots
+  each turned glass too, and fails one whose face shows no bird. In the Lab, a
+  dash whose glass is turned portrait now stands its case upright and face-on,
+  out of its desk stand (the stand is cut for the landscape case), with the
+  glass reading upright instead of squeezed onto the landscape screen.
+  `emulator/test/glass_turn.sh` holds the nightlight's hardware turn natively,
+  pixel for pixel, and the dist drift check now names a flavor's bundle the
+  committed dist lacks. The emulator dist moves: a new
+  `canary-display-nightlight` bundle, which no emsdk has built yet. CI's
+  pinned emsdk builds it in this PR, and the nightlight manifest's `emulator`
+  claim follows it; until then the wasm job's drift check is red by design,
+  and F204 and F184 stay open. The nightlight was not run in a browser here.
+  The five existing bundles most likely do not move, but the rebuild decides.
+  Host-tested, run in local Chromium on the committed dist (the portrait dash)
+  and in a native full boot outside CI (the nightlight); not bench-tested.
+- **A dash, dash7 or nightstand7 turned to portrait or to landscape, flipped
+  draws its face turned, and a tap lands where the face is drawn (sweep
+  F205).** The dash family builds against LVGL 9.5, whose rotation turns
+  nothing it renders. A portrait glass drew the top 480 rows of its 480x800
+  face unturned into the panel's left 480 columns and lost the rest. A flipped
+  landscape glass drew its face upright while its taps were turned a half
+  turn. `lvgl_port.cpp`'s flush now turns each area into the panel's native
+  framebuffer (LVGL's `lv_display_rotate_area` and `lv_draw_sw_rotate`)
+  through a turn buffer that costs 128,000 B more PSRAM. Only a glass whose
+  draw buffer already fell back to internal RAM puts the turn buffer there too
+  (25,600 B); a glass that cannot allocate it stays landscape and logs why.
+  The touch map now inverts the turn both LVGL majors draw; it had assumed the
+  opposite quarter turn at both portraits. Portrait puts the face's top along
+  the panel's native left edge (the panel turned a quarter clockwise).
+  `test_lvgl_port_turn` runs the real port against LVGL 9.5's quoted rotation
+  code and holds every pixel and every tap at all four turns, and which heap
+  each buffer comes from. `test_display_settings` holds the touch map against
+  both majors' arithmetic. The emulator dist does not move. **Host-tested**,
+  and run natively against LVGL 9.5.0 outside CI; no CI job runs the real LVGL
+  9.5 renderer (F225). The ESP32 builds are CI's. Not bench-tested: no turned
+  glass has shown a face, and neither the touch axes nor what the turn costs
+  on an S3 has been checked (F224).
+
 ### canary-wap's FULL builds wait for the owner's Bluetooth confirm and Remove forgets the phone, Chirp's cooldown is a timer and a refused confirm says why, the PIO mesh status reads one pass and the kernel wizard reads each pairing's outcome, the canary's diagnostics carry its egress counters and the WAP reports the presence thresholds it runs, the Vision keeps one dwell per stay, the Lab's probes run on the sources, and the emulator walks a turned dash (#1762, wave 13)
 
 - **canary-wap Bluetooth: a FULL build now waits for the owner's confirm
@@ -80,10 +259,10 @@
   ACTIVE, which a PlatformIO Canary does not read until it hears a member: it
   says a finished pairing finished and a failed one failed, on which Canary
   and why, cancels a Canary still running the pairing when the other fails or
-  the wait times out (so the retry is not refused for five minutes; not yet
-  after a rejected confirmation, a confirm lost on the network or five
-  unreadable polls, F200), and still reads older Canaries and canary-wap the
-  old way. The PlatformIO dashboard's Community tab, whose
+  the wait times out (so the retry is not refused for five minutes; after a
+  rejected confirmation, a confirm lost on the network or five unreadable
+  polls it did not until wave 14, F200), and still reads older Canaries and
+  canary-wap the old way. The PlatformIO dashboard's Community tab, whose
   Chirp routes nothing in that firmware serves, stays hidden until one
   answers. Host-tested (the mesh C++ suites, a two-thread run clean under
   ThreadSanitizer, node page tests, a static check with 25 self-test
