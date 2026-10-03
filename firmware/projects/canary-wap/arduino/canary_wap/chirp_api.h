@@ -40,6 +40,9 @@
  * cooldown) is rounded up by chirp_channel::seconds_left(), so a cooldown
  * that still runs never reads 0 s, and it is the cooldown's timer, which a
  * mute no longer ends.
+ *
+ * Sweep F192: a mute or an unmute on a channel that is off is refused by
+ * name, 409 chirp_disabled (send_mute_answer).
  */
 
 #ifndef SECURACV_CHIRP_API_H
@@ -132,6 +135,29 @@ inline esp_err_t send_dismiss_answer(httpd_req_t* req, const chirp_channel::Resu
     }
   }
   char buffer[256];
+  serializeJson(doc, buffer);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_sendstr(req, buffer);
+}
+
+// A mute or an unmute the loop task ran (POST /api/chirp/mute, /unmute): a
+// refusal by name, from the Result the loop task read: the channel off (409
+// chirp_disabled, sweep F192: a mute there turned the channel on with no
+// session, and an unmute answered success for nothing), or a mute's duration
+// the channel does not offer (invalid_duration, the 200 it always had; the
+// statuses are sweep F195's decision). http_status_line() has no 200, so a
+// 200 refusal sets no status line.
+inline esp_err_t send_mute_answer(httpd_req_t* req, const chirp_channel::Result& r) {
+  JsonDocument doc;
+  doc["success"] = r.ok;
+  if (!r.ok) {
+    const int status = chirp_channel::mute_refusal_status(r.mute_refusal);
+    if (status != 200) httpd_resp_set_status(req, http_status_line(status));
+    doc["error"] = chirp_channel::mute_refusal_error(r.mute_refusal);
+    doc["message"] = chirp_channel::mute_refusal_message(r.mute_refusal);
+  }
+  char buffer[160];
   serializeJson(doc, buffer);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -632,41 +658,17 @@ inline esp_err_t handle_chirp_mute(httpd_req_t* req) {
   chirp_channel::Result r;
   const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
   if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
-  bool success = r.ok;
-
-  JsonDocument doc;
-  doc["success"] = success;
-  if (!success) {
-    doc["error"] = "invalid_duration";
-    doc["message"] = "Duration must be 15, 30, 60, or 120 minutes";
-  }
-
-  // 101 bytes refused: a 64-byte buffer was filled without a terminator and
-  // the stack after it went out too (rule CV10, sweep F174).
-  char buffer[160];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_mute_answer(req, r);
 }
 
-// POST /api/chirp/unmute - Unmute chirps
+// POST /api/chirp/unmute - Unmute chirps (refused on a channel that is off,
+// sweep F192)
 inline esp_err_t handle_chirp_unmute(httpd_req_t* req) {
   chirp_channel::Result r;
   const loop_command_ring::Wait w = chirp_channel::submit(
       chirp_channel::make_command(chirp_channel::CHIRP_CMD_UNMUTE), &r);
   if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
-
-  JsonDocument doc;
-  doc["success"] = true;
-
-  char buffer[64];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_mute_answer(req, r);
 }
 
 // POST /api/chirp/settings - Update chirp settings

@@ -1301,12 +1301,54 @@ inline const char* vote_unsent_message(ConfirmRefusal why) {
   return "Dismissed on this device only: the suppress vote could not be signed";
 }
 
+// Why a CHIRP_CMD_MUTE or CHIRP_CMD_UNMUTE did not run: the channel is off
+// (checked first, as for a send or a confirm), or a mute's duration is not
+// one the channel offers. A mute on a channel that was off turned it on
+// with no session: is_enabled() read true, the status route read "muted"
+// and then "active" with an empty emoji, the passes ran with an all-zero
+// session id, and a later enable answered success with an empty emoji,
+// since enable() starts a session only from CHIRP_DISABLED (sweep F192).
+// There is nothing to mute or unmute on a channel that is off, and a
+// disable ends a running mute, so neither command finds one there.
+enum MuteRefusal : uint8_t {
+  MUTE_REFUSED_NONE = 0,
+  MUTE_REFUSED_DISABLED,
+  MUTE_REFUSED_DURATION,   // MUTE only: not 15, 30, 60 or 120 minutes
+};
+
+// POST /api/chirp/mute's and /unmute's answer to a refusal: its "error",
+// "message" and HTTP status. The channel off is 409, as a confirm's is (the
+// request is sound, the channel's state refuses it); a duration the channel
+// does not offer keeps the 200 it has always answered (whether every Chirp
+// refusal carries a status is sweep F195's decision). Never 403: the
+// dashboard reads a 403 as a bad token.
+inline const char* mute_refusal_error(MuteRefusal why) {
+  switch (why) {
+    case MUTE_REFUSED_DISABLED: return "chirp_disabled";
+    case MUTE_REFUSED_DURATION: return "invalid_duration";
+    case MUTE_REFUSED_NONE:     break;
+  }
+  return nullptr;
+}
+inline const char* mute_refusal_message(MuteRefusal why) {
+  switch (why) {
+    case MUTE_REFUSED_DISABLED: return "Chirp channel is not enabled";
+    case MUTE_REFUSED_DURATION: return "Duration must be 15, 30, 60, or 120 minutes";
+    case MUTE_REFUSED_NONE:     break;
+  }
+  return nullptr;
+}
+inline int mute_refusal_status(MuteRefusal why) {
+  return why == MUTE_REFUSED_DISABLED ? 409 : 200;
+}
+
 // What a command did, as the loop task saw it right after the command ran.
 struct Result {
-  bool         ok;                     // the command's own answer (DISABLE, UNMUTE, SETTINGS: true)
+  bool         ok;                     // the command's own answer (DISABLE, SETTINGS: true)
   SendRefusal  refusal;                // SEND that failed: why
   ConfirmRefusal confirm_refusal;      // CONFIRM that failed: why; DISMISS: NOT_FOUND, or why
                                        // its suppress vote did not go out (sweep F174)
+  MuteRefusal  mute_refusal;           // MUTE or UNMUTE that failed: why (sweep F192)
   bool         vote_sent;              // DISMISS: its signed suppress vote went out
   uint8_t      cooldown_tier;          // SEND: get_cooldown_tier() after the attempt
   uint32_t     cooldown_remaining_ms;  // SEND refused for the cooldown (> 0 whenever it is)

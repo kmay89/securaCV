@@ -288,7 +288,18 @@ CV11. The dashboard shows what the routes now say (`web_ui.h`): the Chirp
      card takes Send's state from `WebUiLogic.chirpSendGate()` (Send off for
      any `can_send` that is not true, F178), and a confirm or a dismiss puts
      `WebUiLogic.chirpActionNote()` of its answer under the list (F174);
-     `web_ui_logic.test.js` tests both functions.
+     `web_ui_logic.test.js` tests both functions. A mute or an unmute puts it
+     there too (F192; `web_ui_logic.test.js` runs both buttons' glue).
+CV12. A refused mute or unmute says why (F192). `send_mute_answer()` is
+     exactly `CHIRP_MUTE_ANSWER`: the status (409 for the channel off; a
+     duration the channel lacks keeps its 200, F195's decision, and sets no
+     status line, which `http_status_line()` has none for), `error` and
+     `message` from `mute_refusal_status()`, `mute_refusal_error()` and
+     `mute_refusal_message()` (host-tested), all from the `Result`. The mute
+     and unmute routes answer through it right after the not-run guard. A
+     mute on a channel that was off turned it on with no session, and the
+     unmute answered success for nothing (`test_chirp_commands_wap.cpp`'s
+     `a_mute_needs_a_channel_that_is_on`).
 
 MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
@@ -1152,6 +1163,7 @@ NOT_RUN_GUARD = "if(w!=loop_command_ring::Wait::kDone)returnsend_not_run(req,w);
 
 SIG_CHANNEL_SUBMIT = r"\bloop_command_ring::Wait\s+submit\s*\([^)]*\)"
 SIG_SEND_NOT_RUN = r"\besp_err_t\s+send_not_run\s*\([^)]*\)"
+SIG_MUTE_ANSWER = r"\binline\s+esp_err_t\s+send_mute_answer\s*\([^)]*\)"
 SIG_BRING_UP = r"\binline\s+bool\s+bring_up\s*\(\s*\)"
 SIG_BT_BRINGUP_TASK = r"\bstatic\s+void\s+ble_bringup_task\s*\([^)]*\)"
 SIG_BT_ENABLE = r"\bstatic\s+bool\s+enable\s*\(\s*\)"
@@ -1607,6 +1619,21 @@ CHIRP_ANSWERED_BY = {
     "handle_chirp_ack": "if(cmd.type==chirp_channel::CHIRP_CMD_CONFIRM)returnsend_confirm_answer(req,r);"
                         "returnsend_dismiss_answer(req,r);}",
 }
+# Rule CV12 (F192): how a mute and an unmute answer once their command ran,
+# and where the two routes answer through it.
+CHIRP_MUTE_ANSWER = (
+    'JsonDocumentdoc;doc["success"]=r.ok;if(!r.ok){'
+    "constintstatus=chirp_channel::mute_refusal_status(r.mute_refusal);"
+    "if(status!=200)httpd_resp_set_status(req,http_status_line(status));"
+    'doc["error"]=chirp_channel::mute_refusal_error(r.mute_refusal);'
+    'doc["message"]=chirp_channel::mute_refusal_message(r.mute_refusal);}'
+    'charbuffer[160];serializeJson(doc,buffer);httpd_resp_set_type(req,"application/json");'
+    'httpd_resp_set_hdr(req,"Access-Control-Allow-Origin","*");returnhttpd_resp_sendstr(req,buffer);'
+)
+CHIRP_MUTE_ANSWERED_BY = {
+    "handle_chirp_mute": "returnsend_mute_answer(req,r);",
+    "handle_chirp_unmute": "returnsend_mute_answer(req,r);",
+}
 # Rule CV10 (F174): the least a buffer that holds an answer with a message
 # may be. The mute route's refusal is 101 bytes, the send not-run answer's
 # 97; the confirm and dismiss answers (a dismiss whose vote waits for the
@@ -1619,6 +1646,10 @@ CHIRP_DASHBOARD_GLUE = {
     "confirmChirp": ("constdata=awaitapi('/api/chirp/confirm','POST',{nonce});",
                      "document.getElementById('chirpActionNote').textContent=WebUiLogic.chirpActionNote(data);"),
     "dismissChirp": ("constdata=awaitapi('/api/chirp/dismiss','POST',{nonce});",
+                     "document.getElementById('chirpActionNote').textContent=WebUiLogic.chirpActionNote(data);"),
+    "muteChirps": ("constdata=awaitapi('/api/chirp/mute','POST',{duration_minutes:mins});",
+                   "document.getElementById('chirpActionNote').textContent=WebUiLogic.chirpActionNote(data);"),
+    "unmuteChirps": ("constdata=awaitapi('/api/chirp/unmute','POST');",
                      "document.getElementById('chirpActionNote').textContent=WebUiLogic.chirpActionNote(data);"),
 }
 # Rule CV7: what each GET key is set from (squashed right-hand sides), once.
@@ -1773,7 +1804,8 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
                 if squash(body).count(need) != 1:
                     errors.append(f"{SKETCH}/web_ui.h: {fn}() must run `{need}` once — the Chirp card's Send "
                                   "follows chirpSendGate() (off for any can_send that is not true, F178), and "
-                                  "a confirm or a dismiss shows chirpActionNote() of its answer (F174)")
+                                  "a confirm, a dismiss (F174), a mute or an unmute (F192) shows "
+                                  "chirpActionNote() of its answer")
     # CV3, CV4, CV5: chirp_channel.cpp.
     code = blank_comments_and_strings(files[CHIRP_CPP])
     spans = named_bodies(code)
@@ -1874,10 +1906,29 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
 
 
 def check_chirp_confirm_answers(api_src: str, errors: list[str]) -> None:
-    """Rules CV9, CV10: a refused confirm says why, a dismiss whether its vote
-    went out, and no answer with a message outgrows its buffer (F174)."""
+    """Rules CV9, CV10, CV12: a refused confirm says why, a dismiss whether its
+    vote went out, no answer with a message outgrows its buffer (F174), and a
+    refused mute or unmute says why (F192)."""
     code = blank_comments_and_strings(api_src)
     kept = blank_comments_only(api_src)
+    span = the_body(code, r"\binline\s+esp_err_t\s+send_mute_answer"
+                    r"\s*\(\s*httpd_req_t\s*\*\s*req\s*,\s*const\s+chirp_channel::Result\s*&\s*r\s*\)",
+                    f"{CHIRP_API}: send_mute_answer(httpd_req_t* req, const chirp_channel::Result& r)", errors)
+    if span is not None and squash(kept[span[0]:span[1]]) != CHIRP_MUTE_ANSWER:
+        errors.append(f"{CHIRP_API}: send_mute_answer() must answer exactly as rule CV12 says — a refusal's "
+                      "status (409 the channel off), error and message from the host-tested lookups of "
+                      "r.mute_refusal (F192: a mute on a channel that was off turned it on with no session)")
+    for h, tail in CHIRP_MUTE_ANSWERED_BY.items():
+        span = the_body(code, r"\besp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                        f"{CHIRP_API}: {h}()", errors)
+        if span is None:
+            continue
+        body = squash(code[span[0]:span[1]])
+        at = body.find(NOT_RUN_GUARD)
+        if at < 0 or body[at + len(NOT_RUN_GUARD):] != tail or body.count("send_mute_answer(") != 1:
+            errors.append(f"{CHIRP_API}: {h}() must answer right after its not-run guard with `{tail}` — "
+                          "the refusal by name and status from the Result (F192: the mute answered every "
+                          "refusal invalid_duration, the unmute success whatever happened)")
     for fn, want in CHIRP_ANSWERS.items():
         span = the_body(code, r"\binline\s+esp_err_t\s+" + fn +
                         r"\s*\(\s*httpd_req_t\s*\*\s*req\s*,\s*const\s+chirp_channel::Result\s*&\s*r\s*\)",
@@ -2827,7 +2878,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("mesh_network.h declares chirp_channel::mute again",
      raw("mesh_h", "bool is_muted();", "bool mute(uint8_t duration_minutes);\nbool is_muted();")),
     ("chirp_channel.cpp defines unmute without static",
-     raw_other(CHIRP_CPP, "static void unmute() {\n", "void unmute() {\n")),
+     raw_other(CHIRP_CPP, "static bool unmute(MuteRefusal* why) {\n", "bool unmute(MuteRefusal* why) {\n")),
     ("chirp_channel's update() drains after its disabled return",
      lambda s: on_other(CHIRP_CPP, SIG_UPDATE, r"\n[ \t]*g_commands\.drain\(run_command\);", "")(
          on_other(CHIRP_CPP, SIG_UPDATE, r"(uint32_t\s+now\s*=\s*millis\(\);)",
@@ -3022,7 +3073,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("chirp read_nearby() reads nothing published",
      on_other(CHIRP_CPP, CHIRP_READER_SIGS["read_nearby"], r"if\s*\(!g_nearby_view\.read\(out\)\)\s*", "")),
     ("chirp unmute() publishes a status of its own",
-     on_other(CHIRP_CPP, r"\bstatic\s+void\s+unmute\s*\(\s*\)", r"(g_muted\s*=\s*false;)",
+     on_other(CHIRP_CPP, r"\bstatic\s+bool\s+unmute\s*\([^)]*\)", r"(g_muted\s*=\s*false;)",
               r"\1 { StatusView z; memset(&z, 0, sizeof z); (void)g_status_view.publish(z); }")),
     ("chirp update() clears the tables' flag before it publishes them",
      on_other(CHIRP_CPP, SIG_UPDATE, r"(g_commands\.drain\(run_command\);)", r"\1 g_tables_changed = false;")),
@@ -3143,7 +3194,32 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_API, r"\binline\s+esp_err_t\s+send_confirm_answer\s*\([^)]*\)",
               r"char\s+buffer\[256\];", "char buffer[64];")),
     ("the mute route answers its refusal from a 64-byte buffer again",
-     on_other(CHIRP_API, api_handler("handle_chirp_mute"), r"char\s+buffer\[160\];", "char buffer[64];")),
+     on_other(CHIRP_API, SIG_MUTE_ANSWER, r"char\s+buffer\[160\];", "char buffer[64];")),
+    # Rule CV12: a refused mute or unmute says why (F192).
+    ("the mute answer names every refusal invalid_duration again",
+     on_other(CHIRP_API, SIG_MUTE_ANSWER,
+              r"doc\[\"error\"\]\s*=\s*chirp_channel::mute_refusal_error\(r\.mute_refusal\);",
+              'doc["error"] = "invalid_duration";')),
+    ("the mute answer drops its status (the channel off a 200)",
+     on_other(CHIRP_API, SIG_MUTE_ANSWER,
+              r"if\s*\(status\s*!=\s*200\)\s*httpd_resp_set_status\(req,\s*http_status_line\(status\)\);", "")),
+    ("the mute answer sets a status line for a 200 (http_status_line() sends it as 400)",
+     on_other(CHIRP_API, SIG_MUTE_ANSWER, r"if\s*\(status\s*!=\s*200\)\s*", "")),
+    ("the unmute route answers success whatever happened again",
+     on_other(CHIRP_API, api_handler("handle_chirp_unmute"), r"return\s+send_mute_answer\(req,\s*r\);",
+              'JsonDocument doc; doc["success"] = true; char buffer[64]; serializeJson(doc, buffer); '
+              "return httpd_resp_sendstr(req, buffer);")),
+    ("the mute route answers through the confirm answer",
+     on_other(CHIRP_API, api_handler("handle_chirp_mute"), r"return\s+send_mute_answer\(req,\s*r\);",
+              "return send_confirm_answer(req, r);")),
+    ("the dashboard's mute drops its answer again",
+     raw_other(f"{SKETCH}/web_ui.h", "const data = await api('/api/chirp/mute', 'POST', { duration_minutes: mins });",
+               "await api('/api/chirp/mute', 'POST', { duration_minutes: mins }); const data = {};")),
+    ("the dashboard's unmute shows nothing of its answer",
+     raw_other(f"{SKETCH}/web_ui.h",
+               "const data = await api('/api/chirp/unmute', 'POST');\n"
+               "      document.getElementById('chirpActionNote').textContent = WebUiLogic.chirpActionNote(data);\n",
+               "const data = await api('/api/chirp/unmute', 'POST');\n")),
     # Rule CV8: the send cooldown is a timer (F178).
     ("a send stores the cooldown as the state again (a mute overwrites it)",
      on_other(CHIRP_CPP, r"\bstatic\s+bool\s+send_chirp\s*\([^)]*\)", r"(cache_nonce\(hdr->nonce\);)",

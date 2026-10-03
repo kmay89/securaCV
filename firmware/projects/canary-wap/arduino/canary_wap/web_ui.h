@@ -2722,10 +2722,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
         return { text: 'Ready', sendDisabled: false, presenceHint: false };
       }
-      // What the Chirp list says after a confirm or a dismiss (sweep F174):
-      // a refused confirm (or a dismiss of a chirp that is gone) says why,
-      // in the device's words, and a dismiss whose signed suppress vote did
-      // not go out says the chirp is hidden on this device only. Both said
+      // What the Chirp list says after a confirm or a dismiss (sweep F174),
+      // a mute or an unmute (sweep F192): a refused one (a dismiss of a
+      // chirp that is gone, a mute on a channel that is off) says why, in
+      // the device's words, and a dismiss whose signed suppress vote did not
+      // go out says the chirp is hidden on this device only. They said
       // nothing: a refused confirm looked like it had worked. '' otherwise.
       function chirpActionNote(data) {
         if (!data || typeof data !== 'object') return '';
@@ -4231,8 +4232,18 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('chirpActionNote').textContent = WebUiLogic.chirpActionNote(data);
       loadChirps();
     }
-    async function muteChirps(mins) { await api('/api/chirp/mute', 'POST', { duration_minutes: mins }); refreshChirpStatus(); }
-    async function unmuteChirps() { await api('/api/chirp/unmute', 'POST'); refreshChirpStatus(); }
+    // A refused mute or unmute says why under the list (sweep F192: the
+    // channel off is 409 chirp_disabled; both answers were thrown away).
+    async function muteChirps(mins) {
+      const data = await api('/api/chirp/mute', 'POST', { duration_minutes: mins });
+      document.getElementById('chirpActionNote').textContent = WebUiLogic.chirpActionNote(data);
+      refreshChirpStatus();
+    }
+    async function unmuteChirps() {
+      const data = await api('/api/chirp/unmute', 'POST');
+      document.getElementById('chirpActionNote').textContent = WebUiLogic.chirpActionNote(data);
+      refreshChirpStatus();
+    }
     async function updateChirpSettings() { await api('/api/chirp/settings', 'POST', { relay_enabled: document.getElementById('chirpRelayEnabled').checked }); }
 
     // ══════════════════════════════════════════════════════════════════

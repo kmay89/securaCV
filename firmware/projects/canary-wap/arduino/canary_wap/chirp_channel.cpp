@@ -338,8 +338,8 @@ static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
                        SendRefusal* why, uint32_t* cooldown_left);
 static bool confirm_chirp(const uint8_t* nonce, ConfirmRefusal* why);
 static bool dismiss_chirp(const uint8_t* nonce, bool* vote_sent, ConfirmRefusal* vote_refusal);
-static bool mute(uint8_t duration_minutes);
-static void unmute();
+static bool mute(uint8_t duration_minutes, MuteRefusal* why);
+static bool unmute(MuteRefusal* why);
 static void set_relay_enabled(bool enabled);
 static void set_urgency_filter(ChirpUrgency min_urgency);
 
@@ -1353,6 +1353,11 @@ static void disable() {
   memset(&g_session, 0, sizeof(g_session));
   g_nearby_count = 0;
   g_recent_chirp_count = 0;
+  // A mute is the running channel's: it ends with it. It outlived a disable,
+  // so the next enable's new session read "active" while every chirp was
+  // still dropped and the status said muted (sweep F192).
+  g_muted = false;
+  g_mute_until_ms = 0;
   set_state(CHIRP_DISABLED);
 }
 
@@ -1399,11 +1404,12 @@ static Result run_command(const Command& cmd) {
       r.ok = dismiss_chirp(cmd.nonce, &r.vote_sent, &r.confirm_refusal);
       break;
     case CHIRP_CMD_MUTE:
-      r.ok = mute(cmd.duration_minutes);
+      // Refused by name on a channel that is off (sweep F192: it turned the
+      // channel on with no session) or for a duration the channel lacks.
+      r.ok = mute(cmd.duration_minutes, &r.mute_refusal);
       break;
     case CHIRP_CMD_UNMUTE:
-      unmute();
-      r.ok = true;
+      r.ok = unmute(&r.mute_refusal);
       break;
     case CHIRP_CMD_SETTINGS:
       if (cmd.set_relay) set_relay_enabled(cmd.relay_enabled);
@@ -1808,9 +1814,21 @@ const NearbyDevice* get_nearby_devices(size_t* count) {
   return g_nearby_devices;
 }
 
-static bool mute(uint8_t duration_minutes) {
+// `why` (when given) names a refusal: the channel off, checked first, then
+// a duration the channel does not offer. A mute set CHIRP_MUTED whatever
+// the state, so on a channel that was off it turned the channel on with no
+// session, and broadcast its mute frame under the all-zero session id
+// (sweep F192).
+static bool mute(uint8_t duration_minutes, MuteRefusal* why) {
+  if (g_state == CHIRP_DISABLED) {
+    if (why != nullptr) *why = MUTE_REFUSED_DISABLED;
+    return false;
+  }
   if (duration_minutes != 15 && duration_minutes != 30 &&
-      duration_minutes != 60 && duration_minutes != 120) return false;
+      duration_minutes != 60 && duration_minutes != 120) {
+    if (why != nullptr) *why = MUTE_REFUSED_DURATION;
+    return false;
+  }
   g_muted = true;
   g_mute_until_ms = millis() + (duration_minutes * 60000UL);
 
@@ -1832,10 +1850,18 @@ static bool mute(uint8_t duration_minutes) {
   return true;
 }
 
-static void unmute() {
+// Refused on a channel that is off (`why`: MUTE_REFUSED_DISABLED): there is
+// no mute there to end, since a disable ends one and a mute is refused
+// there (sweep F192).
+static bool unmute(MuteRefusal* why) {
+  if (g_state == CHIRP_DISABLED) {
+    if (why != nullptr) *why = MUTE_REFUSED_DISABLED;
+    return false;
+  }
   g_muted = false;
   g_mute_until_ms = 0;
   if (g_state == CHIRP_MUTED) set_state(CHIRP_ACTIVE);
+  return true;
 }
 
 bool is_muted() { return g_muted && millis() < g_mute_until_ms; }

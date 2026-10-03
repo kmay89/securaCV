@@ -224,3 +224,64 @@ describe('chirpActionNote', () => {
     assert.equal(L.chirpActionNote(null), '');
   });
 });
+
+// The mute and unmute buttons show a refused answer under the Community
+// Activity list (sweep F192: a mute or an unmute on a channel that is off is
+// 409 chirp_disabled; both answers were thrown away). The two functions are
+// the page's glue, outside the WEBUI_LOGIC block, so each is lifted out of
+// web_ui.h whole and run with stand-ins for api(), the page and the status
+// refresh.
+function glueFunction(name) {
+  const src = fs.readFileSync(UI, 'utf8');
+  const start = src.indexOf(`async function ${name}(`);
+  if (start < 0) throw new Error(`${name}() not found in web_ui.h`);
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  throw new Error(`${name}() has no closing brace`);
+}
+async function runGlue(name, answer, ...args) {
+  const calls = [];
+  const note = { textContent: 'stale' };
+  let refreshed = 0;
+  const sandbox = {
+    WebUiLogic: L,
+    api: async (endpoint, method, body) => { calls.push({ endpoint, method, body }); return answer; },
+    document: { getElementById: (id) => (id === 'chirpActionNote' ? note : { textContent: '' }) },
+    refreshChirpStatus: () => { refreshed++; },
+  };
+  vm.runInNewContext(`${glueFunction(name)}\nglobalThis.__run = ${name};`, sandbox);
+  await sandbox.__run(...args);
+  return { calls, note: note.textContent, refreshed };
+}
+
+describe('the Chirp mute and unmute buttons', () => {
+  const off = { success: false, error: 'chirp_disabled', message: 'Chirp channel is not enabled' };
+  it('a mute on a channel that is off says so', async () => {
+    const r = await runGlue('muteChirps', off, 30);
+    // Built in the sandbox's realm: compared as JSON, not by prototype.
+    assert.equal(JSON.stringify(r.calls),
+                 JSON.stringify([{ endpoint: '/api/chirp/mute', method: 'POST', body: { duration_minutes: 30 } }]));
+    assert.equal(r.note, 'Chirp channel is not enabled');
+    assert.equal(r.refreshed, 1);
+  });
+  it('an unmute on a channel that is off says so', async () => {
+    const r = await runGlue('unmuteChirps', off);
+    assert.equal(r.calls.length, 1);
+    assert.equal(r.calls[0].endpoint, '/api/chirp/unmute');
+    assert.equal(r.note, 'Chirp channel is not enabled');
+    assert.equal(r.refreshed, 1);
+  });
+  it('a mute that runs clears the note', async () => {
+    const r = await runGlue('muteChirps', { success: true }, 15);
+    assert.equal(r.note, '');
+    assert.equal(r.refreshed, 1);
+  });
+  it('a duration the channel lacks says which it offers', async () => {
+    const r = await runGlue('muteChirps', { success: false, error: 'invalid_duration',
+                                            message: 'Duration must be 15, 30, 60, or 120 minutes' }, 7);
+    assert.equal(r.note, 'Duration must be 15, 30, 60, or 120 minutes');
+  });
+});

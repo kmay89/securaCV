@@ -387,6 +387,9 @@ void test_every_command_runs_on_the_loop_task() {
   m.duration_minutes = 7;
   r = rest(m);
   CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && !cc::g_muted);
+  CHECK(r.r.mute_refusal == cc::MUTE_REFUSED_DURATION);
+  CHECK(std::string(cc::mute_refusal_error(r.r.mute_refusal)) == "invalid_duration");
+  CHECK(cc::mute_refusal_status(r.r.mute_refusal) == 200);   // as it always answered (F195)
   m.duration_minutes = 30;
   r = rest(m);
   CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
@@ -394,7 +397,7 @@ void test_every_command_runs_on_the_loop_task() {
   CHECK(cc::g_mute_until_ms == host_sim::now_ms - r.waited_ms + 5 + 30u * 60000u);
   CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_MUTE});
   r = rest(cmd_of(cc::CHIRP_CMD_UNMUTE));
-  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.mute_refusal == cc::MUTE_REFUSED_NONE);
   CHECK(r.muted_before_turn && !cc::g_muted && cc::g_state == cc::CHIRP_ACTIVE);
 
   // Settings: relay off and the urgent filter, stored (NVS) on the loop
@@ -784,7 +787,7 @@ void test_a_status_read_is_the_last_published_pass() {
   CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted);
   CHECK(strcmp(v.session_emoji, cc::get_session_emoji()) == 0);
 
-  CHECK(cc::mute(30));                                 // the loop task, mid-pass
+  CHECK(cc::mute(30, nullptr));                        // the loop task, mid-pass
   CHECK(cc::g_state == cc::CHIRP_MUTED && cc::g_muted);
   v = status_read();
   CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted && v.mute_remaining_ms == 0);   // not yet published
@@ -1542,6 +1545,130 @@ size_t acks_since(size_t from) {
   return n;
 }
 
+// ── A mute needs a channel that is on (sweep F192) ──────────────────────
+
+cc::Command mute_of(uint8_t minutes) {
+  cc::Command c = cc::make_command(cc::CHIRP_CMD_MUTE);
+  c.duration_minutes = minutes;
+  return c;
+}
+
+// The presence beacons sent since `from`: each one's session id and emoji.
+struct Beacon {
+  std::array<uint8_t, cc::SESSION_ID_SIZE> sid;
+  std::string emoji;
+};
+std::vector<Beacon> beacons_since(size_t from) {
+  std::vector<Beacon> out;
+  const auto& sent = host_sim::espnow->sent;
+  for (size_t i = from; i < sent.size(); ++i) {
+    const cc::ChirpHeader* h = reinterpret_cast<const cc::ChirpHeader*>(sent[i].bytes.data());
+    if (h->msg_type != cc::CHIRP_MSG_PRESENCE) continue;
+    cc::ChirpPresencePayload p;
+    memcpy(&p, sent[i].bytes.data() + sizeof(cc::ChirpHeader), sizeof p);
+    Beacon b;
+    memcpy(b.sid.data(), h->session_id, b.sid.size());
+    b.emoji.assign(p.emoji, strnlen(p.emoji, sizeof p.emoji));
+    out.push_back(b);
+  }
+  return out;
+}
+bool all_zero(const uint8_t* p, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    if (p[i] != 0) return false;
+  }
+  return true;
+}
+
+// A mute on a channel that is off turned it on with no session: mute() set
+// CHIRP_MUTED whatever the state, so is_enabled() read true, GET /api/chirp
+// read "muted" and, once the mute ran out, "active", both with an empty
+// emoji, the passes ran (taking frames, sending beacons) under the all-zero
+// session id, the mute's own frame went out under it, and a later enable
+// answered success with an empty emoji: enable() makes a session only from
+// CHIRP_DISABLED. Now a mute and an unmute on a channel that is off are
+// refused by name (MUTE_REFUSED_DISABLED, which chirp_api.h answers 409
+// chirp_disabled), the channel off before a duration it lacks, and nothing
+// moves; the enable that follows makes a real session.
+void test_a_mute_needs_a_channel_that_is_on() {
+  boot();
+  // Turned on once and off again, so ESP-NOW is up and a frame would show.
+  enabled_channel(false);
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE)).r.ok && cc::g_state == cc::CHIRP_DISABLED);
+  host_sim::espnow->sent.clear();
+
+  Rest r = rest(mute_of(30));
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.mute_refusal == cc::MUTE_REFUSED_DISABLED);
+  CHECK(cc::g_state == cc::CHIRP_DISABLED && !cc::is_enabled() && !cc::g_muted);
+  CHECK(host_sim::espnow->sent.empty());                 // no mute frame under a zero session id
+  r = rest(mute_of(7));                                  // the channel off is named first
+  CHECK(!r.r.ok && r.r.mute_refusal == cc::MUTE_REFUSED_DISABLED);
+  r = rest(cmd_of(cc::CHIRP_CMD_UNMUTE));
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.mute_refusal == cc::MUTE_REFUSED_DISABLED);
+  CHECK(cc::g_state == cc::CHIRP_DISABLED);
+  CHECK(std::string(cc::mute_refusal_error(r.r.mute_refusal)) == "chirp_disabled");
+  CHECK(cc::mute_refusal_status(r.r.mute_refusal) == 409);
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_DISABLED && !v.muted && v.mute_remaining_ms == 0);
+  CHECK(v.session_emoji[0] == '\0' && reason_of(v) == "disabled");
+
+  // Past the 30 minutes and a beacon interval: still off, nothing sent.
+  host_sim::now_ms += 31u * 60000u + cc::PRESENCE_INTERVAL_MS;
+  cc::update();
+  CHECK(cc::g_state == cc::CHIRP_DISABLED && host_sim::espnow->sent.empty());
+  CHECK(status_read().state == cc::CHIRP_DISABLED);
+
+  // The enable makes a real session, and its beacon carries it.
+  r = rest(cmd_of(cc::CHIRP_CMD_ENABLE));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && cc::g_state == cc::CHIRP_ACTIVE);
+  CHECK(r.r.session_emoji[0] != '\0' && cc::g_session.valid);
+  CHECK(!all_zero(cc::get_session_id(), cc::SESSION_ID_SIZE));
+  const std::vector<Beacon> b = beacons_since(0);
+  CHECK(b.size() == 1);
+  CHECK(memcmp(b[0].sid.data(), cc::get_session_id(), cc::SESSION_ID_SIZE) == 0);
+  CHECK(b[0].emoji == r.r.session_emoji);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && strcmp(v.session_emoji, r.r.session_emoji) == 0);
+
+  // On, the same commands run: a 30-minute mute, an unmute.
+  r = rest(mute_of(30));
+  CHECK(r.r.ok && r.r.mute_refusal == cc::MUTE_REFUSED_NONE && cc::g_state == cc::CHIRP_MUTED);
+  r = rest(cmd_of(cc::CHIRP_CMD_UNMUTE));
+  CHECK(r.r.ok && r.r.mute_refusal == cc::MUTE_REFUSED_NONE && cc::g_state == cc::CHIRP_ACTIVE);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_mute_needs_a_channel_that_is_on\n");
+}
+
+// A disable ends a running mute (sweep F192). The mute outlived it: the next
+// enable's new session read "active", its beacon said listening, and the
+// status said muted with the old mute's time left, while handle_witness()
+// still dropped every chirp until the old mute ran out.
+void test_a_disable_ends_the_mute() {
+  boot();
+  enabled_channel(false);
+  CHECK(rest(mute_of(120)).r.ok && cc::g_muted && cc::g_state == cc::CHIRP_MUTED);
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE)).r.ok);
+  CHECK(!cc::g_muted && cc::g_mute_until_ms == 0 && cc::g_state == cc::CHIRP_DISABLED);
+  CHECK(!status_read().muted);
+
+  host_sim::now_ms += 60000u;
+  const size_t before = host_sim::espnow->sent.size();
+  Rest r = rest(cmd_of(cc::CHIRP_CMD_ENABLE));
+  CHECK(r.r.ok && cc::g_state == cc::CHIRP_ACTIVE && !cc::is_muted());
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted && v.mute_remaining_ms == 0);
+  CHECK(presence_listening(before) == std::vector<uint8_t>{1});
+
+  // The new session takes a neighbor's chirp: no mute drops it.
+  host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;
+  const Neighbor bee = neighbor_of(0x31, BEE);
+  deliver(bee, presence_of(bee));
+  deliver(bee, witness_of(bee, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x51));
+  CHECK(cc::g_recent_chirp_count == 1);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_disable_ends_the_mute\n");
+}
+
 // A chirp this device sent, as handle_witness() stores it when a neighbor's
 // relay of it arrives after the nonce filter's 5-minute reset: this
 // session's own pubkey as the origin.
@@ -1693,6 +1820,8 @@ const Test kTests[] = {
     {"a_send_while_muted_stays_muted", test_a_send_while_muted_stays_muted},
     {"a_send_just_after_the_cooldown_goes_out", test_a_send_just_after_the_cooldown_goes_out},
     {"a_send_at_an_edge_names_why", test_a_send_at_an_edge_names_why},
+    {"a_mute_needs_a_channel_that_is_on", test_a_mute_needs_a_channel_that_is_on},
+    {"a_disable_ends_the_mute", test_a_disable_ends_the_mute},
     {"a_refused_confirm_names_why", test_a_refused_confirm_names_why},
     {"a_dismiss_says_whether_its_vote_went", test_a_dismiss_says_whether_its_vote_went},
     {"a_send_carries_the_owners_fields", test_a_send_carries_the_owners_fields},
