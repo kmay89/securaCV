@@ -636,6 +636,52 @@ test("native vision core = committed dist, tick for tick (LAB_CORES=native)", na
   }
 });
 
+// Sweep A42: boxes far outside the frame, where the pipeline's int and long
+// arithmetic used to overflow (the center x + w/2, the cell px * cols, the
+// area (long)w*h on wasm32's 32-bit long, and area * 100). The native build
+// is 64-bit g++ and the dist wasm32 clang, so before A42 the same box read
+// proximity "near" here and "unknown" there, and landed in different cells.
+// The sources now take each of those in int64_t, where no int box overflows,
+// so the two builds must agree on every one of these boxes, value for value.
+// Each frame holds one extreme box, or two (so the occupied-cell mask sees
+// both), and the clock runs on, so the FSM sees them as a visit too.
+test("native vision core = committed dist on out-of-range boxes (LAB_CORES=native)", native, async () => {
+  const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-vision-core.js"))(),
+    cores.coreFactory("canary-vision-core")()]);
+  const [d, n] = pair.map((m) => ({
+    reset: m.cwrap("vision_emu_reset", null, []),
+    config: m.cwrap("vision_emu_set_config", null, ["number", "number", "number", "number"]),
+    begin: m.cwrap("vision_emu_begin_frame", null, []),
+    push: m.cwrap("vision_emu_push_box", "number", Array(6).fill("number")),
+    tick: m.cwrap("vision_emu_tick_json", "string", ["number"]),
+  }));
+  assert.ok(pair[1].nativeCore, "the second core is the native one");
+  d.reset(); n.reset();
+  d.config(0, 50, 1500, 10000); n.config(0, 50, 1500, 10000);
+  const V = [-2147483648, -2000000000, -1, 0, 240, 50000, 2000000000, 2147483647];
+  let t = 0, frames = 0;
+  const frame = (boxes) => {
+    d.begin(); n.begin();
+    for (const b of boxes) assert.strictEqual(n.push(...b, 90, 0), d.push(...b, 90, 0), "push_box " + STALE);
+    t += 100;
+    const want = d.tick(t);
+    assert.strictEqual(n.tick(t), want, `boxes ${JSON.stringify(boxes)} at ${t} ms ` + STALE);
+    frames++;
+    return JSON.parse(want);
+  };
+  for (const x of V) for (const y of V) for (const w of V) for (const h of V) frame([[x, y, w, h]]);
+  const r = lcg(42);
+  for (let i = 0; i < 1000; i++) {
+    const pick = () => V[r(V.length)];
+    frame([[pick(), pick(), pick(), pick()], [pick(), pick(), pick(), pick()]]);
+  }
+  // The sweep item's box, two billion pixels wide from the frame's corner:
+  // near, in the last column, on both builds.
+  const wide = frame([[0, 0, 2000000000, 70]]).sample;
+  assert.deepStrictEqual([wide.proximity, wide.posture, wide.voxel.r, wide.voxel.c], ["near", "horizontal", 0, 2]);
+  assert.strictEqual(frames, V.length ** 4 + 1000 + 1);
+});
+
 test("native audio core = committed dist, frame for frame (LAB_CORES=native)", native, async () => {
   const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-wap-audio.js"))(),
     cores.coreFactory("canary-wap-audio")()]);

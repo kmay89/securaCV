@@ -514,7 +514,7 @@ test("firmware wasm: class filter, threshold and highest score", async () => {
 
 test("firmware wasm: bbox-to-voxel integer math and clamps", async () => {
   const core = await firmwareCore();
-  assert.ok(detectionPipelineH.includes("c = (px * safe_cols) / FRAME_W;"));
+  assert.ok(detectionPipelineH.includes("const int64_t col = (px * safe_cols) / FRAME_W;"));
   // center of frame lands center cell
   assert.deepStrictEqual(core.tick(0,
     [{ x: 100, y: 100, w: 40, h: 40, score: 90, target: 0 }]).sample.voxel,

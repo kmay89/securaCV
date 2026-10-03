@@ -80,15 +80,21 @@ To compare the committed dist with this tree, run
 `LAB_CORES=native node --test canary-local/tests/native_cores.test.js`. It
 drives each native core next to its committed bundle, call for call, on
 fixed scenarios: 3000 Vision ticks of random boxes in and around the
-frame, with out-of-range tuning, and the audio cadences plus noise. A difference means the dist is
+frame, with out-of-range tuning; about 5000 Vision frames of boxes whose
+position and size sit at the ends of the int range; and the audio cadences
+plus noise. A difference means the dist is
 stale, or that the native build and the wasm one disagree on that input.
 They can: `long` is 64 bits on a 64-bit host and 32 in wasm, and a signed overflow
 (undefined in C++) can come out one way from g++ and another from
-emscripten's clang. A box two billion pixels wide reads `unknown` on the
-dist and `near` natively today. So agreement covers the calls those
-scenarios make, not every input. `CXX=clang++` is the closer compiler (on
-that box it matches the dist's voxel row, where g++ does not), but the ABI
-is still 64-bit. Without the variable, the same file checks the loader
+emscripten's clang. The Vision core's box arithmetic did both until sweep
+A42: a box two billion pixels wide read `unknown` on the dist and `near`
+natively, and landed in another cell. It now takes a box's center, cell and
+area in `int64_t`, where no int box can overflow them, which is what the
+second scenario holds (and `firmware/tests_host/test_vision_detection_pipeline.cpp`
+holds the same boxes to exact arithmetic, in a build under
+`-fsanitize=undefined` as well). So agreement covers the calls those
+scenarios make, not every input. `CXX=clang++` is the closer compiler, but
+the ABI is still 64-bit. Without the variable, the same file checks the loader
 itself without compiling anything. It checks what the default returns, how
 `build.sh` is read, that it finds every export and runtime method the dist
 has, and that a signature a wasm call can't carry is refused. It also drives

@@ -389,9 +389,11 @@ must(DETECTION_PIPELINE_H, "if (box.target != det.person_target) continue;", "cl
 must(DETECTION_PIPELINE_H, "if (box.score < det.score_min) continue;", "score filter")
 must(DETECTION_PIPELINE_H, "if (box.score > best_score) {", "best-box rule")
 # voxel mapping — center of the box, integer grid math (refactored into
-# point_to_cell() upstream in #1071; same math, verified where it now lives)
-must(DETECTION_PIPELINE_H, "point_to_cell(box.x + (box.w / 2), box.y + (box.h / 2), rows, cols, row, col);", "voxel center")
-must(DETECTION_PIPELINE_H, "c = (px * safe_cols) / FRAME_W;", "voxel col math")
+# point_to_cell() upstream in #1071; same math, verified where it now lives),
+# taken in int64_t so no out-of-range box overflows it (sweep A42)
+must(DETECTION_PIPELINE_H, "point_to_cell((int64_t)box.x + (box.w / 2), (int64_t)box.y + (box.h / 2), rows, cols, row, col);",
+     "voxel center")
+must(DETECTION_PIPELINE_H, "const int64_t col = (px * safe_cols) / FRAME_W;", "voxel col math")
 
 EVENTS = re.findall(r'emit\(out_event,\s*"([a-z_]+)"', read(PRESENCE_FSM_CPP))
 if len(set(EVENTS)) < 5:

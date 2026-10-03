@@ -47,22 +47,36 @@ namespace canary::vision::optical {
 #define OPT_PROXIMITY_FAR_PCT 6   // <= 6% of frame  -> Far  (else Mid)
 #endif
 
+// classify_proximity counts a box past the frame as 100% of it.
+static_assert(OPT_PROXIMITY_NEAR_PCT <= 100, "a box covering the whole frame must read near");
+
 // -------------------- Classifiers (pure) --------------------
 
 // Posture from box width/height. Non-positive dims -> Unknown.
 inline Posture classify_posture(int w, int h) {
   if (w <= 0 || h <= 0) return Posture::Unknown;
-  // h*100 >= w*RATIO  ==  h/w >= RATIO/100
-  if ((long)h * 100 >= (long)w * OPT_POSTURE_UPRIGHT_RATIO_X100) return Posture::Upright;
-  if ((long)w * 100 >= (long)h * OPT_POSTURE_HORIZONTAL_RATIO_X100) return Posture::Horizontal;
+  // h*100 >= w*RATIO  ==  h/w >= RATIO/100, in int64_t: a 32-bit long (the
+  // ESP32's, wasm32's) overflowed once a side passed INT32_MAX / 130 (sweep
+  // A42); every positive int side fits here.
+  if ((int64_t)h * 100 >= (int64_t)w * OPT_POSTURE_UPRIGHT_RATIO_X100) return Posture::Upright;
+  if ((int64_t)w * 100 >= (int64_t)h * OPT_POSTURE_HORIZONTAL_RATIO_X100) return Posture::Horizontal;
   return Posture::Ambiguous;
 }
 
 // Proximity from box area vs frame area. Non-positive frame -> Unknown.
-inline Proximity classify_proximity(long box_area, long frame_area) {
+// The areas are int64_t (sweep A42): a 32-bit long overflowed in the
+// caller's w * h and here in box_area * 100, so the ESP32 and the wasm32
+// emulator read an out-of-range box's proximity differently from a 64-bit
+// host, whose long overflowed only once box_area * 100 passed INT64_MAX.
+inline Proximity classify_proximity(int64_t box_area, int64_t frame_area) {
   if (frame_area <= 0 || box_area <= 0) return Proximity::Unknown;
-  // pct = box_area*100 / frame_area, computed without division-by-zero risk
-  const long pct = (box_area * 100) / frame_area;
+  // A box covers at most the whole frame: an area past the frame's counts
+  // as 100%, which bounds box_area * 100 by frame_area * 100.
+  if (box_area > frame_area) box_area = frame_area;
+  // pct = box_area*100 / frame_area, computed without division-by-zero risk;
+  // a frame too large to multiply by 100 is scaled down instead.
+  const int64_t pct = (frame_area > INT64_MAX / 100) ? box_area / (frame_area / 100)
+                                                      : (box_area * 100) / frame_area;
   if (pct >= OPT_PROXIMITY_NEAR_PCT) return Proximity::Near;
   if (pct <= OPT_PROXIMITY_FAR_PCT)  return Proximity::Far;
   return Proximity::Mid;

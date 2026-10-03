@@ -17,6 +17,7 @@
 #include "canary/vision/optical_features.h"
 
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -58,6 +59,33 @@ void test_proximity() {
   CHECK(classify_proximity(10000, 0)     == Proximity::Unknown);
 }
 
+// Sweep A42: the classifiers take any int box without overflowing. They
+// multiplied in long, 32 bits on the ESP32 and on the emulator's wasm32
+// build and 64 on a host, so an out-of-range box read differently on each
+// (and box_area * 100 overflowed even a 64-bit long past INT64_MAX / 100).
+void test_out_of_range() {
+  const int64_t frame = 240 * 240;
+  // an area past the frame's is over 100%: near, however large
+  CHECK(classify_proximity(frame + 1, frame) == Proximity::Near);
+  CHECK(classify_proximity((int64_t)50000 * 50000, frame) == Proximity::Near);   // past INT32_MAX
+  CHECK(classify_proximity((int64_t)INT32_MAX * INT32_MAX, frame) == Proximity::Near);
+  CHECK(classify_proximity(INT64_MAX, frame) == Proximity::Near);
+  // a frame too large to multiply by 100: scaled, the same whole percents
+  CHECK(classify_proximity(INT64_MAX, INT64_MAX) == Proximity::Near);           // 100%
+  CHECK(classify_proximity(INT64_MAX / 4, INT64_MAX) == Proximity::Near);       // 25%
+  CHECK(classify_proximity(INT64_MAX / 10, INT64_MAX) == Proximity::Mid);       // 10%
+  CHECK(classify_proximity(INT64_MAX / 20, INT64_MAX) == Proximity::Far);       // 5%
+  CHECK(classify_proximity(-1, INT64_MAX) == Proximity::Unknown);
+  // posture compares h*100 with w*130 (and w*100 with h*110): any int side
+  CHECK(classify_posture(1, INT32_MAX) == Posture::Upright);
+  CHECK(classify_posture(INT32_MAX, 1) == Posture::Horizontal);
+  CHECK(classify_posture(INT32_MAX, INT32_MAX) == Posture::Ambiguous);
+  CHECK(classify_posture(1000000000, 1300000000) == Posture::Upright);          // exactly 1.30
+  CHECK(classify_posture(1000000000, 1299999999) == Posture::Ambiguous);
+  CHECK(classify_posture(1100000000, 1000000000) == Posture::Horizontal);       // exactly 1.10
+  CHECK(classify_posture(1099999999, 1000000000) == Posture::Ambiguous);
+}
+
 // Occupancy is a COARSE bucket, never an exact running tally.
 void test_occupancy() {
   CHECK(strcmp(occupancy_name(-1), "none") == 0);
@@ -84,6 +112,7 @@ void test_names() {
 int main() {
   test_posture();
   test_proximity();
+  test_out_of_range();
   test_occupancy();
   test_names();
   printf("[optical_features] %d checks passed\n", g_checks);
