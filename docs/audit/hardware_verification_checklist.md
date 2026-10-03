@@ -1117,7 +1117,13 @@ Code: `firmware/projects/canary-wap/arduino/canary_wap/ble_server_dispatch.h`
 Opera onConnect and onDisconnect, whichever init runs first; no pairing
 owner answers a passkey no), `bluetooth_channel.cpp` (`init()` and
 `ble_opera.h`'s `init()` install through it; the paired list keeps each
-phone's identity address and Remove deletes the bond in the stack's form;
+phone's identity address and Remove deletes the bond in the stack's form,
+with the radio quiet for the call (the owner's scan ends, the presence scan
+pauses, the shared advertiser stops: NimBLE refuses to forget a phone's
+IRK bond while it advertises or scans), keeping the entry and answering
+`The phone's bond was not removed; try again` when the stack keeps it;
+the inactivity timeout drops only the idle link the connection card shows;
+neither `New device paired` nor `BLE device connected` logs an address;
 a list saved before is rebuilt from the bond store once, health log `Paired
 list rebuilt from the bond store`; `format_address()` prints most
 significant first; `apply_connect()` drops a link while Bluetooth is off;
@@ -1130,9 +1136,10 @@ default server callbacks) and held by
 pairing, its private addresses, NimBLE's bond store and a stalled loop task
 are not something a host test can run. Compile is CI's. Owner: U1.
 
-- [ ] **A FULL build waits for the owner's confirm**
+- [ ] **A FULL build waits for the owner's confirm (Numeric Comparison)**
   - Setup: one canary-wap flashed with the default FULL profile; a phone
-    with nRF Connect (or the system Bluetooth pane); the web UI's
+    with nRF Connect (or the system Bluetooth pane: a phone offers a
+    display and a yes/no, so it gets a Numeric Comparison); the web UI's
     Bluetooth tab open.
   - Repro: Bluetooth > Pair; connect from the phone and start bonding.
     When both screens show six digits, wait 20 s without pressing
@@ -1146,7 +1153,11 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     the phone. `GET /api/ble/status`'s `opera.connected_now` still counts
     the link while it is up, and a display or a second WAP keeps seeing
     this WAP's fleet beacon through the link (the channel no longer stops
-    the shared advertiser for a link while Opera advertises on it).
+    the shared advertiser for a link while Opera advertises on it). Then
+    connect a second phone (not paired) after the first and leave both
+    idle for the inactivity timeout (5 minutes by default): only the
+    second, the link the connection card shows, is dropped (health log
+    `Disconnecting due to inactivity`), and the first stays connected.
   - Artifact: `docs/audit/repro/F171/full-confirm/`.
 - [ ] **Remove forgets the phone's bond**
   - Setup: the FULL build above with the phone paired (an iPhone or a
@@ -1154,16 +1165,27 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     pane open.
   - Repro: note the phone's entry in `GET /api/bluetooth/paired`; turn the
     phone's Bluetooth off and on and reconnect (it shows another private
-    address); then press Remove for it in the web UI and reconnect from
-    the phone.
+    address); then, with advertising on and the presence scan running (the
+    defaults) and a scan running from the web UI, `DELETE
+    /api/bluetooth/paired` with that `address` (or press Remove) and
+    reconnect from the phone. Pair it again and repeat with
+    `DELETE /api/bluetooth/paired/all`. Read the health log after each.
   - Expected: one entry, its `address` the phone's identity address
     (capitals, most significant byte first; the same before and after the
-    reconnect, `connection_count` up by one); after Remove the reconnect
-    asks to pair again (the phone may need "Forget this device" first:
-    its own bond is the phone's to drop) instead of coming back encrypted,
-    and the paired list does not fill itself again. On a device updated
-    from a build before F172, the first boot's health log has `Paired list
-    rebuilt from the bond store` with what it kept, added and dropped.
+    reconnect, `connection_count` up by one); the DELETE answers `Device
+    removed` (if it answers `The phone's bond was not removed; try again`,
+    the entry is still listed: note it, repeat, and count the tries), the
+    web UI's scan has ended, `"advertising"` is back on afterwards, and the
+    phone's link (if up) is dropped; after Remove the reconnect asks to
+    pair again (the phone may need "Forget this device" first: its own
+    bond is the phone's to drop) instead of coming back encrypted, and the
+    paired list does not fill itself again (before the F172 review a
+    phone with private addresses kept its bond: NimBLE refused the delete
+    while the WAP scanned or advertised, and Remove answered ok anyway).
+    No health-log line carries the phone's address (`New device paired`
+    has no detail). On a device updated from a build before F172, the
+    first boot's health log has `Paired list rebuilt from the bond store`
+    with what it kept, added and dropped.
   - Artifact: `docs/audit/repro/F172/remove-bond/`.
 - [ ] **A link that comes up as Bluetooth goes off is dropped**
   - Setup: the FULL build; a phone with nRF Connect set to reconnect

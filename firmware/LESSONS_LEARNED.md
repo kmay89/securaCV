@@ -2779,10 +2779,20 @@
   in both orders over a stand-in whose default callbacks are the library's
   (the FULL tests fail at the library's yes with the old wiring);
   `check_wap_loop_commands.py` rule BD1 refuses a `setCallbacks()` of any
-  server-callbacks object outside the dispatcher. Two more from the same
-  review: a stand-in's defaults must be the library's defaults, and a BLE
-  address on the air is not the bond's key (a phone with private addresses
-  is bonded under its identity address, `getIdAddress()`, F172).
+  server-callbacks object (or a null, which puts the defaults back)
+  outside the dispatcher. Two more from the same review: a stand-in's
+  defaults must be the library's defaults, and a BLE address on the air is
+  not the bond's key (a phone with private addresses is bonded under its
+  identity address, `getIdAddress()`, F172).
+- **And its refusals (the F172 review):** the stand-in's `deleteBond()`
+  deleted every bond and answered true, so the fix for Remove passed every
+  test while a device would still keep the bond: NimBLE's
+  `ble_gap_unpair()` answers `BLE_HS_EBUSY` and keeps a bond that carries
+  the phone's IRK while it advertises or scans, which the WAP nearly always
+  does, and the code threw the answer away. A stand-in returns what the
+  library returns, refusals included (`deleteBond()` now refuses a missing
+  key and a busy radio, `test_a_bond_the_stack_keeps_keeps_its_entry`), and
+  a call that can refuse has its answer checked.
 - **Date learned:** 2026-10
 
 ## How to Add an Entry

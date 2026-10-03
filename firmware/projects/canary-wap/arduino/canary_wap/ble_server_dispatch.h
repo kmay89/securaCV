@@ -34,8 +34,10 @@
  *
  * With no pairing owner (a build without the pairing channel, or before it
  * is up) a Numeric Comparison is answered no and the passkey shown is a
- * random one nobody sees: pairing fails closed instead of taking the
- * library's yes.
+ * random one nobody sees: that pairing fails closed instead of taking the
+ * library's yes. (A pairing NimBLE runs by Just Works, which its tables
+ * pick for an initiator with no display or no yes/no, reaches no callback
+ * here: it asks nobody, on any profile.)
  *
  * Not overridden: onPassKeyEntry. NimBLE-Arduino 2.3.8, the floor
  * platformio.ini pins, does not declare it (2.5.0 does), and the WAP's IO

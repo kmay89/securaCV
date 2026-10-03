@@ -60,6 +60,16 @@
 // build both inits (Opera's real header) over the stand-in, whose default
 // server callbacks answer as NimBLE-Arduino 2.5.0's do, in either order.
 //
+// And the review of F172: NimBLE refuses to forget a bond that carries the
+// phone's IRK while it advertises or scans (ble_gap_unpair(): BLE_HS_EBUSY),
+// and the WAP nearly always does one or the other; Remove threw the answer
+// away. The stand-in's deleteBond() now answers as ble_gap_unpair() does
+// (the presence loop's scan counts as a discovery), and Remove and Clear
+// delete with the radio quiet and keep an entry whose bond the stack kept.
+// No health-log line names a peer's address; only the recorded link's
+// events label the connection card; the inactivity timeout drops only the
+// recorded link.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
