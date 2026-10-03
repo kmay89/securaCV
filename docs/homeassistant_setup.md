@@ -1018,6 +1018,17 @@ When enabled, PWK automatically creates these entities for each zone:
 | `binary_sensor.pwk_<zone>_motion` | Binary Sensor | Motion detected (auto-off after 10 min) |
 | `sensor.pwk_last_event` | Sensor | Most recent event with full attributes |
 
+The bridge asks Home Assistant for these ids with `default_entity_id`, which
+Home Assistant 2025.10 and later honors when it first registers an entity;
+`<zone>` is the zone name as Home Assistant slugs it (`Front Door` becomes
+`front_door`). An entity your Home Assistant registered before keeps the id it
+has, and an older Home Assistant ignores the key and names the entity from the
+device name and the entity name
+(`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`). That was read from
+Home Assistant core's source, not seen in a running Home Assistant, so if an
+automation below cannot find its entity, look up the id under **Settings >
+Devices & Services**, on the Entities tab.
+
 ### Entity Attributes
 
 The `sensor.pwk_last_event` entity includes these attributes:

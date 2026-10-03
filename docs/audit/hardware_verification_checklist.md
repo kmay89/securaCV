@@ -382,15 +382,17 @@ or ticks Beacon frames. Every row below assumes both.
   - Setup: one board + MQTT broker + Home Assistant instance.
   - Repro: pair the device, wait one 30 s publish cycle.
   - Post-fix expected: HA's Settings → Devices → SecuraCV Canary
-    shows the four new sensors:
-    - `sensor.canary_<id>_chirp_state` (Normal/Trouble/Alarm/Supervisory)
-    - `sensor.canary_<id>_beacon_state` (Normal/Trouble/Alarm/Supervisory)
-    - `sensor.canary_<id>_beacon_airtime_pct` (%)
-    - `sensor.canary_<id>_beacon_active_template` (string)
+    shows the four new sensors (`<id>` the device id as Home Assistant
+    slugs it; these ids on Home Assistant 2025.10 or later, for an entity
+    it registers for the first time, sweep HA16):
+    - `sensor.<id>_chirp_state` (Normal/Trouble/Alarm/Supervisory)
+    - `sensor.<id>_beacon_state` (Normal/Trouble/Alarm/Supervisory)
+    - `sensor.<id>_beacon_airtime_pct` (%)
+    - `sensor.<id>_beacon_active_template` (string)
   - Artifact: `docs/audit/repro/ha/screenshots/`.
 
 - [ ] **Alarm triggers HA automation**
-  - Setup: HA automation: `state_changes -> sensor.canary_<id>_beacon_state
+  - Setup: HA automation: `state_changes -> sensor.<id>_beacon_state
     becomes "Alarm"`.
   - Repro: trigger a beacon alarm via the happy-path test above.
   - Post-fix expected: HA automation fires within one 30 s publish cycle.
