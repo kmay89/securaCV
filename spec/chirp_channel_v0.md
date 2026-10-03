@@ -364,9 +364,31 @@ once. The receiver tracks `nearby_count = |g_nearby_devices|`.
 absolute floor to prevent suppression in very-small networks), within
 `SUPPRESS_WINDOW_MS` (default 120 s) of the chirp's `received_ms`.
 
+On the canary-wap (sweep F233):
+- The votes needed are `suppress_votes_needed(nearby_count)`: more than
+  half of the rows, never fewer than 3 (3 up to 5 rows, 4 at 6 or 7, 5 at 8
+  or 9, 9 at 16 or 17, 10 at 18, 17 at 32). It is read at each counted
+  vote, against the rows the table holds then.
+- The set holds `MAX_SUPPRESS_VOTERS` keys, the most votes any table size
+  asks for (17 at the 32-row `MAX_NEARBY_CACHE`), so a full set meets the
+  threshold at every table size.
+- A vote heard more than `SUPPRESS_WINDOW_MS` after the chirp arrived here
+  is dropped and takes no slot; so is one heard before the chirp it names
+  (nothing keeps it for later).
+- Before F233 the set held 8 keys while the threshold was `nearby_count /
+  2` (at least 3): from 18 rows on no chirp could be suppressed, 7 rows
+  suppressed at 3 votes (43%), and no window was read.
+  `test_chirp_suppress_wap.cpp` holds the rule with real signed votes at
+  every table size from 3 to 32 rows.
+- Who may vote is open (sweep F234): a vote needs a valid signature and a
+  session id that derives from its key, not a presence row.
+
 **Behavior when suppressed**:
 - The chirp is hidden from the receiver's UI.
-- The receiver no longer relays the chirp.
+- The receiver no longer relays the chirp. (The canary-wap drops a
+  suppressed chirp from its recent table at the next prune, at most 30 s
+  later; until then a confirmation that validates it still relays it, as
+  `handle_ack()` does not read `suppressed`.)
 - The receiver does not echo further suppress votes (they're not needed).
 - The suppression itself is logged to the health log but does not generate
   further wire traffic.
@@ -1021,13 +1043,24 @@ void generate_chirp_session() {
 
 ### 12.3 Memory Budget
 
+The canary-wap's tables, as the host measures them (its layout is the
+device's: no pointer, `size_t` or 8-byte member in any). All but the session
+are allocated once by `init()`, in PSRAM where the board has it.
+
 | Component | Max Size |
 |-----------|----------|
-| Session identity | 128 bytes |
-| Recent chirps | 16 * 128 = 2048 bytes |
-| Nonce cache | 100 * 8 = 800 bytes |
-| Presence cache | 32 * 16 = 512 bytes |
-| **Total** | ~3.5 KB |
+| Session identity | 112 bytes |
+| Recent chirps | 16 * 964 = 15,424 bytes |
+| Nonce dedup (Bloom filter) | 4,096 bytes |
+| Nearby (presence) table | 32 * 48 = 1,536 bytes |
+| Per-key witness rate table | 32 * 40 = 1,280 bytes |
+| Self-test seen table | 32 * 40 = 1,280 bytes |
+| Route views (two copies and a scratch) | 3,404 bytes |
+| **Total** | ~27 KB |
+
+A recent chirp holds its suppress set of 17 keys (§2.5.6); sizing that set to
+the fullest table added 288 bytes to each, 4,608 in all (sweep F233). This
+table said ~3.5 KB, sized for a 128-byte chirp and a 100-entry nonce list.
 
 ## 13. Relationship to Opera
 
