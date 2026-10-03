@@ -57,6 +57,11 @@ export function romBanner(kind) {
 // both boards), the charger runs off USB whenever USB is present (even
 // with the switch off), and pulling USB with a healthy switched-on
 // battery is a non-event the firmware never notices.
+//
+// A board whose bench block names no battery (`power.battery` absent: the
+// Nightstand stick, the Nightlight's C3-LCD-1.47) has no battery path at
+// all, so nothing can fit one: setBattery(true) is refused, the battery
+// term stays false, and pulling USB always drops its rail (sweep A54).
 export class BenchPower {
   /**
    * @param profile the registry entry's `bench` block (leds/buttons/power)
@@ -68,7 +73,8 @@ export class BenchPower {
     this.profile = profile || {};
     this.cb = cb;
     this.usb = true;
-    this.batteryFitted = !!this.profile.power?.battery;
+    this.batteryPath = !!this.profile.power?.battery; // a board with none can fit none
+    this.batteryFitted = this.batteryPath;
     this.switchOn = true;
     this.soc = 62; // arrives part-charged, so CHG has a story to tell
     this.bootHeld = false;
@@ -104,6 +110,10 @@ export class BenchPower {
   }
 
   setBattery(fitted) {
+    if (fitted && !this.batteryPath) {
+      this._log("no battery to connect — this board has no battery path; USB is its only power.");
+      return;
+    }
     if (this.batteryFitted === !!fitted) return;
     this.batteryFitted = !!fitted;
     if (this.batteryFitted) this._log("battery connected.");

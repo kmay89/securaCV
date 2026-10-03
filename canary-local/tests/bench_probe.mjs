@@ -225,10 +225,11 @@ if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench_ok.png` });
 // ── The Nightlight's twin (sweep A54) ───────────────────────────────────
 // Its card boots the nightlight flavor CI built (F204), offers Try it with
 // the firmware's own Character ring, and its bench is the C3-LCD-1.47's:
-// USB-C the only power (no battery, no switch to gate one), so pulling the
-// cable drops the rail at once, and the backlight row says the cap the
-// board's HAL enforces and this twin's does not. A fresh document: the
-// page reads its #card only at load.
+// USB-C the only power (no battery, no switch to gate one), so the battery
+// chip is inert, a click on it fits nothing, the troubleshooter offers no
+// step that stages a battery, pulling the cable drops the rail at once, and
+// the backlight row says the cap the board's HAL enforces and this twin's
+// does not. A fresh document: the page reads its #card only at load.
 await page.goto("about:blank");
 await page.goto(`http://127.0.0.1:${port}/canary-local/fleet.html#canary-nightlight`);
 await page.waitForSelector(".tabs .tab", { timeout: 30000 });
@@ -252,7 +253,18 @@ await page
   )
   .catch(() => fail("the Nightlight's bench never reported the app running"));
 if (await page.locator(".bench-led-dot").count()) await fail("the Nightlight's bench lists a light no file settles");
-if (!/removed/.test(await chip("battery").textContent())) await fail("the Nightlight's bench fitted a battery the board has not got");
+if (!/none on this board/.test(await chip("battery").textContent())) await fail("the Nightlight's battery chip does not say the board has none");
+if (!(await chip("battery").isDisabled())) await fail("the Nightlight's battery chip can be pressed, on a board with no battery path");
+// a hand at the chip anyway: nothing fits, the chip keeps saying so
+await chip("battery").click({ force: true });
+if (!/none on this board/.test(await chip("battery").textContent())) await fail("a click fitted a battery the Nightlight has not got");
+// and the troubleshooter offers no step that stages a battery it cannot fit
+await page.locator(".bench-trouble summary").first().click();
+const nlFixes = await page.locator(".bench-trouble .fix summary").allTextContents();
+if (!nlFixes.length) await fail("the Nightlight's bench offers no troubleshooting flows at all");
+if (nlFixes.some((t) => /unplugged the cable/.test(t))) await fail("the Nightlight's bench offers the battery ride-through flow");
+if (/rides the battery|ride-through/.test(await page.locator(".bench-trouble").textContent()))
+  await fail("a Nightlight troubleshooting step still talks of riding a battery");
 if (!(await chip("— (no battery path)").count())) await fail("the Nightlight's bench offers a switch with a battery path to gate");
 await page
   .waitForFunction(

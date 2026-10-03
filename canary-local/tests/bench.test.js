@@ -131,10 +131,91 @@ test("the Nightlight's bench: USB is its only power, so pulling it kills the rai
   bench.setSwitch(false);
   assert.ok(bench.powered(), "the listed-as-none switch gates nothing: USB keeps the board up");
   bench.setSwitch(true);
+  // a hand at the battery chip: the board has no battery path, so nothing fits
+  bench.setBattery(true);
+  assert.strictEqual(bench.batteryFitted, false, "no battery can be fitted where the board has no battery path");
+  assert.ok(events.some(([k, l]) => k === "log" && /no battery path/.test(l)), "the bench says why nothing fitted");
   bench.setUsb(false);
   assert.strictEqual(bench.mode, "off");
   assert.deepStrictEqual(events.filter(([k]) => k === "power").pop(), ["power", false, "usb-out"]);
   assert.deepStrictEqual(bench.leds(), {}, "no lights listed, none lit");
+});
+
+// A bench block with no `power.battery` is a board with no battery path
+// (the Nightstand stick, the Nightlight): its battery chip cannot fit one,
+// so pulling USB drops the rail whatever was clicked first, and the page
+// draws the chip inert and saying so. A board with a battery still takes one.
+test("a board with no battery path takes no battery, so a USB pull always drops its rail", async () => {
+  const { BenchPower } = await importBench();
+  const none = registry().devices.filter((d) => d.bench && !d.bench.power?.battery).map((d) => d.id).sort();
+  assert.deepStrictEqual(none, ["canary-display-nightstand-s3", "canary-nightlight"],
+    "the benches with no battery path are the two USB-only boards");
+  for (const id of none) {
+    const { bench, events } = rig(benchProfile(id), BenchPower);
+    assert.strictEqual(bench.batteryPath, false, `${id}: no battery path`);
+    bench.setBattery(true);
+    bench.setBattery(true);
+    assert.strictEqual(bench.batteryFitted, false, `${id}: a click on the battery chip fits nothing`);
+    bench.tick(60000);
+    assert.strictEqual(bench.soc, 62, `${id}: no cell to charge`);
+    bench.setUsb(false);
+    assert.strictEqual(bench.mode, "off", `${id}: USB out, rail down`);
+    assert.strictEqual(bench.source(), "none");
+    assert.deepStrictEqual(events.filter(([k]) => k === "power").pop(), ["power", false, "usb-out"], id);
+  }
+  const { bench } = rig(benchProfile("canary-display-dash"), BenchPower);
+  assert.strictEqual(bench.batteryPath, true);
+  bench.setBattery(false);
+  bench.setBattery(true);
+  assert.strictEqual(bench.batteryFitted, true, "a board with a battery header still takes a battery");
+  // and the page: an inert chip that says the board has none
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.match(app, /if \(!bench\.batteryPath\) \{\s*bat\.b\.disabled = true;/, "the battery chip is inert with no battery path");
+  assert.match(app, /bat\.st\.textContent = !bench\.batteryPath \? "none on this board"/, "and says the board has none");
+});
+
+// The troubleshooter's steps stage the bench. A step that fits a battery
+// says so (`battery: true`), and a board with no battery path is offered the
+// flows without those steps, so no staged rail-down sits under words about
+// riding a battery.
+test("a bench with no battery path is offered no step that stages a battery", async () => {
+  const { BENCH_FIXES, benchFixesFor } = await importGuides();
+  const { BenchPower } = await importBench();
+  const ctxFor = (bench) => ({
+    bench,
+    emu: { setWifi() {}, setBroker() {}, setTimeScale() {} },
+    setHour() {},
+    note() {},
+  });
+  // the marker is honest: exactly the steps whose stage fits a battery carry it
+  for (const fix of BENCH_FIXES) {
+    for (const step of fix.steps) {
+      if (!step.stage) {
+        assert.ok(!step.battery, `${fix.symptom}: ${step.title} stages nothing`);
+        continue;
+      }
+      const { bench } = rig(benchProfile("canary-display-dash"), BenchPower);
+      bench.setBattery(false);
+      let fits = false;
+      const real = bench.setBattery.bind(bench);
+      bench.setBattery = (f) => { if (f) fits = true; real(f); };
+      await step.stage(ctxFor(bench));
+      assert.strictEqual(!!step.battery, fits, `${fix.symptom}: ${step.title} ${fits ? "fits a battery unmarked" : "is marked but fits none"}`);
+    }
+  }
+  assert.ok(BENCH_FIXES.some((f) => f.steps.some((st) => st.battery)), "some step stages a battery");
+  assert.strictEqual(benchFixesFor(benchProfile("canary-display-dash")), BENCH_FIXES, "a board with a battery gets every flow");
+  for (const id of ["canary-display-nightstand-s3", "canary-nightlight"]) {
+    const offered = benchFixesFor(benchProfile(id));
+    assert.ok(offered.length >= 3, `${id}: still a curriculum`);
+    assert.ok(offered.every((f) => f.steps.length && f.steps.every((st) => !st.battery)), `${id}: no battery step offered`);
+    assert.ok(!offered.some((f) => /unplugged the cable/.test(f.symptom)), `${id}: no ride-through flow`);
+    const { bench, events } = rig(benchProfile(id), BenchPower);
+    for (const f of offered) for (const st of f.steps) if (st.stage) await st.stage(ctxFor(bench));
+    assert.ok(!events.some(([k, l]) => k === "log" && /no battery path/.test(l)), `${id}: no offered step asks for a battery`);
+  }
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.match(app, /fixView\(guideCtx, benchFixesFor\(profile\), noteLine\)/, "the bench view offers the board's own flows");
 });
 
 // ── the power truth table ───────────────────────────────────────────────

@@ -23,7 +23,7 @@ import { buildOnboardPhone } from "./onboard-phone.js";
 import {
   DISPLAY_TOUR,
   DISPLAY_FIXES,
-  BENCH_FIXES,
+  benchFixesFor,
   LED_GRAMMAR,
   CHIRP_GRAMMAR,
   ledSequence,
@@ -922,6 +922,13 @@ function benchView(ctx, guideCtx, noteLine) {
 
   const usb = chip("USB-C cable", profile.power?.usb, () => bench.setUsb(!bench.usb));
   const bat = chip("battery", profile.power?.battery, () => bench.setBattery(!bench.batteryFitted));
+  // A board with no battery path offers nothing to fit: the chip stays,
+  // inert, so the bench says so instead of fitting a cell the board has
+  // not got (sweep A54; BenchPower refuses one too).
+  if (!bench.batteryPath) {
+    bat.b.disabled = true;
+    bat.b.title = "no battery path on this board — USB is its only power";
+  }
   const soc = el("div", "bench-soc");
   const socFill = el("div", "bench-soc-fill");
   soc.append(socFill);
@@ -979,7 +986,8 @@ function benchView(ctx, guideCtx, noteLine) {
     usb.b.classList.toggle("on", bench.usb);
     usb.st.textContent = bench.usb ? "plugged" : "unplugged";
     bat.b.classList.toggle("on", bench.batteryFitted);
-    bat.st.textContent = bench.batteryFitted ? `fitted · ${Math.round(bench.soc)}%` : "removed";
+    bat.st.textContent = !bench.batteryPath ? "none on this board"
+      : bench.batteryFitted ? `fitted · ${Math.round(bench.soc)}%` : "removed";
     soc.style.visibility = bench.batteryFitted ? "visible" : "hidden";
     socFill.style.width = `${Math.round(bench.soc)}%`;
     socFill.classList.toggle("low", bench.soc < 15);
@@ -1044,7 +1052,7 @@ function benchView(ctx, guideCtx, noteLine) {
   // ── Debug mode: the symptom-first bench flows ─────────────────────────
   const trouble = el("details", "bench-trouble");
   trouble.append(el("summary", null, "Troubleshoot — the bench debug flows"));
-  trouble.append(fixView(guideCtx, BENCH_FIXES, noteLine));
+  trouble.append(fixView(guideCtx, benchFixesFor(profile), noteLine));
 
   wrap.append(ledRow, ledCap, controls, diag, trouble);
   refresh();
