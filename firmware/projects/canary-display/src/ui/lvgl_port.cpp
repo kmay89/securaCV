@@ -309,8 +309,10 @@ bool lvgl_port_init() {
 void lvgl_port_set_rotation(uint8_t rot) {
   rot &= 3;
 #if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
-  // A turn flush_cb cannot draw would lay a turned face out on an unturned
-  // glass and un-rotate every tap: stay landscape, and say so.
+  // A turn flush_cb cannot draw would leave LVGL's canvas turned over an
+  // unturned glass and un-rotate every tap: the port stays landscape (canvas,
+  // LVGL and touch) and says so. main.cpp picks the face from the saved
+  // setting, not from lvgl_port_rotation(), so it does not follow this yet.
   if (rot != 0 && !s_turn_buf) {
     canary::log_line("LVGL", "No rotation buffer — staying landscape.");
     rot = 0;
