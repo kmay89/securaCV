@@ -371,10 +371,9 @@ static int test_dst_at_midnight_keeps_one_row_per_date() {
 }
 
 // The zone moved east by an hour at 23:57, after the row: the clock reads
-// 00:57 on the next date, and that date still owes its row. A clock stepped
-// from 23:58 to 00:45 (a GPS correction) is the same: the next date's row
-// commits. Before the latch was keyed on the date, neither did.
-static int test_a_new_date_reached_past_0030_owes_its_row() {
+// 00:57 on the next date, and that date still owes its row. Before the latch
+// was keyed on the date, it had none.
+static int test_a_zone_moved_east_after_the_row_owes_the_next_row() {
   host_prefs().clear();
   reset_counts();
   set_zone("UTC0");
@@ -387,7 +386,15 @@ static int test_a_new_date_reached_past_0030_owes_its_row() {
   CHECK(std::strcmp(g_summaries[1].date, "2026-10-04") == 0);
   CHECK(g_summaries[1].minute == 1435);
   CHECK(g_summaries[1].wall == kOct3 + kDay + 22 * 3600 + 55 * 60);
+  set_zone("UTC0");
+  return 0;
+}
 
+// A clock stepped from 23:58 to 00:45 (a GPS correction after a drift) skips
+// every minute before 00:30, and the next date still owes its row. Before the
+// latch was keyed on the date, it had none.
+static int test_a_clock_stepped_past_0030_owes_the_next_row() {
+  host_prefs().clear();
   reset_counts();
   set_zone("UTC0");
   reboot_and_boot();
@@ -487,7 +494,8 @@ int main() {
   rc |= test_a_night_without_windows_still_owes_the_next_row();
   rc |= test_what_the_summary_row_carries();
   rc |= test_dst_at_midnight_keeps_one_row_per_date();
-  rc |= test_a_new_date_reached_past_0030_owes_its_row();
+  rc |= test_a_zone_moved_east_after_the_row_owes_the_next_row();
+  rc |= test_a_clock_stepped_past_0030_owes_the_next_row();
   rc |= test_a_zone_moved_west_after_midnight_commits_no_second();
   rc |= test_the_household_minute_is_local();
   rc |= test_the_loop_feeds_the_clock_on_every_pass();
