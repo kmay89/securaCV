@@ -49,9 +49,15 @@ J3. What the check cannot bound fails: an array built in a loop, a value
     helper whose document carries a `const char*` parameter
     (`send_err(req, msg)`) is measured at every call of it in its file, and
     at every value the helper assigns it.
-J4. A site exempt from J1-J3 is named in `EXEMPT` with its reason, and must
-    still use the sized form (it writes no further than the buffer; the one
-    exempt site terminates a cut cache itself).
+J4. The fleet scan's cache is not an answer but the handler answers from it
+    (F211): `fleet_scan_task()` writes it only through `fleet_scan_cache.h`
+    (host-tested: the adverts that fit, whole, and a complete document at
+    every step). The task begins a `fleet_scan_cache::Cache` over the
+    staging buffer it allocated with `FLEET_SCAN_CACHE_SIZE` bytes, with that
+    size, adds the adverts with `fleet_scan_cache::add()`, and copies the
+    buffer into the cache with that size; nothing else writes the staging
+    buffer. No site is exempt from J1-J3: the one that was, the cut cache's
+    `serializeJson()`, is gone.
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -84,13 +90,9 @@ SKETCH = "firmware/projects/canary-wap/arduino/canary_wap"
 INO = f"{SKETCH}/canary_wap.ino"
 # Answer files left out, with why. A file named here is not measured.
 EXCLUDED: dict[str, str] = {}
-# Sites J1-J3 do not hold, by (file, function, target): each must still use
-# the sized serializeJson() form, which terminates.
-EXEMPT = {
-    (INO, "fleet_scan_task", "staging"):
-        "the mDNS browse's cache, not an answer: handle_fleet_scan() deserializes it and answers "
-        "an empty list when it was cut",
-}
+# J4: the fleet scan's cache, its writer and its size.
+FLEET_TASK = "fleet_scan_task"
+FLEET_SIZE = "FLEET_SCAN_CACHE_SIZE"
 
 # ArduinoJson 7.4.1 writes an integer in its type's widest decimal spelling at
 # most; a float with up to 9 decimals and an exponent (JsonFloat is double).
@@ -990,7 +992,7 @@ class Site:
     fn: str
     line: int
     target: str
-    verdict: str          # "grows", "measured", "guarded", "exempt", "fits", or an error
+    verdict: str          # "grows", "measured", "guarded", "fits", or an error
     bound: int | None = None
     size: int | None = None
 
@@ -1103,9 +1105,6 @@ def judge_site(ctx: Ctx, call_at: int) -> Site:
     if base in ("String", "std::string", "File", "fs::File") and len(args) == 2:
         site.verdict = "grows"
         return site
-    if (ctx.file, ctx.fn.name, target) in EXEMPT:
-        site.verdict = "exempt" if len(args) == 3 else f"{target}: exempt, but not the sized form (J4)"
-        return site
     lo = ctx.fn.body[0]
     before = kept[lo:call_at]
     size_expr = None
@@ -1174,6 +1173,61 @@ def judge_site(ctx: Ctx, call_at: int) -> Site:
     return site
 
 
+def check_fleet_cache(files: dict[str, str], idx: Index) -> list[str]:
+    """J4: fleet_scan_task() writes its staging buffer only through fleet_scan_cache.h, at the cache's
+    size, and copies all of it into the cache."""
+    where = f"{INO}: {FLEET_TASK}()"
+    fns = [f for f in idx.fns.get(FLEET_TASK, []) if f.file == INO and f.body]
+    if len(fns) != 1:
+        return [f"{where}: {len(fns)} definitions; the fleet scan's cache writer cannot be read (J4)"]
+    fn = fns[0]
+    code = blank_comments_and_strings(files[INO])
+    kept = blank_comments_only(files[INO])
+    body = code[fn.body[0]:fn.body[1]]
+    errors = []
+    alloc = re.findall(r"\bchar\s*\*\s*(\w+)\s*=\s*\(\s*char\s*\*\s*\)\s*(?:calloc\s*\(\s*1\s*,|malloc\s*\()\s*"
+                       + FLEET_SIZE + r"\s*\)\s*;", body)
+    if len(alloc) != 1:
+        return [f"{where}: no one staging buffer of {FLEET_SIZE} bytes (J4)"]
+    buf = alloc[0]
+    begins = re.findall(r"\bfleet_scan_cache\s*::\s*begin\s*\(\s*(\w+)\s*,\s*(\w+)\s*,\s*([^;]*?)\s*\)\s*;", body)
+    if len(begins) != 1:
+        errors.append(f"{where}: fleet_scan_cache::begin() {len(begins)} times; the cache is begun once (J4)")
+    else:
+        cache, target, size = begins[0]
+        if target != buf or size != FLEET_SIZE:
+            errors.append(f"{where}: fleet_scan_cache::begin({cache}, {target}, {size}) is not over {buf} with "
+                          f"{FLEET_SIZE} bytes (J4)")
+        adds = re.findall(r"\bfleet_scan_cache\s*::\s*add\s*\(\s*(\w+)\s*,", body)
+        if not adds or any(a != cache for a in adds):
+            errors.append(f"{where}: the adverts are not added to {cache} with fleet_scan_cache::add() (J4)")
+    if not re.search(r"\bmemcpy\s*\(\s*g_fleet_scan_cache\s*,\s*" + re.escape(buf) + r"\s*,\s*" + FLEET_SIZE
+                     + r"\s*\)", body):
+        errors.append(f"{where}: {buf} is not copied whole ({FLEET_SIZE} bytes) into g_fleet_scan_cache (J4)")
+    # Every use of the staging buffer: the allocation, the test of it, the
+    # writer's begin, the copy and the free. Anything else writes around the
+    # builder (a serializeJson(), a hand-placed NUL, a strcpy()).
+    allowed = [
+        r"char\s*\*\s*" + buf + r"\s*=",
+        r"if\s*\(\s*" + buf + r"\s*&&",
+        r"fleet_scan_cache\s*::\s*begin\s*\(\s*\w+\s*,\s*" + buf + r"\s*,",
+        r"memcpy\s*\(\s*g_fleet_scan_cache\s*,\s*" + buf + r"\s*,",
+        r"free\s*\(\s*" + buf + r"\s*\)",
+    ]
+    for m in re.finditer(r"(?<![\w.>])" + re.escape(buf) + r"\b", body):
+        at = m.start()
+        start = max(body.rfind(c, 0, at) for c in ";{}") + 1     # the statement around this use
+        end = statement_end(body, at)
+        stmt = body[start:end if end >= 0 else len(body)]
+        if any(a.start() <= at - start < a.end() for pat in allowed for a in re.finditer(pat, stmt)):
+            continue
+        line = code.count("\n", 0, fn.body[0] + at) + 1
+        text = kept[fn.body[0] + start:fn.body[0] + at + len(buf) + 30].strip()
+        errors.append(f"{INO}:{line}: {FLEET_TASK}(): {buf} is written around fleet_scan_cache.h "
+                      f"({text[:70]!r}); the cache holds the adverts that fit, never a cut list (J4)")
+    return errors
+
+
 def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     idx = build_index(files)
     errors: list[str] = []
@@ -1181,9 +1235,7 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     for name in EXCLUDED:
         if name not in files:
             errors.append(f"{name}: EXCLUDED names a file the sketch no longer has")
-    for (file, fn, _target) in EXEMPT:
-        if file not in files or not any(f.file == file and f.body for f in idx.fns.get(fn, [])):
-            errors.append(f"{file}: EXEMPT names {fn}(), which is gone (J4)")
+    errors += check_fleet_cache(files, idx)
     for name in scope_of(files):
         src = files[name]
         code = blank_comments_and_strings(src)
@@ -1195,7 +1247,7 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
                 continue
             site = judge_site(Ctx(idx, name, fn, kept, code), m.start())
             sites.append(site)
-            if site.verdict not in ("grows", "measured", "guarded", "exempt", "fits"):
+            if site.verdict not in ("grows", "measured", "guarded", "fits"):
                 errors.append(f"{name}:{site.line}: {fn.name}(): {site.verdict}")
     return errors, sites
 
@@ -1314,9 +1366,25 @@ MUTATIONS: list[tuple[str, Mutation]] = [
               "namespace zz_api {\ninline esp_err_t handle_zz(httpd_req_t* req) {\n  JsonDocument doc;\n"
               f'  doc["message"] = "{LONG}";\n  char buffer[64];\n  serializeJson(doc, buffer);\n'
               "  return httpd_resp_sendstr(req, buffer);\n}\n}\n")),
-    # J4: the exempt site keeps the sized form.
-    ("the fleet scan cache drops its size",
-     raw_in(INO, "serializeJson(doc, staging, FLEET_SCAN_CACHE_SIZE);", "serializeJson(doc, staging);")),
+    # J4: the fleet scan's cache is written by fleet_scan_cache.h, whole.
+    ("the fleet scan's cache goes back to a cut serializeJson()",
+     raw_in(INO, "    fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);\n",
+            "    fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);\n"
+            "    JsonDocument doc;\n    if (serializeJson(doc, staging, FLEET_SCAN_CACHE_SIZE) >= FLEET_SCAN_CACHE_SIZE) {\n"
+            "      staging[FLEET_SCAN_CACHE_SIZE - 1] = '\\0';\n    }\n")),
+    ("the fleet scan's cache is terminated by hand",
+     raw_in(INO, "    portENTER_CRITICAL(&g_fleet_scan_mux);\n    memcpy(g_fleet_scan_cache, staging, FLEET_SCAN_CACHE_SIZE);",
+            "    staging[FLEET_SCAN_CACHE_SIZE - 1] = '\\0';\n"
+            "    portENTER_CRITICAL(&g_fleet_scan_mux);\n    memcpy(g_fleet_scan_cache, staging, FLEET_SCAN_CACHE_SIZE);")),
+    ("the fleet scan's cache is begun past its buffer",
+     raw_in(INO, "fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);",
+            "fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE + 512);")),
+    ("an advert is copied into the cache around the builder",
+     raw_in(INO, "      fleet_scan_cache::add(cache, advert);",
+            "      strcat(staging, name.c_str());")),
+    ("the fleet scan's cache is copied short",
+     raw_in(INO, "memcpy(g_fleet_scan_cache, staging, FLEET_SCAN_CACHE_SIZE);",
+            "memcpy(g_fleet_scan_cache, staging, strlen(staging));")),
     # J2: every value a const char* holds before the answer, wherever it is
     # assigned (the review's P1 and P3: an assignment after `)` or `case 3:`).
     ("the status reason is reassigned on an if's own line",

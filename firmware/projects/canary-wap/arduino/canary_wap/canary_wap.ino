@@ -166,6 +166,7 @@
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
 #include "csi_event_egress.h"    // the egress's counters, for GET /api/diagnostics (F149)
 #include "wap_diagnostics.h"     // pure, host-tested: GET /api/diagnostics's body (F149)
+#include "fleet_scan_cache.h"    // pure, host-tested: the fleet scan's cache keeps the adverts that fit (F211)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -6959,10 +6960,12 @@ static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
 static volatile bool     g_fleet_scan_busy    = false;
 static uint32_t          g_fleet_scan_done_ms = 0;      // guarded by mux
 static bool              g_fleet_scan_have    = false;  // guarded by mux
-// Sized for the 8-device browse cap below: each entry serializes to ~200 B
-// worst-case (32-char name, 30-char hostname, TXT fields), so 8 × ~200 B +
-// wrapper ≈ 1.7 KB; 2560 leaves honest slack instead of truncating the whole
-// result at exactly the advertised capacity.
+// Sized for eight ordinary adverts (a 32-byte name, a 30-byte hostname and
+// short TXT values make a row of about 200 B, so eight are about 1.7 KB).
+// Adverts are other devices' bytes: each TXT value can be 255 bytes, so a
+// list can need several times this. fleet_scan_cache.h keeps the adverts
+// that fit, whole and in browse order, and the cache is a complete document
+// at every step (sweep F211); it never holds a cut list.
 //
 // Cache + handler snapshot live in PSRAM (csi_mem.h), allocated in setup():
 // 2 x 2.5 KB of internal DRAM back for the BLE budget. Both are only
@@ -6978,40 +6981,38 @@ static portMUX_TYPE      g_fleet_scan_mux = portMUX_INITIALIZER_UNLOCKED;
 static const uint32_t    FLEET_SCAN_TTL_MS = 10000;
 
 static void fleet_scan_task(void*) {
-  /* Nested scope: vTaskDelete(NULL) never returns, so JsonDocument's
-   * destructor (and its heap pool) only runs if the scope closes first —
-   * without it every scan leaked the doc's pool. */
-  {
-  JsonDocument doc;
-  JsonArray arr = doc["canaries"].to<JsonArray>();
-
-  // Blocking browse (~2 s). The mDNS component is internally thread-safe.
-  int n = MDNS.queryService("securacv", "tcp");
-  for (int i = 0; i < n && i < 8; i++) {
-    JsonObject o = arr.add<JsonObject>();
-    o["device_id"] = MDNS.txt(i, "device_id");
-    o["name"]      = MDNS.txt(i, "name");
-    o["mdns_host"] = MDNS.txt(i, "host");
-    o["fw"]        = MDNS.txt(i, "fw");
-    o["model"]     = MDNS.txt(i, "model");
-    // Device type + role (canonical TXT schema) — the SPA branches its
-    // per-type wizard steps and badges off dt ("canary-vision",
-    // "canary-sense", "canary-wap"); older firmware adverts return "".
-    o["dt"]        = MDNS.txt(i, "dt");
-    o["role"]      = MDNS.txt(i, "role");
-    o["ip"]        = MDNS.address(i).toString();
-    o["port"]      = MDNS.port(i);
-  }
-
   // Heap staging (not a function-local static): keeps the one-shot task's
   // stack small and leaves nothing shared between task instances. calloc,
   // not malloc: the full buffer is memcpy'd into the cache below, and the
-  // bytes past serializeJson's NUL must be zeros, not heap garbage.
+  // bytes past the document's NUL must be zeros, not heap garbage.
   char* staging = (char*)calloc(1, FLEET_SCAN_CACHE_SIZE);
   if (staging && g_fleet_scan_cache) {
-    size_t written = serializeJson(doc, staging, FLEET_SCAN_CACHE_SIZE);
-    if (written >= FLEET_SCAN_CACHE_SIZE) {
-      staging[FLEET_SCAN_CACHE_SIZE - 1] = '\0';
+    // The adverts that fit, whole, in browse order: an advert too long for
+    // what is left is skipped and the next is still tried (sweep F211).
+    fleet_scan_cache::Cache cache;
+    fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);
+
+    // Blocking browse (~2 s). The mDNS component is internally thread-safe.
+    const int n = MDNS.queryService("securacv", "tcp");
+    for (int i = 0; i < n && !fleet_scan_cache::full(cache); i++) {
+      // One advert's values, alive only for this pass: vTaskDelete(NULL)
+      // below never returns, so nothing that owns heap may outlive the loop.
+      const String device_id = MDNS.txt(i, "device_id");
+      const String name      = MDNS.txt(i, "name");
+      const String mdns_host = MDNS.txt(i, "host");
+      const String fw        = MDNS.txt(i, "fw");
+      const String model     = MDNS.txt(i, "model");
+      // Device type + role (canonical TXT schema) — the SPA branches its
+      // per-type wizard steps and badges off dt ("canary-vision",
+      // "canary-sense", "canary-wap"); older firmware adverts return "".
+      const String dt        = MDNS.txt(i, "dt");
+      const String role      = MDNS.txt(i, "role");
+      const String ip        = MDNS.address(i).toString();
+      const fleet_scan_cache::Advert advert = {
+          device_id.c_str(), name.c_str(), mdns_host.c_str(), fw.c_str(),
+          model.c_str(), dt.c_str(), role.c_str(), ip.c_str(),
+          (uint16_t)MDNS.port(i)};
+      fleet_scan_cache::add(cache, advert);
     }
 
     portENTER_CRITICAL(&g_fleet_scan_mux);
@@ -7021,7 +7022,6 @@ static void fleet_scan_task(void*) {
     portEXIT_CRITICAL(&g_fleet_scan_mux);
   }
   free(staging);
-  }  /* scope closes: doc's destructor runs BEFORE the task dies */
 
   __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);
   vTaskDelete(NULL);
@@ -7051,7 +7051,7 @@ static esp_err_t handle_fleet_scan(httpd_req_t* req) {
   bool busy = __atomic_load_n(&g_fleet_scan_busy, __ATOMIC_ACQUIRE);
   if (stale && !busy) {
     __atomic_store_n(&g_fleet_scan_busy, true, __ATOMIC_RELEASE);
-    // Internal-RAM stack; the task builds a small JSON doc + mDNS browse.
+    // Internal-RAM stack; the task browses mDNS and writes the cache.
     if (xTaskCreate(fleet_scan_task, "fleet_scan", 6144, nullptr, 1, nullptr)
         != pdPASS) {
       __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);

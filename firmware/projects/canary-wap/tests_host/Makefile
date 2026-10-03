@@ -380,6 +380,31 @@ clean-wap-diagnostics:
 run: run-wap-diagnostics
 clean: clean-wap-diagnostics
 
+# The fleet scan's cache (sweep F211): the REAL fleet_scan_cache.h (on the
+# REAL wap_json_writer.h) the worker task writes GET /api/fleet/scan's cache
+# with, at the sketch's own FLEET_SCAN_CACHE_SIZE, read from canary_wap.ino
+# (its path passed in, so the read fails closed). Eight adverts whose 255-byte
+# TXT values hold `"` and `\`: the cache parses under JSON.parse's rules
+# (json_strict.h), keeps exactly the adverts that fit (an oracle in the test
+# says which), each value as advertised, and is a complete document after
+# every advert; never a cut list.
+FSCACHE_BIN = test_fleet_scan_cache
+FSCACHE_SRC = test_fleet_scan_cache.cpp
+
+$(FSCACHE_BIN): $(FSCACHE_SRC) json_strict.h $(SRC_DIR)/fleet_scan_cache.h \
+                $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/canary_wap.ino
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(FSCACHE_SRC)
+
+.PHONY: run-fleet-scan-cache clean-fleet-scan-cache
+run-fleet-scan-cache: $(FSCACHE_BIN)
+	$(call run_marked,$(FSCACHE_BIN))
+clean-fleet-scan-cache:
+	rm -f $(FSCACHE_BIN)
+
+run: run-fleet-scan-cache
+clean: clean-fleet-scan-cache
+
 # The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
 # sketch's csi_module_settings_* readers, by the shared
 # csi_module_settings_nvs.h rule, and its boot init through one read-only
