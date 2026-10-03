@@ -911,8 +911,30 @@ jobs:
       - name: WAP probe — first-boot, captive portal, serial + MQTT
         run: node canary-local/tests/wap_probe.mjs
       - name: Vision probe — two ports, model load + preview, boot, MQTT, aim
+        id: vision-probe
+        run: node canary-local/tests/vision_probe.mjs
+      - name: Vision probe on this tree's sources (LAB_CORES=native, g++, no emsdk)
+        # The step above drove the committed dist core in Chromium. Here the
+        # probe builds the core from the sources build.sh hands em++ (read by
+        # tests/native/cores.js, as the logic job's native step builds it) and
+        # its server answers the dist URL with a stand-in factory that forwards
+        # each call to that build (tests/native/probe_cores.js, sweep A41). It
+        # runs whenever the step above ran, red or green: green here and red
+        # above on a core change means the sources are right and the dist is
+        # stale (Actions -> "Rebuild emulator dist (pinned emsdk)").
+        if: ${{ (success() || failure()) && steps.vision-probe.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
         run: node canary-local/tests/vision_probe.mjs
       - name: Eyes probe — webcam bench renders, real wasm decides presence in-browser, camera path
+        id: eyes-probe
+        run: node canary-local/tests/eyes_probe.mjs
+      - name: Eyes probe on this tree's sources (LAB_CORES=native, g++, no emsdk)
+        # As the Vision probe's native step: this tree's sources through the
+        # stand-in factory, whenever the step above ran (sweep A41).
+        if: ${{ (success() || failure()) && steps.eyes-probe.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
         run: node canary-local/tests/eyes_probe.mjs
       - name: Sense probe — radar lab, serial, MQTT + flavor-gated entities
         run: node canary-local/tests/sense_probe.mjs
@@ -921,6 +943,14 @@ jobs:
       - name: Proving Ground probe — twin boots, knobs sync, auto drills pass
         run: node canary-local/tests/radar_dev_probe.mjs
       - name: Audio probe — smoke bench renders, real wasm detects T3 / rejects off-band, mic path
+        id: audio-probe
+        run: node canary-local/tests/audio_probe.mjs
+      - name: Audio probe on this tree's sources (LAB_CORES=native, g++, no emsdk)
+        # As the Vision probe's native step: this tree's sources through the
+        # stand-in factory, whenever the step above ran (sweep A41).
+        if: ${{ (success() || failure()) && steps.audio-probe.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
         run: node canary-local/tests/audio_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs

@@ -472,6 +472,22 @@ test("every probe that drives a core page takes the bridge, before its own file 
     "vision_probe.mjs:canary-vision-core"]);
 });
 
+// CI's wasm job runs each of those probes on the dist, then again under
+// LAB_CORES=native whenever the dist step ran, red or green, as the logic
+// job does for the Node tests (A40).
+test("CI runs each core probe on the dist, then on this tree's sources even after a red dist step", () => {
+  const wf = fs.readFileSync(join(REPO, ".github/workflows/canary-local.yml"), "utf8");
+  for (const [id, probe] of [["vision-probe", "vision_probe.mjs"], ["eyes-probe", "eyes_probe.mjs"], ["audio-probe", "audio_probe.mjs"]]) {
+    const dist = new RegExp(String.raw`\n {8}id: ${id}\n {8}run: node canary-local/tests/${probe}\n`);
+    assert.match(wf, dist, `${probe}: its dist step carries id ${id}`);
+    const after = wf.slice(wf.search(dist));
+    const next = /\n {6}- name: [^\n]*\n((?: {8}[^\n]*\n)+)/.exec(after.slice(1))[1];
+    assert.ok(next.includes(`if: \${{ (success() || failure()) && steps.${id}.outcome != 'skipped' }}`), `${probe}: native step's if:`);
+    assert.ok(next.includes("LAB_CORES: native") && next.includes(`run: node canary-local/tests/${probe}`),
+      `${probe}: the step after its dist step runs it under LAB_CORES=native`);
+  }
+});
+
 // ── LAB_CORES=native only: the native core next to its committed dist ──────
 
 const native = { skip: cores.mode() !== "native" && "LAB_CORES=native only (builds with g++)" };
