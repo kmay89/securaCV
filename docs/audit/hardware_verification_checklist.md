@@ -1618,6 +1618,52 @@ Compile is CI's. Owner: U1.
     the host test covers it.
   - Artifact: `docs/audit/repro/F213/nearby-emoji/`.
 
+## canary-wap: the fleet scan keeps the adverts that fit, the identity answers escape what a person typed (F211, F212) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/fleet_scan_cache.h`
+(`fleet_scan_task()`'s cache: each advert whole or not at all, in browse
+order, at most eight, a complete document after every advert),
+`identity_json.h` (GET `/api/device-info` and the provisioning receipt, every
+string escaped, each answer measured and written into a heap buffer of its own
+length), both on `wap_json_writer.h`, and their glue in `canary_wap.ino`.
+Host-tested (`tests_host/test_fleet_scan_cache.cpp`,
+`tests_host/test_identity_json.cpp`) and held by
+`firmware/scripts/check_wap_json_answers.py` (J4 the cache's writer, J5 the
+`snprintf()` answers measured and their `%s` escaped, J6 the identity answers'
+measured form). The old cache's failure was shown only in a scratch harness
+over ArduinoJson 7.4.1 (the library is not in the repo). Compile is CI's.
+Owner: U1.
+
+- [ ] **Long mDNS adverts cost their own rows, not the whole list**
+  - Setup: a canary-wap on a LAN with at least one other Canary, and a
+    laptop on the same LAN that can publish a `_securacv._tcp` service
+    (`avahi-publish-service` on Linux, `dns-sd -R` on macOS).
+  - Repro: publish two services whose `name` and `model` TXT values are 255
+    bytes each, half of them `"` and `\`; open the Fleet sheet; read
+    `curl -s -H "Authorization: Bearer <token>" http://<wap>/api/fleet/scan
+    | python3 -m json.tool` twice, 15 seconds apart (the first read starts
+    the browse); then publish six more such services and read it again.
+  - Expected: every answer parses; `canaries` lists the other Canary, and
+    each long advert whose row still fits in the 2560-byte cache in browse
+    order (one such row is a little under 1 KB), each value as published; with
+    eight long adverts the list is not empty (before F211 it was, whichever
+    device sent the long values). An advert missing from the list is one
+    that did not fit when its turn came.
+  - Artifact: `docs/audit/repro/F211/long-adverts/`.
+- [ ] **A device name holding a quote or a backslash keeps /api/device-info whole**
+  - Setup: a canary-wap with its API token.
+  - Repro: `curl -X POST -H "Authorization: Bearer <token>"
+    -d '{"name":"kitchen \"north\" \\ door"}' http://<wap>/api/device-name`;
+    then `curl -s http://<wap>/api/device-info | python3 -m json.tool`; open
+    the dashboard and the companion page; read the provisioning receipt with
+    the token (`/api/provisioning-receipt`).
+  - Expected: the rename answers `"ok":true` (the route takes the name, as
+    it always did); the device-info answer parses and its `device_name` reads
+    `kitchen "north" \ door`; the dashboard shows the device; the receipt
+    parses and its token and AP password are unchanged. Before F212 the
+    device-info answer did not parse.
+  - Artifact: `docs/audit/repro/F212/quoted-name/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at

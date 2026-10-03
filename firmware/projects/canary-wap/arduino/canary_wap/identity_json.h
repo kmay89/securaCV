@@ -7,7 +7,7 @@
  * buffer (768 and 1024 bytes) that nothing measured, and both wrote their
  * strings with %s unescaped. GET /api/device-info carries the device name a
  * person typed: the routes in front of setup_wizard::set_device_name()
- * (POST /api/wifi/connect's `device_name` and POST /api/device/name) require
+ * (POST /api/wifi/connect's `device_name` and POST /api/device-name) require
  * 1 to 32 bytes of which one survives the mDNS-label sanitizer, so `"`, `\`
  * and control bytes are all accepted, and a name holding `"` made the answer
  * unparseable. That route answers without a token, and the device's own
