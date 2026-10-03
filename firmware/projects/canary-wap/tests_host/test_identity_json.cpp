@@ -104,7 +104,7 @@ std::string old_receipt(const identity_json::Receipt& in) {
 
 identity_json::DeviceInfo typical_info(const char* name) {
   identity_json::DeviceInfo in = {};
-  in.device_id = "canary-wap-Kx7d";
+  in.device_id = "canary-s3-4dC2";
   in.device_name = name;
   in.mdns_host = "canary-kitchen";
   in.firmware = "2.4.1";
@@ -121,14 +121,14 @@ identity_json::DeviceInfo typical_info(const char* name) {
 
 identity_json::Receipt typical_receipt() {
   identity_json::Receipt in = {};
-  in.device_id = "canary-wap-Kx7d";
+  in.device_id = "canary-s3-4dC2";
   in.tls_enabled = true;
   in.ap_ip = "192.168.4.1";
   in.token = "cv_0123456789abcdefABCDEF0123456789";
   in.pubkey_fp = "a1b2c3d4e5f60718";
   in.firmware = "2.4.1";
   in.hw_token = "0f1e2d3c4b5a6978";
-  in.ap_ssid = "SecuraCV-Kx7d";
+  in.ap_ssid = "SecuraCV-4dC2";
   in.ap_password = "cv-abcdefghjkmn";
   in.tls_cert_fp = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
   in.boot_count = 42;
@@ -191,7 +191,7 @@ void test_a_name_with_quote_and_backslash() {
   const std::string out = handler_info(in);
   CHECK(json_strict::parse(out, &v));
   CHECK(str_field(v, "device_name") == name);
-  CHECK(str_field(v, "device_id") == "canary-wap-Kx7d");
+  CHECK(str_field(v, "device_id") == "canary-s3-4dC2");
   CHECK(str_field(v, "provisioning_gate") == "physical_button");
   CHECK(v.get("auth_required") && v.get("auth_required")->kind == json_strict::Value::Bool &&
         v.get("auth_required")->b);
