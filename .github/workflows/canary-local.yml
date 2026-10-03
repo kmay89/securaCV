@@ -525,6 +525,7 @@ jobs:
           node --test canary-local/tests/mic.test.js
           node --test canary-local/tests/board_facts.test.mjs
           node --test canary-local/tests/csp.test.js
+          node --test canary-local/tests/probe_server.test.js
           node --test canary-local/tests/scene_figures.test.js
           node --test canary-local/tests/real_shapes.test.js
           node --test canary-local/tests/body_dims.test.js
