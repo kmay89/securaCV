@@ -31,6 +31,9 @@
 // A refused send names its reason (sweep F146): a wall clock not set yet is
 // clock_unsynced, no longer a cooldown with 0 seconds left.
 //
+// A refused confirm names its reason, by name and status, and a dismiss says
+// whether its signed suppress vote went out (sweep F174).
+//
 // The send cooldown is a timer, not a state (sweep F178): a mute no longer
 // ends it, a send drained in the pass after it ran out goes out, and the
 // status route reads it over at once and its last second as 1 s, not 0.
@@ -346,22 +349,25 @@ void test_every_command_runs_on_the_loop_task() {
   neighbor_chirp(n1);
   size_t before = host_sim::espnow->sent.size();
   r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, n1));
-  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NONE);
   CHECK(r.sent_before_turn == before);
   CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_ACK});
 
-  // An unknown nonce: confirm and dismiss both answer false, and send nothing.
+  // An unknown nonce: confirm and dismiss both answer false, say so by name
+  // (sweep F174), and send nothing.
   const uint8_t unknown[8] = {9, 9, 9, 9, 9, 9, 9, 9};
   before = host_sim::espnow->sent.size();
   r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, unknown));
-  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NOT_FOUND);
   r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, unknown));
-  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NOT_FOUND);
+  CHECK(!r.r.vote_sent);
   CHECK(host_sim::espnow->sent.size() == before);
 
   // Dismissed: marked on the loop task's turn, with its signed suppress vote.
   r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, n1));
-  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.vote_sent);
+  CHECK(r.r.confirm_refusal == cc::CONFIRM_REFUSED_NONE);
   CHECK(cc::g_recent_chirps[0].dismissed);
   CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_SUPPRESS_VOTE});
 
@@ -1361,6 +1367,166 @@ void test_a_send_just_after_the_cooldown_goes_out() {
   std::printf("PASS a_send_just_after_the_cooldown_goes_out\n");
 }
 
+// ── A refused confirm says why; a dismiss says if its vote went (F174) ──
+
+// The confirm route's answer to a refusal (chirp_api.h's send_confirm_answer
+// sets the status and the error and message from these lookups).
+struct Named {
+  int status;
+  std::string error;
+  std::string message;
+};
+Named named(cc::ConfirmRefusal why) {
+  return Named{cc::confirm_refusal_status(why), cc::confirm_refusal_error(why),
+               cc::confirm_refusal_message(why)};
+}
+
+// The signed confirmations (ACK frames) sent since `from`.
+size_t acks_since(size_t from) {
+  size_t n = 0;
+  for (uint8_t t : sent_types(from)) n += t == cc::CHIRP_MSG_ACK ? 1 : 0;
+  return n;
+}
+
+// A chirp this device sent, as handle_witness() stores it when a neighbor's
+// relay of it arrives after the nonce filter's 5-minute reset: this
+// session's own pubkey as the origin.
+void own_chirp(const uint8_t nonce[8]) {
+  cc::ReceivedChirp c;
+  memset(&c, 0, sizeof(c));
+  memcpy(c.nonce, nonce, 8);
+  memcpy(c.sender_pubkey, cc::g_session.session_pubkey, sizeof(c.sender_pubkey));
+  c.template_id = cc::TPL_INFRA_POWER_OUT;
+  c.hop_count = 1;
+  c.received_ms = host_sim::now_ms;
+  cc::g_recent_chirps[cc::g_recent_chirp_count++] = c;
+}
+
+// confirm_chirp() returned false for every refusal, and POST
+// /api/chirp/confirm answered each {"error":"not_found","message":"Chirp not
+// found or already dismissed"} (/api/chirp/ack with "confirmed" a bare
+// success:false). Each refusal is in the Result now, read on the loop task
+// right after the attempt, in the order confirm_chirp() checks: the channel
+// off, the presence requirement, the wall clock, then the chirp (none with
+// that nonce, or this device's own). None of them sends a frame.
+void test_a_refused_confirm_names_why() {
+  boot();
+  const uint8_t n1[8] = {0xC1, 1, 1, 1, 1, 1, 1, 1};
+  Rest r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, n1));             // off
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
+  CHECK(r.r.confirm_refusal == cc::CONFIRM_REFUSED_DISABLED);
+  CHECK(named(r.r.confirm_refusal).error == "chirp_disabled" && named(r.r.confirm_refusal).status == 409);
+
+  enabled_channel(/*present=*/false);
+  neighbor_chirp(n1);
+  size_t before = host_sim::espnow->sent.size();
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, n1));                  // on for less than 10 minutes
+  CHECK(!r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_PRESENCE);
+  CHECK(named(r.r.confirm_refusal).error == "presence_required" && named(r.r.confirm_refusal).status == 409);
+
+  host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;
+  host_sim::wall_now = cc::MIN_UNIX_TIME - 1;                      // the clock not set yet
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, n1));
+  CHECK(!r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_CLOCK_UNSYNCED);
+  CHECK(named(r.r.confirm_refusal).error == "clock_unsynced" && named(r.r.confirm_refusal).status == 409);
+  CHECK(named(r.r.confirm_refusal).message.find("GPS time") != std::string::npos);
+  host_sim::wall_now = 1760000000;
+
+  const uint8_t gone[8] = {0xC2, 2, 2, 2, 2, 2, 2, 2};
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, gone));                // no such chirp
+  CHECK(!r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NOT_FOUND);
+  CHECK(named(r.r.confirm_refusal).error == "not_found" && named(r.r.confirm_refusal).status == 404);
+  CHECK(named(r.r.confirm_refusal).message == "Chirp not found or already dismissed");
+
+  const uint8_t mine[8] = {0xC3, 3, 3, 3, 3, 3, 3, 3};
+  own_chirp(mine);
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, mine));                // this device's own
+  CHECK(!r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_OWN_CHIRP);
+  CHECK(named(r.r.confirm_refusal).error == "own_chirp" && named(r.r.confirm_refusal).status == 409);
+  CHECK(acks_since(before) == 0);                                  // no refusal sent one
+
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, n1));                  // all met: it goes out
+  CHECK(r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NONE);
+  CHECK(acks_since(before) == 1);
+
+  // The other answers: the dashboard reads a 403 as a bad token, so no
+  // refusal is one; NONE with a failure (an ACK that could not be signed,
+  // which the fixed canonical buffer rules out) is a 500 of its own.
+  for (cc::ConfirmRefusal why : {cc::CONFIRM_REFUSED_DISABLED, cc::CONFIRM_REFUSED_PRESENCE,
+                                 cc::CONFIRM_REFUSED_CLOCK_UNSYNCED, cc::CONFIRM_REFUSED_NOT_FOUND,
+                                 cc::CONFIRM_REFUSED_OWN_CHIRP}) {
+    const int st = cc::confirm_refusal_status(why);
+    CHECK((st == 404 || st == 409) && strcmp(http_status_line(st), "400 Bad Request") != 0);
+  }
+  CHECK(named(cc::CONFIRM_REFUSED_NONE).status == 500 && named(cc::CONFIRM_REFUSED_NONE).error == "confirm_failed");
+  // Every answer fits its buffer with room for the terminator (chirp_api.h's
+  // send_confirm_answer and send_dismiss_answer serialize into 256 bytes,
+  // rule CV9): serializeJson() leaves a full char array unterminated, and the
+  // refused confirm's old 85-byte answer filled its 64-byte buffer. The
+  // longest, a dismiss whose vote waits for the clock, is 161 bytes, past
+  // rule CV10's 160-byte floor for other answers with a message.
+  for (cc::ConfirmRefusal why : {cc::CONFIRM_REFUSED_NONE, cc::CONFIRM_REFUSED_DISABLED,
+                                 cc::CONFIRM_REFUSED_PRESENCE, cc::CONFIRM_REFUSED_CLOCK_UNSYNCED,
+                                 cc::CONFIRM_REFUSED_NOT_FOUND, cc::CONFIRM_REFUSED_OWN_CHIRP}) {
+    const std::string refused = std::string("{\"success\":false,\"error\":\"") + cc::confirm_refusal_error(why) +
+                                "\",\"message\":\"" + cc::confirm_refusal_message(why) + "\"}";
+    const std::string unsent = std::string("{\"success\":true,\"vote_sent\":false,\"vote_error\":\"") +
+                               cc::confirm_refusal_error(why) + "\",\"message\":\"" +
+                               cc::vote_unsent_message(why) + "\"}";
+    CHECK(refused.size() < 160 && unsent.size() < 256);
+    if (why == cc::CONFIRM_REFUSED_CLOCK_UNSYNCED) CHECK(unsent.size() == 161);
+  }
+  CHECK(strcmp(http_status_line(500), "500 Internal Server Error") == 0);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_refused_confirm_names_why\n");
+}
+
+// A dismiss hides the chirp here whatever the clock, but sends its signed
+// suppress vote only with the presence requirement met and the clock set,
+// and said nothing when it did not. The Result says whether the vote went
+// out, and if not why; a chirp that is not there is not_found, as for a
+// confirm.
+void test_a_dismiss_says_whether_its_vote_went() {
+  boot();
+  enabled_channel(/*present=*/false);
+  const uint8_t a[8] = {0xD1, 1, 1, 1, 1, 1, 1, 1};
+  const uint8_t b[8] = {0xD2, 2, 2, 2, 2, 2, 2, 2};
+  const uint8_t c[8] = {0xD3, 3, 3, 3, 3, 3, 3, 3};
+  neighbor_chirp(a);
+  neighbor_chirp(b);
+  neighbor_chirp(c);
+
+  size_t before = host_sim::espnow->sent.size();
+  Rest r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, a));              // on for less than 10 minutes
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && cc::g_recent_chirps[0].dismissed);
+  CHECK(!r.r.vote_sent && r.r.confirm_refusal == cc::CONFIRM_REFUSED_PRESENCE);
+  CHECK(std::string(cc::vote_unsent_message(r.r.confirm_refusal)).find("10 minutes") != std::string::npos);
+  CHECK(std::string(cc::confirm_refusal_error(r.r.confirm_refusal)) == "presence_required");
+  CHECK(sent_types(before).empty());
+
+  host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;
+  host_sim::wall_now = cc::MIN_UNIX_TIME - 1;                      // the clock not set yet
+  before = host_sim::espnow->sent.size();
+  r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, b));
+  CHECK(r.r.ok && cc::g_recent_chirps[1].dismissed);
+  CHECK(!r.r.vote_sent && r.r.confirm_refusal == cc::CONFIRM_REFUSED_CLOCK_UNSYNCED);
+  CHECK(std::string(cc::vote_unsent_message(r.r.confirm_refusal)).find("GPS time") != std::string::npos);
+  for (uint8_t t : sent_types(before)) CHECK(t != cc::CHIRP_MSG_SUPPRESS_VOTE);
+  host_sim::wall_now = 1760000000;
+
+  before = host_sim::espnow->sent.size();
+  r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, c));                   // both met: the vote goes out
+  CHECK(r.r.ok && r.r.vote_sent && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NONE);
+  CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_SUPPRESS_VOTE});
+
+  const uint8_t gone[8] = {0xD4, 4, 4, 4, 4, 4, 4, 4};
+  r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, gone));
+  CHECK(!r.r.ok && !r.r.vote_sent && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NOT_FOUND);
+  CHECK(named(r.r.confirm_refusal).status == 404 && named(r.r.confirm_refusal).error == "not_found");
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_dismiss_says_whether_its_vote_went\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1371,6 +1537,8 @@ const Test kTests[] = {
     {"a_refused_send_names_why", test_a_refused_send_names_why},
     {"a_mute_does_not_end_the_cooldown", test_a_mute_does_not_end_the_cooldown},
     {"a_send_just_after_the_cooldown_goes_out", test_a_send_just_after_the_cooldown_goes_out},
+    {"a_refused_confirm_names_why", test_a_refused_confirm_names_why},
+    {"a_dismiss_says_whether_its_vote_went", test_a_dismiss_says_whether_its_vote_went},
     {"a_send_carries_the_owners_fields", test_a_send_carries_the_owners_fields},
     {"a_settings_post_changes_only_what_it_names", test_a_settings_post_changes_only_what_it_names},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},

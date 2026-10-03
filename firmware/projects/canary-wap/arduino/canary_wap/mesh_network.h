@@ -1225,10 +1225,89 @@ inline uint32_t seconds_left(uint32_t ms) {
   return ms / 1000u + (ms % 1000u != 0u ? 1u : 0u);
 }
 
+// Why a CHIRP_CMD_CONFIRM sent no signed confirmation ("I see this too"), in
+// the order confirm_chirp() checks: the channel off, the presence
+// requirement, a wall clock not set yet (origination waits for it, audit
+// C10), then the chirp itself: none in the recent list with that nonce, or
+// one this device sent (the originator cannot confirm its own, spec 3.4).
+// POST /api/chirp/confirm answered every one of them not_found, and
+// /api/chirp/ack's "confirmed" a bare success:false (sweep F174).
+//
+// A CHIRP_CMD_DISMISS uses the same names: NOT_FOUND when there is no such
+// chirp, and otherwise why its signed suppress vote did not go out
+// (PRESENCE or CLOCK_UNSYNCED). A dismiss hides the chirp here whatever the
+// vote does, and said nothing when the vote stayed home.
+enum ConfirmRefusal : uint8_t {
+  CONFIRM_REFUSED_NONE = 0,  // it went out (failed with NONE: the frame could not be
+                             // signed, which the fixed-size canonical buffer rules out)
+  CONFIRM_REFUSED_DISABLED,
+  CONFIRM_REFUSED_PRESENCE,
+  CONFIRM_REFUSED_CLOCK_UNSYNCED,
+  CONFIRM_REFUSED_NOT_FOUND,
+  CONFIRM_REFUSED_OWN_CHIRP,
+};
+
+// A refused confirm's (or a dismiss's not-found) "error", "message" and HTTP
+// status: 404 for a chirp that is not there, 409 for the others (the
+// request is sound, the channel's state refuses it). Never 403: the
+// dashboard reads a 403 as a bad token and asks for it again.
+inline const char* confirm_refusal_error(ConfirmRefusal why) {
+  switch (why) {
+    case CONFIRM_REFUSED_DISABLED:       return "chirp_disabled";
+    case CONFIRM_REFUSED_PRESENCE:       return "presence_required";
+    case CONFIRM_REFUSED_CLOCK_UNSYNCED: return "clock_unsynced";
+    case CONFIRM_REFUSED_NOT_FOUND:      return "not_found";
+    case CONFIRM_REFUSED_OWN_CHIRP:      return "own_chirp";
+    case CONFIRM_REFUSED_NONE:           break;
+  }
+  return "confirm_failed";
+}
+inline const char* confirm_refusal_message(ConfirmRefusal why) {
+  switch (why) {
+    case CONFIRM_REFUSED_DISABLED:       return "Chirp channel is not enabled";
+    case CONFIRM_REFUSED_PRESENCE:       return "Must be active for 10 minutes before confirming";
+    case CONFIRM_REFUSED_CLOCK_UNSYNCED: return "Waiting for the clock to be set from GPS time before confirming";
+    case CONFIRM_REFUSED_NOT_FOUND:      return "Chirp not found or already dismissed";
+    case CONFIRM_REFUSED_OWN_CHIRP:      return "This device sent this chirp and cannot confirm it";
+    case CONFIRM_REFUSED_NONE:           break;
+  }
+  return "The confirmation could not be signed";
+}
+inline int confirm_refusal_status(ConfirmRefusal why) {
+  switch (why) {
+    case CONFIRM_REFUSED_NOT_FOUND:      return 404;
+    case CONFIRM_REFUSED_DISABLED:
+    case CONFIRM_REFUSED_PRESENCE:
+    case CONFIRM_REFUSED_CLOCK_UNSYNCED:
+    case CONFIRM_REFUSED_OWN_CHIRP:      return 409;
+    case CONFIRM_REFUSED_NONE:           break;
+  }
+  return 500;
+}
+
+// What a dismiss whose suppress vote did not go out says beside its
+// success: the chirp is hidden here, and why no neighbor heard the vote.
+inline const char* vote_unsent_message(ConfirmRefusal why) {
+  switch (why) {
+    case CONFIRM_REFUSED_PRESENCE:
+      return "Dismissed on this device only: a suppress vote needs 10 minutes active";
+    case CONFIRM_REFUSED_CLOCK_UNSYNCED:
+      return "Dismissed on this device only: no suppress vote until the clock is set from GPS time";
+    case CONFIRM_REFUSED_NONE:
+    case CONFIRM_REFUSED_DISABLED:
+    case CONFIRM_REFUSED_NOT_FOUND:
+    case CONFIRM_REFUSED_OWN_CHIRP:      break;
+  }
+  return "Dismissed on this device only: the suppress vote could not be signed";
+}
+
 // What a command did, as the loop task saw it right after the command ran.
 struct Result {
   bool         ok;                     // the command's own answer (DISABLE, UNMUTE, SETTINGS: true)
   SendRefusal  refusal;                // SEND that failed: why
+  ConfirmRefusal confirm_refusal;      // CONFIRM that failed: why; DISMISS: NOT_FOUND, or why
+                                       // its suppress vote did not go out (sweep F174)
+  bool         vote_sent;              // DISMISS: its signed suppress vote went out
   uint8_t      cooldown_tier;          // SEND: get_cooldown_tier() after the attempt
   uint32_t     cooldown_remaining_ms;  // SEND refused for the cooldown (> 0 whenever it is)
   bool         relay_enabled;          // SETTINGS: the setting after the command

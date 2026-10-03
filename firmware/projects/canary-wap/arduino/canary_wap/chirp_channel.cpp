@@ -335,8 +335,8 @@ static bool enable();
 static void disable();
 static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
                        ChirpDetailSlot detail, uint8_t ttl_minutes);
-static bool confirm_chirp(const uint8_t* nonce);
-static bool dismiss_chirp(const uint8_t* nonce);
+static bool confirm_chirp(const uint8_t* nonce, ConfirmRefusal* why);
+static bool dismiss_chirp(const uint8_t* nonce, bool* vote_sent, ConfirmRefusal* vote_refusal);
 static bool mute(uint8_t duration_minutes);
 static void unmute();
 static void set_relay_enabled(bool enabled);
@@ -1398,10 +1398,14 @@ static Result run_command(const Command& cmd) {
       }
       break;
     case CHIRP_CMD_CONFIRM:
-      r.ok = confirm_chirp(cmd.nonce);
+      // Why it was refused, by name (sweep F174: the handler answered every
+      // refusal not_found).
+      r.ok = confirm_chirp(cmd.nonce, &r.confirm_refusal);
       break;
     case CHIRP_CMD_DISMISS:
-      r.ok = dismiss_chirp(cmd.nonce);
+      // Hidden here whatever the vote does; whether the vote went out, and
+      // if not why (sweep F174: the answer said nothing of it).
+      r.ok = dismiss_chirp(cmd.nonce, &r.vote_sent, &r.confirm_refusal);
       break;
     case CHIRP_CMD_MUTE:
       r.ok = mute(cmd.duration_minutes);
@@ -1666,21 +1670,36 @@ const ReceivedChirp* get_pending_chirps(size_t* count) {
   return pending;
 }
 
-static bool confirm_chirp(const uint8_t* nonce) {
+// This device's signed confirmation of a neighbor's chirp ("I see this
+// too"), or why it sent none, in *why (CONFIRM_REFUSED_NONE when it went
+// out): the channel off, then the checks in the order they always ran (the
+// presence requirement, the wall clock, the chirp itself). Every refusal
+// was answered not_found (sweep F174).
+static bool confirm_chirp(const uint8_t* nonce, ConfirmRefusal* why) {
+  *why = CONFIRM_REFUSED_NONE;
+  if (!is_enabled()) {
+    *why = CONFIRM_REFUSED_DISABLED;
+    return false;
+  }
   if (!has_presence_requirement()) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
                "chirp: refused confirm — presence requirement not met");
+    *why = CONFIRM_REFUSED_PRESENCE;
     return false;
   }
   if (!wall_clock_is_synced()) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
                "chirp: refused confirm — time unsynced");
+    *why = CONFIRM_REFUSED_CLOCK_UNSYNCED;
     return false;
   }
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     if (memcmp(g_recent_chirps[i].nonce, nonce, 8) != 0) continue;
     if (memcmp(g_recent_chirps[i].sender_pubkey, g_session.session_pubkey,
-               SESSION_PUBKEY_SIZE) == 0) return false;
+               SESSION_PUBKEY_SIZE) == 0) {
+      *why = CONFIRM_REFUSED_OWN_CHIRP;   // the originator cannot confirm its own (spec 3.4)
+      return false;
+    }
 
     uint8_t buf[sizeof(ChirpHeader) + sizeof(ChirpAckPayload)];
     memset(buf, 0, sizeof(buf));
@@ -1710,15 +1729,28 @@ static bool confirm_chirp(const uint8_t* nonce) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: confirmed witness (signed)");
     return true;
   }
+  *why = CONFIRM_REFUSED_NOT_FOUND;
   return false;
 }
 
-static bool dismiss_chirp(const uint8_t* nonce) {
+// Hides a chirp here (true when there is one with that nonce), and sends this
+// device's signed suppress vote when it may originate: *vote_sent, or why
+// not in *vote_refusal (the presence requirement, then the wall clock;
+// CONFIRM_REFUSED_NOT_FOUND when there is no such chirp). The vote stayed
+// home without a word (sweep F174).
+static bool dismiss_chirp(const uint8_t* nonce, bool* vote_sent, ConfirmRefusal* vote_refusal) {
+  *vote_sent = false;
+  *vote_refusal = CONFIRM_REFUSED_NONE;
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     if (memcmp(g_recent_chirps[i].nonce, nonce, 8) == 0) {
       g_recent_chirps[i].dismissed = true;
+      if (!has_presence_requirement()) {
+        *vote_refusal = CONFIRM_REFUSED_PRESENCE;
+      } else if (!wall_clock_is_synced()) {
+        *vote_refusal = CONFIRM_REFUSED_CLOCK_UNSYNCED;
+      }
       // C7: broadcast a signed suppress vote so neighbors can converge.
-      if (has_presence_requirement() && wall_clock_is_synced()) {
+      if (*vote_refusal == CONFIRM_REFUSED_NONE) {
         uint8_t buf[sizeof(ChirpHeader) + sizeof(ChirpSuppressVotePayload)];
         memset(buf, 0, sizeof(buf));
         ChirpHeader* hdr = (ChirpHeader*)buf;
@@ -1740,11 +1772,13 @@ static bool dismiss_chirp(const uint8_t* nonce) {
           Ed25519::sign(payload->signature, g_session.session_privkey,
                         g_session.session_pubkey, canonical, cl);
           broadcast_message(buf, sizeof(buf));
+          *vote_sent = true;
         }
       }
       return true;
     }
   }
+  *vote_refusal = CONFIRM_REFUSED_NOT_FOUND;
   return false;
 }
 

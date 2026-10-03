@@ -31,6 +31,11 @@
  * read in place could mix two passes (a row read while the 30-second prune
  * shifts the table under it). The responses are what they were.
  *
+ * Sweep F174: a refused confirm says why, by name and status
+ * (send_confirm_answer), and a dismiss whether its signed suppress vote went
+ * out (send_dismiss_answer); /api/chirp/ack answers as the route of the
+ * command it ran.
+ *
  * Sweep F178: cooldown_remaining_sec (GET /api/chirp, a send refused for the
  * cooldown) is rounded up by chirp_channel::seconds_left(), so a cooldown
  * that still runs never reads 0 s, and it is the cooldown's timer, which a
@@ -81,6 +86,52 @@ inline esp_err_t send_not_run(httpd_req_t* req, loop_command_ring::Wait w) {
                        ? "Chirp channel is busy; try again"
                        : "Chirp channel did not answer in time; try again";
   char buffer[160];
+  serializeJson(doc, buffer);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_sendstr(req, buffer);
+}
+
+// A confirm the loop task ran (POST /api/chirp/confirm, and /api/chirp/ack
+// with "confirmed"): a refusal by name, from the Result the loop task read,
+// with its status (confirm_refusal_status: 404 a chirp that is not there,
+// 409 the others). The confirm route answered every refusal not_found and
+// the ack a bare success:false (sweep F174).
+inline esp_err_t send_confirm_answer(httpd_req_t* req, const chirp_channel::Result& r) {
+  JsonDocument doc;
+  doc["success"] = r.ok;
+  if (!r.ok) {
+    httpd_resp_set_status(req, http_status_line(chirp_channel::confirm_refusal_status(r.confirm_refusal)));
+    doc["error"] = chirp_channel::confirm_refusal_error(r.confirm_refusal);
+    doc["message"] = chirp_channel::confirm_refusal_message(r.confirm_refusal);
+  }
+  char buffer[256];
+  serializeJson(doc, buffer);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_sendstr(req, buffer);
+}
+
+// A dismiss the loop task ran (POST /api/chirp/dismiss, and /api/chirp/ack
+// with "resolved"): a chirp that is not there by name (404 not_found); one
+// it hid says whether its signed suppress vote went out, and when it did not,
+// why (the presence requirement, the clock) beside its success. It said
+// nothing, and the vote had stayed home (sweep F174).
+inline esp_err_t send_dismiss_answer(httpd_req_t* req, const chirp_channel::Result& r) {
+  JsonDocument doc;
+  doc["success"] = r.ok;
+  if (!r.ok) {
+    httpd_resp_set_status(req, http_status_line(chirp_channel::confirm_refusal_status(r.confirm_refusal)));
+    doc["error"] = chirp_channel::confirm_refusal_error(r.confirm_refusal);
+    doc["message"] = chirp_channel::confirm_refusal_message(r.confirm_refusal);
+  } else {
+    doc["vote_sent"] = r.vote_sent;
+    if (!r.vote_sent) {
+      doc["vote_error"] = chirp_channel::confirm_refusal_error(r.confirm_refusal);
+      doc["message"] = chirp_channel::vote_unsent_message(r.confirm_refusal);
+    }
+  }
+  char buffer[256];
   serializeJson(doc, buffer);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -496,7 +547,6 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
   // confirmer_session_pubkey (verified in handle_ack). SEEN ACKs are
   // diagnostic-only and produce no local state change; we accept the
   // request and return success without doing anything observable.
-  bool success;
   if (strcmp(ack_type_str, "confirmed") == 0 || strcmp(ack_type_str, "resolved") == 0) {
     chirp_channel::Command cmd = chirp_channel::make_command(
         strcmp(ack_type_str, "confirmed") == 0 ? chirp_channel::CHIRP_CMD_CONFIRM
@@ -505,14 +555,14 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
     chirp_channel::Result r;
     const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
     if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
-    success = r.ok;
-  } else {
-    // SEEN — no-op, but still acknowledge the request.
-    success = true;
+    // Answered as the route of the command it ran answers (sweep F174).
+    if (cmd.type == chirp_channel::CHIRP_CMD_CONFIRM) return send_confirm_answer(req, r);
+    return send_dismiss_answer(req, r);
   }
 
+  // SEEN — no-op, but still acknowledge the request.
   JsonDocument doc;
-  doc["success"] = success;
+  doc["success"] = true;
 
   char buffer[64];
   serializeJson(doc, buffer);
@@ -555,17 +605,7 @@ inline esp_err_t handle_chirp_dismiss(httpd_req_t* req) {
   chirp_channel::Result r;
   const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
   if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
-  bool success = r.ok;
-
-  JsonDocument doc;
-  doc["success"] = success;
-
-  char buffer[64];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_dismiss_answer(req, r);
 }
 
 // POST /api/chirp/mute - Mute for duration
@@ -601,7 +641,9 @@ inline esp_err_t handle_chirp_mute(httpd_req_t* req) {
     doc["message"] = "Duration must be 15, 30, 60, or 120 minutes";
   }
 
-  char buffer[64];
+  // 101 bytes refused: a 64-byte buffer was filled without a terminator and
+  // the stack after it went out too (rule CV10, sweep F174).
+  char buffer[160];
   serializeJson(doc, buffer);
 
   httpd_resp_set_type(req, "application/json");
@@ -713,21 +755,7 @@ inline esp_err_t handle_chirp_confirm(httpd_req_t* req) {
   chirp_channel::Result r;
   const loop_command_ring::Wait w = chirp_channel::submit(cmd, &r);
   if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
-  bool success = r.ok;
-
-  JsonDocument doc;
-  doc["success"] = success;
-  if (!success) {
-    doc["error"] = "not_found";
-    doc["message"] = "Chirp not found or already dismissed";
-  }
-
-  char buffer[64];
-  serializeJson(doc, buffer);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  return send_confirm_answer(req, r);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -264,6 +264,24 @@ CV8. The send cooldown is a timer, not a state (F178): in
      `read_status()` and `cannot_send_reason()` read the timer
      (`test_chirp_commands_wap.cpp`'s `a_mute_does_not_end_the_cooldown`,
      `a_send_just_after_the_cooldown_goes_out`).
+CV9. A refused confirm says why, and a dismiss whether its suppress vote
+     went out (F174). `send_confirm_answer()` and `send_dismiss_answer()`
+     are exactly `CHIRP_CONFIRM_ANSWER` and `CHIRP_DISMISS_ANSWER`: the
+     status, `error` and `message` from `confirm_refusal_status()`,
+     `confirm_refusal_error()` and `confirm_refusal_message()`, a hidden
+     chirp's `vote_sent` and, when it stayed home, `vote_error` and
+     `vote_unsent_message()` (host-tested), all from the `Result`. The
+     confirm and dismiss routes answer through them right after the
+     not-run guard, and `/api/chirp/ack` through the one of the command it
+     ran.
+CV10. Every `chirp_api.h` function that answers a `message` serializes into
+     a buffer of at least `CHIRP_MESSAGE_BUFFER` bytes. `serializeJson()`
+     into a char array leaves it unterminated when the answer fills it, and
+     `httpd_resp_sendstr()` then sends the stack after it: the confirm
+     route's 85-byte refusal went out of a 64-byte buffer that way, and so
+     did the mute route's 101-byte one (F174; an ArduinoJson 7.4.1 scratch
+     harness showed both). The confirm and dismiss answers' 256 bytes are
+     CV9's (the longest, 161 bytes, is host-tested).
 
 MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
@@ -1078,7 +1096,9 @@ BT_SETTINGS_FIELDS = {             # key: (the field it fills, the mask bit that
 # of its request's own values. State the command changed is answered from
 # the Result the loop task read, never from a live reader on this task.
 AFTER_SUBMIT_CALLS = {"chirp_channel": ("get_template_text", "urgency_name", "send_refusal_error",
-                                       "send_refusal_message", "seconds_left"),
+                                       "send_refusal_message", "seconds_left", "confirm_refusal_status",
+                                       "confirm_refusal_error", "confirm_refusal_message",
+                                       "vote_unsent_message"),
                       "bluetooth_channel": ()}
 # Right after `const loop_command_ring::Wait w = <ns>::submit(...);`: every
 # answer but kDone is a command that did not run.
@@ -1505,6 +1525,34 @@ CHIRP_READER_VIEW = {"read_status": "g_status_view.read(", "read_nearby": "g_nea
 # Rule CV8 (F178): the only functions in chirp_channel.cpp that may name
 # CHIRP_COOLDOWN. The send cooldown is a timer; this is the state it reads as.
 CHIRP_COOLDOWN_NAMERS = ("shown_state", "state_name")
+# Rule CV9 (F174): how a confirm and a dismiss answer once their command ran.
+CHIRP_REFUSAL_ANSWER = (
+    "httpd_resp_set_status(req,http_status_line(chirp_channel::confirm_refusal_status(r.confirm_refusal)));"
+    'doc["error"]=chirp_channel::confirm_refusal_error(r.confirm_refusal);'
+    'doc["message"]=chirp_channel::confirm_refusal_message(r.confirm_refusal);'
+)
+CHIRP_ANSWER_TAIL = ('charbuffer[256];serializeJson(doc,buffer);httpd_resp_set_type(req,"application/json");'
+                     'httpd_resp_set_hdr(req,"Access-Control-Allow-Origin","*");returnhttpd_resp_sendstr(req,buffer);')
+CHIRP_CONFIRM_ANSWER = ('JsonDocumentdoc;doc["success"]=r.ok;if(!r.ok){' + CHIRP_REFUSAL_ANSWER + '}'
+                        + CHIRP_ANSWER_TAIL)
+CHIRP_DISMISS_ANSWER = ('JsonDocumentdoc;doc["success"]=r.ok;if(!r.ok){' + CHIRP_REFUSAL_ANSWER + '}'
+                        'else{doc["vote_sent"]=r.vote_sent;if(!r.vote_sent){'
+                        'doc["vote_error"]=chirp_channel::confirm_refusal_error(r.confirm_refusal);'
+                        'doc["message"]=chirp_channel::vote_unsent_message(r.confirm_refusal);}}'
+                        + CHIRP_ANSWER_TAIL)
+CHIRP_ANSWERS = {"send_confirm_answer": CHIRP_CONFIRM_ANSWER, "send_dismiss_answer": CHIRP_DISMISS_ANSWER}
+# Where each route answers through them: right after its not-run guard.
+CHIRP_ANSWERED_BY = {
+    "handle_chirp_confirm": "returnsend_confirm_answer(req,r);",
+    "handle_chirp_dismiss": "returnsend_dismiss_answer(req,r);",
+    "handle_chirp_ack": "if(cmd.type==chirp_channel::CHIRP_CMD_CONFIRM)returnsend_confirm_answer(req,r);"
+                        "returnsend_dismiss_answer(req,r);}",
+}
+# Rule CV10 (F174): the least a buffer that holds an answer with a message
+# may be. The mute route's refusal is 101 bytes, the send not-run answer's
+# 97; the confirm and dismiss answers (a dismiss whose vote waits for the
+# clock is 161 bytes, test_chirp_commands_wap.cpp) are held at 256 by CV9.
+CHIRP_MESSAGE_BUFFER = 160
 # Rule CV7: what each GET key is set from (squashed right-hand sides), once.
 CHIRP_STATUS_FIELDS = {
     "state": "chirp_channel::state_name(v.state)",
@@ -1605,8 +1653,8 @@ def chirp_live_read_findings(name: str, code: str) -> tuple[str, ...]:
 
 
 def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]) -> None:
-    """Rules CV1-CV8: the Chirp GET routes read only what the loop task published, and the
-    send cooldown is a timer."""
+    """Rules CV1-CV10: the Chirp GET routes read only what the loop task published, the
+    send cooldown is a timer, a refused confirm says why, and no answer outgrows its buffer."""
     files = dict(others)
     files[INO] = ino
     for name, src in files.items():
@@ -1640,6 +1688,8 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
                           "them (F138)")
     # CV7: what the routes answer under each key.
     check_chirp_route_answers(files[CHIRP_API], errors)
+    # CV9, CV10: the confirm and dismiss answers, and the answer buffers.
+    check_chirp_confirm_answers(files[CHIRP_API], errors)
     # CV3, CV4, CV5: chirp_channel.cpp.
     code = blank_comments_and_strings(files[CHIRP_CPP])
     spans = named_bodies(code)
@@ -1737,6 +1787,46 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
         if hit:
             errors.append(f"{CHIRP_CPP}: {fn}() names {hit.group(1)} — it runs on the httpd task and "
                           "reads only what the loop task published (F138)")
+
+
+def check_chirp_confirm_answers(api_src: str, errors: list[str]) -> None:
+    """Rules CV9, CV10: a refused confirm says why, a dismiss whether its vote
+    went out, and no answer with a message outgrows its buffer (F174)."""
+    code = blank_comments_and_strings(api_src)
+    kept = blank_comments_only(api_src)
+    for fn, want in CHIRP_ANSWERS.items():
+        span = the_body(code, r"\binline\s+esp_err_t\s+" + fn +
+                        r"\s*\(\s*httpd_req_t\s*\*\s*req\s*,\s*const\s+chirp_channel::Result\s*&\s*r\s*\)",
+                        f"{CHIRP_API}: {fn}(httpd_req_t* req, const chirp_channel::Result& r)", errors)
+        if span is None:
+            continue
+        if squash(kept[span[0]:span[1]]) != want:
+            errors.append(f"{CHIRP_API}: {fn}() must answer exactly as rule CV9 says — the status, error "
+                          "and message from the host-tested lookups of r.confirm_refusal (404 not found, "
+                          "409 the rest; never 403, which the dashboard reads as a bad token), a dismissed "
+                          "chirp's vote_sent and why its vote stayed home (F174)")
+    for h, tail in CHIRP_ANSWERED_BY.items():
+        span = the_body(code, r"\besp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                        f"{CHIRP_API}: {h}()", errors)
+        if span is None:
+            continue
+        body = squash(code[span[0]:span[1]])
+        at = body.find(NOT_RUN_GUARD)
+        after = body[at + len(NOT_RUN_GUARD):]
+        if at < 0 or not (after == tail if h != "handle_chirp_ack" else after.startswith(tail)) or \
+                body.count("send_confirm_answer(") + body.count("send_dismiss_answer(") != tail.count("_answer("):
+            errors.append(f"{CHIRP_API}: {h}() must answer right after its not-run guard with `{tail.rstrip('}')}` — "
+                          "the refusal by name and status from the Result (F174: every refused confirm "
+                          "answered not_found, the ack a bare success:false, a dismiss nothing of its vote)")
+    for name, start, end in named_bodies(code):
+        body = kept[start:end]
+        if '["message"]' not in body.replace(" ", ""):
+            continue
+        for m in re.finditer(r"\bchar\s+buffer\s*\[\s*(\d+)\s*\]", body):
+            if int(m.group(1)) < CHIRP_MESSAGE_BUFFER:
+                errors.append(f"{CHIRP_API}: {name}() answers a message from a {m.group(1)}-byte buffer — "
+                              f"at least {CHIRP_MESSAGE_BUFFER}: serializeJson() leaves a full char array "
+                              "unterminated and httpd_resp_sendstr() sends the stack after it (F174)")
 
 
 def check_chirp_route_answers(api_src: str, errors: list[str]) -> None:
@@ -2755,6 +2845,37 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the send route rounds a cooldown refusal's time left down again (F178)",
      on_other(CHIRP_API, api_handler("handle_chirp_send"),
               r"chirp_channel::seconds_left\(r\.cooldown_remaining_ms\)", "r.cooldown_remaining_ms / 1000")),
+    # Rules CV9, CV10: a refused confirm says why (F174).
+    ("the confirm answer names every refusal not_found again",
+     on_other(CHIRP_API, r"\binline\s+esp_err_t\s+send_confirm_answer\s*\([^)]*\)",
+              r"doc\[\"error\"\]\s*=\s*chirp_channel::confirm_refusal_error\(r\.confirm_refusal\);",
+              'doc["error"] = "not_found";')),
+    ("the confirm answer drops its status (every refusal a 200)",
+     on_other(CHIRP_API, r"\binline\s+esp_err_t\s+send_confirm_answer\s*\([^)]*\)",
+              r"httpd_resp_set_status\(req,\s*http_status_line\(chirp_channel::confirm_refusal_status\("
+              r"r\.confirm_refusal\)\)\);", "")),
+    ("the dismiss answer says nothing of the vote",
+     on_other(CHIRP_API, r"\binline\s+esp_err_t\s+send_dismiss_answer\s*\([^)]*\)",
+              r"doc\[\"vote_sent\"\]\s*=\s*r\.vote_sent;", "")),
+    ("the dismiss answer names a vote that went out as unsent",
+     on_other(CHIRP_API, r"\binline\s+esp_err_t\s+send_dismiss_answer\s*\([^)]*\)",
+              r"if\s*\(!r\.vote_sent\)", "if (true)")),
+    ("the confirm route answers a bare success again",
+     on_other(CHIRP_API, api_handler("handle_chirp_confirm"), r"return\s+send_confirm_answer\(req,\s*r\);",
+              'JsonDocument doc; doc["success"] = r.ok; char buffer[64]; serializeJson(doc, buffer); '
+              "return httpd_resp_sendstr(req, buffer);")),
+    ("the ack answers a confirm as a dismiss",
+     on_other(CHIRP_API, api_handler("handle_chirp_ack"),
+              r"if\s*\(cmd\.type\s*==\s*chirp_channel::CHIRP_CMD_CONFIRM\)\s*return\s+send_confirm_answer\(req,\s*r\);",
+              "")),
+    ("the dismiss route answers through the confirm answer",
+     on_other(CHIRP_API, api_handler("handle_chirp_dismiss"), r"return\s+send_dismiss_answer\(req,\s*r\);",
+              "return send_confirm_answer(req, r);")),
+    ("the confirm answer goes back to its 64-byte buffer",
+     on_other(CHIRP_API, r"\binline\s+esp_err_t\s+send_confirm_answer\s*\([^)]*\)",
+              r"char\s+buffer\[256\];", "char buffer[64];")),
+    ("the mute route answers its refusal from a 64-byte buffer again",
+     on_other(CHIRP_API, api_handler("handle_chirp_mute"), r"char\s+buffer\[160\];", "char buffer[64];")),
     # Rule CV8: the send cooldown is a timer (F178).
     ("a send stores the cooldown as the state again (a mute overwrites it)",
      on_other(CHIRP_CPP, r"\bstatic\s+bool\s+send_chirp\s*\([^)]*\)", r"(cache_nonce\(hdr->nonce\);)",
