@@ -222,7 +222,7 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
     // The answer is identity_json.h's (sweep F212): the host the device
     // advertises goes in as mdns_host and comes out under that key.
     assert.match(body, /in\.mdns_host\s*=\s*g_device\.mdns_hostname;/);
-    assert.match(body, /identity_json::device_info\(in, json, need\);/);
+    assert.match(body, /identity_json::device_info\(in, json, need\) >= need\)/);
     const idj = fs.readFileSync(path.join(__dirname, 'identity_json.h'), 'utf8');
     assert.match(idj, /wap_json::raw\(w, ",\\"mdns_host\\":"\);\n  wap_json::str\(w, in\.mdns_host\);/);
   });
