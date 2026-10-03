@@ -930,7 +930,7 @@ CI's. Owner: U1.
     canceled each board still running its pairing, so neither waits out
     its own 5-minute timeout. (A board that restarts mid-pairing, which
     the wizard names as restarted, is host-tested only; a confirmation a
-    board rejects still leaves the other running, handed up.)
+    board rejects is the F200 row below.)
   - Artifact: `docs/audit/repro/F163/wizard-outcome/`.
 - [ ] **No Community tab on the PlatformIO dashboard**
   - Setup: a PlatformIO canary on `[env:full]`, the dashboard open with the
@@ -939,6 +939,68 @@ CI's. Owner: U1.
   - Expected: no Community tab; one `GET /api/chirp` at load (404) and no
     other `/api/chirp` request.
   - Artifact: `docs/audit/repro/F176/community-tab/`.
+
+## PlatformIO canary alert history, dashboard routes, the kernel wizard's left-behind pairing (F197, F198, F200) — on-device verification
+
+Code: `firmware/canary/lib/securacv_mesh/src/mesh_session.cpp` (the alert
+history is a `loop_snapshot.h` log: `dispatch_verified()` appends,
+`clear_alerts()` / `reset_alerts()` clear, `read_alerts()` copies it newest
+first), `handle_mesh_alerts` in `securacv_network.cpp`; the dashboard's
+Bluetooth nav button and `refreshBtStatus()`, `loadWifiStatus()` and
+`forgetWifi()` in `securacv_webui.cpp`; `meshCancelLeftRunning()` in
+`privacy_witness_kernel/wizard/index.html`. Host-tested
+(`test_mesh_session.cpp`, a two-thread run of stores and clears included;
+`firmware/tests_host/test_canary_dashboard_routes.test.js`;
+`privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js`) and held by
+`firmware/scripts/check_canary_mesh_status.py`. The `[env:full]` compile is
+CI's. Owner: U1.
+
+- [ ] **The Opera page's alert list reads whole while alerts arrive**
+  - Setup: two paired PlatformIO canaries on `[env:full]`; a script on one
+    polling `GET /api/mesh/alerts` every 100 ms, logging each body; a way to
+    make the other raise tamper alerts back to back (open its enclosure,
+    or the bench's tamper trigger).
+  - Repro: raise twenty or more alerts in a burst; press "Clear" on the
+    Opera page mid-burst; raise a few more.
+  - Expected: every body answers 200 and never `mesh_busy`; within a body
+    the alerts are newest first, each one's fields belong together (kind,
+    severity, sender and `witness_seq` as the sender's witness log has
+    them), at most 16; no body mixes alerts from before the clear with
+    alerts after it, and the first bodies after the clear's answer hold only
+    the later alerts. `alerts_received` in `GET /api/mesh` keeps counting
+    through the clear.
+  - Artifact: `docs/audit/repro/F197/alert-reads/`.
+- [ ] **The PlatformIO dashboard asks only for routes the firmware serves**
+  - Setup: a PlatformIO canary on `[env:full]`, joined to a home network,
+    the dashboard open with the browser's network panel.
+  - Repro: load the page and stay on it a minute; open Settings; on a
+    second board whose home network is out of range (state `failed`), press
+    Forget Network; reconnect it from the Wi-Fi card.
+  - Expected: no Bluetooth tab; one `GET /api/bluetooth` at load (404) and
+    no other `/api/bluetooth` request; the Wi-Fi card polls
+    `GET /api/wifi/status` (200), never `GET /api/wifi`, and reads
+    Connected with the home IP, "Saved" for the home network and the AP as
+    On or Off; no Rotate Old Logs button; Forget posts
+    `/api/wifi/disconnect`, after which the card reads AP Only and "Not
+    configured"; the reconnect's success names the network entered. No 404
+    in the network panel other than the one `/api/bluetooth` and the one
+    `/api/chirp` (F176).
+  - Artifact: `docs/audit/repro/F198/dashboard-routes/`.
+- [ ] **The kernel wizard frees a Canary it leaves pairing**
+  - Setup: Home Assistant with the add-on; a PlatformIO canary already in
+    an opera and a fresh one (both on firmware with F133's pairing
+    numbers).
+  - Repro: run "Add another Canary" until the codes show, pull the existing
+    board's power, press "Codes match — confirm"; when the wizard reports
+    the network error, power the board back up and press "Start Pairing"
+    at once. Repeat, pulling the new board's power instead and waiting for
+    "A Canary became unreachable while completing" before retrying.
+  - Expected: the wizard says what failed; the board still powered reads
+    no running pairing in `GET /api/mesh` within a few seconds of that
+    message (the wizard canceled it), and the immediate retry starts on it
+    instead of answering `pair_start_failed` (400). A board that reported no
+    pairing number (older firmware, canary-wap) is not canceled, as before.
+  - Artifact: `docs/audit/repro/F200/wizard-left-pairing/`.
 
 ## canary-wap Chirp and Bluetooth commands, MQTT network timeout (F111, F112) — on-device verification
 
