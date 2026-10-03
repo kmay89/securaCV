@@ -441,6 +441,11 @@ chirp_presence = {
 ```
 
 - Sent every 60 seconds when chirp channel enabled
+- On the canary-wap `listening` is false exactly while a mute runs: that is
+  when it drops the chirps it hears. The send cooldown (§2.5.4) limits what
+  the device sends, not what it takes, so a device in its cooldown says it
+  is listening (sweep F194: it said it was not, and neighbors listed it as
+  deaf for the cooldown's 5 minutes to 4 hours).
 - No sensitive information shared
 - Allows UI to show "X devices nearby"
 
@@ -721,13 +726,20 @@ made while muted goes out, and the channel reads `muted` until the mute runs
 out. Before F178 it read `cooldown`, then `active`, and its presence beacon
 said it was listening while the mute still dropped every chirp.
 
+A mute belongs to a channel that is on (sweep F192): a mute or an unmute on
+a channel that is off is refused, and a disable ends a running mute. A mute
+there set `CHIRP_MUTED` and so turned the channel on with no session: the
+status read `muted` and then `active` with an empty emoji, the channel's
+passes ran with an all-zero session id, and a later enable kept that empty
+session, since it starts one only from `DISABLED`.
+
 ### 7.2 Transitions
 
 ```
 DISABLED ──enable()──→ INITIALIZING
 INITIALIZING ──ready()──→ LISTENING
 LISTENING ──join_active()──→ ACTIVE
-ACTIVE ──mute(duration)──→ MUTED
+ACTIVE ──mute(duration)──→ MUTED      (DISABLED refuses mute and unmute)
 MUTED ──unmute/timeout──→ ACTIVE
 ACTIVE ──send_chirp()──→ COOLDOWN
 COOLDOWN ──timeout(tier: 5 min to 4 h)──→ ACTIVE
@@ -796,6 +808,22 @@ out. When it did not, `"vote_error"` names why (`presence_required` or
 `clock_unsynced`) and `"message"` says the chirp is dismissed on this device
 only. A dismiss of a chirp that is not there answers `404 not_found`. No
 Chirp answer is a `403`: the dashboard reads a 403 as a bad token.
+
+A mute (`POST /api/chirp/mute`) or an unmute (`/unmute`) on a channel that
+is off answers `409` `chirp_disabled` with a `message` (sweep F192: the mute
+answered success and turned the channel on with no session, the unmute
+success for nothing); a mute's duration other than 15, 30, 60 or 120
+minutes answers `invalid_duration`, with the `200` it always had. The
+dashboard shows either under the Community Activity list.
+
+Every answer fits the buffer it is serialized into (sweep F196). The
+`nearby`, `recent` and `templates` lists are serialized to their own length:
+a full recent list (sixteen chirps, about 4.8 KB) was cut at 4096 bytes and
+sent with the heap bytes after it, and 32 neighbors whose emoji hold bytes
+JSON escapes (`"`, `\`) overran the nearby list's 3072-byte buffer the same
+way. The other answers keep fixed buffers that
+`firmware/scripts/check_wap_json_answers.py` measures against their longest
+answer.
 
 The GET routes (`/api/chirp`, `/nearby`, `/recent`) read what the loop task
 last published, never the live session, cooldowns or tables (sweep F138):

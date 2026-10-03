@@ -1404,6 +1404,71 @@ handlers' JSON was checked only in a scratch harness over ArduinoJson 7.4.1
     as not listening, and the first does not show the second's chirp.
   - Artifact: `docs/audit/repro/F178/send-while-muted/`.
 
+## canary-wap Chirp: a mute needs a channel that is on, the beacon through a cooldown, answers that fit (F192, F194, F196) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`mute()` and `unmute()` refuse a channel that is off and report a
+`MuteRefusal` into the command `Result`; `disable()` ends a running mute;
+`send_presence()` sets `listening` from `is_muted()` alone), `mesh_network.h`
+(`MuteRefusal` and its lookups), `chirp_api.h` (`send_mute_answer()`; the
+nearby, recent and templates lists serialized to `measureJson()`'s length),
+`rf_presence_api.h` (`GET /api/rf/status`, the same) and the Chirp card's
+mute buttons in `web_ui.h`. Host-tested (`tests_host/test_chirp_commands_wap.cpp`:
+`a_mute_needs_a_channel_that_is_on`, `a_disable_ends_the_mute`,
+`the_beacon_says_listening_through_a_cooldown`; `web_ui_logic.test.js`'s
+mute and unmute buttons) and held by
+`firmware/scripts/check_wap_loop_commands.py` (rules CV11, CV12) and
+`firmware/scripts/check_wap_json_answers.py` (every REST answer buffer
+measured). The handlers' JSON was checked only in a scratch harness over
+ArduinoJson 7.4.1 (the library is not in the repo). Compile is CI's.
+Owner: U1.
+
+- [ ] **A mute or an unmute on a channel that is off is refused**
+  - Setup: a canary-wap with Chirp off (the default after a flash).
+  - Repro: `curl -i -X POST /api/chirp/mute -d '{"duration_minutes":30}'`
+    and `curl -i -X POST /api/chirp/unmute` (with the Bearer token); read
+    `GET /api/chirp`; wait a minute; turn Chirp on from the dashboard.
+  - Expected: both answer `409`
+    `{"success":false,"error":"chirp_disabled","message":"Chirp channel is not enabled"}`;
+    the status still reads `"state":"disabled"`, `"muted":false`; no
+    presence beacon or mute frame goes out while the channel is off (sniff
+    ESP-NOW, or watch a second board's nearby list); turning Chirp on shows
+    a session emoji at once, and the second board lists this one.
+  - Artifact: `docs/audit/repro/F192/mute-while-off/`.
+- [ ] **A disable ends a running mute**
+  - Setup: a canary-wap with Chirp on.
+  - Repro: mute 120 minutes from the dashboard; turn Chirp off and on.
+  - Expected: after the turn on, `GET /api/chirp` reads `"state":"active"`,
+    `"muted":false`, the Unmute button is gone, and a second board's chirp
+    shows in the Community Activity list.
+  - Artifact: `docs/audit/repro/F192/disable-ends-mute/`.
+- [ ] **The presence beacon says listening through a send cooldown**
+  - Setup: two canary-wap boards with Chirp on for ten minutes and the
+    clock set.
+  - Repro: on the first, send a chirp; watch the second board's
+    `GET /api/chirp/nearby` for the first's row over the 5-minute cooldown;
+    then mute the first 15 minutes and watch again.
+  - Expected: through the cooldown the first's row says
+    `"listening":true` (it said false before F194), and a chirp the second
+    sends then shows on the first; while the first is muted its row says
+    `"listening":false`.
+  - Artifact: `docs/audit/repro/F194/listening-in-cooldown/`.
+- [ ] **Full Chirp lists come back whole**
+  - Setup: a canary-wap with Chirp on; sixteen recent chirps (a bench board
+    sending one every few seconds with the receiver's urgency filter at
+    info, or chirps from several boards); for nearby, as many neighbors as
+    the bench has.
+  - Repro: `curl -s /api/chirp/recent | python3 -m json.tool`, the same for
+    `/api/chirp/nearby` and `/api/chirp/templates`, and
+    `curl -s /api/rf/status | python3 -m json.tool`; open the dashboard's
+    Community Activity list.
+  - Expected: every answer parses as JSON with nothing after its closing
+    brace; the recent list carries all sixteen chirps (about 4.8 KB; it was
+    cut at 4096 bytes and followed by heap bytes) and the dashboard lists
+    them (it said no alerts). The boot log's free heap is unchanged at
+    idle (the lists' buffers are allocated per request and freed).
+  - Artifact: `docs/audit/repro/F196/full-lists/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at
