@@ -123,8 +123,6 @@ def blank_comments_only(src: str) -> str:
     """Comments become spaces, string literals stay (offsets kept)."""
     code = blank_comments_and_strings(src)
     out = list(code)
-    for m in re.finditer(r"\"|'", code):
-        pass
     # Copy every literal's inside back from the source.
     i, n = 0, len(code)
     while i < n:
@@ -278,6 +276,7 @@ class Index:
     structs: dict[str, list[Struct]] = field(default_factory=dict)
     enums: dict[str, list[tuple[tuple[str, ...], str]]] = field(default_factory=dict)
     consts: dict[str, list[tuple[tuple[str, ...], str]]] = field(default_factory=dict)
+    table_fields: dict[tuple[str, str], int] = field(default_factory=dict)   # bound_table_field's
 
 
 def namespace_spans(code: str) -> list[tuple[int, int, str]]:
@@ -631,7 +630,6 @@ def bound_returns(ctx: Ctx, fn: Fn) -> int:
     kept = blank_comments_only(ctx.idx.files[fn.file])
     code = blank_comments_and_strings(ctx.idx.files[fn.file])
     sub = Ctx(ctx.idx, fn.file, fn, kept, code, ctx.depth + 1)
-    body = kept[fn.body[0]:fn.body[1]]
     best = None
     for m in re.finditer(r"\breturn\b", code[fn.body[0]:fn.body[1]]):
         start = fn.body[0] + m.end()
@@ -640,7 +638,6 @@ def bound_returns(ctx: Ctx, fn: Fn) -> int:
         best = w if best is None else max(best, w)
     if best is None:
         raise Unbounded(f"{fn.name}() returns nothing the check can read")
-    del body
     return best
 
 
@@ -680,9 +677,7 @@ def struct_of_var(ctx: Ctx, var: str, pos: int) -> Struct:
     return cands[0]
 
 
-@functools.lru_cache(maxsize=64)
-def table_field_bound(files_key: int, struct_name: str, fields: tuple[str, ...], fname: str) -> int:
-    idx = _INDEX_BY_KEY[files_key]
+def table_field_bound(idx: Index, struct_name: str, fields: tuple[str, ...], fname: str) -> int:
     i = fields.index(fname)
     lens = []
     for file, src in idx.files.items():
@@ -711,14 +706,13 @@ def table_field_bound(files_key: int, struct_name: str, fields: tuple[str, ...],
     return max(lens)
 
 
-_INDEX_BY_KEY: dict[int, "Index"] = {}
-
-
 def bound_table_field(idx: Index, st: Struct, fname: str) -> int:
-    """A `const char*` field every value of which a static table of positional literals gives."""
-    key = id(idx)
-    _INDEX_BY_KEY[key] = idx
-    return table_field_bound(key, st.name, tuple(st.fields), fname)
+    """A `const char*` field every value of which a static table of positional literals gives
+    (computed once per index: each mutation of the self-test builds its own)."""
+    key = (st.name, fname)
+    if key not in idx.table_fields:
+        idx.table_fields[key] = table_field_bound(idx, st.name, tuple(st.fields), fname)
+    return idx.table_fields[key]
 
 
 def bound_literal_table(ctx: Ctx, name: str, pos: int) -> int:
