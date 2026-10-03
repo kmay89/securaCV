@@ -283,15 +283,21 @@ static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 // task only — the offset is loop-owned (csi_event.h).
 //
 // The same household minute of day feeds meta.daily_summary, whose 23:55
-// row needs it (sweep F121). Both callers pass a synced clock; the guard
-// says so here too, so an unsynced clock feeds neither: no offset, and no
-// daily summary, rather than one at boot + 23 h 55 min.
+// row needs it (sweep F121), with the local date it falls on as a key that
+// changes when the date does, so the summary is one per date across DST and
+// zone changes (UTC's date if localtime_r fails, as local_minute_of_day()
+// falls back). Both callers pass a synced clock; the guard says so here too,
+// so an unsynced clock feeds neither: no offset, and no daily summary,
+// rather than one at boot + 23 h 55 min.
 static void updateCsiClockOffset(time_t wall_now) {
   if (wall_now < WALL_CLOCK_FLOOR) return;  // unsynced: feed nothing
   const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
   const int32_t mono_min = (int32_t)(millis() / 60000UL);
   csi_event_set_clock_offset_minutes(wall_min - mono_min);
-  securacv_csi_modules_set_clock((uint16_t)wall_min);
+  struct tm local_tm = {};
+  if (localtime_r(&wall_now, &local_tm) == nullptr) (void)gmtime_r(&wall_now, &local_tm);
+  securacv_csi_modules_set_clock(
+      (uint16_t)wall_min, (uint32_t)local_tm.tm_year * 366u + (uint32_t)local_tm.tm_yday);
 }
 
 static void syncClockFromGps() {

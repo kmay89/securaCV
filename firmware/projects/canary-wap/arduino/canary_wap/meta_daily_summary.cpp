@@ -12,13 +12,16 @@
 
 namespace {
 
+/* No local date: the latch's "no row committed yet" (the host's date keys
+ * are far below it). */
+constexpr uint32_t kNoDate = 0xffffffffu;
+
 uint16_t s_last_minutes = 0xffff;   /* sentinel: no clock yet */
-bool     s_emitted_today = false;
+uint32_t s_date = kNoDate;          /* the local date the fed minute falls on */
+uint32_t s_done_date = kNoDate;     /* the local date whose row is done */
 
 /* The emit window: the household day's last five minutes (23:55..23:59). */
 constexpr uint16_t kEmitFromMin = 1435;
-/* A minute before 00:30 starts a new day: the latch lets go. */
-constexpr uint16_t kNewDayBeforeMin = 30;
 constexpr uint16_t kMinutesPerDay = 1440;
 
 const csi_event_decl_t EVENTS[] = {
@@ -78,19 +81,23 @@ void emit_summary() {
 
 void on_init(const csi_module_settings_t* /*s*/) {
   s_last_minutes = 0xffff;
-  s_emitted_today = false;
+  s_date = kNoDate;
+  s_done_date = kNoDate;
 }
 
 void on_tick(const csi_features_t* /*f*/) {
   /* No clock supplied yet (an unsynced clock is never fed): nothing to do. */
   if (s_last_minutes == 0xffff) return;
   /* The last 5 minutes of the day is the emit window, and the latch makes it
-   * one summary per day: it lets go only before 00:30 (in
-   * meta_daily_summary_set_clock), so a clock stepped back inside the window
-   * does not summarize the same day twice. */
-  if (s_last_minutes >= kEmitFromMin && !s_emitted_today) {
+   * one summary per local date: it holds the date whose row is done, so a
+   * clock stepped back inside the window, a DST fall-back over 23:55 or a
+   * zone moved west across midnight does not summarize a date twice, and any
+   * new date owes its row however the clock reached it (a night with no
+   * ticks, a spring-forward at midnight, a zone moved east, a step past
+   * midnight). */
+  if (s_last_minutes >= kEmitFromMin && s_date != s_done_date) {
     emit_summary();
-    s_emitted_today = true;
+    s_done_date = s_date;
   }
 }
 
@@ -109,18 +116,19 @@ const csi_module_t MODULE = {
 
 extern "C" {
 const csi_module_t* meta_daily_summary_module(void) { return &MODULE; }
-void meta_daily_summary_set_clock(uint16_t minutes_of_day) {
+void meta_daily_summary_set_clock(uint16_t minutes_of_day, uint32_t local_date) {
   if (minutes_of_day >= kMinutesPerDay) return;  /* not a minute of the day */
+  if (local_date == kNoDate) return;             /* not a date key */
   const bool first_clock = (s_last_minutes == 0xffff);
   s_last_minutes = minutes_of_day;
-  if (minutes_of_day < kNewDayBeforeMin) {
-    s_emitted_today = false;            /* a new day: its summary is still owed */
-  } else if (first_clock && minutes_of_day >= kEmitFromMin) {
+  s_date = local_date;
+  if (first_clock && minutes_of_day >= kEmitFromMin) {
     /* The first clock since init() lands inside the window: a boot (or the
      * clock's first sync) at 23:55..23:59. This boot cannot know whether the
-     * one before it already committed today's row, so it commits none today
-     * rather than a second (sweep F121). The next day's is owed as usual. */
-    s_emitted_today = true;
+     * one before it already committed this date's row, so it commits none
+     * for it rather than a second (sweep F121). The next date's is owed as
+     * usual. */
+    s_done_date = local_date;
   }
 }
 }

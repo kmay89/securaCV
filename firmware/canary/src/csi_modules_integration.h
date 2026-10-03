@@ -117,13 +117,15 @@ void securacv_csi_modules_tick(void);
 
 /**
  * Hand meta.daily_summary the household minute of day (0..1439), the same
- * local wall time the chokepoint's clock offset is derived from (sweep F28).
+ * local wall time the chokepoint's clock offset is derived from (sweep F28),
+ * and a key for the local date it falls on (years since 1900 * 366 + day of
+ * the year), so the summary is one per date across DST and zone changes.
  * main.cpp's updateCsiClockOffset() calls it on every loop pass with a
  * synced wall clock and never before one, so an unsynced canary commits no
  * daily summary (sweep F121). Plain-typed, like the calls above, to keep
  * main.cpp free of the module headers. Loop task only.
  */
-void securacv_csi_modules_set_clock(uint16_t local_minute_of_day);
+void securacv_csi_modules_set_clock(uint16_t local_minute_of_day, uint32_t local_date);
 
 /**
  * Tear down the pipeline. Optional — only needed if the host wants

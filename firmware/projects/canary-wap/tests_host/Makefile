@@ -459,9 +459,12 @@ clean: clean-wap-tune-lab
 # them (the sketch's real csi_settings_nvs.cpp, over stubs/module_boot). A
 # synced day crossing 23:55 commits exactly one row, a reboot after it
 # commits no second, an unsynced clock commits none, a first clock inside
-# the window waits for the next day, Quiet Hours over 23:55 hold the row,
-# and the row carries what docs/csi_modules.md says. Hooked into `run` and
-# `clean` by prerequisite so it adds no hunk to their lists.
+# the window waits for the next day, Quiet Hours over 23:55 hold the row, DST
+# and zone changes keep one row per local date, the minute is the
+# household's, the row carries what docs/csi_modules.md says, and a source
+# pin holds loop()'s per-pass call (the sketch is read at run time, so it is
+# a prerequisite through the cut). Hooked into `run` and `clean` by
+# prerequisite so it adds no hunk to their lists.
 DAILY_BIN = test_wap_daily_summary
 DAILY_SRC = test_wap_daily_summary.cpp
 DAILY_INC = test_wap_daily_summary_clock.inc
@@ -480,7 +483,8 @@ $(DAILY_BIN): $(DAILY_SRC) $(DAILY_INC) $(MODBOOT_LIB) $(SRC_DIR)/csi_settings_n
               $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_wire.h $(SRC_DIR)/tz_rule.h \
               $(wildcard stubs/module_boot/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
-	  -I stubs/module_boot -I $(SRC_DIR) -I . -o $@ $(DAILY_SRC) $(MODBOOT_LIB)
+	  -I stubs/module_boot -I $(SRC_DIR) -I . -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -o $@ $(DAILY_SRC) $(MODBOOT_LIB)
 
 .PHONY: run-wap-daily-summary clean-wap-daily-summary
 run-wap-daily-summary: $(DAILY_BIN)

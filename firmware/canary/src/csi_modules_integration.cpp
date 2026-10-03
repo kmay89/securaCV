@@ -560,12 +560,13 @@ extern "C" void securacv_csi_modules_tick(void) {
   csi_bundler_tick();
 }
 
-extern "C" void securacv_csi_modules_set_clock(uint16_t local_minute_of_day) {
+extern "C" void securacv_csi_modules_set_clock(uint16_t local_minute_of_day,
+                                               uint32_t local_date) {
   /* Pass-through, not gated on s_initialized: a clock fed before the
    * module's boot init() is cleared by it and fed again on the next loop
    * pass (main.cpp's updateCsiClockOffset, every pass with a synced clock),
    * and a module that never registered never ticks, so it never emits. */
-  meta_daily_summary_set_clock(local_minute_of_day);
+  meta_daily_summary_set_clock(local_minute_of_day, local_date);
 }
 
 extern "C" void securacv_csi_modules_deinit(void) {

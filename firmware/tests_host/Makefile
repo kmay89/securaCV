@@ -814,9 +814,11 @@ $(MODBOOT_BIN): test_csi_module_boot.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile |
 # WALL_CLOCK_FLOOR line it guards on, over the same REAL bridge, library and
 # modules. A synced day crossing 23:55 commits exactly one row, a reboot
 # after it commits no second, an unsynced clock commits none, a first clock
-# inside the window waits for the next day, and the row carries what
-# docs/csi_modules.md says. Hooked into `run` and `clean` by prerequisite so
-# it adds no hunk to their lists.
+# inside the window waits for the next day, DST and zone changes keep one row
+# per local date, the minute is the household's, the row carries what
+# docs/csi_modules.md says, and a source pin holds loop()'s per-pass call
+# (main.cpp is read at run time, so it is a prerequisite). Hooked into `run`
+# and `clean` by prerequisite so it adds no hunk to their lists.
 DAILY_MAIN = ../canary/src/main.cpp
 DAILY_INC  = $(BUILD_DIR)/canary_clock_feed.inc
 DAILY_BIN  = $(BUILD_DIR)/test_csi_daily_summary
@@ -832,7 +834,8 @@ $(DAILY_BIN): test_csi_daily_summary.cpp $(DAILY_INC) $(MODINT_SRC) $(MODINT_HDR
               ../common/time/tz_rule.h Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src -I ../common \
-	    -I $(BUILD_DIR) test_csi_daily_summary.cpp $(MODINT_SRC) -o $@
+	    -I $(BUILD_DIR) -DCANARY_MAIN_CPP='"$(abspath $(DAILY_MAIN))"' \
+	    test_csi_daily_summary.cpp $(MODINT_SRC) -o $@
 
 .PHONY: run-daily-summary
 run-daily-summary: $(DAILY_BIN)
