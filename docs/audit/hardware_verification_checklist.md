@@ -1471,8 +1471,9 @@ device. Owner: U1.
 
 Code: `core_presence_baseline_thresholds()` (`firmware/common/csi/src/core_presence.cpp`,
 staged), `read_presence_thresholds_in_use()` in
-`csi_settings_nvs.cpp`, and `handle_calibrate_status()` in
-`csi_integration.cpp`. Host-tested (`tests_host/test_wap_tune_lab.cpp`,
+`csi_settings_nvs.cpp`, `handle_calibrate_status()` in
+`csi_integration.cpp`, and the Tuning Lab's `tune_read_value()` in
+`csi_tune_lab.cpp`. Host-tested (`tests_host/test_wap_tune_lab.cpp`,
 `test_wap_module_boot.cpp`, which boots the module on each case and finds
 it classifying at the threshold the status reports); the compile is CI's;
 not run on a device. Owner: U1.
@@ -1491,6 +1492,20 @@ not run on a device. Owner: U1.
     `"current_source":"stored"` (a stored threshold still wins over a later
     preset, sweep F127).
   - Artifact: `docs/audit/repro/F166/calibration-current/`.
+- [ ] **The Tuning Lab shows the thresholds the device runs, and a bundle round trip keeps them**
+  - Setup: a canary-wap on this firmware with NVS erased, the dashboard open,
+    the preset set to "sensitive" and the slider left at 50, no calibration
+    applied.
+  - Repro: open the Tuning Lab and read `GET /api/tune/coefficients`. Use
+    Save Preset, then Load Preset with the file it saved. Start a calibration
+    and read `GET /api/csi/calibrate/status` when it is ready.
+  - Expected: the motion, active and breathing threshold sliders, and those
+    rows' `"value"`, are 25 / 60 / 20, and their `"default"` is still
+    35 / 75 / 30. Before F166's review the values were 35 / 75 / 30. The
+    saved file carries 25 / 60 / 20. After the load, the status reports
+    `"current":{"motion":25,"active":60,"breathing":20}` with
+    `"current_source":"stored"`. Before, the load stored 35 / 75 / 30.
+  - Artifact: `docs/audit/repro/F166/tuning-lab-values/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 
