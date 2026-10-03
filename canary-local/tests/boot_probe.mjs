@@ -97,7 +97,11 @@ for (const flavor of RUN) {
   let st = null;
   try {
     await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&flavor=${flavor}`);
-    await page.waitForFunction("window.__ready === true", null, { timeout: 90000 });
+    // A function, never a string: Playwright re-evaluates a string predicate
+    // through eval on every animation frame, which harness.html's policy
+    // (no 'unsafe-eval') refuses whenever the wasm is not ready at the first
+    // poll. A function is compiled once, inside the DevTools call (sweep A44).
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: 90000 });
     await new Promise((res) => setTimeout(res, 6500)); // splash + face
     st = await page.evaluate(async () => ({
       flushes: window.__state.flushes,

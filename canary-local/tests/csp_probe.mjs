@@ -73,7 +73,10 @@ const flavors = (await readdir(join(ROOT, LAB, "emulator/dist")))
 if (!flavors.length) { console.error("CSP_PROBE_FAIL: no canary-display-*.js in emulator/dist/"); process.exit(1); }
 
 // Pages that boot the firmware wasm get longer to do it; the harness reports
-// readiness itself. index.html redirects by script — proof the external
+// readiness itself, and its wait is a function, never a string: Playwright
+// re-evaluates a string predicate through eval on every animation frame,
+// which the harness's policy refuses (and this probe would then count its
+// own eval as the page's violation) (sweep A44). index.html redirects by script — proof the external
 // redirect module ran under the policy is where it lands: a device hash goes
 // to fleet.html, which only the script does (the meta refresh goes to lab.html).
 const WASM_PAGES = new Set(["eyes.html", "fleet.html", "senselab.html", "smoke.html", "vision.html"]);
@@ -83,7 +86,7 @@ for (const p of pages) {
   else targets.push({ name: p, path: `${LAB}/${p}`, settle: WASM_PAGES.has(p) ? 5000 : 1500 });
 }
 for (const f of flavors) {
-  targets.push({ name: `emulator/web/harness.html?flavor=${f}`, path: `${LAB}/emulator/web/harness.html?hour=10&flavor=${f}`, ready: "window.__ready === true", settle: 1000 });
+  targets.push({ name: `emulator/web/harness.html?flavor=${f}`, path: `${LAB}/emulator/web/harness.html?hour=10&flavor=${f}`, ready: () => window.__ready === true, settle: 1000 });
 }
 const run = ONLY ? targets.filter((t) => t.name === ONLY || t.name.startsWith(ONLY)) : targets;
 if (!run.length) { console.error(`CSP_PROBE_FAIL: --only ${ONLY} matches no page`); process.exit(1); }

@@ -19,6 +19,9 @@
 //     happens to exercise
 //   · flash.html's hand-written policy quietly widens     → "flash.html is no weaker"
 //   · a page needs a source the desktop app would block   → "desktop Lab agrees"
+//   · a probe waits on a string predicate, which          → "no probe waits on a string"
+//     Playwright re-evaluates through eval in the page
+//     every frame and the policy refuses (A44)
 //   · the gate is dropped from CI                         → "CI runs this gate"
 //
 // tests/csp_probe.mjs is the other half: real Chromium, every page, zero
@@ -338,6 +341,46 @@ test("the desktop Lab agrees: IPC origins on every page, no page source the app 
     }
   }
   assert.ok(app.get("script-src").includes("'wasm-unsafe-eval'"), "the app's own policy must allow the firmware wasm");
+});
+
+// ── the probes' own waits: never a string the policy refuses ─────────────────
+
+// page.waitForFunction("window.__ready === true") is re-evaluated through
+// globalThis.eval on every animation frame in the page (Playwright's
+// server/frames.js, waitForFunctionExpression), and no page here allows
+// 'unsafe-eval': whenever the predicate is false at the first poll (a wasm
+// boot slower than the load event), the next poll throws EvalError and the
+// probe fails, not the page. A function predicate is evaluated once, inside
+// the DevTools call, which the policy does not govern, and then only called.
+// boot_probe.mjs and csp_probe.mjs both waited on that string (sweep A44).
+test("no probe waits on a string: every waitForFunction predicate is a function", () => {
+  const FN = /^(?:async\s+)?(?:\(|function\b|[A-Za-z_$][\w$]*\s*=>)/;
+  const NAME = /^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*[,)]/;
+  const bad = [];
+  let calls = 0;
+  // every probe and test beside this file (which names the call in its prose)
+  for (const f of readdirSync(__dirname).filter((x) => /\.m?js$/.test(x) && x !== "csp.test.js").sort()) {
+    const src = read(join(__dirname, f));
+    for (const m of src.matchAll(/\bwaitForFunction\s*\(/g)) {
+      calls++;
+      const where = `${f}:${src.slice(0, m.index).split("\n").length}`;
+      const rest = src.slice(m.index + m[0].length).replace(/^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)+/, "");
+      if (FN.test(rest)) continue;
+      const name = NAME.exec(rest);
+      if (!name) {
+        bad.push(`${where}: waitForFunction(${rest.slice(0, 40).split("\n")[0]}…) is handed something other than a function`);
+        continue;
+      }
+      // a name passed through (a wrapper's parameter, a table's field): it
+      // must not be given a string anywhere in the file
+      const last = name[1].split(".").pop();
+      if (new RegExp(String.raw`(?:^|[^\w$.])${last.replace(/\$/g, "\\$")}\s*[:=]\s*["'\x60]`, "m").test(src)) {
+        bad.push(`${where}: waitForFunction(${name[1]}): ${last} is given a string in ${f}`);
+      }
+    }
+  }
+  assert.ok(calls > 0, "no waitForFunction call found: the scan is looking in the wrong place");
+  assert.deepStrictEqual(bad, [], "a string predicate is eval'd by the page on every poll, and the policy refuses it");
 });
 
 // ── CI wiring: this gate cannot be silently dropped ─────────────────────────
