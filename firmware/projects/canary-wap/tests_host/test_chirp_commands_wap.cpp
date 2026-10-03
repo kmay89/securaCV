@@ -1322,9 +1322,11 @@ void test_a_mute_does_not_end_the_cooldown() {
   CHECK(no_witness_since(before) && cc::g_cooldown.chirps_sent_today == 3);
   CHECK(reason_of(status_read()) == "cooldown");
 
-  // Kept: the presence beacon says "not listening" while the cooldown runs,
-  // as it did when the cooldown was the state, and "listening" after it.
-  CHECK(presence_listening(before) == std::vector<uint8_t>{0});
+  // The pass the mute ran out on beaconed "listening": the cooldown still
+  // runs, and a device in its cooldown takes chirps (sweep F194; it said
+  // "not listening" here, as it did when the cooldown was the state). And
+  // after the cooldown, "listening" still.
+  CHECK(presence_listening(before) == std::vector<uint8_t>{1});
   host_sim::now_ms = third_at + cc::COOLDOWN_TIER_3_MS;
   before = host_sim::espnow->sent.size();
   cc::update();
@@ -1543,6 +1545,66 @@ size_t acks_since(size_t from) {
   size_t n = 0;
   for (uint8_t t : sent_types(from)) n += t == cc::CHIRP_MSG_ACK ? 1 : 0;
   return n;
+}
+
+// ── The beacon says listening through a cooldown (sweep F194) ───────────
+
+// The presence beacon's `listening` is whether this device takes a chirp,
+// and handle_witness() drops one only while the mute runs. send_presence()
+// set it from what the state read as, and an active channel in its send
+// cooldown reads CHIRP_COOLDOWN, so the beacon said "not listening" for the
+// cooldown's 15 minutes to 4 hours while the device still took every chirp;
+// neighbors' nearby lists showed it deaf. Now the flag is the mute alone:
+// listening through a cooldown, not while a mute runs (cooldown or not), and
+// listening again when the mute ends with the cooldown still running. Each
+// beacon is checked against a real witness frame taken or dropped in the
+// same state.
+void test_the_beacon_says_listening_through_a_cooldown() {
+  boot();
+  enabled_channel();
+  const Neighbor bee = neighbor_of(0x41, BEE);
+  deliver(bee, presence_of(bee));
+  // Three sends, each as the last cooldown ends: tier 3's hour outlasts a
+  // 15-minute mute.
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);
+  host_sim::now_ms = cc::g_cooldown.last_chirp_ms + cc::COOLDOWN_TIER_1_MS;
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);
+  host_sim::now_ms = cc::g_cooldown.last_chirp_ms + cc::COOLDOWN_TIER_2_MS;
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.cooldown_tier == 3);
+  deliver(bee, presence_of(bee));                     // still nearby
+  const uint32_t sent_at = cc::g_cooldown.last_chirp_ms;
+
+  // The cooldown runs, no mute: the next beacon says listening, and a
+  // neighbor's chirp is taken.
+  host_sim::now_ms = sent_at + cc::PRESENCE_INTERVAL_MS;
+  size_t before = host_sim::espnow->sent.size();
+  cc::update();
+  CHECK(cc::get_cooldown_remaining_ms() > 0 && cc::get_status().state == cc::CHIRP_COOLDOWN);
+  CHECK(presence_listening(before) == std::vector<uint8_t>{1});
+  deliver(bee, witness_of(bee, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x61));
+  CHECK(cc::g_recent_chirp_count == 1);
+
+  // Muted in the cooldown: not listening, and a chirp is dropped.
+  cc::Command m15 = cmd_of(cc::CHIRP_CMD_MUTE);
+  m15.duration_minutes = 15;
+  CHECK(rest(m15).r.ok && cc::g_state == cc::CHIRP_MUTED);
+  host_sim::now_ms += cc::PRESENCE_INTERVAL_MS;
+  before = host_sim::espnow->sent.size();
+  cc::update();
+  CHECK(presence_listening(before) == std::vector<uint8_t>{0});
+  deliver(bee, witness_of(bee, cc::TPL_INFRA_WATER_ISSUE, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x62));
+  CHECK(cc::g_recent_chirp_count == 1);
+
+  // The mute runs out, the cooldown does not: listening again, chirps taken.
+  host_sim::now_ms = cc::g_mute_until_ms;
+  before = host_sim::espnow->sent.size();
+  cc::update();
+  CHECK(!cc::g_muted && cc::get_cooldown_remaining_ms() > 0);
+  CHECK(presence_listening(before) == std::vector<uint8_t>{1});
+  deliver(bee, witness_of(bee, cc::TPL_INFRA_GAS_SMELL, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x63));
+  CHECK(cc::g_recent_chirp_count == 2);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS the_beacon_says_listening_through_a_cooldown\n");
 }
 
 // ── A mute needs a channel that is on (sweep F192) ──────────────────────
@@ -1820,6 +1882,7 @@ const Test kTests[] = {
     {"a_send_while_muted_stays_muted", test_a_send_while_muted_stays_muted},
     {"a_send_just_after_the_cooldown_goes_out", test_a_send_just_after_the_cooldown_goes_out},
     {"a_send_at_an_edge_names_why", test_a_send_at_an_edge_names_why},
+    {"the_beacon_says_listening_through_a_cooldown", test_the_beacon_says_listening_through_a_cooldown},
     {"a_mute_needs_a_channel_that_is_on", test_a_mute_needs_a_channel_that_is_on},
     {"a_disable_ends_the_mute", test_a_disable_ends_the_mute},
     {"a_refused_confirm_names_why", test_a_refused_confirm_names_why},

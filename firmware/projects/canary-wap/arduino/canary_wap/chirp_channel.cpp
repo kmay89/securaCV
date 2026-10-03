@@ -703,10 +703,12 @@ static void send_presence() {
   esp_fill_random(hdr->nonce, 8);
 
   strncpy(payload->emoji, g_session.emoji_display, EMOJI_DISPLAY_SIZE);
-  // As the beacon always said: not listening while muted or in the cooldown
-  // (the cooldown read from its timer since sweep F178).
-  const ChirpState shown = shown_state(g_state, get_cooldown_remaining_ms());
-  payload->listening = (shown == CHIRP_ACTIVE || shown == CHIRP_LISTENING) ? 1 : 0;
+  // Listening is whether this device takes a chirp: handle_witness() drops
+  // them while the mute runs, and only then (is_muted(), the one test both
+  // read). The send cooldown limits what this device sends, not what it
+  // hears; the beacon said not listening while it ran, so neighbors' nearby
+  // lists showed a device in its cooldown as deaf (sweep F194).
+  payload->listening = is_muted() ? 0 : 1;
 
   if (g_last_chirp_sent_ms == 0) {
     payload->last_chirp_age_min = 255;
@@ -763,7 +765,7 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   cache_nonce(hdr->nonce);
 
   if (payload->urgency < (uint8_t)g_urgency_filter) return;
-  if (g_muted && millis() < g_mute_until_ms) return;
+  if (is_muted()) return;   // what the presence beacon's `listening` says (sweep F194)
   if (memcmp(hdr->session_id, g_session.session_id, SESSION_ID_SIZE) == 0) return;
 
   // audit C6: session_id MUST derive from carried session_pubkey
