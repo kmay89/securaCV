@@ -1014,6 +1014,49 @@ CI's. Owner: U1.
     new board, is host-tested only.)
   - Artifact: `docs/audit/repro/F200/wizard-left-pairing/`.
 
+## The per-entry log acknowledge on both trees, the kernel wizard's Back during a start (F214, F217) — on-device verification
+
+Code: the `POST /api/logs/*` registration and `log_ack_seq_from_uri()` /
+`handle_log_ack()` in `firmware/canary/lib/securacv_network/src/securacv_network.cpp`
+and in `firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino`;
+`meshStarting` and the Back button (`mesh-back-btn`) in
+`privacy_witness_kernel/wizard/index.html`. Host-tested
+(`firmware/tests_host/test_dashboard_route_match.test.js` through a verbatim
+copy of IDF's `httpd_uri_match_wildcard()`, `test_log_ack_route.cpp` on both
+handlers, `privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js`).
+The compiles are CI's. F216 (the Bluetooth settings load's guard) has no
+device row: nothing in the PlatformIO tree serves `/api/bluetooth`, so the
+tab never shows. Owner: U1.
+
+- [ ] **Acknowledge on one log entry works on both dashboards**
+  - Setup: a PlatformIO canary on `[env:full]` and a canary-wap, each with
+    a few unread health-log entries (a reboot leaves some), each dashboard
+    open with the browser's network panel.
+  - Repro: on each, open the log list, press Acknowledge on one entry (on
+    canary-wap, type a reason), then Acknowledge All; then send
+    `POST /api/logs/42` and `POST /api/logs/x/ack` with the bearer token
+    (curl).
+  - Expected: the per-entry `POST /api/logs/<seq>/ack` answers 200
+    `{"ok":true}` (it answered 404 on canary-wap and 405 on the PlatformIO
+    canary) and that entry alone reads acknowledged in `GET /api/logs`;
+    Acknowledge All still answers 200 and acknowledges the rest (and on
+    canary-wap `POST /api/logs/rotate` still answers); the two curl requests
+    answer 404 "Nothing matches the given URI" and acknowledge nothing.
+  - Artifact: `docs/audit/repro/F214/log-ack/`.
+- [ ] **The wizard's Back waits for Start Pairing**
+  - Setup: Home Assistant with the add-on; two PlatformIO canaries as in
+    the F200 row, the existing one's address pointing at a host that does
+    not answer (so `pair/start` waits on the add-on's timeout).
+  - Repro: press "Start Pairing", then Back while it reads "Starting…";
+    after the wizard reports the failure, press Back; reopen the wizard,
+    correct the address and start again; at the codes press Cancel.
+  - Expected: Back is grayed out and does nothing while the start runs;
+    once the wizard reports the failure it works and closes the wizard; the
+    reopened wizard's Start reads "Start Pairing", starts and reaches its
+    codes; Cancel leaves neither board with a running pairing in
+    `GET /api/mesh`.
+  - Artifact: `docs/audit/repro/F217/wizard-back/`.
+
 ## canary-wap Chirp and Bluetooth commands, MQTT network timeout (F111, F112) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
