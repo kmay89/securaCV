@@ -37,11 +37,16 @@
 //  * Text width is lv_txt_get_width at letter_space 0: each glyph's
 //    lv_font_get_glyph_width given the letter after it. A test supplies the
 //    font's glyph widths (lv_font_t::glyph_w) from LVGL's own font data.
-// Timers are recorded, never fired (the blink/flourish cadence places
-// nothing). lv_timer_handler() is a refresh: it calls the test's
+// Timers are recorded, never fired by the fake (the blink/flourish cadence
+// places nothing); a test may fire one itself from fake_lvgl::timers().
+// lv_timer_handler() is a refresh: it calls the test's
 // fake_lvgl::refresh_hook(), where a test reads the glass, and fires no
 // timer either. Anims advance on fake_lvgl::run(ms) — linear, with playback and
-// repeats — so a test can watch the breath and the hop move the bird.
+// repeats — so a test can watch the breath and the hop move the bird. They run
+// oldest first and call their exec callback every step; LVGL 8.4 runs its list
+// newest first and calls it only when the value changes (lv_anim.c), so two
+// anims writing one property settle differently here, and a test of that
+// counts the anims instead of reading the property.
 //
 // The numbers a test pins were measured with the real LVGL 8.4.0 and the
 // display's lv_conf in a native harness (see test_canary_mark_seat.cpp), so
@@ -72,6 +77,9 @@ struct lv_color_t {
 inline lv_color_t lv_color_hex(uint32_t c) { return lv_color_t{c}; }
 inline lv_color_t lv_color_white() { return lv_color_hex(0xFFFFFF); }
 inline lv_color_t lv_color_black() { return lv_color_hex(0x000000); }
+inline lv_color_t lv_color_make(uint8_t r, uint8_t g, uint8_t b) {
+  return lv_color_hex(((uint32_t)r << 16) | ((uint32_t)g << 8) | b);
+}
 struct lv_font_t {
   int line_height;
   // lv_font_get_glyph_width(font, letter, next): the test's font data.
@@ -106,6 +114,8 @@ typedef uint8_t lv_align_t;
 #define LV_PART_INDICATOR 0x020000u
 #define LV_PART_KNOB 0x030000u
 #define LV_OPA_TRANSP 0
+#define LV_OPA_0 0
+#define LV_OPA_10 25
 #define LV_OPA_20 51
 #define LV_OPA_30 76
 #define LV_OPA_40 102
@@ -329,6 +339,12 @@ inline void lv_obj_set_style_bg_color(lv_obj_t* o, lv_color_t c, lv_style_select
   o->bg_color = c.full;
 }
 inline void lv_obj_set_style_bg_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
+// The nightlight face's lamp bands and dimming: nothing a placement reads.
+enum { LV_GRAD_DIR_NONE = 0, LV_GRAD_DIR_VER, LV_GRAD_DIR_HOR };
+typedef uint8_t lv_grad_dir_t;
+inline void lv_obj_set_style_bg_grad_dir(lv_obj_t*, lv_grad_dir_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_bg_grad_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
 inline void lv_obj_set_style_border_width(lv_obj_t* o, lv_coord_t w, lv_style_selector_t) {
   o->border = w;
 }
@@ -552,6 +568,8 @@ inline lv_obj_t* lv_layer_top() {
 }
 
 // ── timers: recorded, never fired ─────────────────────────────────────────
+// fake_lvgl::timers() lists the live ones, oldest first, so a test can fire
+// one by hand (t->cb(t)): canary_mark.cpp's idle flourish, say.
 struct _lv_timer_t;
 typedef _lv_timer_t lv_timer_t;
 typedef void (*lv_timer_cb_t)(lv_timer_t*);
@@ -560,14 +578,25 @@ struct _lv_timer_t {
   uint32_t period;
   bool paused;
 };
+namespace fake_lvgl {
+inline std::vector<lv_timer_t*>& timers() {
+  static std::vector<lv_timer_t*> t;
+  return t;
+}
+}  // namespace fake_lvgl
 inline lv_timer_t* lv_timer_create(lv_timer_cb_t cb, uint32_t period, void*) {
   lv_timer_t* t = new lv_timer_t();
   t->cb = cb;
   t->period = period;
   t->paused = false;
+  fake_lvgl::timers().push_back(t);
   return t;
 }
-inline void lv_timer_del(lv_timer_t* t) { delete t; }
+inline void lv_timer_del(lv_timer_t* t) {
+  std::vector<lv_timer_t*>& l = fake_lvgl::timers();
+  l.erase(std::remove(l.begin(), l.end(), t), l.end());
+  delete t;
+}
 inline void lv_timer_set_period(lv_timer_t* t, uint32_t p) { t->period = p; }
 inline void lv_timer_pause(lv_timer_t* t) { t->paused = true; }
 inline void lv_timer_resume(lv_timer_t* t) { t->paused = false; }
@@ -609,6 +638,7 @@ inline int32_t lv_anim_path_ease_in_out(const lv_anim_t*) { return 0; }
 inline int32_t lv_anim_path_overshoot(const lv_anim_t*) { return 0; }
 inline int32_t lv_anim_path_ease_out(const lv_anim_t*) { return 0; }
 inline int32_t lv_anim_path_ease_in(const lv_anim_t*) { return 0; }
+inline int32_t lv_anim_path_bounce(const lv_anim_t*) { return 0; }
 inline void lv_anim_init(lv_anim_t* a) {
   memset(a, 0, sizeof(*a));
   a->time = 500;
@@ -649,6 +679,12 @@ inline bool lv_anim_del(void* var, lv_anim_exec_xcb_t cb) {
     }
   }
   return del;
+}
+// lv_anim.c: the first running anim on `var` with `cb` (any cb when null).
+inline lv_anim_t* lv_anim_get(void* var, lv_anim_exec_xcb_t cb) {
+  for (lv_anim_t* a : fake_lvgl::anims())
+    if (a->var == var && (cb == nullptr || a->exec_cb == cb)) return a;
+  return nullptr;
 }
 inline lv_anim_t* lv_anim_start(const lv_anim_t* a) {
   if (a->exec_cb != nullptr) lv_anim_del(a->var, a->exec_cb);

@@ -43,6 +43,8 @@
 
 #include <cstdio>
 
+#include "esp_random.h"
+
 using namespace canary::ui;
 
 static int g_fail = 0;
@@ -374,6 +376,92 @@ static void test_host_animation_survives_moods() {
   }
 }
 
+// 7. A hop owns the bird's y (F244). The breath (bob_cb) and the hop
+//    (hop_cb) both write the bird's y; lv_anim_start() replaces only an anim
+//    with the same var and exec callback, so a hop started over a breath ran
+//    beside it, and on LVGL 8.4 the breath's write landed after the hop's in
+//    every frame its value moved. Every hop the mark starts over a breath —
+//    the idle flourish's hop and its song, the search hop, Startle, Joyful —
+//    must leave exactly one anim on the bird while it flies, and hand the
+//    bird back to one breath when it lands. (The fake runs anims oldest
+//    first, so it cannot show which write wins: it counts them.
+//    canary-local/emulator/test/runtime_turn.sh reads the bird's y through a
+//    hop on the real LVGL 8.4.)
+static lv_timer_t* flourish_timer(size_t created_from) {
+  // canary_mark_create makes the blink (2900 ms) then the flourish (30 s).
+  for (size_t i = created_from; i < fake_lvgl::timers().size(); ++i)
+    if (fake_lvgl::timers()[i]->period == 30000) return fake_lvgl::timers()[i];
+  return nullptr;
+}
+
+// One hop, started by `start`, on a bird breathing in `mood`: one anim on the
+// bird while it flies (and the bird rises off its seat), one breath after.
+static void check_hop(const char* what, CanaryMood mood, void (*start)(lv_timer_t*),
+                      uint16_t trust = 0) {
+  lv_obj_t* content = nullptr;
+  lv_obj_t* scr = glass(320, 180, &content);
+  const size_t before = fake_lvgl::timers().size();
+  lv_obj_t* bird = canary_mark_create(content, 93);
+  lv_timer_t* flourish = flourish_timer(before);
+  lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+  canary_mark_trust(trust);
+  canary_mark_mood(mood);
+  watch(scr, bird, 1000);  // mid-breath
+  fake_lvgl::run(8000);    // past the Tilt/Startle ration
+  CHECK(anims_on(bird) == 1, "%s: one breath before the hop (%d anims)", what,
+        anims_on(bird));
+  CHECK(flourish != nullptr, "%s: the flourish timer", what);
+  if (flourish == nullptr) return;
+  start(flourish);
+  const int flying = anims_on(bird);
+  CHECK(flying == 1, "%s: %d anims write the bird's y while it hops, want 1 (the hop)",
+        what, flying);
+  const Span hop = watch(scr, bird, 600);  // 240 ms up, 320 ms down
+  const int seat_y = 29;
+  CHECK(hop.y_lo <= seat_y - 8, "%s: the bird rose to y %d, its seat is y %d", what,
+        hop.y_lo, seat_y);
+  CHECK(anims_on(bird) == 1, "%s: one breath after the hop (%d anims)", what,
+        anims_on(bird));
+  const int seat_x = mood == CanaryMood::Searching ? 226 + 93 * 6 / 100 : 226;
+  check_seat(what, watch(scr, bird, 3000), seat_x, seat_y);
+  std::printf("  %-34s %d anim on the bird in flight, rose to y %d\n", what, flying,
+              hop.y_lo);
+  lv_obj_del(scr);
+}
+
+static void roll_hop(lv_timer_t* t) {  // the idle pool's hop (roll 75..89)
+  fake_esp::script() = {0, 80};
+  t->cb(t);
+}
+static void roll_song(lv_timer_t* t) {  // the week-of-trust song (roll >= 90)
+  fake_esp::script() = {0, 95};
+  t->cb(t);
+}
+static void roll_search_hop(lv_timer_t* t) {  // Searching: roll >= 60 hops
+  fake_esp::script() = {0, 70};
+  t->cb(t);
+}
+static void react_startle(lv_timer_t*) { canary_mark_react(CanaryReact::Startle); }
+static void react_joyful(lv_timer_t*) { canary_mark_react(CanaryReact::Joyful); }
+static void joyful_then_temperament(lv_timer_t*) {
+  // The Character picker re-applies the breath live; mid-hop it must not
+  // start a breath under the hop.
+  canary_mark_react(CanaryReact::Joyful);
+  canary_mark_temperament(1.2f, 1.0f, 1.0f);
+}
+
+static void test_hop_owns_y() {
+  std::printf("a hop owns the bird's y (F244):\n");
+  check_hop("idle flourish: the hop", CanaryMood::Idle, roll_hop);
+  check_hop("idle flourish: the song", CanaryMood::Idle, roll_song, 7);
+  check_hop("searching flourish: the hop", CanaryMood::Searching, roll_search_hop);
+  check_hop("Startle", CanaryMood::Idle, react_startle);
+  check_hop("Joyful", CanaryMood::Idle, react_joyful);
+  check_hop("Joyful, then a temperament", CanaryMood::Idle, joyful_then_temperament);
+  canary_mark_temperament(1.0f, 1.0f, 1.0f);
+  fake_esp::script().clear();
+}
+
 int main() {
   test_first_mood_before_layout();
   test_first_mood_after_layout();
@@ -381,6 +469,7 @@ int main() {
   test_every_anchor();
   test_new_bird_new_base();
   test_host_animation_survives_moods();
+  test_hop_owns_y();
   if (g_fail == 0) {
     std::printf("ALL CANARY MARK SEAT TESTS PASSED\n");
     return 0;

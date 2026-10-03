@@ -114,14 +114,18 @@ void hop_cb(void* var, int32_t v) {
   lv_obj_set_y((lv_obj_t*)var, s_base_y - v);
 }
 
+// The hop hands the bird's y back to a fresh breath.
 void hop_done(lv_anim_t*) { start_bob(1400, 2); }
 
-// Stop the mark's own motion: the breath and the hop on the bird (s_bob runs
-// one at a time, through bob_cb or hop_cb) and any wing flourish. The bird is
-// deleted from by exec callback, never with a null one: its host animates the
-// same object (the nightlight's tumble slides its translate in from the edge
-// that was up, nightlight_ui_tumble()), and a mood change must leave that
-// slide running. Deleting every animation on the bird used to end the
+// A hop running on the bird right now (it owns the bird's y until hop_done).
+bool hopping() { return s_bird && lv_anim_get(s_bird, hop_cb) != nullptr; }
+
+// Stop the mark's own motion: the breath and the hop on the bird (one of the
+// two owns the bird's y at a time, see start_hop) and any wing flourish. The
+// bird is deleted from by exec callback, never with a null one: its host
+// animates the same object (the nightlight's tumble slides its translate in
+// from the edge that was up, nightlight_ui_tumble()), and a mood change must
+// leave that slide running. Deleting every animation on the bird used to end the
 // tumble at its first frame on the first mood after a turn rebuilt the face,
 // so the companion stayed a whole fling off its perch, off the glass (F222).
 // The wing is the mark's own child, so everything on it is the mark's.
@@ -131,7 +135,17 @@ void stop_motion() {
   lv_anim_del(s_wing, nullptr);
 }
 
+// A hop takes the bird's y from the breath: the breath stops here and
+// hop_done starts a fresh one, so one animation writes y at a time. The
+// breath used to keep running beside the hop (F244): lv_anim_start()
+// replaces only an animation with the same var AND exec callback, and LVGL
+// 8.4 puts the newer one at the head of its list and runs the list from the
+// head, calling each exec callback when its value changes. So every frame
+// the breath's value moved, its write landed after the hop's and the bird
+// dropped back to its seat mid-air for that frame (the idle flourish's hop,
+// Startle and Joyful all start over a breath).
 void start_hop() {
+  lv_anim_del(s_bird, bob_cb);
   // Hop apex rides the Character's hop energy, clamped — even the
   // springiest look stays inside the calm-tech ration.
   int apex = (int)(12.0f * s_temp_hop);
@@ -574,8 +588,10 @@ void canary_mark_temperament(float breath, float flourish, float hop) {
   // Re-apply the breath live so the new rate lands immediately: the
   // picker persists to the hidden face's bird, and the raw request keeps
   // the CURRENT mood's pace — the new scalar just rescales it. No bird
-  // (or an off-stage one) means no timers to touch.
-  if (s_bird && s_mood != CanaryMood::Hidden)
+  // (or an off-stage one) means no timers to touch. A hop in flight keeps
+  // the bird's y: a breath started under it would fight it (F244), and
+  // hop_done's breath already takes the new scalar.
+  if (s_bird && s_mood != CanaryMood::Hidden && !hopping())
     start_bob(s_breath_raw_ms, s_breath_amp);
 }
 
