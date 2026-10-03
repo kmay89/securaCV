@@ -61,6 +61,7 @@
 #include "csi_event_egress.h"
 #include "csi_integration.h"
 #include "device_signature.h"
+#include "json_strict.h"     // GET /api/mqtt/config parses under JSON.parse's rules (sweep F227)
 
 #include <cstdio>
 #include <cstdlib>
@@ -1141,6 +1142,90 @@ void test_the_settings_read_on_a_fresh_nvs_logs_nothing() {
   std::printf("PASS the_settings_read_on_a_fresh_nvs_logs_nothing\n");
 }
 
+// ── GET /api/mqtt/config (sweep F227) ──────────────────────────────────
+
+// The settings page's strings come back as JSON whatever they hold. The
+// POST's json_extract_string() decodes \" \\ and the control escapes and
+// passes raw bytes, so a host or user holding a quote, a backslash or a
+// control byte was stored as such, and the GET wrote it with an unescaped
+// %s: the answer stopped parsing and the settings page could not show the
+// broker it had saved. Now the answer is written by wap_json_writer.h and
+// gives every string back as stored; an ordinary config answers the bytes
+// the old format did.
+void test_the_config_answer_escapes_what_the_page_sent() {
+  boot_with_broker("10.0.0.1");
+  // An ordinary config: the old format's bytes, verbatim.
+  {
+    const Http g = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+    csi_mqtt::Config c;
+    csi_mqtt::config_load(&c);
+    char old[800];
+    snprintf(old, sizeof(old),
+      "{"
+        "\"enabled\":%s,"
+        "\"host\":\"%s\","
+        "\"port\":%u,"
+        "\"user\":\"%s\","
+        "\"prefix\":\"%s\","
+        "\"tls\":%s,"
+        "\"tls_mode\":%u,"
+        "\"ca_set\":%s,"
+        "\"transport\":\"%s\","
+        "\"last_error\":\"%s\","
+        "\"discovery\":%s,"
+        "\"password_set\":%s,"
+        "\"connected\":%s"
+      "}",
+      c.enabled ? "true" : "false", c.host, (unsigned)c.port, c.user, c.prefix,
+      c.tls ? "true" : "false", (unsigned)c.tls_mode, c.ca_set ? "true" : "false",
+      csi_mqtt::transport_name(), "", c.discovery ? "true" : "false",
+      c.pass[0] ? "true" : "false", csi_mqtt::connected() ? "true" : "false");
+    CHECK(g.req.status == "200 OK");
+    CHECK(g.req.resp == old);
+  }
+  // A host and a user holding a quote, a backslash, decoded control escapes
+  // and a raw control byte, saved through the real POST.
+  std::string body = "{\"host\":\"br\\\"ok\\\\er";
+  body.push_back('\x01');
+  body += ".lan\",\"user\":\"u\\nse\\tr";
+  body.push_back('\x1f');
+  body += "\"}";
+  const Http h = http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+  CHECK(h.req.status == "200 OK");
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  const std::string host = std::string("br\"ok\\er") + '\x01' + ".lan";
+  const std::string user = std::string("u\nse\tr") + '\x1f';
+  CHECK(host == c.host);                         // stored as decoded
+  CHECK(user == c.user);
+  const Http g = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(g.req.status == "200 OK");
+  json_strict::Value v;
+  CHECK(json_strict::parse(g.req.resp, &v));
+  const json_strict::Value* vh = v.get("host");
+  const json_strict::Value* vu = v.get("user");
+  const json_strict::Value* vp = v.get("password_set");
+  CHECK(vh != nullptr && vh->text == host);
+  CHECK(vu != nullptr && vu->text == user);
+  CHECK(vp != nullptr && vp->kind == json_strict::Value::Bool);
+  CHECK(!has_key(g.req.resp, "pass"));           // the password stays write-only
+  // A long host and user, every byte escaping to six: past the old 800-byte
+  // buffer (which cut the answer), answered whole. (Kept under the fields'
+  // limits: what config_load() reads back at the limit is F241's.)
+  const std::string long_host(120, '\x02'), long_user(60, '\x03');
+  (void)http(csi_mqtt::handle_config_post, "{\"host\":\"" + long_host + "\",\"user\":\"" + long_user + "\"}",
+             /*turn_at=*/1);
+  const Http gl = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(gl.req.resp.size() > 800);
+  json_strict::Value lv;
+  CHECK(json_strict::parse(gl.req.resp, &lv));
+  const json_strict::Value* lh = lv.get("host");
+  const json_strict::Value* lu = lv.get("user");
+  CHECK(lh != nullptr && lh->text == long_host);
+  CHECK(lu != nullptr && lu->text == long_user);
+  std::printf("PASS the_config_answer_escapes_what_the_page_sent\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1169,6 +1254,7 @@ const Test kTests[] = {
     {"a_connect_burst_cut_short_leaves_the_link_down", test_a_connect_burst_cut_short_leaves_the_link_down},
     {"the_health_publish_warns_before_the_id_space_runs_out", test_the_health_publish_warns_before_the_id_space_runs_out},
     {"the_egress_counters_ride_a_retained_topic_of_their_own", test_the_egress_counters_ride_a_retained_topic_of_their_own},
+    {"the_config_answer_escapes_what_the_page_sent", test_the_config_answer_escapes_what_the_page_sent},
 };
 
 }  // namespace reinit

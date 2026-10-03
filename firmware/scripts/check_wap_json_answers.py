@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Every canary-wap REST answer fits the buffer it is serialized into (sweep F196),
 the fleet scan's cache keeps the adverts that fit (F211), the answers spelled
-with snprintf() are measured and escaped (F212), and the device name holds no
-byte ArduinoJson would write raw (F226).
+with snprintf() are measured and escaped (F212), every other JSON text spelled
+with printf is held or recorded (F227), and the device name holds no byte
+ArduinoJson would write raw (F226).
 
 ArduinoJson's `serializeJson(doc, char_array)` and its sized form
 `serializeJson(doc, buf, n)` write at most the buffer's size and add the
@@ -67,14 +68,20 @@ J4. The fleet scan's cache is not an answer but the handler answers from it
     hands that count, unchanged, to `fleet_scan_cache::fill()` once, which
     offers every result (the loop and its bound are the header's, where the
     host test holds them); calls no `fleet_scan_cache::add()` of its own; and
-    copies the buffer into the cache with that size. Nothing else writes the
-    staging buffer. No site is exempt from J1-J3: the one that was, the cut
-    cache's `serializeJson()`, is gone.
+    copies the buffer into the cache with that size, in that order: begun,
+    filled, copied, freed (F227). Nothing else writes the staging buffer. No
+    site is exempt from J1-J3: the one that was, the cut cache's
+    `serializeJson()`, is gone.
 
 J5. An answer spelled with `snprintf()` (F212): a call whose format is a JSON
-    object (its first byte `{`), into a buffer the same function sends
-    (`http_send_json()`, `httpd_resp_sendstr()`, `httpd_resp_send()`), and
-    every call that continues it at `buf + pos`. Each is measured, one of:
+    object or array (its first byte `{` or `[`), into a buffer the same
+    function sends, and every call that continues it at `buf + pos`. A send
+    is `httpd_resp_sendstr()`, `httpd_resp_send()` or any helper of the
+    sketch shaped `(httpd_req_t* req, const char* text)` that hands `text` to
+    a send (`http_send_json()`, `send_json()`, `send_json_response()`, found
+    to a fixpoint, so an answer sent through a helper is an answer: F227).
+    No answer file calls an unsized `sprintf()` or `vsprintf()` (F227). Each
+    answer is measured, one of:
     - guarded: the statement after it tests the length it returned against
       the size it was given (`n >= (int)sizeof(buf)` beside `n <= 0` or
       `n < 0`, or `(size_t)n >= sizeof(buf)`) and its body returns;
@@ -98,10 +105,23 @@ J6. The two answers that carry strings the check cannot read (F212), GET
     /api/device-info (`handle_device_info()`, the device name a person
     typed) and the provisioning receipt (`send_provisioning_receipt()`), are
     built by `identity_json.h` (host-tested: escaped, the old bytes for
-    ordinary input) into a heap buffer of the length it measured: `need =
-    identity_json::<answer>(in, nullptr, 0) + 1`, `malloc(need)` refused when
-    it fails, built with `need`, sent, freed; and neither spells JSON with
+    ordinary input) into a heap buffer of the length it measured. Every
+    statement that names the buffer stands in this order and there is no
+    other (F227): `need = identity_json::<answer>(in, nullptr, 0) + 1`,
+    `malloc(need)`, its failure refused, built with `need` in an `if (... >=
+    need)` whose body frees the buffer (the receipt wipes it with
+    `secure_zero()` first) and returns (F230: a refused build answers 503),
+    sent, then freed (the receipt wiped first); and neither spells JSON with
     `snprintf()`.
+J7. Every other JSON text the sketch spells with `snprintf()`/`sprintf()`
+    (F227: the non-answer texts in `canary_wap.ino`, the builders outside the
+    answer files) is held or recorded: each `%s` value the check can read is
+    held as J5 holds one, and the values it cannot read are recorded in
+    `RECORDED` by file and function, spelled as the call spells them, with
+    why each is safe. A `%s` the record does not name, a record the code no
+    longer matches and a recorded function with nothing left to record all
+    fail. Their lengths are not computed: where a cut matters, the record
+    says what the builder does with one.
 J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
     one raw into POST /api/device-name's answer and GET /api/fleet/scan's
     self row, and JSON.parse refuses it. `setup_wizard::set_device_name()`
@@ -1277,6 +1297,20 @@ def check_fleet_cache(files: dict[str, str], idx: Index) -> list[str]:
                     or not re.fullmatch(r"\w+", args[2]):
                 errors.append(f"{where}: fleet_scan_cache::fill({fills[0]}) is not ({cache}, <the browse's "
                               f"count, unchanged>, <reader>): every result is offered (J4)")
+    # In that order: begun, filled, copied, freed (F227: J4 held the statements, not their order).
+    steps = [("fleet_scan_cache::begin()", r"\bfleet_scan_cache\s*::\s*begin\s*\("),
+             ("fleet_scan_cache::fill()", r"\bfleet_scan_cache\s*::\s*fill\s*\("),
+             (f"the copy of {buf}", r"\bmemcpy\s*\(\s*g_fleet_scan_cache\s*,\s*" + re.escape(buf) + r"\b"),
+             (f"free({buf})", r"\bfree\s*\(\s*" + re.escape(buf) + r"\s*\)")]
+    at = [[m.start() for m in re.finditer(pat, body)] for _, pat in steps]
+    if all(len(a) >= 1 for a in at):
+        for k in range(1, len(steps)):
+            if min(at[k]) < max(at[k - 1]):
+                errors.append(f"{where}: {steps[k][0]} stands before {steps[k - 1][0]}; the task begins the "
+                              "cache, fills it, copies it and frees it, in that order (J4)")
+                break
+    elif not at[3]:
+        errors.append(f"{where}: {buf} is never freed (J4)")
     if re.search(r"\bfleet_scan_cache\s*::\s*(?:add|pick_\w+)\s*\(", code):
         errors.append(f"{INO}: calls fleet_scan_cache::add() or a pick_*() step itself; fill() is the browse, "
                       f"whole (J4)")
@@ -1308,8 +1342,43 @@ def check_fleet_cache(files: dict[str, str], idx: Index) -> list[str]:
 
 # ── J5: snprintf() answers ───────────────────────────────────────────────
 
-SEND = re.compile(r"\b(?:http_send_json|httpd_resp_sendstr)\s*\(\s*\w+\s*,\s*(\w+)\s*\)"
-                  r"|\bhttpd_resp_send(?:_chunk)?\s*\(\s*\w+\s*,\s*(\w+)\s*,")
+BASE_SINKS = ("http_send_json", "httpd_resp_sendstr")     # (req, text); httpd_resp_send(_chunk) take a length too
+
+
+def send_re(sinks: frozenset[str]) -> re.Pattern:
+    names = "|".join(sorted(re.escape(n) for n in sinks))
+    return re.compile(r"\b(?:" + names + r")\s*\(\s*\w+\s*,\s*(\w+)\s*\)"
+                      r"|\bhttpd_resp_send(?:_chunk)?\s*\(\s*\w+\s*,\s*(\w+)\s*,")
+
+
+def sinks_of(idx: Index) -> frozenset[str]:
+    """Every function that sends its text: the httpd sends, and each helper of the sketch shaped
+    `(httpd_req_t* req, const char* text)` that hands `text` to one of them (send_json() and friends),
+    to a fixpoint. An answer sent through a helper is an answer (F227)."""
+    sinks = set(BASE_SINKS)
+    changed = True
+    while changed:
+        changed = False
+        rx = send_re(frozenset(sinks))
+        for name, fns in idx.fns.items():
+            if name in sinks:
+                continue
+            for f in fns:
+                params = split_top(f.params) if f.body else []
+                if len(params) != 2 or not re.fullmatch(r"(?:const\s+)?httpd_req_t\s*\*\s*\w+", params[0].strip()):
+                    continue
+                text = re.fullmatch(r"const\s+char\s*\*\s*(\w+)", params[1].strip())
+                if text is None:
+                    continue
+                body = blank_comments_and_strings(idx.files[f.file])[f.body[0]:f.body[1]]
+                if any((m.group(1) or m.group(2)) == text.group(1) for m in rx.finditer(body)):
+                    sinks.add(name)
+                    changed = True
+                    break
+    return frozenset(sinks)
+
+
+SEND = send_re(frozenset(BASE_SINKS))   # check_files() widens it to every sink the sketch defines
 CONV = re.compile(rb"%(?P<flags>[-+ #0]*)(?P<width>\d+|\*)?(?:\.(?P<prec>\d+|\*))?(?P<len>hh|h|ll|l|z|j|t|L)?"
                   rb"(?P<conv>[diouxXcsfFeEgGaAp%n])")
 INT_SPELL = {  # the widest spelling of an integer conversion, by length modifier
@@ -1567,7 +1636,7 @@ def json_answer_starts(ctx: Ctx, calls: list[int], sent: set[str]) -> set[str]:
     for at in calls:
         args = printf_args(ctx, at)
         fmt = c_literal_bytes(args[2]) if len(args) >= 3 else None
-        if len(args) >= 3 and args[0] in sent and (fmt is None or fmt.lstrip().startswith(b"{")):
+        if len(args) >= 3 and args[0] in sent and (fmt is None or fmt.lstrip()[:1] in (b"{", b"[")):
             out.add(args[0])
     return out
 
@@ -1582,7 +1651,7 @@ def judge_printf(ctx: Ctx, call_at: int, answers: set[str]) -> Printf | None:
         return None
     target, offset = tgt.group(1), tgt.group(2)
     fmt = c_literal_bytes(args[2])
-    if fmt is not None and offset is None and not fmt.lstrip().startswith(b"{"):
+    if fmt is not None and offset is None and fmt.lstrip()[:1] not in (b"{", b"["):
         return None                     # a text into the same buffer that is not the JSON answer
     line = kept.count("\n", 0, call_at) + 1
     pf = Printf(ctx.file, ctx.fn.name, line, args[0], "")
@@ -1659,9 +1728,35 @@ def check_printf_answers(files: dict[str, str], idx: Index) -> tuple[list[str], 
 # ── J6: the identity answers ─────────────────────────────────────────────
 
 IDENTITY = {"handle_device_info": "device_info", "send_provisioning_receipt": "provisioning_receipt"}
+# The identity answers that carry a secret (the API token, the AP password): wiped before every free.
+IDENTITY_WIPED = {"send_provisioning_receipt"}
+
+
+def statements_naming(code: str, lo: int, hi: int, name: str) -> list[tuple[int, str]]:
+    """Each statement of code[lo:hi] that names `name`, in order: (offset, squashed text). An `if (...)`
+    or `else if (...)` statement runs to its condition's close."""
+    out: list[tuple[int, str]] = []
+    seen: set[int] = set()
+    for m in re.finditer(r"(?<![\w.>])" + re.escape(name) + r"\b", code[lo:hi]):
+        at = lo + m.start()
+        start = max(code.rfind(c, lo, at) for c in ";{}") + 1
+        if start in seen:
+            continue
+        seen.add(start)
+        head = code[start:at]
+        cond = re.match(r"\s*(?:else\s+)?(?:if|while)\s*\(", head)
+        if cond is not None:
+            end = matching_paren(code, start + cond.end() - 1) + 1
+        else:
+            end = statement_end(code, start) + 1
+        out.append((start, re.sub(r"\s+", "", code[start:end])))
+    return out
 
 
 def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
+    """J6: each identity answer is measured, allocated at that length, refused when the allocation
+    fails, built at it with a refused build freed (and wiped) and refused, sent, then (wiped and)
+    freed, in that order, and nothing else names the buffer (F212, F227, F230)."""
     errors = []
     code = blank_comments_and_strings(files[INO])
     for fname, builder in IDENTITY.items():
@@ -1670,7 +1765,8 @@ def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
         if len(fns) != 1:
             errors.append(f"{where}: {len(fns)} definitions; the identity answer cannot be read (J6)")
             continue
-        body = code[fns[0].body[0]:fns[0].body[1]]
+        lo, hi = fns[0].body
+        body = code[lo:hi]
         b = re.escape(builder)
         m = re.search(r"\bconst\s+size_t\s+(\w+)\s*=\s*identity_json\s*::\s*" + b
                       + r"\s*\(\s*(\w+)\s*,\s*nullptr\s*,\s*0\s*\)\s*\+\s*1\s*;", body)
@@ -1685,23 +1781,286 @@ def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
             errors.append(f"{where}: the answer is not written into malloc({need}) (J6)")
             continue
         buf = a.group(1)
-        checks = [
-            (r"if\s*\(\s*!\s*" + re.escape(buf) + r"\s*\)\s*return\b", f"a failed malloc({need}) is not refused"),
-            (r"\bif\s*\(\s*identity_json\s*::\s*" + b + r"\s*\(\s*" + re.escape(inp) + r"\s*,\s*" + re.escape(buf)
-             + r"\s*,\s*" + re.escape(need) + r"\s*\)\s*>=\s*" + re.escape(need) + r"\s*\)\s*\{[^{}]*\bfree\s*\(\s*"
-             + re.escape(buf) + r"\s*\)\s*;[^{}]*\breturn\b[^{}]*\}",
-             f"the answer is not built into {buf} with {need}, with a refused build (F230) freed and refused"),
-            (r"\b(?:httpd_resp_sendstr|http_send_json)\s*\(\s*\w+\s*,\s*" + re.escape(buf) + r"\s*\)",
-             f"{buf} is not what is sent"),
-            (r"\bfree\s*\(\s*" + re.escape(buf) + r"\s*\)", f"{buf} is not freed"),
-        ]
-        for pat, why in checks:
-            if not re.search(pat, body):
-                errors.append(f"{where}: {why} (J6)")
+        wiped = fname in IDENTITY_WIPED
+        wipe = f"secure_zero({buf},{need});"
+        free = f"free({buf});"
+        # Every statement that names the buffer, in the order they must stand.
+        want = [f"char*{buf}=(char*)malloc({need});",
+                f"if(!{buf})",
+                f"if(identity_json::{builder}({inp},{buf},{need})>={need})"]
+        want += [wipe] if wiped else []
+        want += [free, "<send>"]
+        want += [wipe] if wiped else []
+        want += [free]
+        got = statements_naming(code, lo, hi, buf)
+        texts = [t for _, t in got]
+        send_at = [k for k, t in enumerate(texts)
+                   if re.fullmatch(r"(?:constesp_err_t\w+=|return)?(?:httpd_resp_sendstr|http_send_json)\(\w+," + re.escape(buf)
+                                   + r"\);", t)]
+        if len(send_at) == 1:
+            texts[send_at[0]] = "<send>"
+        if texts != want:
+            first = next((k for k in range(max(len(texts), len(want)))
+                          if k >= len(texts) or k >= len(want) or texts[k] != want[k]), 0)
+            saw = texts[first] if first < len(texts) else "(nothing)"
+            wanted = want[first] if first < len(want) else "(nothing)"
+            errors.append(f"{where}: the statements naming {buf} run out of order or carry another write: "
+                          f"statement {first + 1} is `{saw}` where `{wanted}` stands (measured, malloc'd, "
+                          f"refused, built with a refused build {'wiped, ' if wiped else ''}freed and refused, "
+                          f"sent, {'wiped, ' if wiped else ''}freed) (J6)")
+            continue
+        # The two refusals return.
+        for k, t in ((1, "a failed malloc"), (2, "a refused build")):
+            start = got[k][0]
+            stmt = if_statement(code, start)
+            if stmt is None or not body_always_returns(stmt[1]):
+                errors.append(f"{where}: {t} is not refused (its `if` must return) (J6)")
         if re.search(r"(?<![\w:.>])snprintf\s*\(", body):
             errors.append(f"{where}: spells JSON with snprintf() again; build it with identity_json.h (J6)")
     return errors
 
+
+
+# ── J7: the JSON texts outside J5's answers ─────────────────────────────
+
+# Every JSON text the sketch spells with snprintf()/sprintf() that J5 does
+# not judge as an answer piece (F227): non-answer texts (a QR payload, BLE
+# characteristic values, card lines, MQTT bodies) and answers built outside
+# the answer files. Each %s value the check can read is held as J5 holds one
+# (inside a JSON string no byte JSON escapes; outside one a token). The
+# values it cannot read are recorded here by file and function, spelled as
+# the call spells them, with why each one is safe; a %s the record does not
+# name, a record the code no longer matches, and a function with none to
+# record fail. The lengths are not computed here: where a cut matters the
+# reason says what the builder does with one.
+RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
+    ("api_auth.h", "api_auth_check"): (
+        ("retry_str",),
+        "the 429 answer: retry_str is snprintf(\"%lu\") of the lockout's seconds, a number outside a "
+        "string; body[128] holds the longest answer (63 bytes)"),
+    ("beacon_channel.cpp", "sd_append_audit_entry"): (
+        ("cfp_hex", "head_hex", "ofp_hex", "prev_hex", "ref_hex", "sigc_hex", "sigo_hex"),
+        "the audit line on the card: every value is audit_hex() of fixed-size binary (hex digits); a cut "
+        "line is refused by the length test after it"),
+    ("ble_opera.h", "updateDeviceInfoCharacteristic"): (
+        ('g_deviceIdHash ? g_deviceIdHash : "unknown"', 'g_firmwareVersion ? g_firmwareVersion : "0.0.0"'),
+        "a BLE characteristic: the device id hash ble_manager.h hands init() (hex) and FIRMWARE_VERSION"),
+    ("ble_opera.h", "updateWitnessCharacteristic"): (
+        ("hashHex",),
+        "a BLE characteristic: hashHex is snprintf(\"%02x\") of the chain head's first 8 bytes"),
+    ("canary_wap.ino", "ble_witness_get_head_json"): (
+        ("head_hex", "pub_hex"),
+        "a BLE witness value: hex_to_str() of the 32-byte chain head and public key"),
+    ("canary_wap.ino", "ble_witness_get_record_json"): (
+        ("ch", "ph", "prev", "sig"),
+        "a BLE witness value: hex_to_str() of the record's three hashes and its signature"),
+    ("canary_wap.ino", "handle_pairing_qr"): (
+        ("base_host", "g_device.api_token_str", "g_device.device_id", "g_tls_cert_fp_hex"),
+        "the pairing QR payload: the device id (prefix and the unambiguous base-32 suffix), the API token "
+        "(\"cv_\" and base62), the certificate pin (hex), base_host the sanitized mDNS label ([a-z0-9-]) "
+        "with \".local\" or the AP's dotted address; a cut payload is refused by the length test after it"),
+    ("canary_wap.ino", "loop"): (
+        ('event_fresh ? g_audio_mqtt_event : "none"',),
+        "the MQTT sensing body: g_audio_mqtt_event holds audio_event_name()'s literal names or \"none\""),
+    ("csi_event_log_line.h", "marshal"): (
+        ("rec->module_id", "rec->type_name",
+         'rec->values.confidence[0] ? rec->values.confidence : ""',
+         'rec->values.dominant_signal[0] ? rec->values.dominant_signal : ""',
+         'rec->values.state_name[0] ? rec->values.state_name : ""'),
+        "an events-log line on the card, not an answer: the names are the CSI modules' own labels; a "
+        "record read back from the card comes through field_str(), which stops at a quote but keeps a "
+        "backslash or a control byte, so a hand-edited card can carry one into a rewritten line; marshal() "
+        "returns 0 on a cut line"),
+    ("csi_event_wire.h", "build_event_body"): (
+        ('module_id ? module_id : ""', "sig_b64", "sig_kv", 'signer.alg ? signer.alg : ""',
+         "signer.fingerprint_hex", "state_s", 'type_name ? type_name : ""',
+         'values->confidence[0] ? values->confidence : "tentative"'),
+        "the MQTT events body (host-tested in firmware/tests_host): module and state names are the "
+        "modules' labels, the signature base64url, the fingerprint hex, the algorithm a constant; sig_kv "
+        "is the piece this function spells itself; a cut body returns 0"),
+    ("csi_event_wire.h", "build_tamper_bridge_body"): (
+        ("values->state_name",),
+        "the tamper bridge body: only for system.integrity's tamper events, whose state names are "
+        "tamper_events_module's literal kinds"),
+    ("csi_integration.cpp", "handle_events_today"): (
+        ("active", "r->module_id", "r->type_name", "r->values.confidence", "r->values.state_name"),
+        "GET /api/csi/events/today, chunked: rows from the event ring (the modules' labels) and active, "
+        "tamper_events_active_kind()'s literal kinds; each row is length-tested and a cut one skipped"),
+    ("csi_integration.cpp", "handle_pair_token"): (
+        ("hex",),
+        "the pairing token answer: pair_token_issue() writes hex digits"),
+    ("csi_integration.cpp", "handle_settings_get"): (
+        ("tz", "tz_iana"),
+        "the settings answer: tz is kept only when tz_rule::posix_valid() parses it (letters, digits, "
+        "<>+-:,./), tz_iana only when it names a zone in tz_rule's table"),
+    ("csi_integration.cpp", "handle_stream"): (
+        ("s->module_id", "s->type_name", "s->values.confidence", "s->values.state_name", "supply"),
+        "the stream answer: the modules' labels, and supply, the JSON piece this function spells itself "
+        "from numbers and true/false"),
+    ("csi_integration.cpp", "handle_tune_get_coefficients"): (
+        ("c.full_key", "c.group", "c.label"),
+        "the Tuning Lab list: the coefficient table's literal keys, groups and labels"),
+    ("csi_mqtt.cpp", "handle_test"): (
+        ("s_last_error", "transport_name()"),
+        "POST /api/mqtt/test: s_last_error holds one of mqtt_transport_logic.h's constant messages (its "
+        "host suite holds them free of quotes and backslashes), transport_name() a literal"),
+    ("csi_mqtt.cpp", "publish_beacon_state"): (
+        ('active_template ? active_template : ""', 'state_name ? state_name : "unknown"'),
+        "an MQTT body: Beacon's literal state names and template ids"),
+    ("csi_mqtt.cpp", "publish_chain"): (
+        ("device_signature::ALG_NAME", "device_signature::fingerprint_hex()", "hash_hex", "sig_b64"),
+        "an MQTT body: the algorithm constant, the fingerprint and chain hash in hex, the signature in "
+        "base64url"),
+    ("csi_mqtt.cpp", "publish_chirp_state"): (
+        ('state_name ? state_name : "unknown"',),
+        "an MQTT body: Chirp's literal state names"),
+    ("csi_mqtt.cpp", "publish_counts"): (
+        ("device_signature::ALG_NAME", "device_signature::fingerprint_hex()", "sig_b64"),
+        "an MQTT body: the algorithm constant, the fingerprint in hex, the signature in base64url"),
+    ("csi_mqtt.cpp", "publish_egress"): (
+        ("object", "s_firmware_version"),
+        "an MQTT body: object is csi_event_egress::stats_json()'s JSON object (numbers only), written "
+        "outside a string on purpose; the firmware version a constant"),
+    ("csi_mqtt.cpp", "publish_health"): (
+        ('battery->charge_state ? battery->charge_state : "unknown"', "s_firmware_version", "s_public_key_hex"),
+        "an MQTT body: power_monitor's literal charge-state names, the firmware version, the public key in "
+        "hex"),
+    ("csi_mqtt.cpp", "publish_mic_discovery"): (
+        ("prefix", "s_device_id", "s_firmware_version", "slug"),
+        "an MQTT discovery body: the topic prefix (the config POST keeps only its safe character set), the "
+        "device id and its slug, the firmware version"),
+    ("csi_mqtt.cpp", "publish_one_discovery"): (
+        ("dev_class_kv", "e.component", "e.dev_class", "e.icon", "e.name", "e.object_id", "e.state_class",
+         "e.state_topic", "e.unit", "e.val_tpl", "icon_kv", "prefix", "s_device_id", "s_firmware_version",
+         "slug", "state_class_kv", "unit_kv"),
+        "an MQTT discovery body: the entity table's literals, the *_kv pieces this function spells from "
+        "them, the topic prefix (its safe character set), the device id and its slug, the firmware version"),
+    ("csi_mqtt.cpp", "publish_one_trigger"): (
+        ("prefix", "s_device_id", "s_firmware_version", "t.payload", "t.state_topic", "t.subtype", "t.type",
+         "t.val_tpl"),
+        "an MQTT discovery body: the trigger table's literals, the topic prefix (its safe character set), "
+        "the device id, the firmware version"),
+    ("csi_mqtt.cpp", "publish_update_discovery"): (
+        ("prefix", "s_device_id", "s_firmware_version", "slug"),
+        "an MQTT discovery body: the topic prefix (its safe character set), the device id and its slug, "
+        "the firmware version"),
+    ("device_signature.cpp", "handle_enroll_json"): (
+        ("nonce", "sig_hex"),
+        "the enrollment answer: the nonce is accepted only as hex, the signature written as hex"),
+    ("device_signature.cpp", "render_enroll_json"): (
+        ("device_signature::ALG_NAME", 'did ? did : ""', 'fp ? fp : ""', 'pk ? pk : ""'),
+        "the enrollment answer: the device id, the public key and fingerprint in hex, the algorithm "
+        "constant"),
+    ("health_store_logic.h", "line_build"): (
+        ('category_name ? category_name : "?"', "det_esc", 'level_name ? level_name : "?"', "msg_esc"),
+        "a health line on the card: message and detail through json_escape() (quotes, backslashes and "
+        "control bytes escaped, host-tested), level and category literal names"),
+    ("sys_monitor.h", "get_json"): (
+        ("ESP.getSdkVersion()", "g_sys_metrics.chip_model", "hw_token", "uptime_str"),
+        "GET /api/system: the chip model ESP.getChipModel() names, the IDF version string, the hardware "
+        "pseudonym in hex, the uptime format_uptime() spells from digits"),
+    ("wap_diagnostics.h", "build_json"): (
+        ('in.degrade_name != nullptr ? in.degrade_name : "UNKNOWN"', "object"),
+        "the diagnostics body (host-tested): the degrade level's literal name, and object, a JSON piece "
+        "written outside a string on purpose"),
+    ("wap_server.cpp", "send_json_error"): (
+        ('error_code ? error_code : "error"', 'message ? message : "Unknown error"'),
+        "never called: wap_server.cpp's helper has no caller in the sketch"),
+    ("witness_page.h", "header_build"): (
+        ("CHAIN_FORMAT", "SCHEMA", "id"),
+        "the witness page header (host-tested): the schema and chain-format constants, the device id"),
+    ("witness_page.h", "record_build"): (
+        ("hash", "iso", "ph", "prev", "sig", "when"),
+        "the witness page record (host-tested): hashes and signature in hex, iso an ISO-8601 stamp, when "
+        "the piece this function spells around it"),
+    ("witness_store.h", "line_build"): (
+        ("ch", "ph", "prev", "sig"),
+        "a witness line on the card (host-tested): hashes and signature in hex"),
+}
+JSONISH = re.compile(rb'"\w*"\s*:|^\s*[\[{]')
+
+
+def check_recorded_json_texts(files: dict[str, str], idx: Index, judged: set[tuple[str, int]]) -> list[str]:
+    """J7: every printf-spelled JSON text outside J5's answers is held or recorded."""
+    global J7_STATS
+    errors: list[str] = []
+    seen: dict[tuple[str, str], set[str]] = {}
+    sites = 0
+    for name, src in files.items():
+        code = blank_comments_and_strings(src)
+        kept = blank_comments_only(src)
+        for m in re.finditer(r"(?<![\w:.>])(v?s(n?)printf)\s*\(", code):
+            open_at = code.find("(", m.start())
+            args = split_top(kept[open_at + 1:matching_paren(code, open_at)])
+            fi = 2 if m.group(2) else 1
+            fmt = c_literal_bytes(args[fi]) if len(args) > fi else None
+            if fmt is None or not JSONISH.search(fmt):
+                continue
+            line = code.count("\n", 0, m.start()) + 1
+            if (name, line) in judged:
+                continue
+            fn = fn_containing(idx, name, m.start())
+            where = f"{name}:{line}"
+            if fn is None:
+                errors.append(f"{where}: a JSON text spelled outside a function (J7)")
+                continue
+            key = (name.rsplit("/", 1)[-1], fn.name)
+            unread = seen.setdefault(key, set())
+            sites += 1
+            ctx = Ctx(idx, name, fn, kept, code)
+            vals = args[fi + 1:]
+            ai = 0
+            for cm in CONV.finditer(fmt):
+                conv = cm.group("conv").decode()
+                if conv == "%":
+                    continue
+                if ai >= len(vals):
+                    break
+                val = vals[ai]
+                ai += 1
+                if conv != "s":
+                    continue
+                try:
+                    strings = literal_values(ctx, val, m.start())
+                except Unbounded:
+                    unread.add(" ".join(val.split()))
+                    continue
+                if in_json_string(fmt, cm.start()):
+                    bad = [v for v in strings if any(b in b'"\\' or b < 0x20 for b in v)]
+                    if bad:
+                        errors.append(f"{where}: {fn.name}(): %s value {bad[0]!r} holds a byte JSON escapes, "
+                                      "inside a JSON string (J7)")
+                else:
+                    bad = [v for v in strings if not JSON_TOKEN.fullmatch(v)]
+                    if bad:
+                        errors.append(f"{where}: {fn.name}(): %s value {bad[0]!r} is not a JSON token, outside "
+                                      "a JSON string (J7)")
+    for key, unread in sorted(seen.items()):
+        rec = RECORDED.get(key)
+        if not unread:
+            if rec is not None:
+                errors.append(f"{key[0]}: {key[1]}(): recorded, but every %s it writes is one the check reads; "
+                              "drop the record (J7)")
+            continue
+        if rec is None:
+            errors.append(f"{key[0]}: {key[1]}(): a JSON text with %s values the check cannot read "
+                          f"({', '.join(sorted(unread))}); record why each is safe, or spell it with "
+                          "wap_json_writer.h (J7)")
+        elif set(rec[0]) != unread:
+            new = sorted(unread - set(rec[0]))
+            gone = sorted(set(rec[0]) - unread)
+            errors.append(f"{key[0]}: {key[1]}(): the record does not match the code (not recorded: {new}; "
+                          f"recorded but gone: {gone}) (J7)")
+        elif not rec[1].strip():
+            errors.append(f"{key[0]}: {key[1]}(): recorded with no reason (J7)")
+    for key in RECORDED:
+        if key not in seen:
+            errors.append(f"{key[0]}: {key[1]}(): recorded, but it spells no JSON text any more (J7)")
+    J7_STATS = (sites, len(seen), sum(1 for k in seen if k in RECORDED))
+    return errors
+
+
+J7_STATS = (0, 0, 0)
 
 
 # ── J8: the device name holds no control byte ────────────────────────────
@@ -1783,18 +2142,35 @@ def check_device_name(files: dict[str, str], idx: Index) -> list[str]:
     return errors
 
 
+def check_unsized_printf(files: dict[str, str]) -> list[str]:
+    """J5: no answer file spells text with an unsized sprintf() (or vsprintf()): it writes whatever
+    length its arguments come to, past any buffer (F227)."""
+    errors = []
+    for name in scope_of(files):
+        code = blank_comments_and_strings(files[name])
+        for m in re.finditer(r"(?<![\w:.>])v?sprintf\s*\(", code):
+            line = code.count("\n", 0, m.start()) + 1
+            errors.append(f"{name}:{line}: an unsized {m.group(0).rstrip('( ')}() in an answer file: give it the "
+                          "buffer's size (snprintf()) or spell the text with wap_json_writer.h (J5)")
+    return errors
+
+
 def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
+    global SEND
     idx = build_index(files)
+    SEND = send_re(sinks_of(idx))
     errors: list[str] = []
     sites: list[Site] = []
+    errors += check_unsized_printf(files)
     for name in EXCLUDED:
         if name not in files:
             errors.append(f"{name}: EXCLUDED names a file the sketch no longer has")
     errors += check_fleet_cache(files, idx)
     errors += check_identity_answers(files, idx)
     errors += check_device_name(files, idx)
-    printf_errors, _printfs = check_printf_answers(files, idx)
+    printf_errors, printfs = check_printf_answers(files, idx)
     errors += printf_errors
+    errors += check_recorded_json_texts(files, idx, {(pf.file, pf.line) for pf in printfs})
     for name in scope_of(files):
         src = files[name]
         code = blank_comments_and_strings(src)
@@ -2062,6 +2438,76 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the beacon reply is written after its refusal",
      raw_in(BEACON, "  }\n  serializeJson(doc, buf, sizeof(buf));\n  return send_json(req, buf);",
             '  }\n  doc["late"] = 1;\n  serializeJson(doc, buf, sizeof(buf));\n  return send_json(req, buf);')),
+    # F227: what J4 to J6 did not read.
+    ("a route spells its hex with an unsized sprintf() again",
+     raw_in(BEACON, '    snprintf(out + i * 2, 3, "%02x", fp[i]);', '    sprintf(out + i * 2, "%02x", fp[i]);')),
+    ("an answer file formats a text with vsprintf()",
+     add_file(f"{SKETCH}/zz_vs_api.h",
+              "#include <stdarg.h>\nnamespace zz_api {\ninline void fmt(char* out, const char* f, ...) {\n"
+              "  va_list ap; va_start(ap, f); vsprintf(out, f, ap); va_end(ap);\n}\n}\n")),
+    ("a new route answers a raw name through its own send_json() helper",
+     add_file(f"{SKETCH}/zz_helper_api.h",
+              "namespace zz_api {\nstatic inline esp_err_t send_json(httpd_req_t* req, const char* json) {\n"
+              "  httpd_resp_set_type(req, \"application/json\");\n  return httpd_resp_sendstr(req, json);\n}\n"
+              "inline esp_err_t handle_zz(httpd_req_t* req) {\n  char name[33] = {0};\n  char buf[96];\n"
+              "  int n = snprintf(buf, sizeof(buf), \"{\\\"name\\\":\\\"%s\\\"}\", name);\n"
+              "  if (n < 0 || (size_t)n >= sizeof(buf)) return ESP_FAIL;\n  return send_json(req, buf);\n}\n}\n")),
+    ("a new route answers through a helper that hands its text to another helper",
+     add_file(f"{SKETCH}/zz_helper2_api.h",
+              "namespace zz_api {\nstatic inline esp_err_t send_raw(httpd_req_t* req, const char* t) {\n"
+              "  return httpd_resp_send(req, t, HTTPD_RESP_USE_STRLEN);\n}\n"
+              "static inline esp_err_t reply(httpd_req_t* r, const char* body) { return send_raw(r, body); }\n"
+              "inline esp_err_t handle_zz(httpd_req_t* req, float t) {\n  char buf[16];\n"
+              "  snprintf(buf, sizeof(buf), \"{\\\"t\\\":%f}\", t);\n  return reply(req, buf);\n}\n}\n")),
+    ("a new route answers a JSON array of a raw name",
+     add_file(f"{SKETCH}/zz_array_api.h",
+              "namespace zz_api {\ninline esp_err_t handle_zz(httpd_req_t* req) {\n  char name[33] = {0};\n"
+              "  char buf[96];\n  int n = snprintf(buf, sizeof(buf), \"[\\\"%s\\\"]\", name);\n"
+              "  if (n < 0 || (size_t)n >= sizeof(buf)) return ESP_FAIL;\n  return httpd_resp_sendstr(req, buf);\n}\n}\n")),
+    ("GET /api/device-info frees its answer before sending it",
+     raw_in(INO, "  const esp_err_t ret = httpd_resp_sendstr(req, json);\n  free(json);\n  return ret;\n}\n\n"
+                 "// ════════════════════════════════════════════════════════════════════════════\n"
+                 "// API: PROVISIONING RECEIPT",
+            "  free(json);\n  const esp_err_t ret = httpd_resp_sendstr(req, json);\n  return ret;\n}\n\n"
+            "// ════════════════════════════════════════════════════════════════════════════\n"
+            "// API: PROVISIONING RECEIPT")),
+    ("the receipt is freed without its wipe",
+     raw_in(INO, "  const esp_err_t ret = httpd_resp_sendstr(req, json);\n  secure_zero(json, need);\n  free(json);\n",
+            "  const esp_err_t ret = httpd_resp_sendstr(req, json);\n  free(json);\n")),
+    ("the receipt is wiped after it is freed",
+     raw_in(INO, "  const esp_err_t ret = httpd_resp_sendstr(req, json);\n  secure_zero(json, need);\n  free(json);\n",
+            "  const esp_err_t ret = httpd_resp_sendstr(req, json);\n  free(json);\n  secure_zero(json, need);\n")),
+    ("the receipt's refused build is freed unwiped",
+     raw_in(INO, "    secure_zero(json, need);   // a refused write pass leaves its whole pieces behind\n", "")),
+    ("a strcat() onto the receipt after its build",
+     raw_in(INO, "    return http_send_error(req, 503, \"answer_changed\");\n  }\n\n  httpd_resp_set_type(req, \"application/json\");\n"
+                 "  httpd_resp_set_hdr(req, \"Cache-Control\", \"no-store\");\n  const esp_err_t ret = httpd_resp_sendstr(req, json);\n"
+                 "  secure_zero(json, need);",
+            "    return http_send_error(req, 503, \"answer_changed\");\n  }\n  strcat(json, \"x\");\n\n"
+            "  httpd_resp_set_type(req, \"application/json\");\n"
+            "  httpd_resp_set_hdr(req, \"Cache-Control\", \"no-store\");\n  const esp_err_t ret = httpd_resp_sendstr(req, json);\n"
+            "  secure_zero(json, need);")),
+    ("GET /api/device-info's refused build falls through to the send",
+     raw_in(INO, "  if (identity_json::device_info(in, json, need) >= need) {\n    free(json);\n"
+                 "    return http_send_error(req, 503, \"answer_changed\");\n  }\n",
+            "  if (identity_json::device_info(in, json, need) >= need) {\n    free(json);\n  }\n")),
+    ("the fleet scan's cache is copied out before the browse fills it",
+     raw_in(INO, "    fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);\n",
+            "    fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);\n"
+            "    memcpy(g_fleet_scan_cache, staging, FLEET_SCAN_CACHE_SIZE);\n")),
+    # J7: every JSON text spelled with printf outside the answers, held or recorded.
+    ("the pairing QR carries the device name in place of the token",
+     raw_in(INO, "g_device.device_id, base_host, g_device.api_token_str, g_tls_cert_fp_hex);",
+            "g_device.device_id, base_host, setup_wizard::get_device_name(), g_tls_cert_fp_hex);")),
+    ("the hardware state writes yes/no where a token goes",
+     raw_in(f"{SKETCH}/hardware_state.h", 'g_hw.safe_mode ? "true" : "false",', 'g_hw.safe_mode ? "yes" : "no",')),
+    ("a recorded builder is renamed, leaving its record behind",
+     raw_in(f"{SKETCH}/wap_server.cpp", "esp_err_t send_json_error(httpd_req_t* req, int status_code,",
+            "esp_err_t send_json_error2(httpd_req_t* req, int status_code,")),
+    ("a new card line writes a raw char array",
+     add_file(f"{SKETCH}/zz_card_line.h",
+              "inline int zz_line(char* out, size_t cap, const char label[24]) {\n"
+              "  return snprintf(out, cap, \"{\\\"label\\\":\\\"%s\\\"}\\n\", label);\n}\n")),
     # J8: the device name holds no control byte (F226).
     ("the name's setter goes back to bounding only its length",
      raw_in(WIZARD, "  if (!device_name_rule::storable(name)) return false;\n",
@@ -2112,6 +2558,7 @@ def self_test(files: dict[str, str]) -> list[str]:
 def main(argv: list[str]) -> int:
     files = sketch_files()
     errors, sites = check_files(files)
+    j7_stats = J7_STATS                 # before the self-test re-runs the check on its mutations
     printfs = check_printf_answers(files, build_index(files))[1]
     if "--list" in argv:
         for s in sites:
@@ -2129,11 +2576,14 @@ def main(argv: list[str]) -> int:
         return 1
     fits = [s for s in sites if s.verdict == "fits"]
     kinds = {k: sum(1 for p in printfs if p.verdict == k) for k in ("fits", "guarded", "composed")}
+    j7_sites, j7_fns, j7_recorded = j7_stats
     print(f"canary-wap REST answers fit their buffers: {len(sites)} serializeJson() calls in "
           f"{len(scope_of(files))} files, {len(fits)} fixed buffers measured against their longest "
           f"answer, the rest grow or are sized by measureJson(); {len(printfs)} snprintf() answer pieces "
           f"({kinds['fits']} measured to fit, {kinds['guarded']} length-tested, {kinds['composed']} composed), "
-          f"every %s escaped by construction; the identity answers measured by identity_json.h "
+          f"every %s escaped by construction; the identity answers measured by identity_json.h; "
+          f"{j7_sites} other JSON texts spelled with printf in {j7_fns} functions, {j7_recorded} of them "
+          f"recorded by the values the check cannot read; the device name's setter, loader and routes "
           f"({len(MUTATIONS)} mutations refused).")
     return 0
 

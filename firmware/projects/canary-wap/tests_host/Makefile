@@ -1145,7 +1145,7 @@ MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
 
 $(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
-                  $(SRC_DIR)/csi_event_egress.h \
+                  $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h json_strict.h \
                   $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
 	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp
@@ -1171,7 +1171,7 @@ HA_IDS_BIN = test_ha_discovery_ids
 HA_IDS_SRC = test_ha_discovery_ids.cpp
 
 $(HA_IDS_BIN): $(HA_IDS_SRC) beacon_source_scan.h $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
-               $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h \
+               $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h \
                $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
 	  -I stubs/mqtt -I $(SRC_DIR) -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \

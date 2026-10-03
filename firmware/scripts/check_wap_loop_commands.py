@@ -1861,7 +1861,7 @@ CHIRP_ROUTE_SHAPE = {
         "constchirp_channel::RecentView*chirps=t->chirps;",
         "for(size_ti=0;i<count;i++){if(chirps[i].dismissed)continue;JsonObjectc=arr.add<JsonObject>();",
         "chirp_channel::ChirpCategorycat=(chirp_channel::ChirpCategory)((uint8_t)chirps[i].template_id>>4);",
-        'charnonce_hex[17];for(intj=0;j<8;j++){sprintf(nonce_hex+j*2,"%02x",chirps[i].nonce[j]);}',
+        'charnonce_hex[17];for(intj=0;j<8;j++){snprintf(nonce_hex+j*2,3,"%02x",chirps[i].nonce[j]);}',
     ),
 }
 # Where the nearby and recent handlers free their copy: right after the

@@ -63,6 +63,7 @@
 #include "csi_event_id_floor.h"     /* staged copy — space_low(): the health's event-id warning (F82) */
 #include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
 #include "csi_module_settings_nvs.h" /* staged copy — begin_read_only(), the quiet read-only open (F150) */
+#include "wap_json_writer.h"         /* GET /api/mqtt/config's answer, escaped and measured (sweep F227) */
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -1921,6 +1922,51 @@ static bool authorized(httpd_req_t* req, const char* api_token) {
  * registers an accessor at init time via set_api_token_provider. */
 const char* (*s_api_token_provider)() = nullptr;
 
+/* GET /api/mqtt/config's answer, from copies taken before it is measured
+ * (sweep F227): the host, the user and the prefix are what the settings page
+ * sent, and json_extract_string() hands them over with `"`, `\` and control
+ * bytes decoded (and raw bytes as they came), so a %s answer broke on a
+ * quote; every string goes through wap_json_writer.h's escaper here, and the
+ * answer is measured and written into a heap buffer of exactly its length.
+ * last_error is the loop task's: it is copied once, so both passes read the
+ * same bytes. */
+struct ConfigAnswer {
+  const Config* c;
+  const char*   transport;
+  const char*   last_error;
+  bool          connected;
+};
+
+static void write_config_answer(wap_json::Writer& w, const ConfigAnswer& a) {
+  wap_json::raw(w, "{\"enabled\":");
+  wap_json::boolean_value(w, a.c->enabled);
+  wap_json::raw(w, ",\"host\":");
+  wap_json::str(w, a.c->host);
+  wap_json::raw(w, ",\"port\":");
+  wap_json::number(w, a.c->port);
+  wap_json::raw(w, ",\"user\":");
+  wap_json::str(w, a.c->user);
+  wap_json::raw(w, ",\"prefix\":");
+  wap_json::str(w, a.c->prefix);
+  wap_json::raw(w, ",\"tls\":");
+  wap_json::boolean_value(w, a.c->tls);
+  wap_json::raw(w, ",\"tls_mode\":");
+  wap_json::number(w, a.c->tls_mode);
+  wap_json::raw(w, ",\"ca_set\":");
+  wap_json::boolean_value(w, a.c->ca_set);
+  wap_json::raw(w, ",\"transport\":");
+  wap_json::str(w, a.transport);
+  wap_json::raw(w, ",\"last_error\":");
+  wap_json::str(w, a.last_error);
+  wap_json::raw(w, ",\"discovery\":");
+  wap_json::boolean_value(w, a.c->discovery);
+  wap_json::raw(w, ",\"password_set\":");
+  wap_json::boolean_value(w, a.c->pass[0] != '\0');
+  wap_json::raw(w, ",\"connected\":");
+  wap_json::boolean_value(w, a.connected);
+  wap_json::raw(w, "}");
+}
+
 esp_err_t handle_config_get(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
   if (!authorized(req, tok)) {
@@ -1934,50 +1980,37 @@ esp_err_t handle_config_get(httpd_req_t* req) {
   config_load(&c);
   /* Echo everything but the password — the password is write-only on
    * the wire so a casual attacker who somehow obtained a session
-   * cookie can't read the broker creds back out of GET. */
-  char body[800];
-  /* snprintf return value intentionally unchecked: we send via
-   * HTTPD_RESP_USE_STRLEN below so a truncated payload still has a
-   * NUL terminator and httpd_resp_send walks until it. Using
-   * snprintf's return as the length would walk past the NUL on
-   * truncation and over-read. (PR #394 review r3213674558.)
+   * cookie can't read the broker creds back out of GET.
    * tls_mode / ca_set / transport / last_error are the broker-TLS
    * surface: the CA itself is never echoed (a page that can read it
-   * back is a page that can be tricked into showing it), and last_error
-   * is one of the header's constant strings — no quotes, no backslashes
-   * (the host suite asserts that), so it is JSON-safe as-is. */
-  snprintf(body, sizeof(body),
-    "{"
-      "\"enabled\":%s,"
-      "\"host\":\"%s\","
-      "\"port\":%u,"
-      "\"user\":\"%s\","
-      "\"prefix\":\"%s\","
-      "\"tls\":%s,"
-      "\"tls_mode\":%u,"
-      "\"ca_set\":%s,"
-      "\"transport\":\"%s\","
-      "\"last_error\":\"%s\","
-      "\"discovery\":%s,"
-      "\"password_set\":%s,"
-      "\"connected\":%s"
-    "}",
-    c.enabled ? "true" : "false",
-    c.host,
-    (unsigned)c.port,
-    c.user,
-    c.prefix,
-    c.tls ? "true" : "false",
-    (unsigned)c.tls_mode,
-    c.ca_set ? "true" : "false",
-    transport_name(),
-    s_last_error,
-    c.discovery ? "true" : "false",
-    c.pass[0] ? "true" : "false",
-    connected() ? "true" : "false");
+   * back is a page that can be tricked into showing it). */
+  char last_error[sizeof(s_last_error)];
+  memcpy(last_error, s_last_error, sizeof(last_error));
+  last_error[sizeof(last_error) - 1] = '\0';
+  const ConfigAnswer a = {&c, transport_name(), last_error, connected()};
+  wap_json::Writer m;
+  wap_json::begin_measure(m);
+  write_config_answer(m, a);
+  const size_t need = m.len + 1;
+  char* body = (char*)malloc(need);
+  if (!body) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"out of memory\"}", -1);
+    return ESP_OK;
+  }
+  wap_json::Writer w;
+  wap_json::begin(w, body, need);
+  write_config_answer(w, a);   /* the same copies: the same length */
+  if (!wap_json::ok(w)) {
+    free(body);
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"answer changed\"}", -1);
+    return ESP_OK;
+  }
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+  free(body);
   return ESP_OK;
 }
 
