@@ -805,6 +805,22 @@ std::string health_detail(const char* message) {
   return detail;
 }
 
+// Whether any health-log line names `addr` (a peer's address, in either
+// case). The log is durable (the SD card's /HEALTH, the BLE log export), and
+// the no-identity invariant keeps a peer's address out of it (the F172
+// review: "New device paired" logged the phone's identity address).
+bool health_names(const std::string& addr) {
+  std::string lo = addr, up = addr;
+  for (char& ch : lo) ch = (char)tolower((unsigned char)ch);
+  for (char& ch : up) ch = (char)toupper((unsigned char)ch);
+  for (const HealthLine& l : g_health_lines) {
+    for (const std::string* text : {&l.message, &l.detail}) {
+      if (text->find(lo) != std::string::npos || text->find(up) != std::string::npos) return true;
+    }
+  }
+  return false;
+}
+
 // Health-log lines and presence-sensor calls made on `task`.
 size_t health_on(const char* task) {
   size_t n = 0;
@@ -1091,7 +1107,8 @@ void test_a_link_is_named_by_its_address() {
   CHECK(strcmp(bc::g_paired_devices[0].name, printed.c_str()) == 0);
   CHECK(memcmp(bc::g_paired_devices[0].address, phone.getAddress().getBase()->val, 6) == 0);
   CHECK(bc::g_paired_devices[0].address_type == 1);
-  CHECK(health_detail("New device paired") == printed);
+  CHECK(health_says("New device paired") == 1 && health_detail("New device paired").empty());
+  CHECK(health_says("BLE device connected") == 1 && !health_names(printed));   // no address logged
   bc::BluetoothStatus st;
   bc::read_status(&st);
   CHECK(strcmp(st.connection.name, printed.c_str()) == 0);
@@ -2320,7 +2337,9 @@ void test_remove_forgets_the_bond_by_its_identity() {
   CHECK(memcmp(bc::g_paired_devices[0].address, identity.getBase()->val, 6) == 0);
   CHECK(bc::g_paired_devices[0].address_type == 0);
   CHECK(strcmp(bc::g_paired_devices[0].name, "c8:2b:96:0a:1b:2c") == 0);
-  CHECK(health_detail("New device paired") == "c8:2b:96:0a:1b:2c");
+  // The identity is the phone's stable address: in the list, never the log.
+  CHECK(health_says("New device paired") == 1 && health_detail("New device paired").empty());
+  CHECK(!health_names("c8:2b:96:0a:1b:2c") && !health_names(phone.getAddress().toString()));
 
   // As the routes print them.
   bc::PairedView paired;
@@ -2614,6 +2633,109 @@ void test_only_the_recorded_links_end_ends_it() {
   loop_pass();
   CHECK(!bc::g_connection.connected && bc::g_state == bc::BT_ADVERTISING);
   std::printf("PASS only_the_recorded_links_end_ends_it\n");
+}
+
+// The reconciliation leaves a record the stack still holds alone, compares
+// the handle as well as the address, and asks the stack only after a new
+// drop (the F169 review's three surviving mutants). A drop while the
+// recorded link is up and a second link's connect was the one lost: the
+// record, its time and the count stay (before the guard, the second link
+// was recorded over it and counted again). A disconnect naming the
+// recorded address on another handle (the phone's old link, reported after
+// the phone came back on a new handle) leaves the record. And a pass after
+// a drop was answered asks the stack nothing.
+void test_a_reconcile_leaves_a_live_record_alone() {
+  boot();
+  NimBLEConnInfo a = link(11, 0xA1);
+  host_sim::server->peers = {11};
+  host_sim::server->link_up(a);
+  host_sim::now_ms += 1000;
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), a); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 11);
+  const uint32_t since = bc::g_connection.connected_since_ms;
+  const uint32_t total = bc::g_total_connections;
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  NimBLEConnInfo b = link(12, 0xB2);                         // its connect finds no room
+  host_sim::server->peers = {11, 12};
+  host_sim::server->link_up(b);
+  host_sim::now_ms += 1000;
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), b); });
+  CHECK(bc::g_events.dropped_reserved() == 1);
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 11);
+  CHECK(memcmp(bc::g_connection.address, a.getAddress().getBase()->val, 6) == 0);
+  CHECK(bc::g_connection.connected_since_ms == since && bc::g_total_connections == total);
+  CHECK(health_says("BLE link up, its start dropped: recorded from the stack's record") == 0);
+  CHECK(health_says("BLE link gone, its end dropped: ended from the stack's record") == 0);
+
+  // The drop was answered: the next pass asks the stack nothing.
+  const unsigned info_calls = host_sim::server->peer_info_calls;
+  const unsigned devices_calls = host_sim::server->peer_devices_calls;
+  loop_pass();
+  loop_pass();
+  CHECK(host_sim::server->peer_info_calls == info_calls);
+  CHECK(host_sim::server->peer_devices_calls == devices_calls);
+
+  // The recorded phone's address on another handle (its old link's end,
+  // reported late): the record stays.
+  NimBLEConnInfo old_link = link(13, 0xA1);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), old_link, 0x08); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 11);
+  CHECK(bc::g_connection.connected_since_ms == since);
+  std::printf("PASS a_reconcile_leaves_a_live_record_alone\n");
+}
+
+// Another link's encryption is not the recorded link's (the F171 review).
+// On FULL a second link can come up beside the recorded one (Opera
+// advertises through a link), and the newest is recorded. The first link's
+// bonded encryption marked the recorded (second, unauthenticated) link
+// bonded on the connection card and ended its pairing as complete; its
+// failed pairing ended the owner's pairing mode as failed. Now only the
+// recorded link's events touch the card and the pairing's state; the bond
+// still reaches the paired list, by its identity.
+void test_another_links_encryption_leaves_the_record() {
+  boot();
+  opera_init();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok && bc::g_pairing.state == bc::PAIR_INITIATED);
+  NimBLEConnInfo a = link(7, 0xA7);
+  NimBLEConnInfo b = link(8, 0xB8);
+  host_sim::server->peers = {7, 8};
+  host_sim::server->link_up(a);
+  host_sim::server->link_up(b);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), a); });
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), b); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 8);
+  CHECK(bc::g_connection.security == bc::SEC_NONE);
+
+  NimBLEConnInfo failed = a;                                 // a's pairing fails
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(failed); });
+  loop_pass();
+  CHECK(health_says("Pairing failed") == 1);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED);         // the owner's pairing mode goes on
+
+  a.encrypted = a.authenticated = a.bonded = true;           // then bonds
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(a); });
+  loop_pass();
+  CHECK(bc::g_paired_count == 1);
+  CHECK(memcmp(bc::g_paired_devices[0].address, a.getIdAddress().getBase()->val, 6) == 0);
+  CHECK(bc::g_connection_handle == 8 && bc::g_connection.security == bc::SEC_NONE);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.connection.security == bc::SEC_NONE && st.pairing.state == bc::PAIR_INITIATED);
+
+  b.encrypted = b.authenticated = true;                      // the recorded link's own
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(b); });
+  loop_pass();
+  CHECK(bc::g_connection.security == bc::SEC_AUTHENTICATED);
+  CHECK(bc::g_pairing.state == bc::PAIR_COMPLETE);
+  CHECK(bc::g_paired_count == 1);                            // not bonded: not listed
+  std::printf("PASS another_links_encryption_leaves_the_record\n");
 }
 
 // ── The state is what runs (F170) ───────────────────────────────────────
@@ -2913,6 +3035,8 @@ const Test kTests[] = {
     {"the_state_after_a_scan_is_what_runs", test_the_state_after_a_scan_is_what_runs},
     {"the_state_after_pairing_or_a_link_is_what_runs", test_the_state_after_pairing_or_a_link_is_what_runs},
     {"a_link_ends_on_full_into_advertising", test_a_link_ends_on_full_into_advertising},
+    {"a_reconcile_leaves_a_live_record_alone", test_a_reconcile_leaves_a_live_record_alone},
+    {"another_links_encryption_leaves_the_record", test_another_links_encryption_leaves_the_record},
     {"a_bond_the_stack_keeps_keeps_its_entry", test_a_bond_the_stack_keeps_keeps_its_entry},
     {"a_remove_during_a_scan_ends_the_scan_first", test_a_remove_during_a_scan_ends_the_scan_first},
     {"full_profile_remove_brings_the_beacon_back", test_full_profile_remove_brings_the_beacon_back},

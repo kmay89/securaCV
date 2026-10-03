@@ -222,11 +222,15 @@ class NimBLEServer {
     host_sim::note("conn_params");
     return true;
   }
-  std::vector<uint16_t> getPeerDevices() const { return peers; }
+  std::vector<uint16_t> getPeerDevices() const {
+    ++peer_devices_calls;
+    return peers;
+  }
   // The stack's own record of a link (ble_gap_conn_find): what is up on
   // `handle` now. NimBLE answers a handle with no link with an empty
   // NimBLEConnInfo (handle 0, address 00:00:00:00:00:00).
   NimBLEConnInfo getPeerInfoByHandle(uint16_t handle) const {
+    ++peer_info_calls;
     std::lock_guard<std::mutex> g(links_mu_);
     const auto it = links_.find(handle);
     if (it != links_.end()) return it->second;
@@ -266,6 +270,10 @@ class NimBLEServer {
   }
   std::vector<uint16_t> disconnected;   // disconnect()'s handles, in order
   std::vector<uint16_t> ended_by_unpair;   // the links deleteBond() ended, in order
+  // How often the channel asked the stack for its links (a test can see a
+  // pass that asks nothing).
+  mutable std::atomic<unsigned> peer_devices_calls{0};
+  mutable std::atomic<unsigned> peer_info_calls{0};
   std::vector<uint16_t> peers;   // the links up, as the test sets them
  private:
   mutable std::mutex links_mu_;

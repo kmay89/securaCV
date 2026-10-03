@@ -528,10 +528,13 @@ static void apply_connect(const Event& e) {
   // with the new parameters internally.
   ble_presence::notify_console_connected(true);
 
+  // No address in the line (the F172 review): the health log is durable
+  // (the SD card's /HEALTH, the BLE log export), and a peer's address is an
+  // identifier the no-identity invariant keeps out of it (spec
+  // canary_free_signals_v0.md, Invariant A). Since F171 this line runs for
+  // every link on the FULL profile too.
   if (g_settings.notify_on_connect) {
-    char detail[64];
-    format_address(g_connection.address, detail);
-    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device connected", detail);
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device connected", nullptr);
   }
 
   if (g_conn_callback) {
@@ -630,10 +633,17 @@ static void apply_disconnect(const Event& e) {
 
 static void apply_auth_complete(const Event& e) {
   const LinkEvent& link = e.u.link;
+  // The connection card and the pairing's state are the recorded link's
+  // (the F171 review): on FULL a second link can be up beside it (Opera
+  // advertises through a link), and its encryption must not mark the
+  // recorded one bonded or end its pairing. A bond is a bond whichever link
+  // made it, so the paired list takes it either way, by its identity.
+  const bool recorded = is_recorded_link(link);
   if (link.authenticated) {
-    g_connection.security = SEC_AUTHENTICATED;
+    if (recorded) {
+      g_connection.security = link.bonded ? SEC_BONDED : SEC_AUTHENTICATED;
+    }
     if (link.bonded) {
-      g_connection.security = SEC_BONDED;
 
       // Add to paired devices, by the identity address the bond is keyed by
       // (sweep F172): the over-the-air address of a phone using resolvable
@@ -666,19 +676,27 @@ static void apply_auth_complete(const Event& e) {
         dev->blocked = false;
 
         save_paired_devices();
-        log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "New device paired", identity_str.c_str());
+        // No address in the line (the F172 review): the identity address is
+        // the phone's stable one (on most phones the public Bluetooth
+        // address), and the health log is durable. The paired list keeps it,
+        // where Remove needs it.
+        log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "New device paired", nullptr);
       }
     }
 
-    g_pairing.state = PAIR_COMPLETE;
-    if (g_pair_callback) {
-      g_pair_callback(&g_pairing);
+    if (recorded) {
+      g_pairing.state = PAIR_COMPLETE;
+      if (g_pair_callback) {
+        g_pair_callback(&g_pairing);
+      }
     }
   } else {
-    g_pairing.state = PAIR_FAILED;
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Pairing failed", nullptr);
-    if (g_pair_callback) {
-      g_pair_callback(&g_pairing);
+    if (recorded) {
+      g_pairing.state = PAIR_FAILED;
+      if (g_pair_callback) {
+        g_pair_callback(&g_pairing);
+      }
     }
   }
 }
