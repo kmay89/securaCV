@@ -571,7 +571,7 @@ test("A47: the scene is handed the panel's own shape, which the firmware's panel
   // part transform now.
   const scene3d = readFileSync(join(ROOT, "assets/scene3d.js"), "utf8");
   assert.ok(scene3d.includes("this.turn = this.turnPose ? glassTurn(this.src, this.glass, this.firmwareTurn) : 0;") &&
-    scene3d.includes("this.turn ? this._turnedSource() : this.src);") &&
+    scene3d.includes("this.turn || fit.fit ? this._screenSource(fit) : this.src);") &&
     scene3d.includes("const shadow = turnedShadow(this.shadow, this.turn, this.turnPose);") &&
     scene3d.includes("for (const { part: p, model } of partModels(this.parts, this.turn, this.turnPose)) {") &&
     scene3d.includes("gl.uniformMatrix4fv(u.uModel, false, M4.mul(spin, model));"),
@@ -579,10 +579,79 @@ test("A47: the scene is handed the panel's own shape, which the firmware's panel
   assert.strictEqual((scene3d.match(/const spin = M4\.mul\(M4\.rotX\(this\.rot\.x\), M4\.rotY\(this\.rot\.y\)\);/g) || []).length, 2,
     "the draw's and project()'s spin are the orbit alone");
   assert.ok(/clearParts\(\) \{[^}]*this\.turnPose = null;/.test(scene3d), "every build names its own body's pose");
-  assert.ok(scene3d.includes("const t = turnTexture(this.turn, this.src.width, this.src.height);") &&
-    scene3d.includes("g.setTransform(...t.m);"), "the turned plane samples the canvas through turnTexture()");
+  assert.ok(scene3d.includes("const fit = fitTexture(this.turn, this.src.width, this.src.height, this.glassPlane());") &&
+    scene3d.includes("const t = turnTexture(turn, w, h);") &&
+    scene3d.includes("g.setTransform(...t.m);"), "the turned plane samples the canvas through turnTexture(), fitted (A55)");
   // The Lab hands the scene the live canvas and the panel's own shape.
   const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
   assert.ok(/ctx\.scene\.src = glass;\n\s*ctx\.scene\.glass = \{ w: dev\.glass\.w, h: dev\.glass\.h \};/.test(app),
     "app.js textures the 3D screen from the live glass and names its panel");
+});
+
+// ── A55: the canvas fits the plane it is given ───────────────────────────
+// The Lab's touch169 figure draws its lit face 36.1 x 28.1, wider than tall,
+// because its case file (canary_s3_touch169.scad) holds the 1.69" glass
+// landscape, while the twin's canvas is the 240x280 portrait panel the
+// firmware draws; textured edge to edge, the canvas stretched half again
+// across. The scene now samples every plane through fitTexture(): the canvas
+// (turned with the body when the glass turned it) set whole into the plane's
+// proportions, centered, on a dark ground. Worked through the same chain as
+// A47's landing (texture, UVs, plane), on each figure's real screen plane.
+test("A55: every figure's live glass keeps the canvas's proportions on the plane its model gives it", async () => {
+  const { buildFromFigure, FIGURE_BUILDERS, fitTexture, turnTexture } = await load();
+  assert.strictEqual(typeof fitTexture, "function", "scene3d.js fits the canvas to its plane");
+  // fitTexture: the turned canvas at 1:1 along the side it fills, centered
+  assert.deepStrictEqual(fitTexture(0, 240, 280, { w: 36.13, h: 28.13 }), { w: 360, h: 280, m: [1, 0, 0, 1, 60, 0], fit: true });
+  assert.deepStrictEqual(fitTexture(0, 800, 480, { w: 160, h: 96 }), { ...turnTexture(0, 800, 480), fit: false },
+    "a plane of the canvas's proportions samples the canvas itself");
+  assert.deepStrictEqual(fitTexture(1, 480, 800, { w: 160, h: 96 }), { ...turnTexture(1, 480, 800), fit: false },
+    "a turned canvas on its turned body is A47's texture, unchanged");
+  assert.deepStrictEqual(fitTexture(0, 240, 280, null), { ...turnTexture(0, 240, 280), fit: false }, "no plane, no fit");
+  const tall = fitTexture(0, 320, 180, { w: 17.4, h: 32.4 });
+  assert.ok(tall.fit && tall.w === 320 && tall.h === Math.round(320 * 32.4 / 17.4) && tall.m[5] === (tall.h - 180) / 2,
+    "a wide canvas on a tall plane is letterboxed above and below");
+  // Where the canvas lands on a plane (u, v over the plane's w x h, as
+  // screenPlane() lays its UVs): its drawn width and height there.
+  const drawn = (t, cw, ch, plane) => {
+    const [a, b, c, d, e, f] = t.m;
+    const tex = (px, py) => [(a * px + c * py + e) / t.w * plane.w, (b * px + d * py + f) / t.h * plane.h];
+    const [x0, y0] = tex(0, 0), [x1, y1] = tex(cw, ch);
+    return { w: Math.abs(x1 - x0), h: Math.abs(y1 - y0), x0: Math.min(x0, x1), y0: Math.min(y0, y1) };
+  };
+  let checked = 0;
+  for (const d of registry.devices) {
+    if (d.kind !== "display" || !d.glass || !FIGURE_BUILDERS[d.id]) continue;
+    const [figId, opts] = FIGURE_BUILDERS[d.id];
+    const scene = fakeScene();
+    await buildFromFigure(figId, opts)(scene);
+    const glassPart = scene.parts.find((p) => p.screen);
+    assert.ok(glassPart, `${d.id}: its figure has a live glass`);
+    const plane = glassPart.builder.plane;
+    assert.ok(plane && plane.w > 0 && plane.h > 0, `${d.id}: its screen plane carries its size`);
+    const { w: cw, h: ch } = d.glass;
+    const fitted = drawn(fitTexture(0, cw, ch, plane), cw, ch, plane);
+    assert.ok(Math.abs(fitted.w / fitted.h - cw / ch) < 0.01 * (cw / ch),
+      `${d.id}: the ${cw}x${ch} canvas lands ${fitted.w.toFixed(2)} x ${fitted.h.toFixed(2)} on its ${plane.w.toFixed(2)} x ${plane.h.toFixed(2)} plane`);
+    assert.ok(fitted.w <= plane.w + 1e-9 && fitted.h <= plane.h + 1e-9 && fitted.x0 >= -1e-9 && fitted.y0 >= -1e-9 &&
+      (Math.abs(fitted.w - plane.w) < 0.02 * plane.w || Math.abs(fitted.h - plane.h) < 0.02 * plane.h),
+    `${d.id}: the canvas fills its plane along one side and stays on it`);
+    checked++;
+  }
+  assert.ok(checked >= 6, `the display figures were checked (${checked})`);
+  // The touch169, which stretched: its plane is landscape, its glass portrait
+  const scene = fakeScene();
+  await buildFromFigure("device.canary-display-touch169")(scene);
+  const plane = scene.parts.find((p) => p.screen).builder.plane;
+  assert.ok(plane.w > plane.h, `the touch169 figure's lit face is wider than tall (${plane.w.toFixed(2)} x ${plane.h.toFixed(2)})`);
+  const touch = registry.devices.find((x) => x.id === "canary-display-touch169").glass;
+  assert.ok(touch.h > touch.w, "its glass is the 240x280 portrait panel");
+  const old = drawn(turnTexture(0, touch.w, touch.h), touch.w, touch.h, plane);
+  assert.ok(old.w / old.h > 1.4 * (touch.w / touch.h), "edge to edge (before A55) it stretched half again across");
+  const now = drawn(fitTexture(0, touch.w, touch.h, plane), touch.w, touch.h, plane);
+  assert.ok(Math.abs(now.w / now.h - touch.w / touch.h) < 0.01 && Math.abs(now.h - plane.h) < 1e-9 &&
+    Math.abs(now.x0 + now.w / 2 - plane.w / 2) < 1e-9, "fitted, it stands at its own proportions, full height, centered");
+  // The draw samples through it, and the screen part keeps its plane.
+  const scene3d = readFileSync(join(ROOT, "assets/scene3d.js"), "utf8");
+  assert.ok(scene3d.includes("m.plane = { w, h, round: !!round };") && scene3d.includes("plane: builder.plane ? { ...builder.plane } : null,") &&
+    scene3d.includes("const p = this.parts.find((q) => q.screen && q.plane);"), "the plane's size reaches the draw");
 });

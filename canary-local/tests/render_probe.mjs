@@ -15,8 +15,9 @@
 //      here, so its pixels can be counted) and stands alone, the marks
 //      upright at the sheet's presentation pose and, face-on, at the
 //      canvas's portrait proportions, the body's foot on the shadow drawn
-//      for it; with no panel named the stand is drawn and the same canvas is
-//      squeezed into the landscape screen. The marks sit in the glass's
+//      for it; with no panel named the stand is drawn and the same canvas
+//      stands unturned in the landscape screen, fitted whole at its own
+//      proportions (A55; before, it was squeezed). The marks sit in the glass's
 //      lower half: the studio light's highlight across the top of a face-on
 //      screen washes a mark there to near white.
 //   5. the case turns the way the firmware turned the glass (sweep A56): a
@@ -24,6 +25,12 @@
 //      left for turn 1 (glass_settings.h's ROT_PORTRAIT, clockwise), on the
 //      right for turn 3 (ROT_PORTRAIT_INV) and on top for turn 2
 //      (ROT_LANDSCAPE_INV, an 800x480 canvas), the marks upright each way.
+//   6. a canvas keeps its proportions on the plane its model gives it (sweep
+//      A55): the Touch 1.69's figure draws its lit face wider than tall (its
+//      case file holds the glass landscape) and its twin's canvas is the
+//      240x280 portrait panel; three marks on that canvas, face-on, read at
+//      the canvas's proportions, where sampled edge to edge they spread half
+//      again across.
 //
 //   node canary-local/tests/render_probe.mjs [--shots DIR]
 //
@@ -211,6 +218,41 @@ try {
   window.__probe.turnedCw = await marks({ w: 800, h: 480 }, "front", 1);
   window.__probe.turnedCcw = await marks({ w: 800, h: 480 }, "front", 3);
   window.__probe.upsideDown = await marks({ w: 800, h: 480 }, "front", 2, flat);
+  // 6. A55: the touch169's 240x280 glass on its figure's landscape lit face,
+  // face-on: red and green on one row, blue under red (centers 120 px across
+  // and 70 px down, in the lower half, clear of the highlight)
+  const touch = document.createElement("canvas");
+  touch.width = 240; touch.height = 280;
+  const tg = touch.getContext("2d");
+  tg.fillStyle = "#101010"; tg.fillRect(0, 0, 240, 280);
+  tg.fillStyle = "#ff0000"; tg.fillRect(30, 150, 60, 60);
+  tg.fillStyle = "#00ff00"; tg.fillRect(150, 150, 60, 60);
+  tg.fillStyle = "#0000ff"; tg.fillRect(30, 220, 60, 60);
+  {
+    const cv = document.createElement("canvas");
+    cv.style.cssText = "width:420px;height:420px";
+    document.body.append(cv);
+    const scene = new DeviceScene(cv, touch);
+    await BUILDERS["canary-display-touch169"](scene);
+    scene.glass = { w: 240, h: 280 };
+    scene.autoSway = false;
+    scene.rot = { x: 0, y: 0 }; scene.home = { x: 0, y: 0 };
+    scene.draw();
+    const gl = scene.gl, W = cv.width, H = cv.height;
+    const px = new Uint8Array(W * H * 4);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const c = { r: [0, 0, 0], g: [0, 0, 0], b: [0, 0, 0] };
+    for (let i = 0; i < px.length; i += 4) {
+      const R = px[i], G = px[i + 1], B = px[i + 2];
+      const k = R - Math.max(G, B) > 40 ? "r" : G - Math.max(R, B) > 40 ? "g" : B - Math.max(R, G) > 40 ? "b" : null;
+      if (k) { const x = (i / 4) % W, y = Math.floor(i / 4 / W); c[k][0] += x; c[k][1] += y; c[k][2]++; }
+    }
+    const plane = scene.glassPlane();
+    scene.dispose?.();
+    cv.remove();
+    const at = (k) => (c[k][2] ? [c[k][0] / c[k][2], c[k][1] / c[k][2]] : null);
+    window.__probe.touch = { turn: scene.turn, plane, r: at("r"), g: at("g"), b: at("b") };
+  }
   window.__probe.status = "done";
 } catch (e) {
   window.__probe.status = "error: " + (e && e.message || e);
@@ -256,10 +298,8 @@ for (const id of EXPECT) {
 // (240 down to 360 across), and at the sheet's presentation pose still
 // upright (the row more across than down, the column more down than
 // across); the case has left its stand, and its foot is on its shadow. The
-// unturned control draws the stand and squeezes the marks into the
-// landscape screen, 480/800 down and 800/480 across.
+// unturned control draws the stand and leaves the case unturned.
 const GLASS_RATIO = 240 / 360;
-const SQUEEZED = GLASS_RATIO * (480 / 800) / (800 / 480);
 const shape = (m) => {
   if (!m || !m.r || !m.g || !m.b) return null;
   const across = m.g[0] - m.r[0], down = m.r[1] - m.b[1];   // readPixels y runs up
@@ -312,15 +352,18 @@ a47("at the sheet's pose: the turned glass reads upright, the case out of its st
   }
   return null;
 });
-// (The stand's front lip hides the foot of the reclined glass, so the
-// squeezed marks' centroids read flatter still than SQUEEZED; what is held
-// is that they are nowhere near the canvas's own proportions.)
-a47("face-on, no panel named: the stand is drawn and the glass squeezed (what the Lab showed before)", probe.unturned, (u, m) => {
+// (Before A55 the same canvas was squeezed into the landscape screen and
+// this control held the marks squeezed. The canvas is now fitted whole at
+// its own proportions, pillarboxed in the screen (fitTexture); but the case
+// reclines in its stand and the stand's front lip hides the foot of the
+// glass, which foreshortens the column far more than the fit restores, so
+// the marks' proportions here say nothing either way. What the control
+// holds is the turn: none, the stand drawn, the marks on the frame in
+// order. The fit is held face-on, on the touch169, in 6. below.)
+a47("face-on, no panel named: the stand is drawn and the case unturned", probe.unturned, (u, m) => {
   if (m.turn !== 0) return "a glass with no panel named turned the case";
   if (!(m.stand > 0)) return "the stand is not drawn";
-  if (!u || !(u.across > 0 && u.down > 0) || !(u.ratio < (GLASS_RATIO + SQUEEZED) / 2)) {
-    return `not the squeezed glass (${JSON.stringify(u)}; want down/across under ${((GLASS_RATIO + SQUEEZED) / 2).toFixed(2)}, the canvas's being ${GLASS_RATIO.toFixed(2)})`;
-  }
+  if (!u || !(u.across > 0 && u.down > 0)) return `the glass's marks are not on the frame in order (${JSON.stringify(u)})`;
   return null;
 });
 a47("at the sheet's pose, no panel named: the case stays in its stand", probe.unturnedHome, (u, m) => {
@@ -349,6 +392,24 @@ const a56 = (what, m, turn, side) => held("A56")(what, m, (t) => {
 a56("turn 1 (clockwise): the cable side on the left, the glass upright", probe.turnedCw, 1, "left");
 a56("turn 3 (counterclockwise): the cable side on the right, the glass upright", probe.turnedCcw, 3, "right");
 a56("turn 2 (upside down): the cable side on top, the glass upright", probe.upsideDown, 2, "top");
+
+// 6. A55: on the touch169's landscape lit face the 240x280 canvas keeps its
+// proportions: down/across 70/120, face-on, within 10% (edge to edge, the
+// plane's 36.1 x 28.1 against the canvas's 240x280 read it at about two
+// thirds of that).
+{
+  const t = probe.touch;
+  const want = 70 / 120;
+  const shapeOf = t && t.r && t.g && t.b ? { across: t.g[0] - t.r[0], down: t.r[1] - t.b[1] } : null;
+  const ratio = shapeOf ? shapeOf.down / shapeOf.across : NaN;
+  if (!t || !t.plane) fail("A55: the touch169 figure's screen plane names no size");
+  else if (!(t.plane.w > t.plane.h)) fail(`A55: the touch169 figure's lit face is no longer wider than tall (${t.plane.w} x ${t.plane.h}); this check is written for the landscape face`);
+  else if (t.turn !== 0) fail(`A55: a 240x280 canvas on the 240x280 glass turned the touch169 (${t.turn})`);
+  else if (!shapeOf) fail(`A55: the touch169's marks are not all on the frame (${JSON.stringify(t)})`);
+  else if (!(shapeOf.across > 0 && shapeOf.down > 0) || Math.abs(t.g[1] - t.r[1]) > 0.1 * shapeOf.across) fail(`A55: the touch169's glass does not read upright (${JSON.stringify(t)})`);
+  else if (Math.abs(ratio / want - 1) > 0.1) fail(`A55: the touch169's 240x280 glass lands at down/across ${ratio.toFixed(2)}, not the canvas's ${want.toFixed(2)} (stretched onto its ${t.plane.w.toFixed(1)} x ${t.plane.h.toFixed(1)} lit face)`);
+  else console.log(`✓ A55 the touch169's 240x280 glass keeps its proportions on its ${t.plane.w.toFixed(1)} x ${t.plane.h.toFixed(1)} lit face (down/across ${ratio.toFixed(2)}, the canvas's ${want.toFixed(2)})`);
+}
 
 await browser.close();
 server.close();
