@@ -24,7 +24,9 @@
 // the next visit's presence_started, with the ended visit's visit_ms. And
 // (sweep F130) dwell_ended's dwell_ms is the dwell it closed, through the same
 // ABI, counted to the frame that declared the person gone, so it includes
-// the lost timeout.
+// the lost timeout. And (sweep F186) a dweller seen on the frame after
+// dwell_ended starts no second dwell: that frame sends presence_ended and the
+// next visit opens on the frame after, as the device does.
 //
 // Before A39 the fsm object had neither key, and this suite fails on it.
 
@@ -275,6 +277,54 @@ void test_dwell_ended_through_the_abi() {
   assert(int_at(k.fsm, "dwell_ms") == 0);
 }
 
+// Sweep F186, through the ABI: a dweller seen on the frame after dwell_ended
+// does not start a second dwell in the same stay. That frame ends the stay
+// (presence_ended, the stay's cell), the next visit opens on the frame after
+// on the sighting's cell, and the ended stay's interaction_likely follows.
+// Before F186 the sighting took the dwell_started branch again at once.
+void test_seen_after_dwell_ended_through_the_abi() {
+  vision_emu_reset();
+  vision_emu_set_config(PERSON_TARGET, SCORE_MIN, 500, 1000);
+  unsigned int t = 0;
+  Tick k = frame(t, 1, 1);
+  assert(event_is(k, "presence_started"));
+  int dwells = 0;
+  for (t += 100; t <= 1900; t += 100) dwells += event_is(frame(t, 1, 1), "dwell_started") ? 1 : 0;
+  assert(dwells == 1);
+  for (;; t += 100) {
+    k = frame(t);
+    if (event_is(k, "dwell_ended")) break;
+    assert(t < 4000);
+  }
+  const long dwell = int_at(k.fsm, "dwell_ms");
+  // seen on the very next frame, in (0,2): it ends the stay...
+  k = frame(t += 100, 0, 2);
+  assert(event_is(k, "presence_ended"));
+  assert(has(k.fsm, "\"presence\":false") && int_at(k.fsm, "visit_ms") == (long)t);
+  assert(int_at(k.fsm_voxel, "r") == 1 && int_at(k.fsm_voxel, "c") == 1);
+  const long visit = int_at(k.fsm, "visit_ms");
+  // ...the next visit opens on the frame after, on its own cell...
+  k = frame(t += 100, 0, 2);
+  assert(event_is(k, "presence_started"));
+  assert(has(k.fsm, "\"presence\":true") && int_at(k.fsm, "presence_ms") == 0);
+  assert(int_at(k.fsm_voxel, "r") == 0 && int_at(k.fsm_voxel, "c") == 2);
+  // ...and the ended stay's interaction_likely follows, with its length
+  k = frame(t += 100, 0, 2);
+  assert(event_is(k, "interaction_likely") && has(k.json, "\"reason\":\"dwell_then_left\""));
+  assert(int_at(k.fsm, "visit_ms") == visit);
+  // the short visit then ends with no dwell of its own
+  frame(t += 100, 0, 2);
+  bool ended = false;
+  for (const unsigned int stop = t + 500 + INTERACTION_AFTER_LEAVE_WINDOW_MS + 1000; t < stop;) {
+    k = frame(t += 100);
+    assert(!event_is(k, "dwell_started") && !event_is(k, "dwell_ended"));
+    if (event_is(k, "presence_ended")) ended = true;
+  }
+  assert(ended);
+  std::printf("  seen on the frame after dwell_ended (dwell %ld ms): presence_ended, then the next visit\n",
+              dwell);
+}
+
 }  // namespace
 
 int main() {
@@ -284,6 +334,7 @@ int main() {
   test_each_visit_opens_on_its_own_cell();
   test_back_to_back_visit_through_the_abi();
   test_dwell_ended_through_the_abi();
+  test_seen_after_dwell_ended_through_the_abi();
   std::printf("ALL VISION CORE BINDING TESTS PASSED\n");
   return 0;
 }

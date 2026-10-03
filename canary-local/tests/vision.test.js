@@ -650,6 +650,44 @@ test("firmware wasm: each visit starts its own interaction clock and cell (sweep
   assert.ok(late.fsm.presence, "sent while the next visit is present");
 });
 
+// Sweep F186: a dweller seen on the frame after dwell_ended starts no second
+// dwell in the same stay. That frame ends the stay (presence_ended), the next
+// visit opens on the frame after (presence_started, from 0), and the ended
+// stay's interaction_likely follows, with its length. The FSM before it took
+// the dwell_started branch again on that frame, so the lingering alert paged
+// twice. Needs a dist built from this tree's presence_fsm.cpp (CI's
+// pinned-emsdk rebuild); on an older dist it fails here, and it passes with
+// LAB_CORES=native.
+test("firmware wasm: a dweller seen on the frame after dwell_ended opens the next visit, not a second dwell (sweep F186)", async () => {
+  const core = await firmwareCore();
+  core.configure({ ...data.detect, dwell_start_ms: 1000, lost_timeout_ms: 500 });
+  const person = [{ x: 100, y: 100, w: 40, h: 80, score: 90, target: 0 }];
+  const events = [];
+  const tick = (t, boxes) => {
+    const k = core.tick(t, boxes);
+    if (k.event) events.push(k.reason ? k.event + ":" + k.reason : k.event);
+    return k;
+  };
+  for (let t = 0; t < 2000; t += 100) tick(t, person);
+  let t = 2000;
+  while (tick(t, []).event !== "dwell_ended") t += 100;
+  t += 100;
+  const ended = tick(t, person);
+  assert.strictEqual(ended.event, "presence_ended", "the frame after dwell_ended ends the stay, seen or not");
+  assert.strictEqual(ended.fsm.visit_ms, t, "the stay's length, to that frame");
+  const again = tick(t + 100, person);
+  assert.strictEqual(again.event, "presence_started", "the sighting opens the next visit on the frame after");
+  assert.strictEqual(again.fsm.presence_ms, 0);
+  const late = tick(t + 200, person);
+  assert.strictEqual(late.event, "interaction_likely");
+  assert.strictEqual(late.reason, "dwell_then_left");
+  assert.strictEqual(late.fsm.visit_ms, ended.fsm.visit_ms, "the ended stay's length");
+  for (let u = t + 300; u < t + 600; u += 100) tick(u, person);
+  for (let u = t + 600; u < t + 5000; u += 100) tick(u, []);
+  assert.deepStrictEqual(events, ["presence_started", "dwell_started", "dwell_ended", "presence_ended",
+    "presence_started", "interaction_likely:dwell_then_left", "presence_ended"], "one dwell per stay");
+});
+
 test("iou + nms behave like a de-dup pass", async () => {
   const { iou, nms } = await import("../assets/vision-ui.js");
   const a = { x: 100, y: 100, w: 40, h: 40, score: 90, target: 0 };
