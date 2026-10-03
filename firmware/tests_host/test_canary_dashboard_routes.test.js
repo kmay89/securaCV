@@ -13,12 +13,16 @@
 //     GET /api/bluetooth, answered with anything but a Bluetooth status,
 //     leaves it hidden and asks for nothing else; a status shows it and
 //     loads its settings and paired list; the 5 s poll asks for nothing
-//     while no route has answered;
+//     while no route has answered; unlocking with a token asks once more (a
+//     firmware that serves the route turns a tokenless probe away);
 //   - the Wi-Fi card reads GET /api/wifi/status and shows what that body
 //     carries (it names no network and has no `configured`: a saved network
 //     is read from the state), Forget reaches POST /api/wifi/disconnect,
-//     the route that clears the saved network, and a connect's success
-//     names the network that was entered;
+//     the route that clears the saved network, Disconnect says it forgets
+//     the network too, and a connect's success names the network that was
+//     entered; the card's 5 s poll asks only while Settings is open (the
+//     route counts against the device-wide request limit, the 404 it
+//     replaced did not), and opening Settings loads it;
 //   - every route the page names is one a source under firmware/canary or
 //     firmware/common registers, method included where the call names one,
 //     matched the way esp_http_server's httpd_uri_match_wildcard matches
@@ -77,6 +81,7 @@ function dom() {
 const bt = slice("    let btState = null;", "    function formatDuration(seconds) {");
 const load = slice("    refreshLockBanner();\n    refreshStatus();", "    setInterval(refreshStatus, 2000);");
 const poll = slice("    setInterval(() => {\n      if (currentPanel === 'logs') loadLogs();", "    }, 5000);");
+const unlock = slice("    function unlockWithToken() {", "    // GET /api/provisioning-receipt");
 
 function navButton(panel) {
   const m = src.match(new RegExp(`<button\\b[^>]*data-panel="${panel}"[^>]*>`));
@@ -95,6 +100,7 @@ function btPage(answers) {
     document: { getElementById: el, querySelectorAll: () => [] },
     currentPanel: "status",
     chirpServed: false,
+    CV_TOKEN: "",
     alert() {}, confirm: () => true, setInterval: () => 0, clearInterval() {}, setTimeout: () => 0,
     formatBytes: (n) => String(n), formatDuration: (n) => String(n),
     api: async (url, method = "GET") => {
@@ -113,7 +119,8 @@ function btPage(answers) {
     bt +
     "\n;globalThis.__load = async () => {\n" + load + "\n};\n" +
     "globalThis.__panelPoll = " + poll.replace(/^\s*setInterval\(/, "") + "};\n" +
-    "globalThis.__t = { refreshBtStatus };\n",
+    unlock +
+    "\nglobalThis.__t = { refreshBtStatus, unlockWithToken };\n",
     ctx);
   return { ctx, el, calls };
 }
@@ -138,6 +145,39 @@ test("a 404 from GET /api/bluetooth at load keeps the tab hidden and asks for no
   await settle();
   assert.strictEqual(p.el("navBluetooth").style.display, "none");
   assert.deepStrictEqual(btCalls(p.calls), ["/api/bluetooth"]);
+});
+
+test("a 200 that is not a Bluetooth status keeps the tab hidden too", async () => {
+  // The gate is the body's `state`, as the Done text says: an answer that
+  // carries no Bluetooth status (an error body with ok, say) shows nothing.
+  const p = btPage({ "/api/bluetooth": { ok: true } });
+  await p.ctx.__load();
+  await settle();
+  assert.strictEqual(p.el("navBluetooth").style.display, "none");
+  assert.deepStrictEqual(btCalls(p.calls), ["/api/bluetooth"]);
+});
+
+test("unlocking with a token asks a turned-away tab probe once more", async () => {
+  // A firmware that serves /api/bluetooth answers a tokenless page 401.
+  const answers = { "/api/bluetooth": { ok: false, error: "unauthorized" } };
+  const p = btPage(answers);
+  await p.ctx.__load();
+  await settle();
+  assert.strictEqual(p.el("navBluetooth").style.display, "none");
+  Object.assign(answers, { "/api/bluetooth": BT_STATUS, "/api/bluetooth/settings": { enabled: true },
+                           "/api/bluetooth/paired": { count: 0, devices: [] } });
+  p.calls.length = 0;
+  p.el("lanTokenInput").value = "tok";
+  p.ctx.__t.unlockWithToken();
+  await settle();
+  assert.strictEqual(p.el("navBluetooth").style.display, "", "the tab is back");
+  assert.ok(p.calls.includes("refreshChirpStatus"), "the Community probe asks again too");
+  // Once a status has answered, an unlock asks nothing of Bluetooth.
+  p.calls.length = 0;
+  p.el("lanTokenInput").value = "tok2";
+  p.ctx.__t.unlockWithToken();
+  await settle();
+  assert.deepStrictEqual(btCalls(p.calls), []);
 });
 
 test("a Bluetooth status shows the tab and loads its settings and paired list", async () => {
@@ -186,12 +226,13 @@ function wifiPage(statuses, extra = {}) {
   const el = dom();
   const calls = [];
   const alerts = [];
+  const confirms = [];
   let n = 0;
   const timers = [];
   const ctx = {
     document: { getElementById: el },
     alert: (m) => alerts.push(m),
-    confirm: () => true,
+    confirm: (m) => { confirms.push(m); return true; },
     setInterval: (fn) => { timers.push(fn); return timers.length; },
     clearInterval: () => {},
     setTimeout: () => 0,
@@ -203,8 +244,8 @@ function wifiPage(statuses, extra = {}) {
     },
   };
   vm.createContext(ctx);
-  vm.runInContext(wifi + "\n;globalThis.__t = { loadWifiStatus, forgetWifi, connectWifi };\n", ctx);
-  return { t: ctx.__t, el, calls, alerts, timers };
+  vm.runInContext(wifi + "\n;globalThis.__t = { loadWifiStatus, forgetWifi, connectWifi, disconnectWifi };\n", ctx);
+  return { t: ctx.__t, el, calls, alerts, confirms, timers };
 }
 
 // GET /api/wifi/status bodies as handle_wifi_status writes them.
@@ -234,6 +275,12 @@ test("the Wi-Fi card reads GET /api/wifi/status and shows what it carries", asyn
   assert.strictEqual(p.el("wifiApSsid").textContent, "On");
   assert.strictEqual(p.el("wifiForgetBtn").style.display, "inline-flex");
   assert.strictEqual(p.el("wifiDisconnectBtn").style.display, "none");
+
+  // Joining the saved network: saved, Connecting.
+  p = wifiPage([statusBody("connecting")]);
+  await p.t.loadWifiStatus();
+  assert.strictEqual(p.el("wifiState").textContent, "Connecting...");
+  assert.strictEqual(p.el("wifiStaSsid").textContent, "Saved");
 
   // The link just dropped, the state not yet moved on: saved, Disconnected.
   p = wifiPage([statusBody("connected", { ap_active: false })]);
@@ -268,6 +315,53 @@ test("Forget reaches the route that clears the saved network", async () => {
   await p.t.forgetWifi();
   assert.deepStrictEqual(p.calls, ["POST /api/wifi/disconnect", "/api/wifi/status"]);
   assert.deepStrictEqual(p.alerts, [], "no failure is reported");
+});
+
+test("Disconnect says it forgets the network, as its route does", async () => {
+  const p = wifiPage([CONNECTED, statusBody("ap_only")],
+                     { "/api/wifi/disconnect": { ok: true, message: "Disconnected from home WiFi" } });
+  await p.t.disconnectWifi();
+  assert.strictEqual(p.confirms.length, 1);
+  assert.match(p.confirms[0], /forget it/, "handle_wifi_disconnect clears the saved network");
+  assert.match(p.confirms[0], /re-enter the password/);
+  assert.deepStrictEqual(p.calls, ["POST /api/wifi/disconnect", "/api/wifi/status"]);
+});
+
+test("the Wi-Fi card is polled only while Settings is open, and loaded on the way in", async () => {
+  // No unconditional poll of the card is left in the page.
+  assert.doesNotMatch(pageText(), /setInterval\(\s*loadWifiStatus\b/);
+  const wifiPoll = slice("    setInterval(() => {\n      if (currentPanel === 'settings') loadWifiStatus();",
+                         "    }, 5000);");
+  const sw = slice("    function switchPanel(panel) {", "    // ── LAN unlock + recovery kit");
+  const calls = [];
+  const cls = () => ({ add() {}, remove() {} });
+  const ctx = {
+    currentPanel: "status", peekActive: false, timelineRefreshTimer: 0, clearInterval() {},
+    document: {
+      querySelectorAll: () => [], querySelector: () => ({ classList: cls() }),
+      getElementById: () => ({ classList: cls() }),
+    },
+  };
+  for (const f of ["loadLogs", "loadWitness", "loadTimeline", "refreshPeekStatus", "refreshSensorState",
+                   "refreshOpera", "refreshChirpStatus", "refreshBtStatus", "loadBtPairedDevices",
+                   "refreshSensing", "refreshThermal", "refreshScout", "refreshLiveSensing",
+                   "refreshOtaStatus", "loadTz", "stopOtaPolling", "stopCamInfoPolling", "stopPeek",
+                   "loadWifiStatus"]) {
+    ctx[f] = () => calls.push(f);
+  }
+  vm.createContext(ctx);
+  vm.runInContext(sw + "\nglobalThis.__poll = " + wifiPoll.replace(/^\s*setInterval\(/, "") + "};\n" +
+                  "globalThis.__sw = switchPanel;\n", ctx);
+  const wifiCalls = () => calls.filter((c) => c === "loadWifiStatus").length;
+  for (const panel of ["status", "sensing", "logs", "opera"]) {
+    ctx.currentPanel = panel;
+    ctx.__poll();
+  }
+  assert.strictEqual(wifiCalls(), 0, "no Wi-Fi status off Settings");
+  ctx.__sw("settings");
+  assert.strictEqual(wifiCalls(), 1, "opening Settings loads the card");
+  ctx.__poll();
+  assert.strictEqual(wifiCalls(), 2, "and the poll keeps it current there");
 });
 
 test("a connect's success names the network that was entered", async () => {
@@ -364,6 +458,76 @@ test("every route the page names is one the tree serves", () => {
     const [method, route] = k.split(" ");
     assert.ok(pageRoutes().some((r) => r.route === route && r.method === method), `the page still names ${k}`);
     assert.ok(!regs.some((g) => matches(g.uri, route) && g.method === method), `${k} is served now`);
+  }
+});
+
+// The page's Chirp and Bluetooth sections (their script) and panels (their
+// markup), by the markers that open and close them.
+function sections() {
+  const text = pageText();
+  const span = (from, to) => {
+    const a = text.indexOf(from);
+    const b = a < 0 ? -1 : text.indexOf(to, a);
+    assert.ok(a >= 0 && b > a, `section marker not found: ${from}`);
+    return [a, b];
+  };
+  const panelEnd = (id) => {   // the panel div's own closing tag
+    const a = text.indexOf(`<div class="panel" id="${id}">`);
+    assert.ok(a >= 0, `panel ${id} is in the page`);
+    let depth = 0;
+    for (const m of text.slice(a).matchAll(/<div\b|<\/div>/g)) {
+      depth += m[0] === "</div>" ? -1 : 1;
+      if (depth === 0) return [a, a + m.index];
+    }
+    assert.fail(`panel ${id} never closes`);
+  };
+  return {
+    text,
+    chirp: { script: span("    let chirpState = null;", "    let btState = null;"), panel: panelEnd("panel-community") },
+    bt: { script: span("    let btState = null;", "    function formatDuration(seconds) {"), panel: panelEnd("panel-bluetooth") },
+  };
+}
+
+test("the gated routes are named only inside their sections, entered only through their gates", () => {
+  const sec = sections();
+  const text = sec.text;
+  const within = (at, [a, b]) => at >= a && at < b;
+  // Every /api/chirp and /api/bluetooth literal sits in its section's script.
+  for (const m of text.matchAll(/(['`])\/api\/(chirp|bluetooth)\b/g)) {
+    const s = m[2] === "chirp" ? sec.chirp : sec.bt;
+    assert.ok(within(m.index, s.script),
+      `page line ${text.slice(0, m.index).split("\n").length} names /api/${m[2]} outside its section`);
+  }
+  // Each section's functions are called from elsewhere only at the gated
+  // sites: the page load's probe, the panel poll behind the served flag,
+  // switchPanel (reached only through the hidden nav button), the unlock's
+  // re-probe, and the panel's own markup.
+  const GATES = {
+    chirp: ["\n    refreshOpera();\n    refreshChirpStatus();\n",
+            "      else if (panel === 'community') refreshChirpStatus();",
+            "      else if (currentPanel === 'community' && chirpServed) refreshChirpStatus();",
+            "      if (!chirpServed) refreshChirpStatus();"],
+    bt: ["    refreshBtStatus();   // F198",
+         "      else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }",
+         "      else if (currentPanel === 'bluetooth' && btServed) refreshBtStatus();",
+         "      if (!btServed) refreshBtStatus();"],
+  };
+  for (const key of ["chirp", "bt"]) {
+    const s = sec[key];
+    const body = text.slice(...s.script);
+    const names = [...body.matchAll(/^\s*(?:async\s+)?function\s+(\w+)\s*\(/gm)].map((m) => m[1]);
+    assert.ok(names.length > 5, `the ${key} section's functions were found`);
+    const allowed = GATES[key].map((g) => {
+      const at = text.indexOf(g);
+      assert.ok(at >= 0 && text.indexOf(g, at + 1) < 0, `the gated call site is in the page once: ${g.trim()}`);
+      return [at, at + g.length];
+    });
+    for (const m of text.matchAll(new RegExp(`\\b(${names.join("|")})\\s*\\(`, "g"))) {
+      if (within(m.index, s.script) || within(m.index, s.panel)) continue;
+      if (allowed.some((r) => within(m.index, r))) continue;
+      assert.fail(`page line ${text.slice(0, m.index).split("\n").length} calls ${m[1]}() outside ` +
+                  `the ${key} gate`);
+    }
   }
 });
 

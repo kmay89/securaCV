@@ -2811,7 +2811,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
       else if (panel === 'sensing') { refreshSensing(); refreshThermal(); refreshScout(); }
       else if (panel === 'status') refreshLiveSensing();
-      else if (panel === 'settings') { refreshOtaStatus(); loadTz(); }
+      else if (panel === 'settings') { refreshOtaStatus(); loadTz(); loadWifiStatus(); }
 
       // Stop OTA status polling when leaving settings (refreshOtaStatus
       // restarts it if an install is still running next time we look)
@@ -2843,6 +2843,10 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       refreshLockBanner();
       refreshStatus();
       loadWifiStatus();
+      // A tab probe the missing token turned away (401) asks again: a
+      // firmware that serves the route gets its tab back now (F176, F198).
+      if (!chirpServed) refreshChirpStatus();
+      if (!btServed) refreshBtStatus();
     }
     // GET /api/provisioning-receipt with the bearer (or, on the LAN without
     // one, after a BOOT tap) and hand it to the browser as a download.
@@ -6570,7 +6574,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     setInterval(() => {
       if (currentPanel === 'status') refreshLiveSensing();
     }, 2000);
-    setInterval(loadWifiStatus, 5000);
+    /* The Wi-Fi card is on Settings only, and GET /api/wifi/status counts
+     * against the device-wide request limit (rate_limit_check), so it is
+     * polled there; switchPanel loads it on the way in (F198). */
+    setInterval(() => {
+      if (currentPanel === 'settings') loadWifiStatus();
+    }, 5000);
     setInterval(() => {
       if (currentPanel === 'logs') loadLogs();
       else if (currentPanel === 'witness') loadWitness();
