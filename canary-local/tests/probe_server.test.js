@@ -113,7 +113,8 @@ test("lookup answers from the index: never a path the request spells", async () 
 //      destructured, a loop's variable, a member of it) from an expression
 //      that mentions it or another such name, the index's answer excepted;
 //      the object a method call hands one of those to (parts.push(req.url)
-//      taints parts), except get and has; each parameter of an inline
+//      taints parts) when the file declares it, unless the method only reads
+//      (get, has) or is itself a read, write or path function; each parameter of an inline
 //      function handed to a call that one of those reaches; and each
 //      parameter of a function the file defines that a call hands one of
 //      those, followed into that function. A name the handler (or such a
@@ -712,6 +713,23 @@ const REFUSED = {
     `  const file = lookup(FILES, req.url);\n  res.end(await readFile(file));\n});` + OK,
   "the handler fills the index": IDX + `const server = createServer(async (req, res) => {\n  FILES.set(req.url, ROOT + req.url);\n` +
     `  const file = lookup(FILES, req.url);\n  res.end(await readFile(file));\n});` + OK,
+  "the index's has() taken for its answer": IDX + `const server = createServer(async (req, res) => {\n` +
+    `  const file = FILES.has(req.url);\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "an index built inside a function, from what it is handed": `const make = (extra) => {\n` +
+    `  const M = new Map([[extra, join(ROOT, extra)]]);\n  return createServer(async (req, res) => {\n` +
+    `    const file = M.get(req.url);\n    if (file) res.end(await readFile(file));\n  });\n};\nconst server = make(process.argv[2]);` + OK,
+  "an index declared after the server starts, from what the page asked for":
+    `const server = createServer(async (req, res) => {\n  const file = SERVABLE.get(req.url);\n  if (file) res.end(await readFile(file));\n});` +
+    OK + `\nlet seen = "/";\npage.on("requestfailed", (r) => { seen = new URL(r.url()).pathname; });\n` +
+    `const SERVABLE = new Map([[seen, join(ROOT, seen)]]);`,
+  "an allowlist filled from a function that runs later": `const SERVABLE = new Map();\nasync function allow(dirRel) {\n` +
+    `  for (const f of await readdir(join(ROOT, dirRel))) SERVABLE.set(\`/\${dirRel}/\${f}\`, join(ROOT, dirRel, f));\n}\n` +
+    `const later = () => allow("docs");\nconst server = createServer(async (req, res) => {\n` +
+    `  const file = SERVABLE.get(req.url);\n  if (file) res.end(await readFile(file));\n});` + OK + `\nsetTimeout(later, 100);`,
+  "an allowlist filled after the server starts": `const SERVABLE = new Map();\nasync function allow(dirRel) {\n` +
+    `  for (const f of await readdir(join(ROOT, dirRel))) SERVABLE.set(\`/\${dirRel}/\${f}\`, join(ROOT, dirRel, f));\n}\n` +
+    `const server = createServer(async (req, res) => {\n  const file = SERVABLE.get(req.url);\n  if (file) res.end(await readFile(file));\n});` +
+    OK + `\nawait allow("docs");`,
   "a map changed while the server runs": `const SERVABLE = new Map();\nfunction refill() {\n  SERVABLE.clear();\n` +
     `  SERVABLE.set("/x", "/etc/passwd");\n}\nconst server = createServer(async (req, res) => {\n  refill();\n` +
     `  const file = SERVABLE.get(req.url);\n  if (file) res.end(await readFile(file));\n});` + OK,
@@ -741,6 +759,12 @@ const REFUSED = {
     `const server = createServer((req, res) => serve(res, req.url));` + OK,
   "a helper whose callback is handed the request's parts": `function serve(res, url) {\n` +
     `  url.split("/").forEach((part) => stat(join(ROOT, part)));\n}\nconst server = createServer((req, res) => serve(res, req.url));` + OK,
+  "a request value relayed through a second module-level name": `let cur = "/", last = "/";\nfunction relay(v) {\n  last = v;\n}\n` +
+    `const send = (res) => res.end(readFileSync(ROOT + last));\n` +
+    `const server = createServer((req, res) => { cur = req.url; send(res); });` + OK + `\nsetInterval(() => relay(cur), 10);`,
+  "a helper handed by name to a callback of the request's parts": `function probe(part) {\n  stat(join(ROOT, part));\n}\n` +
+    `const server = createServer((req, res) => { req.url.split("/").forEach(probe); res.end(); });` + OK,
+  "a path from the request, built and sent back": `const server = createServer((req, res) => res.end(String(path.join(ROOT, req.url))));` + OK,
   // rule 0: names for fs and path the scan would not see called
   "a renamed readFile import": `import { readFile as rf } from "node:fs/promises";\n` +
     `const server = createServer(async (req, res) => res.end(await rf(ROOT + req.url)));` + OK,
@@ -836,6 +860,9 @@ const PASSED = {
   "render_probe.mjs's shots folder (fs/promises called at once)": IDX +
     `if (SHOTS) await (await import("node:fs/promises")).mkdir(SHOTS, { recursive: true });\n` +
     `const server = createServer(async (req, res) => {\n  const file = lookup(FILES, req.url);\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "a request echoed back (parts.join and Promise.resolve are not paths)": IDX + `const server = createServer(async (req, res) => {\n` +
+    `  const parts = [req.method, req.url];\n  const file = lookup(FILES, req.url);\n` +
+    `  if (!file) return res.end(await Promise.resolve(parts.join(" ")));\n  res.end(await readFile(file));\n});` + OK,
   "a request logged and counted, which reaches no read": IDX + `const served = new Set();\n` +
     `const server = createServer(async (req, res) => {\n  console.log(req.method, req.url);\n  served.add(req.url.split("?")[0]);\n` +
     `  const file = lookup(FILES, req.url);\n  if (file) res.end(await readFile(file));\n});` + OK +
