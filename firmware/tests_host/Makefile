@@ -437,8 +437,11 @@ DASHROUTES_JS = test_canary_dashboard_routes.test.js
 #     tables in registration order (dashboard_route_tables.js) and asks
 #     idf_uri_route_oracle (IDF's httpd_uri_match_wildcard, copied verbatim,
 #     and the first-match / refuse-a-duplicate loop around it) which route
-#     answers each request both dashboards make, then hands the URL each
-#     dashboard's per-entry Acknowledge builds to test_log_ack_route --parse
+#     answers each request every page the two trees serve makes (sweep F238:
+#     the setup page, the companion PWA, the Tuning Lab, the MQTT and Sense
+#     pages too), names each request to a route only some #if branches
+#     register, then hands the URL each dashboard's per-entry Acknowledge
+#     builds to test_log_ack_route --parse
 #     (both trees' parsers) to hold it to the entry the handler reads. The
 #     oracle is C: IDF's function names a parameter `template`. It is built
 #     with -Wno-sign-compare, as IDF builds it (the copy is not edited).

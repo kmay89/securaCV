@@ -1,5 +1,6 @@
-// Every request two dashboards make reaches the route it means, as
-// esp_http_server routes it (repo sweep F214).
+// Every request the firmware's pages make reaches the route it means, as
+// esp_http_server routes it, and a request to a route only some builds
+// register is named (repo sweeps F214, F238, F239).
 //
 // Both firmware trees registered the per-entry log acknowledge as
 // POST "/api/logs/*/ack" on servers whose uri_match_fn is
@@ -18,25 +19,34 @@
 // refuse-a-duplicate loop around it. dashboard_route_tables.js reads each
 // tree's primary route table in registration order (every #if branch, the
 // way both route budget checks count; a registration it cannot place fails
-// it) and every request the two dashboards make
-// (canary/lib/securacv_webui/src/securacv_webui.cpp, and canary-wap's
-// web_ui.h). What this pins:
+// it), each registration with the #if conditions it sits under, and every
+// request each page the tree serves from a raw string makes: the PlatformIO
+// canary's dashboard and setup page; canary-wap's admin dashboard (web_ui.h,
+// /admin), Sensing dashboard (/, which /sense redirects to), companion PWA,
+// Tuning Lab and MQTT page, and its captive page. What this pins:
 //   - the copy is the IDF function, byte for byte (a hash of its text), and
 //     the oracle answers as IDF's matcher does on the cases that decided F214;
+//   - the #if reader reads what it must (a synthetic source);
+//   - kProbePaths' comment holds (F239);
 //   - no registration in either table is refused as a duplicate;
-//   - every dashboard request whose method the page names reaches the
-//     registration it means: an exact template equal to its path if one is
-//     registered, else the one wildcard that matches it (the PlatformIO
-//     page's Chirp and Bluetooth calls excepted: gated, nothing serves them,
-//     F176/F198); a URL the page holds for later reaches its route by some
-//     method;
+//   - every raw string in a tree is a page read here or one named as not a
+//     page (and naming no /api/ route), and each page is what the handler
+//     that serves it sends;
+//   - every request a page names the method of reaches the registration it
+//     means: an exact template equal to its path if one is registered, else
+//     the one wildcard that matches it (the PlatformIO dashboard's Chirp and
+//     Bluetooth calls excepted: gated, nothing serves them, F176/F198); a URL
+//     a page holds for later reaches its route by some method;
+//   - every request whose route sits under an #if the page's own
+//     registration does not is listed in GATED, by page and condition, with
+//     how the page meets a build without it (F238);
 //   - the log routes reach their handlers on both trees: POST
 //     /api/logs/<seq>/ack the log-ack handler, ack-all and rotate theirs;
-//   - each dashboard's per-entry Acknowledge builds a URL its own tree's
-//     handler reads as the entry it names: the requests the page makes that
-//     route to the log-ack registration (there must be one), each a template
-//     carrying exactly one value, filled with 0, 7 and 4294967295 and handed
-//     to log_ack_seq_from_uri() as cut out of the firmware
+//   - each page's per-entry Acknowledge builds a URL its own tree's handler
+//     reads as the entry it names: the requests a page makes that route to
+//     the log-ack registration (each tree's dashboard must make one), each a
+//     template carrying exactly one value, filled with 0, 7 and 4294967295
+//     and handed to log_ack_seq_from_uri() as cut out of the firmware
 //     (test_log_ack_route --parse). Reaching the route is not enough: the
 //     wildcard takes any path under /api/logs/, and the handler answers 404
 //     for every shape but <seq>/ack.
@@ -61,13 +71,37 @@ const R = require("./dashboard_route_tables.js");
 const IDF_MATCHER_SHA256 = "3df494155c6770152cbc15743617a5e7473b09adb842221f7ea4731e1b30a396";
 
 const TREES = [
-  { name: "PlatformIO canary", table: R.pioTable, page: R.PIO_PAGE, parser: "pio", gated: ["/api/chirp", "/api/bluetooth"],
+  { name: "PlatformIO canary", key: "pio", table: R.pioTable, parser: "pio", ackPage: "dashboard",
     logs: { "GET /api/logs": "handle_logs", "POST /api/logs/1/ack": "handle_log_ack",
             "POST /api/logs/ack-all": "handle_ack_all" } },
-  { name: "canary-wap", table: R.wapTable, page: R.WAP_PAGE, parser: "wap", gated: [],
+  { name: "canary-wap", key: "wap", table: R.wapTable, parser: "wap", ackPage: "admin dashboard",
     logs: { "GET /api/logs": "handle_logs_auth", "POST /api/logs/1/ack": "handle_log_ack_auth",
             "POST /api/logs/ack-all": "handle_ack_all_auth", "POST /api/logs/rotate": "handle_logs_rotate_auth" } },
 ];
+
+// Per page (R.PAGES): the fewest requests its reader must find (a floor that
+// proves it found the page's script) and the route families nothing in the
+// tree serves, which the page gates on a first answer (F176, F198).
+const PAGE_EXPECT = {
+  "pio:dashboard": { min: 50, unserved: ["/api/chirp", "/api/bluetooth"] },
+  "pio:setup page": { min: 5, unserved: [] },
+  "wap:admin dashboard": { min: 50, unserved: [] },
+  "wap:Sensing dashboard": { min: 15, unserved: [] },
+  "wap:companion PWA": { min: 10, unserved: [] },
+  "wap:Tuning Lab": { min: 3, unserved: [] },
+  "wap:MQTT page": { min: 3, unserved: [] },
+  "wap:captive page": { min: 0, unserved: [] },
+};
+
+// Raw strings in each tree that are not pages the walk reads, and why; none
+// may name an /api/ route. canary-wap's companion service worker and
+// manifest ride beside COMPANION_HTML; firmware/common's PORTAL_HTML is the
+// shared setup portal the other devices serve (nothing under firmware/canary
+// names it).
+const NOT_PAGES = {
+  pio: { PORTAL_HTML: "firmware/common's shared setup portal; the PlatformIO canary does not serve it" },
+  wap: { COMPANION_SW_JS: "the companion PWA's service worker", COMPANION_MANIFEST: "the companion PWA's manifest" },
+};
 
 test("the oracle's matcher is ESP-IDF's httpd_uri_match_wildcard, verbatim", () => {
   const c = readFileSync(join(__dirname, "idf_uri_route_oracle.c"), "utf8");
@@ -95,6 +129,52 @@ test("the matcher answers the cases F214 turned on", () => {
   ];
   const got = R.match(cases.map(([t, u]) => [t, u]));
   cases.forEach(([t, u, want], i) => assert.strictEqual(got[i], want, `${t} against ${u}`));
+});
+
+// The #if reader the gated-route test stands on (sweep F238), on a source
+// with every shape it must read: an include guard (no condition), #ifdef,
+// #if / #elif / #else, nesting, a continued line, a comment on a directive,
+// and a raw string whose CSS line looks like a directive.
+test("the condition reader reads #if, #elif, #else and nesting, and skips guards and strings", () => {
+  const code = [
+    "#ifndef X_H",                                   // 1  include guard
+    "#define X_H",                                   // 2
+    "int a;",                                        // 3  []
+    "#ifdef FEAT_A",                                 // 4
+    "int b;",                                        // 5  [defined(FEAT_A)]
+    "#if FEAT_B && \\",                              // 6
+    "    FEAT_C  // trailing words",                 // 7
+    "int c;",                                        // 8  [defined(FEAT_A), FEAT_B && FEAT_C]
+    "#elif FEAT_D",                                  // 9
+    "int d;",                                        // 10 [defined(FEAT_A), !(FEAT_B && FEAT_C), FEAT_D]
+    "#else",                                         // 11
+    "int e;",                                        // 12 [defined(FEAT_A), !(FEAT_B && FEAT_C), !(FEAT_D)]
+    "#endif",                                        // 13
+    "#endif",                                        // 14
+    "#ifndef FEAT_E",                                // 15 (no #define after: a condition)
+    "const char P[] = R\"H(",                        // 16
+    "#if-banner { color: red; }",                    // 17 CSS, not a directive
+    ")H\";",                                         // 18
+    "int f;",                                        // 19 [!defined(FEAT_E)]
+    "#endif",                                        // 20
+    "int g;",                                        // 21 []
+    "#endif",                                        // 22
+  ].join("\n");
+  const src = { path: "synthetic.h", text: R.stripComments(code) };
+  const at = (line, word) => {
+    const lines = src.text.split("\n");
+    let off = 0;
+    for (let i = 0; i < line - 1; i++) off += lines[i].length + 1;
+    return off + lines[line - 1].indexOf(word);
+  };
+  assert.deepStrictEqual(R.condsAt(src, at(3, "int")), []);
+  assert.deepStrictEqual(R.condsAt(src, at(5, "int")), ["defined(FEAT_A)"]);
+  assert.deepStrictEqual(R.condsAt(src, at(8, "int")), ["defined(FEAT_A)", "FEAT_B && FEAT_C"]);
+  assert.deepStrictEqual(R.condsAt(src, at(10, "int")), ["defined(FEAT_A)", "!(FEAT_B && FEAT_C)", "FEAT_D"]);
+  assert.deepStrictEqual(R.condsAt(src, at(12, "int")), ["defined(FEAT_A)", "!(FEAT_B && FEAT_C)", "!(FEAT_D)"]);
+  assert.deepStrictEqual(R.condsAt(src, at(19, "int")), ["!defined(FEAT_E)"]);
+  assert.deepStrictEqual(R.condsAt(src, at(21, "int")), []);
+  assert.throws(() => R.condsAt({ path: "open.h", text: "#if A\nint x;\n" }, 7), /never closed/);
 });
 
 // kProbePaths' comment in securacv_network.cpp (sweep F239): the matcher is
@@ -134,7 +214,140 @@ test("PlatformIO canary: the probe routes match as kProbePaths' comment says (F2
   assert.ok(!/\bstrcmp\s*\(\s*uri\b/.test(body), "no strcmp of the whole uri (it keeps the query)");
 });
 
+// Requests to a route only some builds register (sweep F238), by tree, page
+// and the condition(s) the route sits under that the page's own
+// registration does not: the routes, and how the page meets a build without
+// them, read from the page. `gap` marks one it does not meet, each handed up
+// as a new sweep item by F238 rather than fixed here. Which builds lack each
+// condition is platformio.ini's (PlatformIO canary) and build_config.h's
+// profiles (canary-wap) business; the test pins only what the sources say.
+const GATED = {
+  pio: {
+    dashboard: {
+      "FEATURE_CAMERA_PEEK": {
+        routes: ["GET /api/peek/sensor", "GET /api/peek/snapshot", "GET /api/peek/status", "GET /api/peek/stream",
+                 "POST /api/peek/resolution", "POST /api/peek/sensor", "POST /api/peek/stop"],
+        meets: "refreshPeekStatus() ignores the refusal, so the Peek tab keeps its markup (Ready, Start) and Start answers 'Camera not available'",
+        gap: true },
+      "FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER": {
+        routes: ["GET /api/sensing"],
+        meets: "refreshSensing() shows the offline pill on a refused answer" },
+      "FEATURE_THERMAL_WATCHDOG": {
+        routes: ["GET /api/thermal"],
+        meets: "refreshThermal() hides the card on a refused answer" },
+      "defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN": {
+        routes: ["GET /api/scout", "GET /api/scout/pair/status", "POST /api/scout/pair/cancel",
+                 "POST /api/scout/pair/start", "POST /api/scout/unpair"],
+        meets: "refreshScout() hides the card, the only caller of the rest, on a refused answer" },
+      "FEATURE_ACOUSTIC_EVENTS": {
+        routes: ["GET /api/audio/level", "GET /api/audio/test/status", "POST /api/audio/mute", "POST /api/audio/test/start"],
+        meets: "the acoustic card starts hidden and shows only when /api/sensing reports the microphone" },
+      "FEATURE_VISION_DETECT": {
+        routes: ["GET /api/vision/config", "GET /api/vision/thumbnail", "POST /api/vision/config", "POST /api/vision/config/save"],
+        meets: "the vision cards show only when /api/sensing reports vision enabled" },
+      "FEATURE_OTA_PULL": {
+        routes: ["GET /api/ota/status", "POST /api/ota/check", "POST /api/ota/config", "POST /api/ota/install"],
+        meets: "refreshOtaStatus() hides the card and stops asking (otaSupported) on a refused answer" },
+      "defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK": {
+        routes: ["DELETE /api/mesh/alerts", "GET /api/mesh", "GET /api/mesh/alerts", "GET /api/mesh/peers",
+                 "POST /api/mesh/enable", "POST /api/mesh/leave", "POST /api/mesh/name", "POST /api/mesh/pair/cancel",
+                 "POST /api/mesh/pair/confirm", "POST /api/mesh/pair/join", "POST /api/mesh/pair/start", "POST /api/mesh/remove"],
+        meets: "refreshOpera() returns on a refused answer and the Opera tab stays, its pairing and settings controls posting to no route",
+        gap: true },
+    },
+    "setup page": {
+      "FEATURE_HA_MQTT": {
+        routes: ["GET /api/mqtt/status", "POST /api/mqtt/ca", "POST /api/mqtt/config"],
+        meets: "loadHub() ignores the refusal and the hub box stays; Save then says the hub bridge is not turned on and to set it up from canary.local, which serves no hub route either",
+        gap: true },
+    },
+  },
+  wap: {
+    "admin dashboard": {
+      "FEATURE_BLE": {
+        routes: ["GET /api/ble/status", "GET /api/nearby", "POST /api/ble/chirp/send"],
+        meets: "refreshBleDiscovery() shows Unavailable and an empty nearby list for a refused answer" },
+      "FEATURE_VAULT_SNAPSHOT": {
+        routes: ["DELETE /api/vault/item", "DELETE /api/vault/key", "GET /api/vault/download", "GET /api/vault/list",
+                 "GET /api/vault/status", "POST /api/vault/config", "POST /api/vault/key", "POST /api/vault/test"],
+        meets: "refreshVault() hides the card, the only caller of the rest, on a refused answer" },
+      "FEATURE_SYS_MONITOR": {
+        routes: ["GET /api/system"],
+        meets: "refreshSystemHealth() returns without a temperature; every profile that serves pages sets it" },
+      "FEATURE_CAMERA_PEEK": {
+        routes: ["GET /api/peek/sensor", "GET /api/peek/snapshot", "GET /api/peek/status", "GET /api/peek/stream",
+                 "POST /api/peek/init", "POST /api/peek/resolution", "POST /api/peek/sensor", "POST /api/peek/stop"],
+        meets: "refreshPeekStatus() ignores the refusal, so the Camera tab keeps its markup (Ready, Start) and Start answers 'Camera not available'",
+        gap: true },
+      "FEATURE_MESH_NETWORK": {
+        routes: ["DELETE /api/mesh/alerts", "GET /api/chirp", "GET /api/chirp/recent", "GET /api/mesh", "GET /api/mesh/alerts",
+                 "GET /api/mesh/peers", "POST /api/chirp/confirm", "POST /api/chirp/disable", "POST /api/chirp/dismiss",
+                 "POST /api/chirp/enable", "POST /api/chirp/mute", "POST /api/chirp/send", "POST /api/chirp/settings",
+                 "POST /api/chirp/unmute", "POST /api/mesh/enable", "POST /api/mesh/leave", "POST /api/mesh/name",
+                 "POST /api/mesh/pair/cancel", "POST /api/mesh/pair/confirm", "POST /api/mesh/pair/join",
+                 "POST /api/mesh/pair/start", "POST /api/mesh/remove"],
+        meets: "refreshOpera() and refreshChirpStatus() return on a refused answer and the Community tab's Opera and Chirp views stay, their controls posting to no route",
+        gap: true },
+      "FEATURE_ACOUSTIC_EVENTS": {
+        routes: ["GET /api/audio/config", "GET /api/audio/selftest", "GET /api/audio/status", "POST /api/audio/config",
+                 "POST /api/audio/mute", "POST /api/audio/selftest"],
+        meets: "refreshMicStatus() hides the microphone card, the only caller of the rest, on a refused answer" },
+      "FEATURE_BLUETOOTH": {
+        routes: ["DELETE /api/bluetooth/paired", "DELETE /api/bluetooth/paired/all", "DELETE /api/bluetooth/scan/results",
+                 "GET /api/bluetooth", "GET /api/bluetooth/ota", "GET /api/bluetooth/paired", "GET /api/bluetooth/scan/results",
+                 "GET /api/bluetooth/settings", "POST /api/bluetooth/advertise/start", "POST /api/bluetooth/advertise/stop",
+                 "POST /api/bluetooth/disable", "POST /api/bluetooth/disconnect", "POST /api/bluetooth/enable",
+                 "POST /api/bluetooth/pair/cancel", "POST /api/bluetooth/pair/confirm", "POST /api/bluetooth/pair/reject",
+                 "POST /api/bluetooth/pair/start", "POST /api/bluetooth/scan/start", "POST /api/bluetooth/settings"],
+        meets: "refreshBtStatus() shows the backend-not-present state for an answer without a state" },
+    },
+    "Sensing dashboard": {
+      "FEATURE_ACOUSTIC_EVENTS": {
+        routes: ["GET /api/audio/status", "POST /api/audio/mute"],
+        meets: "pollMicPill() hides the microphone pill, the only caller of the mute, on a refused answer" },
+    },
+    "companion PWA": {
+      "FEATURE_QR_PROVISION": {
+        routes: ["DELETE /api/wifi/qr-scan", "GET /api/wifi/qr-scan", "POST /api/wifi/qr-scan"],
+        meets: "the QR offer shows only when GET /api/wifi carries qr_provision, which the same #if adds" },
+    },
+  },
+};
+
+// The requests a page makes, each with every method it can be sent with:
+// the one the page names, or (a URL held for later) each method a
+// registration uses, kept where that method reaches a route.
+function pageAsks(table, page) {
+  const exp = PAGE_EXPECT[page.key];
+  const reqs = R.pageRequests(page)
+    .filter((r) => !exp.unserved.some((g) => r.route === g || r.route.startsWith(g + "/")));
+  const methods = [...new Set(table.map((r) => r.method))];
+  const asks = [];
+  for (const r of reqs) for (const m of r.method ? [r.method] : methods) asks.push({ r, method: m });
+  const matched = R.match(asks.flatMap(({ r }) => table.map((g) => [g.uri, r.route])));
+  const { answers } = R.route(table, asks.map((a) => ({ method: a.method, target: a.r.route })));
+  return asks.map((a, i) => {
+    const row = matched.slice(i * table.length, (i + 1) * table.length);
+    const exact = table.findIndex((g) => g.method === a.method && g.uri === a.r.route);
+    let want;
+    if (exact >= 0) {
+      want = exact;
+    } else {
+      const wild = table.map((g, j) => (g.method === a.method && row[j] && g.uri !== a.r.route ? j : -1)).filter((j) => j >= 0);
+      want = wild.length === 1 ? wild[0] : wild.length ? `${wild.length} wildcards` : null;
+    }
+    return { ...a, answer: answers[i], want, ok: typeof want === "number" && answers[i] === want };
+  });
+}
+
+// The registrations that serve a page: those of each handler it names.
+function servingRegs(table, page) {
+  return page.servedBy.flatMap((h) => table.filter((g) => g.handler === h.handler));
+}
+
 for (const tree of TREES) {
+  for (const page of R.PAGES[tree.key]) page.key = `${tree.key}:${page.name}`;
+
   test(`${tree.name}: no registration is refused as a duplicate`, () => {
     const table = tree.table();
     assert.ok(table.length > 50, "the table was read");
@@ -145,41 +358,103 @@ for (const tree of TREES) {
     assert.deepStrictEqual(refused, []);
   });
 
-  test(`${tree.name}: every dashboard request reaches the route it means`, () => {
+  // Fail closed on pages (sweep F238): every raw string in the tree is a page
+  // the walk reads or one NOT_PAGES names, and each page is what the handler
+  // the walk takes it from actually sends.
+  test(`${tree.name}: every page the tree serves from a raw string is read`, () => {
     const table = tree.table();
-    const reqs = R.pageRequests(tree.page)
-      .filter((r) => !tree.gated.some((g) => r.route === g || r.route.startsWith(g + "/")));
-    assert.ok(reqs.length > 50, "the page's requests were read");
-    // Each request, for each method it can be: the one the page names, or
-    // (a URL held for later) any method a registration uses.
-    const methods = [...new Set(table.map((r) => r.method))];
-    const asks = [];
-    for (const r of reqs) for (const m of r.method ? [r.method] : methods) asks.push({ r, method: m });
-    const matched = R.match(asks.flatMap(({ r }) => table.map((g) => [g.uri, r.route])));
-    const { answers } = R.route(table, asks.map((a) => ({ method: a.method, target: a.r.route })));
-    const meant = (i) => {
-      const { r, method } = asks[i];
-      const row = matched.slice(i * table.length, (i + 1) * table.length);
-      const exact = table.findIndex((g) => g.method === method && g.uri === r.route);
-      if (exact >= 0) return exact;
-      const wild = table.map((g, j) => (g.method === method && row[j] && g.uri !== r.route ? j : -1)).filter((j) => j >= 0);
-      return wild.length === 1 ? wild[0] : wild.length ? `${wild.length} wildcards` : null;
-    };
-    const wrong = [];
-    const reached = new Map();
-    asks.forEach((a, i) => {
-      const want = meant(i);
-      const ok = typeof want === "number" && answers[i] === want;
-      if (a.r.method) {
-        if (!ok) wrong.push(`${a.method} ${a.r.route} (page line ${a.r.line}): answered ` +
-          `${typeof answers[i] === "number" ? table[answers[i]].uri : answers[i]}, means ` +
-          `${typeof want === "number" ? table[want].uri : want || "nothing registered"}`);
-      } else {
-        reached.set(a.r, (reached.get(a.r) || false) || ok);
+    const files = tree.key === "pio"
+      ? R.filesUnder(join(R.FW, "canary"), /\.(c|cc|cpp|h|hpp|ino)$/).concat(R.filesUnder(join(R.FW, "common"), /\.(c|cc|cpp|h|hpp|ino)$/))
+      : R.filesUnder(R.WAP_DIR, /\.(c|cc|cpp|h|hpp|ino)$/);
+    const pages = R.PAGES[tree.key];
+    const found = [];
+    for (const f of files) {
+      for (const rs of R.rawStrings(f)) {
+        const page = pages.find((p) => p.path === f && p.symbol === rs.name);
+        if (page) { found.push(page.symbol); continue; }
+        assert.ok(rs.name && NOT_PAGES[tree.key][rs.name],
+          `${f}: raw string ${rs.name || "(unnamed)"} is neither a page dashboard_route_tables.js reads nor in NOT_PAGES`);
+        const text = R.pageText({ path: f, symbol: rs.name });
+        assert.ok(!/['"`]\/api\//.test(text), `${rs.name}: a raw string that names an /api/ route is a page to read`);
       }
+    }
+    assert.deepStrictEqual(found.sort(), pages.map((p) => p.symbol).sort(), "each listed page was found once");
+    if (tree.key === "pio") {
+      const canaryFiles = R.filesUnder(join(R.FW, "canary"), /\.(c|cc|cpp|h|hpp|ino)$/);
+      for (const f of canaryFiles) assert.ok(!/\bPORTAL_HTML\b/.test(R.source(f).text), `${f} names PORTAL_HTML`);
+    }
+    for (const page of pages) {
+      assert.ok(servingRegs(table, page).length >= 1, `${page.name}: a registration serves it`);
+      for (const h of page.servedBy) {
+        assert.ok(table.some((g) => g.handler === h.handler), `${page.name}: ${h.handler} is registered`);
+        assert.match(R.handlerBody(h), new RegExp(`\\b${page.symbol}(?:_GZ)?\\b`),
+          `${page.name}: ${h.handler} sends ${page.symbol}`);
+      }
+    }
+    if (tree.key === "wap") {
+      // /sense is the Sensing dashboard: handle_sense_page redirects to /.
+      const sense = table.find((g) => g.uri === "/sense");
+      assert.ok(sense, "/sense is registered");
+      const body = R.handlerBody({ handler: sense.handler, file: join(R.WAP_DIR, "csi_integration.cpp") });
+      assert.match(body, /"Location"\s*,\s*"\/"/, "/sense redirects to /");
+    }
+  });
+
+  for (const page of R.PAGES[tree.key]) {
+    test(`${tree.name} ${page.name}: every request reaches the route it means`, () => {
+      const table = tree.table();
+      const asks = pageAsks(table, page);
+      const reqs = new Set(asks.map((a) => a.r));
+      assert.ok(reqs.size >= PAGE_EXPECT[page.key].min, `the page's requests were read (${reqs.size})`);
+      const wrong = [];
+      const reached = new Map();
+      for (const a of asks) {
+        if (a.r.method) {
+          if (!a.ok) wrong.push(`${a.method} ${a.r.route} (page line ${a.r.line}): answered ` +
+            `${typeof a.answer === "number" ? table[a.answer].uri : a.answer}, means ` +
+            `${typeof a.want === "number" ? table[a.want].uri : a.want || "nothing registered"}`);
+        } else {
+          reached.set(a.r, (reached.get(a.r) || false) || a.ok);
+        }
+      }
+      for (const [r, ok] of reached) if (!ok) wrong.push(`${r.route} (page line ${r.line}): no method reaches a route`);
+      assert.deepStrictEqual(wrong, []);
     });
-    for (const [r, ok] of reached) if (!ok) wrong.push(`${r.route} (page line ${r.line}): no method reaches a route`);
-    assert.deepStrictEqual(wrong, []);
+  }
+
+  // Not every build registers every route (sweep F238): a request whose
+  // route sits under an #if the page's own registration does not, is a call
+  // a build without that feature answers 404 (or a catch-all answers). Each
+  // is named in GATED below, by page and condition, with how the page meets
+  // the build that lacks it; a new one fails until it is named there.
+  test(`${tree.name}: every request to a route only some builds register is named`, () => {
+    const table = tree.table();
+    const got = {};
+    for (const page of R.PAGES[tree.key]) {
+      const serving = servingRegs(table, page);
+      for (const a of pageAsks(table, page)) {
+        if (!a.ok) continue;
+        const reg = table[a.want];
+        for (const s of serving) {
+          const missing = reg.conds.filter((c) => !s.conds.includes(c));
+          if (!missing.length) continue;
+          const byCond = (got[page.name] = got[page.name] || {});
+          const key = missing.join(" && ");
+          (byCond[key] = byCond[key] || new Set()).add(`${a.method} ${a.r.route}`);
+        }
+      }
+    }
+    const actual = {};
+    for (const [p, byCond] of Object.entries(got)) {
+      actual[p] = {};
+      for (const [c, set] of Object.entries(byCond)) actual[p][c] = [...set].sort();
+    }
+    const expected = {};
+    for (const [p, byCond] of Object.entries(GATED[tree.key])) {
+      expected[p] = {};
+      for (const [c, g] of Object.entries(byCond)) expected[p][c] = [...g.routes].sort();
+    }
+    assert.deepStrictEqual(actual, expected);
   });
 
   test(`${tree.name}: the log routes reach their handlers`, () => {
@@ -207,30 +482,34 @@ for (const tree of TREES) {
     r.answers.forEach((a, i) => assert.strictEqual(a, ack, `POST /api/logs/${seqs[i]}/ack`));
   });
 
-  test(`${tree.name}: the page's per-entry Acknowledge is a URL its handler reads`, () => {
+  test(`${tree.name}: each page's per-entry Acknowledge is a URL its handler reads`, () => {
     const table = tree.table();
     const ack = table.findIndex((g) => g.handler === tree.logs["POST /api/logs/1/ack"]);
     assert.ok(ack >= 0, "the log-ack handler is registered");
-    // Every request the page can send as a POST: the ones it names POST and
-    // the ones whose method it does not name (a URL held for later, a
-    // method it computes).
-    const reqs = R.pageRequests(tree.page).filter((r) => r.method === "POST" || r.method === null);
-    const { answers } = R.route(table, reqs.map((r) => ({ method: "POST", target: r.route })));
-    const acks = reqs.filter((r, i) => answers[i] === ack);
-    assert.ok(acks.length >= 1, "the page makes a per-entry Acknowledge (a POST the log-ack route answers)");
-    const seqs = [0, 7, 4294967295];
     const asks = [];
-    for (const r of acks) {
-      const holes = r.raw.match(/\$\{[^}]*\}/g) || [];
-      assert.strictEqual(holes.length, 1,
-        `${r.raw} (page line ${r.line}): an Acknowledge carries one value, the entry's seq`);
-      for (const seq of seqs) asks.push({ r, seq, target: r.raw.replace(/\$\{[^}]*\}/, String(seq)) });
+    const seqs = [0, 7, 4294967295];
+    for (const page of R.PAGES[tree.key]) {
+      // Every request the page can send as a POST: the ones it names POST
+      // and the ones whose method it does not name (a URL held for later,
+      // a method it computes).
+      const reqs = R.pageRequests(page).filter((r) => r.method === "POST" || r.method === null);
+      const { answers } = R.route(table, reqs.map((r) => ({ method: "POST", target: r.route })));
+      const acks = reqs.filter((r, i) => answers[i] === ack);
+      if (page.name === tree.ackPage) {
+        assert.ok(acks.length >= 1, `the ${page.name} makes a per-entry Acknowledge (a POST the log-ack route answers)`);
+      }
+      for (const r of acks) {
+        const holes = r.raw.match(/\$\{[^}]*\}/g) || [];
+        assert.strictEqual(holes.length, 1,
+          `${page.name}: ${r.raw} (page line ${r.line}): an Acknowledge carries one value, the entry's seq`);
+        for (const seq of seqs) asks.push({ page, r, seq, target: r.raw.replace(/\$\{[^}]*\}/, String(seq)) });
+      }
     }
     const read = R.logAckParse(asks.map((a) => a.target));
     const wrong = asks.map((a, i) => {
       const got = read[i][tree.parser];
       return got === a.seq ? null :
-        `${a.r.raw} (page line ${a.r.line}) as ${a.target}: the handler reads ${got === null ? "no entry (404)" : got}`;
+        `${a.page.name}: ${a.r.raw} (page line ${a.r.line}) as ${a.target}: the handler reads ${got === null ? "no entry (404)" : got}`;
     }).filter(Boolean);
     assert.deepStrictEqual(wrong, []);
   });
