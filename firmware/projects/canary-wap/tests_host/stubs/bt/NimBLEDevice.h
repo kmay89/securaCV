@@ -133,13 +133,25 @@ enum : uint16_t {
 #define BLE_STORE_OBJ_TYPE_PEER_SEC  2
 #define BLE_STORE_OBJ_TYPE_CCCD      3
 #define BLE_STORE_OBJ_TYPE_PEER_ADDR 6
+#define BLE_STORE_OBJ_TYPE_CSFC      8
 #define BLE_STORE_EVENT_OVERFLOW     1
 #define BLE_STORE_EVENT_FULL         2
 #define BLE_HS_ENOENT                5
+#define BLE_HS_ENOMEM                6
 #define BLE_HS_EBUSY                 15
 #define BLE_HS_EUNKNOWN              17
 #define BLE_HS_ESTORE_CAP            27
-union ble_store_value;
+// The record an OVERFLOW names (host/ble_store.h): the stand-in carries the
+// CCCD's, whose peer the default answer spares.
+struct ble_store_value_cccd {
+  ble_addr_t peer_addr;
+  uint16_t chr_val_handle;
+  uint16_t flags;
+  unsigned value_changed : 1;
+};
+union ble_store_value {
+  struct ble_store_value_cccd cccd;
+};
 struct ble_store_status_event {
   int event_code;
   union {
@@ -501,6 +513,15 @@ inline NimBLEDeviceCallbacks* device_callbacks = &default_device_callbacks;
 // The store's status events, by code, as the stack raised them.
 inline unsigned full_events = 0;
 inline unsigned overflow_events = 0;
+// The CCCD records (a bonded peer's subscription, kept across links):
+// CONFIG_BT_NIMBLE_MAX_CCCDS, nimconfig.h's default 8, which no WAP build
+// raises. Keyed by the peer's identity and the characteristic's handle.
+struct CccdRecord {
+  NimBLEAddress peer;
+  uint16_t chr_val_handle;
+};
+inline size_t max_cccds = 8;
+inline std::vector<CccdRecord> cccds;
 // What the radio was last set to: setPower()'s dBm, setDefaultPhy()'s mask.
 inline int8_t tx_power = 0;
 inline uint8_t default_phy = 0;
@@ -599,13 +620,21 @@ inline int host_sim::gap_unpair(const NimBLEAddress& a) {
   }
   bonds.erase(std::remove(bonds.begin(), bonds.end(), a), bonds.end());
   bond_irks.erase(std::remove(bond_irks.begin(), bond_irks.end(), a), bond_irks.end());
+  // ble_store_util_delete_peer(): the peer's CCCD records go with its bond.
+  cccds.erase(std::remove_if(cccds.begin(), cccds.end(),
+                             [&](const CccdRecord& r) { return r.peer == a; }),
+              cccds.end());
   return 0;
 }
 
 // ble_store_util_status_rr() (ble_store_util.c), NimBLE-Arduino's default
 // onStoreStatus(): FULL proceeds; OVERFLOW of a bond's keys unpairs the
 // oldest bond (ble_gap_unpair_oldest_peer(): the store's first, through
-// ble_gap_unpair()'s busy guard), and its answer is the write's.
+// ble_gap_unpair()'s busy guard), and OVERFLOW of a CCCD or CSFC record
+// unpairs the oldest bond but the writing peer's
+// (ble_gap_unpair_oldest_except(): BLE_HS_ENOMEM when the peer's is the
+// only one); its answer is the write's (the F189 review: the stand-in
+// answered a CCCD with BLE_HS_EUNKNOWN and unpaired nothing).
 inline int NimBLEDeviceCallbacks::onStoreStatus(struct ble_store_status_event* event, void*) {
   switch (event->event_code) {
     case BLE_STORE_EVENT_OVERFLOW:
@@ -616,6 +645,19 @@ inline int NimBLEDeviceCallbacks::onStoreStatus(struct ble_store_status_event* e
           if (host_sim::bonds.empty()) return BLE_HS_ENOENT;
           host_sim::note("unpair_oldest");
           return host_sim::gap_unpair(host_sim::bonds.front());
+        case BLE_STORE_OBJ_TYPE_CCCD:
+        case BLE_STORE_OBJ_TYPE_CSFC: {
+          if (host_sim::bonds.empty()) return BLE_HS_ENOENT;
+          const NimBLEAddress spared(event->overflow.value->cccd.peer_addr);
+          for (const NimBLEAddress& b : host_sim::bonds) {
+            if (b != spared) {
+              host_sim::note("unpair_oldest_except");
+              const NimBLEAddress victim = b;
+              return host_sim::gap_unpair(victim);
+            }
+          }
+          return BLE_HS_ENOMEM;
+        }
         default:
           return BLE_HS_EUNKNOWN;
       }
@@ -671,6 +713,37 @@ inline int persist_bond(const NimBLEAddress& identity, bool irk) {
     if (rc != 0) return rc;
   }
   store_bond(identity, irk);
+  return 0;
+}
+// A bonded peer writes a characteristic's CCCD (it subscribes): NimBLE
+// persists the record (ble_gatts_clt_cfg_access() -> ble_store_write_cccd(),
+// only for a bonded link). A record the store holds is rewritten; a new one
+// that finds the CCCD store full raises BLE_STORE_EVENT_OVERFLOW (the CCCD
+// as its value) until the device callbacks make room (0) or give up: that
+// answer is returned, and ble_gatts_clt_cfg_access() returns it as the
+// access's, so the phone's Write Request is answered with an ATT error
+// (ble_att_svr_write(), 2.5.0). The subscription itself is already set in
+// RAM for the link.
+inline int persist_cccd(const NimBLEAddress& peer, uint16_t chr_val_handle) {
+  for (const CccdRecord& r : cccds) {
+    if (r.peer == peer && r.chr_val_handle == chr_val_handle) return 0;
+  }
+  while (cccds.size() >= max_cccds) {
+    ble_store_value value;
+    memset(&value, 0, sizeof value);
+    value.cccd.peer_addr = *peer.getBase();
+    value.cccd.chr_val_handle = chr_val_handle;
+    value.cccd.flags = 1;
+    ble_store_status_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.event_code = BLE_STORE_EVENT_OVERFLOW;
+    ev.overflow.obj_type = BLE_STORE_OBJ_TYPE_CCCD;
+    ev.overflow.value = &value;
+    ++overflow_events;
+    const int rc = device_callbacks->onStoreStatus(&ev, nullptr);
+    if (rc != 0) return rc;
+  }
+  cccds.push_back({peer, chr_val_handle});
   return 0;
 }
 }  // namespace host_sim

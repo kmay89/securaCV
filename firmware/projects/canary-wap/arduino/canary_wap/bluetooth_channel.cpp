@@ -570,9 +570,19 @@ class ScanCallbacks : public NimBLEScanCallbacks {
 //     The owner removes a paired phone to make room.
 //   - BLE_STORE_EVENT_OVERFLOW (ble_store_write(), a record with no room
 //     after all: a bond whose pairing was let start as a held peer but that
-//     handed over a new identity, a CCCD, an address record): not kept.
-//     NimBLE ignores a CCCD write's failure (ble_gatts.c), so a subscription
-//     is then held only for the link.
+//     handed over a new identity, an address record, or a bonded phone's
+//     CCCD, a subscription kept across links, whose store holds
+//     CONFIG_BT_NIMBLE_MAX_CCCDS = 8 records where the sketch has a dozen
+//     characteristics to subscribe to): not kept. NimBLE's default made
+//     room for a CCCD by unpairing the oldest bond but the writing phone's
+//     (ble_gap_unpair_oldest_except()), another listed phone's, behind the
+//     owner, as for a bond. Refused, a subscription's record is not kept:
+//     on the write path ble_gatts_clt_cfg_access() returns the store's
+//     error as the access's, so the phone's CCCD Write Request is answered
+//     with an ATT error (ble_att_svr_write(), NimBLE-Arduino 2.5.0), while
+//     the subscription is already set in RAM and holds for that link only;
+//     the other writes of a CCCD (the stack's own, at a reconnect or a
+//     notify while disconnected) ignore the error.
 // So the store-full path calls no ble_gap_unpair() and cannot fail on its
 // busy guard. Each posts its event (the log is the loop task's) under the
 // lossy limit: a stranger's repeated pairing attempts never take the room

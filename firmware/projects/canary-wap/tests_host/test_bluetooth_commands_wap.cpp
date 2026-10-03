@@ -289,6 +289,8 @@ void boot(bool bring_up = true, bool wipe = true) {
   host_sim::device_callbacks = &host_sim::default_device_callbacks;
   host_sim::full_events = 0;
   host_sim::overflow_events = 0;
+  if (wipe) host_sim::cccds.clear();       // NimBLE's CCCD records are in NVS too (the F189 review)
+  host_sim::max_cccds = 8;
   host_sim::presence_disc = false;         // the presence loop starts in init()
   host_sim::presence_paused = false;
   host_sim::passkey_answers.clear();
@@ -339,6 +341,10 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_link_drops = {0, 0};
   bc::g_lossy_drops = {0, 0};
   bc::g_link_drops_reconciled = 0;
+  bc::g_store_full_count = 0;              // F189's counts and their logs, as at power-up
+  bc::g_store_overflow_count = 0;
+  bc::g_store_full_log = {0, 0};
+  bc::g_store_overflow_log = {0, 0};
   bc::g_status_view = decltype(bc::g_status_view)();       // nothing published yet
   bc::g_scan_view = decltype(bc::g_scan_view)();
   bc::g_paired_view = decltype(bc::g_paired_view)();
@@ -2340,12 +2346,19 @@ void test_threads_bring_up_loop_and_reads() {
     // The sketch tells the channel before it creates the worker, on the loop
     // task (the F167 review), and the worker goes on, after init(), to
     // register ble_status's services and Opera's (FULL) on the same server.
+    // It registers them once the loop task has taken init()'s result (as a
+    // device's worker may: NimBLE's bring-up returned, the loop task ran a
+    // pass), so a start the adoption made would come before them.
+    std::atomic<bool> adopted{false};
     bc::bringup_worker_started();
     std::thread bringup([&] {
       host_sim::task = "bringup";
       bool up = false;
       for (int i = 0; i < 3 && !(up = bc::init()); ++i) std::this_thread::yield();
-      if (up) worker_registers_services(/*opera=*/true);
+      if (up) {
+        while (!adopted.load()) std::this_thread::yield();
+        worker_registers_services(/*opera=*/true);
+      }
       brought.store(true);   // the worker's g_ble_bringup_done (release)
     });
     std::thread httpd([&] {
@@ -2375,6 +2388,7 @@ void test_threads_bring_up_loop_and_reads() {
         finalized = true;
       }
       bc::update();
+      if (bc::g_initialized) adopted.store(true);
       host_sim::now_ms += 1;
       std::this_thread::yield();
     }
@@ -3759,6 +3773,77 @@ void test_the_store_never_evicts_a_listed_bond() {
   std::printf("PASS the_store_never_evicts_a_listed_bond\n");
 }
 
+// A bonded phone's subscription (a CCCD record, kept across links) that
+// finds the CCCD store full: CONFIG_BT_NIMBLE_MAX_CCCDS keeps 8 records
+// where the sketch has a dozen characteristics to subscribe to, so three
+// bonded phones subscribing to three each make nine. NimBLE's default made
+// room by unpairing the oldest bond but the writing phone's
+// (ble_gap_unpair_oldest_except()): another listed phone lost its bond
+// behind the owner, the defect F189 closed for bonds (the F189 review: the
+// stand-in's default answered a CCCD with BLE_HS_EUNKNOWN, so no test saw
+// it). The channel refuses: every bond kept, the record not kept, the
+// phone's write answered with the store's error (its subscription holds for
+// that link), and the health log says a record was not kept.
+void test_a_full_cccd_store_evicts_no_bond() {
+  boot();
+  NimBLEConnInfo phones[3] = {public_phone(51, 0x21), public_phone(52, 0x22), public_phone(53, 0x23)};
+  for (NimBLEConnInfo& p : phones) {
+    CHECK(pair_through_stack(p, /*irk=*/false));
+    link_ends(p);
+  }
+  CHECK(bc::g_paired_count == 3 && host_sim::bonds.size() == 3);
+  // They subscribe on their next links: 3 + 3 + 2 records fill the store.
+  int rc = -1;
+  const uint16_t handles[3] = {10, 11, 12};
+  for (int i = 0; i < 3; ++i) {
+    for (int h = 0; h < (i < 2 ? 3 : 2); ++h) {
+      on_nimble([&] { rc = host_sim::persist_cccd(phones[i].getIdAddress(), handles[h]); });
+      CHECK(rc == 0);
+    }
+  }
+  CHECK(host_sim::cccds.size() == 8 && host_sim::overflow_events == 0);
+  // The third phone's third subscription: refused, and no bond goes.
+  on_nimble([&] { rc = host_sim::persist_cccd(phones[2].getIdAddress(), 12); });
+  CHECK(rc == BLE_HS_ESTORE_CAP && host_sim::overflow_events == 1);
+  CHECK(host_sim::bonds.size() == 3 && host_sim::count("unpair_oldest_except") == 0);
+  for (NimBLEConnInfo& p : phones) CHECK(NimBLEDevice::isBonded(p.getIdAddress()));
+  CHECK(host_sim::cccds.size() == 8);
+  loop_pass();
+  CHECK(bc::g_paired_count == 3);
+  for (size_t i = 0; i < bc::g_paired_count; ++i) {
+    CHECK(NimBLEDevice::isBonded(bc::paired_identity(bc::g_paired_devices[i])));
+  }
+  CHECK(health_says("BLE bond store full: a record was not kept") == 1);
+  // A record the store holds is rewritten in place: no room needed.
+  on_nimble([&] { rc = host_sim::persist_cccd(phones[0].getIdAddress(), 10); });
+  CHECK(rc == 0 && host_sim::overflow_events == 1);
+  std::printf("PASS a_full_cccd_store_evicts_no_bond\n");
+}
+
+// The state the bring-up leaves (the F167 review): what runs
+// (rest_state()), so a device saved with Bluetooth off reads disabled, not
+// advertising (before F167 init() set idle, beside "enabled": false), and
+// one with auto-advertise off reads idle, not advertising.
+void test_the_bring_up_leaves_the_state_of_what_runs() {
+  for (int saved_off = 0; saved_off < 2; ++saved_off) {
+    boot(/*bring_up=*/false);
+    {
+      FakeMainNvs nvs;
+      nvs.putBool(saved_off ? "bt_enabled" : "bt_auto_adv", false);
+    }
+    host_sim::calls.clear();
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    loop_pass();
+    CHECK(bc::g_initialized && bc::is_enabled() == !saved_off);
+    CHECK(host_sim::count("adv_start") == 0 && !host_sim::advertising.isAdvertising());
+    CHECK((shown() == std::pair<bc::BluetoothState, bool>{saved_off ? bc::BT_DISABLED : bc::BT_IDLE, false}));
+    CHECK(bc::read_settings().enabled == !saved_off);
+  }
+  std::printf("PASS the_bring_up_leaves_the_state_of_what_runs\n");
+}
+
 // A list saved by a firmware whose store evicted bonds behind it (F189):
 // each boot, once the stack is up, the loop task drops an entry whose bond
 // the store no longer holds (no phone can use it), saves the list, and says
@@ -3875,6 +3960,8 @@ const Test kTests[] = {
     {"a_full_bond_store_refuses_a_new_pairing", test_a_full_bond_store_refuses_a_new_pairing},
     {"the_store_never_evicts_a_listed_bond", test_the_store_never_evicts_a_listed_bond},
     {"the_paired_list_follows_the_bond_store_at_boot", test_the_paired_list_follows_the_bond_store_at_boot},
+    {"a_full_cccd_store_evicts_no_bond", test_a_full_cccd_store_evicts_no_bond},
+    {"the_bring_up_leaves_the_state_of_what_runs", test_the_bring_up_leaves_the_state_of_what_runs},
 };
 
 }  // namespace bt_commands
