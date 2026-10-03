@@ -991,8 +991,9 @@ jobs:
           new_bundles="$(git ls-files --others --exclude-standard -- 'canary-local/emulator/dist/*.js')"
           if [ -n "$new_bundles" ]; then
             echo "── bundles this tree builds that the committed dist lacks ──"
-            echo "$new_bundles" | sed 's/^/· /'
-            git add -N -- $new_bundles
+            mapfile -t new_list <<< "$new_bundles"
+            printf '· %s\n' "${new_list[@]}"
+            git add -N -- "${new_list[@]}"
           fi
           if [ -n "$new_bundles" ] || ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
             echo "── first differing bytes per artifact (diagnosis) ──"
