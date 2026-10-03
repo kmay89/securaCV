@@ -372,6 +372,14 @@ HEALTHLOG_JS = test_canary_health_logs.test.js
 # appears (the gate can go then).
 CHIRPPANEL_JS = test_canary_community_panel.test.js
 
+# The rest of that dashboard's routes (repo sweep F198): nothing in the
+# PlatformIO tree serves /api/bluetooth or anything under it, GET /api/wifi,
+# POST /api/wifi/forget or POST /api/logs/rotate. The Bluetooth tab is gated
+# the way the Community tab is, the Wi-Fi card reads GET /api/wifi/status and
+# Forget POST /api/wifi/disconnect (the route that clears the saved network),
+# and a scan holds every route the page names to one a source registers.
+DASHROUTES_JS = test_canary_dashboard_routes.test.js
+
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
 # provision_core byte-math (A-only captive DNS, probe classification, JSON
@@ -1021,6 +1029,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(TIMELINE_JS)
 	$(NODE) --test $(HEALTHLOG_JS)
 	$(NODE) --test $(CHIRPPANEL_JS)
+	$(NODE) --test $(DASHROUTES_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -996,7 +996,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </button>
       <button class="nav-btn" data-panel="witness">Witness</button>
       <button class="nav-btn" data-panel="settings">Settings</button>
-      <button class="nav-btn" data-panel="bluetooth">Bluetooth</button>
+      <button class="nav-btn" data-panel="bluetooth" id="navBluetooth" style="display:none">Bluetooth</button>
     </nav>
 
     <!-- LAN unlock banner (F20 gap #11): shown only when the server served
@@ -2510,9 +2510,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="stat-label">SD Used</div>
             <div class="stat-value"><span id="sdUsed">0</span><span class="stat-unit">MB</span></div>
           </div>
-        </div>
-        <div style="margin-top:1rem;">
-          <button class="btn btn-secondary" onclick="rotateOldLogs()">Rotate Old Logs (30+ days)</button>
         </div>
       </div>
     </div>
@@ -5096,12 +5093,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
-    async function rotateOldLogs() {
-      if (!confirm('Delete logs older than 30 days?')) return;
-      const data = await api('/api/logs/rotate', 'POST', { max_age_days: 30 });
-      alert(data.ok ? `Rotated ${data.deleted_count || 0} entries` : 'Rotation failed');
-    }
-
     // ══════════════════════════════════════════════════════════════════
     // SOFTWARE UPDATE (signed pull-OTA)
     // ══════════════════════════════════════════════════════════════════
@@ -5662,16 +5653,30 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     let wifiState = null;
     let wifiPollingInterval = null;
 
+    // F198: the card reads GET /api/wifi/status, the route this firmware
+    // serves for it (nothing serves GET /api/wifi). Its body names neither
+    // network and carries no `configured`, so a name shows only when a body
+    // carries one, and whether a home network is saved is read from the
+    // state: the firmware enters connecting, connected and failed only with
+    // saved credentials (connectToHome()), and ap_only once they are gone.
+    function wifiConfigured(data) {
+      if (typeof data.configured === 'boolean') return data.configured;
+      return data.state === 'connecting' || data.state === 'connected' || data.state === 'failed';
+    }
+
     async function loadWifiStatus() {
-      const data = await api('/api/wifi');
+      const data = await api('/api/wifi/status');
       if (!data.ok) return;
 
       wifiState = data;
+      const configured = wifiConfigured(data);
 
       // Update UI elements
-      document.getElementById('wifiApSsid').textContent = data.ap_ssid || '--';
+      document.getElementById('wifiApSsid').textContent =
+        data.ap_ssid || (data.ap_active === true ? 'On' : data.ap_active === false ? 'Off' : '--');
       document.getElementById('wifiApIp').textContent = data.ap_ip || '--';
-      document.getElementById('wifiStaSsid').textContent = data.configured ? data.sta_ssid : 'Not configured';
+      document.getElementById('wifiStaSsid').textContent =
+        configured ? (data.sta_ssid || 'Saved') : 'Not configured';
       document.getElementById('wifiStaIp').textContent = data.sta_connected ? data.sta_ip : '--';
 
       // Update badge
@@ -5690,7 +5695,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         badge.className = 'badge danger';
         state.textContent = 'Failed';
         document.getElementById('wifiSubtitle').textContent = 'Connection failed - check credentials';
-      } else if (data.configured) {
+      } else if (configured) {
         badge.className = 'badge info';
         state.textContent = 'Disconnected';
         document.getElementById('wifiSubtitle').textContent = 'Home WiFi configured but not connected';
@@ -5714,10 +5719,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         rssiBar.style.display = 'none';
       }
 
-      // Show/hide buttons
+      // Show/hide buttons. Disconnect and Forget reach the same route
+      // (POST /api/wifi/disconnect drops the link and clears the saved
+      // network), so Forget shows only while there is no link to drop.
       document.getElementById('wifiConnectBtn').style.display = data.sta_connected ? 'none' : 'inline-flex';
       document.getElementById('wifiDisconnectBtn').style.display = data.sta_connected ? 'inline-flex' : 'none';
-      document.getElementById('wifiForgetBtn').style.display = data.configured ? 'inline-flex' : 'none';
+      document.getElementById('wifiForgetBtn').style.display =
+        configured && !data.sta_connected ? 'inline-flex' : 'none';
 
       // Show progress if connecting
       document.getElementById('wifiProgress').style.display = data.state === 'connecting' ? 'block' : 'none';
@@ -5816,11 +5824,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       // Start polling for connection status
       document.getElementById('wifiProgressText').textContent = 'Connecting to ' + ssid + '...';
-      startWifiPolling();
+      startWifiPolling(ssid);
     }
 
     async function disconnectWifi() {
-      if (!confirm('Disconnect from home WiFi? The AP will remain active.')) return;
+      // The route clears the saved network too (handle_wifi_disconnect).
+      if (!confirm('Disconnect from home WiFi and forget it? You will need to re-enter the password to reconnect. The AP will remain active.')) return;
 
       const data = await api('/api/wifi/disconnect', 'POST');
       if (data.ok) {
@@ -5833,7 +5842,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function forgetWifi() {
       if (!confirm('Forget saved WiFi credentials? You will need to re-enter them to reconnect.')) return;
 
-      const data = await api('/api/wifi/forget', 'POST');
+      // F198: nothing serves POST /api/wifi/forget; POST /api/wifi/disconnect
+      // clears the saved network (and drops a link, if there is one).
+      const data = await api('/api/wifi/disconnect', 'POST');
       if (data.ok) {
         document.getElementById('wifiSsidInput').value = '';
         document.getElementById('wifiPassword').value = '';
@@ -5843,7 +5854,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
-    function startWifiPolling() {
+    function startWifiPolling(ssid) {
       if (wifiPollingInterval) clearInterval(wifiPollingInterval);
 
       let pollCount = 0;
@@ -5856,7 +5867,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (wifiState.sta_connected) {
             stopWifiPolling();
             document.getElementById('wifiProgress').style.display = 'none';
-            alert('Successfully connected to ' + wifiState.sta_ssid + '!\n\nIP: ' + wifiState.sta_ip);
+            alert('Successfully connected to ' + (wifiState.sta_ssid || ssid) + '!\n\nIP: ' + wifiState.sta_ip);
           } else if (wifiState.state === 'failed' || pollCount > 20) {
             stopWifiPolling();
             document.getElementById('wifiProgress').style.display = 'none';
@@ -6157,10 +6168,24 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     let btState = null;
     let btScanning = false;
+    // F198: the Bluetooth tab shows only once GET /api/bluetooth has
+    // answered with a Bluetooth status (F176's shape for Chirp). No route in
+    // this firmware's tree serves /api/bluetooth or anything under it, so on
+    // today's firmware the page load's one call below answers 404, the tab
+    // stays hidden and nothing asks for Bluetooth again; a firmware that
+    // serves the routes gets the tab, its settings and its paired list back
+    // with no page change.
+    let btServed = false;
 
     async function refreshBtStatus() {
       const data = await api('/api/bluetooth');
       if (!data.state) return;
+      if (!btServed) {
+        btServed = true;
+        document.getElementById('navBluetooth').style.display = '';
+        loadBtSettings();
+        loadBtPairedDevices();
+      }
 
       btState = data;
 
@@ -6536,9 +6561,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     loadWifiStatus();
     refreshOpera();
     refreshChirpStatus();
-    refreshBtStatus();
-    loadBtSettings();
-    loadBtPairedDevices();
+    refreshBtStatus();   // F198: its settings and paired list follow once it answers
     updateResolutionUI();
     setInterval(refreshStatus, 2000);
     /* Live sensing updates only matter when the user is actually on
@@ -6553,7 +6576,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (currentPanel === 'witness') loadWitness();
       else if (currentPanel === 'opera') refreshOpera();
       else if (currentPanel === 'community' && chirpServed) refreshChirpStatus();
-      else if (currentPanel === 'bluetooth') refreshBtStatus();
+      else if (currentPanel === 'bluetooth' && btServed) refreshBtStatus();
     }, 5000);
     /* Sensing panel polls at 1 Hz to match the CSI window cadence so the
      * gauges feel live without flooding the device with HTTP. */
