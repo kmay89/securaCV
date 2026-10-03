@@ -116,7 +116,7 @@ so it is bridged too and stays off. To keep it out, list its exact id under
 out of the list on purpose.** Their MQTT discovery configs ask for
 `binary_sensor.pwk_<zone>_motion` and `binary_sensor.<canary_id>_smoke_alarm`
 / `_co_alarm` (the table in §1; `<canary_id>` is the device id as Home
-Assistant slugs it, `canary-s3-AbCd` becoming `canary_s3_abcd`) with
+Assistant slugs it, `canary-s3-4dC2` becoming `canary_s3_4dc2`) with
 `default_entity_id`. Read from Home Assistant core's source
 (`homeassistant/components/mqtt/entity.py`), not seen in a running Home
 Assistant: Home Assistant 2025.10 and later gives an entity that id when it

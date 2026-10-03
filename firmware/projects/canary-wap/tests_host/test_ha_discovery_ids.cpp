@@ -353,8 +353,8 @@ void boot() {
   std::string prefix(kLongestPrefix, 'p');
   std::snprintf(c.prefix, sizeof c.prefix, "%s", prefix.c_str());
   check(csi_mqtt::config_save(c), "the settings are stored");
-  csi_mqtt::set_identity("canary-s3-AbCd", "2.4.15-wap", "ab");
-  check(csi_mqtt::init("canary-s3-AbCd", "2.4.15-wap", "ab"), "the boot init opens a client");
+  csi_mqtt::set_identity("canary-s3-4dC2", "2.4.15-wap", "ab");
+  check(csi_mqtt::init("canary-s3-4dC2", "2.4.15-wap", "ab"), "the boot init opens a client");
   check(fake::clients.size() == 1, "one client");
 }
 
@@ -363,8 +363,8 @@ void test_every_config_asks_for_its_documented_id() {
   size_t longest = 0;
   // The id the sketch generates: DEVICE_ID_PREFIX and four characters of the
   // no-confusion alphabet, which has capitals.
-  connect_and_check("canary-s3-AbCd", "canary_s3_abcd", &longest);
-  connect_and_check("canary-c3-x7Qk", "canary_c3_x7qk", &longest);
+  connect_and_check("canary-s3-4dC2", "canary_s3_4dc2", &longest);
+  connect_and_check("canary-c3-xQ72", "canary_c3_xq72", &longest);
   end_test("every_config_asks_for_its_documented_id (longest body " + std::to_string(longest) +
            " of " + std::to_string(kBodyBytes) + ")");
 }
