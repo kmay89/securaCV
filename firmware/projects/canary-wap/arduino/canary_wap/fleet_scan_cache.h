@@ -31,6 +31,14 @@
  * every add(): the closing `]}` is reserved from the start and rewritten
  * behind each kept row.
  *
+ * The only reader of the cache is handle_fleet_scan(), which parses it with
+ * ArduinoJson and serializes the rows again into its answer; ArduinoJson
+ * 7.4.1 writes a control byte other than \b \f \n \r \t raw there, which a
+ * browser's JSON.parse refuses (the Fleet sheet then says it could not reach
+ * the device). So the cache writes such a byte as `\ufffd`, the replacement
+ * character, which ArduinoJson decodes to U+FFFD and writes as valid UTF-8:
+ * a value holding one reads back with U+FFFD in its place.
+ *
  * Pure hosted C++ (no Arduino, ESP-IDF or heap): host-tested in
  * tests_host/test_fleet_scan_cache.cpp at the sketch's own cache size, read
  * from canary_wap.ino.
@@ -114,6 +122,7 @@ inline void begin(Cache& c, char* out, size_t cap) {
   c.kept = 0;
   c.skipped = 0;
   wap_json::begin(c.w, out, cap, 2);
+  c.w.replace_controls = true;   // handle_fleet_scan() re-serializes with ArduinoJson
   if (!wap_json::raw(c.w, "{\"canaries\":[")) {
     if (cap > 0) out[0] = '\0';
     return;

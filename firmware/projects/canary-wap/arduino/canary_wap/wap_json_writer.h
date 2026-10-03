@@ -20,6 +20,12 @@
  *    `\u00XX` (ArduinoJson 7.4.1 writes those last ones raw, which a strict
  *    parser such as a browser's JSON.parse refuses). Every other byte goes as
  *    it is. So one byte costs at most kEscapeMax (6) bytes.
+ *  - A writer with `replace_controls` set writes those other control bytes as
+ *    `\ufffd` instead (the replacement character, the same six bytes), for a
+ *    text that ArduinoJson parses and serializes again before anyone reads
+ *    it: ArduinoJson decodes `\u00XX` back to the raw byte and writes it raw
+ *    (fleet_scan_cache.h's reader, handle_fleet_scan(), does exactly that),
+ *    while `\ufffd` decodes to U+FFFD, which it writes as valid UTF-8.
  *  - Every write is whole or not at all: a write that does not fit before the
  *    reserve sets `overflow` and writes nothing, and every write after it is
  *    refused too, so the text is always a run of whole writes followed by a
@@ -75,6 +81,7 @@ struct Writer {
   size_t len;        // bytes written, the NUL excluded
   size_t reserve;    // bytes held back past `len` for a closing written last
   bool   overflow;   // a write did not fit: it and every write after it were refused
+  bool   replace_controls;  // a control byte str() would write as \u00XX goes as \ufffd
 };
 
 /* Starts an empty text in out[cap]. A NULL `out` or a `cap` of 0 leaves
@@ -86,6 +93,7 @@ inline void begin(Writer& w, char* out, size_t cap, size_t reserve = 0) {
   w.len = 0;
   w.reserve = reserve;
   w.overflow = (cap == 0 || reserve >= cap);
+  w.replace_controls = false;
   if (cap > 0) out[0] = '\0';
 }
 
@@ -97,6 +105,7 @@ inline void begin_measure(Writer& w) {
   w.len = 0;
   w.reserve = 0;
   w.overflow = false;
+  w.replace_controls = false;   // the same length either way
 }
 
 /* True when `n` more bytes fit before the reserve and the NUL. */
@@ -145,7 +154,9 @@ inline bool escaped(Writer& w, const char* s) {
       case '\r': *o++ = '\\'; *o++ = 'r';  break;
       case '\t': *o++ = '\\'; *o++ = 't';  break;
       default:
-        if (c < 0x20) {
+        if (c < 0x20 && w.replace_controls) {
+          *o++ = '\\'; *o++ = 'u'; *o++ = 'f'; *o++ = 'f'; *o++ = 'f'; *o++ = 'd';
+        } else if (c < 0x20) {
           *o++ = '\\'; *o++ = 'u'; *o++ = '0'; *o++ = '0';
           *o++ = kHex[c >> 4]; *o++ = kHex[c & 0x0F];
         } else {

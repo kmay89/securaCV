@@ -1645,7 +1645,8 @@ Owner: U1.
     | python3 -m json.tool` twice, 15 seconds apart (the first read starts
     the browse); then publish six more such services and read it again;
     then stop them and publish one service with six 255-byte values of `"`
-    and read it again.
+    and read it again; then one whose `name` holds a control byte (for
+    example `printf 'x\001y'` as the TXT value) and open the Fleet sheet.
   - Expected: every answer parses; `canaries` always lists the other Canary
     (its row is short, and the shortest rows that fit in the 2560-byte cache
     are the ones kept, whatever order mDNS answers in), and as many long
@@ -1653,8 +1654,12 @@ Owner: U1.
     value as published; with eight long adverts the list is not empty
     (before F211 the cut cache emptied it, and the sheet showed only this
     device, whichever device sent the long values); the single advert with
-    six long values is the row left out, never the Canary. An advert missing
-    from the list is one longer than the rows kept.
+    six long values is the row left out, never the Canary; the advert with
+    the control byte is listed with U+FFFD (the replacement character) in
+    that byte's place, and the sheet lists every device (before, that one
+    byte made the route's answer unparseable in the browser and the sheet
+    said it could not reach the device). An advert missing from the list is
+    one longer than the rows kept.
   - Artifact: `docs/audit/repro/F211/long-adverts/`.
 - [ ] **A device name holding a quote or a backslash keeps /api/device-info whole**
   - Setup: a canary-wap with its API token.

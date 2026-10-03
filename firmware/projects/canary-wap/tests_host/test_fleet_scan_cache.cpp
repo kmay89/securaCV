@@ -107,9 +107,12 @@ std::string long_value(size_t quotes, char fill = 'a') {
 }
 
 // ── The oracle ──────────────────────────────────────────────────────────
+// A control byte other than the five with two-byte escapes is written as
+// \ufffd, not \u00XX: the cache's one reader, handle_fleet_scan(), parses it
+// with ArduinoJson and serializes it again, and ArduinoJson writes the byte
+// \u00XX decodes to raw, which JSON.parse refuses; U+FFFD it writes as UTF-8.
 std::string oracle_str(const std::string& s) {
   std::string o = "\"";
-  char buf[8];
   for (unsigned char c : s) {
     switch (c) {
       case '"': o += "\\\""; break;
@@ -121,14 +124,26 @@ std::string oracle_str(const std::string& s) {
       case '\t': o += "\\t"; break;
       default:
         if (c < 0x20) {
-          std::snprintf(buf, sizeof(buf), "\\u%04x", c);
-          o += buf;
+          o += "\\ufffd";
         } else {
           o.push_back((char)c);
         }
     }
   }
   return o + "\"";
+}
+
+// What a reader gets back for `s`: each such control byte as U+FFFD.
+std::string as_read(const std::string& s) {
+  std::string o;
+  for (unsigned char c : s) {
+    if (c < 0x20 && c != '\b' && c != '\f' && c != '\n' && c != '\r' && c != '\t') {
+      o += "\xef\xbf\xbd";
+    } else {
+      o.push_back((char)c);
+    }
+  }
+  return o;
 }
 
 std::string oracle_row(const Ad& a) {
@@ -251,7 +266,7 @@ bool rows_match(const std::string& text, const std::vector<Ad>& ads, const std::
     if (row.keys.size() != 9) return false;
     for (int k = 0; k < 8; ++k) {
       const json_strict::Value* f = row.get(names[k]);
-      if (!f || f->kind != json_strict::Value::String || f->text != *vals[k]) return false;
+      if (!f || f->kind != json_strict::Value::String || f->text != as_read(*vals[k])) return false;
     }
     const json_strict::Value* port = row.get("port");
     if (!port || port->kind != json_strict::Value::Number || port->text != std::to_string(a.port)) return false;
@@ -390,7 +405,7 @@ void test_the_most_that_fit_and_never_a_longer_one() {
     seed = seed * 1664525u + 1013904223u;
     return (seed >> 8) % bound;
   };
-  const char pool[] = {'a', 'b', '"', '\\', 'z', '\xc3', '\xa9', '-', '"', '\\'};
+  const char pool[] = {'a', 'b', '"', '\\', 'z', '\xc3', '\xa9', '-', '"', '\\', '\x01', '\n'};
   int cases = 0, left_out = 0;
   for (int round = 0; round < 400; ++round) {
     const size_t n = 1 + next(12);
@@ -524,9 +539,12 @@ void test_at_most_eight() {
   CHECK(before == buf.data());
 }
 
-// Control bytes go as \u00XX (ArduinoJson would write them raw, which a
-// strict parser refuses), the two-byte escapes as themselves, and bytes from
-// 0x7f up as they are; a missing value reads as "".
+// A control byte with no two-byte escape goes as \ufffd and reads back as
+// U+FFFD; the cache holds no \u00XX escape at all (ArduinoJson decodes one to
+// the raw byte and handle_fleet_scan() would write that raw again, which a
+// browser's JSON.parse refuses, so one advert holding 0x01 emptied the Fleet
+// sheet). The two-byte escapes go as themselves, bytes from 0x7f up as they
+// are, and a missing value reads as "".
 void test_every_byte_a_reader_can_get_back() {
   Ad a = ordinary(0);
   a.name = std::string("a\x01" "b\x1f" "c\n\t\r\b\f\x7f", 11) + "\xc3\xa9" "/\"\\";
@@ -534,7 +552,20 @@ void test_every_byte_a_reader_can_get_back() {
   std::vector<Ad> ads = {a};
   const Built b = build(ads, kCap);
   CHECK(rows_match(b.text, ads, {0}));
-  CHECK(b.text.find("a\\u0001b\\u001fc\\n\\t\\r\\b\\f\x7f\xc3\xa9/\\\"\\\\") != std::string::npos);
+  CHECK(b.text.find("a\\ufffdb\\ufffdc\\n\\t\\r\\b\\f\x7f\xc3\xa9/\\\"\\\\") != std::string::npos);
+  CHECK(b.text.find("\\u00") == std::string::npos);
+
+  // Every control byte, in every field, at once.
+  Ad all = ordinary(1);
+  std::string controls;
+  for (int ch = 1; ch < 0x20; ++ch) controls.push_back((char)ch);
+  for (int k = 0; k < 7; ++k) *all.field(k) = controls;
+  ads = {all};
+  const Built c_all = build(ads, kCap);
+  CHECK(rows_match(c_all.text, ads, {0}));
+  CHECK(c_all.text.find("\\u00") == std::string::npos);
+  CHECK(std::all_of(c_all.text.begin(), c_all.text.end(),   // nothing raw below 0x20 either
+                    [](char ch) { return (unsigned char)ch >= 0x20; }));
 
   std::vector<char> buf(kCap, '\0');
   fleet_scan_cache::Cache c;
