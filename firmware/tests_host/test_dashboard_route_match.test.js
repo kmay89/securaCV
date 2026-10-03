@@ -131,6 +131,66 @@ test("the matcher answers the cases F214 turned on", () => {
   cases.forEach(([t, u, want], i) => assert.strictEqual(got[i], want, `${t} against ${u}`));
 });
 
+// canary-wap's wap_server.h lists the routes the sketch serves (sweep F237:
+// it listed eight nothing registered). Held both ways against the table the
+// walk reads: every entry is served (a METHOD /path entry reaches the
+// registration it means, `<seq>` filled; a `*` family entry matches at least
+// one registration, as httpd's matcher reads the template), every
+// registration is an entry or falls under a family, and a registration under
+// an #if has a covering entry that names each macro of it on its line or in
+// its section's heading.
+test("canary-wap: wap_server.h's route list is the route table (F237)", () => {
+  const table = R.wapTable();
+  const text = readFileSync(join(R.WAP_DIR, "wap_server.h"), "utf8");
+  const a = text.indexOf(" * HTTP routes, as canary_wap.ino registers them");
+  const b = text.indexOf("*/", a);
+  assert.ok(a >= 0 && b > a, "wap_server.h holds the route list");
+  const entries = [];
+  let heading = "";
+  for (const line of text.slice(a, b).split("\n")) {
+    if (/^ \* ── /.test(line)) { heading = line; continue; }
+    const m = line.match(/^ \* (GET|POST|DELETE|OPTIONS|PUT|\*)\s+(\/\S*)/);
+    if (m) entries.push({ method: m[1], path: m[2], line, heading });
+  }
+  assert.ok(entries.length > 60, `the list was read (${entries.length} entries)`);
+  const specific = entries.filter((e) => e.method !== "*");
+  const family = entries.filter((e) => e.method === "*");
+  // Every specific entry reaches the registration it means.
+  const targets = specific.map((e) => ({ method: e.method, target: e.path.replace(/<[^>]+>/g, "7") }));
+  const { answers } = R.route(table, targets);
+  const means = (t) => {
+    const exact = table.findIndex((g) => g.method === t.method && g.uri === t.target);
+    if (exact >= 0) return exact;
+    const hits = R.match(table.map((g) => [g.uri, t.target]));
+    const wild = table.map((g, j) => (g.method === t.method && hits[j] ? j : -1)).filter((j) => j >= 0);
+    return wild.length === 1 ? wild[0] : null;
+  };
+  const wrong = [];
+  specific.forEach((e, i) => {
+    const want = means(targets[i]);
+    if (typeof answers[i] !== "number" || answers[i] !== want) {
+      wrong.push(`${e.method} ${e.path}: answered ${typeof answers[i] === "number" ? table[answers[i]].uri : answers[i]}`);
+    }
+  });
+  // Every family entry covers something, and which registrations it covers.
+  const famHits = family.map((e) => R.match(table.map((g) => [e.path, g.uri])));
+  family.forEach((e, k) => { if (!famHits[k].some(Boolean)) wrong.push(`* ${e.path}: matches no registration`); });
+  assert.deepStrictEqual(wrong, [], "every entry in wap_server.h's list is served");
+  // Every registration is covered, and a gated one by an entry naming its gate.
+  const uncovered = [];
+  const unnamed = [];
+  table.forEach((g, j) => {
+    const covering = specific.filter((e, i) => answers[i] === j).concat(family.filter((e, k) => famHits[k][j]));
+    if (!covering.length) { uncovered.push(`${g.method} ${g.uri} (${g.where})`); return; }
+    const macros = [...new Set(g.conds.flatMap((c) => c.match(/\b[A-Z][A-Z0-9_]{2,}\b/g) || []))];
+    if (macros.length && !covering.some((e) => macros.every((mac) => new RegExp(`\\b${mac}\\b`).test(e.line + e.heading)))) {
+      unnamed.push(`${g.method} ${g.uri}: ${macros.join(", ")}`);
+    }
+  });
+  assert.deepStrictEqual(uncovered, [], "every registration is in wap_server.h's list");
+  assert.deepStrictEqual(unnamed, [], "a gated registration's list entry names its #if");
+});
+
 // The #if reader the gated-route test stands on (sweep F238), on a source
 // with every shape it must read: an include guard (no condition), #ifdef,
 // #if / #elif / #else, nesting, a continued line, a comment on a directive,
@@ -514,26 +574,3 @@ for (const tree of TREES) {
     assert.deepStrictEqual(wrong, []);
   });
 }
-
-// canary-wap's wap_server.h carries an endpoint list in a comment, the first
-// thing a reader opens to learn the API. Eight of its lines named routes
-// nothing registers (GET /api/health, /api/identity, /api/witness/:seq, ...),
-// each a 404 or 405 on a device (sweep F237). Every line it lists now routes
-// through the same table and matcher as the dashboards' requests, a `:name`
-// placeholder filled with 1, and must reach a registration of its own
-// method: a list that names a route nothing serves fails here.
-test("canary-wap: every route wap_server.h's endpoint comment lists is registered", () => {
-  const text = readFileSync(join(__dirname, "..", "projects", "canary-wap", "arduino", "canary_wap", "wap_server.h"), "utf8");
-  const a = text.indexOf("REST API Endpoints");
-  const b = text.indexOf("*/", a);
-  assert.ok(a >= 0 && b > a, "wap_server.h still carries its endpoint comment");
-  const listed = [...text.slice(a, b).matchAll(/^\s*\*\s+(GET|POST|PUT|PATCH|DELETE)\s+(\/\S*)/gm)]
-    .map((m) => ({ method: m[1], raw: m[2], target: m[2].replace(/:\w+/g, "1") }));
-  assert.ok(listed.length > 20, "the comment's routes were read");
-  const table = R.wapTable();
-  const { answers } = R.route(table, listed);
-  const phantom = listed.map((l, i) => typeof answers[i] === "number" && table[answers[i]].method === l.method
-    ? null : `${l.method} ${l.raw}: answered ${typeof answers[i] === "number" ? table[answers[i]].uri : answers[i]}`)
-    .filter(Boolean);
-  assert.deepStrictEqual(phantom, []);
-});
