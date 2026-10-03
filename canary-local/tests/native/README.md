@@ -165,8 +165,9 @@ and the dist is still what ships.
 
 ## Which tests drive a dist core
 
-Only the three above `require()` a core in Node, and all three take it
-through `cores.js` (`native_cores.test.js` holds that).
+Only `vision.test.js`, `eyes.test.js` and `audio.test.js` `require()` a core
+in Node, and all three take it through `cores.js` (`native_cores.test.js`
+holds that); `vision_wasm32.test.js` builds its own and loads no dist.
 
 ## The browser probes on the tree's sources
 
