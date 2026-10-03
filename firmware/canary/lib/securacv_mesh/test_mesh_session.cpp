@@ -7338,6 +7338,35 @@ void test_the_peer_list_joins_each_member_from_the_view() {
   mesh_session::process(97000);
   assert(has(peers_body(keys + 64, 1, 98500), "\"state\":\"CONNECTED\",\"last_seen_sec\":1,\"rssi\":-60"));
 
+  /* Unheard past PEER_OFFLINE_AFTER_MS, a member's transport entry turns
+   * OFFLINE but stays in the table: the row is still live, so it reads
+   * OFFLINE with its real age and RSSI, not "never" and 0, and never
+   * CONNECTED (review: no case reached this row). */
+  const uint32_t gone = 97000 + mesh_transport::PEER_OFFLINE_AFTER_MS + 5000;
+  mesh_transport::test::set_now_ms(gone);
+  mesh_transport::process();
+  mesh_session::process(gone);
+  {
+    mesh_session::StatusView aged;
+    mesh_session::read_status(&aged);
+    bool seen_b = false;
+    for (size_t m = 0; m < aged.member_count; ++m) {
+      if (std::memcmp(aged.members[m].fp, b.fp, mesh_crypto::FINGERPRINT_LEN) != 0) continue;
+      seen_b = aged.members[m].live &&
+               aged.members[m].link_state == mesh_transport::PeerState::OFFLINE;
+    }
+    assert(seen_b);
+  }
+  const std::string aged_rows = peers_body(keys, 5, gone);
+  assert(aged_rows == live_peers_body(keys, 5, gone));
+  assert(has(peers_body(keys + 64, 1, gone),
+             "\"state\":\"OFFLINE\",\"last_seen_sec\":305,\"rssi\":-60,"));
+  assert(has(peers_body(keys + 32, 1, gone),
+             "\"state\":\"OFFLINE\",\"last_seen_sec\":306,\"rssi\":-42,"));
+  assert(!has(aged_rows, "CONNECTED") && !has(aged_rows, "STALE"));
+  assert(has(status_body(), "\"peers_total\":4,\"peers_online\":0,"));
+  assert(status_body() == live_status_body());
+
   /* Null rows or keys answer nothing. */
   mesh_session::StatusView v;
   mesh_session::read_status(&v);
