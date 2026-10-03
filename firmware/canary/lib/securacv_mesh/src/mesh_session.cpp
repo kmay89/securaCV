@@ -219,13 +219,10 @@ static_assert(mesh_rekey::MAX_SURVIVORS >= MAX_TRUSTED_PEERS,
               "every other trusted peer must fit in a rotation");
 
 /* Alert channel state (F10). Opera-wide lifetime counter for the boot,
- * plus a ring of the most recent MAX_ALERT_HISTORY records (s_alert_head
- * is the next write slot). clear_alerts() empties the ring and keeps the
- * counters; deinit() and leave_opera() wipe both. */
+ * plus the most recent MAX_ALERT_HISTORY records (s_alert_log, below with
+ * the other state the REST GETs read: F197). clear_alerts() empties the
+ * history and keeps the counters; deinit() and leave_opera() wipe both. */
 static uint32_t           s_alerts_received = 0;
-static mesh_alert::Record s_alert_ring[MAX_ALERT_HISTORY];
-static size_t             s_alert_head  = 0;
-static size_t             s_alert_count = 0;
 
 /* REST request slot (review fix; see mesh_session.h). s_slot_state is the
  * only field both tasks race on, and it moves by __atomic builtins; the
@@ -271,6 +268,35 @@ struct StatusViewLock {
 };
 #endif
 static loop_snapshot::Value<StatusView, StatusViewLock> s_status_view;
+
+/* The alert history GET /api/mesh/alerts reads (F197; mesh_session.h
+ * TAMPER ALERTS). A loop_snapshot::Log the main loop appends to on its
+ * receive path and clears (clear_alerts(), reset_alerts()), each change
+ * under the log's own lock (the same two kinds as the view's, a separate
+ * instance), and read_alerts() copies whole on any task. The Log copies in
+ * storage order, which once it has wrapped starts mid-history, so each
+ * record carries its place in the order the main loop stored it (`seq`,
+ * consecutive within one read) and read_alerts() puts the newest first. */
+struct AlertEntry {
+  uint32_t           seq;   /* s_alert_seq when it was stored */
+  mesh_alert::Record rec;
+};
+#ifdef CSI_TEST_HOST_BUILD
+struct AlertLogLock {
+  std::mutex m;
+  void lock()   { m.lock(); }
+  void unlock() { m.unlock(); }
+};
+#else
+static portMUX_TYPE s_alert_log_mux = portMUX_INITIALIZER_UNLOCKED;
+struct AlertLogLock {
+  void lock()   { portENTER_CRITICAL(&s_alert_log_mux); }
+  void unlock() { portEXIT_CRITICAL(&s_alert_log_mux); }
+};
+#endif
+static uint32_t   s_alert_seq = 0;   /* main loop only: records stored this boot */
+static AlertEntry s_alert_store[MAX_ALERT_HISTORY];
+static loop_snapshot::Log<AlertEntry, MAX_ALERT_HISTORY, AlertLogLock> s_alert_log;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * INTERNAL HELPERS
@@ -601,9 +627,7 @@ static void end_complete_copies_unless_wanted() {
 
 static void reset_alerts() {
   s_alerts_received = 0;
-  memset(s_alert_ring, 0, sizeof(s_alert_ring));
-  s_alert_head  = 0;
-  s_alert_count = 0;
+  s_alert_log.clear();   /* F197: under the log's lock; zeroes the records */
 }
 
 /* End any rotation in flight, without committing it. */
@@ -852,14 +876,18 @@ static void dispatch_verified(TrustedPeer&               peer,
       }
       peer.alerts_received++;
       s_alerts_received++;
-      mesh_alert::Record& r = s_alert_ring[s_alert_head];
-      r.timestamp_ms = s_last_process_ms;
-      memcpy(r.sender_fp, peer.sender_fp, sizeof(r.sender_fp));
-      r.kind        = kind;
-      r.severity    = severity;
-      r.witness_seq = witness_seq;
-      s_alert_head = (s_alert_head + 1) % MAX_ALERT_HISTORY;
-      if (s_alert_count < MAX_ALERT_HISTORY) ++s_alert_count;
+      /* F197: built whole, then appended under the log's lock (the oldest
+       * overwritten once MAX_ALERT_HISTORY are held), so a GET reads it
+       * whole or not at all. */
+      AlertEntry e;
+      memset(&e, 0, sizeof(e));
+      e.seq              = ++s_alert_seq;
+      e.rec.timestamp_ms = s_last_process_ms;
+      memcpy(e.rec.sender_fp, peer.sender_fp, sizeof(e.rec.sender_fp));
+      e.rec.kind        = kind;
+      e.rec.severity    = severity;
+      e.rec.witness_seq = witness_seq;
+      (void)s_alert_log.append(e);   /* attached by init(); false only before it */
       if (s_tamper_alert_cb) {
         s_tamper_alert_cb(peer.sender_fp, kind, severity, witness_seq);
       }
@@ -1147,6 +1175,10 @@ bool init(const uint8_t device_pubkey [mesh_crypto::PUBKEY_LEN],
   memcpy(s_device_pub,  device_pubkey,  mesh_crypto::PUBKEY_LEN);
   memcpy(s_device_priv, device_privkey, mesh_crypto::PRIVKEY_LEN);
   mesh_pairing::context_init(s_ctx);
+  /* F197: where the alert history lives, before any frame can store one
+   * (process() runs nothing before init()). Once per boot: deinit() clears
+   * the log and keeps its storage. */
+  if (s_alert_log.storage() == nullptr) s_alert_log.attach(s_alert_store);
   mesh_transport::set_recv_callback(&on_transport_recv);
   mesh_transport::set_unknown_sender_callback(&on_transport_unknown);
   s_initialized = true;
@@ -1968,22 +2000,32 @@ void set_tamper_alert_handler(tamper_alert_received_fn fn) {
 
 uint32_t alerts_received() { return s_alerts_received; }
 
-size_t get_alerts(mesh_alert::Record* out, size_t cap) {
-  if (out == nullptr) return 0;
-  size_t n = 0;
-  /* Newest first: walk back from the slot before the write head. */
-  for (size_t k = 0; k < s_alert_count && n < cap; ++k) {
-    const size_t idx = (s_alert_head + MAX_ALERT_HISTORY - 1 - k) % MAX_ALERT_HISTORY;
-    out[n++] = s_alert_ring[idx];
+size_t read_alerts(mesh_alert::Record* out, size_t cap) {
+  if (out == nullptr || cap == 0) return 0;
+  /* F197: one copy of the whole history, every record whole and all from
+   * one moment (loop_snapshot.h Log::read), in storage order... */
+  AlertEntry held[MAX_ALERT_HISTORY];
+  const size_t n = s_alert_log.read(held, MAX_ALERT_HISTORY);
+  /* ...then newest first, by the order the main loop stored them. The seqs
+   * of one read are consecutive, so the wrap-safe difference orders them
+   * across a uint32_t wrap too. At most MAX_ALERT_HISTORY records. */
+  for (size_t i = 1; i < n; ++i) {
+    const AlertEntry e = held[i];
+    size_t j = i;
+    while (j > 0 && (int32_t)(e.seq - held[j - 1].seq) > 0) {
+      held[j] = held[j - 1];
+      --j;
+    }
+    held[j] = e;
   }
-  return n;
+  const size_t m = n < cap ? n : cap;   /* the newest `cap` of them */
+  for (size_t k = 0; k < m; ++k) out[k] = held[k].rec;
+  return m;
 }
 
 void clear_alerts() {
   /* History only — the lifetime counters keep counting (WAP parity). */
-  memset(s_alert_ring, 0, sizeof(s_alert_ring));
-  s_alert_head  = 0;
-  s_alert_count = 0;
+  s_alert_log.clear();
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

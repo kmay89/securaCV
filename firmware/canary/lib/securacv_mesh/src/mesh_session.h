@@ -59,8 +59,9 @@
  *   • Every mutator belongs to that same task. Another task (the REST
  *     handlers on the httpd task) reaches the F10 mutators only through
  *     the request slot near the end of this header, which process()
- *     drains, and reads the status only through the view the main loop
- *     publishes (STATUS VIEW, the last section; F161).
+ *     drains, reads the status only through the view the main loop
+ *     publishes (STATUS VIEW, the last section; F161), and reads the
+ *     alert history only through read_alerts() (TAMPER ALERTS; F197).
  */
 
 #ifndef SECURACV_MESH_SESSION_H
@@ -797,10 +798,25 @@ void set_peer_left_handler(peer_left_fn fn);
  * (oldest overwritten), then fires the tamper-alert handler. A malformed
  * payload is dropped silently and counts nothing.
  *
- * get_alerts() copies the ring newest-first. clear_alerts() empties the
- * history only; the per-peer and opera-wide counters keep counting for
- * the boot (canary-wap parity: its DELETE clears history, not
- * g_alerts_received). Nothing here is persisted — per boot, by design.
+ * clear_alerts() empties the history only; the per-peer and opera-wide
+ * counters keep counting for the boot (canary-wap parity: its DELETE
+ * clears history, not g_alerts_received). Nothing here is persisted — per
+ * boot, by design.
+ *
+ * read_alerts() is GET /api/mesh/alerts' read, on the httpd task (F197):
+ * the history is a loop_snapshot::Log (the header the status view and
+ * canary-wap's alerts route use, F110/F161) that the main loop's receive
+ * path appends to and clear_alerts() / deinit() / leave_opera() clear,
+ * each change under the log's lock, so a read copies every record whole
+ * and all from one moment, never a record half overwritten by a newer
+ * alert and never a body straddling a clear, and it never waits for the
+ * main loop. It answers at most `cap` records, newest first (the newest
+ * `cap` when more are held). Until F197 the route copied the ring in
+ * place (get_alerts()) while the main loop wrote it.
+ *
+ *   read_alerts()  any task.
+ *   clear_alerts() main-loop task only (the REST DELETE goes through the
+ *                  request slot, CLEAR_ALERTS).
  * ────────────────────────────────────────────────────────────────────────── */
 
 constexpr size_t MAX_ALERT_HISTORY = 16;
@@ -818,7 +834,7 @@ typedef void (*tamper_alert_received_fn)(
 
 void     set_tamper_alert_handler(tamper_alert_received_fn fn);
 uint32_t alerts_received();
-size_t   get_alerts(mesh_alert::Record* out, size_t cap);
+size_t   read_alerts(mesh_alert::Record* out, size_t cap);
 void     clear_alerts();
 
 /* ──────────────────────────────────────────────────────────────────────────

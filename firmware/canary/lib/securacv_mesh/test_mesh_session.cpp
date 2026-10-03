@@ -1342,7 +1342,7 @@ void test_tamper_alert_roundtrip() {
 
   /* History ring holds the record. */
   mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY];
-  assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 1);
+  assert(mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 1);
   assert(recs[0].timestamp_ms == 4242);
   assert(std::memcmp(recs[0].sender_fp, tx_fp, sizeof(tx_fp)) == 0);
   assert(recs[0].kind == mesh_alert::Kind::CAMERA_TAMPER);
@@ -1381,16 +1381,16 @@ void test_tamper_alert_roundtrip() {
   assert(mesh_session::alerts_received() == 2);
   assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
   assert(links[0].alerts_received == 2);
-  assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 2);
+  assert(mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 2);
   assert(recs[0].kind == mesh_alert::Kind::TEMP_DRIFT && recs[0].timestamp_ms == 5000);
   assert(recs[1].kind == mesh_alert::Kind::CAMERA_TAMPER);
   /* cap is honored. */
-  assert(mesh_session::get_alerts(recs, 1) == 1);
+  assert(mesh_session::read_alerts(recs, 1) == 1);
   assert(recs[0].kind == mesh_alert::Kind::TEMP_DRIFT);
 
   /* DELETE semantics: history empties, the lifetime counters stay. */
   mesh_session::clear_alerts();
-  assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 0);
+  assert(mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 0);
   assert(mesh_session::alerts_received() == 2);
   assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
   assert(links[0].alerts_received == 2);
@@ -1398,7 +1398,7 @@ void test_tamper_alert_roundtrip() {
   /* deinit wipes counters and history. */
   mesh_session::deinit();
   assert(mesh_session::alerts_received() == 0);
-  assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 0);
+  assert(mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 0);
   std::printf("PASS test_tamper_alert_roundtrip\n");
 }
 
@@ -1425,12 +1425,124 @@ void test_alert_ring_wraps_newest_first() {
   }
   assert(mesh_session::alerts_received() == total);
   mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY + 4];
-  const size_t n = mesh_session::get_alerts(recs, sizeof(recs) / sizeof(recs[0]));
+  const size_t n = mesh_session::read_alerts(recs, sizeof(recs) / sizeof(recs[0]));
   assert(n == mesh_session::MAX_ALERT_HISTORY);
   for (size_t k = 0; k < n; ++k) {
     assert(recs[k].witness_seq == (uint32_t)(1000 + total - k));
   }
+  /* F197: the history is a loop_snapshot::Log, which copies in storage
+   * order, and after the wrap storage starts mid-history (slots 0..2 hold
+   * the three newest). The route still answers newest first, and a cap
+   * below what is held keeps the newest ones, not the first slots. */
+  mesh_alert::Record few[5];
+  assert(mesh_session::read_alerts(few, 1) == 1);
+  assert(few[0].witness_seq == (uint32_t)(1000 + total));
+  assert(mesh_session::read_alerts(few, 5) == 5);
+  for (size_t k = 0; k < 5; ++k) {
+    assert(few[k].witness_seq == (uint32_t)(1000 + total - k));
+  }
+  assert(mesh_session::read_alerts(few, 0) == 0);
+  assert(mesh_session::read_alerts(nullptr, 5) == 0);
+  /* A clear, then two more: only those two, newest first. */
+  mesh_session::clear_alerts();
+  for (size_t i = total + 1; i <= total + 2; ++i) {
+    const size_t flen = build_alert_frame(tx_pub, tx_priv, secret, i,
+                                          mesh_alert::Kind::TEMP_DRIFT, 2,
+                                          (uint32_t)(1000 + i), frame, sizeof(frame));
+    inject_from(mac, frame, flen);
+  }
+  assert(mesh_session::read_alerts(recs, sizeof(recs) / sizeof(recs[0])) == 2);
+  assert(recs[0].witness_seq == (uint32_t)(1000 + total + 2));
+  assert(recs[1].witness_seq == (uint32_t)(1000 + total + 1));
+  /* Leaving the opera wipes the history it holds and the counter. */
+  (void)mesh_session::leave_opera(100);
+  assert(mesh_session::read_alerts(recs, sizeof(recs) / sizeof(recs[0])) == 0);
+  assert(mesh_session::alerts_received() == 0);
   std::printf("PASS test_alert_ring_wraps_newest_first\n");
+}
+
+/* F197: GET /api/mesh/alerts reads the history on the httpd task while the
+ * main loop's receive path stores alerts and a DELETE (clear_alerts(), run
+ * by the drain) empties it. Until F197 the route copied the ring in place,
+ * so a body could hold a record half overwritten by a newer alert, run out
+ * of order across a store, or straddle a clear. Every read must be whole
+ * records, newest first and all from one moment: each record's fields agree
+ * with its witness_seq (its kind, severity, sender and timestamp are made
+ * from it), the numbers run down one at a time, and no body mixes the two
+ * sides of a clear (each clear moves the numbers on by 1000, so a straddle
+ * shows a gap). */
+static mesh_alert::Kind kind_for(uint32_t w) {
+  static const mesh_alert::Kind kinds[3] = {mesh_alert::Kind::ENCLOSURE_TAMPER,
+                                            mesh_alert::Kind::TEMP_DRIFT,
+                                            mesh_alert::Kind::CAMERA_TAMPER};
+  return kinds[w % 3];
+}
+
+void test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x5A + i);
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, rx_pub, rx_priv);
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN], tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+  uint8_t tx_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(tx_pub, tx_fp);
+  const uint8_t mac[6] = {0x02, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5};
+  assert(mesh_session::bind_peer_mac(tx_fp, mac));
+
+  std::atomic<bool> done(false);
+  std::atomic<long> reads(0), torn(0), full(0);
+  std::thread reader([&] {
+    mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY + 4];
+    while (!done.load(std::memory_order_acquire)) {
+      const size_t n = mesh_session::read_alerts(recs, sizeof(recs) / sizeof(recs[0]));
+      bool ok = n <= mesh_session::MAX_ALERT_HISTORY;
+      for (size_t k = 0; ok && k < n; ++k) {
+        const uint32_t w = recs[k].witness_seq;
+        ok = std::memcmp(recs[k].sender_fp, tx_fp, sizeof(tx_fp)) == 0 &&
+             recs[k].kind == kind_for(w) && recs[k].severity == (uint8_t)(w % 8) &&
+             recs[k].timestamp_ms == w &&
+             (k == 0 || w + 1 == recs[k - 1].witness_seq);
+      }
+      if (!ok) torn.fetch_add(1);
+      if (n == mesh_session::MAX_ALERT_HISTORY) full.fetch_add(1);
+      reads.fetch_add(1);
+    }
+  });
+  const int steps = 1200;
+  uint32_t w = 0;
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  for (int step = 1; step <= steps; ++step) {
+    if (step % 40 == 0) {
+      mesh_session::clear_alerts();   /* what the drain runs for a DELETE */
+      w += 1000;
+    }
+    ++w;
+    mesh_session::process(w);         /* the record is stamped with this clock */
+    const size_t flen = build_alert_frame(tx_pub, tx_priv, secret, (uint64_t)step,
+                                          kind_for(w), (uint8_t)(w % 8), w,
+                                          frame, sizeof(frame));
+    inject_from(mac, frame, flen);
+    if (g_outs.size() > 64) g_outs.clear();
+  }
+  done.store(true, std::memory_order_release);
+  reader.join();
+  assert(mesh_session::alerts_received() == (uint32_t)steps);
+  assert(reads.load() > 0 && full.load() > 0);
+  /* deinit() wipes the history it holds (the next session starts empty). */
+  mesh_alert::Record after[mesh_session::MAX_ALERT_HISTORY];
+  assert(mesh_session::read_alerts(after, mesh_session::MAX_ALERT_HISTORY) > 0);
+  mesh_session::deinit();
+  assert(mesh_session::read_alerts(after, mesh_session::MAX_ALERT_HISTORY) == 0);
+  if (torn.load() != 0) {
+    std::printf("FAIL: %ld of %ld alert reads were torn, out of order or straddled a clear\n",
+                torn.load(), reads.load());
+    std::fflush(stdout);
+  }
+  assert(torn.load() == 0);
+  std::printf("PASS test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears "
+              "(%ld reads)\n", reads.load());
 }
 
 void test_send_tamper_alert() {
@@ -7485,6 +7597,7 @@ int main() {
   /* F10 — enable, leave, the alerts channel; F11 attribution. */
   test_tamper_alert_roundtrip();
   test_alert_ring_wraps_newest_first();
+  test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears();
   test_send_tamper_alert();
   test_enable_disable();
   /* v0.4 — the registry's outer frame (spec §4.5; crypto review pending). */

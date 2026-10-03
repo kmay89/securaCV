@@ -5708,10 +5708,14 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
+  // F197: the history as the main loop last left it, copied whole under the
+  // log's lock (every record whole, all from one moment, newest first),
+  // never the ring read in place while the receive path or a DELETE writes
+  // it. It does not wait for the main loop.
   static_assert(mesh_session::MAX_ALERT_HISTORY <= mesh_api::MAX_ALERTS_JSON,
                 "ALERTS_JSON_CAP is pinned for MAX_ALERTS_JSON rows");
   mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY];
-  const size_t n = mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY);
+  const size_t n = mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY);
 
   // Worst-case body (host-test pinned, mesh_api.h) — heap, not the httpd
   // task's stack.
