@@ -16,8 +16,9 @@
 // (F155, an open decision), so there they are printed, not held.
 //
 // Pure functions over the source texts, so onboard.test.js holds them on the
-// real tree and on edited copies; onboard_probe.mjs and boot_probe.mjs call
-// turnedGlasses() with the files read from disk (readTurnedSources).
+// real tree and on edited copies; onboard_probe.mjs calls turnedGlasses() and
+// boot_probe.mjs bootTurns() (those turns and the counterclockwise ones, A56)
+// with the files read from disk (readTurnedSources).
 
 /**
  * The board build.sh compiles a display flavor against: the boards/<id> of
@@ -70,6 +71,32 @@ export function turnedGlasses({ buildSh, glassSettings, orientation, pinsH }) {
     turn("dash", portrait, "portrait", false),
     turn("nightlight", landscape, "landscape", true),
   ];
+}
+
+/**
+ * The side turns boot_probe.mjs boots (A56): each turned glass above, and
+ * the same flavor turned the other way round, counterclockwise:
+ * glass_settings.h's ROT_PORTRAIT_INV on the dash, io/orientation.h's
+ * Orient::R270 on the nightlight. Both turns give the glass the same shape,
+ * so only the turn the HAL announces with it tells them apart; booting both
+ * is what holds a HAL that says 1 for every side turn (the case turned the
+ * wrong way round, the bug A56 fixed). The walk in onboard_probe.mjs keeps
+ * turnedGlasses(): the layout is the same either way round. Takes the same
+ * sources; throws naming the first fact it cannot read.
+ */
+export function bootTurns(src) {
+  const cw = turnedGlasses(src);
+  const portraitInv = Number(/\bROT_PORTRAIT_INV\s*=\s*(\d+)/.exec(src.glassSettings)?.[1]);
+  if (!(portraitInv >= 0)) throw new Error("glass_settings.h names no ROT_PORTRAIT_INV");
+  const landscapeInv = Number(/\bR270\s*=\s*(\d+)/.exec(src.orientation)?.[1]);
+  if (!(landscapeInv >= 0)) throw new Error("io/orientation.h names no Orient::R270");
+  const ccw = { dash: portraitInv, nightlight: landscapeInv };
+  const other = cw.map((t) => {
+    const rotation = ccw[t.flavor];
+    const glass = rotation % 2 ? { w: t.panel.h, h: t.panel.w } : { ...t.panel };
+    return { ...t, rotation, name: `${t.name}-ccw`, glass };
+  });
+  return [...cw, ...other];
 }
 
 /** Read the sources turnedGlasses() takes, from a checkout at `root`. */

@@ -498,6 +498,15 @@ test("A56: the turn travels from the emulator's HAL to the scene", async () => {
     "the nightlight's panel turn, else LVGL's software rotation");
   assert.match(hal, /const int turn = lvgl_turn\(\);\n\s*if \(turn != g_turn\) glass_turn\(turn\);/, "g_turn is what LVGL's driver says, flush by flush");
   assert.match(hal, /return \(int\)d->driver->rotated;/);
+  // The nightlight's turn is the one display_set_rotation() was handed, kept
+  // whole (R270 stays 3) before the shape is announced: a store that folded
+  // 3 onto 1, or none at all, would still give the glass its turned shape.
+  assert.match(hal, /void panel_turn\(int rot\) \{\n\s*g_panel_rot = rot & 3;\n[\s\S]*?\n\s*js_display_ready\(g_view_w, g_view_h, kRoundMask, glass_quarter_turns\(\)\);\n\}/,
+    "panel_turn stores the whole turn, then announces it");
+  assert.strictEqual((hal.match(/\bg_panel_rot\s*=(?!=)/g) || []).length, 2,
+    "g_panel_rot is set where it is declared and in panel_turn, nowhere else");
+  assert.match(hal, /void display_set_rotation\(uint8_t rot\) \{\n\s*if \(!g_fb\) return;[^\n]*\n\s*panel_turn\(rot\);\n\}/,
+    "the board's rotation call reaches panel_turn with the turn it was handed");
   // The shell passes it on, and remembers it; null from a dist that does not say.
   const { CanaryEmulator } = await import("../emulator/web/emu-shell.js");
   let mod = null;

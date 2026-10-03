@@ -9,15 +9,18 @@
 // CI before this loop existed — the probe only knew the watch.
 //
 // Then boots each turned glass (F206) whose flavor it booted: the dash with a
-// saved portrait rotation and the nightlight with a saved landscape one
-// (?rotation=, staged before power-on; turned_glass.mjs reads the turns and
-// panels from the sources). There the same checks hold, and the glass is the
+// saved portrait rotation and the nightlight with a saved landscape one, each
+// turned clockwise and then counterclockwise (?rotation=, staged before
+// power-on; turned_glass.mjs's bootTurns() reads the turns and panels from
+// the sources). There the same checks hold, and the glass is the
 // turned size, every frame the firmware drew landed on it from the first
 // (framesOnGlass), and the face's bird is on stage (a turned face at 10:00
 // always shows it; birdOnStage) and sits on that glass and clear of every
 // line (birdPerch). On a native boot the bird is held where it is on stage
 // (the landscape dash's face hides it). A turned glass's last shape must
-// name the saved rotation as its turn, once the dist announces one (A56).
+// name the saved rotation as its turn, once the dist announces one (A56):
+// both side turns give the same glass, so only that check tells a HAL that
+// turns the case the right way round from one that says 1 for both.
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
@@ -26,7 +29,7 @@ import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { birdPerch, birdOnStage } from "./bird_perch.mjs";
 import { framesOnGlass } from "./onboard_glass.mjs";
-import { turnedGlasses, readTurnedSources } from "./turned_glass.mjs";
+import { bootTurns, readTurnedSources } from "./turned_glass.mjs";
 import { lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
@@ -59,8 +62,9 @@ if (ONLY && !FLAVORS.includes(ONLY)) {
   process.exit(1);
 }
 const RUN = ONLY ? [ONLY] : FLAVORS;
-// F206: the turned glasses, for the flavors this run boots.
-const TURNED = turnedGlasses(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));
+// F206: the turned glasses, for the flavors this run boots, each turned both
+// ways round (A56: the same glass, told apart only by the announced turn).
+const TURNED = bootTurns(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));
 
 // Allowlist, not sanitization: the probe serves exactly the files the
 // harness needs, enumerated up front. Request paths are only ever used

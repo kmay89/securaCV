@@ -968,7 +968,12 @@ fails on byte drift.
   bench is the C3-LCD-1.47's as `devices/registry.json` states it (USB-C
   the only power, so a pull drops the rail at once; no lights listed; the
   backlight row names the 50% cap the board's HAL enforces and the twin's
-  does not). Each fact in a bench block may cite its file (`sources`), and
+  does not). A bench block that names no `power.battery` is a board with no
+  battery path (the Nightlight, the Nightstand stick): its battery chip is
+  inert and reads "none on this board", `BenchPower` refuses to fit a cell
+  there, and the troubleshooter leaves out every step that stages one
+  (`benchFixesFor`), so the probe clicks the chip and still sees the rail
+  drop. Each fact in a bench block may cite its file (`sources`), and
   `tests/bench.test.js` holds every cited file to its quoted words.
 - `tests/wap.test.js` + `tests/wap_probe.mjs` — the WAP bench (§4i): the
   honesty test pins every SSID, route, MQTT topic, HA entity, boot line and
@@ -1001,10 +1006,14 @@ fails on byte drift.
   firmware reports once a frame has landed; and the QR card and halo stand where
   `onboard_layout.h`'s stack seats them, the halo's stroke inked where its
   circle says (`tests/onboard_glass.mjs`), with the nightlight's card corners
-  held inside the stroke. `tests/boot_probe.mjs` boots each turned glass too
-  (its size, every frame on it, the face's bird on stage and clear of every
-  line, and the turn the emulator's HAL announces with the glass's shape,
-  once the dist announces one: the saved rotation, A56). That announced turn
+  held inside the stroke. `tests/boot_probe.mjs` boots each turned glass too,
+  turned clockwise and again counterclockwise (`bootTurns`: the dash at
+  `ROT_PORTRAIT` and `ROT_PORTRAIT_INV`, the nightlight at `Orient::R90` and
+  `R270`), and holds its size, every frame on it, the face's bird on stage
+  and clear of every line, and the turn the emulator's HAL announces with the
+  glass's shape, once the dist announces one: the saved rotation, 1 or 3
+  (A56). Both turns give the same glass, so that check is what tells them
+  apart. That announced turn
   is what the Lab's 3D case turns by (`assets/scene3d.js` `glassTurn`): the
   canvas alone cannot tell a glass turned clockwise from one turned
   counterclockwise, and `tests/render_probe.mjs` draws the real Dash turned

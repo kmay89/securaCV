@@ -875,6 +875,24 @@ test("turned glasses (F204, F206): turned_glass.mjs reads each turned flavor's p
   assert.throws(() => edit({ orientation: src.orientation.replace(/\bR90\s*=\s*\d+/, "RIGHT = 1") }), /Orient::R90/);
   assert.throws(() => edit({ glassSettings: "" }), /ROT_PORTRAIT/);
   assert.throws(() => edit({ pinsH: () => "" }), /LCD_WIDTH/);
+  // boot_probe boots each of them the other way round too (A56): the same
+  // glass, so only the announced turn tells 1 from 3 — read from the sources.
+  assert.deepStrictEqual(T.bootTurns(src), [
+    ...T.turnedGlasses(src),
+    { flavor: "dash", rotation: 3, name: "portrait-ccw", panel: { w: 800, h: 480 }, glass: { w: 480, h: 800 }, corners: false },
+    { flavor: "nightlight", rotation: 3, name: "landscape-ccw", panel: { w: 180, h: 320 }, glass: { w: 320, h: 180 }, corners: true },
+  ]);
+  const boots = (patch) => T.bootTurns({ ...src, ...patch });
+  assert.strictEqual(boots({ glassSettings: src.glassSettings.replace(/\bROT_PORTRAIT_INV\s*=\s*\d+/, "ROT_PORTRAIT_INV = 2") })[2].rotation, 2);
+  assert.deepStrictEqual(boots({ orientation: src.orientation.replace(/\bR270\s*=\s*\d+/, "R270 = 2") })[3].glass,
+    { w: 180, h: 320 }, "an even turn keeps the panel's sides");
+  assert.throws(() => boots({ glassSettings: src.glassSettings.replace(/\bROT_PORTRAIT_INV\s*=\s*\d+/, "ROT_CCW = 3") }), /ROT_PORTRAIT_INV/);
+  assert.throws(() => boots({ orientation: src.orientation.replace(/\bR270\s*=\s*\d+/, "LEFT = 3") }), /Orient::R270/);
+  const sides = T.bootTurns(src).filter((t) => t.rotation % 2);
+  for (const flavor of ["dash", "nightlight"]) {
+    assert.deepStrictEqual(sides.filter((t) => t.flavor === flavor).map((t) => t.rotation), [1, 3],
+      `${flavor}: booted turned both ways round, so a HAL that says 1 for both fails one of them`);
+  }
 });
 
 test("splash coverage (F206): the turned walk must see the bird and every line kHello types, whole", async () => {
@@ -1005,7 +1023,8 @@ test("splash and turned boots (F206): the harness slows the clock from power-on;
   // boot_probe boots each turned glass whose flavor it boots, and holds the
   // turned size, every frame on that glass, and the face's bird.
   const boot = read(join(__dirname, "boot_probe.mjs"));
-  assert.ok(boot.includes("const TURNED = turnedGlasses(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));"));
+  assert.ok(boot.includes("const TURNED = bootTurns(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));"),
+    "boot_probe boots each turned glass both ways round (A56)");
   assert.ok(boot.includes("for (const t of TURNED) { await bootOnce(t.flavor, t); booted.push(`${t.flavor}@${t.name}`); }"));
   const once = /async function bootOnce\(flavor, turn = null\) \{([\s\S]*?)\n\}\n/.exec(boot)?.[1] || "";
   assert.ok(once.includes("const turnArg = turn ? `&rotation=${turn.rotation}` : \"\";"));
@@ -1019,6 +1038,12 @@ test("splash and turned boots (F206): the harness slows the clock from power-on;
   assert.ok(turnedBlock.includes("const stage = birdOnStage(st, `the ${turn.name} ${flavor} face 6.5 s on`);") &&
     turnedBlock.includes("if (stage) { fail(name, stage); return; }"),
   "a turned boot fails when its face shows no bird");
+  // ...and when the glass announces a turn other than the saved rotation
+  // (A56), the check that tells the clockwise boot from the counterclockwise.
+  assert.ok(turnedBlock.includes("const told = st.shapes.at(-1)?.turn;") &&
+    turnedBlock.includes("if (told !== null && told !== undefined && told !== turn.rotation) {") &&
+    turnedBlock.includes("fail(name, `booted with saved rotation ${turn.rotation}, the glass announced turn ${told} (A56)`);"),
+  "a turned boot fails when the glass announces another turn than the saved one");
 });
 
 test("splash coverage (F206): splashInk names the lines never seen drawn, and a whole line drawn nowhere", async () => {
