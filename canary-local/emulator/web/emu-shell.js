@@ -177,7 +177,7 @@ export class CanaryEmulator {
   }
 
   async start({ provisioned = true, firstMeeting = false, seed = null,
-                nvsImage = null, rotation = null } = {}) {
+                nvsImage = null, rotation = null, timeScale = null } = {}) {
     const shell = this;
     this.module = await this.factory({
       onSerial: (t) => shell.opts.onSerial?.(t),
@@ -309,6 +309,11 @@ export class CanaryEmulator {
       if (!this.c.presetRotation) throw new Error("this emulator dist has no emu_preset_rotation (rebuild it)");
       if (this.c.presetRotation(rotation) !== 1) throw new Error(`the firmware refused rotation ${rotation} (0..3)`);
     }
+    // The emulated clock's speed from power-on (F206): set before the
+    // firmware's first line, so the splash itself runs on it — a probe that
+    // slowed the clock once the page was ready would find the splash half
+    // played. The same knob as setTimeScale(); every dist has it.
+    if (timeScale !== null && timeScale !== undefined) this.c.timeScale(timeScale);
 
     this._wireInput();
     this.c.power();

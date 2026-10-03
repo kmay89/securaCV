@@ -85,6 +85,7 @@ import {
   linesOnGlass, linesCut, haloOf, cardInHalo, framesOnGlass, cardAtLayout, haloAtLayout,
   qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked,
 } from "./onboard_glass.mjs";
+import { turnedGlasses, readTurnedSources, helloLines, splashCoverage } from "./turned_glass.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -143,34 +144,24 @@ const FLAVORS = (await readdir(DIST))
   .sort();
 const RUN = ONLY ? FLAVORS.filter((f) => f === ONLY) : FLAVORS;
 if (!RUN.length) { console.error(`ONBOARD_PROBE_FAIL: no dist bundle for ${ONLY || "any flavor"}`); process.exit(1); }
-// F184: the turned glass each flavor's firmware wears from a saved rotation.
-// The dash glass (main.cpp: lvgl_port_set_rotation before the splash) turned
-// portrait runs the walk on its panel's sides swapped; its QR card's corners
-// reach past the ring there as on the native glass (F155, open), so they are
-// printed, not held. The panel is the one build.sh wires for the flavor (its
-// pin map's LCD_WIDTH x LCD_HEIGHT) and the turn glass_settings.h's
-// ROT_PORTRAIT, read from the sources, not typed here. The landscape
-// nightlight (320x180, corners inside the stroke, F157) would join this
-// table with a nightlight flavor; build.sh builds none.
-const BUILD_SH = await readFile(join(ROOT, "canary-local/emulator/build.sh"), "utf8");
-const GLASS_SETTINGS = await readFile(join(ROOT, "firmware/projects/canary-display/include/canary/glass_settings.h"), "utf8");
-async function dashPanel() {
-  const pins = /\belse\s+PINS_DIR="\$FW\/boards\/([^"]+)\/pins"\s+CFG_DIR="\$FW\/configs\/canary-display\/dash"/
-    .exec(BUILD_SH)?.[1];
-  if (!pins) throw new Error("build.sh wires no pin map for the dash flavor");
-  const h = await readFile(join(ROOT, "firmware/boards", pins, "pins/pins.h"), "utf8");
-  const w = Number(/^#define LCD_WIDTH\s+(\d+)/m.exec(h)?.[1]);
-  const ht = Number(/^#define LCD_HEIGHT\s+(\d+)/m.exec(h)?.[1]);
-  if (!(w > 0 && ht > 0)) throw new Error(`boards/${pins}/pins/pins.h names no LCD_WIDTH/LCD_HEIGHT`);
-  return { w, h: ht };
-}
-const ROT_PORTRAIT = Number(/\bROT_PORTRAIT\s*=\s*(\d+)/.exec(GLASS_SETTINGS)?.[1]);
-if (!(ROT_PORTRAIT >= 0)) { console.error("ONBOARD_PROBE_FAIL: glass_settings.h names no ROT_PORTRAIT"); process.exit(1); }
-const DASH = await dashPanel();
-const TURNED = [
-  // A quarter turn swaps the panel's sides: 480x800 for the dash's 800x480.
-  { flavor: "dash", rotation: ROT_PORTRAIT, name: "portrait", glass: { w: DASH.h, h: DASH.w }, corners: false },
-].filter((t) => RUN.includes(t.flavor));
+// F184, F204: the turned glass each flavor's firmware wears from a saved
+// rotation, read from the sources by turned_glass.mjs (never typed here): the
+// dash turned portrait in software (480x800, glass_settings.h's ROT_PORTRAIT)
+// and the nightlight stood on its edge in hardware (320x180, io/orientation.h's
+// Orient::R90), each on the panel build.sh's pin map names for the flavor. The
+// dash's QR card corners reach past the ring there as on its native glass
+// (F155, open), so they are printed, not held; the landscape nightlight's
+// layout keeps them inside the stroke (F157), so there they are held. A
+// flavor with no committed dist bundle is not walked (the dist is what a bare
+// checkout serves; the drift check names a missing bundle).
+const TURNED = turnedGlasses(await readTurnedSources(ROOT, readFile)).filter((t) => RUN.includes(t.flavor));
+// F206: the first meeting's lines the splash types, from story_scripts.h —
+// the turned walk reads the splash from power-on and must see each one whole.
+const HELLO_LINES = helloLines(await readFile(join(ROOT, "firmware/common/story/story_scripts.h"), "utf8"));
+// F206: the clock the turned walk's splash runs on, from power-on (the
+// harness's ?timescale=): half speed, so each read of the bird's hops and the
+// typed lines lands at least twice as often in emulated time.
+const SPLASH_SCALE = 0.5;
 // onboard_layout.h's card corner radius, the one cardInHalo measures with.
 const CARD_RADIUS = Number(/constexpr int kCardRadius = (\d+);/.exec(
   await readFile(join(ROOT, "firmware/projects/canary-display/include/canary/ui/onboard_layout.h"), "utf8"))?.[1]);
@@ -494,11 +485,44 @@ async function walkHarness(flavor, turn = null) {
   };
 
   try {
-    const turnArg = turn ? `&rotation=${turn.rotation}` : "";
+    const turnArg = turn ? `&rotation=${turn.rotation}&timescale=${SPLASH_SCALE}` : "";
     await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&meet=1&flavor=${flavor}${turnArg}`);
     await page.waitForFunction(() => window.__ready === true || window.__harnessError, null, { timeout: 90000 });
     const harnessError = await E(() => window.__harnessError || null);
     check(!harnessError, `the harness did not boot: ${harnessError}`);
+
+    // F206: on a turned walk, the first meeting's splash, read from power-on
+    // on the slowed clock until the onboarding takes the glass (the
+    // first-boot line): every read on the turned glass, every line on it and
+    // none cut (linesOnGlass, linesCut), and the bird, where it is on stage,
+    // on the glass and clear of every line (birdPerch). The run must have
+    // seen the bird and every line kHello types whole, so a walk that missed
+    // the splash fails instead of passing on nothing.
+    let splashRead = null;
+    if (turn) {
+      const reads = [];
+      const t0 = Date.now();
+      // From the firmware's first frame: before it, the canvas is the page's,
+      // not yet the glass the firmware announced (framesOnGlass holds that
+      // first frame to the turned glass).
+      await until(() => E(() => window.__state.flushes > 0), "the firmware's first frame", 60000, 20);
+      while (!(await serial()).includes('First boot - onboarding AP "SecuraCV-')) {
+        check(Date.now() - t0 < 240000, `the splash never handed the glass to the onboarding (${reads.length} reads)`);
+        const st = await E(birdState);
+        check(st.glass.w === turn.glass.w && st.glass.h === turn.glass.h,
+          `the splash: the ${flavor} glass is ${st.glass.w}x${st.glass.h}, not the ${turn.name} ` +
+          `${turn.glass.w}x${turn.glass.h} it boots turned to (F206)`);
+        const bad = linesOnGlass(st.labels, st.glass) || linesCut(st.labels) || birdPerch(st);
+        check(bad === null, `the splash: ${bad} (F206)`);
+        reads.push(st);
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      splashRead = splashCoverage(reads, HELLO_LINES);
+      check(splashRead.bird > 0 && splashRead.missing.length === 0,
+        `the splash was not read whole: ${splashRead.reads} reads, the bird on stage in ${splashRead.bird}, ` +
+        `never seen whole: ${JSON.stringify(splashRead.missing)} (F206)`);
+      await E(() => window.__emu.setTimeScale(1));
+    }
 
     // First boot: the firmware's own line, and the radio it configured.
     await until(async () => (await serial()).includes('First boot - onboarding AP "SecuraCV-'), "the first-boot serial line");
@@ -791,9 +815,10 @@ async function walkHarness(flavor, turn = null) {
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${walkName}.png` });
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
     const turned = turn
-      ? `${turn.glass.w}x${turn.glass.h} glass from the first frame, the QR card and halo where the layout ` +
-        `seats them (offset ${inHalo.offset.join(",")}, sides ${inHalo.sides} px from the center, inner edge ` +
-        `${inHalo.inner}; corners reach ${inHalo.reach}, F155), `
+      ? `${turn.glass.w}x${turn.glass.h} glass from the first frame, the splash read whole (${splashRead.reads} ` +
+        `reads, the bird in ${splashRead.bird}, all ${splashRead.seen.length} lines), the QR card and halo where ` +
+        `the layout seats them (offset ${inHalo.offset.join(",")}, sides ${inHalo.sides} px from the center, inner ` +
+        `edge ${inHalo.inner}; corners reach ${inHalo.reach}${turn.corners ? ", held inside" : ", F155"}), `
       : "";
     console.log(`ONBOARD_PROBE_OK[${walkName}] ${ap.ssid}: ${turned}${framesAtEnd.frames} frames on one glass ` +
       `(${framesAtBoot.shapes.length} shape(s) announced), every line read on the glass, inked and none cut ` +

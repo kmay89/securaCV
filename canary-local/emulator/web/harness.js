@@ -78,13 +78,23 @@ document.getElementById("controls").addEventListener("click", (e) => {
   CONTROLS[b.dataset.emu](Number(b.dataset.arg));
 });
 
-// ?rotation=0..3: a saved rotation (canary::glass::Rotation) staged before
-// power-on, so the dash glass boots turned the way main.cpp brings up a unit
-// that saved it (F184: 1 is the 480x800 portrait). Only those four values.
+// ?rotation=0..3: a saved rotation staged before power-on, so the glass boots
+// turned the way main.cpp brings up a unit that saved it: the dash's
+// canary::glass::Rotation (F184: 1 is the 480x800 portrait) or the
+// nightlight's quarter turns (F204: 1 is the 320x180 landscape). Only those
+// four values.
 const ROTATIONS = { 0: 0, 1: 1, 2: 2, 3: 3 };
 const rotationParam = q.get("rotation");
 if (rotationParam !== null && !Object.hasOwn(ROTATIONS, rotationParam)) {
   throw new Error("rotation must be 0, 1, 2 or 3");
+}
+// ?timescale=<x>: the emulated clock's speed from power-on (F206), so a probe
+// can read the splash on a slowed clock from its first frame (0.5 = half
+// speed). A number above 0 and at most 64; anything else is refused.
+const timeScaleParam = q.get("timescale");
+const timeScale = timeScaleParam === null ? null : Number(timeScaleParam);
+if (timeScale !== null && !(Number.isFinite(timeScale) && timeScale > 0 && timeScale <= 64)) {
+  throw new Error("timescale must be a number above 0 and at most 64");
 }
 // A boot the shell refuses (a dist without a binding the query asks for) is
 // named on window.__harnessError, so a probe fails on the reason at once
@@ -95,6 +105,7 @@ try {
     firstMeeting: q.get("meet") === "1",
     seed: 1234,
     rotation: rotationParam === null ? null : ROTATIONS[rotationParam],
+    timeScale,
   });
 } catch (e) {
   window.__harnessError = String((e && e.message) || e);

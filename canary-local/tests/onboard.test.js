@@ -21,6 +21,13 @@
 //     the binding boots unturned                               → "saved rotation (F184)"
 //   · the turned walk falls out of the probe or the glass test
 //     out of CI                                                → "turned wiring (F184)"
+//   · a turned flavor's panel or turn typed in a probe, or read
+//     from the wrong pin map                                   → "turned glasses (F204, F206)"
+//   · the turned splash read misses the splash or half of it   → "splash coverage (F206)"
+//   · the nightlight flavor's wiring, HAL turn, preset or the
+//     emulator's flavor lists drift apart                      → "nightlight flavor (F204)"
+//   · the clock slows after the splash began, or a probe stops
+//     reading the turned splash or booting a turned glass      → "splash and turned boots (F206)"
 //   · the gates fall out of CI                                 → "CI runs"
 //
 // The browser half (the real wasm answering) is tests/onboard_probe.mjs, in
@@ -770,12 +777,13 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   "the harness logs each announced glass shape with the frame count");
   // The probe walks the turned dash and holds the new reads on it.
   const probe = read(join(__dirname, "onboard_probe.mjs"));
-  // The turned glass is derived, not typed: the dash's pin map's panel with
-  // its sides swapped, at glass_settings.h's ROT_PORTRAIT.
-  assert.ok(probe.includes('{ flavor: "dash", rotation: ROT_PORTRAIT, name: "portrait", glass: { w: DASH.h, h: DASH.w }, corners: false }'));
-  assert.ok(probe.includes("const ROT_PORTRAIT = Number(/\\bROT_PORTRAIT\\s*=\\s*(\\d+)/.exec(GLASS_SETTINGS)?.[1]);") &&
-    probe.includes("const w = Number(/^#define LCD_WIDTH\\s+(\\d+)/m.exec(h)?.[1]);"), "TURNED reads the panel and the turn from the sources");
-  assert.ok(probe.includes("const turnArg = turn ? `&rotation=${turn.rotation}` : \"\";"));
+  // The turned glass is derived, not typed: turned_glass.mjs reads each
+  // flavor's pin map and turn from the sources (held in its own test below),
+  // and the probe walks the ones whose flavor has a dist bundle.
+  assert.ok(probe.includes("const TURNED = turnedGlasses(await readTurnedSources(ROOT, readFile)).filter((t) => RUN.includes(t.flavor));"),
+    "TURNED comes from turned_glass.mjs, read from the sources");
+  assert.ok(!/\bglass: \{ w: \d+/.test(probe) && !/\brotation: \d/.test(probe), "the probe types no glass or turn of its own");
+  assert.ok(probe.includes("const turnArg = turn ? `&rotation=${turn.rotation}&timescale=${SPLASH_SCALE}` : \"\";"));
   assert.ok(probe.includes("check(cv[0] === turn.glass.w && cv[1] === turn.glass.h,"), "the turned walk checks the glass's size");
   // Every frame on one glass, on a turned walk the turned one from the first
   // frame: checked at the first-boot line and at the end of the walk.
@@ -829,6 +837,155 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   const buildSh = read(join(ROOT, "emulator/build.sh"));
   assert.ok(buildSh.includes('if [[ ! -d "$TP/lvgl" ]]; then') && /^LVGL_TAG="v8\.4\.\d+"$/m.test(buildSh),
     "build.sh reuses a checkout already at third_party/lvgl, and pins an 8.4 tag");
+});
+
+test("turned glasses (F204, F206): turned_glass.mjs reads each turned flavor's panel and turn from the sources", async () => {
+  const T = await import("./turned_glass.mjs");
+  const fs = require("node:fs/promises");
+  const src = await T.readTurnedSources(REPO, fs.readFile);
+  // The real tree: the dash turned portrait in software, the nightlight stood
+  // on its edge in hardware — each on the pin map build.sh wires for it.
+  assert.deepStrictEqual(T.turnedGlasses(src), [
+    { flavor: "dash", rotation: 1, name: "portrait", panel: { w: 800, h: 480 }, glass: { w: 480, h: 800 }, corners: false },
+    { flavor: "nightlight", rotation: 1, name: "landscape", panel: { w: 180, h: 320 }, glass: { w: 320, h: 180 }, corners: true },
+  ]);
+  assert.strictEqual(T.flavorBoard(src.buildSh, "dash"), "waveshare-esp32s3-lcd43");
+  assert.strictEqual(T.flavorBoard(src.buildSh, "nightlight"), "waveshare-esp32c3-lcd147");
+  assert.strictEqual(T.flavorBoard(src.buildSh, "watch"), "xiao-esp32s3-round");
+  assert.strictEqual(T.flavorBoard(src.buildSh, "nosuch"), null);
+  // Derived, not typed: move a fact in the sources and the table follows.
+  const edit = (patch) => T.turnedGlasses({ ...src, ...patch });
+  assert.strictEqual(edit({ glassSettings: src.glassSettings.replace(/\bROT_PORTRAIT\s*=\s*\d+/, "ROT_PORTRAIT = 3") })[0].rotation, 3);
+  assert.deepStrictEqual(edit({ orientation: src.orientation.replace(/\bR90\s*=\s*\d+/, "R90 = 2") })[1].glass,
+    { w: 180, h: 320 }, "an even turn keeps the panel's sides");
+  const wider = (board) => src.pinsH(board).replace(/^#define LCD_WIDTH\s+\d+/m, "#define LCD_WIDTH 200");
+  assert.deepStrictEqual(edit({ pinsH: wider })[1].glass, { w: 320, h: 200 });
+  // ...and a fact it cannot read fails, naming it.
+  assert.throws(() => edit({ buildSh: src.buildSh.replace('PINS_DIR="$FW/boards/waveshare-esp32c3-lcd147/pins"', "") }),
+    /no pin map for the nightlight flavor/);
+  assert.throws(() => edit({ orientation: src.orientation.replace(/\bR90\s*=\s*\d+/, "RIGHT = 1") }), /Orient::R90/);
+  assert.throws(() => edit({ glassSettings: "" }), /ROT_PORTRAIT/);
+  assert.throws(() => edit({ pinsH: () => "" }), /LCD_WIDTH/);
+});
+
+test("splash coverage (F206): the turned walk must see the bird and every line kHello types, whole", async () => {
+  const T = await import("./turned_glass.mjs");
+  const lines = T.helloLines(read(join(REPO, "firmware/common/story/story_scripts.h")));
+  assert.strictEqual(lines[0], "Oh! Hello.");
+  assert.ok(lines.length >= 8 && lines.includes("Not that kind of bird. Call me %s."), "every typed beat, the pseudonym's too");
+  assert.throws(() => T.helloLines("nothing here"), /kHelloBeats/);
+  assert.ok(T.isWholeLine("Not that kind of bird. Call me 4f2a1c9e.", "Not that kind of bird. Call me %s."));
+  assert.ok(!T.isWholeLine("Not that kind of bird. Call me", "Not that kind of bird. Call me %s."), "half typed is not whole");
+  assert.ok(!T.isWholeLine("Oh! Hello", "Oh! Hello."));
+  const label = (text, extra = {}) => ({ text, shown: true, opa: 255, ...extra });
+  const typed = (text) => ({ labels: [label(text.replace("%s", "4f2a1c9e"))], bird: { shown: true } });
+  const all = lines.map(typed);
+  assert.deepStrictEqual(T.splashCoverage(all, lines), { reads: lines.length, bird: lines.length, seen: lines, missing: [] });
+  // A run that left before the last line, a line seen only half typed, a
+  // line only on a hidden or faded label, and no bird: each is named.
+  const short = T.splashCoverage(all.slice(0, -1), lines);
+  assert.deepStrictEqual(short.missing, [lines[lines.length - 1]]);
+  const half = T.splashCoverage([...all.slice(1), { labels: [label("Oh! Hel")], bird: null }], lines);
+  assert.deepStrictEqual(half.missing, ["Oh! Hello."]);
+  const hidden = T.splashCoverage([...all.slice(1), { labels: [label("Oh! Hello.", { shown: false })] }], lines);
+  assert.deepStrictEqual(hidden.missing, ["Oh! Hello."]);
+  const faded = T.splashCoverage([...all.slice(1), { labels: [label("Oh! Hello.", { opa: 0 })] }], lines);
+  assert.deepStrictEqual(faded.missing, ["Oh! Hello."]);
+  assert.strictEqual(T.splashCoverage(lines.map((l) => ({ labels: [label(l.replace("%s", "x1"))], bird: null })), lines).bird, 0);
+});
+
+test("nightlight flavor (F204): build.sh builds it, the HAL turns its panel, the preset stages its own key, and the lists agree", () => {
+  const build = read(join(ROOT, "emulator/build.sh"));
+  const branch = /elif \[\[ "\$FLAVOR" == "nightlight" \]\]; then\n([\s\S]*?)\nelse\n/.exec(build)?.[1] || "";
+  assert.ok(branch.includes('PINS_DIR="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
+    branch.includes('CFG_DIR="$FW/configs/canary-display/nightlight"'), "the nightlight's pin map and config");
+  // The env's lean budget, for the nightlight alone (the faces its glass wears).
+  const ini = read(join(REPO, "firmware/envs/platformio/canary-display.ini"));
+  const env = /\[env:canary-display-nightlight-c3\]([\s\S]*?)(?=\n\[env:|$)/.exec(ini)?.[1] || "";
+  assert.ok(env.includes("-DCD_LEAN_BUILD=1"), "the env builds lean");
+  assert.match(build, /if \[\[ "\$FLAVOR" == "nightlight" \]\]; then\n  DEFINES\+=\(-DCD_LEAN_BUILD=1\)\nfi/);
+  assert.strictEqual(build.split("+=(-DCD_LEAN_BUILD=1)").length - 1, 1, "no other flavor builds lean");
+  assert.ok(read(join(REPO, "firmware/configs/canary-display/nightlight/config.h")).includes("#define CD_NIGHTLIGHT"));
+  // The flavor lists agree: every display flavor build.sh wires (and builds
+  // in `all`) is a harness entry loading its bundle by build.sh's factory.
+  const wired = [...build.matchAll(/^\s{2}([a-z0-9]+)\)\s+EXPORT_NAME="(createCanaryEmu[A-Za-z0-9]+)" ;;$/gm)]
+    .map((m) => [m[1], m[2]]);
+  const dash = /^\s{2}\*\)\s+EXPORT_NAME="(createCanaryEmuDash)" ;;$/m.exec(build)?.[1];
+  assert.ok(dash, "the dash is the case's default");
+  const fromBuild = Object.fromEntries([...wired, ["dash", dash]]);
+  const all = /if \[\[ "\$FLAVOR" == "all" \]\]; then([\s\S]*?)exit 0/.exec(build)?.[1] || "";
+  for (const f of Object.keys(fromBuild)) assert.ok(all.includes(`"$0" ${f}\n`), `build.sh all builds ${f}`);
+  const harness = read(join(ROOT, "emulator/web/harness.js"));
+  const listed = Object.fromEntries([...harness.matchAll(/^\s{2}([a-z0-9]+):\s*\{ src: "\.\.\/dist\/canary-display-([a-z0-9]+)\.js",\s*factory: "([A-Za-z0-9]+)" \},$/gm)]
+    .map((m) => { assert.strictEqual(m[1], m[2], `${m[1]} loads its own bundle`); return [m[1], m[3]]; }));
+  assert.deepStrictEqual(listed, fromBuild, "harness.js FLAVORS is build.sh's display flavors, factory for factory");
+  assert.strictEqual(fromBuild.nightlight, "createCanaryEmuNightlight");
+  // The HAL: the hardware turn reshapes the framebuffer to the logical frame
+  // (flushes land unturned), and no IMU answers.
+  const hal = read(join(ROOT, "emulator/src/emu_hal_display.cpp"));
+  const nl = [...hal.matchAll(/#ifdef CD_NIGHTLIGHT\n([\s\S]*?)#endif/g)].map((m) => m[1]).join("\n");
+  assert.match(nl, /void display_set_rotation\(uint8_t rot\) \{\s*if \(!g_fb\) return;[^\n]*\n\s*panel_turn\(rot\);\s*\}/);
+  assert.ok(nl.includes("g_view_w = side ? EMU_H : EMU_W;") && nl.includes("js_display_ready(g_view_w, g_view_h, kRoundMask);"),
+    "a turn reshapes the glass and tells the page");
+  assert.ok(nl.includes("put565(g_fb + ((size_t)fy * g_view_w + fx) * 4, *s);"), "a flush lands in the logical frame");
+  assert.match(nl, /bool imu_init\(\) \{[\s\S]*?return false;\s*\}/);
+  // The preset: the nightlight's own key, through its own setter, after power-on
+  // and before setup() (the order the dash's test above holds for main()).
+  const emuMain = read(join(ROOT, "emulator/src/emu_main.cpp"));
+  const save = /void save_rotation\(int rot\) \{([\s\S]*?)\n\}/.exec(emuMain)?.[1] || "";
+  assert.match(save, /#ifdef CD_NIGHTLIGHT\s*canary::care::nightlight_begin\(\);\s*canary::care::nightlight_set_rotation\(\(uint8_t\)rot\);\s*#else/);
+  const glue = read(join(REPO, "firmware/projects/canary-display/src/care/nightlight.cpp"));
+  assert.ok(glue.includes('constexpr const char* NVS_NS = "scv-nl";') && glue.includes('put_u8("rot", s_rot);') &&
+    glue.includes('s_rot = (uint8_t)(p.getUChar("rot", 0) & 3);'), "nightlight_set_rotation writes, and begin reads, scv-nl/rot");
+  // main.cpp: the nightlight's prefs load before the glass, and its saved
+  // rotation is worn once, after lvgl_port_init and before the splash and
+  // the onboarding — the order the turned walk's framesOnGlass holds.
+  const mainCpp = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
+  const setupBody = /\nvoid setup\(\) \{([\s\S]*?)\n\}\n/.exec(mainCpp)?.[1] || "";
+  const at = (needle) => setupBody.indexOf(needle);
+  const wear = "canary::hal::display_set_rotation(rot0);\n      canary::ui::lvgl_port_set_panel_rotation(rot0);";
+  assert.strictEqual(setupBody.split(wear).length - 1, 1, "setup() wears the nightlight's rotation exactly once");
+  assert.ok(at("canary::care::nightlight_begin();") >= 0 && at("canary::care::nightlight_begin();") < at(wear));
+  assert.ok(at(wear) > at("g_display_ok = canary::ui::lvgl_port_init();"), "after lvgl_port_init()");
+  assert.ok(at(wear) < at("canary::ui::splash_play(") && at(wear) < at("canary::net::provision_run("),
+    "before the splash and the onboarding");
+});
+
+test("splash and turned boots (F206): the harness slows the clock from power-on; the probes read the turned splash and boot the turned glasses", () => {
+  const harness = read(join(ROOT, "emulator/web/harness.js"));
+  assert.ok(harness.includes('const timeScaleParam = q.get("timescale");') &&
+    harness.includes("if (timeScale !== null && !(Number.isFinite(timeScale) && timeScale > 0 && timeScale <= 64)) {") &&
+    /rotation: rotationParam === null \? null : ROTATIONS\[rotationParam\],\n\s*timeScale,\n/.test(harness),
+  "?timescale= is checked and handed to start()");
+  const shell = read(join(ROOT, "emulator/web/emu-shell.js"));
+  const start = /async start\(\{[\s\S]*?\n  \}\n/.exec(shell)?.[0] || "";
+  assert.ok(start.includes("rotation = null, timeScale = null } = {}"));
+  const scale = start.indexOf("if (timeScale !== null && timeScale !== undefined) this.c.timeScale(timeScale);");
+  assert.ok(scale > 0 && scale < start.indexOf("this.c.power();"), "the clock is slowed before power-on");
+  // The turned walk reads the splash from the first frame to the first-boot
+  // line, holds every read, and must have seen it whole.
+  const probe = read(join(__dirname, "onboard_probe.mjs"));
+  const splash = /let splashRead = null;\n    if \(turn\) \{([\s\S]*?)\n    \}\n/.exec(probe)?.[1] || "";
+  assert.ok(splash.includes("window.__state.flushes > 0"), "from the firmware's first frame");
+  assert.ok(splash.includes("while (!(await serial()).includes('First boot - onboarding AP \"SecuraCV-')) {"));
+  assert.ok(splash.includes("check(st.glass.w === turn.glass.w && st.glass.h === turn.glass.h,"));
+  assert.ok(splash.includes("const bad = linesOnGlass(st.labels, st.glass) || linesCut(st.labels) || birdPerch(st);"));
+  assert.ok(splash.includes("splashRead = splashCoverage(reads, HELLO_LINES);") &&
+    splash.includes("check(splashRead.bird > 0 && splashRead.missing.length === 0,"), "the splash must have been read whole");
+  assert.ok(splash.includes("await E(() => window.__emu.setTimeScale(1));"), "the clock is restored after the splash");
+  assert.ok(probe.includes('const HELLO_LINES = helloLines(await readFile(join(ROOT, "firmware/common/story/story_scripts.h"), "utf8"));'));
+  assert.match(probe, /const SPLASH_SCALE = 0\.\d+;/);
+  // boot_probe boots each turned glass whose flavor it boots, and holds the
+  // turned size, every frame on that glass, and the face's bird.
+  const boot = read(join(__dirname, "boot_probe.mjs"));
+  assert.ok(boot.includes("const TURNED = turnedGlasses(await readTurnedSources(ROOT, readFile)).filter((t) => RUN.includes(t.flavor));"));
+  assert.ok(boot.includes("for (const t of TURNED) { await bootOnce(t.flavor, t); booted.push(`${t.flavor}@${t.name}`); }"));
+  const once = /async function bootOnce\(flavor, turn = null\) \{([\s\S]*?)\n\}\n/.exec(boot)?.[1] || "";
+  assert.ok(once.includes("const turnArg = turn ? `&rotation=${turn.rotation}` : \"\";"));
+  assert.ok(once.includes("if (st.glass.w !== turn.glass.w || st.glass.h !== turn.glass.h) {") &&
+    once.includes("const frames = framesOnGlass(st.shapes, st.flushes, turn.glass);") &&
+    once.indexOf("const perch = birdPerch(st);") > once.indexOf("const frames = framesOnGlass("),
+  "a turned boot holds its glass, its frames and its face's bird");
 });
 
 test("CI runs the generator check, this test and the browser probe", () => {

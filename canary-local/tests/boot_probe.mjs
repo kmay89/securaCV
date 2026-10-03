@@ -8,12 +8,22 @@
 // or just --flavor NAME. Three of the five flavors had never been booted by
 // CI before this loop existed — the probe only knew the watch.
 //
+// Then boots each turned glass (F206) whose flavor it booted: the dash with a
+// saved portrait rotation and the nightlight with a saved landscape one
+// (?rotation=, staged before power-on; turned_glass.mjs reads the turns and
+// panels from the sources). There the same checks hold, and the glass is the
+// turned size, every frame the firmware drew landed on it from the first
+// (framesOnGlass), and the face's bird, where it is on stage, sits on that
+// glass and clear of every line (birdPerch).
+//
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { birdPerch } from "./bird_perch.mjs";
+import { framesOnGlass } from "./onboard_glass.mjs";
+import { turnedGlasses, readTurnedSources } from "./turned_glass.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -45,6 +55,8 @@ if (ONLY && !FLAVORS.includes(ONLY)) {
   process.exit(1);
 }
 const RUN = ONLY ? [ONLY] : FLAVORS;
+// F206: the turned glasses, for the flavors this run boots.
+const TURNED = turnedGlasses(await readTurnedSources(ROOT, readFile)).filter((t) => RUN.includes(t.flavor));
 
 // Allowlist, not sanitization: the probe serves exactly the files the
 // harness needs, enumerated up front. Request paths are only ever used
@@ -88,7 +100,10 @@ const browser = await pw.chromium.launch(
 const failures = [];
 const fail = (flavor, msg) => { console.error(`BOOT_PROBE_FAIL[${flavor}]:`, msg); failures.push(flavor); };
 
-for (const flavor of RUN) {
+// One boot: the harness for `flavor` (with a saved rotation when `turn` is
+// given), the face read 6.5 s on, every check held. Returns the run's name.
+async function bootOnce(flavor, turn = null) {
+  const name = turn ? `${flavor}@${turn.name}` : flavor;
   const page = await browser.newPage({ viewport: { width: 1100, height: 620 } });
   const errors = [];
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
@@ -96,46 +111,67 @@ for (const flavor of RUN) {
 
   let st = null;
   try {
-    await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&flavor=${flavor}`);
+    const turnArg = turn ? `&rotation=${turn.rotation}` : "";
+    await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&flavor=${flavor}${turnArg}`);
     // A function, never a string: Playwright re-evaluates a string predicate
     // through eval on every animation frame, which harness.html's policy
     // (no 'unsafe-eval') refuses whenever the wasm is not ready at the first
     // poll. A function is compiled once, inside the DevTools call (sweep A44).
-    await page.waitForFunction(() => window.__ready === true, null, { timeout: 90000 });
+    await page.waitForFunction(() => window.__ready === true || window.__harnessError, null, { timeout: 90000 });
+    const harnessError = await page.evaluate(() => window.__harnessError || null);
+    if (harnessError) throw new Error(`the harness did not boot: ${harnessError}`);
     await new Promise((res) => setTimeout(res, 6500)); // splash + face
     st = await page.evaluate(async () => ({
       flushes: window.__state.flushes,
+      shapes: window.__state.shapes,
       mqtt: window.__state.mqtt,
       serial: window.__state.serialText,
       bird: await window.__emu.markBox(),
       labels: await window.__emu.screenLabels(),
       glass: { w: document.getElementById("glass").width, h: document.getElementById("glass").height },
     }));
-    if (SHOTS) await page.screenshot({ path: `${SHOTS}/ci_face_${flavor}.png` });
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/ci_face_${name}.png` });
   } catch (e) {
     errors.push(`did not reach ready: ${e}`);
   }
   await page.close();
 
-  if (errors.length) { fail(flavor, "page errors:\n" + errors.slice(0, 8).join("\n")); continue; }
-  if (st.flushes < 10) { fail(flavor, `framebuffer barely flushed (${st.flushes})`); continue; }
-  if (!st.serial.includes("The canary is singing")) { fail(flavor, "boot banner missing from serial"); continue; }
+  if (errors.length) { fail(name, "page errors:\n" + errors.slice(0, 8).join("\n")); return; }
+  if (st.flushes < 10) { fail(name, `framebuffer barely flushed (${st.flushes})`); return; }
+  if (!st.serial.includes("The canary is singing")) { fail(name, "boot banner missing from serial"); return; }
   if (!st.mqtt.some((m) => m.dir === "out" && m.topic.endsWith("/status")))
-    { fail(flavor, "display never published its status heartbeat"); continue; }
+    { fail(name, "display never published its status heartbeat"); return; }
   if (!st.mqtt.some((m) => m.dir === "in" && m.topic.includes("canary_")))
-    { fail(flavor, "fleet payloads never reached the dispatcher"); continue; }
+    { fail(name, "fleet payloads never reached the dispatcher"); return; }
   if (!st.serial.includes("Pinned new witness pubkey"))
-    { fail(flavor, "TOFU pinning never happened — trust path broken"); continue; }
+    { fail(name, "TOFU pinning never happened — trust path broken"); return; }
+  if (turn) {
+    // F206: booted with its saved rotation, the glass is the turned one, and
+    // the firmware drew every frame on it from the first (main.cpp turns the
+    // glass before the splash).
+    if (st.glass.w !== turn.glass.w || st.glass.h !== turn.glass.h) {
+      fail(name, `booted with saved rotation ${turn.rotation}, the ${flavor} glass is ${st.glass.w}x${st.glass.h}, ` +
+        `not the ${turn.name} ${turn.glass.w}x${turn.glass.h} main.cpp turns it to (F206)`);
+      return;
+    }
+    const frames = framesOnGlass(st.shapes, st.flushes, turn.glass);
+    if (frames) { fail(name, frames); return; }
+  }
   const perch = birdPerch(st);
-  if (perch) { fail(flavor, perch); continue; }
-  console.log(`BOOT_PROBE_OK[${flavor}] flushes=${st.flushes} mqtt=${st.mqtt.length}`);
+  if (perch) { fail(name, perch); return; }
+  console.log(`BOOT_PROBE_OK[${name}] flushes=${st.flushes} mqtt=${st.mqtt.length}` +
+    (turn ? ` glass=${st.glass.w}x${st.glass.h} shapes=${st.shapes.length}` : ""));
 }
+
+const booted = [];
+for (const flavor of RUN) { await bootOnce(flavor); booted.push(flavor); }
+for (const t of TURNED) { await bootOnce(t.flavor, t); booted.push(`${t.flavor}@${t.name}`); }
 
 await browser.close();
 server.close();
 if (failures.length) {
-  console.error(`BOOT_PROBE_FAIL: ${failures.length} of ${RUN.length} flavors failed (${failures.join(", ")})`);
+  console.error(`BOOT_PROBE_FAIL: ${failures.length} of ${booted.length} boots failed (${failures.join(", ")})`);
   process.exit(1);
 }
-console.log(`BOOT_PROBE_OK all ${RUN.length} flavors booted: ${RUN.join(", ")}`);
+console.log(`BOOT_PROBE_OK all ${booted.length} boots: ${booted.join(", ")}`);
 process.exit(0);
