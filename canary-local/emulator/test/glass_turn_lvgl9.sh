@@ -3,7 +3,10 @@
 # the LVGL the dash builds ship (F225): builds glass_turn_lvgl9_test.cpp with
 # g++ against the REAL ui/lvgl_port.cpp (dash config, its LVGL 9 branch) and
 # the real LVGL 9.x release the display's Arduino profiles pin, compiled with
-# the display's own lv_conf.h, and runs it. glass_turn.sh is its sibling for
+# the display's own lv_conf.h, and runs it; then builds the same test again
+# in nightstand-c6's config (F248: the lean lv_conf, its C6 pin map, the
+# port's static internal buffer, never turned) against LVGL compiled lean,
+# and runs that. glass_turn.sh is its sibling for
 # the emulator's LVGL 8.4; tests_host/test_lvgl_port_turn holds the same port
 # against fake_lvgl9/lvgl.h, whose quotes of LVGL 9.5 this script also checks
 # against the fetched source (check_lvgl9_quotes.py). No emsdk, no ESP32:
@@ -73,6 +76,27 @@ if grep -q 'CD_LEAN_BUILD' <<<"$dash_env"; then
 fi
 cmp -s "$PROJ/include/lv_conf.h" "$PROJ/arduino/canary_display/lv_conf.h" ||
   die "the Arduino sketch's lv_conf.h differs from include/lv_conf.h (./setup.sh regen)"
+
+# nightstand-c6 (F248), the other release that compiles lvgl_port.cpp's
+# LVGL 9 branch: its core-3 base must ask for the same release, and the env
+# must still be the lean nightstand on the C6 pin map with lv_conf.h found
+# this way — the config the second build below compiles.
+env_block() {  # env_block <section>: the lines of one [section] of the .ini
+  awk -v want="[$1]" '$0 == want { p = 1; next } /^\[/ { p = 0 } p' "$INI"
+}
+c6_env="$(env_block env:canary-display-nightstand-c6)"
+[[ -n "$c6_env" ]] || die "$INI has no [env:canary-display-nightstand-c6]"
+grep -Eq '^extends[[:space:]]*=[[:space:]]*canary_display_c6_core3[[:space:]]*$' <<<"$c6_env" ||
+  die "the nightstand-c6 env no longer extends canary_display_c6_core3"
+grep -Eq "^[[:space:]]*lvgl/lvgl@\\^${pin//./\\.}[[:space:]]*$" <<<"$(env_block canary_display_c6_core3)" ||
+  die "canary_display_c6_core3 does not ask for lvgl/lvgl@^$pin (sketch.yaml's pin)"
+for flag in '-DCD_LEAN_BUILD=1' '-DCONFIG_NIGHTSTAND' '-DLV_CONF_INCLUDE_SIMPLE' \
+            '-I${PROJECT_DIR}/include' \
+            '-I${PROJECT_DIR}/../../configs/canary-display/nightstand' \
+            '-I${PROJECT_DIR}/../../boards/waveshare-esp32c6-lcd147/pins'; do
+  grep -Fxq "    $flag" <<<"$c6_env" ||
+    die "the nightstand-c6 env's build_flags no longer carry '$flag' (this test builds that config)"
+done
 tag="v$pin"
 
 # ── The library ─────────────────────────────────────────────────────────
@@ -111,16 +135,25 @@ CFG="$FW/configs/canary-display/dash"
 PINS="$FW/boards/waveshare-esp32s3-lcd43/pins"
 DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE -DCONFIG_CANARY_DISPLAY)
 
-# LVGL, once per checkout (an object newer than its source is kept).
-export OUT LVGL
-export LVGL_FLAGS="-std=gnu11 -O1 -w ${DEFS[*]} -I $PROJ/include -I $LVGL"
-# shellcheck disable=SC2016  # the inner script expands its own variables
-find "$LVGL/src" -name '*.c' -print0 | sort -z | xargs -0 -n 8 -P "$(nproc)" bash -c '
-  for src in "$@"; do
-    obj="$OUT/lvgl/$(echo "${src#$LVGL/}" | tr "/." "__").o"
-    [[ -f "$obj" && "$obj" -nt "$src" ]] && continue
-    gcc $LVGL_FLAGS -c "$src" -o "$obj"
-  done' _
+# LVGL, once per checkout and lv_conf (an object newer than its source is
+# kept): build_lvgl <objdir> <extra flags...>. CD_LEAN_BUILD changes what
+# lv_conf.h compiles (no 36/48 px faces, the stock refresh period), so the
+# lean config has its own objects.
+build_lvgl() {
+  local objs="$1"
+  shift
+  mkdir -p "$objs"
+  export OUT LVGL OBJS="$objs"
+  export LVGL_FLAGS="-std=gnu11 -O1 -w ${DEFS[*]} $* -I $PROJ/include -I $LVGL"
+  # shellcheck disable=SC2016  # the inner script expands its own variables
+  find "$LVGL/src" -name '*.c' -print0 | sort -z | xargs -0 -n 8 -P "$(nproc)" bash -c '
+    for src in "$@"; do
+      obj="$OBJS/$(echo "${src#$LVGL/}" | tr "/." "__").o"
+      [[ -f "$obj" && "$obj" -nt "$src" ]] && continue
+      gcc $LVGL_FLAGS -c "$src" -o "$obj"
+    done' _
+}
+build_lvgl "$OUT/lvgl"
 
 CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
      "${DEFS[@]}" -I "$HERE/native9" -I "$PROJ/include" -I "$CFG" -I "$PINS"
@@ -129,4 +162,33 @@ CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
 "${CXX[@]}" -c "$HERE/glass_turn_lvgl9_test.cpp" -o "$OUT/glass_turn_lvgl9_test.o"
 g++ -o "$OUT/glass_turn_lvgl9_test" "$OUT/glass_turn_lvgl9_test.o" "$OUT/lvgl_port.o" \
   "$OUT"/lvgl/*.o -lm
-"$OUT/glass_turn_lvgl9_test"
+# Every suite runs and the script fails at the end if any did, so a red
+# dash turn cannot hide another config's result (a build error still stops
+# it there).
+failed=()
+run_suite() {  # run_suite <name> <binary>
+  "$2" || failed+=("$1")
+}
+run_suite "dash turns" "$OUT/glass_turn_lvgl9_test"
+
+# nightstand-c6's wiring (F248), as its env's build_flags hand it to the
+# compiler (the defines that reach the display UI; the OTA and secrets
+# paths do not): the nightstand config on the C6 pin map, built lean.
+C6_CFG="$FW/configs/canary-display/nightstand"
+C6_PINS="$FW/boards/waveshare-esp32c6-lcd147/pins"
+C6_DEFS=(-DCONFIG_NIGHTSTAND -DCD_LEAN_BUILD=1 -DFEATURE_CHIRP_SCAN=0 -DFEATURE_FLEET_LINK=0
+         -DCANARY_MQTT_PLAIN_ONLY=1)
+build_lvgl "$OUT/lvgl_lean" -DCD_LEAN_BUILD=1
+C6_CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
+        "${DEFS[@]}" "${C6_DEFS[@]}" -I "$HERE/native9" -I "$PROJ/include" -I "$C6_CFG"
+        -I "$C6_PINS" -I "$FW/common" -I "$LVGL")
+"${C6_CXX[@]}" -c "$PROJ/src/ui/lvgl_port.cpp" -o "$OUT/c6_lvgl_port.o"
+"${C6_CXX[@]}" -c "$HERE/glass_turn_lvgl9_test.cpp" -o "$OUT/c6_glass_turn_lvgl9_test.o"
+g++ -o "$OUT/c6_glass_turn_lvgl9_test" "$OUT/c6_glass_turn_lvgl9_test.o" \
+  "$OUT/c6_lvgl_port.o" "$OUT"/lvgl_lean/*.o -lm
+run_suite "nightstand-c6 glass" "$OUT/c6_glass_turn_lvgl9_test"
+
+if ((${#failed[@]})); then
+  echo "glass_turn_lvgl9: FAILED: ${failed[*]}" >&2
+  exit 1
+fi

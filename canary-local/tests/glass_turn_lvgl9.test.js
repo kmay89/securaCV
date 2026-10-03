@@ -116,6 +116,35 @@ test("the pin (F225): the script reads sketch.yaml's dash-core3 LVGL, fetches th
   assert.match(read(join(ROOT, "emulator/.gitignore")), /^third_party\/$/m);
 });
 
+test("nightstand-c6 (F248): the script builds the same test in the lean C6 config, against LVGL built lean, and every suite runs", () => {
+  const sh = read(join(ROOT, "emulator/test/glass_turn_lvgl9.sh"));
+  // The config its env compiles: the nightstand on the C6 pin map, lean.
+  assert.ok(sh.includes('C6_CFG="$FW/configs/canary-display/nightstand"') &&
+    sh.includes('C6_PINS="$FW/boards/waveshare-esp32c6-lcd147/pins"') &&
+    /C6_DEFS=\(-DCONFIG_NIGHTSTAND -DCD_LEAN_BUILD=1 /.test(sh), "the nightstand-c6 config, lean");
+  assert.ok(sh.includes('build_lvgl "$OUT/lvgl_lean" -DCD_LEAN_BUILD=1') &&
+    sh.includes('"$OUT"/lvgl_lean/*.o'), "its LVGL objects are compiled with the lean lv_conf");
+  assert.ok(sh.includes('"${C6_CXX[@]}" -c "$PROJ/src/ui/lvgl_port.cpp"') &&
+    sh.includes('"${C6_CXX[@]}" -c "$HERE/glass_turn_lvgl9_test.cpp"'), "the REAL port and the same test");
+  // The env still is that config (the script refuses to run otherwise).
+  const ini = read(join(REPO, "firmware/envs/platformio/canary-display.ini"));
+  const c6 = /\n\[env:canary-display-nightstand-c6\]\n([\s\S]*?)(?=\n\[)/.exec(ini)?.[1] || "";
+  for (const flag of ["-DCD_LEAN_BUILD=1", "-DCONFIG_NIGHTSTAND", "-DLV_CONF_INCLUDE_SIMPLE", "-I${PROJECT_DIR}/include",
+    "-I${PROJECT_DIR}/../../configs/canary-display/nightstand", "-I${PROJECT_DIR}/../../boards/waveshare-esp32c6-lcd147/pins"]) {
+    assert.ok(c6.split("\n").includes(`    ${flag}`), `the nightstand-c6 env carries ${flag}`);
+    assert.ok(sh.includes(`'${flag}'`), `the script checks ${flag}`);
+  }
+  // A red suite does not stop the next: each runs, and the script fails at the end.
+  const runs = [...sh.matchAll(/^run_suite "([^"]+)" "\$OUT\/([a-z0-9_]+)"$/gm)].map((m) => m[2]);
+  assert.ok(runs.includes("glass_turn_lvgl9_test") && runs.includes("c6_glass_turn_lvgl9_test"), `suites run: ${runs}`);
+  assert.ok(sh.includes('"$2" || failed+=("$1")') && /if \(\(\$\{#failed\[@\]\}\)\); then\n[^\n]*\n\s+exit 1\nfi\n?$/.test(sh),
+    "every suite runs, and a failed one fails the script at its end");
+  // The C6 board's pins reach the workflow's path filter.
+  const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
+  const prPaths = wf.slice(wf.indexOf("\n  pull_request:"), wf.indexOf("\njobs:"));
+  assert.ok(prPaths.includes('- "firmware/boards/*/pins/pins.h"'), "a C6 pin map edit runs the workflow");
+});
+
 test("check_lvgl9_quotes.py (F225): fails on each drift from the library and on a missing function", () => {
   const r = spawnSync("python3", [join(ROOT, "emulator/test/check_lvgl9_quotes.py"), "--self-test"], { encoding: "utf8" });
   assert.strictEqual(r.status, 0, `check_lvgl9_quotes.py --self-test failed:\n${r.stdout}${r.stderr}`);

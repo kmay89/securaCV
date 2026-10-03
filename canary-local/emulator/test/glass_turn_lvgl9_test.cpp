@@ -52,6 +52,20 @@
 //     a portrait turn, says so, and keeps drawing the landscape scene
 //     upright, pixel for pixel.
 //
+// Built a second time in nightstand-c6's config (sweep F248), the one other
+// release that compiles lvgl_port.cpp's LVGL 9 branch: the nightstand
+// flavor with CD_LEAN_BUILD (its lv_conf drops the 36 and 48 px faces and
+// keeps LVGL's stock refresh period), the C6 pin map's 172x320 ST7789 and
+// the port's static internal draw buffer (172 x 60 rows), never turned
+// (main.cpp turns only the dash). There it holds: the display is the
+// panel's 172x320 and LVGL is unturned; the port asked ESP-IDF's heap for
+// nothing (the static buffer); a scene of the same kinds of pixel without
+// the 36 px face (and the splash's tail square) lands whole, every native
+// pixel painted and equal to the same scene on a plain 172x320 display, in
+// full-width bands no taller than the buffer's 60 rows; the partial update
+// (2b) the same way; the tail (4); and a fed point reads back where it was
+// fed.
+//
 // Prints "ALL LVGL 9 GLASS TURN TESTS PASSED" on success.
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
@@ -72,8 +86,14 @@
 #if LVGL_VERSION_MAJOR != 9
 #error "glass_turn_lvgl9_test.cpp builds against LVGL 9 (glass_turn_lvgl9.sh)"
 #endif
-#ifndef CD_FLAVOR_DASH
-#error "glass_turn_lvgl9_test.cpp builds the dash config (glass_turn_lvgl9.sh)"
+// The two configs glass_turn_lvgl9.sh builds: the dash (turned in software,
+// PSRAM buffers) and nightstand-c6 (lean, a static buffer, never turned).
+#if defined(CD_FLAVOR_DASH)
+#define GLASS_TURNS 1
+#elif defined(CD_FLAVOR_NIGHTSTAND) && defined(CD_LEAN_BUILD) && !defined(CD_AMOLED_GLASS)
+#define GLASS_TURNS 0
+#else
+#error "glass_turn_lvgl9_test.cpp builds the dash or the nightstand-c6 config (glass_turn_lvgl9.sh)"
 #endif
 
 // ── The bench this test stands in for ───────────────────────────────────
@@ -81,7 +101,13 @@ namespace {
 uint32_t g_now = 0;
 int g_fail = 0;
 int g_checks = 0;
+#if GLASS_TURNS
 constexpr int PW = LCD_WIDTH, PH = LCD_HEIGHT;  // the dash panel's native scan
+constexpr int kBufRows = 80;                    // lvgl_port.cpp: 800 x 80 rows
+#else
+constexpr int PW = TFT_WIDTH, PH = TFT_HEIGHT;  // the C6 ST7789's 172x320
+constexpr int kBufRows = 60;                    // lvgl_port.cpp's s_buf: 172 x 60
+#endif
 Arduino_GFX g_panel(PW, PH);
 int g_touch_rot = -1, g_touch_w = 0, g_touch_h = 0;
 }  // namespace
@@ -116,9 +142,9 @@ using namespace canary::glass;
 namespace {
 
 // ── The reference: a plain display of the logical size ──────────────────
-// Its draw buffer is the port's size (lvgl_port.cpp: 800 x 80 rows x 2 B),
-// so both render the same bands.
-constexpr size_t kBufBytes = (size_t)PW * 80 * 2;
+// Its draw buffer is the port's size (lvgl_port.cpp: 800 x 80 rows x 2 B on
+// the dash, 172 x 60 on nightstand-c6), so both render the same bands.
+constexpr size_t kBufBytes = (size_t)PW * kBufRows * 2;
 alignas(4) uint8_t s_ref_buf[kBufBytes];
 std::vector<uint16_t> s_ref_fb;
 int s_ref_w = 0, s_ref_h = 0;
@@ -152,7 +178,11 @@ void size_reference(int w, int h) {
 
 // The splash's tail square (splash.cpp), placed where every glass shape
 // has room: its box's top-left corner.
+#if GLASS_TURNS
 constexpr int kTailX = 420, kTailY = 60, kTailSide = 12;
+#else
+constexpr int kTailX = 40, kTailY = 200, kTailSide = 12;
+#endif
 constexpr uint32_t kBg = 0x101418;
 constexpr uint32_t kCardColor = 0xF4EEDC;
 constexpr int kRingEnd = 290;
@@ -166,6 +196,22 @@ struct Scene {
 };
 Scene s_ref_scene, s_port_scene;
 
+// splash.cpp's tail, style for style: the square LVGL 9.5 turns through a
+// transform layer (LVGL 8.4 refuses that layer on this lv_conf, F185).
+void add_tail(lv_obj_t* scr) {
+  lv_obj_t* tail = lv_obj_create(scr);
+  lv_obj_set_size(tail, kTailSide, kTailSide);
+  lv_obj_set_style_bg_color(tail, lv_color_hex(0xF4EEDC), 0);
+  lv_obj_set_style_bg_opa(tail, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(tail, lv_color_hex(0xC8C0AA), 0);
+  lv_obj_set_style_border_width(tail, 1, 0);
+  lv_obj_set_style_radius(tail, 2, 0);
+  lv_obj_set_style_transform_rotation(tail, 450, 0);
+  lv_obj_clear_flag(tail, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_pos(tail, kTailX, kTailY);
+}
+
+#if GLASS_TURNS
 // Every kind of pixel the onboarding and the splash draw, inside the 480 px
 // both of the dash's shapes share and off-center, so a wrong turn or a
 // mirrored axis cannot read as equal.
@@ -232,20 +278,81 @@ Scene build_scene(lv_obj_t* scr) {
   lv_obj_set_style_bg_color(band, lv_color_hex(0x3355AA), 0);
   lv_obj_set_style_bg_opa(band, LV_OPA_50, 0);
 
-  // splash.cpp's tail, style for style: the square LVGL 9.5 turns through a
-  // transform layer (LVGL 8.4 refuses that layer on this lv_conf, F185).
-  lv_obj_t* tail = lv_obj_create(scr);
-  lv_obj_set_size(tail, kTailSide, kTailSide);
-  lv_obj_set_style_bg_color(tail, lv_color_hex(0xF4EEDC), 0);
-  lv_obj_set_style_bg_opa(tail, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(tail, lv_color_hex(0xC8C0AA), 0);
-  lv_obj_set_style_border_width(tail, 1, 0);
-  lv_obj_set_style_radius(tail, 2, 0);
-  lv_obj_set_style_transform_rotation(tail, 450, 0);
-  lv_obj_clear_flag(tail, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_pos(tail, kTailX, kTailY);
+  add_tail(scr);
   return Scene{card, ring, body};
 }
+#else
+// The same kinds of pixel on nightstand-c6's 172x320 glass, spread down its
+// whole height (every 60-row band of the port's buffer holds some), without
+// the 36 px face its lean lv_conf drops: the 28 px face is the largest it
+// keeps (character.cpp's lean ladder caps there).
+Scene build_scene(lv_obj_t* scr) {
+  lv_obj_clean(scr);
+  lv_obj_set_style_bg_color(scr, lv_color_hex(kBg), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+  lv_obj_t* card = lv_obj_create(scr);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, 70, 44);
+  lv_obj_set_pos(card, 6, 8);
+  lv_obj_set_style_bg_color(card, lv_color_hex(kCardColor), 0);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(card, 8, 0);
+  lv_obj_set_style_border_width(card, 2, 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(0xFFD44F), 0);
+
+  lv_obj_t* ring = lv_arc_create(scr);
+  lv_obj_set_size(ring, 110, 110);
+  lv_obj_align(ring, LV_ALIGN_TOP_LEFT, 56, 40);
+  lv_arc_set_rotation(ring, 270);
+  lv_arc_set_bg_angles(ring, 0, 360);
+  lv_arc_set_angles(ring, 0, kRingEnd);
+  lv_obj_set_style_arc_width(ring, 3, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(ring, 3, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(ring, lv_color_hex(0x5A6470), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(ring, lv_color_hex(0xE8E2D0), LV_PART_INDICATOR);
+  lv_obj_set_style_arc_rounded(ring, true, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, LV_PART_KNOB);
+
+  lv_obj_t* title = lv_label_create(scr);
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_color(title, lv_color_hex(0xE8E2D0), 0);
+  lv_label_set_text(title, "Hello.");
+  lv_obj_set_pos(title, 8, 96);
+
+  lv_obj_t* body = lv_label_create(scr);
+  lv_obj_set_style_text_font(body, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(body, lv_color_hex(0x9AA4AE), 0);
+  lv_label_set_long_mode(body, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_width(body, 80);
+  lv_label_set_text(body, kBodyText);
+  lv_obj_set_pos(body, 86, 12);
+
+  lv_obj_t* small = lv_label_create(scr);
+  lv_obj_set_style_text_font(small, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_color(small, lv_color_hex(0xC8C0AA), 0);
+  lv_label_set_text(small, "password p7Rm2Kqf");
+  lv_obj_set_pos(small, 10, 300);
+
+  lv_obj_t* qr = lv_qrcode_create(scr);
+  lv_qrcode_set_size(qr, 64);
+  lv_qrcode_set_dark_color(qr, lv_color_black());
+  lv_qrcode_set_light_color(qr, lv_color_white());
+  const char* payload = "WIFI:T:WPA;S:SecuraCV-A7K2;P:p7Rm2Kqf;;";
+  lv_qrcode_update(qr, payload, (uint32_t)strlen(payload));
+  lv_obj_set_pos(qr, 100, 180);
+
+  lv_obj_t* band = lv_obj_create(scr);
+  lv_obj_remove_style_all(band);
+  lv_obj_set_size(band, 150, 20);
+  lv_obj_set_pos(band, 4, 260);
+  lv_obj_set_style_bg_color(band, lv_color_hex(0x3355AA), 0);
+  lv_obj_set_style_bg_opa(band, LV_OPA_50, 0);
+
+  add_tail(scr);
+  return Scene{card, ring, body};
+}
+#endif
 
 // 2b's change, made the same way on either display; changed = false puts
 // back what build_scene() drew.
@@ -268,6 +375,7 @@ void refresh(lv_display_t* d) {
   lv_refr_now(d);
 }
 
+#if GLASS_TURNS
 lv_display_rotation_t lvgl_rotation_for(uint8_t rot) {
   switch (rot & 3) {
     case ROT_PORTRAIT:      return LV_DISPLAY_ROTATION_90;
@@ -276,6 +384,7 @@ lv_display_rotation_t lvgl_rotation_for(uint8_t rot) {
     default:                return LV_DISPLAY_ROTATION_0;
   }
 }
+#endif
 
 // Where the port draws logical (lx, ly) on the native panel: the quarter
 // turn glass_settings.h states, written out here so a wrong turn in the
@@ -395,6 +504,7 @@ void check_partial(const char* tag, lv_display_rotation_t lr, int lw, int lh) {
   CHECK(s_ref_fb == scene, "%s: putting the objects back does not redraw the scene", tag);
 }
 
+#if GLASS_TURNS
 // ── 1 + 2: the turn and the glass at one quarter turn ───────────────────
 void check_turn(uint8_t rot) {
   const char* tag = rotation_name(rot);
@@ -523,11 +633,70 @@ void check_turn(uint8_t rot) {
   check_tail(tag);
   check_partial(tag, lr, lw, lh);
 }
+#else
+// ── 2 on nightstand-c6: the one shape, never turned ─────────────────────
+// main.cpp turns only the dash (lvgl_port_set_rotation is called under
+// CD_FLAVOR_DASH), so this glass is held as the port leaves it.
+void check_unturned_glass(const char* tag) {
+  CHECK(lv_display_get_rotation(s_port) == LV_DISPLAY_ROTATION_0 &&
+            canary::ui::lvgl_port_rotation() == 0,
+        "%s: LVGL is turned (%d) or the port wears a turn (%d)", tag,
+        (int)lv_display_get_rotation(s_port), (int)canary::ui::lvgl_port_rotation());
+  CHECK(canary::ui::lvgl_port_width() == PW && canary::ui::lvgl_port_height() == PH,
+        "%s: lvgl_port reports %dx%d, want the panel's %dx%d", tag,
+        (int)canary::ui::lvgl_port_width(), (int)canary::ui::lvgl_port_height(), PW, PH);
+  size_reference(PW, PH);
+  s_ref_scene = build_scene(lv_display_get_screen_active(s_ref));
+  refresh(s_ref);
+  s_port_scene = build_scene(lv_display_get_screen_active(s_port));
+  g_panel.clear_marks();
+  s_flushed.clear();
+  refresh(s_port);
+
+  long unpainted = 0;
+  for (uint8_t p : g_panel.painted)
+    if (!p) unpainted++;
+  // The whole frame arrives in bands of the port's buffer: full width, at
+  // most its 60 rows each, top to bottom.
+  int bands = 0, odd = 0, tallest = 0;
+  for (const lv_area_t& a : s_flushed) {
+    bands++;
+    const int h = (int)lv_area_get_height(&a);
+    if (h > tallest) tallest = h;
+    if (a.x1 != 0 || a.x2 != PW - 1 || h > kBufRows) odd++;
+  }
+  const int want_bands = (PH + kBufRows - 1) / kBufRows;
+  CHECK(bands == want_bands && odd == 0,
+        "%s: the whole frame came in %d flushes (%d not a full-width band of at most %d rows, "
+        "tallest %d); the port's %dx%d buffer makes %d",
+        tag, bands, odd, kBufRows, tallest, PW, kBufRows, want_bands);
+  CHECK(g_panel.off_panel == 0 && unpainted == 0,
+        "%s: %ld flushed pixels fall off the %dx%d panel and %ld are never painted", tag,
+        g_panel.off_panel, PW, PH, unpainted);
+  int fx = -1, fy = -1;
+  const long diff = panel_diff(LV_DISPLAY_ROTATION_0, PW, PH, &fx, &fy);
+  CHECK(diff == 0,
+        "%s: %ld of %d pixels on the glass differ from the scene rendered on a plain %dx%d "
+        "display (first at %d,%d)",
+        tag, diff, PW * PH, PW, PH, fx, fy);
+  if (diff) {
+    say565("want", s_ref_fb[(size_t)fy * PW + fx]);
+    say565("got ", g_panel.fb[(size_t)fy * PW + fx]);
+  }
+  printf("  %-17s canvas %dx%d, %d bands of at most %d rows, %ld off the panel, %ld unpainted, "
+         "%ld px differ\n",
+         tag, PW, PH, bands, tallest, g_panel.off_panel, unpainted, diff);
+  check_tail(tag);
+  check_partial(tag, LV_DISPLAY_ROTATION_0, PW, PH);
+}
+#endif
 
 // ── 3: the finger through LVGL's own pointer processing ─────────────────
-void check_pointer(uint8_t rot) {
-  const char* tag = rotation_name(rot);
-  canary::ui::lvgl_port_set_rotation(rot);
+// `turn`: lvgl_port_set_rotation(rot) first (the dash); nightstand-c6 is
+// read as the port left it, under its own name.
+void check_pointer(uint8_t rot, bool turn, const char* name = nullptr) {
+  const char* tag = name != nullptr ? name : rotation_name(rot);
+  if (turn) canary::ui::lvgl_port_set_rotation(rot);
   lv_obj_clean(lv_display_get_screen_active(s_port));  // nothing to press
   lv_indev_t* in = lv_indev_get_next(nullptr);
   CHECK(in != nullptr, "no pointer device registered");
@@ -570,6 +739,7 @@ void check_pointer(uint8_t rot) {
         tag, moved, n, bx, by, gx, gy);
 }
 
+#if GLASS_TURNS
 // ── 5: a glass with no turn buffer ──────────────────────────────────────
 void check_refused_turn() {
   lv_deinit();
@@ -614,9 +784,43 @@ void check_refused_turn() {
   }
   native9::heap_grant_limit() = -1;
 }
+#endif
 
 }  // namespace
 
+#if !GLASS_TURNS
+// nightstand-c6: the lean config's glass, never turned (F248).
+int main() {
+  printf("glass (LVGL %d.%d.%d, the real renderer, nightstand-c6 config):\n", LVGL_VERSION_MAJOR,
+         LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
+  native9::heap_requests() = 0;
+  CHECK(canary::ui::lvgl_port_init(), "lvgl_port_init failed");
+  // The draw buffer is the port's static internal one (no PSRAM on the C6):
+  // nothing asked ESP-IDF's capability allocator for memory.
+  CHECK(native9::heap_requests() == 0,
+        "lvgl_port_init asked heap_caps_malloc for %ld buffers; nightstand-c6 draws from its "
+        "static internal buffer",
+        native9::heap_requests());
+  CHECK(!Serial.saw("FAILED"), "the glass came up");
+  s_port = lv_display_get_default();
+  CHECK(s_port != nullptr, "no display");
+  if (s_port == nullptr) return 1;
+  CHECK(lv_display_get_horizontal_resolution(s_port) == PW &&
+            lv_display_get_vertical_resolution(s_port) == PH,
+        "the port's display is the panel's native %dx%d", PW, PH);
+  lv_display_add_event_cb(s_port, record_flush, LV_EVENT_FLUSH_START, nullptr);
+  make_reference();
+  CHECK(lv_display_get_default() == s_port, "the port's display stays the default");
+  check_unturned_glass("portrait");
+  check_pointer(ROT_LANDSCAPE, false, "portrait");
+  if (g_fail) {
+    printf("%d of %d LVGL 9 glass checks FAILED\n", g_fail, g_checks);
+    return 1;
+  }
+  printf("ALL LVGL 9 GLASS TURN TESTS PASSED (%d checks)\n", g_checks);
+  return 0;
+}
+#else
 int main() {
   printf("glass turn (LVGL %d.%d.%d, the real renderer, dash config):\n", LVGL_VERSION_MAJOR,
          LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
@@ -644,7 +848,7 @@ int main() {
                       ROT_PORTRAIT, ROT_LANDSCAPE}) {
     check_turn(rot);
   }
-  for (uint8_t rot = 0; rot < 4; rot++) check_pointer(rot);
+  for (uint8_t rot = 0; rot < 4; rot++) check_pointer(rot, true);
   check_refused_turn();
 
   if (g_fail) {
@@ -654,3 +858,4 @@ int main() {
   printf("ALL LVGL 9 GLASS TURN TESTS PASSED (%d checks)\n", g_checks);
   return 0;
 }
+#endif

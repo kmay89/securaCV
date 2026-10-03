@@ -1118,6 +1118,11 @@ jobs:
         # frames and for partial updates (areas right of logical x 0, narrower
         # than the canvas); touch lands on what is drawn; the splash's turned
         # tail square draws; a glass with no turn buffer stays landscape.
+        # Then the same test in nightstand-c6's config (F248: the lean
+        # lv_conf, LVGL compiled lean, the C6 pin map's 172x320, the port's
+        # static buffer, never turned), whole frames and partial updates
+        # against a plain 172x320 display. Every suite runs; the step fails
+        # at the end if any did.
         # First it holds tests_host/fake_lvgl9's quotes of LVGL 9.5 to the
         # fetched source (check_lvgl9_quotes.py, after its own drift
         # self-test). Proves the sources on a 64-bit host, not an ESP32 build;
