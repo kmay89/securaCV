@@ -283,7 +283,9 @@ CV10. Every `chirp_api.h` function that answers a `message` serializes into
      route's 85-byte refusal went out of a 64-byte buffer that way, and so
      did the mute route's 101-byte one (F174; an ArduinoJson 7.4.1 scratch
      harness showed both). The confirm and dismiss answers' 256 bytes are
-     CV9's (the longest, 161 bytes, is host-tested).
+     CV9's (the longest, 161 bytes, is host-tested). Since F196
+     `check_wap_json_answers.py` measures every REST answer buffer of the
+     sketch against the longest answer it computes; this floor stays.
 CV11. The dashboard shows what the routes now say (`web_ui.h`): the Chirp
      card takes Send's state from `WebUiLogic.chirpSendGate()` (Send off for
      any `can_send` that is not true, F178), and a confirm or a dismiss puts
