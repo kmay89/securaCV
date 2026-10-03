@@ -244,11 +244,17 @@ bool lvgl_port_init() {
     return false;
   }
 #if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
-  // flush_cb's turned copy (see s_turn_buf): the draw buffer's size, from
-  // the same heap tier — 128,000 B more PSRAM of the glass's 8 MB, or, on
-  // the internal fallback above, 25,600 B more internal RAM.
+  // flush_cb's turned copy (see s_turn_buf): the draw buffer's size, PSRAM
+  // first — 128,000 B more of the glass's 8 MB. Internal RAM only when the
+  // draw buffer itself fell back to it (the block above grants BUF_BYTES
+  // from PSRAM alone, so a smaller buffer is the internal fallback): then it
+  // is 25,600 B more. A glass whose draw buffer is in PSRAM never takes the
+  // turn buffer's 128,000 B from internal RAM — about a third of the S3's
+  // internal heap, before WiFi, TLS and NimBLE start; a refused second PSRAM
+  // request refuses the turn instead, and says so below.
+  const bool draw_in_psram = (buf_bytes == BUF_BYTES);
   s_turn_buf = (uint8_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM);
-  if (!s_turn_buf) {
+  if (!s_turn_buf && !draw_in_psram) {
     s_turn_buf = (uint8_t*)heap_caps_malloc(
         buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   }

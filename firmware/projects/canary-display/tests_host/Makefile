@@ -530,9 +530,10 @@ clean: clean-splash-scenes
 # shows at every native pixel, at every quarter turn: the face turned the way
 # lv_display_rotate_area() turns it, nothing off the panel, nothing left
 # unpainted, a raw touch at any pixel (rotation_map_touch, as display_dash.cpp
-# maps the GT911) landing on the pixel drawn there, the turn buffer's cost per
-# heap tier, and a glass with no turn buffer staying landscape. Hooked into
-# `run` and `clean` by prerequisite.
+# maps the GT911) landing on the pixel drawn there, the turn buffer's size and
+# tier (PSRAM first; internal RAM only when the draw buffer fell back there,
+# every request scripted and recorded), and a glass with no turn buffer
+# staying landscape. Hooked into `run` and `clean` by prerequisite.
 PORTTURN_BIN = test_lvgl_port_turn
 PORTTURN_SRC = test_lvgl_port_turn.cpp ../src/ui/lvgl_port.cpp
 

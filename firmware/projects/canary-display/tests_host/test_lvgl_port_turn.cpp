@@ -30,10 +30,13 @@
 //     GT911's sample, is the logical pixel drawn there; and a logical point
 //     fed to the port's pointer device comes out of LVGL's own pointer
 //     rotation (lv_display_rotate_point) where it went in;
-//  4. the memory: the turn buffer is the draw buffer's size from the same
-//     tier (two 128,000 B PSRAM buffers; 25,600 B internal on the PSRAM-less
-//     fallback, where the glass still turns), and a glass with no turn
-//     buffer refuses a turn, says so, and stays landscape.
+//  4. the memory: the turn buffer is the draw buffer's size, asked of PSRAM
+//     first (two 128,000 B PSRAM buffers on the dash's arrangement), and of
+//     internal RAM only when the draw buffer itself fell back there (25,600
+//     B on the PSRAM-less fallback, where the glass still turns). A glass
+//     whose draw buffer is in PSRAM never asks internal RAM for 128,000 B:
+//     when its second PSRAM request is refused it refuses the turn. A glass
+//     with no turn buffer refuses a turn, says so, and stays landscape.
 //
 // Prints "ALL LVGL PORT TURN TESTS PASSED" on success.
 #include <Arduino.h>
@@ -58,6 +61,7 @@ LogSink g_log_sink = nullptr;
 
 namespace {
 const int PW = LCD_WIDTH, PH = LCD_HEIGHT;  // the dash panel's native scan
+const size_t BIG_DRAW = (size_t)PW * 80 * 2;  // the dash's PSRAM draw buffer
 Arduino_GFX g_panel(PW, PH);
 int g_touch_rot = -1, g_touch_w = 0, g_touch_h = 0;
 int g_fail = 0;
@@ -283,12 +287,13 @@ static void test_psram_glass() {
         "one partial-mode display of the panel's native size");
   const size_t draw = (size_t)PW * 80 * 2;
   CHECK(d && d->buf_size == draw, "the draw buffer is %zu B", draw);
-  const auto& a = fake_heap::allocs();
-  CHECK(a.size() == 2, "two capability allocations (draw buffer, turn buffer), got %zu", a.size());
+  const auto& a = fake_heap::attempts();
+  CHECK(a.size() == 2, "two capability requests (draw buffer, turn buffer), got %zu", a.size());
   for (size_t i = 0; i < a.size(); i++)
-    CHECK(a[i].bytes == draw && (a[i].caps & MALLOC_CAP_SPIRAM),
-          "allocation %zu: %zu B from PSRAM (got %zu B, caps 0x%x)", i, draw, a[i].bytes,
-          (unsigned)a[i].caps);
+    CHECK(a[i].granted && a[i].bytes == draw && (a[i].caps & MALLOC_CAP_SPIRAM) &&
+              !(a[i].caps & MALLOC_CAP_INTERNAL),
+          "request %zu: %zu B from PSRAM, granted (got %zu B, caps 0x%x, %s)", i, draw,
+          a[i].bytes, (unsigned)a[i].caps, a[i].granted ? "granted" : "refused");
   for (uint8_t rot : {ROT_LANDSCAPE, ROT_PORTRAIT, ROT_LANDSCAPE_INV, ROT_PORTRAIT_INV,
                       ROT_PORTRAIT, ROT_LANDSCAPE}) {
     check_rotation(rot);
@@ -303,13 +308,94 @@ static void test_internal_glass() {
   lv_display_t* d = fake_lvgl9::display();
   const size_t draw = (size_t)PW * 16 * 2;
   CHECK(d && d->buf_size == draw, "the internal draw buffer is %zu B", draw);
-  const auto& a = fake_heap::allocs();
-  CHECK(a.size() == 1 && a[0].bytes == draw && (a[0].caps & MALLOC_CAP_INTERNAL) &&
-            !(a[0].caps & MALLOC_CAP_SPIRAM),
-        "the turn buffer falls back to %zu B of internal RAM", draw);
+  // The draw buffer's PSRAM request (refused; it then shrinks into plain
+  // malloc), the turn buffer's PSRAM request (refused), and only then the
+  // turn buffer's internal one, granted at the draw buffer's size.
+  const auto& a = fake_heap::attempts();
+  CHECK(a.size() == 3, "three capability requests, got %zu", a.size());
+  if (a.size() == 3) {
+    CHECK(!a[0].granted && a[0].bytes == BIG_DRAW && (a[0].caps & MALLOC_CAP_SPIRAM),
+          "the draw buffer asks PSRAM for %zu B first", BIG_DRAW);
+    CHECK(!a[1].granted && a[1].bytes == draw && (a[1].caps & MALLOC_CAP_SPIRAM) &&
+              !(a[1].caps & MALLOC_CAP_INTERNAL),
+          "the turn buffer asks PSRAM for %zu B first", draw);
+    CHECK(a[2].granted && a[2].bytes == draw && (a[2].caps & MALLOC_CAP_INTERNAL) &&
+              !(a[2].caps & MALLOC_CAP_SPIRAM),
+          "the turn buffer falls back to %zu B of internal RAM", draw);
+  }
   for (uint8_t rot : {ROT_PORTRAIT, ROT_PORTRAIT_INV, ROT_LANDSCAPE_INV, ROT_LANDSCAPE}) {
     check_rotation(rot);
   }
+}
+
+// ── A draw buffer in internal RAM, a turn buffer in PSRAM ────────────────
+// PSRAM refused the draw buffer's 128,000 B and granted the turn buffer's
+// 25,600 B (a fragmented PSRAM): the port asks PSRAM first even then, and
+// takes no internal RAM it was not refused PSRAM for.
+static void test_internal_draw_psram_turn() {
+  fake_heap::reset();
+  fake_heap::refuse_calls() = {0};
+  CHECK(canary::ui::lvgl_port_init(), "lvgl_port_init brings the glass up on the fallback");
+  lv_display_t* d = fake_lvgl9::display();
+  const size_t draw = (size_t)PW * 16 * 2;
+  CHECK(d && d->buf_size == draw, "the internal draw buffer is %zu B", draw);
+  const auto& a = fake_heap::attempts();
+  CHECK(a.size() == 2 && a[1].granted && a[1].bytes == draw && (a[1].caps & MALLOC_CAP_SPIRAM) &&
+            !(a[1].caps & MALLOC_CAP_INTERNAL),
+        "the turn buffer takes %zu B of PSRAM and asks internal RAM for nothing (%zu requests)",
+        draw, a.size());
+  for (uint8_t rot : {ROT_PORTRAIT_INV, ROT_PORTRAIT, ROT_LANDSCAPE}) {
+    check_rotation(rot);
+  }
+}
+
+// The port refuses every non-zero turn and keeps LVGL, the canvas, the touch
+// layer and the glass landscape, logging each refusal.
+static void check_refuses_turns(const char* tag) {
+  lv_display_t* d = fake_lvgl9::display();
+  for (uint8_t rot : {ROT_PORTRAIT, ROT_LANDSCAPE_INV, ROT_PORTRAIT_INV}) {
+    Serial.text.clear();
+    g_touch_rot = -1;
+    canary::ui::lvgl_port_set_rotation(rot);
+    CHECK(canary::ui::lvgl_port_rotation() == ROT_LANDSCAPE && canary::ui::lvgl_port_width() == PW &&
+              canary::ui::lvgl_port_height() == PH,
+          "%s: %s refused, the port stays landscape at %dx%d", tag, rotation_name(rot), PW, PH);
+    CHECK(d && lv_display_get_rotation(d) == LV_DISPLAY_ROTATION_0,
+          "%s: %s refused, LVGL is left unturned", tag, rotation_name(rot));
+    CHECK(g_touch_rot == ROT_LANDSCAPE, "%s: %s refused, the touch layer stays landscape", tag,
+          rotation_name(rot));
+    CHECK(Serial.text.find("staying landscape") != std::string::npos,
+          "%s: %s refused, the refusal is logged", tag, rotation_name(rot));
+    check_turned_glass(tag, ROT_LANDSCAPE);
+  }
+}
+
+// ── A PSRAM draw buffer whose turn buffer PSRAM refuses ──────────────────
+// The second 128,000 B PSRAM request fails straight after the first was
+// granted. The turn buffer must not land in internal RAM: 128,000 B is about
+// a third of the S3's internal heap, taken before WiFi, TLS and NimBLE start.
+// The glass refuses the turn instead, and says so.
+static void test_psram_draw_turn_refused() {
+  fake_heap::reset();
+  fake_heap::refuse_calls() = {1};
+  Serial.text.clear();
+  CHECK(canary::ui::lvgl_port_init(), "the glass comes up on its PSRAM draw buffer");
+  lv_display_t* d = fake_lvgl9::display();
+  CHECK(d && d->buf_size == BIG_DRAW, "the PSRAM draw buffer is %zu B", BIG_DRAW);
+  const auto& a = fake_heap::attempts();
+  CHECK(a.size() >= 2 && a[0].granted && a[0].bytes == BIG_DRAW &&
+            (a[0].caps & MALLOC_CAP_SPIRAM) && !a[1].granted && a[1].bytes == BIG_DRAW &&
+            (a[1].caps & MALLOC_CAP_SPIRAM),
+        "the draw buffer's PSRAM request granted, the turn buffer's refused");
+  size_t internal_asks = 0;
+  for (const auto& at : a)
+    if (at.caps & MALLOC_CAP_INTERNAL) internal_asks++;
+  CHECK(internal_asks == 0 && a.size() == 2,
+        "the turn buffer asks internal RAM for nothing (%zu internal requests of %zu)",
+        internal_asks, a.size());
+  CHECK(Serial.text.find("Rotation buffer allocation FAILED") != std::string::npos,
+        "the missing turn buffer is logged at bring-up");
+  check_refuses_turns("PSRAM draw buffer, turn refused");
 }
 
 // ── No turn buffer at all: the glass refuses the turn and stays landscape ─
@@ -320,27 +406,14 @@ static void test_no_turn_buffer() {
   CHECK(canary::ui::lvgl_port_init(), "the glass still comes up (landscape needs no turn buffer)");
   CHECK(Serial.text.find("Rotation buffer allocation FAILED") != std::string::npos,
         "the missing turn buffer is logged at bring-up");
-  lv_display_t* d = fake_lvgl9::display();
-  for (uint8_t rot : {ROT_PORTRAIT, ROT_LANDSCAPE_INV, ROT_PORTRAIT_INV}) {
-    Serial.text.clear();
-    g_touch_rot = -1;
-    canary::ui::lvgl_port_set_rotation(rot);
-    CHECK(canary::ui::lvgl_port_rotation() == ROT_LANDSCAPE && canary::ui::lvgl_port_width() == PW &&
-              canary::ui::lvgl_port_height() == PH,
-          "%s refused: the port stays landscape at %dx%d", rotation_name(rot), PW, PH);
-    CHECK(d && lv_display_get_rotation(d) == LV_DISPLAY_ROTATION_0,
-          "%s refused: LVGL is left unturned", rotation_name(rot));
-    CHECK(g_touch_rot == ROT_LANDSCAPE, "%s refused: the touch layer stays landscape",
-          rotation_name(rot));
-    CHECK(Serial.text.find("staying landscape") != std::string::npos,
-          "%s refused: the refusal is logged", rotation_name(rot));
-    check_turned_glass("refused turn", ROT_LANDSCAPE);
-  }
+  check_refuses_turns("no turn buffer");
 }
 
 int main() {
   test_psram_glass();
   test_internal_glass();
+  test_internal_draw_psram_turn();
+  test_psram_draw_turn_refused();
   test_no_turn_buffer();
   if (g_fail) {
     std::printf("%d of %d LVGL PORT TURN CHECK(S) FAILED\n", g_fail, g_checks);
