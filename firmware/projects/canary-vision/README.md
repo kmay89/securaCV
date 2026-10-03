@@ -167,6 +167,16 @@ includes the grace) and `presence_ended` follow once it has passed. The
 grace is compile-time and 0 in every shipped build, so the lost timeout
 ends every stay on a device today.
 
+`presence_ended` goes out on the frame after `dwell_ended`, whatever that
+frame shows: `dwell_ended` has already declared the person gone, and the
+stay waits that one frame only because a frame sends one event. Someone
+seen on that frame starts the next visit, whose `presence_started` follows
+on the frame after (from that sighting's cell, held present through the
+lost timeout from it), exactly as if they had come back one frame later. So
+a stay has at most one dwell, and the lingering alert, which pages on
+`dwell_started`, pages once per stay. Before this the sighting kept the
+stay and started a second dwell in it at once, with a second `dwell_ended`.
+
 ### When `interaction_likely` fires
 
 `interaction_likely` is sent once a visit has ended, when that visit
@@ -180,7 +190,10 @@ It goes out on the frame after `presence_ended`, within
 `INTERACTION_AFTER_LEAVE_WINDOW_MS` (3 s) of it. When someone is seen on
 that very frame, the frame starts the next visit (`presence_started`) and
 the ended visit's `interaction_likely` follows on the frame after, still
-inside the window. Its `visit_ms` says how long the ended visit lasted
+inside the window. The same goes for a dweller seen on the frame after
+`dwell_ended`: that frame sends `presence_ended`, the next one the new
+visit's `presence_started`, and the one after that the ended visit's
+`interaction_likely` (`dwell_then_left`). Its `visit_ms` says how long the ended visit lasted
 either way. The rest of the row is the frame it was sent from, after the
 visit: `confidence` 0 (no box) on the usual frame, or, when it was held
 back a frame, the next visit's box, with `presence` true and the next
@@ -245,7 +258,8 @@ stateDiagram-v2
   Idle --> Present: person_now (presence_started)
   Present --> Idle: unseen > lost_timeout (presence_ended)
   Present --> Dwelling: present >= dwell_start_ms (dwell_started)
-  Dwelling --> Present: unseen > max(lost_timeout, dwell_end_grace) (dwell_ended)
+  Dwelling --> Leaving: unseen > max(lost_timeout, dwell_end_grace) (dwell_ended)
+  Leaving --> Idle: next frame, seen or not (presence_ended)
 
   state Present {
     [*] --> Watching
@@ -256,6 +270,11 @@ stateDiagram-v2
     [*] --> Counting
     Counting --> Counting: person_now continues, or back within the grace
   }
+
+  note right of Leaving
+    Seen on that frame: the sighting opens the next visit,
+    presence_started on the frame after (one dwell per stay)
+  end note
 
   Idle --> InteractionLikely: next frame, this visit qualified, within window
   InteractionLikely --> Idle: after publish
