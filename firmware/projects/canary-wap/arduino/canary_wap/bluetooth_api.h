@@ -521,6 +521,9 @@ inline esp_err_t handle_bluetooth_paired_remove(httpd_req_t* req) {
   if (r.refusal == bluetooth_channel::BT_REFUSED_BOND_KEPT) {
     return send_error(req, "The phone's bond was not removed; try again");
   }
+  if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_UP) {
+    return send_error(req, "Bluetooth is not up yet; nothing was removed");
+  }
   return send_error(req, "Device not found");
 }
 
@@ -535,6 +538,9 @@ inline esp_err_t handle_bluetooth_paired_clear(httpd_req_t* req) {
   }
   if (r.refusal == bluetooth_channel::BT_REFUSED_BOND_KEPT) {
     return send_error(req, "Not every phone's bond was removed; try again");
+  }
+  if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_UP) {
+    return send_error(req, "Bluetooth is not up yet; nothing was cleared");
   }
   return send_error(req, "Failed to clear paired devices");
 }

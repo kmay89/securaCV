@@ -34,7 +34,8 @@
  *
  * With no pairing owner (a build without the pairing channel, or before it
  * is up: the channel attaches the Dispatcher when it creates the server and
- * installs its callbacks once the loop task holds its state, sweep F167) a
+ * names its callbacks the pairing owner once the loop task holds its
+ * state, sweep F167, with set_owner()) a
  * Numeric Comparison is answered no and the passkey shown is a random one
  * nobody sees: that pairing fails closed instead of taking the library's
  * yes. (A pairing NimBLE runs by Just Works, which its tables
@@ -167,11 +168,23 @@ inline bool attach(NimBLEServer* server) {
 }
 
 // Records `owner` for `role` (nullptr clears it), then attaches the
-// Dispatcher to `server`. The one way a module installs its server
-// callbacks (rule BD1). False when there is no server.
+// Dispatcher to `server`. The way a module installs its server callbacks
+// (rule BD1). False when there is no server.
 inline bool install(NimBLEServer* server, Role role, NimBLEServerCallbacks* owner) {
   g_dispatcher.set(role, owner);
   return attach(server);
+}
+
+// Records `owner` for `role` and nothing else: no setCallbacks(). For an
+// owner whose server already carries the Dispatcher: the pairing channel,
+// whose init() attached it when it created the server and whose loop task
+// names itself the pairing owner when it takes init()'s result (sweep
+// F167). install() there would call NimBLEServer::setCallbacks() from the
+// loop task while, on FULL, the bring-up worker's Opera init calls it
+// from its own (the F167 review). The slot is atomic: the NimBLE host task
+// reads it.
+inline void set_owner(Role role, NimBLEServerCallbacks* owner) {
+  g_dispatcher.set(role, owner);
 }
 
 // Whether a link observer (Opera) is registered: it advertises on the

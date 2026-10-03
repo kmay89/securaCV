@@ -224,14 +224,24 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 // run off the loop task but the readers below and submit().
 //
 // init() writes none of the loop task's state (sweep F167): it brings the
-// stack up, loads the saved settings and paired list into a hand-over, and
-// publishes it; update() takes it on the loop task's next pass, before that
-// pass's commands (so a handler that brought the stack up and then submits
-// finds it taken), and there turns Bluetooth on and advertises when the
-// settings say so. is_initialized(): any task; true once the stack is up
-// and the hand-over published.
+// stack up and publishes what it made in a hand-over; update() takes it on
+// the loop task's next pass, before that pass's commands (so a handler that
+// brought the stack up and then submits finds it taken), and there turns
+// Bluetooth on and advertises when the settings say so. The saved settings
+// and paired list are the loop task's from its first update() pass, before
+// any command runs (the F167 review). is_initialized(): any task; true once
+// the stack is up and the hand-over published.
 bool init();
 bool is_initialized();
+
+// The sketch's BLE bring-up worker (canary_wap.ino), on the loop task (the
+// F167 review): started before the sketch creates it, finished when its
+// result is taken (the finalize stage) or it could not be created. After
+// init() returns the worker goes on registering GATT services on the same
+// server (ble_status, Opera), so in between the channel starts no
+// advertising: a start asked for meanwhile is made when it finishes.
+void bringup_worker_started();
+void bringup_worker_finished();
 
 // Why the last init() attempt left the radio off ("" when initialized or
 // never attempted). Any task. Each refusal is written whole before its
@@ -356,6 +366,8 @@ enum Refusal : uint8_t {
   BT_REFUSED_CONNECTED,    // ADVERTISE_START: a device is connected
   BT_REFUSED_BOND_KEPT,    // PAIRED_REMOVE / PAIRED_CLEAR: NimBLE kept a bond
                            // (ble_gap_unpair() busy); its entry stays listed
+  BT_REFUSED_NOT_UP,       // PAIRED_REMOVE / PAIRED_CLEAR: the stack is not up, so
+                           // its bond store cannot be reached; nothing changed
 };
 
 // What a command did, as the loop task saw it right after the command ran.

@@ -11676,6 +11676,13 @@ static void ble_bringup_finalize_if_done() {
   }
   g_ble_bringup_finalized = true;
 
+  // The worker registers no more GATT services: the pairing channel's
+  // advertising, held meanwhile (its auto-advertise among it), may start
+  // the server now (the F167 review; bluetooth_channel.h).
+  #if FEATURE_BLUETOOTH
+  bluetooth_channel::bringup_worker_finished();
+  #endif
+
   #if FEATURE_BLE
   if (g_ble_mgr_result == 1) {
     // spec/event_contract.md §10: route the lifecycle event through the
@@ -11735,8 +11742,19 @@ static void ble_discovery_start_if_due() {
   // Internal-RAM stack (no PSRAM task stacks with the prebuilt core). If the
   // task can't even be created, record the attempt so the self-test reports
   // FAIL rather than sitting on "Starting up…" forever.
+  // The pairing channel holds its advertising from here until the worker's
+  // result is taken (ble_bringup_finalize_if_done()): after its init() the
+  // worker registers more GATT services on the server an advertising start
+  // starts (the F167 review; bluetooth_channel.h). Before the create: the
+  // worker may run before xTaskCreate() returns.
+  #if FEATURE_BLUETOOTH
+  bluetooth_channel::bringup_worker_started();
+  #endif
   if (xTaskCreate(ble_bringup_task, "ble_bringup", 8192, nullptr, 1, nullptr)
       != pdPASS) {
+    #if FEATURE_BLUETOOTH
+    bluetooth_channel::bringup_worker_finished();   // no worker: nothing to wait for
+    #endif
     g_ble_init_attempted = true;
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                "BLE bring-up task create failed (out of memory)", nullptr);

@@ -166,8 +166,8 @@ static PairedDevice g_paired_devices[MAX_PAIRED_DEVICES];
 static size_t g_paired_count = 0;
 static bool g_paired_by_identity = false;   // the saved list's NVS_KEY_BT_PAIRED_ID
 
-// What init() brings up and loads, handed to the loop task (sweep F167).
-// init() runs on the BLE bring-up worker or on an HTTP handler's task
+// What init() brings up, handed to the loop task (sweep F167). init() runs
+// on the BLE bring-up worker or on an HTTP handler's task
 // (bluetooth_api.h's bring_up()). It used to load the saved settings and
 // the paired list straight into g_settings and g_paired_devices, set the
 // state, set the NimBLE object pointers and g_initialized (a plain bool),
@@ -175,17 +175,23 @@ static bool g_paired_by_identity = false;   // the saved list's NVS_KEY_BT_PAIRE
 // while the loop task's update() drained commands, applied the NimBLE
 // events (F143) and published the views (F138) from the same state. Now
 // init() fills g_bringup and touches none of the loop task's state: it
-// brings the stack up, loads what it needs into g_bringup, and publishes it
-// (g_bringup_ready, release) as its last write to it. The loop task takes it
-// once, first thing in update() (adopt_init_result(): the settings, the
-// list and its rebuild, the objects, the channel's server callbacks, the
-// auto-advertise). After the publish nothing writes g_bringup again: a
-// later init() returns at once (g_stack_up).
+// brings the stack up, keeps the objects it made and the settings it read
+// for the stack (the name NimBLE advertises, the TX power and the PHY it
+// set), and publishes them (g_bringup_ready, release) as its last write to
+// g_bringup. The loop task takes it once, first thing in update() after
+// load_saved() (adopt_init_result(): the objects, the list's rebuild, the
+// channel's server callbacks, the auto-advertise). After the publish
+// nothing writes g_bringup again: a later init() returns at once
+// (g_stack_up).
+//
+// The saved settings and the paired list are not in it (the F167 review):
+// they are the loop task's from its first pass (load_saved()), before any
+// command runs. A hand-over that carried them overwrote, at adoption, what
+// the owner's commands had done while init() ran (NimBLE's bring-up can
+// take ~21 s): a Disable came back on, a name or a TX power went back, in
+// RAM and in NVS.
 struct Bringup {
-  BluetoothSettings settings;
-  PairedDevice paired[MAX_PAIRED_DEVICES];
-  size_t paired_count;
-  bool paired_by_identity;
+  BluetoothSettings applied;      // the saved settings as init() read them for the stack
   NimBLEServer* server;
   NimBLEService* service;
   NimBLECharacteristic* status_char;
@@ -196,6 +202,21 @@ struct Bringup {
 };
 static Bringup g_bringup;
 static bool g_bringup_ready = false;   // init() publishes (release), adopt_init_result() takes (acquire)
+// The loop task's (the F167 review): update() has loaded the saved
+// settings and the paired list (load_saved()).
+static bool g_saved_loaded = false;
+// The loop task's (the F167 review): the sketch's BLE bring-up worker is
+// running (bringup_worker_started() to bringup_worker_finished(), both
+// called by canary_wap.ino on the loop task). After init() returns it goes
+// on registering GATT services on the same server (ble_status on DEV and
+// FULL, Opera on FULL), and NimBLEAdvertising::start() starts the server
+// (NimBLEServer::start(), which walks the service list it appends to), so
+// no advertising starts meanwhile: a start asked for then
+// (start_advertising(), or restore_radio() putting a stopped advertiser
+// back) is held in g_advertise_after_bringup and made when the worker
+// finishes.
+static bool g_bringup_worker_running = false;
+static bool g_advertise_after_bringup = false;
 
 // Scan results
 static ScannedDevice g_scanned_devices[MAX_SCANNED_DEVICES];
@@ -246,6 +267,7 @@ static const char* NVS_KEY_BT_LONG_RANGE = "bt_long_range";
 static void set_state(BluetoothState new_state);
 static BluetoothState rest_state();
 static bool init_running();
+static void load_saved();
 static void adopt_init_result();
 static void load_settings(BluetoothSettings* out);
 static void save_settings();
@@ -1056,8 +1078,9 @@ static void set_state(BluetoothState new_state) {
 // ════════════════════════════════════════════════════════════════════════════
 
 // Into `out`, which holds the values a key the device never saved keeps
-// (init() starts it from kDefaultSettings). init()'s, on its own task: it
-// loads into its handoff (g_bringup, sweep F167), never into g_settings.
+// (its callers start it from kDefaultSettings): load_saved()'s, on the loop
+// task, and init()'s, on its own, into its hand-over (the settings it gives
+// the stack, sweep F167). It names none of the channel's state.
 static void load_settings(BluetoothSettings* out) {
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return;
@@ -1096,7 +1119,8 @@ static void save_settings() {
 }
 
 // Into `out` (MAX_PAIRED_DEVICES entries), `count` and `by_identity`.
-// init()'s, into its handoff (sweep F167), like load_settings().
+// load_saved()'s, on the loop task (the F167 review); like load_settings()
+// it names none of the channel's state.
 static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity) {
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return;
@@ -1338,14 +1362,16 @@ bool init() {
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Initializing BLE", nullptr);
 
-  // Load settings and the paired list into the handoff (sweep F167), never
-  // into the loop task's g_settings and g_paired_devices: update() reads
-  // and writes those on the loop task meanwhile.
+  // The saved settings the stack starts with (its name, TX power and PHY),
+  // read into the hand-over on this task (sweep F167), never into the loop
+  // task's g_settings: the loop task loaded those at its first pass
+  // (load_saved()) and its commands change them meanwhile. A command that
+  // changes the TX power or the PHY while init() runs is applied to the
+  // stack when the loop task takes the hand-over (adopt_init_result()).
   Bringup& b = g_bringup;
   memset(&b, 0, sizeof(b));
-  b.settings = kDefaultSettings;
-  load_settings(&b.settings);
-  load_paired_devices(b.paired, &b.paired_count, &b.paired_by_identity);
+  b.applied = kDefaultSettings;
+  load_settings(&b.applied);
 
   // Initialize NimBLE. This is the single NimBLEDevice::init() owner for the
   // firmware: it runs before ble_manager::init() in setup() and owns the GAP
@@ -1382,7 +1408,7 @@ bool init() {
       return false;
     }
   }
-  if (!NimBLEDevice::init(b.settings.device_name)) {
+  if (!NimBLEDevice::init(b.applied.device_name)) {
     log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE init failed", nullptr);
     set_init_fail_reason("%s", "NimBLE stack init failed (controller/host bring-up)");
     return false;
@@ -1397,7 +1423,7 @@ bool init() {
   // where the boot's TX power is set (set_tx_power(), the owner's, on the loop
   // task, is the other); ble_manager no longer overrides it (it used to bump
   // every combined build to +9 dBm, ignoring this NVS setting).
-  NimBLEDevice::setPower(b.settings.tx_power);
+  NimBLEDevice::setPower(b.applied.tx_power);
 
   // Bump default ATT MTU to 247 (244-byte payload). The default is 23
   // (20-byte payload), which fragments every JSON status read into 3+ ATT
@@ -1410,7 +1436,7 @@ bool init() {
   // connections. The actual PHY upgrade happens after the link is up,
   // via a PHY update request in onConnect — discovery still uses 1M.
   // Bit masks: 0x01 = 1M, 0x02 = 2M, 0x04 = Coded.
-  if (b.settings.long_range_mode) {
+  if (b.applied.long_range_mode) {
     NimBLEDevice::setDefaultPhy(0x04, 0x04);
   } else {
     NimBLEDevice::setDefaultPhy(0x01 | 0x02, 0x01 | 0x02);
@@ -1546,8 +1572,10 @@ bool init() {
   // Hand the result to the loop task (sweep F167): the objects, then the
   // publish, the last write to g_bringup; then the flag other tasks read.
   // The auto-advertise and the paired list's rebuild are the loop task's
-  // (adopt_init_result()): advertising starts on its next pass, which runs
-  // before any command a handler submits after this returns.
+  // (adopt_init_result()), on its next pass, which runs before any command
+  // a handler submits after this returns; the advertising itself waits for
+  // the sketch's bring-up worker, if it is running, to finish registering
+  // its services (start_advertising(), the F167 review).
   b.server = server;
   b.service = service;
   b.status_char = status_char;
@@ -1559,7 +1587,7 @@ bool init() {
   set_init_fail_reason(nullptr);
   __atomic_store_n(&g_stack_up, true, __ATOMIC_RELEASE);
 
-  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE initialized", b.settings.device_name);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE initialized", b.applied.device_name);
   return true;
 }
 
@@ -1570,23 +1598,42 @@ static bool init_running() {
   return __atomic_load_n(&g_init_in_progress, __ATOMIC_ACQUIRE);
 }
 
-// The loop task, first in every update() pass (sweep F167): takes the
-// bring-up's result once it is published, and does there what init() used
-// to do on its own task: the settings and the paired list become the loop
-// task's, with the NimBLE objects; a list saved before F172 is rebuilt from
-// the bond store (it needs the stack up, which it now is); the channel's
-// server callbacks go to the dispatcher, so the stack's events reach this
-// task from here on and never before; and with auto-advertise on,
-// Bluetooth turns on and advertises. Before any command of the pass, so a
-// handler that brought the stack up (bring_up()) and then submitted finds
-// it taken.
+// The loop task, first in every update() pass (the F167 review): the saved
+// settings and the paired list, loaded once, before any command or event
+// of the pass. They are the loop task's from here on whether or not the
+// stack ever comes up, so a command run before it is up (or while init()
+// runs on another task) changes the settings the device saved, never the
+// compiled defaults, and saves what it changed and nothing else. Before,
+// they were loaded by init(): first into g_settings on init()'s own task,
+// then (F167) into its hand-over, which overwrote at adoption whatever the
+// owner's commands had done meanwhile; and a command run before init()
+// saved the defaults over the stored settings.
+static void load_saved() {
+  if (g_saved_loaded) return;
+  g_saved_loaded = true;
+  BluetoothSettings saved = kDefaultSettings;
+  load_settings(&saved);
+  g_settings = saved;
+  load_paired_devices(g_paired_devices, &g_paired_count, &g_paired_by_identity);
+}
+
+// The loop task, in every update() pass after load_saved() (sweep F167):
+// takes the bring-up's result once it is published, and does there what
+// init() used to do on its own task: the NimBLE objects become the loop
+// task's; a TX power or PHY the owner changed while init() ran reaches the
+// stack (init() set the saved ones); a list saved before F172 is rebuilt
+// from the bond store (it needs the stack up, which it now is), and the
+// list follows the store (F189); the channel's server callbacks become the
+// dispatcher's pairing owner, so the stack's events reach this task from
+// here on and never before; and with auto-advertise on, Bluetooth turns on
+// and advertises (once the sketch's bring-up worker has finished
+// registering its services, start_advertising()). The settings and the
+// list stay as the loop task holds them (the F167 review). Before any
+// command of the pass, so a handler that brought the stack up
+// (bring_up()) and then submitted finds it taken.
 static void adopt_init_result() {
   if (g_initialized || !__atomic_load_n(&g_bringup_ready, __ATOMIC_ACQUIRE)) return;
   const Bringup& b = g_bringup;
-  g_settings = b.settings;
-  memcpy(g_paired_devices, b.paired, sizeof(g_paired_devices));
-  g_paired_count = b.paired_count;
-  g_paired_by_identity = b.paired_by_identity;
   g_server = b.server;
   g_service = b.service;
   g_status_char = b.status_char;
@@ -1595,21 +1642,59 @@ static void adopt_init_result() {
   g_advertising = b.advertising;
   g_scanner = b.scanner;
   g_initialized = true;
+  // The state from what runs (F170): disabled when Bluetooth is saved off,
+  // idle otherwise (it read idle either way before F167).
   set_state(rest_state());
+
+  // What the owner changed while init() ran, on the stack init() set up
+  // with the saved values (the name NimBLE advertises takes effect at the
+  // next boot, as a name change always has).
+  if (g_settings.tx_power != b.applied.tx_power) {
+    NimBLEDevice::setPower(g_settings.tx_power);
+  }
+  if (g_settings.long_range_mode != b.applied.long_range_mode) {
+    if (g_settings.long_range_mode) {
+      NimBLEDevice::setDefaultPhy(0x04, 0x04);
+    } else {
+      NimBLEDevice::setDefaultPhy(0x01 | 0x02, 0x01 | 0x02);
+    }
+  }
 
   // A paired list saved before sweep F172 is rebuilt from the bond store
   // (once; it needs the stack up). Then the list follows the store (F189).
   migrate_paired_devices();
   drop_entries_without_bond();
 
-  ble_server_dispatch::install(g_server, ble_server_dispatch::kPairing, &g_server_callbacks);
+  // init() already put the dispatcher on the server (attach()); this only
+  // names the channel its pairing owner, an atomic store the NimBLE host
+  // task reads. Not install(): that calls NimBLEServer::setCallbacks()
+  // again, from this task, while on FULL the bring-up worker's Opera init
+  // calls it on its own (the F167 review).
+  ble_server_dispatch::set_owner(ble_server_dispatch::kPairing, &g_server_callbacks);
 
   // Auto-start advertising if enabled. NOTE: init() is only ever called
   // AFTER the provisioning join window has cleared (the loop's
   // ble_discovery_start_if_due gate — the whole BLE bring-up is deferred
-  // there for internal-RAM budgeting), so transmitting immediately is safe.
+  // there for internal-RAM budgeting), or by the owner's own tap, so
+  // transmitting immediately is safe. While the sketch's bring-up worker
+  // still registers services, start_advertising() holds the start until it
+  // finishes (the F167 review).
   if (g_settings.enabled && g_settings.auto_advertise) {
     enable();
+    start_advertising();
+  }
+}
+
+// The sketch's BLE bring-up worker (canary_wap.ino), told by the sketch on
+// the loop task (the F167 review): see g_bringup_worker_running.
+void bringup_worker_started() {
+  g_bringup_worker_running = true;
+}
+
+void bringup_worker_finished() {
+  g_bringup_worker_running = false;
+  if (g_advertise_after_bringup) {
+    g_advertise_after_bringup = false;
     start_advertising();
   }
 }
@@ -1711,6 +1796,17 @@ static bool start_advertising() {
   if (!g_initialized || !g_settings.enabled) return false;
   if (g_connection.connected) return false;  // Can't advertise while connected
 
+  // The sketch's bring-up worker is still registering GATT services on the
+  // server NimBLEAdvertising::start() would start (NimBLEServer::start()
+  // walks the service list the worker appends to, from another task): the
+  // start is held, and made when it finishes (bringup_worker_finished(), the
+  // F167 review). Answered as started: it follows within a loop pass or
+  // two, and pairing mode reads pairing meanwhile.
+  if (g_bringup_worker_running) {
+    g_advertise_after_bringup = true;
+    return true;
+  }
+
   if (g_advertising && !g_advertising->isAdvertising()) {
     g_advertising->start();
     g_advertising_start_ms = millis();
@@ -1728,6 +1824,7 @@ static bool start_advertising() {
 }
 
 static void stop_advertising() {
+  g_advertise_after_bringup = false;   // a start held for the bring-up worker, withdrawn
   if (g_advertising && g_advertising->isAdvertising()) {
     g_advertising->stop();
     g_advertising_total_ms += millis() - g_advertising_start_ms;
@@ -1984,7 +2081,13 @@ static QuietRadio quiet_radio() {
 
 static void restore_radio(const QuietRadio& q) {
   if (q.advertising && g_advertising && !g_advertising->isAdvertising()) {
-    g_advertising->start();
+    // Held while the sketch's bring-up worker registers services, as
+    // start_advertising() holds its own (the F167 review).
+    if (g_bringup_worker_running) {
+      g_advertise_after_bringup = true;
+    } else {
+      g_advertising->start();
+    }
   }
   ble_presence::resume_continuous_scan();
 }
@@ -2003,6 +2106,14 @@ static bool forget_bond(const NimBLEAddress& identity) {
 }
 
 static bool remove_paired_device(const uint8_t* address, Refusal* refusal) {
+  // The bond store is NimBLE's, reachable once the stack is up (the F167
+  // review: the list is loaded at the loop task's first pass, so before the
+  // stack is up an entry is found whose bond no call can reach yet, and
+  // forget_bond() would read the unreachable bond as gone). Nothing changes.
+  if (!g_initialized) {
+    *refusal = BT_REFUSED_NOT_UP;
+    return false;
+  }
   for (size_t i = 0; i < g_paired_count; i++) {
     if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
       // Forget the bond first (sweep F172), by the identity address the list
@@ -2032,6 +2143,13 @@ static bool remove_paired_device(const uint8_t* address, Refusal* refusal) {
 }
 
 static bool clear_all_paired_devices(Refusal* refusal) {
+  // As Remove (the F167 review): with the stack down no bond can be
+  // deleted, and every entry would read unbonded and be dropped, saving an
+  // empty list over the bonds NimBLE still keeps. Nothing changes.
+  if (!g_initialized) {
+    *refusal = BT_REFUSED_NOT_UP;
+    return false;
+  }
   // Every bond NimBLE keeps, with the radio quiet once for all of them (see
   // quiet_radio()).
   const QuietRadio q = quiet_radio();
@@ -2458,10 +2576,12 @@ static void log_drops(uint32_t dropped, DropLog& log, LogLevel level, const char
 }
 
 void update() {
-  // The bring-up's result, once init() has published it (sweep F167): the
-  // settings, the paired list and the stack's objects become this task's
-  // before anything below reads them, and the channel's server callbacks
-  // reach the stack only from here on.
+  // The saved settings and paired list, on the first pass (the F167
+  // review), then the bring-up's result, once init() has published it
+  // (sweep F167): the stack's objects become this task's before anything
+  // below reads them, and the channel's server callbacks reach the stack
+  // only from here on.
+  load_saved();
   adopt_init_result();
   // What the NimBLE host task reported since the last pass (sweep F143),
   // then the owner's commands (F111), both before the early return below:

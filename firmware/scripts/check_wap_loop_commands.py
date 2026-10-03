@@ -396,17 +396,21 @@ BD1. One set of NimBLE server callbacks, two owners (F171). NimBLE keeps one
      `NimBLEServerCallbacks`, however many steps down), a pointer variable,
      or `nullptr` / `NULL` / `0`, which put NimBLE's default server
      callbacks back (the F171 review). Each owner hands its server
-     callbacks to
-     `ble_server_dispatch::install(`, `bluetooth_channel.cpp`'s
+     callbacks to the dispatcher: `bluetooth_channel.cpp`'s
      `adopt_init_result()` as `kPairing` (`&g_server_callbacks`: the loop
-     task, once it takes `init()`'s result, F167) and `ble_opera.h`'s
-     `init()` as `kLink` (`&g_serverCallbacks`), each once, and no other
-     file names a role. `ble_server_dispatch.h`'s `attach()` is the one
-     `setCallbacks(`, of the dispatcher, with NimBLE's deleteCallbacks
-     false (the dispatcher is not on the heap); `install()` records the
-     owner and calls it, nothing else; and the channel's `init()` attaches
+     task, once it takes `init()`'s result, F167) with
+     `ble_server_dispatch::set_owner(`, and `ble_opera.h`'s `init()` as
+     `kLink` (`&g_serverCallbacks`) with `ble_server_dispatch::install(`,
+     each once, and no other file names a role. `ble_server_dispatch.h`'s
+     `attach()` is the one `setCallbacks(`, of the dispatcher, with
+     NimBLE's deleteCallbacks false (the dispatcher is not on the heap);
+     `install()` records the owner and calls it, nothing else;
+     `set_owner()` only records the owner (`g_dispatcher.set(role,
+     owner);`), and only the channel calls it and never `install()` (the
+     F167 review: a second `setCallbacks()` from the loop task raced
+     Opera's on the bring-up worker); and the channel's `init()` attaches
      the dispatcher to the server it creates, once (F167: until the loop
-     task installs the channel's callbacks, the server would otherwise
+     task names the channel's callbacks, the server would otherwise
      answer with NimBLE's defaults). What the dispatcher hands each owner is
      `test_bluetooth_commands_wap.cpp`'s, which compiles both inits over the
      stand-in.
@@ -420,9 +424,10 @@ BV4. `init()` hands its result to the loop task (F167). It runs on the BLE
      `bluetooth_channel.cpp`: `init()` names no file global but its latch,
      its hand-over (`g_bringup`, `g_bringup_ready`), `g_stack_up`, the
      device metadata (`g_meta_*`) and the GATT and scan callbacks objects
-     (`BT_INIT_GLOBALS`), and calls nothing of the file but its loaders and
-     `set_init_fail_reason()` (`BT_INIT_CALLS`); the loaders name no file
-     global (they fill the hand-over). `init()` publishes the hand-over
+     (`BT_INIT_GLOBALS`), and calls nothing of the file but
+     `load_settings()` (the settings it gives the stack, into the
+     hand-over) and `set_init_fail_reason()` (`BT_INIT_CALLS`); the
+     loaders name no file global (they fill what they are given). `init()` publishes the hand-over
      once, `__atomic_store_n(&g_bringup_ready, true, __ATOMIC_RELEASE);`,
      writes none of it after, and only then sets
      `__atomic_store_n(&g_stack_up, true, __ATOMIC_RELEASE);`, touching
@@ -436,9 +441,22 @@ BV4. `init()` hands its result to the loop task (F167). It runs on the BLE
      exactly the acquire load of `g_init_fail_reason`, which
      `set_init_fail_reason()` publishes with a release store after writing
      the text whole into the next of its slots. The hand-over's globals are
-     named only by those functions (`BT_HANDOFF_NAMES`). That nothing of
-     the loop task's moves on the bring-up's task, and the threads under
-     TSAN, are `test_bluetooth_commands_wap.cpp`'s.
+     named only by those functions (`BT_HANDOFF_NAMES`). And the F167
+     review: the hand-over carried the saved settings, and the adoption
+     overwrote what the owner's commands had done while `init()` ran (a
+     Disable came back on). `update()` starts `load_saved();
+     adopt_init_result();`, each once; `load_saved()` starts `if
+     (g_saved_loaded) return; g_saved_loaded = true;`, loads the settings
+     and the paired list, is called only by `update()` and alone names
+     `g_saved_loaded`; `load_paired_devices()` is called only by
+     `load_saved()`, `load_settings()` only by it and `init()`;
+     `adopt_init_result()` writes none of `g_settings`, the paired list or
+     its count and flag (`BT_ADOPT_KEEPS`); and `remove_paired_device()`
+     and `clear_all_paired_devices()` start `if (!g_initialized) {
+     *refusal = BT_REFUSED_NOT_UP; return false; }` (the list is loaded
+     before the stack is up; its bonds are NimBLE's). That nothing of the
+     loop task's moves on the bring-up's task, the commands kept across
+     it, and the threads under TSAN, are `test_bluetooth_commands_wap.cpp`'s.
 
 BV5. The bond store never evicts behind the owner, and the paired list takes
      only a bond the store holds (F189). NimBLE keeps 3 bonds by default
@@ -468,6 +486,34 @@ BV6. Every Bluetooth REST answer goes out at its own length (F196). The
      return send_json_response(req, out.c_str());` (a failed reservation
      answers the fixed allocation error), and no other function of the file
      calls `serializeJson(`, `serializeJsonPretty(` or `serializeMsgPack(`.
+
+BV7. No advertising start while the sketch's bring-up worker registers GATT
+     services (the F167 review). After the channel's `init()` returns, the
+     worker (`canary_wap.ino`'s `ble_bringup_task`) goes on to
+     `ble_status::init()` and, on FULL, `ble_opera::init()`, both adding
+     services to the one server, and `NimBLEAdvertising::start()` starts
+     that server (`NimBLEServer::start()` walks the service list the
+     worker appends to). In `bluetooth_channel.cpp`: `start_advertising()`
+     holds the start (`if (g_bringup_worker_running) {
+     g_advertise_after_bringup = true; return true; }`) before it starts
+     anything; `restore_radio()` puts a stopped advertiser back only
+     outside the bring-up (`if (g_bringup_worker_running) {
+     g_advertise_after_bringup = true; } else { g_advertising->start(); }`);
+     no other function starts `g_advertising`; `stop_advertising()` starts
+     `g_advertise_after_bringup = false;`; `bringup_worker_started()` and
+     `bringup_worker_finished()` are exactly `g_bringup_worker_running =
+     true;` and `g_bringup_worker_running = false; if
+     (g_advertise_after_bringup) { g_advertise_after_bringup = false;
+     start_advertising(); }`, and nothing else sets the flag. In
+     `canary_wap.ino`: `ble_discovery_start_if_due()` calls
+     `bluetooth_channel::bringup_worker_started();` once, before
+     `xTaskCreate(ble_bringup_task, ...` (the worker may run before it
+     returns), and `bringup_worker_finished();` when the create fails;
+     `ble_bringup_finalize_if_done()` calls `bringup_worker_finished();`
+     once, after its acquire of `g_ble_bringup_done`; no other function of
+     the sketch calls either (both are loop-task only). That a start waits
+     for the worker, over a stand-in whose advertising start walks the
+     services, is `test_bluetooth_commands_wap.cpp`'s.
 
 ## It proves it bites
 
@@ -1123,7 +1169,11 @@ BT_INTERNAL = {
     # init()'s result (adopt_init_result()); init() calls neither.
     "enable": ("adopt_init_result", "set_settings"),
     "disable": ("set_settings",),
-    "start_advertising": ("adopt_init_result", "apply_disconnect", "start_pairing"),   # F143: the loop task's
+    # F143: the loop task's. The F167 review: a start held while the sketch's
+    # bring-up worker registered services is made by bringup_worker_finished(),
+    # which canary_wap.ino calls on the loop task (rule BV7).
+    "start_advertising": ("adopt_init_result", "apply_disconnect", "start_pairing",
+                          "bringup_worker_finished"),
     "stop_advertising": ("deinit", "disable"),
     "stop_scan": ("deinit", "disable", "handle_scan_timeout",
                   "quiet_radio"),   # F172 review: a bond's delete ends the owner's scan (loop task)
@@ -2479,12 +2529,16 @@ SIG_OPERA_INIT = r"\bstatic\s+bool\s+init\s*\(\s*const\s+char\s*\*\s*deviceIdHas
 SIG_DISPATCH_INSTALL = r"\binline\s+bool\s+install\s*\([^)]*\)"
 SIG_DISPATCH_ATTACH = r"\binline\s+bool\s+attach\s*\([^)]*\)"
 SIG_BT_ADOPT = r"\bstatic\s+void\s+adopt_init_result\s*\(\s*\)"
+SIG_DISPATCH_SET_OWNER = r"\binline\s+void\s+set_owner\s*\([^)]*\)"
 # Each owner's install: (file, the signature of the function that installs,
 # the call, squashed). The pairing channel's is the loop task's, when it
-# takes init()'s result (F167); its init() only attaches the dispatcher.
+# takes init()'s result (F167), and only names the owner (set_owner(): its
+# init() attached the dispatcher, and install() would call setCallbacks()
+# again from the loop task while Opera's init calls it on the bring-up
+# worker, the F167 review).
 BT_DISPATCH_OWNERS = (
     (BT_CPP, SIG_BT_ADOPT,
-     "ble_server_dispatch::install(g_server,ble_server_dispatch::kPairing,&g_server_callbacks);"),
+     "ble_server_dispatch::set_owner(ble_server_dispatch::kPairing,&g_server_callbacks);"),
     (BLE_OPERA_H, SIG_OPERA_INIT,
      "ble_server_dispatch::install(g_pServer,ble_server_dispatch::kLink,&g_serverCallbacks);"),
 )
@@ -2616,6 +2670,27 @@ def check_bluetooth_dispatch(files: dict[str, str], errors: list[str]) -> None:
                       "`g_dispatcher.set(role, owner); return attach(server);`, nothing else (F171)")
     if len(re.findall(r"\bsetCallbacks\s*\(", dcode)) != 1:
         errors.append(f"{BT_DISPATCH_H}: the dispatcher is put on the server only by attach() (F171)")
+    set_owner = body_of(dcode, SIG_DISPATCH_SET_OWNER, f"{BT_DISPATCH_H}: set_owner()", errors)
+    if set_owner is not None and squash(set_owner) != "g_dispatcher.set(role,owner);":
+        errors.append(f"{BT_DISPATCH_H}: set_owner() only records the owner, "
+                      "`g_dispatcher.set(role, owner);` — no setCallbacks(): it is for an owner whose "
+                      "server already carries the dispatcher (the F167 review)")
+    # set_owner() skips the attach, so only the owner whose own init() attached
+    # the dispatcher to the server may use it: the pairing channel, at adoption.
+    for path, code in blanked.items():
+        if path == BT_DISPATCH_H:
+            continue
+        n_set = len(re.findall(r"\bble_server_dispatch::set_owner\s*\(", code))
+        n_install = len(re.findall(r"\bble_server_dispatch::install\s*\(", code))
+        if path == BT_CPP and n_install:
+            errors.append(f"{BT_CPP}: calls ble_server_dispatch::install() — the channel's init() "
+                          "attached the dispatcher; the loop task only names its owner with set_owner(), "
+                          "or it calls NimBLEServer::setCallbacks() again from the loop task while Opera's "
+                          "init calls it on the bring-up worker (the F167 review)")
+        if path != BT_CPP and n_set:
+            errors.append(f"{path}: calls ble_server_dispatch::set_owner() — only the pairing channel, "
+                          "whose init() attached the dispatcher, may skip the attach; another owner "
+                          "installs with install() (the F167 review)")
     for path, sig, call in BT_DISPATCH_OWNERS:
         if path not in files:
             errors.append(f"{path}: missing — a server callbacks owner (F171)")
@@ -2658,10 +2733,12 @@ SIG_BT_DEINIT = r"\bstatic\s+void\s+deinit\s*\(\s*\)"
 BT_INIT_GLOBALS = ("g_init_in_progress", "g_stack_up", "g_bringup", "g_bringup_ready",
                    "g_char_callbacks", "g_scan_callbacks", "g_store_callbacks")
 BT_INIT_GLOBAL_PREFIXES = ("g_meta_",)
-# What init() may call of the file: its loaders (into the handoff) and the
-# refusal's publisher. Not set_state(), not enable() / start_advertising(),
-# not the list's rebuild or a save: those are the loop task's.
-BT_INIT_CALLS = ("load_settings", "load_paired_devices", "set_init_fail_reason")
+# What init() may call of the file: the settings loader (into the hand-over:
+# the settings it gives the stack) and the refusal's publisher. Not
+# set_state(), not enable() / start_advertising(), not the list's loader, its
+# rebuild or a save: those are the loop task's (the list's loader since the
+# F167 review, load_saved()).
+BT_INIT_CALLS = ("load_settings", "set_init_fail_reason")
 # Who may name the hand-over's own globals.
 BT_HANDOFF_NAMES = {
     "g_bringup": ("init", "adopt_init_result"),
@@ -2674,6 +2751,19 @@ BT_HANDOFF_NAMES = {
 BT_PUBLISH_HANDOFF = "__atomic_store_n(&g_bringup_ready,true,__ATOMIC_RELEASE);"
 BT_PUBLISH_STACK_UP = "__atomic_store_n(&g_stack_up,true,__ATOMIC_RELEASE);"
 BT_TAKE_HANDOFF = "if(g_initialized||!__atomic_load_n(&g_bringup_ready,__ATOMIC_ACQUIRE))return;"
+# The F167 review: the saved settings and the paired list are the loop
+# task's from its first pass (load_saved(), first in update()), and the
+# adoption keeps them; Remove and Clear wait for the stack.
+SIG_BT_LOAD_SAVED = r"\bstatic\s+void\s+load_saved\s*\(\s*\)"
+SIG_BT_REMOVE = r"\bstatic\s+bool\s+remove_paired_device\s*\([^)]*\)"
+SIG_BT_CLEAR = r"\bstatic\s+bool\s+clear_all_paired_devices\s*\([^)]*\)"
+BT_LOAD_SAVED_LATCH = "if(g_saved_loaded)return;g_saved_loaded=true;"
+BT_UPDATE_HEAD = "load_saved();adopt_init_result();"
+BT_NOT_UP_GUARD = "if(!g_initialized){*refusal=BT_REFUSED_NOT_UP;returnfalse;}"
+# What the adoption must not write: the loop task's settings and list.
+BT_ADOPT_KEEPS = (r"\bg_settings\s*(?:\.\w+\s*)?=(?!=)", r"\bg_paired_count\s*=(?!=)",
+                  r"\bg_paired_by_identity\s*=(?!=)", r"\bmemcpy\s*\(\s*(?:&\s*)?g_(?:settings|paired_devices)\b",
+                  r"\bg_paired_devices\s*\[[^\]]*\]\s*=(?!=)", r"\bload_(?:settings|paired_devices)\s*\(")
 
 
 def check_bluetooth_bringup(cpp_src: str, errors: list[str]) -> None:
@@ -2774,9 +2864,50 @@ def check_bluetooth_bringup(cpp_src: str, errors: list[str]) -> None:
     update = body_of(code, SIG_UPDATE, f"{BT_CPP}: update()", errors)
     if update is not None:
         sq = squash(update)
-        if not sq.startswith("adopt_init_result();") or sq.count("adopt_init_result();") != 1:
-            errors.append(f"{BT_CPP}: update() must take the bring-up's result first, "
-                          "`adopt_init_result();` once, before it applies an event or runs a command (F167)")
+        if not sq.startswith(BT_UPDATE_HEAD) or sq.count("adopt_init_result();") != 1 or \
+                sq.count("load_saved();") != 1:
+            errors.append(f"{BT_CPP}: update() must start `load_saved(); adopt_init_result();`, each once: "
+                          "the saved settings and list are the loop task's before any command or event "
+                          "of its first pass, and the bring-up's result is taken before either runs "
+                          "(F167 and its review)")
+    # The F167 review: the loop task loads, the adoption keeps.
+    saved = body_of(code, SIG_BT_LOAD_SAVED, f"{BT_CPP}: load_saved()", errors)
+    if saved is not None:
+        sq = squash(saved)
+        if not sq.startswith(BT_LOAD_SAVED_LATCH) or "load_settings(&" not in sq or \
+                "load_paired_devices(g_paired_devices,&g_paired_count,&g_paired_by_identity);" not in sq:
+            errors.append(f"{BT_CPP}: load_saved() loads the saved settings and the paired list once, "
+                          f"starting `{BT_LOAD_SAVED_LATCH}` — a load on a later pass would overwrite what "
+                          "the owner's commands changed (the F167 review)")
+    for name, allowed in (("load_saved", ("update",)), ("load_paired_devices", ("load_saved",)),
+                          ("load_settings", ("load_saved", "init"))):
+        for m in re.finditer(r"(?<![\w:.>])" + name + r"\s*\(", code):
+            where = enclosing_function(spans, m.start())
+            if where is not None and where != name and where not in allowed:
+                errors.append(f"{BT_CPP}: {where}() calls {name}() — only {', '.join(allowed)} may: the "
+                              "saved settings and list are loaded once, by the loop task, before any "
+                              "command (init() reads the settings only for the stack) (the F167 review)")
+    for m in re.finditer(r"\bg_saved_loaded\b", code):
+        where = enclosing_function(spans, m.start())
+        if where is not None and where != "load_saved":
+            errors.append(f"{BT_CPP}: {where}() names g_saved_loaded — load_saved()'s own latch "
+                          "(the F167 review)")
+            break
+    if adopt is not None:
+        for pattern in BT_ADOPT_KEEPS:
+            m = re.search(pattern, adopt)
+            if m:
+                errors.append(f"{BT_CPP}: adopt_init_result() writes the loop task's settings or paired "
+                              f"list (`{m.group(0).strip()}`) — they are the loop task's from its first pass, "
+                              "and the owner's commands may have changed them while init() ran: a "
+                              "Disable came back on (the F167 review)")
+                break
+    for sig, what in ((SIG_BT_REMOVE, "remove_paired_device()"), (SIG_BT_CLEAR, "clear_all_paired_devices()")):
+        body = body_of(code, sig, f"{BT_CPP}: {what}", errors)
+        if body is not None and not squash(body).startswith(BT_NOT_UP_GUARD):
+            errors.append(f"{BT_CPP}: {what} must start `{BT_NOT_UP_GUARD}` — the list is loaded before "
+                          "the stack is up, and its bonds are NimBLE's, reachable once it is: an entry "
+                          "dropped or a list cleared then leaves the bond (the F167 review)")
 
 
 # BV5 (F189): the bond store never evicts behind the owner, and the paired
@@ -2833,6 +2964,110 @@ def check_bluetooth_bond_store(files: dict[str, str], errors: list[str]) -> None
                           "bonded whether or not the bond was kept (F189)")
 
 
+# BV7 (the F167 review): no advertising start while the sketch's bring-up
+# worker registers GATT services.
+SIG_BT_START_ADV = r"\bstatic\s+bool\s+start_advertising\s*\(\s*\)"
+SIG_BT_STOP_ADV = r"\bstatic\s+void\s+stop_advertising\s*\(\s*\)"
+SIG_BT_RESTORE_RADIO = r"\bstatic\s+void\s+restore_radio\s*\([^)]*\)"
+SIG_BT_WORKER_STARTED = r"\bvoid\s+bringup_worker_started\s*\(\s*\)"
+SIG_BT_WORKER_FINISHED = r"\bvoid\s+bringup_worker_finished\s*\(\s*\)"
+SIG_INO_DISCOVERY_START = r"\bstatic\s+void\s+ble_discovery_start_if_due\s*\(\s*\)"
+SIG_INO_FINALIZE = r"\bstatic\s+void\s+ble_bringup_finalize_if_done\s*\(\s*\)"
+BT_ADV_HOLD = "if(g_bringup_worker_running){g_advertise_after_bringup=true;returntrue;}"
+BT_RESTORE_HOLD = "if(g_bringup_worker_running){g_advertise_after_bringup=true;}else{g_advertising->start();}"
+BT_WORKER_STARTED_BODY = "g_bringup_worker_running=true;"
+BT_WORKER_FINISHED_BODY = ("g_bringup_worker_running=false;if(g_advertise_after_bringup){"
+                           "g_advertise_after_bringup=false;start_advertising();}")
+INO_WORKER_STARTED = "bluetooth_channel::bringup_worker_started();"
+INO_WORKER_FINISHED = "bluetooth_channel::bringup_worker_finished();"
+INO_WORKER_CREATE = "xTaskCreate(ble_bringup_task,"
+INO_FINALIZE_HEAD = ("if(g_ble_bringup_finalized||!__atomic_load_n(&g_ble_bringup_done,__ATOMIC_ACQUIRE)){return;}"
+                     "g_ble_bringup_finalized=true;")
+
+
+def check_bluetooth_bringup_worker(files: dict[str, str], errors: list[str]) -> None:
+    """Rule BV7 (the F167 review): after the channel's init() returns, the
+    sketch's bring-up worker goes on registering GATT services on the same
+    server (ble_status on DEV and FULL, Opera on FULL), and an advertising
+    start starts that server (NimBLEServer::start() walks the service list
+    the worker appends to). The channel holds every start of its own while
+    the worker runs, and the sketch tells it when that is, on the loop
+    task."""
+    code = blank_comments_and_strings(files.get(BT_CPP, ""))
+    spans = named_bodies(code)
+    start = body_of(code, SIG_BT_START_ADV, f"{BT_CPP}: start_advertising()", errors)
+    if start is not None:
+        sq = squash(start)
+        hold = sq.find(BT_ADV_HOLD)
+        go = sq.find("g_advertising->start()")
+        if hold < 0 or go < 0 or go < hold:
+            errors.append(f"{BT_CPP}: start_advertising() holds the start while the sketch's bring-up worker "
+                          f"runs, before it starts anything (`{BT_ADV_HOLD}`) — NimBLEAdvertising::start() "
+                          "starts the server the worker is still adding services to (the F167 review)")
+    restore = body_of(code, SIG_BT_RESTORE_RADIO, f"{BT_CPP}: restore_radio()", errors)
+    if restore is not None and BT_RESTORE_HOLD not in squash(restore):
+        errors.append(f"{BT_CPP}: restore_radio() puts a stopped advertiser back only when no bring-up worker "
+                      f"runs, holding it otherwise (`{BT_RESTORE_HOLD}`) (the F167 review)")
+    stop = body_of(code, SIG_BT_STOP_ADV, f"{BT_CPP}: stop_advertising()", errors)
+    if stop is not None and not squash(stop).startswith("g_advertise_after_bringup=false;"):
+        errors.append(f"{BT_CPP}: stop_advertising() withdraws a held start first, "
+                      "`g_advertise_after_bringup = false;` — or the worker's end starts what the owner "
+                      "stopped (the F167 review)")
+    for m in re.finditer(r"\bg_advertising\s*->\s*start\s*\(", code):
+        where = enclosing_function(spans, m.start())
+        if where not in ("start_advertising", "restore_radio"):
+            errors.append(f"{BT_CPP}: {where or 'file scope'}() starts the advertiser itself — every start "
+                          "goes through start_advertising() or restore_radio(), which hold it while the "
+                          "bring-up worker registers services (the F167 review)")
+    for sig, body_want, what in ((SIG_BT_WORKER_STARTED, BT_WORKER_STARTED_BODY, "bringup_worker_started()"),
+                                 (SIG_BT_WORKER_FINISHED, BT_WORKER_FINISHED_BODY, "bringup_worker_finished()")):
+        body = body_of(code, sig, f"{BT_CPP}: {what}", errors)
+        if body is not None and squash(body) != body_want:
+            errors.append(f"{BT_CPP}: {what} must be exactly `{body_want}` (the F167 review)")
+    for m in re.finditer(r"\bg_bringup_worker_running\s*=(?!=)", code):
+        where = enclosing_function(spans, m.start())
+        if where is not None and where not in ("bringup_worker_started", "bringup_worker_finished"):
+            errors.append(f"{BT_CPP}: {where or 'file scope'}() sets g_bringup_worker_running — only the "
+                          "sketch's calls do (the F167 review)")
+    # The sketch: started before the worker is created, finished when its
+    # result is taken (or it could not be created), both on the loop task.
+    ino = blank_comments_and_strings(files.get(INO, ""))
+    ino_spans = named_bodies(ino)
+    disc = body_of(ino, SIG_INO_DISCOVERY_START, f"{INO}: ble_discovery_start_if_due()", errors)
+    if disc is not None:
+        sq = squash(disc)
+        st = sq.find(INO_WORKER_STARTED)
+        cr = sq.find(INO_WORKER_CREATE)
+        fin = sq.find(INO_WORKER_FINISHED)
+        if sq.count(INO_WORKER_STARTED) != 1 or cr < 0 or st < 0 or st > cr or \
+                sq.count(INO_WORKER_FINISHED) != 1 or fin < cr:
+            errors.append(f"{INO}: ble_discovery_start_if_due() tells the pairing channel "
+                          f"`{INO_WORKER_STARTED}` once, before `{INO_WORKER_CREATE}` (the worker may run "
+                          f"before it returns), and `{INO_WORKER_FINISHED}` when the create fails "
+                          "(the F167 review)")
+    fin_body = body_of(ino, SIG_INO_FINALIZE, f"{INO}: ble_bringup_finalize_if_done()", errors)
+    if fin_body is not None:
+        sq = squash(fin_body)
+        if not sq.startswith(INO_FINALIZE_HEAD) or sq.count(INO_WORKER_FINISHED) != 1:
+            errors.append(f"{INO}: ble_bringup_finalize_if_done() tells the pairing channel "
+                          f"`{INO_WORKER_FINISHED}` once, after it has taken the worker's result "
+                          "(the F167 review)")
+    for call, allowed in (("bringup_worker_started", ("ble_discovery_start_if_due",)),
+                          ("bringup_worker_finished", ("ble_discovery_start_if_due",
+                                                       "ble_bringup_finalize_if_done"))):
+        for path, src in files.items():
+            if path in (BT_CPP, BT_H):
+                continue
+            blanked = ino if path == INO else blank_comments_and_strings(src)
+            pspans = ino_spans if path == INO else named_bodies(blanked)
+            for m in re.finditer(r"\b" + call + r"\s*\(", blanked):
+                where = enclosing_function(pspans, m.start())
+                if path != INO or where not in allowed:
+                    errors.append(f"{path}: {where or 'file scope'}() calls bluetooth_channel::{call}() — "
+                                  f"only canary_wap.ino's {', '.join(allowed)} may, on the loop task "
+                                  "(the F167 review)")
+
+
 # BV6 (F196, bluetooth_api.h): every answer goes out at its own length.
 SIG_BT_SEND_DOC = r"\bstatic\s+inline\s+esp_err_t\s+send_doc\s*\([^)]*\)"
 BT_SEND_DOC_BODY = ("Stringout;if(!out.reserve(measureJson(doc)+1)){returnsend_json_response(req,\"\");}"
@@ -2877,6 +3112,7 @@ def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
     check_bluetooth_bringup(files[BT_CPP], errors)
     check_bluetooth_bond_store(files, errors)
     check_bluetooth_answer_lengths(files[BT_API], errors)
+    check_bluetooth_bringup_worker(files, errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -3736,7 +3972,7 @@ BV_MUTATIONS += [
               "g_pServer->setCallbacks(&g_serverCallbacks);")),
     ("the channel installs its server callbacks with setCallbacks() again",
      on_other(BT_CPP, SIG_BT_ADOPT,
-              r"ble_server_dispatch::install\(g_server,\s*ble_server_dispatch::kPairing,\s*&g_server_callbacks\);",
+              r"ble_server_dispatch::set_owner\(ble_server_dispatch::kPairing,\s*&g_server_callbacks\);",
               "g_server->setCallbacks(&g_server_callbacks);")),
     ("Opera installs through the dispatcher and replaces it too",
      on_other(BLE_OPERA_H, SIG_OPERA_INIT,
@@ -3756,7 +3992,7 @@ BV_MUTATIONS += [
     # The F171 review's four misses, and the other spellings of a null.
     ("the channel puts NimBLE's default server callbacks back (setCallbacks(nullptr))",
      on_other(BT_CPP, SIG_BT_ADOPT,
-              r"(ble_server_dispatch::install\(g_server,\s*ble_server_dispatch::kPairing,\s*&g_server_callbacks\);)",
+              r"(ble_server_dispatch::set_owner\(ble_server_dispatch::kPairing,\s*&g_server_callbacks\);)",
               r"\1 g_server->setCallbacks(nullptr);")),
     ("Opera puts the defaults back with NULL",
      on_other(BLE_OPERA_H, SIG_OPERA_INIT,
@@ -3788,7 +4024,7 @@ BV_MUTATIONS += [
      on_other(BT_CPP, SIG_BT_INIT, r'(log_health\(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Initializing BLE", nullptr\);)',
               r"\1 set_state(BT_INITIALIZING);")),
     ("init() loads the settings into the loop task's g_settings",
-     on_other(BT_CPP, SIG_BT_INIT, r"load_settings\(&b\.settings\);", "load_settings(&g_settings);")),
+     on_other(BT_CPP, SIG_BT_INIT, r"load_settings\(&b\.applied\);", "load_settings(&g_settings);")),
     ("init() turns Bluetooth on and advertises itself again",
      on_other(BT_CPP, SIG_BT_INIT, r"(__atomic_store_n\(&g_bringup_ready, true, __ATOMIC_RELEASE\);)",
               r"enable(); start_advertising(); \1")),
@@ -3815,7 +4051,7 @@ BV_MUTATIONS += [
               "__atomic_load_n(&g_bringup_ready, __ATOMIC_RELAXED)")),
     ("the loop task reads the hand-over before the acquire",
      on_other(BT_CPP, SIG_BT_ADOPT, r"(if \(g_initialized \|\| !__atomic_load_n)",
-              r"g_settings = g_bringup.settings; \1")),
+              r"g_server = g_bringup.server; \1")),
     ("update() never takes the bring-up's result",
      on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*adopt_init_result\(\);", "")),
     ("update() takes the bring-up's result after the commands ran",
@@ -3844,12 +4080,85 @@ BV_MUTATIONS += [
      lambda s: on_other(BT_CPP, SIG_BT_INIT, r"ble_server_dispatch::attach\(server\);",
                         "ble_server_dispatch::install(server, ble_server_dispatch::kPairing, &g_server_callbacks);")(
          on_other(BT_CPP, SIG_BT_ADOPT,
-                  r"\n[ \t]*ble_server_dispatch::install\(g_server, ble_server_dispatch::kPairing, &g_server_callbacks\);",
+                  r"\n[ \t]*ble_server_dispatch::set_owner\(ble_server_dispatch::kPairing, &g_server_callbacks\);",
                   "")(s))),
     ("init() leaves the server on NimBLE's default callbacks until the loop task installs",
      on_other(BT_CPP, SIG_BT_INIT, r"\n[ \t]*ble_server_dispatch::attach\(server\);", "")),
     ("install() puts the dispatcher on the server without recording the owner",
      on_other(BT_DISPATCH_H, SIG_DISPATCH_INSTALL, r"g_dispatcher\.set\(role, owner\);", "")),
+    # The F167 review: the loop task loads the saved settings and list, the
+    # adoption keeps them, the dispatcher's owner is named without a second
+    # setCallbacks(), and Remove and Clear wait for the stack.
+    ("the adoption overwrites the settings with init()'s copy (a Disable comes back on)",
+     on_other(BT_CPP, SIG_BT_ADOPT, r"(g_initialized = true;)", r"g_settings = b.applied; \1")),
+    ("the adoption empties the loop task's paired list",
+     on_other(BT_CPP, SIG_BT_ADOPT, r"(g_initialized = true;)", r"g_paired_count = 0; \1")),
+    ("the adoption reloads the saved settings over the owner's commands",
+     on_other(BT_CPP, SIG_BT_ADOPT, r"(g_initialized = true;)", r"load_settings(&g_settings); \1")),
+    ("init() loads the paired list again",
+     on_other(BT_CPP, SIG_BT_INIT, r"(load_settings\(&b\.applied\);)",
+              r"\1 load_paired_devices(g_paired_devices, &g_paired_count, &g_paired_by_identity);")),
+    ("update() never loads the saved settings",
+     on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*load_saved\(\);", "")),
+    ("update() takes the bring-up's result before loading the saved settings",
+     lambda s: on_other(BT_CPP, SIG_UPDATE, r"(adopt_init_result\(\);)", r"\1 load_saved();")(
+         on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*load_saved\(\);", "")(s))),
+    ("update() loads the saved settings after the commands ran",
+     lambda s: on_other(BT_CPP, SIG_UPDATE, r"(g_commands\.drain\(run_command\);)", r"load_saved(); \1")(
+         on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*load_saved\(\);", "")(s))),
+    ("load_saved() loads on every pass (over the owner's commands)",
+     on_other(BT_CPP, SIG_BT_LOAD_SAVED, r"if \(g_saved_loaded\) return;\s*", "")),
+    ("a command reloads the saved settings (a second caller)",
+     on_other(BT_CPP, r"\bstatic\s+Result\s+run_command\s*\([^)]*\)", r"(case BT_CMD_ENABLE:)",
+              r"\1 g_saved_loaded = false;")),
+    ("Remove runs before the stack is up",
+     on_other(BT_CPP, SIG_BT_REMOVE, r"if \(!g_initialized\) \{", "if (false) {")),
+    ("Clear all runs before the stack is up",
+     on_other(BT_CPP, SIG_BT_CLEAR, r"if \(!g_initialized\) \{", "if (false) {")),
+    ("the adoption installs the channel's callbacks with install() (a second setCallbacks)",
+     on_other(BT_CPP, SIG_BT_ADOPT,
+              r"ble_server_dispatch::set_owner\(ble_server_dispatch::kPairing, &g_server_callbacks\);",
+              "ble_server_dispatch::install(g_server, ble_server_dispatch::kPairing, &g_server_callbacks);")),
+    ("set_owner() puts the dispatcher on the server too",
+     on_other(BT_DISPATCH_H, SIG_DISPATCH_SET_OWNER, r"(g_dispatcher\.set\(role, owner\);)",
+              r"\1 attach(NimBLEDevice::getServer());")),
+    ("Opera names its owner without attaching the dispatcher",
+     on_other(BLE_OPERA_H, SIG_OPERA_INIT,
+              r"ble_server_dispatch::install\(g_pServer,\s*ble_server_dispatch::kLink,\s*&g_serverCallbacks\);",
+              "ble_server_dispatch::set_owner(ble_server_dispatch::kLink, &g_serverCallbacks);")),
+]
+# Rule BV7 (the F167 review): no advertising start while the sketch's
+# bring-up worker registers services.
+BV_MUTATIONS += [
+    ("start_advertising() starts while the bring-up worker registers services",
+     on_other(BT_CPP, SIG_BT_START_ADV, r"if \(g_bringup_worker_running\) \{[^}]*\}", "")),
+    ("restore_radio() puts the advertiser back during the bring-up",
+     on_other(BT_CPP, SIG_BT_RESTORE_RADIO,
+              r"if \(g_bringup_worker_running\) \{\s*g_advertise_after_bringup = true;\s*\} else \{\s*"
+              r"g_advertising->start\(\);\s*\}", "g_advertising->start();")),
+    ("a link's end starts the advertiser itself",
+     on_other(BT_CPP, r"\bstatic\s+void\s+apply_disconnect\s*\([^)]*\)",
+              r"(ble_presence::notify_console_connected\(false\);)",
+              r"\1 if (g_advertising) g_advertising->start();")),
+    ("stop_advertising() leaves a held start for the worker's end",
+     on_other(BT_CPP, SIG_BT_STOP_ADV, r"g_advertise_after_bringup = false;[^\n]*\n", "\n")),
+    ("the worker's end drops a held start",
+     on_other(BT_CPP, SIG_BT_WORKER_FINISHED, r"g_advertise_after_bringup = false;\s*start_advertising\(\);",
+              "g_advertise_after_bringup = false;")),
+    ("the sketch never tells the channel its worker started",
+     on("ino", SIG_INO_DISCOVERY_START, r"bluetooth_channel::bringup_worker_started\(\);", "")),
+    ("the sketch tells the channel after creating the worker",
+     lambda s: on("ino", SIG_INO_DISCOVERY_START, r"(!= pdPASS\) \{)",
+                  r"\1 bluetooth_channel::bringup_worker_started();")(
+         on("ino", SIG_INO_DISCOVERY_START, r"bluetooth_channel::bringup_worker_started\(\);", "")(s))),
+    ("the finalize stage never tells the channel the worker finished",
+     on("ino", SIG_INO_FINALIZE, r"bluetooth_channel::bringup_worker_finished\(\);", "")),
+    ("a failed worker create leaves the channel waiting",
+     on("ino", SIG_INO_DISCOVERY_START, r"bluetooth_channel::bringup_worker_finished\(\);[^\n]*\n", "\n")),
+    ("the worker tells the channel it finished, from its own task",
+     on("ino", r"\bstatic\s+void\s+ble_bringup_task\s*\(\s*void\s*\*\s*\)",
+        r"(__atomic_store_n\(&g_ble_bringup_done, true, __ATOMIC_RELEASE\);)",
+        r"bluetooth_channel::bringup_worker_finished(); \1")),
 ]
 # Rule BV6 (F196): every Bluetooth answer at its own length.
 BV_MUTATIONS += [

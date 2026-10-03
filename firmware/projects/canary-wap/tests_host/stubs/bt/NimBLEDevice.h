@@ -225,6 +225,13 @@ class NimBLEService {
     return chars_.back().get();
   }
   void start() {}
+  // What NimBLEServer::start() does to a service (2.5.0's resetGATT() and
+  // start_internal(): every characteristic, by walking the service's vector).
+  size_t gatt_register() const {
+    size_t n = 0;
+    for (const auto& c : chars_) n += (c != nullptr);
+    return n;
+  }
  private:
   std::vector<std::unique_ptr<NimBLECharacteristic>> chars_;
 };
@@ -254,6 +261,7 @@ inline NimBLEServerCallbacks default_server_callbacks;   // NimBLEServer.cpp's d
 class NimBLEServer {
  public:
   void setCallbacks(NimBLEServerCallbacks* cb, bool deleteCallbacks = true) {
+    host_sim::note("set_server_callbacks");   // which task (m_pServerCallbacks, no lock in NimBLE)
     if (cb != nullptr) {
       cb_ = cb;
       delete_cb_ = deleteCallbacks;
@@ -266,10 +274,25 @@ class NimBLEServer {
   NimBLEServerCallbacks* callbacks() const { return cb_; }
   // Whether NimBLE would delete the callbacks object with the server.
   bool callbacks_deleted_with_server() const { return delete_cb_; }
+  // The server's service list, appended to and walked as NimBLE-Arduino's
+  // own (m_svcVec): no lock, so the threaded tests see, under TSAN, a walk
+  // (an advertising start, below) that overlaps another task's createService
+  // (the F167 review: the sketch's bring-up worker registers ble_status and
+  // Opera after the channel's init() returns).
   NimBLEService* createService(const NimBLEUUID&) {
+    host_sim::note("svc_create");
     services_.emplace_back(new NimBLEService());
     return services_.back().get();
   }
+  // NimBLEServer::start() (2.5.0: resetGATT() walks every service and its
+  // characteristics; 2.3.8: ble_gatts_start() and the same walk), which
+  // NimBLEAdvertising::start() calls first.
+  size_t gatt_start() const {
+    size_t n = 0;
+    for (const auto& sv : services_) n += sv->gatt_register();
+    return n;
+  }
+  size_t services() const { return services_.size(); }
   bool updateConnParams(uint16_t, uint16_t, uint16_t, uint16_t, uint16_t) {
     host_sim::note("conn_params");
     return true;
@@ -344,6 +367,10 @@ class NimBLEAdvertisementData {
   std::string mfg, name;
 };
 
+namespace host_sim {
+size_t server_start();   // NimBLEServer::start() on the one server (below NimBLEDevice)
+}  // namespace host_sim
+
 class NimBLEAdvertising {
  public:
   void addServiceUUID(const NimBLEUUID&) {}
@@ -356,6 +383,7 @@ class NimBLEAdvertising {
   // read and written atomically here, so the threaded test finds only the
   // channel's races.
   bool start() {
+    (void)host_sim::server_start();   // NimBLEAdvertising::start() -> NimBLEServer::start()
     host_sim::note("adv_start");
     __atomic_store_n(&advertising_, true, __ATOMIC_RELEASE);
     return true;
@@ -473,6 +501,9 @@ inline NimBLEDeviceCallbacks* device_callbacks = &default_device_callbacks;
 // The store's status events, by code, as the stack raised them.
 inline unsigned full_events = 0;
 inline unsigned overflow_events = 0;
+// What the radio was last set to: setPower()'s dBm, setDefaultPhy()'s mask.
+inline int8_t tx_power = 0;
+inline uint8_t default_phy = 0;
 }  // namespace host_sim
 
 namespace host_sim {
@@ -492,12 +523,16 @@ class NimBLEDevice {
     host_sim::server.reset();
     return true;
   }
-  static bool setPower(int8_t) {
+  static bool setPower(int8_t dbm) {
     host_sim::note("set_power");
+    host_sim::tx_power = dbm;
     return true;
   }
   static bool setMTU(uint16_t) { return true; }
-  static bool setDefaultPhy(uint8_t, uint8_t) { return true; }
+  static bool setDefaultPhy(uint8_t tx_mask, uint8_t) {
+    host_sim::default_phy = tx_mask;
+    return true;
+  }
   static void setSecurityAuth(bool, bool, bool) {}
   static void setSecurityIOCap(uint8_t) {}
   static NimBLEServer* createServer() {
@@ -539,6 +574,8 @@ class NimBLEDevice {
   static NimBLEAddress getBondedAddress(int i) { return host_sim::bonds[(size_t)i]; }
   static NimBLEAddress getAddress() { return NimBLEAddress(); }
 };
+
+inline size_t host_sim::server_start() { return server ? server->gatt_start() : 0; }
 
 // NimBLE-Arduino 2.5.0's default server callbacks (NimBLEServer.cpp).
 inline uint32_t NimBLEServerCallbacks::onPassKeyDisplay() { return 123456; }

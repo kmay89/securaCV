@@ -189,8 +189,16 @@ void log_health(LogLevel level, LogCategory, const char* message, const char* de
   g_health.push_back(message);
   g_health_lines.push_back({level, message, detail ? detail : "", host_sim::task});
 }
+// Run inside init(), where it registers the OTA service (after the stack is
+// up and the saved settings read, before the hand-over is published): a
+// test plays what the loop task does while NimBLE's bring-up runs on
+// another task (the F167 review).
+std::function<void()> g_inside_init;
 namespace ble_ota {
-bool init(NimBLEServer*, const uint8_t[32]) { return true; }
+bool init(NimBLEServer*, const uint8_t[32]) {
+  if (g_inside_init) g_inside_init();
+  return true;
+}
 }  // namespace ble_ota
 namespace host_sim {
 inline std::mutex presence_mu;
@@ -294,6 +302,9 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_initialized = false;
   bc::g_stack_up = false;                  // sweep F167: init()'s flag and handoff, as at power-up
   bc::g_bringup_ready = false;
+  bc::g_saved_loaded = false;              // the F167 review: the loop task loads them at its first pass
+  bc::g_bringup_worker_running = false;    // no sketch worker unless a test plays one
+  bc::g_advertise_after_bringup = false;
   bc::g_init_fail_reason = "";
   bc::g_server = nullptr;                  // the stack's objects went with the stack
   bc::g_service = nullptr;
@@ -2036,6 +2047,17 @@ void test_settings_enabled_false_turns_bluetooth_off() {
   std::printf("PASS settings_enabled_false_turns_bluetooth_off\n");
 }
 
+// A device that saved Bluetooth off, its saved settings loaded by the loop
+// task's first pass (the F167 review: the loop task loads them, before any
+// command runs, whether or not the stack comes up).
+void saved_off_and_loaded() {
+  FakeMainNvs nvs;
+  nvs.putBool("bt_enabled", false);
+  loop_pass();
+  CHECK(!bc::g_settings.enabled && bc::g_saved_loaded);
+  host_sim::calls.clear();
+}
+
 // {"enabled": true} turns Bluetooth on the way POST /api/bluetooth/enable
 // does: the same state, the same calls, the setting saved; with the stack
 // down it is refused like an enable and applies nothing, since a command
@@ -2071,7 +2093,7 @@ void test_settings_enabled_true_turns_bluetooth_on_as_enable_does() {
 
   // The stack never came up: refused, and none of the POST's fields applied.
   boot(/*bring_up=*/false);
-  bc::g_settings.enabled = false;
+  saved_off_and_loaded();
   on.settings.allow_pairing = !bc::g_settings.allow_pairing;
   on.set_mask = bc::BT_SET_ENABLED | bc::BT_SET_ALLOW_PAIRING;
   const bc::BluetoothSettings before = bc::g_settings;
@@ -2094,7 +2116,7 @@ void test_settings_enabled_true_turns_bluetooth_on_as_enable_does() {
 // NimBLE's init never blocks it.
 void test_no_command_brings_the_stack_up() {
   boot(/*bring_up=*/false);
-  bc::g_settings.enabled = false;
+  saved_off_and_loaded();
   Rest r = rest(cmd_of(bc::BT_CMD_ENABLE));
   CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == bc::BT_REFUSED_NOT_ENABLED);
   r = rest(cmd_of(bc::BT_CMD_ADVERTISE_START));
@@ -2160,10 +2182,17 @@ void test_the_bring_up_hands_its_result_to_the_loop_task() {
     __atomic_store_n(&bc::g_init_in_progress, true, __ATOMIC_RELEASE);
     loop_pass();
     CHECK(shown().first == bc::BT_INITIALIZING);
+    // The loop task's first pass loaded what the device saved (the F167
+    // review), the stack up or not, and saved nothing.
+    CHECK(strcmp(bc::g_settings.device_name, "Porch") == 0);
+    CHECK(bc::g_settings.tx_power == 4 && !bc::g_settings.allow_pairing);
+    CHECK(bc::g_paired_count == 1 && bc::g_paired_by_identity);
+    CHECK(host_sim::count("nvs_write") == 0);
     __atomic_store_n(&bc::g_init_in_progress, false, __ATOMIC_RELEASE);
     loop_pass();
     CHECK(shown().first == bc::BT_DISABLED);
     host_sim::calls.clear();
+    const bc::BluetoothSettings held = bc::g_settings;
 
     host_sim::task = on;
     CHECK(bc::init());
@@ -2172,9 +2201,8 @@ void test_the_bring_up_hands_its_result_to_the_loop_task() {
     CHECK(host_sim::count("nimble_init", on) == 1);
     // None of the loop task's state moved.
     CHECK(!bc::g_initialized && bc::g_state == bc::BT_DISABLED);
-    CHECK(strcmp(bc::g_settings.device_name, "SecuraCV-Canary") == 0);
-    CHECK(bc::g_settings.tx_power == 9 && bc::g_settings.allow_pairing == bt_defaults::ALLOW_PAIRING);
-    CHECK(bc::g_paired_count == 0 && !bc::g_paired_by_identity);
+    CHECK(memcmp(&bc::g_settings, &held, sizeof held) == 0);
+    CHECK(bc::g_paired_count == 1 && bc::g_paired_by_identity);
     CHECK(bc::g_server == nullptr && bc::g_advertising == nullptr && bc::g_scanner == nullptr);
     CHECK(bc::g_status_char == nullptr && bc::g_command_char == nullptr);
     CHECK(host_sim::count("adv_start") == 0 && host_sim::count("nvs_write") == 0);
@@ -2201,6 +2229,7 @@ void test_the_bring_up_hands_its_result_to_the_loop_task() {
     CHECK(bc::g_server == host_sim::server.get() && bc::g_command_char != nullptr);
     CHECK(ble_server_dispatch::g_dispatcher.owner(ble_server_dispatch::kPairing) ==
           &bc::g_server_callbacks);
+    CHECK(host_sim::count("set_power", "loop") == 0);   // init() set the saved power; nothing changed it
     CHECK(host_sim::count("adv_start", "loop") == 1 && host_sim::count("adv_start", on) == 0);
     CHECK(host_sim::count("nvs_write", on) == 0);   // enable()'s save is the loop task's
     CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
@@ -2265,6 +2294,35 @@ void test_a_refused_bring_up_publishes_its_reason_whole() {
 // place, it reports those races; now the hand-over is a release and an
 // acquire. Played twice: a bring-up that comes up, and one the heap guard
 // refuses.
+extern uint32_t g_opera_chain_height;
+extern uint8_t g_opera_chain_head[32];
+// What the sketch's bring-up worker registers after the channel's init()
+// returns (canary_wap.ino's ble_bringup_task): ble_status's two services
+// (DEV and FULL) and Opera's (FULL), on the same server.
+void worker_registers_services(bool opera) {
+  NimBLEServer* server = NimBLEDevice::getServer();
+  for (int k = 0; k < 2; ++k) {
+    NimBLEService* svc = server->createService(NimBLEUUID("status"));
+    for (int c = 0; c < 8; ++c) svc->createCharacteristic(NimBLEUUID("chr"), 0);
+    svc->start();
+  }
+  if (opera) {
+    CHECK(ble_opera::init("A3F7B2C1D4E5F6A7", "9.9.9", &g_opera_chain_height, g_opera_chain_head));
+  }
+}
+// Where the first advertising start fell among the server's service
+// registrations: true when every createService came before it (or nothing
+// started advertising).
+bool every_service_before_advertising() {
+  std::lock_guard<std::mutex> g(host_sim::calls_mu);
+  size_t last_svc = 0, first_adv = SIZE_MAX;
+  for (size_t i = 0; i < host_sim::calls.size(); ++i) {
+    if (host_sim::calls[i].what == "svc_create") last_svc = i;
+    if (host_sim::calls[i].what == "adv_start" && first_adv == SIZE_MAX) first_adv = i;
+  }
+  return first_adv == SIZE_MAX || last_svc < first_adv;
+}
+
 void test_threads_bring_up_loop_and_reads() {
   const uint8_t phone_addr[6] = {0x3C, 0x22, 0x11, 0x0A, 0x0B, 0x0D};
   for (int refused = 0; refused < 2; ++refused) {
@@ -2279,10 +2337,16 @@ void test_threads_bring_up_loop_and_reads() {
     std::atomic<uint32_t> reads{0};
     std::atomic<uint32_t> commands{0};
     std::atomic<bool> reasons_whole{true};
+    // The sketch tells the channel before it creates the worker, on the loop
+    // task (the F167 review), and the worker goes on, after init(), to
+    // register ble_status's services and Opera's (FULL) on the same server.
+    bc::bringup_worker_started();
     std::thread bringup([&] {
       host_sim::task = "bringup";
-      for (int i = 0; i < 3 && !bc::init(); ++i) std::this_thread::yield();
-      brought.store(true);
+      bool up = false;
+      for (int i = 0; i < 3 && !(up = bc::init()); ++i) std::this_thread::yield();
+      if (up) worker_registers_services(/*opera=*/true);
+      brought.store(true);   // the worker's g_ble_bringup_done (release)
     });
     std::thread httpd([&] {
       host_sim::task = "httpd";
@@ -2303,7 +2367,13 @@ void test_threads_bring_up_loop_and_reads() {
       }
     });
     host_sim::task = "loop";
+    bool finalized = false;
     for (int pass = 0; !brought.load() || pass < 200 || reads.load() < 50; ++pass) {
+      // The sketch's finalize stage, on the loop task, once the worker is done.
+      if (!finalized && brought.load()) {
+        bc::bringup_worker_finished();
+        finalized = true;
+      }
       bc::update();
       host_sim::now_ms += 1;
       std::this_thread::yield();
@@ -2311,6 +2381,7 @@ void test_threads_bring_up_loop_and_reads() {
     done.store(true);
     bringup.join();
     httpd.join();
+    if (!finalized) bc::bringup_worker_finished();
     bc::update();
     CHECK(reasons_whole.load() && reads.load() > 0);
     if (refused) {
@@ -2321,11 +2392,226 @@ void test_threads_bring_up_loop_and_reads() {
       CHECK(bc::is_initialized() && bc::g_initialized && bc::g_paired_count == 1);
       CHECK(strcmp(bc::g_settings.device_name, "Porch") == 0);
       CHECK(host_sim::count("adv_start", "bringup") == 0 && host_sim::count("nvs_write", "bringup") == 0);
+      // No advertising start (a server start) before the worker's last
+      // service, and the channel never set the server's callbacks from the
+      // loop task (the F167 review).
+      CHECK(every_service_before_advertising());
+      CHECK(host_sim::count("adv_start", "loop") >= 1);
+      CHECK(host_sim::count("set_server_callbacks", "loop") == 0);
     }
     CHECK(host_sim::mux_depth == 0);
     std::printf("PASS threads_bring_up_loop_and_reads (%s: %u reads, %u commands ran)\n",
                 refused ? "refused" : "up", (unsigned)reads.load(), (unsigned)commands.load());
   }
+}
+
+// The sketch's bring-up worker goes on registering GATT services on the
+// server after the channel's init() returns (ble_status, and Opera on FULL),
+// and an advertising start starts that server (NimBLEServer::start() walks
+// the service list the worker appends to). The F167 review: the adoption's
+// auto-advertise had moved to the loop task, where it ran between the
+// worker's registrations; before F167 init() advertised on the worker
+// itself, before them. Now every start of the channel's (the auto-advertise,
+// the owner's pairing mode or advertising, a link's end, Remove's restore)
+// waits for the sketch to say the worker finished, on the loop task; a stop
+// meanwhile withdraws it. Before the worker exists (the owner's tap brought
+// the stack up on the HTTP task) nothing is held.
+void test_the_advertising_waits_for_the_bring_up_worker() {
+  // The worker's own bring-up.
+  boot(/*bring_up=*/false);
+  loop_pass();
+  bc::bringup_worker_started();
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();                                         // the result taken...
+  CHECK(bc::g_initialized && bc::is_enabled());
+  CHECK(host_sim::count("adv_start") == 0 && !host_sim::advertising.isAdvertising());   // ...the start held
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_IDLE, false}));
+  host_sim::task = "bringup";
+  worker_registers_services(/*opera=*/true);           // ble_status, then Opera
+  host_sim::task = "loop";
+  Rest r = rest(cmd_of(bc::BT_CMD_PAIR_START));        // the owner's pairing mode, meanwhile
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::g_pairing.state == bc::PAIR_INITIATED);
+  CHECK(host_sim::count("adv_start") == 0);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_PAIRING, false}));
+  bc::bringup_worker_finished();                       // the sketch's finalize stage
+  CHECK(host_sim::count("adv_start", "loop") == 1 && host_sim::advertising.isAdvertising());
+  CHECK(every_service_before_advertising());
+  loop_pass();
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_PAIRING, true}));
+  CHECK(host_sim::count("set_server_callbacks", "loop") == 0);
+
+  // A stop meanwhile withdraws the held start.
+  boot(/*bring_up=*/false);
+  loop_pass();
+  bc::bringup_worker_started();
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  r = rest(cmd_of(bc::BT_CMD_ADVERTISE_STOP));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  bc::bringup_worker_finished();
+  CHECK(host_sim::count("adv_start") == 0 && !host_sim::advertising.isAdvertising());
+
+  // The owner's tap before the worker exists: up on the HTTP task, the
+  // auto-advertise at once, as it was. Then the sketch creates the worker,
+  // whose init() returns at once and registers its services: Clear all's
+  // quiet radio stops the advertiser, and its restore waits for the worker.
+  boot(/*bring_up=*/false);
+  loop_pass();
+  host_sim::task = "httpd";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  CHECK(host_sim::count("adv_start", "loop") == 1 && host_sim::advertising.isAdvertising());
+  bc::bringup_worker_started();
+  host_sim::task = "bringup";
+  CHECK(bc::init());                                   // up already: at once
+  host_sim::calls.clear();
+  worker_registers_services(/*opera=*/false);
+  host_sim::task = "loop";
+  r = rest(cmd_of(bc::BT_CMD_PAIRED_CLEAR));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(host_sim::count("adv_stop") == 1 && host_sim::count("adv_start") == 0);
+  CHECK(!host_sim::advertising.isAdvertising());
+  bc::bringup_worker_finished();
+  CHECK(host_sim::count("adv_start", "loop") == 1 && host_sim::advertising.isAdvertising());
+  CHECK(every_service_before_advertising());
+  std::printf("PASS the_advertising_waits_for_the_bring_up_worker\n");
+}
+
+// The owner's commands the loop task runs while init() runs on another
+// task (NimBLE's bring-up takes ~21 s on a device) are kept when it takes
+// init()'s result (the F167 review). init() used to read the saved
+// settings into its hand-over and the loop task to adopt them whole, so a
+// Disable came back on and advertised, a name, a TX power and the
+// auto-advertise switch went back, in RAM and in NVS (enable() saved the
+// stale copy). And a command run before the stack is up changes the saved
+// settings, not the compiled defaults: the loop task loads them at its
+// first pass, before any command (before F167, a name set then saved the
+// default TX power, +9, over the saved one).
+void saved_porch() {
+  FakeMainNvs nvs;
+  nvs.putBytes("bt_name", "Porch", 5);
+  nvs.putChar("bt_tx_pwr", 4);
+  nvs.putBool("bt_enabled", true);
+  nvs.putBool("bt_auto_adv", true);
+  host_sim::calls.clear();
+}
+int8_t nvs_char(const char* key) {
+  const auto it = host_sim::main_nvs.find(key);
+  CHECK(it != host_sim::main_nvs.end() && it->second.size() == 1);
+  return (int8_t)it->second[0];
+}
+std::string nvs_name() {
+  const auto it = host_sim::main_nvs.find("bt_name");
+  CHECK(it != host_sim::main_nvs.end());
+  return std::string(it->second.begin(), it->second.end());
+}
+// `cmd`, run by the loop task while init() runs on the bring-up worker;
+// then the loop task's next passes take init()'s result.
+void command_inside_init(const bc::Command& cmd) {
+  boot(/*bring_up=*/false);
+  saved_porch();
+  loop_pass();                                   // the loop task's first pass: the saved settings
+  bool ran = false;
+  g_inside_init = [&] {
+    const std::string was = host_sim::task;
+    const Rest r = rest(cmd);                    // a handler's command; the loop task's pass runs it
+    ran = r.wait == lcr::Wait::kDone && r.r.ok;
+    host_sim::task = was;
+  };
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  g_inside_init = nullptr;
+  host_sim::task = "loop";
+  CHECK(ran && !bc::g_initialized);
+  loop_pass();
+  loop_pass();
+  CHECK(bc::g_initialized);
+}
+void test_commands_while_init_runs_are_kept() {
+  // Disable: stays off, saved off, not advertising.
+  command_inside_init(cmd_of(bc::BT_CMD_DISABLE));
+  CHECK(!bc::g_settings.enabled && !nvs_bool("bt_enabled"));
+  CHECK(!host_sim::advertising.isAdvertising() && host_sim::count("adv_start") == 0);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_DISABLED, false}));
+  CHECK(!bc::read_settings().enabled);
+
+  // A name: kept, and nothing else saved over (the TX power stays 4).
+  bc::Command name = cmd_of(bc::BT_CMD_NAME);
+  strcpy(name.name, "Garden");
+  command_inside_init(name);
+  CHECK(strcmp(bc::g_settings.device_name, "Garden") == 0 && nvs_name() == "Garden");
+  CHECK(bc::g_settings.tx_power == 4 && nvs_char("bt_tx_pwr") == 4);
+  CHECK(host_sim::advertising.isAdvertising());      // auto-advertise, as saved
+
+  // A TX power: kept, and the stack gets it (init() set the saved one, 4).
+  bc::Command power = cmd_of(bc::BT_CMD_POWER);
+  power.power = -6;
+  command_inside_init(power);
+  CHECK(bc::g_settings.tx_power == -6 && nvs_char("bt_tx_pwr") == -6);
+  CHECK(host_sim::tx_power == -6 && host_sim::count("set_power", "loop") == 1);
+
+  // Auto-advertise off: kept, so the bring-up does not advertise.
+  bc::Command quiet = cmd_of(bc::BT_CMD_SETTINGS);
+  quiet.set_mask = bc::BT_SET_AUTO_ADVERTISE;
+  quiet.settings.auto_advertise = false;
+  command_inside_init(quiet);
+  CHECK(!bc::g_settings.auto_advertise && !nvs_bool("bt_auto_adv"));
+  CHECK(!host_sim::advertising.isAdvertising() && host_sim::count("adv_start") == 0);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_IDLE, false}));
+
+  // Long range on: kept, and the stack's PHY preference follows it.
+  bc::Command coded = cmd_of(bc::BT_CMD_SETTINGS);
+  coded.set_mask = bc::BT_SET_LONG_RANGE;
+  coded.settings.long_range_mode = true;
+  command_inside_init(coded);
+  CHECK(bc::g_settings.long_range_mode && host_sim::default_phy == 0x04);
+
+  // Before the stack is up at all (no init() yet): a name saves the saved
+  // settings with the new name, not the defaults with it.
+  boot(/*bring_up=*/false);
+  saved_porch();
+  const Rest r = rest(name);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && !bc::is_initialized());
+  CHECK(nvs_name() == "Garden" && nvs_char("bt_tx_pwr") == 4 && nvs_bool("bt_auto_adv"));
+  std::printf("PASS commands_while_init_runs_are_kept\n");
+}
+
+// Remove and Clear all before the stack is up (the F167 review): the list
+// is the loop task's from its first pass now, but the bonds are NimBLE's,
+// reachable once it is up. Refused, nothing changed (Clear all would have
+// read every entry unbonded and saved an empty list over the bonds NimBLE
+// still keeps); once the stack is up they run.
+void test_remove_and_clear_wait_for_the_stack() {
+  const uint8_t phone_addr[6] = {0x3C, 0x22, 0x11, 0x0A, 0x0B, 0x0E};
+  const NimBLEAddress phone(phone_addr, 0);
+  boot(/*bring_up=*/false);
+  saved_device(phone);
+  loop_pass();
+  CHECK(bc::g_paired_count == 1);
+  host_sim::calls.clear();
+  bc::Command rm = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  memcpy(rm.address, phone.getBase()->val, 6);
+  Rest r = rest(rm);
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == bc::BT_REFUSED_NOT_UP);
+  r = rest(cmd_of(bc::BT_CMD_PAIRED_CLEAR));
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == bc::BT_REFUSED_NOT_UP);
+  CHECK(bc::g_paired_count == 1 && host_sim::bonds.size() == 1);
+  CHECK(host_sim::count("bond_delete") == 0 && host_sim::count("nvs_write") == 0);
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(paired.count == 1);
+  // Up: Remove runs.
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  r = rest(rm);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::g_paired_count == 0 && host_sim::bonds.empty());
+  std::printf("PASS remove_and_clear_wait_for_the_stack\n");
 }
 
 // ── The ring's edges, through the real submit() and update() ────────────
@@ -3557,6 +3843,9 @@ const Test kTests[] = {
     {"the_bring_up_hands_its_result_to_the_loop_task", test_the_bring_up_hands_its_result_to_the_loop_task},
     {"a_refused_bring_up_publishes_its_reason_whole", test_a_refused_bring_up_publishes_its_reason_whole},
     {"threads_bring_up_loop_and_reads", test_threads_bring_up_loop_and_reads},
+    {"commands_while_init_runs_are_kept", test_commands_while_init_runs_are_kept},
+    {"the_advertising_waits_for_the_bring_up_worker", test_the_advertising_waits_for_the_bring_up_worker},
+    {"remove_and_clear_wait_for_the_stack", test_remove_and_clear_wait_for_the_stack},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},
     {"full_profile_the_owner_answers_every_pairing", test_full_profile_the_owner_answers_every_pairing},
