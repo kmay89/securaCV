@@ -1065,6 +1065,104 @@ void test_a_beacon_emoji_is_its_session_display() {
   std::printf("PASS a_beacon_emoji_is_its_session_display\n");
 }
 
+// Sweep F231: spec §2.3 built a session's display from three emoji and §3.2
+// gave the beacon's field as 3 to 12 bytes, while generate_emoji_string()
+// renders five (audit C11 lifted it from three, 12 bits, to five, 20 bits,
+// on purpose; the spec's changelog says so). The spec now says five. What
+// selects them is the low nibble of session id bytes 0 to 4, so every input
+// that picks a display is one of 16^5 nibble tuples, and each is checked
+// here: all five of its emoji, in order, none dropped by the field's guard,
+// between 15 bytes (five ⭐, 3 bytes each) and 30 (five ☀️, 6 each), and
+// terminated inside the 31-byte field with nothing written past the NUL.
+// The high nibbles and bytes 5 to 7 choose nothing. A beacon carries the
+// display NUL-padded to the field's end (strncpy). And the session id the
+// display is drawn from is SHA-256 over the 25 bytes of
+// "securacv:chirp:session:v0" and the pubkey, as spec §2.3 and §3.1 write
+// it; §12.2's pseudocode hashed 26, a NUL the code never hashes.
+void test_every_session_display_is_five_emoji_in_its_field() {
+  boot();
+  enabled_channel();
+  size_t lens[16];
+  for (size_t i = 0; i < 16; ++i) lens[i] = strlen(cc::EMOJI_SET[i]);
+  CHECK(*std::min_element(lens, lens + 16) == 3);    // ⭐
+  CHECK(*std::max_element(lens, lens + 16) == 6);    // ☀️ (with its variation selector)
+
+  // Every tuple of five nibbles, under high nibbles and tail bytes that move
+  // with it: the display is exactly the five emoji the nibbles name.
+  size_t shortest = SIZE_MAX, longest = 0, wrong = 0;
+  uint32_t first_wrong = 0;
+  for (uint32_t t = 0; t < (1u << 20); ++t) {
+    uint8_t sid[cc::SESSION_ID_SIZE];
+    for (uint32_t k = 0; k < 5; ++k) {
+      sid[k] = (uint8_t)(((t >> (4 * k)) & 0x0Fu) | (((t * 37u) + (k * 101u)) & 0xF0u));
+    }
+    for (uint32_t k = 5; k < cc::SESSION_ID_SIZE; ++k) sid[k] = (uint8_t)((t * 13u) + k);
+    char out[cc::EMOJI_DISPLAY_SIZE + 4];
+    memset(out, 0x5A, sizeof out);
+    cc::generate_emoji_string(sid, out);
+    std::string expect;
+    for (uint32_t k = 0; k < 5; ++k) expect += cc::EMOJI_SET[(t >> (4 * k)) & 0x0Fu];
+    const size_t n = strnlen(out, sizeof out);
+    const bool ok = n < cc::EMOJI_DISPLAY_SIZE && std::string(out, n) == expect &&
+                    std::all_of(out + n + 1, out + sizeof out, [](char c) { return c == 0x5A; });
+    if (!ok && wrong++ == 0) first_wrong = t;
+    shortest = std::min(shortest, n);
+    longest = std::max(longest, n);
+  }
+  if (wrong != 0) std::fprintf(stderr, "first wrong nibble tuple: %05x\n", (unsigned)first_wrong);
+  CHECK(wrong == 0);
+  CHECK(shortest == 15);                              // five ⭐
+  CHECK(longest == 30);                               // five ☀️: the field's 31 with its NUL
+  CHECK(longest == cc::EMOJI_DISPLAY_SIZE - 1);
+
+  // Each byte value at each position: only bytes 0 to 4 choose, by their low nibble.
+  for (uint32_t pos = 0; pos < cc::SESSION_ID_SIZE; ++pos) {
+    for (uint32_t b = 0; b < 256; ++b) {
+      uint8_t sid[cc::SESSION_ID_SIZE] = {0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87};
+      sid[pos] = (uint8_t)b;
+      char out[cc::EMOJI_DISPLAY_SIZE];
+      cc::generate_emoji_string(sid, out);
+      std::string expect;
+      for (uint32_t k = 0; k < 5; ++k) expect += cc::EMOJI_SET[sid[k] & 0x0F];
+      CHECK(std::string(out) == expect);
+    }
+  }
+
+  // The beacon's field: the display, then NULs to the end of the 31 bytes.
+  for (const uint8_t pick : {(uint8_t)0x0B, (uint8_t)0x04, (uint8_t)0x00}) {   // ☀️, ⭐, 🐦
+    memset(cc::g_session.session_id, pick, sizeof cc::g_session.session_id);
+    cc::generate_emoji_string(cc::g_session.session_id, cc::g_session.emoji_display);
+    const std::string display = cc::g_session.emoji_display;
+    CHECK(display.size() == 5 * strlen(cc::EMOJI_SET[pick]));
+    const size_t from = host_sim::espnow->sent.size();
+    cc::send_presence();
+    CHECK(host_sim::espnow->sent.size() == from + 1);
+    const std::vector<uint8_t>& f = host_sim::espnow->sent.back().bytes;
+    CHECK(f.size() == sizeof(cc::ChirpHeader) + sizeof(cc::ChirpPresencePayload));
+    const cc::ChirpPresencePayload* p =
+        reinterpret_cast<const cc::ChirpPresencePayload*>(f.data() + sizeof(cc::ChirpHeader));
+    CHECK(sizeof p->emoji == cc::EMOJI_DISPLAY_SIZE);
+    CHECK(memcmp(p->emoji, display.data(), display.size()) == 0);
+    CHECK(std::all_of(p->emoji + display.size(), p->emoji + sizeof p->emoji,
+                      [](char c) { return c == '\0'; }));
+  }
+
+  // The session id: the first 8 bytes of SHA-256(25-byte domain || pubkey).
+  const Neighbor n = neighbor_of(0x6E);
+  static const char kDomain[] = "securacv:chirp:session:v0";
+  CHECK(sizeof kDomain - 1 == 25);
+  for (const size_t domain_len : {sizeof kDomain - 1, sizeof kDomain}) {   // 25, then 26 with the NUL
+    std::vector<uint8_t> in(kDomain, kDomain + domain_len);
+    in.insert(in.end(), n.pub, n.pub + sizeof n.pub);
+    uint8_t md[32];
+    unsigned int md_len = 0;
+    CHECK(EVP_Digest(in.data(), in.size(), md, &md_len, EVP_sha256(), nullptr) == 1 && md_len == 32);
+    const bool same = memcmp(md, n.sid, cc::SESSION_ID_SIZE) == 0;
+    CHECK(same == (domain_len == 25));
+  }
+  std::printf("PASS every_session_display_is_five_emoji_in_its_field\n");
+}
+
 // update()'s 30-second prune drops a neighbor not heard for 3 minutes and a
 // chirp older than 30; the pass that prunes publishes the shorter tables.
 void test_the_prune_shows_in_the_tables() {
@@ -1985,6 +2083,7 @@ const Test kTests[] = {
     {"the_pass_publishes_what_it_changed", test_the_pass_publishes_what_it_changed},
     {"a_frame_shows_in_the_tables_after_its_pass", test_a_frame_shows_in_the_tables_after_its_pass},
     {"a_beacon_emoji_is_its_session_display", test_a_beacon_emoji_is_its_session_display},
+    {"every_session_display_is_five_emoji_in_its_field", test_every_session_display_is_five_emoji_in_its_field},
     {"the_prune_shows_in_the_tables", test_the_prune_shows_in_the_tables},
     {"an_idle_pass_does_not_rebuild_the_tables", test_an_idle_pass_does_not_rebuild_the_tables},
     {"a_status_read_counts_time_at_the_read", test_a_status_read_counts_time_at_the_read},

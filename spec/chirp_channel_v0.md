@@ -129,12 +129,25 @@ session_id = SHA-256("securacv:chirp:session:v0" || session_pubkey)[0:8]
 
 **Emoji Display** (for session identification):
 ```
-emoji_index = session_id[i] % 16
 emoji_set = ["🐦", "🌳", "🏠", "🌙", "⭐", "🌸", "🍃", "💧",
              "🔔", "🎵", "🌈", "☀️", "🌻", "🐝", "🦋", "🍀"]
-display = emoji_set[session_id[0]] + emoji_set[session_id[1]] + emoji_set[session_id[2]]
-// Example: "🐦🌳⭐" - easy to remember, hard to track
+display = emoji_set[session_id[0] % 16] + emoji_set[session_id[1] % 16]
+        + emoji_set[session_id[2] % 16] + emoji_set[session_id[3] % 16]
+        + emoji_set[session_id[4] % 16]
+// Example: "🐦🌳⭐🌙🍀" - five emoji, easy to remember, hard to track
 ```
+
+- Five emoji, picked by the low nibble of `session_id` bytes 0 to 4; the
+  high nibbles and bytes 5 to 7 pick nothing. v0.2 lifted the display from
+  three emoji (12 bits, 4,096 displays) to five (20 bits, about a million;
+  audit C11). It is a memory aid, not an identity: a device that wants a
+  neighbor's display finds a session key with it in about a million tries.
+- In UTF-8 a display is 15 to 30 bytes: ⭐ is 3 bytes, ☀️ is 6 (U+2600 and
+  the variation selector U+FE0F), the other fourteen are 4. The canary-wap
+  keeps and sends it in a 31-byte field with its NUL (`EMOJI_DISPLAY_SIZE`),
+  and `test_chirp_commands_wap.cpp` renders all 16^5 displays and holds each
+  to five emoji inside that field (sweep F231: this section built three, and
+  §3.2 gave the field as 3 to 12 bytes).
 
 ## 2.5 Abuse Prevention Design
 
@@ -434,9 +447,9 @@ Periodic broadcast to discover nearby chirp-enabled devices:
 ```cddl
 chirp_presence = {
   msg_type: 0,
-  emoji: tstr .size (3..12),      ; Emoji display string
+  emoji: tstr .size (15..30),     ; the sender's five-emoji display (§2.3), NUL-padded to 31 bytes
   listening: bool,                 ; Accepting community chirps
-  last_chirp_age_min: uint / null ; Minutes since last chirp sent
+  last_chirp_age_min: uint / null ; Minutes since last chirp sent (the canary-wap: 0 to 254, 255 for null)
 }
 ```
 
@@ -580,7 +593,7 @@ chirp_mute = {
 ┌─────────────────────────────────────────┐
 │         SHARE WITH COMMUNITY?           │
 │                                         │
-│  🐦🌳⭐ (your session)                   │
+│  🐦🌳⭐🌙🍀 (your session)               │
 │                                         │
 │  ┌─────────────────────────────────┐   │
 │  │ What's happening?               │   │
@@ -608,7 +621,7 @@ When chirp received, display is **calm and informative**, not alarming:
 
 ```
 ┌─────────────────────────────────────────┐
-│  🐝🌸💧 shared nearby:                   │
+│  🐝🌸💧🔔🌻 shared nearby:               │
 │                                         │
 │  📍 Activity • Caution                  │
 │  "someone checking car doors"           │
@@ -847,7 +860,7 @@ shows what the POST did. The answers keep their shape.
 // GET /api/chirp
 {
   "state": "ACTIVE",
-  "session_emoji": "🐦🌳⭐",
+  "session_emoji": "🐦🌳⭐🌙🍀",
   "nearby_count": 12,
   "recent_chirps": 2,
   "last_chirp_sent": null,
@@ -859,7 +872,7 @@ shows what the POST did. The answers keep their shape.
 {
   "chirps": [
     {
-      "emoji": "🐝🌸💧",
+      "emoji": "🐝🌸💧🔔🌻",
       "category": "activity",
       "urgency": "caution",
       "message": "someone checking car doors",
@@ -907,7 +920,7 @@ The web UI MUST include a "Community" panel showing:
 
 Chirp notifications should be **informative, not alarming**:
 
-✅ Good: "🐝🌸💧 shared: activity nearby"
+✅ Good: "🐝🌸💧🔔🌻 shared: activity nearby"
 ❌ Bad: "⚠️ ALERT: SUSPICIOUS ACTIVITY DETECTED"
 
 ✅ Good: "heads up from your area"
@@ -993,13 +1006,15 @@ void generate_chirp_session() {
   // Derive session keypair
   Ed25519::generateKeyPair(session_pubkey, session_privkey, session_seed);
 
-  // Compute session ID
+  // Compute session ID: the domain's 25 characters, no NUL (§2.3, §3.1).
+  // This line hashed 26, a NUL the canary-wap never hashes, and a session id
+  // computed that way would not match one a receiver derives (sweep F231).
   SHA256 hash;
-  hash.update("securacv:chirp:session:v0", 26);
+  hash.update("securacv:chirp:session:v0", 25);
   hash.update(session_pubkey, 32);
   hash.finalize(session_id);  // Use first 8 bytes
 
-  // Generate emoji display
+  // Generate emoji display: five emoji from session_id[0..4] (§2.3)
   generate_emoji_string(session_id, emoji_display);
 }
 ```
@@ -1042,7 +1057,7 @@ Opera devices MUST NOT:
 
 - **Chirp**: A community alert message sent via the Chirp Channel
 - **Session**: A temporary identity that lasts until disable/reboot
-- **Emoji ID**: Human-readable 3-emoji representation of session
+- **Emoji ID**: Human-readable five-emoji representation of the session id (§2.3)
 - **Hop**: One relay transmission (max 3)
 - **Presence**: Periodic beacon showing device is chirp-enabled
 - **Relay**: Forwarding someone else's chirp to extend range
