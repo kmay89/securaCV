@@ -6,7 +6,10 @@
 # the display's own lv_conf.h, and runs it; then builds the same test again
 # in nightstand-c6's config (F248: the lean lv_conf, its C6 pin map, the
 # port's static internal buffer, never turned) against LVGL compiled lean,
-# and runs that. glass_turn.sh is its sibling for
+# and runs that. In each config it also builds glass_splash_lvgl9_test.cpp
+# (F246), which links the REAL ui/splash.cpp and canary_mark.cpp, plays the
+# first meeting and reads the speech bubble's tail off the frame. Every suite
+# runs; the script fails at the end if any did. glass_turn.sh is its sibling for
 # the emulator's LVGL 8.4; tests_host/test_lvgl_port_turn holds the same port
 # against fake_lvgl9/lvgl.h, whose quotes of LVGL 9.5 this script also checks
 # against the fetched source (check_lvgl9_quotes.py). No emsdk, no ESP32:
@@ -97,6 +100,13 @@ for flag in '-DCD_LEAN_BUILD=1' '-DCONFIG_NIGHTSTAND' '-DLV_CONF_INCLUDE_SIMPLE'
   grep -Fxq "    $flag" <<<"$c6_env" ||
     die "the nightstand-c6 env's build_flags no longer carry '$flag' (this test builds that config)"
 done
+# The splash's pseudonym (F246): native9/identity/device_pseudonym.h stands
+# in for the NVS-backed one with HEX_LEN = TOKEN_BYTES * 2 = 16 letters, the
+# length the first meeting's line wraps around; the real header must agree.
+PSEUDO="$FW/common/identity/device_pseudonym.h"
+grep -Eq '^constexpr size_t TOKEN_BYTES = 8;' "$PSEUDO" &&
+  grep -Eq '^constexpr size_t HEX_LEN[[:space:]]+= TOKEN_BYTES \* 2;' "$PSEUDO" ||
+  die "$PSEUDO no longer makes a 16-letter pseudonym (TOKEN_BYTES 8, HEX_LEN TOKEN_BYTES * 2): update native9/identity/device_pseudonym.h"
 tag="v$pin"
 
 # ── The library ─────────────────────────────────────────────────────────
@@ -171,6 +181,25 @@ run_suite() {  # run_suite <name> <binary>
 }
 run_suite "dash turns" "$OUT/glass_turn_lvgl9_test"
 
+# The boot splash's tail through the same port and library (F246): the
+# REAL splash.cpp and canary_mark.cpp, with the theme, the Character and
+# the story engine they read, the splash clock driven by its own pump.
+SPLASH_SRC=(splash canary_mark theme character)
+build_splash() {  # build_splash <prefix> <port object> <lvgl objdir> <compiler...>
+  local pre="$1" port="$2" objs="$3"
+  shift 3
+  local o=()
+  for f in "${SPLASH_SRC[@]}"; do
+    "$@" -c "$PROJ/src/ui/$f.cpp" -o "$OUT/${pre}$f.o"
+    o+=("$OUT/${pre}$f.o")
+  done
+  "$@" -c "$HERE/glass_splash_lvgl9_test.cpp" -o "$OUT/${pre}glass_splash_lvgl9_test.o"
+  g++ -o "$OUT/${pre}glass_splash_lvgl9_test" "$OUT/${pre}glass_splash_lvgl9_test.o" "${o[@]}" \
+    "$port" "$objs"/*.o -lm
+}
+build_splash "" "$OUT/lvgl_port.o" "$OUT/lvgl" "${CXX[@]}"
+run_suite "dash splash tail" "$OUT/glass_splash_lvgl9_test"
+
 # nightstand-c6's wiring (F248), as its env's build_flags hand it to the
 # compiler (the defines that reach the display UI; the OTA and secrets
 # paths do not): the nightstand config on the C6 pin map, built lean.
@@ -187,6 +216,8 @@ C6_CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-paramet
 g++ -o "$OUT/c6_glass_turn_lvgl9_test" "$OUT/c6_glass_turn_lvgl9_test.o" \
   "$OUT/c6_lvgl_port.o" "$OUT"/lvgl_lean/*.o -lm
 run_suite "nightstand-c6 glass" "$OUT/c6_glass_turn_lvgl9_test"
+build_splash c6_ "$OUT/c6_lvgl_port.o" "$OUT/lvgl_lean" "${C6_CXX[@]}"
+run_suite "nightstand-c6 splash tail" "$OUT/c6_glass_splash_lvgl9_test"
 
 if ((${#failed[@]})); then
   echo "glass_turn_lvgl9: FAILED: ${failed[*]}" >&2

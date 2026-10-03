@@ -14,7 +14,7 @@
 // builds a stand-in checkout from the fake's own quotes; no LVGL needed).
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync } = require("node:fs");
+const { existsSync, readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
@@ -143,6 +143,31 @@ test("nightstand-c6 (F248): the script builds the same test in the lean C6 confi
   const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
   const prPaths = wf.slice(wf.indexOf("\n  pull_request:"), wf.indexOf("\njobs:"));
   assert.ok(prPaths.includes('- "firmware/boards/*/pins/pins.h"'), "a C6 pin map edit runs the workflow");
+});
+
+test("the splash's tail (F246): the script links the REAL splash.cpp and canary_mark.cpp into a test it runs in both configs", () => {
+  const sh = read(join(ROOT, "emulator/test/glass_turn_lvgl9.sh"));
+  assert.ok(sh.includes("SPLASH_SRC=(splash canary_mark theme character)") &&
+    sh.includes('"$@" -c "$PROJ/src/ui/$f.cpp"'), "the real splash.cpp and canary_mark.cpp, with the theme and Character they read");
+  assert.ok(sh.includes('"$@" -c "$HERE/glass_splash_lvgl9_test.cpp"'), "the splash tail test");
+  assert.ok(sh.includes('build_splash "" "$OUT/lvgl_port.o" "$OUT/lvgl" "${CXX[@]}"') &&
+    sh.includes('build_splash c6_ "$OUT/c6_lvgl_port.o" "$OUT/lvgl_lean" "${C6_CXX[@]}"'),
+  "built in the dash config and in nightstand-c6's, each with its own port and LVGL objects");
+  const runs = [...sh.matchAll(/^run_suite "([^"]+)" "\$OUT\/([a-z0-9_]+)"$/gm)].map((m) => m[2]);
+  assert.ok(runs.includes("glass_splash_lvgl9_test") && runs.includes("c6_glass_splash_lvgl9_test"), `suites run: ${runs}`);
+  // The stand-ins it needs beside the port's, and the pseudonym's length held
+  // to the real header before anything builds.
+  for (const f of ["Preferences.h", "esp_random.h", "identity/device_pseudonym.h"]) {
+    assert.ok(existsSync(join(ROOT, "emulator/test/native9", f)), `native9/${f}`);
+  }
+  assert.ok(sh.includes('PSEUDO="$FW/common/identity/device_pseudonym.h"'), "the pseudonym stand-in is held to the real header");
+  const real = read(join(REPO, "firmware/common/identity/device_pseudonym.h"));
+  assert.match(real, /^constexpr size_t TOKEN_BYTES = 8;/m);
+  assert.match(read(join(ROOT, "emulator/test/native9/identity/device_pseudonym.h")), /constexpr size_t TOKEN_BYTES = 8;/);
+  // The test reads the tail off the frame and holds it to the box and styles.
+  const t = read(join(ROOT, "emulator/test/glass_splash_lvgl9_test.cpp"));
+  assert.ok(t.includes("canary::ui::splash_play(1700);") && t.includes("Ink tail_ink(lv_obj_t* tail)") &&
+    t.includes("Box styled_extent(lv_obj_t* tail)"), "the splash played, its tail read off the glass and held to its styles");
 });
 
 test("check_lvgl9_quotes.py (F225): fails on each drift from the library and on a missing function", () => {

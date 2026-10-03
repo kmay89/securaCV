@@ -1121,8 +1121,12 @@ jobs:
         # Then the same test in nightstand-c6's config (F248: the lean
         # lv_conf, LVGL compiled lean, the C6 pin map's 172x320, the port's
         # static buffer, never turned), whole frames and partial updates
-        # against a plain 172x320 display. Every suite runs; the step fails
-        # at the end if any did.
+        # against a plain 172x320 display. And in both configs the boot
+        # splash's own speech-bubble tail (F246): the REAL splash.cpp and
+        # canary_mark.cpp play the first meeting on the dash's 800x480 and
+        # 480x800 and nightstand-c6's 172x320, and the tail, read off the
+        # frame at each new line, is drawn where its box and styles put it.
+        # Every suite runs; the step fails at the end if any did.
         # First it holds tests_host/fake_lvgl9's quotes of LVGL 9.5 to the
         # fetched source (check_lvgl9_quotes.py, after its own drift
         # self-test). Proves the sources on a 64-bit host, not an ESP32 build;
