@@ -964,11 +964,13 @@ fails on byte drift.
   frame is already turned; the splash is read from power-on on a clock slowed
   to half speed (`?timescale=0.5`, F206): every line on the glass and none
   cut, the bird clear of every line, and the bird and every line the first
-  meeting types seen whole; and the QR card and halo stand where
+  meeting types seen whole, each line inked on the canvas inside the box the
+  firmware reports once a frame has landed; and the QR card and halo stand where
   `onboard_layout.h`'s stack seats them, the halo's stroke inked where its
   circle says (`tests/onboard_glass.mjs`), with the nightlight's card corners
   held inside the stroke. `tests/boot_probe.mjs` boots each turned glass too
-  (its size, every frame on it, the face's bird).
+  (its size, every frame on it, the face's bird on stage and clear of every
+  line).
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /
