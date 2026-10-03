@@ -903,6 +903,13 @@ fails on byte drift.
   it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
   absent, so CI runs it before any step that reads the committed dist (a
   stale dist turns those red and skips every later step).
+- `emulator/test/runtime_turn.sh` — the nightlight turned while it runs,
+  natively (F222): `build.sh`'s nightlight TU list (the real `main.cpp`, the
+  emulator's sources) built with g++ and booted on a virtual clock; a boot
+  turned at 7 s from each rotation to each other through
+  `nightlight_request_rotation()` must seat the companion where a boot at
+  that rotation seats it. Fetches LVGL, Crypto and ArduinoJson at
+  `build.sh`'s pins when absent, and CI runs it right after `glass_turn.sh`.
 - `tests/canary_local.test.js` — Node tests for the DOM-free logic:
   the witness signing canonical is pinned against `trust.cpp`'s locked
   format (and a WebCrypto round-trip verifies a real signature over

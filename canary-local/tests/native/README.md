@@ -188,10 +188,16 @@ still checks the dist.
 The display flavors (`dist/canary-display-*.js`) are booted only in
 Chromium, by the probes (`boot_probe.mjs`, `bench_probe.mjs`,
 `onboard_probe.mjs` and `csp_probe.mjs` among them), and aren't served
-natively. (The one native proof of a display source is narrower:
+natively. (Two native proofs of display sources are narrower.
 `emulator/test/glass_turn.sh` builds the real `lvgl_port.cpp` and the
 emulator's display HAL with g++, in the dash and the nightlight configs, and
-holds the turned glass pixel for pixel; it boots no firmware.) Each of
+holds the turned glass pixel for pixel; it boots no firmware.
+`emulator/test/runtime_turn.sh` boots the nightlight's whole firmware with
+g++, the TU list `build.sh` hands em++, its driver playing the page on a
+virtual clock, and holds one thing: a unit turned while it runs seats its
+companion where a boot at that rotation does (F222). It reads the bird's
+box and the glass's shape, no canvas, audio or portal, and stands in for no
+bundle.) Each of
 those bundles links the display firmware, LVGL and the browser shims into
 one page under Asyncify, and the probes drive that page: its canvas, Web
 Audio, serial panel and the phone's captive portal. A native process behind
