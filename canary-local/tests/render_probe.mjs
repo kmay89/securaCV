@@ -6,6 +6,14 @@
 //      a visitor's browser),
 //   2. every device draws a NON-EMPTY frame (pixels actually covered),
 //   3. the frame isn't a flat blob (color variance — lighting is alive).
+//   4. a turned glass reads upright on its turned model (sweep A47): the
+//      dash scene fed a 480x800 canvas (a portrait dash's glass) with three
+//      marks — red and green on one row, blue under red — and the panel's
+//      own 800x480 shape draws them face-on where a person in front of the
+//      glass sees them, at the canvas's portrait proportions, while the
+//      same canvas left unturned is squeezed into the landscape screen. The
+//      marks sit in the glass's lower half: the studio light's highlight
+//      across the top of a face-on screen washes a mark there to near white.
 //
 //   node canary-local/tests/render_probe.mjs [--shots DIR]
 //
@@ -101,6 +109,48 @@ try {
       mean, stddev,
     };
   }
+  // 4. A47: the turned glass, face-on, against the same glass left unturned.
+  const glass = document.createElement("canvas");
+  glass.width = 480; glass.height = 800;
+  const g = glass.getContext("2d");
+  g.fillStyle = "#101010"; g.fillRect(0, 0, 480, 800);
+  // red and green on one row, blue under red: centers 360 px across and
+  // 240 px down, in the lower half (the highlight washes the top)
+  g.fillStyle = "#ff0000"; g.fillRect(0, 440, 120, 120);
+  g.fillStyle = "#00ff00"; g.fillRect(360, 440, 120, 120);
+  g.fillStyle = "#0000ff"; g.fillRect(0, 680, 120, 120);
+  const marks = async (panel) => {
+    const cv = document.createElement("canvas");
+    cv.style.cssText = "width:420px;height:420px";
+    document.body.append(cv);
+    const scene = new DeviceScene(cv, glass);
+    await BUILDERS["canary-display-dash"](scene);
+    scene.glass = panel;
+    scene.autoSway = false;
+    scene.rot = { x: 0, y: 0 };
+    scene.home = { x: 0, y: 0 };
+    scene.draw();
+    const gl = scene.gl, W = cv.width, H = cv.height;
+    const px = new Uint8Array(W * H * 4);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const c = { r: [0, 0, 0], g: [0, 0, 0], b: [0, 0, 0] };   // sum x, sum y (up), count
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4, R = px[i], G = px[i + 1], B = px[i + 2];
+        // a mark is its channel standing 40 clear of the other two (the
+        // studio light adds white to every channel; the margin survives it)
+        const k = R - Math.max(G, B) > 40 ? "r" : G - Math.max(R, B) > 40 ? "g"
+          : B - Math.max(R, G) > 40 ? "b" : null;
+        if (k) { c[k][0] += x; c[k][1] += y; c[k][2]++; }
+      }
+    }
+    scene.dispose?.();
+    cv.remove();
+    const at = (k) => (c[k][2] ? [c[k][0] / c[k][2], c[k][1] / c[k][2]] : null);
+    return { turn: scene.turn, r: at("r"), g: at("g"), b: at("b") };
+  };
+  window.__probe.turned = await marks({ w: 800, h: 480 });
+  window.__probe.unturned = await marks(null);
   window.__probe.status = "done";
 } catch (e) {
   window.__probe.status = "error: " + (e && e.message || e);
@@ -140,6 +190,30 @@ for (const id of EXPECT) {
     await page.locator("#" + id).screenshot({ path: join(SHOTS, id + ".png") });
   }
 }
+
+// 4. A47: on the turned model the marks stand as on the glass — red left of
+// green on one row, blue under red — at the canvas's proportions (240 down
+// to 360 across); the unturned control squeezes them into the landscape
+// screen, 480/800 down and 800/480 across.
+const GLASS_RATIO = 240 / 360;
+const SQUEEZED = GLASS_RATIO * (480 / 800) / (800 / 480);
+const shape = (m) => {
+  if (!m || !m.r || !m.g || !m.b) return null;
+  const across = m.g[0] - m.r[0], down = m.r[1] - m.b[1];   // readPixels y runs up
+  return { across, down, ratio: down / across, row: Math.abs(m.g[1] - m.r[1]), col: Math.abs(m.b[0] - m.r[0]) };
+};
+const near = (v, want) => Math.abs(v / want - 1) < 0.2;
+const t = shape(probe.turned), u = shape(probe.unturned);
+if (!t) fail(`A47: the turned glass's marks are not all on the frame (${JSON.stringify(probe.turned)})`);
+else if (probe.turned.turn !== 1) fail(`A47: the scene did not turn the model for a 480x800 glass on an 800x480 panel`);
+else if (!(t.across > 0 && t.down > 0 && t.row < 0.1 * t.across && t.col < 0.1 * t.down)) {
+  fail(`A47: the turned glass does not read upright (red ${probe.turned.r}, green ${probe.turned.g}, blue ${probe.turned.b})`);
+} else if (!near(t.ratio, GLASS_RATIO)) {
+  fail(`A47: the turned glass is not at its proportions (down/across ${t.ratio.toFixed(2)}, the canvas's ${GLASS_RATIO.toFixed(2)})`);
+} else console.log(`✓ A47: a 480x800 glass reads upright on the turned dash (down/across ${t.ratio.toFixed(2)}; canvas ${GLASS_RATIO.toFixed(2)})`);
+if (!u || probe.unturned.turn !== 0 || !(u.across > 0 && u.down > 0) || !near(u.ratio, SQUEEZED)) {
+  fail(`A47: the unturned control is not the squeezed glass (${JSON.stringify(u)}; want down/across near ${SQUEEZED.toFixed(2)})`);
+} else console.log(`✓ A47: the same glass unturned is squeezed (down/across ${u.ratio.toFixed(2)}, want ${SQUEEZED.toFixed(2)}): what the Lab showed before`);
 
 await browser.close();
 server.close();

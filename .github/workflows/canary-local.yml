@@ -920,7 +920,7 @@ jobs:
         run: node canary-local/tests/boardroom_probe.mjs
       - name: Bench probe — the physical test bench drives the live firmware
         run: node canary-local/tests/bench_probe.mjs
-      - name: Render probe — studio shaders compile and every device shades on a real GPU
+      - name: Render probe — studio shaders compile, every device shades on a real GPU, a turned glass reads upright (A47)
         run: node canary-local/tests/render_probe.mjs
       - name: Scene lifecycle probe — forty 3D cards on one page share one WebGL context, none evicted, every one draws
         run: node canary-local/tests/scene_lifecycle_probe.mjs
