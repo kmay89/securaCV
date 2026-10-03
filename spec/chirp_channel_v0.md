@@ -446,6 +446,12 @@ chirp_presence = {
   the device sends, not what it takes, so a device in its cooldown says it
   is listening (sweep F194: it said it was not, and neighbors listed it as
   deaf for the cooldown's 5 minutes to 4 hours).
+- The beacon is unsigned, so a receiver never shows its `emoji` field. The
+  canary-wap's nearby list shows the display of the header's `session_id`
+  (§2.3), derived as a witness's sender emoji is (it is what an honest
+  sender puts in the field), so every byte comes from the emoji set (sweep
+  F213: the field was stored as sent, and any device in range could put
+  quotes, control bytes or markup into `GET /api/chirp/nearby`).
 - No sensitive information shared
 - Allows UI to show "X devices nearby"
 
@@ -821,7 +827,9 @@ Every answer fits the buffer it is serialized into (sweep F196). The
 a full recent list (sixteen chirps, about 4.8 KB) was cut at 4096 bytes and
 sent with the heap bytes after it, and 32 neighbors whose emoji hold bytes
 JSON escapes (`"`, `\`) overran the nearby list's 3072-byte buffer the same
-way. The other answers keep fixed buffers that
+way. (Since F213 a neighbor's emoji is its session id's display, never the
+beacon's bytes, so it holds no such byte; the list still goes out at its own
+length.) The other answers keep fixed buffers that
 `firmware/scripts/check_wap_json_answers.py` measures against their longest
 answer.
 

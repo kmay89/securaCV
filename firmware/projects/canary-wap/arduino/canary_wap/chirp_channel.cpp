@@ -746,7 +746,15 @@ static void handle_presence(const uint8_t* data, size_t len, int8_t rssi) {
   }
   if (device) {
     memcpy(device->session_id, hdr->session_id, SESSION_ID_SIZE);
-    strncpy(device->emoji, payload->emoji, EMOJI_DISPLAY_SIZE);
+    // The emoji the row shows is the display of the session id it is keyed
+    // on (spec §2.3), derived here as a witness's sender emoji is
+    // (generate_emoji_string()), never the beacon's own field: a presence
+    // frame is unsigned, so that field held whatever bytes any device in
+    // range put there (quotes, control bytes, markup, 31 bytes with no
+    // terminator), and GET /api/chirp/nearby serialized them whole (sweep
+    // F213). A canary-wap beacon carries generate_emoji_string() of its own
+    // session id, so an honest neighbor shows the emoji it sends.
+    generate_emoji_string(hdr->session_id, device->emoji);
     device->last_seen_ms = millis();
     device->rssi = rssi;
     device->listening = payload->listening != 0;

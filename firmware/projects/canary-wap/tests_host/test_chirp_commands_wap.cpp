@@ -75,6 +75,7 @@
 #include <string.h>
 #include <time.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -691,14 +692,19 @@ std::string reason_of(const cc::StatusView& v) {
 }
 
 // Another chirp device in range: its own session key, as it would derive it.
+// `display` is its session id's emoji (generate_emoji_string(), spec §2.3),
+// what a canary-wap shows for it; `emoji` is what its presence beacon
+// carries: the same display unless the test forges the field (sweep F213:
+// the beacon is unsigned, and the row no longer takes the field).
 struct Neighbor {
   uint8_t priv[32];
   uint8_t pub[32];
   uint8_t sid[cc::SESSION_ID_SIZE];
   uint8_t mac[6];
+  std::string display;
   std::string emoji;
 };
-Neighbor neighbor_of(uint8_t seed, const char* emoji) {
+Neighbor neighbor_of(uint8_t seed, const char* beacon_emoji = nullptr) {
   Neighbor n;
   memset(n.priv, seed, sizeof n.priv);
   n.priv[0] ^= 0x5A;
@@ -706,7 +712,10 @@ Neighbor neighbor_of(uint8_t seed, const char* emoji) {
   cc::session_id_from_pubkey(n.pub, n.sid);
   const uint8_t mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, seed};
   memcpy(n.mac, mac, sizeof mac);
-  n.emoji = emoji;
+  char shown[cc::EMOJI_DISPLAY_SIZE];
+  cc::generate_emoji_string(n.sid, shown);
+  n.display = shown;
+  n.emoji = beacon_emoji != nullptr ? beacon_emoji : n.display;
   return n;
 }
 cc::ChirpHeader header_of(const Neighbor& n, cc::ChirpMsgType type, uint8_t nonce_byte) {
@@ -735,7 +744,8 @@ void deliver(const Neighbor& n, const std::vector<uint8_t>& f, int8_t rssi = -60
 std::vector<uint8_t> presence_of(const Neighbor& n) {
   cc::ChirpPresencePayload p;
   memset(&p, 0, sizeof p);
-  strncpy(p.emoji, n.emoji.c_str(), sizeof p.emoji - 1);
+  // The field whole, as a sender may fill it (31 bytes, no terminator).
+  memcpy(p.emoji, n.emoji.data(), std::min(n.emoji.size(), sizeof p.emoji));
   p.listening = 1;
   p.last_chirp_age_min = 255;
   return frame_of(header_of(n, cc::CHIRP_MSG_PRESENCE, 0x70), p);
@@ -771,8 +781,6 @@ std::vector<uint8_t> confirm_of(const Neighbor& n, const uint8_t nonce[8]) {
   return frame_of(h, p);
 }
 
-const char* const BEE = "\xF0\x9F\x90\x9D\xF0\x9F\x8C\xB8";   // two of EMOJI_SET's
-const char* const TREE = "\xF0\x9F\x8C\xB3";
 
 // The loop task changes the channel mid-pass: a read shows the last pass it
 // published, whole, until the pass ends and publishes the change. A read of
@@ -936,20 +944,20 @@ void test_the_pass_publishes_what_it_changed() {
 void test_a_frame_shows_in_the_tables_after_its_pass() {
   boot();
   enabled_channel();
-  const Neighbor N = neighbor_of(1, BEE);
-  const Neighbor M = neighbor_of(2, TREE);
+  const Neighbor N = neighbor_of(1);
+  const Neighbor M = neighbor_of(2);
   deliver(N, presence_of(N), -48);
   CHECK(cc::g_nearby_count == 1);
   CHECK(nearby_read().count == 0 && status_read().nearby_count == 0);   // not yet published
   cc::update();
   cc::NearbyTable t = nearby_read();
   CHECK(t.count == 1 && status_read().nearby_count == 1);
-  CHECK(std::string(t.devices[0].emoji) == BEE && t.devices[0].rssi == -48);
+  CHECK(std::string(t.devices[0].emoji) == N.display && t.devices[0].rssi == -48);
   CHECK(t.devices[0].listening && t.devices[0].last_seen_ms == host_sim::now_ms);
   deliver(M, presence_of(M), -71);
   cc::update();
   t = nearby_read();
-  CHECK(t.count == 2 && std::string(t.devices[1].emoji) == TREE && t.devices[1].rssi == -71);
+  CHECK(t.count == 2 && std::string(t.devices[1].emoji) == M.display && t.devices[1].rssi == -71);
 
   const size_t sent_before = host_sim::espnow->sent.size();
   deliver(N, witness_of(N, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT,
@@ -985,12 +993,84 @@ void test_a_frame_shows_in_the_tables_after_its_pass() {
   std::printf("PASS a_frame_shows_in_the_tables_after_its_pass\n");
 }
 
+// Sweep F213: a presence beacon is unsigned, and handle_presence() copied
+// its 31 emoji bytes into the nearby table as sent, so any device in
+// ESP-NOW range put quotes, control bytes or markup (or 31 bytes with no
+// terminator) into every neighbor's GET /api/chirp/nearby, which serializes
+// the row whole since F196. The row's emoji is now the display of the
+// session id it is keyed on (spec §2.3), derived by generate_emoji_string()
+// as a witness's sender emoji is: five of EMOJI_SET's sixteen, whatever the
+// beacon's field says. An honest beacon carries that same display, so a
+// canary-wap neighbor shows the emoji it sends.
+// Whether `e` is exactly `n` of EMOJI_SET's entries, one after another.
+bool emoji_set_only(const std::string& e, size_t n) {
+  size_t pos = 0, count = 0;
+  while (pos < e.size()) {
+    size_t step = 0;
+    for (const char* entry : cc::EMOJI_SET) {
+      const size_t len = strlen(entry);
+      if (e.compare(pos, len, entry) == 0) { step = len; break; }
+    }
+    if (step == 0) return false;
+    pos += step;
+    ++count;
+  }
+  return count == n;
+}
+void test_a_beacon_emoji_is_its_session_display() {
+  boot();
+  enabled_channel();
+  std::string control;                                 // every control byte but NUL, then DEL
+  for (int c = 1; c < 30; ++c) control.push_back((char)c);
+  control.push_back('\x7f');
+  const std::string forged_fields[] = {
+      std::string(30, '"'),                            // the F196 harness's quotes
+      "\"},\"emoji\":\"\\u0000\",\"x\":\"\\\\",       // quotes and backslashes that close the field
+      control,
+      "<img src=x onerror=alert(1)>",                  // markup
+      "</script><script>alert(1)",
+      std::string(31, 'A'),                            // the whole field, no terminator
+  };
+  std::vector<Neighbor> senders;
+  uint8_t seed = 0x51;
+  for (const std::string& field : forged_fields) senders.push_back(neighbor_of(seed++, field.c_str()));
+  const Neighbor honest = neighbor_of(seed++);
+  CHECK(honest.emoji == honest.display && emoji_set_only(honest.display, 5));
+  for (const Neighbor& n : senders) deliver(n, presence_of(n));
+  deliver(honest, presence_of(honest));
+  cc::update();
+  const cc::NearbyTable t = nearby_read();
+  CHECK(t.count == senders.size() + 1);
+  for (size_t i = 0; i < t.count && i < senders.size() + 1; ++i) {
+    const Neighbor& n = i < senders.size() ? senders[i] : honest;
+    const size_t len = strnlen(t.devices[i].emoji, sizeof t.devices[i].emoji);
+    CHECK(len < sizeof t.devices[i].emoji);            // terminated in its field
+    const std::string shown(t.devices[i].emoji, len);
+    CHECK(shown == n.display);                         // the session's display...
+    CHECK(emoji_set_only(shown, 5));                   // ...five of the set's, nothing else
+    CHECK(shown.find_first_of("\"\\<>") == std::string::npos);
+    CHECK(std::none_of(shown.begin(), shown.end(), [](char c) { return (unsigned char)c < 0x20 || c == 0x7f; }));
+    CHECK(std::string(cc::g_nearby_devices[i].emoji) == n.display);   // the table the view copies
+  }
+  // The same session's next beacon carries other bytes: the row keeps its display.
+  Neighbor again = senders[0];
+  again.emoji = "<b>bold</b>";
+  deliver(again, presence_of(again));
+  cc::update();
+  CHECK(std::string(nearby_read().devices[0].emoji) == senders[0].display);
+  // This device's own beacon carries its session's display, as a neighbor derives it.
+  char own[cc::EMOJI_DISPLAY_SIZE];
+  cc::generate_emoji_string(cc::g_session.session_id, own);
+  CHECK(strcmp(own, cc::get_session_emoji()) == 0 && emoji_set_only(own, 5));
+  std::printf("PASS a_beacon_emoji_is_its_session_display\n");
+}
+
 // update()'s 30-second prune drops a neighbor not heard for 3 minutes and a
 // chirp older than 30; the pass that prunes publishes the shorter tables.
 void test_the_prune_shows_in_the_tables() {
   boot();
   enabled_channel();
-  const Neighbor N = neighbor_of(3, BEE);
+  const Neighbor N = neighbor_of(3);
   deliver(N, presence_of(N));
   deliver(N, witness_of(N, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x22));
   cc::update();
@@ -1018,7 +1098,7 @@ void test_the_prune_shows_in_the_tables() {
 void test_an_idle_pass_does_not_rebuild_the_tables() {
   boot();
   enabled_channel();
-  const Neighbor N = neighbor_of(6, BEE);
+  const Neighbor N = neighbor_of(6);
   deliver(N, presence_of(N), -50);
   deliver(N, witness_of(N, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x55));
   cc::update();                                        // marked: publishes both tables
@@ -1114,8 +1194,8 @@ void test_cannot_send_reason_names_the_clock() {
 void test_every_field_the_routes_show_is_the_live_one() {
   boot();
   enabled_channel();
-  const Neighbor N = neighbor_of(4, BEE);
-  const Neighbor M = neighbor_of(5, TREE);
+  const Neighbor N = neighbor_of(4);
+  const Neighbor M = neighbor_of(5);
   deliver(N, presence_of(N), -41);
   deliver(M, presence_of(M), -88);
   cc::g_nearby_devices[1].listening = false;
@@ -1200,7 +1280,7 @@ void test_the_tables_publish_into_their_block() {
   boot();
   CHECK(cc::g_view_tables != nullptr);
   enabled_channel();
-  const Neighbor N = neighbor_of(7, BEE);
+  const Neighbor N = neighbor_of(7);
   deliver(N, presence_of(N), -52);
   deliver(N, witness_of(N, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x66));
   cc::update();
@@ -1562,7 +1642,7 @@ size_t acks_since(size_t from) {
 void test_the_beacon_says_listening_through_a_cooldown() {
   boot();
   enabled_channel();
-  const Neighbor bee = neighbor_of(0x41, BEE);
+  const Neighbor bee = neighbor_of(0x41);
   deliver(bee, presence_of(bee));
   // Three sends, each as the last cooldown ends: tier 3's hour outlasts a
   // 15-minute mute.
@@ -1730,7 +1810,7 @@ void test_a_disable_ends_the_mute() {
 
   // The new session takes a neighbor's chirp: no mute drops it.
   host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;
-  const Neighbor bee = neighbor_of(0x31, BEE);
+  const Neighbor bee = neighbor_of(0x31);
   deliver(bee, presence_of(bee));
   deliver(bee, witness_of(bee, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x51));
   CHECK(cc::g_recent_chirp_count == 1);
@@ -1904,6 +1984,7 @@ const Test kTests[] = {
     {"a_read_right_after_a_post_shows_what_it_did", test_a_read_right_after_a_post_shows_what_it_did},
     {"the_pass_publishes_what_it_changed", test_the_pass_publishes_what_it_changed},
     {"a_frame_shows_in_the_tables_after_its_pass", test_a_frame_shows_in_the_tables_after_its_pass},
+    {"a_beacon_emoji_is_its_session_display", test_a_beacon_emoji_is_its_session_display},
     {"the_prune_shows_in_the_tables", test_the_prune_shows_in_the_tables},
     {"an_idle_pass_does_not_rebuild_the_tables", test_an_idle_pass_does_not_rebuild_the_tables},
     {"a_status_read_counts_time_at_the_read", test_a_status_read_counts_time_at_the_read},

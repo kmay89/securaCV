@@ -1594,6 +1594,30 @@ Owner: U1.
     idle (the lists' buffers are allocated per request and freed).
   - Artifact: `docs/audit/repro/F196/full-lists/`.
 
+## canary-wap Chirp: a neighbor's emoji is its session's display (F213) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`handle_presence()` sets a nearby row's emoji with
+`generate_emoji_string()` of the beacon header's session id, as
+`handle_witness()` does a chirp's sender emoji, and never reads the beacon's
+own emoji field). Host-tested (`tests_host/test_chirp_commands_wap.cpp`:
+`a_beacon_emoji_is_its_session_display`, over forged beacons carrying quotes,
+backslashes, control bytes, markup and a full field with no terminator).
+Compile is CI's. Owner: U1.
+
+- [ ] **A neighbor's row shows the emoji that neighbor shows for itself**
+  - Setup: two canary-wap boards, A and B, with Chirp on.
+  - Repro: read A's `session_emoji` from its `GET /api/chirp` (and its Chirp
+    card); on B, `curl -s /api/chirp/nearby | python3 -m json.tool`; turn
+    Chirp off and on at A (a new session) and read both again after A's next
+    beacon (up to a minute).
+  - Expected: B's row for A carries exactly A's five emoji, before and after
+    A's new session (a new row for the new session; the old one ages out in
+    three minutes). A beacon whose emoji field differs from its session's
+    display needs a sender built for the purpose and is outside this row;
+    the host test covers it.
+  - Artifact: `docs/audit/repro/F213/nearby-emoji/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at
