@@ -20,11 +20,13 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, dirname, resolve, sep } from "node:path";
+import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { indexTree, lookup } from "./probe_server.mjs";
 import { probeCores } from "./native/probe_cores.js";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
+const FILES = indexTree(ROOT);
 const TYPES = {
   ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
   ".json": "application/json", ".css": "text/css", ".svg": "image/svg+xml",
@@ -47,16 +49,18 @@ const cores = await probeCores(["canary-vision-core"]);
 const server = createServer(async (req, res) => {
   try {
     if (cores && await cores.handle(req, res)) return;
-    const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    if (rel === "/favicon.ico") { res.writeHead(204); return res.end(); }
-    const p = resolve(join(ROOT, rel));
-    if (p !== ROOT && !p.startsWith(ROOT + sep)) { res.writeHead(403); return res.end(); }
-    const file = rel.endsWith("/") ? join(p, "index.html") : p;
+    const path = req.url.split("?")[0];
+    if (path === "/favicon.ico") { res.writeHead(204); return res.end(); }
+    // the URL never becomes a path: it is looked up in the tree's index
+    // (probe_server.mjs), so the path that reaches readFile is the index's
+    const file = lookup(FILES, req.url);
+    if (!file) { res.writeHead(404); return res.end("not found"); }
     const body = await readFile(file);
     res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
     res.end(body);
   } catch { res.writeHead(404); res.end("not found"); }
-}).listen(0);
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
 
 const errors = [];
@@ -69,7 +73,7 @@ page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + 
 page.on("pageerror", (e) => errors.push("pageerror: " + String(e)));
 
 try {
-  const url = `http://localhost:${port}/canary-local/eyes.html`;
+  const url = `http://127.0.0.1:${port}/canary-local/eyes.html`;
   // Under LAB_CORES=native each core call is a request, which "networkidle"
   // would count; the bridge waits for the same quiet without them.
   if (cores) await cores.gotoIdle(page, url, { timeout: 45000 });

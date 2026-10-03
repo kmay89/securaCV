@@ -18,10 +18,12 @@
 
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
-import { extname, join, dirname, resolve, sep } from "node:path";
+import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { indexTree, lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
+const FILES = indexTree(ROOT);
 const LAB = "canary-local";
 const TYPES = {
   ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
@@ -49,22 +51,24 @@ const SELFTEST_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8" />
 
 const server = createServer(async (req, res) => {
   try {
-    const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    if (rel === "/favicon.ico") { res.writeHead(204); return res.end(); }
-    if (rel === SELFTEST_PATH) {
+    const path = req.url.split("?")[0];
+    if (path === "/favicon.ico") { res.writeHead(204); return res.end(); }
+    if (path === SELFTEST_PATH) {
       res.writeHead(200, { "content-type": "text/html" });
       return res.end(SELFTEST_HTML);
     }
-    const p = resolve(join(ROOT, rel));
-    if (p !== ROOT && !p.startsWith(ROOT + sep)) { res.writeHead(403); return res.end(); }
-    const file = rel.endsWith("/") ? join(p, "index.html") : p;
+    // the URL never becomes a path: it is looked up in the tree's index
+    // (probe_server.mjs), so the path that reaches readFile is the index's
+    const file = lookup(FILES, req.url);
+    if (!file) { res.writeHead(404); return res.end("not found"); }
     const body = await readFile(file);
     res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
     res.end(body);
   } catch { res.writeHead(404); res.end("not found"); }
-}).listen(0);
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
-const url = (rel) => `http://localhost:${port}/${rel}`;
+const url = (rel) => `http://127.0.0.1:${port}/${rel}`;
 
 // What every page loads, plus the harness once per committed display flavor.
 const pages = (await readdir(join(ROOT, LAB))).filter((f) => f.endsWith(".html")).sort();
@@ -114,7 +118,7 @@ async function violationsIn(page) {
   for (const f of page.frames()) {
     try {
       const v = await f.evaluate(() => (window.__cspViolations || []).slice());
-      for (const x of v) all.push({ frame: f.url().replace(/^http:\/\/localhost:\d+\//, ""), ...x });
+      for (const x of v) all.push({ frame: f.url().replace(/^http:\/\/127\.0\.0\.1:\d+\//, ""), ...x });
     } catch { /* a frame that navigated away or detached mid-read */ }
   }
   return all;
