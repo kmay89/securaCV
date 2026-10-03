@@ -96,7 +96,9 @@ holds the same boxes to exact arithmetic, in a build under
 passes every native build, because a 64-bit `long` holds it; only a wasm32
 build shows it. `vision.test.js`'s A42 test holds such boxes to exact
 arithmetic on the committed dist, which CI runs, so from the dist rebuild
-that carries A42 on it is the CI gate for that half. No CI job runs
+that carries A42 on it is the CI gate for that half in the bytes the Lab
+serves; `vision_wasm32.test.js` shows the same half from the sources, before
+any rebuild (below). No CI job runs
 `native_cores.test.js` under the variable: its parity scenarios are run by
 hand, after a rebuilt dist is pulled. So agreement covers the calls those
 scenarios make, not every input. `CXX=clang++` is the closer compiler, but
@@ -114,6 +116,50 @@ and needs no emsdk. The native step runs whenever the dist step ran, even
 when the dist step failed (its `if:`), so after a core change you see both
 answers: native green and dist red means the sources are right and the dist
 is stale.
+
+## The Vision pipeline as wasm32, from the sources (`vision_wasm32.test.js`)
+
+`LAB_CORES=native` cannot show what the sources compute in a 32-bit `long`,
+and `vision.test.js`'s A42 test shows it only on a dist CI has rebuilt. So
+[`wasm32.js`](wasm32.js) builds the Vision detection pipeline a second way:
+[`wasm32/pipeline_probe.cpp`](wasm32/pipeline_probe.cpp), which puts
+`detection_pipeline.h` behind a small C ABI, compiled with the host's clang
+for `wasm32-unknown-unknown` and linked by `wasm-ld`, with the flags
+`build.sh` hands em++ for the Vision core (read through `cores.js`'s
+`buildPlan`, not copied). The build is freestanding: no libc and no C++
+library, the two headers in [`wasm32/stubs`](wasm32/stubs) stand in for what
+the firmware headers include (`size_t`, and a `strcmp` declaration nothing
+calls), and `wasm-ld` refuses any undefined symbol. Node instantiates the
+module, which imports nothing. The same file built with g++ (or `$CXX`) and
+`PIPELINE_PROBE_HOSTED` serves boxes over stdin and stdout.
+
+```sh
+node --test canary-local/tests/vision_wasm32.test.js
+```
+
+The test checks that the wasm32 build's `long` is 32 bits and the host
+build's 64, hands both the 104,976 boxes built from the int range's ends that
+`firmware/tests_host/test_vision_detection_pipeline.cpp` holds the host build
+to exact arithmetic on, and requires every field of every answer to agree.
+Its last test puts each of A42's two `long` multiplies (the posture products
+and the area) back in a scratch copy of the header and requires the host
+build to read every box as before and the wasm32 build to read some box
+otherwise, so it shows the comparison sees what it is there for. Each build
+takes well under a second.
+
+It needs `clang++` with a wasm32 target (it tries `clang++`, then
+`clang++-20` down to `clang++-16`, or `$WASM32_CLANGXX`) and `wasm-ld` (at
+clang's own version first, `wasm-ld-<n>`, then `wasm-ld`, or `$WASM_LD`; it
+ships in lld). Where one is missing the tests skip and say which.
+`VISION_WASM32=require` makes that a failure instead, and CI sets it:
+`canary-local.yml`'s page logic job runs this file in its own step, after
+the native step and whenever the dist step ran, on the runner's clang 18
+and `wasm-ld-18` (the image installs `lld-<n>` beside each `clang-<n>`).
+
+It is the host's clang, not emscripten's, and it is not the dist. It settles
+what the sources compute with a 32-bit `long`; an undefined signed overflow
+can still come out one way from this clang and another from emscripten's,
+and the dist is still what ships.
 
 ## Which tests drive a dist core
 
