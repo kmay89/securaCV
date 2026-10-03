@@ -868,9 +868,11 @@ jobs:
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
-      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL (native g++, F184)
+      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL (native g++, F184, F204)
         # ui/lvgl_port.cpp's dash rotation and the HAL that turns the emulator's
-        # framebuffer with it (src/emu_hal_display.cpp), built with g++ against
+        # framebuffer with it (src/emu_hal_display.cpp) — and, built a second
+        # time with the nightlight's config, its hardware turn
+        # (display_set_rotation, lvgl_port_set_panel_rotation) — with g++ against
         # build.sh's pinned LVGL (the cached checkout, or fetched into it at
         # build.sh's LVGL_TAG on a cold cache, which the dist build then
         # reuses): at every quarter turn the glass the page reads equals the

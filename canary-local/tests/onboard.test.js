@@ -930,6 +930,15 @@ test("nightlight flavor (F204): build.sh builds it, the HAL turns its panel, the
     "a turn reshapes the glass and tells the page");
   assert.ok(nl.includes("put565(g_fb + ((size_t)fy * g_view_w + fx) * 4, *s);"), "a flush lands in the logical frame");
   assert.match(nl, /bool imu_init\(\) \{[\s\S]*?return false;\s*\}/);
+  // CI's native glass test builds the nightlight config too, and runs it.
+  const gtSh = read(join(ROOT, "emulator/test/glass_turn.sh"));
+  assert.ok(gtSh.includes('NL_CFG="$FW/configs/canary-display/nightlight"') &&
+    gtSh.includes('NL_PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
+    /\n"\$OUT\/nl_glass_turn_test"\n?$/.test(gtSh), "glass_turn.sh builds and runs the nightlight's hardware turn");
+  const gtTest = read(join(ROOT, "emulator/test/glass_turn_test.cpp"));
+  assert.ok(gtTest.includes("canary::hal::display_set_rotation(rot);\n    canary::ui::lvgl_port_set_panel_rotation(rot);") &&
+    gtTest.includes("for (uint8_t rot : {1, 3, 2, 0, 1}) check_panel_glass(rot, true);"),
+  "the native test turns the nightlight's panel the way main.cpp does, every way");
   // The preset: the nightlight's own key, through its own setter, after power-on
   // and before setup() (the order the dash's test above holds for main()).
   const emuMain = read(join(ROOT, "emulator/src/emu_main.cpp"));

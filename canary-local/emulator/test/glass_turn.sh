@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# canary-local/emulator/test/glass_turn.sh — the turned dash glass, natively
-# (F184): builds glass_turn_test.cpp with g++ against the REAL
-# ui/lvgl_port.cpp (dash config), the emulator's REAL display HAL and LVGL
-# 8.4, and runs it. No emsdk: this proves the sources the dist is built from,
+# canary-local/emulator/test/glass_turn.sh — the turned glass, natively
+# (F184, F204): builds glass_turn_test.cpp with g++ against the REAL
+# ui/lvgl_port.cpp, the emulator's REAL display HAL and LVGL 8.4, and runs
+# it twice: in the dash config (LVGL's software rotation) and in the
+# nightlight config (the panel's hardware turn). No emsdk: this proves the sources the dist is built from,
 # not the dist's bytes (the browser probe, onboard_probe.mjs, reads those).
 #
 #   bash canary-local/emulator/test/glass_turn.sh [LVGL_DIR]
@@ -73,3 +74,20 @@ CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
 g++ -o "$OUT/glass_turn_test" "$OUT/glass_turn_test.o" "$OUT/lvgl_port.o" \
   "$OUT/emu_hal_display.o" "$OUT"/lvgl/*.o -lm
 "$OUT/glass_turn_test"
+
+# The nightlight's wiring (F204), as build.sh hands it to em++: the same
+# test, now holding the hardware turn (display_set_rotation and
+# lvgl_port_set_panel_rotation) on its 180x320 panel. The LVGL objects above
+# serve it unchanged (its lean budget only drops fonts this test never sets).
+NL_CFG="$FW/configs/canary-display/nightlight"
+NL_PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"
+NL_INC=(-I "$HERE/native" -I "$EMU/shim" -I "$EMU/src" -I "$PROJ/include"
+        -I "$NL_CFG" -I "$NL_PINS" -I "$FW/common" -I "$LVGL")
+NL_CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
+        "${DEFS[@]}" "${NL_INC[@]}")
+"${NL_CXX[@]}" -c "$PROJ/src/ui/lvgl_port.cpp" -o "$OUT/nl_lvgl_port.o"
+"${NL_CXX[@]}" -c "$EMU/src/emu_hal_display.cpp" -o "$OUT/nl_emu_hal_display.o"
+"${NL_CXX[@]}" -c "$HERE/glass_turn_test.cpp" -o "$OUT/nl_glass_turn_test.o"
+g++ -o "$OUT/nl_glass_turn_test" "$OUT/nl_glass_turn_test.o" "$OUT/nl_lvgl_port.o" \
+  "$OUT/nl_emu_hal_display.o" "$OUT"/lvgl/*.o -lm
+"$OUT/nl_glass_turn_test"
