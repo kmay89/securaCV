@@ -920,12 +920,16 @@ fails on byte drift.
   `emulator/test/third_party/lvgl`, which CI caches under its own key) and
   the display's own `lv_conf.h`. At every quarter turn each native pixel the
   port flushes equals the scene rendered on a plain display of the logical
-  size, nothing falls off the panel or goes unpainted, a raw touch lands on
-  the pixel drawn there, the splash's turned tail square draws, and a glass
-  with no turn buffer stays landscape. It first holds
+  size, for whole frames and for partial updates (a few objects changed, so
+  LVGL flushes only their areas, right of logical x 0 and narrower than the
+  canvas); nothing falls off the panel or goes unpainted, a raw touch lands
+  on the pixel drawn there, the splash's turned tail square draws, and a
+  glass with no turn buffer stays landscape. It first holds
   `tests_host/fake_lvgl9/lvgl.h`'s quotes of LVGL 9.5 to the fetched source
-  (`emulator/test/check_lvgl9_quotes.py`). It reads no dist; CI runs it
-  right after `glass_turn.sh`.
+  (`emulator/test/check_lvgl9_quotes.py`). It reads no dist; CI runs it as
+  the wasm job's last step, whether the steps before it passed or failed
+  (`success() || failure()`), so an earlier red cannot skip it and its own
+  red skips no other step.
 - `tests/canary_local.test.js` — Node tests for the DOM-free logic:
   the witness signing canonical is pinned against `trust.cpp`'s locked
   format (and a WebCrypto round-trip verifies a real signature over

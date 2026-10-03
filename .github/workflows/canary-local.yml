@@ -897,29 +897,6 @@ jobs:
         # since a firmware loop that stops yielding would never end.
         timeout-minutes: 10
         run: bash canary-local/emulator/test/runtime_turn.sh
-      # The dash family and nightstand-c6 ship LVGL 9.5, not the emulator's
-      # 8.4: its own checkout, cached under its own key (the release is
-      # sketch.yaml's dash-core3 pin, which the script reads; the path is the
-      # script's gitignored default, apart from build.sh's third_party).
-      - name: Cache LVGL 9 (the dash builds' release)
-        uses: actions/cache@v6
-        with:
-          path: canary-local/emulator/test/third_party
-          key: canary-local-lvgl9-${{ hashFiles('firmware/projects/canary-display/arduino/canary_display/sketch.yaml') }}
-      - name: Turned glass — the real LVGL 9.5 through ui/lvgl_port.cpp's 9.x flush (native g++, F225)
-        # ui/lvgl_port.cpp's LVGL 9 branch (dash config) with g++ against the
-        # release the dash builds pin (fetched into the cache above on a cold
-        # cache), compiled with the display's own lv_conf.h: at every quarter
-        # turn each native pixel the port flushes equals the scene rendered on
-        # a plain display of the logical size under the turn the port draws,
-        # nothing falls off the panel and nothing is left unpainted; touch
-        # lands on what is drawn; the splash's turned tail square draws; a
-        # glass with no turn buffer stays landscape. First it holds
-        # tests_host/fake_lvgl9's quotes of LVGL 9.5 to the fetched source
-        # (check_lvgl9_quotes.py, after its own drift self-test). Proves the
-        # sources on a 64-bit host, not an ESP32 build; it reads no dist, so
-        # it runs here, before every step that does.
-        run: bash canary-local/emulator/test/glass_turn_lvgl9.sh
       # Weekly key: playwright (installed unpinned below) moves its pinned
       # Chromium build over time; a weekly rotation keeps the ~150 MB
       # browser download to at most one run per week while never letting
@@ -1077,3 +1054,35 @@ jobs:
         run: node canary-local/tests/boot_probe.mjs
       - name: Artifact stamps
         run: cat canary-local/emulator/dist/*.meta.json
+      # The dash family and nightstand-c6 ship LVGL 9.5, not the emulator's
+      # 8.4: its own checkout, cached under its own key (the release is
+      # sketch.yaml's dash-core3 pin, which the script reads; the path is the
+      # script's gitignored default, apart from build.sh's third_party).
+      # These two steps close the job and run whether the steps before them
+      # passed or failed (success() || failure(): anything but a canceled
+      # run): an earlier red (glass_turn.sh, which compiles the same
+      # lvgl_port.cpp against 8.4, or a stale dist turning a probe red)
+      # cannot hide the LVGL 9.5 result, and a red here, a failed cold-cache
+      # clone included, skips no other step.
+      - name: Cache LVGL 9 (the dash builds' release)
+        if: ${{ success() || failure() }}
+        uses: actions/cache@v6
+        with:
+          path: canary-local/emulator/test/third_party
+          key: canary-local-lvgl9-${{ hashFiles('firmware/projects/canary-display/arduino/canary_display/sketch.yaml') }}
+      - name: Turned glass — the real LVGL 9.5 through ui/lvgl_port.cpp's 9.x flush (native g++, F225)
+        # ui/lvgl_port.cpp's LVGL 9 branch (dash config) with g++ against the
+        # release the dash builds pin (fetched into the cache above on a cold
+        # cache), compiled with the display's own lv_conf.h: at every quarter
+        # turn each native pixel the port flushes equals the scene rendered on
+        # a plain display of the logical size under the turn the port draws,
+        # nothing falls off the panel and nothing is left unpainted, for whole
+        # frames and for partial updates (areas right of logical x 0, narrower
+        # than the canvas); touch lands on what is drawn; the splash's turned
+        # tail square draws; a glass with no turn buffer stays landscape.
+        # First it holds tests_host/fake_lvgl9's quotes of LVGL 9.5 to the
+        # fetched source (check_lvgl9_quotes.py, after its own drift
+        # self-test). Proves the sources on a 64-bit host, not an ESP32 build;
+        # it reads no dist.
+        if: ${{ success() || failure() }}
+        run: bash canary-local/emulator/test/glass_turn_lvgl9.sh

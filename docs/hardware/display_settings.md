@@ -200,7 +200,8 @@ portrait column, `portrait7_ui`.
 > CI renders a scene through the same port and the real LVGL 9.5.0 at every
 > quarter turn (`canary-local/emulator/test/glass_turn_lvgl9.sh`, natively on
 > a 64-bit host) and holds the panel pixel for pixel against the scene drawn
-> on a plain display of the logical size. No turned panel has been
+> on a plain display of the logical size, for whole frames and for partial
+> updates whose areas start right of logical x 0. No turned panel has been
 > confirmed on real glass, nor the GT911's axes against the panel's.
 > Landscape (rotation 0) is the default and a no-op, so boot is never
 > sideways.

@@ -1,6 +1,6 @@
 // canary-local/tests/glass_turn_lvgl9.test.js — the real LVGL 9.5 turned
-// glass (F225), wired where it cannot be skipped and pinned to the release
-// the dash builds ship.
+// glass (F225), wired where no other step's red can skip it and pinned to
+// the release the dash builds ship.
 //
 // emulator/test/glass_turn_lvgl9.sh builds the real ui/lvgl_port.cpp (dash
 // config, LVGL 9 branch) against the LVGL 9.x release sketch.yaml's
@@ -29,36 +29,54 @@ function profileLvgl(sketch, profile) {
   return /^\s*- lvgl \(([0-9.]+)\)\s*$/m.exec(body)?.[1] || null;
 }
 
-test("CI (F225): the LVGL 9.5 turned glass runs after its own cache, unconditionally, before anything reads the dist", () => {
+// The wasm job's steps, each from its "      - " line to the next.
+function jobSteps(wf, job) {
+  const at = wf.indexOf(`\n  ${job}:\n`);
+  if (at < 0) return [];
+  const rest = wf.slice(at + 1);
+  const end = rest.slice(1).search(/\n {2}[A-Za-z0-9_-]+:\n/);
+  const body = end < 0 ? rest : rest.slice(0, end + 1);
+  return body.split(/\n(?= {6}- )/).slice(1).map((st) => `${st.replace(/\n+$/, "")}\n`);
+}
+
+test("CI (F225): the LVGL 9.5 turned glass closes the wasm job after its own cache, run whether the steps before passed or failed", () => {
   const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
-  const at = wf.indexOf("\n  wasm-build-and-boot:");
-  assert.ok(at > 0, "the wasm job");
-  const job = wf.slice(at);
-  const run = job.indexOf(`run: bash ${SCRIPT}\n`);
-  assert.ok(run > 0, "the wasm job runs glass_turn_lvgl9.sh");
+  const steps = jobSteps(wf, "wasm-build-and-boot");
+  assert.ok(steps.length > 10, "the wasm job's steps");
+  const runAt = steps.findIndex((st) => st.includes(`run: bash ${SCRIPT}\n`));
+  assert.ok(runAt > 0, "the wasm job runs glass_turn_lvgl9.sh");
+  const cacheAt = steps.findIndex((st) => /^ {6}- name: Cache LVGL 9/.test(st));
+  assert.ok(cacheAt >= 0, "a cache step for the LVGL 9 checkout");
+  // The job's last two steps, the cache restored first: no step follows,
+  // so a red here (a failed cold-cache clone included) skips nothing.
+  assert.strictEqual(runAt, steps.length - 1, "glass_turn_lvgl9.sh is the wasm job's last step");
+  assert.strictEqual(cacheAt, steps.length - 2, "its cache is restored right before it");
+  // Both run whether the steps before passed or failed (anything but a
+  // canceled run): glass_turn.sh (the same lvgl_port.cpp against 8.4) or a
+  // probe on a stale dist going red earlier cannot hide the LVGL 9.5
+  // result. A step with no if: runs only when every step before it passed;
+  // the vision/eyes/audio native steps spell the same condition this way.
+  for (const at of [cacheAt, runAt]) {
+    const ifs = steps[at].match(/^ {8}if: .*$/gm) || [];
+    assert.deepStrictEqual(ifs, ["        if: ${{ success() || failure() }}"],
+      `${at === runAt ? "the run step" : "the cache step"} runs after a red step too`);
+  }
+  const gtAt = steps.findIndex((st) => st.includes("run: bash canary-local/emulator/test/glass_turn.sh\n"));
+  assert.ok(gtAt > 0 && gtAt < cacheAt, "after glass_turn.sh");
   // Its own cache: the script's default checkout, keyed on the file that
   // names the release, apart from build.sh's third_party cache.
-  const cache = /- name: Cache LVGL 9[^\n]*\n\s+uses: actions\/cache@v\d+\n\s+with:\n\s+path: (\S+)\n\s+key: ([^\n]+)\n/.exec(job);
-  assert.ok(cache, "a cache step for the LVGL 9 checkout");
-  assert.ok(job.indexOf(cache[0]) < run, "restored before the script runs");
+  const cacheRe = /\n\s+uses: actions\/cache@v\d+\n\s+with:\n\s+path: (\S+)\n\s+key: ([^\n]+)\n/;
+  const cache = cacheRe.exec(steps[cacheAt]);
+  assert.ok(cache, "the LVGL 9 cache step restores a path under a key");
   assert.strictEqual(cache[1], "canary-local/emulator/test/third_party",
     "the cached path is the script's default checkout's parent");
   assert.ok(read(join(ROOT, "emulator/test/glass_turn_lvgl9.sh")).includes('DEFAULT="$HERE/third_party/lvgl"'));
   assert.ok(cache[2].includes("hashFiles('firmware/projects/canary-display/arduino/canary_display/sketch.yaml')"),
     "keyed on sketch.yaml, where the pin lives");
-  const tp = /- name: Cache third-party sources\n\s+uses: actions\/cache@v\d+\n\s+with:\n\s+path: (\S+)\n\s+key: ([^\n]+)\n/.exec(job);
+  const tpStep = steps.find((st) => /^ {6}- name: Cache third-party sources\n/.test(st)) || "";
+  const tp = cacheRe.exec(tpStep);
   assert.ok(tp && tp[1] !== cache[1] && !cache[1].startsWith(`${tp[1]}/`) && tp[2] !== cache[2],
     "a path and key of its own, not inside build.sh's cached third_party");
-  // Beside glass_turn.sh, before every step that reads the committed dist
-  // (a stale dist turns those red and GitHub skips each later step).
-  const gt = job.indexOf("run: bash canary-local/emulator/test/glass_turn.sh\n");
-  assert.ok(gt > 0 && gt < run, "after glass_turn.sh");
-  for (const later of ["node canary-local/tests/boot_probe.mjs", "node canary-local/tests/onboard_probe.mjs",
-    "node canary-local/tests/csp_probe.mjs", "./build.sh all", "Dist drift check"]) {
-    assert.ok(job.indexOf(later) > run, `glass_turn_lvgl9.sh runs before ${later}`);
-  }
-  const step = /- name: Turned glass — the real LVGL[\s\S]*?run: bash canary-local\/emulator\/test\/glass_turn_lvgl9\.sh\n/.exec(job)?.[0] || "";
-  assert.ok(step && !/^\s+if:/m.test(step), "the step runs unconditionally");
   // The workflow runs on a change to any input: the port, the pin, the env,
   // the fake, the script.
   const prPaths = wf.slice(wf.indexOf("\n  pull_request:"), wf.indexOf("\njobs:"));
