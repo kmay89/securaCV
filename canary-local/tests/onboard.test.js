@@ -482,6 +482,19 @@ test("turned glass (F184): qrFinders/qrUpright hold the join QR upright, and a m
     assert.strictEqual(g.br, true, `${how}: a finder at bottom-right`);
     assert.match(qrUpright(g), /finder patterns stand at .*br.* not top-left, top-right and bottom-left/, how);
   }
+  // A fourth finder (a corrupted code, or a glass drawn twice over) is not
+  // an upright code either.
+  const four = qrGlass();
+  const N = 21, m = 4, left = 46 + 12 + (N - 7) * m, top = 20 + 12 + (N - 7) * m;
+  for (let j = -1; j < 7; j++) {
+    for (let i = -1; i < 7; i++) {
+      const d = i >= 0 && j >= 0 && (i === 0 || i === 6 || j === 0 || j === 6 || (i >= 2 && i <= 4 && j >= 2 && j <= 4));
+      for (let y = 0; y < m; y++) for (let x = 0; x < m; x++) paint(four.fr, left + i * m + x, top + j * m + y, d ? 0 : 255);
+    }
+  }
+  const f4 = qrFinders(four.fr, four.card, 10);
+  assert.deepStrictEqual([f4.tl, f4.tr, f4.bl, f4.br], [true, true, true, true]);
+  assert.match(qrUpright(f4), /stand at tl, tr, bl, br/);
   // The glass behind the card's rounded corners is not the code's: read as
   // if the card were square, the corners' dark bounds the code and no finder
   // is found.
@@ -517,10 +530,13 @@ test("turned glass (F184): haloInk/haloInked hold the halo the firmware reports 
   assert.match(haloInked(haloInk(ring(16), { ...halo, r: 70 }), 0, 3), /right, left, bottom, top/);
   assert.match(haloInked(haloInk(ring(16), { ...halo, stroke: 0 }), 0, 3), /not the one on the glass/);
   assert.match(haloInked(haloInk(ring(16), { ...halo, cx: 50 }), 0, 3), /not the one on the glass at its (right|left)/);
-  // Ink outside the stroke (a ring drawn wider than reported) fails too.
+  // Ink just outside the stroke (a ring drawn wider than reported) fails
+  // too, even where the stroke is still the brighter of the two.
   const wide = ring(16);
-  for (let x = 152; x < 156; x++) paint(wide, x, 100, 40);
-  assert.match(haloInked(haloInk(wide, halo), 0, 3), /at its right/);
+  for (let x = 152; x < 156; x++) paint(wide, x, 100, 10);
+  const wideInk = haloInk(wide, halo);
+  assert.ok(wideInk.stroke[0] > wideInk.outside[0] + 3, "the stroke outshines what is outside it");
+  assert.match(haloInked(wideInk, 0, 3), /at its right \(/);
   // A glass no brighter than the margin is not a stroke.
   assert.match(haloInked(haloInk(ring(3), halo), 0, 3), /right, left, bottom, top/);
 });
