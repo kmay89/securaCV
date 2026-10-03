@@ -7220,6 +7220,12 @@ void test_deinit_publishes_the_wiped_session() {
   assert(b == live_status_body());
   assert(has(b, "\"state\":\"NO_OPERA\",\"opera_id\":\"\",\"opera_name\":\"\"") &&
          has(b, "\"peers_total\":0") && has(b, "\"pairing_seq\":0,\"pairing_result\":\"none\""));
+  /* deinit() clears the name by its first byte; the view copies no
+   * fragment of the old one from behind it. */
+  mesh_session::StatusView v;
+  std::memset(&v, 0xA5, sizeof(v));
+  mesh_session::read_status(&v);
+  for (size_t i = 0; i < sizeof(v.opera_name); ++i) assert(v.opera_name[i] == '\0');
   std::printf("PASS test_deinit_publishes_the_wiped_session\n");
 }
 

@@ -1760,8 +1760,10 @@ static void build_status_view(StatusView* v) {
   v->enabled   = s_enabled;
   v->has_opera = s_opera_id_set;
   if (s_opera_id_set) memcpy(v->opera_id, s_opera_id, sizeof(v->opera_id));
-  memcpy(v->opera_name, s_opera_name, sizeof(v->opera_name));
-  v->opera_name[sizeof(v->opera_name) - 1] = '\0';
+  /* strncpy, not memcpy: the bytes past the name are zero in the view even
+   * where a clear left the old name behind its first byte (deinit, leave),
+   * so no fragment of an old name is copied and padding compares equal. */
+  strncpy(v->opera_name, s_opera_name, sizeof(v->opera_name) - 1);
   v->pairing_state       = s_ctx.state;
   v->pairing_seq         = s_pairing_seq;
   v->pairing_outcome     = pairing_outcome();
