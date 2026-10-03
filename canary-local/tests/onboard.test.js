@@ -28,6 +28,7 @@
 //     emulator's flavor lists drift apart                      → "nightlight flavor (F204)"
 //   · the clock slows after the splash began, or a probe stops
 //     reading the turned splash or booting a turned glass      → "splash and turned boots (F206)"
+//   · the drift check passes a new flavor's uncommitted bundle → "dist drift (F204)"
 //   · the gates fall out of CI                                 → "CI runs"
 //
 // The browser half (the real wasm answering) is tests/onboard_probe.mjs, in
@@ -986,6 +987,44 @@ test("splash and turned boots (F206): the harness slows the clock from power-on;
     once.includes("const frames = framesOnGlass(st.shapes, st.flushes, turn.glass);") &&
     once.indexOf("const perch = birdPerch(st);") > once.indexOf("const frames = framesOnGlass("),
   "a turned boot holds its glass, its frames and its face's bird");
+});
+
+test("dist drift (F204): the drift check fails on a bundle this tree builds that the committed dist lacks", () => {
+  // Run the workflow step's own script in a scratch repository: one bundle
+  // committed, then a new flavor's bundle left untracked (what build.sh all
+  // leaves when a flavor is added and the dist is not rebuilt). git diff
+  // alone cannot see an untracked file, so the old step passed it.
+  const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
+  const step = /      - name: Dist drift check[^\n]*\n        run: \|\n([\s\S]*?)(?=\n      - name:)/.exec(wf)?.[1];
+  assert.ok(step, "canary-local.yml has its dist drift step");
+  const script = step.split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require("node:fs");
+  const dir = mkdtempSync(join(require("node:os").tmpdir(), "drift-"));
+  try {
+    const sh = (cmd) => spawnSync("bash", ["-c", cmd], { cwd: dir, encoding: "utf8" });
+    mkdirSync(join(dir, "canary-local/emulator/dist"), { recursive: true });
+    writeFileSync(join(dir, "canary-local/emulator/dist/canary-display-watch.js"), "watch bytes\n");
+    assert.strictEqual(sh("git init -q && git -c user.email=t@t -c user.name=t add . && " +
+      "git -c user.email=t@t -c user.name=t commit -qm base").status, 0);
+    writeFileSync(join(dir, "drift.sh"), `set -eo pipefail\n${script}\n`);
+    // the committed dist matches: the step passes
+    assert.strictEqual(sh("bash drift.sh").status, 0, "a dist that matches passes");
+    // a changed bundle fails, as it always did
+    writeFileSync(join(dir, "canary-local/emulator/dist/canary-display-watch.js"), "watch bytes, rebuilt\n");
+    assert.strictEqual(sh("bash drift.sh").status, 1, "a changed bundle fails");
+    sh("git checkout -q -- canary-local/emulator/dist");
+    // a new flavor's bundle the committed dist lacks fails, named, and the
+    // binary patch carries it
+    writeFileSync(join(dir, "canary-local/emulator/dist/canary-display-nightlight.js"), "nightlight bytes\n");
+    const r = sh("bash drift.sh");
+    assert.strictEqual(r.status, 1, "an untracked new bundle fails the drift check");
+    assert.match(r.stdout, /bundles this tree builds that the committed dist lacks[\s\S]*canary-display-nightlight\.js/);
+    const patch = r.stdout.split("\n").filter((l) => l.startsWith("PATCH:")).map((l) => l.slice(6)).join("");
+    const diff = require("node:zlib").gunzipSync(Buffer.from(patch, "base64")).toString("utf8");
+    assert.match(diff, /new file mode[\s\S]*canary-display-nightlight\.js/, "the patch adds the new bundle");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("CI runs the generator check, this test and the browser probe", () => {

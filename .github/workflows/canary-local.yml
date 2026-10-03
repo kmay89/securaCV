@@ -982,10 +982,20 @@ jobs:
           # meta.json carries a git stamp (the merge-base with origin/main,
           # see build.sh) that legitimately differs on a PR merge ref and in
           # this shallow checkout — the drift gate is the code bundles.
-          if ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
+          # A flavor build.sh builds that the committed dist lacks (a new one,
+          # F204's nightlight) leaves an UNTRACKED bundle, which git diff
+          # cannot see: name it, and mark it intent-to-add so the binary patch
+          # below carries it too.
+          new_bundles="$(git ls-files --others --exclude-standard -- 'canary-local/emulator/dist/*.js')"
+          if [ -n "$new_bundles" ]; then
+            echo "── bundles this tree builds that the committed dist lacks ──"
+            echo "$new_bundles" | sed 's/^/· /'
+            git add -N -- $new_bundles
+          fi
+          if [ -n "$new_bundles" ] || ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
             echo "── first differing bytes per artifact (diagnosis) ──"
             for f in canary-local/emulator/dist/*.js; do
-              git show "HEAD:$f" > /tmp/committed.js || continue
+              git show "HEAD:$f" > /tmp/committed.js 2>/dev/null || continue
               off=$(cmp /tmp/committed.js "$f" | awk '{print $5}' | tr -d ',')
               [ -n "$off" ] || continue
               start=$(( off > 80 ? off - 80 : 1 ))
