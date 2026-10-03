@@ -84,12 +84,12 @@ if (pills !== boardCount) fail(`expected ${boardCount} board pills, saw ${pills}
 await page.waitForFunction(() => {
   const cv = document.querySelector(".broom-3d");
   return cv && cv.__scene && cv.__scene.parts.length >= 5;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 
 step("mesh in scene");
 // ── pin flags hang off the pinout's own anchors ──
 await page.waitForFunction(() => document.querySelectorAll(".pin-flag").length >= 5,
-  { timeout: 15000 });
+  null, { timeout: 15000 });
 const flagText = await page.locator(".broom-overlay").textContent();
 for (const needle of ["D1", "D6", "D7", "BAT+"]) {
   if (!flagText.includes(needle)) fail(`missing pin flag "${needle}"`);
@@ -136,7 +136,7 @@ step("harness in scene");
 await page.locator(".wire-nav .primary", { hasText: "next" }).click();
 await page.waitForFunction(() =>
   document.querySelector(".wire-counter")?.textContent.includes("step 1"),
-  { timeout: 5000 });
+  null, { timeout: 5000 });
 if (!(await page.locator(".wire-step-card.on h5").textContent()).includes(build.steps[0].title)) {
   fail("step 1 card not active after next");
 }
@@ -153,7 +153,7 @@ for (const [bid, b] of Object.entries(boards.boards).slice(1)) {
   await page.waitForFunction(() => {
     const cv = document.querySelector(".broom-3d");
     return cv && cv.__scene && cv.__scene.parts.length >= 3;
-  }, { timeout: 15000 });
+  }, null, { timeout: 15000 });
   const hasBuild = wiring.builds.some((w) => w.board === bid);
   const disabled = await page.locator(".broom-modes .tab", { hasText: "wire it" }).isDisabled();
   if (disabled === hasBuild) fail(`${bid}: wire-it disabled=${disabled} but harness exists=${hasBuild}`);

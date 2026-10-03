@@ -83,7 +83,7 @@ step("packages ok");
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length >= 2;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 
 step("meshes in scene");
 // ── honesty ribbon: deviate one option → custom; restore → exact ──
@@ -122,7 +122,7 @@ await page.locator(".ws-chip", { hasText: "lid" }).first().click();
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length === 1;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 const specs = await page.locator(".ws-specs").textContent();
 for (const needle of ["triangles", "cm³", "mm", "print-validated"]) {
   if (!specs.includes(needle)) fail(`spec strip missing "${needle}"`);
@@ -131,7 +131,7 @@ await page.locator(".ws-chip", { hasText: "all" }).click();
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length >= 2;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 
 // ── the parameter-set download says exactly what it is ──
 const how = await page.locator(".ws-check").textContent();
@@ -162,7 +162,7 @@ await addon.check();
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length >= 4;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 
 step("addon meshes ok");
 // ── dreaming mode hides the deep sheet ──
@@ -214,7 +214,7 @@ await page.locator(".ws-device", { hasText: "Canary Dash" }).click();
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length >= 1;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 if (!(await page.locator(".ws-soon").count())) {
   fail("dash configure should carry a coming-soon card (no tick-box options)");
 }

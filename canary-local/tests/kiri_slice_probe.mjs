@@ -77,7 +77,7 @@ page.on("response", (r) => {
 try {
   await page.goto(`http://localhost:${port}/canary-local/tests/fixtures/kiri_harness.html`,
     { waitUntil: "networkidle", timeout: 45000 });
-  await page.waitForFunction(() => window.__harnessReady || window.__harnessError, { timeout: 20000 });
+  await page.waitForFunction(() => window.__harnessReady || window.__harnessError, null, { timeout: 20000 });
   if (await page.evaluate(() => window.__harnessError)) fail("harness: " + await page.evaluate(() => window.__harnessError));
   await page.waitForSelector(".enclab", { timeout: 15000 });
 
@@ -112,7 +112,7 @@ try {
     () => {
       const n = document.querySelector(".est-slice-note");
       return n && n.textContent && n.textContent.trim() !== "" && n.textContent.trim() !== "slicing…";
-    }, { timeout: 40000 });
+    }, null, { timeout: 40000 });
   const note = (await page.$eval(".est-slice-note", (n) => n.textContent)).trim();
   const timeLabel = await page.$eval(".est-totals .est-big:first-child i", (i) => i.textContent);
 

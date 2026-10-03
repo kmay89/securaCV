@@ -145,7 +145,7 @@ try {
   const playing = await page.waitForFunction(() => {
     const v = document.querySelector(".eyes-stage video");
     return !!v && !!v.srcObject && v.readyState >= 2 && v.videoWidth > 0;
-  }, { timeout: 10000 }).then(() => true).catch(() => false);
+  }, null, { timeout: 10000 }).then(() => true).catch(() => false);
   if (!playing) fail("the fake camera stream did not reach the sensor pane");
   await page.click(".eyes-stop");
   await page.waitForSelector(".eyes-start", { timeout: 5000 })
