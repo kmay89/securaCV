@@ -869,8 +869,9 @@ static int8_t clamp_tx_power(int8_t v) {
 // is off, then a link, a scan, pairing mode and advertising, in that
 // order, else idle. Before, each of those ends set idle (or connected)
 // whatever went on, so a scan that ended while advertising read
-// "state": "idle" with "advertising": true. The starts (a link up, a scan,
-// pairing mode, advertising) still set their own state.
+// "state": "idle" with "advertising": true. The starts of a link, a scan
+// and pairing mode still set their own state; advertising's start sets
+// this one (sweep F190), since pairing mode starts advertising itself.
 static BluetoothState rest_state() {
   if (!g_settings.enabled) return BT_DISABLED;
   if (g_connection.connected) return BT_CONNECTED;
@@ -1443,7 +1444,13 @@ static bool start_advertising() {
   if (g_advertising && !g_advertising->isAdvertising()) {
     g_advertising->start();
     g_advertising_start_ms = millis();
-    set_state(BT_ADVERTISING);
+    // The state from what runs (sweep F190), not BT_ADVERTISING: pairing
+    // mode starts the advertiser when the owner had stopped it, and setting
+    // advertising here hid pairing mode from GET /api/bluetooth until it
+    // ended. So pairing mode reads pairing, a scan scanning, a link
+    // connected, and advertising alone reads advertising (rest_state()'s
+    // order, F170).
+    set_state(rest_state());
     log_health(SCV_LOG_DEBUG, SCV_CAT_BLUETOOTH, "BLE advertising started", nullptr);
   }
 

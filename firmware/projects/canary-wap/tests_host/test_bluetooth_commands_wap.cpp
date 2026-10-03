@@ -2919,6 +2919,47 @@ void test_a_link_ends_on_full_into_advertising() {
   std::printf("PASS a_link_ends_on_full_into_advertising\n");
 }
 
+// Pairing mode starts the advertiser when the owner had stopped it (sweep
+// F190): GET /api/bluetooth reads pairing beside "advertising": true until
+// pairing mode ends. Before, start_advertising() set advertising over the
+// pairing start_pairing() had just set, so the route hid pairing mode
+// whenever it had to start advertising (from Bluetooth off too: Pair turns
+// it on). And advertising started by the owner while a scan runs reads
+// scanning (what runs, in rest_state()'s order); the scan's end reads
+// advertising.
+void test_pairing_mode_reads_pairing_when_it_starts_advertising() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_ADVERTISE_STOP)).r.ok && !host_sim::advertising.isAdvertising());
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_IDLE, false}));
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED && bc::g_state == bc::BT_PAIRING);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_PAIRING, true}));
+  loop_pass();
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_PAIRING, true}));
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_CANCEL)).r.ok);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
+
+  // From Bluetooth off: Pair turns it on and starts advertising.
+  CHECK(rest(cmd_of(bc::BT_CMD_DISABLE)).r.ok && !host_sim::advertising.isAdvertising());
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok && bc::is_enabled());
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_PAIRING, true}));
+  // Its timeout ends it into advertising (F170).
+  host_sim::now_ms += bc::PAIRING_TIMEOUT_MS;
+  loop_pass();
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
+
+  // Start Advertising during a scan: scanning, then advertising at its end.
+  CHECK(rest(cmd_of(bc::BT_CMD_ADVERTISE_STOP)).r.ok);
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok && bc::g_state == bc::BT_SCANNING);
+  CHECK(rest(cmd_of(bc::BT_CMD_ADVERTISE_START)).r.ok && host_sim::advertising.isAdvertising());
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_SCANNING, true}));
+  CHECK(rest(cmd_of(bc::BT_CMD_SCAN_STOP)).r.ok);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
+  std::printf("PASS pairing_mode_reads_pairing_when_it_starts_advertising\n");
+}
+
 // When the stack keeps the bond after all (another task started the
 // advertiser again inside the delete: Opera's onConnect on the NimBLE host
 // task, a chirp), Remove keeps the entry and says so: before the F172
@@ -3102,6 +3143,8 @@ const Test kTests[] = {
     {"the_state_after_a_scan_is_what_runs", test_the_state_after_a_scan_is_what_runs},
     {"the_state_after_pairing_or_a_link_is_what_runs", test_the_state_after_pairing_or_a_link_is_what_runs},
     {"a_link_ends_on_full_into_advertising", test_a_link_ends_on_full_into_advertising},
+    {"pairing_mode_reads_pairing_when_it_starts_advertising",
+     test_pairing_mode_reads_pairing_when_it_starts_advertising},
     {"a_reconcile_leaves_a_live_record_alone", test_a_reconcile_leaves_a_live_record_alone},
     {"another_links_encryption_leaves_the_record", test_another_links_encryption_leaves_the_record},
     {"full_profile_the_timeout_ends_the_recorded_link_only",
