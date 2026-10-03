@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Hold the PlatformIO canary's mesh status routes to the view the main loop
-publishes (sweep F161).
+publishes (sweep F161), and its alerts route to the log the main loop changes
+under its lock (sweep F197).
 
 `GET /api/mesh` and `/api/mesh/peers` (`handle_mesh_status`,
 `handle_mesh_peers` in `securacv_network.cpp`) run on esp_http_server's
@@ -10,16 +11,22 @@ the peer links and the transport table) while the main loop's
 `mesh_session::process()` wrote it, so one body could mix two passes. Now
 the main loop builds a `StatusView` and publishes it
 (`mesh_session::publish_status()`, through `loop_snapshot.h`), and the two
-routes copy it (`mesh_session::read_status()`).
+routes copy it (`mesh_session::read_status()`). `GET /api/mesh/alerts`
+(`handle_mesh_alerts`) copied the alert ring in place while the main loop's
+receive path stored into it and a DELETE cleared it; now the history is a
+`loop_snapshot::Log` the main loop appends to and clears under its lock,
+and the route copies it with `mesh_session::read_alerts()`, newest first
+(F197).
 
 `test_mesh_session.cpp` runs the session, the view and the JSON on the
 host: the read is the last published pass, a read right after a request's
 answer shows the request, a stopped session still publishes, deinit()
 publishes, the code is kept only while shown, the peer join, and a
-two-thread run. No host test compiles `securacv_network.cpp` or
-`main.cpp` (only CI's `[env:full]` build does), and none can see which task
-a call runs on; this check holds the sources to the shape those tests
-assume.
+two-thread run; and the alert history newest first after the log wraps, a
+cap, a clear, a leave, deinit, and a two-thread run of stores and clears.
+No host test compiles `securacv_network.cpp` or `main.cpp` (only CI's
+`[env:full]` build does), and none can see which task a call runs on; this
+check holds the sources to the shape those tests assume.
 
 ## The rules
 
@@ -27,9 +34,9 @@ assume.
    name(httpd_req_t* req)` function) names a live reader of the session's
    or the transport's state (`LIVE_READERS` below: `pairing_seq`,
    `pairing_state`, `get_opera_name`, `get_peer_links`,
-   `mesh_transport::list_peers` and the rest). One allowance, named in
-   `ALLOWED`: `handle_mesh_alerts` still reads `mesh_session::get_alerts`
-   (F161 covered the two status routes; the alerts route is handed up).
+   `mesh_transport::list_peers` and the rest, `get_alerts` among them).
+   No allowance: F161 allowed `handle_mesh_alerts`' `get_alerts` until the
+   alerts route moved, which F197 did.
 2. `handle_mesh_status` and `handle_mesh_peers` each read the view once
    (`mesh_session::read_status(&view);`), and `handle_mesh_peers` joins its
    rows with `mesh_api::peer_views_from_status(view, ...)` once.
@@ -47,6 +54,16 @@ assume.
    restore: the HTTP server is up before the first loop pass), and no other
    file under `firmware/canary` calls it: a handler that published would
    run the main loop's build on the httpd task.
+6. `handle_mesh_alerts` reads the alert log once
+   (`mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY);`).
+   In `mesh_session.cpp` (F197), `s_alert_log` is appended to once, in
+   `dispatch_verified()` (the TAMPER_ALERT receive path), cleared only in
+   `clear_alerts()` and `reset_alerts()` (once each), read once, in
+   `read_alerts()`, and attached (and its `storage()` asked) only in
+   `init()`; `s_alert_store`, the records' memory, is named only by its
+   declaration and that attach; `read_alerts()` names no live state; and no
+   in-place history is left (`s_alert_ring`, `s_alert_head`,
+   `s_alert_count`, `get_alerts`).
 
 Each rule is proved to bite: `self_test()` mutates the real sources in
 memory and requires the check to fail on every mutation.
@@ -82,7 +99,6 @@ LIVE_READERS = {
     ),
     "mesh_transport": ("list_peers", "get_peer", "has_peer"),
 }
-ALLOWED = {("mesh_session", "get_alerts", "handle_mesh_alerts")}
 STATUS_HANDLERS = ("handle_mesh_status", "handle_mesh_peers")
 
 # Rule 4: names read_status() must not touch.
@@ -91,6 +107,18 @@ LIVE_STATE = (
     "s_enabled", "s_running", "s_pairing_seq", "s_alerts_received", "build_status_view",
     "get_peer_links", "online_peer_count", "trusted_peer_count", "list_peers",
 )
+
+# Rule 6 (F197): where the alert log is touched, and what read_alerts() must
+# not name (it runs on the httpd task).
+ALERT_LOG_USES = {
+    "append": (("dispatch_verified",), 1),
+    "clear": (("clear_alerts", "reset_alerts"), 2),
+    "read": (("read_alerts",), 1),
+    "attach": (("init",), 1),
+    "storage": (("init",), 1),
+}
+ALERT_READER_LIVE = LIVE_STATE + ("s_alert_store", "s_alert_seq")
+OLD_ALERT_RING = ("s_alert_ring", "s_alert_head", "s_alert_count", "get_alerts")
 
 HANDLER_SIG = re.compile(r"\bstatic\s+esp_err_t\s+(\w+)\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)\s*\{")
 
@@ -200,8 +228,6 @@ def check_network(net_src: str, errors: list[str]) -> None:
     for name, body in handler_bodies(code):
         for ns, readers in LIVE_READERS.items():
             for m in re.finditer(r"\b" + ns + r"::(" + "|".join(readers) + r")\s*\(", body):
-                if (ns, m.group(1), name) in ALLOWED:
-                    continue
                 errors.append(f"{NETWORK}: HTTP handler {name}() reads {ns}::{m.group(1)}( — the "
                               "live state is the main loop's; read the published view "
                               "(mesh_session::read_status) (F161)")
@@ -218,6 +244,17 @@ def check_network(net_src: str, errors: list[str]) -> None:
         if len(reads) != 1:
             errors.append(f"{NETWORK}: {h}() must read the published view once "
                           f"(`mesh_session::read_status(&view);`, found {len(reads)}) (F161)")
+    alerts = bodies.get("handle_mesh_alerts")
+    if alerts is None:
+        errors.append(f"{NETWORK}: handle_mesh_alerts() is missing")
+    else:
+        reads = re.findall(r"\bmesh_session::read_alerts\s*\(\s*recs\s*,\s*"
+                           r"mesh_session::MAX_ALERT_HISTORY\s*\)\s*;", alerts)
+        calls = re.findall(r"\bread_alerts\s*\(", alerts)
+        if len(reads) != 1 or len(calls) != 1:
+            errors.append(f"{NETWORK}: handle_mesh_alerts() must read the alert log once "
+                          f"(`mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY);`, "
+                          f"found {len(reads)}) (F197)")
     peers = bodies.get("handle_mesh_peers")
     if peers is not None:
         joins = re.findall(r"\bmesh_api::peer_views_from_status\s*\(\s*view\s*,", peers)
@@ -284,6 +321,55 @@ def check_session(sess_src: str, errors: list[str]) -> None:
                           "task and reads only what the main loop published (F161)")
     if one_body(code, SIG_PUBLISH, f"{SESSION}: publish_status()", errors) is None:
         pass
+    check_alert_log(code, errors)
+
+
+SIG_READ_ALERTS = (r"\bsize_t\s+read_alerts\s*\(\s*mesh_alert::Record\s*\*\s*\w+\s*,"
+                   r"\s*size_t\s+\w+\s*\)\s*\{")
+ALERT_STORE_DECL = re.compile(r"\bstatic\s+AlertEntry\s+s_alert_store\s*\[")
+
+
+def check_alert_log(code: str, errors: list[str]) -> None:
+    """Rule 6 (F197): the alert log is changed only on the main loop's paths
+    and read only by read_alerts(), which names no live state."""
+    seen: dict[str, list[str]] = {}
+    for m in re.finditer(r"\bs_alert_log\s*\.\s*(\w+)\s*\(", code):
+        where = enclosing(code, m.start())
+        seen.setdefault(m.group(1), []).append(where)
+        use = ALERT_LOG_USES.get(m.group(1))
+        if use is None or where not in use[0]:
+            errors.append(f"{SESSION}: {where}() uses s_alert_log.{m.group(1)}( — the alert log is "
+                          "appended to on the receive path, cleared by clear_alerts() / "
+                          "reset_alerts(), attached in init() and read only by read_alerts() (F197)")
+    for name, (_, count) in ALERT_LOG_USES.items():
+        if len(seen.get(name, [])) != count:
+            errors.append(f"{SESSION}: s_alert_log.{name}( is called {len(seen.get(name, []))} "
+                          f"time(s); expected {count} (F197)")
+    if seen.get("clear", []).count("clear_alerts") != 1 or seen.get("clear", []).count("reset_alerts") != 1:
+        errors.append(f"{SESSION}: clear_alerts() and reset_alerts() must each clear the alert log "
+                      "once (F197)")
+    decl = list(ALERT_STORE_DECL.finditer(code))
+    if len(decl) != 1:
+        errors.append(f"{SESSION}: `static AlertEntry s_alert_store[...]` declared {len(decl)} "
+                      "time(s); expected once (F197)")
+    for m in re.finditer(r"\bs_alert_store\b", code):
+        if any(d.start() <= m.start() < d.end() + len("s_alert_store") for d in decl):
+            continue
+        where = enclosing(code, m.start())
+        if where != "init" or not re.match(r"s_alert_store\s*\)\s*;", code[m.start():]) or \
+                not re.search(r"\bs_alert_log\s*\.\s*attach\s*\(\s*$", code[max(0, m.start() - 40):m.start()]):
+            errors.append(f"{SESSION}: {where}() names s_alert_store — the records are reached only "
+                          "through the log (s_alert_log.attach(s_alert_store) in init()) (F197)")
+    rd = one_body(code, SIG_READ_ALERTS, f"{SESSION}: read_alerts()", errors)
+    if rd is not None:
+        hit = re.search(r"\b(" + "|".join(ALERT_READER_LIVE) + r")\b", rd)
+        if hit:
+            errors.append(f"{SESSION}: read_alerts() names {hit.group(1)} — it runs on the httpd "
+                          "task and reads only the alert log (F197)")
+    for name in OLD_ALERT_RING:
+        if re.search(r"\b" + name + r"\b", code):
+            errors.append(f"{SESSION}: names {name} — the in-place alert ring the httpd task read "
+                          "while the main loop wrote it is gone; the history is s_alert_log (F197)")
 
 
 SIG_SETUP = r"\bvoid\s+setup\s*\(\s*\)\s*\{"
@@ -380,6 +466,13 @@ PROC_EARLY = "    publish_status();   /* F161: a stopped or disabled session's v
 DRAIN_PUB = "   * before it. */\n  publish_status();\n  s_slot_result = res;"
 DEINIT_PUB = "  publish_status();   /* F161: no view of the session it just wiped */\n"
 MAIN_PUB = "    mesh_session::publish_status();\n  } else {"
+ALERTS_READ = "  const size_t n = mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY);"
+ALERT_APPEND = "      (void)s_alert_log.append(e);"
+ALERT_CLEAR = ("  /* History only — the lifetime counters keep counting (WAP parity). */\n"
+               "  s_alert_log.clear();")
+ALERT_RESET = "  s_alert_log.clear();   /* F197: under the log's lock; zeroes the records */"
+ALERT_READ = "  const size_t n = s_alert_log.read(held, MAX_ALERT_HISTORY);"
+ALERT_ATTACH = "  if (s_alert_log.storage() == nullptr) s_alert_log.attach(s_alert_store);"
 
 MUTATIONS: list[tuple[str, Mutation]] = [
     ("status handler reads pairing_seq live",
@@ -439,6 +532,42 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("main.cpp publishes from loop() as well",
      raw("main", "  mesh_session::process((uint32_t)millis());\n",
          "  mesh_session::process((uint32_t)millis());\n  mesh_session::publish_status();\n")),
+    ("alerts handler reads the ring in place (get_alerts)",
+     raw("network", ALERTS_READ,
+         "  const size_t n = mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY);")),
+    ("alerts handler reads the log twice",
+     raw("network", ALERTS_READ, ALERTS_READ + "\n  (void)mesh_session::read_alerts(recs, 1);")),
+    ("alerts handler never reads the log",
+     raw("network", ALERTS_READ, "  const size_t n = 0;")),
+    ("alerts handler reads the alert counter live",
+     raw("network", ALERTS_READ, ALERTS_READ + "\n  (void)mesh_session::alerts_received();")),
+    ("the receive path writes the records in place",
+     raw("session", ALERT_APPEND, "      s_alert_store[0] = e;")),
+    ("the log appended outside the receive path",
+     raw("session", ALERT_CLEAR, ALERT_CLEAR + "\n  AlertEntry z; memset(&z, 0, sizeof(z)); (void)s_alert_log.append(z);")),
+    ("clear_alerts() wipes the records in place",
+     raw("session", ALERT_CLEAR, ALERT_CLEAR.replace("  s_alert_log.clear();",
+                                                     "  memset(s_alert_store, 0, sizeof(s_alert_store));"))),
+    ("reset_alerts() keeps the history",
+     raw("session", ALERT_RESET, "")),
+    ("read_alerts() copies the records in place",
+     raw("session", ALERT_READ, "  memcpy(held, s_alert_store, sizeof(held));\n"
+                                "  const size_t n = s_alert_log.count();")),
+    ("read_alerts() names the main loop's counter",
+     raw("session", ALERT_READ, ALERT_READ + "\n  (void)s_alert_seq;")),
+    ("read_alerts() reads the log twice",
+     raw("session", ALERT_READ, ALERT_READ + "\n  (void)s_alert_log.read(held, 1);")),
+    ("the log attached outside init()",
+     raw("session", ALERT_CLEAR, ALERT_CLEAR + "\n  s_alert_log.attach(s_alert_store);")),
+    ("init() attaches nothing",
+     raw("session", ALERT_ATTACH, "")),
+    ("the in-place ring comes back",
+     raw("session", "static uint32_t   s_alert_seq = 0;",
+         "static size_t s_alert_head = 0;\nstatic uint32_t   s_alert_seq = 0;")),
+    ("a get_alerts() reader comes back",
+     raw("session", "void clear_alerts() {",
+         "size_t get_alerts(mesh_alert::Record* out, size_t cap) { return read_alerts(out, cap); }\n\n"
+         "void clear_alerts() {")),
     ("another canary file publishes",
      other("firmware/canary/src/csi_modules_integration.cpp",
            "  mesh_session::set_beacon_event_handler(&on_peer_beacon_event_inbound);",
@@ -481,8 +610,9 @@ def main() -> int:
         return 1
     print(f"canary mesh status routes hold: GET /api/mesh and /peers read only the view the main "
           f"loop publishes (each pass, its early return, each request before its result, "
-          f"deinit, and setup's restore), no HTTP handler reads the session's live state "
-          f"(the alerts route excepted) ({len(MUTATIONS)} mutations refused).")
+          f"deinit, and setup's restore), GET /api/mesh/alerts reads only the log the main loop "
+          f"changes under its lock, no HTTP handler reads the session's live state "
+          f"({len(MUTATIONS)} mutations refused).")
     return 0
 
 

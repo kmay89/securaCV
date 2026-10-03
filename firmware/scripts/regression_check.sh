@@ -826,13 +826,15 @@ echo ""
 # deinit, and setup's restore) and the two routes copy it. test_mesh_session
 # runs the view on the host; this holds securacv_network.cpp's handlers,
 # mesh_session.cpp's publish points and main.cpp's setup publish to it, and
-# mutates them in memory to prove it bites.
+# mutates them in memory to prove it bites. GET /api/mesh/alerts (F197)
+# reads the alert history the same way: a log the main loop appends to and
+# clears under its lock, copied whole by read_alerts().
 section "Reliability: canary mesh status routes read the published view"
 
 MESH_STATUS_CHECK="$SCRIPT_DIR/check_canary_mesh_status.py"
 if [ -f "$MESH_STATUS_CHECK" ]; then
   if MESH_STATUS_OUT=$(python3 "$MESH_STATUS_CHECK" 2>&1); then
-    check_pass "GET /api/mesh and /peers read only the view the main loop publishes; no canary HTTP handler reads the session's live state"
+    check_pass "GET /api/mesh and /peers read only the view the main loop publishes, /alerts only its locked log; no canary HTTP handler reads the session's live state"
   else
     check_fail "a canary mesh status route reads the session's live state, or the main loop stopped publishing the view where the routes need it"
     echo "$MESH_STATUS_OUT" | sed 's/^/    /'
