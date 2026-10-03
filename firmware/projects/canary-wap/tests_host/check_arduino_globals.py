@@ -83,8 +83,10 @@ def clean_env() -> dict[str, str]:
     return env
 
 
-def real_cxx() -> str:
-    return os.environ.get("CXX") or "g++"
+def real_cxx() -> list[str]:
+    """The configured compiler, as make would run it (CXX may carry a
+    wrapper or flags: `ccache g++`)."""
+    return shlex.split(os.environ.get("CXX") or "g++")
 
 
 def default_targets(makefile: str) -> list[str]:
@@ -122,9 +124,9 @@ def plan(makefile: str, targets: list[str]) -> list[list[str]]:
     return cmds
 
 
-def split_command(toks: list[str]) -> tuple[str, list[str], list[str], str]:
+def split_command(toks: list[str]) -> tuple[list[str], list[str], list[str], str]:
     """(compiler, preprocessor flags, sources, output) of one compile command."""
-    cxx = real_cxx() if toks[0] == SENTINEL else toks[0]
+    cxx = real_cxx() if toks[0] == SENTINEL else [toks[0]]
     flags: list[str] = []
     sources: list[str] = []
     output = ""
@@ -205,8 +207,8 @@ def analyze(text: str) -> tuple[list[str], set[str]]:
     return problems, sketch_files
 
 
-def preprocess(cxx: str, flags: list[str], src: str) -> str:
-    out = subprocess.run([cxx] + flags + ["-E", src], cwd=HERE, capture_output=True, text=True)
+def preprocess(cxx: list[str], flags: list[str], src: str) -> str:
+    out = subprocess.run(cxx + flags + ["-E", src], cwd=HERE, capture_output=True, text=True)
     if out.returncode != 0:
         err = out.stderr.strip().splitlines()
         raise CheckError(f"{src}: the preprocessor failed: " + " | ".join(err[:6]))
