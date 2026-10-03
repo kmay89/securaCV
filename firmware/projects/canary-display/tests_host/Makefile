@@ -319,6 +319,34 @@ clean-mark-seat:
 run: run-mark-seat
 clean: clean-mark-seat
 
+# The nightlight's tumble wears its Startle (F242): the REAL
+# src/ui/nightlight_ui.cpp and canary_mark.cpp against fake_lvgl/lvgl.h, with
+# the nightlight's config and pin map and the real color engine and plumage
+# behind the lamp, turned the way main.cpp's apply path turns it (the face
+# rebuilt, the tumble, then the first update). Every turn on both glass shapes
+# hops with its Startle once the bird has its first mood; asleep, inside the
+# mark's ration, after the tumble and on a face built without a turn it does
+# not. Hooked into `run` and `clean` by prerequisite.
+NLTUMBLE_BIN = test_nightlight_tumble
+NLTUMBLE_SRC = test_nightlight_tumble.cpp ../src/ui/nightlight_ui.cpp ../src/ui/canary_mark.cpp \
+  ../src/fleet/fleet_model.cpp ../../../common/color/color_engine.cpp \
+  ../../../common/color/look_engine.cpp ../../../common/color/plumage.cpp
+
+$(NLTUMBLE_BIN): $(NLTUMBLE_SRC) ../include/canary/ui/nightlight_ui.h ../include/canary/ui/canary_mark.h \
+	  fake_lvgl/lvgl.h fake_lvgl/esp_random.h lv_txt_wrap.h
+	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl $(INC) -I ../../../configs/canary-display/nightlight \
+	  -I ../../../boards/waveshare-esp32c3-lcd147/pins -I ../../../common \
+	  -o $@ $(NLTUMBLE_SRC)
+
+.PHONY: run-nl-tumble clean-nl-tumble
+run-nl-tumble: $(NLTUMBLE_BIN)
+	$(call run_marked,$(NLTUMBLE_BIN))
+clean-nl-tumble:
+	rm -f $(NLTUMBLE_BIN)
+
+run: run-nl-tumble
+clean: clean-nl-tumble
+
 # What the onboarding scenes DRAW (F64, F65, F66, F84): the REAL
 # src/ui/onboard_ui.cpp, round_frame.cpp and canary_mark.cpp against
 # fake_lvgl/lvgl.h, driven through every scene the way provision.cpp drives

@@ -81,6 +81,8 @@ int s_bird_px = 96;                   // bird size this composition chose
 
 uint32_t s_caption_bright_until = 0;  // ambient-life check-in window
 uint32_t s_tumble_until = 0;          // caption shows the tumble word
+bool s_tumble_startle = false;        // the tumble's Startle, owed to the
+                                      // first mood (see nightlight_ui_tumble)
 VisitKind s_staged = VisitKind::None; // the visit currently on stage
 
 lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
@@ -283,6 +285,7 @@ void nightlight_ui_create() {
 
   s_staged = VisitKind::None;
   s_tumble_until = 0;
+  s_tumble_startle = false;
 }
 
 void nightlight_ui_tumble(uint8_t delta_cw, uint32_t now) {
@@ -303,8 +306,11 @@ void nightlight_ui_tumble(uint8_t delta_cw, uint32_t now) {
 
   // The companion FEELS the handling — Startle is exactly the honest
   // reaction (the mark rations it; asleep birds refuse it, so a night
-  // flip stays still, which is also right).
-  canary_mark_react(CanaryReact::Startle);
+  // flip stays still, which is also right). The bird create() just built
+  // stays Hidden until the next update gives it a mood, and the mark
+  // refuses to react while Hidden, so a Startle sent from here was always
+  // dropped (F242): it is owed to that first mood, and the update pays it.
+  s_tumble_startle = true;
 
   // Drop in with a bounce; both axes so diagonal entries read naturally.
   lv_anim_t a;
@@ -353,6 +359,16 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
 
   // The bird wears the mood engine's face, always.
   canary_mark_mood(st.bird);
+
+  // ...and then the tumble's Startle (F242), once, now that the bird is on
+  // stage: the mark still refuses it asleep or hidden and rations it. Owed
+  // only while the tumble plays; a first update that comes after it pays
+  // nothing.
+  if (s_tumble_startle) {
+    s_tumble_startle = false;
+    if ((int32_t)(now - s_tumble_until) < 0)
+      canary_mark_react(CanaryReact::Startle);
+  }
 
   // ── The lamp field ──
   {
