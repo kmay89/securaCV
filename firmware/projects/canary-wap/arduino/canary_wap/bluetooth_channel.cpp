@@ -48,6 +48,7 @@
 #include "health_log.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>       // vTaskDelay: submit() waits for the loop task
+#include <ctype.h>                // isxdigit: parse_address()
 #include "ble_ota.h"
 #include "ble_presence.h"
 #include "ble_console.h"
@@ -140,9 +141,12 @@ static bool g_pending_pair_active = false;
 static uint16_t g_connection_handle = 0xFFFF;
 static uint16_t g_connection_mtu = 23;  // negotiated MTU; defaults to ATT min
 
-// Paired devices
+// Paired devices. Each keeps its identity address (sweep F172), the key
+// NimBLE's bond store holds it by; a list saved before F172 kept the
+// over-the-air address, and init() rebuilds it from the bond store once.
 static PairedDevice g_paired_devices[MAX_PAIRED_DEVICES];
 static size_t g_paired_count = 0;
+static bool g_paired_by_identity = false;   // the saved list's NVS_KEY_BT_PAIRED_ID
 
 // Scan results
 static ScannedDevice g_scanned_devices[MAX_SCANNED_DEVICES];
@@ -182,6 +186,8 @@ static const char* NVS_KEY_BT_NAME = "bt_name";
 static const char* NVS_KEY_BT_TX_PWR = "bt_tx_pwr";
 static const char* NVS_KEY_BT_TIMEOUT = "bt_timeout";
 static const char* NVS_KEY_BT_PAIRED = "bt_paired";
+// Set once the saved paired list holds identity addresses (sweep F172).
+static const char* NVS_KEY_BT_PAIRED_ID = "bt_paired_id";
 static const char* NVS_KEY_BT_LONG_RANGE = "bt_long_range";
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -193,6 +199,7 @@ static void load_settings();
 static void save_settings();
 static void load_paired_devices();
 static void save_paired_devices();
+static void migrate_paired_devices();
 static void update_status_characteristic();
 static void handle_inactivity_timeout();
 static void handle_scan_timeout();
@@ -268,15 +275,21 @@ enum EventType : uint8_t {
   BT_EV_ACTIVITY,
 };
 
-// A link, as a server callback's NimBLEConnInfo named it. The address is
-// the stack's own form (ble_addr_t: the type, and the bytes least
+// A link, as a server callback's NimBLEConnInfo named it. The addresses
+// are the stack's own form (ble_addr_t: the type, and the bytes least
 // significant first, as getBase() holds them), so the loop task rebuilds
-// the same NimBLEAddress from it. NimBLE-Arduino 2.x's byte-array
+// the same NimBLEAddress from them. NimBLE-Arduino 2.x's byte-array
 // constructor takes the bytes in printed order and reverses them, so
 // bytes copied out of getBase() went back through it printed backwards.
+// `address` is the one on the air (getAddress()): a phone using
+// resolvable private addresses shows a new one every few minutes.
+// `id_address` is its identity (getIdAddress()), the address NimBLE keys
+// its bond by, and the one the paired list keeps (sweep F172); the two are
+// the same for a peer that uses no private address.
 struct LinkEvent {
   uint16_t handle;
   ble_addr_t address;
+  ble_addr_t id_address;
   bool encrypted;
   bool authenticated;
   bool bonded;
@@ -330,6 +343,7 @@ static Event link_event(EventType type, NimBLEConnInfo& connInfo) {
   Event e = make_event(type);
   e.u.link.handle = connInfo.getConnHandle();
   e.u.link.address = *connInfo.getAddress().getBase();
+  e.u.link.id_address = *connInfo.getIdAddress().getBase();
   e.u.link.encrypted = connInfo.isEncrypted();
   e.u.link.authenticated = connInfo.isAuthenticated();
   e.u.link.bonded = connInfo.isBonded();
@@ -574,10 +588,15 @@ static void apply_auth_complete(const Event& e) {
     if (link.bonded) {
       g_connection.security = SEC_BONDED;
 
-      // Add to paired devices
+      // Add to paired devices, by the identity address the bond is keyed by
+      // (sweep F172): the over-the-air address of a phone using resolvable
+      // private addresses changes every few minutes and names no bond, so
+      // a Remove could never forget it.
+      const NimBLEAddress identity(link.id_address);
+      const std::string identity_str = identity.toString();
       bool found = false;
       for (size_t i = 0; i < g_paired_count; i++) {
-        if (memcmp(g_paired_devices[i].address, link.address.val, BLE_ADDRESS_LENGTH) == 0) {
+        if (memcmp(g_paired_devices[i].address, link.id_address.val, BLE_ADDRESS_LENGTH) == 0) {
           g_paired_devices[i].last_connected_ms = e.at_ms;
           g_paired_devices[i].connection_count++;
           g_paired_devices[i].security = SEC_BONDED;
@@ -588,9 +607,9 @@ static void apply_auth_complete(const Event& e) {
 
       if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
         PairedDevice* dev = &g_paired_devices[g_paired_count++];
-        memcpy(dev->address, link.address.val, BLE_ADDRESS_LENGTH);
-        dev->address_type = link.address.type;
-        strncpy(dev->name, g_connection.name, MAX_DEVICE_NAME_LEN);
+        memcpy(dev->address, link.id_address.val, BLE_ADDRESS_LENGTH);
+        dev->address_type = link.id_address.type;
+        strncpy(dev->name, identity_str.c_str(), MAX_DEVICE_NAME_LEN);
         dev->name[MAX_DEVICE_NAME_LEN] = '\0';
         dev->paired_timestamp = e.at_ms / 1000;
         dev->last_connected_ms = e.at_ms;
@@ -600,7 +619,7 @@ static void apply_auth_complete(const Event& e) {
         dev->blocked = false;
 
         save_paired_devices();
-        log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "New device paired", g_connection.name);
+        log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "New device paired", identity_str.c_str());
       }
     }
 
@@ -790,6 +809,7 @@ static void load_paired_devices() {
     nvs->getBytes(NVS_KEY_BT_PAIRED, g_paired_devices, data_len);
     g_paired_count = data_len / sizeof(PairedDevice);
   }
+  g_paired_by_identity = nvs->getBool(NVS_KEY_BT_PAIRED_ID, false);
 
 }
 
@@ -798,7 +818,66 @@ static void save_paired_devices() {
   if (!nvs.isOpen()) return;
 
   nvs->putBytes(NVS_KEY_BT_PAIRED, g_paired_devices, g_paired_count * sizeof(PairedDevice));
+  // Every list saved from here on holds identity addresses (apply_auth_complete).
+  nvs->putBool(NVS_KEY_BT_PAIRED_ID, true);
+  g_paired_by_identity = true;
 
+}
+
+// A paired list saved before sweep F172 kept each phone's over-the-air
+// address, which for a phone using resolvable private addresses (most do)
+// is one it has long since dropped, and names no bond: Remove asked NimBLE
+// to forget an address it had never stored. Once, the first time the stack
+// is up with such a list (init(), after NimBLEDevice::init(): the bond
+// store is NimBLE's), the list is rebuilt from the bond store, which keys
+// each bond by the phone's identity address. An entry that names a bond
+// keeps what it says (name, counts, trust, block); a bond with no entry is
+// added under its identity address; an entry that names no bond (an old
+// over-the-air address, or a bond NimBLE no longer has) is dropped, as no
+// phone can use it. The rebuilt list is saved with NVS_KEY_BT_PAIRED_ID, so
+// this runs once. An over-the-air entry cannot be matched to its bond (that
+// needs the phone's IRK, which NimBLE-Arduino does not hand out), so its
+// trust and block flags start over under the identity entry.
+static void migrate_paired_devices() {
+  if (g_paired_by_identity) return;
+  const int bonds = NimBLEDevice::getNumBonds();
+  // A device with no list and no bond (a fresh one) has nothing to rebuild,
+  // and nothing is written: its first pairing saves the list, marked.
+  if (g_paired_count == 0 && bonds <= 0) return;
+  PairedDevice rebuilt[MAX_PAIRED_DEVICES];
+  memset(rebuilt, 0, sizeof(rebuilt));
+  size_t count = 0;
+  size_t kept = 0;
+  for (int b = 0; b < bonds && count < MAX_PAIRED_DEVICES; b++) {
+    const NimBLEAddress identity = NimBLEDevice::getBondedAddress(b);
+    const ble_addr_t* id = identity.getBase();
+    PairedDevice* dev = &rebuilt[count++];
+    bool found = false;
+    for (size_t i = 0; i < g_paired_count; i++) {
+      if (memcmp(g_paired_devices[i].address, id->val, BLE_ADDRESS_LENGTH) == 0) {
+        *dev = g_paired_devices[i];
+        found = true;
+        kept++;
+        break;
+      }
+    }
+    if (!found) {
+      memcpy(dev->address, id->val, BLE_ADDRESS_LENGTH);
+      strncpy(dev->name, identity.toString().c_str(), MAX_DEVICE_NAME_LEN);
+      dev->name[MAX_DEVICE_NAME_LEN] = '\0';
+      dev->security = SEC_BONDED;
+    }
+    dev->address_type = id->type;
+  }
+  const size_t dropped = g_paired_count > kept ? g_paired_count - kept : 0;
+  memcpy(g_paired_devices, rebuilt, sizeof(g_paired_devices));
+  g_paired_count = count;
+  save_paired_devices();
+
+  char detail[64];
+  snprintf(detail, sizeof(detail), "%u kept, %u added, %u dropped", (unsigned)kept,
+           (unsigned)(count - kept), (unsigned)dropped);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Paired list rebuilt from the bond store", detail);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -959,6 +1038,10 @@ bool init() {
   // the ONLY place TX power is set; ble_manager no longer overrides it (it
   // used to bump every combined build to +9 dBm, ignoring this NVS setting).
   NimBLEDevice::setPower(g_settings.tx_power);
+
+  // A paired list saved before sweep F172 is rebuilt from the bond store
+  // (once; it needs the stack up).
+  migrate_paired_devices();
 
   // Bump default ATT MTU to 247 (244-byte payload). The default is 23
   // (20-byte payload), which fragments every JSON status read into 3+ ATT
@@ -1444,8 +1527,16 @@ static bool remove_paired_device(const uint8_t* address) {
       g_paired_count--;
       memset(&g_paired_devices[g_paired_count], 0, sizeof(PairedDevice));
 
-      // Remove from NimBLE bond storage using stored address type
-      NimBLEDevice::deleteBond(NimBLEAddress(address, addr_type));
+      // Forget the bond (sweep F172). NimBLE keys it by the identity address
+      // in the stack's own form, which is what the list keeps; the byte-array
+      // constructor this used reverses the bytes (it takes the printed
+      // order), so ble_gap_unpair() was asked for another address, answered
+      // success anyway (a missing key is no error to the store), and the
+      // phone kept its bond and came back encrypted without pairing again.
+      ble_addr_t id;
+      id.type = addr_type;
+      memcpy(id.val, address, BLE_ADDRESS_LENGTH);
+      NimBLEDevice::deleteBond(NimBLEAddress(id));
 
       save_paired_devices();
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Paired device removed", nullptr);
@@ -1945,13 +2036,27 @@ void update() {
 // UTILITIES
 // ════════════════════════════════════════════════════════════════════════════
 
+// The lists keep an address's bytes as the stack does, least significant
+// first (getBase()->val); a Bluetooth address is printed most significant
+// first, as the phone shows its own and NimBLE's toString() prints it. So
+// the bytes go out in reverse (sweep F172: they went out in stored order,
+// backwards against the phone and against connection.name), and
+// parse_address() takes them back in reverse, so an address a GET route
+// printed finds its entry again (DELETE /api/bluetooth/paired, trust,
+// block).
 void format_address(const uint8_t* addr, char* out) {
   snprintf(out, BLE_ADDRESS_STR_LEN, "%02X:%02X:%02X:%02X:%02X:%02X",
-           addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+           addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
 }
 
 bool parse_address(const char* str, uint8_t* out) {
   if (strlen(str) != 17) return false;
+  // "XX:XX:XX:XX:XX:XX" exactly: sscanf's %02x stops at the first non-hex
+  // character and still counts the field, so "...:0G" read as "...:00".
+  for (int i = 0; i < 17; i++) {
+    const bool colon = (i % 3) == 2;
+    if (colon ? str[i] != ':' : !isxdigit((unsigned char)str[i])) return false;
+  }
 
   unsigned int bytes[6];
   if (sscanf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
@@ -1961,7 +2066,7 @@ bool parse_address(const char* str, uint8_t* out) {
   }
 
   for (int i = 0; i < 6; i++) {
-    out[i] = (uint8_t)bytes[i];
+    out[5 - i] = (uint8_t)bytes[i];   // printed most significant first (format_address)
   }
   return true;
 }

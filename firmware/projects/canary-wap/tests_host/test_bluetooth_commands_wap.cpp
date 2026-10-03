@@ -233,14 +233,14 @@ namespace lcr = loop_command_ring;
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 // A device powering up: RAM gone (the channel's statics, the stack), NVS
-// kept unless `wipe`. When `bring_up`, the boot worker runs the real init()
+// (the channel's keys and NimBLE's bonds) kept unless `wipe`. When `bring_up`, the boot worker runs the real init()
 // ("bringup"), which turns Bluetooth on and advertises (the defaults).
 void boot(bool bring_up = true, bool wipe = true) {
   if (wipe) host_sim::main_nvs.clear();
   NimBLEDevice::deinit(true);
   host_sim::advertising = NimBLEAdvertising();
   host_sim::scan = NimBLEScan();
-  host_sim::bonds.clear();
+  if (wipe) host_sim::bonds.clear();       // NimBLE's bond store is in NVS too
   host_sim::bonds_deleted.clear();
   host_sim::passkey_answers.clear();
   host_sim::presence_calls.clear();
@@ -266,6 +266,7 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_connection_handle = 0xFFFF;
   memset(bc::g_paired_devices, 0, sizeof bc::g_paired_devices);
   bc::g_paired_count = 0;
+  bc::g_paired_by_identity = false;
   memset(bc::g_scanned_devices, 0, sizeof bc::g_scanned_devices);
   bc::g_scanned_count = 0;
   bc::g_scanning = false;
@@ -2230,6 +2231,179 @@ void test_no_pairing_owner_fails_closed() {
   std::printf("PASS no_pairing_owner_fails_closed\n");
 }
 
+// ── A paired phone's address: its identity, printed as it is (F172) ─────
+
+// A phone that uses resolvable private addresses, as most do: the link
+// shows the one it is using now (random, its two top bits 01), and NimBLE
+// keys the bond by its identity address (here a public one). `ota_tag`
+// tells two of its over-the-air addresses apart.
+const uint8_t kPhoneIdentity[6] = {0xC8, 0x2B, 0x96, 0x0A, 0x1B, 0x2C};   // printed order
+NimBLEConnInfo rpa_phone(uint16_t handle, uint8_t ota_tag) {
+  NimBLEConnInfo c;
+  c.handle = handle;
+  const uint8_t ota[6] = {0x5A, ota_tag, 0x22, 0x33, 0x44, 0x55};        // printed 5a:<tag>:22:33:44:55
+  c.address = NimBLEAddress(ota, 1);
+  c.id_address = NimBLEAddress(kPhoneIdentity, 0);
+  c.id_known = true;
+  return c;
+}
+
+// The phone pairs and bonds on `handle` (the stack stores its bond by its
+// identity, as NimBLE does), and the loop task applies it.
+void rpa_phone_bonds(NimBLEConnInfo& phone) {
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::server->peers = {phone.getConnHandle()};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  if (!NimBLEDevice::isBonded(phone.getIdAddress())) host_sim::bonds.push_back(phone.getIdAddress());
+  loop_pass();
+}
+
+std::string upper(std::string s) {
+  for (char& ch : s) ch = (char)toupper((unsigned char)ch);
+  return s;
+}
+
+// The paired list keeps the identity address NimBLE keys the bond by, and
+// Remove forgets that bond. Before F172 the list kept the over-the-air
+// address (here a resolvable private one the phone drops every few
+// minutes), Remove handed its bytes to NimBLE-Arduino's byte-array
+// constructor (which reverses them), and ble_gap_unpair() was asked for an
+// address no bond had: the phone kept its bond. The same phone back on a
+// new private address is the same paired device, not a second one. And the
+// addresses print most significant first, as the phone shows its own: GET
+// /paired's `address` (and its `name`) is the identity, the connection's
+// `address` is the link's own and reads as `connection.name` does; an
+// address a route printed finds its entry again (DELETE /paired's round
+// trip, through parse_address()).
+void test_remove_forgets_the_bond_by_its_identity() {
+  boot();
+  NimBLEConnInfo phone = rpa_phone(17, 0x11);
+  CHECK(phone.getAddress().isRpa() && phone.getAddress() != phone.getIdAddress());
+  rpa_phone_bonds(phone);
+  CHECK(bc::g_paired_count == 1);
+  const NimBLEAddress identity = phone.getIdAddress();
+  CHECK(memcmp(bc::g_paired_devices[0].address, identity.getBase()->val, 6) == 0);
+  CHECK(bc::g_paired_devices[0].address_type == 0);
+  CHECK(strcmp(bc::g_paired_devices[0].name, "c8:2b:96:0a:1b:2c") == 0);
+  CHECK(health_detail("New device paired") == "c8:2b:96:0a:1b:2c");
+
+  // As the routes print them.
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  char printed[bc::BLE_ADDRESS_STR_LEN];
+  bc::format_address(paired.devices[0].address, printed);
+  CHECK(strcmp(printed, "C8:2B:96:0A:1B:2C") == 0);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  char conn[bc::BLE_ADDRESS_STR_LEN];
+  bc::format_address(st.connection.address, conn);
+  CHECK(strcmp(conn, "5A:11:22:33:44:55") == 0);
+  CHECK(upper(st.connection.name) == conn);
+
+  // The phone leaves and comes back on another private address: the bond's
+  // identity finds its entry.
+  host_sim::server->link_down(17);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  loop_pass();
+  NimBLEConnInfo again = rpa_phone(18, 0x77);
+  rpa_phone_bonds(again);
+  CHECK(bc::g_paired_count == 1 && bc::g_paired_devices[0].connection_count == 2);
+
+  // DELETE /api/bluetooth/paired with the address GET /paired printed.
+  bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  CHECK(bc::parse_address(printed, remove.address));
+  CHECK(memcmp(remove.address, paired.devices[0].address, 6) == 0);
+  const Rest r = rest(remove);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::g_paired_count == 0);
+  CHECK(host_sim::bonds_deleted.size() == 1 && host_sim::bonds_deleted[0] == identity);
+  CHECK(!NimBLEDevice::isBonded(identity) && host_sim::bonds.empty());
+  none_on_httpd();
+  std::printf("PASS remove_forgets_the_bond_by_its_identity\n");
+}
+
+// format_address() prints the stored bytes most significant first and
+// parse_address() takes that string back to the same bytes, for every
+// position; a string that is not an address is refused.
+void test_an_address_prints_most_significant_first_and_round_trips() {
+  const uint8_t stored[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB};   // as getBase()->val holds them
+  char out[bc::BLE_ADDRESS_STR_LEN];
+  bc::format_address(stored, out);
+  CHECK(strcmp(out, "AB:89:67:45:23:01") == 0);
+  ble_addr_t base;
+  base.type = 0;
+  memcpy(base.val, stored, 6);
+  CHECK(upper(NimBLEAddress(base).toString()) == out);      // as NimBLE prints it
+  uint8_t back[6] = {0};
+  CHECK(bc::parse_address(out, back) && memcmp(back, stored, 6) == 0);
+  CHECK(bc::parse_address("ab:89:67:45:23:01", back) && memcmp(back, stored, 6) == 0);
+  CHECK(!bc::parse_address("AB:89:67:45:23", back));
+  CHECK(!bc::parse_address("AB:89:67:45:23:0G", back));
+  std::printf("PASS an_address_prints_most_significant_first_and_round_trips\n");
+}
+
+// A paired list saved before F172 is rebuilt from the bond store the first
+// time the stack is up: the entry that names a bond (a phone with one
+// address) keeps what it said; the bond kept under a phone's identity
+// whose entry named an old private address gets an entry under its
+// identity (so Remove can forget it), as does a bond with no entry; an
+// entry that names no bond is dropped. Once: the rebuilt list is saved
+// marked, and the next boot loads it as it is.
+void test_an_old_paired_list_is_rebuilt_from_the_bond_store() {
+  boot(/*bring_up=*/false);
+  NimBLEConnInfo a = rpa_phone(21, 0x11);                   // saved by its private address
+  const uint8_t b_addr[6] = {0x00, 0x1A, 0x7D, 0xDA, 0x71, 0x13};
+  const NimBLEAddress b(b_addr, 0);                         // a public address: one address
+  const uint8_t c_addr[6] = {0x00, 0x1A, 0x7D, 0xDA, 0x71, 0x99};
+  const NimBLEAddress c(c_addr, 0);                         // its bond is gone
+  const uint8_t d_addr[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01};
+  const NimBLEAddress d(d_addr, 0);                         // bonded, never listed
+  bc::PairedDevice old[3];
+  memset(old, 0, sizeof old);
+  memcpy(old[0].address, a.getAddress().getBase()->val, 6);
+  old[0].address_type = 1;
+  old[0].trusted = true;
+  memcpy(old[1].address, b.getBase()->val, 6);
+  strcpy(old[1].name, "kitchen tablet");
+  old[1].connection_count = 7;
+  old[1].trusted = true;
+  old[1].security = bc::SEC_BONDED;
+  memcpy(old[2].address, c.getBase()->val, 6);
+  const uint8_t* raw = reinterpret_cast<const uint8_t*>(old);
+  host_sim::main_nvs["bt_paired"].assign(raw, raw + sizeof old);
+  host_sim::bonds = {a.getIdAddress(), b, d};
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  CHECK(bc::g_paired_count == 3);
+  CHECK(memcmp(bc::g_paired_devices[0].address, a.getIdAddress().getBase()->val, 6) == 0);
+  CHECK(bc::g_paired_devices[0].address_type == 0 && !bc::g_paired_devices[0].trusted);
+  CHECK(strcmp(bc::g_paired_devices[0].name, "c8:2b:96:0a:1b:2c") == 0);
+  CHECK(memcmp(bc::g_paired_devices[1].address, b.getBase()->val, 6) == 0);
+  CHECK(strcmp(bc::g_paired_devices[1].name, "kitchen tablet") == 0);
+  CHECK(bc::g_paired_devices[1].connection_count == 7 && bc::g_paired_devices[1].trusted);
+  CHECK(memcmp(bc::g_paired_devices[2].address, d.getBase()->val, 6) == 0);
+  CHECK(bc::g_paired_devices[2].security == bc::SEC_BONDED);
+  CHECK(host_sim::main_nvs.count("bt_paired_id") == 1);
+  CHECK(host_sim::main_nvs["bt_paired"].size() == 3 * sizeof(bc::PairedDevice));
+  CHECK(health_detail("Paired list rebuilt from the bond store") == "1 kept, 2 added, 2 dropped");
+
+  // Remove the phone by the identity GET /paired prints: its bond goes.
+  bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  CHECK(bc::parse_address("C8:2B:96:0A:1B:2C", remove.address));
+  CHECK(rest(remove).r.ok && bc::g_paired_count == 2);
+  CHECK(!NimBLEDevice::isBonded(a.getIdAddress()) && host_sim::bonds.size() == 2);
+
+  // Once: the next boot loads the saved list as it is, even with a bond
+  // the store no longer has.
+  host_sim::bonds = {b};
+  boot(/*bring_up=*/true, /*wipe=*/false);
+  CHECK(bc::g_paired_count == 2);
+  CHECK(health_says("Paired list rebuilt from the bond store") == 0);
+  std::printf("PASS an_old_paired_list_is_rebuilt_from_the_bond_store\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2281,6 +2455,10 @@ const Test kTests[] = {
     {"full_profile_the_owner_answers_every_pairing", test_full_profile_the_owner_answers_every_pairing},
     {"full_profile_either_init_order", test_full_profile_either_init_order},
     {"no_pairing_owner_fails_closed", test_no_pairing_owner_fails_closed},
+    {"remove_forgets_the_bond_by_its_identity", test_remove_forgets_the_bond_by_its_identity},
+    {"an_address_prints_most_significant_first_and_round_trips",
+     test_an_address_prints_most_significant_first_and_round_trips},
+    {"an_old_paired_list_is_rebuilt_from_the_bond_store", test_an_old_paired_list_is_rebuilt_from_the_bond_store},
 };
 
 }  // namespace bt_commands
