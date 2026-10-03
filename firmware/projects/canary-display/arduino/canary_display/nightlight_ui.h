@@ -54,7 +54,10 @@ void nightlight_ui_update(const canary::fleet::Fleet& fleet, uint32_t now,
 // and the clock breathes back in behind it. `delta_cw` is how many quarter
 // turns clockwise the world just made (1..3); the entry direction derives
 // from it so the motion always reads as the real turn the device felt.
-// Call right after nightlight_ui_create() on an orientation commit.
+// Call right after nightlight_ui_create() on an orientation commit. The
+// companion's Startle comes with the face's next nightlight_ui_update(),
+// once the bird has a mood to react from, if that update comes while the
+// tumble still plays (F242).
 void nightlight_ui_tumble(uint8_t delta_cw, uint32_t now);
 
 // Symmetry with the other faces (main.cpp calls ui_ack_hold uniformly);
