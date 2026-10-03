@@ -151,6 +151,8 @@ static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa
 #endif
 #if FEATURE_DIAGNOSTICS
 #include "securacv_diagnostics.h"
+#include "diagnostics_json.h"              /* GET /api/diagnostics' body (F179) */
+#include "csi_event_egress_diagnostics.h"  /* its egress counters (include/) */
 #endif
 #if FEATURE_POWER_MONITOR
 #include "securacv_power.h"
@@ -4786,7 +4788,13 @@ static esp_err_t handle_audio_test_status(httpd_req_t* req) {
 
 #if FEATURE_DIAGNOSTICS
 
-// GET /api/diagnostics — Full diagnostic snapshot as JSON
+// GET /api/diagnostics — Full diagnostic snapshot as JSON, with the
+// committed-event egress's counters (sweep F179). The body is built by
+// diagnostics_json.h (host-tested), into a stack buffer: no ArduinoJson heap
+// allocation during a diagnostics call, when memory pressure is the very
+// thing being diagnosed. This runs on the HTTP server's task, so the egress
+// counters come from the copy the loop task's pump publishes each pass
+// (csi_event_egress_diagnostics_json()), never from the pump's own state.
 static esp_err_t handle_diagnostics(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
@@ -4797,67 +4805,12 @@ static esp_err_t handle_diagnostics(httpd_req_t* req) {
     return http_send_error(req, 500, "diagnostics_unavailable");
   }
 
-  const char* degrade_name = "none";
-  switch (snap.heap.degrade_level) {
-    case DEGRADE_WARN:      degrade_name = "warn"; break;
-    case DEGRADE_CRITICAL:  degrade_name = "critical"; break;
-    case DEGRADE_EMERGENCY: degrade_name = "emergency"; break;
+  char egress[kCsiEventEgressDiagnosticsMax];
+  (void)csi_event_egress_diagnostics_json(egress, sizeof(egress));  /* "" spells null */
+  char buf[diagnostics_json::kJsonMax];
+  if (diagnostics_json::build(snap, FIRMWARE_VERSION, egress, buf, sizeof(buf)) == 0) {
+    return http_send_error(req, 500, "diagnostics_too_large");
   }
-
-  /* Build JSON with snprintf into a stack buffer. This avoids
-   * ArduinoJson heap allocation during a diagnostics call when
-   * memory pressure is the very thing being diagnosed. */
-  char buf[2048];
-  int pos = 0;
-
-  /* heap */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "{\"heap\":{\"free\":%u,\"min\":%u,\"largest_block\":%u,"
-    "\"psram_free\":%u,\"psram_total\":%u,"
-    "\"stack_hwm\":%u,\"fragmentation_pct\":%u,"
-    "\"degrade_level\":\"%s\"},",
-    snap.heap.free_heap, snap.heap.min_heap, snap.heap.largest_block,
-    snap.heap.psram_free, snap.heap.psram_total,
-    snap.heap.stack_hwm_main, snap.heap.fragmentation_pct,
-    degrade_name);
-
-  /* sd */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "\"sd\":{\"mounted\":%s,\"usage_pct\":%u,"
-    "\"total_writes\":%u,\"write_errors\":%u,"
-    "\"space_warning\":%s,\"space_critical\":%s},",
-    snap.sd.mounted ? "true" : "false",
-    snap.sd.usage_pct, snap.sd.total_writes, snap.sd.write_errors,
-    snap.sd.space_warning ? "true" : "false",
-    snap.sd.space_critical ? "true" : "false");
-
-  /* selftest */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "\"selftest\":{\"has_run\":%s,\"health_score\":%u,"
-    "\"passed\":%u,\"total\":%u,\"tests\":[",
-    snap.selftest.has_run ? "true" : "false",
-    snap.selftest.health_score,
-    snap.selftest.passed_count, snap.selftest.total_count);
-
-  for (uint8_t i = 0; i < snap.selftest.total_count && i < SELFTEST_COUNT; i++) {
-    if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "{\"name\":\"%s\",\"passed\":%s,\"ms\":%u}",
-      snap.selftest.tests[i].name ? snap.selftest.tests[i].name : "unknown",
-      snap.selftest.tests[i].passed ? "true" : "false",
-      snap.selftest.tests[i].duration_ms);
-    if ((size_t)pos >= sizeof(buf) - 64) break;  /* safety margin */
-  }
-
-  pos += snprintf(buf + pos, sizeof(buf) - pos, "]},");
-
-  /* system */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "\"system\":{\"uptime_sec\":%u,\"boot_count\":%u,"
-    "\"reset_reason\":%u,\"firmware\":\"%s\"}}",
-    snap.uptime_sec, snap.boot_count,
-    snap.reset_reason, FIRMWARE_VERSION);
-
   return http_send_json(req, buf);
 }
 

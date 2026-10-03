@@ -318,11 +318,28 @@ BACKFILL_BIN  = $(BUILD_DIR)/test_csi_event_backfill
 # manager's and the witness's calls.
 CANEGR_SRC  = ../canary/src/csi_event_egress.cpp ../canary/src/csi_event_log.cpp $(IDSPACE_SRC)
 CANEGR_HDRS = ../canary/src/csi_event_egress.h ../canary/src/csi_event_log.h \
+              ../canary/include/csi_event_egress_diagnostics.h \
               ../canary/lib/securacv_mqtt/src/securacv_mqtt.h ../canary/include/canary_config.h \
               ../common/csi/src/csi_event_wire.h ../common/mqtt/mqtt_offline_queue.h \
               ../common/identity/device_signature.h $(BACKFILL_HDRS) $(IDSPACE_HDRS) \
               $(wildcard stubs/canary_egress/*.h stubs/canary_egress/freertos/*.h)
 CANEGR_BIN  = $(BUILD_DIR)/test_canary_event_egress
+
+# The canary's GET /api/diagnostics body (sweep F179): the REAL
+# canary/lib/securacv_diagnostics/src/diagnostics_json.h builder and the REAL
+# csi_event_egress_stats_json() spelling of its egress counters. It reads
+# main.cpp (the MQTT health's names for the counters), securacv_diagnostics.cpp
+# (the longest self-test name) and securacv_network.cpp (the handler), each
+# path passed in so the read fails closed.
+CANDIAG_SRC  = test_canary_diagnostics.cpp
+CANDIAG_HDRS = ../canary/lib/securacv_diagnostics/src/diagnostics_json.h \
+               ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.h \
+               ../canary/include/csi_event_egress_diagnostics.h \
+               ../canary/src/csi_event_egress.h $(BACKFILL_HDRS)
+CANDIAG_READS = ../canary/src/main.cpp \
+                ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp \
+                ../canary/lib/securacv_network/src/securacv_network.cpp
+CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
@@ -751,6 +768,15 @@ $(CANEGR_BIN): test_canary_event_egress.cpp $(CANEGR_SRC) $(CANEGR_HDRS) Makefil
 	    -I ../canary/lib/securacv_mqtt/src -I ../common/csi/src -I ../common \
 	    test_canary_event_egress.cpp $(CANEGR_SRC) -o $@
 
+$(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD \
+	    -I ../canary/include -I ../canary/src -I ../canary/lib/securacv_diagnostics/src \
+	    -I ../common/csi/src \
+	    -DCANARY_MAIN_CPP='"$(abspath ../canary/src/main.cpp)"' \
+	    -DCANARY_DIAG_CPP='"$(abspath ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp)"' \
+	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
+	    $(CANDIAG_SRC) -o $@
+
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
 	    test_csi_event_id_space.cpp $(IDSPACE_SRC) -o $@
@@ -876,7 +902,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -909,6 +935,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(EVLINE_BIN)
 	./$(BACKFILL_BIN)
 	./$(CANEGR_BIN)
+	./$(CANDIAG_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)

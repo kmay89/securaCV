@@ -81,7 +81,11 @@
  * queue, the hold's overflow and the ambient rows it refuses, all from
  * boot. F82: csi_event_egress_id_space_low() is up once the real
  * allocator reaches kHoldLimit, after a reboot past it, and after a wrap.
- * Each fails with its line of the fix reverted.
+ * Each fails with its line of the fix reverted. F179: the copy of those
+ * counters the pump publishes for other tasks (csi_event_egress_read_stats(),
+ * what GET /api/diagnostics reads on the HTTP server's task): none before
+ * the first pump (`null`), each pass's counters after it, the last pass's
+ * between two passes, no lock for an unchanged copy, none after a reboot.
  *
  * The proofs build this file, with this directory's Makefile and stubs,
  * against an older egress source: for F104 the one from the commit that
@@ -115,7 +119,9 @@
 #include "csi_event.h"
 #include "csi_event_backfill.h"
 #include "csi_event_egress.h"
+#include "csi_event_egress_diagnostics.h"
 #include "csi_event_id_floor.h"
+#include "freertos/FreeRTOS.h"   /* stub_critical_sections() */
 #include "csi_module.h"
 #include "identity/device_signature.h"
 #include "mqtt/mqtt_offline_queue.h"
@@ -1203,6 +1209,108 @@ static void test_card_less_losses_are_counted() {
         "the two the queue evicted are its dropped_overflow (health's offline_queue)");
 }
 
+/* ── F179: the copy GET /api/diagnostics reads ─────────────────────────── */
+
+static bool same_stats(const CsiEventEgressStats& a, const CsiEventEgressStats& b) {
+  return std::memcmp(&a, &b, sizeof(a)) == 0;
+}
+/* What the route's egress object reads now (include/csi_event_egress_diagnostics.h). */
+static std::string diagnostics_object() {
+  char buf[kCsiEventEgressDiagnosticsMax];
+  const size_t n = csi_event_egress_diagnostics_json(buf, sizeof(buf));
+  return std::string(buf, n);
+}
+static std::string spelled(const CsiEventEgressStats& s) {
+  char buf[kCsiEventEgressStatsJsonMax];
+  const size_t n = csi_event_egress_stats_json(s, buf, sizeof(buf));
+  return std::string(buf, n);
+}
+
+/* The route runs on the HTTP server's task, so it reads the copy the pump
+ * publishes as its last step (csi_event_egress_read_stats()), never the
+ * pump's own state: the copy is the counters as of the last pass, whole. */
+static void test_other_tasks_read_what_the_pump_published() {
+  std::printf("-- F179: other tasks read the counters the last pump published, null before it\n");
+  fresh_device();
+  CsiEventEgressStats s;
+  std::memset(&s, 0x5A, sizeof(s));
+  const CsiEventEgressStats untouched = s;
+  CHECK(!csi_event_egress_read_stats(&s) && same_stats(s, untouched),
+        "before the first pump there is no copy, and *out is left as it was");
+  CHECK(diagnostics_object() == "null", "so the diagnostics object is null");
+  CHECK(!csi_event_egress_read_stats(nullptr), "a null *out reads nothing");
+
+  connect();
+  loop_pass();
+  CHECK(csi_event_egress_read_stats(&s) && same_stats(s, csi_event_egress_stats()),
+        "the first pump publishes its counters");
+  for (int i = 0; i < 3; ++i) { (void)emit_ping(); loop_pass(); }
+  CHECK(csi_event_egress_read_stats(&s) && s.planner.live == 3 &&
+        same_stats(s, csi_event_egress_stats()), "each pass publishes what it did: three live rows");
+  CHECK(diagnostics_object() == spelled(csi_event_egress_stats()),
+        "and the diagnostics object spells that copy");
+
+  /* An outage, then the backfill: the copy follows the pass that sent the rows. */
+  W.connected = false;
+  for (int i = 0; i < 2; ++i) { (void)emit_ping(); loop_pass(); }
+  CHECK(csi_event_egress_read_stats(&s) && s.planner.held == 2, "the outage's two rows: held");
+  connect();
+  drain(40);
+  CHECK(csi_event_egress_read_stats(&s) && s.planner.replayed == 2 &&
+        same_stats(s, csi_event_egress_stats()), "and replayed, as of the last pass");
+
+  /* Between two passes the copy is the last pass's: ten commits with the
+   * loop task stalled, two of them refused by the full egress queue. */
+  for (int i = 0; i < 10; ++i) (void)emit_ping();
+  CHECK(csi_event_egress_stats().dropped == 2, "the committing task counts the two at once");
+  CHECK(csi_event_egress_read_stats(&s) && s.dropped == 0,
+        "the copy is the last pass's: at most one pass old");
+  CHECK(diagnostics_object() == spelled(s) &&
+        diagnostics_object() != spelled(csi_event_egress_stats()),
+        "and the diagnostics object is that copy, not the pump's own counters");
+  loop_pass();
+  CHECK(csi_event_egress_read_stats(&s) && s.dropped == 2 &&
+        same_stats(s, csi_event_egress_stats()), "the next pass publishes them");
+  drain(20);
+
+  /* A pass that changed no counter publishes nothing: it takes no lock. */
+  const unsigned locks = stub_critical_sections();
+  loop_pass();
+  CHECK(stub_critical_sections() == locks, "an unchanged copy takes no lock");
+  (void)emit_ping();
+  loop_pass();
+  CHECK(stub_critical_sections() == locks + 1, "a changed one takes one");
+
+  /* A power cycle clears RAM: nothing to read until the first pump. */
+  boot();
+  CHECK(!csi_event_egress_read_stats(&s) && diagnostics_object() == "null",
+        "after a reboot the object is null again until the first pump");
+  loop_pass();
+  CHECK(csi_event_egress_read_stats(&s) && s.planner.live == 0 && s.dropped == 0,
+        "and then holds this boot's counters");
+}
+
+/* The route's own buffer: a buffer that cannot hold the answer gets none of it. */
+static void test_the_diagnostics_object_is_refused_whole() {
+  std::printf("-- F179: the diagnostics object never goes out cut short\n");
+  fresh_device();
+  char tiny[4];
+  std::memset(tiny, 'x', sizeof(tiny));
+  CHECK(csi_event_egress_diagnostics_json(tiny, sizeof(tiny)) == 0 && tiny[0] == '\0',
+        "no room for null: nothing, and an empty string");
+  char five[5];
+  CHECK(csi_event_egress_diagnostics_json(five, sizeof(five)) == 4 &&
+        std::strcmp(five, "null") == 0, "five bytes hold null");
+  connect();
+  loop_pass();
+  const std::string whole = diagnostics_object();
+  CHECK(whole.size() > 4 && whole.front() == '{' && whole.back() == '}', "an object once pumped");
+  std::vector<char> short_buf(whole.size());   /* one short of the NUL */
+  CHECK(csi_event_egress_diagnostics_json(short_buf.data(), short_buf.size()) == 0 &&
+        short_buf[0] == '\0', "one byte short: nothing, never a partial object");
+  CHECK(csi_event_egress_diagnostics_json(nullptr, 64) == 0, "no buffer: nothing");
+}
+
 static void test_failed_append_as_the_card_opens_waits_behind_the_hold() {
   std::printf("-- F103: a row whose append fails in the pass a late card opens waits behind the held row\n");
   fresh_device();
@@ -1271,6 +1379,8 @@ int main() {
   test_egress_counts_what_it_did();
   test_card_less_losses_are_counted();
   test_id_space_low_is_flagged();
+  test_other_tasks_read_what_the_pump_published();
+  test_the_diagnostics_object_is_refused_whole();
 
   CHECK(g_ceiling_violations_total == 0,
         "in every scenario, each id was under the NVS ceiling before it was handed over (F47)");

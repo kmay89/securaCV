@@ -98,6 +98,10 @@ void csi_event_egress_test_reset(void);
 #endif
 
 #ifdef __cplusplus
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
 #include "csi_event_backfill.h"   /* the planner's Stats */
 
 /* What the egress did this boot (backlog F109), in the canary-wap's
@@ -129,7 +133,8 @@ void csi_event_egress_test_reset(void);
  *                    a ledger of rows: docs/csi_developer_api.md says what
  *                    each one counts and what none of them does.
  * Loop task (the pump's), as the health publish is. All zero without
- * FEATURE_HA_MQTT, where nothing leaves the device. */
+ * FEATURE_HA_MQTT, where nothing leaves the device. Any other task reads
+ * csi_event_egress_read_stats() below. */
 struct CsiEventEgressStats {
   uint32_t                  dropped;
   uint32_t                  held_dropped;
@@ -138,6 +143,58 @@ struct CsiEventEgressStats {
   csi_event_backfill::Stats planner;
 };
 CsiEventEgressStats csi_event_egress_stats();
+
+/* Thirteen u32 counters and nothing else: no padding for the snapshot's
+ * byte compare to trip on, and a counter added here or to the planner's
+ * Stats fails the build until csi_event_egress_stats_json() spells it. */
+static_assert(sizeof(csi_event_backfill::Stats) == 9 * sizeof(uint32_t),
+              "the planner's Stats changed: add the counter to csi_event_egress_stats_json()");
+static_assert(sizeof(CsiEventEgressStats) == 13 * sizeof(uint32_t),
+              "CsiEventEgressStats changed: add the counter to csi_event_egress_stats_json()");
+
+/* Any task (sweep F179): the counters as the last csi_event_egress_pump()
+ * left them, a whole copy. The pump publishes them as its last step, every
+ * pass (an unchanged copy takes no lock), so this is at most one loop pass
+ * old; `dropped`, which a committing task bumps, as of that pass. False,
+ * with *out untouched, before the first pump, and on a build without
+ * FEATURE_HA_MQTT (no egress runs). GET /api/diagnostics, on the HTTP
+ * server's task, reads this (csi_event_egress_diagnostics_json()), never
+ * csi_event_egress_stats(): the pump's own state is the loop task's. The
+ * canary-wap's csi_event_egress::read_stats() (sweep F149), on the same
+ * pattern (its loop_snapshot.h Value<T>). */
+bool csi_event_egress_read_stats(CsiEventEgressStats* out);
+
+/* The counters as one JSON object, in the names the MQTT health spells its
+ * `csi_event_egress` object with (main.cpp mqtt_publish_health_update(),
+ * sweep F109), which are the canary-wap's (csi_event_egress::stats_json()):
+ *   {"dropped":N,"held_dropped":N,"ambient_dropped":N,"unsent_dropped":N,
+ *    "planner":{"live":N,"held":N,"queued":N,"replayed":N,"skipped":N,
+ *               "untrusted":N,"unsendable":N,"truncated_unsent":N,
+ *               "read_giveups":N}}
+ * kCsiEventEgressStatsJsonMax holds it with every counter at 4294967295
+ * (319 bytes and the NUL). Returns its length, or 0 (and `out` holds no
+ * partial object) when it does not fit `cap`. Pure: any task, any copy. */
+constexpr size_t kCsiEventEgressStatsJsonMax = 384;
+inline size_t csi_event_egress_stats_json(const CsiEventEgressStats& s, char* out, size_t cap) {
+  if (out == nullptr || cap == 0) return 0;
+  const csi_event_backfill::Stats& p = s.planner;
+  const int n = snprintf(out, cap,
+      "{\"dropped\":%lu,\"held_dropped\":%lu,\"ambient_dropped\":%lu,"
+      "\"unsent_dropped\":%lu,\"planner\":{\"live\":%lu,\"held\":%lu,"
+      "\"queued\":%lu,\"replayed\":%lu,\"skipped\":%lu,\"untrusted\":%lu,"
+      "\"unsendable\":%lu,\"truncated_unsent\":%lu,\"read_giveups\":%lu}}",
+      (unsigned long)s.dropped, (unsigned long)s.held_dropped,
+      (unsigned long)s.ambient_dropped, (unsigned long)s.unsent_dropped,
+      (unsigned long)p.live, (unsigned long)p.held, (unsigned long)p.queued,
+      (unsigned long)p.replayed, (unsigned long)p.skipped,
+      (unsigned long)p.untrusted, (unsigned long)p.unsendable,
+      (unsigned long)p.truncated_unsent, (unsigned long)p.read_giveups);
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
 
 /* The event-id space is running out (backlog F82): the allocator's next id
  * is at or past csi_event_id_floor::kHoldLimit, or the counter has wrapped

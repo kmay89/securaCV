@@ -4,6 +4,7 @@
  */
 
 #include "csi_event_egress.h"
+#include "csi_event_egress_diagnostics.h"
 #include "canary_config.h"
 
 #if FEATURE_CSI
@@ -99,6 +100,28 @@ uint32_t              s_dropped_said = 0;  // what the log last reported
  * layer, refused with nothing to keep them (route(); csi_event_egress_stats(),
  * backlog F109). Loop task only. */
 uint32_t              s_unsent_dropped = 0;
+
+/* The counters as the last pump left them, for other tasks (sweep F179).
+ * GET /api/diagnostics runs on the HTTP server's task, which may not read
+ * the pump's own state (s_hold and s_backfill are plain loop-task fields).
+ * The pump publishes a whole copy as its last step every pass, under a
+ * FreeRTOS spinlock, and csi_event_egress_read_stats() copies it out under
+ * the same lock: never torn, at most one pass old. The canary-wap's
+ * loop_snapshot.h Value<T> (sweep F149), written out here (that header is
+ * the canary-wap sketch's): an unchanged copy takes no lock, since the
+ * pump compares against its own last copy, which only it writes. */
+portMUX_TYPE          s_stats_mux = portMUX_INITIALIZER_UNLOCKED;
+CsiEventEgressStats   s_stats_view = {};
+bool                  s_stats_published = false;
+
+void publish_stats() {
+  const CsiEventEgressStats s = csi_event_egress_stats();
+  if (s_stats_published && memcmp(&s, &s_stats_view, sizeof(s)) == 0) return;
+  portENTER_CRITICAL(&s_stats_mux);
+  s_stats_view = s;
+  s_stats_published = true;
+  portEXIT_CRITICAL(&s_stats_mux);
+}
 
 void copy_name(char (&dst)[CSI_EVENT_NAME_MAX], const char* src) {
   strncpy(dst, src ? src : "", CSI_EVENT_NAME_MAX - 1);
@@ -648,6 +671,10 @@ extern "C" void csi_event_egress_pump(void) {
     log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT event backfill done", detail);
     s_replay_run = 0;
   }
+
+  /* Last: what this pass did, for the tasks that may not read the pump's
+   * state (csi_event_egress_read_stats(), sweep F179). */
+  publish_stats();
 #endif
 }
 
@@ -661,6 +688,30 @@ CsiEventEgressStats csi_event_egress_stats() {
   s.planner = s_backfill.stats();
 #endif
   return s;
+}
+
+bool csi_event_egress_read_stats(CsiEventEgressStats* out) {
+#if FEATURE_HA_MQTT
+  if (out == nullptr) return false;
+  portENTER_CRITICAL(&s_stats_mux);
+  const bool published = s_stats_published;
+  if (published) *out = s_stats_view;
+  portEXIT_CRITICAL(&s_stats_mux);
+  return published;
+#else
+  (void)out;
+  return false;
+#endif
+}
+
+static_assert(kCsiEventEgressStatsJsonMax <= (size_t)kCsiEventEgressDiagnosticsMax,
+              "the route's egress buffer must hold the widest counters object");
+
+extern "C" size_t csi_event_egress_diagnostics_json(char* out, size_t cap) {
+  if (out == nullptr || cap == 0) return 0;
+  CsiEventEgressStats s;
+  if (csi_event_egress_read_stats(&s)) return csi_event_egress_stats_json(s, out, cap);
+  return csi_event_egress_diagnostics_null(out, cap);
 }
 
 bool csi_event_egress_id_space_low() {
@@ -689,6 +740,9 @@ extern "C" void csi_event_egress_test_reset(void) {
   s_card_wait = false;
   s_card_wait_since = 0;
   s_not_owed_at_open = false;
+  /* A reboot clears RAM: nothing to read until the first pump. */
+  s_stats_view = CsiEventEgressStats{};
+  s_stats_published = false;
 #endif
 }
 #endif
@@ -698,6 +752,10 @@ extern "C" void csi_event_egress_test_reset(void) {
 extern "C" void csi_event_egress_begin(void) {}
 extern "C" void csi_event_egress_pump(void) {}
 CsiEventEgressStats csi_event_egress_stats() { return CsiEventEgressStats{}; }
+bool csi_event_egress_read_stats(CsiEventEgressStats*) { return false; }
+extern "C" size_t csi_event_egress_diagnostics_json(char* out, size_t cap) {
+  return csi_event_egress_diagnostics_null(out, cap);
+}
 bool csi_event_egress_id_space_low() { return false; }
 
 #endif  // FEATURE_CSI
