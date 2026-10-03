@@ -277,6 +277,7 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_events = decltype(bc::g_events)();
   bc::g_link_drops = {0, 0};
   bc::g_lossy_drops = {0, 0};
+  bc::g_link_drops_reconciled = 0;
   bc::g_status_view = decltype(bc::g_status_view)();       // nothing published yet
   bc::g_scan_view = decltype(bc::g_scan_view)();
   bc::g_paired_view = decltype(bc::g_paired_view)();
@@ -857,7 +858,9 @@ void test_a_callback_changes_nothing_until_the_loop_task_applies_it() {
   CHECK(bc::g_scanned_count == 1 && bc::g_scanned_devices[0].rssi == -55);
   CHECK(strcmp(bc::g_scanned_devices[0].name, "Garmin watch") == 0);
   CHECK(bc::g_scanned_devices[0].type == bc::DEV_WEARABLE);
-  CHECK(!bc::g_scanning && bc::g_state == bc::BT_IDLE);
+  // The advertising the disconnect restarted goes on (sweep F170: this read
+  // idle, beside "advertising": true).
+  CHECK(!bc::g_scanning && bc::g_state == bc::BT_ADVERTISING && host_sim::advertising.isAdvertising());
   CHECK(host_sim::count("", "nimble") == 0);
   // The health log's lines and the presence sensor's calls are the loop
   // task's too (a link up and down, the scan handed back).
@@ -951,6 +954,7 @@ void test_a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed() {
   CHECK(rest(scan).r.ok);
   NimBLEConnInfo phone = link(41, 0xA4);
   host_sim::server->peers = {41};
+  host_sim::server->link_up(phone);                         // the stack holds the link
   // A burst of advertisements: twenty heard before the loop task's pass.
   for (uint8_t i = 0; i < 20; ++i) {
     NimBLEAdvertisedDevice d;
@@ -2404,6 +2408,239 @@ void test_an_old_paired_list_is_rebuilt_from_the_bond_store() {
   std::printf("PASS an_old_paired_list_is_rebuilt_from_the_bond_store\n");
 }
 
+// ── A link while Bluetooth is off; a dropped link event (F173, F169) ────
+
+// A phone whose connection was in flight when Bluetooth was turned off
+// comes up anyway. Before F173 its connect was applied, and since a
+// disabled channel's update() returns early, nothing dropped it: GET
+// /api/bluetooth read "state": "connected" beside "enabled": false until
+// the phone left. Now the loop task drops it and records nothing, and a
+// Numeric Comparison it asks for meanwhile is answered no (nothing would
+// time it out while disabled). Its end leaves Bluetooth off.
+void test_a_link_while_bluetooth_is_off_is_refused() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_DISABLE)).r.ok && bc::g_state == bc::BT_DISABLED);
+  const uint32_t connections = bc::g_total_connections;
+  NimBLEConnInfo phone = link(61, 0xD6);
+  host_sim::server->peers = {61};
+  host_sim::server->link_up(phone);
+  host_sim::calls.clear();
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 112233); });
+  loop_pass();
+  CHECK(!bc::g_connection.connected && bc::g_connection_handle == 0xFFFF);
+  CHECK(bc::g_state == bc::BT_DISABLED && bc::g_total_connections == connections);
+  CHECK(host_sim::count("disconnect", "loop") == 1);
+  CHECK(host_sim::server->disconnected.size() == 1 && host_sim::server->disconnected[0] == 61);
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].task == "loop" && host_sim::passkey_answers[0].handle == 61);
+  CHECK(bc::g_pairing.state == bc::PAIR_NONE && !bc::g_pending_pair_active);
+  CHECK(host_sim::conn_heap == 0);
+  CHECK(health_says("BLE link refused: Bluetooth is off") == 1);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(!st.connected && st.state == bc::BT_DISABLED && !st.enabled);
+  host_sim::server->link_down(61);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x16); });
+  loop_pass();
+  CHECK(bc::g_state == bc::BT_DISABLED && !host_sim::advertising.isAdvertising());
+  CHECK(host_sim::count("adv_start") == 0);
+  std::printf("PASS a_link_while_bluetooth_is_off_is_refused\n");
+}
+
+// The loop task stalls long enough for a link's room in the queue to fill
+// (here with scan ends, which post at the full limit too), and the phone's
+// disconnect finds no room. Before F169 the connection stayed recorded:
+// "connected": true, no advertising, until another link's events or a
+// reboot. Now the next pass sees a link's event was dropped, asks the stack
+// for the recorded handle, finds it gone, and ends it as the disconnect
+// would have: advertising resumes, and the health log says why.
+void test_a_dropped_disconnect_heals() {
+  boot();
+  NimBLEConnInfo phone = link(71, 0xE7);
+  host_sim::server->peers = {71};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && !host_sim::advertising.isAdvertising());
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  host_sim::server->link_down(71);
+  host_sim::server->peers.clear();
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  CHECK(bc::g_events.dropped_reserved() == 1);
+  loop_pass();
+  CHECK(!bc::g_connection.connected && bc::g_connection_handle == 0xFFFF);
+  CHECK(host_sim::advertising.isAdvertising() && bc::g_state == bc::BT_ADVERTISING);
+  CHECK(health_says("BLE link gone, its end dropped: ended from the stack's record") == 1);
+  CHECK(health_level("BLE link gone, its end dropped: ended from the stack's record") == SCV_LOG_WARNING);
+  CHECK(presence_on("loop", "console_off") == 1);
+  // A pass with no new drop asks nothing more.
+  g_health.clear();
+  loop_pass();
+  CHECK(health_says("BLE link gone, its end dropped: ended from the stack's record") == 0);
+  std::printf("PASS a_dropped_disconnect_heals\n");
+}
+
+// The other way: a phone's connect finds no room. Before F169 its live link
+// went unrecorded (no inactivity timeout, advertising on beside it). Now the
+// next pass records it from the stack's own record, as its connect would.
+void test_a_dropped_connect_is_recorded_from_the_stack() {
+  boot();
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  NimBLEConnInfo phone = link(72, 0xE8);
+  host_sim::server->peers = {72};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  CHECK(bc::g_events.dropped_reserved() == 1);
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 72);
+  CHECK(strcmp(bc::g_connection.name, phone.getAddress().toString().c_str()) == 0);
+  CHECK(bc::g_state == bc::BT_CONNECTED && !host_sim::advertising.isAdvertising());
+  CHECK(health_says("BLE link up, its start dropped: recorded from the stack's record") == 1);
+  // Its end, reported as usual, ends it.
+  host_sim::server->link_down(72);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  loop_pass();
+  CHECK(!bc::g_connection.connected && bc::g_state == bc::BT_ADVERTISING);
+  std::printf("PASS a_dropped_connect_is_recorded_from_the_stack\n");
+}
+
+// Only the recorded link's end ends the record. A second phone that comes
+// up while one is recorded (on the FULL profile Opera re-advertises after
+// a connect, F171 put its links in front of the channel) is recorded in its
+// place; the first phone's end, on its own handle, or on the same handle
+// for another address, leaves the second recorded. Before, any disconnect
+// cleared the record while the second link was up.
+void test_only_the_recorded_links_end_ends_it() {
+  boot();
+  NimBLEConnInfo a = link(81, 0xF1);
+  NimBLEConnInfo b = link(82, 0xF2);
+  host_sim::server->peers = {81, 82};
+  host_sim::server->link_up(a);
+  host_sim::server->link_up(b);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), a); });
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), b); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 82);
+  host_sim::server->link_down(81);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), a, 0x13); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 82);
+  CHECK(bc::g_state == bc::BT_CONNECTED && !host_sim::advertising.isAdvertising());
+  NimBLEConnInfo stranger = link(82, 0xF9);                // another address on b's handle
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), stranger, 0x13); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 82);
+  host_sim::server->link_down(82);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), b, 0x13); });
+  loop_pass();
+  CHECK(!bc::g_connection.connected && bc::g_state == bc::BT_ADVERTISING);
+  std::printf("PASS only_the_recorded_links_end_ends_it\n");
+}
+
+// ── The state is what runs (F170) ───────────────────────────────────────
+
+// What GET /api/bluetooth shows: the state and the advertising flag.
+std::pair<bc::BluetoothState, bool> shown() {
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  return {st.state, st.advertising};
+}
+
+// A scan ends (the owner's stop, its timeout or the stack's end) while
+// something else goes on: the state names what goes on. Before F170 each
+// end set idle (or connected) whatever it was, so with advertising on the
+// route read "state": "idle" beside "advertising": true, and a scan run in
+// pairing mode left the state idle with pairing mode still on.
+void test_the_state_after_a_scan_is_what_runs() {
+  boot();
+  CHECK(host_sim::advertising.isAdvertising());
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok && bc::g_state == bc::BT_SCANNING);
+  CHECK(rest(cmd_of(bc::BT_CMD_SCAN_STOP)).r.ok);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
+  CHECK(rest(scan).r.ok);
+  on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  loop_pass();
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
+  CHECK(rest(scan).r.ok);
+  host_sim::now_ms += 5000;                                  // its timeout
+  loop_pass();
+  CHECK(!bc::g_scanning && bc::g_state == bc::BT_ADVERTISING);
+
+  // In pairing mode: the scan ends back in pairing mode.
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok && bc::g_state == bc::BT_PAIRING);
+  CHECK(rest(scan).r.ok && bc::g_state == bc::BT_SCANNING);
+  on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  loop_pass();
+  CHECK(bc::g_state == bc::BT_PAIRING);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_CANCEL)).r.ok);
+
+  // Nothing else running: idle, as before.
+  CHECK(rest(cmd_of(bc::BT_CMD_ADVERTISE_STOP)).r.ok);
+  CHECK(rest(scan).r.ok);
+  CHECK(rest(cmd_of(bc::BT_CMD_SCAN_STOP)).r.ok);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_IDLE, false}));
+  std::printf("PASS the_state_after_a_scan_is_what_runs\n");
+}
+
+// Pairing mode starts advertising; canceling it (or its timeout) leaves the
+// advertising on, and the state says so (before F170: idle). A link that
+// ends while a scan runs leaves the state scanning (before: idle, then
+// advertising once the restart ran).
+void test_the_state_after_pairing_or_a_link_is_what_runs() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok && bc::g_state == bc::BT_PAIRING);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_CANCEL)).r.ok);
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  host_sim::now_ms += bc::PAIRING_TIMEOUT_MS;
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_NONE && bc::g_state == bc::BT_ADVERTISING);
+
+  NimBLEConnInfo phone = link(91, 0xA9);
+  host_sim::server->peers = {91};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok && bc::g_state == bc::BT_SCANNING);
+  host_sim::server->link_down(91);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  loop_pass();
+  CHECK(!bc::g_connection.connected && bc::g_scanning && bc::g_state == bc::BT_SCANNING);
+  CHECK(rest(cmd_of(bc::BT_CMD_SCAN_STOP)).r.ok && bc::g_state == bc::BT_ADVERTISING);
+  std::printf("PASS the_state_after_pairing_or_a_link_is_what_runs\n");
+}
+
+// On the FULL profile Opera's onDisconnect restarts advertising on the
+// NimBLE host task before the loop task applies the link's end, so the
+// channel's own restart finds it on and set no state: GET /api/bluetooth
+// read idle beside "advertising": true (F170, reachable since F171 put
+// the links in front of the channel there). Now advertising.
+void test_a_link_ends_on_full_into_advertising() {
+  boot();
+  opera_init();
+  host_sim::server->peers = {92};
+  NimBLEConnInfo other = link(92, 0xAA);
+  host_sim::server->link_up(other);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), other); });
+  loop_pass();
+  CHECK(bc::g_state == bc::BT_CONNECTED && !host_sim::advertising.isAdvertising());
+  host_sim::server->link_down(92);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), other, 0x13); });
+  CHECK(host_sim::advertising.isAdvertising());              // Opera's restart, on the NimBLE task
+  loop_pass();
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
+  std::printf("PASS a_link_ends_on_full_into_advertising\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2459,6 +2696,13 @@ const Test kTests[] = {
     {"an_address_prints_most_significant_first_and_round_trips",
      test_an_address_prints_most_significant_first_and_round_trips},
     {"an_old_paired_list_is_rebuilt_from_the_bond_store", test_an_old_paired_list_is_rebuilt_from_the_bond_store},
+    {"a_link_while_bluetooth_is_off_is_refused", test_a_link_while_bluetooth_is_off_is_refused},
+    {"a_dropped_disconnect_heals", test_a_dropped_disconnect_heals},
+    {"a_dropped_connect_is_recorded_from_the_stack", test_a_dropped_connect_is_recorded_from_the_stack},
+    {"only_the_recorded_links_end_ends_it", test_only_the_recorded_links_end_ends_it},
+    {"the_state_after_a_scan_is_what_runs", test_the_state_after_a_scan_is_what_runs},
+    {"the_state_after_pairing_or_a_link_is_what_runs", test_the_state_after_pairing_or_a_link_is_what_runs},
+    {"a_link_ends_on_full_into_advertising", test_a_link_ends_on_full_into_advertising},
 };
 
 }  // namespace bt_commands

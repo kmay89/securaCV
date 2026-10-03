@@ -195,6 +195,7 @@ static const char* NVS_KEY_BT_LONG_RANGE = "bt_long_range";
 // ════════════════════════════════════════════════════════════════════════════
 
 static void set_state(BluetoothState new_state);
+static BluetoothState rest_state();
 static void load_settings();
 static void save_settings();
 static void load_paired_devices();
@@ -328,6 +329,9 @@ struct DropLog {
 };
 static DropLog g_link_drops = {0, 0};     // a link's events (posted at the full limit)
 static DropLog g_lossy_drops = {0, 0};    // scan results and GATT activity (the lower limit)
+// The loop task's: the count of a link's dropped events reconcile_link()
+// last answered (sweep F169).
+static uint32_t g_link_drops_reconciled = 0;
 
 // An Event of `type`, at the callback's time, the rest zero.
 static Event make_event(EventType type) {
@@ -460,6 +464,20 @@ static ScanCallbacks g_scan_callbacks;
 
 static void apply_connect(const Event& e) {
   const LinkEvent& link = e.u.link;
+  // Bluetooth is off (sweep F173). disable() stops advertising and drops
+  // the link it knows of, but a phone whose connection was already in
+  // flight (or, on the FULL profile, one Opera's advertising let in) comes
+  // up anyway, and nothing would ever drop it: update() returns early while
+  // the channel is disabled, so no inactivity timeout runs. Refused: the
+  // link is dropped and nothing of it is recorded (its end, when the stack
+  // reports it, finds no connection and leaves the state disabled).
+  if (!g_settings.enabled) {
+    if (g_server) {
+      g_server->disconnect(link.handle);
+    }
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE link refused: Bluetooth is off", nullptr);
+    return;
+  }
   g_connection.connected = true;
   g_connection_handle = link.handle;
   memcpy(g_connection.address, link.address.val, BLE_ADDRESS_LENGTH);
@@ -524,6 +542,14 @@ static void apply_connect(const Event& e) {
   }
 }
 
+// Whether `link` (an ended link's event) is the connection the channel
+// records: the same handle and the same over-the-air address. A handle is
+// reused, so the handle alone could name the next link.
+static bool is_recorded_link(const LinkEvent& link) {
+  return g_connection.connected && g_connection_handle == link.handle &&
+         memcmp(g_connection.address, link.address.val, BLE_ADDRESS_LENGTH) == 0;
+}
+
 static void apply_disconnect(const Event& e) {
   // A pairing awaiting the owner's answer on this link ends with it: the
   // stack ended that pairing when the link went, and the copy must not
@@ -544,6 +570,15 @@ static void apply_disconnect(const Event& e) {
     if (g_pair_callback) {
       g_pair_callback(&g_pairing);
     }
+  }
+
+  // The end of a link that is not the one recorded (sweep F169): a second
+  // link that came up while one was recorded (Opera's advertising, on the
+  // FULL profile, lets one in), or the stack's own report of a link the
+  // loop task already ended when it found the link gone (reconcile_link()).
+  // The recorded connection is another link's and stays.
+  if (g_connection.connected && !is_recorded_link(e.u.link)) {
+    return;
   }
 
   // A link whose connect event was dropped (a full queue) adds no time.
@@ -567,9 +602,6 @@ static void apply_disconnect(const Event& e) {
   memset(&g_connection, 0, sizeof(g_connection));
   g_connection_handle = 0xFFFF;
   g_connection_mtu = 23;
-  // A link that ends after Bluetooth was turned off (POST /disable, or the
-  // settings' "enabled": false, which drop it) leaves it off, not idle.
-  set_state(g_settings.enabled ? BT_IDLE : BT_DISABLED);
 
   // Restore the presence sensor's normal duty cycle now that the radio
   // doesn't need to favor a live link.
@@ -579,6 +611,13 @@ static void apply_disconnect(const Event& e) {
   if (g_settings.enabled && g_settings.auto_advertise) {
     start_advertising();
   }
+  // The state from what still runs (sweep F170): disabled when the link
+  // ended after Bluetooth was turned off (POST /disable, or the settings'
+  // "enabled": false, which drop it); otherwise a scan, pairing mode or
+  // advertising that goes on. On the FULL profile Opera's onDisconnect has
+  // usually restarted advertising before this pass, and the state read
+  // idle with "advertising": true.
+  set_state(rest_state());
 }
 
 static void apply_auth_complete(const Event& e) {
@@ -651,6 +690,15 @@ static void apply_passkey_display(const Event& e) {
 }
 
 static void apply_confirm_passkey(const Event& e) {
+  // Bluetooth is off (sweep F173): the link is being refused, and no pairing
+  // may wait for a yes meanwhile (update() returns early while disabled, so
+  // no pairing timeout would answer it). Answered no, and its copy deleted.
+  if (!g_settings.enabled) {
+    NimBLEDevice::injectConfirmPasskey(*e.u.passkey.conn, false);
+    delete e.u.passkey.conn;
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE pairing refused: Bluetooth is off", nullptr);
+    return;
+  }
   // The event's copy is the loop task's now. One left from an earlier
   // passkey that nobody answered is replaced, as it always was (NimBLE
   // times that attempt out).
@@ -702,7 +750,7 @@ static void apply_scan_end(const Event& /*e*/) {
   // may have ended it on this task already.
   if (!g_scanning) return;
   g_scanning = false;
-  set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
+  set_state(rest_state());   // F170: advertising, a link or pairing mode may go on
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE scan complete",
              String(g_scanned_count).c_str());
   // Hand the radio back to the always-on presence loop. Safe to call
@@ -715,6 +763,49 @@ static void apply_activity(const Event& e) {
   g_connection.last_activity_ms = e.at_ms;
   g_connection.bytes_received += e.u.activity.rx_bytes;
   g_total_bytes_received += e.u.activity.rx_bytes;
+}
+
+// After a link's event was dropped (sweep F169). The queue keeps room for a
+// link's own events, but a loop task stalled long enough fills that too,
+// and a dropped disconnect left the connection recorded (no advertising
+// again, no inactivity timeout to drop it) until the next link's events or
+// a reboot; a dropped connect left a live link unrecorded. So when the
+// count of a link's dropped events has moved, the loop task asks the stack
+// itself, once: a recorded link the stack no longer holds on its handle
+// (or holds for another address) ended, and is ended here as its event
+// would have; then, with no link recorded, a link the stack holds is
+// recorded as its connect would have. A pending pairing's answer was
+// already safe (answer_pending_pairing() asks the stack the same way). The
+// stack's own report of such a link, if it comes after all, finds another
+// link or none recorded (apply_disconnect()).
+static void reconcile_link() {
+  const uint32_t dropped = g_events.dropped_reserved();
+  if (dropped == g_link_drops_reconciled) return;
+  g_link_drops_reconciled = dropped;
+  if (g_server == nullptr) return;
+  if (g_connection.connected) {
+    const NimBLEConnInfo live = g_server->getPeerInfoByHandle(g_connection_handle);
+    if (live.getConnHandle() != g_connection_handle ||
+        memcmp(live.getAddress().getBase()->val, g_connection.address, BLE_ADDRESS_LENGTH) != 0) {
+      Event end = make_event(BT_EV_DISCONNECT);
+      end.u.link.handle = g_connection_handle;
+      memcpy(end.u.link.address.val, g_connection.address, BLE_ADDRESS_LENGTH);
+      end.u.link.reason = -1;            // the stack's reason was in the dropped event
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                 "BLE link gone, its end dropped: ended from the stack's record", nullptr);
+      apply_disconnect(end);
+    }
+  }
+  if (!g_connection.connected) {
+    for (const uint16_t handle : g_server->getPeerDevices()) {
+      NimBLEConnInfo live = g_server->getPeerInfoByHandle(handle);
+      if (live.getConnHandle() != handle) continue;
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                 "BLE link up, its start dropped: recorded from the stack's record", nullptr);
+      apply_connect(link_event(BT_EV_CONNECT, live));
+      break;
+    }
+  }
 }
 
 // One event, on the loop task (update()'s consume of g_events).
@@ -745,6 +836,25 @@ static int8_t clamp_tx_power(int8_t v) {
   if (v < -12) return -12;
   if (v >  9)  return  9;
   return v;
+}
+
+// The state from what is running (sweep F170), for when the activity the
+// state named ends (a scan, pairing mode, a link): disabled when Bluetooth
+// is off, then a link, a scan, pairing mode and advertising, in that
+// order, else idle. Before, each of those ends set idle (or connected)
+// whatever went on, so a scan that ended while advertising read
+// "state": "idle" with "advertising": true. The starts (a link up, a scan,
+// pairing mode, advertising) still set their own state.
+static BluetoothState rest_state() {
+  if (!g_settings.enabled) return BT_DISABLED;
+  if (g_connection.connected) return BT_CONNECTED;
+  if (g_scanning) return BT_SCANNING;
+  if (g_pairing.state == PAIR_INITIATED || g_pairing.state == PAIR_PIN_DISPLAYED ||
+      g_pairing.state == PAIR_CONFIRMING) {
+    return BT_PAIRING;
+  }
+  if (g_advertising && g_advertising->isAdvertising()) return BT_ADVERTISING;
+  return BT_IDLE;
 }
 
 static void set_state(BluetoothState new_state) {
@@ -1358,7 +1468,7 @@ static void stop_scan() {
     g_scanner->stop();
     g_scanning = false;
     if (g_state == BT_SCANNING) {
-      set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
+      set_state(rest_state());   // F170: advertising, a link or pairing mode may go on
     }
     log_health(SCV_LOG_DEBUG, SCV_CAT_BLUETOOTH, "BLE scan stopped", nullptr);
     // Hand the radio back to the always-on presence loop.
@@ -1438,7 +1548,7 @@ static void cancel_pairing() {
   memset(&g_pairing, 0, sizeof(g_pairing));
 
   if (g_state == BT_PAIRING) {
-    set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
+    set_state(rest_state());   // F170: start_pairing() started advertising, which goes on
   }
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Pairing canceled", nullptr);
@@ -1961,6 +2071,7 @@ void update() {
   // command acts on the radio's latest state (a PIN confirm finds the
   // passkey the stack just asked about).
   g_events.consume(apply_event);
+  reconcile_link();   // F169: what a dropped link event left stale
   g_commands.drain(run_command);
 
   // Events a full queue refused, in the health log at most once a minute
