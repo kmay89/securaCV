@@ -167,6 +167,7 @@
 #include "csi_event_egress.h"    // the egress's counters, for GET /api/diagnostics (F149)
 #include "wap_diagnostics.h"     // pure, host-tested: GET /api/diagnostics's body (F149)
 #include "fleet_scan_cache.h"    // pure, host-tested: the fleet scan's cache keeps the adverts that fit (F211)
+#include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -7737,50 +7738,42 @@ static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
 static esp_err_t handle_device_info(httpd_req_t* req) {
   g_health.http_requests++;
 
-  const char* dev_name = setup_wizard::get_device_name();
-  char json[768];
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
-  snprintf(json, sizeof(json),
-    "{"
-    "\"device_id\":\"%s\","
-    "\"device_name\":\"%s\","
-    "\"mdns_host\":\"%s\","
-    "\"firmware\":\"%s\","
-    "\"pubkey_fp\":\"%s\","
-    "\"hw_token\":\"%s\","
-    "\"uptime_ms\":%lu,"
-    "\"chain_length\":%lu,"
-    // When this device's KEY was born, in days since the Unix epoch — a fact
-    // about the Canary, not about whoever paired it. `born_day` is 0 until the
-    // device has met a believable clock, and `born_exact` false means the day
-    // is when it was first DATED rather than born, so a reader must not call
-    // it a birthday. A day carries no time of day, on purpose (birth_day.h).
-    "\"born_day\":%lu,"
-    "\"born_exact\":%s,"
-    "\"auth_required\":true,"
-    "\"tls_enabled\":%s,"
-    "\"ap_auth\":\"%s\","
-    "\"provisioning_gate\":\"physical_button\""
-    "}",
-    g_device.device_id,
-    dev_name ? dev_name : "",
-    g_device.mdns_hostname,
-    FIRMWARE_VERSION,
-    g_device.fingerprint_hex,
-    hw_token,
-    (unsigned long)millis(),
-    (unsigned long)g_device.seq,
-    (unsigned long)g_device.born_day,
-    g_device.born_exact ? "true" : "false",
-    g_tls_enabled ? "true" : "false",
-    g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown"
-  );
+  identity_json::DeviceInfo in = {};
+  in.device_id    = g_device.device_id;
+  // Person-typed: the rename routes bound its length, not its bytes, so
+  // identity_json.h escapes it (sweep F212: a `"` broke this answer).
+  in.device_name  = setup_wizard::get_device_name();
+  in.mdns_host    = g_device.mdns_hostname;
+  in.firmware     = FIRMWARE_VERSION;
+  in.pubkey_fp    = g_device.fingerprint_hex;
+  in.hw_token     = hw_token;
+  in.uptime_ms    = (unsigned long)millis();
+  in.chain_length = (unsigned long)g_device.seq;
+  // When this device's KEY was born, in days since the Unix epoch — a fact
+  // about the Canary, not about whoever paired it. `born_day` is 0 until the
+  // device has met a believable clock, and `born_exact` false means the day
+  // is when it was first DATED rather than born, so a reader must not call
+  // it a birthday. A day carries no time of day, on purpose (birth_day.h).
+  in.born_day     = (unsigned long)g_device.born_day;
+  in.born_exact   = g_device.born_exact;
+  in.tls_enabled  = g_tls_enabled;
+  in.ap_auth      = g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown";
+
+  // Measured, then written into exactly that much heap (sweep F212): no
+  // fixed buffer to outgrow, and never a cut answer.
+  const size_t need = identity_json::device_info(in, nullptr, 0) + 1;
+  char* json = (char*)malloc(need);
+  if (!json) return http_send_error(req, 500, "out_of_memory");
+  identity_json::device_info(in, json, need);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  return httpd_resp_sendstr(req, json);
+  const esp_err_t ret = httpd_resp_sendstr(req, json);
+  free(json);
+  return ret;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -7788,39 +7781,36 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
-  char json[1024];
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
-  snprintf(json, sizeof(json),
-    "{\n"
-    "  \"device_id\": \"%s\",\n"
-    "  \"base_url\": \"%s://%s\",\n"
-    "  \"token\": \"%s\",\n"
-    "  \"pubkey_fp\": \"%s\",\n"
-    "  \"firmware\": \"%s\",\n"
-    "  \"hw_token\": \"%s\",\n"
-    "  \"ap_ssid\": \"%s\",\n"
-    "  \"ap_password\": \"%s\",\n"
-    "  \"tls_cert_fp\": \"%s\",\n"
-    "  \"provisioned_at\": \"boot:%lu\"\n"
-    "}",
-    g_device.device_id,
-    g_tls_enabled ? "https" : "http",
-    WiFi.softAPIP().toString().c_str(),
-    g_device.api_token_str,
-    g_device.fingerprint_hex,
-    FIRMWARE_VERSION,
-    hw_token,
-    g_device.ap_ssid,
-    g_device.ap_password,
-    g_tls_cert_fp_hex,
-    (unsigned long)g_device.boot_count
-  );
+  const String ap_ip = WiFi.softAPIP().toString();
+  identity_json::Receipt in = {};
+  in.device_id   = g_device.device_id;
+  in.tls_enabled = g_tls_enabled;
+  in.ap_ip       = ap_ip.c_str();
+  in.token       = g_device.api_token_str;
+  in.pubkey_fp   = g_device.fingerprint_hex;
+  in.firmware    = FIRMWARE_VERSION;
+  in.hw_token    = hw_token;
+  in.ap_ssid     = g_device.ap_ssid;
+  in.ap_password = g_device.ap_password;
+  in.tls_cert_fp = g_tls_cert_fp_hex;
+  in.boot_count  = (unsigned long)g_device.boot_count;
+
+  // Measured, then written into exactly that much heap (sweep F212). The
+  // receipt carries the API token and the AP password: wiped before free.
+  const size_t need = identity_json::provisioning_receipt(in, nullptr, 0) + 1;
+  char* json = (char*)malloc(need);
+  if (!json) return http_send_error(req, 500, "out_of_memory");
+  identity_json::provisioning_receipt(in, json, need);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  return httpd_resp_sendstr(req, json);
+  const esp_err_t ret = httpd_resp_sendstr(req, json);
+  secure_zero(json, need);
+  free(json);
+  return ret;
 }
 
 static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {

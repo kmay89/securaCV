@@ -405,6 +405,29 @@ clean-fleet-scan-cache:
 run: run-fleet-scan-cache
 clean: clean-fleet-scan-cache
 
+# The identity answers (sweep F212): the REAL identity_json.h (on the REAL
+# wap_json_writer.h) that GET /api/device-info and the provisioning receipt are
+# built with. The old answers' bytes for every ordinary input (the old snprintf
+# formats are spelled in the test, verbatim), an answer that parses under
+# JSON.parse's rules for every name a person can type (`"`, `\`, control
+# bytes; the rename routes refuse none of them), and a length measured first
+# and written whole or not at all. check_wap_json_answers.py rule J6 holds the
+# two handlers to the measured form.
+IDJSON_BIN = test_identity_json
+IDJSON_SRC = test_identity_json.cpp
+
+$(IDJSON_BIN): $(IDJSON_SRC) json_strict.h $(SRC_DIR)/identity_json.h $(SRC_DIR)/wap_json_writer.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(IDJSON_SRC)
+
+.PHONY: run-identity-json clean-identity-json
+run-identity-json: $(IDJSON_BIN)
+	$(call run_marked,$(IDJSON_BIN))
+clean-identity-json:
+	rm -f $(IDJSON_BIN)
+
+run: run-identity-json
+clean: clean-identity-json
+
 # The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
 # sketch's csi_module_settings_* readers, by the shared
 # csi_module_settings_nvs.h rule, and its boot init through one read-only

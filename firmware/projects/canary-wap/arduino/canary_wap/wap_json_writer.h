@@ -3,14 +3,14 @@
  * @brief A clamp-safe JSON text writer for the canary-wap's answers that carry
  *        bytes the device did not choose (sweep F211, F212).
  *
- * Two of the sketch's JSON texts are made from strings someone else wrote:
+ * Some of the sketch's JSON texts carry strings the device did not choose:
  * the fleet scan's cache holds what other devices advertise over mDNS (up to
- * 255 bytes per TXT value, any bytes), and GET /api/device/info and the
- * provisioning receipt carry the device name a person typed (the routes in
- * front of setup_wizard::set_device_name() bound its length, not its bytes).
- * ArduinoJson's sized serializeJson() cuts an answer that does not fit and
- * leaves it unterminated, and the sketch's snprintf() answers wrote those
- * strings with %s unescaped, so a `"` in a name broke the answer.
+ * 255 bytes per TXT value, any bytes), and GET /api/device-info carries the
+ * device name a person typed (the routes in front of
+ * setup_wizard::set_device_name() bound its length, not its bytes).
+ * ArduinoJson's sized serializeJson() cut the cache when it did not fit and
+ * left it unterminated, and the device-info answer wrote the name with an
+ * unescaped %s, so a `"` in a name broke it.
  *
  * This writer is the one place those texts are spelled:
  *
@@ -24,9 +24,11 @@
  *    reserve sets `overflow` and writes nothing, and every write after it is
  *    refused too, so the text is always a run of whole writes followed by a
  *    NUL, never a cut one.
- *  - A builder that must not answer a partial text checks ok() and refuses
- *    (identity_json.h); one that keeps what fits rolls a refused piece back
- *    with rollback() (fleet_scan_cache.h keeps the adverts that fit).
+ *  - A builder that must not answer a partial text measures it first (a
+ *    writer begun with begin_measure() counts the bytes and writes none) and
+ *    writes it into a buffer of that length (identity_json.h); one that keeps
+ *    what fits rolls a refused piece back with rollback() (fleet_scan_cache.h
+ *    keeps the adverts that fit).
  *
  * Pure hosted C++ (no Arduino, ESP-IDF or heap): any task, and host-tested
  * through its builders (tests_host/test_fleet_scan_cache.cpp,
@@ -60,22 +62,33 @@ inline size_t string_len(const char* s) {
 }
 
 struct Writer {
-  char*  out;        // the text, always followed by a NUL
+  char*  out;        // the text, always followed by a NUL (NULL: measuring)
   size_t cap;        // out's size
   size_t len;        // bytes written, the NUL excluded
   size_t reserve;    // bytes held back past `len` for a closing written last
   bool   overflow;   // a write did not fit: it and every write after it were refused
 };
 
-/* Starts an empty text in out[cap]. A `cap` of 0 leaves `out` untouched and
- * refuses every write. */
+/* Starts an empty text in out[cap]. A NULL `out` or a `cap` of 0 leaves
+ * nothing written and refuses every write. */
 inline void begin(Writer& w, char* out, size_t cap, size_t reserve = 0) {
+  if (out == nullptr) cap = 0;
   w.out = out;
   w.cap = cap;
   w.len = 0;
   w.reserve = reserve;
   w.overflow = (cap == 0 || reserve >= cap);
   if (cap > 0) out[0] = '\0';
+}
+
+/* Counts what the writes would spend and writes nothing: len is then the
+ * text's length, the NUL excluded. */
+inline void begin_measure(Writer& w) {
+  w.out = nullptr;
+  w.cap = SIZE_MAX;
+  w.len = 0;
+  w.reserve = 0;
+  w.overflow = false;
 }
 
 /* True when `n` more bytes fit before the reserve and the NUL. */
@@ -92,20 +105,27 @@ inline bool refuse(Writer& w) {
  * digits), whole or not at all. */
 inline bool raw(Writer& w, const char* text, size_t n) {
   if (!room(w, n)) return refuse(w);
-  memcpy(w.out + w.len, text, n);
+  if (w.out) {
+    memcpy(w.out + w.len, text, n);
+    w.out[w.len + n] = '\0';
+  }
   w.len += n;
-  w.out[w.len] = '\0';
   return true;
 }
 
 inline bool raw(Writer& w, const char* text) { return raw(w, text, strlen(text)); }
 
-/* Writes `s` as a quoted JSON string (NULL as ""), whole or not at all. */
-inline bool str(Writer& w, const char* s) {
-  if (!room(w, string_len(s))) return refuse(w);
+/* Writes the bytes of `s` escaped, without quotes (NULL as nothing), whole or
+ * not at all: the inside of a JSON string the caller opens and closes. */
+inline bool escaped(Writer& w, const char* s) {
+  const size_t n = string_len(s) - 2;
+  if (!room(w, n)) return refuse(w);
+  if (!w.out) {
+    w.len += n;
+    return true;
+  }
   static const char kHex[] = "0123456789abcdef";
   char* o = w.out + w.len;
-  *o++ = '"';
   for (const char* p = s ? s : ""; *p; ++p) {
     const unsigned char c = (unsigned char)*p;
     switch (c) {
@@ -125,10 +145,17 @@ inline bool str(Writer& w, const char* s) {
         }
     }
   }
-  *o++ = '"';
   w.len = (size_t)(o - w.out);
   w.out[w.len] = '\0';
   return true;
+}
+
+/* Writes `s` as a quoted JSON string (NULL as ""), whole or not at all. */
+inline bool str(Writer& w, const char* s) {
+  if (!room(w, string_len(s))) return refuse(w);
+  raw(w, "\"", 1);
+  escaped(w, s);
+  return raw(w, "\"", 1);
 }
 
 /* Writes `v` in decimal, whole or not at all (no printf: the same digits on
@@ -156,7 +183,7 @@ inline size_t mark(const Writer& w) { return w.len; }
 inline void rollback(Writer& w, size_t at) {
   if (w.cap == 0 || at > w.len) return;
   w.len = at;
-  w.out[w.len] = '\0';
+  if (w.out) w.out[w.len] = '\0';
   w.overflow = (w.reserve >= w.cap);
 }
 
