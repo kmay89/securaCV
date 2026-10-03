@@ -805,7 +805,7 @@ test("firmware wasm: a box near the int range's ends reads what exact arithmetic
     [[1000000000, 0, 0, 0], { r: 0, c: 2, posture: "unknown", proximity: "unknown", mask: 4 }],
     // both sides negative: no area, so no proximity (sweep F221; it read mid)
     [[0, 0, -100, -100], { r: 0, c: 0, posture: "unknown", proximity: "unknown", mask: 1 }],
-    // and near, from a product past INT32_MAX
+    // and one whose product passes INT32_MAX (it read near)
     [[0, 0, -2000000000, -100], { r: 0, c: 0, posture: "unknown", proximity: "unknown", mask: 1 }],
   ];
   for (const [box, want] of fixed) {

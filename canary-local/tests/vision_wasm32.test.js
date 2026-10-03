@@ -45,10 +45,26 @@ function builds() {
 }
 
 // test_vision_detection_pipeline.cpp's V (the int range's ends, the frame's
-// own sizes, the overflow thresholds between), crossed four ways.
+// own sizes, the overflow thresholds between), read from that file so the
+// two grids cannot drift, and crossed four ways. Each entry is a literal or
+// INT_MIN / INT_MAX / FRAME_W, optionally "/ n" or "- n"; anything else is
+// refused by name rather than guessed.
+const HOST_SUITE = join(REPO, "firmware/tests_host/test_vision_detection_pipeline.cpp");
+function hostGridValues(frameW, src = fs.readFileSync(HOST_SUITE, "utf8")) {
+  const m = /static const int V\[\] = \{([^}]*)\};/.exec(src);
+  assert.ok(m, "test_vision_detection_pipeline.cpp has no `static const int V[] = { ... };`");
+  const names = { INT_MIN, INT_MAX, FRAME_W: frameW };
+  return m[1].split(",").map((t) => t.trim()).filter(Boolean).map((t) => {
+    const e = /^(-?\d+|[A-Z_]+)(?:\s*([/-])\s*(\d+))?$/.exec(t);
+    assert.ok(e && (/^-?\d/.test(e[1]) || e[1] in names), `cannot read V entry "${t}" in test_vision_detection_pipeline.cpp`);
+    const v = /^-?\d/.test(e[1]) ? Number(e[1]) : names[e[1]];
+    return !e[2] ? v : e[2] === "/" ? Math.trunc(v / Number(e[3])) : v - Number(e[3]);
+  });
+}
+
 function grid(frameW) {
-  const V = [INT_MIN, Math.trunc(INT_MIN / 2), -2000000000, -1000000, -100, -1, 0, 1, 40,
-    frameW - 1, frameW, 5000, 50000, 1000000, 1000000000, 2000000000, Math.trunc(INT_MAX / 2), INT_MAX];
+  const V = hostGridValues(frameW);
+  assert.ok(V.every((v) => Number.isInteger(v) && v >= INT_MIN && v <= INT_MAX), "every V entry is an int");
   const boxes = new Int32Array(V.length ** 4 * 4);
   let i = 0;
   for (const x of V) for (const y of V) for (const ww of V) for (const h of V) boxes.set([x, y, ww, h], 4 * i++);

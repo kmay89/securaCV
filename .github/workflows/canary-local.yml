@@ -200,6 +200,9 @@ on:
       # Wall contract vectors against both vendored walls
       - "firmware/canary/include/canary/runtime_config.h"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
+      # vision_wasm32.test.js crosses the host suite's extreme-box values,
+      # read from the suite itself so the two grids cannot drift (sweep A49)
+      - "firmware/tests_host/test_vision_detection_pipeline.cpp"
       # …and the files they only check exist (a rename or delete fails them
       # just the same): each concept's docs in the registry (canary_local;
       # the glob also takes two research notes no concept names yet, so a new
@@ -413,6 +416,9 @@ on:
       # Wall contract vectors against both vendored walls
       - "firmware/canary/include/canary/runtime_config.h"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
+      # vision_wasm32.test.js crosses the host suite's extreme-box values,
+      # read from the suite itself so the two grids cannot drift (sweep A49)
+      - "firmware/tests_host/test_vision_detection_pipeline.cpp"
       # …and the files they only check exist (a rename or delete fails them
       # just the same): each concept's docs in the registry (canary_local;
       # the glob also takes two research notes no concept names yet, so a new

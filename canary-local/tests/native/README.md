@@ -140,7 +140,9 @@ node --test canary-local/tests/vision_wasm32.test.js
 The test checks that the wasm32 build's `long` is 32 bits and the host
 build's 64, hands both the 104,976 boxes built from the int range's ends that
 `firmware/tests_host/test_vision_detection_pipeline.cpp` holds the host build
-to exact arithmetic on, and requires every field of every answer to agree.
+to exact arithmetic on (its values read from that suite, so the two grids
+cannot drift; `canary-local.yml` watches the file for that reason), and
+requires every field of every answer to agree.
 Its last test puts each of A42's two `long` multiplies (the posture products
 and the area) back in a scratch copy of the header and requires the host
 build to read every box as before and the wasm32 build to read some box
