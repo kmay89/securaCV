@@ -296,6 +296,9 @@ inline void lv_obj_align(lv_obj_t* o, lv_align_t a, lv_coord_t x, lv_coord_t y) 
   lv_obj_set_pos(o, x, y);
 }
 inline void lv_obj_center(lv_obj_t* o) { lv_obj_align(o, LV_ALIGN_CENTER, 0, 0); }
+inline void lv_obj_set_style_translate_x(lv_obj_t* o, lv_coord_t v, lv_style_selector_t) {
+  o->tx = v;
+}
 inline void lv_obj_set_style_translate_y(lv_obj_t* o, lv_coord_t v, lv_style_selector_t) {
   o->ty = v;
 }
