@@ -133,10 +133,12 @@ inline void begin(Cache& c, char* out, size_t cap) {
 inline bool full(const Cache& c) { return c.kept >= kMaxAdverts; }
 
 /* The bytes left for rows and the commas between them (0 when begin() could
- * not start the list). */
+ * not start the list). Like wap_json::room(), no subtraction here can wrap
+ * (sweep F230): an ok writer has cap > reserve, and len is tested first. */
 inline size_t room(const Cache& c) {
   if (!wap_json::ok(c.w)) return 0;
-  return c.w.cap - 1 - c.w.reserve - c.w.len;
+  const size_t avail = c.w.cap - 1 - c.w.reserve;
+  return c.w.len <= avail ? avail - c.w.len : 0;
 }
 
 /* Appends `a` whole when it fits in what is left (and fewer than kMaxAdverts

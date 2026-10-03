@@ -8250,11 +8250,16 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
   in.ap_auth      = g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown";
 
   // Measured, then written into exactly that much heap (sweep F212): no
-  // fixed buffer to outgrow, and never a cut answer.
+  // fixed buffer to outgrow, and never a cut answer. ap_auth is the loop
+  // task's: a label that grew between the measure and the write is refused
+  // by the builder (sweep F230), and so is the answer, never sent empty.
   const size_t need = identity_json::device_info(in, nullptr, 0) + 1;
   char* json = (char*)malloc(need);
   if (!json) return http_send_error(req, 500, "out_of_memory");
-  identity_json::device_info(in, json, need);
+  if (identity_json::device_info(in, json, need) >= need) {
+    free(json);
+    return http_send_error(req, 503, "answer_changed");
+  }
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -8298,7 +8303,11 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = fa
   const size_t need = identity_json::provisioning_receipt(in, nullptr, 0) + 1;
   char* json = (char*)malloc(need);
   if (!json) return http_send_error(req, 500, "out_of_memory");
-  identity_json::provisioning_receipt(in, json, need);
+  if (identity_json::provisioning_receipt(in, json, need) >= need) {
+    secure_zero(json, need);   // a refused write pass leaves its whole pieces behind
+    free(json);
+    return http_send_error(req, 503, "answer_changed");
+  }
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");

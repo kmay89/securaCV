@@ -1675,8 +1675,10 @@ def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
         buf = a.group(1)
         checks = [
             (r"if\s*\(\s*!\s*" + re.escape(buf) + r"\s*\)\s*return\b", f"a failed malloc({need}) is not refused"),
-            (r"\bidentity_json\s*::\s*" + b + r"\s*\(\s*" + re.escape(inp) + r"\s*,\s*" + re.escape(buf) + r"\s*,\s*"
-             + re.escape(need) + r"\s*\)\s*;", f"the answer is not built into {buf} with {need}"),
+            (r"\bif\s*\(\s*identity_json\s*::\s*" + b + r"\s*\(\s*" + re.escape(inp) + r"\s*,\s*" + re.escape(buf)
+             + r"\s*,\s*" + re.escape(need) + r"\s*\)\s*>=\s*" + re.escape(need) + r"\s*\)\s*\{[^{}]*\bfree\s*\(\s*"
+             + re.escape(buf) + r"\s*\)\s*;[^{}]*\breturn\b[^{}]*\}",
+             f"the answer is not built into {buf} with {need}, with a refused build (F230) freed and refused"),
             (r"\b(?:httpd_resp_sendstr|http_send_json)\s*\(\s*\w+\s*,\s*" + re.escape(buf) + r"\s*\)",
              f"{buf} is not what is sent"),
             (r"\bfree\s*\(\s*" + re.escape(buf) + r"\s*\)", f"{buf} is not freed"),
@@ -1908,16 +1910,22 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     # J6: the identity answers are built by identity_json.h at their measured length.
     ("GET /api/device-info goes back to snprintf() with the raw name",
      raw_in(INO, "  const size_t need = identity_json::device_info(in, nullptr, 0) + 1;\n  char* json = (char*)malloc(need);\n"
-                 "  if (!json) return http_send_error(req, 500, \"out_of_memory\");\n  identity_json::device_info(in, json, need);\n",
+                 "  if (!json) return http_send_error(req, 500, \"out_of_memory\");\n"
+                 "  if (identity_json::device_info(in, json, need) >= need) {\n    free(json);\n"
+                 "    return http_send_error(req, 503, \"answer_changed\");\n  }\n",
             "  char json[768];\n  snprintf(json, sizeof(json), \"{\\\"device_name\\\":\\\"%s\\\"}\", in.device_name);\n")),
     ("the receipt is built into a fixed 1024 bytes",
      raw_in(INO, "  const size_t need = identity_json::provisioning_receipt(in, nullptr, 0) + 1;",
             "  const size_t need = 1024;")),
     ("GET /api/device-info is built with a size that is not the measured one",
-     raw_in(INO, "  identity_json::device_info(in, json, need);", "  identity_json::device_info(in, json, 512);")),
+     raw_in(INO, "  if (identity_json::device_info(in, json, need) >= need) {", "  if (identity_json::device_info(in, json, 512) >= need) {")),
+    ("GET /api/device-info sends a refused build (the F230 refusal dropped)",
+     raw_in(INO, "  if (identity_json::device_info(in, json, need) >= need) {\n    free(json);\n"
+                 "    return http_send_error(req, 503, \"answer_changed\");\n  }\n",
+            "  identity_json::device_info(in, json, need);\n")),
     ("a failed malloc for the receipt is not refused",
-     raw_in(INO, "  if (!json) return http_send_error(req, 500, \"out_of_memory\");\n  identity_json::provisioning_receipt(in, json, need);",
-            "  identity_json::provisioning_receipt(in, json, need);")),
+     raw_in(INO, "  if (!json) return http_send_error(req, 500, \"out_of_memory\");\n  if (identity_json::provisioning_receipt(in, json, need) >= need) {",
+            "  if (identity_json::provisioning_receipt(in, json, need) >= need) {")),
     # J2: every value a const char* holds before the answer, wherever it is
     # assigned (the review's P1 and P3: an assignment after `)` or `case 3:`).
     ("the status reason is reassigned on an if's own line",

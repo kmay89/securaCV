@@ -435,6 +435,34 @@ clean-identity-json:
 run: run-identity-json
 clean: clean-identity-json
 
+# The writer's bounds (sweep F230): the REAL wap_json_writer.h, identity_json.h
+# and fleet_scan_cache.h, with a string grown where a live global can change
+# under a build: between escaped()'s measure and its copy (and str()'s), and
+# between identity_json.h's measuring and writing passes, through test hooks
+# the headers compile only when this suite defines them. Every buffer is a
+# heap block of exactly the size the builder was given, and the suite is
+# built with AddressSanitizer, so a byte written past one aborts the run
+# (each buffer is also checked against a guard copy, for a build without
+# it): a grown string is refused whole, the identity build answers the
+# refusal (a return of the buffer's size), room() never reads a length past
+# the cap as room, and the fleet scan's cache drops only the row that grew.
+WRITER_BIN = test_wap_json_writer
+WRITER_SRC = test_wap_json_writer.cpp
+
+$(WRITER_BIN): $(WRITER_SRC) json_strict.h arduino_globals.h $(SRC_DIR)/wap_json_writer.h \
+               $(SRC_DIR)/identity_json.h $(SRC_DIR)/fleet_scan_cache.h
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror -fsanitize=address -fno-omit-frame-pointer \
+	  -I $(SRC_DIR) -o $@ $(WRITER_SRC)
+
+.PHONY: run-wap-json-writer clean-wap-json-writer
+run-wap-json-writer: $(WRITER_BIN)
+	$(call run_marked,$(WRITER_BIN))
+clean-wap-json-writer:
+	rm -f $(WRITER_BIN)
+
+run: run-wap-json-writer
+clean: clean-wap-json-writer
+
 # The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
 # sketch's csi_module_settings_* readers, by the shared
 # csi_module_settings_nvs.h rule, and its boot init through one read-only

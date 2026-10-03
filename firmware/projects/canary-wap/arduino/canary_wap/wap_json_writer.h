@@ -35,6 +35,14 @@
  *    writes it into a buffer of that length (identity_json.h); one that keeps
  *    what fits rolls a refused piece back with rollback() (fleet_scan_cache.h
  *    keeps the shortest adverts that fit, each whole).
+ *  - A write never passes the bytes it checked (sweep F230). escaped()
+ *    measures its string and checks the room for that length, and the copy
+ *    behind it is bounded by that same length: a string another task grows
+ *    between the measure and the copy (the identity answers read live
+ *    globals, and the loop task writes g_wifi_status.ap_auth) stops the copy
+ *    at the bound and refuses the write, whole, instead of writing on past
+ *    an exactly sized buffer. room() compares without a subtraction that can
+ *    wrap, so a length past the cap could never read as room again.
  *
  * Callers spell every call `wap_json::name(...)`, never `using namespace
  * wap_json;`: the sketch's translation unit opens with Arduino.h, and a
@@ -108,9 +116,15 @@ inline void begin_measure(Writer& w) {
   w.replace_controls = false;   // the same length either way
 }
 
-/* True when `n` more bytes fit before the reserve and the NUL. */
+/* True when `n` more bytes fit before the reserve and the NUL. Every
+ * subtraction here is of a smaller number from a larger one: `avail` is at
+ * least 0 once cap > reserve, and `len` is tested against it before it is
+ * taken from it, so a length past the cap is no room, never a wrapped huge
+ * one (sweep F230: `cap - 1 - reserve - len` wrapped once len passed it). */
 inline bool room(const Writer& w, size_t n) {
-  return !w.overflow && w.cap > w.reserve && n <= w.cap - 1 - w.reserve - w.len;
+  if (w.overflow || w.cap <= w.reserve) return false;
+  const size_t avail = w.cap - 1 - w.reserve;
+  return w.len <= avail && n <= avail - w.len;
 }
 
 inline bool refuse(Writer& w) {
@@ -133,7 +147,15 @@ inline bool raw(Writer& w, const char* text, size_t n) {
 inline bool raw(Writer& w, const char* text) { return raw(w, text, strlen(text)); }
 
 /* Writes the bytes of `s` escaped, without quotes (NULL as nothing), whole or
- * not at all: the inside of a JSON string the caller opens and closes. */
+ * not at all: the inside of a JSON string the caller opens and closes.
+ *
+ * The copy is bounded by the length measured and checked (n), not by the
+ * string's NUL: a string that grew after it was measured (another task
+ * writing it) would otherwise be copied past the room checked for it. Each
+ * byte's escape is written only when it fits in what is left of n; one that
+ * does not stops the copy, the text is put back as it was, and the write is
+ * refused (sweep F230). The copy also reads at most n bytes of `s`, since
+ * every byte spends at least one. */
 inline bool escaped(Writer& w, const char* s) {
   const size_t n = string_len(s) - 2;
   if (!room(w, n)) return refuse(w);
@@ -141,10 +163,18 @@ inline bool escaped(Writer& w, const char* s) {
     w.len += n;
     return true;
   }
+#ifdef WAP_JSON_TEST_HOOK_AFTER_MEASURE
+  WAP_JSON_TEST_HOOK_AFTER_MEASURE(s);   /* host tests only: grow `s` here */
+#endif
   static const char kHex[] = "0123456789abcdef";
-  char* o = w.out + w.len;
+  char* const start = w.out + w.len;
+  char* o = start;
   for (const char* p = s ? s : ""; *p; ++p) {
     const unsigned char c = (unsigned char)*p;
+    if (escaped_byte_len(c) > n - (size_t)(o - start)) {
+      *start = '\0';                     /* grew since measured: none of it */
+      return refuse(w);
+    }
     switch (c) {
       case '"':  *o++ = '\\'; *o++ = '"';  break;
       case '\\': *o++ = '\\'; *o++ = '\\'; break;
@@ -169,12 +199,19 @@ inline bool escaped(Writer& w, const char* s) {
   return true;
 }
 
-/* Writes `s` as a quoted JSON string (NULL as ""), whole or not at all. */
+/* Writes `s` as a quoted JSON string (NULL as ""), whole or not at all: a
+ * string that grew between this measure and escaped()'s own leaves neither
+ * quote behind it. */
 inline bool str(Writer& w, const char* s) {
   if (!room(w, string_len(s))) return refuse(w);
-  raw(w, "\"", 1);
-  escaped(w, s);
-  return raw(w, "\"", 1);
+#ifdef WAP_JSON_TEST_HOOK_AFTER_MEASURE
+  if (w.out) WAP_JSON_TEST_HOOK_AFTER_MEASURE(s);   /* host tests only */
+#endif
+  const size_t at = w.len;
+  if (raw(w, "\"", 1) && escaped(w, s) && raw(w, "\"", 1)) return true;
+  w.len = at;
+  if (w.out) w.out[at] = '\0';
+  return refuse(w);
 }
 
 /* Writes `v` in decimal, whole or not at all (no printf: the same digits on
