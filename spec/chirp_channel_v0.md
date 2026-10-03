@@ -294,6 +294,16 @@ Reset: 24 hours of no chirps
 - Max 4-5 chirps per day per device
 - Legitimate users rarely need >2 chirps/day
 
+**A timer, not a state** (canary-wap, sweep F178): the cooldown is the
+tier's cooldown counted from the last send, and every check reads that timer.
+Muting, unmuting and a mute that runs out leave it running, and it is over
+the moment it runs out, not when the device next gets round to it. Before
+F178 it was the `CHIRP_COOLDOWN` state, which a mute replaced: a send right
+after muting went out a tier up. The state still reads `cooldown` while the
+timer runs (§7.1). Note: the canary-wap resets the tiers 24 hours after the
+first chirp of the run of sends, not after 24 hours of no chirps, and
+re-enabling the channel or a reboot resets them too (filed with F178).
+
 ### 2.5.5 Defense: Presence Requirement (Anti-Drive-By)
 
 Devices must broadcast presence for **10 minutes** before they can send chirps.
@@ -703,6 +713,11 @@ CHIRP_MUTED          → Temporarily ignoring chirps
 CHIRP_COOLDOWN       → Rate limited, cannot send new chirp
 ```
 
+On the canary-wap `CHIRP_COOLDOWN` is what an active channel reads as while
+the send cooldown's timer runs (§2.5.4); the channel never stores it, so a
+mute shows `muted` over a running cooldown, and the cooldown still refuses a
+send (sweep F178).
+
 ### 7.2 Transitions
 
 ```
@@ -712,9 +727,13 @@ LISTENING ──join_active()──→ ACTIVE
 ACTIVE ──mute(duration)──→ MUTED
 MUTED ──unmute/timeout──→ ACTIVE
 ACTIVE ──send_chirp()──→ COOLDOWN
-COOLDOWN ──timeout(5min)──→ ACTIVE
+COOLDOWN ──timeout(tier: 5 min to 4 h)──→ ACTIVE
 * ──disable()──→ DISABLED
 ```
+
+On the canary-wap the two COOLDOWN arrows are the timer starting and running
+out, not stored transitions: MUTED ──unmute/timeout──→ ACTIVE reads COOLDOWN
+again while the timer still runs.
 
 ## 8. API Endpoints
 
@@ -748,6 +767,27 @@ origination is refused until it is, audit C10; sweep F146 — before it, this
 was answered as a `cooldown` with 0 seconds left), then `night_restricted`.
 `GET /api/chirp` names the same cases in `cannot_send_reason`
 (`disabled`, `cooldown`, `presence_required`, `clock_unsynced`).
+`cooldown_remaining_sec`, in the status and in a send refused for the
+cooldown, is the cooldown's timer (§2.5.4) in whole seconds rounded up, so
+`cooldown` never comes with 0 seconds, and `cannot_send_reason` is
+`cooldown` exactly while the timer runs, muted or not (sweep F178: a send
+in the pass after the timer ran out, or in its last second, was refused with
+0 seconds left, and the dashboard said Ready). The dashboard turns Send off
+for any `can_send` that is not true.
+
+A confirmation (`POST /api/chirp/confirm`, or `/api/chirp/ack` with
+`"type":"confirmed"`) that sends nothing says why, in this order:
+`chirp_disabled` (409), `presence_required` (409, ten minutes on),
+`clock_unsynced` (409), `not_found` (404, no chirp with that nonce in the
+recent list), `own_chirp` (409, the originator cannot confirm its own,
+§3.4), each with a `message` (sweep F174: every one was `not_found`, and the
+ack's a bare `{"success":false}`). A dismiss (`POST /api/chirp/dismiss`, or
+the ack with `"resolved"`) hides the chirp on this device whatever happens,
+and answers `"vote_sent"`: whether its signed suppress vote (§2.5.6) went
+out. When it did not, `"vote_error"` names why (`presence_required` or
+`clock_unsynced`) and `"message"` says the chirp is dismissed on this device
+only. A dismiss of a chirp that is not there answers `404 not_found`. No
+Chirp answer is a `403`: the dashboard reads a 403 as a bad token.
 
 The GET routes (`/api/chirp`, `/nearby`, `/recent`) read what the loop task
 last published, never the live session, cooldowns or tables (sweep F138):

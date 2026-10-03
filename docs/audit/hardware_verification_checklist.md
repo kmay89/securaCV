@@ -1054,6 +1054,62 @@ a host test can run. Compile is CI's. Owner: U1.
     GPS sets the clock the card says Ready and a send goes out.
   - Artifact: `docs/audit/repro/F146/unset-clock-send/`.
 
+## canary-wap Chirp: refused confirms, dismiss votes, the cooldown timer (F174, F178) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`confirm_chirp()` and `dismiss_chirp()` report into the command `Result`;
+the send cooldown is `cooldown_left_ms()`, a timer, and `shown_state()` is
+what the state reads as), `mesh_network.h` (`ConfirmRefusal` and its
+lookups, `seconds_left()`), `chirp_api.h` (`send_confirm_answer()`,
+`send_dismiss_answer()`, the rounded `cooldown_remaining_sec`) and the
+Chirp card in `web_ui.h` (`WebUiLogic.chirpSendGate`, `chirpActionNote`).
+Host-tested (`tests_host/test_chirp_commands_wap.cpp`:
+`a_refused_confirm_names_why`, `a_dismiss_says_whether_its_vote_went`,
+`a_mute_does_not_end_the_cooldown`,
+`a_send_just_after_the_cooldown_goes_out`; `web_ui_logic.test.js`) and held
+by `firmware/scripts/check_wap_loop_commands.py` (rules CV8-CV11). The
+handlers' JSON was checked only in a scratch harness over ArduinoJson 7.4.1
+(the library is not in the repo). Compile is CI's. Owner: U1.
+
+- [ ] **A refused confirm says why, with its status**
+  - Setup: two canary-wap boards with Chirp on; the second sends a chirp
+    while the first has been on for less than ten minutes.
+  - Repro: on the first, press the eye (confirm) on the chirp; again after
+    ten minutes but with no GPS fix since boot; again with the clock set;
+    `curl -i -X POST /api/chirp/confirm` with a made-up nonce.
+  - Expected: the note under the list reads "Must be active for 10 minutes
+    before confirming", then "Waiting for the clock to be set from GPS time
+    before confirming" (each a `409` with `presence_required` /
+    `clock_unsynced`), then nothing (it went out, `200`); the made-up nonce
+    answers `404` `{"success":false,"error":"not_found",...}`, whole JSON
+    (no bytes after the closing brace). No auth prompt appears (no refusal
+    is a `403`).
+  - Artifact: `docs/audit/repro/F174/refused-confirm/`.
+- [ ] **A dismiss says when its suppress vote stayed home**
+  - Setup: as above, the first board on for less than ten minutes.
+  - Repro: dismiss the chirp (the cross); then, on a board on for ten
+    minutes with the clock set, dismiss another; sniff ESP-NOW or watch the
+    second board's log for the suppress vote.
+  - Expected: the first dismiss hides the chirp and the note reads
+    "Dismissed on this device only: a suppress vote needs 10 minutes
+    active" (`"vote_sent":false`, `"vote_error":"presence_required"`), and
+    no vote goes out; the second answers `"vote_sent":true` with no note,
+    and its vote is heard.
+  - Artifact: `docs/audit/repro/F174/dismiss-vote/`.
+- [ ] **A mute does not end the send cooldown**
+  - Setup: a canary-wap with Chirp on for ten minutes and the clock set.
+  - Repro: send a chirp; mute 15 minutes; press Send (or post one with
+    `curl`); unmute; send again; wait out the 5 minutes with the page open
+    and press Send within a second of the countdown ending.
+  - Expected: both sends in the cooldown are refused `cooldown` with the
+    time left, tier 1 (the card counts down with Send off, muted or not);
+    `GET /api/chirp` reads `"state":"muted"` then `"cooldown"`, with
+    `"cannot_send_reason":"cooldown"`; the card never says Ready with Send
+    on while a send would be refused, and a refused send never says 0
+    seconds left; the send right after the countdown goes out (tier 2), not
+    `cooldown` with 0 seconds.
+  - Artifact: `docs/audit/repro/F178/mute-in-cooldown/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at
