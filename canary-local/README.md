@@ -1003,7 +1003,12 @@ fails on byte drift.
   circle says (`tests/onboard_glass.mjs`), with the nightlight's card corners
   held inside the stroke. `tests/boot_probe.mjs` boots each turned glass too
   (its size, every frame on it, the face's bird on stage and clear of every
-  line).
+  line, and the turn the emulator's HAL announces with the glass's shape,
+  once the dist announces one: the saved rotation, A56). That announced turn
+  is what the Lab's 3D case turns by (`assets/scene3d.js` `glassTurn`): the
+  canvas alone cannot tell a glass turned clockwise from one turned
+  counterclockwise, and `tests/render_probe.mjs` draws the real Dash turned
+  1, 3 and 2 and finds its cable side left, right and on top.
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /
