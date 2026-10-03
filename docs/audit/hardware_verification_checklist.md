@@ -889,33 +889,48 @@ early return, in `drain_request()` before the result is posted, and in
 CI's. Owner: U1.
 
 - [ ] **The Opera page reads as before while the opera is busy**
-  - Setup: two paired PlatformIO canaries on `[env:full]`, the web UI's
-    Opera page open on one; a script polling `GET /api/mesh` and
-    `GET /api/mesh/peers` on it every 200 ms, logging each body.
+  - Setup: two paired PlatformIO canaries on `[env:full]` with flash
+    encryption on, the web UI's Opera page open on one; a script polling
+    `GET /api/mesh` and `GET /api/mesh/peers` on it every 200 ms, logging
+    each body. (The peers rows are the members persisted in NVS, which a
+    board without flash encryption refuses to read: there every
+    `GET /api/mesh/peers` answers 500 `load_failed`, before and after
+    F161, and this row cannot be run.)
   - Repro: start a pairing from the page and watch the code appear; cancel
     it; rename the opera; trigger tamper alerts on the other board; reboot
     the polled board and keep polling through its boot.
-  - Expected: every GET answers 200 (never `mesh_busy` or `mesh_timeout`);
-    in the log, `pairing_seq` and `pairing_result` always belong together
-    (a new number first appears with `running`), `opera_name` is never a
-    mix of the old and new names, the code appears only while `state` is
+  - Expected: both routes answer 200 and neither ever answers `mesh_busy`
+    or `mesh_timeout` (neither waits for the main loop). Within each body,
+    `pairing_seq` and `pairing_result` always belong together (a new
+    number first appears with `running`), `opera_name` is never a mix of
+    the old and new names, and the code appears only while `state` is
     `PAIRING_CONFIRM` and is gone in the first body after the cancel's
-    answer, and the peers body's rows agree with `peers_total` /
-    `peers_online` on every poll. Through the reboot, the bodies read no
-    opera only until the mesh setup ends, then the restored opera and its
-    members, before the first loop pass.
+    answer. The two routes are two requests, so compare them only on polls
+    after the mesh setup with no pairing or removal between the two
+    reads: there the peers body's rows agree with `peers_total` /
+    `peers_online`. Through the reboot, from the HTTP server's start until
+    the mesh setup ends, `GET /api/mesh` reads no opera with `peers_total`
+    0 while the peers rows already list the persisted members (OFFLINE,
+    never heard); that window is expected. Once the setup ends, both read
+    the restored opera and its members, before the first loop pass.
   - Artifact: `docs/audit/repro/F161/status-routes/`.
 - [ ] **The kernel wizard says what the pairing came to**
   - Setup: Home Assistant with the add-on; a PlatformIO canary already in
     an opera and a fresh one.
   - Repro: run "Add another Canary", match the codes and confirm. Then run
-    it again and let the code wait run out on one board (or pull its power
-    after the codes show).
+    it again with the new board unable to hear the existing one (on
+    another Wi-Fi channel, say), so no code shows, and let the wait run
+    out; then press "Start Pairing" again at once.
   - Expected: the first run shows "Canary added" with the note that both
     report the pairing finished, within a few seconds of the confirm, even
-    while both boards still read CONNECTING (F162). The second names the board and says
-    why (a timeout, or that the board restarted or started another
-    pairing) as soon as that board reports it, not after a minute.
+    while both boards still read CONNECTING (F162). The second ends with
+    "Timed out waiting for the pairing code" after the code wait's two
+    minutes, or sooner, naming the board and the reason, if a board
+    reports its pairing failed first. The retry is not refused: the wizard
+    canceled each board still running its pairing, so neither waits out
+    its own 5-minute timeout. (A board that restarts mid-pairing, which
+    the wizard names as restarted, is host-tested only; a confirmation a
+    board rejects still leaves the other running, handed up.)
   - Artifact: `docs/audit/repro/F163/wizard-outcome/`.
 - [ ] **No Community tab on the PlatformIO dashboard**
   - Setup: a PlatformIO canary on `[env:full]`, the dashboard open with the
