@@ -10,12 +10,15 @@
 // witness event and Aim payload appear — all with zero page errors.
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set), same as the
-// other probes. Prints VISION_PROBE_OK / exits 0 on success.
+// other probes. Prints VISION_PROBE_OK / exits 0 on success. With
+// LAB_CORES=native the core is this tree's sources instead of the committed
+// dist (tests/native/README.md).
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { probeCores } from "./native/probe_cores.js";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const TYPES = {
@@ -31,8 +34,16 @@ const pw = await (async () => {
 
 const fail = (m) => { console.error("VISION_PROBE_FAIL:", m); process.exit(1); };
 
+// LAB_CORES=native (sweep A41): the page's core (canary-vision-core) is built
+// from this tree's sources (tests/native/cores.js, as the Node page tests
+// build it) and reached through a stand-in factory served at its dist URL
+// (tests/native/probe_cores.js). Unset (or "dist"), this is null and the
+// committed dist is served as always.
+const cores = await probeCores(["canary-vision-core"]);
+
 const server = createServer(async (req, res) => {
   try {
+    if (cores && await cores.handle(req, res)) return;
     const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
     if (rel === "/favicon.ico") { res.writeHead(204); return res.end(); }
     const p = resolve(join(ROOT, rel));
@@ -54,7 +65,11 @@ page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + 
 page.on("pageerror", (e) => errors.push("pageerror: " + String(e)));
 
 try {
-  await page.goto(`http://localhost:${port}/canary-local/vision.html`, { waitUntil: "networkidle", timeout: 45000 });
+  const url = `http://localhost:${port}/canary-local/vision.html`;
+  // Under LAB_CORES=native each core call is a request, which "networkidle"
+  // would count; the bridge waits for the same quiet without them.
+  if (cores) await cores.gotoIdle(page, url, { timeout: 45000 });
+  else await page.goto(url, { waitUntil: "networkidle", timeout: 45000 });
   await page.waitForSelector("#play", { timeout: 15000 });
 
   // all sections render from the JSON
@@ -68,7 +83,7 @@ try {
   if (!/runtime\s+real firmware wasm/i.test(chipText))
     fail("Vision runtime did not identify the production firmware wasm: " + chipText);
   if (!(await page.evaluate(() => typeof globalThis.createCanaryVisionCore === "function")))
-    fail("committed Canary Vision firmware core factory did not load");
+    fail((cores ? "LAB_CORES=native stand-in" : "committed") + " Canary Vision firmware core factory did not load");
 
   // ── two-port picker: right and wrong answers both teach ──
   const tasks = await page.$$(".vis-task");
@@ -163,7 +178,8 @@ try {
   if (!(await page.$("#board canvas"))) fail("board 3D canvas missing");
 
   if (errors.length) fail("page errors:\n  " + errors.join("\n  "));
-  console.log("VISION_PROBE_OK");
+  if (cores && !cores.used()) fail("LAB_CORES=native, but the page never ran the native core: " + cores.summary());
+  console.log("VISION_PROBE_OK" + (cores ? ` (LAB_CORES=native: ${cores.summary()})` : ""));
   process.exit(0);
 } catch (e) {
   fail(String(e && e.stack || e));

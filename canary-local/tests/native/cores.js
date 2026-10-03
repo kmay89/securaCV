@@ -406,6 +406,13 @@ function instance({ plan, bin, args = [] }) {
     for (const k of plan.runtime) if (HEAP_VIEWS[k]) mod[k] = new HEAP_VIEWS[k](heap);
   };
   views();
+  // For the browser probes' bridge (probe_cores.js), which mirrors this heap
+  // in the page: the buffer the HEAP views see now, and its open windows.
+  // Not enumerable, so the module's keys stay the dist's.
+  Object.defineProperties(mod.nativeCore, {
+    heap: { value: () => heap },
+    windows: { value: () => [...windows.values()].map((w) => ({ offset: w.offset, len: w.len })) },
+  });
   const push = () => {
     for (const [addr, w] of windows) {
       const now = new Uint8Array(heap, w.offset, w.len);
@@ -495,5 +502,7 @@ function nativeFactory(name) {
 }
 
 // instance and limits are exported for native_cores.test.js, which drives the
-// pipe with a stand-in core (fake_core.js) instead of a compiled one.
-module.exports = { coreFactory, buildPlan, exportsOf, exportTable, mode, CORES, instance, limits };
+// pipe with a stand-in core (fake_core.js) instead of a compiled one; build
+// for probe_cores.js, which compiles a core once before its probe's browser
+// starts and hands each page its own instance.
+module.exports = { coreFactory, buildPlan, build, exportsOf, exportTable, mode, CORES, instance, limits };
