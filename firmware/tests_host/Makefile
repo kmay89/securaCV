@@ -649,15 +649,17 @@ VISFSM_GRACE_BIN = $(BUILD_DIR)/test_vision_presence_fsm_grace
 # emulator's Arduino shim and a one-macro emscripten.h stub. Holds the tick
 # JSON the Vision page's MQTT pane reads: the tracker's settled cell and
 # visit_ms (sweep A39), and dwell_ended's dwell (F130) through the ABI.
+# Its headers are every one the compiler reads for it (sweep F249): the
+# bindings also include the box pipeline (VISION_PIPE_HDR) and version.h, and
+# detect_config.cpp reads detect_profiles.h and log.h, so an edit to any of
+# them rebuilds this suite instead of leaving a stale binary passing.
+# scripts/tests/test_vision_core_make_deps.py holds the list to `g++ -MM`.
 EMU_DIR    = ../../canary-local/emulator
 VISCORE_SRC = $(VISION_SRC)/detect_config.cpp $(VISFSM_SRC) \
               $(EMU_DIR)/vision/vision_core_bindings.cpp $(EMU_DIR)/vision/vision_core_shim.cpp
-# Every header vision_core_bindings.cpp includes is a prerequisite, the
-# detection pipeline among them (sweep F249): without it an incremental make
-# after a pipeline edit rebuilt test_vision_detection_pipeline and reused a
-# stale test_vision_core_bindings. CI builds fresh, so only local runs lied.
-VISCORE_HDR = $(VISFSM_HDR) $(VISION_PIPE_HDR) $(VISION_INC)/canary/version.h \
-              $(VISION_CFG)/config.h $(wildcard $(EMU_DIR)/shim/*.h) \
+VISCORE_HDR = $(VISFSM_HDR) $(VISION_PIPE_HDR) $(VISION_CFG)/config.h \
+              $(VISION_INC)/canary/detect_profiles.h $(VISION_INC)/canary/log.h \
+              $(VISION_INC)/canary/version.h $(wildcard $(EMU_DIR)/shim/*.h) \
               stubs/emscripten/emscripten.h
 VISCORE_BIN = $(BUILD_DIR)/test_vision_core_bindings
 
