@@ -1207,9 +1207,26 @@ last-seen time; no key. The two routes read a whole copy and nothing else
 of the session's, so they never wait for the main loop. The peer list's
 members still come from the persisted pubkeys (NVS), joined by fingerprint
 against the view, and `last_seen_sec` is counted at the read; every field
-of both bodies is unchanged. `GET /api/mesh/alerts` still reads the alert
-history in place. Host-tested (`test_mesh_session.cpp`, a two-thread test
-included; `test_loop_snapshot.cpp` covers the shared header); the
+of both bodies is unchanged. Host-tested (`test_mesh_session.cpp`, a
+two-thread test included; `test_loop_snapshot.cpp` covers the shared
+header); the `[env:full]` compile is CI's; not bench-tested.
+
+**PlatformIO tree: the alerts route reads a log the main loop changes under
+its lock (sweep F197).** `GET /api/mesh/alerts` copied the 16-record alert
+history in place from the HTTP server's task while the main loop's receive
+path stored alerts into it and a `DELETE` (run by the main loop) emptied it,
+so a body could hold a record half overwritten by a newer alert or straddle
+a clear. The history is now a `loop_snapshot.h` log, as canary-wap's is
+(F110): the main loop builds each record whole and appends it under the
+log's lock (the oldest overwritten), and a `DELETE`, leaving the opera and
+`deinit()` clear it under the same lock; the route copies every record
+whole and all from one moment, never waiting for the main loop. The log
+reads in storage order, so each record carries the order it was stored in
+and the route still answers newest first; every field of the body is
+unchanged. Cost: 4 bytes a record (the order) and, per request, a
+384-byte copy of the log on the HTTP task's stack beside the 320 bytes of
+records it already held. Host-tested (`test_mesh_session.cpp`, a two-thread
+run of stores and clears included, clean under ThreadSanitizer); the
 `[env:full]` compile is CI's; not bench-tested.
 
 ### 8.2 Response Formats
