@@ -595,6 +595,27 @@ test("turned glass (F184): linesInk/linesInked find each drawn line's ink where 
   }
 });
 
+test("frame pairing (A63): linesSettled holds a frame only to the lines that drew whole before it landed", async () => {
+  const { linesSettled } = await import("./onboard_glass.mjs");
+  const label = (extra = {}) => ({ x: 8, y: 135, w: 164, h: 18, shown: true, opa: 255, text: "Check your phone", ...extra });
+  const read = (extra = {}) => ({ text: "Check your phone", box: [8, 135, 164, 18], ink: 0, ...extra });
+  // Whole before the frame: the frame shows it, so a dark read of it fails.
+  assert.deepStrictEqual(linesSettled([label()], [read()]), { held: [read()], ahead: [] });
+  // The phone-joined scene after a clock step: mid-fade (or hidden, or not
+  // there yet) when the labels were read, faded in only after that frame's
+  // refresh. The frame may not show it yet; it is read again, not failed.
+  for (const before of [[label({ opa: 0 })], [label({ opa: 249 })], [label({ shown: false })], []]) {
+    assert.deepStrictEqual(linesSettled(before, [read()]), { held: [], ahead: [read()] }, JSON.stringify(before));
+  }
+  // Another line, or the same words in another box, is not the one read.
+  for (const before of [[label({ text: "a setup page is opening" })], [label({ y: 167 })], [label({ w: 100 })]]) {
+    assert.deepStrictEqual(linesSettled(before, [read()]).ahead, [read()], JSON.stringify(before));
+  }
+  // Each read on its own: one held, one ahead.
+  const hint = { text: "no page? open 192.168.4.1", box: [8, 269, 164, 15], ink: 0 };
+  assert.deepStrictEqual(linesSettled([label()], [read(), hint]), { held: [read()], ahead: [hint] });
+});
+
 test("turned glass (F184): framesOnGlass holds every frame to one glass, a turned boot's from the first", async () => {
   const { framesOnGlass } = await import("./onboard_glass.mjs");
   const turned = { w: 480, h: 800 };
@@ -812,8 +833,18 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   assert.ok(probe.includes("const helloLines = linesOnGlass(st.labels, st.glass) || linesCut(st.labels);") &&
     probe.includes("const pjLines = linesOnGlass(st.labels, st.glass) || linesCut(st.labels);"),
   "every bird read also holds the lines");
-  assert.ok(probe.includes("const off = linesOnGlass(ls, glass) || linesCut(ls) ||\n      linesInked(await onCanvas(linesInk, [], \"window.__emu.screenLabels()\"));"),
+  assert.ok(probe.includes("const off = linesOnGlass(ls, glass) || linesCut(ls) || linesInked(await inkOnFrame());"),
     "every scene read holds the lines, and their ink");
+  // A63: the ink is read off a frame drawn after the labels: the labels and
+  // the frame count first, then the next frame, then labels and pixels in one
+  // turn, held only to the lines that drew whole before that frame.
+  const ink = /const inkOnFrame = async \(keep = \(\) => true\) => \{([\s\S]*?)\n  \};\n/.exec(probe)?.[1] || "";
+  assert.ok(ink.includes("const before = await E(async () => ({ frames: window.__state.flushes, labels: await window.__emu.screenLabels() }));") &&
+    ink.includes("(await E(() => window.__state.flushes)) <= before.frames") &&
+    ink.includes('const reads = (await onCanvas(linesInk, [], "window.__emu.screenLabels()")).filter(keep);') &&
+    ink.includes("const { held, ahead } = linesSettled(before.labels, reads);") &&
+    ink.includes("if ((ahead.length === 0 && linesInked(held) === null) || pass === 4) return reads;"),
+  "each line's ink is read off a frame drawn after it read whole (A63)");
   for (const scene of ['await holdLines("the join scene");', 'await holdLines("the join scene with the stuck-phone hint");',
     'await holdLines("the phone-joined scene");', "await holdLines(`after a ${reason} failure`);",
     "await holdLines(`${scene}: the Connecting scene`);", 'await holdLines("the face after onboarding");']) {
@@ -1012,10 +1043,9 @@ test("splash and turned boots (F206): the harness slows the clock from power-on;
   // ...and off the framebuffer: each whole line at full strength is read on
   // the canvas a frame after (its ink inside the firmware's box), and every
   // line must have been seen inked.
-  assert.ok(splash.includes('whole = (await onCanvas(linesInk, [], "window.__emu.screenLabels()"))') &&
-    splash.includes("while (Date.now() - tw < 2000 && (await E(() => window.__state.flushes)) < f0 + 2) {") &&
+  assert.ok(splash.includes("const whole = await inkOnFrame((r) => HELLO_LINES.some((line) => isWholeLine(r.text, line)));") &&
     splash.includes("const dark = await inkSplash();") && splash.includes("check(dark === null, `the splash: ${dark} (F206)`);"),
-  "the splash's whole lines are read on the canvas, a frame after");
+  "the splash's whole lines are read on the canvas, a frame after (A63)");
   assert.ok(splash.includes("splashInked = splashInk(inkReads, HELLO_LINES);") &&
     splash.includes("check(splashInked.missing.length === 0,"), "every splash line must have been seen inked");
   assert.ok(probe.includes('const HELLO_LINES = helloLines(await readFile(join(ROOT, "firmware/common/story/story_scripts.h"), "utf8"));'));

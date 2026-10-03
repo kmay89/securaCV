@@ -332,3 +332,19 @@ export function linesInked(reads) {
   return `${empty.length} line(s) the firmware draws show no ink where it says they are: ` +
     `${JSON.stringify(empty.map((r) => ({ text: r.text, box: r.box })))} (F184)`;
 }
+
+/**
+ * Which linesInk() reads a frame must show (A63). before: the labels read
+ * before that frame landed (__emu.screenLabels()); reads: linesInk() on the
+ * frame. A read is held when its line already drew whole in `before`, with
+ * the same text in the same box: the frame was drawn after that, so the line
+ * is on it. Any other read is ahead: LVGL 8.4 runs its refresh before its
+ * animations in one timer pass, so a line can read faded in up to a refresh
+ * period before the frame that shows it lands, and a read of it now may be
+ * one step ahead of the glass. Returns {held, ahead}.
+ */
+export function linesSettled(before, reads) {
+  const drew = (r) => before.some((l) => l.shown && l.opa >= 250 && l.text === r.text &&
+    l.x === r.box[0] && l.y === r.box[1] && l.w === r.box[2] && l.h === r.box[3]);
+  return { held: reads.filter(drew), ahead: reads.filter((r) => !drew(r)) };
+}

@@ -90,7 +90,7 @@ import { createHash } from "node:crypto";
 import { birdPerch, birdOnGlass, breathOnSeat, flourishHop } from "./bird_perch.mjs";
 import {
   linesOnGlass, linesCut, haloOf, cardInHalo, framesOnGlass, cardAtLayout, haloAtLayout,
-  qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked,
+  qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked, linesSettled,
 } from "./onboard_glass.mjs";
 import { turnedGlasses, readTurnedSources, helloLines, splashCoverage, splashInk, isWholeLine } from "./turned_glass.mjs";
 import { lookup } from "./probe_server.mjs";
@@ -410,21 +410,50 @@ async function walkHarness(flavor, turn = null) {
   // the canvas as drawn (its source, evaluated there: it is self-contained),
   // after `pre` (an in-page async expression whose value joins the args) —
   // the firmware's answer and the pixels read in one turn of the page, with
-  // no frame landing between them.
+  // no frame landing between them. That alone does not pair them: the
+  // answer can be a step ahead of the last frame (A63, inkOnFrame below).
   const onCanvas = (fn, args = [], pre = "null") => E(`(async () => {
     const extra = await (${pre});
     const cv = document.getElementById("glass");
     const fr = { w: cv.width, h: cv.height, data: cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data };
     return (${fn.toString()})(fr, ...${JSON.stringify(args)}, ...(extra === null ? [] : [extra]));
   })()`);
+  // A63: each line's ink, off a frame drawn after the line read whole. The
+  // labels are the firmware's object tree between two passes of its loop;
+  // the canvas is the last frame LVGL flushed. LVGL 8.4 runs the display
+  // refresh before the animations in one lv_timer_handler pass (each new
+  // timer goes to the head of the list, and the refresh timer is made after
+  // the animation timer), so a fade's step lands after its pass's frame and
+  // a line reads faded in for up to a refresh period (16 ms emulated) while
+  // the glass still shows the step before. A clock step finishes a 260 ms
+  // fade in one such step: after stepTime(5000) the phone-joined scene read
+  // fully faded in for about 30 ms of wall time while the canvas still held
+  // all three of its lines dark. So each pass reads the labels, waits for the
+  // next frame, and reads the labels and the pixels in one turn: a line that
+  // drew whole before that frame is on it (linesSettled's held). A still
+  // glass draws no frame at all, so 300 ms with none means nothing was left
+  // to draw. The read stands once no line is ahead of it and every held line
+  // is inked; otherwise it is taken again, and the fifth is judged as it is.
+  // keep: which reads count (the splash counts kHello's whole lines).
+  const inkOnFrame = async (keep = () => true) => {
+    for (let pass = 0; ; pass++) {
+      const before = await E(async () => ({ frames: window.__state.flushes, labels: await window.__emu.screenLabels() }));
+      const t0 = Date.now();
+      while (Date.now() - t0 < 300 && (await E(() => window.__state.flushes)) <= before.frames) {
+        await new Promise((r) => setTimeout(r, 2));
+      }
+      const reads = (await onCanvas(linesInk, [], "window.__emu.screenLabels()")).filter(keep);
+      const { held, ahead } = linesSettled(before.labels, reads);
+      if ((ahead.length === 0 && linesInked(held) === null) || pass === 4) return reads;
+    }
+  };
   // F184: no line of the scene on the glass leaves it, none is cut to an
   // ellipsis as its own text says, and each one that draws has ink on the
   // glass inside the box the firmware reports for it — held on every walk.
   const holdLines = async (scene) => {
     const ls = await E(() => window.__emu.screenLabels());
     const glass = await E(() => ({ w: document.getElementById("glass").width, h: document.getElementById("glass").height }));
-    const off = linesOnGlass(ls, glass) || linesCut(ls) ||
-      linesInked(await onCanvas(linesInk, [], "window.__emu.screenLabels()"));
+    const off = linesOnGlass(ls, glass) || linesCut(ls) || linesInked(await inkOnFrame());
     check(off === null, `${scene}: ${off}`);
   };
   // F184: the shapes the firmware announced for its glass, and the frames
@@ -520,22 +549,16 @@ async function walkHarness(flavor, turn = null) {
       const reads = [];
       const inkReads = [];
       const inkedTexts = new Set();
-      // the canvas after a frame or two has landed past the read (or 2 s
-      // without one: nothing has changed to draw), the labels and the
-      // pixels read in one turn of the page; a whole line dark there is read
-      // once more after another frame before it fails
+      // kHello's whole lines off a frame drawn after they read whole
+      // (inkOnFrame, A63). This used to wait for two flushes past the read, or
+      // 2 s without them. On a still glass the second flush can be the next
+      // beat's: on "Dark means all is well. If I glow, look at me." and "Add
+      // another of me and we compare notes." it came about 1.6 s on, near the
+      // end of the line's 950 or 850 ms hold on the half-speed clock (1.9 or
+      // 1.7 s of wall time), and when it came after, the read found the next
+      // line and the line was never seen inked.
       const inkSplash = async () => {
-        let whole = [];
-        for (let pass = 0; pass < 2; pass++) {
-          const f0 = await E(() => window.__state.flushes);
-          const tw = Date.now();
-          while (Date.now() - tw < 2000 && (await E(() => window.__state.flushes)) < f0 + 2) {
-            await new Promise((r) => setTimeout(r, 10));
-          }
-          whole = (await onCanvas(linesInk, [], "window.__emu.screenLabels()"))
-            .filter((r) => HELLO_LINES.some((line) => isWholeLine(r.text, line)));
-          if (splashInk(whole, HELLO_LINES).dark.length === 0) break;
-        }
+        const whole = await inkOnFrame((r) => HELLO_LINES.some((line) => isWholeLine(r.text, line)));
         inkReads.push(...whole);
         for (const r of whole) if (r.ink > 0) inkedTexts.add(r.text);
         const dark = splashInk(whole, HELLO_LINES).dark;
