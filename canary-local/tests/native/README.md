@@ -92,7 +92,13 @@ natively, and landed in another cell. It now takes a box's center, cell and
 area in `int64_t`, where no int box can overflow them, which is what the
 second scenario holds (and `firmware/tests_host/test_vision_detection_pipeline.cpp`
 holds the same boxes to exact arithmetic, in a build under
-`-fsanitize=undefined` as well). So agreement covers the calls those
+`-fsanitize=undefined` as well). A product put back in a 32-bit `long`
+passes every native build, because a 64-bit `long` holds it; only a wasm32
+build shows it. `vision.test.js`'s A42 test holds such boxes to exact
+arithmetic on the committed dist, which CI runs, so from the dist rebuild
+that carries A42 on it is the CI gate for that half. No CI job runs
+`native_cores.test.js` under the variable: its parity scenarios are run by
+hand, after a rebuilt dist is pulled. So agreement covers the calls those
 scenarios make, not every input. `CXX=clang++` is the closer compiler, but
 the ABI is still 64-bit. Without the variable, the same file checks the loader
 itself without compiling anything. It checks what the default returns, how

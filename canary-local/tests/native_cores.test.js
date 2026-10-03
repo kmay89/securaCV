@@ -644,7 +644,9 @@ test("native vision core = committed dist, tick for tick (LAB_CORES=native)", na
 // The sources now take each of those in int64_t, where no int box overflows,
 // so the two builds must agree on every one of these boxes, value for value.
 // Each frame holds one extreme box, or two (so the occupied-cell mask sees
-// both), and the clock runs on, so the FSM sees them as a visit too.
+// both), and the clock runs on, so the FSM sees them as a visit too. Like
+// the scenario above it is opt-in, and no CI job runs this file under
+// LAB_CORES=native; vision.test.js's A42 test is the CI gate on the dist.
 test("native vision core = committed dist on out-of-range boxes (LAB_CORES=native)", native, async () => {
   const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-vision-core.js"))(),
     cores.coreFactory("canary-vision-core")()]);

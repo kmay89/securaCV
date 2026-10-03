@@ -724,6 +724,94 @@ test("firmware wasm: a dweller last seen on the dwell_started frame leaves with 
   }
 });
 
+// Sweep A42: a box near the int range's ends lands in the cell, and reads the
+// posture and proximity, that exact arithmetic says. The Lab's sandbox and
+// this core's ABI take any int box (the device's SSCMA boxes have uint16
+// fields). The pipeline took the center (x + w/2) and the cell (px * cols) in
+// int and the area (long)w*h and the posture products in long, and long is 32
+// bits on this wasm32 core: the item's box, two billion pixels wide, read
+// proximity "unknown" here and "near" on a 64-bit host, whose long holds the
+// product. That half cannot be seen natively. LAB_CORES=native and the
+// firmware host suites build with a 64-bit long, so the posture or area put
+// back in long passes them all; this test on the dist is the CI gate that
+// catches it. The oracle is BigInt, where nothing an int box makes overflows.
+// The fixed rows each name the overflow they used to hit; the grid crosses
+// the int range's ends with the frame's own sizes. Needs a dist built from
+// this tree's detection_pipeline.h and optical_features.h (CI's pinned-emsdk
+// rebuild); on an older dist it fails here, and it passes with
+// LAB_CORES=native.
+test("firmware wasm: a box near the int range's ends reads what exact arithmetic says (sweep A42)", async () => {
+  const core = await firmwareCore();
+  const opticalH = read(join(FW, "include/canary/vision/optical_features.h"));
+  const define = (name) => {
+    const m = opticalH.match(new RegExp("#define " + name + "\\s+(\\d+)"));
+    assert.ok(m, name + " not found in optical_features.h");
+    return BigInt(m[1]);
+  };
+  const UPRIGHT = define("OPT_POSTURE_UPRIGHT_RATIO_X100");
+  const HORIZONTAL = define("OPT_POSTURE_HORIZONTAL_RATIO_X100");
+  const NEAR = define("OPT_PROXIMITY_NEAR_PCT");
+  const FAR = define("OPT_PROXIMITY_FAR_PCT");
+  const { rows, cols } = data.detect.voxel;
+  const FW_ = BigInt(data.detect.frame.w), FH_ = BigInt(data.detect.frame.h);
+  // C++ division truncates toward zero, as BigInt's does; then the grid clamps.
+  const cell = (at, extent, n, frame) => {
+    const c = (BigInt(at) + BigInt(Math.trunc(extent / 2))) * BigInt(n) / frame;
+    return Number(c < 0n ? 0n : (c > BigInt(n - 1) ? BigInt(n - 1) : c));
+  };
+  const posture = (w, h) => {
+    if (w <= 0 || h <= 0) return "unknown";
+    if (BigInt(h) * 100n >= BigInt(w) * UPRIGHT) return "upright";
+    if (BigInt(w) * 100n >= BigInt(h) * HORIZONTAL) return "horizontal";
+    return "ambiguous";
+  };
+  const proximity = (w, h) => {
+    const area = BigInt(w) * BigInt(h);
+    if (area <= 0n) return "unknown";
+    const pct = area * 100n / (FW_ * FH_);
+    return pct >= NEAR ? "near" : (pct <= FAR ? "far" : "mid");
+  };
+  const oracle = ([x, y, w, h]) => {
+    const r = cell(y, h, rows, FH_), c = cell(x, w, cols, FW_);
+    return { r, c, posture: posture(w, h), proximity: proximity(w, h), mask: 1 << (r * cols + c) };
+  };
+  core.reset();
+  core.configure({ ...data.detect, person_target: 0, score_min: 50 });
+  let t = 0;
+  const read1 = ([x, y, w, h]) => {
+    const s = core.tick(t += 100, [{ x, y, w, h, score: 90, target: 0 }]).sample;
+    return { r: s.voxel.r, c: s.voxel.c, posture: s.posture, proximity: s.proximity, mask: s.voxel_mask };
+  };
+  const I = 2147483647;
+  const fixed = [
+    // the item's box: (long)w*h and w*100 overflowed a 32-bit long
+    [[0, 0, 2000000000, 70], { r: 0, c: 2, posture: "horizontal", proximity: "near", mask: 4 }],
+    // w*h past INT32_MAX, every side and posture product in range
+    [[0, 0, 50000, 50000], { r: 2, c: 2, posture: "ambiguous", proximity: "near", mask: 256 }],
+    [[0, 0, I, I], { r: 2, c: 2, posture: "ambiguous", proximity: "near", mask: 256 }],
+    // h*100 past INT32_MAX: the posture products
+    [[0, 0, 1, I], { r: 2, c: 0, posture: "upright", proximity: "near", mask: 64 }],
+    [[0, 0, I, 1], { r: 0, c: 2, posture: "horizontal", proximity: "near", mask: 4 }],
+    // x + w/2 past INT_MAX: the center
+    [[2000000000, 2000000000, 1000000000, 1000000000], { r: 2, c: 2, posture: "ambiguous", proximity: "near", mask: 256 }],
+    // x + w/2 under INT_MIN
+    [[-2000000000, 100, -2000000000, 40], { r: 1, c: 0, posture: "unknown", proximity: "unknown", mask: 8 }],
+    // px * cols past INT_MAX, the center in range: the cell
+    [[1000000000, 0, 0, 0], { r: 0, c: 2, posture: "unknown", proximity: "unknown", mask: 4 }],
+  ];
+  for (const [box, want] of fixed) {
+    assert.deepStrictEqual(oracle(box), want, "the oracle on " + JSON.stringify(box));
+    assert.deepStrictEqual(read1(box), want, "the core on " + JSON.stringify(box));
+  }
+  const V = [-I - 1, -2000000000, -1, 0, 1, data.detect.frame.w, 50000, 2000000000, I];
+  const wrong = [];
+  for (const x of V) for (const y of V) for (const w of V) for (const h of V) {
+    const box = [x, y, w, h], got = read1(box), want = oracle(box);
+    if (JSON.stringify(got) !== JSON.stringify(want)) wrong.push({ box, got, want });
+  }
+  assert.deepStrictEqual(wrong.slice(0, 3), [], `${wrong.length} of ${V.length ** 4} boxes read otherwise than exact arithmetic`);
+});
+
 test("iou + nms behave like a de-dup pass", async () => {
   const { iou, nms } = await import("../assets/vision-ui.js");
   const a = { x: 100, y: 100, w: 40, h: 40, score: 90, target: 0 };
