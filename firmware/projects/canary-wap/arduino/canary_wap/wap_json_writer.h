@@ -34,7 +34,7 @@
  *    writer begun with begin_measure() counts the bytes and writes none) and
  *    writes it into a buffer of that length (identity_json.h); one that keeps
  *    what fits rolls a refused piece back with rollback() (fleet_scan_cache.h
- *    keeps the adverts that fit).
+ *    keeps the shortest adverts that fit, each whole).
  *
  * Callers spell every call `wap_json::name(...)`, never `using namespace
  * wap_json;`: the sketch's translation unit opens with Arduino.h, and a
