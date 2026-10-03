@@ -53,7 +53,10 @@
 // lingering alert paged twice, and a second dwell_ended followed): the
 // sweep item's probe P8, here as a test, with the one-frame and back-for-good
 // cases and a table of every way back after a dwell, from one frame away to
-// past the lost timeout and the grace.
+// past the lost timeout and the grace. And (F186's review) a next frame with
+// a sighting of its own opens the visit from that sighting, not the held
+// one, and reset() forgets an owed presence_ended and a held sighting (the
+// Lab resets its core on every scene change).
 //
 // presence_fsm.cpp and voxel_tracker.cpp are linked verbatim; the only
 // stand-in is canary::cfg::detect(), the NVS-backed tuning, which is
