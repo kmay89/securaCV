@@ -775,7 +775,7 @@ MESH_ADDR_LINK = $(SRC_DIR)/airtime_governor.cpp $(SRC_DIR)/mesh_channel_policy.
                  $(SRC_DIR)/mesh_channel_hop.cpp $(SRC_DIR)/mesh_hub_election.cpp \
                  $(SRC_DIR)/mesh_crypto.cpp
 
-$(MESH_ADDR_BIN): $(MESH_ADDR_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
+$(MESH_ADDR_BIN): $(MESH_ADDR_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_ADDR_SRC) $(MESH_ADDR_LINK) -lcrypto
 
 .PHONY: run-mesh-address clean-mesh-address
@@ -796,7 +796,7 @@ clean: clean-mesh-address
 MESH_LIVE_BIN = test_mesh_liveness_wap
 MESH_LIVE_SRC = test_mesh_liveness_wap.cpp
 
-$(MESH_LIVE_BIN): $(MESH_LIVE_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
+$(MESH_LIVE_BIN): $(MESH_LIVE_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_LIVE_SRC) $(MESH_ADDR_LINK) -lcrypto
 
 .PHONY: run-mesh-liveness clean-mesh-liveness
@@ -817,7 +817,7 @@ clean: clean-mesh-liveness
 MESH_CMD_BIN = test_mesh_commands_wap
 MESH_CMD_SRC = test_mesh_commands_wap.cpp
 
-$(MESH_CMD_BIN): $(MESH_CMD_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(MESH_ADDR_LINK)
+$(MESH_CMD_BIN): $(MESH_CMD_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(MESH_ADDR_LINK)
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_CMD_SRC) $(MESH_ADDR_LINK) -lcrypto
 
 .PHONY: run-mesh-commands clean-mesh-commands

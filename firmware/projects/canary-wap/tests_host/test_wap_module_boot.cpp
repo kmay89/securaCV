@@ -712,7 +712,19 @@ static int test_every_read_only_open_of_csi_is_the_quiet_one() {
     const std::string code = without_comments(src);
     for (size_t at = code.find("begin_read_only("); at != std::string::npos;
          at = code.find("begin_read_only(", at + 1)) {
-      if (name != "csi_module_settings_nvs.h") ++quiet_calls;
+      if (name == "csi_module_settings_nvs.h") continue;
+      // The quiet opens of another namespace (mesh_network.cpp's of "mesh",
+      // sweep F164; test_mesh_liveness_wap.cpp holds those) are not this
+      // rule's: count a call only when it opens "csi" (no namespace
+      // argument, or one of the sketch's spellings of it).
+      const size_t close = code.find(')', at);
+      const std::string call = code.substr(at, close == std::string::npos ? 0 : close - at);
+      const size_t comma = call.find(',');
+      const std::string ns = comma == std::string::npos ? "" : trimmed(call.substr(comma + 1));
+      if (ns.empty() || ns == "SETTINGS_NS" || ns == "\"csi\"" || ns == "kNamespace" ||
+          ns == "csi_module_settings_nvs::kNamespace") {
+        ++quiet_calls;
+      }
     }
   }
   for (const char* must : {"csi_integration.cpp", "csi_settings_nvs.cpp", "csi_event_egress.cpp",

@@ -17,6 +17,7 @@
 #include "mesh_channel_policy.h"
 #include "loop_snapshot.h"        // F110: what the status routes read
 #include "csi_mem.h"
+#include "csi_module_settings_nvs.h"  // F164: begin_read_only(), the quiet open of "mesh"
 #include "airtime_governor.h"
 #include "log_level.h"
 #include "health_log.h"
@@ -1899,7 +1900,10 @@ static bool load_opera_config(bool* member_slots_without_opera) {
     return false;
   }
 
-  g_prefs.begin(NVS_NS, true);
+  // Read-only, through the quiet probe (sweep F164): a namespace never
+  // created opens nothing and logs nothing, and every read below is its
+  // default, as the refused open made it.
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);
   g_opera_config.enabled = g_prefs.getBool(NVS_ENABLED, false);
   size_t id_len = g_prefs.getBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
   size_t secret_len = g_prefs.getBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
@@ -2045,7 +2049,7 @@ static bool fold_duplicate_peers() {
 // write, nothing logged); the list is saved only when one is there, and
 // then the next boot finds none.
 static bool load_peers() {
-  g_prefs.begin(NVS_NS, true);
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);   // F164
   uint8_t stored = g_prefs.getUChar(NVS_PEER_COUNT, 0);
 
   if (stored > MAX_OPERA_SIZE) {
@@ -3136,7 +3140,7 @@ static void persist_revocations() {
 static void load_revocations() {
   mesh_revocation::init(g_revoked);
   if (!flash_encryption_enabled()) return;
-  g_prefs.begin(NVS_NS, true);
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);   // F164
   uint8_t blob[mesh_revocation::BLOB_MAX];
   size_t got = 0;
   if (g_prefs.isKey(NVS_REVOKED)) {
@@ -3261,7 +3265,7 @@ static void persist_rx_tombstones() {
 static void load_rx_tombstones() {
   g_rx_tomb_count = 0;
   memset(g_rx_tombs, 0, sizeof(g_rx_tombs));
-  g_prefs.begin(NVS_NS, true);
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);   // F164
   if (!g_prefs.isKey(NVS_RX_TOMBS)) {
     g_prefs.end();
     return;
@@ -3327,7 +3331,7 @@ bool save_replay_counters_before_reboot() {
 }
 
 bool load_replay_counters() {
-  g_prefs.begin(NVS_NS, true);
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);   // F164
   if (!g_prefs.isKey(NVS_REPLAY_KEY)) {
     g_prefs.end();
     return true;
@@ -3457,7 +3461,7 @@ static bool persist_tx_reservations() {
 static void load_tx_reservations() {
   uint64_t high = 0;
   Preferences prefs;
-  const bool opened = prefs.begin(NVS_NS, true);
+  const bool opened = csi_module_settings_nvs::begin_read_only(prefs, NVS_NS);   // F164
   if (!opened || !prefs.isKey(NVS_TX_RESERVED)) {
     if (opened) prefs.end();
     if (g_peer_count == 0) return;

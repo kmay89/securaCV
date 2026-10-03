@@ -36,6 +36,10 @@
 //   F116 a re-added member's last-seen counter started at 0, so a frame it
 //        signed before its removal, replayed at the re-pair, counted as the
 //        joiner heard and ended F100's COMPLETE resend.
+// And F164: a boot with no "mesh" namespace (the first after an NVS erase,
+// and every boot of a device that never turned the mesh on) logged an
+// error line for each read-only open of it (stubs/mesh_net's Preferences
+// models NVS namespaces and counts the refused opens); now it logs none.
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -2631,6 +2635,154 @@ void test_a_board_without_flash_encryption_keeps_its_stored_members() {
   std::printf("PASS a_board_without_flash_encryption_keeps_its_stored_members\n");
 }
 
+// ── F164: a boot opens no "mesh" namespace it does not find ─────────────
+
+// What one boot of `d` cost in NVS: Preferences opens tried (opened or
+// refused), their error lines, and IDF's quiet nvs_open() probes.
+struct BootCost {
+  unsigned begins, error_logs, probes;
+};
+BootCost boot_cost(Device& d) {
+  const unsigned b = host_sim::nvs_begins, e = host_sim::nvs_error_logs, p = host_sim::nvs_probes;
+  boot(d);
+  return {host_sim::nvs_begins - b, host_sim::nvs_error_logs - e, host_sim::nvs_probes - p};
+}
+bool holds_mesh_namespace(Device& d) {
+  become(d);
+  return host_sim::nvs_has_namespace(mn::NVS_NS);
+}
+
+void test_a_first_boot_with_no_mesh_namespace_logs_nothing() {
+  // After an NVS erase (and on any device with no opera that never turned
+  // the mesh on, at every boot) init() reads the opera, the deny-list (both
+  // with flash encryption on), the last-seen tombstones and the send-counter
+  // record, and the sketch's load_replay_counters() runs right after it.
+  // Before F164 each read-only open of the absent "mesh" namespace was
+  // refused and logged "nvs_open failed: NOT_FOUND" on a build that keeps
+  // Arduino's error log: five lines, three with flash encryption off. Now
+  // each asks IDF quietly first and opens nothing.
+  for (const bool fe : {true, false}) {
+    host_sim::flash_encrypted = fe;
+    A.nvs.clear();
+    A.espnow = host_sim::EspNow();
+    g_health.clear();
+    const BootCost first = boot_cost(A);
+    CHECK(first.error_logs == 0);              // no error line
+    CHECK(first.begins == 0);                  // no Preferences open at all
+    CHECK(first.probes == (fe ? 5u : 3u));     // every one of those reads asked
+    CHECK(!holds_mesh_namespace(A));           // and the boot created nothing
+    become(A);
+    CHECK(mn::g_mesh_state == mn::MESH_DISABLED);
+    CHECK(!mn::g_opera_config.configured && !mn::g_opera_config.enabled);
+    CHECK(mn::g_peer_count == 0 && mn::g_rx_tomb_count == 0 && mn::g_tx_high_signed == 0);
+    // The same at the next boot: nothing has written the namespace.
+    const BootCost again = boot_cost(A);
+    CHECK(again.error_logs == 0 && again.begins == 0 && !holds_mesh_namespace(A));
+  }
+  host_sim::flash_encrypted = true;
+  std::printf("PASS a_first_boot_with_no_mesh_namespace_logs_nothing\n");
+}
+
+void test_a_boot_that_finds_the_mesh_namespace_opens_it_as_before() {
+  // The mesh turned on once, with no opera: the setting is saved, which
+  // creates the namespace. Every read opens it as before F164, and none logs.
+  fresh_device(A);
+  become(A);
+  mn::set_enabled(true);
+  CHECK(holds_mesh_namespace(A));
+  const BootCost c = boot_cost(A);
+  CHECK(c.error_logs == 0);
+  CHECK(c.begins == 5);                        // the opera, the deny-list, the tombstones,
+                                               // the send counters, the last-seen record
+  become(A);
+  CHECK(mn::g_opera_config.enabled && !mn::g_opera_config.configured);
+  CHECK(mn::g_mesh_state == mn::MESH_NO_OPERA);
+  // And an opera loads whole, members and all (the rest of this suite).
+  fresh_opera({&A, &B});
+  CHECK(boots_holding(A, {&B}));
+  std::printf("PASS a_boot_that_finds_the_mesh_namespace_opens_it_as_before\n");
+}
+
+void test_an_nvs_fault_at_boot_keeps_its_error_lines() {
+  // The probe stands in for the open only when IDF says the namespace is
+  // absent. NVS refusing every open (a fault, not a new device) still goes
+  // to Preferences, which logs it, once per read as before F164; the mesh
+  // comes up as with nothing stored.
+  fresh_device(A);
+  host_sim::nvs_open_fails = true;
+  const BootCost c = boot_cost(A);
+  host_sim::nvs_open_fails = false;
+  CHECK(c.begins == 5 && c.error_logs == 5);
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_DISABLED && !mn::g_opera_config.configured);
+  std::printf("PASS an_nvs_fault_at_boot_keeps_its_error_lines\n");
+}
+
+// mesh_network.cpp with its comments blanked (string literals kept).
+std::string mesh_code_without_comments(const std::string& s) {
+  std::string out = s;
+  for (size_t i = 0; i < s.size();) {
+    if (s.compare(i, 2, "//") == 0) {
+      while (i < s.size() && s[i] != '\n') out[i++] = ' ';
+    } else if (s.compare(i, 2, "/*") == 0) {
+      const size_t end = s.find("*/", i + 2);
+      const size_t stop = end == std::string::npos ? s.size() : end + 2;
+      for (; i < stop; ++i) if (out[i] != '\n') out[i] = ' ';
+    } else if (s[i] == '"') {
+      for (++i; i < s.size() && s[i] != '"'; ++i) if (s[i] == '\\') ++i;
+      ++i;
+    } else {
+      ++i;
+    }
+  }
+  return out;
+}
+
+// The read-only opens of "mesh" that do not go through begin_read_only():
+// `.begin(NVS_NS, <anything ending in true>)`, whitespace and comments aside.
+size_t plain_read_only_mesh_opens(const std::string& src) {
+  const std::string code = mesh_code_without_comments(src);
+  std::string squashed;
+  for (char c : code) if (c != ' ' && c != '\t' && c != '\n' && c != '\r') squashed += c;
+  size_t n = 0;
+  for (size_t at = squashed.find(".begin(NVS_NS,true)"); at != std::string::npos;
+       at = squashed.find(".begin(NVS_NS,true)", at + 1)) ++n;
+  return n;
+}
+
+void test_every_read_only_open_of_mesh_is_the_quiet_one() {
+  // The boot above reaches five of them; load_peers() runs only with an
+  // opera, so only with the namespace there. The source holds all six.
+  std::FILE* f = std::fopen(MESH_NETWORK_CPP, "rb");
+  CHECK(f != nullptr);
+  std::string src;
+  char buf[4096];
+  for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) src.append(buf, n);
+  std::fclose(f);
+  CHECK(src.size() > 100000);
+  CHECK(plain_read_only_mesh_opens(src) == 0);
+  const std::string quiet = "csi_module_settings_nvs::begin_read_only(";
+  std::vector<size_t> sites;
+  const std::string code = mesh_code_without_comments(src);
+  for (size_t at = code.find(quiet); at != std::string::npos; at = code.find(quiet, at + 1)) {
+    sites.push_back(at);
+  }
+  CHECK(sites.size() == 6);
+  // Each one, put back as the plain open it replaced, is caught.
+  for (size_t at : sites) {
+    const size_t open = at + quiet.size();
+    const size_t comma = code.find(',', open);
+    const size_t close = code.find(')', comma);
+    const std::string handle = code.substr(open, comma - open);
+    std::string mutated = code;
+    mutated.replace(at, close + 1 - at, handle + ".begin(NVS_NS, /*readOnly=*/true)");
+    CHECK(plain_read_only_mesh_opens(mutated) == 1);
+  }
+  CHECK(plain_read_only_mesh_opens("g_prefs.begin(NVS_NS, false); // g_prefs.begin(NVS_NS, true);") == 0);
+  CHECK(plain_read_only_mesh_opens("prefs.begin( NVS_NS ,\n true );") == 1);
+  std::printf("PASS every_read_only_open_of_mesh_is_the_quiet_one\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2746,6 +2898,12 @@ const Test kTests[] = {
     {"a_boot_removes_the_members_an_older_leave_left", test_a_boot_removes_the_members_an_older_leave_left},
     {"a_board_without_flash_encryption_keeps_its_stored_members",
      test_a_board_without_flash_encryption_keeps_its_stored_members},
+    {"a_first_boot_with_no_mesh_namespace_logs_nothing",
+     test_a_first_boot_with_no_mesh_namespace_logs_nothing},
+    {"a_boot_that_finds_the_mesh_namespace_opens_it_as_before",
+     test_a_boot_that_finds_the_mesh_namespace_opens_it_as_before},
+    {"an_nvs_fault_at_boot_keeps_its_error_lines", test_an_nvs_fault_at_boot_keeps_its_error_lines},
+    {"every_read_only_open_of_mesh_is_the_quiet_one", test_every_read_only_open_of_mesh_is_the_quiet_one},
 };
 
 }  // namespace liveness
