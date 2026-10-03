@@ -78,6 +78,7 @@ const HARNESS = `<!doctype html><meta charset="utf-8">
 <script type="module">
 import { DeviceScene, BUILDERS, M4, turnedShadow } from "/canary-local/assets/scene3d.js";
 import { upgradeRealShape } from "/canary-local/assets/real-shapes.js";
+import { parseSTL } from "/canary-local/assets/stl.js";
 window.__probe = { status: "running", results: {} };
 const frames = (n) => new Promise((ok) => {
   const step = () => (n-- <= 0 ? ok() : requestAnimationFrame(step));
@@ -129,6 +130,8 @@ try {
   g.fillStyle = "#ff0000"; g.fillRect(0, 440, 120, 120);
   g.fillStyle = "#00ff00"; g.fillRect(360, 440, 120, 120);
   g.fillStyle = "#0000ff"; g.fillRect(0, 680, 120, 120);
+  // the stand's own mesh, to know its part by (not by the flag under test)
+  const standMesh = parseSTL(await (await fetch("enclosures/preview/canary_dash_display_stand.stl")).arrayBuffer()).mesh;
   const marks = async (panel, pose) => {
     const cv = document.createElement("canvas");
     cv.style.cssText = "width:420px;height:420px";
@@ -137,7 +140,8 @@ try {
     await BUILDERS["canary-display-dash"](scene);
     const real = await upgradeRealShape(scene, "canary-display-dash");
     // the stand in a color nothing else here has, so its pixels can be told
-    for (const p of scene.parts) if (p.stand) { p.role = null; p.color = [1, 0, 1]; p.gloss = 0; }
+    const stands = scene.parts.filter((p) => p.count === standMesh.idx.length && p.src.pos.length === standMesh.pos.length);
+    for (const p of stands) { p.role = null; p.color = [1, 0, 1]; p.gloss = 0; }
     scene.glass = panel;
     scene.autoSway = false;
     if (pose === "front") { scene.rot = { x: 0, y: 0 }; scene.home = { x: 0, y: 0 }; }
@@ -146,11 +150,14 @@ try {
     const px = new Uint8Array(W * H * 4);
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
     const c = { r: [0, 0, 0], g: [0, 0, 0], b: [0, 0, 0] };   // sum x, sum y (up), count
-    let stand = 0, foot = H, top = -1;                         // rows counted up from the bottom
+    let stand = 0, foot = H, top = -1, left = W, right = -1;  // rows counted up from the bottom
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const i = (y * W + x) * 4, R = px[i], G = px[i + 1], B = px[i + 2];
-        if (px[i + 3] === 255) { foot = Math.min(foot, y); top = Math.max(top, y); }
+        if (px[i + 3] === 255) {
+          foot = Math.min(foot, y); top = Math.max(top, y);
+          left = Math.min(left, x); right = Math.max(right, x);
+        }
         if (R - G > 60 && B - G > 60 && Math.abs(R - B) < 40) { stand++; continue; }
         // a mark is its channel standing 40 clear of the other two (the
         // studio light adds white to every channel; the margin survives it)
@@ -169,7 +176,8 @@ try {
     scene.dispose?.();
     cv.remove();
     const at = (k) => (c[k][2] ? [c[k][0] / c[k][2], c[k][1] / c[k][2]] : null);
-    return { real, turn: scene.turn, r: at("r"), g: at("g"), b: at("b"), stand, foot, top, shadowRow };
+    return { real: real && stands.length === 1, turn: scene.turn, r: at("r"), g: at("g"), b: at("b"),
+             stand, foot, top, left, right, W, shadowRow };
   };
   window.__probe.turned = await marks({ w: 800, h: 480 }, "front");
   window.__probe.unturned = await marks(null, "front");
@@ -229,7 +237,7 @@ const shape = (m) => {
   const across = m.g[0] - m.r[0], down = m.r[1] - m.b[1];   // readPixels y runs up
   return { across, down, ratio: down / across, row: Math.abs(m.g[1] - m.r[1]), col: Math.abs(m.b[0] - m.r[0]) };
 };
-const near = (v, want) => Math.abs(v / want - 1) < 0.2;
+const near = (v, want, tol = 0.2) => Math.abs(v / want - 1) < tol;
 const a47 = (what, m, check) => {
   if (!m || !m.real) return fail(`A47 ${what}: the sheet's real dash did not load (${JSON.stringify(m)})`);
   const t = shape(m);
@@ -237,7 +245,7 @@ const a47 = (what, m, check) => {
   if (msg) return fail(`A47 ${what}: ${msg}`);
   const f = (v) => (typeof v === "number" ? v.toFixed(2) : v);
   console.log(`✓ A47 ${what} (down/across ${f(t?.ratio)}, stand pixels ${m.stand}, foot row ${m.foot}, `
-    + `shadow center row ${f(m.shadowRow)}, body ${m.top - m.foot} rows)`);
+    + `shadow center row ${f(m.shadowRow)}, body ${m.top - m.foot} rows, middle ${f((m.left + m.right) / 2)} of ${m.W})`);
 };
 const turnedCase = (t, m) => {
   if (m.turn !== 1) return "the scene did not turn the case for a 480x800 glass on an 800x480 panel";
@@ -258,7 +266,12 @@ a47("face-on: a 480x800 glass reads upright on the turned case, out of its stand
   if (!(t.across > 0 && t.down > 0 && t.row < 0.1 * t.across && t.col < 0.1 * t.down)) {
     return `the turned glass does not read upright (red ${m.r}, green ${m.g}, blue ${m.b})`;
   }
-  if (!near(t.ratio, GLASS_RATIO)) return `the turned glass is not at its proportions (down/across ${t.ratio.toFixed(2)}, the canvas's ${GLASS_RATIO.toFixed(2)})`;
+  // within 10%: the glass faces the camera square (a case left reclined in
+  // the turn reads 15% off)
+  if (!near(t.ratio, GLASS_RATIO, 0.1)) return `the turned glass is not at its proportions (down/across ${t.ratio.toFixed(2)}, the canvas's ${GLASS_RATIO.toFixed(2)})`;
+  // seated face-on at the origin: the camera's axis runs through its middle
+  const mid = (m.left + m.right) / 2;
+  if (Math.abs(mid - m.W / 2) > 0.03 * m.W) return `the turned case is not standing where it was seated (its middle at ${mid}, the frame's at ${m.W / 2})`;
   return null;
 });
 a47("at the sheet's pose: the turned glass reads upright, the case out of its stand", probe.turnedHome, (t, m) => {
