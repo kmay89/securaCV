@@ -442,7 +442,7 @@ function readJs(src) {
 }
 
 const IDENT = String.raw`[A-Za-z_$][\w$]*`;
-const esc = (s) => s.replace(/\$/g, "\\$");
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const lineOf = (src, at) => src.slice(0, at).split("\n").length;
 // leading whitespace and comments off, trailing whitespace off
 const trivia = (s) => s.replace(/^(?:\s|\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, "").trimEnd();

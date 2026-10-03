@@ -120,12 +120,17 @@ function bridgeOver(built, { distPrefix = "/canary-local/emulator/dist/" } = {})
 
   // One request body in, one reply out, never a throw: an error is answered,
   // not a 500, so a page that catches the throw (as it would a wasm trap)
-  // does not also leave a failed load in its console.
+  // does not also leave a failed load in its console. The reply carries an
+  // Error's message (the refusal this bridge, cores.js or JSON.parse wrote),
+  // never the exception itself: its stack, and anything thrown that is not an
+  // Error, stay in this server's log.
   function respond(text) {
     try {
       return answer(JSON.parse(text));
     } catch (e) {
-      return { error: String((e && e.message) || e) };
+      if (e instanceof Error) return { error: e.message };
+      console.error("native core bridge: a request threw a non-Error:", e);
+      return { error: "native core bridge: the request failed (see the probe server's log)" };
     }
   }
 
