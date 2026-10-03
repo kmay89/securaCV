@@ -25,9 +25,12 @@
 //     replaced did not), and opening Settings loads it;
 //   - every route the page names is one a source under firmware/canary or
 //     firmware/common registers, method included where the call names one,
-//     matched the way esp_http_server's httpd_uri_match_wildcard matches
-//     (a `*` counts only at a template's end), except the gated Chirp and
-//     Bluetooth routes and the one gap named in KNOWN_UNMATCHED;
+//     matched by esp_http_server's own httpd_uri_match_wildcard (copied
+//     verbatim into idf_uri_route_oracle.c; a `*` counts only at a
+//     template's end), except the gated Chirp and Bluetooth routes (the one
+//     gap F198 named, POST /api/logs/<seq>/ack against "/api/logs/*/ack", is
+//     served since F214; test_dashboard_route_match.test.js holds every call
+//     to the route it means, in registration order, on both trees);
 //   - and, so the gates stay true, nothing registers an /api/bluetooth
 //     route: when one does, that case fails and the gate can go.
 // The functions are lifted out of the C++ raw string by literal markers and
@@ -402,13 +405,11 @@ function registrations() {
   return out;
 }
 
-// esp_http_server's httpd_uri_match_wildcard, the canary servers' matcher:
-// a `*` at the end of a template matches anything after it, and anywhere
-// else it is a literal character.
-function matches(template, uri) {
-  if (template.endsWith("*")) return uri.startsWith(template.slice(0, -1));
-  return template === uri;
-}
+// esp_http_server's httpd_uri_match_wildcard, the canary servers' matcher,
+// asked of the oracle that holds IDF's function verbatim: a `*` at the end of
+// a template matches anything after it, a `?` makes the character before it
+// optional, and anywhere else either is a literal character.
+const { match } = require("./dashboard_route_tables.js");
 
 // Every /api/... string literal in the page's script: the path (a template
 // literal's ${...} read as one segment, `1`), and the method when the
@@ -436,29 +437,38 @@ function pageRoutes() {
 // Gated behind a status read that answers on a firmware serving them (F176,
 // F198); premise cases below hold that nothing serves them today.
 const GATED = ["/api/chirp", "/api/bluetooth"];
-// A route the page names that the tree registers in a form the matcher does
-// not take: POST /api/logs/<seq>/ack against "/api/logs/*/ack" (a `*` that is
-// not the template's last character is a literal to httpd_uri_match_wildcard).
-// Handed up from F198; not run on a device.
-const KNOWN_UNMATCHED = ["POST /api/logs/1/ack"];
+// Routes the page names that the tree registers in a form the matcher does
+// not take. Empty since F214: POST /api/logs/<seq>/ack, registered as
+// "/api/logs/*/ack" (a `*` that is not the template's last character is a
+// literal to httpd_uri_match_wildcard), is "/api/logs/*" now.
+const KNOWN_UNMATCHED = [];
 
 test("every route the page names is one the tree serves", () => {
   const regs = registrations();
   assert.ok(regs.length > 50, "the registrations were found");
+  const routes = pageRoutes().filter((r) => !GATED.some((g) => r.route === g || r.route.startsWith(g + "/")));
+  const hit = match(routes.flatMap((r) => regs.map((g) => [g.uri, r.route])));
   const missing = [];
-  for (const r of pageRoutes()) {
-    if (GATED.some((g) => r.route === g || r.route.startsWith(g + "/"))) continue;
-    const served = regs.filter((g) => matches(g.uri, r.route) && (r.method === null || g.method === r.method));
+  routes.forEach((r, i) => {
+    const served = regs.filter((g, j) => hit[i * regs.length + j] && (r.method === null || g.method === r.method));
     const key = `${r.method || "ANY"} ${r.route}`.replace(/^ANY /, "");
     if (served.length === 0 && !KNOWN_UNMATCHED.includes(key)) missing.push(`${key} (page line ${r.at}: ${r.raw})`);
-  }
+  });
   assert.deepStrictEqual(missing, [], "the page names routes nothing serves");
-  // The known gap is still a gap (drop it from the list the day it is not).
+  // A known gap is still a gap (drop it from the list the day it is not).
   for (const k of KNOWN_UNMATCHED) {
     const [method, route] = k.split(" ");
     assert.ok(pageRoutes().some((r) => r.route === route && r.method === method), `the page still names ${k}`);
-    assert.ok(!regs.some((g) => matches(g.uri, route) && g.method === method), `${k} is served now`);
+    const gone = match(regs.map((g) => [g.uri, route]));
+    assert.ok(!regs.some((g, j) => gone[j] && g.method === method), `${k} is served now`);
   }
+});
+
+test("the per-entry Acknowledge is served (F214: the gap F198 named)", () => {
+  const regs = registrations().filter((g) => g.method === "POST");
+  const hit = match(regs.map((g) => [g.uri, "/api/logs/42/ack"]));
+  assert.deepStrictEqual(regs.filter((g, j) => hit[j]).map((g) => g.uri), ["/api/logs/*"],
+    "POST /api/logs/42/ack matches exactly one registration, \"/api/logs/*\"");
 });
 
 // The page's Chirp and Bluetooth sections (their script) and panels (their

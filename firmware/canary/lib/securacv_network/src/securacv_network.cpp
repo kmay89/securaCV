@@ -1851,11 +1851,18 @@ void ScvNetworkManager::registerHttpHandlers(httpd_handle_t server) {
   httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs };
   register_route(server, &logs);
 
-  httpd_uri_t log_ack = { .uri = "/api/logs/*/ack", .method = HTTP_POST, .handler = handle_log_ack };
-  register_route(server, &log_ack);
-
   httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all };
   register_route(server, &ack_all);
+
+  // POST /api/logs/<seq>/ack. httpd_uri_match_wildcard takes a `*` only as a
+  // template's last character ("/api/logs/*/ack" matched no request: sweep
+  // F214), so the route is "/api/logs/*" and handle_log_ack reads the rest.
+  // It goes after every other POST /api/logs/... route: httpd answers with
+  // the first match in registration order, and refuses a later template
+  // this one already matches (firmware/tests_host/
+  // test_dashboard_route_match.test.js holds both).
+  httpd_uri_t log_ack = { .uri = "/api/logs/*", .method = HTTP_POST, .handler = handle_log_ack };
+  register_route(server, &log_ack);
 
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot };
   register_route(server, &reboot);
@@ -2824,18 +2831,42 @@ static esp_err_t handle_logs(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// The <seq> of POST /api/logs/<seq>/ack (sweep F214), read from the request
+// target: what follows its first "/api/logs/" must be decimal digits that fit
+// a uint32_t, then "/ack", then the end of the path (a query or fragment may
+// follow). Anything else is no log-ack request. canary_wap.ino carries the
+// same function; firmware/tests_host/test_log_ack_route.cpp runs both.
+static bool log_ack_seq_from_uri(const char* uri, uint32_t* seq) {
+  static const char kPrefix[] = "/api/logs/";
+  const char* p = strstr(uri, kPrefix);  // origin form: at 0; absolute form: after the authority
+  if (p == nullptr) return false;
+  p += sizeof(kPrefix) - 1;
+  const char* const digits = p;
+  uint32_t value = 0;
+  while (*p >= '0' && *p <= '9') {
+    const uint32_t d = (uint32_t)(*p - '0');
+    if (value > (UINT32_MAX - d) / 10u) return false;  // past uint32_t
+    value = value * 10u + d;
+    ++p;
+  }
+  if (p == digits || strncmp(p, "/ack", 4) != 0) return false;
+  p += 4;
+  if (*p != '\0' && *p != '?' && *p != '#') return false;
+  *seq = value;
+  return true;
+}
+
 static esp_err_t handle_log_ack(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  const char* uri = req->uri;
-  const char* seq_start = strstr(uri, "/logs/");
-  if (!seq_start) {
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid URI");
+  // Registered as POST /api/logs/*: a path that is not /api/logs/<seq>/ack
+  // gets the 404 httpd gives a request no route matches.
+  uint32_t seq = 0;
+  if (!log_ack_seq_from_uri(req->uri, &seq)) {
+    return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, nullptr);
   }
-  seq_start += 6;
-  uint32_t seq = atoi(seq_start);
 
   bool success = acknowledge_log_entry(seq, ACK_STATUS_ACKNOWLEDGED, "");
 

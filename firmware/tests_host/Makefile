@@ -380,6 +380,33 @@ CHIRPPANEL_JS = test_canary_community_panel.test.js
 # and a scan holds every route the page names to one a source registers.
 DASHROUTES_JS = test_canary_dashboard_routes.test.js
 
+# POST /api/logs/<seq>/ack on both trees (repo sweep F214). Both registered
+# "/api/logs/*/ack", which esp_http_server's httpd_uri_match_wildcard never
+# matches (a `*` counts only at a template's end), so the per-entry
+# Acknowledge answered 404 on both dashboards. They register "/api/logs/*"
+# after the other POST /api/logs/... routes and the handler reads the rest.
+#   - test_log_ack_route.cpp runs both trees' log_ack_seq_from_uri() and
+#     handle_log_ack(), cut verbatim out of securacv_network.cpp and
+#     canary_wap.ino by cut_functions.awk, over stand-ins: an entry's path
+#     acknowledges it, any other path the route is handed answers httpd's 404.
+#   - test_dashboard_route_match.test.js reads both trees' primary route
+#     tables in registration order (dashboard_route_tables.js) and asks
+#     idf_uri_route_oracle (IDF's httpd_uri_match_wildcard, copied verbatim,
+#     and the first-match / refuse-a-duplicate loop around it) which route
+#     answers each request both dashboards make. The oracle is C: IDF's
+#     function names a parameter `template`. It is built with
+#     -Wno-sign-compare, as IDF builds it (the copy is not edited).
+LOGACK_PIO_SRC  = ../canary/lib/securacv_network/src/securacv_network.cpp
+LOGACK_WAP_SRC  = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
+LOGACK_SIGS     = static bool log_ack_seq_from_uri(const char* uri, uint32_t* seq) {|static esp_err_t handle_log_ack(httpd_req_t* req) {
+LOGACK_PIO_INC  = $(BUILD_DIR)/log_ack_pio.inc
+LOGACK_WAP_INC  = $(BUILD_DIR)/log_ack_wap.inc
+LOGACK_BIN      = $(BUILD_DIR)/test_log_ack_route
+ROUTE_ORACLE    = $(BUILD_DIR)/idf_uri_route_oracle
+CC             ?= cc
+ORACLE_CFLAGS   = -std=c11 -O2 -Wall -Wextra -Wno-sign-compare -Werror
+ROUTEMATCH_JS   = test_dashboard_route_match.test.js
+
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
 # provision_core byte-math (A-only captive DNS, probe classification, JSON
@@ -902,6 +929,18 @@ $(CHAINPERSIST_BIN): test_chain_persist.cpp $(CHAINPERSIST_INC) $(CHAINPERSIST_H
 	$(CXX) $(CXXFLAGS) -I stubs/witness_glue -I ../canary/lib/securacv_witness/src \
 	    -I ../canary/include -I ../common -I $(BUILD_DIR) test_chain_persist.cpp -o $@
 
+$(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@
+
+$(LOGACK_WAP_INC): $(LOGACK_WAP_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_WAP_SRC) > $@.tmp && mv $@.tmp $@
+
+$(LOGACK_BIN): test_log_ack_route.cpp $(LOGACK_PIO_INC) $(LOGACK_WAP_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I $(BUILD_DIR) test_log_ack_route.cpp -o $@
+
+$(ROUTE_ORACLE): idf_uri_route_oracle.c Makefile | $(BUILD_DIR)
+	$(CC) $(ORACLE_CFLAGS) idf_uri_route_oracle.c -o $@
+
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
@@ -961,7 +1000,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1029,7 +1068,9 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(TIMELINE_JS)
 	$(NODE) --test $(HEALTHLOG_JS)
 	$(NODE) --test $(CHIRPPANEL_JS)
-	$(NODE) --test $(DASHROUTES_JS)
+	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
+	./$(LOGACK_BIN)
+	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(ROUTEMATCH_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)
