@@ -88,7 +88,9 @@ canary-local/
     web/emu-shell.js    the bench: power, LAN, fleet, serial, a finger
     web/bench.js        the power plane: cable, battery, switch, straps,
                         hardwired LEDs, ROM banners (DOM-free, tested)
-    web/harness.html    bare oscilloscope page (dev + CI boot test)
+    web/harness.html    bare oscilloscope page (dev + CI boot test);
+                        ?rotation=0..3 boots the dash glass turned (F184)
+    test/               native checks of emulator code (g++, no emsdk)
     dist/               committed artifacts + build stamps (*.meta.json)
 ```
 
@@ -891,6 +893,12 @@ fails on byte drift.
 ## 8. Testing
 
 - `emulator/web/harness.html` — bare boot bench (also the CI probe).
+- `emulator/test/glass_turn.sh` — the turned dash glass, natively (F184):
+  the real `ui/lvgl_port.cpp` and the emulator's real display HAL built with
+  g++ against the pinned LVGL 8.4; at every quarter turn the framebuffer the
+  page reads equals the scene rendered unturned, pixel for pixel, and a fed
+  touch comes back out of LVGL's pointer where it went in. CI runs it after
+  the dist build fetches LVGL.
 - `tests/canary_local.test.js` — Node tests for the DOM-free logic:
   the witness signing canonical is pinned against `trust.cpp`'s locked
   format (and a WebCrypto round-trip verifies a real signature over
@@ -941,6 +949,10 @@ fails on byte drift.
   DNS A-only, the 302, GET / byte-for-byte, wrong key / absent SSID / 400
   from the firmware, credentials only on success, the AP torn down, the
   boot finishing), then the fleet page's phone end to end under its CSP.
+  Every scene it reads keeps every line on the glass and none cut, and it
+  walks the portal again on the dash glass turned portrait (`?rotation=1`,
+  480x800, F184), holding the QR card over its halo's center with its sides
+  inside the stroke (`tests/onboard_glass.mjs`).
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /
