@@ -48,7 +48,12 @@ device_id[48], so 47 characters) with each product's real manufacturer,
 model (every flavor's) and firmware version, devObj and availObj cut at
 their own declared sizes as snprintf cuts them, and each must fit the p[]
 buffer it is formatted into: at 768 bytes the Vision's Presence JSON was
-cut off mid-object from a 40-character id.
+cut off mid-object from a 40-character id. And devObj and availObj
+themselves, formatted whole with their real format strings for that id and
+every flavor's model, must fit the buffers they are declared with (sweep
+F181): at 256 bytes the Vision's and the Sense's device object was cut
+mid-JSON from a 46- and a 44-character id (39 on the Sense wellbeing build),
+which made every entity's config invalid.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_ha_discovery_binary_sensors.py' -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests)
@@ -87,12 +92,25 @@ def c_string(body: str) -> str:
     return "".join(out)
 
 
+def named_format(src: str, name: str) -> str:
+    """The decoded literal of `static constexpr char <name>[] = "..." "...";`."""
+    m = re.search(r"\bconstexpr char %s\[\] =" % re.escape(name), src)
+    assert m, name
+    return c_string(src[m.end():src.index(";", m.end())])
+
+
 def snprintf_call(src: str, start: int) -> tuple[str, list[str]]:
     """The format (decoded) and the argument expressions of the snprintf call
     whose first literal follows `start`: literals up to the first token that
-    is not one, then the comma-separated arguments up to the closing paren."""
+    is not one, then the comma-separated arguments up to the closing paren.
+    A format named by a constant (the device object's, sweep F181) is that
+    constant's literal."""
     i = src.index("snprintf(", start)
     j = src.index(",", src.index(",", i) + 1) + 1  # past the buffer and its size
+    named = re.compile(r"\s*(k[A-Z]\w*)\s*,").match(src, j)
+    if named:
+        _, args = snprintf_call(src[:j] + '"",' + src[named.end():], start)
+        return named_format(src, named.group(1)), args
     k = j
     while True:
         m = re.compile(r'\s*(#[^\n]*\n\s*)*"').match(src, k)
@@ -133,17 +151,26 @@ def discovery_source(product: str) -> str:
     return (FIRMWARE / "projects" / product / "src/ha/ha_discovery.cpp").read_text(encoding="utf-8")
 
 
+def device_objects(product: str, ids: dict[str, str]) -> dict[str, tuple[str, int]]:
+    """devObj and availObj, each formatted whole with its real format string
+    and arguments, and the size of the buffer it is declared with."""
+    src = discovery_source(product)
+    out = {}
+    for obj in ("devObj", "availObj"):
+        decl = re.search(r"char %s\[(\d+)\];" % obj, src)
+        fmt, args = snprintf_call(src, decl.start())
+        out[obj] = (fill(fmt, args, ids), int(decl.group(1)))
+    return out
+
+
 def announcements(product: str, ids: dict[str, str]) -> dict[str, tuple[str, int]]:
     """object id -> (the bytes each binary_sensor announcement formats, as
     text, and the size of the p[] buffer it is formatted into), with devObj
     and availObj cut at their declared sizes the way snprintf cuts them."""
     src = discovery_source(product)
     values = dict(ids)
-    for obj in ("devObj", "availObj"):
-        decl = re.search(r"char %s\[(\d+)\];" % obj, src)
-        fmt, args = snprintf_call(src, decl.start())
-        whole = fill(fmt, args, ids).encode("utf-8")
-        values[obj] = whole[:int(decl.group(1)) - 1].decode("utf-8", errors="ignore")
+    for obj, (text, size) in device_objects(product, ids).items():
+        values[obj] = text.encode("utf-8")[:size - 1].decode("utf-8", errors="ignore")
     found = {}
     for m in re.finditer(r'char t\[\d+\], p\[(\d+)\];\s*'
                          r'topic_for\("binary_sensor", "([a-z_]+)", t, sizeof\(t\)\);', src):
@@ -152,6 +179,40 @@ def announcements(product: str, ids: dict[str, str]) -> dict[str, tuple[str, int
     # every binary_sensor announcement was matched with its buffer declaration
     assert len(found) == src.count('topic_for("binary_sensor",'), product
     return found
+
+
+def topic_values(product: str, device_id: str) -> dict[str, str]:
+    """`topics.<name>` -> the topic build_topics (topics.h) writes for `device_id`."""
+    src = (FIRMWARE / "projects" / product / "include/canary/topics.h").read_text(encoding="utf-8")
+    found = re.findall(r'snprintf\(t\.(\w+),\s*sizeof\(t\.\1\),\s*"([^"]*)",\s*device_id\);', src)
+    assert found and all(fmt.count("%s") == 1 for _, fmt in found), product
+    return {f"topics.{name}": fmt.replace("%s", device_id) for name, fmt in found}
+
+
+def every_announcement(product: str, ids: dict[str, str]) -> tuple[dict[str, tuple[str, int]], list[str]]:
+    """Every announcement whose arguments are all known (the device id, a
+    topic, availObj, devObj or a literal): "<component>/<object id>" -> (the
+    payload, the p[] size), with devObj and availObj whole; and the
+    announcements left out, whose arguments come from a table (the number
+    entities, the Vision's watch profile select). Those check their own
+    snprintf result and skip a payload that does not fit, with a log line."""
+    src = discovery_source(product)
+    values = dict(ids)
+    for obj, (text, _) in device_objects(product, ids).items():
+        values[obj] = text
+    found, table = {}, []
+    for m in re.finditer(r'char t\[\d+\], p\[(\d+)\][^;]*;\s*(?:[^\n]*\n\s*)*?'
+                         r'topic_for\("([a-z_]+)", ("[a-z_]+"|[\w.]+), t, sizeof\(t\)\);', src):
+        component, oid = m.group(2), m.group(3).strip('"')
+        fmt, args = snprintf_call(src, m.end())
+        if not m.group(3).startswith('"') or any(a not in values and not re.fullmatch(r'"[^"]*"', a)
+                                                 for a in args):
+            table.append(f"{component}/{oid}")
+            continue
+        found[f"{component}/{oid}"] = (fill(fmt, args, values), int(m.group(1)))
+    # every announcement was matched with its buffer declaration
+    assert len(found) + len(table) == src.count("topic_for(\"") , product
+    return found, table
 
 
 def binary_sensors(product: str) -> dict[str, dict]:
@@ -300,6 +361,54 @@ class EveryBinarySensorTurnsOnAndOff(unittest.TestCase):
                         with self.subTest(product=product, model=model, sensor=oid):
                             self.assertLess(len(text.encode("utf-8")), size,
                                             f"snprintf cuts the {oid} discovery JSON at {size - 1} bytes")
+
+    def test_the_device_object_fits_for_the_longest_device_id(self):
+        # Sweep F181: devObj (and availObj) formatted whole, with the real
+        # format strings, the longest id runtime_config.h accepts and each
+        # product's manufacturer, every flavor's model and its firmware
+        # version, must fit the buffer it is declared with. At 256 bytes the
+        # Vision's was cut from a 46-character id and the Sense's from 44 (39
+        # on the wellbeing build): snprintf ends it mid-JSON, so every entity
+        # that embeds it publishes invalid JSON. The announcements above cut
+        # it at its size the way snprintf does; this holds that nothing is cut.
+        checked = set()
+        for product in PRODUCTS:
+            did = longest_device_id(product)
+            for manufacturer in string_constants(product, "MANUFACTURER"):
+                for model in string_constants(product, "MODEL"):
+                    ids = {"DEVICE_ID": did, "topics.status": f"securacv/{did}/status",
+                           "MANUFACTURER": manufacturer, "MODEL": model,
+                           "CANARY_FW_VERSION": firmware_version(product)}
+                    for obj, (text, size) in device_objects(product, ids).items():
+                        with self.subTest(product=product, model=model, object=obj):
+                            json.loads("{%s}" % text)  # whole, it is the JSON members it should be
+                            self.assertIn(did, text)
+                            self.assertLess(len(text.encode("utf-8")), size,
+                                            f"snprintf cuts {obj} at {size - 1} bytes "
+                                            f"({len(text.encode('utf-8'))} needed)")
+                        checked.add((product, model, obj))
+        self.assertEqual(len(checked), 2 * sum(len(string_constants(p, "MODEL")) for p in PRODUCTS))
+
+    def test_every_announcement_fits_its_buffer_for_the_longest_device_id(self):
+        # With the device object whole (sweep F181), each payload carries all
+        # of it: every announcement built from the device id, topics and the
+        # two objects must still fit its p[] for the longest id and every
+        # flavor's model, and parse as JSON. The table-driven ones are named.
+        for product in PRODUCTS:
+            did = longest_device_id(product)
+            for manufacturer in string_constants(product, "MANUFACTURER"):
+                for model in string_constants(product, "MODEL"):
+                    ids = {"DEVICE_ID": did, **topic_values(product, did), "MANUFACTURER": manufacturer,
+                           "MODEL": model, "CANARY_FW_VERSION": firmware_version(product)}
+                    found, table = every_announcement(product, ids)
+                    self.assertTrue(all(t.startswith(("number/", "select/")) for t in table), table)
+                    self.assertGreaterEqual(len(found), 12, product)
+                    for name, (text, size) in found.items():
+                        with self.subTest(product=product, model=model, announcement=name):
+                            entity = json.loads(text)
+                            self.assertEqual(entity["device"]["model"], model)
+                            self.assertLess(len(text.encode("utf-8")), size,
+                                            f"snprintf cuts the {name} discovery JSON at {size - 1} bytes")
 
     def test_the_old_template_never_matched(self):
         # what the three products announced before HA25, rendered the same way
