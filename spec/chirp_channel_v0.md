@@ -992,15 +992,37 @@ The Chirp Channel operates on **community trust**:
 
 ### 11.2 NVS Storage
 
+The canary-wap keeps these keys in NVS namespace `chirp` (`NVS_CHIRP_NS`,
+`nvs_store.h`):
+
 ```
-NVS Key              | Size    | Description
----------------------|---------|---------------------------
-chirp_enabled        | 1 byte  | Feature flag
-chirp_relay          | 1 byte  | Relay enabled
-chirp_notify_sound   | 1 byte  | Sound enabled
-chirp_urgency_filter | 1 byte  | Min urgency to show
-// Session identity NOT stored (regenerated each boot)
+NVS Key      | Type   | Written by                        | Description
+-------------|--------|-----------------------------------|------------------------------------------
+chirp_relay  | uint8  | save_settings() (chirp_channel)   | 1: relay others' chirps (default 1)
+chirp_filter | uint8  | save_settings() (chirp_channel)   | lowest urgency taken: 0 info, 1 caution, 2 urgent (default 0)
+st_chirp_at  | uint32 | the loop's self-test (canary_wap) | UNIX seconds the audible self-test tone last played
+// Session identity NOT stored (regenerated on each enable and boot)
 ```
+
+- `save_settings()` writes both settings whenever the owner changes either
+  (`POST /api/chirp/settings`); `init()` reads them at boot, and a missing
+  key keeps its default. The urgency filter drops a lower-urgency chirp on
+  receipt: it is not stored, relayed or shown.
+- `st_chirp_at` is not a Chirp channel setting. It is the 30-day cadence of
+  the speaker's NFPA-72-style self-test tone (`FEATURE_AUDIBLE_CHIRP`),
+  seeded on the first pass with a set wall clock, and it shares the
+  namespace.
+- Nothing else is stored. The channel's on state is not: it starts off at
+  every boot until the owner turns it on (`POST /api/chirp/enable`). The
+  cooldown tiers, the mute and the tables live in RAM. §11.1's notification
+  sound, presence broadcast, display time and auto-dismiss are not settings
+  on the canary-wap.
+- A read-only open of `chirp` before anything wrote it opens nothing and
+  logs nothing (sweep F220).
+- Sweep F236: this table named `chirp_enabled`, `chirp_notify_sound` and
+  `chirp_urgency_filter`, which nothing stores, and left out `chirp_filter`
+  and `st_chirp_at`. `scripts/tests/test_chirp_spec_tables.py` now holds it
+  to the keys the sketch reads and writes.
 
 ## 12. Implementation Notes
 
