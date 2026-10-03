@@ -96,6 +96,7 @@ INC=(-I "$HERE/runtime_turn" -I "$EMU/shim" -I "$EMU/src" -I "$PROJ/include"
 # source is kept), with the same configuration as the firmware TUs.
 export OUT LVGL
 export LVGL_FLAGS="-std=gnu11 -O1 -w ${DEFS[*]} ${INC[*]}"
+# shellcheck disable=SC2016  # the inner script expands $OUT, $LVGL and $LVGL_FLAGS itself
 find "$LVGL/src" -name '*.c' -print0 | sort -z | xargs -0 -n 8 -P "$(nproc)" bash -c '
   for src in "$@"; do
     obj="$OUT/lvgl/$(echo "${src#$LVGL/}" | tr "/." "__").o"
