@@ -136,9 +136,11 @@ With it, the probe asks [`probe_cores.js`](probe_cores.js) for its core,
 which builds it with `cores.js` as above, before Chromium starts. The probe's
 server then answers the dist URL (`emulator/dist/canary-vision-core.js`,
 `canary-wap-audio.js`) with [`core_standin.js`](core_standin.js) instead of
-the committed bundle, under every spelling of that URL the server would read
-as the file (`dist//`, `%2e%2e`, a percent-encoded name), and refuses any
-other method on it, so a native run never serves the committed core. The
+the committed bundle, under every spelling of that URL a probe server has
+ever read as the file (`dist//`, `%2e%2e`, a percent-encoded name; the probes
+now look a request up in the tree's index, `probe_server.mjs`, which reads
+fewer), and refuses any other method on it, so a native run never serves the
+committed core. The
 stand-in is a factory of the same name and shape:
 `createCanaryVisionCore()` resolves to a module whose `cwrap`, `ccall`,
 `UTF8ToString` and `HEAP` views are the ones the dist has. Each call is a

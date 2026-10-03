@@ -438,9 +438,10 @@ test("the probe server's first stop: the stand-in at each core's dist URL, the e
       "/x/canary-local/emulator/dist/fake-core.js"]) {
       assert.strictEqual(await (await fetch(base + miss)).text(), "fell through", miss);
     }
-    // every spelling the probe servers would read as the dist core's file
-    // (they decode the pathname and join it onto the root) is the stand-in,
-    // sent as written: fetch would tidy some of these before they left
+    // every spelling the probe servers ever read as the dist core's file
+    // (until sweep A46 they decoded the pathname and joined it onto the root;
+    // the index they look it up in now reads fewer) is the stand-in, sent as
+    // written: fetch would tidy some of these before they left
     const raw = (path, method = "GET") => new Promise((done, failed) => {
       http.request({ host: "localhost", port: server.address().port, path, method }, (r) => {
         let body = "";

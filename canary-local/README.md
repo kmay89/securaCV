@@ -966,6 +966,16 @@ fails on byte drift.
   frame grants against what the page actually loads; the probe opens every
   page (and the harness per flavor) in headless Chromium with a
   `securitypolicyviolation` listener in every frame and fails on one violation.
+  The test also holds every probe's `waitForFunction` to a function predicate
+  (a string is re-evaluated through `eval`, which no page allows, A44) and to
+  options stated third, where Playwright reads them (handed second they reach
+  the predicate and the wait runs 30 s whatever it says, A45).
+- `tests/probe_server.test.js` — every browser probe serves the repository
+  through `tests/probe_server.mjs`: the tree indexed once, a request a lookup
+  in that index, never a path built from the URL, and the server bound to
+  127.0.0.1 (sweep A46). It refuses a probe whose request reaches `join`,
+  `resolve` or a file read, or whose handler reads a file the index did not
+  answer, and holds `lookup()` itself on a scratch tree.
 - `tests/vault.test.js` + `tests/vault_probe.mjs` — the Vault explainer (§4j):
   the honesty test pins the quorum constants, the three signing domains, the
   `VLT2`/`SVLT` magics and Invariants I & V to their source **and runs a real

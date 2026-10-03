@@ -134,11 +134,14 @@ function bridgeOver(built, { distPrefix = "/canary-local/emulator/dist/" } = {})
     }
   }
 
-  // The path a probe server reads for a request (decodeURIComponent of the
-  // URL's pathname, joined onto the repository root, which normalizes it),
-  // so that no spelling of a dist core's URL (dist//x.js, %2e%2e, %66) slips
-  // past the stand-in to the committed bytes. null when it cannot be decoded:
-  // the server refuses that too.
+  // The path a request names, read as loosely as the probe servers ever read
+  // one (decodeURIComponent of the URL's pathname, normalized, as their
+  // resolve(join(ROOT, rel)) did until sweep A46), so that no spelling of a
+  // dist core's URL (dist//x.js, %2e%2e, %66) slips past the stand-in to the
+  // committed bytes. The servers now look a request up in the tree's index
+  // (probe_server.mjs: the query cut, one decode, an exact key), which reads
+  // fewer spellings as the file than this does. null when it cannot be
+  // decoded: the server refuses that too.
   const pathOf = (url) => {
     try { return posix.normalize(decodeURIComponent(new URL(url, "http://x").pathname)); } catch { return null; }
   };
