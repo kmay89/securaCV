@@ -615,6 +615,88 @@ static void test_back_for_good_dwells_once_in_the_next_stay() {
   assert(nth(log, "interaction_likely", 1).snap.visit_ms == nth(log, "presence_ended", 1).snap.visit_ms);
 }
 
+// Seen on that frame in one cell and on the next frame in another: the next
+// frame's own sighting opens the visit, as any sighting does, and the held
+// one is dropped. So presence_started names the cell the person is in on
+// its own frame, not the one they were seen in on the frame before, and the
+// visit is held present through the lost timeout from its latest sighting.
+// Every other F186 case comes back to one cell, or leaves the next frame
+// empty, so only this one can tell which sighting opened the visit. Seen in
+// the new cell for one frame (the held sighting would also leave the stay's
+// cell and its last sighting a frame stale) and for five.
+static void test_seen_in_the_gap_then_elsewhere_opens_on_the_new_cell() {
+  const uint32_t lost = canary::cfg::detect().lost_timeout_ms;
+  for (const uint32_t ms : {100u, 500u}) {
+    PresenceFSM fsm;
+    fsm.reset();
+    Log log;
+    uint32_t t = 1000;
+    dwell_and_leave(fsm, t, log);
+    const uint32_t gap = t;
+    frames(fsm, t, log, person(0, 2), 100);
+    frames(fsm, t, log, person(2, 0), ms);
+    const uint32_t last_seen = t - 100;
+    frames(fsm, t, log, empty(), settle_ms());
+    std::printf("  seen in the gap in (0,2), then %lu ms in (2,0): %s\n", (unsigned long)ms,
+                log.events.c_str());
+    std::fflush(stdout);
+    assert(log.events == "presence_started dwell_started dwell_ended presence_ended presence_started "
+                         "interaction_likely:dwell_then_left presence_ended");
+    const Seen& ended = nth(log, "presence_ended");
+    assert(ended.t == gap);
+    const Seen& again = nth(log, "presence_started", 1);
+    assert(again.t == gap + 100);
+    assert(again.snap.presence && again.snap.presence_ms == 0 && again.snap.confidence == 91);
+    assert(again.snap.voxel.r == 2 && again.snap.voxel.c == 0);
+    const Seen& gone = nth(log, "presence_ended", 1);
+    assert(gone.t - last_seen > lost && gone.t - last_seen <= lost + 100);
+    assert(gone.snap.voxel.r == 2 && gone.snap.voxel.c == 0);
+    assert(gone.snap.visit_ms == gone.t - again.t);
+  }
+}
+
+// reset() forgets what dwell_ended left owed (the stay's presence_ended on
+// the next frame) and a sighting held on that frame for the next visit, as
+// it forgets everything else. The device resets once, at boot, but the Lab
+// resets its core on every scene change and camera start (vision-ui.js and
+// eyes-bench.js, through vision_emu_reset), so a reset can land on either
+// frame. Taken right after dwell_ended, and right after a sighting on the
+// frame after it: empty frames then send nothing, and the next sighting
+// opens a visit on its own frame and cell with nothing owed from before.
+static void test_reset_forgets_a_leave_owed_and_a_held_sighting() {
+  const uint32_t lost = canary::cfg::detect().lost_timeout_ms;
+  for (const bool seen_in_the_gap : {false, true}) {
+    PresenceFSM fsm;
+    fsm.reset();
+    Log log;
+    uint32_t t = 1000;
+    dwell_and_leave(fsm, t, log);  // t: the frame after dwell_ended
+    if (seen_in_the_gap) {
+      Seen s;
+      assert(step(fsm, person(0, 2), t, s) && is(s, "presence_ended"));
+      t += 100;
+    }
+    fsm.reset();
+    Log after;
+    frames(fsm, t, after, empty(), settle_ms());
+    std::printf("  reset after dwell_ended%s, then empty frames: \"%s\"\n",
+                seen_in_the_gap ? " and a sighting" : "", after.events.c_str());
+    std::fflush(stdout);
+    assert(after.events.empty());
+    const uint32_t back = t;
+    frames(fsm, t, after, person(2, 0), 100);
+    frames(fsm, t, after, empty(), settle_ms());
+    assert(after.events == "presence_started presence_ended");
+    const Seen& started = nth(after, "presence_started");
+    assert(started.t == back);
+    assert(started.snap.presence && started.snap.presence_ms == 0 && started.snap.confidence == 91);
+    assert(started.snap.voxel.r == 2 && started.snap.voxel.c == 0);
+    const Seen& gone = nth(after, "presence_ended");
+    assert(gone.t - back > lost && gone.t - back <= lost + 100);
+    assert(gone.snap.visit_ms == gone.t - started.t);
+  }
+}
+
 // Every way back after a dwell: away for 1 frame to past the longer of the
 // lost timeout and the grace, then seen for 1, 2, 5 or 40 frames, then gone.
 // On every frame of every walk: a stay holds at most one dwell, dwell_ended
@@ -799,6 +881,8 @@ int main() {
   test_seen_on_the_frame_after_dwell_ended_opens_the_next_visit();
   test_one_frame_seen_after_dwell_ended_still_opens_a_visit();
   test_back_for_good_dwells_once_in_the_next_stay();
+  test_seen_in_the_gap_then_elsewhere_opens_on_the_new_cell();
+  test_reset_forgets_a_leave_owed_and_a_held_sighting();
   test_every_way_back_after_a_dwell();
 #if VISION_DWELL_END_GRACE_MS > 0
   test_grace_holds_the_dweller_then_dwell_ended_fires();
