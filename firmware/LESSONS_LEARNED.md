@@ -2756,6 +2756,35 @@
   turn Bluetooth on from the dashboard, and every test still passes.
 - **Date learned:** 2026-10
 
+### A library that keeps one callbacks pointer has one owner, and its default answer is the library's, not yours
+- **What happened:** on the canary-wap's default FULL profile a phone's BLE
+  pairing was accepted with no owner confirm (sweep F171). The pairing
+  channel (`bluetooth_channel.cpp`) and Opera (`ble_opera.h`) each called
+  `setCallbacks()` on the one NimBLE server; NimBLE keeps one pointer, and
+  Opera's init ran second, so its object replaced the channel's. Opera
+  overrides only `onConnect` and `onDisconnect`, so NimBLE-Arduino's
+  defaults answered the rest: `onConfirmPassKey` injects yes,
+  `onPassKeyDisplay` shows 123456. The channel's passkey handling, its PIN
+  box, its paired list and its inactivity timeout were all dead on the
+  shipping profile, with every host test green.
+- **Root cause:** two modules each treated a singleton's single slot as
+  theirs, and nothing failed loudly when the second replaced the first. The
+  host stand-in hid it twice: its base callbacks did nothing (the library's
+  default says yes), and no test built both modules' inits.
+- **Fix:** one dispatcher (`ble_server_dispatch.h`) is the server's only
+  callbacks object, installed by whichever init runs first; each module
+  registers with a role (the pairing channel every callback, Opera a link's
+  start and end). With no pairing owner a passkey is answered no.
+- **Regression check:** `test_bluetooth_commands_wap.cpp` builds both inits
+  in both orders over a stand-in whose default callbacks are the library's
+  (the FULL tests fail at the library's yes with the old wiring);
+  `check_wap_loop_commands.py` rule BD1 refuses a `setCallbacks()` of any
+  server-callbacks object outside the dispatcher. Two more from the same
+  review: a stand-in's defaults must be the library's defaults, and a BLE
+  address on the air is not the bond's key (a phone with private addresses
+  is bonded under its identity address, `getIdAddress()`, F172).
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

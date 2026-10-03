@@ -428,7 +428,11 @@ void set_data_callback(DataCallback cb);
 // not-yet-started channel's included.
 void update();
 
-// Utilities
+// Utilities. An address's bytes are kept as the stack keeps them, least
+// significant first; format_address() prints them most significant first
+// ("AB:89:67:45:23:01", as the phone shows its own), and parse_address()
+// reads that form back into the same bytes, refusing anything else
+// (sweep F172).
 void format_address(const uint8_t* addr, char* out);
 bool parse_address(const char* str, uint8_t* out);
 const char* device_type_name(DeviceType type);

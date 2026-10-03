@@ -259,9 +259,11 @@ static bool set_tx_power(int8_t power);
 // for a link's own events (up, down, a passkey, a bond). When an event
 // still finds no room (the loop task stalled for that long), it is dropped
 // and counted by kind (loop_event_queue.h): update() logs a link's dropped
-// events as a warning (the state may be stale) and the scan results and
-// activity the lower limit refused at debug level (routine when a busy
-// room advertises through a stall). A passkey to confirm that finds no
+// events as a warning and asks the stack for the link (reconcile_link(),
+// sweep F169: a lost connect or disconnect would leave the state stale),
+// and logs the scan results and activity the lower limit refused at debug
+// level (routine when a busy room advertises through a stall). A passkey
+// to confirm that finds no
 // room is answered no on this task instead (as is one whose copy could not
 // be allocated): the pairing fails closed, and the phone may try again.
 
@@ -2075,8 +2077,9 @@ void update() {
   g_commands.drain(run_command);
 
   // Events a full queue refused, in the health log at most once a minute
-  // each: a link's as a warning (the connection state may be stale), scan
-  // results and GATT activity at debug level (a busy room through a stall).
+  // each: a link's as a warning (reconcile_link() above has asked the stack
+  // for the link), scan results and GATT activity at debug level (a busy
+  // room through a stall).
   uint32_t now = millis();
   log_drops(g_events.dropped_reserved(), g_link_drops, SCV_LOG_WARNING,
             "BLE link events dropped (queue full)", now);
