@@ -910,7 +910,11 @@ fails on byte drift.
   `LAB_CORES=native` they drive this tree's sources instead, built with g++
   from the sources `build.sh` hands em++ and served to the same tests. That
   proves a core change page-side before CI's pinned-emsdk rebuild lands, with
-  no emsdk. CI runs them both ways. See
+  no emsdk. The browser probes that load those cores (`tests/vision_probe.mjs`,
+  `tests/eyes_probe.mjs`, `tests/audio_probe.mjs`) take the same variable:
+  their server answers the dist URL with a stand-in factory that forwards
+  each call to the native build, and the page is served as committed. CI
+  runs all six both ways. See
   [`tests/native/README.md`](tests/native/README.md).
 - `tests/boot_probe.mjs` + CI (`.github/workflows/canary-local.yml`):
   rebuilds both flavors from the tree, boots the watch in headless

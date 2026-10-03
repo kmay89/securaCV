@@ -21,7 +21,9 @@ You need g++ (or set `CXX`, e.g. `CXX=clang++`) on Linux or macOS. Each test
 process builds the core it uses once, in about three seconds, into a temp
 directory that it removes on exit. Leave `LAB_CORES` unset (or set it to
 `dist`) for the committed bundles. Any other value is refused, so a typo
-can't fall back to the dist without you noticing.
+can't fall back to the dist without you noticing. The three Chromium probes
+that load those cores take the same variable (see "The browser probes on
+the tree's sources" below).
 
 ## What it builds, and how the tests reach it
 
@@ -104,10 +106,65 @@ is stale.
 ## Which tests drive a dist core
 
 Only the three above `require()` a core in Node, and all three take it
-through `cores.js` (`native_cores.test.js` holds that). `LAB_CORES` applies
-to those Node tests only. The browser probes that load the Vision and audio
-cores (`vision_probe.mjs`, `eyes_probe.mjs`, `audio_probe.mjs`) load the
-committed dist, because each page loads it with a `<script>` tag.
+through `cores.js` (`native_cores.test.js` holds that).
+
+## The browser probes on the tree's sources
+
+Three Chromium probes drive a page that loads one of these cores with a
+`<script>` tag: `vision_probe.mjs` and `eyes_probe.mjs` (the Vision core) and
+`audio_probe.mjs` (the WAP's acoustic core). They take the same variable:
+
+```sh
+LAB_CORES=native node canary-local/tests/vision_probe.mjs
+LAB_CORES=native node canary-local/tests/eyes_probe.mjs
+LAB_CORES=native node canary-local/tests/audio_probe.mjs
+```
+
+With it, the probe asks [`probe_cores.js`](probe_cores.js) for its core,
+which builds it with `cores.js` as above, before Chromium starts. The probe's
+server then answers the dist URL (`emulator/dist/canary-vision-core.js`,
+`canary-wap-audio.js`) with [`core_standin.js`](core_standin.js) instead of
+the committed bundle. That is a factory of the same name and shape:
+`createCanaryVisionCore()` resolves to a module whose `cwrap`, `ccall`,
+`UTF8ToString` and `HEAP` views are the ones the dist has. Each call is a
+synchronous request to the probe server, which runs it on the native core
+through `cores.js`'s own module, so the return conversions and refusals are
+the same code the Node tests use. A pointer export's window (the audio
+frame) lives in a heap the stand-in keeps in the page. The page writes it
+through `HEAP16`, each call carries it to the core and brings it back, and
+the heap grows and detaches its old buffer the way wasm memory does.
+
+The page itself is served as committed, policy and all. The stand-in is a
+`'self'` script, its requests are `'self'` connects, and it needs no eval and
+no inline code. Unset, `probeCores` returns `null` and the probe serves the
+dist exactly as before. Two things differ for the page under the stand-in,
+and the probes allow for both. Every core call is now a request, so
+`vision.html`, which calls its core every animation frame, never reaches
+Playwright's `networkidle`; the probe waits instead for the same 500 ms of
+quiet with the core's own requests left out. And a native run proves nothing
+if the page never ran the stand-in, so the probe fails one whose page never
+loaded it or never called it, and prints the call count when it passes.
+
+`native_cores.test.js` holds this in the default run with no compiler and no
+Chromium. It runs the stand-in as served, in its own `vm` context, with an
+`XMLHttpRequest` that hands each request to the bridge over the stand-in
+core [`fake_core.js`](fake_core.js), which also hands out two buffers through
+pointer exports. It checks the module's shape, the i32 arguments, the
+return conversions, the refusals at `cwrap` time, a core that dies, the
+window carried both ways and grown, and the bridge's refusal of memory
+outside an open window. It also checks what the probe server's `handle()`
+takes, that no probe opening a core page skips the bridge, and that CI runs
+each probe both ways. Under `LAB_CORES=native` it also drives the stand-in
+call for call against `cores.js`'s module on both real cores.
+
+CI's wasm job runs each of the three probes on the dist, then again with
+`LAB_CORES=native` on the runner's g++, whenever the dist step ran, red or
+green, as the logic job does for the Node tests. A native pass in Chromium
+proves the same thing as one in Node: this tree's sources pass, built by
+another compiler for a 64-bit ABI. It is not the dist, and the default run
+still checks the dist.
+
+## The display flavors
 
 The display flavors (`dist/canary-display-*.js`) are booted only in
 Chromium, by the probes (`boot_probe.mjs`, `bench_probe.mjs`,
