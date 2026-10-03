@@ -340,9 +340,14 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
      Bluetooth is off still ends; a command acts on the radio's latest
      state), and nothing else consumes them. `apply_event(` is never called
      (only `consume` runs it), and each `apply_<event>()` only from
-     `apply_event()`. What a full queue does (a link's events kept, the
-     drops logged by kind, a passkey failed closed) and what each event
-     carries are `test_bluetooth_commands_wap.cpp`'s.
+     `apply_event()`, but `apply_connect()` and `apply_disconnect()`, which
+     `reconcile_link()` calls too (F169: after a link's event was dropped,
+     the loop task ends or records the link from the stack's own record).
+     `reconcile_link();` is `update()`'s, once, between the consume and the
+     drain, and nobody else calls it. What a full queue does (a link's
+     events kept, the drops logged by kind, a passkey failed closed, the
+     reconciliation) and what each event carries are
+     `test_bluetooth_commands_wap.cpp`'s.
 BV3. The Bluetooth status routes read only what the loop task published
      (F138). `bluetooth_channel.h` declares none of the live readers
      (`BT_LIVE_READERS`: `get_status`, `get_settings`, `get_scanned_devices`,
@@ -365,6 +370,21 @@ BV3. The Bluetooth status routes read only what the loop task published
      `toggleBtAdvertising`, `loadBtSettings`, `btStartScan`,
      `renderBtScanList`, `deviceIcon`, `loadBtPairedDevices`) reads no key
      its route does not send.
+
+BD1. One set of NimBLE server callbacks, two owners (F171). NimBLE keeps one
+     callbacks pointer per server, and on the FULL profile Opera's
+     `setCallbacks()` replaced the pairing channel's, so the library's
+     default answered every Numeric Comparison yes. In the sketch, no file
+     hands an object of a class derived from `NimBLEServerCallbacks` to
+     `setCallbacks(` (by address, by name or new): each owner hands it to
+     `ble_server_dispatch::install(`, `bluetooth_channel.cpp`'s `init()` as
+     `kPairing` (`&g_server_callbacks`) and `ble_opera.h`'s `init()` as
+     `kLink` (`&g_serverCallbacks`), each once, and no other file names a
+     role. `ble_server_dispatch.h`'s `install()` is the one
+     `setCallbacks(`, of the dispatcher, with NimBLE's deleteCallbacks
+     false (the dispatcher is not on the heap). What the dispatcher hands
+     each owner is `test_bluetooth_commands_wap.cpp`'s, which compiles both
+     inits over the stand-in.
 
 ## It proves it bites
 
@@ -2010,6 +2030,12 @@ BT_CALLBACK_CALLS = BT_EVENT_HELPERS + ("detect_device_type",)
 BT_EVENT_APPLIERS = ("apply_connect", "apply_disconnect", "apply_auth_complete",
                      "apply_passkey_display", "apply_confirm_passkey", "apply_scan_result",
                      "apply_scan_end", "apply_activity")
+# Who applies each event: apply_event(), the consume's runner; and, for a
+# link's start and end, reconcile_link() (F169: after a link's event was
+# dropped, the loop task asks the stack and applies what the lost event
+# would have).
+BT_EVENT_APPLIER_CALLERS = {"apply_connect": ("apply_event", "reconcile_link"),
+                            "apply_disconnect": ("apply_event", "reconcile_link")}
 # The channel's state: the loop task's (update(), its commands and the
 # events it applies). A callback on the NimBLE host task names none of it.
 BT_LIVE_STATE = ("g_state", "g_settings", "g_initialized", "g_connection", "g_pairing",
@@ -2084,8 +2110,10 @@ def check_bluetooth_callbacks(cpp_src: str, errors: list[str]) -> None:
             (r"\bg_events\s*\.\s*post\s*\(", ("post_event",), "g_events.post("),
             (r"(?<![\w:.>])post_event\s*\(", BT_CALLBACKS, "post_event("),
             (r"\bg_events\s*\.\s*consume\s*\(", ("update",), "g_events.consume("),
-            (r"(?<![\w:.>])apply_event\s*\(", (), "apply_event(")) + tuple(
-            (r"(?<![\w:.>])" + a + r"\s*\(", ("apply_event",), a + "(") for a in BT_EVENT_APPLIERS):
+            (r"(?<![\w:.>])apply_event\s*\(", (), "apply_event("),
+            (r"(?<![\w:.>])reconcile_link\s*\(", ("update",), "reconcile_link(")) + tuple(
+            (r"(?<![\w:.>])" + a + r"\s*\(", BT_EVENT_APPLIER_CALLERS.get(a, ("apply_event",)), a + "(")
+            for a in BT_EVENT_APPLIERS):
         for m in re.finditer(pattern, code):
             where = enclosing_function(spans, m.start())
             if where is None:
@@ -2108,6 +2136,11 @@ def check_bluetooth_callbacks(cpp_src: str, errors: list[str]) -> None:
                           f"`{consume}` once, before its first return and before `{drain}` — a "
                           "link that ends while Bluetooth is off still ends, and a command acts on "
                           "the radio's latest state (F143)")
+        reconcile = "reconcile_link();"
+        if sq.count(reconcile) != 1 or not (sq.find(consume) < sq.find(reconcile) < sq.find(drain)):
+            errors.append(f"{BT_CPP}: update() must call `{reconcile}` once, right after `{consume}` "
+                          f"and before `{drain}` — a link event the full queue dropped is "
+                          "reconciled with the stack before a command reads the connection (F169)")
 
 
 # BV3 (F138): the status routes' reads.
@@ -2283,15 +2316,90 @@ def check_bluetooth_reads(files: dict[str, str], errors: list[str]) -> None:
                               f"its {obj} object (F138)")
 
 
+# BD1 (F171): the server's callbacks go through the one dispatcher.
+BT_DISPATCH_H = f"{SKETCH}/ble_server_dispatch.h"
+BLE_OPERA_H = f"{SKETCH}/ble_opera.h"
+SIG_BT_INIT = r"\bbool\s+init\s*\(\s*\)"
+SIG_OPERA_INIT = r"\bstatic\s+bool\s+init\s*\(\s*const\s+char\s*\*\s*deviceIdHash[^)]*\)"
+SIG_DISPATCH_INSTALL = r"\binline\s+bool\s+install\s*\([^)]*\)"
+# Each owner's install: (file, its init's signature, the call, squashed).
+BT_DISPATCH_OWNERS = (
+    (BT_CPP, SIG_BT_INIT,
+     "ble_server_dispatch::install(g_server,ble_server_dispatch::kPairing,&g_server_callbacks);"),
+    (BLE_OPERA_H, SIG_OPERA_INIT,
+     "ble_server_dispatch::install(g_pServer,ble_server_dispatch::kLink,&g_serverCallbacks);"),
+)
+SERVER_CB_CLASS_RE = r"\bclass\s+(\w+)\s*(?:final\s*)?:\s*(?:public\s+)?NimBLEServerCallbacks\b"
+
+
+def check_bluetooth_dispatch(files: dict[str, str], errors: list[str]) -> None:
+    """Rule BD1 (F171)."""
+    blanked = {path: blank_comments_and_strings(src) for path, src in files.items()}
+    classes = set()
+    for code in blanked.values():
+        classes.update(re.findall(SERVER_CB_CLASS_RE, code))
+    instances = set()
+    for code in blanked.values():
+        for cls in classes:
+            instances.update(re.findall(r"\b" + cls + r"\s+(\w+)\s*(?:;|\{|=|\()", code))
+    for path, code in blanked.items():
+        for m in re.finditer(r"\bsetCallbacks\s*\(", code):
+            close = matching_paren(code, m.end() - 1)
+            arg = squash(code[m.end():close]) if close > 0 else ""
+            first = arg.split(",")[0]
+            name = first.lstrip("&*")
+            new = re.match(r"new(\w+)", first)
+            if path == BT_DISPATCH_H and first == "&g_dispatcher":
+                continue
+            if name in instances or (new is not None and new.group(1) in classes):
+                errors.append(f"{path}: setCallbacks({first}) installs server callbacks of its own — "
+                              "NimBLE keeps one pointer per server, so it replaces the other owner's "
+                              "(on FULL the library's default then answers every passkey yes): hand "
+                              "them to ble_server_dispatch::install() (F171)")
+    if BT_DISPATCH_H not in files:
+        errors.append(f"{BT_DISPATCH_H}: missing — the server callbacks' dispatcher (F171)")
+        return
+    dcode = blanked[BT_DISPATCH_H]
+    install = body_of(dcode, SIG_DISPATCH_INSTALL, f"{BT_DISPATCH_H}: install()", errors)
+    if install is not None:
+        if squash(install).count("server->setCallbacks(&g_dispatcher,false);") != 1:
+            errors.append(f"{BT_DISPATCH_H}: install() must put the dispatcher on the server once, "
+                          "`server->setCallbacks(&g_dispatcher, false);` — NimBLE deletes a callbacks "
+                          "object with the server when the flag is true, and the dispatcher is not on "
+                          "the heap (F171)")
+    if len(re.findall(r"\bsetCallbacks\s*\(", dcode)) != 1:
+        errors.append(f"{BT_DISPATCH_H}: the dispatcher is installed only by install() (F171)")
+    for path, sig, call in BT_DISPATCH_OWNERS:
+        if path not in files:
+            errors.append(f"{path}: missing — a server callbacks owner (F171)")
+            continue
+        body = body_of(blanked[path], sig, f"{path}: init()", errors)
+        if body is not None and squash(body).count(call) != 1:
+            errors.append(f"{path}: init() must install its server callbacks once with `{call}` "
+                          "(F171: its role decides which callbacks reach it)")
+    for path, code in blanked.items():
+        if path == BT_DISPATCH_H:
+            continue
+        for role in ("kPairing", "kLink"):
+            n = len(re.findall(r"\bble_server_dispatch::" + role + r"\b", code))
+            owns = any(p == path and role in c for p, _sig, c in BT_DISPATCH_OWNERS)
+            if n != (1 if owns else 0):
+                errors.append(f"{path}: names ble_server_dispatch::{role} {n} time(s) — each role "
+                              "has one owner (the pairing channel every callback, Opera a link's "
+                              "start and end), installed once (F171)")
+
+
 def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
-    """Rules BV1..BV3: the Bluetooth channel's settings enable (F144), the
-    NimBLE host task's events (F143) and the status routes' reads (F138)."""
+    """Rules BV1..BV3 and BD1: the Bluetooth channel's settings enable (F144),
+    the NimBLE host task's events (F143), the status routes' reads (F138) and
+    the server callbacks' one dispatcher (F171)."""
     if BT_API not in files or BT_CPP not in files:
         errors.append(f"{SKETCH}: the Bluetooth channel's sources ({BT_API}, {BT_CPP}) are missing")
         return
     check_bluetooth_settings_enable(files[BT_API], files[BT_CPP], errors)
     check_bluetooth_callbacks(files[BT_CPP], errors)
     check_bluetooth_reads(files, errors)
+    check_bluetooth_dispatch(files, errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -3017,7 +3125,7 @@ BV_MUTATIONS += [
                   r"g_events.consume(apply_event); \1")(s))),
     ("update() runs the commands before the events",
      on_other(BT_CPP, SIG_UPDATE,
-              r"g_events\.consume\(apply_event\);(\s*)g_commands\.drain\(run_command\);",
+              r"g_events\.consume\(apply_event\);(\s*reconcile_link\(\);[^\n]*\s*)g_commands\.drain\(run_command\);",
               r"g_commands.drain(run_command);\1g_events.consume(apply_event);")),
     ("handle_scan_timeout consumes the events too",
      on_other(BT_CPP, r"\bstatic\s+void\s+handle_scan_timeout\s*\(\s*\)", r"(if\s*\(!g_scanning\)\s*return;)",
@@ -3101,6 +3209,47 @@ BV_MUTATIONS += [
     ("publish_scan_view() reads the paired view",
      on_other(BT_CPP, SIG_BT_PUBLISH_SCAN, r"(\(void\)g_scan_view\.publish\(v\);)",
               r"PairedView pv; (void)g_paired_view.read(&pv); \1")),
+]
+# Rule BV2's reconciliation (F169) and rule BD1 (F171).
+SIG_BT_RECONCILE = r"\bstatic\s+void\s+reconcile_link\s*\(\s*\)"
+BV_MUTATIONS += [
+    ("update() never reconciles a dropped link event",
+     on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*reconcile_link\(\);[^\n]*", "")),
+    ("update() reconciles before it applies the events",
+     lambda s: on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*reconcile_link\(\);[^\n]*", "")(
+         on_other(BT_CPP, SIG_UPDATE, r"(g_events\.consume\(apply_event\);)", r"reconcile_link(); \1")(s))),
+    ("update() reconciles after the commands ran",
+     lambda s: on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*reconcile_link\(\);[^\n]*", "")(
+         on_other(BT_CPP, SIG_UPDATE, r"(g_commands\.drain\(run_command\);)", r"\1 reconcile_link();")(s))),
+    ("a scan's end reconciles the link (a second caller)",
+     on_other(BT_CPP, r"\bstatic\s+void\s+apply_scan_end\s*\([^)]*\)", r"(if\s*\(!g_scanning\)\s*return;)",
+              r"\1 reconcile_link();")),
+    ("reconcile_link() applies another event kind",
+     on_other(BT_CPP, SIG_BT_RECONCILE, r"(g_link_drops_reconciled\s*=\s*dropped;)",
+              r"\1 apply_scan_end(make_event(BT_EV_SCAN_END));")),
+    ("Opera installs its server callbacks with setCallbacks() again (F171's defect)",
+     on_other(BLE_OPERA_H, SIG_OPERA_INIT,
+              r"ble_server_dispatch::install\(g_pServer,\s*ble_server_dispatch::kLink,\s*&g_serverCallbacks\);",
+              "g_pServer->setCallbacks(&g_serverCallbacks);")),
+    ("the channel installs its server callbacks with setCallbacks() again",
+     on_other(BT_CPP, SIG_BT_INIT,
+              r"ble_server_dispatch::install\(g_server,\s*ble_server_dispatch::kPairing,\s*&g_server_callbacks\);",
+              "g_server->setCallbacks(&g_server_callbacks);")),
+    ("Opera installs through the dispatcher and replaces it too",
+     on_other(BLE_OPERA_H, SIG_OPERA_INIT,
+              r"(ble_server_dispatch::install\(g_pServer,\s*ble_server_dispatch::kLink,\s*&g_serverCallbacks\);)",
+              r"\1 NimBLEDevice::getServer()->setCallbacks(new OperaServerCallbacks());")),
+    ("Opera takes the pairing owner's role",
+     on_other(BLE_OPERA_H, SIG_OPERA_INIT, r"ble_server_dispatch::kLink", "ble_server_dispatch::kPairing")),
+    ("the dispatcher lets NimBLE delete it with the server",
+     on_other(BT_DISPATCH_H, SIG_DISPATCH_INSTALL, r"setCallbacks\(&g_dispatcher,\s*false\)",
+              "setCallbacks(&g_dispatcher)")),
+    ("a new module installs server callbacks of its own",
+     raw_other(f"{SKETCH}/ble_status_api.h", "static NimBLEServer* g_server = nullptr;",
+               "static NimBLEServer* g_server = nullptr;\n"
+               "class StatusServerCallbacks : public NimBLEServerCallbacks {};\n"
+               "static StatusServerCallbacks g_status_server_callbacks;\n"
+               "static void hook() { g_server->setCallbacks(&g_status_server_callbacks); }")),
 ]
 MUTATIONS += BV_MUTATIONS
 
