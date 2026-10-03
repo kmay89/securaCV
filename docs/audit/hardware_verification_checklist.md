@@ -1291,6 +1291,81 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     `"idle"`).
   - Artifact: `docs/audit/repro/F169-F170/dropped-and-state/`.
 
+## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers (F190, F167, F189, F196 Bluetooth half) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
+(`start_advertising()` sets the state from `rest_state()`, so pairing mode
+reads `"pairing"`; `init()`, on the BLE bring-up worker or an HTTP
+handler's task, fills a hand-over and publishes it, and the loop task's
+`update()` takes it, `adopt_init_result()`: the settings, the paired list
+and its rebuild, the state, the server callbacks and auto-advertise;
+`is_initialized()` and `init_fail_reason()` read what the bring-up
+published; `StoreCallbacks::onStoreStatus()` refuses a new phone's pairing
+that finds NimBLE's bond store full and never deletes a bond to make room;
+`apply_auth_complete()` lists a phone only when the store kept its bond;
+the first loop pass drops listed entries without a bond),
+`ble_server_dispatch.h` (`attach()` in `init()`, the channel's callbacks
+installed at the hand-over) and `bluetooth_api.h` (`send_doc()`: every
+answer serialized at its own measured length). Host-tested
+(`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE stand-in that
+models NimBLE-Arduino's 3-bond store, its full-store event at a Pairing
+Request and its default eviction of the oldest bond; the bring-up, the loop
+and a reader on threads under TSAN, `make tsan-bt-commands`) and held by
+`firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5 and BV6; a
+phone's real pairing, NimBLE's real store and the real bring-up worker are
+not something a host test can run. Compile is CI's. Owner: U1.
+
+- [ ] **Pairing mode reads pairing**
+  - Setup: one canary-wap flashed with the default FULL profile; the web
+    UI's Bluetooth tab open; advertising stopped (Stop Advertising).
+  - Repro: Bluetooth > Pair; `GET /api/bluetooth` within the 60 s window;
+    then cancel. Repeat from Bluetooth off (Pair turns it on).
+  - Expected: `"state": "pairing"` with `"advertising": true` for the
+    window (before F190 it read `"advertising"`, and the web UI showed no
+    pairing in progress); after the cancel or the timeout, `"advertising"`.
+  - Artifact: `docs/audit/repro/F190/pairing-state/`.
+- [ ] **The bring-up's result reaches the loop task whole**
+  - Setup: the FULL build with auto-advertise on and two phones already
+    paired; a serial console at boot.
+  - Repro: reboot and poll `GET /api/bluetooth` every 200 ms from power-on
+    until `"state"` is `"advertising"`; then `GET /api/bluetooth/paired`.
+    Separately, on a build where the bring-up is refused (a heap too small
+    for NimBLE, if one can be arranged), read `GET /api/bluetooth` during
+    and after the refusal.
+  - Expected: `"disabled"` until the bring-up starts, `"initializing"`
+    while it runs, then `"advertising"`, never a state that goes back; the two phones
+    listed, each once; the phones reconnect encrypted with no owner asked;
+    no crash or watchdog reset in the boot log. A refused bring-up's error
+    reads whole (no mixed or cut text).
+  - Artifact: `docs/audit/repro/F167/bring-up/`.
+- [ ] **A full bond store refuses a new phone and keeps the old ones**
+  - Setup: the FULL build after `DELETE /api/bluetooth/paired/all`; four
+    phones (or one phone and nRF Connect profiles with different
+    identities); the health log open.
+  - Repro: pair three phones, each confirmed in the web UI. Pair the
+    fourth. Then pair the first again after "Forget this device" on it
+    only. Then Remove one of the three and pair the fourth again.
+  - Expected: three listed after the first three; the fourth's pairing
+    fails on the phone, the health log has `BLE pairing refused: the bond
+    store is full`, and the three stay listed and reconnect encrypted
+    (before F189 NimBLE's default unpaired the oldest bond, which stayed
+    listed, or the list grew past what the store held); the first phone
+    re-pairs (the store holds it); after the Remove the fourth pairs and
+    is listed. On a device updated from a build before F189 whose list
+    held more phones than the store, the first boot's health log has
+    `Paired list: entries without a bond dropped`.
+  - Artifact: `docs/audit/repro/F189/bond-store/`.
+- [ ] **The REST answers are whole**
+  - Setup: the FULL build; a device name of 32 characters with quotes and
+    backslashes (`POST /api/bluetooth/settings`); a scan in a room with
+    many BLE devices.
+  - Repro: `GET /api/bluetooth/settings`, `GET /api/bluetooth/ota`,
+    `GET /api/bluetooth/scan/results` (after the scan), `GET
+    /api/bluetooth/paired`; each through `jq .`.
+  - Expected: every answer parses as one JSON document with nothing after
+    it; the name reads back as set.
+  - Artifact: `docs/audit/repro/F196/bt-answers/`.
+
 ## canary-wap Chirp status reads and the unset-clock refusal (F138 Chirp half, F146) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`

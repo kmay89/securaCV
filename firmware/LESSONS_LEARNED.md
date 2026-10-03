@@ -2795,6 +2795,32 @@
   a call that can refuse has its answer checked.
 - **Date learned:** 2026-10
 
+### A list that mirrors a store must be no longer than the store, and "the link is bonded" is not "the bond was kept"
+- **What happened:** the canary-wap's paired list holds 8 phones; NimBLE-Arduino
+  keeps 3 bonds unless the build raises `CONFIG_BT_NIMBLE_MAX_BONDS` (sweep
+  F189). A fourth phone's pairing found the store full and NimBLE's default
+  answer unpaired the oldest bond (or, while the WAP advertised or scanned,
+  could not, and the pairing failed), while the channel listed the new phone
+  anyway: NimBLE reports the link bonded from the pairing's flags, not from
+  what the store kept. The list showed four phones for three bonds, and the
+  oldest one was asked to pair again with no word of why.
+- **Root cause:** the list and the store were two records of one fact with
+  no rule tying their sizes or their contents, and the host stand-in's store
+  had no size at all, so no test could reach the full path.
+- **Fix:** the channel answers NimBLE's store-status callback itself
+  (`NimBLEDevice::setDeviceCallbacks()`): a new phone that finds the store
+  full is refused and nothing is deleted to make room; a phone is listed
+  only when `NimBLEDevice::isBonded()` says the store holds it; the first
+  loop pass drops listed entries without a bond.
+- **Regression check:** the stand-in models the store's size, the full
+  event at a Pairing Request and the default eviction
+  (`test_bluetooth_commands_wap.cpp`'s bond-store tests fail on the old
+  wiring); `check_wap_loop_commands.py` rule BV5. The same review moved
+  `init()`'s result to the loop task (F167): a bring-up that writes the
+  loop task's state from another task is a race whatever the timing looks
+  like, and TSAN found it in the first threaded run.
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
