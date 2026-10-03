@@ -55,6 +55,20 @@ F181): at 256 bytes the Vision's and the Sense's device object was cut
 mid-JSON from a 46- and a 44-character id (39 on the Sense wellbeing build),
 which made every entity's config invalid.
 
+The Vision's and the Sense's number entities and the Vision's watch profile
+select take their fields from tables (NumberEnt numbers[] inside
+publish_discovery, WATCH_PROFILES[] in detect_profiles.h), and the payloads
+built from them check their own snprintf result and are skipped, with only a
+serial log line, when they do not fit: an entity that outgrew its buffer
+would simply be missing from Home Assistant. The test reads those tables
+(their struct's member order, each row's literals, topics and named integer
+constants, and a flavor's `#if` rows only where that flavor builds them),
+formats every row for the 47-character id and every flavor's model, and holds
+it, and the buffers it is assembled in (the Vision's unitField and options),
+to its declared size, which a buffer one byte too small fails (sweep F203).
+What the reader cannot follow (an expression it cannot evaluate, another
+preprocessor form, an argument it has no value for) it refuses by name.
+
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_ha_discovery_binary_sensors.py' -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests)
 """
@@ -119,10 +133,13 @@ def snprintf_call(src: str, start: int) -> tuple[str, list[str]]:
         lit = _LITERAL.match(src, m.end() - 1)
         k = lit.end()
     fmt = c_string(re.sub(r"^\s*#.*$", "", src[j:k], flags=re.M))
-    depth, a, args = 0, k, []
-    for n in range(k, len(src)):
+    depth, a, args, n = 0, k, [], k - 1
+    while n + 1 < len(src):
+        n += 1
         ch = src[n]
-        if ch == "(":
+        if ch == '"':  # an argument's string literal: its commas and parens are text
+            n = _LITERAL.match(src, n).end() - 1
+        elif ch == "(":
             depth += 1
         elif ch == ")":
             if depth == 0:
@@ -194,8 +211,8 @@ def every_announcement(product: str, ids: dict[str, str]) -> tuple[dict[str, tup
     topic, availObj, devObj or a literal): "<component>/<object id>" -> (the
     payload, the p[] size), with devObj and availObj whole; and the
     announcements left out, whose arguments come from a table (the number
-    entities, the Vision's watch profile select). Those check their own
-    snprintf result and skip a payload that does not fit, with a log line."""
+    entities, the Vision's watch profile select): table_announcements()
+    formats those (sweep F203)."""
     src = discovery_source(product)
     values = dict(ids)
     for obj, (text, _) in device_objects(product, ids).items():
@@ -214,6 +231,278 @@ def every_announcement(product: str, ids: dict[str, str]) -> tuple[dict[str, tup
     # every announcement was matched with its buffer declaration
     assert len(found) + len(table) == src.count("topic_for(\"") , product
     return found, table
+
+
+# --------------------------------------------------------------------------- #
+# The table-driven announcements (sweep F203): the Vision's and the Sense's
+# number entities and the Vision's watch profile select take their fields
+# from tables inside publish_discovery (NumberEnt numbers[]) and in
+# detect_profiles.h (WATCH_PROFILES[]). Each such payload checks its own
+# snprintf result and is skipped, with a serial log line, when it does not
+# fit, so an entity that outgrew its buffer would simply be missing from Home
+# Assistant. These read the tables the compiler reads, refusing by name what
+# they cannot follow rather than guessing at it, and format every row.
+# --------------------------------------------------------------------------- #
+
+def strip_comments(text: str) -> str:
+    """`text` without its // and /* */ comments; string literals kept whole."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        if text.startswith("//", i):
+            i = text.find("\n", i)
+            i = n if i < 0 else i
+        elif text.startswith("/*", i):
+            i = text.index("*/", i) + 2
+            out.append(" ")
+        elif text[i] == '"':
+            lit = _LITERAL.match(text, i)
+            assert lit, text[i:i + 40]
+            out.append(lit.group(0))
+            i = lit.end()
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def struct_members(src: str, struct: str) -> list[str]:
+    """The member names of `struct <struct> { ... };`, in declaration order."""
+    m = re.search(r"\bstruct %s\s*\{(.*?)\};" % re.escape(struct), src, re.S)
+    assert m, struct
+    names = []
+    for decl in strip_comments(m.group(1)).split(";"):
+        decl = decl.strip()
+        if decl:
+            parts = [p.strip() for p in decl.split(",")]
+            names.append(re.search(r"(\w+)$", parts[0]).group(1))
+            names += parts[1:]
+    assert names and all(re.fullmatch(r"[A-Za-z_]\w*", x) for x in names), (struct, names)
+    return names
+
+
+def preprocessor_holds(line: str, defines: dict[str, str]) -> bool:
+    """`#if defined(X) && X` or `#if X`, against a flavor's #defines; any other
+    condition is refused, never guessed."""
+    m = re.fullmatch(r"#if\s+defined\((\w+)\)\s*&&\s*(\w+)", line) or re.fullmatch(r"#if\s+(\w+)()", line)
+    assert m and (not m.group(2) or m.group(1) == m.group(2)), f"cannot follow {line!r}"
+    value = defines.get(m.group(1))
+    return value is not None and int(value, 0) != 0
+
+
+def table_rows(src: str, array: str, defines: dict[str, str]) -> list[list[str]]:
+    """The rows of `<array>[] = { {...}, ... };` as lists of field expressions,
+    with `#if`/`#endif` blocks kept or dropped for the flavor's #defines."""
+    m = re.search(r"\b%s\[\]\s*=\s*\{" % re.escape(array), src)
+    assert m, array
+    body = strip_comments(src[m.end():])
+    rows, row, field, depth, keep, i = [], None, [], 0, [True], 0
+    while True:
+        ch = body[i]
+        if ch == "#" and body[:i].rstrip(" \t").endswith("\n"):
+            end = body.index("\n", i)
+            line = body[i:end].strip()
+            if line.startswith("#if"):
+                keep.append(keep[-1] and preprocessor_holds(line, defines))
+            elif line == "#endif" and len(keep) > 1:
+                keep.pop()
+            else:
+                raise AssertionError(f"{array}: cannot follow {line!r}")
+            i = end
+            continue
+        if ch == '"':
+            lit = _LITERAL.match(body, i)
+            field.append(lit.group(0))
+            i = lit.end()
+            continue
+        if ch == "{":
+            depth += 1
+            if depth == 1:
+                row, field = [], []
+            else:
+                field.append(ch)
+        elif ch == "}":
+            if depth == 0:
+                break  # the array's own closing brace
+            depth -= 1
+            if depth == 0:
+                row.append("".join(field).strip())
+                if keep[-1]:
+                    rows.append(row)
+                row, field = None, []
+            else:
+                field.append(ch)
+        elif ch == "," and depth == 1:
+            row.append("".join(field).strip())
+            field = []
+        elif depth >= 1:
+            field.append(ch)
+        i += 1
+    assert len(keep) == 1, f"{array}: an #if without its #endif"
+    return rows
+
+
+def int_constant(product: str, name: str) -> int:
+    """The value of `constexpr <type> <name> = <integer>;` in the product's
+    headers (canary/*.h)."""
+    for header in sorted((FIRMWARE / "projects" / product / "include/canary").glob("*.h")):
+        m = re.search(r"\bconstexpr\s+[\w:]+\s+%s\s*=\s*([^;]+);" % re.escape(name),
+                      header.read_text(encoding="utf-8"))
+        if m:
+            return field_value(product, m.group(1).strip(), {})
+    raise AssertionError(f"{product}: no integer constant {name}")
+
+
+def field_value(product: str, expr: str, topics: dict[str, str]):
+    """A table field's value: a string literal, nullptr, `topics.<name>`, an
+    integer literal or a named integer constant (through a (long) cast or a
+    canary::cfg:: qualifier). Anything else is refused by name."""
+    if expr.startswith('"'):
+        assert re.fullmatch(r'("(?:[^"\\]|\\.)*"\s*)+', expr), expr
+        return c_string(expr)
+    if expr == "nullptr":
+        return None
+    if expr.startswith("topics."):
+        assert expr in topics, f"{product}: no topic {expr}"
+        return topics[expr]
+    m = re.fullmatch(r"(?:\((?:long|int|uint32_t|uint8_t)\)\s*)?(?:canary::cfg::)?(\w+)", expr)
+    assert m, f"{product}: cannot evaluate table field {expr!r}"
+    token = m.group(1)
+    lit = re.fullmatch(r"(0[xX][0-9a-fA-F]+|\d+)[uUlL]*", token)
+    if lit:
+        return int(lit.group(1), 0)
+    return int_constant(product, token)
+
+
+def flavor_defines(path: Path) -> dict[str, str]:
+    """A flavor config.h's #defines, in order: a quoted #include of another
+    flavor's header is read in its place, and #undef drops a name (the
+    Sentinel's flavors build on its door flavor this way)."""
+    defines: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        inc = re.match(r'\s*#include\s+"([^"]+)"', line)
+        if inc:
+            defines.update(flavor_defines((path.parent / inc.group(1)).resolve()))
+            continue
+        undef = re.match(r"\s*#undef\s+(\w+)", line)
+        if undef:
+            defines.pop(undef.group(1), None)
+            continue
+        d = re.match(r'\s*#define\s+(\w+)\s+("(?:[^"\\]|\\.)*"|[^\s/]+)', line)
+        if d:
+            defines[d.group(1)] = d.group(2)
+    return defines
+
+
+def flavors(product: str) -> list[dict]:
+    """Each flavor of the product: its name, its config.h #defines, and the
+    MANUFACTURER and MODEL it builds with (the project config.h's literal, or
+    the flavor macro that constant is set from)."""
+    cfg = (FIRMWARE / "projects" / product / "include/canary/config.h").read_text(encoding="utf-8")
+    out = []
+    for flavor in sorted((FIRMWARE / "configs" / product).glob("*/config.h")):
+        defines = flavor_defines(flavor)
+        found = {"flavor": flavor.parent.name, "defines": defines}
+        for name in ("MANUFACTURER", "MODEL"):
+            m = re.search(r"\b%s\s*=\s*(\"[^\"]*\"|[A-Z_]+);" % name, cfg)
+            assert m, (product, name)
+            if m.group(1).startswith('"'):
+                found[name] = m.group(1)[1:-1]
+            else:
+                value = defines.get(m.group(1), "")
+                assert value.startswith('"'), (product, flavor, m.group(1))
+                found[name] = c_string(value)
+        out.append(found)
+    assert out, product
+    return out
+
+
+def watch_profiles(product: str = "canary-vision", defines: dict[str, str] | None = None) -> list[dict]:
+    """The product's WATCH_PROFILES rows (detect_profiles.h), by member."""
+    profiles = (FIRMWARE / "projects" / product / "include/canary/detect_profiles.h").read_text(encoding="utf-8")
+    members = struct_members(profiles, "WatchProfilePreset")
+    return [{m: field_value(product, e, {}) for m, e in zip(members, row)}
+            for row in table_rows(profiles, "WATCH_PROFILES", defines or {})]
+
+
+def table_announcements(product: str, ids: dict[str, str], defines: dict[str, str],
+                        src: str | None = None) -> dict[str, tuple[str, int]]:
+    """Every table-driven announcement of the product, formatted for `ids`
+    with the flavor's #defines: "<component>/<object id>" -> (the payload,
+    the p[] size). The buffers each payload is assembled from (the Vision's
+    unitField and options) are held to their own sizes as "<name>#<buffer>".
+    `src` replaces the product's ha_discovery.cpp (the self-test below)."""
+    src = discovery_source(product) if src is None else src
+    values = dict(ids)
+    for obj, (text, _) in device_objects(product, ids).items():
+        values[obj] = text
+    topics = {k: v for k, v in ids.items() if k.startswith("topics.")}
+    out: dict[str, tuple[str, int]] = {}
+    # The number entities: NumberEnt numbers[] and the loop that formats it.
+    if "NumberEnt numbers[]" in src:
+        members = struct_members(src, "NumberEnt")
+        loop = src.index("for (const auto& n : numbers) {")
+        decl = re.compile(r"char t\[\d+\], p\[(\d+)\](?:, unitField\[(\d+)\] = \"\")?;").search(src, loop)
+        assert decl, product
+        body_end = src.index("publish_cfg(mqtt, t, p);", loop)
+        unit_call = src.find("snprintf(unitField", loop, body_end)
+        main_call = src.index("const int written = snprintf(p, sizeof(p),", loop)
+        for row in table_rows(src, "numbers", defines):
+            assert len(row) == len(members), (product, row)
+            ent = {m: field_value(product, e, topics) for m, e in zip(members, row)}
+            vals = dict(values)
+            vals.update({f"n.{m}": ("" if v is None else str(v)) for m, v in ent.items()})
+            if decl.group(2):
+                # unitField: "" for a unitless row, else its own snprintf
+                assert src[loop:unit_call].rstrip().endswith("if (n.unit) {"), product
+                ufmt, uargs = snprintf_call(src, unit_call - 1)
+                assert uargs == ["n.unit"], uargs
+                unit = "" if ent["unit"] is None else fill(ufmt, uargs, vals)
+                out[f"number/{ent['objectId']}#unitField"] = (unit, int(decl.group(2)))
+                vals["unitField"] = unit
+            else:
+                # %s straight from n.unit: a nullptr there would print "(null)" or crash
+                assert ent["unit"] is not None, f"{product}: {ent['objectId']} has no unit"
+            fmt, args = snprintf_call(src, main_call)
+            unknown = [a for a in args if a not in vals]
+            assert not unknown, f"{product}: cannot fill {unknown}"
+            out[f"number/{ent['objectId']}"] = (fill(fmt, args, vals), int(decl.group(1)))
+    # The watch profile select: options[] joined from WATCH_PROFILES' labels.
+    if 'topic_for("select", "watch_profile"' in src:
+        rows = watch_profiles(product, defines)
+        osize = int(re.search(r"char options\[(\d+)\] = \"\";", src).group(1))
+        ofmt, oargs = snprintf_call(src, src.index("snprintf(options + off, sizeof(options) - off,") - 1)
+        assert oargs == ['i ? "," : ""', "canary::cfg::WATCH_PROFILES[i].label"], oargs
+        options = "".join(fill(ofmt, oargs, {oargs[0]: "," if i else "", oargs[1]: r["label"]})
+                          for i, r in enumerate(rows))
+        out["select/watch_profile#options"] = (options, osize)
+        at = src.index('topic_for("select", "watch_profile"')
+        size = int(re.findall(r"char t\[\d+\], p\[(\d+)\];", src[:at])[-1])
+        fmt, args = snprintf_call(src, at)
+        vals = dict(values, options=options)
+        unknown = [a for a in args if a not in vals]
+        assert not unknown, f"{product}: cannot fill {unknown}"
+        out["select/watch_profile"] = (fill(fmt, args, vals), size)
+    return out
+
+
+def longest_ids(product: str, flavor: dict) -> dict[str, str]:
+    did = longest_device_id(product)
+    return {"DEVICE_ID": did, **topic_values(product, did), "MANUFACTURER": flavor["MANUFACTURER"],
+            "MODEL": flavor["MODEL"], "CANARY_FW_VERSION": firmware_version(product)}
+
+
+def overflows(product: str, src: str | None = None) -> list[tuple[str, str, int, int]]:
+    """Every table-driven payload (or the buffer it is built in) that does
+    not fit for the longest device id, in any flavor: (flavor, name, bytes
+    needed with the terminator, buffer size)."""
+    out = []
+    for flavor in flavors(product):
+        for name, (text, size) in table_announcements(product, longest_ids(product, flavor),
+                                                      flavor["defines"], src).items():
+            need = len(text.encode("utf-8")) + 1
+            if need > size:
+                out.append((flavor["flavor"], name, need, size))
+    return out
 
 
 def binary_sensors(product: str) -> dict[str, dict]:
@@ -394,7 +683,8 @@ class EveryBinarySensorTurnsOnAndOff(unittest.TestCase):
         # With the device object whole (sweep F181), each payload carries all
         # of it: every announcement built from the device id, topics and the
         # two objects must still fit its p[] for the longest id and every
-        # flavor's model, and parse as JSON. The table-driven ones are named.
+        # flavor's model, and parse as JSON. The table-driven ones are named
+        # here and formatted by the test after it (sweep F203).
         for product in PRODUCTS:
             did = longest_device_id(product)
             for manufacturer in string_constants(product, "MANUFACTURER"):
@@ -410,6 +700,111 @@ class EveryBinarySensorTurnsOnAndOff(unittest.TestCase):
                             self.assertEqual(entity["device"]["model"], model)
                             self.assertLess(len(text.encode("utf-8")), size,
                                             f"snprintf cuts the {name} discovery JSON at {size - 1} bytes")
+
+    def test_every_table_driven_announcement_fits_its_buffer_for_the_longest_device_id(self):
+        # Sweep F203: the Vision's and the Sense's number entities and the
+        # Vision's watch profile select take their fields from tables, so the
+        # test above could not format them. Each row is formatted here from
+        # the table the compiler reads (a flavor's #if rows only where that
+        # flavor builds them), for the longest id and every flavor's model,
+        # parsed, and held to its p[] and to the buffers it is assembled in
+        # (the Vision's unitField and options). A payload that does not fit
+        # is skipped by the firmware with only a serial log line, so the
+        # entity would just be missing from Home Assistant.
+        labels = [r["label"] for r in watch_profiles()]
+        for product in PRODUCTS:
+            for flavor in flavors(product):
+                ids = longest_ids(product, flavor)
+                did = ids["DEVICE_ID"]
+                anns = table_announcements(product, ids, flavor["defines"])
+                _, table = every_announcement(product, ids)
+                # every site the test above leaves out is formatted here
+                for site in table:
+                    component, oid = site.split("/")
+                    if oid.startswith("n."):
+                        self.assertTrue(any(k.startswith(component + "/") and "#" not in k for k in anns), site)
+                    else:
+                        self.assertIn(site, anns)
+                numbers = sorted(k[len("number/"):] for k in anns if k.startswith("number/") and "#" not in k)
+                vitals = {"cfg_vlock", "cfg_vlost", "cfg_bmin", "cfg_bmax", "cfg_hmin", "cfg_hmax"}
+                if product == "canary-vision":
+                    self.assertEqual(numbers, ["cfg_dwell", "cfg_lost", "cfg_score", "cfg_target"])
+                    self.assertIn("select/watch_profile", anns)
+                elif product == "canary-sense":
+                    vitals_build = flavor["defines"].get("FEATURE_VITALS", "0") != "0"
+                    self.assertEqual(vitals <= set(numbers), vitals_build, (flavor["flavor"], numbers))
+                    self.assertEqual(len(numbers), 11 if vitals_build else 5)
+                else:
+                    self.assertEqual(anns, {}, product)
+                for name, (text, size) in anns.items():
+                    with self.subTest(product=product, flavor=flavor["flavor"], payload=name):
+                        self.assertLess(len(text.encode("utf-8")), size,
+                                        f"snprintf cuts {name} at {size - 1} bytes "
+                                        f"({len(text.encode('utf-8'))} needed): the entity would be skipped")
+                        if "#" in name:
+                            continue
+                        entity = json.loads(text)
+                        self.assertEqual(entity["device"]["model"], flavor["MODEL"])
+                        self.assertEqual(entity["unique_id"], f"{did}_{name.split('/')[1]}")
+                        if name.startswith("number/"):
+                            self.assertLessEqual(entity["min"], entity["max"])
+                            self.assertGreater(entity["step"], 0)
+                        else:
+                            self.assertEqual(entity["options"], labels)
+
+    def test_a_table_driven_buffer_one_byte_too_small_fails(self):
+        # The check above reads each buffer's size from the source: shrink a
+        # buffer to one byte under what its longest payload needs (the bytes
+        # plus the terminator) and overflows() must name that payload; at
+        # exactly what it needs, nothing. So a tight buffer cannot pass.
+        cases = [
+            ("canary-vision", "number/", r"(for \(const auto& n : numbers\) \{\s*char t\[\d+\], p\[)(\d+)(\])"),
+            ("canary-vision", "#unitField", r"(unitField\[)(\d+)(\] = \"\";)"),
+            ("canary-vision", "select/watch_profile", r"(char t\[\d+\], p\[)(\d+)(\];\s*topic_for\(\"select\")"),
+            ("canary-vision", "#options", r"(char options\[)(\d+)(\] = \"\";)"),
+            ("canary-sense", "number/", r"(for \(const auto& n : numbers\) \{\s*char t\[\d+\], p\[)(\d+)(\])"),
+        ]
+        for product, kind, decl in cases:
+            src = discovery_source(product)
+            need = 0
+            for flavor in flavors(product):
+                for name, (text, _) in table_announcements(product, longest_ids(product, flavor),
+                                                           flavor["defines"]).items():
+                    if (name.endswith(kind) if kind.startswith("#") else
+                            (name.startswith(kind) and "#" not in name)):
+                        need = max(need, len(text.encode("utf-8")) + 1)
+            self.assertGreater(need, 1, (product, kind))
+            for size, fits in ((need - 1, False), (need, True)):
+                with self.subTest(product=product, buffer=kind, size=size):
+                    mutated, n = re.subn(decl, lambda m: m.group(1) + str(size) + m.group(3), src)
+                    self.assertEqual(n, 1, decl)
+                    found = overflows(product, mutated)
+                    if fits:
+                        self.assertEqual(found, [])
+                    else:
+                        self.assertTrue(found and all(o[2] == need and o[3] == need - 1 for o in found), found)
+
+    def test_a_table_the_reader_cannot_follow_is_refused(self):
+        # The reader formats what the compiler would, or stops and says why:
+        # a field it cannot evaluate, a preprocessor line it cannot follow,
+        # an argument it has no value for. Each edit below is refused by name
+        # rather than formatted with a guess (or left out, reading as fit).
+        src = discovery_source("canary-sense")
+        flavor = flavors("canary-sense")[-1]
+        ids = longest_ids("canary-sense", flavor)
+        edits = [
+            ("(long)canary::cfg::SENSE_CLEAR_MS_HI, 100}",
+             "(long)canary::cfg::SENSE_CLEAR_MS_HI * 2, 100}", "cannot evaluate"),
+            ("#if defined(FEATURE_VITALS) && FEATURE_VITALS", "#ifdef FEATURE_VITALS", "cannot follow"),
+            ("#endif\n    };", "#else\n#endif\n    };", "cannot follow"),
+            ("n.unit, n.icon, availObj, devObj);", "n.unit, n.icon, availObj, devObj, n.extra);", "cannot fill"),
+            ('"cm", "mdi:map-marker-radius-outline"', 'nullptr, "mdi:map-marker-radius-outline"', "has no unit"),
+        ]
+        for old, new, why in edits:
+            with self.subTest(edit=new):
+                self.assertIn(old, src)
+                with self.assertRaisesRegex(AssertionError, why):
+                    table_announcements("canary-sense", ids, flavor["defines"], src.replace(old, new, 1))
 
     def test_the_old_template_never_matched(self):
         # what the three products announced before HA25, rendered the same way
