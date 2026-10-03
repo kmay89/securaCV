@@ -673,7 +673,9 @@ static void test_reset_forgets_a_leave_owed_and_a_held_sighting() {
     dwell_and_leave(fsm, t, log);  // t: the frame after dwell_ended
     if (seen_in_the_gap) {
       Seen s;
-      assert(step(fsm, person(0, 2), t, s) && is(s, "presence_ended"));
+      const bool sent = step(fsm, person(0, 2), t, s);
+      assert(sent && is(s, "presence_ended"));
+      (void)sent;
       t += 100;
     }
     fsm.reset();
