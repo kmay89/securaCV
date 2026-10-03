@@ -299,14 +299,18 @@ test("a scene retains its part data and shares the page's one context", async ()
 // 480x800; F204: a landscape nightlight 320x180), and the Lab textures its 3D
 // screen from that canvas (app.js: ctx.scene.src = glass). Textured as is, a
 // turned canvas stretched across the model's unturned screen. The choice
-// held here: the model turns a quarter turn clockwise whenever the canvas has
-// turned from the panel's own shape (the registry card's glass, which app.js
-// hands the scene), and the plane samples the canvas turned the other way, so
-// the glass reads upright on the turned body. A glass that never turns never
-// turns its model.
+// held here: the device's body turns a quarter turn clockwise when the
+// canvas is the panel's own shape (the registry card's glass, which app.js
+// hands the scene) exactly turned on its side, and the plane samples the
+// canvas turned the other way, so the glass reads upright on the turned
+// body. A glass that never turns never turns its model, and neither does a
+// canvas of any other shape (the 300x150 HTML default the glass canvas is
+// before the firmware's first frame). What turns is the body alone, seated
+// face-on (partModels; real_shapes.test.js holds the Dash's stand left out).
 test("A47: a turned glass turns the model, and reads upright on it", async () => {
   const { glassTurn, turnModel, turnTexture, screenPlane } = await load();
-  // The decision: only a canvas turned from its panel's shape turns the model.
+  // The decision: only a canvas that is its panel exactly turned on its side
+  // turns the model.
   assert.strictEqual(glassTurn({ width: 480, height: 800 }, { w: 800, h: 480 }), 1, "the dash worn portrait");
   assert.strictEqual(glassTurn({ width: 320, height: 180 }, { w: 180, h: 320 }), 1, "the nightlight stood on its edge");
   assert.strictEqual(glassTurn({ width: 800, height: 480 }, { w: 800, h: 480 }), 0, "the dash as it scans");
@@ -314,6 +318,19 @@ test("A47: a turned glass turns the model, and reads upright on it", async () =>
   assert.strictEqual(glassTurn({ width: 240, height: 240 }, { w: 240, h: 240 }), 0, "a round glass never turns");
   assert.strictEqual(glassTurn(null, { w: 800, h: 480 }), 0, "no live glass, no turn");
   assert.strictEqual(glassTurn({ width: 480, height: 800 }, null), 0, "no panel shape, no turn");
+  assert.strictEqual(glassTurn({ width: 480, height: 640 }, { w: 800, h: 480 }), 0, "a canvas of neither shape turns nothing");
+  // Before the firmware's first frame the glass canvas is the HTML default
+  // 300x150 (emu-shell.js sizes it in _displayReady), or 0x0: no twin's
+  // model turns on it — a portrait twin used to lie on its side until then.
+  let twins = 0;
+  for (const d of registry.devices) {
+    if (d.kind !== "display" || !d.glass) continue;
+    for (const c of [{ width: 300, height: 150 }, { width: 0, height: 0 }, { width: 150, height: 300 }]) {
+      assert.strictEqual(glassTurn(c, d.glass), 0, `${d.id} (${d.glass.w}x${d.glass.h}): a ${c.width}x${c.height} canvas turns nothing`);
+    }
+    twins++;
+  }
+  assert.ok(twins >= 5, `every display card's glass was checked (${twins})`);
   // The look: where each corner of the canvas lands in the viewer's frame,
   // through the texture turnTexture() draws, the UVs screenPlane() gives the
   // plane and the model turn turnModel() applies (+x right, +y up).
@@ -357,6 +374,34 @@ test("A47: a turned glass turns the model, and reads upright on it", async () =>
   assert.throws(() => upright(wrong(480, 800, { w: 160, h: 96 }), 480, 800, "flipped"), /left to right|top to bottom/);
 });
 
+test("A47: a figure turns where it stands, and its shadow follows it", async () => {
+  const { buildFromFigure, partModels, turnModel, turnedShadow, M4 } = await load();
+  const scene = fakeScene();
+  await buildFromFigure("device.canary-display-dash")(scene);
+  const pose = scene.turnPose;
+  assert.ok(pose, "a figure names its body's pose");
+  assert.deepStrictEqual(Array.from(pose.seat), Array.from(M4.ident()), "a figure is placed centered and face-on already");
+  const [w, h] = pose.size;
+  assert.ok(w > h, `the dash figure is landscape face-on (${pose.size.join(" x ")})`);
+  // Unturned, every part draws as built; turned, every part (a figure has no
+  // stand) turns about the viewer's axis.
+  const flat = (m) => Array.from(m).map((v) => +v.toFixed(6) || 0);
+  for (const { part, model } of partModels(scene.parts, 0, pose)) assert.strictEqual(model, part.model);
+  const turned = partModels(scene.parts, 1, pose);
+  assert.strictEqual(turned.length, scene.parts.length, "nothing of a figure is left out");
+  for (const { part, model } of turned) {
+    assert.deepStrictEqual(flat(model), flat(M4.mul(turnModel(1), part.model ?? M4.ident())));
+  }
+  // The shadow: unturned the figure's own; turned, under a body h wide and w
+  // tall — the old shadow, left where it was, sat (w - h) / 2 up the turned
+  // body.
+  assert.strictEqual(turnedShadow(scene.shadow, 0, pose), scene.shadow);
+  const sh = turnedShadow(scene.shadow, 1, pose);
+  assert.ok(Math.abs(sh.y - (-w / 2 - 1.5)) < 1e-9, `the turned shadow stands under the body's foot (${sh.y})`);
+  assert.ok(scene.shadow.y > -w / 2, "the figure's own shadow would cross the turned body");
+  assert.strictEqual(sh.alpha, scene.shadow.alpha);
+});
+
 test("A47: the scene is handed the panel's own shape, which the firmware's panel is", async () => {
   const { glassTurn } = await load();
   const { flavorBoard, pinsPanel, turnedGlasses, readTurnedSources } = await import("./turned_glass.mjs");
@@ -385,13 +430,21 @@ test("A47: the scene is handed the panel's own shape, which the firmware's panel
     checked++;
   }
   assert.ok(checked >= 5, `the display twins were checked (${checked})`);
-  // The render turns the texture and the model with the canvas, every frame,
-  // and the pin flags' projection uses the same turned pose.
+  // The render turns the texture and the body with the canvas, every frame,
+  // and only when the build named its body's pose; the shadow follows the
+  // turned body. project() is the orbit alone: its callers hand it world
+  // points with any part transform applied (scene3d.js), and a turn is a
+  // part transform now.
   const scene3d = readFileSync(join(ROOT, "assets/scene3d.js"), "utf8");
-  assert.ok(scene3d.includes("this.turn = glassTurn(this.src, this.glass);") &&
+  assert.ok(scene3d.includes("this.turn = this.turnPose ? glassTurn(this.src, this.glass) : 0;") &&
     scene3d.includes("this.turn ? this._turnedSource() : this.src);") &&
-    (scene3d.match(/const spin = this\._spin\(\);/g) || []).length === 2 &&
-    scene3d.includes("return M4.mul(M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y)), turnModel(this.turn));"));
+    scene3d.includes("const shadow = turnedShadow(this.shadow, this.turn, this.turnPose);") &&
+    scene3d.includes("for (const { part: p, model } of partModels(this.parts, this.turn, this.turnPose)) {") &&
+    scene3d.includes("gl.uniformMatrix4fv(u.uModel, false, M4.mul(spin, model));"),
+    "the draw turns the texture, the body and the shadow through glassTurn/partModels/turnedShadow");
+  assert.strictEqual((scene3d.match(/const spin = M4\.mul\(M4\.rotX\(this\.rot\.x\), M4\.rotY\(this\.rot\.y\)\);/g) || []).length, 2,
+    "the draw's and project()'s spin are the orbit alone");
+  assert.ok(/clearParts\(\) \{[^}]*this\.turnPose = null;/.test(scene3d), "every build names its own body's pose");
   assert.ok(scene3d.includes("const t = turnTexture(this.turn, this.src.width, this.src.height);") &&
     scene3d.includes("g.setTransform(...t.m);"), "the turned plane samples the canvas through turnTexture()");
   // The Lab hands the scene the live canvas and the panel's own shape.

@@ -88,6 +88,15 @@ export const M4 = {
     o[0] = x; o[5] = y; o[10] = z;
     return o;
   },
+  // The inverse of a rotation-plus-translation (no scale): Rᵀ, −Rᵀt.
+  rigidInverse(m) {
+    const o = M4.ident();
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) o[i * 4 + j] = m[j * 4 + i];
+      o[12 + i] = -(m[i * 4] * m[12] + m[i * 4 + 1] * m[13] + m[i * 4 + 2] * m[14]);
+    }
+    return o;
+  },
 };
 
 // ── geometry builders (positions + normals + uv, indexed) ───────────────
@@ -283,28 +292,45 @@ export function screenPlane(w, h, round, seg = 64) {
 // as the person in front of it reads it, so it turns too (F184, F204); the
 // 3D model's screen plane is the panel as it sits in the case. Textured as
 // is, a turned canvas would stretch across the unturned plane. So when the
-// canvas's long side disagrees with the panel's own (the glass turned), the
-// model turns a quarter turn clockwise as the viewer sees it — the way both
-// firmwares' turn 1 stands the device (lv_disp_rot_t 90 on the dash,
-// Orient::R90 on the nightlight) — and the plane samples the canvas turned a
-// quarter turn the other way, so the glass reads upright on the turned body.
-// The canvas cannot tell turn 1 from turn 3 (both read upright), so a device
-// worn the other way shows the same upright glass on a body turned the same
-// way. The panel's own shape is the registry card's glass (app.js hands it
-// over with the canvas): a glass that never turns never turns its model.
+// canvas is the panel's own shape exactly swapped (the glass turned), the
+// device's body turns a quarter turn clockwise as the viewer sees it — the
+// way both firmwares' turn 1 stands the device (lv_disp_rot_t 90 on the
+// dash, Orient::R90 on the nightlight) — and the plane samples the canvas
+// turned a quarter turn the other way, so the glass reads upright on the
+// turned body. The canvas cannot tell turn 1 from turn 3 (both read
+// upright), so a device worn the other way shows the same upright glass on
+// a body turned the same way. The panel's own shape is the registry card's
+// glass (app.js hands it over with the canvas): a glass that never turns
+// never turns its model, and neither does a canvas of any other shape —
+// the HTML default 300x150 the glass canvas is until the firmware's first
+// frame sizes it, say.
+//
+// Only the device turns. Each builder that can be turned names its body's
+// pose (`scene.turnPose`: the `seat` that stands the body face-on at the
+// origin, +Z toward the viewer and its glass's top up, and the body's
+// face-on `size`), and marks the parts that hold the device (`stand`).
+// Turned, the body is seated face-on and turned, the holders are left out,
+// and the contact shadow is the one a body of the turned size stands on.
+// The Dash's desk stand is why: it is cut for the landscape case (the plug's
+// channel under the USB-C in its bottom wall, the screw lobes on the
+// pedestal; canary_dash_display.scad), and the wall cradle's four pads span
+// ±38 x ±16, so no printed part holds the case portrait — the turned case
+// is drawn standing alone, as the fleet figures stand, rather than in a
+// stand that would not take it. A scene that names no pose never turns.
 
 /** Quarter turns clockwise the model takes for this glass: 1 when the
- * canvas (`src`: {width, height}) is tall and the panel it shows
- * (`panel`: {w, h}, its native scan) wide, or the reverse; 0 otherwise (a
- * square or round glass, an unturned glass, or nothing to compare). */
+ * canvas (`src`: {width, height}) is exactly the panel it shows (`panel`:
+ * {w, h}, its native scan) turned on its side, 0 otherwise (a square or
+ * round glass, an unturned glass, a canvas not yet sized, or nothing to
+ * compare). */
 export function glassTurn(src, panel) {
-  if (!src || !panel) return 0;
-  const tall = src.height > src.width, wide = src.width > src.height;
-  return (tall && panel.w > panel.h) || (wide && panel.h > panel.w) ? 1 : 0;
+  if (!src || !panel || panel.w === panel.h) return 0;
+  const w = src.width, h = src.height;
+  return w > 0 && h > 0 && w === panel.h && h === panel.w ? 1 : 0;
 }
 
-/** The model's own turn for `turn` quarter turns clockwise (about the
- * viewer's axis, +Z toward them). */
+/** The body's own turn for `turn` quarter turns clockwise (about the
+ * viewer's axis, +Z toward them), once it is seated face-on. */
 export function turnModel(turn) {
   return turn ? M4.rotZ(-Math.PI / 2) : M4.ident();
 }
@@ -315,6 +341,37 @@ export function turnModel(turn) {
  * (y, w - x) — so that on the plane turned clockwise it reads upright. */
 export function turnTexture(turn, w, h) {
   return turn ? { w: h, h: w, m: [0, -1, 1, 0, 0, w] } : { w, h, m: [1, 0, 0, 1, 0, 0] };
+}
+
+/** Where each part draws for `turn` (`pose`: the scene's turnPose).
+ * Unturned, or with no pose, every part draws as built. Turned, the parts
+ * that hold the device (`stand`) are left out and every other part is the
+ * body, seated face-on and turned: turnModel(turn) · seat · part.model.
+ * Returns [{ part, model }] in draw order. */
+export function partModels(parts, turn, pose) {
+  if (!turn || !pose) return parts.map((part) => ({ part, model: part.model }));
+  const T = M4.mul(turnModel(turn), pose.seat);
+  return parts.filter((p) => !p.stand).map((part) => ({ part, model: M4.mul(T, part.model) }));
+}
+
+/** The grounding shadow a body of face-on `size` [w, h, d] stands on (the
+ * figures' framing rule). */
+export function figureShadow(size) {
+  return {
+    y: -size[1] / 2 - 1.5,
+    rx: Math.max(16, size[0] * 0.62),
+    rz: Math.max(14, size[2] * 0.9 + 10),
+    alpha: 0.3,
+  };
+}
+
+/** The contact shadow for `turn`: unturned (or with no pose, or no shadow)
+ * the scene's own; turned, the one the body stands on turned on its side —
+ * its face-on width is now its height — at the scene's own strength. */
+export function turnedShadow(shadow, turn, pose) {
+  if (!shadow || !turn || !pose) return shadow;
+  const [w, h, d] = pose.size;
+  return { ...figureShadow([h, w, d]), alpha: shadow.alpha };
 }
 
 // Wedge stand (25° recline cradle, simplified silhouette of the printed
@@ -708,9 +765,12 @@ export class DeviceScene {
     this.dirtySerial = -1;
     this._tex = null;    // { tex, gen }: the live-screen texture, per context generation
     // The live glass's own panel ({w, h}, its native scan: app.js sets it
-    // with the canvas) and the quarter turns the model takes when the
-    // canvas has turned from it (A47).
+    // with the canvas), the pose the builder gives the device's body for a
+    // turned glass (glassTurn / partModels; every build clears it), and the
+    // quarter turns the body takes when the canvas has turned from the
+    // panel (A47).
     this.glass = null;
+    this.turnPose = null;
     this.turn = 0;
     this._turned = null; // the turned canvas a turned plane samples
     this._wireOrbit();
@@ -759,7 +819,7 @@ export class DeviceScene {
 
   addMesh(builder, { color = [0.5, 0.5, 0.5], gloss = 0.2, metal = 0, screen = false,
                      model = M4.ident(), lines = false, unlit = false,
-                     clippable = false, minZ = 0, role = null } = {}) {
+                     clippable = false, minZ = 0, role = null, stand = false } = {}) {
     const pos = builder.pos instanceof Float32Array ? builder.pos : new Float32Array(builder.pos);
     const nv = pos.length / 3;
     // every enabled attribute must read a buffer big enough for the draw: a
@@ -786,6 +846,9 @@ export class DeviceScene {
       unlit,
       clippable,
       minZ,
+      // a part that holds the device (a desk stand): left out when the
+      // glass turns the body (A47, partModels)
+      stand,
       count: builder.idx.length,
       // retained source data: the buffers below are re-uploaded from these
       // after a release (off-screen) or a context loss
@@ -865,6 +928,7 @@ export class DeviceScene {
     this.buildGen++;
     for (const p of this.parts) this._free(p);
     this.parts = [];
+    this.turnPose = null; // the next build names its own body's pose (A47)
   }
 
   setGlow(g) { this.glow = g; }
@@ -1043,10 +1107,11 @@ export class DeviceScene {
       }
     }
 
-    // live screen texture — turned with the glass when the canvas's shape
-    // disagrees with the model's screen (A47: the model turns to match)
+    // live screen texture — turned with the glass when the canvas is the
+    // panel turned on its side (A47: the body turns to match, if the build
+    // named how it turns)
     const tex = this._tex.tex;
-    this.turn = glassTurn(this.src, this.glass);
+    this.turn = this.turnPose ? glassTurn(this.src, this.glass) : 0;
     if (this.src) {
       gl.bindTexture(gl.TEXTURE_2D, tex);
       try {
@@ -1057,19 +1122,21 @@ export class DeviceScene {
 
     const proj = M4.persp(0.62, W / H, 5, 2000);
     const view = M4.translate(0, -this.viewY, -this.dist);
-    const spin = this._spin();
+    const spin = M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y));
     const { u, a, su, sa } = gpu;
 
-    // the grounding shadow, under everything, blended, no depth write
-    if (this.shadow) {
+    // the grounding shadow, under everything, blended, no depth write — under
+    // the turned body when the glass has turned it (A47)
+    const shadow = turnedShadow(this.shadow, this.turn, this.turnPose);
+    if (shadow) {
       gl.useProgram(gpu.sprog);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied
       gl.depthMask(false);
       gl.uniformMatrix4fv(su.proj, false, proj);
-      gl.uniform3f(su.center, 0, this.shadow.y - this.viewY, -this.dist);
-      gl.uniform2f(su.radii, this.shadow.rx, this.shadow.rz);
-      gl.uniform1f(su.alpha, this.shadow.alpha);
+      gl.uniform3f(su.center, 0, shadow.y - this.viewY, -this.dist);
+      gl.uniform2f(su.radii, shadow.rx, shadow.rz);
+      gl.uniform1f(su.alpha, shadow.alpha);
       gl.bindBuffer(gl.ARRAY_BUFFER, gpu.squad);
       gl.vertexAttribPointer(sa, 2, gl.FLOAT, false, 0, 0);
       gl.enableVertexAttribArray(sa);
@@ -1089,8 +1156,10 @@ export class DeviceScene {
     gl.enableVertexAttribArray(a.nrm);
     gl.enableVertexAttribArray(a.uv);
 
-    for (const p of this.parts) {
-      gl.uniformMatrix4fv(u.uModel, false, M4.mul(spin, p.model));
+    // every part as built, or — the glass turned — the body seated and
+    // turned with the holders left out (partModels, A47)
+    for (const { part: p, model } of partModels(this.parts, this.turn, this.turnPose)) {
+      gl.uniformMatrix4fv(u.uModel, false, M4.mul(spin, model));
       gl.uniform3fv(u.uColor, (p.role && finishColor(p.role)) || p.color);
       gl.uniform1f(u.uGloss, p.gloss);
       gl.uniform1f(u.uMetal, p.metal || 0);
@@ -1134,7 +1203,7 @@ export class DeviceScene {
   project(x, y, z) {
     const W = this.canvas.clientWidth || 1, H = this.canvas.clientHeight || 1;
     const proj = M4.persp(0.62, W / H, 5, 2000);
-    const spin = this._spin();
+    const spin = M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y));
     const wx = spin[0] * x + spin[4] * y + spin[8] * z;
     const wy = spin[1] * x + spin[5] * y + spin[9] * z;
     const wz = spin[2] * x + spin[6] * y + spin[10] * z;
@@ -1148,11 +1217,6 @@ export class DeviceScene {
       depth: cw,
       visible: true,
     };
-  }
-
-  // The orbit pose, then the model's own turn for its glass (A47).
-  _spin() {
-    return M4.mul(M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y)), turnModel(this.turn));
   }
 
   // The live canvas drawn a quarter turn counterclockwise into a canvas of
@@ -1241,15 +1305,14 @@ export const FIGURE_PAINT = {
 };
 export const SCREEN_MATERIAL = "lit screen";
 
+// A figure is its body, centered and face-on as placed, so a turned glass
+// turns it where it stands (turnPose's seat is the identity; A47). The
+// framing distance reads the largest side, which a quarter turn keeps.
 function frameFigure(scene, size) {
   const big = Math.max(size[0], size[1], size[2]);
-  scene.setContactShadow({
-    y: -size[1] / 2 - 1.5,
-    rx: Math.max(16, size[0] * 0.62),
-    rz: Math.max(14, size[2] * 0.9 + 10),
-    alpha: 0.3,
-  });
+  scene.setContactShadow(figureShadow(size));
   scene.dist = 60 + big * 1.8;
+  scene.turnPose = { seat: M4.ident(), size: [size[0], size[1], size[2]] };
 }
 
 // glTF frame (+Y up, +Z toward the viewer, mm after parseGLB) is the card's

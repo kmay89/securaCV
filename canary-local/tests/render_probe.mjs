@@ -6,14 +6,19 @@
 //      a visitor's browser),
 //   2. every device draws a NON-EMPTY frame (pixels actually covered),
 //   3. the frame isn't a flat blob (color variance — lighting is alive).
-//   4. a turned glass reads upright on its turned model (sweep A47): the
-//      dash scene fed a 480x800 canvas (a portrait dash's glass) with three
+//   4. a turned glass reads upright on its turned model (sweep A47), on the
+//      dash the Lab's sheet shows — its real printed shape, the case
+//      reclined in its desk stand (app.js runs upgradeRealShape after the
+//      figure): fed a 480x800 canvas (a portrait dash's glass) with three
 //      marks — red and green on one row, blue under red — and the panel's
-//      own 800x480 shape draws them face-on where a person in front of the
-//      glass sees them, at the canvas's portrait proportions, while the
-//      same canvas left unturned is squeezed into the landscape screen. The
-//      marks sit in the glass's lower half: the studio light's highlight
-//      across the top of a face-on screen washes a mark there to near white.
+//      own 800x480 shape, the case leaves its stand (painted a probe color
+//      here, so its pixels can be counted) and stands alone, the marks
+//      upright at the sheet's presentation pose and, face-on, at the
+//      canvas's portrait proportions, the body's foot on the shadow drawn
+//      for it; with no panel named the stand is drawn and the same canvas is
+//      squeezed into the landscape screen. The marks sit in the glass's
+//      lower half: the studio light's highlight across the top of a face-on
+//      screen washes a mark there to near white.
 //
 //   node canary-local/tests/render_probe.mjs [--shots DIR]
 //
@@ -45,7 +50,9 @@ if (SHOTS) await (await import("node:fs/promises")).mkdir(SHOTS, { recursive: tr
 
 const server = createServer(async (req, res) => {
   const path = req.url.split("?")[0];
-  if (path === "/probe.html") {
+  // served beside the Lab's pages: real-shapes.js fetches its STLs relative
+  // to the page (enclosures/preview/), as it does on the sheet
+  if (path === "/canary-local/probe.html") {
     res.writeHead(200, { "content-type": "text/html" });
     res.end(HARNESS);
     return;
@@ -69,7 +76,8 @@ const BASE = `http://127.0.0.1:${server.address().port}`;
 const HARNESS = `<!doctype html><meta charset="utf-8">
 <body style="background:#f4f4f5;margin:0;display:flex;flex-wrap:wrap">
 <script type="module">
-import { DeviceScene, BUILDERS } from "/canary-local/assets/scene3d.js";
+import { DeviceScene, BUILDERS, M4, turnedShadow } from "/canary-local/assets/scene3d.js";
+import { upgradeRealShape } from "/canary-local/assets/real-shapes.js";
 window.__probe = { status: "running", results: {} };
 const frames = (n) => new Promise((ok) => {
   const step = () => (n-- <= 0 ? ok() : requestAnimationFrame(step));
@@ -109,7 +117,9 @@ try {
       mean, stddev,
     };
   }
-  // 4. A47: the turned glass, face-on, against the same glass left unturned.
+  // 4. A47: the sheet's dash — its real shape in the desk stand — fed a
+  // turned glass, at the sheet's presentation pose and face-on, against the
+  // same glass with no panel named.
   const glass = document.createElement("canvas");
   glass.width = 480; glass.height = 800;
   const g = glass.getContext("2d");
@@ -119,24 +129,29 @@ try {
   g.fillStyle = "#ff0000"; g.fillRect(0, 440, 120, 120);
   g.fillStyle = "#00ff00"; g.fillRect(360, 440, 120, 120);
   g.fillStyle = "#0000ff"; g.fillRect(0, 680, 120, 120);
-  const marks = async (panel) => {
+  const marks = async (panel, pose) => {
     const cv = document.createElement("canvas");
     cv.style.cssText = "width:420px;height:420px";
     document.body.append(cv);
     const scene = new DeviceScene(cv, glass);
     await BUILDERS["canary-display-dash"](scene);
+    const real = await upgradeRealShape(scene, "canary-display-dash");
+    // the stand in a color nothing else here has, so its pixels can be told
+    for (const p of scene.parts) if (p.stand) { p.role = null; p.color = [1, 0, 1]; p.gloss = 0; }
     scene.glass = panel;
     scene.autoSway = false;
-    scene.rot = { x: 0, y: 0 };
-    scene.home = { x: 0, y: 0 };
+    if (pose === "front") { scene.rot = { x: 0, y: 0 }; scene.home = { x: 0, y: 0 }; }
     scene.draw();
     const gl = scene.gl, W = cv.width, H = cv.height;
     const px = new Uint8Array(W * H * 4);
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
     const c = { r: [0, 0, 0], g: [0, 0, 0], b: [0, 0, 0] };   // sum x, sum y (up), count
+    let stand = 0, foot = H, top = -1;                         // rows counted up from the bottom
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const i = (y * W + x) * 4, R = px[i], G = px[i + 1], B = px[i + 2];
+        if (px[i + 3] === 255) { foot = Math.min(foot, y); top = Math.max(top, y); }
+        if (R - G > 60 && B - G > 60 && Math.abs(R - B) < 40) { stand++; continue; }
         // a mark is its channel standing 40 clear of the other two (the
         // studio light adds white to every channel; the margin survives it)
         const k = R - Math.max(G, B) > 40 ? "r" : G - Math.max(R, B) > 40 ? "g"
@@ -144,13 +159,22 @@ try {
         if (k) { c[k][0] += x; c[k][1] += y; c[k][2]++; }
       }
     }
+    // the shadow the scene drew (view space, so no orbit): its center's row
+    const sh = turnedShadow(scene.shadow, scene.turn, scene.turnPose);
+    let shadowRow = null;
+    if (sh) {
+      const P = M4.persp(0.62, W / H, 5, 2000), vy = sh.y - scene.viewY, vz = -scene.dist;
+      shadowRow = ((P[5] * vy + P[9] * vz + P[13]) / (P[7] * vy + P[11] * vz + P[15]) + 1) / 2 * H;
+    }
     scene.dispose?.();
     cv.remove();
     const at = (k) => (c[k][2] ? [c[k][0] / c[k][2], c[k][1] / c[k][2]] : null);
-    return { turn: scene.turn, r: at("r"), g: at("g"), b: at("b") };
+    return { real, turn: scene.turn, r: at("r"), g: at("g"), b: at("b"), stand, foot, top, shadowRow };
   };
-  window.__probe.turned = await marks({ w: 800, h: 480 });
-  window.__probe.unturned = await marks(null);
+  window.__probe.turned = await marks({ w: 800, h: 480 }, "front");
+  window.__probe.unturned = await marks(null, "front");
+  window.__probe.turnedHome = await marks({ w: 800, h: 480 }, "home");
+  window.__probe.unturnedHome = await marks(null, "home");
   window.__probe.status = "done";
 } catch (e) {
   window.__probe.status = "error: " + (e && e.message || e);
@@ -162,7 +186,7 @@ const browser = await pw.chromium.launch(exe ? { executablePath: exe } : {});
 const page = await browser.newPage({ viewport: { width: 1300, height: 900 } });
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
-await page.goto(BASE + "/probe.html");
+await page.goto(BASE + "/canary-local/probe.html");
 await page.waitForFunction(() => window.__probe && window.__probe.status !== "running",
                            null, { timeout: 30000 });
 const probe = await page.evaluate(() => window.__probe);
@@ -191,10 +215,13 @@ for (const id of EXPECT) {
   }
 }
 
-// 4. A47: on the turned model the marks stand as on the glass — red left of
-// green on one row, blue under red — at the canvas's proportions (240 down
-// to 360 across); the unturned control squeezes them into the landscape
-// screen, 480/800 down and 800/480 across.
+// 4. A47: on the turned case the marks stand as on the glass — red left of
+// green on one row, blue under red — face-on at the canvas's proportions
+// (240 down to 360 across), and at the sheet's presentation pose still
+// upright (the row more across than down, the column more down than
+// across); the case has left its stand, and its foot is on its shadow. The
+// unturned control draws the stand and squeezes the marks into the
+// landscape screen, 480/800 down and 800/480 across.
 const GLASS_RATIO = 240 / 360;
 const SQUEEZED = GLASS_RATIO * (480 / 800) / (800 / 480);
 const shape = (m) => {
@@ -203,17 +230,61 @@ const shape = (m) => {
   return { across, down, ratio: down / across, row: Math.abs(m.g[1] - m.r[1]), col: Math.abs(m.b[0] - m.r[0]) };
 };
 const near = (v, want) => Math.abs(v / want - 1) < 0.2;
-const t = shape(probe.turned), u = shape(probe.unturned);
-if (!t) fail(`A47: the turned glass's marks are not all on the frame (${JSON.stringify(probe.turned)})`);
-else if (probe.turned.turn !== 1) fail(`A47: the scene did not turn the model for a 480x800 glass on an 800x480 panel`);
-else if (!(t.across > 0 && t.down > 0 && t.row < 0.1 * t.across && t.col < 0.1 * t.down)) {
-  fail(`A47: the turned glass does not read upright (red ${probe.turned.r}, green ${probe.turned.g}, blue ${probe.turned.b})`);
-} else if (!near(t.ratio, GLASS_RATIO)) {
-  fail(`A47: the turned glass is not at its proportions (down/across ${t.ratio.toFixed(2)}, the canvas's ${GLASS_RATIO.toFixed(2)})`);
-} else console.log(`✓ A47: a 480x800 glass reads upright on the turned dash (down/across ${t.ratio.toFixed(2)}; canvas ${GLASS_RATIO.toFixed(2)})`);
-if (!u || probe.unturned.turn !== 0 || !(u.across > 0 && u.down > 0) || !near(u.ratio, SQUEEZED)) {
-  fail(`A47: the unturned control is not the squeezed glass (${JSON.stringify(u)}; want down/across near ${SQUEEZED.toFixed(2)})`);
-} else console.log(`✓ A47: the same glass unturned is squeezed (down/across ${u.ratio.toFixed(2)}, want ${SQUEEZED.toFixed(2)}): what the Lab showed before`);
+const a47 = (what, m, check) => {
+  if (!m || !m.real) return fail(`A47 ${what}: the sheet's real dash did not load (${JSON.stringify(m)})`);
+  const t = shape(m);
+  const msg = check(t, m);
+  if (msg) return fail(`A47 ${what}: ${msg}`);
+  const f = (v) => (typeof v === "number" ? v.toFixed(2) : v);
+  console.log(`✓ A47 ${what} (down/across ${f(t?.ratio)}, stand pixels ${m.stand}, foot row ${m.foot}, `
+    + `shadow center row ${f(m.shadowRow)}, body ${m.top - m.foot} rows)`);
+};
+const turnedCase = (t, m) => {
+  if (m.turn !== 1) return "the scene did not turn the case for a 480x800 glass on an 800x480 panel";
+  if (m.stand !== 0) return `the stand turned with the case (${m.stand} stand pixels drawn)`;
+  if (!t) return `the turned glass's marks are not all on the frame (${JSON.stringify(m)})`;
+  // the shadow drawn for the turned case is under its foot (rows count up;
+  // the shadow's center may sit a little below the lowest pixel, never up
+  // the body)
+  const h = m.top - m.foot;
+  if (m.shadowRow === null || m.shadowRow > m.foot + 0.03 * h || m.shadowRow < m.foot - 0.06 * h) {
+    return `the case does not stand on its shadow (foot row ${m.foot}, shadow center row ${m.shadowRow?.toFixed(1)}, body ${h} rows)`;
+  }
+  return null;
+};
+a47("face-on: a 480x800 glass reads upright on the turned case, out of its stand", probe.turned, (t, m) => {
+  const bad = turnedCase(t, m);
+  if (bad) return bad;
+  if (!(t.across > 0 && t.down > 0 && t.row < 0.1 * t.across && t.col < 0.1 * t.down)) {
+    return `the turned glass does not read upright (red ${m.r}, green ${m.g}, blue ${m.b})`;
+  }
+  if (!near(t.ratio, GLASS_RATIO)) return `the turned glass is not at its proportions (down/across ${t.ratio.toFixed(2)}, the canvas's ${GLASS_RATIO.toFixed(2)})`;
+  return null;
+});
+a47("at the sheet's pose: the turned glass reads upright, the case out of its stand", probe.turnedHome, (t, m) => {
+  const bad = turnedCase(t, m);
+  if (bad) return bad;
+  if (!(t.across > 0 && t.down > 0 && t.row < t.across && t.col < t.down)) {
+    return `the turned glass does not read upright (red ${m.r}, green ${m.g}, blue ${m.b})`;
+  }
+  return null;
+});
+// (The stand's front lip hides the foot of the reclined glass, so the
+// squeezed marks' centroids read flatter still than SQUEEZED; what is held
+// is that they are nowhere near the canvas's own proportions.)
+a47("face-on, no panel named: the stand is drawn and the glass squeezed (what the Lab showed before)", probe.unturned, (u, m) => {
+  if (m.turn !== 0) return "a glass with no panel named turned the case";
+  if (!(m.stand > 0)) return "the stand is not drawn";
+  if (!u || !(u.across > 0 && u.down > 0) || !(u.ratio < (GLASS_RATIO + SQUEEZED) / 2)) {
+    return `not the squeezed glass (${JSON.stringify(u)}; want down/across under ${((GLASS_RATIO + SQUEEZED) / 2).toFixed(2)}, the canvas's being ${GLASS_RATIO.toFixed(2)})`;
+  }
+  return null;
+});
+a47("at the sheet's pose, no panel named: the case stays in its stand", probe.unturnedHome, (u, m) => {
+  if (m.turn !== 0) return "a glass with no panel named turned the case";
+  if (!(m.stand > 0)) return "the stand is not drawn";
+  return null;
+});
 
 await browser.close();
 server.close();

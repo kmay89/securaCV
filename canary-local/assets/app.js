@@ -497,9 +497,11 @@ async function buildDisplaySheet(ctx, side, stage) {
     });
     // The 3D screen textures from the live panel. The canvas turns with the
     // glass (a portrait dash is 480x800), so the scene is handed the panel's
-    // own shape too and turns the model whenever the canvas has turned from
-    // it (scene3d.js glassTurn, A47): a turned glass reads upright on a
-    // turned body instead of stretching across the landscape screen.
+    // own shape too and turns the device's body when the canvas is that
+    // shape turned on its side (scene3d.js glassTurn, A47): a turned glass
+    // reads upright on a turned case, out of its landscape-only stand,
+    // instead of stretching across the landscape screen. Until the first
+    // frame sizes it the canvas is 300x150, which turns nothing.
     ctx.scene.src = glass;
     ctx.scene.glass = { w: dev.glass.w, h: dev.glass.h };
     // A preserved image (reboot / bench power event) is preseeded before
