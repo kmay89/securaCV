@@ -79,6 +79,11 @@ const TREES = [
             "POST /api/logs/ack-all": "handle_ack_all_auth", "POST /api/logs/rotate": "handle_logs_rotate_auth" } },
 ];
 
+// A catch-all ("/*": the PlatformIO canary's GET fallback, which 404s or,
+// during setup, redirects to the wizard) answers any path but means none: a
+// request only it answers reaches no route.
+const catchAll = (g) => g.uri === "/*";
+
 // Per page (R.PAGES): the fewest requests its reader must find (a floor that
 // proves it found the page's script) and the route families nothing in the
 // tree serves, which the page gates on a first answer (F176, F198).
@@ -162,7 +167,7 @@ test("canary-wap: wap_server.h's route list is the route table (F237)", () => {
     const exact = table.findIndex((g) => g.method === t.method && g.uri === t.target);
     if (exact >= 0) return exact;
     const hits = R.match(table.map((g) => [g.uri, t.target]));
-    const wild = table.map((g, j) => (g.method === t.method && hits[j] ? j : -1)).filter((j) => j >= 0);
+    const wild = table.map((g, j) => (g.method === t.method && hits[j] && !catchAll(g) ? j : -1)).filter((j) => j >= 0);
     return wild.length === 1 ? wild[0] : null;
   };
   const wrong = [];
@@ -393,7 +398,7 @@ function pageAsks(table, page) {
     if (exact >= 0) {
       want = exact;
     } else {
-      const wild = table.map((g, j) => (g.method === a.method && row[j] && g.uri !== a.r.route ? j : -1)).filter((j) => j >= 0);
+      const wild = table.map((g, j) => (g.method === a.method && row[j] && g.uri !== a.r.route && !catchAll(g) ? j : -1)).filter((j) => j >= 0);
       want = wild.length === 1 ? wild[0] : wild.length ? `${wild.length} wildcards` : null;
     }
     return { ...a, answer: answers[i], want, ok: typeof want === "number" && answers[i] === want };
