@@ -18,13 +18,20 @@
 //   - anything else the "/api/logs/*" route can be handed (no digits, a
 //     sign, a number past uint32_t, another suffix, a trailing slash,
 //     ack-all, rotate) answers 404 with httpd's own message and
-//     acknowledges nothing — the old atoi() read acknowledged entry 42 for
-//     POST /api/logs/42 and entry 0 for POST /api/logs/x/ack;
+//     acknowledges nothing. That strictness is new with the route, not a
+//     fix of something a device did: the old template matched only its own
+//     literal text, so no other path ever reached the old body, but behind
+//     "/api/logs/*" that body's atoi() read would have acknowledged entry
+//     42 for POST /api/logs/42 and entry 0 for POST /api/logs/x/ack;
 //   - canary-wap reads the reason from the body only for a log-ack request;
 //   - the PlatformIO handler's rate limit and bearer gate still come first.
 // Which request reaches this handler at all is
 // test_dashboard_route_match.test.js's question (registration order through
-// a copy of the IDF matcher).
+// a copy of the IDF matcher). That test also hands this binary the URL each
+// dashboard's per-entry Acknowledge builds: run with --parse, it reads one
+// target per line on stdin and prints, per line, what each tree's
+// log_ack_seq_from_uri() reads from it ("<pio> <wap>", each the seq or "-"
+// for a target it refuses).
 //
 // Build/run: make -C firmware/tests_host (the Makefile cuts the functions).
 
@@ -225,14 +232,14 @@ static const struct { const char* uri; uint32_t seq; } kAcks[] = {
 
 // Targets the route can be handed that name none: each answers 404.
 static const char* const kNotAck[] = {
-  "/api/logs/42",            // the old atoi() acknowledged entry 42
+  "/api/logs/42",            // the old body's atoi() would read entry 42
   "/api/logs/x/ack",         // ... and entry 0
   "/api/logs/42/",
   "/api/logs/42/ackx",
   "/api/logs/42/ack/",
   "/api/logs/42/acknowledge",
   "/api/logs//ack",
-  "/api/logs/-1/ack",        // atoi(): 4294967295 once stored in a uint32_t
+  "/api/logs/-1/ack",        // atoi() would read 4294967295 into a uint32_t
   "/api/logs/+1/ack",
   "/api/logs/1a/ack",
   "/api/logs/4294967296/ack",
@@ -313,7 +320,23 @@ static void test_pio_gates_come_first() {
   CHECK(pio::health.http_requests == before + 1, "pio: a 404 after the gates is counted, as before");
 }
 
-int main() {
+// --parse: what each tree's parser reads from each target on stdin.
+static int parse_stdin() {
+  char line[512];
+  while (std::fgets(line, sizeof line, stdin)) {
+    line[std::strcspn(line, "\r\n")] = '\0';
+    for (const Tree& t : kTrees) {
+      uint32_t seq = 0;
+      if (t.parse(line, &seq)) std::printf("%s%u", &t == kTrees ? "" : " ", (unsigned)seq);
+      else std::printf("%s-", &t == kTrees ? "" : " ");
+    }
+    std::printf("\n");
+  }
+  return 0;
+}
+
+int main(int argc, char** argv) {
+  if (argc == 2 && std::strcmp(argv[1], "--parse") == 0) return parse_stdin();
   test_acks_name_their_entry();
   test_other_paths_answer_404_and_ack_nothing();
   test_wap_reads_the_reason();

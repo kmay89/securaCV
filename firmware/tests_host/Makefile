@@ -393,9 +393,11 @@ DASHROUTES_JS = test_canary_dashboard_routes.test.js
 #     tables in registration order (dashboard_route_tables.js) and asks
 #     idf_uri_route_oracle (IDF's httpd_uri_match_wildcard, copied verbatim,
 #     and the first-match / refuse-a-duplicate loop around it) which route
-#     answers each request both dashboards make. The oracle is C: IDF's
-#     function names a parameter `template`. It is built with
-#     -Wno-sign-compare, as IDF builds it (the copy is not edited).
+#     answers each request both dashboards make, then hands the URL each
+#     dashboard's per-entry Acknowledge builds to test_log_ack_route --parse
+#     (both trees' parsers) to hold it to the entry the handler reads. The
+#     oracle is C: IDF's function names a parameter `template`. It is built
+#     with -Wno-sign-compare, as IDF builds it (the copy is not edited).
 LOGACK_PIO_SRC  = ../canary/lib/securacv_network/src/securacv_network.cpp
 LOGACK_WAP_SRC  = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 LOGACK_SIGS     = static bool log_ack_seq_from_uri(const char* uri, uint32_t* seq) {|static esp_err_t handle_log_ack(httpd_req_t* req) {
@@ -1070,7 +1072,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(CHIRPPANEL_JS)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
 	./$(LOGACK_BIN)
-	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(ROUTEMATCH_JS)
+	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) LOG_ACK_ROUTE_BIN=$(abspath $(LOGACK_BIN)) $(NODE) --test $(ROUTEMATCH_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

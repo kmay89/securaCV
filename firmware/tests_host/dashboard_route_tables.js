@@ -29,6 +29,11 @@
 // the short list of places that register on another server, so a route
 // added somewhere the walk does not reach fails the test instead of
 // vanishing from it.
+//
+// Past the route, one handler is asked too: logAckParse() hands targets to
+// test_log_ack_route --parse, which runs both trees' log_ack_seq_from_uri()
+// as cut out of the firmware, so a dashboard URL that reaches the log-ack
+// route can be held to the entry the handler reads from it.
 
 "use strict";
 
@@ -384,6 +389,37 @@ function route(table, requests) {
   return { regs, answers };
 }
 
+// ── The log-ack handler's own parser ─────────────────────────────────────
+
+// What each tree's log_ack_seq_from_uri() (cut verbatim out of the firmware
+// into test_log_ack_route, which the Makefile builds) reads from each target:
+// [{ pio, wap }] per target, each the seq (a number) or null (refused).
+let logAckBin = null;
+function logAckParse(targets) {
+  if (!logAckBin) {
+    if (process.env.LOG_ACK_ROUTE_BIN && existsSync(process.env.LOG_ACK_ROUTE_BIN)) {
+      logAckBin = process.env.LOG_ACK_ROUTE_BIN;
+    } else {
+      // Run outside the Makefile's `run`: have make cut the functions and
+      // build it (its recipe, its flags).
+      execFileSync("make", ["-C", __dirname, "--no-print-directory", "build/test_log_ack_route"],
+        { stdio: ["ignore", "ignore", "inherit"] });
+      logAckBin = join(__dirname, "build", "test_log_ack_route");
+    }
+  }
+  if (targets.length === 0) return [];
+  const res = spawnSync(logAckBin, ["--parse"], { input: targets.join("\n") + "\n", encoding: "utf8" });
+  assert.strictEqual(res.status, 0, `test_log_ack_route --parse failed: ${res.stderr}`);
+  const out = res.stdout.trim().split("\n");
+  assert.strictEqual(out.length, targets.length, "one answer per target");
+  return out.map((l) => {
+    const m = l.match(/^(\d+|-) (\d+|-)$/);
+    assert.ok(m, `test_log_ack_route --parse answered ${l}`);
+    const read = (v) => (v === "-" ? null : +v);
+    return { pio: read(m[1]), wap: read(m[2]) };
+  });
+}
+
 // ── The dashboards' requests ─────────────────────────────────────────────
 
 // The page served by `path`: the one raw string the file holds.
@@ -474,5 +510,5 @@ function pageRequests(path) {
 
 module.exports = {
   PIO_NET, PIO_PAGE, WAP_INO, WAP_PAGE,
-  pioTable, wapTable, route, match, pageRequests, pageText, stripComments,
+  pioTable, wapTable, route, match, logAckParse, pageRequests, pageText, stripComments,
 };

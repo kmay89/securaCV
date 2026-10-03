@@ -31,11 +31,20 @@
 //     F176/F198); a URL the page holds for later reaches its route by some
 //     method;
 //   - the log routes reach their handlers on both trees: POST
-//     /api/logs/<seq>/ack the log-ack handler, ack-all and rotate theirs.
+//     /api/logs/<seq>/ack the log-ack handler, ack-all and rotate theirs;
+//   - each dashboard's per-entry Acknowledge builds a URL its own tree's
+//     handler reads as the entry it names: the requests the page makes that
+//     route to the log-ack registration (there must be one), each a template
+//     carrying exactly one value, filled with 0, 7 and 4294967295 and handed
+//     to log_ack_seq_from_uri() as cut out of the firmware
+//     (test_log_ack_route --parse). Reaching the route is not enough: the
+//     wildcard takes any path under /api/logs/, and the handler answers 404
+//     for every shape but <seq>/ack.
 //
 // Run: node --test firmware/tests_host/test_dashboard_route_match.test.js
-// (the Makefile's `run` target does, with the oracle it built; run alone,
-// the test builds it with $CC, default cc).
+// (the Makefile's `run` target does, with the oracle and test_log_ack_route
+// it built; run alone, the test builds the oracle with $CC, default cc, and
+// has make build test_log_ack_route).
 
 "use strict";
 
@@ -52,10 +61,10 @@ const R = require("./dashboard_route_tables.js");
 const IDF_MATCHER_SHA256 = "3df494155c6770152cbc15743617a5e7473b09adb842221f7ea4731e1b30a396";
 
 const TREES = [
-  { name: "PlatformIO canary", table: R.pioTable, page: R.PIO_PAGE, gated: ["/api/chirp", "/api/bluetooth"],
+  { name: "PlatformIO canary", table: R.pioTable, page: R.PIO_PAGE, parser: "pio", gated: ["/api/chirp", "/api/bluetooth"],
     logs: { "GET /api/logs": "handle_logs", "POST /api/logs/1/ack": "handle_log_ack",
             "POST /api/logs/ack-all": "handle_ack_all" } },
-  { name: "canary-wap", table: R.wapTable, page: R.WAP_PAGE, gated: [],
+  { name: "canary-wap", table: R.wapTable, page: R.WAP_PAGE, parser: "wap", gated: [],
     logs: { "GET /api/logs": "handle_logs_auth", "POST /api/logs/1/ack": "handle_log_ack_auth",
             "POST /api/logs/ack-all": "handle_ack_all_auth", "POST /api/logs/rotate": "handle_logs_rotate_auth" } },
 ];
@@ -159,5 +168,33 @@ for (const tree of TREES) {
     const seqs = ["0", "7", "4294967295"];
     const r = R.route(table, seqs.map((s) => ({ method: "POST", target: `/api/logs/${s}/ack` })));
     r.answers.forEach((a, i) => assert.strictEqual(a, ack, `POST /api/logs/${seqs[i]}/ack`));
+  });
+
+  test(`${tree.name}: the page's per-entry Acknowledge is a URL its handler reads`, () => {
+    const table = tree.table();
+    const ack = table.findIndex((g) => g.handler === tree.logs["POST /api/logs/1/ack"]);
+    assert.ok(ack >= 0, "the log-ack handler is registered");
+    // Every request the page can send as a POST: the ones it names POST and
+    // the ones whose method it does not name (a URL held for later, a
+    // method it computes).
+    const reqs = R.pageRequests(tree.page).filter((r) => r.method === "POST" || r.method === null);
+    const { answers } = R.route(table, reqs.map((r) => ({ method: "POST", target: r.route })));
+    const acks = reqs.filter((r, i) => answers[i] === ack);
+    assert.ok(acks.length >= 1, "the page makes a per-entry Acknowledge (a POST the log-ack route answers)");
+    const seqs = [0, 7, 4294967295];
+    const asks = [];
+    for (const r of acks) {
+      const holes = r.raw.match(/\$\{[^}]*\}/g) || [];
+      assert.strictEqual(holes.length, 1,
+        `${r.raw} (page line ${r.line}): an Acknowledge carries one value, the entry's seq`);
+      for (const seq of seqs) asks.push({ r, seq, target: r.raw.replace(/\$\{[^}]*\}/, String(seq)) });
+    }
+    const read = R.logAckParse(asks.map((a) => a.target));
+    const wrong = asks.map((a, i) => {
+      const got = read[i][tree.parser];
+      return got === a.seq ? null :
+        `${a.r.raw} (page line ${a.r.line}) as ${a.target}: the handler reads ${got === null ? "no entry (404)" : got}`;
+    }).filter(Boolean);
+    assert.deepStrictEqual(wrong, []);
   });
 }
