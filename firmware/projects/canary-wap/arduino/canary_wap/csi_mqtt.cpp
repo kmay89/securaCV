@@ -524,10 +524,16 @@ bool config_load(Config* out) {
    * without a separate toggle. Non-HA users flip it off via the /mqtt
    * settings page; the persisted bool then survives reboots. */
   out->discovery = prefs.getBool(NVS_KEY_DISCOVERY, true);
-  prefs.getString(NVS_KEY_HOST,   out->host,   MAX_HOST_LEN);
-  prefs.getString(NVS_KEY_USER,   out->user,   MAX_USER_LEN);
-  prefs.getString(NVS_KEY_PASS,   out->pass,   MAX_PASS_LEN);
-  prefs.getString(NVS_KEY_PREFIX, out->prefix, MAX_PREFIX_LEN);
+  /* Each string with its member's whole size (sweep F241). Arduino-ESP32's
+   * Preferences::getString(key, buf, maxLen) refuses, whole, a value whose
+   * length with its NUL exceeds maxLen; these read with MAX_*_LEN, so a
+   * value of exactly MAX_*_LEN characters, which the POST stores, read back
+   * as nothing: the prefix as the default, the host as none. A value longer
+   * than its member (none this firmware writes) is still refused that way. */
+  prefs.getString(NVS_KEY_HOST,   out->host,   sizeof(out->host));
+  prefs.getString(NVS_KEY_USER,   out->user,   sizeof(out->user));
+  prefs.getString(NVS_KEY_PASS,   out->pass,   sizeof(out->pass));
+  prefs.getString(NVS_KEY_PREFIX, out->prefix, sizeof(out->prefix));
   prefs.end();
   if (!out->prefix[0]) strncpy(out->prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
   if (out->port == 0)  out->port = out->tls ? DEFAULT_PORT_TLS : DEFAULT_PORT;
@@ -1479,12 +1485,13 @@ void device_id_slug(char* out, size_t cap) {
 
 /* Emit one entity's config payload. Returns true on enqueue success.
  * The discovery JSON is built into a fixed 768-byte buffer. The longest
- * body is the presence entity's: 762 bytes at the longest device id (32),
- * prefix (31, what config_load reads back) and firmware version (23) the
- * bridge holds, and 654 at a device's own 14-character id with that
- * prefix. test_ha_discovery_ids.cpp formats every config at those lengths
- * and holds each under the buffer; a body that does not fit is never
- * published, and publish_discovery() stops at it. */
+ * body is the presence entity's: 764 bytes at the longest device id (32),
+ * prefix (32, MAX_PREFIX_LEN, what config_load reads back since sweep F241)
+ * and firmware version (23) the bridge holds, and 656 at a device's own
+ * 14-character id with that prefix. test_ha_discovery_ids.cpp formats
+ * every config at those lengths and holds each under the buffer; a body
+ * that does not fit is never published, and publish_discovery() stops at
+ * it. */
 bool publish_one_discovery(const DiscoveryEntity& e) {
   const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
   char slug[sizeof(s_device_id)];
@@ -2090,6 +2097,20 @@ static bool json_extract_int(const char* body, const char* key, long* out) {
   return true;
 }
 
+/* Refuse a string setting its Config member cannot hold (sweep F241), with
+ * the limit in the reason, so the page can say which field and how long;
+ * the handler used to cut a long user or prefix to the member and save it. */
+static bool refuse_too_long(httpd_req_t* req, const char* field, const char* value, size_t max) {
+  if (strlen(value) <= max) return false;
+  char answer[96];
+  snprintf(answer, sizeof(answer),
+           "{\"ok\":false,\"reason\":\"%s must be at most %u characters\"}",
+           field, (unsigned)max);
+  httpd_resp_set_status(req, "400 Bad Request");
+  httpd_resp_send(req, answer, HTTPD_RESP_USE_STRLEN);
+  return true;
+}
+
 esp_err_t handle_config_post(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
   if (!authorized(req, tok)) {
@@ -2191,15 +2212,26 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   if (json_extract_int(body, "\"port\"", &port_l) && port_l > 0 && port_l <= 65535) {
     c.port = (uint16_t)port_l;
   }
-  /* Empty string in any field clears it; missing field leaves it as-is. */
-  char buf[MAX_PASS_LEN + 1] = {};
+  /* Empty string in any field clears it; missing field leaves it as-is.
+   * A value longer than its Config member holds is refused, never cut
+   * (sweep F241): buf holds one character more than the longest member, so
+   * json_extract_string()'s cut cannot hide a value past any member's limit
+   * (a JSON escape is one character of the value). Each member holds what
+   * config_load() reads back, so what is saved is what the bridge uses. */
+  constexpr size_t kLongestSetting = MAX_HOST_LEN > MAX_PASS_LEN ? MAX_HOST_LEN : MAX_PASS_LEN;
+  static_assert(MAX_USER_LEN <= kLongestSetting && MAX_PREFIX_LEN <= kLongestSetting,
+                "buf must hold one character past every string setting");
+  char buf[kLongestSetting + 2] = {};
   if (json_extract_string(body, "\"host\"",   buf, sizeof(buf))) {
+    if (refuse_too_long(req, "host", buf, MAX_HOST_LEN)) return ESP_OK;
     strncpy(c.host,   buf, MAX_HOST_LEN);   c.host  [MAX_HOST_LEN]   = '\0';
   }
   if (json_extract_string(body, "\"user\"",   buf, sizeof(buf))) {
+    if (refuse_too_long(req, "user", buf, MAX_USER_LEN)) return ESP_OK;
     strncpy(c.user,   buf, MAX_USER_LEN);   c.user  [MAX_USER_LEN]   = '\0';
   }
   if (json_extract_string(body, "\"prefix\"", buf, sizeof(buf))) {
+    if (refuse_too_long(req, "prefix", buf, MAX_PREFIX_LEN)) return ESP_OK;
     /* Restrict prefix to a safe character set so we can splat it into
      * the discovery JSON's stat_t / avty_t fields via %s without an
      * escaper. JSON-unsafe (", \, control chars) would corrupt the
@@ -2224,6 +2256,7 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     strncpy(c.prefix, buf, MAX_PREFIX_LEN); c.prefix[MAX_PREFIX_LEN] = '\0';
   }
   if (json_extract_string(body, "\"password\"", buf, sizeof(buf))) {
+    if (refuse_too_long(req, "password", buf, MAX_PASS_LEN)) return ESP_OK;
     strncpy(c.pass,   buf, MAX_PASS_LEN);   c.pass  [MAX_PASS_LEN]   = '\0';
   }
   if (!c.prefix[0]) strncpy(c.prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
@@ -2321,15 +2354,15 @@ button.test{background:transparent;color:#3a311e;border:1px solid #d4c994;}
     <input type="checkbox" id="enabled"> Send to a broker
   </label>
   <div class="row">
-    <label>Broker host<input type="text" id="host" placeholder="192.168.1.10"></label>
+    <label>Broker host<input type="text" id="host" maxlength="128" placeholder="192.168.1.10"></label>
     <label>Port<input type="number" id="port" min="1" max="65535" value="1883"></label>
   </div>
   <div class="row">
-    <label>Username (optional)<input type="text" id="user"></label>
-    <label>Password (optional)<input type="text" class="pw-masked" id="password" placeholder="leave blank to keep" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+    <label>Username (optional)<input type="text" id="user" maxlength="64"></label>
+    <label>Password (optional)<input type="text" class="pw-masked" id="password" maxlength="128" placeholder="leave blank to keep" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
   </div>
   <div class="row">
-    <label>Topic prefix<input type="text" id="prefix" value="securacv"></label>
+    <label>Topic prefix<input type="text" id="prefix" maxlength="32" value="securacv"></label>
     <label>Encryption<select id="tls_mode">
       <option value="0">Off (plain, port 1883)</option>
       <option value="1">On, check the broker's certificate (port 8883)</option>

@@ -1377,6 +1377,181 @@ void test_the_config_answer_gives_its_buffer_back() {
   std::printf("PASS the_config_answer_gives_its_buffer_back\n");
 }
 
+// ── The settings' lengths (sweep F241) ──────────────────────────────────
+//
+// POST /api/mqtt/config stored up to MAX_*_LEN characters of each string
+// setting (cutting a longer user or prefix to it without a word), and
+// config_load() read each back with Preferences::getString(key, buf,
+// MAX_*_LEN). arduino-esp32 3.3.8's getString refuses a value whose length
+// with its NUL exceeds the size it is given (stubs/mqtt/Preferences.h quotes
+// it), so a setting of exactly MAX_*_LEN characters was stored and read back
+// as nothing: a 32-character prefix as "securacv", a 128-character host as no
+// host. config_load() now reads each with its member's whole size, and the
+// POST refuses a value its member cannot hold instead of cutting it.
+
+// Each string setting: its key in the POST's body, its NVS key, the most
+// characters its Config member holds, the member's size, the member.
+struct Setting {
+  const char* field;
+  const char* key;
+  size_t max;
+  size_t size;
+  char* (*member)(csi_mqtt::Config&);
+  char fill;
+};
+#define F241_SETTING(field, key, max, name, fill) \
+  {field, key, max, sizeof(csi_mqtt::Config::name), \
+   [](csi_mqtt::Config& c) -> char* { return c.name; }, fill}
+const Setting kSettings[] = {
+    F241_SETTING("host", csi_mqtt::NVS_KEY_HOST, csi_mqtt::MAX_HOST_LEN, host, 'h'),
+    F241_SETTING("user", csi_mqtt::NVS_KEY_USER, csi_mqtt::MAX_USER_LEN, user, 'u'),
+    F241_SETTING("password", csi_mqtt::NVS_KEY_PASS, csi_mqtt::MAX_PASS_LEN, pass, 'w'),
+    F241_SETTING("prefix", csi_mqtt::NVS_KEY_PREFIX, csi_mqtt::MAX_PREFIX_LEN, prefix, 'p'),
+};
+#undef F241_SETTING
+
+// A check that reports and lets the test go on, so one run names every
+// setting that fails; the test ends on CHECK(g_soft_failures == 0).
+int g_soft_failures = 0;
+
+std::string post_one(const Setting& s, const std::string& value) {
+  return std::string("{\"") + s.field + "\":\"" + value + "\"}";
+}
+
+// A setting of its member's whole length is stored and read back whole, with
+// no error log, through config_save() and config_load(). One character more
+// can only come from outside this firmware (config_save() writes the member,
+// the POST refuses it): the core refuses it whole, as it refused a value at
+// the limit before, so that field reads empty, the prefix its default.
+void test_each_setting_reads_back_at_its_limit() {
+  g_soft_failures = 0;
+  for (const Setting& s : kSettings) {
+    const std::string what = std::string(" [") + s.field + "]";
+    CHECK(s.size == s.max + 1);
+    stub_nvs().clear();
+    stub_nvs_created().clear();
+    csi_mqtt::Config c;
+    CHECK(csi_mqtt::config_load(&c));
+    c.enabled = true;
+    std::snprintf(c.host, sizeof c.host, "%s", "10.0.0.9");
+    const std::string at(s.max, s.fill);
+    std::memcpy(s.member(c), at.c_str(), at.size() + 1);
+    CHECK(csi_mqtt::config_save(c));
+    const int logs = stub_nvs_error_logs();
+    csi_mqtt::Config back;
+    CHECK(csi_mqtt::config_load(&back));
+    if (std::string(s.member(back)) != at) {
+      std::printf("FAIL%s: %zu characters stored, %zu read back\n", what.c_str(), at.size(),
+                  std::strlen(s.member(back)));
+      ++g_soft_failures;
+    }
+    CHECK(stub_nvs_error_logs() == logs);
+
+    Preferences p;
+    CHECK(p.begin("csi", false));
+    p.putString(s.key, std::string(s.max + 1, s.fill).c_str());
+    p.end();
+    csi_mqtt::Config past;
+    CHECK(csi_mqtt::config_load(&past));
+    const std::string expect = std::strcmp(s.field, "prefix") == 0 ? "securacv" : "";
+    CHECK(std::string(s.member(past)) == expect);
+    CHECK(stub_nvs_error_logs() == logs + 1);
+  }
+  stub_nvs().clear();
+  stub_nvs_created().clear();
+  CHECK(g_soft_failures == 0);
+  std::printf("PASS each_setting_reads_back_at_its_limit\n");
+}
+
+// Through the handler: POST /api/mqtt/config takes each setting at its
+// member's whole length, which config_load() and GET /api/mqtt/config then
+// give back whole, and refuses one character more with the limit in the
+// reason, storing nothing. A JSON escape is one character of the value.
+void test_the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past() {
+  g_soft_failures = 0;
+  boot_with_broker("10.0.0.1");
+  for (const Setting& s : kSettings) {
+    const std::string what = std::string(" [") + s.field + "]";
+    const std::string at(s.max, s.fill);
+    const Http ok = http(csi_mqtt::handle_config_post, post_one(s, at), /*turn_at=*/1);
+    CHECK(ok.req.status == "200 OK" && ok.req.resp == "{\"ok\":true}");
+    csi_mqtt::Config c;
+    CHECK(csi_mqtt::config_load(&c));
+    if (std::string(s.member(c)) != at) {
+      std::printf("FAIL%s: %zu characters posted, %zu read back\n", what.c_str(), at.size(),
+                  std::strlen(s.member(c)));
+      ++g_soft_failures;
+    }
+
+    const Http refused = http(csi_mqtt::handle_config_post, post_one(s, std::string(s.max + 1, s.fill)),
+                              /*turn_at=*/1);
+    CHECK(refused.req.status == "400 Bad Request");
+    const std::string reason = std::string("{\"ok\":false,\"reason\":\"") + s.field + " must be at most " +
+                               std::to_string(s.max) + " characters\"}";
+    if (refused.req.resp != reason) {
+      std::printf("FAIL%s: one past the limit answered %s %s\n", what.c_str(),
+                  refused.req.status.c_str(), refused.req.resp.c_str());
+      ++g_soft_failures;
+    }
+    csi_mqtt::Config after;
+    CHECK(csi_mqtt::config_load(&after));
+    CHECK(std::string(s.member(after)) == at);   // nothing stored, nothing cut
+  }
+
+  // 127 characters and an escaped quote: 128 characters stored, quote and all.
+  const std::string pw = std::string(csi_mqtt::MAX_PASS_LEN - 1, 'w');
+  const Http esc = http(csi_mqtt::handle_config_post, "{\"password\":\"" + pw + "\\\"\"}", /*turn_at=*/1);
+  CHECK(esc.req.status == "200 OK");
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  CHECK(std::string(c.pass) == pw + "\"");
+  const Http esc2 = http(csi_mqtt::handle_config_post, "{\"password\":\"" + pw + "\\\"x\"}", /*turn_at=*/1);
+  CHECK(esc2.req.status == "400 Bad Request");
+
+  // GET answers the longest host, user and prefix whole (the password is
+  // write-only), in a body that still fits its buffer.
+  const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(get.req.resp.find("\"host\":\"" + std::string(csi_mqtt::MAX_HOST_LEN, 'h') + "\",") !=
+        std::string::npos);
+  CHECK(get.req.resp.find("\"user\":\"" + std::string(csi_mqtt::MAX_USER_LEN, 'u') + "\",") !=
+        std::string::npos);
+  CHECK(get.req.resp.find("\"prefix\":\"" + std::string(csi_mqtt::MAX_PREFIX_LEN, 'p') + "\",") !=
+        std::string::npos);
+  CHECK(get.req.resp.find("\"password_set\":true,") != std::string::npos);
+  CHECK(!get.req.resp.empty() && get.req.resp.back() == '}');
+  // The bridge took the longest host into its broker URI whole.
+  CHECK(fake::last_client()->uri ==
+        "mqtt://" + std::string(csi_mqtt::MAX_HOST_LEN, 'h') + ":1883");
+  power_cycle();
+  CHECK(g_soft_failures == 0);
+  std::printf("PASS the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past\n");
+}
+
+// The /mqtt page's inputs stop at the lengths the device takes.
+void test_the_settings_page_limits_each_field() {
+  g_soft_failures = 0;
+  const Http page = http(csi_mqtt::handle_ui, "", /*turn_at=*/0);
+  CHECK(page.req.status == "200 OK");
+  for (const Setting& s : kSettings) {
+    const std::string id = std::string("id=\"") + s.field + "\"";
+    const size_t at = page.req.resp.find(id);
+    CHECK(at != std::string::npos);
+    if (at == std::string::npos) continue;
+    const size_t open = page.req.resp.rfind("<input", at);
+    const size_t close = page.req.resp.find('>', at);
+    CHECK(open != std::string::npos && close != std::string::npos);
+    if (open == std::string::npos || close == std::string::npos) continue;
+    const std::string tag = page.req.resp.substr(open, close - open + 1);
+    const std::string limit = "maxlength=\"" + std::to_string(s.max) + "\"";
+    if (tag.find(limit) == std::string::npos) {
+      std::printf("FAIL [%s]: the page's input has no %s: %s\n", s.field, limit.c_str(), tag.c_str());
+      ++g_soft_failures;
+    }
+  }
+  CHECK(g_soft_failures == 0);
+  std::printf("PASS the_settings_page_limits_each_field\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1407,6 +1582,10 @@ const Test kTests[] = {
     {"the_egress_counters_ride_a_retained_topic_of_their_own", test_the_egress_counters_ride_a_retained_topic_of_their_own},
     {"the_config_answer_escapes_what_the_page_sent", test_the_config_answer_escapes_what_the_page_sent},
     {"the_config_answer_gives_its_buffer_back", test_the_config_answer_gives_its_buffer_back},
+    {"each_setting_reads_back_at_its_limit", test_each_setting_reads_back_at_its_limit},
+    {"the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past",
+     test_the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past},
+    {"the_settings_page_limits_each_field", test_the_settings_page_limits_each_field},
 };
 
 }  // namespace reinit
