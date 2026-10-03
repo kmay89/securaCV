@@ -83,10 +83,7 @@ REPO = Path(__file__).resolve().parents[2]
 SKETCH = "firmware/projects/canary-wap/arduino/canary_wap"
 INO = f"{SKETCH}/canary_wap.ino"
 # Answer files left out, with why. A file named here is not measured.
-EXCLUDED = {
-    f"{SKETCH}/bluetooth_api.h": "the Bluetooth REST answers, measured by the wave-14 Bluetooth "
-                                 "package (F196 leaves them to it); add the file to the scope then",
-}
+EXCLUDED: dict[str, str] = {}
 # Sites J1-J3 do not hold, by (file, function, target): each must still use
 # the sized serializeJson() form, which terminates.
 EXEMPT = {
