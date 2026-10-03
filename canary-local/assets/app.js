@@ -495,7 +495,13 @@ async function buildDisplaySheet(ctx, side, stage) {
         await boot({ preserve: true });
       },
     });
-    ctx.scene.src = glass; // 3D screen textures from the live panel
+    // The 3D screen textures from the live panel. The canvas turns with the
+    // glass (a portrait dash is 480x800), so the scene is handed the panel's
+    // own shape too and turns the model whenever the canvas has turned from
+    // it (scene3d.js glassTurn, A47): a turned glass reads upright on a
+    // turned body instead of stretching across the landscape screen.
+    ctx.scene.src = glass;
+    ctx.scene.glass = { w: dev.glass.w, h: dev.glass.h };
     // A preserved image (reboot / bench power event) is preseeded before
     // power-on, so setup() always reads the surviving flash — never a
     // race against the firmware's resume. A "meet again" reboot must not

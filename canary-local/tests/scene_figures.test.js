@@ -293,3 +293,109 @@ test("a scene retains its part data and shares the page's one context", async ()
   assert.ok(registry.devices.length > 16,
     `${registry.devices.length} registry devices — the fleet page is past a browser's ~16 live contexts`);
 });
+
+// ── A47: the Lab's 3D display turns with its glass ──────────────────────
+// The emulator's canvas turns with the glass (F184: a portrait dash is
+// 480x800; F204: a landscape nightlight 320x180), and the Lab textures its 3D
+// screen from that canvas (app.js: ctx.scene.src = glass). Textured as is, a
+// turned canvas stretched across the model's unturned screen. The choice
+// held here: the model turns a quarter turn clockwise whenever the canvas has
+// turned from the panel's own shape (the registry card's glass, which app.js
+// hands the scene), and the plane samples the canvas turned the other way, so
+// the glass reads upright on the turned body. A glass that never turns never
+// turns its model.
+test("A47: a turned glass turns the model, and reads upright on it", async () => {
+  const { glassTurn, turnModel, turnTexture, screenPlane } = await load();
+  // The decision: only a canvas turned from its panel's shape turns the model.
+  assert.strictEqual(glassTurn({ width: 480, height: 800 }, { w: 800, h: 480 }), 1, "the dash worn portrait");
+  assert.strictEqual(glassTurn({ width: 320, height: 180 }, { w: 180, h: 320 }), 1, "the nightlight stood on its edge");
+  assert.strictEqual(glassTurn({ width: 800, height: 480 }, { w: 800, h: 480 }), 0, "the dash as it scans");
+  assert.strictEqual(glassTurn({ width: 180, height: 320 }, { w: 180, h: 320 }), 0);
+  assert.strictEqual(glassTurn({ width: 240, height: 240 }, { w: 240, h: 240 }), 0, "a round glass never turns");
+  assert.strictEqual(glassTurn(null, { w: 800, h: 480 }), 0, "no live glass, no turn");
+  assert.strictEqual(glassTurn({ width: 480, height: 800 }, null), 0, "no panel shape, no turn");
+  // The look: where each corner of the canvas lands in the viewer's frame,
+  // through the texture turnTexture() draws, the UVs screenPlane() gives the
+  // plane and the model turn turnModel() applies (+x right, +y up).
+  const landing = (turn, cw, ch, plane) => {
+    const m = screenPlane(plane.w, plane.h, false);
+    const at = (u, v) => {
+      const i = [0, 1, 2, 3].find((k) => m.uv[2 * k] === u && m.uv[2 * k + 1] === v);
+      return [m.pos[3 * i], m.pos[3 * i + 1]];
+    };
+    const [x00, y00] = at(0, 0), [x10] = at(1, 0), [, y01] = at(0, 1);
+    const t = turnTexture(turn, cw, ch);
+    const [a, b, c, d, e, f] = t.m;
+    const M = turnModel(turn);
+    return (px, py) => {
+      const X = a * px + c * py + e, Y = b * px + d * py + f;      // canvas -> texture
+      const u = X / t.w, v = Y / t.h;                               // texture -> uv
+      const x = x00 + u * (x10 - x00), y = y00 + v * (y01 - y00);   // uv -> plane
+      return [M[0] * x + M[4] * y, M[1] * x + M[5] * y];            // plane -> view
+    };
+  };
+  const upright = (land, cw, ch, what) => {
+    const [tl, tr, bl] = [land(0, 0), land(cw, 0), land(0, ch)];
+    assert.ok(tl[0] < tr[0] && Math.abs(tl[1] - tr[1]) < 1e-6, `${what}: the canvas's top edge runs left to right`);
+    assert.ok(bl[1] < tl[1] && Math.abs(tl[0] - bl[0]) < 1e-6, `${what}: the canvas's left edge runs top to bottom`);
+    const vw = tr[0] - tl[0], vh = tl[1] - bl[1];
+    assert.ok(Math.abs(vw / vh - cw / ch) < 1e-6, `${what}: the glass keeps its shape on the model (${vw}x${vh})`);
+  };
+  // The dash's own screen plane, 800:480 like its panel, and the
+  // nightlight's, 180:320 like its panel.
+  upright(landing(1, 480, 800, { w: 160, h: 96 }), 480, 800, "the portrait dash on its turned model");
+  upright(landing(1, 320, 180, { w: 22.5, h: 40 }), 320, 180, "the landscape nightlight on its turned model");
+  upright(landing(0, 800, 480, { w: 160, h: 96 }), 800, 480, "the unturned dash");
+  // Without the turn, the portrait canvas lands stretched on the landscape
+  // screen (what the Lab showed before): the shape check catches it.
+  assert.throws(() => upright(landing(0, 480, 800, { w: 160, h: 96 }), 480, 800, "unturned"), /keeps its shape/);
+  // And a texture turned the wrong way lands the glass upside down.
+  const wrong = (cw, ch, plane) => {
+    const good = landing(1, cw, ch, plane);
+    return (px, py) => good(cw - px, ch - py);
+  };
+  assert.throws(() => upright(wrong(480, 800, { w: 160, h: 96 }), 480, 800, "flipped"), /left to right|top to bottom/);
+});
+
+test("A47: the scene is handed the panel's own shape, which the firmware's panel is", async () => {
+  const { glassTurn } = await load();
+  const { flavorBoard, pinsPanel, turnedGlasses, readTurnedSources } = await import("./turned_glass.mjs");
+  const fsp = require("node:fs/promises");
+  const REPO = join(ROOT, "..");
+  const buildSh = readFileSync(join(ROOT, "emulator/build.sh"), "utf8");
+  const panel = (flavor) => {
+    const pins = readFileSync(join(REPO, "firmware/boards", flavorBoard(buildSh, flavor), "pins/pins.h"), "utf8");
+    const p = pinsPanel(pins);
+    if (p) return p;
+    return { w: Number(/^#define TFT_WIDTH\s+(\d+)/m.exec(pins)?.[1]), h: Number(/^#define TFT_HEIGHT\s+(\d+)/m.exec(pins)?.[1]) };
+  };
+  const turned = turnedGlasses(await readTurnedSources(REPO, fsp.readFile));
+  let checked = 0;
+  for (const d of registry.devices) {
+    if (d.kind !== "display" || !d.emulator) continue;
+    const flavor = /canary-display-([a-z0-9]+)\.js$/.exec(d.emulator.module)[1];
+    // The card's glass, which app.js hands the scene, is the panel build.sh
+    // compiles the twin against: the shape the canvas turns from.
+    assert.deepStrictEqual({ w: d.glass.w, h: d.glass.h }, panel(flavor), `${d.id}: its card's glass is the ${flavor} panel`);
+    assert.strictEqual(glassTurn({ width: d.glass.w, height: d.glass.h }, d.glass), 0, `${d.id}: its own glass turns nothing`);
+    for (const t of turned.filter((x) => x.flavor === flavor)) {
+      assert.strictEqual(glassTurn({ width: t.glass.w, height: t.glass.h }, d.glass), 1,
+        `${d.id}: the ${t.name} ${t.glass.w}x${t.glass.h} glass turns the model`);
+    }
+    checked++;
+  }
+  assert.ok(checked >= 5, `the display twins were checked (${checked})`);
+  // The render turns the texture and the model with the canvas, every frame,
+  // and the pin flags' projection uses the same turned pose.
+  const scene3d = readFileSync(join(ROOT, "assets/scene3d.js"), "utf8");
+  assert.ok(scene3d.includes("this.turn = glassTurn(this.src, this.glass);") &&
+    scene3d.includes("this.turn ? this._turnedSource() : this.src);") &&
+    (scene3d.match(/const spin = this\._spin\(\);/g) || []).length === 2 &&
+    scene3d.includes("return M4.mul(M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y)), turnModel(this.turn));"));
+  assert.ok(scene3d.includes("const t = turnTexture(this.turn, this.src.width, this.src.height);") &&
+    scene3d.includes("g.setTransform(...t.m);"), "the turned plane samples the canvas through turnTexture()");
+  // The Lab hands the scene the live canvas and the panel's own shape.
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.ok(/ctx\.scene\.src = glass;\n\s*ctx\.scene\.glass = \{ w: dev\.glass\.w, h: dev\.glass\.h \};/.test(app),
+    "app.js textures the 3D screen from the live glass and names its panel");
+});
