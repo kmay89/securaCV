@@ -36,7 +36,12 @@
 //     B on the PSRAM-less fallback, where the glass still turns). A glass
 //     whose draw buffer is in PSRAM never asks internal RAM for 128,000 B:
 //     when its second PSRAM request is refused it refuses the turn. A glass
-//     with no turn buffer refuses a turn, says so, and stays landscape.
+//     with no turn buffer refuses a turn, says so, and stays landscape;
+//  5. the face (F223): the face main.cpp builds (canary/ui/dash_face.h, read
+//     by its dash_is_portrait()) follows the turn the port wore. A glass that
+//     saved a portrait rotation but could not allocate its turn buffer stays
+//     landscape, and so does its face: the landscape poster on the 800x480
+//     canvas, not the 480-wide portrait column.
 //
 // Prints "ALL LVGL PORT TURN TESTS PASSED" on success.
 #include <Arduino.h>
@@ -52,6 +57,7 @@
 #include "pins.h"
 #include "canary/glass_settings.h"
 #include "canary/log.h"
+#include "canary/ui/dash_face.h"
 #include "canary/ui/lvgl_port.h"
 
 FakeSerial Serial;
@@ -76,6 +82,17 @@ void touch_set_rotation(uint8_t rot, int16_t native_w, int16_t native_h) {
   g_touch_h = native_h;
 }
 }  // namespace canary::hal
+
+// The glass settings store, as far as this test needs it: the rotation the
+// glass saved, which main.cpp's boot hands the port
+// (lvgl_port_set_rotation(settings().rotation)). glass_settings.cpp is not
+// linked; nothing in lvgl_port.cpp reads the store.
+namespace {
+canary::glass::Settings g_saved = {};
+}  // namespace
+namespace canary::glass {
+const Settings& settings() { return g_saved; }
+}  // namespace canary::glass
 
 #define CHECK(cond, ...)                                    \
   do {                                                      \
@@ -409,12 +426,59 @@ static void test_no_turn_buffer() {
   check_refuses_turns("no turn buffer");
 }
 
+// ── The face main.cpp builds follows the turn the port wore (F223) ───────
+// For every saved rotation, main.cpp's boot call wears it and its face choice
+// (dash_face_portrait(), which dash_is_portrait() returns) is read: the
+// portrait column only on a glass the port actually turned to a portrait, so
+// the face always matches the canvas it is laid out on.
+static void check_face(const char* tag, bool turns) {
+  for (uint8_t rot : {ROT_PORTRAIT, ROT_LANDSCAPE_INV, ROT_PORTRAIT_INV, ROT_LANDSCAPE}) {
+    g_saved.rotation = rot;
+    canary::ui::lvgl_port_set_rotation(canary::glass::settings().rotation);
+    const bool want = turns && rotation_is_portrait(rot);
+    const bool portrait = canary::ui::dash_face_portrait();
+    CHECK(portrait == want, "%s: saved %s, glass %dx%d: main.cpp builds the %s face, want the %s",
+          tag, rotation_name(rot), canary::ui::lvgl_port_width(), canary::ui::lvgl_port_height(),
+          portrait ? "portrait" : "landscape", want ? "portrait" : "landscape");
+    CHECK(portrait == (canary::ui::lvgl_port_width() < canary::ui::lvgl_port_height()),
+          "%s: saved %s: the %s face on a %dx%d canvas", tag, rotation_name(rot),
+          portrait ? "portrait" : "landscape", canary::ui::lvgl_port_width(),
+          canary::ui::lvgl_port_height());
+  }
+}
+
+static void test_face_follows_the_worn_turn() {
+  // A glass with its turn buffer: the face turns with the saved rotation.
+  fake_heap::reset();
+  CHECK(canary::ui::lvgl_port_init(), "the glass comes up");
+  check_face("turn buffer granted", true);
+  // A PSRAM glass whose 128,000 B turn buffer PSRAM refused at boot.
+  fake_heap::reset();
+  fake_heap::refuse_calls() = {1};
+  CHECK(canary::ui::lvgl_port_init(), "the glass comes up without its turn buffer");
+  check_face("PSRAM turn buffer refused", false);
+  // A glass whose draw buffer fell back to internal RAM, and whose 25,600 B
+  // turn buffer PSRAM and internal RAM both refused.
+  fake_heap::reset();
+  fake_heap::refuse_spiram() = true;
+  fake_heap::refuse_calls() = {2};
+  CHECK(canary::ui::lvgl_port_init(), "the fallback glass comes up without its turn buffer");
+  const auto& a = fake_heap::attempts();
+  CHECK(a.size() == 3 && !a[1].granted && (a[1].caps & MALLOC_CAP_SPIRAM) && !a[2].granted &&
+            (a[2].caps & MALLOC_CAP_INTERNAL) && a[2].bytes == (size_t)PW * 16 * 2,
+        "the 25,600 B turn buffer refused by PSRAM, then by internal RAM (%zu requests)",
+        a.size());
+  check_face("fallback glass, turn buffer refused by both heaps", false);
+  g_saved.rotation = ROT_LANDSCAPE;
+}
+
 int main() {
   test_psram_glass();
   test_internal_glass();
   test_internal_draw_psram_turn();
   test_psram_draw_turn_refused();
   test_no_turn_buffer();
+  test_face_follows_the_worn_turn();
   if (g_fail) {
     std::printf("%d of %d LVGL PORT TURN CHECK(S) FAILED\n", g_fail, g_checks);
     return 1;

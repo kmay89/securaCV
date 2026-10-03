@@ -16,6 +16,9 @@ bool lvgl_port_init();
 // the logical canvas rotated to match a wall-mounted-portrait or tall bedside
 // device. A no-op on the SPI/round flavors (fixed glass). Also tells the HAL
 // how to un-rotate raw touch so a tap still lands where the finger points.
+// A turn the glass cannot draw (LVGL 9 with no turn buffer) is refused and
+// the glass stays landscape; lvgl_port_rotation() reports the turn WORN, so
+// a face chosen from it matches the canvas (canary/ui/dash_face.h).
 void lvgl_port_set_rotation(uint8_t rot);
 uint8_t lvgl_port_rotation();
 

@@ -533,13 +533,15 @@ clean: clean-splash-scenes
 # maps the GT911) landing on the pixel drawn there, the turn buffer's size and
 # tier (PSRAM first; internal RAM only when the draw buffer fell back there,
 # every request scripted and recorded), and a glass with no turn buffer
-# staying landscape. Hooked into `run` and `clean` by prerequisite.
+# staying landscape, its face too (dash_face.h, the choice main.cpp makes;
+# F223). Hooked into `run` and `clean` by prerequisite.
 PORTTURN_BIN = test_lvgl_port_turn
 PORTTURN_SRC = test_lvgl_port_turn.cpp ../src/ui/lvgl_port.cpp
 
 $(PORTTURN_BIN): $(PORTTURN_SRC) fake_lvgl9/lvgl.h fake_lvgl9/Arduino.h \
 	  fake_lvgl9/Arduino_GFX_Library.h fake_lvgl9/esp_heap_caps.h \
 	  ../include/canary/glass_settings.h ../include/canary/ui/lvgl_port.h \
+	  ../include/canary/ui/dash_face.h \
 	  ../include/canary/hal/display.h ../include/canary/log.h
 	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl9 $(INC) -I ../../../configs/canary-display/dash \
 	  -I ../../../boards/waveshare-esp32s3-lcd43/pins -o $@ $(PORTTURN_SRC)

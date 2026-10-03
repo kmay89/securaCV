@@ -33,6 +33,8 @@
 //   · the native runtime-turn boot stops compiling what build.sh
 //     compiles for the nightlight, stops turning it through the
 //     app's mailbox, or falls out of CI                        → "runtime turn (F222)"
+//   · the dash face is picked from the saved rotation again,
+//     not from the turn the port wore                         → "dash face (F223)"
 //   · the gates fall out of CI                                 → "CI runs"
 //
 // The browser half (the real wasm answering) is tests/onboard_probe.mjs, in
@@ -1166,6 +1168,29 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   }
   const step = /- name: Runtime turn[\s\S]*?run: bash canary-local\/emulator\/test\/runtime_turn\.sh\n/.exec(wf)?.[0] || "";
   assert.ok(step && !/^\s+if:/m.test(step) && /^\s+timeout-minutes: \d+$/m.test(step), "the step runs unconditionally, with a time bound");
+});
+
+test("dash face (F223): main.cpp picks the dash face from the turn the port wore, never from the saved rotation", () => {
+  // The choice is dash_face.h's, held by test_lvgl_port_turn on a glass whose
+  // turn buffer is refused; main.cpp must ask it and nothing else.
+  const mainCpp = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
+  assert.ok(mainCpp.includes("static bool dash_is_portrait() { return canary::ui::dash_face_portrait(); }"),
+    "dash_is_portrait() returns dash_face_portrait()");
+  assert.match(mainCpp, /#ifdef CD_FLAVOR_DASH\n(?:#include [^\n]*\n)*#include "canary\/ui\/dash_face\.h"/);
+  assert.ok(!mainCpp.includes("rotation_is_portrait("), "main.cpp derives no orientation of its own");
+  // Every read of the saved rotation in main.cpp hands it to the port: setup()'s
+  // wear and render()'s tracker of an off-glass change.
+  const reads = mainCpp.split("\n").filter((l) => /(settings\(\)|\bgs)\.rotation\b/.test(l)).map((l) => l.trim());
+  assert.deepStrictEqual(reads, [
+    "static uint8_t s_applied_rot = canary::glass::settings().rotation;",
+    "if (gs.rotation != s_applied_rot) {",
+    "s_applied_rot = gs.rotation;",
+    "canary::ui::lvgl_port_set_rotation(gs.rotation);",
+    "canary::ui::lvgl_port_set_rotation(canary::glass::settings().rotation);",
+  ], "main.cpp reads the saved rotation only to hand it to the port");
+  const face = read(join(REPO, "firmware/projects/canary-display/include/canary/ui/dash_face.h"));
+  assert.ok(face.includes("return canary::glass::rotation_is_portrait(lvgl_port_rotation());"),
+    "dash_face_portrait() reads the turn the port wore");
 });
 
 test("CI runs the generator check, this test and the browser probe", () => {
