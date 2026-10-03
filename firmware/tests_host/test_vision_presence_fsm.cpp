@@ -58,6 +58,13 @@
 // one, and reset() forgets an owed presence_ended and a held sighting (the
 // Lab resets its core on every scene change).
 //
+// Pinned here (sweep F202), in both builds: a stay that dwelled reports
+// dwell_then_left even when the person is last seen on the frame that sends
+// dwell_started. That frame returned before the dwell was latched for the
+// leave, so the stay reported zone_interaction_then_left (settled in one
+// cell) or no interaction_likely at all (its settled cell moving); the FSM
+// now latches the dwell where it starts.
+//
 // presence_fsm.cpp and voxel_tracker.cpp are linked verbatim; the only
 // stand-in is canary::cfg::detect(), the NVS-backed tuning, which is
 // replaced by a struct the test owns so no Arduino shim is needed.
@@ -765,6 +772,92 @@ static void test_every_way_back_after_a_dwell() {
               walks);
 }
 
+// ---- sweep F202: a dweller last seen on the dwell_started frame ----
+//
+// The frame that sends dwell_started returned before the line that latched
+// the dwell for the leave (`if (dwelling_) dwell_latch_ = true;`), and the
+// latch was set only on later sighted frames. So a person last seen on that
+// frame left a stay that had dwelled (dwell_started and dwell_ended both
+// went out) with the dwell unlatched: settled in one cell, it ended in
+// interaction_likely with the zone reason instead of dwell_then_left; with
+// the settled cell moving every few frames (so the zone clock never runs
+// ZONE_INTERACTION_MS), it sent no interaction_likely at all. Seen one frame
+// longer, it reported dwell_then_left. The lingering alert and the litter-box
+// visit-completed recipe page on interaction_likely. The FSM now latches the
+// dwell where it starts. Both builds run these (grace 0 and 4000 ms).
+
+// Cell (r, c) for sighted frame i: (1,1) throughout when settled; when
+// moving, a new cell every 5 frames (0.5 s), around the edge of the grid.
+// The tracker settles on each after VOXEL_STABLE_N (3) frames, so the zone
+// clock restarts every 0.5 s and the stay never qualifies by it.
+static VisionSample seen_at(int i, bool moving) {
+  static const int ring[8][2] = {{0, 0}, {0, 1}, {0, 2}, {1, 2}, {2, 2}, {2, 1}, {2, 0}, {1, 0}};
+  if (!moving) return person(1, 1);
+  const int* rc = ring[(i / 5) % 8];
+  return person(rc[0], rc[1]);
+}
+
+// A stay seen every 100 ms from t until `extra` frames after the frame that
+// sends dwell_started (-1: the frame before it), then gone for good.
+static Log last_seen_around_the_dwell(int extra, bool moving, uint32_t& dwell_at) {
+  PresenceFSM fsm;
+  fsm.reset();
+  Log log;
+  uint32_t t = 1000;
+  const int dwell_frame = (int)(DWELL_START_MS / 100);  // presence_started is frame 0
+  dwell_at = 0;
+  for (int i = 0; i <= dwell_frame + extra; ++i, t += 100) {
+    Seen s;
+    if (step(fsm, seen_at(i, moving), t, s)) {
+      note(log, s);
+      if (is(s, "dwell_started")) dwell_at = t;
+    }
+  }
+  frames(fsm, t, log, empty(), settle_ms());
+  return log;
+}
+
+// The sweep item's probe, settled and moving: last seen on the dwell_started
+// frame, the stay reports dwell_then_left, as it does seen one frame longer.
+static void test_last_seen_on_the_dwell_started_frame_reports_dwell_then_left() {
+  for (const bool moving : {false, true}) {
+    for (const int extra : {0, 1, 2}) {
+      uint32_t dwell_at = 0;
+      const Log log = last_seen_around_the_dwell(extra, moving, dwell_at);
+      if (extra == 0) {
+        std::printf("  last seen on the dwell_started frame (%s): %s\n",
+                    moving ? "settled cell moving" : "settled in one cell", log.events.c_str());
+        std::fflush(stdout);
+      }
+      assert(log.events == "presence_started dwell_started dwell_ended presence_ended "
+                           "interaction_likely:dwell_then_left");
+      const Seen& dend = nth(log, "dwell_ended");
+      const Seen& ended = nth(log, "presence_ended");
+      const Seen& late = nth(log, "interaction_likely");
+      assert(dwell_at == nth(log, "presence_started").t + DWELL_START_MS);
+      assert(dend.snap.dwell_ms == dend.t - dwell_at);
+      assert(ended.t == dend.t + 100 && late.t == ended.t + 100);
+      assert(late.snap.visit_ms == ended.snap.visit_ms);
+      assert(!late.snap.presence && late.snap.dwell_ms == 0);
+    }
+  }
+}
+
+// The frame before it: the stay never dwelled, so it is judged by the zone
+// rule alone: settled in one cell for over ZONE_INTERACTION_MS it qualifies,
+// moving it does not. (Unchanged by F202; it bounds the fix to stays that
+// dwelled.)
+static void test_last_seen_the_frame_before_the_dwell_is_judged_by_the_zone() {
+  static_assert(DWELL_START_MS - 100 > ZONE_INTERACTION_MS, "a settled stay qualifies by the zone first");
+  uint32_t dwell_at = 0;
+  const Log settled = last_seen_around_the_dwell(-1, false, dwell_at);
+  assert(dwell_at == 0);
+  assert(settled.events == "presence_started presence_ended interaction_likely:zone_interaction_then_left");
+  const Log moving = last_seen_around_the_dwell(-1, true, dwell_at);
+  assert(dwell_at == 0);
+  assert(moving.events == "presence_started presence_ended");
+}
+
 // ---- sweep F154: the dwell end grace (the build with a grace) ----
 #if VISION_DWELL_END_GRACE_MS > 0
 
@@ -889,6 +982,8 @@ int main() {
   test_seen_in_the_gap_then_elsewhere_opens_on_the_new_cell();
   test_reset_forgets_a_leave_owed_and_a_held_sighting();
   test_every_way_back_after_a_dwell();
+  test_last_seen_on_the_dwell_started_frame_reports_dwell_then_left();
+  test_last_seen_the_frame_before_the_dwell_is_judged_by_the_zone();
 #if VISION_DWELL_END_GRACE_MS > 0
   test_grace_holds_the_dweller_then_dwell_ended_fires();
   test_dweller_back_within_the_grace_keeps_the_dwell();

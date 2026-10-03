@@ -29,7 +29,9 @@
 // next visit opens on the frame after, as the device does, from the next
 // frame's own sighting when it has one; and vision_emu_reset, which the Lab
 // calls on every scene change and camera start, forgets an owed
-// presence_ended and a held sighting (F186's review).
+// presence_ended and a held sighting (F186's review). And (sweep F202) a
+// person last seen on the frame that sends dwell_started leaves a stay whose
+// interaction_likely says dwell_then_left, as the device's does.
 //
 // Before A39 the fsm object had neither key, and this suite fails on it.
 
@@ -402,6 +404,48 @@ void test_reset_after_dwell_ended_through_the_abi() {
   std::printf("  reset after dwell_ended, and after a sighting on the frame after it: nothing owed\n");
 }
 
+// Sweep F202, through the ABI: a person last seen on the frame that sends
+// dwell_started leaves a stay that dwelled, and its interaction_likely says
+// so (dwell_then_left), settled in one cell or with the settled cell moving
+// every 0.5 s. Before F202 the dwell was latched for the leave only on a
+// later sighted frame, so the settled stay reported zone_interaction_then_left
+// and the moving one no interaction_likely at all.
+void test_last_seen_on_the_dwell_started_frame_through_the_abi() {
+  static const int ring[8][2] = {{0, 0}, {0, 1}, {0, 2}, {1, 2}, {2, 2}, {2, 1}, {2, 0}, {1, 0}};
+  for (const bool moving : {false, true}) {
+    vision_emu_reset();
+    vision_emu_set_config(PERSON_TARGET, SCORE_MIN, LOST_TIMEOUT_MS, DWELL_START_MS);
+    unsigned int t = 1000;
+    bool dwelled = false;
+    for (int i = 0; !dwelled; ++i, t += 100) {
+      const int r = moving ? ring[(i / 5) % 8][0] : 1, c = moving ? ring[(i / 5) % 8][1] : 1;
+      const Tick k = frame(t, r, c);
+      if (i == 0) assert(event_is(k, "presence_started"));
+      dwelled = event_is(k, "dwell_started");
+      assert(t < 1000 + DWELL_START_MS + 100);
+    }
+    // gone from the frame after it: dwell_ended, presence_ended, then the report
+    std::string events;
+    Tick late{};
+    for (const unsigned int stop = t + LOST_TIMEOUT_MS + INTERACTION_AFTER_LEAVE_WINDOW_MS + 1000; t < stop;
+         t += 100) {
+      const Tick k = frame(t);
+      for (const char* name : {"dwell_ended", "presence_ended", "interaction_likely"}) {
+        if (event_is(k, name)) {
+          events += events.empty() ? "" : " ";
+          events += name;
+          if (std::strcmp(name, "interaction_likely") == 0) late = k;
+        }
+      }
+    }
+    std::printf("  last seen on the dwell_started frame (%s): %s, %s\n", moving ? "settled cell moving" : "settled",
+                events.c_str(), late.json.empty() ? "no report" : late.json.c_str() + late.json.find("\"event\""));
+    std::fflush(stdout);
+    assert(events == "dwell_ended presence_ended interaction_likely");
+    assert(has(late.json, "\"reason\":\"dwell_then_left\""));
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -414,6 +458,7 @@ int main() {
   test_seen_after_dwell_ended_through_the_abi();
   test_seen_in_the_gap_then_elsewhere_through_the_abi();
   test_reset_after_dwell_ended_through_the_abi();
+  test_last_seen_on_the_dwell_started_frame_through_the_abi();
   std::printf("ALL VISION CORE BINDING TESTS PASSED\n");
   return 0;
 }

@@ -185,7 +185,9 @@ dwell in it at once, with a second `dwell_ended`.
 `interaction_likely` is sent once a visit has ended, when that visit
 qualified: it dwelled (reason `dwell_then_left`), or the person stayed in
 one settled cell for `ZONE_INTERACTION_MS` (2.5 s) of that visit (reason
-`zone_interaction_then_left`). Each visit is judged on its own: the tracker
+`zone_interaction_then_left`). A visit counts as dwelled from the frame that
+sends `dwell_started`, so a person last seen on that very frame still
+leaves a visit that reports `dwell_then_left`. Each visit is judged on its own: the tracker
 and its clock start again on the frame that starts the visit, so a short
 visit after a long one does not inherit the earlier visit's time in a cell.
 

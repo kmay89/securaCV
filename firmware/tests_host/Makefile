@@ -536,8 +536,9 @@ VISPROF_BIN = $(BUILD_DIR)/test_vision_profiles
 # linked verbatim): the clocks each event row carries, read from the snapshot
 # publish_event_json takes on the tick that emitted the event. Pins dwell_ended
 # reporting the dwell it closed (sweep F130), dwell_started's 0, visit_ms's own
-# latch, and each visit's own interaction clock and opening cell (F152).
-# detect() is the test's struct, so no Arduino shim is linked.
+# latch, each visit's own interaction clock and opening cell (F152), one dwell
+# per stay (F186), and the dwell latched for the leave on the frame it starts
+# (F202). detect() is the test's struct, so no Arduino shim is linked.
 VISION_SRC = ../projects/canary-vision/src
 VISFSM_SRC = $(VISION_SRC)/state/presence_fsm.cpp $(VISION_SRC)/state/voxel_tracker.cpp
 VISFSM_HDR = $(VISION_INC)/canary/state/presence_fsm.h \

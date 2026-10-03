@@ -146,6 +146,13 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
     if (send_pending_interaction(now_ms, out_event)) return true;
 
     if (!dwelling_ && (now_ms - presence_start_ms_) >= canary::cfg::detect().dwell_start_ms) {
+      // The stay has dwelled: latch it for the leave here, where the dwell
+      // starts (sweep F202). The latch used to be set below, on later
+      // sighted frames only, and this frame returns before it, so a person
+      // last seen on this frame left a stay that had dwelled (dwell_started
+      // and dwell_ended both sent) reporting zone_interaction_then_left, or
+      // no interaction_likely at all when their settled cell kept moving.
+      dwell_latch_ = true;
       dwelling_ = true;
       dwell_start_ms_ = now_ms;
       return emit(out_event, "dwell_started");
@@ -155,7 +162,6 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
       interaction_candidate_ = true;
     }
 
-    if (dwelling_) dwell_latch_ = true;
     if (interaction_candidate_) interaction_latch_ = true;
 
     return false;

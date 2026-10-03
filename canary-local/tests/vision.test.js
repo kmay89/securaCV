@@ -552,7 +552,7 @@ test("firmware wasm: the production FSM event order", async () => {
   assert.strictEqual(core.tick(0, person).event, "presence_started");
   assert.strictEqual(core.tick(100, person).event, null);
   assert.strictEqual(core.tick(1000, person).event, "dwell_started");
-  assert.strictEqual(core.tick(1100, person).event, null); // latches the dwell
+  assert.strictEqual(core.tick(1100, person).event, null); // the dwell runs on
   // silence: dwell_ended fires the tick before presence_ended (firmware order)
   assert.strictEqual(core.tick(1500, []).event, null);      // within lost timeout
   assert.strictEqual(core.tick(1700, []).event, "dwell_ended");
@@ -686,6 +686,42 @@ test("firmware wasm: a dweller seen on the frame after dwell_ended opens the nex
   for (let u = t + 600; u < t + 5000; u += 100) tick(u, []);
   assert.deepStrictEqual(events, ["presence_started", "dwell_started", "dwell_ended", "presence_ended",
     "presence_started", "interaction_likely:dwell_then_left", "presence_ended"], "one dwell per stay");
+});
+
+// Sweep F202: a person last seen on the frame that sends dwell_started leaves
+// a stay that dwelled, and its interaction_likely says dwell_then_left, settled
+// in one cell or moving to a new cell every 0.5 s. That frame returned before
+// the FSM latched the dwell for the leave, so the settled stay reported
+// zone_interaction_then_left and the moving one no interaction_likely at all,
+// on a Lab pane that says "Leave afterwards and the qualified visit signs
+// interaction_likely (dwell_then_left)". Needs a dist built from this tree's
+// presence_fsm.cpp (CI's pinned-emsdk rebuild); on an older dist it fails
+// here, and it passes with LAB_CORES=native.
+test("firmware wasm: a dweller last seen on the dwell_started frame leaves with dwell_then_left (sweep F202)", async () => {
+  const core = await firmwareCore();
+  assert.ok(data.sandbox.some((s) => s.blurb.includes("the qualified visit signs interaction_likely (dwell_then_left)")),
+    "the sandbox's linger blurb this test stands behind");
+  const at = (cx, cy) => [{ x: cx - 20, y: cy - 40, w: 40, h: 80, score: 90, target: 0 }];
+  const ring = [[40, 40], [120, 40], [200, 40], [200, 120], [200, 200], [120, 200], [40, 200], [40, 120]];
+  for (const moving of [false, true]) {
+    core.reset();
+    core.configure({ ...data.detect });
+    const events = [];
+    let t = 1000, i = 0;
+    for (;; t += 100, i++) {
+      const [cx, cy] = moving ? ring[Math.floor(i / 5) % ring.length] : [120, 120];
+      const k = core.tick(t, at(cx, cy));
+      if (k.event) events.push(k.reason ? k.event + ":" + k.reason : k.event);
+      if (k.event === "dwell_started") break;
+      assert.ok(t < 1000 + data.detect.dwell_start_ms, "the dwell starts at dwell_start_ms");
+    }
+    for (const stop = t + 10000; (t += 100) < stop;) {
+      const k = core.tick(t, []);
+      if (k.event) events.push(k.reason ? k.event + ":" + k.reason : k.event);
+    }
+    assert.deepStrictEqual(events, ["presence_started", "dwell_started", "dwell_ended", "presence_ended",
+      "interaction_likely:dwell_then_left"], moving ? "settled cell moving" : "settled in one cell");
+  }
 });
 
 test("iou + nms behave like a de-dup pass", async () => {
