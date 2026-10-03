@@ -107,7 +107,16 @@ void on_committed(uint32_t                  event_id,
  * card. */
 void pump();
 
-/* The delivery watermark (diagnostics and host tests). */
+/* The delivery watermark: the highest event id handed to the MQTT layer
+ * or given up (csi_event_backfill.h), restored at boot to just under the
+ * NVS ceiling (see above), so after a reboot it can stand up to kStride
+ * ids past the last row handed over.
+ * Loop task (it reads the pump's state). Only the host tests read it
+ * (test_wap_event_egress.cpp): no route or topic carries it. GET
+ * /api/diagnostics and the `egress` topic carry the counters (stats(),
+ * read_stats()), as the canary's health and diagnostics do (sweep F180:
+ * this said "diagnostics and host tests", but no diagnostics reader ever
+ * had it). */
 uint32_t watermark();
 
 struct Stats {
