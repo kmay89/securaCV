@@ -459,7 +459,9 @@ async function buildDisplaySheet(ctx, side, stage) {
     ctx.emu = new CanaryEmulator(factory, {
       canvas: glass,
       onSerial: serialAppend,
-      onDisplayReady: () => {},
+      // Each shape the firmware announces carries the turn it wears the
+      // glass at (A56): the 3D case turns that way, not just "on its side".
+      onDisplayReady: (w, h, round, turn) => { ctx.scene.firmwareTurn = turn ?? null; },
       onFrame: () => {},
       onBacklight: (glow) => {
         ctx.scene.setGlow(glow);
@@ -498,10 +500,11 @@ async function buildDisplaySheet(ctx, side, stage) {
     // The 3D screen textures from the live panel. The canvas turns with the
     // glass (a portrait dash is 480x800), so the scene is handed the panel's
     // own shape too and turns the device's body when the canvas is that
-    // shape turned on its side (scene3d.js glassTurn, A47): a turned glass
-    // reads upright on a turned case, out of its landscape-only stand,
-    // instead of stretching across the landscape screen. Until the first
-    // frame sizes it the canvas is 300x150, which turns nothing.
+    // shape turned on its side (scene3d.js glassTurn, A47), the way the
+    // firmware turned it (onDisplayReady above, A56): a turned glass reads
+    // upright on a turned case, out of its landscape-only stand, instead of
+    // stretching across the landscape screen. Until the first frame sizes it
+    // the canvas is 300x150, which turns nothing.
     ctx.scene.src = glass;
     ctx.scene.glass = { w: dev.glass.w, h: dev.glass.h };
     // A preserved image (reboot / bench power event) is preseeded before

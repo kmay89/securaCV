@@ -182,7 +182,7 @@ export class CanaryEmulator {
     this.module = await this.factory({
       onSerial: (t) => shell.opts.onSerial?.(t),
       onFlush: (x, y, w, h) => shell._blit(),
-      onDisplayReady: (w, h, round) => shell._displayReady(w, h, round),
+      onDisplayReady: (w, h, round, turn) => shell._displayReady(w, h, round, turn),
       onBacklight: (level, duty13) => shell._backlight(level, duty13),
       onTone: (f, g) => shell.opts.onTone?.(f, g),
       onMqttPublish: (topic, payload, retained) => {
@@ -333,14 +333,20 @@ export class CanaryEmulator {
     }
   }
 
-  _displayReady(w, h, round) {
+  // The firmware announced its glass's shape, and with it (a dist built
+  // since sweep A56) the quarter turns the glass is worn at — LVGL's software
+  // rotation on the dash, the panel's hardware turn on the nightlight — which
+  // the canvas cannot say (turn 1 and turn 3 are the same shape, both read
+  // upright). null from a dist built before it.
+  _displayReady(w, h, round, turn) {
     this.fb.w = w;
     this.fb.h = h;
     this.round = !!round;
+    this.glassTurn = Number.isInteger(turn) && turn >= 0 && turn <= 3 ? turn : null;
     this.canvas.width = w;
     this.canvas.height = h;
     this.imageData = this.ctx.createImageData(w, h);
-    this.opts.onDisplayReady?.(w, h, this.round);
+    this.opts.onDisplayReady?.(w, h, this.round, this.glassTurn);
   }
 
   /** Take this instance off the bench: a replacement module owns the

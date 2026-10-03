@@ -402,6 +402,131 @@ test("A47: a figure turns where it stands, and its shadow follows it", async () 
   assert.strictEqual(sh.alpha, scene.shadow.alpha);
 });
 
+// ── A56: the case turns the way the visitor did ─────────────────────────
+// A47 read the turn off the canvas alone, and a portrait canvas cannot say
+// which way the glass was turned: a dash worn portrait the other way
+// (glass_settings.h's ROT_PORTRAIT_INV, 270) got its case turned clockwise
+// as for ROT_PORTRAIT, its cable side where the other turn puts it. The
+// emulator's HAL now announces the turn with every shape (LVGL's software
+// rotation on the dash, the panel's hardware turn on the nightlight), the
+// shell passes it on, app.js hands it to the scene, and glassTurn() takes it
+// when the canvas's shape agrees. Where each canvas corner lands is worked
+// through the same chain as A47's (texture, UVs, plane, model turn).
+const landingFor = (screenPlane, turnTexture, turnModel) => (turn, cw, ch, plane, textureTurn = turn) => {
+  const m = screenPlane(plane.w, plane.h, false);
+  const at = (u, v) => {
+    const i = [0, 1, 2, 3].find((k) => m.uv[2 * k] === u && m.uv[2 * k + 1] === v);
+    return [m.pos[3 * i], m.pos[3 * i + 1]];
+  };
+  const [x00, y00] = at(0, 0), [x10] = at(1, 0), [, y01] = at(0, 1);
+  const t = turnTexture(textureTurn, cw, ch);
+  const [a, b, c, d, e, f] = t.m;
+  const M = turnModel(turn);
+  return (px, py) => {
+    const X = a * px + c * py + e, Y = b * px + d * py + f;
+    const u = X / t.w, v = Y / t.h;
+    const x = x00 + u * (x10 - x00), y = y00 + v * (y01 - y00);
+    return [M[0] * x + M[4] * y, M[1] * x + M[5] * y];
+  };
+};
+const readsUpright = (land, cw, ch, what) => {
+  const [tl, tr, bl] = [land(0, 0), land(cw, 0), land(0, ch)];
+  assert.ok(tl[0] < tr[0] && Math.abs(tl[1] - tr[1]) < 1e-6, `${what}: the canvas's top edge runs left to right`);
+  assert.ok(bl[1] < tl[1] && Math.abs(tl[0] - bl[0]) < 1e-6, `${what}: the canvas's left edge runs top to bottom`);
+  const vw = tr[0] - tl[0], vh = tl[1] - bl[1];
+  assert.ok(Math.abs(vw / vh - cw / ch) < 1e-6, `${what}: the glass keeps its shape on the model (${vw}x${vh})`);
+};
+
+test("A56: the firmware's turn turns the model the way the glass was worn, and the glass reads upright on it", async () => {
+  const { glassTurn, turnModel, turnTexture, turnedShadow, figureShadow, screenPlane } = await load();
+  const dash = { w: 800, h: 480 }, nl = { w: 180, h: 320 };
+  const portrait = { width: 480, height: 800 }, landscape = { width: 800, height: 480 };
+  // The turn the HAL announced, where the canvas agrees with it.
+  assert.strictEqual(glassTurn(portrait, dash, 1), 1, "ROT_PORTRAIT: clockwise");
+  assert.strictEqual(glassTurn(portrait, dash, 3), 3, "ROT_PORTRAIT_INV: counterclockwise, not clockwise as A47 drew it");
+  assert.strictEqual(glassTurn(landscape, dash, 2), 2, "ROT_LANDSCAPE_INV: upside down, though its canvas is the panel's own shape");
+  assert.strictEqual(glassTurn(landscape, dash, 0), 0);
+  assert.strictEqual(glassTurn({ width: 320, height: 180 }, nl, 1), 1, "the nightlight stood on one edge");
+  assert.strictEqual(glassTurn({ width: 320, height: 180 }, nl, 3), 3, "and on the other");
+  // A turn the canvas contradicts (one has not caught up with the other) turns nothing.
+  for (const [c, t] of [[landscape, 1], [landscape, 3], [portrait, 0], [portrait, 2], [{ width: 300, height: 150 }, 1]]) {
+    assert.strictEqual(glassTurn(c, dash, t), 0, `a ${c.width}x${c.height} canvas with turn ${t}`);
+  }
+  assert.strictEqual(glassTurn({ width: 240, height: 240 }, { w: 240, h: 240 }, 1), 0, "a round glass never turns");
+  // A dist that does not say (null, undefined, or nothing it could mean): A47's shape-only read.
+  for (const t of [null, undefined, 4, -1, 1.5, "3", NaN]) {
+    assert.strictEqual(glassTurn(portrait, dash, t), 1, `turn ${String(t)}: the panel on its side turns the body once`);
+    assert.strictEqual(glassTurn(landscape, dash, t), 0);
+  }
+  // Where the body's face-on sides land, exactly: its bottom wall (the
+  // dash's USB-C side, canary_dash_display.scad) goes left for a clockwise
+  // turn, right for a counterclockwise one, and up for upside down.
+  const land = (t, x, y) => { const M = turnModel(t); return [M[0] * x + M[4] * y + 0, M[1] * x + M[5] * y + 0]; };
+  assert.deepStrictEqual(land(1, 0, -1), [-1, 0]);
+  assert.deepStrictEqual(land(3, 0, -1), [1, 0]);
+  assert.deepStrictEqual(land(2, 0, -1), [0, 1]);
+  assert.deepStrictEqual(land(0, 0, -1), [0, -1]);
+  assert.deepStrictEqual(Array.from(turnModel(4)), Array.from(turnModel(0)));
+  // The glass reads upright on every turned body, at its own proportions.
+  const landing = landingFor(screenPlane, turnTexture, turnModel);
+  readsUpright(landing(3, 480, 800, { w: 160, h: 96 }), 480, 800, "the dash worn portrait the other way");
+  readsUpright(landing(2, 800, 480, { w: 160, h: 96 }), 800, 480, "the dash upside down");
+  readsUpright(landing(3, 320, 180, { w: 22.5, h: 40 }), 320, 180, "the nightlight on its other edge");
+  readsUpright(landing(1, 480, 800, { w: 160, h: 96 }), 480, 800, "the dash worn portrait (A47's turn, unchanged)");
+  // ...and with a texture turned for the other way it does not: the body and
+  // its texture must turn together.
+  assert.throws(() => readsUpright(landing(3, 480, 800, { w: 160, h: 96 }, 1), 480, 800, "turn 3, texture 1"), /left to right|top to bottom/);
+  assert.throws(() => readsUpright(landing(1, 480, 800, { w: 160, h: 96 }, 3), 480, 800, "turn 1, texture 3"), /left to right|top to bottom/);
+  assert.throws(() => readsUpright(landing(2, 800, 480, { w: 160, h: 96 }, 0), 800, 480, "turn 2, texture 0"), /left to right|top to bottom/);
+  // The shadow: on its side either way; upside down, its own size, standing alone.
+  const pose = { seat: null, size: [100, 60, 20] };
+  const own = { y: -9, rx: 9, rz: 9, alpha: 0.25 };
+  assert.deepStrictEqual(turnedShadow(own, 3, pose), turnedShadow(own, 1, pose));
+  assert.deepStrictEqual(turnedShadow(own, 1, pose), { ...figureShadow([60, 100, 20]), alpha: 0.25 });
+  assert.deepStrictEqual(turnedShadow(own, 2, pose), { ...figureShadow([100, 60, 20]), alpha: 0.25 });
+});
+
+test("A56: the turn travels from the emulator's HAL to the scene", async () => {
+  // The HAL: every shape announcement carries the turn, read where the glass
+  // is turned (LVGL's driver on the dash, the panel's turn on the nightlight).
+  const hal = readFileSync(join(ROOT, "emulator/src/emu_hal_display.cpp"), "utf8");
+  assert.match(hal, /EM_JS\(void, js_display_ready, \(int w, int h, int round_mask, int turn\), \{\n\s*if \(Module\.onDisplayReady\) Module\.onDisplayReady\(w, h, !!round_mask, turn\);/);
+  const calls = hal.match(/(?<![\w$])js_display_ready\(.*\);/g) || [];
+  assert.ok(calls.length >= 3 && calls.every((c) => c === "js_display_ready(g_view_w, g_view_h, kRoundMask, glass_quarter_turns());"),
+    `every announcement carries the turn (${calls.join(" | ")})`);
+  assert.match(hal, /int glass_quarter_turns\(\) \{\n#ifdef CD_NIGHTLIGHT\n\s*return g_panel_rot;\n#else\n\s*return g_turn;\n#endif\n\}/,
+    "the nightlight's panel turn, else LVGL's software rotation");
+  assert.match(hal, /const int turn = lvgl_turn\(\);\n\s*if \(turn != g_turn\) glass_turn\(turn\);/, "g_turn is what LVGL's driver says, flush by flush");
+  assert.match(hal, /return \(int\)d->driver->rotated;/);
+  // The shell passes it on, and remembers it; null from a dist that does not say.
+  const { CanaryEmulator } = await import("../emulator/web/emu-shell.js");
+  let mod = null;
+  const seen = [];
+  const factory = async (m) => { mod = m; return { cwrap: () => () => 0, HEAPU8: new Uint8Array(16), UTF8ToString: () => "[]" }; };
+  const canvas = { width: 0, height: 0, getContext: () => ({ createImageData: (w, h) => ({ w, h }) }), addEventListener: () => {} };
+  const emu = new CanaryEmulator(factory, { canvas, onDisplayReady: (...a) => seen.push(a) });
+  await emu.start({});
+  mod.onDisplayReady(480, 800, 0, 3);
+  assert.deepStrictEqual(seen.pop(), [480, 800, false, 3]);
+  assert.strictEqual(emu.glassTurn, 3);
+  assert.deepStrictEqual([canvas.width, canvas.height], [480, 800]);
+  mod.onDisplayReady(800, 480, 0);
+  assert.deepStrictEqual(seen.pop(), [800, 480, false, null], "a dist built before A56 says no turn");
+  for (const bad of [4, -1, 1.5]) {
+    mod.onDisplayReady(800, 480, 0, bad);
+    assert.strictEqual(seen.pop()[3], null, `turn ${bad} is no turn`);
+  }
+  // The Lab hands it to the scene, which the draw reads.
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.ok(app.includes("onDisplayReady: (w, h, round, turn) => { ctx.scene.firmwareTurn = turn ?? null; },"),
+    "app.js hands the scene the firmware's turn");
+  const scene3d = readFileSync(join(ROOT, "assets/scene3d.js"), "utf8");
+  assert.ok(scene3d.includes("this.firmwareTurn = null;"), "a scene starts with no turn said");
+  // The harness logs it with each shape, for the probes.
+  const harness = readFileSync(join(ROOT, "emulator/web/harness.js"), "utf8");
+  assert.ok(harness.includes("onDisplayReady: (w, h, round, turn) => {\n    state.shapes.push({ w, h, frames: state.flushes, turn });"));
+});
+
 test("A47: the scene is handed the panel's own shape, which the firmware's panel is", async () => {
   const { glassTurn } = await load();
   const { flavorBoard, pinsPanel, turnedGlasses, readTurnedSources } = await import("./turned_glass.mjs");
@@ -436,7 +561,7 @@ test("A47: the scene is handed the panel's own shape, which the firmware's panel
   // points with any part transform applied (scene3d.js), and a turn is a
   // part transform now.
   const scene3d = readFileSync(join(ROOT, "assets/scene3d.js"), "utf8");
-  assert.ok(scene3d.includes("this.turn = this.turnPose ? glassTurn(this.src, this.glass) : 0;") &&
+  assert.ok(scene3d.includes("this.turn = this.turnPose ? glassTurn(this.src, this.glass, this.firmwareTurn) : 0;") &&
     scene3d.includes("this.turn ? this._turnedSource() : this.src);") &&
     scene3d.includes("const shadow = turnedShadow(this.shadow, this.turn, this.turnPose);") &&
     scene3d.includes("for (const { part: p, model } of partModels(this.parts, this.turn, this.turnPose)) {") &&

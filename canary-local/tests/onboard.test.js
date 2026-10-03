@@ -765,7 +765,7 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   // The glass follows what LVGL did to the pixels, and tells the page its shape.
   const hal = read(join(ROOT, "emulator/src/emu_hal_display.cpp"));
   assert.ok(hal.includes("_lv_refr_get_disp_refreshing()") && hal.includes("d->driver->sw_rotate"));
-  assert.ok(hal.includes("js_display_ready(g_view_w, g_view_h, kRoundMask);"));
+  assert.ok(hal.includes("js_display_ready(g_view_w, g_view_h, kRoundMask, glass_quarter_turns());"));
   assert.match(hal, /int emu_fb_width\(void\) \{ return g_view_w; \}/);
   const binding = read(join(ROOT, "emulator/src/emu_bindings.cpp"));
   assert.match(binding, /EMSCRIPTEN_KEEPALIVE const char\* emu_screen_arcs\(void\)/);
@@ -779,8 +779,9 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   const harness = read(join(ROOT, "emulator/web/harness.js"));
   assert.ok(harness.includes("const ROTATIONS = { 0: 0, 1: 1, 2: 2, 3: 3 };") &&
     harness.includes("rotation: rotationParam === null ? null : ROTATIONS[rotationParam],"));
-  // ...and logs every shape the firmware announces with the frames drawn by then.
-  assert.ok(/onDisplayReady: \(w, h, round\) => \{\s*state\.shapes\.push\(\{ w, h, frames: state\.flushes \}\);/.test(harness) &&
+  // ...and logs every shape the firmware announces with the frames drawn by then
+  // (and, since sweep A56, the quarter-turn the HAL says LVGL is wearing).
+  assert.ok(/onDisplayReady: \(w, h, round, turn\) => \{\s*(?:\/\/[^\n]*\n\s*)*state\.shapes\.push\(\{ w, h, frames: state\.flushes, turn \}\);/.test(harness) &&
     harness.includes("onFrame: () => { state.flushes++; },") && harness.includes("shapes: [] };"),
   "the harness logs each announced glass shape with the frame count");
   // The probe walks the turned dash and holds the new reads on it.
@@ -933,7 +934,7 @@ test("nightlight flavor (F204): build.sh builds it, the HAL turns its panel, the
   const hal = read(join(ROOT, "emulator/src/emu_hal_display.cpp"));
   const nl = [...hal.matchAll(/#ifdef CD_NIGHTLIGHT\n([\s\S]*?)#endif/g)].map((m) => m[1]).join("\n");
   assert.match(nl, /void display_set_rotation\(uint8_t rot\) \{\s*if \(!g_fb\) return;[^\n]*\n\s*panel_turn\(rot\);\s*\}/);
-  assert.ok(nl.includes("g_view_w = side ? EMU_H : EMU_W;") && nl.includes("js_display_ready(g_view_w, g_view_h, kRoundMask);"),
+  assert.ok(nl.includes("g_view_w = side ? EMU_H : EMU_W;") && nl.includes("js_display_ready(g_view_w, g_view_h, kRoundMask, glass_quarter_turns());"),
     "a turn reshapes the glass and tells the page");
   assert.ok(nl.includes("put565(g_fb + ((size_t)fy * g_view_w + fx) * 4, *s);"), "a flush lands in the logical frame");
   assert.match(nl, /bool imu_init\(\) \{[\s\S]*?return false;\s*\}/);

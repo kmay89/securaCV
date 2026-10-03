@@ -16,7 +16,8 @@
 // (framesOnGlass), and the face's bird is on stage (a turned face at 10:00
 // always shows it; birdOnStage) and sits on that glass and clear of every
 // line (birdPerch). On a native boot the bird is held where it is on stage
-// (the landscape dash's face hides it).
+// (the landscape dash's face hides it). A turned glass's last shape must
+// name the saved rotation as its turn, once the dist announces one (A56).
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
@@ -166,6 +167,15 @@ async function bootOnce(flavor, turn = null) {
     }
     const frames = framesOnGlass(st.shapes, st.flushes, turn.glass);
     if (frames) { fail(name, frames); return; }
+    // A56: the glass's last shape names the turn the firmware wears it at
+    // (LVGL's rotation on the dash, the panel's turn on the nightlight), the
+    // one the Lab turns the 3D case by; a dist built before the HAL said it
+    // announces none (null), and there is nothing to hold.
+    const told = st.shapes.at(-1)?.turn;
+    if (told !== null && told !== undefined && told !== turn.rotation) {
+      fail(name, `booted with saved rotation ${turn.rotation}, the glass announced turn ${told} (A56)`);
+      return;
+    }
     // and the face's bird is there to read: birdPerch passes a bird off stage
     const stage = birdOnStage(st, `the ${turn.name} ${flavor} face 6.5 s on`);
     if (stage) { fail(name, stage); return; }
@@ -173,7 +183,8 @@ async function bootOnce(flavor, turn = null) {
   const perch = birdPerch(st);
   if (perch) { fail(name, perch); return; }
   console.log(`BOOT_PROBE_OK[${name}] flushes=${st.flushes} mqtt=${st.mqtt.length}` +
-    (turn ? ` glass=${st.glass.w}x${st.glass.h} shapes=${st.shapes.length} bird=${st.bird.w}x${st.bird.h}@${st.bird.x},${st.bird.y}` : ""));
+    (turn ? ` glass=${st.glass.w}x${st.glass.h} shapes=${st.shapes.length} turn=${st.shapes.at(-1)?.turn ?? "unsaid"}` +
+      ` bird=${st.bird.w}x${st.bird.h}@${st.bird.x},${st.bird.y}` : ""));
 }
 
 const booted = [];

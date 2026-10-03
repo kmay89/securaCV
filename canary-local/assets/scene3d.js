@@ -298,12 +298,23 @@ export function screenPlane(w, h, round, seg = 64) {
 // dash, Orient::R90 on the nightlight) — and the plane samples the canvas
 // turned a quarter turn the other way, so the glass reads upright on the
 // turned body. The canvas cannot tell turn 1 from turn 3 (both read
-// upright), so a device worn the other way shows the same upright glass on
-// a body turned the same way. The panel's own shape is the registry card's
-// glass (app.js hands it over with the canvas): a glass that never turns
-// never turns its model, and neither does a canvas of any other shape —
-// the HTML default 300x150 the glass canvas is until the firmware's first
-// frame sizes it, say.
+// upright), so the scene also takes the turn the firmware wore it at
+// (`firmwareTurn`, sweep A56): the emulator's HAL announces it with every
+// shape (LVGL's software rotation on the dash, the panel's hardware turn on
+// the nightlight), and app.js hands it over. Turn 1 is the glass worn turned
+// clockwise, 3 counterclockwise, 2 upside down (glass_settings.h's
+// ROT_PORTRAIT / ROT_PORTRAIT_INV / ROT_LANDSCAPE_INV; on the nightlight,
+// io/orientation.h's model picks R90 when gravity pulls toward the glass's
+// right edge, and R270 for its left), so the body takes that many quarter
+// turns clockwise and the plane samples the canvas turned as many back. A dist that does not announce it leaves `firmwareTurn` null,
+// and the scene reads the shape alone, as A47 did: a canvas that is the
+// panel on its side turns the body once. The panel's own shape is the
+// registry card's glass (app.js hands it over with the canvas): a glass
+// that never turns never turns its model, and neither does a canvas of any
+// other shape — the HTML default 300x150 the glass canvas is until the
+// firmware's first frame sizes it, say — nor a turn the canvas's shape
+// contradicts (an odd turn on an unturned canvas, or an even one on a
+// turned canvas, while one has not yet caught up with the other).
 //
 // Only the device turns. Each builder that can be turned names its body's
 // pose (`scene.turnPose`: the `seat` that stands the body face-on at the
@@ -318,29 +329,51 @@ export function screenPlane(w, h, round, seg = 64) {
 // is drawn standing alone, as the fleet figures stand, rather than in a
 // stand that would not take it. A scene that names no pose never turns.
 
-/** Quarter turns clockwise the model takes for this glass: 1 when the
- * canvas (`src`: {width, height}) is exactly the panel it shows (`panel`:
- * {w, h}, its native scan) turned on its side, 0 otherwise (a square or
- * round glass, an unturned glass, a canvas not yet sized, or nothing to
- * compare). */
-export function glassTurn(src, panel) {
+/** Quarter turns clockwise the model takes for this glass (0..3). The
+ * canvas (`src`: {width, height}) against the panel it shows (`panel`:
+ * {w, h}, its native scan), and the turn the firmware wore it at
+ * (`firmwareTurn`, 0..3, or null when the emulator did not say): that turn
+ * when the canvas's shape agrees with it (the panel on its side for 1 and 3,
+ * its own shape for 0 and 2), else 0; with no firmware turn, 1 when the
+ * canvas is exactly the panel turned on its side. 0 for a square or round
+ * glass, a canvas not yet sized, or nothing to compare. */
+export function glassTurn(src, panel, firmwareTurn = null) {
   if (!src || !panel || panel.w === panel.h) return 0;
   const w = src.width, h = src.height;
-  return w > 0 && h > 0 && w === panel.h && h === panel.w ? 1 : 0;
+  if (!(w > 0 && h > 0)) return 0;
+  const onSide = w === panel.h && h === panel.w;
+  const asScanned = w === panel.w && h === panel.h;
+  if (!Number.isInteger(firmwareTurn) || firmwareTurn < 0 || firmwareTurn > 3) return onSide ? 1 : 0;
+  return (firmwareTurn % 2 ? onSide : asScanned) ? firmwareTurn : 0;
 }
 
+// cos and sin of a quarter turn, exactly (a turn is a whole number of them)
+const QUARTER = [[1, 0], [0, -1], [-1, 0], [0, 1]];
+
 /** The body's own turn for `turn` quarter turns clockwise (about the
- * viewer's axis, +Z toward them), once it is seated face-on. */
+ * viewer's axis, +Z toward them), once it is seated face-on: its
+ * face-on +x lands at (cos, sin) of -turn·90°, exactly. */
 export function turnModel(turn) {
-  return turn ? M4.rotZ(-Math.PI / 2) : M4.ident();
+  const t = ((turn % 4) + 4) % 4;
+  if (!t) return M4.ident();
+  const [c, s] = QUARTER[t];
+  const m = M4.ident();
+  m[0] = c; m[1] = s; m[4] = -s; m[5] = c;
+  return m;
 }
 
 /** The texture a turned plane samples, from a `w` x `h` canvas: its size and
  * the 2D transform (setTransform's a, b, c, d, e, f) that draws the canvas
- * into it a quarter turn counterclockwise — canvas (x, y) at texture
- * (y, w - x) — so that on the plane turned clockwise it reads upright. */
+ * into it as many quarter turns counterclockwise as the plane turns
+ * clockwise, so that on the turned plane it reads upright: canvas (x, y) at
+ * texture (y, w - x) for 1, (w - x, h - y) for 2, (h - y, x) for 3. */
 export function turnTexture(turn, w, h) {
-  return turn ? { w: h, h: w, m: [0, -1, 1, 0, 0, w] } : { w, h, m: [1, 0, 0, 1, 0, 0] };
+  switch (((turn % 4) + 4) % 4) {
+    case 1: return { w: h, h: w, m: [0, -1, 1, 0, 0, w] };
+    case 2: return { w, h, m: [-1, 0, 0, -1, w, h] };
+    case 3: return { w: h, h: w, m: [0, 1, -1, 0, h, 0] };
+    default: return { w, h, m: [1, 0, 0, 1, 0, 0] };
+  }
 }
 
 /** Where each part draws for `turn` (`pose`: the scene's turnPose).
@@ -366,12 +399,13 @@ export function figureShadow(size) {
 }
 
 /** The contact shadow for `turn`: unturned (or with no pose, or no shadow)
- * the scene's own; turned, the one the body stands on turned on its side —
- * its face-on width is now its height — at the scene's own strength. */
+ * the scene's own; turned, the one the body stands on alone, at the scene's
+ * own strength — on its side (an odd turn: its face-on width is now its
+ * height) or upside down (2: its own size, out of the holders it stood in). */
 export function turnedShadow(shadow, turn, pose) {
   if (!shadow || !turn || !pose) return shadow;
   const [w, h, d] = pose.size;
-  return { ...figureShadow([h, w, d]), alpha: shadow.alpha };
+  return { ...figureShadow(turn % 2 ? [h, w, d] : [w, h, d]), alpha: shadow.alpha };
 }
 
 // Wedge stand (25° recline cradle, simplified silhouette of the printed
@@ -772,6 +806,10 @@ export class DeviceScene {
     this.glass = null;
     this.turnPose = null;
     this.turn = 0;
+    // The turn the firmware wears its glass at, as the emulator announced it
+    // with the glass's shape (A56; app.js sets it): 0..3, or null when the
+    // dist does not say, and glassTurn() reads the canvas's shape alone.
+    this.firmwareTurn = null;
     this._turned = null; // the turned canvas a turned plane samples
     this._wireOrbit();
     this._raf = null;
@@ -1107,11 +1145,11 @@ export class DeviceScene {
       }
     }
 
-    // live screen texture — turned with the glass when the canvas is the
-    // panel turned on its side (A47: the body turns to match, if the build
-    // named how it turns)
+    // live screen texture — turned with the glass when the firmware wears it
+    // turned (A47, A56: the body turns to match, the way the firmware said,
+    // if the build named how it turns)
     const tex = this._tex.tex;
-    this.turn = this.turnPose ? glassTurn(this.src, this.glass) : 0;
+    this.turn = this.turnPose ? glassTurn(this.src, this.glass, this.firmwareTurn) : 0;
     if (this.src) {
       gl.bindTexture(gl.TEXTURE_2D, tex);
       try {

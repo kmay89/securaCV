@@ -39,7 +39,8 @@ const serial = document.getElementById("serial");
 // shapes: every shape the firmware announced for its glass (onDisplayReady,
 // F184), with how many frames it had drawn by then — so a probe can tell the
 // glass the FIRST frame landed on (a saved rotation is worn before the
-// splash, main.cpp) from one the firmware turned to later.
+// splash, main.cpp) from one the firmware turned to later — and the quarter
+// turns it is worn at (A56; null from a dist built before the HAL said).
 const state = { booted: false, flushes: 0, serialText: "", mqtt: [], flavor, shapes: [] };
 window.__state = state;
 
@@ -50,8 +51,8 @@ const emu = new CanaryEmulator(factory, {
     serial.textContent = state.serialText.slice(-20000);
     serial.scrollTop = serial.scrollHeight;
   },
-  onDisplayReady: (w, h, round) => {
-    state.shapes.push({ w, h, frames: state.flushes });
+  onDisplayReady: (w, h, round, turn) => {
+    state.shapes.push({ w, h, frames: state.flushes, turn });
     if (round) document.getElementById("glass").classList.add("round");
   },
   onFrame: () => { state.flushes++; },

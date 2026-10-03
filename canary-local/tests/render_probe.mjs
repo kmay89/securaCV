@@ -19,6 +19,11 @@
 //      squeezed into the landscape screen. The marks sit in the glass's
 //      lower half: the studio light's highlight across the top of a face-on
 //      screen washes a mark there to near white.
+//   5. the case turns the way the firmware turned the glass (sweep A56): a
+//      cyan tab on the case's bottom wall (the USB-C's side) lands on the
+//      left for turn 1 (glass_settings.h's ROT_PORTRAIT, clockwise), on the
+//      right for turn 3 (ROT_PORTRAIT_INV) and on top for turn 2
+//      (ROT_LANDSCAPE_INV, an 800x480 canvas), the marks upright each way.
 //
 //   node canary-local/tests/render_probe.mjs [--shots DIR]
 //
@@ -76,7 +81,7 @@ const BASE = `http://127.0.0.1:${server.address().port}`;
 const HARNESS = `<!doctype html><meta charset="utf-8">
 <body style="background:#f4f4f5;margin:0;display:flex;flex-wrap:wrap">
 <script type="module">
-import { DeviceScene, BUILDERS, M4, turnedShadow } from "/canary-local/assets/scene3d.js";
+import { DeviceScene, BUILDERS, M4, turnedShadow, roundedBox } from "/canary-local/assets/scene3d.js";
 import { upgradeRealShape } from "/canary-local/assets/real-shapes.js";
 import { parseSTL } from "/canary-local/assets/stl.js";
 window.__probe = { status: "running", results: {} };
@@ -130,18 +135,36 @@ try {
   g.fillStyle = "#ff0000"; g.fillRect(0, 440, 120, 120);
   g.fillStyle = "#00ff00"; g.fillRect(360, 440, 120, 120);
   g.fillStyle = "#0000ff"; g.fillRect(0, 680, 120, 120);
+  // A56: the same marks on the glass as an upside-down dash shows it, the
+  // panel's own 800x480 shape: red and green on one row, blue under red
+  const flat = document.createElement("canvas");
+  flat.width = 800; flat.height = 480;
+  const fg = flat.getContext("2d");
+  fg.fillStyle = "#101010"; fg.fillRect(0, 0, 800, 480);
+  fg.fillStyle = "#ff0000"; fg.fillRect(120, 300, 120, 120);
+  fg.fillStyle = "#00ff00"; fg.fillRect(480, 300, 120, 120);
+  fg.fillStyle = "#0000ff"; fg.fillRect(120, 180 + 240, 120, 60);
   // the stand's own mesh, to know its part by (not by the flag under test)
   const standMesh = parseSTL(await (await fetch("enclosures/preview/canary_dash_display_stand.stl")).arrayBuffer()).mesh;
-  const marks = async (panel, pose) => {
+  const marks = async (panel, pose, firmwareTurn = null, src = glass) => {
     const cv = document.createElement("canvas");
     cv.style.cssText = "width:420px;height:420px";
     document.body.append(cv);
-    const scene = new DeviceScene(cv, glass);
+    const scene = new DeviceScene(cv, src);
     await BUILDERS["canary-display-dash"](scene);
     const real = await upgradeRealShape(scene, "canary-display-dash");
     // the stand in a color nothing else here has, so its pixels can be told
     const stands = scene.parts.filter((p) => p.count === standMesh.idx.length && p.src.pos.length === standMesh.pos.length);
     for (const p of stands) { p.role = null; p.color = [1, 0, 1]; p.gloss = 0; }
+    // A56: the case's bottom wall — the side its USB-C leaves by
+    // (canary_dash_display.scad) — marked by a cyan tab on the bezel there,
+    // seated with the case (its model the seat undone), so it turns with it
+    if (scene.turnPose) {
+      const [, ch, cd] = scene.turnPose.size;
+      scene.addMesh(roundedBox(14, 5, 1.2, 0.3), { color: [0, 1, 1], gloss: 0,
+        model: M4.mul(M4.rigidInverse(scene.turnPose.seat), M4.translate(0, -ch / 2 + 4, cd / 2 + 2)) });
+    }
+    scene.firmwareTurn = firmwareTurn;
     scene.glass = panel;
     scene.autoSway = false;
     if (pose === "front") { scene.rot = { x: 0, y: 0 }; scene.home = { x: 0, y: 0 }; }
@@ -149,7 +172,7 @@ try {
     const gl = scene.gl, W = cv.width, H = cv.height;
     const px = new Uint8Array(W * H * 4);
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    const c = { r: [0, 0, 0], g: [0, 0, 0], b: [0, 0, 0] };   // sum x, sum y (up), count
+    const c = { r: [0, 0, 0], g: [0, 0, 0], b: [0, 0, 0], cable: [0, 0, 0] };   // sum x, sum y (up), count
     let stand = 0, foot = H, top = -1, left = W, right = -1;  // rows counted up from the bottom
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
@@ -159,6 +182,7 @@ try {
           left = Math.min(left, x); right = Math.max(right, x);
         }
         if (R - G > 60 && B - G > 60 && Math.abs(R - B) < 40) { stand++; continue; }
+        if (G - R > 60 && B - R > 60 && Math.abs(G - B) < 40) { c.cable[0] += x; c.cable[1] += y; c.cable[2]++; continue; }
         // a mark is its channel standing 40 clear of the other two (the
         // studio light adds white to every channel; the margin survives it)
         const k = R - Math.max(G, B) > 40 ? "r" : G - Math.max(R, B) > 40 ? "g"
@@ -177,12 +201,16 @@ try {
     cv.remove();
     const at = (k) => (c[k][2] ? [c[k][0] / c[k][2], c[k][1] / c[k][2]] : null);
     return { real: real && stands.length === 1, turn: scene.turn, r: at("r"), g: at("g"), b: at("b"),
-             stand, foot, top, left, right, W, shadowRow };
+             cable: at("cable"), stand, foot, top, left, right, W, shadowRow };
   };
   window.__probe.turned = await marks({ w: 800, h: 480 }, "front");
   window.__probe.unturned = await marks(null, "front");
   window.__probe.turnedHome = await marks({ w: 800, h: 480 }, "home");
   window.__probe.unturnedHome = await marks(null, "home");
+  // A56: the turn the firmware announced, each way
+  window.__probe.turnedCw = await marks({ w: 800, h: 480 }, "front", 1);
+  window.__probe.turnedCcw = await marks({ w: 800, h: 480 }, "front", 3);
+  window.__probe.upsideDown = await marks({ w: 800, h: 480 }, "front", 2, flat);
   window.__probe.status = "done";
 } catch (e) {
   window.__probe.status = "error: " + (e && e.message || e);
@@ -238,15 +266,17 @@ const shape = (m) => {
   return { across, down, ratio: down / across, row: Math.abs(m.g[1] - m.r[1]), col: Math.abs(m.b[0] - m.r[0]) };
 };
 const near = (v, want, tol = 0.2) => Math.abs(v / want - 1) < tol;
-const a47 = (what, m, check) => {
-  if (!m || !m.real) return fail(`A47 ${what}: the sheet's real dash did not load (${JSON.stringify(m)})`);
+const held = (tag) => (what, m, check) => {
+  if (!m || !m.real) return fail(`${tag} ${what}: the sheet's real dash did not load (${JSON.stringify(m)})`);
   const t = shape(m);
   const msg = check(t, m);
-  if (msg) return fail(`A47 ${what}: ${msg}`);
+  if (msg) return fail(`${tag} ${what}: ${msg}`);
   const f = (v) => (typeof v === "number" ? v.toFixed(2) : v);
-  console.log(`✓ A47 ${what} (down/across ${f(t?.ratio)}, stand pixels ${m.stand}, foot row ${m.foot}, `
-    + `shadow center row ${f(m.shadowRow)}, body ${m.top - m.foot} rows, middle ${f((m.left + m.right) / 2)} of ${m.W})`);
+  console.log(`✓ ${tag} ${what} (down/across ${f(t?.ratio)}, stand pixels ${m.stand}, foot row ${m.foot}, `
+    + `shadow center row ${f(m.shadowRow)}, body ${m.top - m.foot} rows, middle ${f((m.left + m.right) / 2)} of ${m.W}`
+    + `${m.cable ? `, cable tab at ${m.cable.map((v) => v.toFixed(0)).join(", ")}` : ""})`);
 };
+const a47 = held("A47");
 const turnedCase = (t, m) => {
   if (m.turn !== 1) return "the scene did not turn the case for a 480x800 glass on an 800x480 panel";
   if (m.stand !== 0) return `the stand turned with the case (${m.stand} stand pixels drawn)`;
@@ -298,6 +328,27 @@ a47("at the sheet's pose, no panel named: the case stays in its stand", probe.un
   if (!(m.stand > 0)) return "the stand is not drawn";
   return null;
 });
+
+// 5. A56: the case turns the way the firmware turned the glass. The cable
+// tab's middle, against the case's: left of it for 1, right for 3, above for
+// 2 — by at least a third of the case's half-width (or half-height) — and
+// the glass upright on the case every way.
+const upright = (t) => t && t.across > 0 && t.down > 0 && t.row < 0.1 * t.across && t.col < 0.1 * t.down;
+const a56 = (what, m, turn, side) => held("A56")(what, m, (t) => {
+  if (m.turn !== turn) return `the scene turned the case ${m.turn} quarter turns, not the firmware's ${turn}`;
+  if (m.stand !== 0) return `the stand turned with the case (${m.stand} stand pixels drawn)`;
+  if (!upright(t)) return `the glass does not read upright on the case (red ${m.r}, green ${m.g}, blue ${m.b})`;
+  if (!m.cable) return "the case's bottom wall (its cable side) drew no pixel";
+  const mx = (m.left + m.right) / 2, my = (m.foot + m.top) / 2;
+  const hw = (m.right - m.left) / 2, hh = (m.top - m.foot) / 2;
+  const [cx, cy] = m.cable;
+  const ok = side === "left" ? cx < mx - hw / 3 : side === "right" ? cx > mx + hw / 3 : cy > my + hh / 3;
+  if (!ok) return `the cable side is not on the ${side} (its tab at ${cx.toFixed(0)}, ${cy.toFixed(0)}; the case's middle ${mx}, ${my})`;
+  return null;
+});
+a56("turn 1 (clockwise): the cable side on the left, the glass upright", probe.turnedCw, 1, "left");
+a56("turn 3 (counterclockwise): the cable side on the right, the glass upright", probe.turnedCcw, 3, "right");
+a56("turn 2 (upside down): the cable side on top, the glass upright", probe.upsideDown, 2, "top");
 
 await browser.close();
 server.close();

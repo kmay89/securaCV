@@ -72,6 +72,29 @@ int g_turn = LV_DISP_ROT_NONE;
 int g_view_w = EMU_W;
 int g_view_h = EMU_H;
 
+#ifdef CD_NIGHTLIGHT
+// The nightlight's quarter turns (Arduino_GFX numbering, as
+// display_set_rotation takes them): the frame the framebuffer is held in.
+int g_panel_rot = 0;
+#endif
+
+// The quarter turns the glass is worn at, as the page is told them with its
+// shape: the panel's hardware turn on the nightlight, LVGL's software
+// rotation (lv_disp_rot_t: 1 = 90, 3 = 270) everywhere else. Turn 1 is the
+// device turned clockwise on both: glass_settings.h's ROT_PORTRAIT ("turned
+// clockwise") on the dash, and on the nightlight the Orient::R90 that
+// orientation.h's model picks when gravity pulls toward the glass's right
+// edge. (Whether the board's MADCTL byte for rotation 1 draws it that way
+// round is still to be bench-verified, display_1in47.cpp says; this
+// framebuffer holds the logical frame either way.)
+int glass_quarter_turns() {
+#ifdef CD_NIGHTLIGHT
+  return g_panel_rot;
+#else
+  return g_turn;
+#endif
+}
+
 // Touch state pushed by JS pointer events, drained by touch_read() each
 // loop pass — the same poll cadence the CST816S/GT911 get on hardware.
 volatile int g_touch_down = 0;
@@ -82,8 +105,14 @@ volatile int g_touch_y = 0;
 volatile int g_backlight_level = 255;   // 0..255 day ladder
 volatile int g_night_duty13 = -1;       // 0..8191 when night profile owns it
 
-EM_JS(void, js_display_ready, (int w, int h, int round_mask), {
-  if (Module.onDisplayReady) Module.onDisplayReady(w, h, !!round_mask);
+// Every shape announcement carries the quarter turns the glass is worn at
+// (sweep A56): the dash's software rotation as LVGL's driver holds it
+// (lv_disp_rot_t, read in lvgl_turn() below), the nightlight's hardware turn
+// as display_set_rotation took it. The canvas alone cannot tell turn 1 from
+// turn 3 (both are the panel on its side, read upright), so the page turns
+// the 3D case from this, the way the visitor did.
+EM_JS(void, js_display_ready, (int w, int h, int round_mask, int turn), {
+  if (Module.onDisplayReady) Module.onDisplayReady(w, h, !!round_mask, turn);
 });
 EM_JS(void, js_flush, (int x, int y, int w, int h, int serial), {
   if (Module.onFlush) Module.onFlush(x, y, w, h, serial);
@@ -127,7 +156,7 @@ void glass_turn(int turn) {
     g_fb[i * 4 + 2] = 0;
     g_fb[i * 4 + 3] = 255;
   }
-  js_display_ready(g_view_w, g_view_h, kRoundMask);
+  js_display_ready(g_view_w, g_view_h, kRoundMask, glass_quarter_turns());
 }
 
 // A native panel pixel, where the viewer of the turned glass sees it: the
@@ -154,10 +183,6 @@ inline void put565(uint8_t* d, uint16_t c) {
 }
 
 #ifdef CD_NIGHTLIGHT
-// The nightlight's quarter turns (Arduino_GFX numbering, as
-// display_set_rotation takes them): the frame the framebuffer is held in.
-int g_panel_rot = 0;
-
 // The panel turned in hardware: the framebuffer takes the logical frame's
 // shape (sides swapped for 1 and 3), cleared to black as the board's HAL
 // clears the panel on every turn (fillScreen after the MADCTL write), and
@@ -173,7 +198,7 @@ void panel_turn(int rot) {
     g_fb[i * 4 + 2] = 0;
     g_fb[i * 4 + 3] = 255;
   }
-  js_display_ready(g_view_w, g_view_h, kRoundMask);
+  js_display_ready(g_view_w, g_view_h, kRoundMask, glass_quarter_turns());
 }
 #endif
 
@@ -263,7 +288,7 @@ bool display_init() {
     // Panel powers up dark, alpha opaque.
     for (size_t i = 0; i < (size_t)EMU_W * EMU_H; i++) g_fb[i * 4 + 3] = 255;
   }
-  js_display_ready(g_view_w, g_view_h, kRoundMask);
+  js_display_ready(g_view_w, g_view_h, kRoundMask, glass_quarter_turns());
   return true;
 }
 
