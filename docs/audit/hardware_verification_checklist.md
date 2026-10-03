@@ -1721,6 +1721,34 @@ Compile is CI's. Owner: U1.
     the host test covers it.
   - Artifact: `docs/audit/repro/F213/nearby-emoji/`.
 
+## canary-wap Chirp: community suppression by more than half, within two minutes (F233) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`handle_suppress_vote()`: a vote counts within `SUPPRESS_WINDOW_MS` of the
+chirp's arrival, into a set of `MAX_SUPPRESS_VOTERS` keys, and suppresses
+the chirp at `suppress_votes_needed(nearby_count)`, more than half of the
+nearby rows and at least three, `mesh_network.h`). Host-tested
+(`tests_host/test_chirp_suppress_wap.cpp`: real signed beacons, a signed
+witness and signed votes at every table size from 3 to 32 rows, a repeated
+voter, votes across the window). Compile is CI's. Owner: U1.
+
+- [ ] **Three of four nearby rows suppress a chirp; a late third vote does not**
+  - Setup: five canary-wap boards, A to E, in ESP-NOW range of A, Chirp on
+    for at least ten minutes on each (the presence requirement a vote
+    needs), each with a GPS fix (no vote goes out on an unset clock).
+  - Repro: on A, `curl -s /api/chirp/nearby` lists four rows. B sends a
+    chirp; within two minutes dismiss it on C, D and E (each dismiss answers
+    `"vote_sent":true`), reading A's `GET /api/chirp/recent` after each.
+    Then C sends a chirp; dismiss it on B and D within a minute, and on E
+    three minutes after it went out.
+  - Expected: B's chirp reads `"suppressed":false` on A after the first two
+    dismissals and `true` after the third, and leaves the list within 30 s;
+    C's chirp still reads `"suppressed":false` after all three (the third
+    vote came after the window; before F233 it counted). Tables of 18 rows
+    and more, where no chirp could be suppressed before F233, take nineteen
+    boards and are the host test's.
+  - Artifact: `docs/audit/repro/F233/suppress-window/`.
+
 ## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed, the device name holds no control byte (F211, F212, F226) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/fleet_scan_cache.h`
