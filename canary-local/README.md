@@ -239,8 +239,9 @@ Three doors into the same live device, all driven by one scenario API
 - **Bench** — the physical test bench: the layer the firmware *can't*
   see, modeled where it lives (outside the silicon boundary, in
   `emulator/web/bench.js`). Pull the USB cable mid-frame, remove or
-  brown out the battery, flip the board's ON/OFF slide switch (it gates
-  the battery path only — its documented job), hold BOOT through RESET
+  brown out the battery (where the board has one: a board with no
+  battery path shows the chip inert), flip the board's ON/OFF slide
+  switch (it gates the battery path only — its documented job), hold BOOT through RESET
   and park the mask ROM in download mode, then recover. The hardwired
   lights (PWR on the rail, CHG/DONE on the charge chip, the watch's
   batteryless-CHG flicker) answer only to physics — no firmware here or
@@ -940,8 +941,10 @@ fails on byte drift.
   rail up ⇔ USB ∨ (battery ∧ switch ∧ charge>0); the switch gates only
   the battery; straps are sampled only at reset (BOOT low → download
   mode, even through `ESP.restart()`); LEDs follow the rail/charger and
-  never the firmware; brownout at 0 %; the ROM banners' exact text; and
-  every `BENCH_FIXES` flow stages cleanly. Registry `bench` blocks are
+  never the firmware; brownout at 0 %; the ROM banners' exact text;
+  every `BENCH_FIXES` flow stages cleanly; and a board whose block names
+  no battery can be fitted none and is offered no step that stages one,
+  so a USB pull always drops its rail. Registry `bench` blocks are
   validated (drivers name real wires, every LED carries its honesty
   note, witnesses carry no bench).
 - `tests/vision.test.js`, `tests/eyes.test.js` and `tests/audio.test.js`
