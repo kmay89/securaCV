@@ -8,9 +8,15 @@
 #   bash canary-local/emulator/test/glass_turn.sh [LVGL_DIR]
 #
 # LVGL_DIR defaults to canary-local/emulator/third_party/lvgl, the checkout
-# build.sh fetches at its pin (CI: canary-local.yml runs this right after the
-# dist build). GLASS_TURN_OUT keeps the objects between runs (default: a
-# fresh temporary directory).
+# build.sh fetches at its pin. When that default is absent (a cold
+# third-party cache), this fetches it there itself, at the LVGL_TAG build.sh
+# names and the way build.sh does, so build.sh later finds it and skips its
+# own clone. That is what lets CI (canary-local.yml) run this FIRST, before
+# any step that reads the committed dist: a stale dist goes red in the
+# browser probes, and a step after them would be skipped, hiding the one
+# proof of these sources that does not need the dist. An explicit LVGL_DIR
+# is never fetched into. GLASS_TURN_OUT keeps the objects between runs
+# (default: a fresh temporary directory).
 set -euo pipefail
 export LC_ALL=C
 
@@ -18,6 +24,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 EMU="$(cd "$HERE/.." && pwd)"
 FW="$(cd "$EMU/../../firmware" && pwd)"
 PROJ="$FW/projects/canary-display"
+if [[ $# -eq 0 && ! -d "$EMU/third_party/lvgl" ]]; then
+  tag="$(sed -n 's/^LVGL_TAG="\([^"]*\)"$/\1/p' "$EMU/build.sh")"
+  if [[ -z "$tag" ]]; then
+    echo "glass_turn: build.sh names no LVGL_TAG to fetch" >&2
+    exit 2
+  fi
+  mkdir -p "$EMU/third_party"
+  git clone --depth 1 --branch "$tag" https://github.com/lvgl/lvgl.git "$EMU/third_party/lvgl"
+fi
 LVGL="$(cd "${1:-$EMU/third_party/lvgl}" 2>/dev/null && pwd || true)"
 if [[ -z "$LVGL" || ! -f "$LVGL/lvgl.h" ]]; then
   echo "glass_turn: no LVGL checkout at ${1:-$EMU/third_party/lvgl} (run build.sh once, or pass one)" >&2

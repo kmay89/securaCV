@@ -504,10 +504,27 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
     assert.ok(probe.includes(scene), `the probe holds the lines: ${scene}`);
   }
   assert.ok(probe.includes('if (WALK !== "native") for (const t of TURNED) { await walkHarness(t.flavor, t);'));
-  // CI: the native glass test runs after the dist build fetched LVGL.
+  // CI: the native glass test runs where an earlier red cannot skip it —
+  // after the third-party cache is restored, before every step that reads
+  // the committed dist (a stale dist turns the probes red, and GitHub skips
+  // each later step) — and fetches build.sh's own pinned LVGL on a cold
+  // cache, where build.sh will find it.
   const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
-  assert.ok(wf.indexOf("./build.sh all") < wf.indexOf("bash canary-local/emulator/test/glass_turn.sh"),
-    "glass_turn.sh runs after build.sh fetched the pinned LVGL");
+  const gt = wf.indexOf("bash canary-local/emulator/test/glass_turn.sh");
+  assert.ok(gt > wf.indexOf("- name: Cache third-party sources"), "glass_turn.sh runs after the third-party cache");
+  for (const later of ["node canary-local/tests/boot_probe.mjs", "node canary-local/tests/onboard_probe.mjs",
+    "node canary-local/tests/csp_probe.mjs", "./build.sh all", "Dist drift check"]) {
+    assert.ok(wf.indexOf(later) > gt, `glass_turn.sh runs before ${later}`);
+  }
+  const gtStep = /- name: Turned glass[\s\S]*?run: bash canary-local\/emulator\/test\/glass_turn\.sh\n/.exec(wf)?.[0] || "";
+  assert.ok(gtStep && !/^\s+if:/m.test(gtStep), "the step runs unconditionally");
+  const gtSh = read(join(ROOT, "emulator/test/glass_turn.sh"));
+  assert.ok(gtSh.includes(`sed -n 's/^LVGL_TAG="\\([^"]*\\)"$/\\1/p' "$EMU/build.sh"`) &&
+    gtSh.includes('git clone --depth 1 --branch "$tag" https://github.com/lvgl/lvgl.git "$EMU/third_party/lvgl"'),
+  "glass_turn.sh fetches build.sh's LVGL_TAG into build.sh's third_party/lvgl when it is absent");
+  const buildSh = read(join(ROOT, "emulator/build.sh"));
+  assert.ok(buildSh.includes('if [[ ! -d "$TP/lvgl" ]]; then') && /^LVGL_TAG="v8\.4\.\d+"$/m.test(buildSh),
+    "build.sh reuses a checkout already at third_party/lvgl, and pins an 8.4 tag");
 });
 
 test("CI runs the generator check, this test and the browser probe", () => {

@@ -897,8 +897,10 @@ fails on byte drift.
   the real `ui/lvgl_port.cpp` and the emulator's real display HAL built with
   g++ against the pinned LVGL 8.4; at every quarter turn the framebuffer the
   page reads equals the scene rendered unturned, pixel for pixel, and a fed
-  touch comes back out of LVGL's pointer where it went in. CI runs it after
-  the dist build fetches LVGL.
+  touch comes back out of LVGL's pointer where it went in. With no argument
+  it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
+  absent, so CI runs it before any step that reads the committed dist (a
+  stale dist turns those red and skips every later step).
 - `tests/canary_local.test.js` — Node tests for the DOM-free logic:
   the witness signing canonical is pinned against `trust.cpp`'s locked
   format (and a WebCrypto round-trip verifies a real signature over

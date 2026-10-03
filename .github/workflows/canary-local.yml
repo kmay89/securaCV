@@ -867,6 +867,19 @@ jobs:
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
+      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL (native g++, F184)
+        # ui/lvgl_port.cpp's dash rotation and the HAL that turns the emulator's
+        # framebuffer with it (src/emu_hal_display.cpp), built with g++ against
+        # build.sh's pinned LVGL (the cached checkout, or fetched into it at
+        # build.sh's LVGL_TAG on a cold cache, which the dist build then
+        # reuses): at every quarter turn the glass the page reads equals the
+        # scene rendered unturned at the logical size, pixel for pixel, and a
+        # fed touch comes back out of LVGL's pointer where it went in. Proves
+        # the sources, not the dist's bytes (the onboard probe reads those).
+        # Runs BEFORE every step that reads the committed dist: a stale dist
+        # turns the probes below red and skips every later step, and this is
+        # the one proof of these sources that does not need the dist.
+        run: bash canary-local/emulator/test/glass_turn.sh
       # Weekly key: playwright (installed unpinned below) moves its pinned
       # Chromium build over time; a weekly rotation keeps the ~150 MB
       # browser download to at most one run per week while never letting
@@ -998,15 +1011,6 @@ jobs:
         # is generated from the LVGL checkout the build above just fetched
         # (build.sh's pin), which the firmware.yml host-test job does not have.
         run: python3 firmware/scripts/gen_montserrat_metrics.py --check
-      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL (native g++, F184)
-        # ui/lvgl_port.cpp's dash rotation and the HAL that turns the emulator's
-        # framebuffer with it (src/emu_hal_display.cpp), built with g++ against
-        # the LVGL checkout the dist build above fetched: at every quarter turn
-        # the glass the page reads equals the scene rendered unturned at the
-        # logical size, pixel for pixel, and a fed touch comes back out of
-        # LVGL's pointer where it went in. Proves the sources; the onboard probe
-        # reads the dist's bytes.
-        run: bash canary-local/emulator/test/glass_turn.sh
       - name: Voice preview drift check (index.html matches voice_score.h)
         # The Canary Voice sound preview (canary-local/voice/index.html) is
         # GENERATED from the firmware header by the real compiler — never
