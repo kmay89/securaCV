@@ -968,6 +968,26 @@ let meshPolling = false;
 // canary-wap): GET /api/mesh then reports that pairing's outcome under it.
 let meshInitSeq = null;
 let meshJoinSeq = null;
+// Each Start Pairing begins an attempt, and Cancel ends it. Work an attempt
+// began (a wait, a confirm, the reads and cancels that end it) carries that
+// attempt's number, Canaries and pairing numbers from its start
+// (meshThisAttempt), and stops at its next await once another attempt has
+// begun or the user canceled (meshGone): it then sends nothing more and
+// leaves the screen to the attempt that owns it. Otherwise a cleanup still
+// waiting on a slow read (the add-on proxy waits up to 10 s for an
+// unreachable Canary) would judge the next attempt's bodies by the next
+// attempt's numbers, cancel its pairing and end its wait (F200's review).
+let meshAttempt = 0;
+
+function meshThisAttempt() {
+  return { n: meshAttempt, init: meshInit, join: meshJoin,
+           initSeq: meshInitSeq, joinSeq: meshJoinSeq };
+}
+
+// True once the attempt `a` is no longer the current one.
+function meshGone(a) {
+  return a.n !== meshAttempt;
+}
 
 // The pairing number in a pair/start or pair/join answer, or null.
 function meshPairingSeq(answer) {
@@ -1037,10 +1057,14 @@ function meshFailText(reason) {
 // side is canceled only on a read that carries this pairing's number, and a
 // Canary runs one pairing at a time, so the cancel can end no one else's; a
 // side that finished is left as it finished, and a Canary that reports no
-// number ("legacy") is not canceled here, as before F163.
-async function meshCancelRunning(vi, vj) {
-  if (vi && vi.kind === "running") { try { await api("api/mesh/pair/cancel", meshInit); } catch (e) {} }
-  if (vj && vj.kind === "running") { try { await api("api/mesh/pair/cancel", meshJoin); } catch (e) {} }
+// number ("legacy") is not canceled here, as before F163. `a` is the attempt
+// the reads belong to: its Canaries are the ones canceled, and nothing is
+// sent once it is gone.
+async function meshCancelRunning(vi, vj, a) {
+  if (meshGone(a)) return;
+  if (vi && vi.kind === "running") { try { await api("api/mesh/pair/cancel", a.init); } catch (e) {} }
+  if (meshGone(a)) return;
+  if (vj && vj.kind === "running") { try { await api("api/mesh/pair/cancel", a.join); } catch (e) {} }
 }
 
 // On a path that ends the pairing without a read that carries both sides'
@@ -1050,36 +1074,59 @@ async function meshCancelRunning(vi, vj) {
 // and cancel, best effort, a side that reports this wizard's pairing still
 // running, as meshCancelRunning does: a side that cannot be read, or that
 // reports no number, a finished pairing or another one, is left alone.
-async function meshCancelLeftRunning() {
+//
+// A side that reports this pairing paired has had both confirms, so a
+// partner still running is completing, not stuck: a PlatformIO initiator
+// reports paired once it sends the opera key and re-sends it until the
+// joiner has it (F134). Canceling that partner would leave the paired side
+// holding a member that never joined, so then nothing is canceled.
+//
+// Answers "gone" (the attempt ended meanwhile: nothing was sent once it
+// did), "completing" (one side paired, the other paired or running: a lost
+// confirm answer, so the confirm wait can still finish it) or "ended".
+async function meshCancelLeftRunning(a) {
+  document.getElementById("mesh-status-line").innerHTML =
+    '<span class="spinner"></span> Checking both Canaries…';
   let vi = null;
   let vj = null;
   try {
-    const si = await api("api/mesh/status", meshInit);
-    if (si && si.ok) vi = meshSideVerdict(si, meshInitSeq);
+    const si = await api("api/mesh/status", a.init);
+    if (si && si.ok) vi = meshSideVerdict(si, a.initSeq);
   } catch (e) { /* unreadable: left alone */ }
+  if (meshGone(a)) return "gone";
   try {
-    const sj = await api("api/mesh/status", meshJoin);
-    if (sj && sj.ok) vj = meshSideVerdict(sj, meshJoinSeq);
+    const sj = await api("api/mesh/status", a.join);
+    if (sj && sj.ok) vj = meshSideVerdict(sj, a.joinSeq);
   } catch (e) { /* unreadable: left alone */ }
-  await meshCancelRunning(vi, vj);
+  if (meshGone(a)) return "gone";
+  const is = (v, kind) => v !== null && v.kind === kind;
+  if (is(vi, "paired") || is(vj, "paired")) {
+    const live = (v) => is(v, "paired") || is(v, "running");
+    return live(vi) && live(vj) ? "completing" : "ended";
+  }
+  await meshCancelRunning(vi, vj, a);
+  return meshGone(a) ? "gone" : "ended";
 }
 
 // Act on a verdict that ends the wait; false for "wait". A failure, or a
-// body about another pairing, cancels a side still running.
-async function meshEndOnVerdict(v, vi, vj) {
+// body about another pairing, cancels a side still running. True also when
+// the attempt `a` ended during the cancel: the caller then stops.
+async function meshEndOnVerdict(v, vi, vj, a) {
   if (v.action === "paired") {
     meshShowSuccess(vi.kind === "paired" || vj.kind === "paired");
     return true;
   }
   if (v.action === "failed") {
     meshPolling = false;
-    await meshCancelRunning(vi, vj);
+    await meshCancelRunning(vi, vj, a);
+    if (meshGone(a)) return true;
     meshPollFailed("Pairing failed on the " + v.side + " Canary: " + meshFailText(v.reason));
     return true;
   }
   if (v.action === "other") {
     meshPolling = false;
-    await meshCancelRunning(vi, vj);
+    await meshCancelRunning(vi, vj, a);
+    if (meshGone(a)) return true;
     meshPollFailed("The " + v.side + " Canary restarted or started another pairing, so this " +
       "pairing's outcome is unknown. Check both Canaries and retry.");
     return true;
@@ -1121,6 +1168,7 @@ async function meshStartPairing() {
     meshShowError("Both Canary addresses are required.");
     return;
   }
+  meshAttempt++;
   meshInit = { address: initAddr, token: initTok };
   meshJoin = { address: joinAddr, token: joinTok };
   meshInitSeq = null;
@@ -1155,14 +1203,23 @@ async function meshStartPairing() {
   }
 
   document.getElementById("mesh-form").classList.add("hidden");
+  document.getElementById("mesh-status-line").innerHTML =
+    '<span class="spinner"></span> Pairing in progress…';
   document.getElementById("mesh-progress").classList.remove("hidden");
   meshPollForCodes();
 }
 
-function meshStartFailed(msg) {
+// The Start button, ready for the next attempt: every way an attempt ends
+// (a failure, a success, Cancel) leaves it so, or a retry from a reopened
+// wizard finds it still reading "Starting…".
+function meshStartReady() {
   const btn = document.getElementById("mesh-start-btn");
   btn.disabled = false;
   btn.innerHTML = "Start Pairing";
+}
+
+function meshStartFailed(msg) {
+  meshStartReady();
   meshShowError(msg);
 }
 
@@ -1176,29 +1233,33 @@ function meshPollFailed(msg) {
 }
 
 async function meshPollForCodes() {
+  const a = meshThisAttempt();
   meshPolling = true;
   let fails = 0;  // consecutive unreachable/non-ok status reads
   let last = null;  // this poll's verdicts [existing, new], when both reads answered
   for (let i = 0; i < 60 && meshPolling; i++) {
     await delay(2000);
+    if (meshGone(a)) return;
     last = null;
     let si, sj;
     try {
-      si = await api("api/mesh/status", meshInit);
-      sj = await api("api/mesh/status", meshJoin);
+      si = await api("api/mesh/status", a.init);
+      sj = await api("api/mesh/status", a.join);
     } catch (e) {
+      if (meshGone(a)) return;
       if (++fails >= 5) {
         meshPolling = false;
-        await meshCancelLeftRunning();
+        if (await meshCancelLeftRunning(a) === "gone") return;
         meshPollFailed("A Canary became unreachable. Check the network and try again.");
         return;
       }
       continue;
     }
+    if (meshGone(a)) return;
     if (!si.ok || !sj.ok) {
       if (++fails >= 5) {
         meshPolling = false;
-        await meshCancelLeftRunning();
+        if (await meshCancelLeftRunning(a) === "gone") return;
         meshPollFailed("A Canary stopped responding. Try again.");
         return;
       }
@@ -1214,14 +1275,20 @@ async function meshPollForCodes() {
       // out-of-band step exists to catch — refuse to offer confirmation and
       // abort the pairing rather than let a click bypass the only OOB check.
       if (ci !== cj) {
-        try { await api("api/mesh/pair/cancel", meshInit); } catch (e) {}
-        try { await api("api/mesh/pair/cancel", meshJoin); } catch (e) {}
+        try { await api("api/mesh/pair/cancel", a.init); } catch (e) {}
+        if (meshGone(a)) return;
+        try { await api("api/mesh/pair/cancel", a.join); } catch (e) {}
+        if (meshGone(a)) return;
         meshPollFailed("Pairing codes do not match (" + ci + " vs " + cj +
           ") — possible wrong device or tampered link. Pairing aborted.");
         return;
       }
       document.getElementById("mesh-code-init").textContent = ci;
       document.getElementById("mesh-code-join").textContent = cj;
+      // Ready again: an earlier attempt's confirm left it "Confirming…".
+      const confirmBtn = document.getElementById("mesh-confirm-btn");
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = "Codes match — confirm";
       document.getElementById("mesh-codes").classList.remove("hidden");
       document.getElementById("mesh-status-line").innerHTML =
         "Both Canaries are showing the same code.";
@@ -1229,48 +1296,68 @@ async function meshPollForCodes() {
     }
     // Already over (e.g. confirmed on the Canaries themselves, or failed):
     // each side's own outcome where it reports one (F163), else ACTIVE.
-    const vi = meshSideVerdict(si, meshInitSeq);
-    const vj = meshSideVerdict(sj, meshJoinSeq);
+    const vi = meshSideVerdict(si, a.initSeq);
+    const vj = meshSideVerdict(sj, a.joinSeq);
     last = [vi, vj];
-    if (await meshEndOnVerdict(meshPairVerdict(vi, vj), vi, vj)) return;
+    if (await meshEndOnVerdict(meshPairVerdict(vi, vj), vi, vj, a)) return;
   }
-  if (meshPolling) {
+  if (meshPolling && !meshGone(a)) {
     // Giving up: end what the last poll saw still running, or "Try again"
     // is refused until that Canary's own timeout.
     meshPolling = false;
-    if (last) await meshCancelRunning(last[0], last[1]);
+    if (last) await meshCancelRunning(last[0], last[1], a);
+    if (meshGone(a)) return;
     meshPollFailed("Timed out waiting for the pairing code. Try again.");
   }
 }
 
 async function meshConfirm() {
   if (!meshInit || !meshJoin) { meshShowError("Pairing is not in progress."); return; }
+  const a = meshThisAttempt();
   const btn = document.getElementById("mesh-confirm-btn");
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Confirming…';
   document.getElementById("mesh-codes").classList.add("hidden");
-  document.getElementById("mesh-status-line").innerHTML =
-    '<span class="spinner"></span> Completing pairing…';
+  const completing = () => {
+    document.getElementById("mesh-status-line").innerHTML =
+      '<span class="spinner"></span> Completing pairing…';
+  };
+  completing();
 
   // Confirm both ends; report which one rejected so the failure isn't
-  // masked by the generic "did not complete" timeout below.
+  // masked by the generic "did not complete" timeout below. A failed
+  // answer does not prove the confirm failed: a reply lost on the way back,
+  // or an error body after the Canary acted (the proxy's timeout, a Canary
+  // answering mesh_timeout), leaves it landed. So each side's own status is
+  // read once (F200): a side still running this pairing is canceled (a
+  // Canary starts a pairing only when none runs), unless a side reports the
+  // pairing paired, when both confirms landed and the wait below finishes
+  // it as for any other answer.
   try {
-    const c1 = await api("api/mesh/pair/confirm", meshInit);
-    const c2 = await api("api/mesh/pair/confirm", meshJoin);
+    const c1 = await api("api/mesh/pair/confirm", a.init);
+    if (meshGone(a)) return;
+    const c2 = await api("api/mesh/pair/confirm", a.join);
+    if (meshGone(a)) return;
     if (!c1.ok || !c2.ok) {
       const which = !c1.ok ? "existing" : "new";
-      // The other side may have confirmed and be waiting on this one; a
-      // Canary starts a pairing only when none runs (F200).
-      await meshCancelLeftRunning();
-      meshPollFailed("The " + which + " Canary rejected the confirmation: " +
-        ((!c1.ok ? c1.error : c2.error) || "unknown error"));
-      return;
+      const left = await meshCancelLeftRunning(a);
+      if (left === "gone") return;
+      if (left !== "completing") {
+        meshPollFailed("The " + which + " Canary rejected the confirmation: " +
+          ((!c1.ok ? c1.error : c2.error) || "unknown error"));
+        return;
+      }
+      completing();
     }
   } catch (e) {
-    // Unknown which confirm landed; each side's own status says (F200).
-    await meshCancelLeftRunning();
-    meshPollFailed("Network error during confirm: " + ((e && e.message) || e));
-    return;
+    if (meshGone(a)) return;
+    const left = await meshCancelLeftRunning(a);
+    if (left === "gone") return;
+    if (left !== "completing") {
+      meshPollFailed("Network error during confirm: " + ((e && e.message) || e));
+      return;
+    }
+    completing();
   }
 
   // Poll until both report this pairing paired, or one reports it failed
@@ -1281,30 +1368,34 @@ async function meshConfirm() {
   let last = null;  // this poll's verdicts [existing, new], when both reads answered
   for (let i = 0; i < 30 && meshPolling; i++) {
     await delay(2000);
+    if (meshGone(a)) return;
     last = null;
     let si, sj;
     try {
-      si = await api("api/mesh/status", meshInit);
-      sj = await api("api/mesh/status", meshJoin);
+      si = await api("api/mesh/status", a.init);
+      sj = await api("api/mesh/status", a.join);
     } catch (e) {
+      if (meshGone(a)) return;
       if (++fails >= 5) {
         meshPolling = false;
-        await meshCancelLeftRunning();
+        if (await meshCancelLeftRunning(a) === "gone") return;
         meshPollFailed("A Canary became unreachable while completing. Try again.");
         return;
       }
       continue;
     }
+    if (meshGone(a)) return;
     if (!si.ok || !sj.ok) continue;
-    const vi = meshSideVerdict(si, meshInitSeq);
-    const vj = meshSideVerdict(sj, meshJoinSeq);
+    const vi = meshSideVerdict(si, a.initSeq);
+    const vj = meshSideVerdict(sj, a.joinSeq);
     last = [vi, vj];
-    if (await meshEndOnVerdict(meshPairVerdict(vi, vj), vi, vj)) return;
+    if (await meshEndOnVerdict(meshPairVerdict(vi, vj), vi, vj, a)) return;
   }
-  if (meshPolling) {
+  if (meshPolling && !meshGone(a)) {
     // As the code wait does: end what the last poll saw still running.
     meshPolling = false;
-    if (last) await meshCancelRunning(last[0], last[1]);
+    if (last) await meshCancelRunning(last[0], last[1], a);
+    if (meshGone(a)) return;
     meshPollFailed("Pairing did not complete. Check both Canaries and retry.");
   }
 }
@@ -1321,16 +1412,22 @@ function meshShowSuccess(byOutcome) {
     : "";
   note.classList.toggle("hidden", !byOutcome);
   document.getElementById("mesh-done").classList.remove("hidden");
+  meshStartReady();
 }
 
 async function meshCancel() {
   meshPolling = false;
+  // The attempt ends here: work it began stops at its next await.
+  meshAttempt++;
+  const init = meshInit;
+  const join = meshJoin;
   // Best-effort cancel on both ends; never let a network error trap the user
   // in the wizard.
   try {
-    if (meshInit) await api("api/mesh/pair/cancel", meshInit);
-    if (meshJoin) await api("api/mesh/pair/cancel", meshJoin);
+    if (init) await api("api/mesh/pair/cancel", init);
+    if (join) await api("api/mesh/pair/cancel", join);
   } catch (e) { /* ignore — closing regardless */ }
+  meshStartReady();
   closeMeshWizard();
 }
 
