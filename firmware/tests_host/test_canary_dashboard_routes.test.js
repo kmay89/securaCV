@@ -123,7 +123,7 @@ function btPage(answers) {
     "\n;globalThis.__load = async () => {\n" + load + "\n};\n" +
     "globalThis.__panelPoll = " + poll.replace(/^\s*setInterval\(/, "") + "};\n" +
     unlock +
-    "\nglobalThis.__t = { refreshBtStatus, unlockWithToken };\n",
+    "\nglobalThis.__t = { refreshBtStatus, unlockWithToken, loadBtSettings };\n",
     ctx);
   return { ctx, el, calls };
 }
@@ -200,6 +200,34 @@ test("a Bluetooth status shows the tab and loads its settings and paired list", 
   p.calls.length = 0;
   await p.ctx.__t.refreshBtStatus();
   assert.deepStrictEqual(btCalls(p.calls), ["/api/bluetooth"]);
+});
+
+test("a settings answer that is not a settings body leaves the form alone (F216)", async () => {
+  // loadBtSettings() returned early on `!data.enabled === undefined`, which
+  // is never true, so an error body filled the form with undefined and the
+  // timeout select with its 300 fallback. It runs only once a Bluetooth
+  // status has shown the tab (F198), so the gate stays as it is.
+  const FORM = { btAutoAdv: true, btAllowPairing: false, btRequirePin: true, btNotifyConnect: true };
+  const formOf = (p) => Object.fromEntries(Object.keys(FORM).map((id) => [id, p.el(id).checked]));
+  for (const body of [NOT_FOUND, { ok: false, error: "unauthorized" }, { success: false, error: "busy" },
+                      { enabled: "yes" }, {}]) {
+    const p = btPage({ "/api/bluetooth": BT_STATUS, "/api/bluetooth/settings": body,
+                       "/api/bluetooth/paired": { count: 0, devices: [] } });
+    for (const [id, v] of Object.entries(FORM)) p.el(id).checked = v;
+    p.el("btTimeoutSelect").value = "600";
+    await p.ctx.__t.refreshBtStatus();
+    await settle();
+    assert.ok(p.calls.includes("/api/bluetooth/settings"), "the tab's first status loaded the settings");
+    assert.deepStrictEqual(formOf(p), FORM, `the form is untouched by ${JSON.stringify(body)}`);
+    assert.strictEqual(p.el("btTimeoutSelect").value, "600", `the timeout is untouched by ${JSON.stringify(body)}`);
+  }
+  // A settings body fills it, as before.
+  const p = btPage({ "/api/bluetooth/settings": { enabled: false, auto_advertise: false, allow_pairing: true,
+                                                  require_pin: false, notify_on_connect: true,
+                                                  inactivity_timeout_sec: 900 } });
+  await p.ctx.__t.loadBtSettings();
+  assert.deepStrictEqual(formOf(p), { btAutoAdv: false, btAllowPairing: true, btRequirePin: false, btNotifyConnect: true });
+  assert.strictEqual(p.el("btTimeoutSelect").value, 900);
 });
 
 test("the panel poll asks for no Bluetooth status while no route has answered", async () => {

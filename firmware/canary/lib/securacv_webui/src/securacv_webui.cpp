@@ -6293,7 +6293,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function loadBtSettings() {
       const data = await api('/api/bluetooth/settings');
-      if (!data.enabled === undefined) return;
+      // A settings body carries the boolean `enabled` (canary-wap's
+      // handle_bluetooth_settings_get). Anything else, an error body from
+      // api() above all, leaves the form as it is (F216: the old guard,
+      // `!data.enabled === undefined`, was never true).
+      if (typeof data.enabled !== 'boolean') return;
 
       document.getElementById('btAutoAdv').checked = data.auto_advertise;
       document.getElementById('btAllowPairing').checked = data.allow_pairing;
