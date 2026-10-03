@@ -218,14 +218,16 @@ or ticks Beacon frames. Every row below assumes both.
   - Post-fix expected: A emits dual-signed `BEACON_MSG_ALERT` at
     `hop_count = 0`. C verifies both signatures, transitions to
     `BEACON_STATE_ALARM`, plays `PATTERN_BEACON` (1200/1700/2200 Hz
-    sequence). HA `sensor.canary_<C>_beacon_state` flips to `Alarm`.
+    sequence). HA `sensor.<C>_beacon_state` flips to `Alarm` (`<C>` is
+    board C's device id as Home Assistant slugs it, as in the
+    `chirp.state` + `beacon.state` row below).
   - Artifact: `docs/audit/repro/beacon/happy_path/`.
 
 - [ ] **CANCEL propagates (and the originator adopts its own frames)**
   - Setup: continue from the happy path — A, B and C all in
     `BEACON_STATE_ALARM` for A's alert.
   - Check first: A itself shows `Alarm` (`GET /api/beacon` on A,
-    HA `sensor.canary_<A>_beacon_state`) — the originator adopts its own
+    HA `sensor.<A>_beacon_state`) — the originator adopts its own
     ALERT at hop 0; before the CANCEL pass it stayed `Normal`. B, the
     cosigner, shows `Alarm` too — it resolves its own fingerprint to its own
     key (spec §7.1 step 5); before the review follow-up it dropped the frame

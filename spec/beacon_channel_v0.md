@@ -428,7 +428,7 @@ Every received Beacon frame goes through:
 
 ### 7.2 NFPA-72 state machine
 
-The publicly visible state surface is the four-state NFPA enum, published to HA as `sensor.canary_<id>_beacon_state`:
+The publicly visible state surface is the four-state NFPA enum, published to HA as `sensor.<id>_beacon_state`, `<id>` being the device id as Home Assistant slugs it (`canary-s3-4dC2` becomes `canary_s3_4dc2`). The discovery config asks for that id with `default_entity_id`, which Home Assistant 2025.10 and later applies when it first registers the entity (sweep HA16):
 
 ```
 NORMAL       — no active alarms, no trouble conditions, no supervisory
