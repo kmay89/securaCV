@@ -116,6 +116,21 @@ void hop_cb(void* var, int32_t v) {
 
 void hop_done(lv_anim_t*) { start_bob(1400, 2); }
 
+// Stop the mark's own motion: the breath and the hop on the bird (s_bob runs
+// one at a time, through bob_cb or hop_cb) and any wing flourish. The bird is
+// deleted from by exec callback, never with a null one: its host animates the
+// same object (the nightlight's tumble slides its translate in from the edge
+// that was up, nightlight_ui_tumble()), and a mood change must leave that
+// slide running. Deleting every animation on the bird used to end the
+// tumble at its first frame on the first mood after a turn rebuilt the face,
+// so the companion stayed a whole fling off its perch, off the glass (F222).
+// The wing is the mark's own child, so everything on it is the mark's.
+void stop_motion() {
+  lv_anim_del(s_bird, bob_cb);
+  lv_anim_del(s_bird, hop_cb);
+  lv_anim_del(s_wing, nullptr);
+}
+
 void start_hop() {
   // Hop apex rides the Character's hop energy, clamped — even the
   // springiest look stays inside the calm-tech ration.
@@ -455,8 +470,7 @@ void canary_mark_mood(CanaryMood m) {
     s_react_timer = nullptr;
   }
   if (m == CanaryMood::Hidden) {
-    lv_anim_del(s_bird, nullptr);
-    lv_anim_del(s_wing, nullptr);
+    stop_motion();
     // Normalize the searching lean before going off stage so the hidden
     // bird parks at its true base (review catch).
     if (prev == CanaryMood::Searching && s_base_recorded)
@@ -475,8 +489,7 @@ void canary_mark_mood(CanaryMood m) {
     s_base_recorded = true;
   }
   lv_obj_clear_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
-  lv_anim_del(s_bird, nullptr);
-  lv_anim_del(s_wing, nullptr);
+  stop_motion();
 
   switch (m) {
     case CanaryMood::Asleep:
