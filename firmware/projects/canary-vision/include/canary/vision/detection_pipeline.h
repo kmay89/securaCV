@@ -39,7 +39,12 @@ inline void point_to_cell(int64_t px, int64_t py, int rows, int cols, int& r, in
 // This product, and classify_proximity's area * 100, are the only overflows
 // the device's uint16 SSCMA boxes could reach, though a 240x240 model does
 // not return a box that large.
-inline int64_t area_of(int w, int h) { return (int64_t)w * h; }
+// A box with a side that is not positive has no area, so its proximity reads
+// unknown, as its posture does (classify_posture). The bare product is
+// positive when both sides are negative, and a -100 by -100 box read mid
+// (sweep F221). Only the Lab's sandbox and the core's ABI can send a negative
+// side; the device's SSCMA sides are unsigned.
+inline int64_t area_of(int w, int h) { return (w <= 0 || h <= 0) ? 0 : (int64_t)w * h; }
 
 inline void bbox_to_voxel(const BBox& box, Voxel& voxel) {
   const int cols = (VOXEL_COLS == 0) ? 1 : VOXEL_COLS;

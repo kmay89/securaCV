@@ -16,7 +16,13 @@
 // Makefile also builds this suite under -fsanitize=undefined, so an overflow
 // fails it on any host whatever value the compiler made of it. A product put
 // back in a 32-bit long passes here, because this host's long holds it;
-// vision.test.js's A42 test catches that on the wasm32 dist.
+// vision.test.js's A42 test catches that on the wasm32 dist, and
+// canary-local/tests/vision_wasm32.test.js catches it from the sources (a
+// clang wasm32 build of this header, compared with a g++ build; sweep A49).
+//
+// Pinned (sweep F221): a box with a side that is not positive reads
+// proximity unknown, as its posture does. The area was the bare w * h,
+// positive when both sides are negative, so a -100 by -100 box read mid.
 
 #include <cassert>
 #include <climits>
@@ -56,10 +62,12 @@ Posture oracle_posture(int w, int h) {
 }
 
 // Area as a whole-percent of the frame, uncapped: a box past the frame is
-// over 100% and so near, whatever its size.
+// over 100% and so near, whatever its size. A side that is not positive
+// reads unknown, as posture does (sweep F221): the bare product is positive
+// when both sides are negative.
 Proximity oracle_proximity(int w, int h) {
+  if (w <= 0 || h <= 0) return Proximity::Unknown;
   const i128 area = (i128)w * h;
-  if (area <= 0) return Proximity::Unknown;
   const i128 pct = area * 100 / ((i128)FRAME_W * FRAME_H);
   if (pct >= OPT_PROXIMITY_NEAR_PCT) return Proximity::Near;
   if (pct <= OPT_PROXIMITY_FAR_PCT) return Proximity::Far;
@@ -109,6 +117,31 @@ void test_out_of_range_boxes_follow_exact_arithmetic(const canary::cfg::DetectCo
   std::printf("  %ld out-of-range boxes follow exact arithmetic\n", checked);
 }
 
+// Sweep F221: a box with a side that is not positive reads proximity unknown,
+// as its posture does. The area was the bare product w * h, positive when
+// both sides are negative, so a -100 by -100 box read mid (and a
+// -2000000000 by -100 one near) while its posture read unknown.
+void test_non_positive_side_reads_no_proximity(const canary::cfg::DetectConfig& cfg) {
+  static const int SIDES[][2] = {{-100, -100}, {-1, -1}, {-2000000000, -100}, {INT_MIN, INT_MIN},
+                                 {-100, 100},  {100, -100}, {0, 100},  {100, 0}, {0, 0}, {INT_MIN, 1}};
+  int checked = 0;
+  for (const auto& wh : SIDES) {
+    const VisionSample s = one_box(TestBox{10, 10, wh[0], wh[1], 90, 0}, cfg);
+    if (!s.person_now || s.posture != Posture::Unknown || s.proximity != Proximity::Unknown) {
+      std::fprintf(stderr, "box %d by %d: posture %d proximity %d, want unknown for both\n", wh[0], wh[1],
+                   (int)s.posture, (int)s.proximity);
+      assert(false && "a box with a side that is not positive read a posture or a proximity");
+    }
+    assert(canary::vision::detection::area_of(wh[0], wh[1]) == 0);
+    checked++;
+  }
+  // The positive boxes either side of it still read their area.
+  assert(canary::vision::detection::area_of(1, 1) == 1);
+  assert(canary::vision::detection::area_of(INT_MAX, INT_MAX) == (int64_t)INT_MAX * INT_MAX);
+  assert(one_box(TestBox{10, 10, 100, 100, 90, 0}, cfg).proximity == Proximity::Mid);
+  std::printf("  %d boxes with a side that is not positive read no proximity\n", checked);
+}
+
 }  // namespace
 
 int main() {
@@ -147,6 +180,7 @@ int main() {
 
   cfg.score_min = 70;
   test_out_of_range_boxes_follow_exact_arithmetic(cfg);
+  test_non_positive_side_reads_no_proximity(cfg);
 
   std::puts("PASS test_vision_detection_pipeline");
   return 0;

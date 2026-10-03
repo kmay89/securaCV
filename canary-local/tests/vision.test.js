@@ -734,11 +734,16 @@ test("firmware wasm: a dweller last seen on the dwell_started frame leaves with 
 // product. That half cannot be seen natively. LAB_CORES=native and the
 // firmware host suites build with a 64-bit long, so the posture or area put
 // back in long passes them all; this test on the dist is the CI gate that
-// catches it. The oracle is BigInt, where nothing an int box makes overflows.
-// The fixed rows each name the overflow they used to hit; the grid crosses
-// the int range's ends with the frame's own sizes. Needs a dist built from
-// this tree's detection_pipeline.h and optical_features.h (CI's pinned-emsdk
-// rebuild); on an older dist it fails here, and it passes with
+// catches it in the bytes the Lab serves, and vision_wasm32.test.js catches
+// it from the sources (a clang wasm32 build of the pipeline beside a g++
+// one, sweep A49). The oracle is BigInt, where nothing an int box makes
+// overflows. Sweep F221: a box with a side that is not positive reads
+// proximity unknown, as its posture does; the area was the bare w * h,
+// positive when both sides are negative, and the oracle followed it. The
+// fixed rows each name the overflow (or the side) they used to hit; the grid
+// crosses the int range's ends with the frame's own sizes. Needs a dist
+// built from this tree's detection_pipeline.h and optical_features.h (CI's
+// pinned-emsdk rebuild); on an older dist it fails here, and it passes with
 // LAB_CORES=native.
 test("firmware wasm: a box near the int range's ends reads what exact arithmetic says (sweep A42)", async () => {
   const core = await firmwareCore();
@@ -766,8 +771,8 @@ test("firmware wasm: a box near the int range's ends reads what exact arithmetic
     return "ambiguous";
   };
   const proximity = (w, h) => {
+    if (w <= 0 || h <= 0) return "unknown";
     const area = BigInt(w) * BigInt(h);
-    if (area <= 0n) return "unknown";
     const pct = area * 100n / (FW_ * FH_);
     return pct >= NEAR ? "near" : (pct <= FAR ? "far" : "mid");
   };
@@ -798,6 +803,10 @@ test("firmware wasm: a box near the int range's ends reads what exact arithmetic
     [[-2000000000, 100, -2000000000, 40], { r: 1, c: 0, posture: "unknown", proximity: "unknown", mask: 8 }],
     // px * cols past INT_MAX, the center in range: the cell
     [[1000000000, 0, 0, 0], { r: 0, c: 2, posture: "unknown", proximity: "unknown", mask: 4 }],
+    // both sides negative: no area, so no proximity (sweep F221; it read mid)
+    [[0, 0, -100, -100], { r: 0, c: 0, posture: "unknown", proximity: "unknown", mask: 1 }],
+    // and near, from a product past INT32_MAX
+    [[0, 0, -2000000000, -100], { r: 0, c: 0, posture: "unknown", proximity: "unknown", mask: 1 }],
   ];
   for (const [box, want] of fixed) {
     assert.deepStrictEqual(oracle(box), want, "the oracle on " + JSON.stringify(box));
@@ -810,6 +819,29 @@ test("firmware wasm: a box near the int range's ends reads what exact arithmetic
     if (JSON.stringify(got) !== JSON.stringify(want)) wrong.push({ box, got, want });
   }
   assert.deepStrictEqual(wrong.slice(0, 3), [], `${wrong.length} of ${V.length ** 4} boxes read otherwise than exact arithmetic`);
+});
+
+// Sweep F221: a box with a side that is not positive has no area, so its
+// proximity reads unknown, as its posture always did. sample_from_boxes
+// handed classify_proximity the bare w * h, positive when both sides are
+// negative: a -100 by -100 box read mid (its posture unknown). The Lab's
+// sandbox and this core's ABI take any int box; the device's SSCMA sides are
+// unsigned. Needs a dist built from this tree's detection_pipeline.h (CI's
+// pinned-emsdk rebuild); on an older dist it fails here, and it passes with
+// LAB_CORES=native.
+test("firmware wasm: a box with a side that is not positive reads no proximity (sweep F221)", async () => {
+  const core = await firmwareCore();
+  core.reset();
+  core.configure({ ...data.detect });
+  let t = 0;
+  const read1 = (w, h) => core.tick(t += 100, [{ x: 120, y: 120, w, h, score: 90, target: 0 }]).sample;
+  for (const [w, h] of [[-100, -100], [-1, -1], [-2000000000, -100], [-100, 100], [100, -100], [0, 80], [80, 0]]) {
+    const s = read1(w, h);
+    assert.ok(s.person_now, `${w} by ${h}: the box is still the frame's person`);
+    assert.deepStrictEqual([s.posture, s.proximity], ["unknown", "unknown"], `${w} by ${h}: no posture, no proximity`);
+  }
+  // the same sides, positive, still read their area (100 x 100 is 17% of 240 x 240)
+  assert.deepStrictEqual([read1(100, 100).proximity, read1(1, 1).proximity, read1(240, 240).proximity], ["mid", "far", "near"]);
 });
 
 test("iou + nms behave like a de-dup pass", async () => {
