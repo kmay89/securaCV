@@ -538,8 +538,15 @@ static void apply_connect(const Event& e) {
     g_conn_callback(&g_connection, true);
   }
 
-  // Stop advertising while connected
-  if (g_advertising && g_advertising->isAdvertising()) {
+  // Stop advertising while connected, unless another owner of the server's
+  // links advertises on the same advertiser for its own reasons: Opera, on
+  // the FULL profile, keeps the fleet-link beacon on the air and starts
+  // advertising again after every connect. Before the dispatcher (sweep
+  // F171) this callback never ran on FULL, so no FULL build stopped the
+  // advertiser for a phone's link; stopping it here would take the beacon
+  // the displays read off the air for the whole link.
+  if (g_advertising && g_advertising->isAdvertising() &&
+      ble_server_dispatch::g_dispatcher.owner(ble_server_dispatch::kLink) == nullptr) {
     g_advertising->stop();
   }
 }

@@ -1144,7 +1144,9 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     connection card shows the link; only "Numbers match" bonds it, and the
     paired list then shows it; the rejected or timed-out attempt fails on
     the phone. `GET /api/ble/status`'s `opera.connected_now` still counts
-    the link while it is up.
+    the link while it is up, and a display or a second WAP keeps seeing
+    this WAP's fleet beacon through the link (the channel no longer stops
+    the shared advertiser for a link while Opera advertises on it).
   - Artifact: `docs/audit/repro/F171/full-confirm/`.
 - [ ] **Remove forgets the phone's bond**
   - Setup: the FULL build above with the phone paired (an iPhone or a

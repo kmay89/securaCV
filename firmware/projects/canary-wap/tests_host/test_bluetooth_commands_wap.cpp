@@ -2144,6 +2144,10 @@ void test_full_profile_the_owner_answers_every_pairing() {
   loop_pass();
   CHECK(bc::g_connection.connected && bc::g_connection_handle == 7);
   CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 482913);
+  // Opera's advertising (the fleet-link beacon) stays on the air through
+  // the link, as on every FULL build before: the channel stops the shared
+  // advertiser for a link only when no other owner advertises on it.
+  CHECK(host_sim::advertising.isAdvertising() && host_sim::count("adv_stop") == 0);
   CHECK(bc::g_pending_pair_active && host_sim::passkey_answers.empty());
   bc::BluetoothStatus st;
   bc::read_status(&st);
@@ -2632,8 +2636,9 @@ void test_a_link_ends_on_full_into_advertising() {
   host_sim::server->link_up(other);
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), other); });
   loop_pass();
-  CHECK(bc::g_state == bc::BT_CONNECTED && !host_sim::advertising.isAdvertising());
+  CHECK(bc::g_state == bc::BT_CONNECTED);
   host_sim::server->link_down(92);
+  host_sim::advertising.stop();                              // off as the link ends: the restart is Opera's
   on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), other, 0x13); });
   CHECK(host_sim::advertising.isAdvertising());              // Opera's restart, on the NimBLE task
   loop_pass();
