@@ -93,7 +93,9 @@ if [[ "$ver" != "$pin" ]]; then
   die "$LVGL is LVGL $ver, not the $pin sketch.yaml pins"
 fi
 
-# test_lvgl_port_turn's quotes of this release, held to it.
+# test_lvgl_port_turn's quotes of this release, held to it — the checker
+# first proving it fails on a drift, then reading the checkout.
+python3 "$HERE/check_lvgl9_quotes.py" --self-test
 python3 "$HERE/check_lvgl9_quotes.py" "$LVGL"
 
 if [[ -n "${GLASS_TURN9_OUT:-}" ]]; then
