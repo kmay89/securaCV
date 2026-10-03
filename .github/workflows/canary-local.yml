@@ -925,10 +925,12 @@ jobs:
         # the emulator's sources) with g++ against build.sh's pinned LVGL 8.4,
         # Crypto and ArduinoJson (the cached checkouts, or fetched into them at
         # build.sh's pins on a cold cache, which the dist build then reuses),
-        # booted natively on a virtual clock: a unit turned at 7 s from each
+        # booted natively on a virtual clock: a unit turned at 9 s from each
         # rotation to each other through nightlight_request_rotation() (the
         # app's picker) must seat its companion where a boot at that rotation
-        # seats it. Proves the sources, not the dist's bytes. Before every step
+        # seats it, hop with the tumble's Startle (F242) and keep one owner of
+        # the bird's y through that hop (F244). Proves the sources, not the
+        # dist's bytes. Before every step
         # that reads the committed dist, for the step above's reason; bounded,
         # since a firmware loop that stops yielding would never end.
         timeout-minutes: 10
