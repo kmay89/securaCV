@@ -216,7 +216,14 @@ sources, not the bytes; the dist is still what ships. Under the same variable
 `native_cores.test.js` drives each native core next to its dist, call for
 call, on fixed scenarios: a difference is a stale dist or an input where
 64-bit g++ and wasm32 clang disagree, and agreement says nothing about inputs
-those scenarios never send. The Chromium probes that drive those two cores
+those scenarios never send. `vision_wasm32.test.js` needs neither variable nor
+dist: it builds the Vision detection pipeline (`detection_pipeline.h`) for
+wasm32 with the host's clang and wasm-ld, freestanding, beside a g++ build, and
+holds the two to each other on the host suite's extreme-box grid, so a box
+product taken in a 32-bit `long` (which every 64-bit build passes) shows from
+the sources before any rebuild. Without clang or wasm-ld it skips and names
+the tool; CI sets `VISION_WASM32=require`. It is not emscripten's clang and not
+the dist. The Chromium probes that drive those two cores
 (`vision_probe.mjs`, `eyes_probe.mjs`, `audio_probe.mjs`) take the same
 variable: their server answers the core's dist URL with a stand-in that
 forwards each call to the native build over synchronous same-origin requests,

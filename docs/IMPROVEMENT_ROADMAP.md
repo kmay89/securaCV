@@ -51,7 +51,8 @@ survived only if a majority could not. The counts:
 | Landed in wave 11 (PR #1762) | a third wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items PR #1761 and waves 9 and 10 filed; it closes none of the rows here and changes no sentence of §2. The PIO mesh refuses a pairing it cannot keep before anything is sealed, pairs a pre-F97 initiator in either confirm order and drops shared or stale stored member addresses at boot (F117-F120); canary-wap's mesh status routes read a view the loop task publishes, a leave stores no opera, and a re-added member starts at its last-seen tombstone (F110, F113, F116); canary-wap's Chirp and Bluetooth commands run on the loop task, and every MQTT client's network timeout sits under the loop watchdog (F111, F112); the Canary's egress reports its counters, both devices warn before the event-id space runs out, and the offline queue's publish order is one shared function (F107, F109; F82's warning half); the Tuning Lab's Quiet Hours match the device and apply at once, and a clean Canary boot logs no NVS error (F123, F125, F128, D11); the Vision reports the dwell it closed, the Lab's core returns its settled cell and `visit_ms`, and the WAP wizard links the host the WAP advertises (F129, F130, A39); and the wide display's setup screens fit their ring, the landscape nightlight's splash bird stays on the glass, and the emulator probe holds the setup bird to its seat (F84, F88, F89). The Vision core and the five display flavors move the emulator dist, which CI's pinned emsdk rebuilds in the PR. It files F133-F160, HA24-HA26 and A40. Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 11" |
 | Landed in wave 12 (PR #1762) | a fourth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items wave 11 filed; it closes none of the rows here and changes no sentence of §2. The PIO initiator resends a lost pairing COMPLETE, a late cancel leaves a finished pairing alone, and the web UI tells a failed pairing from a finished one (F133-F135); canary-wap's mesh saves leave no former member's key in NVS, a debug build's first boot logs no `csi` NOT_FOUND line, and the presence settings go through the key map (F137, F150, F151); canary-wap's Bluetooth settings turn the radio off and on, its NimBLE callbacks post events the loop task applies, and its Bluetooth and Chirp status routes read published views (F144, F143, F138); a Chirp send before the clock is set says `clock_unsynced` (F146); the canary-wap's egress counters reach a retained topic and its diagnostics, and Home Assistant reads them and the event-id warning (F149, HA24); the Vision judges each visit on its own, its dwell grace works, and three products' presence binary sensors can turn on (F152, F154, HA25, HA26); the turned panels' onboarding and the narrow glass's splash bubble fit (F156-F158, F160); and the Lab's core-driving page tests can run on the tree's sources (A40). The Vision core and the five display flavors move the emulator dist, which CI's pinned emsdk rebuilds in the PR. It files F161-F186, HA27 and A41-A44, among them F171 (on the default FULL profile a phone's Bluetooth pairing is accepted with no owner confirm, read from code). Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 12" |
 | Landed in wave 13 (PR #1762) | a fifth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items wave 12 filed; it closes none of the rows here and changes no sentence of §2. On canary-wap's default FULL profile a phone's Numeric Comparison now waits for the owner's confirm in the web UI (a security fix: one server-callback dispatcher replaces the library's yes), Remove forgets the phone's bond by its identity address with the radio quiet, a link while Bluetooth is off is refused, a dropped link event heals and the state names what runs (F171, F172, F173, F169, F170); Chirp's send cooldown is a timer a mute cannot end, and a refused send or confirm says why (F174, F178); the PIO mesh status routes read a view the main loop publishes, the kernel wizard reads each Canary's pairing outcome, and the PIO dashboard hides a Chirp tab nothing serves (F161, F163, F176); the canary's diagnostics carry its egress counters, a mesh-less canary-wap boot logs no NVS error, and its calibration status and Tuning Lab report the thresholds it runs (F179, F180, F164, F166); the Vision keeps one dwell per stay and discovery fits every legal device id (F186, F181); the Lab's Vision, eyes and audio browser probes run on the tree's sources and wait with a predicate the CSP cannot refuse (A41, A44); and the emulator boots a turned dash, which the onboarding probe walks (F184 in part). The Vision core and the five display flavors move the emulator dist, which CI's pinned emsdk rebuilds in the PR after the ledger lands. It files F187-F206 and A45-A47. Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 13" |
-| Landed in wave 14 (PR #1762) | a sixth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items waves 10, 12 and 13 filed; it closes none of the rows here and changes no sentence of §2. canary-wap's Bluetooth bring-up hands its result to the loop task and keeps the owner's commands, pairing mode reads pairing, and the paired list fits NimBLE's 3-bond store, a full store refusing a new phone instead of evicting one (F190, F167, F189); Chirp refuses a mute or unmute on a channel that is off and its beacon says listening through a cooldown, and every canary-wap `serializeJson()` REST answer fits its buffer, held by a new measuring check (the sketch's `snprintf` answers are F212) (F192, F194, F196); the PIO alert list reads a log the main loop changes under its lock, the PIO dashboard calls only routes that exist, and the kernel wizard cancels a pairing it leaves behind (F197, F198, F200); `meta.daily_summary` emits one row per local date, and a canary-wap first boot opens `securacv` quietly (F121, F201); a Vision dwell gone at once reports `dwell_then_left`, its box math is 64-bit on every build, and the discovery fit test formats the table-driven announcements (F202, A42, F203); the Lab's probe waits state their timeout third and fourteen probes serve the tree from an index on loopback (A45, A46); the emulator builds the nightlight and the turned splash is read in a browser, and the Lab's 3D dash turns its case with the glass (F204, F206, A47); and on LVGL 9.5 the dash glass turns what it draws and touch follows it (F205). The Vision core and a new nightlight bundle move the emulator dist, which CI's pinned emsdk rebuilt in the PR after the ledger landed; the rebuilt dist passes the probes with the nightlight walked landscape, and with the nightlight manifest's emulator claim that closes F204 and the rest of F184. It files F207-F225, A48-A56, HA28 and C16. Host-tested; the ESP32 compiles are CI's, no CI job runs the real LVGL 9.5 renderer, and nothing ran on a bench. See §3, "Landed in wave 14" |
+| Landed in wave 14 (PR #1762) | a sixth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items waves 10, 12 and 13 filed; it closes none of the rows here and changes no sentence of §2. canary-wap's Bluetooth bring-up hands its result to the loop task and keeps the owner's commands, pairing mode reads pairing, and the paired list fits NimBLE's 3-bond store, a full store refusing a new phone instead of evicting one (F190, F167, F189); Chirp refuses a mute or unmute on a channel that is off and its beacon says listening through a cooldown, and every canary-wap `serializeJson()` REST answer fits its buffer, held by a new measuring check (the sketch's `snprintf` answers are F212) (F192, F194, F196); the PIO alert list reads a log the main loop changes under its lock, the PIO dashboard calls only routes that exist, and the kernel wizard cancels a pairing it leaves behind (F197, F198, F200); `meta.daily_summary` emits one row per local date, and a canary-wap first boot opens `securacv` quietly (F121, F201); a Vision dwell gone at once reports `dwell_then_left`, its box math is 64-bit on every build, and the discovery fit test formats the table-driven announcements (F202, A42, F203); the Lab's probe waits state their timeout third and fourteen probes serve the tree from an index on loopback (A45, A46); the emulator builds the nightlight and the turned splash is read in a browser, and the Lab's 3D dash turns its case with the glass (F204, F206, A47); and on LVGL 9.5 the dash glass turns what it draws and touch follows it (F205). The Vision core and a new nightlight bundle move the emulator dist, which CI's pinned emsdk rebuilt in the PR after the ledger landed; the rebuilt dist passes the probes with the nightlight walked landscape, and with the nightlight manifest's emulator claim that closes F204 and the rest of F184; CI ran those probes green on the commit that landed the claim (`41d53091`). It files F207-F225, A48-A56, HA28 and C16. Host-tested; the ESP32 compiles are CI's, no CI job ran the real LVGL 9.5 renderer then (F225, done in wave 15), and nothing ran on a bench. See §3, "Landed in wave 14" |
+| Landed in wave 15 (PR #1762) | a seventh wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items wave 14 filed; it closes none of the rows here and changes no sentence of §2. canary-wap's fleet scan keeps the shortest adverts that fit, each whole, and its device-info and provisioning receipt escape a typed name and are sized to their own length, with three new rules in `check_wap_json_answers.py` (F211, F212); its Bluetooth handlers read the on-switch the loop task published, a nearby Chirp device's emoji is derived from its session id, and a first boot opens `chirp` quietly (F210, F213, F220); the per-entry log Acknowledge matches a route on both trees, held by a verbatim copy of ESP-IDF's matcher, the PlatformIO Bluetooth settings load ignores an error body, and the kernel wizard's Back waits for Start Pairing (F214, F216, F217); both publishers ask Home Assistant for the documented entity ids and the kernel wizard's dashboard names the same zone ids, read from Home Assistant's source and not yet seen in a running one, so HA16 stays open, and the iOS timeline's comments say what sets the WAP's bucket clock (HA16 in part, A48); a runtime turn keeps the nightlight's companion on its perch, held by a native boot in CI, and the dash face follows the turn the port wore (F222, F223); CI renders the dash glass through the real LVGL 9.5 at every quarter turn, partial updates included (F225); a Vision box with a non-positive side reads no proximity, and a freestanding wasm32 build of the pipeline is held to the g++ build from the sources (F221, A49); and the Lab's boot and onboard probes bind loopback, every probe server answers a malformed escape, the Nightlight's card boots its own twin on a bench with no battery path, and the 3D dash turns by the turn the HAL reports (A51, A52, A54, A56). The display flavors (all six) and the Vision core move the emulator dist, which CI's pinned emsdk rebuilds in the PR after the ledger lands; until then `vision.test.js` gives 33 of 35 on the committed dist and 35 of 35 with `LAB_CORES=native`, and the dist drift check is red. It files F226-F250, A57-A64, HA29, HA30 and C17. Host-tested; the ESP32 compiles are CI's; no carried Home Assistant file changes; nothing ran on a bench. See §3, "Landed in wave 15" |
 | Still open | 0 in full, 1 in part (21's Parametrize leftovers — the 7" frame's panel record, the render-plan package's selector half and the C6 manifest's `figure`; see row 21 and §4); row 20 carries one new open clause (a signed head for the sealed-log document, without which the Wall's "Verified" cannot say the tail is current or complete). Decisions taken and waiting on the maintainer's confirmation: row 30's version spread and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §3, "Landed in wave 4"), both decided on 2026-09-22 and landed in PR #1704; the two wave-5 questions, landed in PR #1703 — the render-plan package's Lab-card half (option B; the selector half, option A, is not built) and `canary-local/devices/registry.json`'s hand-typed `body_mm` (retired and derived; row 21); and, landed in PR #1704, the sidecar's bind (option (3), row 1) and the Wall's viewer token (option (a), row 20) |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -1225,16 +1226,101 @@ reviewed adversarially and fixed before it joined the PR. Eight packages:
   the new `canary-display-nightlight` bundle in the PR, the nightlight
   manifest claims it, and the rebuilt dist passes the boot, onboarding, CSP
   and render probes in local Chromium, `nightlight@landscape` included, which
-  closes F204 and F184. Not bench-tested. Files F222, A54-A56 and C16.
+  closes F204 and F184; CI ran the same probes green on the commit that
+  landed the claim (`41d53091`). Not bench-tested. Files F222, A54-A56 and
+  C16.
 - **LVGL 9.5 turns what it draws (sweep F205).** `lvgl_port.cpp`'s 9.x
   `flush_cb` turns each flushed area (`lv_display_rotate_area`,
   `lv_draw_sw_rotate`) through a 128,000 B PSRAM turn buffer, refusing a turn
   it cannot allocate; `rotation_map_touch()` now inverts the turn both LVGL
   majors draw. Host-tested (`test_lvgl_port_turn`, 1956 checks against LVGL
   9.5's quoted rotation code; `test_display_settings`) and run natively
-  against LVGL 9.5.0 outside CI; no CI job runs the real 9.5 renderer (F225);
+  against LVGL 9.5.0 outside CI; no CI job ran the real 9.5 renderer then
+  (F225, done in wave 15);
   the ESP32 builds are CI's; not bench-tested (F224). The emulator dist does
   not move. Files F223-F225.
+
+### Landed in wave 15
+
+A fifteenth pass on 2026-10-03 (monorepo PR #1762) worked the 2026-09-20
+sweep's backlog
+([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) again,
+taking items wave 14 filed. It closes none of the rows above and changes no
+sentence of §2. Each package was built in its own worktree, reviewed
+adversarially and fixed before it joined the PR. Eight packages:
+
+- **canary-wap fleet scan and identity answers (sweep F211, F212).**
+  `fleet_scan_cache::fill()` measures every advert's row, keeps the shortest
+  that fit (at most eight) and writes them in browse order, each whole, on a
+  new pure writer (`wap_json_writer.h`); a control byte goes out as U+FFFD.
+  GET /api/device-info and the provisioning receipt are built by
+  `identity_json.h`, every string escaped and each answer written into a heap
+  buffer of its measured length. `check_wap_json_answers.py` drops `EXEMPT`
+  and adds J4 to J6 (53 mutations). Host-tested (`test_fleet_scan_cache.cpp`,
+  582 checks; `test_identity_json.cpp`, 96, both compiled after Arduino.h's
+  global names); the compiles are CI's; not bench-tested. Files F226-F230.
+- **canary-wap Bluetooth's on-switch, Chirp's nearby emoji, a quiet `chirp`
+  first boot (sweep F210, F213, F220).** Start Advertising and Pair read
+  `read_enabled()`, the settings the loop task published (rule BV8; 326
+  mutations refused); a nearby row's emoji is `generate_emoji_string()` of the
+  beacon's session id; `NvsSession`'s read-only open asks IDF first.
+  Host-tested (a local ThreadSanitizer run for the Bluetooth read; 71 and 30
+  tests in the Bluetooth and Chirp suites; `test_wap_first_boot_nvs`, 93
+  checks); the compiles are CI's; not bench-tested. Files F231-F236.
+- **The log Acknowledge, the PlatformIO Bluetooth settings load, the
+  wizard's Back (sweep F214, F216, F217).** Both trees register `POST
+  /api/logs/*` after the other log routes and parse `<seq>/ack` in the
+  handler, held by a byte-identical copy of ESP-IDF's matcher over both route
+  tables (`test_dashboard_route_match.test.js`, 10 cases;
+  `test_log_ack_route.cpp`, 229 checks); `loadBtSettings()` returns on
+  anything but a settings body; the kernel wizard disables Back while a start
+  runs (`test_wizard_mesh_pairing.test.js`, 28 cases). Host-tested; the
+  compiles are CI's; not bench-tested. Files F237-F240.
+- **Home Assistant entity ids, the iOS bucket comment (sweep HA16 in part,
+  A48).** canary-wap's discovery configs and the kernel's
+  `event_mqtt_bridge` carry `default_entity_id` for the documented ids, and
+  the kernel wizard's zone ids match the bridge's. Host-tested
+  (`test_ha_discovery_ids.cpp`, 909 checks with a strict JSON reader; Rust
+  unit tests; a wizard page test); read from Home Assistant's source, not
+  seen in a running Home Assistant, so HA16 stays open. A48's comment is
+  corrected, comment-only. No carried Home Assistant file changes. Files
+  HA29, HA30, A57 and F241.
+- **A turned display keeps its face (sweep F222, F223).**
+  `canary_mark_mood()` stops only the mark's own animations, held natively by
+  `runtime_turn.sh` (72 checks, in CI right after `glass_turn.sh`) and a
+  fake_lvgl test; the dash face follows the turn the port wore
+  (`dash_face.h`; `test_lvgl_port_turn`, 1984 checks). The emulator dist
+  moves for all six display flavors. Not bench-tested. Files F242-F245.
+- **The real LVGL 9.5 in CI (sweep F225).** `glass_turn_lvgl9.sh` renders
+  through the real `lvgl_port.cpp` and LVGL 9.5.0 at every quarter turn,
+  partial updates included (169 checks), and `check_lvgl9_quotes.py` holds
+  `fake_lvgl9`'s quotes to the library; both close the wasm job and run after
+  a red step too. Native on a 64-bit host; not run in CI yet; the emulator
+  dist does not move. Files F246-F248.
+- **A Vision box with a non-positive side, the pipeline as wasm32 (sweep
+  F221, A49).** `area_of` gives such a box no area, so it reads proximity
+  unknown; `vision_wasm32.test.js` holds a freestanding clang/wasm-ld wasm32
+  build of `detection_pipeline.h` to the g++ build on the host suite's
+  104,976-box grid (`VISION_WASM32=require` in CI). Host-tested; firmware
+  compile-tested by CI. The Vision core moves the emulator dist. Files A58
+  and F249.
+- **Lab probes, the Nightlight's twin, the 3D dash's turn (sweep A51, A52,
+  A54, A56).** Boot and onboard probes bind loopback; every probe server
+  answers a malformed escape with a 404; the registry's Nightlight card
+  boots its own twin on the C3-LCD-1.47's bench, a board with no battery
+  path; the emulator's display HAL tells the page the turn, and the 3D dash
+  turns by it (an emulator change that moves the dist for all six display
+  flavors). Run in local Chromium; not bench-tested. Files A59-A64, C17 and
+  F250.
+
+The emulator dist moves for all six display flavors and the Vision core;
+CI's pinned emsdk rebuilds it in the PR after the ledger lands. Until then
+the wasm job's dist drift check is red, and `vision.test.js` gives 33 of 35
+on the committed dist (the A42 and F221 tests) and 35 of 35 with
+`LAB_CORES=native`; the rebuilt dist was not run here. The integrated tree
+passed 83 of 84 gates of the local CI mirror, the one failure being that
+committed-dist page test.
+
 
 ### The documentation wave
 
