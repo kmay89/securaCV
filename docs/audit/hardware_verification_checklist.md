@@ -707,6 +707,48 @@ Host-tested (`test_wap_event_egress.cpp`, `test_mqtt_reinit.cpp`,
     come back, started over, with the `egress` publish that follows it.
   - Artifact: `docs/audit/repro/HA24/ha-entities/`.
 
+## canary-wap MQTT settings at their limit (F241) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp`
+(`config_load()` reads the broker host, user, password and topic prefix with
+each member's whole size, so a value of `MAX_*_LEN` characters reads back;
+`handle_config_post()` refuses a value longer than its member with 400 and
+the limit in the reason, where it used to cut a long user or prefix; the
+`/mqtt` page's inputs and the companion wizard's Home Assistant step carry
+the same maxlengths). Host-tested (`tests_host/test_mqtt_reinit.cpp`:
+`each_setting_reads_back_at_its_limit`,
+`the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past`,
+`the_settings_page_limits_each_field`, over a Preferences stand-in that
+refuses as arduino-esp32 3.3.8's `getString()` does;
+`test_ha_discovery_ids.cpp` at the 32-character prefix). Compile is CI's.
+Owner: U1.
+
+- [ ] **A 32-character topic prefix is the prefix the device publishes under**
+  - Setup: a canary-wap board joined to Wi-Fi, a broker on the LAN,
+    `mosquitto_sub -v -t '#'` on a laptop, and a paired session.
+  - Repro: on the `/mqtt` page set the broker and the topic prefix
+    `abcdefghijklmnopqrstuvwxyz012345` (32 characters), Save, then reboot the
+    board. Try to type a 33rd character into the field, and send
+    `POST /api/mqtt/config` with a 33-character prefix.
+  - Expected: after Save and after the reboot, `GET /api/mqtt/config`
+    answers the 32-character prefix, and the broker sees
+    `<prefix>/<device id>/status` and the discovery configs' `stat_t` under
+    it (before this fix, `securacv/...`). The field takes no 33rd character;
+    the POST answers 400 `{"ok":false,"reason":"prefix must be at most 32
+    characters"}` and the stored prefix is unchanged.
+  - Artifact: `docs/audit/repro/F241/prefix-32/`.
+- [ ] **A 128-character broker password still authenticates after a reboot**
+  - Setup: as above, with a broker user whose password is 128 characters.
+  - Repro: save that user and password on the `/mqtt` page, reboot, and
+    watch the broker's log; then `POST /api/mqtt/config` a 129-character
+    password.
+  - Expected: after the reboot the board logs in with the saved password
+    (`GET /api/mqtt/config` answers `"password_set":true` and
+    `"connected":true`); before this fix the password read back empty and
+    the broker refused the login. The 129-character POST answers 400 naming
+    the 128 limit, and the board keeps the saved password.
+  - Artifact: `docs/audit/repro/F241/password-128/`.
+
 ## canary-wap loop-task ownership (F96, F106) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
