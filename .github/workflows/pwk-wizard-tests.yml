@@ -1,9 +1,10 @@
 name: PWK Wizard Tests
 
 # Scoped to the Privacy Witness Kernel add-on only. Runs the pairing-
-# wizard proxy unit tests (PR-8), shellcheck over the entry scripts, the
-# run_lib unit tests and the kernel-config render check (which also covers
-# the Docker sidecar's copy of the same heredoc). The
+# wizard proxy unit tests (PR-8), the wizard page's pairing-screen tests
+# (F163), shellcheck over the entry scripts, the run_lib unit tests and the
+# kernel-config render check (which also covers the Docker sidecar's copy
+# of the same heredoc). The
 # custom_components/securacv tests are run separately by python.yml
 # (ruff + mypy + pytest). Triggers only on changes under
 # privacy_witness_kernel/** so it stays off the firmware build path.
@@ -56,6 +57,19 @@ jobs:
 
       - name: Run wizard tests
         run: pytest privacy_witness_kernel/tests/ -v
+
+      - name: Set up Node
+        # For the page test below (node:test, no npm, no browser).
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # The "Add another Canary" screens of wizard/index.html, lifted out of
+      # the page and driven against a scripted proxy (F163): a pairing the
+      # Canaries report paired, failed or replaced is said to be exactly
+      # that, and a Canary that reports no pairing number is read the old way.
+      - name: Run the wizard page's pairing tests
+        run: node --test privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js
 
       - name: Shellcheck add-on scripts
         run: |

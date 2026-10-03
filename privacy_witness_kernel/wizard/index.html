@@ -488,6 +488,7 @@
     <div class="done-icon">✅</div>
     <div class="done-title">Canary added.</div>
     <div class="done-sub">The new Canary has joined your opera — the group your Canaries share alerts in.</div>
+    <div class="done-sub hidden" id="mesh-done-note"></div>
     <div class="btn-row" style="justify-content:center;margin-top:20px">
       <button class="btn btn-secondary btn-sm" onclick="closeMeshWizard()">Done</button>
     </div>
@@ -962,6 +963,96 @@ function showDoneError(msg) {
 let meshInit = null;   // {address, token}
 let meshJoin = null;
 let meshPolling = false;
+// The pairing number each Canary's pair/start or pair/join answered (F133),
+// or null when its answer had none (a Canary from before F133, or a
+// canary-wap): GET /api/mesh then reports that pairing's outcome under it.
+let meshInitSeq = null;
+let meshJoinSeq = null;
+
+// The pairing number in a pair/start or pair/join answer, or null.
+function meshPairingSeq(answer) {
+  const n = answer && answer.pairing_seq;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+// What one Canary's GET /api/mesh body says about the pairing this wizard
+// started on it (sweep F163). A Canary that reports its pairing's number and
+// outcome (pairing_seq, pairing_result; F133) is read by them: "paired",
+// "failed" (with pairing_fail_reason), "running", or "other" when the body
+// is about another pairing (a later one, or 0 after a restart), which claims
+// neither. A PlatformIO Canary reads ACTIVE only once it has heard a member
+// this boot, and a new member sends nothing until it has an opera frame to
+// send (F162), so a finished pairing there can read CONNECTING for good. A
+// Canary that reports no number (from before F133, or a canary-wap) is read
+// the old way: done once its state is ACTIVE.
+function meshSideVerdict(body, seq) {
+  const reports = Number.isInteger(body.pairing_seq) && typeof body.pairing_result === "string";
+  if (!reports || seq === null) return { kind: "legacy", done: body.state === "ACTIVE" };
+  if (body.pairing_seq !== seq) return { kind: "other" };
+  if (body.pairing_result === "paired") return { kind: "paired" };
+  if (body.pairing_result === "failed") return { kind: "failed", reason: body.pairing_fail_reason };
+  return { kind: "running" };
+}
+
+// Both sides together: "failed" and "other" name the side ("existing" or
+// "new"); "paired" once both are done; else "wait".
+function meshPairVerdict(vi, vj) {
+  for (const [v, side] of [[vi, "existing"], [vj, "new"]]) {
+    if (v.kind === "failed") return { action: "failed", side, reason: v.reason };
+  }
+  for (const [v, side] of [[vi, "existing"], [vj, "new"]]) {
+    if (v.kind === "other") return { action: "other", side };
+  }
+  const done = (v) => v.kind === "paired" || (v.kind === "legacy" && v.done);
+  if (done(vi) && done(vj)) return { action: "paired" };
+  return { action: "wait" };
+}
+
+// Why a pairing failed, in words (GET /api/mesh pairing_fail_reason).
+function meshFailText(reason) {
+  switch (reason) {
+    case "timeout":
+      return "it timed out before both Canaries confirmed the code (5 minutes).";
+    case "canceled":
+      return "it was canceled.";
+    case "partner_refused":
+      return "that Canary cannot take the other into its opera: the opera is full, " +
+             "another member already uses the other's radio address, or the other was " +
+             "removed. Its health log names it.";
+    case "bad_confirm":
+      return "the other Canary's confirmation did not match. Check that both show the " +
+             "same code, then try again.";
+    case "bad_complete":
+      return "the opera key from the other Canary could not be opened. Try again.";
+    case "crypto":
+      return "a pairing key could not be made. Try again.";
+    default:
+      return "it ended (" + (reason || "no reason given") + ").";
+  }
+}
+
+// Act on a verdict that ends the wait; false for "wait". A failure cancels,
+// best effort, only a side still running, so a side that finished is left
+// as it finished.
+async function meshEndOnVerdict(v, vi, vj) {
+  if (v.action === "paired") {
+    meshShowSuccess(vi.kind === "paired" || vj.kind === "paired");
+    return true;
+  }
+  if (v.action === "failed") {
+    meshPolling = false;
+    if (vi.kind === "running") { try { await api("api/mesh/pair/cancel", meshInit); } catch (e) {} }
+    if (vj.kind === "running") { try { await api("api/mesh/pair/cancel", meshJoin); } catch (e) {} }
+    meshPollFailed("Pairing failed on the " + v.side + " Canary: " + meshFailText(v.reason));
+    return true;
+  }
+  if (v.action === "other") {
+    meshPollFailed("The " + v.side + " Canary restarted or started another pairing, so this " +
+      "pairing's outcome is unknown. Check both Canaries and retry.");
+    return true;
+  }
+  return false;
+}
 
 function openMeshWizard() {
   document.getElementById(`screen-${currentStep}`).classList.add("hidden");
@@ -999,6 +1090,8 @@ async function meshStartPairing() {
   }
   meshInit = { address: initAddr, token: initTok };
   meshJoin = { address: joinAddr, token: joinTok };
+  meshInitSeq = null;
+  meshJoinSeq = null;
 
   const btn = document.getElementById("mesh-start-btn");
   btn.disabled = true;
@@ -1010,7 +1103,9 @@ async function meshStartPairing() {
   try {
     const r1 = await api("api/mesh/pair/start", meshInit);
     if (!r1.ok) { meshStartFailed(r1.error || "Existing Canary refused to start pairing"); return; }
+    meshInitSeq = meshPairingSeq(r1);
     const r2 = await api("api/mesh/pair/join", meshJoin);
+    if (r2.ok) meshJoinSeq = meshPairingSeq(r2);
     if (!r2.ok) {
       // The initiator is already in pairing mode; cancel it (best effort) so
       // an immediate retry isn't blocked until the initiator's own timeout.
@@ -1087,11 +1182,11 @@ async function meshPollForCodes() {
         "Both Canaries are showing the same code.";
       return;
     }
-    if (si.state === "ACTIVE" && sj.state === "ACTIVE") {
-      // Already completed (e.g. confirmed out-of-band).
-      meshShowSuccess();
-      return;
-    }
+    // Already over (e.g. confirmed on the Canaries themselves, or failed):
+    // each side's own outcome where it reports one (F163), else ACTIVE.
+    const vi = meshSideVerdict(si, meshInitSeq);
+    const vj = meshSideVerdict(sj, meshJoinSeq);
+    if (await meshEndOnVerdict(meshPairVerdict(vi, vj), vi, vj)) return;
   }
   if (meshPolling) {
     meshPollFailed("Timed out waiting for the pairing code. Try again.");
@@ -1123,7 +1218,9 @@ async function meshConfirm() {
     return;
   }
 
-  // Poll until both report ACTIVE.
+  // Poll until both report this pairing paired, or one reports it failed
+  // (F163). A Canary that reports no pairing number is done once it reads
+  // ACTIVE, as before.
   meshPolling = true;
   let fails = 0;
   for (let i = 0; i < 30 && meshPolling; i++) {
@@ -1136,19 +1233,27 @@ async function meshConfirm() {
       if (++fails >= 5) { meshPollFailed("A Canary became unreachable while completing. Try again."); return; }
       continue;
     }
-    if (si.ok && sj.ok && si.state === "ACTIVE" && sj.state === "ACTIVE") {
-      meshShowSuccess();
-      return;
-    }
+    if (!si.ok || !sj.ok) continue;
+    const vi = meshSideVerdict(si, meshInitSeq);
+    const vj = meshSideVerdict(sj, meshJoinSeq);
+    if (await meshEndOnVerdict(meshPairVerdict(vi, vj), vi, vj)) return;
   }
   if (meshPolling) {
     meshPollFailed("Pairing did not complete. Check both Canaries and retry.");
   }
 }
 
-function meshShowSuccess() {
+// byOutcome: a Canary said its pairing finished (F133) rather than reading
+// ACTIVE, so they may not have heard from each other yet (F162).
+function meshShowSuccess(byOutcome) {
   meshPolling = false;
   document.getElementById("mesh-progress").classList.add("hidden");
+  const note = document.getElementById("mesh-done-note");
+  note.textContent = byOutcome
+    ? "Both Canaries report the pairing finished. Each may show the other as not yet " +
+      "connected until it hears from it."
+    : "";
+  note.classList.toggle("hidden", !byOutcome);
   document.getElementById("mesh-done").classList.remove("hidden");
 }
 
