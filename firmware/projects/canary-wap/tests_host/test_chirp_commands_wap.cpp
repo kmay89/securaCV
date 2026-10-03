@@ -31,6 +31,10 @@
 // A refused send names its reason (sweep F146): a wall clock not set yet is
 // clock_unsynced, no longer a cooldown with 0 seconds left.
 //
+// The send cooldown is a timer, not a state (sweep F178): a mute no longer
+// ends it, a send drained in the pass after it ran out goes out, and the
+// status route reads it over at once and its last second as 1 s, not 0.
+//
 // The harness is one thread, so "the HTTP server's task" is a role the test
 // plays: rest() sets host_sim::on_httpd_task and calls submit() the way a
 // handler does. submit() waits in vTaskDelay, and the stub's vTaskDelay is
@@ -332,7 +336,8 @@ void test_every_command_runs_on_the_loop_task() {
   Rest r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
   CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
   CHECK(r.state_before_turn == cc::CHIRP_ACTIVE && r.sent_before_turn == 0);
-  CHECK(cc::g_state == cc::CHIRP_COOLDOWN);
+  CHECK(cc::get_cooldown_remaining_ms() > 0 && cc::get_status().state == cc::CHIRP_COOLDOWN);
+  CHECK(cc::g_state == cc::CHIRP_ACTIVE);              // a timer, not a stored state (F178)
   CHECK(r.r.cooldown_tier == 1 && r.r.refusal == cc::SEND_REFUSED_NONE);
   CHECK(sent_types() == std::vector<uint8_t>{cc::CHIRP_MSG_WITNESS});
 
@@ -439,7 +444,7 @@ void test_a_refused_send_names_why() {
   CHECK(error_of(r.r.refusal) == "clock_unsynced");
   CHECK(std::string(cc::send_refusal_message(r.r.refusal)).find("clock") != std::string::npos);
   CHECK(r.r.cooldown_remaining_ms == 0 && r.r.cooldown_tier == 0);
-  CHECK(cc::g_state == cc::CHIRP_ACTIVE);              // no cooldown started
+  CHECK(cc::get_cooldown_remaining_ms() == 0);         // no cooldown started
   for (uint8_t t : sent_types(sent_before)) CHECK(t != cc::CHIRP_MSG_WITNESS);   // no chirp went out
   host_sim::wall_now = cc::MIN_UNIX_TIME;              // the first second it counts as set
   r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
@@ -890,11 +895,14 @@ void test_the_pass_publishes_what_it_changed() {
   v = status_read();
   CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted && v.can_send);
 
+  // A cooldown is a timer (sweep F178): it ends at the read that finds it
+  // run out, before any pass. The pass that came after it said so before.
   CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);
   CHECK(status_read().state == cc::CHIRP_COOLDOWN);
   host_sim::now_ms += cc::COOLDOWN_TIER_1_MS;
   v = status_read();
-  CHECK(v.state == cc::CHIRP_COOLDOWN && v.cooldown_remaining_ms == 0 && !v.can_send);
+  CHECK(v.state == cc::CHIRP_ACTIVE && v.cooldown_remaining_ms == 0 && v.can_send);
+  CHECK(reason_of(v) == "(none)");
   cc::update();
   v = status_read();
   CHECK(v.state == cc::CHIRP_ACTIVE && v.can_send && v.cooldown_tier == 1);
@@ -1070,7 +1078,11 @@ void test_cannot_send_reason_names_the_clock() {
   CHECK(reason_of(v) == "clock_unsynced");
   v.presence_met = false;
   CHECK(reason_of(v) == "presence_required");
-  v.state = cc::CHIRP_COOLDOWN;
+  // The cooldown is its timer, whatever the state reads (sweep F178): muted
+  // in it, it still names the cooldown.
+  v.cooldown_remaining_ms = 1;
+  CHECK(reason_of(v) == "cooldown");
+  v.state = cc::CHIRP_MUTED;
   CHECK(reason_of(v) == "cooldown");
   v.state = cc::CHIRP_DISABLED;
   CHECK(reason_of(v) == "disabled");
@@ -1209,6 +1221,146 @@ void test_the_view_sizes() {
               cc::NEARBY_BYTES, cc::RECENT_CHIRPS_BYTES);
 }
 
+// ── The send cooldown is a timer (sweep F178) ───────────────────────────
+
+// The presence beacons the loop task sent since `from`: each one's
+// `listening` flag, in order.
+std::vector<uint8_t> presence_listening(size_t from) {
+  std::vector<uint8_t> out;
+  const auto& sent = host_sim::espnow->sent;
+  for (size_t i = from; i < sent.size(); ++i) {
+    const cc::ChirpHeader* h = reinterpret_cast<const cc::ChirpHeader*>(sent[i].bytes.data());
+    if (h->msg_type != cc::CHIRP_MSG_PRESENCE) continue;
+    CHECK(sent[i].bytes.size() >= sizeof(cc::ChirpHeader) + sizeof(cc::ChirpPresencePayload));
+    cc::ChirpPresencePayload p;
+    memcpy(&p, sent[i].bytes.data() + sizeof(cc::ChirpHeader), sizeof p);
+    out.push_back(p.listening);
+  }
+  return out;
+}
+
+// No witness frame went out since `from`.
+bool no_witness_since(size_t from) {
+  for (uint8_t t : sent_types(from)) {
+    if (t == cc::CHIRP_MSG_WITNESS) return false;
+  }
+  return true;
+}
+
+// A mute does not end the send cooldown (spec 2.5.4: escalating, counted
+// from the last send). The cooldown was a state, CHIRP_COOLDOWN, which
+// mute() overwrote with CHIRP_MUTED, and unmute() and the mute's timeout
+// returned to CHIRP_ACTIVE; can_send_chirp() and the send's refusal read
+// only the state. So a send one second after the first, muted in between,
+// went out, a tier up. Now each refusal is the timer's, with its time left,
+// and GET /api/chirp names it whatever the state reads.
+void test_a_mute_does_not_end_the_cooldown() {
+  boot();
+  enabled_channel();
+  Rest r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(r.r.ok && r.r.cooldown_tier == 1);
+  const uint32_t first_at = cc::g_cooldown.last_chirp_ms;
+  host_sim::now_ms += 1000;
+  cc::Command m15 = cmd_of(cc::CHIRP_CMD_MUTE);
+  m15.duration_minutes = 15;
+  CHECK(rest(m15).r.ok && cc::g_state == cc::CHIRP_MUTED);
+
+  // Muted: refused for the cooldown, with the timer's time left, tier 1.
+  size_t before = host_sim::espnow->sent.size();
+  r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_COOLDOWN && r.r.cooldown_tier == 1);
+  CHECK(r.r.cooldown_remaining_ms == cc::COOLDOWN_TIER_1_MS - (host_sim::now_ms - first_at));
+  CHECK(no_witness_since(before) && cc::g_cooldown.chirps_sent_today == 1);
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.muted && !v.can_send);
+  CHECK(reason_of(v) == "cooldown" && v.cooldown_remaining_ms == r.r.cooldown_remaining_ms);
+  CHECK(cc::seconds_left(v.cooldown_remaining_ms) == (cc::COOLDOWN_TIER_1_MS - 1000 - 10) / 1000 + 1);
+
+  // Unmuted: still refused, and the state reads "cooldown" again.
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_UNMUTE)).r.ok && cc::g_state == cc::CHIRP_ACTIVE);
+  r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_COOLDOWN && r.r.cooldown_remaining_ms > 0);
+  CHECK(no_witness_since(before));
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_COOLDOWN && !v.can_send && reason_of(v) == "cooldown");
+  CHECK(cc::get_status().state == cc::CHIRP_COOLDOWN && !cc::can_send_chirp());
+
+  // The mute's own timeout: tier 3's hour outlasts a 15-minute mute.
+  host_sim::now_ms = first_at + cc::COOLDOWN_TIER_1_MS;
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.cooldown_tier == 2);
+  host_sim::now_ms = cc::g_cooldown.last_chirp_ms + cc::COOLDOWN_TIER_2_MS;
+  r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(r.r.ok && r.r.cooldown_tier == 3);
+  const uint32_t third_at = cc::g_cooldown.last_chirp_ms;
+  CHECK(rest(m15).r.ok && cc::g_state == cc::CHIRP_MUTED);
+  host_sim::now_ms += 15u * 60000u;
+  before = host_sim::espnow->sent.size();
+  cc::update();                                       // the mute runs out on this pass
+  CHECK(!cc::g_muted && cc::g_state == cc::CHIRP_ACTIVE);
+  r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_COOLDOWN && r.r.cooldown_tier == 3);
+  CHECK(r.r.cooldown_remaining_ms == cc::COOLDOWN_TIER_3_MS - (host_sim::now_ms - third_at));
+  CHECK(no_witness_since(before) && cc::g_cooldown.chirps_sent_today == 3);
+  CHECK(reason_of(status_read()) == "cooldown");
+
+  // Kept: the presence beacon says "not listening" while the cooldown runs,
+  // as it did when the cooldown was the state, and "listening" after it.
+  CHECK(presence_listening(before) == std::vector<uint8_t>{0});
+  host_sim::now_ms = third_at + cc::COOLDOWN_TIER_3_MS;
+  before = host_sim::espnow->sent.size();
+  cc::update();
+  CHECK(presence_listening(before) == std::vector<uint8_t>{1});
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_mute_does_not_end_the_cooldown\n");
+}
+
+// The cooldown is over the moment its timer runs out, whatever pass the
+// loop task is at. update() drains the owner's commands first and ended
+// CHIRP_COOLDOWN only after them, so a send drained in the pass after the
+// timer ran out was refused as a cooldown with 0 s left, and GET /api/chirp,
+// read before that pass ended, said cannot_send_reason "cooldown" with
+// cooldown_remaining_sec 0 (the card said Ready, with Send on). And in the
+// cooldown's last second the refused send and the route both said 0 s:
+// they say 1 now (seconds_left() rounds up), so "cooldown" never reads 0.
+void test_a_send_just_after_the_cooldown_goes_out() {
+  boot();
+  enabled_channel();
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);
+  const uint32_t sent_at = cc::g_cooldown.last_chirp_ms;
+
+  // Its last second: 400 ms left at the loop task's turn (one poll in).
+  host_sim::now_ms = sent_at + cc::COOLDOWN_TIER_1_MS - 400 - cc::COMMAND_POLL_MS;
+  size_t before = host_sim::espnow->sent.size();
+  Rest r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_COOLDOWN);
+  CHECK(r.r.cooldown_remaining_ms == 400 && cc::seconds_left(r.r.cooldown_remaining_ms) == 1);
+  CHECK(no_witness_since(before));
+  cc::StatusView v = status_read();
+  CHECK(reason_of(v) == "cooldown" && !v.can_send && v.cooldown_remaining_ms == 400);
+  CHECK(cc::seconds_left(v.cooldown_remaining_ms) == 1);
+
+  // Run out, and no pass since: the route reads it over at once.
+  host_sim::now_ms = sent_at + cc::COOLDOWN_TIER_1_MS;
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && v.can_send && v.cooldown_remaining_ms == 0);
+  CHECK(reason_of(v) == "(none)" && cc::seconds_left(v.cooldown_remaining_ms) == 0);
+
+  // A send drained by the next pass (its drain comes first) goes out.
+  host_sim::now_ms = sent_at + cc::COOLDOWN_TIER_1_MS - cc::COMMAND_POLL_MS;
+  before = host_sim::espnow->sent.size();
+  r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE && r.r.cooldown_tier == 2);
+  CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_WITNESS});
+  CHECK(host_sim::httpd_side_effects == 0);
+
+  // seconds_left() rounds up, so only a timer that ran out reads 0.
+  CHECK(cc::seconds_left(0) == 0 && cc::seconds_left(1) == 1 && cc::seconds_left(999) == 1);
+  CHECK(cc::seconds_left(1000) == 1 && cc::seconds_left(1001) == 2);
+  CHECK(cc::seconds_left(cc::COOLDOWN_TIER_4_MS) == cc::COOLDOWN_TIER_4_MS / 1000);
+  CHECK(cc::seconds_left(0xFFFFFFFFu) == 4294968u);
+  std::printf("PASS a_send_just_after_the_cooldown_goes_out\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1217,6 +1369,8 @@ const Test kTests[] = {
     {"enable_runs_on_the_loop_task", test_enable_runs_on_the_loop_task},
     {"every_command_runs_on_the_loop_task", test_every_command_runs_on_the_loop_task},
     {"a_refused_send_names_why", test_a_refused_send_names_why},
+    {"a_mute_does_not_end_the_cooldown", test_a_mute_does_not_end_the_cooldown},
+    {"a_send_just_after_the_cooldown_goes_out", test_a_send_just_after_the_cooldown_goes_out},
     {"a_send_carries_the_owners_fields", test_a_send_carries_the_owners_fields},
     {"a_settings_post_changes_only_what_it_names", test_a_settings_post_changes_only_what_it_names},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},

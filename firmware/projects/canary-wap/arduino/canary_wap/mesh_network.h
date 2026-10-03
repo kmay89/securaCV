@@ -800,7 +800,9 @@ enum ChirpState : uint8_t {
   CHIRP_LISTENING,         // Receiving chirps, passive mode
   CHIRP_ACTIVE,            // Full participation
   CHIRP_MUTED,             // Temporarily ignoring chirps
-  CHIRP_COOLDOWN           // Rate limited after sending
+  CHIRP_COOLDOWN           // Rate limited after sending: what an active channel
+                           // reads as while the send cooldown runs. Shown, never
+                           // stored: the cooldown is a timer (sweep F178)
 };
 
 // Chirp message types
@@ -1215,12 +1217,20 @@ inline const char* send_refusal_message(SendRefusal why) {
   return nullptr;
 }
 
+// A time left, in whole seconds rounded up, as the routes answer
+// cooldown_remaining_sec: a cooldown that still runs never reads 0 s. Its
+// last second read 0 while a send was still refused for it, and the card
+// said Ready (sweep F178).
+inline uint32_t seconds_left(uint32_t ms) {
+  return ms / 1000u + (ms % 1000u != 0u ? 1u : 0u);
+}
+
 // What a command did, as the loop task saw it right after the command ran.
 struct Result {
   bool         ok;                     // the command's own answer (DISABLE, UNMUTE, SETTINGS: true)
   SendRefusal  refusal;                // SEND that failed: why
   uint8_t      cooldown_tier;          // SEND: get_cooldown_tier() after the attempt
-  uint32_t     cooldown_remaining_ms;  // SEND refused for the cooldown
+  uint32_t     cooldown_remaining_ms;  // SEND refused for the cooldown (> 0 whenever it is)
   bool         relay_enabled;          // SETTINGS: the setting after the command
   ChirpUrgency urgency_filter;         // SETTINGS: the setting after the command
   char         session_emoji[EMOJI_DISPLAY_SIZE];  // ENABLE: the session's emoji
@@ -1293,7 +1303,8 @@ ChirpStatus get_status();
 
 // One pass, as GET /api/chirp shows it.
 struct StatusView {
-  ChirpState state;
+  ChirpState state;                       // published: the stored state; read: what it reads as
+                                          // (CHIRP_COOLDOWN while an active channel's cooldown runs)
   char session_emoji[EMOJI_DISPLAY_SIZE];
   uint8_t nearby_count;
   uint8_t recent_chirp_count;
@@ -1305,7 +1316,7 @@ struct StatusView {
   uint32_t mute_until_ms;
   uint32_t session_start_ms;              // 0: never enabled since boot
   // Counted at the read by read_status() (the loop task publishes them 0):
-  uint32_t cooldown_remaining_ms;
+  uint32_t cooldown_remaining_ms;         // the cooldown timer, whatever the state (sweep F178)
   uint32_t mute_remaining_ms;
   bool presence_met;                      // has_presence_requirement()
   bool clock_synced;                      // time() at or past MIN_UNIX_TIME
@@ -1358,6 +1369,9 @@ void read_recent(RecentTable* out);
 // order the route has always checked: "disabled", "cooldown",
 // "presence_required", then "clock_unsynced" (sweep F146: the route named no
 // reason for it, and the dashboard said Ready). nullptr when it can send.
+// "cooldown" exactly while the timer runs (cooldown_remaining_ms > 0), muted
+// or not: it read the state, which a mute overwrote and which a pass ended
+// only after the timer had (sweep F178).
 const char* cannot_send_reason(const StatusView& v);
 
 // Get state name as string
@@ -1372,7 +1386,8 @@ const char* urgency_name(ChirpUrgency urgency);
 // Check if active and can receive chirps
 bool is_active();
 
-// Check if can send chirp (not in cooldown)
+// Check if can send chirp: on, the cooldown timer run out, the presence
+// requirement met and the wall clock set (night mode is the template's)
 bool can_send_chirp();
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1389,7 +1404,9 @@ bool has_presence_requirement();
 // Get current cooldown tier (1-4)
 uint8_t get_cooldown_tier();
 
-// Get cooldown remaining for current tier
+// The send cooldown left (spec 2.5.4): the tier's cooldown counted from the
+// last send. A timer, not a state: a mute, its timeout and an unmute leave it
+// running, and it is over the moment it runs out (sweep F178)
 uint32_t get_cooldown_remaining_ms();
 
 // Get template display text (for UI)

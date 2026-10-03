@@ -446,6 +446,29 @@ static uint32_t get_cooldown_for_tier(uint8_t tier) {
   }
 }
 
+// The send cooldown (spec 2.5.4): a timer, `cooldown_ms` (the tier's)
+// counted from the last send, none before the first (tier 0). It was a
+// state, CHIRP_COOLDOWN, and every gate read the state: a mute overwrote it
+// (so a send right after muting went out, a tier up), and update() ended it
+// only after its drain, so a send drained in the pass after the timer ran
+// out was refused as a cooldown with 0 s left (sweep F178). Every gate reads
+// this now, the live one through get_cooldown_remaining_ms() and the view
+// through read_status(); the state only reads "cooldown" (shown_state()).
+static uint32_t cooldown_left_ms(uint8_t tier, uint32_t last_send_ms, uint32_t cooldown_ms,
+                                 uint32_t now) {
+  if (tier == 0) return 0;
+  const uint32_t elapsed = now - last_send_ms;
+  return elapsed < cooldown_ms ? cooldown_ms - elapsed : 0;
+}
+
+// What a stored state reads as: an active channel whose cooldown runs reads
+// CHIRP_COOLDOWN, as it always did. g_state never holds CHIRP_COOLDOWN, so
+// a mute cannot overwrite the cooldown, and an unmute or the mute's timeout
+// reads "cooldown" again while the timer still runs (sweep F178).
+static ChirpState shown_state(ChirpState stored, uint32_t cooldown_left) {
+  return (stored == CHIRP_ACTIVE && cooldown_left > 0) ? CHIRP_COOLDOWN : stored;
+}
+
 static void reset_cooldown_if_stale() {
   uint32_t now = millis();
   if (g_cooldown.first_chirp_today_ms > 0 &&
@@ -679,7 +702,10 @@ static void send_presence() {
   esp_fill_random(hdr->nonce, 8);
 
   strncpy(payload->emoji, g_session.emoji_display, EMOJI_DISPLAY_SIZE);
-  payload->listening = (g_state == CHIRP_ACTIVE || g_state == CHIRP_LISTENING) ? 1 : 0;
+  // As the beacon always said: not listening while muted or in the cooldown
+  // (the cooldown read from its timer since sweep F178).
+  const ChirpState shown = shown_state(g_state, get_cooldown_remaining_ms());
+  payload->listening = (shown == CHIRP_ACTIVE || shown == CHIRP_LISTENING) ? 1 : 0;
 
   if (g_last_chirp_sent_ms == 0) {
     payload->last_chirp_age_min = 255;
@@ -1228,18 +1254,18 @@ void read_status(StatusView* out) {
   }
   // What counts in time, counted now, from what the loop task published,
   // as get_status(), has_presence_requirement() and can_send_chirp() count it.
+  // The cooldown is its timer (sweep F178), muted or not, and it is over at
+  // the read the moment it runs out, not at the next pass.
   const uint32_t now = millis();
-  out->cooldown_remaining_ms = 0;
-  if (out->state == CHIRP_COOLDOWN && out->last_chirp_sent_ms > 0) {
-    const uint32_t elapsed = now - out->last_chirp_sent_ms;
-    out->cooldown_remaining_ms = (elapsed < out->cooldown_ms) ? out->cooldown_ms - elapsed : 0;
-  }
+  out->cooldown_remaining_ms = cooldown_left_ms(out->cooldown_tier, out->last_chirp_sent_ms,
+                                                out->cooldown_ms, now);
+  out->state = shown_state(out->state, out->cooldown_remaining_ms);
   out->mute_remaining_ms = (out->muted && now < out->mute_until_ms) ? out->mute_until_ms - now : 0;
   out->presence_met = out->session_start_ms != 0 &&
                       (now - out->session_start_ms) >= PRESENCE_REQUIRED_MS;
   out->clock_synced = wall_clock_is_synced();
   out->night_mode = is_night_mode();
-  out->can_send = out->state != CHIRP_DISABLED && out->state != CHIRP_COOLDOWN &&
+  out->can_send = out->state != CHIRP_DISABLED && out->cooldown_remaining_ms == 0 &&
                   out->presence_met && out->clock_synced;
 }
 
@@ -1254,7 +1280,7 @@ void read_recent(RecentTable* out) {
 const char* cannot_send_reason(const StatusView& v) {
   if (v.can_send) return nullptr;
   if (v.state == CHIRP_DISABLED) return "disabled";
-  if (v.state == CHIRP_COOLDOWN) return "cooldown";
+  if (v.cooldown_remaining_ms > 0) return "cooldown";
   if (!v.presence_met) return "presence_required";
   if (!v.clock_synced) return "clock_unsynced";
   return nullptr;
@@ -1357,7 +1383,9 @@ static Result run_command(const Command& cmd) {
           r.refusal = SEND_REFUSED_DISABLED;
         } else if (!has_presence_requirement()) {
           r.refusal = SEND_REFUSED_PRESENCE;
-        } else if (g_state == CHIRP_COOLDOWN) {
+        } else if (get_cooldown_remaining_ms() > 0) {
+          // The timer, not the state (sweep F178): a mute no longer hides
+          // it, and a send after it ran out is not refused with 0 s left.
           r.refusal = SEND_REFUSED_COOLDOWN;
           r.cooldown_remaining_ms = get_cooldown_remaining_ms();
         } else if (!wall_clock_is_synced()) {
@@ -1428,10 +1456,8 @@ void update() {
     g_muted = false;
     if (g_state == CHIRP_MUTED) set_state(CHIRP_ACTIVE);
   }
-  if (g_state == CHIRP_COOLDOWN) {
-    uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
-    if (now - g_cooldown.last_chirp_ms >= cooldown_ms) set_state(CHIRP_ACTIVE);
-  }
+  // No cooldown to end here: it is a timer, over when it runs out, not at
+  // this pass (sweep F178).
   if (now - g_last_presence_ms >= PRESENCE_INTERVAL_MS) send_presence();
   static uint32_t last_prune_ms = 0;
   if (now - last_prune_ms > 30000) {
@@ -1450,13 +1476,8 @@ ChirpStatus get_status() {
   status.nearby_count = (uint8_t)g_nearby_count;
   status.recent_chirp_count = (uint8_t)g_recent_chirp_count;
   status.last_chirp_sent_ms = g_cooldown.last_chirp_ms;
-  if (g_state == CHIRP_COOLDOWN && g_cooldown.last_chirp_ms > 0) {
-    uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
-    uint32_t elapsed = millis() - g_cooldown.last_chirp_ms;
-    status.cooldown_remaining_ms = (elapsed < cooldown_ms) ? cooldown_ms - elapsed : 0;
-  } else {
-    status.cooldown_remaining_ms = 0;
-  }
+  status.cooldown_remaining_ms = get_cooldown_remaining_ms();
+  status.state = shown_state(g_state, status.cooldown_remaining_ms);
   status.relay_enabled = g_relay_enabled;
   status.muted = g_muted;
   status.mute_remaining_ms = (g_muted && millis() < g_mute_until_ms)
@@ -1497,7 +1518,10 @@ const char* urgency_name(ChirpUrgency urgency) {
   }
 }
 
-bool is_active() { return g_state == CHIRP_ACTIVE || g_state == CHIRP_LISTENING; }
+bool is_active() {
+  const ChirpState shown = shown_state(g_state, get_cooldown_remaining_ms());
+  return shown == CHIRP_ACTIVE || shown == CHIRP_LISTENING;
+}
 
 bool has_presence_requirement() {
   if (g_session_start_ms == 0) return false;
@@ -1505,7 +1529,8 @@ bool has_presence_requirement() {
 }
 
 bool can_send_chirp() {
-  if (g_state == CHIRP_DISABLED || g_state == CHIRP_COOLDOWN) return false;
+  if (g_state == CHIRP_DISABLED) return false;
+  if (get_cooldown_remaining_ms() > 0) return false;   // the timer (sweep F178)
   if (!has_presence_requirement()) return false;
   if (!wall_clock_is_synced()) return false;
   return true;
@@ -1539,10 +1564,8 @@ uint8_t get_cooldown_tier() {
 }
 
 uint32_t get_cooldown_remaining_ms() {
-  if (g_state != CHIRP_COOLDOWN) return 0;
-  uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
-  uint32_t elapsed = millis() - g_cooldown.last_chirp_ms;
-  return (elapsed >= cooldown_ms) ? 0 : cooldown_ms - elapsed;
+  return cooldown_left_ms(get_cooldown_tier(), g_cooldown.last_chirp_ms,
+                          get_cooldown_for_tier(g_cooldown.chirps_sent_today), millis());
 }
 
 const char* get_validation_status(const ReceivedChirp* chirp) {
@@ -1607,7 +1630,8 @@ static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   g_cooldown.last_chirp_ms = now;
   g_last_chirp_sent_ms = now;
   cache_nonce(hdr->nonce);
-  set_state(CHIRP_COOLDOWN);
+  // The cooldown starts here, as a timer (get_cooldown_remaining_ms()); the
+  // state stays as it was, so a mute cannot overwrite it (sweep F178).
 
   char log_detail[96];
   snprintf(log_detail, sizeof(log_detail), "chirp sent: %s (%s, tier %u)",

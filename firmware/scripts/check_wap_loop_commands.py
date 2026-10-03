@@ -253,7 +253,17 @@ CV7. What the routes put under each key (`chirp_api.h` is not host-compiled:
      before every `return` that follows the read. `POST /api/chirp/send`
      answers a refusal exactly as `CHIRP_SEND_ANSWER` says: `error` and
      `message` from `send_refusal_error()` and `send_refusal_message()`
-     (host-tested), the cooldown's two fields only for a cooldown.
+     (host-tested), the cooldown's two fields only for a cooldown, its time
+     left rounded up by `seconds_left()` (F178: a cooldown's last second read
+     0 s), as the status route's is.
+CV8. The send cooldown is a timer, not a state (F178): in
+     `chirp_channel.cpp`, `CHIRP_COOLDOWN` is named only by `shown_state()`
+     (what an active channel reads as while the timer runs) and
+     `state_name()`. Nothing stores it, so a mute cannot overwrite it, and
+     nothing gates on it: `can_send_chirp()`, the send's refusal,
+     `read_status()` and `cannot_send_reason()` read the timer
+     (`test_chirp_commands_wap.cpp`'s `a_mute_does_not_end_the_cooldown`,
+     `a_send_just_after_the_cooldown_goes_out`).
 
 MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
@@ -1068,7 +1078,7 @@ BT_SETTINGS_FIELDS = {             # key: (the field it fills, the mask bit that
 # of its request's own values. State the command changed is answered from
 # the Result the loop task read, never from a live reader on this task.
 AFTER_SUBMIT_CALLS = {"chirp_channel": ("get_template_text", "urgency_name", "send_refusal_error",
-                                       "send_refusal_message"),
+                                       "send_refusal_message", "seconds_left"),
                       "bluetooth_channel": ()}
 # Right after `const loop_command_ring::Wait w = <ns>::submit(...);`: every
 # answer but kDone is a command that did not run.
@@ -1402,7 +1412,7 @@ CHIRP_LIVE_READER_RE = r"\bchirp_channel::(" + "|".join(CHIRP_LIVE_READERS) + r"
 # What a Chirp GET handler may call on the channel besides its one reader:
 # pure lookups of the copy it read (rule CV2).
 CHIRP_VIEW_LOOKUPS = ("state_name", "category_name", "urgency_name", "get_template_text",
-                      "get_detail_text", "get_validation_status", "cannot_send_reason")
+                      "get_detail_text", "get_validation_status", "cannot_send_reason", "seconds_left")
 # What the readers may not name: the live state and its readers (rule CV4).
 CHIRP_LIVE_STATE = ("g_state", "g_session", "g_cooldown", "g_recent_chirps", "g_recent_chirp_count",
                     "g_nearby_devices", "g_nearby_count", "g_muted", "g_mute_until_ms", "g_relay_enabled",
@@ -1492,6 +1502,9 @@ CHIRP_READER_SIGS = {
 }
 CHIRP_READER_VIEW = {"read_status": "g_status_view.read(", "read_nearby": "g_nearby_view.read(",
                      "read_recent": "g_recent_view.read("}
+# Rule CV8 (F178): the only functions in chirp_channel.cpp that may name
+# CHIRP_COOLDOWN. The send cooldown is a timer; this is the state it reads as.
+CHIRP_COOLDOWN_NAMERS = ("shown_state", "state_name")
 # Rule CV7: what each GET key is set from (squashed right-hand sides), once.
 CHIRP_STATUS_FIELDS = {
     "state": "chirp_channel::state_name(v.state)",
@@ -1499,7 +1512,8 @@ CHIRP_STATUS_FIELDS = {
     "nearby_count": "v.nearby_count",
     "recent_chirps": "v.recent_chirp_count",
     "last_chirp_sent_ms": "v.last_chirp_sent_ms",
-    "cooldown_remaining_sec": "v.cooldown_remaining_ms/1000",
+    # Rounded up (F178): a cooldown that still runs never reads 0 s.
+    "cooldown_remaining_sec": "chirp_channel::seconds_left(v.cooldown_remaining_ms)",
     "cooldown_tier": "v.cooldown_tier",
     "presence_met": "v.presence_met",
     "night_mode": "v.night_mode",
@@ -1569,7 +1583,8 @@ CHIRP_SEND_ANSWER = (
     'doc["error"]=chirp_channel::send_refusal_error(r.refusal);'
     'doc["message"]=chirp_channel::send_refusal_message(r.refusal);'
     'if(r.refusal==chirp_channel::SEND_REFUSED_COOLDOWN){'
-    'doc["cooldown_remaining_sec"]=r.cooldown_remaining_ms/1000;doc["cooldown_tier"]=r.cooldown_tier;}}'
+    'doc["cooldown_remaining_sec"]=chirp_channel::seconds_left(r.cooldown_remaining_ms);'
+    'doc["cooldown_tier"]=r.cooldown_tier;}}'
     "charbuffer[384];"
 )
 
@@ -1590,7 +1605,8 @@ def chirp_live_read_findings(name: str, code: str) -> tuple[str, ...]:
 
 
 def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]) -> None:
-    """Rules CV1-CV7: the Chirp GET routes read only what the loop task published."""
+    """Rules CV1-CV8: the Chirp GET routes read only what the loop task published, and the
+    send cooldown is a timer."""
     files = dict(others)
     files[INO] = ino
     for name, src in files.items():
@@ -1701,6 +1717,15 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
             if where is not None and where not in allowed:
                 errors.append(f"{CHIRP_CPP}: {where}() calls {fn}() — it changes the tables, and only "
                               f"{', '.join(allowed)} marks them for the view (F138)")
+    # CV8: the send cooldown is a timer (F178).
+    for m in re.finditer(r"\bCHIRP_COOLDOWN\b", code):
+        where = enclosing_function(spans, m.start())
+        if where not in CHIRP_COOLDOWN_NAMERS:
+            errors.append(f"{CHIRP_CPP}: {where or 'file scope'} names CHIRP_COOLDOWN — the send cooldown "
+                          "is a timer (get_cooldown_remaining_ms(), cooldown_left_ms()), not a state: a "
+                          "stored CHIRP_COOLDOWN is one a mute overwrites, and a gate on it refuses a "
+                          f"send after the timer ran out; only {', '.join(CHIRP_COOLDOWN_NAMERS)} name it "
+                          "(F178)")
     for fn, sig in CHIRP_READER_SIGS.items():
         body = body_of(code, sig, f"{CHIRP_CPP}: {fn}()", errors)
         if body is None:
@@ -2722,8 +2747,28 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the status route answers can_send from the presence requirement (h04)",
      on_other(CHIRP_API, api_handler("handle_chirp_status"), r"=\s*v\.can_send;", "= v.presence_met;")),
     ("the status route answers the tier's whole cooldown as what is left (h05)",
-     on_other(CHIRP_API, api_handler("handle_chirp_status"), r"v\.cooldown_remaining_ms\s*/\s*1000",
-              "v.cooldown_ms / 1000")),
+     on_other(CHIRP_API, api_handler("handle_chirp_status"),
+              r"chirp_channel::seconds_left\(v\.cooldown_remaining_ms\)", "v.cooldown_ms / 1000")),
+    ("the status route rounds the cooldown left down again: its last second reads 0 (F178)",
+     on_other(CHIRP_API, api_handler("handle_chirp_status"),
+              r"chirp_channel::seconds_left\(v\.cooldown_remaining_ms\)", "v.cooldown_remaining_ms / 1000")),
+    ("the send route rounds a cooldown refusal's time left down again (F178)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"chirp_channel::seconds_left\(r\.cooldown_remaining_ms\)", "r.cooldown_remaining_ms / 1000")),
+    # Rule CV8: the send cooldown is a timer (F178).
+    ("a send stores the cooldown as the state again (a mute overwrites it)",
+     on_other(CHIRP_CPP, r"\bstatic\s+bool\s+send_chirp\s*\([^)]*\)", r"(cache_nonce\(hdr->nonce\);)",
+              r"\1 set_state(CHIRP_COOLDOWN);")),
+    ("can_send_chirp() gates on the cooldown state again",
+     on_other(CHIRP_CPP, r"\bbool\s+can_send_chirp\s*\(\s*\)",
+              r"if\s*\(get_cooldown_remaining_ms\(\)\s*>\s*0\)\s*return\s+false;",
+              "if (g_state == CHIRP_COOLDOWN) return false;")),
+    ("cannot_send_reason() names the cooldown from the state again",
+     on_other(CHIRP_CPP, r"\bconst\s+char\s*\*\s*cannot_send_reason\s*\([^)]*\)",
+              r"if\s*\(v\.cooldown_remaining_ms\s*>\s*0\)", "if (v.state == CHIRP_COOLDOWN)")),
+    ("update() ends a cooldown state after its drain again",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+              r"\1 if (g_state == CHIRP_COOLDOWN && get_cooldown_remaining_ms() == 0) set_state(CHIRP_ACTIVE);")),
     ("the recent route shows dismissed chirps (h06)",
      on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"\n[ \t]*if\s*\(chirps\[i\]\.dismissed\)\s*continue;",
               "")),

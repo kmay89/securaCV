@@ -30,6 +30,11 @@
  * update() and the chirp frames it is handed rewrite on the loop task; a
  * read in place could mix two passes (a row read while the 30-second prune
  * shifts the table under it). The responses are what they were.
+ *
+ * Sweep F178: cooldown_remaining_sec (GET /api/chirp, a send refused for the
+ * cooldown) is rounded up by chirp_channel::seconds_left(), so a cooldown
+ * that still runs never reads 0 s, and it is the cooldown's timer, which a
+ * mute no longer ends.
  */
 
 #ifndef SECURACV_CHIRP_API_H
@@ -97,7 +102,7 @@ inline esp_err_t handle_chirp_status(httpd_req_t* req) {
   doc["nearby_count"] = v.nearby_count;
   doc["recent_chirps"] = v.recent_chirp_count;
   doc["last_chirp_sent_ms"] = v.last_chirp_sent_ms;
-  doc["cooldown_remaining_sec"] = v.cooldown_remaining_ms / 1000;
+  doc["cooldown_remaining_sec"] = chirp_channel::seconds_left(v.cooldown_remaining_ms);
   doc["cooldown_tier"] = v.cooldown_tier;
   doc["presence_met"] = v.presence_met;
   doc["night_mode"] = v.night_mode;
@@ -339,7 +344,7 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
     doc["error"] = chirp_channel::send_refusal_error(r.refusal);
     doc["message"] = chirp_channel::send_refusal_message(r.refusal);
     if (r.refusal == chirp_channel::SEND_REFUSED_COOLDOWN) {
-      doc["cooldown_remaining_sec"] = r.cooldown_remaining_ms / 1000;
+      doc["cooldown_remaining_sec"] = chirp_channel::seconds_left(r.cooldown_remaining_ms);
       doc["cooldown_tier"] = r.cooldown_tier;
     }
   }
