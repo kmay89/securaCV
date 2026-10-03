@@ -11,6 +11,22 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic
 SRC_DIR   = ../arduino/canary_wap
 
+# Arduino.h's global names in front of every translation unit a suite
+# compiles (sweep F229). arduino-cli and PlatformIO open canary_wap.ino with
+# Arduino.h, so every header the sketch includes, and every function a suite
+# cuts out of the .ino, is compiled after `typedef bool boolean;`, `byte`,
+# `word`, the pin and bit macros and the rest; a suite compiled them without,
+# and F212's first identity_json.h passed every suite and could not compile
+# in the sketch. arduino_globals.h carries arduino-esp32 3.3.8's names;
+# `-include` puts it first in each translation unit, the sketch's own .cpp
+# files a suite compiles included. `override`, so a CXXFLAGS given to make
+# keeps it; a recipe that does not pass CXXFLAGS (the tsan builds) passes
+# $(ARDUINO_GLOBALS) itself. check_arduino_globals.py (run by `run`) holds
+# every compile to it by what the preprocessor reads. A change to
+# arduino_globals.h rebuilds nothing by itself: `make -B`.
+ARDUINO_GLOBALS = -include arduino_globals.h
+override CXXFLAGS += $(ARDUINO_GLOBALS)
+
 # $(call run_marked,<suite>[ <args>][,<marker>]) runs ./<suite> and holds it
 # to the check firmware.yml's old inline steps made: a non-zero exit fails,
 # and so does output without the suite's marker (default "ALL .* PASSED"), so
@@ -1119,7 +1135,7 @@ $(BT_CMD_BIN): $(BT_CMD_DEPS)
 run-bt-commands: $(BT_CMD_BIN)
 	$(call run_marked,$(BT_CMD_BIN))
 tsan-bt-commands: $(BT_CMD_DEPS)
-	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $(BT_CMD_BIN)_tsan $(BT_CMD_SRC)
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread $(ARDUINO_GLOBALS) -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $(BT_CMD_BIN)_tsan $(BT_CMD_SRC)
 	./$(BT_CMD_BIN)_tsan
 clean-bt-commands:
 	rm -f $(BT_CMD_BIN) $(BT_CMD_BIN)_tsan
@@ -1215,7 +1231,7 @@ $(LOOP_RING_BIN): $(LOOP_RING_SRC) $(SRC_DIR)/loop_command_ring.h
 run-loop-ring: $(LOOP_RING_BIN)
 	$(call run_marked,$(LOOP_RING_BIN))
 tsan-loop-ring: $(LOOP_RING_SRC) $(SRC_DIR)/loop_command_ring.h
-	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_RING_BIN)_tsan $(LOOP_RING_SRC)
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread $(ARDUINO_GLOBALS) -I $(SRC_DIR) -o $(LOOP_RING_BIN)_tsan $(LOOP_RING_SRC)
 	./$(LOOP_RING_BIN)_tsan
 clean-loop-ring:
 	rm -f $(LOOP_RING_BIN) $(LOOP_RING_BIN)_tsan
@@ -1242,7 +1258,7 @@ $(LOOP_SNAP_BIN): $(LOOP_SNAP_SRC) $(SRC_DIR)/loop_snapshot.h
 run-loop-snapshot: $(LOOP_SNAP_BIN)
 	$(call run_marked,$(LOOP_SNAP_BIN))
 tsan-loop-snapshot: $(LOOP_SNAP_SRC) $(SRC_DIR)/loop_snapshot.h
-	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_SNAP_BIN)_tsan $(LOOP_SNAP_SRC)
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread $(ARDUINO_GLOBALS) -I $(SRC_DIR) -o $(LOOP_SNAP_BIN)_tsan $(LOOP_SNAP_SRC)
 	./$(LOOP_SNAP_BIN)_tsan
 clean-loop-snapshot:
 	rm -f $(LOOP_SNAP_BIN) $(LOOP_SNAP_BIN)_tsan
@@ -1269,7 +1285,7 @@ $(LOOP_EV_BIN): $(LOOP_EV_SRC) $(SRC_DIR)/loop_event_queue.h
 run-loop-events: $(LOOP_EV_BIN)
 	$(call run_marked,$(LOOP_EV_BIN))
 tsan-loop-events: $(LOOP_EV_SRC) $(SRC_DIR)/loop_event_queue.h
-	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_EV_BIN)_tsan $(LOOP_EV_SRC)
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread $(ARDUINO_GLOBALS) -I $(SRC_DIR) -o $(LOOP_EV_BIN)_tsan $(LOOP_EV_SRC)
 	./$(LOOP_EV_BIN)_tsan
 clean-loop-events:
 	rm -f $(LOOP_EV_BIN) $(LOOP_EV_BIN)_tsan
@@ -1601,3 +1617,16 @@ clean-mqtt-identity:
 
 run: run-mqtt-identity
 clean: clean-mqtt-identity
+
+# Every suite compiles the sketch's code after Arduino.h's names (sweep
+# F229): check_arduino_globals.py asks make for every compile of `run` and
+# of the tsan builds, runs each one's preprocessor and fails a translation
+# unit that reads a line of the sketch folder (a header, a sketch .cpp, a
+# function cut out of the .ino) before arduino_globals.h; its self-test
+# mutates a copy of this Makefile and must see each mutation fail. The cut
+# .inc files are its prerequisites, since the preprocessor reads them.
+.PHONY: run-arduino-globals
+run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS)
+	python3 check_arduino_globals.py
+
+run: run-arduino-globals
