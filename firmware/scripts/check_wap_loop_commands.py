@@ -282,6 +282,11 @@ CV10. Every `chirp_api.h` function that answers a `message` serializes into
      did the mute route's 101-byte one (F174; an ArduinoJson 7.4.1 scratch
      harness showed both). The confirm and dismiss answers' 256 bytes are
      CV9's (the longest, 161 bytes, is host-tested).
+CV11. The dashboard shows what the routes now say (`web_ui.h`): the Chirp
+     card takes Send's state from `WebUiLogic.chirpSendGate()` (Send off for
+     any `can_send` that is not true, F178), and a confirm or a dismiss puts
+     `WebUiLogic.chirpActionNote()` of its answer under the list (F174);
+     `web_ui_logic.test.js` tests both functions.
 
 MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
@@ -1553,6 +1558,15 @@ CHIRP_ANSWERED_BY = {
 # 97; the confirm and dismiss answers (a dismiss whose vote waits for the
 # clock is 161 bytes, test_chirp_commands_wap.cpp) are held at 256 by CV9.
 CHIRP_MESSAGE_BUFFER = 160
+# Rule CV11 (F174, F178): the dashboard glue, squashed, in each function.
+CHIRP_DASHBOARD_GLUE = {
+    "refreshChirpStatus": ("constgate=WebUiLogic.chirpSendGate(data);",
+                           "document.getElementById('chirpSendBtn').disabled=gate.sendDisabled;"),
+    "confirmChirp": ("constdata=awaitapi('/api/chirp/confirm','POST',{nonce});",
+                     "document.getElementById('chirpActionNote').textContent=WebUiLogic.chirpActionNote(data);"),
+    "dismissChirp": ("constdata=awaitapi('/api/chirp/dismiss','POST',{nonce});",
+                     "document.getElementById('chirpActionNote').textContent=WebUiLogic.chirpActionNote(data);"),
+}
 # Rule CV7: what each GET key is set from (squashed right-hand sides), once.
 CHIRP_STATUS_FIELDS = {
     "state": "chirp_channel::state_name(v.state)",
@@ -1653,8 +1667,9 @@ def chirp_live_read_findings(name: str, code: str) -> tuple[str, ...]:
 
 
 def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]) -> None:
-    """Rules CV1-CV10: the Chirp GET routes read only what the loop task published, the
-    send cooldown is a timer, a refused confirm says why, and no answer outgrows its buffer."""
+    """Rules CV1-CV11: the Chirp GET routes read only what the loop task published, the
+    send cooldown is a timer, a refused confirm says why, no answer outgrows its buffer, and
+    the dashboard shows what the routes say."""
     files = dict(others)
     files[INO] = ino
     for name, src in files.items():
@@ -1690,6 +1705,21 @@ def check_chirp_status_reads(ino: str, others: dict[str, str], errors: list[str]
     check_chirp_route_answers(files[CHIRP_API], errors)
     # CV9, CV10: the confirm and dismiss answers, and the answer buffers.
     check_chirp_confirm_answers(files[CHIRP_API], errors)
+    # CV11: the dashboard shows them.
+    ui = files.get(f"{SKETCH}/web_ui.h")
+    if ui is None:
+        errors.append(f"{SKETCH}/web_ui.h: missing (rule CV11)")
+    else:
+        for fn, needs in CHIRP_DASHBOARD_GLUE.items():
+            body = js_function_body(ui, fn)
+            if body is None:
+                errors.append(f"{SKETCH}/web_ui.h: the dashboard's {fn}() is not where rule CV11 reads it")
+                continue
+            for need in needs:
+                if squash(body).count(need) != 1:
+                    errors.append(f"{SKETCH}/web_ui.h: {fn}() must run `{need}` once — the Chirp card's Send "
+                                  "follows chirpSendGate() (off for any can_send that is not true, F178), and "
+                                  "a confirm or a dismiss shows chirpActionNote() of its answer (F174)")
     # CV3, CV4, CV5: chirp_channel.cpp.
     code = blank_comments_and_strings(files[CHIRP_CPP])
     spans = named_bodies(code)
@@ -2845,6 +2875,17 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the send route rounds a cooldown refusal's time left down again (F178)",
      on_other(CHIRP_API, api_handler("handle_chirp_send"),
               r"chirp_channel::seconds_left\(r\.cooldown_remaining_ms\)", "r.cooldown_remaining_ms / 1000")),
+    # Rule CV11: the dashboard shows it (F174, F178).
+    ("the dashboard's confirm drops its answer again",
+     raw_other(f"{SKETCH}/web_ui.h",
+               "document.getElementById('chirpActionNote').textContent = WebUiLogic.chirpActionNote(data);\n"
+               "      loadChirps();\n    }\n    async function dismissChirp", "loadChirps();\n    }\n    async function dismissChirp")),
+    ("the dashboard's dismiss posts without reading its answer",
+     raw_other(f"{SKETCH}/web_ui.h", "const data = await api('/api/chirp/dismiss', 'POST', { nonce });",
+               "await api('/api/chirp/dismiss', 'POST', { nonce }); const data = {};")),
+    ("the Chirp card's Send follows the presence requirement alone",
+     raw_other(f"{SKETCH}/web_ui.h", "document.getElementById('chirpSendBtn').disabled = gate.sendDisabled;",
+               "document.getElementById('chirpSendBtn').disabled = !data.presence_met;")),
     # Rules CV9, CV10: a refused confirm says why (F174).
     ("the confirm answer names every refusal not_found again",
      on_other(CHIRP_API, r"\binline\s+esp_err_t\s+send_confirm_answer\s*\([^)]*\)",

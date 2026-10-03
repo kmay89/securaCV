@@ -2030,6 +2030,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div id="chirpList" class="log-list" style="max-height:300px;">
             <div class="empty-state"><div class="empty-icon">🐦</div><p>No community alerts</p></div>
           </div>
+          <div id="chirpActionNote" role="status" aria-live="polite" style="margin-top:0.5rem;font-size:0.8rem;min-height:1.2em;color:var(--muted);"></div>
         </div>
 
         <!-- Chirp Settings Card -->
@@ -2701,7 +2702,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // The Chirp send card from GET /api/chirp: what the countdown line
       // says, whether Send is off, and whether the warming-up hint shows. A
       // wall clock not set yet (cannot_send_reason "clock_unsynced", sweep
-      // F146) said "Ready" with Send on, and the send was refused.
+      // F146) said "Ready" with Send on, and the send was refused. Send is
+      // off for any can_send that is not true (sweep F178): a cooldown that
+      // read 0 s left, and any reason this card has no words for, said
+      // "Ready" with Send on.
       function chirpSendGate(data) {
         if (!data.presence_met) return { text: 'Warming up\u2026', sendDisabled: true, presenceHint: true };
         if (data.cooldown_remaining_sec > 0) {
@@ -2712,9 +2716,26 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (data.cannot_send_reason === 'clock_unsynced') {
           return { text: 'Waiting for GPS time\u2026', sendDisabled: true, presenceHint: false };
         }
+        if (data.can_send !== true) {
+          const text = data.cannot_send_reason === 'cooldown' ? 'Cooling down\u2026' : 'Not ready';
+          return { text, sendDisabled: true, presenceHint: false };
+        }
         return { text: 'Ready', sendDisabled: false, presenceHint: false };
       }
-      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible, cameraPanelState, chirpSendGate };
+      // What the Chirp list says after a confirm or a dismiss (sweep F174):
+      // a refused confirm (or a dismiss of a chirp that is gone) says why,
+      // in the device's words, and a dismiss whose signed suppress vote did
+      // not go out says the chirp is hidden on this device only. Both said
+      // nothing: a refused confirm looked like it had worked. '' otherwise.
+      function chirpActionNote(data) {
+        if (!data || typeof data !== 'object') return '';
+        if (data.success === false || data.ok === false) {
+          return data.message || data.error || 'That did not work; try again';
+        }
+        if (data.vote_sent === false) return data.message || 'Dismissed on this device only';
+        return '';
+      }
+      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible, cameraPanelState, chirpSendGate, chirpActionNote };
     })();
     if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
     /* WEBUI_LOGIC:END */
@@ -4200,8 +4221,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       refreshChirpStatus();
     }
 
-    async function confirmChirp(nonce) { await api('/api/chirp/confirm', 'POST', { nonce }); loadChirps(); }
-    async function dismissChirp(nonce) { await api('/api/chirp/dismiss', 'POST', { nonce }); loadChirps(); }
+    async function confirmChirp(nonce) {
+      const data = await api('/api/chirp/confirm', 'POST', { nonce });
+      document.getElementById('chirpActionNote').textContent = WebUiLogic.chirpActionNote(data);
+      loadChirps();
+    }
+    async function dismissChirp(nonce) {
+      const data = await api('/api/chirp/dismiss', 'POST', { nonce });
+      document.getElementById('chirpActionNote').textContent = WebUiLogic.chirpActionNote(data);
+      loadChirps();
+    }
     async function muteChirps(mins) { await api('/api/chirp/mute', 'POST', { duration_minutes: mins }); refreshChirpStatus(); }
     async function unmuteChirps() { await api('/api/chirp/unmute', 'POST'); refreshChirpStatus(); }
     async function updateChirpSettings() { await api('/api/chirp/settings', 'POST', { relay_enabled: document.getElementById('chirpRelayEnabled').checked }); }

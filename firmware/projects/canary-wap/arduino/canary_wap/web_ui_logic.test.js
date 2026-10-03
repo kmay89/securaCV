@@ -179,4 +179,48 @@ describe('chirpSendGate', () => {
     assert.equal(g.sendDisabled, true);
     assert.equal(g.presenceHint, false);
   });
+  // Sweep F178: GET /api/chirp could answer a cooldown with 0 s left (its
+  // last second, or the pass after it ran out), and the card said Ready
+  // with Send on for a send the device refused. The route rounds up now,
+  // but the card turns Send off for any can_send that is not true.
+  it('turns Send off for a cooldown that reads 0 s', () => {
+    const g = L.chirpSendGate({ ...ready, cooldown_remaining_sec: 0, can_send: false,
+                                cannot_send_reason: 'cooldown' });
+    assert.equal(g.sendDisabled, true);
+    assert.notEqual(g.text, 'Ready');
+    assert.equal(g.presenceHint, false);
+  });
+  it('turns Send off for any can_send false, a reason it has no words for included', () => {
+    for (const why of ['disabled', 'some_future_reason', undefined]) {
+      const g = L.chirpSendGate({ ...ready, can_send: false, cannot_send_reason: why });
+      assert.equal(g.sendDisabled, true, String(why));
+      assert.notEqual(g.text, 'Ready', String(why));
+    }
+    assert.equal(L.chirpSendGate({ ...ready, can_send: undefined }).sendDisabled, true);
+  });
+});
+
+// What the Chirp list says after a confirm or a dismiss (sweep F174), from
+// the answers chirp_api.h's send_confirm_answer() and send_dismiss_answer()
+// build (their shapes: test_chirp_commands_wap.cpp and rule CV9).
+describe('chirpActionNote', () => {
+  it('says why a confirm was refused, in the device\'s words', () => {
+    assert.equal(L.chirpActionNote({ success: false, error: 'clock_unsynced',
+                                     message: 'Waiting for the clock to be set from GPS time before confirming' }),
+                 'Waiting for the clock to be set from GPS time before confirming');
+    assert.equal(L.chirpActionNote({ success: false, error: 'not_found' }), 'not_found');
+  });
+  it('says a dismiss whose vote stayed home hid the chirp here only', () => {
+    const m = 'Dismissed on this device only: a suppress vote needs 10 minutes active';
+    assert.equal(L.chirpActionNote({ success: true, vote_sent: false, vote_error: 'presence_required', message: m }), m);
+    assert.match(L.chirpActionNote({ success: true, vote_sent: false }), /this device only/);
+  });
+  it('says nothing for a confirm or a dismiss that went out', () => {
+    assert.equal(L.chirpActionNote({ success: true }), '');
+    assert.equal(L.chirpActionNote({ success: true, vote_sent: true }), '');
+  });
+  it('says what api() reports when the request itself failed', () => {
+    assert.equal(L.chirpActionNote({ ok: false, error: 'Network error' }), 'Network error');
+    assert.equal(L.chirpActionNote(null), '');
+  });
 });
