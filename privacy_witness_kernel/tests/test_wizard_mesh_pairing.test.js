@@ -42,7 +42,13 @@
 //     or starts again: a cleanup still reading, or a wait asleep, sends
 //     nothing more and leaves the screen to the new attempt;
 //   - a retry finds Start ready (after a failure, a success or Cancel), the
-//     wait's line reset, and at its codes a confirm button that is ready.
+//     wait's line reset, and at its codes a confirm button that is ready;
+//   - (F217) Back waits for Start Pairing: while pair/start or pair/join is
+//     in flight the Back button is disabled and closeMeshWizard() leaves the
+//     screen as it is (it used to hide it and end nothing, so the start went
+//     on out of sight and a reopened wizard's Start read "Starting…" until a
+//     reload); every way out of the start leaves Back working, and a start
+//     Back could not stop reaches the progress view, whose Cancel ends it.
 // The mesh section of the page's script is lifted out by literal markers
 // and run against a stub DOM, a scripted api() (the add-on proxy's routes,
 // told apart by the device address in the body) and an immediate delay(),
@@ -71,7 +77,7 @@ function slice(from, to) {
 const code =
   slice("let meshInit = null;",
         "// ---------------------------------------------------------------------------\n// Utilities") +
-  "\n;globalThis.__t = { meshStartPairing, meshConfirm, meshCancel, openMeshWizard };\n";
+  "\n;globalThis.__t = { meshStartPairing, meshConfirm, meshCancel, openMeshWizard, closeMeshWizard };\n";
 
 const INIT = "10.0.0.11";
 const JOIN = "10.0.0.22";
@@ -798,4 +804,95 @@ test("Cancel during a cleanup's read ends it: nothing more is sent or shown", as
   assert.deepStrictEqual(p.calls.slice(before), [], "the user's Cancel already ended both sides");
   assert.ok(!visible(p, "mesh-error"), "no message from the canceled attempt on the reopened form");
   assert.ok(!p.el("mesh-start-btn").disabled);
+});
+
+// ── F217: Back during Start Pairing ──────────────────────────────────────
+
+const backDisabled = (p) => p.el("mesh-back-btn").disabled;
+
+test("Back waits while Start Pairing awaits pair/start and pair/join", async () => {
+  for (const route of ["api/mesh/pair/start", "api/mesh/pair/join"]) {
+    const held = gate();
+    const script = Object.assign({}, F133, {
+      hold: async (r) => { if (r === route) await held.wait(); },
+    });
+    const p = page(script);
+    p.t.openMeshWizard();
+    assert.ok(!backDisabled(p), "Back works before the start");
+    const starting = p.t.meshStartPairing();
+    await ticks();
+    assert.strictEqual(held.parked, 1, `${route} is in flight`);
+    assert.ok(backDisabled(p), `Back is disabled while ${route} is in flight`);
+    p.t.closeMeshWizard();  // what a press would run, were it not disabled
+    assert.ok(visible(p, "screen-mesh"), "the wizard stays on screen");
+    assert.ok(!visible(p, "screen-1"), "and the step behind it stays hidden");
+    held.open();
+    await starting;
+    await settle();
+    // The start reaches the progress view, in sight, where Cancel ends it.
+    assert.ok(visible(p, "mesh-progress"), "the start hands over to the progress view");
+    assert.ok(visible(p, "mesh-codes"), "and its wait reaches the codes on screen");
+    assert.ok(!backDisabled(p), "Back is enabled again once the start is over");
+    await p.t.meshCancel();
+    assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel init", "api/mesh/pair/cancel join"]);
+    assert.ok(!visible(p, "screen-mesh"), "Cancel closes the wizard");
+  }
+});
+
+test("every way out of a start leaves Back working", async () => {
+  const exits = [
+    ["the existing Canary refuses", { start: { ok: false, error: "busy" } }, /^busy$/],
+    ["the new Canary refuses", { join: { ok: false, error: "not_now" } }, /^not_now$/],
+    ["the network fails", { start: THROW }, /^Network error contacting a Canary/],
+  ];
+  for (const [what, over, message] of exits) {
+    const script = Object.assign({}, F133, over);
+    if (over.start === THROW) {
+      script.hold = async (r) => { if (r === "api/mesh/pair/start") throw new TypeError("Failed to fetch"); };
+    }
+    const p = page(script);
+    p.t.openMeshWizard();
+    await p.t.meshStartPairing();
+    await settle();
+    assert.match(p.el("mesh-error").textContent, message, what);
+    assert.ok(!backDisabled(p), `${what}: Back works again`);
+    assert.ok(!p.el("mesh-start-btn").disabled, `${what}: Start is ready`);
+    p.t.closeMeshWizard();
+    assert.ok(!visible(p, "screen-mesh"), `${what}: Back closes the wizard`);
+  }
+});
+
+test("a reopened wizard's Start works after Back was pressed during a start", async () => {
+  // The case F217 names: Back during the start, then the user reopens the
+  // wizard. Back no longer hides a running start, so the attempt is ended
+  // through the progress view's Cancel, and the next Start begins and
+  // reaches its codes.
+  const held = gate();
+  const script = Object.assign({}, F133, {
+    hold: async (r) => { if (r === "api/mesh/pair/join") await held.wait(); },
+  });
+  const p = page(script);
+  p.t.openMeshWizard();
+  const starting = p.t.meshStartPairing();
+  await ticks();
+  p.t.closeMeshWizard();
+  held.open();
+  await starting;
+  await settle();
+  assert.ok(visible(p, "screen-mesh") && visible(p, "mesh-codes"), "the start finished in sight");
+  await p.t.meshCancel();
+  p.t.openMeshWizard();
+  assert.ok(!p.el("mesh-start-btn").disabled, "Start is ready in the reopened wizard");
+  assert.strictEqual(p.el("mesh-start-btn").innerHTML, "Start Pairing");
+  assert.ok(!backDisabled(p));
+  script.hold = null;
+  Object.assign(script, {
+    start: { ok: true, state: "PAIRING_INIT", pairing_seq: 9 },
+    join: { ok: true, state: "PAIRING_JOIN", pairing_seq: 5 },
+    codes: { init: [codeBody(9)], join: [codeBody(5)] },
+  });
+  await p.t.meshStartPairing();
+  await settle();
+  assert.ok(visible(p, "mesh-codes"), "the next attempt reaches its codes");
+  assert.strictEqual(p.calls.filter((c) => c === "api/mesh/pair/start init").length, 2);
 });

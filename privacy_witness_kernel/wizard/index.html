@@ -448,7 +448,7 @@
     </div>
     <div class="info-box red hidden" id="mesh-error"></div>
     <div class="btn-row" style="margin-top:20px">
-      <button class="btn btn-secondary btn-sm" onclick="closeMeshWizard()">Back</button>
+      <button class="btn btn-secondary btn-sm" id="mesh-back-btn" onclick="closeMeshWizard()">Back</button>
       <button class="btn btn-primary" id="mesh-start-btn" onclick="meshStartPairing()">Start Pairing</button>
     </div>
   </div>
@@ -978,6 +978,24 @@ let meshJoinSeq = null;
 // unreachable Canary) would judge the next attempt's bodies by the next
 // attempt's numbers, cancel its pairing and end its wait (F200's review).
 let meshAttempt = 0;
+// True while meshStartPairing() awaits pair/start and pair/join. Back is
+// disabled then, and closeMeshWizard() does nothing (F217): Back used to
+// hide the screen and end nothing, so the start went on out of sight, its
+// wait polled a hidden screen and could stop at the codes with both
+// Canaries in PAIRING_CONFIRM until their 5-minute timeout, and a reopened
+// wizard's Start read "Starting…" until a reload. Back does not end the
+// attempt through Cancel's path instead: a start's pair/start or pair/join
+// may still be on its way to a Canary (the add-on proxy forwards each
+// request on its own, and waits up to 10 s for one that does not answer), so
+// a cancel sent at Back can reach that Canary before the start does and
+// leave the pairing the start then begins running, and a cancel sent after
+// the start answers would break the rule above that nothing is sent for an
+// attempt once it is gone (it could end a pairing a reopened wizard began on
+// the same Canary). So the start keeps one owner, itself: it cancels on its
+// own failures as before, then hands over to the progress view, whose Cancel
+// ends the attempt. The wait is the start's own two requests (and its
+// cancels on a failure), each bounded by the proxy's timeout.
+let meshStarting = false;
 
 function meshThisAttempt() {
   return { n: meshAttempt, init: meshInit, join: meshJoin,
@@ -1146,6 +1164,7 @@ function openMeshWizard() {
 }
 
 function closeMeshWizard() {
+  if (meshStarting) return;  // F217: a start in flight keeps the screen
   meshPolling = false;
   document.getElementById("screen-mesh").classList.add("hidden");
   document.getElementById(`screen-${currentStep}`).classList.remove("hidden");
@@ -1177,6 +1196,10 @@ async function meshStartPairing() {
   const btn = document.getElementById("mesh-start-btn");
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Starting…';
+  // Back waits for the start (F217; see meshStarting).
+  const back = document.getElementById("mesh-back-btn");
+  meshStarting = true;
+  back.disabled = true;
 
   // Initiator starts pairing (add-another), joiner joins. A network error
   // (fetch reject / non-JSON body) throws out of api(); catch it so the UI
@@ -1200,6 +1223,11 @@ async function meshStartPairing() {
     try { await api("api/mesh/pair/cancel", meshJoin); } catch (_) {}
     meshStartFailed("Network error contacting a Canary: " + ((e && e.message) || e));
     return;
+  } finally {
+    // Every way out of the start: a failure leaves the form (Back works
+    // again), a success hands the screen to the progress view (its Cancel).
+    meshStarting = false;
+    back.disabled = false;
   }
 
   document.getElementById("mesh-form").classList.add("hidden");
