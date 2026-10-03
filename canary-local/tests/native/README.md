@@ -124,7 +124,10 @@ With it, the probe asks [`probe_cores.js`](probe_cores.js) for its core,
 which builds it with `cores.js` as above, before Chromium starts. The probe's
 server then answers the dist URL (`emulator/dist/canary-vision-core.js`,
 `canary-wap-audio.js`) with [`core_standin.js`](core_standin.js) instead of
-the committed bundle. That is a factory of the same name and shape:
+the committed bundle, under every spelling of that URL the server would read
+as the file (`dist//`, `%2e%2e`, a percent-encoded name), and refuses any
+other method on it, so a native run never serves the committed core. The
+stand-in is a factory of the same name and shape:
 `createCanaryVisionCore()` resolves to a module whose `cwrap`, `ccall`,
 `UTF8ToString` and `HEAP` views are the ones the dist has. Each call is a
 synchronous request to the probe server, which runs it on the native core
@@ -153,8 +156,10 @@ pointer exports. It checks the module's shape, the i32 arguments, the
 return conversions, the refusals at `cwrap` time, a core that dies, the
 window carried both ways and grown, and the bridge's refusal of memory
 outside an open window. It also checks what the probe server's `handle()`
-takes, that no probe opening a core page skips the bridge, and that CI runs
-each probe both ways. Under `LAB_CORES=native` it also drives the stand-in
+takes (each spelling of a dist URL, and nothing else), that a bridge whose
+stand-in was never served or never called is not `used()`, that the quiet
+wait leaves the core's requests out, that no probe opening a core page skips
+the bridge, and that CI runs each probe both ways. Under `LAB_CORES=native` it also drives the stand-in
 call for call against `cores.js`'s module on both real cores.
 
 CI's wasm job runs each of the three probes on the dist, then again with

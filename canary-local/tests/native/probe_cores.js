@@ -26,7 +26,7 @@
 "use strict";
 
 const fs = require("node:fs");
-const { join } = require("node:path");
+const { join, posix } = require("node:path");
 const cores = require("./cores.js");
 
 // The URL the stand-in posts to. Nothing in the repository lives there, and
@@ -129,12 +129,29 @@ function bridgeOver(built, { distPrefix = "/canary-local/emulator/dist/" } = {})
     }
   }
 
+  // The path a probe server reads for a request (decodeURIComponent of the
+  // URL's pathname, joined onto the repository root, which normalizes it),
+  // so that no spelling of a dist core's URL (dist//x.js, %2e%2e, %66) slips
+  // past the stand-in to the committed bytes. null when it cannot be decoded:
+  // the server refuses that too.
+  const pathOf = (url) => {
+    try { return posix.normalize(decodeURIComponent(new URL(url, "http://x").pathname)); } catch { return null; }
+  };
+
   // The probe server's first stop: the stand-in in place of each dist core,
-  // and the endpoint. True when it took the request.
+  // and the endpoint. True when it took the request. In a native run the
+  // committed core is never served: a GET of its URL gets the stand-in, and
+  // anything else is refused here rather than falling through to the file.
   async function handle(req, res) {
-    const path = req.url.split("?")[0];
+    const path = pathOf(req.url);
+    if (path === null) return false;
     const name = Object.keys(built).find((n) => path === `${distPrefix}${n}.js`);
-    if (name && req.method === "GET") {
+    if (name) {
+      if (req.method !== "GET") {
+        res.writeHead(405, { allow: "GET", "content-type": "text/plain", "cache-control": "no-store" });
+        res.end(`native core bridge: ${name}.js is the stand-in here, and a ${req.method} of it is not served`);
+        return true;
+      }
       served.add(name);
       res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-store" });
       res.end(standin(name));
@@ -193,7 +210,8 @@ function bridgeOver(built, { distPrefix = "/canary-local/emulator/dist/" } = {})
   // What the probe reports, and checks: a native run whose page never
   // loaded the stand-in, or never called it, proved nothing.
   const summary = () => Object.keys(built).map((n) =>
-    `${n}: stand-in ${served.has(n) ? "served" : "NOT served"}, ${calls.get(n)} calls to this tree's ${built[n].plan.sources.length} sources`).join("; ");
+    `${n}: stand-in ${served.has(n) ? "served" : "NOT served"}, ${calls.get(n)} call${calls.get(n) === 1 ? "" : "s"} ` +
+    `to this tree's ${built[n].plan.sources.length} sources`).join("; ");
   const used = () => Object.keys(built).every((n) => served.has(n) && calls.get(n) > 0);
 
   return { answer, respond, handle, standin, gotoIdle, summary, used, calls, ENDPOINT };

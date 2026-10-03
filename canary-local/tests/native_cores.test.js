@@ -434,9 +434,33 @@ test("the probe server's first stop: the stand-in at each core's dist URL, the e
     assert.ok(!text.includes(probeBridge.PLACEHOLDER), "served with its config written in");
     assert.match(text, /"exportName":"createFakeCore"/);
     for (const miss of ["/canary-local/emulator/dist/fake-core.meta.json", "/canary-local/emulator/dist/canary-vision-core.js",
-      "/canary-local/vision.html"]) {
+      "/canary-local/vision.html", "/canary-local/fake-core.js", "/canary-local/emulator/dist/sub/fake-core.js",
+      "/x/canary-local/emulator/dist/fake-core.js"]) {
       assert.strictEqual(await (await fetch(base + miss)).text(), "fell through", miss);
     }
+    // every spelling the probe servers would read as the dist core's file
+    // (they decode the pathname and join it onto the root) is the stand-in,
+    // sent as written: fetch would tidy some of these before they left
+    const raw = (path, method = "GET") => new Promise((done, failed) => {
+      http.request({ host: "localhost", port: server.address().port, path, method }, (r) => {
+        let body = "";
+        r.on("data", (c) => { body += c; });
+        r.on("end", () => done({ status: r.statusCode, body }));
+      }).on("error", failed).end();
+    });
+    for (const spelling of ["/canary-local/emulator//dist/fake-core.js", "/canary-local//emulator/dist/fake-core.js?x=1",
+      "/canary-local/emulator/dist/%66ake-core.js", "/canary-local/emulator/dist%2Ffake-core.js",
+      "/canary-local/emulator/x/../dist/fake-core.js", "/canary-local/emulator/dist/%2e/fake-core.js",
+      "/canary-local/emulator/dist/x/%2e%2e/fake-core.js"]) {
+      assert.deepStrictEqual(await raw(spelling), { status: 200, body: text }, spelling);
+    }
+    // and nothing else of it is ever the committed file
+    for (const method of ["POST", "HEAD", "PUT"]) {
+      const r = await raw("/canary-local/emulator/dist/fake-core.js", method);
+      assert.strictEqual(r.status, 405, `${method}: refused, not fallen through to the dist`);
+    }
+    assert.strictEqual((await raw("/canary-local/emulator/dist/%E0fake-core.js")).body, "fell through",
+      "a path that cannot be decoded is the server's to refuse");
     const post = (body) => fetch(base + probeBridge.ENDPOINT, { method: "POST", body }).then((r) => r.json());
     assert.ok((await post(JSON.stringify({ op: "new", core: "fake-core" }))).id > 0);
     assert.match((await post("x".repeat((8 << 20) + 1))).error, /a request over/);
@@ -444,6 +468,78 @@ test("the probe server's first stop: the stand-in at each core's dist URL, the e
   } finally {
     server.close();
   }
+});
+
+// used() is what keeps a native run from passing on the committed dist: a
+// probe fails unless every core it asked for had its stand-in served AND
+// called. A page that fell back to the dist (or never booted its core) must
+// read as unused, and summary() must say which half was missing.
+test("a native run whose page never loaded, or never called, the stand-in is not used()", async () => {
+  const get = (bridge, url) => bridge.handle({ url, method: "GET" }, { writeHead() {}, end() {} });
+  const call = (bridge, core) => {
+    const made = bridge.respond(JSON.stringify({ op: "new", core }));
+    const wrap = bridge.respond(JSON.stringify({ op: "cwrap", id: made.id, fn: "num", ret: "number", argTypes: ["number"] })).wrap;
+    const r = bridge.respond(JSON.stringify({ op: "call", id: made.id, wrap, args: [5] }));
+    assert.strictEqual(r.ret, 5, JSON.stringify(r));
+  };
+  const one = fakeBridge();
+  assert.strictEqual(one.used(), false, "a fresh bridge");
+  assert.match(one.summary(), /^fake-core: stand-in NOT served, 0 calls to this tree's 0 sources$/);
+  assert.strictEqual(await get(one, "/canary-local/emulator/dist/fake-core.meta.json"), false);
+  assert.strictEqual(one.used(), false, "a request for anything but the core");
+  assert.strictEqual(await get(one, "/canary-local/emulator/dist/fake-core.js"), true);
+  assert.strictEqual(one.used(), false, "served, never called: the page loaded the stand-in and never ran it");
+  assert.match(one.summary(), /^fake-core: stand-in served, 0 calls/);
+  one.respond(JSON.stringify({ op: "new", core: "fake-core" }));
+  assert.strictEqual(one.used(), false, "an instance is not a call");
+  call(one, "fake-core");
+  assert.strictEqual(one.used(), true, "served and called");
+  assert.match(one.summary(), /^fake-core: stand-in served, 1 call to this tree's 0 sources$/);
+
+  const unserved = fakeBridge();
+  call(unserved, "fake-core");
+  assert.strictEqual(unserved.used(), false, "called, never served: the page got its core from somewhere else");
+  assert.match(unserved.summary(), /^fake-core: stand-in NOT served, 1 call/);
+
+  const core = { bin: process.execPath, args: [join(__dirname, "native/fake_core.js")] };
+  const two = probeBridge.bridgeOver({
+    "fake-core": { ...core, plan: BRIDGE_PLAN },
+    "other-core": { ...core, plan: { ...BRIDGE_PLAN, name: "other-core", exportName: "createOtherCore" } },
+  });
+  await get(two, "/canary-local/emulator/dist/fake-core.js");
+  call(two, "fake-core");
+  assert.strictEqual(two.used(), false, "every core the probe asked for, not any one of them");
+  assert.match(two.summary(), /^fake-core: stand-in served, 1 call[^;]*; other-core: stand-in NOT served, 0 calls/);
+  await get(two, "/canary-local/emulator/dist/other-core.js");
+  call(two, "other-core");
+  assert.strictEqual(two.used(), true);
+});
+
+// gotoIdle stands in for waitUntil: "networkidle", which a page that calls
+// its core every animation frame never reaches once each call is a request:
+// the same 500 ms without a request in flight, not counting the core's own.
+test("gotoIdle waits out the page's own requests and 500 ms of quiet, never the core's", async () => {
+  const { EventEmitter } = require("node:events");
+  const bridge = fakeBridge();
+  const req = (path) => ({ url: () => `http://localhost:1${path}` });
+  const page = new EventEmitter();
+  page.goto = async (url, opts) => {
+    assert.strictEqual(opts.waitUntil, "load", "the page's load event first, as networkidle implies");
+    page.emit("request", req(probeBridge.ENDPOINT));   // a core call, in flight for good
+    const late = req("/canary-local/assets/late.js");
+    page.emit("request", late);
+    setTimeout(() => page.emit("requestfinished", late), 300);
+  };
+  const t0 = Date.now();
+  await bridge.gotoIdle(page, "http://localhost:1/canary-local/vision.html", { timeout: 5000 });
+  assert.ok(Date.now() - t0 >= 780, `waited for the page's request and then 500 ms of quiet (took ${Date.now() - t0} ms)`);
+  assert.strictEqual(page.listenerCount("request") + page.listenerCount("requestfinished") + page.listenerCount("requestfailed"), 0,
+    "and left no listener behind");
+  const stuck = new EventEmitter();
+  stuck.goto = async () => { stuck.emit("request", req("/canary-local/stuck.json")); };
+  await assert.rejects(bridge.gotoIdle(stuck, "http://localhost:1/x.html", { timeout: 700 }),
+    /never went idle in 700 ms; in flight: http:\/\/localhost:1\/canary-local\/stuck\.json/);
+  assert.strictEqual(stuck.listenerCount("request"), 0, "nor after a timeout");
 });
 
 test("the stand-in asks the page's policy for nothing new: no eval, no inline code, same-origin requests only", () => {
