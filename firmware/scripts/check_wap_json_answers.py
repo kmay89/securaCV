@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Every canary-wap REST answer fits the buffer it is serialized into (sweep F196).
+"""Every canary-wap REST answer fits the buffer it is serialized into (sweep F196),
+the fleet scan's cache keeps the adverts that fit (F211), and the answers spelled
+with snprintf() are measured and escaped (F212).
 
 ArduinoJson's `serializeJson(doc, char_array)` and its sized form
 `serializeJson(doc, buf, n)` write at most the buffer's size and add the
@@ -13,6 +15,11 @@ beacons carried emoji of bytes JSON escapes, and `GET /api/chirp/recent`,
 from the heap, once its list was full: sixteen ordinary chirps are about
 4.8 KB against its 4096-byte buffer (F196, an ArduinoJson 7.4.1 scratch
 harness of the real handlers).
+
+The same answer files also spelled answers with `snprintf()`, which
+terminates but cuts an answer that does not fit (unparseable), and wrote
+their strings with `%s` unescaped: GET /api/device-info wrote the device name
+a person typed, so a `"` in it broke the answer (F212).
 
 This check measures every one of them, in the canary-wap's REST answer files
 (`SCOPE`: every `*_api.h` of the sketch but the ones `EXCLUDED` names, and
@@ -58,6 +65,38 @@ J4. The fleet scan's cache is not an answer but the handler answers from it
     buffer into the cache with that size; nothing else writes the staging
     buffer. No site is exempt from J1-J3: the one that was, the cut cache's
     `serializeJson()`, is gone.
+
+J5. An answer spelled with `snprintf()` (F212): a call whose format is a JSON
+    object (its first byte `{`), into a buffer the same function sends
+    (`http_send_json()`, `httpd_resp_sendstr()`, `httpd_resp_send()`), and
+    every call that continues it at `buf + pos`. Each is measured, one of:
+    - guarded: the statement after it tests the length it returned against
+      the size it was given (`n >= (int)sizeof(buf)` beside `n <= 0` or
+      `n < 0`, or `(size_t)n >= sizeof(buf)`) and its body returns;
+    - composed: it is followed by `ok = (n > 0 && (size_t)n < left);`, the
+      buffer's `left` starts at `sizeof(buf)` and its `pos` at 0, both move
+      only together by `n` inside `if (ok)`, and the send is right behind an
+      `if (!ok)` whose body returns (a refused piece is written over, never
+      sent);
+    - fits: a `char buf[N]` given `sizeof(buf)`, whose longest output (the
+      format's own bytes and each conversion's widest spelling: `%s` by the
+      longest string it can be given, an integer by its type's widest, a
+      float, a `*` width or a precision unbounded) is under N.
+    And each `%s` is escaped by construction: inside a JSON string every
+    string it can be given (a literal, a ternary of them, a function that
+    returns only literals, a `const char*` given only those, a parameter
+    given only those at every call) holds no byte JSON escapes (`"`, `\\`,
+    a control byte); outside one, each is `true`, `false`, `null` or a
+    number. A string the check cannot read (a char array, a person-typed
+    name) fails: such an answer goes through `wap_json_writer.h`.
+J6. The two answers that carry strings the check cannot read (F212), GET
+    /api/device-info (`handle_device_info()`, the device name a person
+    typed) and the provisioning receipt (`send_provisioning_receipt()`), are
+    built by `identity_json.h` (host-tested: escaped, the old bytes for
+    ordinary input) into a heap buffer of the length it measured: `need =
+    identity_json::<answer>(in, nullptr, 0) + 1`, `malloc(need)` refused when
+    it fails, built with `need`, sent, freed; and neither spells JSON with
+    `snprintf()`.
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -1227,6 +1266,401 @@ def check_fleet_cache(files: dict[str, str], idx: Index) -> list[str]:
                       f"({text[:70]!r}); the cache holds the adverts that fit, never a cut list (J4)")
     return errors
 
+# ── J5: snprintf() answers ───────────────────────────────────────────────
+
+SEND = re.compile(r"\b(?:http_send_json|httpd_resp_sendstr)\s*\(\s*\w+\s*,\s*(\w+)\s*\)"
+                  r"|\bhttpd_resp_send(?:_chunk)?\s*\(\s*\w+\s*,\s*(\w+)\s*,")
+CONV = re.compile(rb"%(?P<flags>[-+ #0]*)(?P<width>\d+|\*)?(?:\.(?P<prec>\d+|\*))?(?P<len>hh|h|ll|l|z|j|t|L)?"
+                  rb"(?P<conv>[diouxXcsfFeEgGaAp%n])")
+INT_SPELL = {  # the widest spelling of an integer conversion, by length modifier
+    "d": {"hh": 4, "h": 6, "": 11, "l": 20, "ll": 20, "z": 20, "j": 20, "t": 20},
+    "u": {"hh": 3, "h": 5, "": 10, "l": 20, "ll": 20, "z": 20, "j": 20, "t": 20},
+    "x": {"hh": 2, "h": 4, "": 8, "l": 16, "ll": 16, "z": 16, "j": 16, "t": 16},
+    "o": {"hh": 3, "h": 6, "": 11, "l": 22, "ll": 22, "z": 22, "j": 22, "t": 22},
+}
+# What a %s outside a JSON string may write: a token, or the separator a
+# list's pieces put between them (`i ? "," : ""`).
+JSON_TOKEN = re.compile(rb"true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][-+]?\d+)?|,|")
+
+
+def literal_values(ctx: Ctx, expr: str, pos: int) -> list[bytes]:
+    """Every string `expr` can be at file offset `pos`, when the check can see them all."""
+    if ctx.depth > 12:
+        raise Unbounded(expr)
+    e = strip_parens(expr)
+    data = c_literal_bytes(e)
+    if data is not None:
+        return [data.split(b"\0")[0]]
+    tern = top_ternary(e)
+    if tern is not None:
+        return literal_values(ctx, tern[0], pos) + literal_values(ctx, tern[1], pos)
+    cast = re.match(r"^\(\s*const\s+char\s*\*\s*\)\s*(.+)$", e, re.S)
+    if cast is not None:
+        return literal_values(ctx, cast.group(1), pos)
+    call = re.match(r"^([A-Za-z_][\w:]*)\s*\(", e)
+    if call is not None and matching_paren(e, call.end() - 1) == len(e) - 1:
+        parts = call.group(1).split("::")
+        fname, qual = parts[-1], tuple(p for p in parts[:-1] if p)
+        defs = [c for c in pick(ctx.idx.fns.get(fname, []), ctx.fn.ns, qual) if c.body is not None]
+        if not defs or any(c.ret.replace(" ", "") not in ("constchar*", "char*") for c in defs):
+            raise Unbounded(f"{call.group(1)}(): not a function whose strings the check can read")
+        out = []
+        for d in defs:
+            kept = blank_comments_only(ctx.idx.files[d.file])
+            code = blank_comments_and_strings(ctx.idx.files[d.file])
+            sub = Ctx(ctx.idx, d.file, d, kept, code, ctx.depth + 1)
+            rets = list(re.finditer(r"\breturn\b", code[d.body[0]:d.body[1]]))
+            if not rets:
+                raise Unbounded(f"{d.name}() returns nothing the check can read")
+            for m in rets:
+                start = d.body[0] + m.end()
+                out += literal_values(sub, kept[start:statement_end(kept, start)], start)
+        return out
+    if re.fullmatch(r"[A-Za-z_]\w*", e):
+        return name_values(ctx, e, pos)
+    raise Unbounded(e)
+
+
+def name_values(ctx: Ctx, name: str, pos: int) -> list[bytes]:
+    """Every string a `const char*` local or parameter holds at `pos`."""
+    t = decl_type(ctx, name, pos)
+    if t is None:
+        raise Unbounded(f"{name}: no declaration found")
+    if t[0].replace(" ", "") != "constchar*" or t[1]:
+        raise Unbounded(f"{name}: a {t[0]}{'[]' * len(t[1])} whose bytes the check cannot read")
+    lo = ctx.fn.body[0]
+    region = ctx.code[lo:pos]
+    esc = re.escape(name)
+    other = re.search(r"(?<![\w.>:&])&\s*" + esc + r"\b|(?<![\w.>:])" + esc + r"\s*(?:\[[^\]]*\]\s*)?"
+                      r"(?:[-+*/%&|^]|<<|>>)=|(?:\+\+|--)\s*" + esc + r"\b|(?<![\w.>:])" + esc + r"\s*(?:\+\+|--)"
+                      r"|(?<![\w.>:])" + esc + r"\s*\[[^\]]*\]\s*=(?!=)", region)
+    if other:
+        raise Unbounded(f"{name}: changed in a way the check does not follow ({other.group(0).strip()})")
+    out = []
+    for a in re.finditer(r"(?<![\w.>:])" + esc + r"\s*=(?!=)", region):
+        start = lo + a.end()
+        out += literal_values(ctx, ctx.kept[start:statement_end(ctx.kept, start)], start)
+    if local_decl(ctx, name, pos) is not None:
+        if not out:
+            raise Unbounded(f"{name}: a local given no value the check can see")
+        return out
+    # A parameter: what every call in the file passes it.
+    params = split_top(ctx.fn.params)
+    at = [i for i, p in enumerate(params) if re.search(r"\b" + esc + r"\b", p)]
+    if len(at) != 1 or "=" in params[at[0]]:
+        raise Unbounded(f"{name}: not a parameter of {ctx.fn.name}() the check can follow")
+    callers = 0
+    for m in re.finditer(r"(?<![\w:.>])" + re.escape(ctx.fn.name) + r"\s*\(", ctx.code):
+        if ctx.fn.body and ctx.fn.body[0] - 400 <= m.start() <= ctx.fn.body[0]:
+            continue                    # the definition's own header
+        caller = next((f for fs in ctx.idx.fns.values() for f in fs
+                       if f.file == ctx.file and f.body and f.body[0] <= m.start() < f.body[1]), None)
+        if caller is None:
+            continue
+        open_at = m.end() - 1
+        args = split_top(ctx.kept[open_at + 1:matching_paren(ctx.code, open_at)])
+        if at[0] >= len(args):
+            raise Unbounded(f"{ctx.fn.name}(): a call without its {name}")
+        callers += 1
+        out += literal_values(Ctx(ctx.idx, ctx.file, caller, ctx.kept, ctx.code, ctx.depth + 1), args[at[0]],
+                              open_at + 1)
+    if not callers:
+        raise Unbounded(f"{ctx.fn.name}(): no call in its file to read {name} at")
+    return out
+
+
+@dataclass
+class Printf:
+    file: str
+    fn: str
+    line: int
+    target: str
+    verdict: str          # "guarded", "composed", "fits", or an error
+    bound: int | None = None
+    size: int | None = None
+
+
+def in_json_string(fmt: bytes, upto: int) -> bool:
+    inside, i = False, 0
+    while i < upto:
+        c = fmt[i:i + 1]
+        if inside and c == b"\\":
+            i += 2
+            continue
+        if c == b'"':
+            inside = not inside
+        i += 1
+    return inside
+
+
+def printf_conversions(ctx: Ctx, fmt: bytes, vals: list[str], pos: int) -> tuple[int | None, list[str], str]:
+    """The format's longest output (None when the check cannot bound it, with why), and what is wrong
+    with its %s values: a string whose bytes the check cannot read, or one that needs escaping."""
+    width, problems, arg = 0, [], 0
+    unbounded = ""
+    last = 0
+    for m in CONV.finditer(fmt):
+        width += m.start() - last
+        last = m.end()
+        conv = m.group("conv").decode()
+        if conv == "%":
+            width += 1
+            continue
+        if arg >= len(vals):
+            problems.append("more conversions than values")
+            break
+        val = vals[arg]
+        arg += 1
+        if m.group("width") == b"*" or m.group("prec") == b"*":
+            problems.append("a `*` width or precision")
+            continue
+        mod = (m.group("len") or b"").decode()
+        if conv == "s":
+            if m.group("prec") is not None:
+                problems.append("a %s with a precision")
+                continue
+            try:
+                strings = literal_values(ctx, val, pos)
+            except Unbounded as why:
+                problems.append(f"%s value {val}: a string whose bytes the check cannot read ({why})")
+                continue
+            spell = max(len(v) for v in strings)
+            if in_json_string(fmt, m.start()):
+                bad = [v for v in strings if any(b in b'"\\' or b < 0x20 for b in v)]
+                if bad:
+                    problems.append(f"%s value {bad[0]!r} holds a byte JSON escapes, inside a JSON string")
+            else:
+                bad = [v for v in strings if not JSON_TOKEN.fullmatch(v)]
+                if bad:
+                    problems.append(f"%s value {bad[0]!r} is not a JSON token or a separator, outside a JSON "
+                                    "string")
+        elif conv in "di":
+            spell = INT_SPELL["d"][mod]
+        elif conv in "uxXo":
+            spell = INT_SPELL["x" if conv in "xX" else conv][mod]
+        elif conv == "c":
+            spell = 1
+        else:
+            unbounded = unbounded or f"a %{conv} conversion"
+            continue
+        if m.group("width"):
+            spell = max(spell, int(m.group("width")))
+        width += spell
+    width += len(fmt) - last
+    if arg != len(vals) and not problems:
+        problems.append("more values than conversions")
+    return (None if unbounded else width), problems, unbounded
+
+
+def next_statement(code: str, after: int) -> int:
+    i = after
+    while i < len(code) and code[i].isspace():
+        i += 1
+    return i
+
+
+def guard_after(ctx: Ctx, stmt_end: int, var: str, size: str, target: str) -> str | None:
+    """'guarded' or 'composed:<flag>' when the statement after the snprintf tests its length."""
+    code, kept = ctx.code, ctx.kept
+    i = next_statement(code, stmt_end + 1)
+    v, sz = re.escape(var), re.escape(size.replace(" ", ""))
+    if re.match(r"if\s*\(", code[i:]):
+        parsed = if_statement(code, i)
+        if parsed is None or not body_always_returns(parsed[1]):
+            return None
+        disj = [d.replace(" ", "") for d in split_top(kept[code.find("(", i) + 1:matching_paren(code, code.find("(", i))], "|")]
+        disj = [d.strip("|") for d in disj if d.strip("|")]
+        sizes = {sz, re.escape("sizeof(" + target + ")")}
+        unsigned = any(re.fullmatch(r"\(size_t\)" + v + r">=(?:" + "|".join(sizes) + r")", d) for d in disj)
+        signed = any(re.fullmatch(v + r">=\(int\)(?:" + "|".join(sizes) + r")", d) for d in disj)
+        negative = any(re.fullmatch(v + r"(?:<=0|<0)", d) for d in disj)
+        if unsigned or (signed and negative):
+            return "guarded"
+        return None
+    flag = re.match(r"(?:bool\s+)?(\w+)\s*=\s*\(\s*" + v + r"\s*>\s*0\s*&&\s*\(\s*size_t\s*\)\s*" + v + r"\s*<\s*"
+                    + re.escape(size.strip()) + r"\s*\)\s*;", code[i:])
+    if flag:
+        return "composed:" + flag.group(1)
+    return None
+
+
+def composed_ok(ctx: Ctx, target: str, size: str, flag: str, offset: str | None, var: str) -> str | None:
+    """What breaks the composed form in ctx's function, or None."""
+    lo, hi = ctx.fn.body
+    body = ctx.code[lo:hi]
+    t, r, f = re.escape(target), re.escape(size.strip()), re.escape(flag)
+    if not re.search(r"\bsize_t\s+" + r + r"\s*=\s*sizeof\s*\(\s*" + t + r"\s*\)\s*;", body):
+        return f"{size} does not start at sizeof({target})"
+    pos_names = set(re.findall(r"\bsize_t\s+(\w+)\s*=\s*0\s*;", body))
+    if offset is not None and offset not in pos_names:
+        return f"{offset} does not start at 0"
+    moves = re.findall(r"if\s*\(\s*" + f + r"\s*\)\s*\{\s*(\w+)\s*\+=\s*\(\s*size_t\s*\)\s*(\w+)\s*;\s*" + r
+                       + r"\s*-=\s*\(\s*size_t\s*\)\s*(\w+)\s*;\s*\}", body)
+    writes = len(re.findall(r"(?<![\w.>])" + r + r"\s*(?:[-+*/]?=)(?!=)", body)) - 1     # less the declaration
+    if writes != len(moves) or any(m[1] != m[2] for m in moves):
+        return f"{size} moves outside `if ({flag}) {{ pos += (size_t)n; {size} -= (size_t)n; }}`"
+    for p in pos_names & {m[0] for m in moves}:
+        if len(re.findall(r"(?<![\w.>])" + re.escape(p) + r"\s*(?:[-+*/]?=)(?!=)", body)) - 1 != len(moves):
+            return f"{p} moves outside `if ({flag})`"
+    send = None
+    for m in SEND.finditer(body):
+        if (m.group(1) or m.group(2)) == target:
+            send = m
+    if send is None:
+        return f"{target} is never sent"
+    stmt_start = max(body.rfind(c, 0, send.start()) for c in ";{}") + 1
+    before = body[:stmt_start].rstrip()
+    guard = re.search(r"if\s*\(\s*!\s*" + f + r"\s*\)\s*(\{[^{}]*\}|[^;{}]*;)\s*$", before)
+    if guard is None or not body_always_returns(guard.group(1).strip("{}")):
+        return f"the send of {target} is not right behind `if (!{flag})` refusing"
+    return None
+
+
+def printf_args(ctx: Ctx, call_at: int) -> list[str]:
+    open_at = ctx.code.find("(", call_at)
+    return split_top(ctx.kept[open_at + 1:matching_paren(ctx.code, open_at)])
+
+
+def json_answer_starts(ctx: Ctx, calls: list[int], sent: set[str]) -> set[str]:
+    """The sent buffers a snprintf() starts with a JSON object."""
+    out = set()
+    for at in calls:
+        args = printf_args(ctx, at)
+        fmt = c_literal_bytes(args[2]) if len(args) >= 3 else None
+        if len(args) >= 3 and args[0] in sent and (fmt is None or fmt.lstrip().startswith(b"{")):
+            out.add(args[0])
+    return out
+
+
+def judge_printf(ctx: Ctx, call_at: int, answers: set[str]) -> Printf | None:
+    kept, code = ctx.kept, ctx.code
+    args = printf_args(ctx, call_at)
+    if len(args) < 3:
+        return None
+    tgt = re.fullmatch(r"(\w+)(?:\s*\+\s*(\w+))?", args[0])
+    if tgt is None or tgt.group(1) not in answers:
+        return None
+    target, offset = tgt.group(1), tgt.group(2)
+    fmt = c_literal_bytes(args[2])
+    if fmt is not None and offset is None and not fmt.lstrip().startswith(b"{"):
+        return None                     # a text into the same buffer that is not the JSON answer
+    line = kept.count("\n", 0, call_at) + 1
+    pf = Printf(ctx.file, ctx.fn.name, line, args[0], "")
+    if fmt is None:
+        pf.verdict = f"snprintf({args[0]}, …): a format the check cannot read (J5)"
+        return pf
+    bound, problems, unbounded = printf_conversions(ctx, fmt, args[3:], call_at)
+    if problems:
+        pf.verdict = f"{args[0]}: {problems[0]}; spell it with wap_json_writer.h (J5)"
+        return pf
+    stmt_end = statement_end(code, call_at)
+    head = kept[max(kept.rfind(";", 0, call_at), kept.rfind("{", 0, call_at), kept.rfind("}", 0, call_at)) + 1:call_at]
+    var = re.search(r"(?:\b(?:const\s+)?(?:int|size_t)\s+)?(\w+)\s*=\s*$", head)
+    guard = guard_after(ctx, stmt_end, var.group(1), args[1], target) if var else None
+    if guard == "guarded":
+        pf.verdict = "guarded"
+        return pf
+    if guard is not None and guard.startswith("composed:"):
+        why = composed_ok(ctx, target, args[1], guard.split(":", 1)[1], offset, var.group(1))
+        pf.verdict = "composed" if why is None else f"{args[0]}: {why} (J5)"
+        return pf
+    if offset is not None:
+        pf.verdict = f"{args[0]}: a piece written at an offset with no length test after it (J5)"
+        return pf
+    t = decl_type(ctx, target, call_at)
+    if t is None or re.sub(r"\bconst\b", "", t[0]).replace(" ", "") != "char" or len(t[1]) != 1:
+        pf.verdict = f"{target}: a buffer the check cannot size, and no length test after the snprintf (J5)"
+        return pf
+    size = const_value(ctx.idx, t[1][0], ctx.fn.ns)
+    if args[1].replace(" ", "") != f"sizeof({target})" and const_value(ctx.idx, args[1], ctx.fn.ns) != size:
+        pf.verdict = f"{target}: written with a size ({args[1]}) that is not the buffer's (J5)"
+        return pf
+    if size is None or bound is None:
+        pf.verdict = (f"{target}: cannot bound the answer ({unbounded or 'its size'}) and no length test after "
+                      "the snprintf (J5)")
+        return pf
+    pf.bound, pf.size = bound, size
+    if bound >= size:
+        pf.verdict = (f"{target}: its longest answer is {bound} bytes against {size}, so it is cut; test "
+                      "snprintf()'s length or size the buffer past it (J5)")
+        return pf
+    pf.verdict = "fits"
+    return pf
+
+
+def check_printf_answers(files: dict[str, str], idx: Index) -> tuple[list[str], list[Printf]]:
+    errors: list[str] = []
+    found: list[Printf] = []
+    for name in scope_of(files):
+        code = blank_comments_and_strings(files[name])
+        kept = blank_comments_only(files[name])
+        for fs in idx.fns.values():
+            for fn in fs:
+                if fn.file != name or not fn.body:
+                    continue
+                body = code[fn.body[0]:fn.body[1]]
+                sent = {m.group(1) or m.group(2) for m in SEND.finditer(body)}
+                if not sent or "snprintf" not in body:
+                    continue
+                ctx = Ctx(idx, name, fn, kept, code)
+                calls = [fn.body[0] + m.start() for m in re.finditer(r"(?<![\w:.>])snprintf\s*\(", body)
+                         if fn_containing(idx, name, fn.body[0] + m.start()) is fn]
+                answers = json_answer_starts(ctx, calls, sent)
+                for at in calls:
+                    pf = judge_printf(ctx, at, answers)
+                    if pf is None:
+                        continue
+                    found.append(pf)
+                    if pf.verdict not in ("guarded", "composed", "fits"):
+                        errors.append(f"{name}:{pf.line}: {fn.name}(): {pf.verdict}")
+    return errors, found
+
+
+# ── J6: the identity answers ─────────────────────────────────────────────
+
+IDENTITY = {"handle_device_info": "device_info", "send_provisioning_receipt": "provisioning_receipt"}
+
+
+def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
+    errors = []
+    code = blank_comments_and_strings(files[INO])
+    for fname, builder in IDENTITY.items():
+        fns = [f for f in idx.fns.get(fname, []) if f.file == INO and f.body]
+        where = f"{INO}: {fname}()"
+        if len(fns) != 1:
+            errors.append(f"{where}: {len(fns)} definitions; the identity answer cannot be read (J6)")
+            continue
+        body = code[fns[0].body[0]:fns[0].body[1]]
+        b = re.escape(builder)
+        m = re.search(r"\bconst\s+size_t\s+(\w+)\s*=\s*identity_json\s*::\s*" + b
+                      + r"\s*\(\s*(\w+)\s*,\s*nullptr\s*,\s*0\s*\)\s*\+\s*1\s*;", body)
+        if m is None:
+            errors.append(f"{where}: the answer is not measured first (`need = identity_json::{builder}(in, "
+                          "nullptr, 0) + 1`) (J6)")
+            continue
+        need, inp = m.group(1), m.group(2)
+        a = re.search(r"\bchar\s*\*\s*(\w+)\s*=\s*\(\s*char\s*\*\s*\)\s*malloc\s*\(\s*" + re.escape(need)
+                      + r"\s*\)\s*;", body)
+        if a is None:
+            errors.append(f"{where}: the answer is not written into malloc({need}) (J6)")
+            continue
+        buf = a.group(1)
+        checks = [
+            (r"if\s*\(\s*!\s*" + re.escape(buf) + r"\s*\)\s*return\b", f"a failed malloc({need}) is not refused"),
+            (r"\bidentity_json\s*::\s*" + b + r"\s*\(\s*" + re.escape(inp) + r"\s*,\s*" + re.escape(buf) + r"\s*,\s*"
+             + re.escape(need) + r"\s*\)\s*;", f"the answer is not built into {buf} with {need}"),
+            (r"\b(?:httpd_resp_sendstr|http_send_json)\s*\(\s*\w+\s*,\s*" + re.escape(buf) + r"\s*\)",
+             f"{buf} is not what is sent"),
+            (r"\bfree\s*\(\s*" + re.escape(buf) + r"\s*\)", f"{buf} is not freed"),
+        ]
+        for pat, why in checks:
+            if not re.search(pat, body):
+                errors.append(f"{where}: {why} (J6)")
+        if re.search(r"(?<![\w:.>])snprintf\s*\(", body):
+            errors.append(f"{where}: spells JSON with snprintf() again; build it with identity_json.h (J6)")
+    return errors
+
+
 
 def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     idx = build_index(files)
@@ -1236,6 +1670,9 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
         if name not in files:
             errors.append(f"{name}: EXCLUDED names a file the sketch no longer has")
     errors += check_fleet_cache(files, idx)
+    errors += check_identity_answers(files, idx)
+    printf_errors, _printfs = check_printf_answers(files, idx)
+    errors += printf_errors
     for name in scope_of(files):
         src = files[name]
         code = blank_comments_and_strings(src)
@@ -1385,6 +1822,59 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the fleet scan's cache is copied short",
      raw_in(INO, "memcpy(g_fleet_scan_cache, staging, FLEET_SCAN_CACHE_SIZE);",
             "memcpy(g_fleet_scan_cache, staging, strlen(staging));")),
+    # J5: a snprintf() answer is measured, and every %s in it escaped by construction.
+    ("http_send_error() goes down to a 40-byte buffer (its longest answer is 44)",
+     raw_in(INO, "  char response[128];\n  snprintf(response, sizeof(response), \"{\\\"ok\\\":false,\\\"error\\\":\\\"%s\\\"}\", error_code);",
+            "  char response[40];\n  snprintf(response, sizeof(response), \"{\\\"ok\\\":false,\\\"error\\\":\\\"%s\\\"}\", error_code);")),
+    ("a route answers the request's own bytes through http_send_error()",
+     raw_in(INO, 'return http_send_error(req, 400, "unknown_action");', "return http_send_error(req, 400, action);")),
+    ("a peek refusal's reason holds a quote",
+     raw_in(f"{SKETCH}/camera_gate_logic.h", '"Device is too hot. The preview stays off until it cools."',
+            '"Device is \\"too hot\\". The preview stays off until it cools."')),
+    ("the mic mute answer writes yes/no where a token goes",
+     raw_in(INO, 'muted ? "true" : "false", persisted ? "true" : "false");',
+            'muted ? "yes" : "no", persisted ? "true" : "false");')),
+    ("the receipt gate's answer gets 128 bytes and an off-by-one length test",
+     both(raw_in(INO, "    char body[256];\n    int n = snprintf(body, sizeof(body),",
+                 "    char body[128];\n    int n = snprintf(body, sizeof(body),"),
+          raw_in(INO, "if (n < 0 || (size_t)n >= sizeof(body)) {", "if (n < 0 || (size_t)n > sizeof(body)) {"))),
+    ("the receipt gate's answer gets 128 bytes and a length test that does not refuse",
+     both(raw_in(INO, "    char body[256];\n    int n = snprintf(body, sizeof(body),",
+                 "    char body[128];\n    int n = snprintf(body, sizeof(body),"),
+          raw_in(INO, "      return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,\n"
+                      "                                 \"Failed to build provisioning gate response\");",
+                 "      (void)httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,\n"
+                 "                                 \"Failed to build provisioning gate response\");"))),
+    ("the transitions answer drops its final refusal",
+     raw_in(INO, "  if (!fits) {\n    return http_send_json(req, \"{\\\"ok\\\":false,\\\"error\\\":\\\"buffer overflow\\\"}\");\n  }\n"
+                 "  return http_send_json(req, buf);", "  return http_send_json(req, buf);")),
+    ("a transitions piece is written with the whole buffer's size",
+     raw_in(INO, "    w = snprintf(buf + pos, remaining,\n", "    w = snprintf(buf + pos, sizeof(buf),\n")),
+    ("the transitions answer's room stops shrinking",
+     raw_in(INO, "  bool fits = (w > 0 && (size_t)w < remaining);\n  if (fits) { pos += (size_t)w; remaining -= (size_t)w; }",
+            "  bool fits = (w > 0 && (size_t)w < remaining);\n  if (fits) { pos += (size_t)w; }")),
+    ("a new route answers a float it cannot bound, untested",
+     add_file(f"{SKETCH}/zz_float_api.h",
+              "namespace zz_api {\ninline esp_err_t handle_zz(httpd_req_t* req, float t) {\n  char buf[32];\n"
+              "  snprintf(buf, sizeof(buf), \"{\\\"t\\\":%f}\", t);\n  return httpd_resp_sendstr(req, buf);\n}\n}\n")),
+    ("a new route answers a char array, length-tested but unescaped",
+     add_file(f"{SKETCH}/zz_name_api.h",
+              "namespace zz_api {\ninline esp_err_t handle_zz(httpd_req_t* req) {\n  char name[33] = {0};\n  char buf[96];\n"
+              "  int n = snprintf(buf, sizeof(buf), \"{\\\"name\\\":\\\"%s\\\"}\", name);\n"
+              "  if (n < 0 || (size_t)n >= sizeof(buf)) return ESP_FAIL;\n  return httpd_resp_sendstr(req, buf);\n}\n}\n")),
+    # J6: the identity answers are built by identity_json.h at their measured length.
+    ("GET /api/device-info goes back to snprintf() with the raw name",
+     raw_in(INO, "  const size_t need = identity_json::device_info(in, nullptr, 0) + 1;\n  char* json = (char*)malloc(need);\n"
+                 "  if (!json) return http_send_error(req, 500, \"out_of_memory\");\n  identity_json::device_info(in, json, need);\n",
+            "  char json[768];\n  snprintf(json, sizeof(json), \"{\\\"device_name\\\":\\\"%s\\\"}\", in.device_name);\n")),
+    ("the receipt is built into a fixed 1024 bytes",
+     raw_in(INO, "  const size_t need = identity_json::provisioning_receipt(in, nullptr, 0) + 1;",
+            "  const size_t need = 1024;")),
+    ("GET /api/device-info is built with a size that is not the measured one",
+     raw_in(INO, "  identity_json::device_info(in, json, need);", "  identity_json::device_info(in, json, 512);")),
+    ("a failed malloc for the receipt is not refused",
+     raw_in(INO, "  if (!json) return http_send_error(req, 500, \"out_of_memory\");\n  identity_json::provisioning_receipt(in, json, need);",
+            "  identity_json::provisioning_receipt(in, json, need);")),
     # J2: every value a const char* holds before the answer, wherever it is
     # assigned (the review's P1 and P3: an assignment after `)` or `case 3:`).
     ("the status reason is reassigned on an if's own line",
@@ -1451,10 +1941,14 @@ def self_test(files: dict[str, str]) -> list[str]:
 def main(argv: list[str]) -> int:
     files = sketch_files()
     errors, sites = check_files(files)
+    printfs = check_printf_answers(files, build_index(files))[1]
     if "--list" in argv:
         for s in sites:
             extra = f" (longest {s.bound} of {s.size})" if s.bound is not None else ""
             print(f"{s.file.rsplit('/', 1)[-1]}:{s.line} {s.fn}() -> {s.target}: {s.verdict}{extra}")
+        for p in printfs:
+            extra = f" (longest {p.bound} of {p.size})" if p.bound is not None else ""
+            print(f"{p.file.rsplit('/', 1)[-1]}:{p.line} {p.fn}() -> snprintf {p.target}: {p.verdict}{extra}")
     for err in errors:
         print(f"::error::{err}")
     problems = [] if "--no-self-test" in argv else self_test(files)
@@ -1463,9 +1957,13 @@ def main(argv: list[str]) -> int:
     if errors or problems:
         return 1
     fits = [s for s in sites if s.verdict == "fits"]
+    kinds = {k: sum(1 for p in printfs if p.verdict == k) for k in ("fits", "guarded", "composed")}
     print(f"canary-wap REST answers fit their buffers: {len(sites)} serializeJson() calls in "
           f"{len(scope_of(files))} files, {len(fits)} fixed buffers measured against their longest "
-          f"answer, the rest grow or are sized by measureJson() ({len(MUTATIONS)} mutations refused).")
+          f"answer, the rest grow or are sized by measureJson(); {len(printfs)} snprintf() answer pieces "
+          f"({kinds['fits']} measured to fit, {kinds['guarded']} length-tested, {kinds['composed']} composed), "
+          f"every %s escaped by construction; the identity answers measured by identity_json.h "
+          f"({len(MUTATIONS)} mutations refused).")
     return 0
 
 
