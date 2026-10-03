@@ -463,6 +463,47 @@ clean-wap-json-writer:
 run: run-wap-json-writer
 clean: clean-wap-json-writer
 
+# The device name holds no control byte (sweep F226): the REAL
+# device_name_rule.h, and setup_wizard.h's init(), get_device_name() and
+# set_device_name() cut verbatim (firmware/tests_host/cut_functions.awk) over
+# the first-boot suite's fake NVS (stubs/first_boot; Arduino.h from
+# stubs/nvs_store), beside canary_wap.ino's sanitize_mdns_label(), cut
+# verbatim. Every byte below 0x20, wherever it stands: the setter refuses it
+# and keeps the name it had, in RAM and NVS; both rename routes' steps (as
+# the sketch spells them, held there by check_wap_json_answers.py rule J8)
+# refuse it; both answers that carry the name through ArduinoJson (POST
+# /api/device-name's, GET /api/fleet/scan's self row) parse under JSON.parse's
+# rules; a name stored before the rule reads back with each control byte as
+# a space and its mDNS label unchanged; and usable() is the routes' old test
+# (1-32 bytes, a label the sanitizer keeps) with only control bytes added.
+DEVNAME_BIN   = test_device_name
+DEVNAME_SRC   = test_device_name.cpp
+DEVNAME_WIZ   = test_device_name_wizard.inc
+DEVNAME_LABEL = test_device_name_label.inc
+DEVNAME_CUT   = ../../../tests_host/cut_functions.awk
+
+$(DEVNAME_WIZ): $(SRC_DIR)/setup_wizard.h $(DEVNAME_CUT) Makefile
+	awk -v 'sigs=inline bool init() {|inline const char* get_device_name() {|inline bool set_device_name(const char* name) {' \
+	  -f $(DEVNAME_CUT) $(SRC_DIR)/setup_wizard.h > $@.tmp && mv $@.tmp $@
+
+$(DEVNAME_LABEL): $(SRC_DIR)/canary_wap.ino $(DEVNAME_CUT) Makefile
+	awk -v 'sigs=static void sanitize_mdns_label(const char* in, char* out, size_t cap) {' \
+	  -f $(DEVNAME_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(DEVNAME_BIN): $(DEVNAME_SRC) $(DEVNAME_WIZ) $(DEVNAME_LABEL) json_strict.h arduino_globals.h \
+                $(SRC_DIR)/device_name_rule.h $(SRC_DIR)/csi_module_settings_nvs.h \
+                $(wildcard stubs/first_boot/*.h) stubs/nvs_store/Arduino.h
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/first_boot -I stubs/nvs_store -I $(SRC_DIR) -I . -o $@ $(DEVNAME_SRC)
+
+.PHONY: run-device-name clean-device-name
+run-device-name: $(DEVNAME_BIN)
+	$(call run_marked,$(DEVNAME_BIN))
+clean-device-name:
+	rm -f $(DEVNAME_BIN) $(DEVNAME_WIZ) $(DEVNAME_LABEL)
+
+run: run-device-name
+clean: clean-device-name
+
 # The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
 # sketch's csi_module_settings_* readers, by the shared
 # csi_module_settings_nvs.h rule, and its boot init through one read-only
@@ -629,7 +670,7 @@ $(FIRSTBOOT_STAMP): $(SRC_DIR)/canary_wap.ino Makefile
 	  $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(FIRSTBOOT_BIN): $(FIRSTBOOT_SRC) $(FIRSTBOOT_INCS) $(SRC_DIR)/nvs_store.h $(SRC_DIR)/nvs_session_depth.h \
-                  $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/first_boot/*.h) \
+                  $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/device_name_rule.h $(wildcard stubs/first_boot/*.h) \
                   stubs/nvs_store/Arduino.h $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/first_boot -I stubs/nvs_store -I $(NVSLOCK_FREERTOS) \
 	  -I $(SRC_DIR) -I . -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(FIRSTBOOT_SRC)

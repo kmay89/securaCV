@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Every canary-wap REST answer fits the buffer it is serialized into (sweep F196),
-the fleet scan's cache keeps the adverts that fit (F211), and the answers spelled
-with snprintf() are measured and escaped (F212).
+the fleet scan's cache keeps the adverts that fit (F211), the answers spelled
+with snprintf() are measured and escaped (F212), and the device name holds no
+byte ArduinoJson would write raw (F226).
 
 ArduinoJson's `serializeJson(doc, char_array)` and its sized form
 `serializeJson(doc, buf, n)` write at most the buffer's size and add the
@@ -101,6 +102,17 @@ J6. The two answers that carry strings the check cannot read (F212), GET
     identity_json::<answer>(in, nullptr, 0) + 1`, `malloc(need)` refused when
     it fails, built with `need`, sent, freed; and neither spells JSON with
     `snprintf()`.
+J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
+    one raw into POST /api/device-name's answer and GET /api/fleet/scan's
+    self row, and JSON.parse refuses it. `setup_wizard::set_device_name()`
+    opens with `if (!device_name_rule::storable(name)) return false;`,
+    `init()` scrubs the stored name right after reading it
+    (`device_name_rule::scrub_stored(s_device_name);`), nothing but those
+    two and `get_device_name()` names `s_device_name`, and the setter is
+    called once in each rename route (`handle_wifi_connect()`,
+    `handle_device_name()`), after `device_name_rule::usable()` of the same
+    argument, unchanged in between (host-tested in
+    tests_host/test_device_name.cpp).
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -1692,6 +1704,85 @@ def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
 
 
 
+# ── J8: the device name holds no control byte ────────────────────────────
+
+WIZARD = f"{SKETCH}/setup_wizard.h"
+NAME_ROUTES = ("handle_wifi_connect", "handle_device_name")
+
+
+def check_device_name(files: dict[str, str], idx: Index) -> list[str]:
+    """J8: setup_wizard::set_device_name() refuses a control byte, init() scrubs a stored name, nothing
+    else writes s_device_name, and every rename decides with device_name_rule::usable() first."""
+    errors: list[str] = []
+    if WIZARD not in files:
+        return [f"{WIZARD}: missing; the device name's setter cannot be read (J8)"]
+    code = blank_comments_and_strings(files[WIZARD])
+    kept = blank_comments_only(files[WIZARD])
+
+    def one(name: str) -> Fn | None:
+        fns = [f for f in idx.fns.get(name, []) if f.file == WIZARD and f.body and f.ns == ("setup_wizard",)]
+        if len(fns) != 1:
+            errors.append(f"{WIZARD}: setup_wizard::{name}() {len(fns)} times; it cannot be read (J8)")
+            return None
+        return fns[0]
+
+    setter, init, getter = one("set_device_name"), one("init"), one("get_device_name")
+    if setter is not None:
+        body = code[setter.body[0]:setter.body[1]]
+        params = split_top(setter.params)
+        arg = re.search(r"(\w+)\s*$", params[0]).group(1) if len(params) == 1 else None
+        if arg is None or not re.match(r"\s*if\s*\(\s*!\s*device_name_rule\s*::\s*storable\s*\(\s*" + arg
+                                       + r"\s*\)\s*\)\s*return\s+false\s*;", body):
+            errors.append(f"{WIZARD}: set_device_name() does not open with `if (!device_name_rule::storable(name)) "
+                          "return false;`: a name holding a control byte would be stored (J8)")
+    if init is not None:
+        body = kept[init.body[0]:init.body[1]]
+        if not re.search(r"prefs\s*\.\s*getString\s*\(\s*\"dev_name\"\s*,\s*s_device_name\s*,\s*sizeof\s*\(\s*"
+                         r"s_device_name\s*\)\s*\)\s*;\s*device_name_rule\s*::\s*scrub_stored\s*\(\s*s_device_name\s*\)"
+                         r"\s*;", body):
+            errors.append(f"{WIZARD}: init() does not scrub the stored name right after reading it "
+                          "(`device_name_rule::scrub_stored(s_device_name);`): a name stored before F226 would "
+                          "reach the answers with its control bytes (J8)")
+    # Nothing but the declaration, init(), get_device_name() and set_device_name() names s_device_name.
+    allowed = [f.body for f in (setter, init, getter) if f is not None]
+    for name, src in files.items():
+        c = blank_comments_and_strings(src)
+        for m in re.finditer(r"\bs_device_name\b", c):
+            if name == WIZARD and (any(b[0] <= m.start() < b[1] for b in allowed)
+                                   or re.match(r"static\s+char\s+s_device_name\s*\[", c[c.rfind("\n", 0, m.start()) + 1:].lstrip())):
+                continue
+            line = c.count("\n", 0, m.start()) + 1
+            errors.append(f"{name}:{line}: names s_device_name outside setup_wizard.h's init(), "
+                          "set_device_name() and get_device_name(): the name's one writer is the setter (J8)")
+    # Every rename decides with usable() on the argument it then stores.
+    calls = 0
+    for name, src in files.items():
+        c = blank_comments_and_strings(src)
+        k = blank_comments_only(src)
+        for m in re.finditer(r"\bsetup_wizard\s*::\s*set_device_name\s*\(", c):
+            calls += 1
+            open_at = m.end() - 1
+            args = split_top(k[open_at + 1:matching_paren(c, open_at)])
+            fn = fn_containing(idx, name, m.start())
+            line = c.count("\n", 0, m.start()) + 1
+            where = f"{name}:{line}: {fn.name if fn else '?'}()"
+            if fn is None or len(args) != 1 or not re.fullmatch(r"\w+", args[0]):
+                errors.append(f"{where}: set_device_name() with an argument the check cannot follow (J8)")
+                continue
+            if fn.name not in NAME_ROUTES:
+                errors.append(f"{where}: sets the device name outside the two rename routes {NAME_ROUTES} (J8)")
+            before = c[fn.body[0]:m.start()]
+            if not re.search(r"\bdevice_name_rule\s*::\s*usable\s*\(\s*" + re.escape(args[0]) + r"\s*\)", before):
+                errors.append(f"{where}: stores {args[0]} without deciding with device_name_rule::usable({args[0]}) "
+                              "first (J8)")
+            elif re.search(r"(?<![\w.>])" + re.escape(args[0]) + r"\s*=(?!=)", before[before.rfind("device_name_rule"):]):
+                errors.append(f"{where}: {args[0]} is reassigned between usable() and the store (J8)")
+    if calls != len(NAME_ROUTES):
+        errors.append(f"{INO}: setup_wizard::set_device_name() is called {calls} times, not once in each of "
+                      f"{NAME_ROUTES} (J8)")
+    return errors
+
+
 def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     idx = build_index(files)
     errors: list[str] = []
@@ -1701,6 +1792,7 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
             errors.append(f"{name}: EXCLUDED names a file the sketch no longer has")
     errors += check_fleet_cache(files, idx)
     errors += check_identity_answers(files, idx)
+    errors += check_device_name(files, idx)
     printf_errors, _printfs = check_printf_answers(files, idx)
     errors += printf_errors
     for name in scope_of(files):
@@ -1970,6 +2062,34 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the beacon reply is written after its refusal",
      raw_in(BEACON, "  }\n  serializeJson(doc, buf, sizeof(buf));\n  return send_json(req, buf);",
             '  }\n  doc["late"] = 1;\n  serializeJson(doc, buf, sizeof(buf));\n  return send_json(req, buf);')),
+    # J8: the device name holds no control byte (F226).
+    ("the name's setter goes back to bounding only its length",
+     raw_in(WIZARD, "  if (!device_name_rule::storable(name)) return false;\n",
+            "  if (!name || strlen(name) == 0 || strlen(name) > DEVICE_NAME_MAX) return false;\n")),
+    ("init() reads a stored name without scrubbing it",
+     raw_in(WIZARD, "    device_name_rule::scrub_stored(s_device_name);\n", "")),
+    ("init() scrubs before it reads the stored name",
+     raw_in(WIZARD, "    prefs.getString(\"dev_name\", s_device_name, sizeof(s_device_name));\n"
+                    "    device_name_rule::scrub_stored(s_device_name);\n",
+            "    device_name_rule::scrub_stored(s_device_name);\n"
+            "    prefs.getString(\"dev_name\", s_device_name, sizeof(s_device_name));\n")),
+    ("POST /api/device-name decides by length again, not usable()",
+     raw_in(INO, "    if (!device_name_rule::usable(name)) {\n",
+            "    if (!name || strlen(name) == 0 || strlen(name) > setup_wizard::DEVICE_NAME_MAX) {\n")),
+    ("the Wi-Fi join stores the name before it tests it",
+     raw_in(INO, "  if (device_name_rule::usable(device_name) && setup_wizard::set_device_name(device_name)) {",
+            "  if (setup_wizard::set_device_name(device_name) && device_name_rule::usable(device_name)) {")),
+    ("the Wi-Fi join tests one name and stores another",
+     raw_in(INO, "  if (device_name_rule::usable(device_name) && setup_wizard::set_device_name(device_name)) {",
+            "  if (device_name_rule::usable(ssid) && setup_wizard::set_device_name(device_name)) {")),
+    ("a name is copied into s_device_name around the setter",
+     raw_in(INO, "  const char* device_name = body[\"device_name\"] | \"\";\n",
+            "  const char* device_name = body[\"device_name\"] | \"\";\n"
+            "  strncpy(setup_wizard::s_device_name, device_name, setup_wizard::DEVICE_NAME_MAX);\n")),
+    ("a third route sets the name, tested",
+     add_file(f"{SKETCH}/zz_name_route.h",
+              "static void zz_ble_rename(const char* n) {\n"
+              "  if (device_name_rule::usable(n)) setup_wizard::set_device_name(n);\n}\n")),
 ]
 
 

@@ -168,6 +168,7 @@
 #include "wap_diagnostics.h"     // pure, host-tested: GET /api/diagnostics's body (F149)
 #include "fleet_scan_cache.h"    // pure, host-tested: the fleet scan's cache keeps the adverts that fit (F211)
 #include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
+#include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -6668,15 +6669,12 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // persists to NVS ("dev_name") and becomes this device's unique mDNS
   // hostname canary-<name>.local, so multiple Canaries are easy to tell apart.
   // We only accept a name that survives RFC-1123 sanitization (otherwise it
-  // would yield an empty/degenerate label); silently ignore an unusable name
-  // rather than failing the whole WiFi save.
+  // would yield an empty/degenerate label) and holds no control byte (sweep
+  // F226: device_name_rule.h); silently ignore an unusable name rather than
+  // failing the whole WiFi save.
   const char* device_name = body["device_name"] | "";
-  if (strlen(device_name) > 0 && strlen(device_name) <= setup_wizard::DEVICE_NAME_MAX) {
-    char probe[setup_wizard::DEVICE_NAME_MAX + 1];
-    sanitize_mdns_label(device_name, probe, sizeof(probe));
-    if (probe[0] && setup_wizard::set_device_name(device_name)) {
-      generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
-    }
+  if (device_name_rule::usable(device_name) && setup_wizard::set_device_name(device_name)) {
+    generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
   }
 
   // Household time zone seed (repo sweep F28): the setup wizard sends the
@@ -8585,9 +8583,9 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
     if (deserializeJson(body, content) == DeserializationError::Ok) {
       name = body["name"] | "";
     }
-    char probe[setup_wizard::DEVICE_NAME_MAX + 1] = {0};
-    if (name) sanitize_mdns_label(name, probe, sizeof(probe));
-    if (!name || strlen(name) == 0 || strlen(name) > setup_wizard::DEVICE_NAME_MAX || !probe[0]) {
+    // 1-32 bytes, no control byte, a letter or digit for the mDNS label
+    // (sweep F226: device_name_rule.h, the setter's own rule).
+    if (!device_name_rule::usable(name)) {
       doc["ok"] = false;
       doc["error"] = "Invalid name (1-32 chars, letters/digits/hyphen)";
     } else if (!setup_wizard::set_device_name(name)) {

@@ -1665,7 +1665,7 @@ Compile is CI's. Owner: U1.
     the host test covers it.
   - Artifact: `docs/audit/repro/F213/nearby-emoji/`.
 
-## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed (F211, F212) — on-device verification
+## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed, the device name holds no control byte (F211, F212, F226) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/fleet_scan_cache.h`
 (`fleet_scan_task()`'s cache, through `fill()`: every result of the browse
@@ -1673,14 +1673,18 @@ offered, the shortest rows that fit together kept whole, at most eight,
 written in browse order, a complete document after every row),
 `identity_json.h` (GET `/api/device-info` and the provisioning receipt, every
 string escaped, each answer measured and written into a heap buffer of its own
-length), both on `wap_json_writer.h`, and their glue in `canary_wap.ino`.
+length), both on `wap_json_writer.h`, `device_name_rule.h` with
+`setup_wizard.h` (no control byte in the device name: the setter refuses one,
+a stored one reads back as a space), and their glue in `canary_wap.ino`.
 Host-tested (`tests_host/test_fleet_scan_cache.cpp`,
-`tests_host/test_identity_json.cpp`) and held by
+`tests_host/test_identity_json.cpp`, `tests_host/test_device_name.cpp`,
+`tests_host/test_wap_json_writer.cpp`) and held by
 `firmware/scripts/check_wap_json_answers.py` (J4 the cache's writer, J5 the
 `snprintf()` answers measured and their `%s` escaped, J6 the identity answers'
-measured form). The old cache's failure was shown only in a scratch harness
-over ArduinoJson 7.4.1 (the library is not in the repo). Compile is CI's.
-Owner: U1.
+measured form, J8 the device name's setter, loader and routes). The old
+cache's failure, and the answers' with a control byte in the name, were shown
+only in scratch harnesses over ArduinoJson 7.4.1 (the library is not in the
+repo). Compile is CI's. Owner: U1.
 
 - [ ] **Long mDNS adverts cost their own rows, not the other Canaries'**
   - Setup: a canary-wap on a LAN with at least one other Canary, and a
@@ -1721,6 +1725,25 @@ Owner: U1.
     parses and its token and AP password are unchanged. Before F212 the
     device-info answer did not parse.
   - Artifact: `docs/audit/repro/F212/quoted-name/`.
+- [ ] **A device name holding a control byte is refused, and one stored before keeps the answers whole (F226)**
+  - Setup: a canary-wap with its API token, on the LAN with another Canary;
+    for the second half, a canary-wap still on firmware from before F226.
+  - Repro: `curl -X POST -H "Authorization: Bearer <token>"
+    --data-binary $'{"name":"kit\x01chen"}' http://<wap>/api/device-name`;
+    then `curl -s -H "Authorization: Bearer <token>" http://<wap>/api/fleet/scan
+    | python3 -m json.tool` and open the Fleet sheet. On the older device,
+    rename it the same way (it takes the name), read
+    `curl -s http://<wap>/api/device-info`, then flash this firmware without
+    erasing NVS and read `/api/fleet/scan` and `/api/device-info` again, and
+    `ping canary-kit-chen.local`.
+  - Expected: the rename answers `"ok":false` with "Invalid name (1-32
+    chars, letters/digits/hyphen)" and the device keeps its old name; the
+    scan answer parses and the Fleet sheet lists the device. On the upgraded
+    device both answers parse, the name reads `kit chen` (the control byte as
+    a space), and its host is still `canary-kit-chen.local` (before F226 the
+    stored byte made `/api/fleet/scan` unparseable and the Fleet sheet said it
+    could not reach the device). A later rename replaces the stored bytes.
+  - Artifact: `docs/audit/repro/F226/control-byte-name/`.
 
 ## One event-id space (F46) — on-device verification
 
