@@ -278,16 +278,22 @@ export function haloInk(fr, halo) {
 
 /**
  * The halo the firmware reports is the one the glass shows (F184): on every
- * axis its stroke is inked (brighter than the glass 3 px outside it by more
- * than `margin`) and nothing is inked 3 px outside it. A circle reported
- * wider or narrower than lv_arc drew, or with no stroke, reads the glass's
- * background where the stroke should be. ink: haloInk(); bg: the glass's
- * background brightness. Returns a failure message, or null.
+ * axis its stroke is inked (brighter than the glass 3 px outside it, and
+ * than the background, by more than `margin`) and nothing is inked 3 px
+ * outside it. Where that outside pixel is past the glass's edge (-1 from
+ * haloInk) nothing can be inked there, and the stroke is held against the
+ * background alone: the landscape nightlight's halo stands 2 px from the
+ * panel's right edge (F157, F204). A circle reported wider or narrower than
+ * lv_arc drew, or with no stroke, reads the glass's background (or nothing)
+ * where the stroke should be. ink: haloInk(); bg: the glass's background
+ * brightness. Returns a failure message, or null.
  */
 export function haloInked(ink, bg = 0, margin = 6) {
   const names = ["right", "left", "bottom", "top"];
-  const bad = names.filter((n, i) => !(ink.stroke[i] > ink.outside[i] + margin && ink.outside[i] >= 0 &&
-    ink.outside[i] <= bg + margin));
+  const bad = names.filter((n, i) => {
+    const out = ink.outside[i];
+    return !(ink.stroke[i] > Math.max(out, bg) + margin && (out < 0 || out <= bg + margin));
+  });
   if (!bad.length) return null;
   return `the halo the firmware reports is not the one on the glass at its ${bad.join(", ")} ` +
     `(stroke ${JSON.stringify(ink.stroke)}, 3 px outside ${JSON.stringify(ink.outside)}) (F184)`;

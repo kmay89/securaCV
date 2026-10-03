@@ -539,6 +539,25 @@ test("turned glass (F184): haloInk/haloInked hold the halo the firmware reports 
   assert.match(haloInked(wideInk, 0, 3), /at its right \(/);
   // A glass no brighter than the margin is not a stroke.
   assert.match(haloInked(haloInk(ring(3), halo), 0, 3), /right, left, bottom, top/);
+  // F204: a halo 2 px from the glass's edge (the landscape nightlight's, at
+  // the panel's right) has nothing 3 px outside it on that side but the
+  // edge; its stroke there is held against the background alone. Before,
+  // the off-glass read (-1) failed it on a halo the glass draws right.
+  const edge = glassFrame(152, 200);
+  for (let y = 0; y < 200; y++) {
+    for (let x = 0; x < 152; x++) {
+      const d = Math.hypot(x - 100, y - 100);
+      if (d >= 47 && d < 50) paint(edge, x, y, 16);
+    }
+  }
+  const edgeInk = haloInk(edge, halo);
+  assert.strictEqual(edgeInk.outside[0], -1, "3 px right of the stroke is off the glass");
+  assert.strictEqual(haloInked(edgeInk, 0, 3), null);
+  // ...but a stroke that is not there still fails, edge or not.
+  const bare = glassFrame(152, 200);
+  assert.match(haloInked(haloInk(bare, halo), 0, 3), /right, left, bottom, top/);
+  // ...and so does a stroke no brighter than the background beside the edge.
+  assert.match(haloInked(haloInk(edge, halo), 16, 3), /right/);
 });
 
 test("turned glass (F184): linesInk/linesInked find each drawn line's ink where the firmware says it is", async () => {

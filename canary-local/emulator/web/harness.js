@@ -4,7 +4,8 @@
 import { CanaryEmulator, demoFleet } from "./emu-shell.js";
 
 // Which glass boots is a query parameter, not a hard-coded script tag:
-// ?flavor=watch (the default) | dash | nightstand | touch169 | amoled241,
+// ?flavor=watch (the default) | dash | nightstand | touch169 | amoled241 |
+// nightlight,
 // each a committed dist/canary-display-<flavor>.js exporting
 // createCanaryEmu<Flavor>. The boot probe walks every flavor this way, so
 // a display CI never booted cannot ship broken.
@@ -17,6 +18,7 @@ const FLAVORS = {
   nightstand:{ src: "../dist/canary-display-nightstand.js",factory: "createCanaryEmuNightstand" },
   touch169:  { src: "../dist/canary-display-touch169.js",  factory: "createCanaryEmuTouch169" },
   amoled241: { src: "../dist/canary-display-amoled241.js", factory: "createCanaryEmuAmoled241" },
+  nightlight:{ src: "../dist/canary-display-nightlight.js",factory: "createCanaryEmuNightlight" },
 };
 const q = new URLSearchParams(location.search);
 const wanted = (q.get("flavor") || "watch").toLowerCase();

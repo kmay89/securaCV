@@ -15,6 +15,16 @@
 // pins). The page's canvas is the glass as a person in front of it reads
 // it, so the framebuffer holds the TURNED frame — 480x800 for a portrait
 // dash — and the page reads it as it reads any other glass.
+//
+// The nightlight turns in hardware instead (F204): display_set_rotation()
+// writes the ST7789's MADCTL on the board, the panel re-addresses its own
+// RAM, and lvgl_port_set_panel_rotation() only swaps LVGL's logical canvas,
+// so LVGL renders nothing turned and every flush arrives in the logical
+// frame. That frame is the glass as the person who stood the nightlight on
+// its edge reads it — 320x180 for a landscape one — so this HAL holds the
+// framebuffer in it and the page reads it the same way. What the MADCTL
+// table does to the panel's RAM is silicon and stays display_1in47.cpp's
+// (bench-verify, as that file says); this shows what the firmware intends.
 #include "canary/hal/display.h"
 
 #include <Arduino.h>
@@ -28,6 +38,9 @@
 #include "emu_bus.h"
 #include <config.h>  // flavor selector (CD_FLAVOR_*) before the geometry pick
 #include "pins.h"
+#ifdef CD_NIGHTLIGHT
+#include "canary/log.h"  // imu_init's line, as the board's HAL says it
+#endif
 
 // Flavor geometry from the board pin map (same -I the firmware build uses).
 #ifdef CD_FLAVOR_WATCH
@@ -140,10 +153,50 @@ inline void put565(uint8_t* d, uint16_t c) {
   d[3] = 255;
 }
 
+#ifdef CD_NIGHTLIGHT
+// The nightlight's quarter turns (Arduino_GFX numbering, as
+// display_set_rotation takes them): the frame the framebuffer is held in.
+int g_panel_rot = 0;
+
+// The panel turned in hardware: the framebuffer takes the logical frame's
+// shape (sides swapped for 1 and 3), cleared to black as the board's HAL
+// clears the panel on every turn (fillScreen after the MADCTL write), and
+// the page is told the glass's new shape.
+void panel_turn(int rot) {
+  g_panel_rot = rot & 3;
+  const bool side = (g_panel_rot & 1) != 0;
+  g_view_w = side ? EMU_H : EMU_W;
+  g_view_h = side ? EMU_W : EMU_H;
+  for (size_t i = 0; i < (size_t)EMU_W * EMU_H; i++) {
+    g_fb[i * 4 + 0] = 0;
+    g_fb[i * 4 + 1] = 0;
+    g_fb[i * 4 + 2] = 0;
+    g_fb[i * 4 + 3] = 255;
+  }
+  js_display_ready(g_view_w, g_view_h, kRoundMask);
+}
+#endif
+
 // One flush, in the panel's native frame (x, y, w, h as LVGL handed it).
 inline void blit565(int16_t x, int16_t y, const uint16_t* src, int16_t w,
                     int16_t h) {
   if (!g_fb) return;
+#ifdef CD_NIGHTLIGHT
+  // Every flush is already in the logical frame the framebuffer holds (the
+  // panel turns, LVGL does not): it lands where LVGL drew it, clipped to the
+  // glass's current shape.
+  for (int16_t row = 0; row < h; row++) {
+    const int16_t fy = y + row;
+    if (fy < 0 || fy >= g_view_h) continue;
+    const uint16_t* s = src + (size_t)row * w;
+    for (int16_t col = 0; col < w; col++, s++) {
+      const int16_t fx = x + col;
+      if (fx < 0 || fx >= g_view_w) continue;
+      put565(g_fb + ((size_t)fy * g_view_w + fx) * 4, *s);
+    }
+  }
+  return;
+#endif
   const int turn = lvgl_turn();
   if (turn != g_turn) glass_turn(turn);
   for (int16_t row = 0; row < h; row++) {
@@ -174,9 +227,19 @@ inline void blit565(int16_t x, int16_t y, const uint16_t* src, int16_t w,
 
 // ── Arduino_GFX shim entry points (called by the real lvgl_port.cpp) ────
 void Arduino_GFX::fillScreen(uint16_t color565) {
+#ifdef CD_NIGHTLIGHT
+  // The turned panel fills its turned shape (Arduino_GFX's own width and
+  // height follow setRotation on the board).
+  uint16_t row[EMU_W > EMU_H ? EMU_W : EMU_H];
+  for (int i = 0; i < g_view_w; i++) row[i] = color565;
+  for (int y = 0; y < g_view_h; y++) {
+    blit565(0, (int16_t)y, row, (int16_t)g_view_w, 1);
+  }
+#else
   uint16_t row[EMU_W];
   for (int i = 0; i < EMU_W; i++) row[i] = color565;
   for (int y = 0; y < EMU_H; y++) blit565(0, (int16_t)y, row, EMU_W, 1);
+#endif
   g_flush_count++;
   g_dirty_serial++;
   js_flush(0, 0, g_view_w, g_view_h, (int)g_dirty_serial);
@@ -226,6 +289,31 @@ TouchSample touch_read() {
   s.y = (int16_t)g_touch_y;
   return s;
 }
+
+#ifdef CD_NIGHTLIGHT
+// The nightlight's hardware rotation (F204): on the board a MADCTL write
+// that turns the panel's scan, then a black frame (display_1in47.cpp). Here
+// the framebuffer takes the turned shape, cleared, and the page is told —
+// main.cpp calls this before lvgl_port_set_panel_rotation(), which swaps
+// LVGL's logical canvas to match, and LVGL's flushes then land in that frame.
+void display_set_rotation(uint8_t rot) {
+  if (!g_fb) return;  // the board's HAL also ignores a turn before the panel
+  panel_turn(rot);
+}
+
+// No QMI8658 answers on the emulated bench's I2C bus (shim/Wire.h), so the
+// firmware takes the board's no-IMU path: auto-orient stays off, and the
+// glass keeps the rotation it booted with (staged before power-on by
+// emu_preset_rotation, the way a unit that saved it would).
+bool imu_init() {
+  canary::log_line("IMU", "QMI8658 quiet (emulated bench) — auto-orient off, everything else fine.");
+  return false;
+}
+
+bool imu_read_accel(int32_t* /*ax*/, int32_t* /*ay*/, int32_t* /*az*/) {
+  return false;
+}
+#endif
 
 #ifdef CD_FLAVOR_DASH
 // The page's finger lands on the canvas, and the canvas shows the glass as
