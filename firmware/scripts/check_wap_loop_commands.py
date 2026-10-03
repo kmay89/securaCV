@@ -1030,7 +1030,8 @@ BT_INTERNAL = {
     "disable": ("set_settings",),
     "start_advertising": ("init", "apply_disconnect", "start_pairing"),   # F143: the loop task's
     "stop_advertising": ("deinit", "disable"),
-    "stop_scan": ("deinit", "disable", "handle_scan_timeout"),
+    "stop_scan": ("deinit", "disable", "handle_scan_timeout",
+                  "quiet_radio"),   # F172 review: a bond's delete ends the owner's scan (loop task)
     "clear_scan_results": ("start_scan",),
     "cancel_pairing": ("update", "reject_pairing",
                        "disable"),   # F143 review: turning Bluetooth off ends a pairing first

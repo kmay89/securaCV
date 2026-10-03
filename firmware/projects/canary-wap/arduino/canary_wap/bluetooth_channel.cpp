@@ -225,8 +225,8 @@ static void cancel_pairing();
 static bool confirm_pairing(uint32_t pin);
 static bool reject_pairing();
 static bool disconnect();
-static bool remove_paired_device(const uint8_t* address);
-static bool clear_all_paired_devices();
+static bool remove_paired_device(const uint8_t* address, Refusal* refusal);
+static bool clear_all_paired_devices(Refusal* refusal);
 static bool set_device_trusted(const uint8_t* address, bool trusted);
 static bool set_device_blocked(const uint8_t* address, bool blocked);
 static bool set_settings(const BluetoothSettings& settings);
@@ -1632,11 +1632,83 @@ static bool disconnect() {
   return true;
 }
 
-static bool remove_paired_device(const uint8_t* address) {
+// A paired entry's identity address in the stack's own form (sweep F172):
+// the list keeps the bytes as getBase()->val holds them and the type beside
+// them, so NimBLEAddress(ble_addr_t) names the key NimBLE's bond store
+// holds. (The byte-array constructor reverses the bytes: it takes the
+// printed order.)
+static NimBLEAddress paired_identity(const PairedDevice& dev) {
+  ble_addr_t id;
+  id.type = dev.address_type;
+  memcpy(id.val, dev.address, BLE_ADDRESS_LENGTH);
+  return NimBLEAddress(id);
+}
+
+// NimBLE will not forget a bond that carries the phone's identity resolving
+// key (IRK) while it advertises or scans: ble_gap_unpair() (ble_gap.c, the
+// same in NimBLE-Arduino 2.3.8 and 2.5.0) answers BLE_HS_EBUSY and keeps
+// the bond, since the IRK must leave the controller's resolving list, which
+// cannot change meanwhile. A phone that uses resolvable private addresses
+// (most do) hands its IRK over, and the WAP nearly always does one or the
+// other: the presence sensor scans without end (ble_presence), advertising
+// is on by default, and on the FULL profile Opera's fleet-link beacon is on
+// the air. So a bond is forgotten with the radio quiet for the call (the
+// F172 review: Remove answered ok, dropped the entry and left the bond, and
+// the phone came back encrypted with no owner asked). Quieting it ends the
+// owner's scan (stop_scan(), which hands the scanner back to the presence
+// loop), pauses the presence loop and stops the shared advertiser, Opera's
+// beacon with it; restore_radio() starts the advertiser again if it was on
+// and resumes the presence loop. Both on the loop task, inside one command.
+struct QuietRadio {
+  bool advertising;   // the shared advertiser was on: started again after
+};
+
+static QuietRadio quiet_radio() {
+  QuietRadio q = {false};
+  if (g_scanning) {
+    stop_scan();
+  }
+  ble_presence::pause_for_user_scan();
+  if (g_advertising && g_advertising->isAdvertising()) {
+    g_advertising->stop();
+    q.advertising = true;
+  }
+  return q;
+}
+
+static void restore_radio(const QuietRadio& q) {
+  if (q.advertising && g_advertising && !g_advertising->isAdvertising()) {
+    g_advertising->start();
+  }
+  ble_presence::resume_continuous_scan();
+}
+
+// Forgets the bond NimBLE keeps under `identity`, with the radio quiet. True
+// when no bond is left under it: deleted now, or there was none (an entry a
+// bond never backed, which ble_gap_unpair() answers with the store's
+// error). False when the stack kept it (an advertiser or a scan another
+// task started again meanwhile: Opera's onConnect, a chirp). ble_gap_unpair()
+// also ends a live link to that address; its disconnect arrives as usual.
+static bool forget_bond(const NimBLEAddress& identity) {
+  const QuietRadio q = quiet_radio();
+  const bool deleted = NimBLEDevice::deleteBond(identity);
+  restore_radio(q);
+  return deleted || !NimBLEDevice::isBonded(identity);
+}
+
+static bool remove_paired_device(const uint8_t* address, Refusal* refusal) {
   for (size_t i = 0; i < g_paired_count; i++) {
     if (memcmp(g_paired_devices[i].address, address, BLE_ADDRESS_LENGTH) == 0) {
-      // Store address type before removing from our list
-      uint8_t addr_type = g_paired_devices[i].address_type;
+      // Forget the bond first (sweep F172), by the identity address the list
+      // keeps. When the stack keeps it, the entry stays (the phone could
+      // still come back without pairing, and the list says so) and the owner
+      // is told; nothing is saved.
+      if (!forget_bond(paired_identity(g_paired_devices[i]))) {
+        log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                   "Paired device not removed: the stack kept its bond", nullptr);
+        *refusal = BT_REFUSED_BOND_KEPT;
+        return false;
+      }
 
       // Shift remaining devices
       for (size_t j = i; j < g_paired_count - 1; j++) {
@@ -1644,17 +1716,6 @@ static bool remove_paired_device(const uint8_t* address) {
       }
       g_paired_count--;
       memset(&g_paired_devices[g_paired_count], 0, sizeof(PairedDevice));
-
-      // Forget the bond (sweep F172). NimBLE keys it by the identity address
-      // in the stack's own form, which is what the list keeps; the byte-array
-      // constructor this used reverses the bytes (it takes the printed
-      // order), so ble_gap_unpair() was asked for another address, answered
-      // success anyway (a missing key is no error to the store), and the
-      // phone kept its bond and came back encrypted without pairing again.
-      ble_addr_t id;
-      id.type = addr_type;
-      memcpy(id.val, address, BLE_ADDRESS_LENGTH);
-      NimBLEDevice::deleteBond(NimBLEAddress(id));
 
       save_paired_devices();
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Paired device removed", nullptr);
@@ -1664,18 +1725,35 @@ static bool remove_paired_device(const uint8_t* address) {
   return false;
 }
 
-static bool clear_all_paired_devices() {
-  // Clear local storage
-  memset(g_paired_devices, 0, sizeof(g_paired_devices));
-  g_paired_count = 0;
-
-  // Clear NimBLE bond storage
-  int bond_count = NimBLEDevice::getNumBonds();
-  for (int i = bond_count - 1; i >= 0; i--) {
+static bool clear_all_paired_devices(Refusal* refusal) {
+  // Every bond NimBLE keeps, with the radio quiet once for all of them (see
+  // quiet_radio()).
+  const QuietRadio q = quiet_radio();
+  for (int i = NimBLEDevice::getNumBonds() - 1; i >= 0; i--) {
     NimBLEDevice::deleteBond(NimBLEDevice::getBondedAddress(i));
   }
+  restore_radio(q);
 
+  // The entries of bonds the stack kept stay listed; the rest go.
+  size_t kept = 0;
+  for (size_t i = 0; i < g_paired_count; i++) {
+    if (NimBLEDevice::isBonded(paired_identity(g_paired_devices[i]))) {
+      g_paired_devices[kept++] = g_paired_devices[i];
+    }
+  }
+  for (size_t i = kept; i < MAX_PAIRED_DEVICES; i++) {
+    memset(&g_paired_devices[i], 0, sizeof(PairedDevice));
+  }
+  g_paired_count = kept;
   save_paired_devices();
+
+  const int left = NimBLEDevice::getNumBonds();
+  if (left > 0) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "Paired devices not all cleared: the stack kept bonds", String(left).c_str());
+    *refusal = BT_REFUSED_BOND_KEPT;
+    return false;
+  }
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "All paired devices cleared", nullptr);
   return true;
 }
@@ -1992,10 +2070,10 @@ static Result run_command(const Command& cmd) {
       r.ok = disconnect();
       break;
     case BT_CMD_PAIRED_REMOVE:
-      r.ok = remove_paired_device(cmd.address);
+      r.ok = remove_paired_device(cmd.address, &r.refusal);
       break;
     case BT_CMD_PAIRED_CLEAR:
-      r.ok = clear_all_paired_devices();
+      r.ok = clear_all_paired_devices(&r.refusal);
       break;
     case BT_CMD_PAIRED_TRUST:
       r.ok = set_device_trusted(cmd.address, cmd.flag);

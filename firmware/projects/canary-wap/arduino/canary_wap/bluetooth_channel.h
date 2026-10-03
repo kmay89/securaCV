@@ -336,12 +336,15 @@ struct Command {
 };
 
 // Why ENABLE, ADVERTISE_START, PAIR_START or a SETTINGS that turns
-// Bluetooth on did not run.
+// Bluetooth on did not run, or why PAIRED_REMOVE / PAIRED_CLEAR left a
+// phone's bond.
 enum Refusal : uint8_t {
   BT_REFUSED_NONE = 0,     // it ran (ok says how it went)
   BT_REFUSED_NOT_ENABLED,  // Bluetooth off and not brought up (init() has not run);
                            // a refused SETTINGS applied none of its fields
   BT_REFUSED_CONNECTED,    // ADVERTISE_START: a device is connected
+  BT_REFUSED_BOND_KEPT,    // PAIRED_REMOVE / PAIRED_CLEAR: NimBLE kept a bond
+                           // (ble_gap_unpair() busy); its entry stays listed
 };
 
 // What a command did, as the loop task saw it right after the command ran.

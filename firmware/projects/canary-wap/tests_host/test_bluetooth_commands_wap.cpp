@@ -190,12 +190,31 @@ inline void presence(const char* what) {
   presence_calls.push_back({what, task});
 }
 }  // namespace host_sim
+// The presence loop's scan runs on the NimBLE scanner from the channel's
+// init() on, without end, except while paused for the owner's scan (or, since
+// the F172 review, a bond's delete): host_sim::presence_disc, which the
+// stand-in's deleteBond() reads as ble_gap_disc_active() would.
+namespace host_sim {
+inline std::atomic<bool> presence_paused{false};
+}  // namespace host_sim
 namespace ble_presence {
 bool init() { return true; }
-void deinit() {}
-bool start() { return true; }
-void pause_for_user_scan() { host_sim::presence("pause"); }
-void resume_continuous_scan() { host_sim::presence("resume"); }
+void deinit() { host_sim::presence_disc = false; }
+bool start() {
+  if (host_sim::presence_paused) return false;
+  host_sim::presence_disc = true;
+  return true;
+}
+void pause_for_user_scan() {
+  host_sim::presence("pause");
+  host_sim::presence_paused = true;
+  host_sim::presence_disc = false;
+}
+void resume_continuous_scan() {
+  host_sim::presence("resume");
+  host_sim::presence_paused = false;
+  start();
+}
 void notify_console_connected(bool on) { host_sim::presence(on ? "console_on" : "console_off"); }
 }  // namespace ble_presence
 namespace ble_console {
@@ -241,7 +260,12 @@ void boot(bool bring_up = true, bool wipe = true) {
   host_sim::advertising = NimBLEAdvertising();
   host_sim::scan = NimBLEScan();
   if (wipe) host_sim::bonds.clear();       // NimBLE's bond store is in NVS too
+  if (wipe) host_sim::bond_irks.clear();
   host_sim::bonds_deleted.clear();
+  host_sim::bonds_busy.clear();
+  host_sim::before_unpair = nullptr;
+  host_sim::presence_disc = false;         // the presence loop starts in init()
+  host_sim::presence_paused = false;
   host_sim::passkey_answers.clear();
   host_sim::presence_calls.clear();
   g_health.clear();
@@ -2257,14 +2281,15 @@ NimBLEConnInfo rpa_phone(uint16_t handle, uint8_t ota_tag) {
 }
 
 // The phone pairs and bonds on `handle` (the stack stores its bond by its
-// identity, as NimBLE does), and the loop task applies it.
+// identity, as NimBLE does, with the IRK the phone hands over), and the loop
+// task applies it.
 void rpa_phone_bonds(NimBLEConnInfo& phone) {
   phone.encrypted = phone.authenticated = phone.bonded = true;
   host_sim::server->peers = {phone.getConnHandle()};
   host_sim::server->link_up(phone);
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
-  if (!NimBLEDevice::isBonded(phone.getIdAddress())) host_sim::bonds.push_back(phone.getIdAddress());
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/true);
   loop_pass();
 }
 
@@ -2319,14 +2344,33 @@ void test_remove_forgets_the_bond_by_its_identity() {
   rpa_phone_bonds(again);
   CHECK(bc::g_paired_count == 1 && bc::g_paired_devices[0].connection_count == 2);
 
-  // DELETE /api/bluetooth/paired with the address GET /paired printed.
+  // DELETE /api/bluetooth/paired with the address GET /paired printed,
+  // with the radio as a device's always is: the presence loop scanning
+  // (advertising is off for the phone's link on this, the DEV, wiring).
+  // NimBLE refuses to forget a bond that carries the phone's IRK meanwhile
+  // (ble_gap_unpair(): BLE_HS_EBUSY, the bond kept; the F172 review), so the
+  // loop task quiets the radio for the call and brings it back after.
+  CHECK(host_sim::presence_disc && host_sim::radio_busy());
+  CHECK(!host_sim::advertising.isAdvertising());
   bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
   CHECK(bc::parse_address(printed, remove.address));
   CHECK(memcmp(remove.address, paired.devices[0].address, 6) == 0);
+  host_sim::calls.clear();
+  host_sim::presence_calls.clear();
   const Rest r = rest(remove);
   CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::g_paired_count == 0);
+  CHECK(r.r.refusal == bc::BT_REFUSED_NONE);
   CHECK(host_sim::bonds_deleted.size() == 1 && host_sim::bonds_deleted[0] == identity);
+  CHECK(host_sim::bonds_busy.empty());
   CHECK(!NimBLEDevice::isBonded(identity) && host_sim::bonds.empty());
+  CHECK(host_sim::count("adv_stop") == 0 && host_sim::count("adv_start") == 0);
+  CHECK(host_sim::presence_disc);                            // the presence loop back
+  CHECK(host_sim::presence_calls.size() == 2);
+  CHECK(host_sim::presence_calls[0].what == "pause" && host_sim::presence_calls[1].what == "resume");
+  CHECK(host_sim::presence_calls[0].task == "loop" && host_sim::presence_calls[1].task == "loop");
+  // ble_gap_unpair() ended the phone's live link (its end arrives as usual).
+  CHECK(host_sim::server->ended_by_unpair == std::vector<uint16_t>{18});
+  CHECK(health_says("Paired device removed") == 1);
   none_on_httpd();
   std::printf("PASS remove_forgets_the_bond_by_its_identity\n");
 }
@@ -2382,6 +2426,7 @@ void test_an_old_paired_list_is_rebuilt_from_the_bond_store() {
   const uint8_t* raw = reinterpret_cast<const uint8_t*>(old);
   host_sim::main_nvs["bt_paired"].assign(raw, raw + sizeof old);
   host_sim::bonds = {a.getIdAddress(), b, d};
+  host_sim::bond_irks = {a.getIdAddress()};                 // the phone handed over its IRK
   host_sim::task = "bringup";
   CHECK(bc::init());
   host_sim::task = "loop";
@@ -2685,6 +2730,127 @@ void test_a_link_ends_on_full_into_advertising() {
   std::printf("PASS a_link_ends_on_full_into_advertising\n");
 }
 
+// When the stack keeps the bond after all (another task started the
+// advertiser again inside the delete: Opera's onConnect on the NimBLE host
+// task, a chirp), Remove keeps the entry and says so: before the F172
+// review it answered ok, dropped the entry and saved the list, and the
+// phone, its bond kept, came back encrypted with no owner asked and was
+// listed again. The owner's retry, the radio quiet, forgets it. Clear-all
+// keeps the entries of the bonds the stack kept, drops the rest, and says
+// so; its retry clears them.
+void test_a_bond_the_stack_keeps_keeps_its_entry() {
+  boot();
+  NimBLEConnInfo phone = rpa_phone(31, 0x31);
+  rpa_phone_bonds(phone);
+  host_sim::server->link_down(31);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  loop_pass();
+  const NimBLEAddress identity = phone.getIdAddress();
+  CHECK(bc::g_paired_count == 1 && NimBLEDevice::isBonded(identity));
+  const std::vector<uint8_t> saved = host_sim::main_nvs["bt_paired"];
+
+  host_sim::before_unpair = [] { host_sim::advertising.start(); };
+  bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  memcpy(remove.address, identity.getBase()->val, 6);
+  Rest r = rest(remove);
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == bc::BT_REFUSED_BOND_KEPT);
+  CHECK(host_sim::bonds_busy.size() == 1 && NimBLEDevice::isBonded(identity));
+  CHECK(bc::g_paired_count == 1 && memcmp(bc::g_paired_devices[0].address, identity.getBase()->val, 6) == 0);
+  CHECK(host_sim::main_nvs["bt_paired"] == saved);            // nothing saved
+  CHECK(health_says("Paired device not removed: the stack kept its bond") == 1);
+  CHECK(health_says("Paired device removed") == 0);
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(paired.count == 1);                                   // the list still shows it
+  CHECK(host_sim::advertising.isAdvertising() && host_sim::presence_disc);
+
+  host_sim::before_unpair = nullptr;                          // the owner tries again
+  r = rest(remove);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.refusal == bc::BT_REFUSED_NONE);
+  CHECK(bc::g_paired_count == 0 && !NimBLEDevice::isBonded(identity));
+
+  // Clear-all: the phone (IRK) and a tablet with one public address.
+  NimBLEConnInfo again = rpa_phone(32, 0x32);
+  rpa_phone_bonds(again);
+  host_sim::server->link_down(32);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), again, 0x13); });
+  loop_pass();
+  NimBLEConnInfo tablet = link(33, 0xE3);
+  tablet.encrypted = tablet.authenticated = tablet.bonded = true;
+  host_sim::server->peers = {33};
+  host_sim::server->link_up(tablet);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), tablet); });
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(tablet); });
+  host_sim::store_bond(tablet.getIdAddress(), /*irk=*/false);
+  loop_pass();
+  CHECK(bc::g_paired_count == 2 && host_sim::bonds.size() == 2);
+  host_sim::before_unpair = [] { host_sim::advertising.start(); };
+  r = rest(cmd_of(bc::BT_CMD_PAIRED_CLEAR));
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == bc::BT_REFUSED_BOND_KEPT);
+  CHECK(host_sim::bonds.size() == 1 && NimBLEDevice::isBonded(identity));
+  CHECK(bc::g_paired_count == 1 && memcmp(bc::g_paired_devices[0].address, identity.getBase()->val, 6) == 0);
+  CHECK(health_detail("Paired devices not all cleared: the stack kept bonds") == "1");
+  host_sim::before_unpair = nullptr;
+  r = rest(cmd_of(bc::BT_CMD_PAIRED_CLEAR));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::g_paired_count == 0 && host_sim::bonds.empty());
+  CHECK(health_says("All paired devices cleared") == 1);
+  CHECK(host_sim::advertising.isAdvertising() && host_sim::presence_disc);
+  none_on_httpd();
+  std::printf("PASS a_bond_the_stack_keeps_keeps_its_entry\n");
+}
+
+// A Remove while the owner's scan runs: a discovery, so the scan ends first
+// (its state from what goes on, the scanner back to the presence loop, which
+// pauses for the delete and resumes after), and the bond goes.
+void test_a_remove_during_a_scan_ends_the_scan_first() {
+  boot();
+  NimBLEConnInfo phone = rpa_phone(35, 0x35);
+  rpa_phone_bonds(phone);
+  host_sim::server->link_down(35);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  loop_pass();
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 10000;
+  CHECK(rest(scan).r.ok && bc::g_scanning && host_sim::scan.isScanning());
+  CHECK(!host_sim::presence_disc);                            // paused for the owner's scan
+  bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  memcpy(remove.address, phone.getIdAddress().getBase()->val, 6);
+  const Rest r = rest(remove);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::g_paired_count == 0);
+  CHECK(host_sim::bonds_busy.empty() && !NimBLEDevice::isBonded(phone.getIdAddress()));
+  CHECK(!bc::g_scanning && !host_sim::scan.isScanning());
+  CHECK((shown() == std::pair<bc::BluetoothState, bool>{bc::BT_ADVERTISING, true}));
+  CHECK(host_sim::presence_disc);                             // the presence loop back
+  none_on_httpd();
+  std::printf("PASS a_remove_during_a_scan_ends_the_scan_first\n");
+}
+
+// On FULL the shared advertiser carries Opera's fleet-link beacon, on the
+// air through a phone's link too: a Remove of a connected phone (its IRK
+// bond) stops it for the delete, the bond goes, and the beacon is back on
+// the air after, Opera's own flag untouched.
+void test_full_profile_remove_brings_the_beacon_back() {
+  boot();
+  opera_init();
+  NimBLEConnInfo phone = rpa_phone(37, 0x37);
+  rpa_phone_bonds(phone);
+  CHECK(bc::g_paired_count == 1 && bc::g_connection.connected);
+  CHECK(host_sim::advertising.isAdvertising() && ble_opera::isAdvertising());
+  CHECK(host_sim::presence_disc);
+  host_sim::calls.clear();
+  bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
+  memcpy(remove.address, phone.getIdAddress().getBase()->val, 6);
+  const Rest r = rest(remove);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::g_paired_count == 0);
+  CHECK(host_sim::bonds_busy.empty() && host_sim::bonds.empty());
+  CHECK(host_sim::count("adv_stop", "loop") == 1 && host_sim::count("adv_start", "loop") == 1);
+  CHECK(host_sim::advertising.isAdvertising() && ble_opera::isAdvertising());
+  CHECK(host_sim::presence_disc);
+  CHECK(host_sim::server->ended_by_unpair == std::vector<uint16_t>{37});
+  none_on_httpd();
+  std::printf("PASS full_profile_remove_brings_the_beacon_back\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2747,6 +2913,9 @@ const Test kTests[] = {
     {"the_state_after_a_scan_is_what_runs", test_the_state_after_a_scan_is_what_runs},
     {"the_state_after_pairing_or_a_link_is_what_runs", test_the_state_after_pairing_or_a_link_is_what_runs},
     {"a_link_ends_on_full_into_advertising", test_a_link_ends_on_full_into_advertising},
+    {"a_bond_the_stack_keeps_keeps_its_entry", test_a_bond_the_stack_keeps_keeps_its_entry},
+    {"a_remove_during_a_scan_ends_the_scan_first", test_a_remove_during_a_scan_ends_the_scan_first},
+    {"full_profile_remove_brings_the_beacon_back", test_full_profile_remove_brings_the_beacon_back},
 };
 
 }  // namespace bt_commands

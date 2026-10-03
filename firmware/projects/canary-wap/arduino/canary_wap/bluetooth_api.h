@@ -522,6 +522,9 @@ inline esp_err_t handle_bluetooth_paired_remove(httpd_req_t* req) {
   if (r.ok) {
     return send_success(req, "Device removed");
   }
+  if (r.refusal == bluetooth_channel::BT_REFUSED_BOND_KEPT) {
+    return send_error(req, "The phone's bond was not removed; try again");
+  }
   return send_error(req, "Device not found");
 }
 
@@ -533,6 +536,9 @@ inline esp_err_t handle_bluetooth_paired_clear(httpd_req_t* req) {
   if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
   if (r.ok) {
     return send_success(req, "All paired devices cleared");
+  }
+  if (r.refusal == bluetooth_channel::BT_REFUSED_BOND_KEPT) {
+    return send_error(req, "Not every phone's bond was removed; try again");
   }
   return send_error(req, "Failed to clear paired devices");
 }

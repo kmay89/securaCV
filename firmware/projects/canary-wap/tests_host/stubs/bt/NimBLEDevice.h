@@ -19,7 +19,18 @@
  * object when the server goes. A link names its over-the-air address and its
  * identity address (getIdAddress(): the same unless the test gives it a
  * resolvable private address over an identity, as phones use); the bond
- * store is keyed by identity, as NimBLE's is (sweep F172). */
+ * store is keyed by identity, as NimBLE's is (sweep F172).
+ *
+ * And deleteBond() answers as ble_gap_unpair() does (NimBLE-Arduino 2.3.8
+ * and 2.5.0, ble_gap.c, the same file in both): it first ends a live link to
+ * that address, then answers false for an address with no bond (the store's
+ * BLE_HS_ENOENT), and false with the bond kept (BLE_HS_EBUSY) for a bond
+ * that carries the peer's IRK (host_sim::store_bond(addr, true): a phone
+ * that uses private addresses hands it over) while the advertiser runs or a
+ * discovery does (this scanner's, or the presence loop's on the same
+ * scanner, host_sim::presence_disc). Before the F172 review it deleted
+ * every bond and answered true, so no test could see the refusal a device
+ * meets. */
 #ifndef STUB_BT_NIMBLE_DEVICE_H
 #define STUB_BT_NIMBLE_DEVICE_H
 
@@ -29,6 +40,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -237,7 +249,23 @@ class NimBLEServer {
     disconnected.push_back(handle);
     return true;
   }
+  // ble_gap_unpair()'s first step (ble_hs_conn_find_by_addr, then
+  // ble_gap_terminate_with_conn): the link whose identity is `identity` is
+  // ended. The termination is the stack's own and asynchronous (its
+  // disconnect event follows, as the test plays it), so the link stays up
+  // here; its handle is kept apart from disconnect()'s.
+  void unpair_ends_link(const NimBLEAddress& identity) {
+    std::lock_guard<std::mutex> g(links_mu_);
+    for (const auto& kv : links_) {
+      if (kv.second.getIdAddress() == identity) {
+        host_sim::note("unpair_terminate");
+        ended_by_unpair.push_back(kv.first);
+        return;
+      }
+    }
+  }
   std::vector<uint16_t> disconnected;   // disconnect()'s handles, in order
+  std::vector<uint16_t> ended_by_unpair;   // the links deleteBond() ended, in order
   std::vector<uint16_t> peers;   // the links up, as the test sets them
  private:
   mutable std::mutex links_mu_;
@@ -350,6 +378,31 @@ inline NimBLEAdvertising advertising;
 inline NimBLEScan scan;
 inline std::vector<NimBLEAddress> bonds;
 inline std::vector<NimBLEAddress> bonds_deleted;   // deleteBond's arguments, in order
+// The bonds that carry the peer's IRK (keyed as `bonds` is).
+inline std::vector<NimBLEAddress> bond_irks;
+// The presence loop's endless scan on the same NimBLE scanner (ble_presence,
+// which the test plays): a discovery to ble_gap_disc_active() as much as
+// the owner's scan is.
+inline std::atomic<bool> presence_disc{false};
+// What deleteBond() refused for a busy radio (BLE_HS_EBUSY), in order.
+inline std::vector<NimBLEAddress> bonds_busy;
+// Run as deleteBond() starts: a test plays another task acting in that
+// window (Opera's onConnect restarting the advertiser on the NimBLE host
+// task, a chirp).
+inline std::function<void()> before_unpair;
+inline bool has_irk(const NimBLEAddress& a) {
+  return std::find(bond_irks.begin(), bond_irks.end(), a) != bond_irks.end();
+}
+// The stack stores a bond under `identity`; `irk` when the peer handed over
+// its identity resolving key (a phone using resolvable private addresses).
+inline void store_bond(const NimBLEAddress& identity, bool irk) {
+  if (std::find(bonds.begin(), bonds.end(), identity) == bonds.end()) bonds.push_back(identity);
+  if (irk && !has_irk(identity)) bond_irks.push_back(identity);
+}
+// ble_gap_adv_active() || ble_gap_disc_active().
+inline bool radio_busy() {
+  return advertising.isAdvertising() || scan.isScanning() || presence_disc.load();
+}
 }  // namespace host_sim
 
 class NimBLEDevice {
@@ -390,15 +443,29 @@ class NimBLEDevice {
     host_sim::note("passkey_entry");
     return true;
   }
-  // ble_gap_unpair(): the bond keyed by this address goes, if there is
-  // one. It answers 0 (true) when there was none, too (ble_store's delete
-  // of a missing key is not an error), so the record of what was asked for
-  // and what is left in host_sim::bonds is the test's evidence, not this.
+  // ble_gap_unpair() (NimBLEDevice::deleteBond() is `== 0` of it): a live
+  // link to the address is ended first, whatever follows. No bond under the
+  // address (neither PEER_SEC nor OUR_SEC holds it): false, the store's
+  // error. A bond that carries the peer's IRK while the advertiser or a
+  // discovery runs: false, BLE_HS_EBUSY, and the bond stays (its IRK cannot
+  // leave the controller's resolving list meanwhile). Otherwise the bond
+  // goes: true.
   static bool deleteBond(const NimBLEAddress& a) {
     host_sim::note("bond_delete");
     host_sim::bonds_deleted.push_back(a);
+    if (host_sim::before_unpair) host_sim::before_unpair();
+    if (host_sim::server) host_sim::server->unpair_ends_link(a);
+    if (!isBonded(a)) return false;
+    if (host_sim::has_irk(a) && host_sim::radio_busy()) {
+      host_sim::note("bond_delete_busy");
+      host_sim::bonds_busy.push_back(a);
+      return false;
+    }
     host_sim::bonds.erase(std::remove(host_sim::bonds.begin(), host_sim::bonds.end(), a),
                           host_sim::bonds.end());
+    host_sim::bond_irks.erase(
+        std::remove(host_sim::bond_irks.begin(), host_sim::bond_irks.end(), a),
+        host_sim::bond_irks.end());
     return true;
   }
   static bool isBonded(const NimBLEAddress& a) {
