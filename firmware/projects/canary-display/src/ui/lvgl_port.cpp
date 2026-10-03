@@ -14,7 +14,9 @@
 // 40 MHz, and LVGL only flushes dirty regions anyway). The dash buffer
 // lives in PSRAM (800x80x2 = 128 KiB); flushes memcpy into the RGB
 // peripheral's scanned framebuffer, so only changed regions ever repaint —
-// which is what makes the panel flicker-free by construction.
+// which is what makes the panel flicker-free by construction. On LVGL 9 the
+// dash takes a second buffer that size for turning a flushed area (see
+// flush_cb); LVGL 8 turns areas itself (sw_rotate).
 #include <config.h>
 #include <Arduino.h>
 #include <lvgl.h>
@@ -101,6 +103,25 @@ alignas(4) uint8_t s_buf[BUF_BYTES];
 
 lv_display_t* s_disp = nullptr;    // captured for runtime rotation (v9)
 
+#ifdef CD_FLAVOR_DASH
+// LVGL 9 turns nothing it renders: lv_display_set_rotation() only swaps the
+// logical resolution (main-modules/display/rotation.rst), so in partial mode
+// every area reaches flush_cb as a LOGICAL area over a logical-width buffer.
+// The RGB framebuffer is the panel's native landscape, so flush_cb turns
+// each area into it the way the docs' partial-mode example does —
+// lv_display_rotate_area() for where it lands, lv_draw_sw_rotate() for its
+// pixels — through this second buffer. A turned area holds the same pixels
+// as the area LVGL rendered, so the draw buffer's size is enough; it is
+// allocated beside the draw buffer (lvgl_port_init). Without it the glass
+// stays landscape (lvgl_port_set_rotation refuses a turn it cannot draw).
+uint8_t* s_turn_buf = nullptr;
+size_t s_turn_bytes = 0;
+// flush_cb blits rows packed (stride == width * 2), turned or not; LVGL's
+// partial-mode buffers are packed only while layers keep stride alignment 1.
+static_assert(LV_DRAW_BUF_STRIDE_ALIGN <= 1,
+              "flush_cb assumes packed RGB565 rows (LV_DRAW_BUF_STRIDE_ALIGN 1)");
+#endif
+
 uint32_t tick_cb() { return millis(); }
 
 void indev_read_cb(lv_indev_t*, lv_indev_data_t* data) { fill_indev_data(data); }
@@ -108,10 +129,37 @@ void indev_read_cb(lv_indev_t*, lv_indev_data_t* data) { fill_indev_data(data); 
 void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
   Arduino_GFX* g = canary::hal::gfx();
   if (g) {
-    const int16_t w = (int16_t)(area->x2 - area->x1 + 1);
-    const int16_t h = (int16_t)(area->y2 - area->y1 + 1);
-    g->draw16bitRGBBitmap(area->x1, area->y1,
-                          reinterpret_cast<uint16_t*>(px_map), w, h);
+    lv_area_t a = *area;
+    uint8_t* px = px_map;
+#ifdef CD_FLAVOR_DASH
+    const lv_display_rotation_t rot = lv_display_get_rotation(disp);
+    if (rot != LV_DISPLAY_ROTATION_0) {
+      // Logical (lx, ly) lands on the panel at 90: (ly, H-1-lx), 180:
+      // (W-1-lx, H-1-ly), 270: (W-1-ly, lx) — the turn rotation_map_touch()
+      // inverts, so a tap lands on what was drawn under it.
+      const lv_color_format_t cf = lv_display_get_color_format(disp);
+      const int32_t src_w = lv_area_get_width(area);
+      const int32_t src_h = lv_area_get_height(area);
+      lv_display_rotate_area(disp, &a);
+      const uint32_t src_stride = lv_draw_buf_width_to_stride((uint32_t)src_w, cf);
+      const uint32_t dst_stride =
+          lv_draw_buf_width_to_stride((uint32_t)lv_area_get_width(&a), cf);
+      if (!s_turn_buf ||
+          (size_t)dst_stride * (size_t)lv_area_get_height(&a) > s_turn_bytes) {
+        // Not reachable (no turn without the buffer, and no area larger than
+        // the draw buffer it matches); blitting unturned would corrupt more.
+        lv_display_flush_ready(disp);
+        return;
+      }
+      lv_draw_sw_rotate(px_map, s_turn_buf, src_w, src_h, (int32_t)src_stride,
+                        (int32_t)dst_stride, rot, cf);
+      px = s_turn_buf;
+    }
+#endif
+    const int16_t w = (int16_t)(a.x2 - a.x1 + 1);
+    const int16_t h = (int16_t)(a.y2 - a.y1 + 1);
+    g->draw16bitRGBBitmap((int16_t)a.x1, (int16_t)a.y1,
+                          reinterpret_cast<uint16_t*>(px), w, h);
   }
   lv_display_flush_ready(disp);
 }
@@ -195,6 +243,20 @@ bool lvgl_port_init() {
     canary::log_line("LVGL", "Draw buffer allocation FAILED — UI disabled.");
     return false;
   }
+#if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
+  // flush_cb's turned copy (see s_turn_buf): the draw buffer's size, from
+  // the same heap tier — 128,000 B more PSRAM of the glass's 8 MB, or, on
+  // the internal fallback above, 25,600 B more internal RAM.
+  s_turn_buf = (uint8_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM);
+  if (!s_turn_buf) {
+    s_turn_buf = (uint8_t*)heap_caps_malloc(
+        buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+  s_turn_bytes = s_turn_buf ? buf_bytes : 0;
+  if (!s_turn_buf) {
+    canary::log_line("LVGL", "Rotation buffer allocation FAILED — the glass stays landscape.");
+  }
+#endif
 
 #if LVGL_VERSION_MAJOR >= 9
   // v9 dropped the compile-time custom tick; register millis at runtime
@@ -246,6 +308,14 @@ bool lvgl_port_init() {
 
 void lvgl_port_set_rotation(uint8_t rot) {
   rot &= 3;
+#if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
+  // A turn flush_cb cannot draw would lay a turned face out on an unturned
+  // glass and un-rotate every tap: stay landscape, and say so.
+  if (rot != 0 && !s_turn_buf) {
+    canary::log_line("LVGL", "No rotation buffer — staying landscape.");
+    rot = 0;
+  }
+#endif
   s_rot = rot;
   // Recompute the logical canvas the UI lays out in. Native is always the
   // panel's landscape; portrait swaps the axes.
@@ -282,8 +352,9 @@ void lvgl_port_set_rotation(uint8_t rot) {
 #endif
 #if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
   // Only the RGB dash glass rotates; the round watch and the fixed-portrait
-  // SPI nightstands ignore it. LVGL software-rotates the render into the
-  // native framebuffer — the panel keeps scanning landscape.
+  // SPI nightstands ignore it. LVGL 9 only swaps the logical canvas here;
+  // flush_cb turns each rendered area into the native framebuffer — the
+  // panel keeps scanning landscape.
   if (s_disp) {
     lv_display_rotation_t r = LV_DISPLAY_ROTATION_0;
     switch (rot) {

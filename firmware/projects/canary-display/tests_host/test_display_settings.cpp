@@ -1,6 +1,6 @@
 // Host test for the pure display-settings geometry + brightness helpers
 // (include/canary/glass_settings.h): orientation dims, the touch un-rotation
-// (round-tripped against the forward render rotation), the rendered
+// (round-tripped against the turn LVGL draws, on both majors), the rendered
 // brightness scrim, and the standalone-weather location wheels (wheel
 // positions <-> stored tenths, and the cell caption). No Arduino, no LVGL,
 // no board.
@@ -28,16 +28,83 @@ static int g_fail = 0;
     }                                                                \
   } while (0)
 
-// The forward render rotation (logical -> native panel) that the touch map
-// must invert. Kept here, in the test, as the independent oracle.
+// Where the glass DRAWS a logical pixel (logical -> native panel): the turn
+// the touch map must invert, kept here, in the test, as the independent
+// oracle. On LVGL 9 lvgl_port.cpp's flush_cb places each rendered area with
+// lv_display_rotate_area(), quoted from lvgl v9.5.0 as written there
+// (disp->hor_res / ver_res are the panel's NATIVE width and height) and
+// applied to a 1x1 area. F205: the old oracle sent ROT_PORTRAIT to
+// (W-1-ly, lx), LVGL's 270, so the HAL's taps followed a turn no LVGL draws.
+struct Area { int x1, y1, x2, y2; };
+static void lvgl9_rotate_area(uint8_t rot, int hor_res, int ver_res, Area* area) {
+  const int w = area->x2 - area->x1 + 1;
+  const int h = area->y2 - area->y1 + 1;
+  switch (rot & 3) {
+    case ROT_PORTRAIT:  // LV_DISPLAY_ROTATION_90
+      area->y2 = ver_res - area->x1 - 1;
+      area->x1 = area->y1;
+      area->x2 = area->x1 + h - 1;
+      area->y1 = area->y2 - w + 1;
+      break;
+    case ROT_LANDSCAPE_INV:  // LV_DISPLAY_ROTATION_180
+      area->y2 = ver_res - area->y1 - 1;
+      area->y1 = area->y2 - h + 1;
+      area->x2 = hor_res - area->x1 - 1;
+      area->x1 = area->x2 - w + 1;
+      break;
+    case ROT_PORTRAIT_INV:  // LV_DISPLAY_ROTATION_270
+      area->x1 = hor_res - area->y2 - 1;
+      area->y2 = area->x2;
+      area->x2 = area->x1 + h - 1;
+      area->y1 = area->y2 - w + 1;
+      break;
+    default: break;
+  }
+}
+
 static void forward(uint8_t rot, int PW, int PH, int lx, int ly,
                     int* px, int* py) {
+  Area a = {lx, ly, lx, ly};
+  lvgl9_rotate_area(rot, PW, PH, &a);
+  *px = a.x1;
+  *py = a.y1;
+}
+
+// The same pixel through LVGL 8.4's sw_rotate (lv_refr.c draw_buf_rotate,
+// quoted from lvgl v8.4.0: the area arithmetic of its 90/270 branch, where
+// a rendered row band becomes a native column band, and draw_buf_rotate_180),
+// the turn the emulator's LVGL 8 glass draws. Applied to a 1x1 area.
+static void lvgl8_draw_buf_rotate(uint8_t rot, int hor_res, int ver_res,
+                                  int lx, int ly, int* px, int* py) {
+  Area a = {lx, ly, lx, ly};
+  const int area_w = a.x2 - a.x1 + 1;
+  const int init_y_off = a.y1;
   switch (rot & 3) {
-    case ROT_PORTRAIT:      *px = PW - 1 - ly; *py = lx;          break;  // 90 CW
-    case ROT_LANDSCAPE_INV: *px = PW - 1 - lx; *py = PH - 1 - ly; break;  // 180
-    case ROT_PORTRAIT_INV:  *px = ly;          *py = PH - 1 - lx; break;  // 270
-    default:                *px = lx;          *py = ly;          break;  // 0
+    case ROT_PORTRAIT:  // LV_DISP_ROT_90
+      a.y2 = ver_res - a.x1 - 1;
+      a.y1 = a.y2 - area_w + 1;
+      a.x1 = init_y_off;
+      a.x2 = init_y_off + area_w - 1;
+      break;
+    case ROT_PORTRAIT_INV:  // LV_DISP_ROT_270
+      a.y1 = a.x1;
+      a.y2 = a.y1 + area_w - 1;
+      a.x2 = hor_res - 1 - init_y_off;
+      a.x1 = a.x2 - area_w + 1;
+      break;
+    case ROT_LANDSCAPE_INV: {  // draw_buf_rotate_180
+      int tmp_coord = a.y2;
+      a.y2 = ver_res - a.y1 - 1;
+      a.y1 = ver_res - tmp_coord - 1;
+      tmp_coord = a.x2;
+      a.x2 = hor_res - a.x1 - 1;
+      a.x1 = hor_res - tmp_coord - 1;
+      break;
+    }
+    default: break;
   }
+  *px = a.x1;
+  *py = a.y1;
 }
 
 // ── Orientation classification + dims ────────────────────────────────────
@@ -58,7 +125,7 @@ static void test_dims() {
   CHECK(w == 480 && h == 800, "270 swaps to 480x800");
 }
 
-// ── Touch mapping inverts the render rotation, exactly, at every rotation ─
+// ── Touch mapping inverts the drawn turn, exactly, at every rotation ─────
 static void test_touch_roundtrip() {
   const int PW = 800, PH = 480;
   for (uint8_t rot = 0; rot < 4; rot++) {
@@ -80,15 +147,42 @@ static void test_touch_roundtrip() {
   }
 }
 
+// Both LVGL majors draw the same quarter turns on the dash (the emulator's
+// LVGL 8 glass and the shipped LVGL 9 builds), so one touch map serves both.
+static void test_majors_draw_one_turn() {
+  const int PW = 800, PH = 480;
+  for (uint8_t rot = 0; rot < 4; rot++) {
+    int LW = 0, LH = 0;
+    rotation_logical_dims(rot, PW, PH, &LW, &LH);
+    for (int lx = 0; lx < LW; lx += 11) {
+      for (int ly = 0; ly < LH; ly += 9) {
+        int p9x = 0, p9y = 0, p8x = 0, p8y = 0;
+        forward(rot, PW, PH, lx, ly, &p9x, &p9y);
+        lvgl8_draw_buf_rotate(rot, PW, PH, lx, ly, &p8x, &p8y);
+        CHECK(p9x == p8x && p9y == p8y,
+              "LVGL 8's sw_rotate draws the pixel where LVGL 9's area turn does");
+      }
+    }
+  }
+}
+
 static void test_touch_corners() {
   const int PW = 800, PH = 480;
   int x = 0, y = 0;
   // Landscape identity.
   rotation_map_touch(ROT_LANDSCAPE, PW, PH, 10, 20, &x, &y);
   CHECK(x == 10 && y == 20, "landscape touch is identity");
-  // Portrait: the panel's top-left corner is the logical bottom-left.
+  // Portrait (LVGL 90): the content's top-left sits at the panel's
+  // bottom-left, so the panel's top-left corner is the logical top-right.
   rotation_map_touch(ROT_PORTRAIT, PW, PH, 0, 0, &x, &y);
-  CHECK(x == 0 && y == PW - 1, "portrait maps panel origin to logical (0, 799)");
+  CHECK(x == PH - 1 && y == 0, "portrait maps panel origin to logical (479, 0)");
+  rotation_map_touch(ROT_PORTRAIT, PW, PH, 0, PH - 1, &x, &y);
+  CHECK(x == 0 && y == 0, "portrait: the panel's bottom-left is the logical origin");
+  // Portrait flipped (LVGL 270): the panel's top-left is the logical bottom-left.
+  rotation_map_touch(ROT_PORTRAIT_INV, PW, PH, 0, 0, &x, &y);
+  CHECK(x == 0 && y == PW - 1, "portrait flipped maps panel origin to logical (0, 799)");
+  rotation_map_touch(ROT_PORTRAIT_INV, PW, PH, PW - 1, 0, &x, &y);
+  CHECK(x == 0 && y == 0, "portrait flipped: the panel's top-right is the logical origin");
 }
 
 // ── Brightness scrim ─────────────────────────────────────────────────────
@@ -156,6 +250,26 @@ static void test_lvgl_indev_feed() {
   int x = 0, y = 0;
   rotation_to_lvgl_indev(ROT_LANDSCAPE, PW, PH, 123, 45, &x, &y);
   CHECK(x == 123 && y == 45, "landscape feeds the point through untouched");
+}
+
+// The HAL's un-rotation IS LVGL 9's own pointer rotation: a raw panel touch
+// mapped by rotation_map_touch() lands where lv_display_rotate_point() would
+// put the same sample, at every quarter turn, across the whole panel (the
+// fed pointer device and the HAL's taps agree on what is under the finger).
+static void test_touch_is_lvgl_indev_rotation() {
+  const int PW = 800, PH = 480;
+  for (uint8_t rot = 0; rot < 4; rot++) {
+    for (int px = 0; px < PW; px += 13) {
+      for (int py = 0; py < PH; py += 7) {
+        int hx = 0, hy = 0;
+        rotation_map_touch(rot, PW, PH, px, py, &hx, &hy);
+        int lx = px, ly = py;
+        lvgl9_rotate_point(rot, PW, PH, &lx, &ly);
+        CHECK(hx == lx && hy == ly,
+              "rotation_map_touch agrees with lv_display_rotate_point");
+      }
+    }
+  }
 }
 
 // ── The LVGL 8 pointer feed inverts LVGL 8's indev rotation too ───────────
@@ -297,6 +411,8 @@ static void test_wx_cell_text() {
 int main() {
   test_dims();
   test_touch_roundtrip();
+  test_majors_draw_one_turn();
+  test_touch_is_lvgl_indev_rotation();
   test_lvgl_indev_feed();
   test_lvgl8_indev_feed();
   test_touch_corners();

@@ -194,23 +194,32 @@ inline void rotation_logical_dims(uint8_t rot, int native_w, int native_h,
 
 // Map a raw native-panel touch (0..native_w-1, 0..native_h-1) into the
 // rotated logical frame the UI drew itself in — the exact inverse of the
-// software render rotation, so a tap lands where the finger points at any
-// orientation. (Bench note: if an axis reads mirrored on real glass, flip
-// the sign on that branch — the panel's touch origin is validated there.)
+// quarter turn the glass DRAWS, so a tap lands on what is under the finger
+// at every orientation. Both LVGL majors draw the same turn on the dash: a
+// logical (lx, ly) lands on the native panel at
+//   ROT_PORTRAIT       (LVGL 90):  (ly, native_h-1-lx)
+//   ROT_LANDSCAPE_INV  (LVGL 180): (native_w-1-lx, native_h-1-ly)
+//   ROT_PORTRAIT_INV   (LVGL 270): (native_w-1-ly, lx)
+// (LVGL 9: lv_display_rotate_area + lv_draw_sw_rotate in lvgl_port.cpp's
+// flush_cb; LVGL 8: lv_refr.c's draw_buf_rotate under sw_rotate). This is
+// therefore LVGL's own lv_display_rotate_point arithmetic, host-tested
+// against both. (Bench note: the GT911's axes are taken to be the panel's
+// native ones; if an axis reads mirrored on real glass, the panel's touch
+// origin is the thing to validate.)
 inline void rotation_map_touch(uint8_t rot, int native_w, int native_h,
                                int raw_x, int raw_y, int* out_x, int* out_y) {
   switch (rot & 3) {
-    case ROT_PORTRAIT:  // 90° CW: (px,py) -> (py, native_w-1-px)
-      *out_x = raw_y;
-      *out_y = native_w - 1 - raw_x;
+    case ROT_PORTRAIT:  // drawn at (ly, h-1-lx): lx = h-1-py, ly = px
+      *out_x = native_h - 1 - raw_y;
+      *out_y = raw_x;
       break;
-    case ROT_LANDSCAPE_INV:  // 180°
+    case ROT_LANDSCAPE_INV:  // 180°, an involution
       *out_x = native_w - 1 - raw_x;
       *out_y = native_h - 1 - raw_y;
       break;
-    case ROT_PORTRAIT_INV:  // 270° CW: (px,py) -> (native_h-1-py, px)
-      *out_x = native_h - 1 - raw_y;
-      *out_y = raw_x;
+    case ROT_PORTRAIT_INV:  // drawn at (w-1-ly, lx): lx = py, ly = w-1-px
+      *out_x = raw_y;
+      *out_y = native_w - 1 - raw_x;
       break;
     default:  // ROT_LANDSCAPE
       *out_x = raw_x;
