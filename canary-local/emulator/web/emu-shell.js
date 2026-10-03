@@ -273,6 +273,10 @@ export class CanaryEmulator {
       // from a dist built before it: onboardJoin() says so.
       onboardJoin: M._emu_onboard_join ? M.cwrap("emu_onboard_join", "number", []) : null,
       presetRotation: M._emu_preset_rotation ? M.cwrap("emu_preset_rotation", "number", ["number"]) : null,
+      // A running glass turned through the firmware's own rotation mailbox
+      // (sweep F243), absent from a dist built before it: requestRotation()
+      // says so.
+      requestRotation: M._emu_request_rotation ? M.cwrap("emu_request_rotation", "number", ["number"]) : null,
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
@@ -515,6 +519,22 @@ export class CanaryEmulator {
     const ptr = await this.c.screenArcs();
     if (!ptr) return [];
     return JSON.parse(this.module.UTF8ToString(ptr)).map(({ shown, ...a }) => ({ ...a, shown: shown === 1 }));
+  }
+
+  /** Turn the running glass to rotation 0..3 (sweep F243) the way the app's
+   *  orientation picker does: through the firmware's rotation mailbox
+   *  (emu_request_rotation), which main.cpp's loop drains on its next pass
+   *  into its one apply path, so the new shape arrives a moment later through
+   *  onDisplayReady, as any turn's does. Only the nightlight's firmware has
+   *  that mailbox. Throws on a dist built before the binding, as
+   *  onboardSeat() does, and names each refusal: the unit not powered on, a
+   *  value outside 0..3, or a flavor with no mailbox. */
+  async requestRotation(rot) {
+    if (!this.c || this.dead) throw new Error("no running emulator to turn");
+    if (!this.c.requestRotation) throw new Error("this emulator dist has no emu_request_rotation (rebuild it)");
+    const answer = await this.c.requestRotation(rot);
+    if (answer === -1) throw new Error("this flavor's firmware has no rotation mailbox (only the nightlight's glass turns at runtime)");
+    if (answer !== 1) throw new Error(`the firmware refused rotation ${rot} (a running unit, 0..3)`);
   }
 
   /** The phone asks the AP to associate: 1 joined · 0 no such network ·

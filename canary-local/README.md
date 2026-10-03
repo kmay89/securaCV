@@ -1063,7 +1063,17 @@ fails on byte drift.
   is what the Lab's 3D case turns by (`assets/scene3d.js` `glassTurn`): the
   canvas alone cannot tell a glass turned clockwise from one turned
   counterclockwise, and `tests/render_probe.mjs` draws the real Dash turned
-  1, 3 and 2 and finds its cable side left, right and on top.
+  1, 3 and 2 and finds its cable side left, right and on top. It then turns
+  a running glass (F243): `nightlight@landscape`, 6.5 s in, is asked for
+  portrait through `emu_request_rotation()` (`emu-shell.js`
+  `requestRotation()`), which writes the rotation mailbox the app's picker
+  writes and `main.cpp`'s loop drains; 3 s after the portrait shape is
+  announced the glass is that shape with frames on it and its turn named
+  (`turnedAtRuntime`), and the companion is on stage, clear of every line and
+  where the unturned boot seats it (`perchAfterTurn`). A dist built before
+  the binding is skipped by name (`BOOT_PROBE_SKIP`); the binding itself is
+  built natively by `tests/onboard.test.js` (`emulator/test/request_rotation_test.cpp`,
+  against the real `emu_main.cpp` and the firmware's real mailbox).
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /

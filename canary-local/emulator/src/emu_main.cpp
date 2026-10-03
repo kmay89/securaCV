@@ -64,6 +64,27 @@ extern "C" EMSCRIPTEN_KEEPALIVE int emu_preset_rotation(int rot) {
   return 1;
 }
 
+// A hand turning a running unit (sweep F243): ask the firmware for rotation
+// rot (0..3) the way the app's orientation picker does — the mailbox
+// glass_web.cpp writes and main.cpp's loop drains into its one apply path
+// (nightlight_apply_orientation: the panel turned, the face rebuilt, the
+// companion tumbling in). It writes nothing else: the picker also parks
+// auto-orient, which this IMU-less twin never runs (imu_init answers that no
+// IMU is there). 1 when queued; 0 when refused — before power-on (stage a
+// saved rotation with emu_preset_rotation instead) or out of range; -1 on a
+// flavor whose firmware has no such mailbox (only the nightlight's glass
+// turns at runtime this way; the dash turns from its Settings sheet).
+extern "C" EMSCRIPTEN_KEEPALIVE int emu_request_rotation(int rot) {
+#ifdef CD_NIGHTLIGHT
+  if (!g_power || rot < 0 || rot > 3) return 0;
+  canary::care::nightlight_request_rotation((uint8_t)rot);
+  return 1;
+#else
+  (void)rot;
+  return -1;
+#endif
+}
+
 int main() {
   while (!g_power) emscripten_sleep(30);
   if (g_saved_rotation >= 0) save_rotation(g_saved_rotation);

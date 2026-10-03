@@ -1339,3 +1339,141 @@ test("CI runs the generator check, this test and the browser probe", () => {
   assert.ok(wf.indexOf("gen_display_portal.py --check") < wf.indexOf("python3 canary-local/tools/gen_csp.py --check"),
     "the portal data gate runs before the CSP gate that hashes it");
 });
+
+// ── F243: a running glass turned, through the firmware's own mailbox ─────
+// runtime_turn.sh holds the sources natively, but nothing turned the dist's
+// nightlight while it ran: emu_preset_rotation() refuses after power-on. The
+// emulator now exports emu_request_rotation(), which writes the rotation
+// mailbox the app's picker writes (glass_web.cpp) and main.cpp's loop drains;
+// emu-shell.js wraps it, and boot_probe.mjs turns nightlight@landscape back
+// to portrait with it once the dist carries it (and says so by name until
+// then). These hold the binding natively, the shell's answers, the probe's
+// judges and its wiring.
+const REQUEST_ROTATION_CONFIGS = [
+  { name: "nightlight", cfg: "nightlight", board: "waveshare-esp32c3-lcd147", mailbox: true },
+  { name: "dash", cfg: "dash", board: "waveshare-esp32s3-lcd43", mailbox: false },
+];
+
+test("F243: emu_request_rotation writes the mailbox main.cpp drains, and only on a running nightlight (native g++)", (t) => {
+  const gxx = spawnSync("g++", ["--version"], { encoding: "utf8" });
+  if (gxx.status !== 0) {
+    if (process.env.CI) assert.fail("g++ is missing on this CI runner: the binding's native test cannot run");
+    t.skip("no g++ on this host: request_rotation_test.cpp needs one");
+    return;
+  }
+  const os = require("node:os");
+  const fs = require("node:fs");
+  const out = fs.mkdtempSync(join(os.tmpdir(), "securacv-request-rotation-"));
+  const FW = join(REPO, "firmware");
+  const PROJ = join(FW, "projects/canary-display");
+  const EMU = join(ROOT, "emulator");
+  try {
+    for (const c of REQUEST_ROTATION_CONFIGS) {
+      const inc = ["-I", join(EMU, "test/native"), "-I", join(EMU, "shim"), "-I", join(EMU, "src"), "-I", join(PROJ, "include"),
+        "-I", join(FW, "configs/canary-display", c.cfg), "-I", join(FW, "boards", c.board, "pins"), "-I", join(FW, "common")];
+      const cxx = ["-std=gnu++17", "-O1", "-fno-exceptions", "-fno-rtti", "-Wall", "-Wno-unused-parameter",
+        "-DARDUINO=10812", "-DCONFIG_CANARY_DISPLAY", ...inc];
+      // the emulator's real binding (main() renamed: the driver owns the
+      // process), the driver, and on the nightlight the firmware's real mailbox
+      const srcs = [[join(EMU, "src/emu_main.cpp"), ["-Dmain=emu_entry"]], [join(EMU, "test/request_rotation_test.cpp"), []]];
+      if (c.mailbox) srcs.push([join(PROJ, "src/care/nightlight.cpp"), []]);
+      const objs = [];
+      for (const [src, extra] of srcs) {
+        const obj = join(out, `${c.name}_${src.replace(/[^A-Za-z0-9]/g, "_")}.o`);
+        const r = spawnSync("g++", [...cxx, ...extra, "-c", src, "-o", obj], { encoding: "utf8" });
+        assert.strictEqual(r.status, 0, `${c.name}: ${src} did not compile:\n${r.stderr}`);
+        objs.push(obj);
+      }
+      const exe = join(out, c.name);
+      const link = spawnSync("g++", ["-o", exe, ...objs], { encoding: "utf8" });
+      assert.strictEqual(link.status, 0, `${c.name}: the driver did not link:\n${link.stderr}`);
+      const run = spawnSync(exe, [], { encoding: "utf8", timeout: 30000 });
+      assert.strictEqual(run.status, 0, `${c.name}: request_rotation_test failed:\n${run.stdout}${run.stderr}`);
+      assert.match(run.stdout, /ALL REQUEST ROTATION TESTS PASSED/);
+      assert.match(run.stdout, c.mailbox ? /emu_request_rotation writes the rotation mailbox/ : /answers -1/);
+    }
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+  // The binding is the one the page and the probe call, and the mailbox is
+  // the one the app's picker writes and the loop drains (the F222 test above
+  // holds those two ends).
+  const emuMain = read(join(ROOT, "emulator/src/emu_main.cpp"));
+  assert.match(emuMain, /extern "C" EMSCRIPTEN_KEEPALIVE int emu_request_rotation\(int rot\) \{\n#ifdef CD_NIGHTLIGHT\n  if \(!g_power \|\| rot < 0 \|\| rot > 3\) return 0;\n  canary::care::nightlight_request_rotation\(\(uint8_t\)rot\);\n  return 1;\n#else/);
+});
+
+test("F243: the shell turns a running glass through the binding, names each refusal, and an old dist says it cannot", async () => {
+  const { CanaryEmulator } = await shell();
+  const fake = (answer) => {
+    const calls = [];
+    const factory = async () => ({
+      cwrap: (name) => (...args) => { calls.push([name, ...args]); return name === "emu_request_rotation" ? answer : 0; },
+      _emu_request_rotation: answer === undefined ? undefined : () => answer,
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "null",
+    });
+    return { calls, factory, canvas: { getContext: () => ({}), addEventListener: () => {} } };
+  };
+  let m = fake(1);
+  let emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await emu.requestRotation(0);
+  assert.deepStrictEqual(m.calls.filter((c) => c[0] === "emu_request_rotation"), [["emu_request_rotation", 0]],
+    "the asked rotation reaches the binding once");
+  assert.ok(m.calls.findIndex((c) => c[0] === "emu_power_on") < m.calls.findIndex((c) => c[0] === "emu_request_rotation"),
+    "asked of a running unit");
+  m = fake(0);
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await assert.rejects(emu.requestRotation(4), /the firmware refused rotation 4/);
+  m = fake(-1);
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await assert.rejects(emu.requestRotation(1), /has no rotation mailbox/);
+  m = fake(undefined);
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await assert.rejects(emu.requestRotation(0), /no emu_request_rotation \(rebuild it\)/);
+  assert.ok(!m.calls.some((c) => c[0] === "emu_request_rotation"), "an old dist is never asked");
+});
+
+test("F243: the probe's runtime turn is read from the sources, and its judges fail what they should", async () => {
+  const { runtimeTurns, readTurnedSources } = await import("./turned_glass.mjs");
+  const { turnedAtRuntime, perchAfterTurn } = await import("./onboard_glass.mjs");
+  const fs = require("node:fs/promises");
+  const src = await readTurnedSources(REPO, (file, enc) => fs.readFile(file, enc));
+  const [rt] = runtimeTurns(src);
+  assert.strictEqual(rt.flavor, "nightlight");
+  assert.deepStrictEqual([rt.from.rotation, rt.from.glass], [1, { w: 320, h: 180 }], "from Orient::R90, the landscape glass");
+  assert.deepStrictEqual([rt.to.rotation, rt.to.glass], [0, { w: 180, h: 320 }], "back to Orient::R0, the panel's own shape");
+  assert.throws(() => runtimeTurns({ ...src, orientation: src.orientation.replace(/\bR0\s*=\s*0/, "UPRIGHT = 0") }), /Orient::R0/);
+  // turnedAtRuntime: the asked shape and turn, frames drawn on it after
+  const before = [{ w: 180, h: 320, frames: 0, turn: 0 }, { w: 320, h: 180, frames: 0, turn: 1 }];
+  const turned = [...before, { w: 180, h: 320, frames: 140, turn: 0 }];
+  assert.strictEqual(turnedAtRuntime(turned, 2, 160, rt.to), null);
+  assert.strictEqual(turnedAtRuntime([...before, { w: 180, h: 320, frames: 140, turn: null }], 2, 160, rt.to), null,
+    "a dist that announces no turn is held to the shape alone");
+  assert.match(turnedAtRuntime(before, 2, 160, rt.to), /announced no new shape/);
+  assert.match(turnedAtRuntime([...before, { w: 320, h: 180, frames: 140, turn: 3 }], 2, 160, rt.to), /announced 320x180/);
+  assert.match(turnedAtRuntime([...before, { w: 180, h: 320, frames: 140, turn: 2 }], 2, 160, rt.to), /announced turn 2/,
+    "upside down is the same shape: only the turn tells it from portrait");
+  assert.match(turnedAtRuntime(turned, 2, 140, rt.to), /drew no frame on it after/);
+  // perchAfterTurn: the perch a boot there seats it on, within the breath
+  const ref = { x: 42, y: 202, w: 96, h: 96, shown: true };
+  assert.strictEqual(perchAfterTurn({ ...ref, y: 204 }, ref), null);
+  assert.strictEqual(perchAfterTurn({ ...ref, y: 198 }, ref), null);
+  assert.match(perchAfterTurn({ ...ref, y: 197 }, ref) || "", /seats it at 42,202/);
+  assert.match(perchAfterTurn({ ...ref, x: -118 }, ref) || "", /drawn at -118,202/, "F222's companion left at the tumble's start");
+  assert.match(perchAfterTurn({ ...ref, shown: false }, ref) || "", /no bird on stage/);
+  assert.strictEqual(perchAfterTurn({ ...ref, x: 0 }, null), null, "no reference read: nothing to hold it to");
+  // The probe makes the turn, by name, from these
+  const probe = read(join(ROOT, "tests/boot_probe.mjs"));
+  assert.ok(probe.includes("const RUNTIME = runtimeTurns(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));"));
+  assert.ok(probe.includes("await page.evaluate((rot) => window.__emu.requestRotation(rot), rt.to.rotation);"));
+  assert.ok(probe.includes("if (!(await page.evaluate(() => !!window.__emu.c.requestRotation))) {") &&
+    probe.includes("BOOT_PROBE_SKIP[${name}]: this ${rt.flavor} dist has no emu_request_rotation (built before sweep F243)"),
+  "a dist without the binding is skipped by name");
+  for (const judge of ["turnedAtRuntime(st.shapes, asked, st.flushes, rt.to)", "birdOnStage(st,", "birdPerch(st)", "perchAfterTurn(st.bird, ref)"]) {
+    assert.ok(probe.includes(judge), `the runtime turn is held by ${judge}`);
+  }
+});
