@@ -14,6 +14,13 @@
 //! - `binary_sensor.pwk_chain_problem`: Sealed-log integrity (daemon mode)
 //! - `button.pwk_verify_now`: One-click verification (daemon mode)
 //!
+//! Each discovery config asks for its id above with `default_entity_id`
+//! (sweep HA16), `<zone>` being the zone name as Home Assistant slugs it.
+//! Home Assistant 2025.10 and later honors that key when it first registers
+//! an entity; an entity already in its registry keeps the id it has, and an
+//! older release ignores the key and names the entity from the device name
+//! and the entity name (`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`).
+//!
 //! With `--fleet-peers-path` (daemon mode) the bridge also keeps the fleet
 //! roll-call for the kernel's `GET /api/fleet`: it subscribes to the Canaries'
 //! `securacv/<device_id>/{availability,status,health,chain,state,meta}`
@@ -167,6 +174,7 @@ struct Args {
 struct HaSensorConfig {
     name: String,
     unique_id: String,
+    default_entity_id: String,
     state_topic: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     json_attributes_topic: Option<String>,
@@ -191,6 +199,7 @@ struct HaSensorConfig {
 struct HaBinarySensorConfig {
     name: String,
     unique_id: String,
+    default_entity_id: String,
     state_topic: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     json_attributes_topic: Option<String>,
@@ -210,6 +219,7 @@ struct HaBinarySensorConfig {
 struct HaButtonConfig {
     name: String,
     unique_id: String,
+    default_entity_id: String,
     command_topic: String,
     payload_press: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1057,19 +1067,71 @@ fn run_verify_and_publish(ctx: &RunContext<'_>, client: &Client) -> Result<()> {
     Ok(())
 }
 
+/// One retained Home Assistant discovery config: its topic and its JSON body.
+struct DiscoveryConfig {
+    topic: String,
+    body: Vec<u8>,
+}
+
+impl DiscoveryConfig {
+    fn new<T: Serialize>(topic: String, config: &T) -> Result<Self> {
+        Ok(Self {
+            topic,
+            body: serde_json::to_vec(config)?,
+        })
+    }
+}
+
+/// `s` the way Home Assistant's `slugify` treats an ASCII name: letters
+/// lowercased, digits kept, every run of anything else one `_` (an `_`
+/// included), none at either end. A non-ASCII character is kept as it is;
+/// Home Assistant slugs whatever object id it is given, so it transliterates
+/// that character itself.
+fn ha_slug(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut gap = false;
+    for c in s.chars() {
+        if c.is_ascii() && !c.is_ascii_alphanumeric() {
+            gap = !out.is_empty();
+            continue;
+        }
+        if gap {
+            out.push('_');
+            gap = false;
+        }
+        out.push(c.to_ascii_lowercase());
+    }
+    out
+}
+
+/// The entity id a discovery config asks Home Assistant for, as its
+/// `default_entity_id` (sweep HA16): `<domain>.<object id>`, the object id
+/// slugged as Home Assistant would. Home Assistant 2025.10 and later keeps
+/// the part after the `.` as the object id when it first registers the
+/// entity (`homeassistant/components/mqtt/entity.py`); without it the id
+/// came from the device name and the entity name.
+fn ha_entity_id(domain: &str, object_id: &str) -> String {
+    format!("{domain}.{}", ha_slug(object_id))
+}
+
+fn publish_configs(client: &Client, configs: &[DiscoveryConfig]) -> Result<()> {
+    for config in configs {
+        mqtt_publish_qos1(client, &config.topic, &config.body, true)?;
+    }
+    Ok(())
+}
+
 /// Discovery configs for the entities that exist regardless of which zones
 /// have produced events: last-event sensor, daily digest, chain integrity,
-/// and the verify button.
-fn publish_static_discovery(
-    client: &Client,
+/// and the verify button, in that order.
+fn static_discovery_configs(
     discovery_prefix: &str,
     state_prefix: &str,
     availability_topic: &str,
     device_id: &str,
     device_info: &HaDeviceInfo,
-) -> Result<()> {
-    publish_last_event_discovery(
-        client,
+) -> Result<Vec<DiscoveryConfig>> {
+    let last_event = last_event_discovery_config(
         discovery_prefix,
         state_prefix,
         availability_topic,
@@ -1080,6 +1142,7 @@ fn publish_static_discovery(
     let digest_config = HaSensorConfig {
         name: "PWK Daily Digest".to_string(),
         unique_id: format!("{}_daily_digest", device_id),
+        default_entity_id: ha_entity_id("sensor", "pwk_daily_digest"),
         state_topic: format!("{}/digest", state_prefix),
         json_attributes_topic: Some(format!("{}/digest", state_prefix)),
         value_template: Some("{{ value_json.total_events }}".to_string()),
@@ -1092,20 +1155,18 @@ fn publish_static_discovery(
         payload_not_available: PAYLOAD_OFFLINE.to_string(),
         device: device_info.clone(),
     };
-    let config_topic = format!(
-        "{}/sensor/{}/daily_digest/config",
-        discovery_prefix, device_id
-    );
-    mqtt_publish_qos1(
-        client,
-        &config_topic,
-        &serde_json::to_vec(&digest_config)?,
-        true,
+    let digest = DiscoveryConfig::new(
+        format!(
+            "{}/sensor/{}/daily_digest/config",
+            discovery_prefix, device_id
+        ),
+        &digest_config,
     )?;
 
     let chain_config = HaBinarySensorConfig {
         name: "PWK Chain Problem".to_string(),
         unique_id: format!("{}_chain_problem", device_id),
+        default_entity_id: ha_entity_id("binary_sensor", "pwk_chain_problem"),
         state_topic: format!("{}/chain_problem", state_prefix),
         json_attributes_topic: Some(format!("{}/chain_problem/attrs", state_prefix)),
         value_template: None,
@@ -1116,20 +1177,18 @@ fn publish_static_discovery(
         payload_not_available: PAYLOAD_OFFLINE.to_string(),
         device: device_info.clone(),
     };
-    let config_topic = format!(
-        "{}/binary_sensor/{}/chain_problem/config",
-        discovery_prefix, device_id
-    );
-    mqtt_publish_qos1(
-        client,
-        &config_topic,
-        &serde_json::to_vec(&chain_config)?,
-        true,
+    let chain = DiscoveryConfig::new(
+        format!(
+            "{}/binary_sensor/{}/chain_problem/config",
+            discovery_prefix, device_id
+        ),
+        &chain_config,
     )?;
 
     let button_config = HaButtonConfig {
         name: "PWK Verify Now".to_string(),
         unique_id: format!("{}_verify_now", device_id),
+        default_entity_id: ha_entity_id("button", "pwk_verify_now"),
         command_topic: format!("{}/cmd/verify", state_prefix),
         payload_press: "PRESS".to_string(),
         icon: Some("mdi:shield-search".to_string()),
@@ -1138,17 +1197,35 @@ fn publish_static_discovery(
         payload_not_available: PAYLOAD_OFFLINE.to_string(),
         device: device_info.clone(),
     };
-    let config_topic = format!(
-        "{}/button/{}/verify_now/config",
-        discovery_prefix, device_id
-    );
-    mqtt_publish_qos1(
-        client,
-        &config_topic,
-        &serde_json::to_vec(&button_config)?,
-        true,
+    let button = DiscoveryConfig::new(
+        format!(
+            "{}/button/{}/verify_now/config",
+            discovery_prefix, device_id
+        ),
+        &button_config,
     )?;
 
+    Ok(vec![last_event, digest, chain, button])
+}
+
+fn publish_static_discovery(
+    client: &Client,
+    discovery_prefix: &str,
+    state_prefix: &str,
+    availability_topic: &str,
+    device_id: &str,
+    device_info: &HaDeviceInfo,
+) -> Result<()> {
+    publish_configs(
+        client,
+        &static_discovery_configs(
+            discovery_prefix,
+            state_prefix,
+            availability_topic,
+            device_id,
+            device_info,
+        )?,
+    )?;
     log::info!("Published HA discovery for digest, chain integrity, and verify button");
     Ok(())
 }
@@ -1182,14 +1259,14 @@ fn publish_discovery_configs(
     }
 
     // Publish last_event sensor discovery
-    publish_last_event_discovery(
-        client,
+    let last_event = last_event_discovery_config(
         discovery_prefix,
         state_prefix,
         availability_topic,
         device_id,
         device_info,
     )?;
+    publish_configs(client, std::slice::from_ref(&last_event))?;
 
     log::info!(
         "Published HA discovery for {} zones + last_event sensor",
@@ -1198,17 +1275,17 @@ fn publish_discovery_configs(
     Ok(())
 }
 
-fn publish_last_event_discovery(
-    client: &Client,
+fn last_event_discovery_config(
     discovery_prefix: &str,
     state_prefix: &str,
     availability_topic: &str,
     device_id: &str,
     device_info: &HaDeviceInfo,
-) -> Result<()> {
+) -> Result<DiscoveryConfig> {
     let last_event_config = HaSensorConfig {
         name: "PWK Last Event".to_string(),
         unique_id: format!("{}_last_event", device_id),
+        default_entity_id: ha_entity_id("sensor", "pwk_last_event"),
         state_topic: format!("{}/last_event", state_prefix),
         json_attributes_topic: Some(format!("{}/last_event", state_prefix)),
         value_template: Some("{{ value_json.event_type }}".to_string()),
@@ -1221,31 +1298,32 @@ fn publish_last_event_discovery(
         payload_not_available: PAYLOAD_OFFLINE.to_string(),
         device: device_info.clone(),
     };
-
-    let config_topic = format!(
-        "{}/sensor/{}/last_event/config",
-        discovery_prefix, device_id
-    );
-    let config_json = serde_json::to_vec(&last_event_config)?;
-    mqtt_publish_qos1(client, &config_topic, &config_json, true)?;
-    Ok(())
+    DiscoveryConfig::new(
+        format!(
+            "{}/sensor/{}/last_event/config",
+            discovery_prefix, device_id
+        ),
+        &last_event_config,
+    )
 }
 
-fn publish_zone_discovery(
-    client: &Client,
+/// One zone's discovery configs: its event-count sensor, then its motion
+/// binary sensor.
+fn zone_discovery_configs(
     discovery_prefix: &str,
     state_prefix: &str,
     availability_topic: &str,
     device_id: &str,
     device_info: &HaDeviceInfo,
     zone: &str,
-) -> Result<()> {
+) -> Result<Vec<DiscoveryConfig>> {
     let zone_clean = sanitize_for_id(zone);
 
     // Event count sensor
     let count_config = HaSensorConfig {
         name: format!("PWK {} Events", zone),
         unique_id: format!("{}_{}_events", device_id, zone_clean),
+        default_entity_id: ha_entity_id("sensor", &format!("pwk_{}_events", zone)),
         state_topic: format!("{}/zone/{}/count", state_prefix, zone),
         json_attributes_topic: None,
         value_template: None,
@@ -1258,18 +1336,19 @@ fn publish_zone_discovery(
         payload_not_available: PAYLOAD_OFFLINE.to_string(),
         device: device_info.clone(),
     };
-
-    let config_topic = format!(
-        "{}/sensor/{}/{}_events/config",
-        discovery_prefix, device_id, zone_clean
-    );
-    let config_json = serde_json::to_vec(&count_config)?;
-    mqtt_publish_qos1(client, &config_topic, &config_json, true)?;
+    let count = DiscoveryConfig::new(
+        format!(
+            "{}/sensor/{}/{}_events/config",
+            discovery_prefix, device_id, zone_clean
+        ),
+        &count_config,
+    )?;
 
     // Motion binary sensor
     let motion_config = HaBinarySensorConfig {
         name: format!("PWK {} Motion", zone),
         unique_id: format!("{}_{}_motion", device_id, zone_clean),
+        default_entity_id: ha_entity_id("binary_sensor", &format!("pwk_{}_motion", zone)),
         state_topic: format!("{}/zone/{}/motion", state_prefix, zone),
         json_attributes_topic: None,
         value_template: None,
@@ -1280,14 +1359,37 @@ fn publish_zone_discovery(
         payload_not_available: PAYLOAD_OFFLINE.to_string(),
         device: device_info.clone(),
     };
+    let motion = DiscoveryConfig::new(
+        format!(
+            "{}/binary_sensor/{}/{}_motion/config",
+            discovery_prefix, device_id, zone_clean
+        ),
+        &motion_config,
+    )?;
 
-    let config_topic = format!(
-        "{}/binary_sensor/{}/{}_motion/config",
-        discovery_prefix, device_id, zone_clean
-    );
-    let config_json = serde_json::to_vec(&motion_config)?;
-    mqtt_publish_qos1(client, &config_topic, &config_json, true)?;
+    Ok(vec![count, motion])
+}
 
+fn publish_zone_discovery(
+    client: &Client,
+    discovery_prefix: &str,
+    state_prefix: &str,
+    availability_topic: &str,
+    device_id: &str,
+    device_info: &HaDeviceInfo,
+    zone: &str,
+) -> Result<()> {
+    publish_configs(
+        client,
+        &zone_discovery_configs(
+            discovery_prefix,
+            state_prefix,
+            availability_topic,
+            device_id,
+            device_info,
+            zone,
+        )?,
+    )?;
     log::debug!("Published HA discovery for zone: {}", zone);
     Ok(())
 }
@@ -1725,6 +1827,124 @@ mod tests {
         assert_eq!(sanitize_for_id("camera_1"), "camera_1");
     }
 
+    fn test_device() -> HaDeviceInfo {
+        HaDeviceInfo {
+            identifiers: vec!["pwk_1a2b3c4d".to_string()],
+            name: "Privacy Witness Kernel".to_string(),
+            manufacturer: "securaCV".to_string(),
+            model: "PWK".to_string(),
+            sw_version: "0.7.0".to_string(),
+        }
+    }
+
+    /// Each discovery config's topic, `default_entity_id` and `unique_id`.
+    fn ids_of(configs: &[DiscoveryConfig]) -> Vec<(String, String, String)> {
+        configs
+            .iter()
+            .map(|c| {
+                let v: serde_json::Value = serde_json::from_slice(&c.body).expect("json body");
+                let s = |k: &str| v[k].as_str().map(str::to_string).unwrap_or_default();
+                (c.topic.clone(), s("default_entity_id"), s("unique_id"))
+            })
+            .collect()
+    }
+
+    // Sweep HA16: every config asks Home Assistant for the id this file's
+    // header (and docs/homeassistant_setup.md, the Lovelace dashboard and
+    // the HomeKit Bridge recipe) gives it, and keeps its unique id, so an
+    // entity Home Assistant already registered keeps its registry entry.
+    #[test]
+    fn every_discovery_config_asks_for_its_documented_entity_id() {
+        let device = test_device();
+        let mut configs = static_discovery_configs(
+            "homeassistant",
+            "witness",
+            "witness/status",
+            "pwk_1a2b3c4d",
+            &device,
+        )
+        .expect("static configs");
+        configs.extend(
+            zone_discovery_configs(
+                "homeassistant",
+                "witness",
+                "witness/status",
+                "pwk_1a2b3c4d",
+                &device,
+                "front_door",
+            )
+            .expect("zone configs"),
+        );
+        let want = [
+            ("sensor", "last_event", "sensor.pwk_last_event"),
+            ("sensor", "daily_digest", "sensor.pwk_daily_digest"),
+            (
+                "binary_sensor",
+                "chain_problem",
+                "binary_sensor.pwk_chain_problem",
+            ),
+            ("button", "verify_now", "button.pwk_verify_now"),
+            (
+                "sensor",
+                "front_door_events",
+                "sensor.pwk_front_door_events",
+            ),
+            (
+                "binary_sensor",
+                "front_door_motion",
+                "binary_sensor.pwk_front_door_motion",
+            ),
+        ];
+        let got = ids_of(&configs);
+        assert_eq!(got.len(), want.len());
+        for ((topic, entity_id, unique_id), (component, object_id, want_id)) in got.iter().zip(want)
+        {
+            assert_eq!(
+                topic,
+                &format!("homeassistant/{component}/pwk_1a2b3c4d/{object_id}/config")
+            );
+            assert_eq!(entity_id, want_id, "{topic}");
+            // The id's domain is the platform the topic names.
+            assert!(entity_id.starts_with(&format!("{component}.")), "{topic}");
+            assert_eq!(unique_id, &format!("pwk_1a2b3c4d_{object_id}"), "{topic}");
+        }
+    }
+
+    // A zone name becomes its id the way Home Assistant slugs it; the unique
+    // id and the topic keep sanitize_for_id's form, as before.
+    #[test]
+    fn zone_entity_ids_are_slugged_like_home_assistant() {
+        let device = test_device();
+        let cases = [
+            ("Front Door", "Front_Door", "pwk_front_door"),
+            ("back-yard", "back_yard", "pwk_back_yard"),
+            ("Garage__2", "Garage__2", "pwk_garage_2"),
+            ("-porch-", "_porch_", "pwk_porch"),
+        ];
+        for (zone, clean, slug) in cases {
+            let got = ids_of(
+                &zone_discovery_configs(
+                    "homeassistant",
+                    "witness",
+                    "witness/status",
+                    "pwk_x",
+                    &device,
+                    zone,
+                )
+                .expect("zone configs"),
+            );
+            assert_eq!(got[0].1, format!("sensor.{slug}_events"), "{zone}");
+            assert_eq!(got[1].1, format!("binary_sensor.{slug}_motion"), "{zone}");
+            assert_eq!(got[0].2, format!("pwk_x_{clean}_events"), "{zone}");
+            assert_eq!(got[1].2, format!("pwk_x_{clean}_motion"), "{zone}");
+        }
+        assert_eq!(ha_slug("PWK Front--Door!"), "pwk_front_door");
+        assert_eq!(ha_slug("_x_"), "x");
+        assert_eq!(ha_slug(""), "");
+        // Non-ASCII is left for Home Assistant's own slugify.
+        assert_eq!(ha_slug("Caf\u{e9} 1"), "caf\u{e9}_1");
+    }
+
     #[test]
     fn ha_sensor_config_serializes_correctly() {
         let device = HaDeviceInfo {
@@ -1738,6 +1958,7 @@ mod tests {
         let config = HaSensorConfig {
             name: "Test Sensor".to_string(),
             unique_id: "pwk_test_sensor".to_string(),
+            default_entity_id: "sensor.pwk_test_sensor".to_string(),
             state_topic: "witness/test".to_string(),
             json_attributes_topic: None,
             value_template: None,
@@ -1753,6 +1974,7 @@ mod tests {
 
         let json = serde_json::to_string(&config).expect("serialize");
         assert!(json.contains("unique_id"));
+        assert!(json.contains("\"default_entity_id\":\"sensor.pwk_test_sensor\""));
         assert!(json.contains("state_topic"));
         assert!(json.contains("availability_topic"));
         assert!(json.contains("device"));
@@ -1799,6 +2021,7 @@ mod tests {
         let config = HaButtonConfig {
             name: "PWK Verify Now".to_string(),
             unique_id: "pwk_test_verify_now".to_string(),
+            default_entity_id: "button.pwk_verify_now".to_string(),
             command_topic: "witness/cmd/verify".to_string(),
             payload_press: "PRESS".to_string(),
             icon: Some("mdi:shield-search".to_string()),
