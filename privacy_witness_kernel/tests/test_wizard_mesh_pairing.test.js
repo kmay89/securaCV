@@ -80,13 +80,32 @@ function slice(text, from, to) {
   return text.slice(a, b);
 }
 
+// The page with every <script> element cut out, matched without regard to
+// case and cut by position: the ids left are the markup's own. This reads a
+// page the repo ships for a test; it is not a sanitizer, and nothing it
+// returns is rendered.
+function withoutScripts(text) {
+  const lower = text.toLowerCase();
+  let out = "";
+  let at = 0;
+  for (;;) {
+    const open = lower.indexOf("<script", at);
+    if (open < 0) break;
+    out += text.slice(at, open);
+    const close = lower.indexOf("</script", open);
+    const end = close < 0 ? -1 : lower.indexOf(">", close);
+    at = end < 0 ? text.length : end + 1;
+  }
+  return out + text.slice(at);
+}
+
 // The mesh section of a page's script, and the ids its markup declares (the
 // page outside its <script>: an element the script would create is not one
 // getElementById() finds on load).
 function lift(text) {
   const section = slice(text, "let meshInit = null;",
     "// ---------------------------------------------------------------------------\n// Utilities");
-  const markup = text.replace(/<script\b[\s\S]*?<\/script>/g, "");
+  const markup = withoutScripts(text);
   const ids = new Set([...markup.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
   const code = section +
     "\n;globalThis.__t = { meshStartPairing, meshConfirm, meshCancel, openMeshWizard, closeMeshWizard };\n";
