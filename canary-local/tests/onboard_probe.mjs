@@ -93,6 +93,7 @@ import {
   qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked,
 } from "./onboard_glass.mjs";
 import { turnedGlasses, readTurnedSources, helloLines, splashCoverage, splashInk, isWholeLine } from "./turned_glass.mjs";
+import { lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -186,17 +187,20 @@ for (const d of ["canary-local", "canary-local/assets", "canary-local/devices", 
   "canary-local/enclosures/preview", "canary-local/emulator/web", "canary-local/emulator/dist",
   "canary-local/models", "docs/hardware/enclosure"]) await allow(d);
 
+// lookup() decodes inside its own try: a malformed escape is a 404, not a
+// URIError that ends the probe (sweep A52).
 const server = createServer(async (req, res) => {
-  const key = decodeURIComponent(req.url.split("?")[0].split("#")[0]);
-  if (key === "/favicon.ico") { res.writeHead(204); res.end(); return; }
-  const path = SERVABLE.get(key);
+  if (req.url.split("?")[0] === "/favicon.ico") { res.writeHead(204); res.end(); return; }
+  const path = lookup(SERVABLE, req.url);
   if (!path) { res.writeHead(404); res.end(); return; }
   try {
     const data = await readFile(path);
     res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(data);
   } catch { res.writeHead(404); res.end(); }
-}).listen(0);
+});
+// Loopback only (sweep A51), and the pages are opened there.
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
 
 const browser = await pw.chromium.launch(
@@ -493,7 +497,7 @@ async function walkHarness(flavor, turn = null) {
 
   try {
     const turnArg = turn ? `&rotation=${turn.rotation}&timescale=${SPLASH_SCALE}` : "";
-    await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&meet=1&flavor=${flavor}${turnArg}`);
+    await page.goto(`http://127.0.0.1:${port}/canary-local/emulator/web/harness.html?hour=10&meet=1&flavor=${flavor}${turnArg}`);
     await page.waitForFunction(() => window.__ready === true || window.__harnessError, null, { timeout: 90000 });
     const harnessError = await E(() => window.__harnessError || null);
     check(!harnessError, `the harness did not boot: ${harnessError}`);
@@ -894,7 +898,7 @@ if ((!ONLY || ONLY === "watch") && WALK !== "turned") {
   page.on("pageerror", (e) => errors.push(String(e)));
   const phone = page.locator(".ob-wrap");
   try {
-    await page.goto(`http://localhost:${port}/canary-local/fleet.html#canary-display-watch`);
+    await page.goto(`http://127.0.0.1:${port}/canary-local/fleet.html#canary-display-watch`);
     await page.waitForSelector(".tabs .tab", { timeout: 30000 });
     // The page's own violations, from here on. The captive frame is sandboxed
     // without scripts, so nothing can listen INSIDE it — a style it is refused

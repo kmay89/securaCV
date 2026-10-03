@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { birdPerch, birdOnStage } from "./bird_perch.mjs";
 import { framesOnGlass } from "./onboard_glass.mjs";
 import { turnedGlasses, readTurnedSources } from "./turned_glass.mjs";
+import { lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -75,17 +76,21 @@ for (const rel of [
   SERVABLE.set("/" + rel, join(ROOT, rel));
 }
 
+// lookup() decodes the request inside its own try (sweep A52): a malformed
+// escape (/%E0) is a miss answered 404, where a bare decodeURIComponent here
+// threw URIError out of this async handler and Node ended the probe with
+// exit 1, naming no request.
 const server = createServer(async (req, res) => {
-  const key = decodeURIComponent(req.url.split("?")[0]);
+  const asked = req.url.split("?")[0];
   // Chromium asks for a favicon on its own; answering "no content" keeps
   // that off the page's error console (a 404 there fails the probe, and it
   // is not the firmware's doing).
-  if (key === "/favicon.ico") { res.writeHead(204); res.end(); return; }
-  const path = SERVABLE.get(key);
+  if (asked === "/favicon.ico") { res.writeHead(204); res.end(); return; }
+  const path = lookup(SERVABLE, req.url);
   if (!path) {
     // Name the miss: a flavor that asks for something outside the allowlist
     // fails the probe, and "404" alone does not say what it wanted.
-    console.error(`boot_probe: 404 for ${key} (not in the allowlist)`);
+    console.error(`boot_probe: 404 for ${asked} (not in the allowlist)`);
     res.writeHead(404); res.end(); return;
   }
   try {
@@ -93,7 +98,10 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(data);
   } catch { res.writeHead(404); res.end(); }
-}).listen(0);
+});
+// Loopback only (sweep A51): listen(0) alone binds every interface, which
+// served the allowlist to the network while the probe ran.
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
 
 const browser = await pw.chromium.launch(
@@ -114,7 +122,7 @@ async function bootOnce(flavor, turn = null) {
   let st = null;
   try {
     const turnArg = turn ? `&rotation=${turn.rotation}` : "";
-    await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&flavor=${flavor}${turnArg}`);
+    await page.goto(`http://127.0.0.1:${port}/canary-local/emulator/web/harness.html?hour=10&flavor=${flavor}${turnArg}`);
     // A function, never a string: Playwright re-evaluates a string predicate
     // through eval on every animation frame, which harness.html's policy
     // (no 'unsafe-eval') refuses whenever the wasm is not ready at the first

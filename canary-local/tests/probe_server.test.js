@@ -16,7 +16,9 @@
 //   · a probe resolves a request path itself again     → "no probe resolves a request path"
 //   · a probe reads a file its index did not hand it   → same test
 //   · a probe server listens beyond loopback           → same test
+//   · a probe throws on a malformed escape (/%E0)      → same test
 //   · the scan stops seeing any of those               → "the request-path scan refuses"
+//   · a real probe's guard is put back unguarded       → "the scan refuses each allowlist probe with its decode unguarded"
 //   · the scan stops finding a server file             → same test
 //   · the gate is dropped from CI                      → "CI runs this gate"
 //
@@ -65,6 +67,12 @@ test("lookup answers from the index: never a path the request spells", async () 
       "/canary-local/emulator/third_party/lvgl.c", "/canary-local/vision.html#top", "/canary-local/vision.html%3Fx",
       "/%E0canary-local/vision.html",
     ]) assert.strictEqual(lookup(files, miss), null, `${miss}: not a key, so not a file`);
+    // a malformed escape is a miss, never a throw: the allowlist probes hand
+    // lookup() the raw request for exactly this (sweep A52)
+    for (const bad of ["/%E0", "/%", "/%zz", "/canary-local/%C0%AF", "/%ED%A0%80", "/canary-local/vision.html%"]) {
+      assert.doesNotThrow(() => lookup(files, bad), `${bad}: lookup() threw`);
+      assert.strictEqual(lookup(files, bad), null, `${bad}: undecodable, so not a file`);
+    }
     // the index holds the paths it walked; a file the tree gains later is not served
     put("canary-local/late.html", "late");
     assert.strictEqual(lookup(files, "/canary-local/late.html"), null);
@@ -128,6 +136,15 @@ test("lookup answers from the index: never a path the request spells", async () 
 //   4. Every `listen` in it is a .listen(…) the scan can read, on loopback:
 //      listen(port, "127.0.0.1") (or "::1"), or an options object whose host
 //      is one of those. "listen" spelled as a string is refused.
+//   5. A malformed request is answered, never thrown out of a handler (an
+//      async handler's throw is an unhandled rejection, and Node ends the
+//      probe with exit 1 naming no request): every decodeURIComponent and
+//      decodeURI in the file is a call inside a try whose catch swallows it
+//      (no `throw` in the catch), with no function, method or arrow starting
+//      between the try and the call; one handed itself on is refused. The
+//      probes call lookup(), whose decode answers null. A `new URL(…)` handed
+//      something derived from the request (rule 3's sense) is held the same
+//      way, since a target like "//" throws ERR_INVALID_URL.
 //
 // What it cannot follow: a function of another module that a handler hands
 // the request (the A41 bridge's handle() is one; native_cores.test.js tests
@@ -136,6 +153,8 @@ test("lookup answers from the index: never a path the request spells", async () 
 // outside any handler the scan knows (a Playwright event's URL, say). Rule 2
 // is the backstop for those inside a handler: whatever a value went through,
 // the handler reads only what an index built before the server answered.
+// Rule 5 sees a decode by name, so not one reached through a computed member
+// of a global (globalThis[k]), nor a throw from another module's function.
 
 const PATH_FNS = ["join", "resolve", "normalize", "relative"];
 const FS_FNS = ["readFile", "readFileSync", "createReadStream", "stat", "statSync", "lstat", "lstatSync", "access",
@@ -519,6 +538,16 @@ function taintProblems(ctx, fn, carriers) {
       if (t) ctx.problems.push(`line ${lineOf(src, open)}: ${m[1]}(…) is handed ${t}, which comes from the request`);
     }
   }
+  // rule 5's other thrower: new URL(…) of a request target such as "//" or
+  // "//[" throws ERR_INVALID_URL, so one handed the request sits in a try too
+  for (const m of body.matchAll(/(?<![\w$.])new\s+URL\s*\(/g)) {
+    const open = fn.from + m.index + m[0].length - 1;
+    const t = (argSpansAt(src, open) || []).map((a) => carried(ctx.codeOf(a))).find(Boolean);
+    if (t && !guardedAt(ctx, fn.from + m.index)) {
+      ctx.problems.push(`line ${lineOf(src, open)}: new URL(…) is handed ${t}, from the request, outside a try that catches it ` +
+        `(a request target like // throws and ends the probe)`);
+    }
+  }
   // follow the file's own functions a call hands one of them (by name, or
   // the name itself handed to a call that one of them reaches)
   const defs = ctx.fns.filter((f) => f.name && f.from !== fn.from);
@@ -593,6 +622,68 @@ function listenProblems(ctx) {
   }
 }
 
+// Rule 5's guard: every try block whose catch can swallow what its block
+// throws ({ o, c } the block's braces). A try with no catch, or whose catch
+// says `throw` anywhere, guards nothing: the error still leaves the handler.
+function guardingTries(ctx) {
+  if (ctx.tries) return ctx.tries;
+  const { src, code } = ctx;
+  const { pairs } = readJs(src);
+  ctx.tries = [];
+  for (const m of code.matchAll(/(?<![\w$.])try\s*\{/g)) {
+    const o = m.index + m[0].length - 1;
+    const c = pairs.get(o);
+    if (c === undefined) continue;
+    const k = /^\s*catch\s*(?:\(\s*[^()]*\)\s*)?\{/.exec(code.slice(c + 1));
+    if (!k) continue;
+    const co = c + 1 + k[0].length - 1;
+    const cc = pairs.get(co);
+    if (cc === undefined || /(?<![\w$.])throw(?![\w$])/.test(code.slice(co, cc))) continue;
+    ctx.tries.push({ o, c });
+  }
+  return ctx.tries;
+}
+
+// Whether the code at index at sits in a guarding try's own block, in the
+// same function as the try: no function, method or arrow starts between the
+// try's brace and it (a callback inside a try runs whenever its caller calls
+// it, maybe after the try is gone), so a throw there is caught right there.
+function guardedAt(ctx, at) {
+  const { src, code } = ctx;
+  const { pairs } = readJs(src);
+  const closes = ctx.closes || (ctx.closes = new Map([...pairs].map(([o, c]) => [c, o])));
+  const CONTROL = /^(?:if|for|while|switch|catch|with)$/;
+  return guardingTries(ctx).some(({ o, c }) => {
+    if (!(o < at && at < c)) return false;
+    if (ctx.fns.some((f) => f.from > o && f.from < at && at < f.to)) return false;
+    for (const [o2, c2] of pairs) {
+      if (src[o2] !== "{" || !(o < o2 && o2 < at && at < c2)) continue;
+      const before = code.slice(0, o2).trimEnd();
+      if (!before.endsWith(")")) continue;                           // a plain block, an object literal
+      const po = closes.get(before.length - 1);
+      const word = po === undefined ? "" : (/([\w$]+)\s*$/.exec(code.slice(0, po)) || [])[1] || "";
+      if (!CONTROL.test(word)) return false;                         // a method's or function's body
+    }
+    return true;
+  });
+}
+
+// Rule 5: an undecodable request is answered, never thrown. Every
+// decodeURIComponent or decodeURI in a server file is a call inside a try
+// that catches it (lookup() is the one the probes use; it answers null);
+// handed itself anywhere, the scan cannot see where it is called.
+function decodeProblems(ctx) {
+  const { code } = ctx;
+  for (const m of code.matchAll(/(?<![\w$])(decodeURI(?:Component)?)(?![\w$])/g)) {
+    if (!/^\s*\(/.test(code.slice(m.index + m[0].length))) {
+      ctx.problems.push(`${ctx.line(m.index)}: ${m[1]} handed itself on, where the scan cannot see it called inside a try`);
+    } else if (!guardedAt(ctx, m.index)) {
+      ctx.problems.push(`${ctx.line(m.index)}: ${m[1]}(…) outside a try that catches it: a malformed escape (/%E0) ` +
+        `throws URIError out of the handler and ends the probe (answer it, as lookup() does)`);
+    }
+  }
+}
+
 // What is wrong with the server file src: { servers, problems }, servers the
 // count of servers and page routes it starts.
 function requestPathProblems(src) {
@@ -608,15 +699,11 @@ function requestPathProblems(src) {
   for (const h of found) readProblems(ctx, h.fn);
   fulfillProblems(ctx);
   listenProblems(ctx);
+  decodeProblems(ctx);
   return { servers: count, problems: [...new Set(ctx.problems)] };
 }
 
-// Probes another change owns this wave, which still listen on every
-// interface: rules 0 to 3 hold for them, rule 4 waits for their owner.
-const LOOPBACK_PENDING = new Set(["boot_probe.mjs", "onboard_probe.mjs"]);
-const excused = (rel, why) => LOOPBACK_PENDING.has(rel) && / not loopback$/.test(why);
-
-test("no probe resolves a request path itself: each serves its index's answer, on loopback", () => {
+test("no probe resolves a request path itself: each serves its index's answer, on loopback, and answers a malformed request", () => {
   const bad = [];
   let servers = 0;
   const probes = [];
@@ -633,23 +720,19 @@ test("no probe resolves a request path itself: each serves its index's answer, o
       probes.push(rel);
       const found = requestPathProblems(src);
       servers += found.servers;
-      for (const why of found.problems) {
-        if (excused(rel, why)) continue;
-        bad.push(`${rel}: ${why}`);
-      }
+      for (const why of found.problems) bad.push(`${rel}: ${why}`);
     }
   };
   walk(__dirname);
   assert.ok(servers >= 17, `only ${servers} probe servers found: the scan is looking in the wrong place`);
   assert.ok(scanned.includes(join("native", "probe_cores.js")), "the scan reads the directories below this one too");
-  for (const f of LOOPBACK_PENDING) assert.ok(probes.includes(f), `${f} is excused from loopback but serves nothing here`);
-  // the excuse covers the listen rule and nothing else, for those two only
-  assert.ok(excused("boot_probe.mjs", "line 82: listen(0) binds every interface (no loopback host the scan can read), not loopback"));
-  assert.ok(!excused("boot_probe.mjs", "line 78: readFile(path) reads what the index did not answer"));
-  assert.ok(!excused("onboard_probe.mjs", "line 197: join(…) is handed key, which comes from the request"));
-  assert.ok(!excused("onboard_probe.mjs", "line 201: a listen the scan cannot read (listen.call(server, 0))"));
-  assert.ok(!excused("vision_probe.mjs", "line 60: listen(0) binds every interface (no loopback host the scan can read), not loopback"));
-  assert.deepStrictEqual(bad, [], "a probe's server turns a request into a path, reads what its index did not answer, or listens beyond loopback");
+  // every allowlist probe is in the scan, held to every rule: none is excused
+  // from loopback any more (sweep A51 moved the boot and onboard probes)
+  for (const f of ["bench_probe.mjs", "boardroom_probe.mjs", "workshop_probe.mjs", "boot_probe.mjs", "onboard_probe.mjs"]) {
+    assert.ok(probes.includes(f), `${f} serves the Lab's pages but the scan did not find its server`);
+  }
+  assert.deepStrictEqual(bad, [], "a probe's server turns a request into a path, reads what its index did not answer, " +
+    "listens beyond loopback, or throws on an undecodable request");
 });
 
 // The scan itself, on the shapes it must refuse and the ones the probes use.
@@ -823,22 +906,90 @@ const REFUSED = {
   "listen through .call": IDX + `const server = createServer(async (req, res) => {\n  const file = lookup(FILES, req.url);\n` +
     `  res.end(await readFile(file));\n});\nserver.listen.call(server, 0);`,
 };
+// Rule 5's own refusals: each must be refused for its decode or its URL,
+// whatever else the scan says about it.
+const UNGUARDED = {
+  "bench_probe.mjs before A52 (an unguarded decode)": `const SERVABLE = new Map();\nasync function allow(dirRel) {\n` +
+    `  for (const f of await readdir(join(ROOT, dirRel))) SERVABLE.set(\`/\${dirRel}/\${f}\`, join(ROOT, dirRel, f));\n}\n` +
+    `await allow("canary-local");\nconst server = createServer(async (req, res) => {\n` +
+    `  const key = decodeURIComponent(req.url.split("?")[0].split("#")[0]);\n  const path = SERVABLE.get(key);\n` +
+    `  if (!path) { res.writeHead(404); res.end(); return; }\n  const data = await readFile(path);\n  res.end(data);\n});` + OK,
+  "boot_probe.mjs before A51 and A52 (every interface, an unguarded decode)": `const SERVABLE = new Map();\n` +
+    `for (const rel of ["a.html", "b.js"]) {\n  SERVABLE.set("/" + rel, join(ROOT, rel));\n}\n` +
+    `const server = createServer(async (req, res) => {\n  const key = decodeURIComponent(req.url.split("?")[0]);\n` +
+    `  if (key === "/favicon.ico") { res.writeHead(204); res.end(); return; }\n  const path = SERVABLE.get(key);\n` +
+    `  if (!path) { console.error(\`404 for \${key}\`); res.writeHead(404); res.end(); return; }\n` +
+    `  try {\n    res.end(await readFile(path));\n  } catch { res.writeHead(404); res.end(); }\n}).listen(0);\nconst port = server.address().port;`,
+  "an unguarded decode in a handler that is not async": IDX + `const server = createServer((req, res) => {\n` +
+    `  const file = FILES.get(decodeURIComponent(req.url));\n  res.end(file ? "yes" : "no");\n});` + OK,
+  "an unguarded decodeURI": IDX + `const server = createServer(async (req, res) => {\n  const file = FILES.get(decodeURI(req.url));\n` +
+    `  if (file) res.end(await readFile(file));\n});` + OK,
+  "a decode through globalThis, unguarded": IDX + `const server = createServer(async (req, res) => {\n` +
+    `  const file = FILES.get(globalThis.decodeURIComponent(req.url));\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "a decode in a try with no catch": IDX + `const server = createServer(async (req, res) => {\n  let key = "/";\n` +
+    `  try { key = decodeURIComponent(req.url); } finally { res.setHeader("x-k", "1"); }\n  const file = FILES.get(key);\n` +
+    `  if (file) res.end(await readFile(file));\n});` + OK,
+  "a decode in a try whose catch throws it again": IDX + `const server = createServer(async (req, res) => {\n  let key;\n` +
+    `  try { key = decodeURIComponent(req.url); } catch (e) { console.error(e); throw e; }\n  const file = FILES.get(key);\n` +
+    `  if (file) res.end(await readFile(file));\n});` + OK,
+  "a decode in the catch, not the try": IDX + `const server = createServer(async (req, res) => {\n  let key;\n` +
+    `  try { key = req.url.slice(0); } catch { key = decodeURIComponent(req.url); }\n  const file = FILES.get(key);\n` +
+    `  if (file) res.end(await readFile(file));\n});` + OK,
+  "a decode in a try's finally": IDX + `const server = createServer(async (req, res) => {\n  let key = "/";\n` +
+    `  try { res.setHeader("x", "1"); } catch { key = "/"; } finally { key = decodeURIComponent(req.url); }\n` +
+    `  const file = FILES.get(key);\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "a decode in a callback the try only schedules": IDX + `const server = createServer((req, res) => {\n` +
+    `  try { setTimeout(() => res.end(String(FILES.has(decodeURIComponent(req.url)))), 0); } catch { res.end(); }\n});` + OK,
+  "a decode in a method defined inside a try": IDX + `const server = createServer(async (req, res) => {\n  let key;\n` +
+    `  try {\n    const o = { k() { return decodeURIComponent(req.url); } };\n    key = "/";\n    later(o);\n  } catch { key = "/"; }\n` +
+    `  const file = FILES.get(key);\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "a helper's decode, called from inside a try (not seen caught)": IDX + `const dec = (u) => decodeURIComponent(u);\n` +
+    `const server = createServer(async (req, res) => {\n  let key;\n  try { key = dec(req.url); } catch { key = "/"; }\n` +
+    `  const file = FILES.get(key);\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "decodeURIComponent handed itself to map": IDX + `const server = createServer(async (req, res) => {\n  let parts = [];\n` +
+    `  try { parts = req.url.split("/").map(decodeURIComponent); } catch { parts = []; }\n` +
+    `  const file = FILES.get("/" + parts.join("/"));\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "decodeURIComponent aliased": IDX + `const dec = decodeURIComponent;\nconst server = createServer(async (req, res) => {\n` +
+    `  const file = FILES.get(dec(req.url));\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "a decode at top level, outside a try": IDX + `const START = decodeURIComponent(process.argv[2] || "/");\n` +
+    `const server = createServer(async (req, res) => {\n  const file = lookup(FILES, req.url);\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "a URL built from the request outside a try (// throws)": IDX + `const server = createServer(async (req, res) => {\n` +
+    `  const u = new URL(req.url, "http://127.0.0.1");\n  const file = lookup(FILES, u.pathname);\n` +
+    `  if (file) res.end(await readFile(file));\n});` + OK,
+  "a URL built from the request in a helper, outside a try": IDX + `function pathOf(r) {\n  return new URL(r.url, "http://x").pathname;\n}\n` +
+    `const server = createServer(async (req, res) => {\n  const file = lookup(FILES, pathOf(req));\n  if (file) res.end(await readFile(file));\n});` + OK,
+};
 const PASSED = {
   "render_probe.mjs's server (the index)": IDX + `const server = createServer(async (req, res) => {\n` +
     `  const path = req.url.split("?")[0];\n  if (path === "/probe.html") { res.end(HARNESS); return; }\n  try {\n` +
     `    const file = lookup(FILES, req.url);\n    if (!file) throw new Error("not in the tree");\n` +
     `    const body = await readFile(file);\n    res.writeHead(200, { "content-type": MIME[extname(path)] || "x" });\n` +
     `    res.end(body);\n  } catch { res.writeHead(404); res.end("not found"); }\n});` + OK,
-  "bench_probe.mjs's server (an allowlist built at start)": `const SERVABLE = new Map();\nasync function allow(dirRel) {\n` +
+  "bench_probe.mjs's server (an allowlist built at start, looked up)": `const SERVABLE = new Map();\nasync function allow(dirRel) {\n` +
     `  for (const f of await readdir(join(ROOT, dirRel))) SERVABLE.set(\`/\${dirRel}/\${f}\`, join(ROOT, dirRel, f));\n}\n` +
     `await allow("canary-local");\nconst server = createServer(async (req, res) => {\n` +
-    `  const key = decodeURIComponent(req.url.split("?")[0].split("#")[0]);\n  const path = SERVABLE.get(key);\n` +
+    `  const path = lookup(SERVABLE, req.url);\n` +
     `  if (!path) { res.writeHead(404); res.end(); return; }\n  const data = await readFile(path);\n  res.end(data);\n});` + OK,
-  "boot_probe.mjs's allowlist (filled by a top-level loop)": `const SERVABLE = new Map();\nfor (const rel of ["a.html", "b.js"]) {\n` +
+  "boot_probe.mjs's allowlist (filled by a top-level loop, looked up)": `const SERVABLE = new Map();\nfor (const rel of ["a.html", "b.js"]) {\n` +
     `  SERVABLE.set("/" + rel, join(ROOT, rel));\n}\nconst server = createServer(async (req, res) => {\n` +
-    `  const key = decodeURIComponent(req.url.split("?")[0]);\n  const path = SERVABLE.get(key);\n` +
-    `  if (!path) { console.error(\`404 for \${key}\`); res.writeHead(404); res.end(); return; }\n` +
+    `  const asked = req.url.split("?")[0];\n  if (asked === "/favicon.ico") { res.writeHead(204); res.end(); return; }\n` +
+    `  const path = lookup(SERVABLE, req.url);\n` +
+    `  if (!path) { console.error(\`404 for \${asked}\`); res.writeHead(404); res.end(); return; }\n` +
     `  res.end(await readFile(path));\n});` + OK + `\nconsole.log(\`serving \${SERVABLE.size} files\`);`,
+  "a decode answered 400 inside its try": `const SERVABLE = new Map([["/a.html", "/srv/a.html"]]);\n` +
+    `const server = createServer(async (req, res) => {\n  let key;\n` +
+    `  try { key = decodeURIComponent(req.url.split("?")[0]); } catch { res.writeHead(400); return res.end(); }\n` +
+    `  const path = SERVABLE.get(key);\n  if (!path) { res.writeHead(404); return res.end(); }\n  res.end(await readFile(path));\n});` + OK,
+  "a decode inside an if, inside a try": IDX + `const server = createServer(async (req, res) => {\n  let key = "/";\n` +
+    `  try {\n    if (req.url.includes("%")) { key = decodeURIComponent(req.url); }\n  } catch (e) { console.error(e.message); }\n` +
+    `  const file = FILES.get(key);\n  if (file) res.end(await readFile(file));\n});` + OK,
+  "a URL built from the request inside a try": IDX + `const server = createServer(async (req, res) => {\n  try {\n` +
+    `    const u = new URL(req.url, "http://127.0.0.1");\n    const file = lookup(FILES, u.pathname);\n` +
+    `    if (file) res.end(await readFile(file));\n  } catch { res.writeHead(400); res.end(); }\n});` + OK,
+  "a URL of the probe's own, outside a try (nothing from the request)": IDX +
+    `const BASE = new URL("http://127.0.0.1/");\nconst server = createServer(async (req, res) => {\n` +
+    `  const here = new URL("/canary-local/", BASE);\n  const file = lookup(FILES, req.url);\n` +
+    `  if (file) res.end(await readFile(file)); else res.end(here.pathname);\n});` + OK,
   "vision_probe.mjs now (the bridge first)": IDX + `const cores = await probeCores(["canary-vision-core"]);\n` +
     `const server = createServer(async (req, res) => {\n  try {\n` +
     `    if (cores && await cores.handle(req, res)) return;\n    const path = req.url.split("?")[0];\n` +
@@ -880,6 +1031,12 @@ test("the request-path scan refuses a path built from the request, however it ge
     assert.ok(servers > 0, `${what}: the scan saw no server`);
     assert.ok(problems.length > 0, `${what}: the scan must refuse it`);
   }
+  for (const [what, src] of Object.entries(UNGUARDED)) {
+    const { servers, problems } = requestPathProblems(src);
+    assert.ok(isServerFile(src) && servers > 0, `${what}: the scan saw no server`);
+    assert.ok(problems.some((p) => /decodeURI(?:Component)?(?:\(…\))? (?:outside|handed)|new URL\(…\) is handed/.test(p)),
+      `${what}: not refused for throwing on a malformed request (${problems.join("; ") || "no problems"})`);
+  }
   for (const [what, src] of Object.entries(PASSED)) {
     const { servers, problems } = requestPathProblems(src);
     assert.ok(isServerFile(src), `${what}: not seen as a server file`);
@@ -893,6 +1050,31 @@ test("the request-path scan refuses a path built from the request, however it ge
   }
   for (const src of [`page.on("request", log);`, `// call listen() here\nconst x = "listening";`, `x.addEventListener("load", f);`]) {
     assert.ok(!isServerFile(src), `${src}: seen as a server file`);
+  }
+});
+
+// The five allowlist probes as they are, each mutated back one way: its
+// lookup() turned into the bare decode it replaced (sweep A52), or its
+// listen turned back to every interface (A51). Each mutant must be refused
+// for that, so the guard the real file carries is the one the scan holds.
+test("the scan refuses each allowlist probe with its decode unguarded or its listen opened up", () => {
+  const ALLOWLIST = ["bench_probe.mjs", "boardroom_probe.mjs", "workshop_probe.mjs", "boot_probe.mjs", "onboard_probe.mjs"];
+  const LOOKUP = "lookup(SERVABLE, req.url)";
+  const LISTEN = `server.listen(0, "127.0.0.1", ok)`;
+  for (const f of ALLOWLIST) {
+    const src = read(join(__dirname, f));
+    assert.deepStrictEqual(requestPathProblems(src).problems, [], `${f}: refused as it stands`);
+    assert.strictEqual(src.split(LOOKUP).length - 1, 1, `${f}: answers a request with ${LOOKUP} once`);
+    assert.strictEqual(src.split(LISTEN).length - 1, 1, `${f}: listens with ${LISTEN} once`);
+    for (const bare of [`SERVABLE.get(decodeURIComponent(req.url.split("?")[0]))`, `SERVABLE.get(decodeURI(req.url))`]) {
+      const { problems } = requestPathProblems(src.replace(LOOKUP, bare));
+      assert.ok(problems.some((p) => /decodeURI(?:Component)?\(…\) outside a try/.test(p)),
+        `${f} with ${bare}: an unguarded decode the scan let through (${problems.join("; ") || "no problems"})`);
+    }
+    for (const open of ["server.listen(0, ok)", `server.listen(0, "0.0.0.0", ok)`, `server.listen({ port: 0 }, ok)`]) {
+      const { problems } = requestPathProblems(src.replace(LISTEN, open));
+      assert.ok(problems.some((p) => / not loopback$/.test(p)), `${f} with ${open}: listening beyond loopback, let through`);
+    }
   }
 });
 

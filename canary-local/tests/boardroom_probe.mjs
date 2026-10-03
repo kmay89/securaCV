@@ -11,6 +11,7 @@ import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MIME = {
@@ -42,8 +43,7 @@ await allow("canary-local/devices");
 await allow("canary-local/boards");
 
 const server = createServer(async (req, res) => {
-  const key = decodeURIComponent(req.url.split("?")[0].split("#")[0]);
-  const path = SERVABLE.get(key);
+  const path = lookup(SERVABLE, req.url);   // decodes inside its own try: /%E0 is a 404 (A52)
   if (!path) { res.writeHead(404); res.end(); return; }
   try {
     const data = await readFile(path);

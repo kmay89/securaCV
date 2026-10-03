@@ -1013,15 +1013,20 @@ fails on byte drift.
   (sweep A46). The fourteen probes that serve the tree use
   `tests/probe_server.mjs` (`indexTree` once, `lookup()` per request); the
   bench, Board Room, workshop, boot and onboard probes build a fixed
-  allowlist `Map` of the files they serve. Every probe server binds
-  127.0.0.1 except `boot_probe.mjs` and `onboard_probe.mjs`, which still
-  listen on every interface and are excused from that one rule by name until
-  their owner moves them. The test refuses a probe whose request reaches
-  `join`, `resolve` or a file read or write, whose handler reads a file its
-  index did not answer, whose index can change while it serves, that names
-  `fs` or `path` in a way the scan would not see called, or whose `listen` it
-  cannot read; its header says what the scan cannot follow. It also holds
-  `lookup()` itself on a scratch tree.
+  allowlist `Map` of the files they serve and look a request up in it with
+  the same `lookup()`, whose one decode sits in its own `try`: a malformed
+  escape (`/%E0`) is a 404, where a bare `decodeURIComponent` in an async
+  handler threw and Node ended the probe (A52). Every probe server binds
+  127.0.0.1 and opens its pages there (A51 moved the last two). The test
+  refuses a probe whose request reaches `join`, `resolve` or a file read or
+  write, whose handler reads a file its index did not answer, whose index can
+  change while it serves, that names `fs` or `path` in a way the scan would
+  not see called, whose `listen` it cannot read or is not on loopback, or
+  that calls `decodeURIComponent`/`decodeURI` (or builds a `new URL` from the
+  request) outside a `try` that catches it; its header says what the scan
+  cannot follow. It holds each allowlist probe's real source mutated back to
+  the bare decode or an open `listen`, and `lookup()` itself on a scratch
+  tree, malformed escapes included.
 - `tests/vault.test.js` + `tests/vault_probe.mjs` — the Vault explainer (§4j):
   the honesty test pins the quorum constants, the three signing domains, the
   `VLT2`/`SVLT` magics and Invariants I & V to their source **and runs a real
