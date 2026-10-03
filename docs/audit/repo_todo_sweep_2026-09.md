@@ -7883,7 +7883,10 @@ so — see D2 below.)
   mutations of the stand-in, the bridge and the probe wiring each fail one of
   those tests. `canary-local.yml`'s wasm job runs each of the three probes
   again under `LAB_CORES=native` right after its dist step, whenever that step
-  ran, red or green, with the runner's g++ and no emsdk. A native pass in
+  ran, red or green, with the runner's g++ and no emsdk. An earlier red step
+  in that job skips both modes: in #1762 the native probes first run after the
+  dist rebuild, since until then the onboard probe goes red at
+  `dash@portrait` before them (F184). A native pass in
   Chromium says what one in Node says: this tree's sources pass, built by
   64-bit g++ rather than wasm32 clang (A42 still applies). Documented in
   `tests/native/README.md` and the Lab README's testing list. Test tooling,

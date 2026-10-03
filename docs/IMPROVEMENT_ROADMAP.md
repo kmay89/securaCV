@@ -1073,8 +1073,9 @@ adversarially and fixed before it joined the PR. Seven packages:
   `loop_snapshot.h` (each pass, its early return, each request before its
   result, `deinit()`, setup's restore), and `GET /api/mesh` and `/peers` copy
   it; the wizard reads `pairing_seq` and `pairing_result`, names a failed
-  Canary and its reason, and cancels a side still running when it gives up;
-  the PIO dashboard shows its Community tab only once `GET /api/chirp`
+  Canary and its reason, and cancels a side still running when the other
+  fails or the wait times out (not yet after a rejected confirmation or five
+  unreadable polls, F200); the PIO dashboard shows its Community tab only once `GET /api/chirp`
   answers. Host-tested (eight new `test_mesh_session` tests, one two-thread
   run clean under ThreadSanitizer; `test_wizard_mesh_pairing.test.js`, 11
   cases; `test_canary_community_panel.test.js`) and held by
@@ -1113,7 +1114,8 @@ adversarially and fixed before it joined the PR. Seven packages:
   policy served as committed; `boot_probe.mjs` and `csp_probe.mjs` wait with a
   function, and `csp.test.js` refuses a predicate it cannot follow to one.
   Test tooling, host-tested and run in local Chromium; the CI steps' first run
-  is CI's. Files A45 and A46.
+  is CI's, after this PR's dist rebuild (an earlier red step skips them,
+  F184). Files A45 and A46.
 - **The emulator boots a turned dash, and the onboarding probe walks it (sweep
   F184, in part).** `lvgl_port_set_rotation()` turns LVGL 8.4 on the dash
   glass; the emulator HAL holds its framebuffer in the turned frame;

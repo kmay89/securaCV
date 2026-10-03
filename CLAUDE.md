@@ -220,9 +220,10 @@ those scenarios never send. The Chromium probes that drive those two cores
 (`vision_probe.mjs`, `eyes_probe.mjs`, `audio_probe.mjs`) take the same
 variable: their server answers the core's dist URL with a stand-in that
 forwards each call to the native build over synchronous same-origin requests,
-the page served as committed, and the wasm job runs each probe both ways, the
-native step even after a red dist step. A native probe pass makes the same
-claim as a native test pass. The display flavors have no native stand-in;
+the page served as committed, and the wasm job runs each probe both ways. The
+native step runs whenever its own dist step ran, red or green; an earlier red
+step in the job (the onboard probe on a stale display dist, say) skips both.
+A native probe pass makes the same claim as a native test pass. The display flavors have no native stand-in;
 they boot only in Chromium. See `canary-local/tests/native/README.md`.
 
 Fixing it needs emsdk **6.0.3** exactly, which most working environments can't

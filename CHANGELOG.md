@@ -79,9 +79,11 @@
   reads each Canary's pairing outcome (F133) instead of waiting a minute for
   ACTIVE, which a PlatformIO Canary does not read until it hears a member: it
   says a finished pairing finished and a failed one failed, on which Canary
-  and why, cancels a Canary still running the pairing when it gives up (so the
-  retry is not refused for five minutes), and still reads older Canaries and
-  canary-wap the old way. The PlatformIO dashboard's Community tab, whose
+  and why, cancels a Canary still running the pairing when the other fails or
+  the wait times out (so the retry is not refused for five minutes; not yet
+  after a rejected confirmation, a confirm lost on the network or five
+  unreadable polls, F200), and still reads older Canaries and canary-wap the
+  old way. The PlatformIO dashboard's Community tab, whose
   Chirp routes nothing in that firmware serves, stays hidden until one
   answers. Host-tested (the mesh C++ suites, a two-thread run clean under
   ThreadSanitizer, node page tests, a static check with 25 self-test
@@ -131,13 +133,15 @@
   synchronous same-origin requests; a native run fails unless the stand-in was
   both served and called. The page and its policy are served as committed, and
   unset nothing changes. CI's wasm job runs each probe both ways, the native
-  step even when the dist step is red. `boot_probe.mjs` and `csp_probe.mjs`
-  waited for the emulator harness with a string predicate, which Playwright
-  re-evaluates through eval every frame and the harness's policy refuses
-  whenever the wasm boots slower than the page loads; they wait with a
-  function now, and `csp.test.js` refuses any predicate it cannot follow to a
-  function within the probe's file, through parentheses, names and wrapper
-  calls. See `canary-local/tests/native/README.md`. Test tooling only: no
+  step whenever its own dist step ran, red or green; an earlier red step in
+  that job skips both, so in this PR they first run after the dist rebuild
+  (the onboard probe is red before them until then, F184). `boot_probe.mjs`
+  and `csp_probe.mjs` waited for the emulator harness with a string
+  predicate, which Playwright re-evaluates through eval every frame and the
+  harness's policy refuses whenever the wasm boots slower than the page loads;
+  they wait with a function now, and `csp.test.js` refuses any predicate it
+  cannot follow to a function within the probe's file, through parentheses,
+  names and wrapper calls. See `canary-local/tests/native/README.md`. Test tooling only: no
   firmware or page behavior changes, and the emulator dist does not move for
   it. **Host-tested** and run in local Chromium; the CI steps' first run is
   CI's.
