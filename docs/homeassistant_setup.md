@@ -589,8 +589,10 @@ later than the health's. A body an earlier boot left on the broker, or one
 left behind by newer firmware after a rollback to firmware that publishes
 no `egress` topic, is not shown as current, after a Home Assistant restart
 too. Clearing the retained topic (`mosquitto_pub -r -n -t
-securacv/<device_id>/egress`) removes the attribute. The canary-wap also
-returns `csi_event_egress` from its token-gated `GET /api/diagnostics`.
+securacv/<device_id>/egress`) removes the attribute. Both devices also
+return `csi_event_egress` from their token-gated `GET /api/diagnostics`
+(the canary since sweep F179), so a bench run without a broker can read
+the counters too.
 
 These count paths, not rows: `planner.queued` counts a row handed to the
 offline queue even if the queue evicts it later (then it is in

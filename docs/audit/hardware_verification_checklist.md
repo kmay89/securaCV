@@ -627,6 +627,36 @@ does, is in `docs/csi_developer_api.md`.
     is past them) until the re-pin.
   - Artifact: `docs/audit/repro/F82/id-space-low/`.
 
+## The canary's diagnostics carry its egress counters (F179) — on-device verification
+
+Code: `firmware/canary/src/csi_event_egress.cpp` (the pump publishes its
+counters as its last step every pass; `csi_event_egress_read_stats()`,
+`csi_event_egress_diagnostics_json()`, declared for the route in
+`include/csi_event_egress_diagnostics.h`), and `securacv_network.cpp`'s
+`handle_diagnostics()`, whose body `lib/securacv_diagnostics/src/diagnostics_json.h`
+builds. Host-tested (`firmware/tests_host/test_canary_event_egress.cpp`,
+`test_canary_diagnostics.cpp`); the PlatformIO compiles are CI's. Owner: U1.
+
+- [ ] **The canary's diagnostics carry the same counters as its health**
+  - Setup: an HA-enabled canary (`release_ha`, FEATURE_DIAGNOSTICS on) with a
+    card in; its API token; `mosquitto_sub -v -t 'securacv/+/health'` on a
+    broker you can stop.
+  - Repro: `curl -H 'Authorization: Bearer <token>' http://<canary>/api/diagnostics`;
+    commit a few events, stop the broker, commit a few more, and call the
+    route again; start the broker, wait for the next health publish and call
+    it once more.
+  - Expected: every response holds the keys it had before (`heap`, `sd`,
+    `selftest`, `system`, unchanged) and a `csi_event_egress` object with
+    the names the health publish uses (`dropped`, `held_dropped`,
+    `ambient_dropped`, `unsent_dropped`, `planner`), never `null` once the
+    loop is running (`null` is the answer only before its first pass). With
+    the broker stopped
+    the route still answers, and its `planner.held` counts the outage's
+    rows. The last response's object equals the health publish's, or is
+    newer by what the device did since. No request stalls the device (no
+    watchdog reset).
+  - Artifact: `docs/audit/repro/F179/canary-diagnostics/`.
+
 ## The canary-wap's egress counters, and Home Assistant reading both devices' (F149, HA24) — on-device verification
 
 Code: the canary-wap's `csi_event_egress.cpp` (`pump()` publishes the
@@ -1378,6 +1408,33 @@ Owner: U1.
     are outside this row.
   - Artifact: `docs/audit/repro/F150/first-boot-log/`.
 
+## canary-wap boot with no mesh namespace (F164) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`:
+every read-only open of the `mesh` namespace (the opera config, the member
+list, the deny-list, the last-seen tombstones, the send-counter record,
+`load_replay_counters()`) goes through
+`csi_module_settings_nvs::begin_read_only()`. Host-tested
+(`tests_host/test_mesh_liveness_wap.cpp`, whose `stubs/mesh_net` NVS counts
+the error line Arduino-ESP32's `Preferences::begin()` logs for a namespace
+that is not there); that IDF's `nvs_open()` answers `ESP_ERR_NVS_NOT_FOUND`
+without an error-level line is from IDF's source as read (F125). Compile is
+CI's. Owner: U1.
+
+- [ ] **A boot with no `mesh` namespace logs no `nvs_open failed` line for it**
+  - Setup: as the F150 row above (a `canary-wap-debug` build, NVS erased, a
+    serial monitor), on a board with flash encryption on if you have one
+    (five reads) and one without (three).
+  - Repro: boot it and let it reach the dashboard without turning the mesh
+    on or pairing; reboot it. Then turn the mesh on in the dashboard (no
+    pairing) and reboot once more.
+  - Expected: no boot logs `[E][Preferences.cpp:...] begin(): nvs_open
+    failed: NOT_FOUND` for the mesh start-up (before F164 each of the first
+    two logged five, or three without flash encryption); `GET /api/mesh`
+    reports the mesh disabled, then, after the third boot, enabled with no
+    opera, as before.
+  - Artifact: `docs/audit/repro/F164/first-boot-log/`.
+
 ## canary-wap dashboard presence settings and calibration (F151) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_settings_nvs.cpp`
@@ -1403,6 +1460,31 @@ device. Owner: U1.
     `"preset":"sensitive"`, `"sensitivity":75` and `"privacy_ceiling":"p1"`,
     and all of it survives the reboot.
   - Artifact: `docs/audit/repro/F151/dashboard-and-calibration-rows/`.
+
+## canary-wap calibration status reports the thresholds in use (F166) — on-device verification
+
+Code: `core_presence_baseline_thresholds()` (`firmware/common/csi/src/core_presence.cpp`,
+staged), `read_presence_thresholds_in_use()` in
+`csi_settings_nvs.cpp`, and `handle_calibrate_status()` in
+`csi_integration.cpp`. Host-tested (`tests_host/test_wap_tune_lab.cpp`,
+`test_wap_module_boot.cpp`, which boots the module on each case and finds
+it classifying at the threshold the status reports); the compile is CI's;
+not run on a device. Owner: U1.
+
+- [ ] **The calibration's before/after shows what the device runs**
+  - Setup: a canary-wap on this firmware with NVS erased, the dashboard open.
+  - Repro: set the preset to "sensitive" and leave the slider at 50; start a
+    calibration and wait for it to finish; read `GET /api/csi/calibrate/status`.
+    Move the slider to 100 and start another; read the status when it is
+    ready. Apply that one, then set the preset to "quiet", start a third and
+    read the status again.
+  - Expected: the first status reports `"current":{"motion":25,"active":60,"breathing":20}`
+    and `"current_source":"preset"` (before F166: 35 / 75 / 30), and the
+    dashboard's "before" column shows those; the second `5 / 40 / 5`,
+    `"preset"`; the third the thresholds the second run applied, with
+    `"current_source":"stored"` (a stored threshold still wins over a later
+    preset, sweep F127).
+  - Artifact: `docs/audit/repro/F166/calibration-current/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 

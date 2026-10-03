@@ -303,9 +303,17 @@ those bodies `"replay":true`. On the canary base
   `csi_event_egress::stats()` uses, beside an `offline_queue` object (the
   MQTT layer's queue). They count paths, not a ledger of rows: a row can
   pass through two of them, and some rows pass through none (below). They
-  start over at every boot. The canary-wap publishes the same
+  start over at every boot. The canary's token-gated `GET /api/diagnostics`
+  (FEATURE_DIAGNOSTICS builds) carries the same `csi_event_egress` object
+  (sweep F179), beside the keys it always had (`heap`, `sd`, `selftest`,
+  `system`; its body is built by `diagnostics_json.h`, host-tested, 1352
+  bytes at the widest in a 2048-byte buffer). That route runs on the HTTP
+  server's task, so it reads a copy the loop task's pump publishes as its
+  last step every pass (`csi_event_egress_read_stats()`): at most one pass
+  old, never torn, and `null` before the first pass. It has no
+  `offline_queue` object; the health has. The canary-wap publishes the same
   `csi_event_egress` object on a retained `egress` topic of its own and in
-  `GET /api/diagnostics` (sweep F149, below). The Home Assistant
+  its own `GET /api/diagnostics` (sweep F149, below). The Home Assistant
   integration shows both objects as attributes of the device's Health
   sensor (HA24). Each one counts:
   - `dropped`: commits the full egress queue refused (the loop task was
@@ -590,6 +598,19 @@ the rows `core.presence`'s `init()`, the boot and the Tuning Lab read, and
 apply, on `core.presence.motion_threshold`, `.active_threshold` and
 `.breathing_threshold` (sweep F151: the handlers spelled these NVS keys by
 hand, and a key misspelled there saved a value no module read).
+
+The calibration's status (`GET /api/csi/calibrate/status`, when a run is
+ready) reports as `current` the thresholds `core.presence` runs, as its
+`init()` derives them from what is stored: each threshold row stored, and
+for a threshold no row stores, the preset and sensitivity baseline
+(`core_presence_baseline_thresholds()`, the function `init()` uses:
+sensitive 25 / 60 / 20, balanced 35 / 75 / 30, quiet 50 / 90 / 40, each
+moved by up to 20 by the slider and kept within 5..120). Beside it,
+`current_source` says which: `"stored"` (all three rows: a calibration, or
+the Tuning Lab), `"preset"` (none) or `"mixed"`. Before sweep F166 every
+absent row read as the balanced numbers whatever the preset. It reads NVS,
+not the module's runtime state, so the one-point nudge a dismissal gives
+the module until its next `init()` does not show.
 
 ```bash
 curl -X POST http://canary.local/api/settings \
