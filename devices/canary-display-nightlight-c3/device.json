@@ -39,6 +39,9 @@
       }
     }
   },
+  "emulator": {
+    "flavor": "nightlight"
+  },
   "flasher": {
     "product": "securacv-canary-display-nightlight-c3"
   },

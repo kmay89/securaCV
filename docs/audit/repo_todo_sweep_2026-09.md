@@ -6835,7 +6835,7 @@ so — see D2 below.)
   AMOLED (seat the bird from the tallest bubble), which would settle both.
   `test_splash_layout` and `test_splash_scenes` print it. Found by F160
   (#1762).
-- [ ] **F184 [code] No emulator flavor runs a turned panel.** The onboarding
+- [x] **F184 [code] No emulator flavor runs a turned panel.** The onboarding
   and the splash on the 480x800 portrait dash glass and the 320x180 landscape
   nightlight are held only on the host (`test_onboard_layout`,
   `test_onboard_scenes` and the splash tests, against fake_lvgl) and were
@@ -6845,9 +6845,9 @@ so — see D2 below.)
   rotation before the first boot, the way `main.cpp` does, would let the
   probes read the turned scenes off the framebuffer: no line cut or off the
   glass, the bird on `bird_seat()`'s seat. Found by F156 and F157 (#1762).
-  *Partly done (#1762): the turned dash glass; its splash in a browser and the
-  nightlight are F206 and F204.* The emulator runs a turned panel, and the
-  onboarding probe walks it. On LVGL 8.4, the emulator's pin,
+  *Done (#1762): the turned dash glass here; its splash in a browser and the
+  landscape nightlight in F206 and F204.* The emulator runs a turned panel,
+  and the onboarding probe walks it. On LVGL 8.4, the emulator's pin,
   `lvgl_port_set_rotation()` used to change only its own logical size, so a
   saved portrait rotation laid a 480x800 face out on LVGL's 800x480 canvas.
   Its 8.4 dash branch now turns the display through v8's API (sw_rotate and
@@ -6916,20 +6916,22 @@ so — see D2 below.)
   rotation; the shipped dash builds run LVGL 9.5, which does not turn what it
   flushes (F205). Not bench-tested. Found here: F204-F206 and A47; the display
   flavors' missing native stand-in is merged into A43.
-  *Partly done (#1762, wave 14):* the rest of it is F204 (the emulator builds
+  *Done (#1762, wave 14):* the rest of it is F204 (the emulator builds
   the nightlight and walks it landscape) and F206 (the turned splash read in a
   browser, laid out and inked, and turned boots in `boot_probe.mjs`). F206 is
   done, and `dash@portrait` passes on the committed dist, which CI rebuilt
-  after wave 13. F204 waits on CI's rebuilt dist and the nightlight manifest's
-  `emulator` claim, both in this PR; the nightlight bundle has never been
-  built by emsdk or run in a browser. F205 is done too: the LVGL 9.5 dash
-  builds now turn each flush in `lvgl_port.cpp`'s `flush_cb`, the same quarter
+  after wave 13. F204 is done: CI's pinned emsdk built the nightlight bundle
+  (`9f636001`), and on that dist, in local Chromium, `boot_probe.mjs` boots
+  `nightlight@landscape` at 320x180 with the bird on the glass and
+  `onboard_probe.mjs` walks it with every turned-walk hold. F205 is done too:
+  the LVGL 9.5 dash builds now turn each flush in `lvgl_port.cpp`'s
+  `flush_cb`, the same quarter
   turns LVGL 8.4's sw_rotate draws in the emulator, so the emulator's turned
   glass shows what the shipped builds draw, as host-tested
   (`test_lvgl_port_turn`, `test_display_settings`) and as a native LVGL 9.5
-  run outside CI showed (no CI job renders with LVGL 9.5, F225). Tick this
-  item with F204, when the rebuilt dist passes `boot_probe.mjs` and
-  `onboard_probe.mjs` with `nightlight@landscape` walked. Not bench-tested.
+  run outside CI showed (no CI job renders with LVGL 9.5, F225). CI's wasm
+  job runs the same probes on the commit that lands the manifest claim. Not
+  bench-tested.
 - [ ] **F185 [code+decision] The LVGL 8.4 glass's speech bubble has no tail.**
   splash.cpp turns its 12 px tail square 45 degrees with rounded corners; LVGL
   8.4 renders a turned object through a transform layer, a rounded one needs
@@ -6945,7 +6947,7 @@ so — see D2 below.)
   drawable on 8.4 (radius 0 passes natively; a centered pivot would center
   it), or drop it on 8.4. `test_splash_scenes` holds the tail object's box,
   not what is drawn. Found by F158's review (#1762).
-- [ ] **F204 [code] No emulator flavor builds the nightlight.**
+- [x] **F204 [code] No emulator flavor builds the nightlight.**
   `canary-local/emulator/build.sh` builds the watch, dash, nightstand,
   touch169 and amoled241 glasses; none defines `CD_NIGHTLIGHT`, so the
   nightlight's hardware rotation (`display_set_rotation()`'s MADCTL table,
@@ -6960,8 +6962,8 @@ so — see D2 below.)
   the text) and the QR card's corners inside the stroke (`cardInHalo`'s
   `corners` option, which F157's 2 px clearance passes). Found by F184
   (#1762).
-  *Partly done (#1762): the flavor is built and walked natively; the dist
-  rebuild and the manifest's `emulator` claim follow in this PR.*
+  *Done (#1762): built by CI's pinned emsdk, claimed by the manifest, and
+  walked in a browser.*
   `canary-local/emulator/build.sh` builds a nightlight flavor (`./build.sh
   nightlight`, in `all` and the allowlist, `createCanaryEmuNightlight`): the
   C3-LCD-1.47's pin map (180x320), the nightlight config (`CD_NIGHTLIGHT` over
@@ -6986,21 +6988,20 @@ so — see D2 below.)
   lacks (the old step passed an untracked file). In a native full boot outside
   CI the probe's holds pass at both landscape turns and unturned, corners held
   (69.4 px from the halo's center against a 72 px inner edge); without the
-  `scv-nl` staging the boot comes up 180x320 and fails them. What is left: no
-  emsdk has built the new `canary-display-nightlight` bundle. CI's pinned
-  emsdk builds it in this PR after this ledger lands; until it is committed
-  the wasm job's drift check is red by design, and the probes walk only what
-  `dist/` holds. Right after it lands,
-  `devices/canary-display-nightlight-c3/device.json` needs `"emulator":
-  {"flavor": "nightlight"}`, or `lint_device_manifests.py` fails. Tick this
-  item once the rebuilt dist passes `boot_probe.mjs` (eight boots: six native
-  including the nightlight, then `dash@portrait` and `nightlight@landscape`),
-  `onboard_probe.mjs` (the nightlight's native walk and
-  `nightlight@landscape`), `csp_probe.mjs` and `render_probe.mjs`, and the
-  manifest claim has landed. None of the nightlight's browser paths have run.
-  The five existing bundles most likely do not move (every emulator change is
-  the nightlight's), but the rebuild decides. Not bench-tested. Found here:
-  F222 and A54.
+  `scv-nl` staging the boot comes up 180x320 and fails them. CI's pinned emsdk
+  then built `dist/canary-display-nightlight.js` (`9f636001`); the five
+  existing display bundles did not move (the Vision core did, for this wave's
+  Vision fixes). `devices/canary-display-nightlight-c3/device.json` claims it
+  (`"emulator": {"flavor": "nightlight"}`), and `lint_device_manifests.py`
+  passes. On the rebuilt dist, in local Chromium: `boot_probe.mjs` passes all
+  eight boots, `nightlight@landscape` at 320x180 with two shapes announced and
+  the bird (93x93) on the glass; `onboard_probe.mjs` passes the nightlight's
+  native walk and `nightlight@landscape` (the glass 320x180 from the first
+  frame, the splash read whole, the QR card and halo where the layout seats
+  them); `csp_probe.mjs` loads all 32 pages, the nightlight's harness among
+  them, with no violation; and `render_probe.mjs` passes. CI's wasm job runs
+  the same probes on the commit that lands the claim. The Lab still offers no
+  nightlight twin (A54). Not bench-tested. Found here: F222 and A54.
 - [x] **F205 [code] On LVGL 9.5 the dash glass's rotation does not turn what
   it draws.** LVGL 9.5's `lv_display_set_rotation()` swaps the logical
   resolution and "will not perform the actual rotation" (its docs,
@@ -8928,8 +8929,9 @@ so — see D2 below.)
   follow values exactly and shrink that; the cost is a vendored dependency in
   a no-build tree and rewriting three scans with their fixtures and mutation
   sets. Found by A46 (#1762).
-- [ ] **A54 [code] The Lab shows no nightlight twin.** Once CI's rebuild
-  commits `dist/canary-display-nightlight.js` (F204) only the probes boot it:
+- [ ] **A54 [code] The Lab shows no nightlight twin.** CI's rebuild has
+  committed `dist/canary-display-nightlight.js` (F204), and only the probes
+  boot it:
   the registry's `canary-nightlight` card has no `emulator` or bench block, so
   `fleet.html` offers no "Try it", the bench knows no nightlight and
   `gen_flash.py` links no twin. Add the registry's emulator block (module,

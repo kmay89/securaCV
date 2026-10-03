@@ -136,7 +136,7 @@
   dist does not move.
 - **The emulator builds the nightlight and walks its landscape glass, the
   turned glasses' splash is read in a browser, and the Lab's 3D dash turns
-  with its glass (sweep F204 in part, F206, A47; the rest of F184).**
+  with its glass (sweep F204, F206, A47; the rest of F184).**
   `canary-local/emulator/build.sh nightlight` builds the Canary Nightlight's
   firmware on its 180x320 panel; its glass turns in hardware, as on the board,
   and a saved landscape turn is staged in its own settings before power-on.
@@ -152,14 +152,15 @@
   glass reading upright instead of squeezed onto the landscape screen.
   `emulator/test/glass_turn.sh` holds the nightlight's hardware turn natively,
   pixel for pixel, and the dist drift check now names a flavor's bundle the
-  committed dist lacks. The emulator dist moves: a new
-  `canary-display-nightlight` bundle, which no emsdk has built yet. CI's
-  pinned emsdk builds it in this PR, and the nightlight manifest's `emulator`
-  claim follows it; until then the wasm job's drift check is red by design,
-  and F204 and F184 stay open. The nightlight was not run in a browser here.
-  The five existing bundles most likely do not move, but the rebuild decides.
-  Host-tested, run in local Chromium on the committed dist (the portrait dash)
-  and in a native full boot outside CI (the nightlight); not bench-tested.
+  committed dist lacks. The emulator dist moves: CI's pinned emsdk built the
+  new `canary-display-nightlight` bundle in this PR (the five existing display
+  bundles did not move), and the nightlight's manifest now claims the flavor.
+  On the rebuilt dist, in local Chromium, `boot_probe.mjs` passes all eight
+  boots, `onboard_probe.mjs` walks the nightlight natively and
+  `nightlight@landscape` at 320x180, `csp_probe.mjs` loads all 32 pages with
+  no violation and `render_probe.mjs` passes; CI's wasm job runs the same
+  probes. Host-tested, run in local Chromium and in a native full boot outside
+  CI; not bench-tested.
 - **A dash, dash7 or nightstand7 turned to portrait or to landscape, flipped
   draws its face turned, and a tap lands where the face is drawn (sweep
   F205).** The dash family builds against LVGL 9.5, whose rotation turns
