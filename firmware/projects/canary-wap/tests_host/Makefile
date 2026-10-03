@@ -452,6 +452,44 @@ clean-wap-tune-lab:
 run: run-wap-tune-lab
 clean: clean-wap-tune-lab
 
+# meta.daily_summary (sweep F121): canary_wap.ino's clock feed,
+# update_csi_clock_offset() cut verbatim (firmware/tests_host/
+# cut_functions.awk) with the GPS_CLOCK_FLOOR line it guards on, over the
+# staged CSI library and modules booted as csi_integration::init() boots
+# them (the sketch's real csi_settings_nvs.cpp, over stubs/module_boot). A
+# synced day crossing 23:55 commits exactly one row, a reboot after it
+# commits no second, an unsynced clock commits none, a first clock inside
+# the window waits for the next day, Quiet Hours over 23:55 hold the row,
+# and the row carries what docs/csi_modules.md says. Hooked into `run` and
+# `clean` by prerequisite so it adds no hunk to their lists.
+DAILY_BIN = test_wap_daily_summary
+DAILY_SRC = test_wap_daily_summary.cpp
+DAILY_INC = test_wap_daily_summary_clock.inc
+DAILY_INO = $(SRC_DIR)/canary_wap.ino
+DAILY_CUT = ../../../tests_host/cut_functions.awk
+
+$(DAILY_INC): $(DAILY_INO) $(DAILY_CUT) Makefile
+	@test "$$(grep -cE '^static const time_t GPS_CLOCK_FLOOR = ' $(DAILY_INO))" = 1 || { \
+	  echo "canary_wap.ino: no single GPS_CLOCK_FLOOR line for update_csi_clock_offset's guard" >&2; exit 1; }
+	@grep -nE '^static const time_t GPS_CLOCK_FLOOR = ' $(DAILY_INO) | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(DAILY_INO)"\n\2|' > $@.tmp
+	awk -v 'sigs=static void update_csi_clock_offset(' -f $(DAILY_CUT) $(DAILY_INO) >> $@.tmp && mv $@.tmp $@
+
+$(DAILY_BIN): $(DAILY_SRC) $(DAILY_INC) $(MODBOOT_LIB) $(SRC_DIR)/csi_settings_nvs.h \
+              $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/meta_daily_summary.h \
+              $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_wire.h $(SRC_DIR)/tz_rule.h \
+              $(wildcard stubs/module_boot/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/module_boot -I $(SRC_DIR) -I . -o $@ $(DAILY_SRC) $(MODBOOT_LIB)
+
+.PHONY: run-wap-daily-summary clean-wap-daily-summary
+run-wap-daily-summary: $(DAILY_BIN)
+	$(call run_marked,$(DAILY_BIN))
+clean-wap-daily-summary:
+	rm -f $(DAILY_BIN) $(DAILY_INC)
+run: run-wap-daily-summary
+clean: clean-wap-daily-summary
+
 # The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
 # closed: all-or-nothing reservations, value-independent refusals, exact
 # exhaustion, a refill only on the 4 h uptime clock (never on a manual

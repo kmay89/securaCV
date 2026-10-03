@@ -1618,6 +1618,35 @@ CI's. Owner: U1.
     opera, as before.
   - Artifact: `docs/audit/repro/F164/first-boot-log/`.
 
+## Daily summary at 23:55 (F121) — on-device verification
+
+Code: `firmware/common/csi/src/meta_daily_summary.cpp` (staged into the
+canary-wap sketch) and each tree's clock feed: the canary's
+`updateCsiClockOffset()` (`firmware/canary/src/main.cpp`, through
+`securacv_csi_modules_set_clock()`) and the canary-wap's
+`update_csi_clock_offset()` (`canary_wap.ino`), which hand the module the
+household minute of day on every loop pass with a synced clock. Host-tested
+(`firmware/tests_host/test_csi_daily_summary.cpp` and
+`firmware/projects/canary-wap/tests_host/test_wap_daily_summary.cpp`, each
+cutting its tree's feed out of the device source); the compiles are CI's.
+Owner: U1.
+
+- [ ] **One `daily_summary` row at 23:55, and only one**
+  - Setup: a canary-wap and a canary base, each with a GPS fix (the clock's
+    one source), the household time zone set, CSI windows flowing (a home
+    access point in range), an MQTT broker and
+    `mosquitto_sub -t 'securacv/+/events' -v`; Quiet Hours off on the
+    canary-wap.
+  - Repro: leave both running past 23:55 local time; before 00:00, reboot
+    each (dashboard or API) and watch until 00:05; leave them running to the
+    next night's 23:59.
+  - Expected: one `events` publish per device with `"type":"daily_summary"`
+    (`"module":"meta.daily_summary"`, `"event_type":"unknown"`, a `bundled`
+    count) between 23:55 and 23:59, none after the reboot, and one more the
+    next night. Before F121 there was none. A board with no GPS fix since
+    boot publishes none.
+  - Artifact: `docs/audit/repro/F121/daily-summary/`.
+
 ## canary-wap dashboard presence settings and calibration (F151) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_settings_nvs.cpp`

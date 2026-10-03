@@ -130,6 +130,7 @@
 #include "gnss_time.h"  // NMEA UTC date/time -> validated Unix epoch (GPS-derived system clock)
 #include "tz_rule.h"    // household time zone: local minute-of-day for the CSI offset (F28)
 #include "csi_event.h"  // csi_event_set_clock_offset_minutes — wall-clock bucket alignment
+#include "meta_daily_summary.h"  // meta_daily_summary_set_clock — the 23:55 summary's clock (F121)
 #include "nvs_store.h"
 #include "api_auth.h"
 #include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
@@ -1202,10 +1203,17 @@ static bool note_wall_clock(uint32_t unix_s);
 // and zone changes without a flag, and stays aligned across millis()
 // rollover because the offset and csi_event's own millis()-based consumer
 // wrap together. Loop task only — the offset is loop-owned (csi_event.h).
+//
+// The same household minute of day feeds meta.daily_summary, whose 23:55
+// row needs it (sweep F121). Both callers pass a synced clock; the guard
+// says so here too, so an unsynced clock feeds neither: no offset, and no
+// daily summary, rather than one at boot + 23 h 55 min.
 static void update_csi_clock_offset(time_t wall_now) {
+  if (wall_now < GPS_CLOCK_FLOOR) return;  // unsynced: feed nothing
   const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
   const int32_t mono_min = (int32_t)(millis() / 60000UL);
   csi_event_set_clock_offset_minutes(wall_min - mono_min);
+  meta_daily_summary_set_clock((uint16_t)wall_min);
 }
 
 static void sync_clock_from_gps() {
