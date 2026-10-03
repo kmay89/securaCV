@@ -1652,7 +1652,8 @@ canary-wap sketch) and each tree's clock feed: the canary's
 `updateCsiClockOffset()` (`firmware/canary/src/main.cpp`, through
 `securacv_csi_modules_set_clock()`) and the canary-wap's
 `update_csi_clock_offset()` (`canary_wap.ino`), which hand the module the
-household minute of day on every loop pass with a synced clock. Host-tested
+household minute of day and the local date it falls on, on every loop pass
+with a synced clock; the module commits one row per local date. Host-tested
 (`firmware/tests_host/test_csi_daily_summary.cpp` and
 `firmware/projects/canary-wap/tests_host/test_wap_daily_summary.cpp`, each
 cutting its tree's feed out of the device source); the compiles are CI's.
