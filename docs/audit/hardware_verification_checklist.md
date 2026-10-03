@@ -871,6 +871,60 @@ handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
     membership change; sweep F141.)
   - Artifact: `docs/audit/repro/F137/older-firmware-leftovers/`.
 
+## PlatformIO canary mesh status reads, the kernel wizard's pairing outcome, the Community tab (F161, F163, F176) — on-device verification
+
+Code: `firmware/canary/lib/securacv_mesh/src/mesh_session.cpp`
+(`publish_status()` at the end of every `process()` pass and before its
+early return, in `drain_request()` before the result is posted, and in
+`deinit()`; `read_status()` through `loop_snapshot.h`), `main.cpp`'s one
+`publish_status()` at the end of the mesh setup, `handle_mesh_status` /
+`handle_mesh_peers` in `securacv_network.cpp`; the kernel wizard's
+`meshConfirm()` / `meshPollForCodes()` in
+`privacy_witness_kernel/wizard/index.html`; the Community nav button and
+`refreshChirpStatus()` in `securacv_webui.cpp`. Host-tested
+(`test_mesh_session.cpp`, a two-thread run included;
+`privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js`;
+`firmware/tests_host/test_canary_community_panel.test.js`) and held by
+`firmware/scripts/check_canary_mesh_status.py`. The `[env:full]` compile is
+CI's. Owner: U1.
+
+- [ ] **The Opera page reads as before while the opera is busy**
+  - Setup: two paired PlatformIO canaries on `[env:full]`, the web UI's
+    Opera page open on one; a script polling `GET /api/mesh` and
+    `GET /api/mesh/peers` on it every 200 ms, logging each body.
+  - Repro: start a pairing from the page and watch the code appear; cancel
+    it; rename the opera; trigger tamper alerts on the other board; reboot
+    the polled board and keep polling through its boot.
+  - Expected: every GET answers 200 (never `mesh_busy` or `mesh_timeout`);
+    in the log, `pairing_seq` and `pairing_result` always belong together
+    (a new number first appears with `running`), `opera_name` is never a
+    mix of the old and new names, the code appears only while `state` is
+    `PAIRING_CONFIRM` and is gone in the first body after the cancel's
+    answer, and the peers body's rows agree with `peers_total` /
+    `peers_online` on every poll. Through the reboot, the bodies read no
+    opera only until the mesh setup ends, then the restored opera and its
+    members, before the first loop pass.
+  - Artifact: `docs/audit/repro/F161/status-routes/`.
+- [ ] **The kernel wizard says what the pairing came to**
+  - Setup: Home Assistant with the add-on; a PlatformIO canary already in
+    an opera and a fresh one.
+  - Repro: run "Add another Canary", match the codes and confirm. Then run
+    it again and let the code wait run out on one board (or pull its power
+    after the codes show).
+  - Expected: the first run shows "Canary added" with the note that both
+    report the pairing finished, within a few seconds of the confirm, even
+    while both boards still read CONNECTING (F162). The second names the board and says
+    why (a timeout, or that the board restarted or started another
+    pairing) as soon as that board reports it, not after a minute.
+  - Artifact: `docs/audit/repro/F163/wizard-outcome/`.
+- [ ] **No Community tab on the PlatformIO dashboard**
+  - Setup: a PlatformIO canary on `[env:full]`, the dashboard open with the
+    browser's network panel.
+  - Repro: load the page, stay on it a minute, switch through every tab.
+  - Expected: no Community tab; one `GET /api/chirp` at load (404) and no
+    other `/api/chirp` request.
+  - Artifact: `docs/audit/repro/F176/community-tab/`.
+
 ## canary-wap Chirp and Bluetooth commands, MQTT network timeout (F111, F112) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
