@@ -1426,11 +1426,17 @@ CI's. Owner: U1.
     serial monitor), on a board with flash encryption on if you have one
     (five reads) and one without (three).
   - Repro: boot it and let it reach the dashboard without turning the mesh
-    on or pairing; reboot it. Then turn the mesh on in the dashboard (no
-    pairing) and reboot once more.
+    on or pairing; within five minutes of that boot, power-cycle it (not
+    the dashboard's or the API's reboot). Then turn the mesh on in the
+    dashboard (no pairing) and reboot once more. Only the boots before the
+    namespace exists show the fix: the sketch's replay save, every five
+    minutes of uptime and before a reboot through the API, opens `mesh`
+    read-write even with no peers, which creates it, and a boot that finds
+    it logged nothing before F164 either.
   - Expected: no boot logs `[E][Preferences.cpp:...] begin(): nvs_open
     failed: NOT_FOUND` for the mesh start-up (before F164 each of the first
-    two logged five, or three without flash encryption); `GET /api/mesh`
+    two logged five, or three without flash encryption, when the second
+    came by a power cycle inside the first five minutes); `GET /api/mesh`
     reports the mesh disabled, then, after the third boot, enabled with no
     opera, as before.
   - Artifact: `docs/audit/repro/F164/first-boot-log/`.

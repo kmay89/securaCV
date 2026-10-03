@@ -37,9 +37,11 @@
 //        signed before its removal, replayed at the re-pair, counted as the
 //        joiner heard and ended F100's COMPLETE resend.
 // And F164: a boot with no "mesh" namespace (the first after an NVS erase,
-// and every boot of a device that never turned the mesh on) logged an
-// error line for each read-only open of it (stubs/mesh_net's Preferences
-// models NVS namespaces and counts the refused opens); now it logs none.
+// and any later one before the sketch's five-minute replay save or a reboot
+// through the API first opens the namespace read-write, which creates it
+// even with no peers) logged an error line for each read-only open of it
+// (stubs/mesh_net's Preferences models NVS namespaces and counts the
+// refused opens); now it logs none.
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -2653,10 +2655,12 @@ bool holds_mesh_namespace(Device& d) {
 }
 
 void test_a_first_boot_with_no_mesh_namespace_logs_nothing() {
-  // After an NVS erase (and on any device with no opera that never turned
-  // the mesh on, at every boot) init() reads the opera, the deny-list (both
-  // with flash encryption on), the last-seen tombstones and the send-counter
-  // record, and the sketch's load_replay_counters() runs right after it.
+  // After an NVS erase (and at any later boot before something opens the
+  // namespace read-write: the sketch's five-minute replay save or a reboot
+  // through the API, see the next test) init() reads the opera, the
+  // deny-list (both with flash encryption on), the last-seen tombstones and
+  // the send-counter record, and the sketch's load_replay_counters() runs
+  // right after it.
   // Before F164 each read-only open of the absent "mesh" namespace was
   // refused and logged "nvs_open failed: NOT_FOUND" on a build that keeps
   // Arduino's error log: five lines, three with flash encryption off. Now
@@ -2675,12 +2679,44 @@ void test_a_first_boot_with_no_mesh_namespace_logs_nothing() {
     CHECK(mn::g_mesh_state == mn::MESH_DISABLED);
     CHECK(!mn::g_opera_config.configured && !mn::g_opera_config.enabled);
     CHECK(mn::g_peer_count == 0 && mn::g_rx_tomb_count == 0 && mn::g_tx_high_signed == 0);
-    // The same at the next boot: nothing has written the namespace.
+    // The same at the next boot, with nothing run in between that writes
+    // the namespace.
     const BootCost again = boot_cost(A);
     CHECK(again.error_logs == 0 && again.begins == 0 && !holds_mesh_namespace(A));
   }
   host_sim::flash_encrypted = true;
   std::printf("PASS a_first_boot_with_no_mesh_namespace_logs_nothing\n");
+}
+
+void test_a_device_up_five_minutes_holds_the_mesh_namespace() {
+  // F164's reach (its review). The sketch saves the replay counters every
+  // five minutes of uptime (canary_wap.ino's REPLAY_SAVE_INTERVAL_MS) and
+  // before a reboot through the API (its pre-reboot hook), whatever the
+  // mesh's state. With no peers, that save opens "mesh" read-write to drop
+  // the blob, and a read-write open creates the namespace. So the boots
+  // that find no namespace, the ones F164 quiets, are the first after an
+  // NVS erase and any before the device first stays up five minutes or
+  // reboots through the API. Every later boot finds it and opens it as
+  // before F164, which logged nothing for those either.
+  for (const bool through_the_api : {false, true}) {
+    host_sim::flash_encrypted = true;
+    A.nvs.clear();
+    A.espnow = host_sim::EspNow();
+    g_health.clear();
+    const BootCost first = boot_cost(A);
+    CHECK(first.error_logs == 0 && first.begins == 0 && !holds_mesh_namespace(A));
+    become(A);
+    CHECK(mn::g_peer_count == 0);
+    CHECK(through_the_api ? mn::save_replay_counters_before_reboot() : mn::save_replay_counters());
+    CHECK(holds_mesh_namespace(A));            // created with nothing in it
+    CHECK(!nvs_has(A, "replay_ctrs"));
+    const BootCost next = boot_cost(A);
+    CHECK(next.error_logs == 0);
+    CHECK(next.begins == 5);                   // found: each read opens it
+    become(A);
+    CHECK(mn::g_mesh_state == mn::MESH_DISABLED && !mn::g_opera_config.configured);
+  }
+  std::printf("PASS a_device_up_five_minutes_holds_the_mesh_namespace\n");
 }
 
 void test_a_boot_that_finds_the_mesh_namespace_opens_it_as_before() {
@@ -2900,6 +2936,8 @@ const Test kTests[] = {
      test_a_board_without_flash_encryption_keeps_its_stored_members},
     {"a_first_boot_with_no_mesh_namespace_logs_nothing",
      test_a_first_boot_with_no_mesh_namespace_logs_nothing},
+    {"a_device_up_five_minutes_holds_the_mesh_namespace",
+     test_a_device_up_five_minutes_holds_the_mesh_namespace},
     {"a_boot_that_finds_the_mesh_namespace_opens_it_as_before",
      test_a_boot_that_finds_the_mesh_namespace_opens_it_as_before},
     {"an_nvs_fault_at_boot_keeps_its_error_lines", test_an_nvs_fault_at_boot_keeps_its_error_lines},
