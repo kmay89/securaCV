@@ -16,7 +16,10 @@
 //     reads off its canvas — is the logical frame, pixel for pixel equal to
 //     the same scene rendered by a plain display of the logical size, at the
 //     size emu_fb_width()/emu_fb_height() report, and the HAL tells the page
-//     (js_display_ready) each time the glass changes shape;
+//     (js_display_ready) each time the glass changes shape, with the quarter
+//     turns it is worn at (sweep A64): 1, 3 and 2 for ROT_PORTRAIT,
+//     ROT_PORTRAIT_INV and ROT_LANDSCAPE_INV, 0 for landscape — the turn the
+//     Lab's 3D case follows (A56), which the shape alone cannot tell apart;
 //  3. the finger: a logical point fed through lvgl_port_touch_feed() comes
 //     out of LVGL's own pointer processing (indev_pointer_proc, which turns
 //     every sample by the display's rotation) as that same point.
@@ -27,10 +30,11 @@
 // lvgl_port_set_panel_rotation() — the pair main.cpp calls — reshape LVGL's
 // canvas to 320x180 for either landscape and back to 180x320, LVGL renders
 // nothing turned (no software rotation: the panel turns), the HAL announces
-// every turn, and at every quarter turn the framebuffer is the logical frame,
-// pixel for pixel equal to the scene rendered by a plain display of that
-// size. A portrait boot (rotation 0, which main.cpp never hands the HAL)
-// keeps the glass display_init announced.
+// every turn with the quarter turns it took (1 and 3 for orientation.h's
+// Orient::R90 and R270, 2 for R180, 0 for R0; A64), and at every quarter turn
+// the framebuffer is the logical frame, pixel for pixel equal to the scene
+// rendered by a plain display of that size. A portrait boot (rotation 0,
+// which main.cpp never hands the HAL) keeps the glass display_init announced.
 //
 // Prints "ALL GLASS TURN TESTS PASSED" on success.
 #include <Arduino.h>
@@ -42,6 +46,7 @@
 #include <string.h>
 
 #include "canary/glass_settings.h"
+#include "canary/io/orientation.h"
 #include "canary/log.h"
 #include "canary/ui/lvgl_port.h"
 
@@ -51,12 +56,22 @@ uint32_t g_now = 0;
 int g_display_ready_calls = 0;
 int g_fail = 0;
 int g_checks = 0;
+// The last js_display_ready, every argument as the HAL handed it.
+struct Shape {
+  int w = -1, h = -1, round = -1, turn = -1;
+};
+Shape g_shape;
 }  // namespace
 
 extern "C" uint32_t millis(void) { return g_now; }
-extern "C" void emu_native_em_js(const char* name) {
-  if (strcmp(name, "js_display_ready") == 0) g_display_ready_calls++;
+// The page's side of the HAL's EM_JS calls (test/native/emscripten.h turns
+// each into a declaration this file defines).
+extern "C" void js_display_ready(int w, int h, int round_mask, int turn) {
+  g_display_ready_calls++;
+  g_shape = Shape{w, h, round_mask, turn};
 }
+extern "C" void js_flush(int, int, int, int, int) {}
+extern "C" void js_backlight_apply(int, int) {}
 void EmuSerial::write_str(const char*) {}
 EmuSerial Serial;
 namespace canary {
@@ -188,8 +203,29 @@ void refresh(lv_disp_t* d) {
   lv_refr_now(d);
 }
 
+// What the page was last told (sweep A64): the glass's logical w x h, no
+// round mask (neither glass here is round), and the quarter turns the glass
+// is worn at, which the Lab's 3D case turns by (A56).
+void check_announced(const char* tag, int lw, int lh, int want_turn) {
+  CHECK(g_shape.w == lw && g_shape.h == lh && g_shape.round == 0 && g_shape.turn == want_turn,
+        "%s: the HAL last told the page %dx%d, round %d, turn %d; want %dx%d, round 0, turn %d",
+        tag, g_shape.w, g_shape.h, g_shape.round, g_shape.turn, lw, lh, want_turn);
+}
+
 #ifndef CD_NIGHTLIGHT
 const char* rot_name(uint8_t rot) { return canary::glass::rotation_name(rot); }
+
+// The quarter turns the page must be told each rotation is worn at, written
+// out from glass_settings.h's names (ROT_PORTRAIT is "turned clockwise"),
+// not read off LVGL or the HAL.
+int announced_turn(uint8_t rot) {
+  switch (rot) {
+    case canary::glass::ROT_PORTRAIT:      return 1;
+    case canary::glass::ROT_PORTRAIT_INV:  return 3;
+    case canary::glass::ROT_LANDSCAPE_INV: return 2;
+    default:                               return 0;
+  }
+}
 
 // ── 1 + 2: the turn and the glass at one quarter turn ───────────────────
 void check_turn(uint8_t rot) {
@@ -225,6 +261,7 @@ void check_turn(uint8_t rot) {
           "%s: the glass changed shape and the HAL never told the page",
           rot_name(rot));
   }
+  check_announced(rot_name(rot), lw, lh, announced_turn(rot));
   const uint8_t* fb = emu_fb_ptr();
   CHECK(fb != nullptr, "no framebuffer");
   if (fb == nullptr || emu_fb_width() != lw || emu_fb_height() != lh) return;
@@ -339,6 +376,17 @@ void check_panel_glass(uint8_t rot, bool turn) {
     CHECK(g_display_ready_calls > calls_before,
           "turn %d: the panel turned and the HAL never told the page", rot);
   }
+  {
+    // orientation.h's Orient, as main.cpp hands it on (static_cast<Orient>):
+    // R90 is 1, R180 2, R270 3, written out so the enum and the HAL cannot
+    // agree on a wrong number between themselves.
+    using canary::io::Orient;
+    const Orient o = static_cast<Orient>(rot);
+    const int want = o == Orient::R90 ? 1 : o == Orient::R180 ? 2 : o == Orient::R270 ? 3 : 0;
+    char tag[16];
+    snprintf(tag, sizeof(tag), "turn %d", rot);
+    check_announced(tag, lw, lh, want);
+  }
   s_ref_drv.hor_res = (lv_coord_t)lw;
   s_ref_drv.ver_res = (lv_coord_t)lh;
   lv_disp_drv_update(s_ref, &s_ref_drv);
@@ -413,6 +461,7 @@ int main() {
   if (s_port == nullptr) return 1;
   CHECK(emu_fb_width() == kNativeW && emu_fb_height() == kNativeH,
         "the glass boots %dx%d", emu_fb_width(), emu_fb_height());
+  check_announced("boot", kNativeW, kNativeH, 0);
 #ifdef CD_NIGHTLIGHT
   CHECK(g_display_ready_calls == 1, "display_init announced the glass %d times",
         g_display_ready_calls);
