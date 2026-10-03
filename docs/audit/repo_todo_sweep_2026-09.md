@@ -7610,7 +7610,8 @@ so — see D2 below.)
   paths only 9.5 takes, such as the splash tail F185 says only 9.5 draws.
   Found by F205 (#1762).
   *Done (#1762):* CI is wired to render the dash glass through the real LVGL
-  9.5; the step has not run there yet.
+  9.5, and its wasm job first ran the step on 5755ce2b: 169 checks passed, the
+  quote check with them, after the onboard probe's red step (A63).
   `canary-local/emulator/test/glass_turn_lvgl9.sh`, `glass_turn.sh`'s sibling,
   reads the release from `sketch.yaml`'s `dash-core3` profile (`lvgl (9.5.0)`,
   the pin the core-3 Arduino dash and modes releases install) and refuses to
@@ -9721,7 +9722,7 @@ so — see D2 below.)
   `URIError` once the cards have rendered, instead of quietly opening nothing.
   Decode inside a `try`, as `probe_server.mjs`'s `lookup()` does. Found by A52
   (#1762).
-- [ ] **A63 [code] `onboard_probe.mjs`'s nightlight walk fails a read now and
+- [x] **A63 [code] `onboard_probe.mjs`'s nightlight walk fails a read now and
   then.** In 31 local walks of `--flavor nightlight` (20 on the wave-15 Lab
   files, 11 with the base `harness.js`, `emu-shell.js` and
   `onboard_probe.mjs`), nine failed one check. Five were the landscape splash
@@ -9733,6 +9734,33 @@ so — see D2 below.)
   found. A read that races the frame it checks would fail this way, and CI's
   wasm job runs the same walk. Find what each read waits on and make it wait
   for the frame it reads. Found by A51 (#1762).
+  *Done (#1762):* both were reads that did not wait for the frame they read,
+  and neither came from the wave-15 change. The labels are the firmware's
+  object tree between two passes of its loop; the canvas is the last frame
+  LVGL flushed. LVGL 8.4 runs its display refresh before its animations in
+  one `lv_timer_handler()` pass (`lv_timer_create()` puts each new timer at
+  the head of the list, and the refresh timer is made after the animation
+  timer), so a fade's step lands after its pass's frame. The phone-joined
+  check comes right after `stepTime(5000)`, which finishes the scene's 260
+  ms fade in one such step: a trace of every turn of the page after the step
+  read all three lines at full opacity with no ink on the canvas for about
+  30 ms, until the next frame inked them. The splash's read waited for two
+  flushes past the read, or 2 s; the glass is still during a line's hold, so
+  the second flush could be the next beat's. On "Dark means all is well. If
+  I glow, look at me." and "Add another of me and we compare notes." it came
+  about 1.6 s on, against holds of 1.9 and 1.7 s of wall time on the
+  half-speed clock. CI's wasm job failed that way on 5755ce2b, on the second
+  line. `inkOnFrame()` now reads the labels, waits for the next frame (300 ms
+  with none means nothing was left to draw), and reads the labels and the
+  pixels in one turn. `linesSettled()` (`onboard_glass.mjs`) holds the frame
+  only to the lines that drew whole before it. A line that came whole after
+  it, or a held line still dark, is read again, and the fifth read is judged
+  as it stands. `holdLines` and the splash both read this way.
+  `onboard.test.js` holds `linesSettled` and pins both reads (the pins fail
+  on the old probe). With the fix, 20 of 20 local nightlight walks passed (8
+  unturned, 12 landscape), and a mutant whose "phone" lines never ink still
+  fails, on the join scene's stuck-phone hint. Run in local Chromium on the
+  CI-rebuilt dist; not bench-tested.
 - [ ] **A64 [code] `glass_turn_test.cpp` does not read the turn the HAL
   announces.** `canary-local/emulator/test/glass_turn_test.cpp` counts
   `js_display_ready` calls, but its stand-in drops the fourth argument, so the
@@ -11384,6 +11412,24 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   (the recorders hear node and python3 only). Decide which drift steps to
   arm, at what cost, and how the other filtered workflows' readers are
   heard. Found doing CI2.
+- [x] **CI5 [code] The Docker sidecar e2e reads a logged line as missing.**
+  On e9c594a0 (#1762) "Build and e2e test" failed with "no
+  SECURACV_API_BIND=all startup notice in the LAN-mode sidecar's log", and
+  the log it dumped next held that notice. `docker/sidecar/ci_e2e.sh` runs
+  under `set -o pipefail` and checked the log with `docker logs | grep -q`.
+  grep exits at its first match, `docker logs` is still writing the rest of
+  the log into the pipe and dies of SIGPIPE (141), and pipefail reports the
+  pipeline as failed. The longer the log runs past the match, the likelier
+  the miss. Its two loop checks had the same trap and were saved only by
+  retrying. Found on #1762.
+  *Done (#1762):* `logs_have()` reads the log into a variable and greps the
+  copy; `running()` asks `docker inspect` for `State.Running` instead of
+  piping `docker ps` into `grep -q`; the retained-discovery check captures
+  `mosquitto_sub`'s message and tests that it is not empty. With a stub
+  `docker` that writes 200000 lines after the notice, the old pipeline
+  returns 141, `logs_have` finds the notice, and a line that is not there
+  still reads as missing. `bash -n` and shellcheck are clean. CI-only: the
+  e2e runs in docker-sidecar.yml.
 
 ---
 

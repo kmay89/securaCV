@@ -110,8 +110,9 @@
   an area placed as if it began at x 0, fails 8. `check_lvgl9_quotes.py`
   holds the host test's quotes of LVGL 9.5 (`fake_lvgl9/lvgl.h`) to the
   library. It closes `canary-local.yml`'s wasm job and runs whether the steps
-  before it passed or failed. Native on a 64-bit host; not an ESP32 build, not
-  run in CI yet, not bench-tested. The PlatformIO dash rows ask for `^9.5.0`,
+  before it passed or failed. Native on a 64-bit host, and green in CI's wasm
+  job on 5755ce2b (169 checks, after a red onboard probe); not an ESP32 build,
+  not bench-tested. The PlatformIO dash rows ask for `^9.5.0`,
   which admits 9.6 (F247).
 - **canary-vision: a box with a non-positive side reads no proximity, and the
   pipeline's 32-bit `long` is checked from the sources (sweep F221, A49).**
@@ -157,6 +158,23 @@
   committed dist announces no turn and the Lab reads the canvas's shape as
   before. Run in local Chromium (the turn announcement natively and through an
   injected harness, not on a rebuilt dist); not bench-tested.
+- **The onboarding probe reads each line off a frame drawn after it, and the
+  sidecar e2e stops losing a logged line (sweep A63, CI5).** The nightlight
+  walk failed a read now and then, and CI's wasm job failed on it once. The
+  probe read the firmware's labels and the canvas in one turn, but the labels
+  can be a step ahead of the canvas: LVGL 8.4 runs its refresh before its
+  animations in one timer pass, so after the probe's 5 s clock step the
+  phone-joined scene read fully faded in for about 30 ms while the canvas
+  still held it dark. The splash waited for two flushes or 2 s, and on a
+  still glass that outlasted a line's hold. `inkOnFrame()` now waits for the
+  next frame (or 300 ms with none) and holds it only to the lines that drew
+  whole before it (`linesSettled()`), reading again while one is ahead. 20 of
+  20 local nightlight walks passed with it, and a line that never inks still
+  fails. The Docker sidecar e2e checked its log with `docker logs | grep -q`
+  under `pipefail`, so `docker logs` dying of SIGPIPE after the match failed
+  the check; it now reads the log whole first. Run in local Chromium on the
+  CI-rebuilt dist, and the e2e fix against a stub `docker`; not
+  bench-tested.
 
 ### canary-wap's Bluetooth keeps the owner's commands through its bring-up and fits its bond store, Chirp refuses a mute it cannot keep and every `serializeJson()` REST answer fits its buffer, the PIO alert list reads whole and the kernel wizard frees a Canary it leaves pairing, the daily summary emits, the Vision's box math cannot overflow, the Lab's probes serve an index on loopback, the emulator builds the nightlight, and the LVGL 9.5 dash turns what it draws (#1762, wave 14)
 
