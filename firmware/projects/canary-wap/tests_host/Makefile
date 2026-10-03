@@ -1093,7 +1093,8 @@ clean: clean-mqtt-reinit
 # Every Home Assistant discovery config asks for the entity id the docs give
 # it (sweep HA16): the REAL csi_mqtt.cpp over stubs/mqtt and a fake esp_mqtt
 # client that records the connect burst. All 27 configs of the build the host
-# compiles, each with one def_ent_id equal to <component>.<device id as Home
+# compiles, each one JSON object a strict reader takes (no key twice, nothing
+# after it), each with one def_ent_id equal to <component>.<device id as Home
 # Assistant slugs it>_<object_id> and its unique id unchanged, each under its
 # 768-byte buffer at the longest device id, prefix and firmware version (the
 # buffer pinned against the source, whose path is passed in).

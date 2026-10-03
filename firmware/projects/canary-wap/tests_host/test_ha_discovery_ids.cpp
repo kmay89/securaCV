@@ -21,9 +21,12 @@
 //     plus the firmware update entity, the auto-update switch and the mic
 //     mute switch. A body too long for its buffer is never published and the
 //     burst stops at it, so a missing config is a body that did not fit.
-//  2. Each body carries exactly one def_ent_id, equal to the documented id,
-//     and its unique id is still canary_<id>_<object_id>, so an entity a
-//     Home Assistant already registered keeps its registry entry.
+//  2. Each body is one JSON object a strict reader takes (RFC 8259, no key
+//     twice in an object, nothing after it: Home Assistant drops a payload
+//     it cannot decode), carries exactly one def_ent_id, equal to the
+//     documented id, and its unique id is still canary_<id>_<object_id>, so
+//     an entity a Home Assistant already registered keeps its registry
+//     entry.
 //  3. The worst case for the buffers: the longest device id the bridge holds
 //     (32 characters), the longest topic prefix config_load() hands back (31)
 //     and the longest firmware version (23); every body is under
@@ -31,6 +34,10 @@
 //  4. The slug: letters lowercased, every other run of characters one '_',
 //     none at either end, which is what Home Assistant's slugify makes of an
 //     ASCII name.
+//  5. The reader itself: it takes valid JSON and refuses a lost or trailing
+//     comma, a doubled key, text after the object, bad numbers, escapes and
+//     raw control bytes, so check 2 cannot pass on a body Home Assistant
+//     would drop.
 //
 // Host-tested only: what Home Assistant does with the key was read from its
 // source, not seen in a running Home Assistant, and the sketch's Arduino
@@ -182,7 +189,7 @@ void check(bool cond, const std::string& what) {
   }
 }
 
-// csi_mqtt.cpp builds every discovery body into `char body[768]`; the four
+// csi_mqtt.cpp builds every discovery body into `char body[768]`; the three
 // builders are pinned below so this cannot drift from the source.
 constexpr size_t kBodyBytes = 768;
 
@@ -251,6 +258,193 @@ std::vector<std::string> string_values(const std::string& body, const std::strin
   }
   return out;
 }
+
+// A strict JSON reader: "" when `s` is one JSON object and nothing else,
+// otherwise what is wrong and at which byte. Home Assistant decodes a
+// discovery payload with its JSON loader and drops one it cannot decode, so
+// a body that merely starts with '{' and ends with '}' proves nothing: a
+// comma lost between two members leaves every entity of that builder out of
+// Home Assistant while each key is still found by string_values(). Read here
+// as RFC 8259 has it: objects, arrays, strings (a control byte unescaped is
+// refused, and an escape must be one of \" \\ \/ \b \f \n \r \t \uXXXX),
+// numbers (no leading zero, no bare '.', no '+'), true, false, null,
+// whitespace between tokens, nothing after the value. A key given twice in
+// one object is refused too: Python's json keeps the last without a word, so
+// a doubled key is a config that says two things.
+class JsonReader {
+ public:
+  explicit JsonReader(const std::string& s) : s_(s) {}
+
+  std::string object_only() {
+    ws();
+    if (i_ >= s_.size() || s_[i_] != '{') return fail("not an object");
+    if (!value(0)) return err_;
+    ws();
+    if (i_ != s_.size()) return fail("text after the object");
+    return "";
+  }
+
+ private:
+  const std::string& s_;
+  size_t i_ = 0;
+  std::string err_;
+
+  std::string fail(const std::string& why) {
+    if (err_.empty()) err_ = why + " at byte " + std::to_string(i_);
+    return err_;
+  }
+  bool bad(const std::string& why) {
+    fail(why);
+    return false;
+  }
+  void ws() {
+    while (i_ < s_.size() &&
+           (s_[i_] == ' ' || s_[i_] == '\t' || s_[i_] == '\n' || s_[i_] == '\r')) {
+      ++i_;
+    }
+  }
+  bool literal(const char* word) {
+    const size_t n = std::strlen(word);
+    if (s_.compare(i_, n, word) != 0) return bad("not a JSON value");
+    i_ += n;
+    return true;
+  }
+  static bool hex(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+  }
+  static bool digit(char c) { return c >= '0' && c <= '9'; }
+
+  // A string from its opening quote; `out` gets its text, escapes undone
+  // (a \u escape kept as written: two keys are compared, not printed).
+  bool string(std::string* out) {
+    ++i_;   // the opening quote
+    while (i_ < s_.size()) {
+      const unsigned char c = (unsigned char)s_[i_];
+      if (c == '"') {
+        ++i_;
+        return true;
+      }
+      if (c < 0x20) return bad("a control byte unescaped in a string");
+      if (c != '\\') {
+        out->push_back((char)c);
+        ++i_;
+        continue;
+      }
+      if (i_ + 1 >= s_.size()) break;
+      const char e = s_[i_ + 1];
+      static const char kFrom[] = "\"\\/bfnrt";
+      static const char kTo[] = "\"\\/\b\f\n\r\t";
+      const char* at = std::strchr(kFrom, e);
+      if (e != '\0' && at != nullptr) {
+        out->push_back(kTo[at - kFrom]);
+        i_ += 2;
+      } else if (e == 'u') {
+        for (size_t k = 2; k < 6; ++k) {
+          if (i_ + k >= s_.size() || !hex(s_[i_ + k])) return bad("a bad \\u escape");
+        }
+        out->append(s_, i_, 6);
+        i_ += 6;
+      } else {
+        return bad("a bad escape");
+      }
+    }
+    return bad("a string never closed");
+  }
+
+  bool number() {
+    if (s_[i_] == '-') ++i_;
+    if (i_ >= s_.size() || !digit(s_[i_])) return bad("a number without digits");
+    if (s_[i_] == '0') {
+      ++i_;
+      if (i_ < s_.size() && digit(s_[i_])) return bad("a number with a leading zero");
+    } else {
+      while (i_ < s_.size() && digit(s_[i_])) ++i_;
+    }
+    if (i_ < s_.size() && s_[i_] == '.') {
+      ++i_;
+      if (i_ >= s_.size() || !digit(s_[i_])) return bad("a fraction without digits");
+      while (i_ < s_.size() && digit(s_[i_])) ++i_;
+    }
+    if (i_ < s_.size() && (s_[i_] == 'e' || s_[i_] == 'E')) {
+      ++i_;
+      if (i_ < s_.size() && (s_[i_] == '+' || s_[i_] == '-')) ++i_;
+      if (i_ >= s_.size() || !digit(s_[i_])) return bad("an exponent without digits");
+      while (i_ < s_.size() && digit(s_[i_])) ++i_;
+    }
+    return true;
+  }
+
+  bool value(int depth) {
+    if (depth > 32) return bad("nested too deep");
+    ws();
+    if (i_ >= s_.size()) return bad("a value missing");
+    const char c = s_[i_];
+    if (c == '{') return object(depth);
+    if (c == '[') return array(depth);
+    if (c == '"') {
+      std::string ignored;
+      return string(&ignored);
+    }
+    if (c == '-' || digit(c)) return number();
+    if (c == 't') return literal("true");
+    if (c == 'f') return literal("false");
+    if (c == 'n') return literal("null");
+    return bad("not a JSON value");
+  }
+
+  bool object(int depth) {
+    ++i_;   // '{'
+    std::set<std::string> keys;
+    ws();
+    if (i_ < s_.size() && s_[i_] == '}') {
+      ++i_;
+      return true;
+    }
+    for (;;) {
+      ws();
+      if (i_ >= s_.size() || s_[i_] != '"') return bad("a member without a quoted key");
+      std::string key;
+      if (!string(&key)) return false;
+      if (!keys.insert(key).second) return bad("the key \"" + key + "\" twice in one object");
+      ws();
+      if (i_ >= s_.size() || s_[i_] != ':') return bad("a key without ':'");
+      ++i_;
+      if (!value(depth + 1)) return false;
+      ws();
+      if (i_ < s_.size() && s_[i_] == ',') {
+        ++i_;
+        continue;
+      }
+      if (i_ < s_.size() && s_[i_] == '}') {
+        ++i_;
+        return true;
+      }
+      return bad("members not separated by ','");
+    }
+  }
+
+  bool array(int depth) {
+    ++i_;   // '['
+    ws();
+    if (i_ < s_.size() && s_[i_] == ']') {
+      ++i_;
+      return true;
+    }
+    for (;;) {
+      if (!value(depth + 1)) return false;
+      ws();
+      if (i_ < s_.size() && s_[i_] == ',') {
+        ++i_;
+        continue;
+      }
+      if (i_ < s_.size() && s_[i_] == ']') {
+        ++i_;
+        return true;
+      }
+      return bad("elements not separated by ','");
+    }
+  }
+};
 
 struct Config {
   std::string component;
@@ -321,7 +515,8 @@ void connect_and_check(const char* device_id, const std::string& slug, size_t* l
       *longest = c.body.size();
       if (longest_what != nullptr) *longest_what = c.component + "/" + c.object_id;
     }
-    check(c.body.front() == '{' && c.body.back() == '}', what + "body is one JSON object");
+    const std::string not_json = JsonReader(c.body).object_only();
+    check(not_json.empty(), what + "body is one JSON object (" + not_json + ")");
 
     const std::vector<std::string> def = string_values(c.body, "def_ent_id");
     const std::string want = c.component + "." + slug + "_" + c.object_id;
@@ -411,6 +606,54 @@ void test_the_buffer_size_is_the_sources() {
   end_test("the_buffer_size_is_the_sources");
 }
 
+// The reader refuses what Home Assistant's loader refuses (and a doubled
+// key), and takes what it takes: a reader that said yes to everything would
+// leave the check above as empty as the one it replaced.
+void test_the_json_reader_is_strict() {
+  begin_test();
+  const char* good[] = {
+      "{}",
+      "{\"a\":\"b\"}",
+      " { \"a\" : [ 1 , -0.5e+3 , true , false , null , { } , [ ] ] } ",
+      "{\"t\":\"\\\" \\\\ \\/ \\b \\f \\n \\r \\t \\u00e9\"}",
+      "{\"n\":0,\"m\":10,\"x\":1.25,\"y\":2E-7}",
+  };
+  for (const char* g : good) {
+    const std::string why = JsonReader(g).object_only();
+    check(why.empty(), std::string("the reader takes ") + g + " (" + why + ")");
+  }
+  const char* bad[] = {
+      "",
+      "[]",
+      "\"a\"",
+      "{\"a\":\"b\"\"c\":1}",       // a comma lost between two members
+      "{\"a\":1,}",                  // a trailing comma
+      "{\"a\":[1,]}",
+      "{\"a\":[1 2]}",
+      "{\"a\":1}}",                  // text after the object
+      "{\"a\":1} x",
+      "{\"a\":1,\"a\":2}",          // a key twice
+      "{\"a\":{\"b\":1,\"b\":1}}",
+      "{a:1}",
+      "{\"a\" 1}",
+      "{\"a\":01}",
+      "{\"a\":.5}",
+      "{\"a\":1.}",
+      "{\"a\":+1}",
+      "{\"a\":1e}",
+      "{\"a\":tru}",
+      "{\"a\":\"b}",
+      "{\"a\":\"\\x\"}",
+      "{\"a\":\"\\u12g4\"}",
+      "{\"a\":\"line\nbreak\"}",  // a raw control byte in a string
+  };
+  for (const char* b : bad) {
+    check(!JsonReader(b).object_only().empty(),
+          std::string("the reader refuses ") + b);
+  }
+  end_test("the_json_reader_is_strict");
+}
+
 }  // namespace
 
 int main() {
@@ -419,6 +662,7 @@ int main() {
   test_every_config_fits_its_buffer_at_the_longest_identity();
   test_the_slug_is_home_assistants();
   test_the_buffer_size_is_the_sources();
+  test_the_json_reader_is_strict();
   if (g_failures != 0) {
     std::fprintf(stderr, "%d of %d HA discovery id checks FAILED\n", g_failures, g_checks);
     return 1;
