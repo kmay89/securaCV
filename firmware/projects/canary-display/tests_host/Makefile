@@ -520,3 +520,34 @@ clean-splash-scenes:
 
 run: run-splash-scenes
 clean: clean-splash-scenes
+
+# The dash glass's LVGL 9 flush (F205): the REAL src/ui/lvgl_port.cpp, dash
+# config, LVGL 9 branch, against fake_lvgl9/lvgl.h — LVGL 9.5's display
+# layer, its rotation arithmetic quoted from lvgl v9.5.0 — and a recording
+# Arduino_GFX over the panel's native 800x480 framebuffer. The test plays
+# LVGL's partial render mode (logical bands into the registered draw buffer,
+# the registered flush callback) and reads back which logical pixel the glass
+# shows at every native pixel, at every quarter turn: the face turned the way
+# lv_display_rotate_area() turns it, nothing off the panel, nothing left
+# unpainted, a raw touch at any pixel (rotation_map_touch, as display_dash.cpp
+# maps the GT911) landing on the pixel drawn there, the turn buffer's cost per
+# heap tier, and a glass with no turn buffer staying landscape. Hooked into
+# `run` and `clean` by prerequisite.
+PORTTURN_BIN = test_lvgl_port_turn
+PORTTURN_SRC = test_lvgl_port_turn.cpp ../src/ui/lvgl_port.cpp
+
+$(PORTTURN_BIN): $(PORTTURN_SRC) fake_lvgl9/lvgl.h fake_lvgl9/Arduino.h \
+	  fake_lvgl9/Arduino_GFX_Library.h fake_lvgl9/esp_heap_caps.h \
+	  ../include/canary/glass_settings.h ../include/canary/ui/lvgl_port.h \
+	  ../include/canary/hal/display.h ../include/canary/log.h
+	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl9 $(INC) -I ../../../configs/canary-display/dash \
+	  -I ../../../boards/waveshare-esp32s3-lcd43/pins -o $@ $(PORTTURN_SRC)
+
+.PHONY: run-lvgl-port-turn clean-lvgl-port-turn
+run-lvgl-port-turn: $(PORTTURN_BIN)
+	$(call run_marked,$(PORTTURN_BIN))
+clean-lvgl-port-turn:
+	rm -f $(PORTTURN_BIN)
+
+run: run-lvgl-port-turn
+clean: clean-lvgl-port-turn
