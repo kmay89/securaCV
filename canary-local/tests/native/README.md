@@ -191,7 +191,8 @@ Chromium, by the probes (`boot_probe.mjs`, `bench_probe.mjs`,
 natively. (The one native proof of a display source is narrower:
 `emulator/test/glass_turn.sh` builds the real `lvgl_port.cpp` and the
 emulator's display HAL with g++, in the dash and the nightlight configs, and
-holds the turned glass pixel for pixel; it boots no firmware.) Each of those bundles links the display firmware, LVGL and the
-browser shims into one page under Asyncify, and the probes drive that page:
-its canvas, Web Audio, serial panel and the phone's captive portal. A native
-process behind a pipe can't stand in for that page.
+holds the turned glass pixel for pixel; it boots no firmware.) Each of
+those bundles links the display firmware, LVGL and the browser shims into
+one page under Asyncify, and the probes drive that page: its canvas, Web
+Audio, serial panel and the phone's captive portal. A native process behind
+a pipe can't stand in for that page.
