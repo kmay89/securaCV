@@ -158,6 +158,44 @@ static void test_lvgl_indev_feed() {
   CHECK(x == 123 && y == 45, "landscape feeds the point through untouched");
 }
 
+// ── The LVGL 8 pointer feed inverts LVGL 8's indev rotation too ───────────
+// The browser emulator compiles the dash glass against LVGL 8.4, and
+// lvgl_port.cpp feeds its pointer device through rotation_to_lvgl_indev on
+// both majors. LVGL 8 rotates a pointer sample in indev_pointer_proc (quoted
+// here from lvgl v8.4.0 as written there: the half turn first for 180 and
+// 270, then the quarter turn for 90 and 270, in the driver's NATIVE dims), so
+// the same feed must come back unchanged through v8's arithmetic as well.
+static void lvgl8_indev_pointer_proc(uint8_t rot, int hor_res, int ver_res,
+                                     int* x, int* y) {
+  const int r = rot & 3;
+  if (r == ROT_LANDSCAPE_INV || r == ROT_PORTRAIT_INV) {
+    *x = hor_res - *x - 1;
+    *y = ver_res - *y - 1;
+  }
+  if (r == ROT_PORTRAIT || r == ROT_PORTRAIT_INV) {
+    const int tmp = *y;
+    *y = *x;
+    *x = ver_res - tmp - 1;
+  }
+}
+
+static void test_lvgl8_indev_feed() {
+  const int PW = 800, PH = 480;
+  for (uint8_t rot = 0; rot < 4; rot++) {
+    int LW = 0, LH = 0;
+    rotation_logical_dims(rot, PW, PH, &LW, &LH);
+    for (int lx = 0; lx < LW; lx += 23) {
+      for (int ly = 0; ly < LH; ly += 7) {
+        int fx = 0, fy = 0;
+        rotation_to_lvgl_indev(rot, PW, PH, lx, ly, &fx, &fy);
+        lvgl8_indev_pointer_proc(rot, PW, PH, &fx, &fy);
+        CHECK(fx == lx && fy == ly,
+              "LVGL 8's own rotation returns the logical point unchanged");
+      }
+    }
+  }
+}
+
 // ── The on-glass location wheels ─────────────────────────────────────────
 // The Location page (settings → weather → location) edits a coordinate as
 // hemisphere · degrees · tenths wheels per axis. These helpers are the only
@@ -260,6 +298,7 @@ int main() {
   test_dims();
   test_touch_roundtrip();
   test_lvgl_indev_feed();
+  test_lvgl8_indev_feed();
   test_touch_corners();
   test_brightness();
   test_names();

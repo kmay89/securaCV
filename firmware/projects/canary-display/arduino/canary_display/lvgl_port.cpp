@@ -76,11 +76,12 @@ int16_t s_in_y = 0;
 
 void fill_indev_data(lv_indev_data_t* data) {
   int x = s_in_x, y = s_in_y;
-#if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
-  // LVGL 9 rotates every pointer sample by the display rotation itself
-  // (lv_display_rotate_point). The HAL already handed us the logical point,
-  // so hand LVGL the native-frame point whose rotation IS that logical
-  // point — the exact inverse, host-tested in test_display_settings.cpp.
+#if defined(CD_FLAVOR_DASH)
+  // LVGL rotates every pointer sample by the display rotation itself (v9:
+  // lv_display_rotate_point; v8: indev_pointer_proc, the same arithmetic in
+  // native panel dims). The HAL already handed us the logical point, so hand
+  // LVGL the native-frame point whose rotation IS that logical point — the
+  // exact inverse, host-tested in test_display_settings.cpp against both.
   if (s_rot != 0) {
     canary::glass::rotation_to_lvgl_indev(s_rot, SCR_W, SCR_H, s_in_x, s_in_y,
                                           &x, &y);
@@ -253,6 +254,32 @@ void lvgl_port_set_rotation(uint8_t rot) {
   s_logical_w = (int16_t)lw;
   s_logical_h = (int16_t)lh;
 
+#if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR < 9
+  // LVGL 8 (no dash env ships it; the browser emulator compiles this glass
+  // against 8.4, emulator/build.sh): the same rotation through v8's API.
+  // sw_rotate has LVGL turn each rendered area into the panel's native
+  // landscape before flush_cb, and the rotation swaps the logical canvas
+  // (lv_disp_get_hor_res). Same quarter turns as the v9 table below. Only a
+  // change touches the driver, so a landscape boot leaves it as registered.
+  {
+    lv_disp_t* d = lv_disp_get_default();
+    lv_disp_rot_t r = LV_DISP_ROT_NONE;
+    switch (rot) {
+      case canary::glass::ROT_PORTRAIT:      r = LV_DISP_ROT_90;   break;
+      case canary::glass::ROT_LANDSCAPE_INV: r = LV_DISP_ROT_180;  break;
+      case canary::glass::ROT_PORTRAIT_INV:  r = LV_DISP_ROT_270;  break;
+      default:                               r = LV_DISP_ROT_NONE; break;
+    }
+    if (d && lv_disp_get_rotation(d) != r) {
+      s_disp_drv.sw_rotate = 1;
+      lv_disp_set_rotation(d, r);
+      // The stale-frame hazard the v9 branch below names, the same way.
+      lv_obj_t* scr = lv_scr_act();
+      if (scr) lv_obj_invalidate(scr);
+    }
+  }
+  canary::hal::touch_set_rotation(rot, SCR_W, SCR_H);
+#endif
 #if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
   // Only the RGB dash glass rotates; the round watch and the fixed-portrait
   // SPI nightstands ignore it. LVGL software-rotates the render into the

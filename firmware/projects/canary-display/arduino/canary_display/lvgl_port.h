@@ -38,9 +38,10 @@ void lvgl_port_set_panel_rotation(uint8_t rot);
 // LVGL-native surface is open, so the faces never see an LVGL click and the
 // policy above them is unchanged. The registered pointer device reports the
 // last fed sample; feed a release when the surface closes. Coordinates are
-// the HAL's logical frame (already un-rotated on the dash glass) — the v9
-// path re-encodes them so LVGL's own indev rotation lands them back where
-// the finger is (canary::glass::rotation_to_lvgl_indev).
+// the HAL's logical frame (already un-rotated on the dash glass) — the dash
+// path (LVGL 9, and LVGL 8 in the emulator) re-encodes them so LVGL's own
+// indev rotation lands them back where the finger is
+// (canary::glass::rotation_to_lvgl_indev).
 void lvgl_port_touch_feed(bool down, int16_t x, int16_t y);
 
 // ── Rendered brightness (binary-backlight glass) ─────────────────────────
