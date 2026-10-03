@@ -2366,13 +2366,14 @@ void test_an_old_paired_list_is_rebuilt_from_the_bond_store() {
   const uint8_t c_addr[6] = {0x00, 0x1A, 0x7D, 0xDA, 0x71, 0x99};
   const NimBLEAddress c(c_addr, 0);                         // its bond is gone
   const uint8_t d_addr[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01};
-  const NimBLEAddress d(d_addr, 0);                         // bonded, never listed
+  const NimBLEAddress d(d_addr, 1);                         // bonded, never listed (random static)
   bc::PairedDevice old[3];
   memset(old, 0, sizeof old);
   memcpy(old[0].address, a.getAddress().getBase()->val, 6);
   old[0].address_type = 1;
   old[0].trusted = true;
   memcpy(old[1].address, b.getBase()->val, 6);
+  old[1].address_type = 1;                                  // the bond says public
   strcpy(old[1].name, "kitchen tablet");
   old[1].connection_count = 7;
   old[1].trusted = true;
@@ -2391,7 +2392,9 @@ void test_an_old_paired_list_is_rebuilt_from_the_bond_store() {
   CHECK(memcmp(bc::g_paired_devices[1].address, b.getBase()->val, 6) == 0);
   CHECK(strcmp(bc::g_paired_devices[1].name, "kitchen tablet") == 0);
   CHECK(bc::g_paired_devices[1].connection_count == 7 && bc::g_paired_devices[1].trusted);
+  CHECK(bc::g_paired_devices[1].address_type == 0);         // the bond store's type
   CHECK(memcmp(bc::g_paired_devices[2].address, d.getBase()->val, 6) == 0);
+  CHECK(bc::g_paired_devices[2].address_type == 1);
   CHECK(bc::g_paired_devices[2].security == bc::SEC_BONDED);
   CHECK(host_sim::main_nvs.count("bt_paired_id") == 1);
   CHECK(host_sim::main_nvs["bt_paired"].size() == 3 * sizeof(bc::PairedDevice));
@@ -2484,6 +2487,28 @@ void test_a_dropped_disconnect_heals() {
   g_health.clear();
   loop_pass();
   CHECK(health_says("BLE link gone, its end dropped: ended from the stack's record") == 0);
+
+  // Both lost: the phone's end and the next phone's start on the same
+  // handle. The stack's record of the handle names another address, so the
+  // recorded link ended, and the one the stack holds is recorded.
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  host_sim::server->peers = {71};
+  host_sim::server->link_up(phone);
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 71);
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  NimBLEConnInfo next = link(71, 0xE9);
+  host_sim::server->link_up(next);                          // the handle is the next phone's now
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), next); });
+  CHECK(bc::g_events.dropped_reserved() == 3);
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 71);
+  CHECK(memcmp(bc::g_connection.address, next.getAddress().getBase()->val, 6) == 0);
+  CHECK(health_says("BLE link gone, its end dropped: ended from the stack's record") == 1);
+  CHECK(health_says("BLE link up, its start dropped: recorded from the stack's record") == 1);
   std::printf("PASS a_dropped_disconnect_heals\n");
 }
 
@@ -2620,6 +2645,20 @@ void test_the_state_after_pairing_or_a_link_is_what_runs() {
   loop_pass();
   CHECK(!bc::g_connection.connected && bc::g_scanning && bc::g_state == bc::BT_SCANNING);
   CHECK(rest(cmd_of(bc::BT_CMD_SCAN_STOP)).r.ok && bc::g_state == bc::BT_ADVERTISING);
+
+  // A scan stopped while a phone is connected: connected, as before. A link
+  // that ends during a scan in pairing mode: scanning, then pairing.
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  CHECK(rest(scan).r.ok && rest(cmd_of(bc::BT_CMD_SCAN_STOP)).r.ok);
+  CHECK(bc::g_connection.connected && bc::g_state == bc::BT_CONNECTED);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok && rest(scan).r.ok);
+  host_sim::server->link_down(91);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  loop_pass();
+  CHECK(bc::g_state == bc::BT_SCANNING);
+  CHECK(rest(cmd_of(bc::BT_CMD_SCAN_STOP)).r.ok && bc::g_state == bc::BT_PAIRING);
   std::printf("PASS the_state_after_pairing_or_a_link_is_what_runs\n");
 }
 
