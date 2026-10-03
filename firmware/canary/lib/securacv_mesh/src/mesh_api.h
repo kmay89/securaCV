@@ -5,8 +5,11 @@
  * Pure, I/O-free helpers that render the JSON bodies for the GET mesh
  * endpoints:
  *
- *   GET /api/mesh         → build_mesh_status_json()
- *   GET /api/mesh/peers   → build_mesh_peers_json()
+ *   GET /api/mesh         → build_mesh_status_json_from_view() (F161), which
+ *                           renders the published view through
+ *                           build_mesh_status_json()
+ *   GET /api/mesh/peers   → peer_views_from_status() (F161), then
+ *                           build_mesh_peers_json()
  *   GET /api/mesh/alerts  → build_mesh_alerts_json()   (F10)
  *
  * Why a separate, pure module:
@@ -83,9 +86,11 @@ constexpr size_t ALERTS_JSON_CAP  = 3072;
  *
  * F133 — the last pairing's outcome, when `last_pairing` is given: three
  * fields added after the others, so a page that reads only the old ones
- * parses the body as before. The parameter has no default: the handler
- * must pass its report, and a call that leaves it out does not compile
- * (only the tests of the old body pass nullptr, by name):
+ * parses the body as before. The parameter has no default: a caller must
+ * pass its report, and a call that leaves it out does not compile (only the
+ * tests of the old body pass nullptr, by name). Since F161 the one caller
+ * on the device is build_mesh_status_json_from_view(), below, which fills
+ * the report from the published view:
  *   pairing_seq          pairings started since boot (0: none); the POST
  *                        pair/start and pair/join answers name theirs;
  *   pairing_result       "none" | "running" | "paired" | "failed"
