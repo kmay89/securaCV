@@ -224,7 +224,7 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
     assert.match(body, /in\.mdns_host\s*=\s*g_device\.mdns_hostname;/);
     assert.match(body, /identity_json::device_info\(in, json, need\);/);
     const idj = fs.readFileSync(path.join(__dirname, 'identity_json.h'), 'utf8');
-    assert.match(idj, /raw\(w, ",\\"mdns_host\\":"\);\n  str\(w, in\.mdns_host\);/);
+    assert.match(idj, /wap_json::raw\(w, ",\\"mdns_host\\":"\);\n  wap_json::str\(w, in\.mdns_host\);/);
   });
   it('opens the host the device advertises, not its device id', async () => {
     const { link, asked } = await linkAfter(INFO);
