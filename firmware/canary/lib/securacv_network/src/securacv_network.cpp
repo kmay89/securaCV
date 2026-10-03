@@ -1641,9 +1641,18 @@ static void register_route(httpd_handle_t server, const httpd_uri_t* uri) {
 }
 
 // The six OS connectivity probes (tls_policy::is_connectivity_probe names the
-// same list). Registered with a trailing '*' because probe URLs sometimes
-// carry a cache-busting query and the wildcard matcher compares the FULL uri;
-// handle_captive_probe re-checks the exact path component itself. File scope
+// same list). esp_http_server hands the uri_match_fn only the request's path
+// (httpd_uri() passes the length of http_parser's UF_PATH field), so an exact
+// template already matches a probe that carries a cache-busting query
+// ("/gen_204?cachebust=1"). The trailing '*' adds nothing for that case: what
+// it does is also take any path that starts with a probe's, such as
+// "/gen_204x" or "/ncsi.txt/", which handle_captive_probe tells apart by the
+// exact path component (probe_path_is; req->uri keeps the query, so its
+// strcmp would not do). Such a near miss gets that handler's Apple branch
+// (while setup runs or the home link is down, the wizard, or on the port-80
+// server beside HTTPS the https:// hint; else the Success page) rather than
+// the catch-all or, on the port-80 server, the https:// redirect. firmware/tests_host/test_dashboard_route_match.test.js holds both
+// claims against a verbatim copy of IDF's matcher (sweep F239). File scope
 // because both the main route table and the FEATURE_HTTPS port-80 server
 // register them.
 static const char* kProbePaths[] = {

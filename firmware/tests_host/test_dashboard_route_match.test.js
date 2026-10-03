@@ -97,6 +97,43 @@ test("the matcher answers the cases F214 turned on", () => {
   cases.forEach(([t, u, want], i) => assert.strictEqual(got[i], want, `${t} against ${u}`));
 });
 
+// kProbePaths' comment in securacv_network.cpp (sweep F239): the matcher is
+// handed only the path, so an exact template matches a probe with a query and
+// the trailing `*` is not what lets one through; what the `*` does is take a
+// near miss (a longer path) to handle_captive_probe too, which tells the
+// probes apart by the exact path component.
+test("PlatformIO canary: the probe routes match as kProbePaths' comment says (F239)", () => {
+  const table = R.pioTable();
+  const probes = table.filter((g) => g.handler === "handle_captive_probe");
+  assert.strictEqual(probes.length, 6, "the six OS connectivity probes are registered on the primary server");
+  const paths = probes.map((g) => {
+    assert.ok(g.uri.endsWith("*"), `${g.uri}: the comment explains a trailing '*'`);
+    return g.uri.slice(0, -1);
+  });
+  // An exact template already takes the probe with a cache-busting query.
+  const exact = R.match(paths.map((p) => [p, `${p}?cachebust=1`]));
+  exact.forEach((m, i) => assert.ok(m, `"${paths[i]}" (no '*') matches ${paths[i]}?cachebust=1`));
+  // On the registered table, the probe with a query and a near miss both
+  // reach the probe handler: the near miss only because of the '*'.
+  const asks = paths.flatMap((p) => [`${p}?cachebust=1`, `${p}x`]).map((target) => ({ method: "GET", target }));
+  const { answers } = R.route(table, asks);
+  answers.forEach((a, i) => assert.strictEqual(typeof a === "number" && table[a].handler, "handle_captive_probe",
+    `GET ${asks[i].target} reaches handle_captive_probe`));
+  const nearMiss = R.match(paths.map((p) => [p, `${p}x`]));
+  nearMiss.forEach((m, i) => assert.ok(!m, `"${paths[i]}" (no '*') does not match ${paths[i]}x`));
+  // And the handler tells them apart by the exact path, through
+  // probe_path_is (req->uri keeps the query), for every probe it answers
+  // other than through its Apple branch.
+  const src = readFileSync(R.PIO_NET, "utf8");
+  const a = src.indexOf("static esp_err_t handle_captive_probe(httpd_req_t* req) {");
+  const b = src.indexOf("\n}\n", a);
+  assert.ok(a >= 0 && b > a, "handle_captive_probe is defined");
+  const body = src.slice(a, b);
+  const checked = [...body.matchAll(/probe_path_is\(uri,\s*"([^"]+)"\)/g)].map((m) => m[1]).sort();
+  assert.deepStrictEqual(checked, ["/connecttest.txt", "/gen_204", "/generate_204", "/ncsi.txt"]);
+  assert.ok(!/\bstrcmp\s*\(\s*uri\b/.test(body), "no strcmp of the whole uri (it keeps the query)");
+});
+
 for (const tree of TREES) {
   test(`${tree.name}: no registration is refused as a duplicate`, () => {
     const table = tree.table();
