@@ -175,9 +175,11 @@ test("the pane note and the Voxel entity say how the settled cell and the length
   // the facts the words stand on
   assert.ok(fsmCpp.includes("s.voxel = voxel_tracker_.stable();"));
   assert.strictEqual(fsmCpp.split("voxel_tracker_.reset();").length - 1, 2,
-    "reset in PresenceFSM::reset() and on the frame that starts a visit");
-  assert.ok(fsmCpp.includes("    if (!presence_) voxel_tracker_.reset();\n    voxel_tracker_.update(vs.voxel, now_ms);\n"),
-    "a new visit's first frame resets the tracker before it seeds the cell (sweep F152)");
+    "reset in PresenceFSM::reset() and in open_visit, where a visit starts");
+  assert.ok(fsmCpp.includes("EventMsg& out_event) {\n  voxel_tracker_.reset();\n  voxel_tracker_.update(first_cell, seen_ms);\n"),
+    "a new visit resets the tracker before its first sighting seeds the cell (sweep F152)");
+  assert.strictEqual(fsmCpp.split('emit(out_event, "presence_started")').length - 1, 1,
+    "open_visit is the one place a visit starts (sweep F186)");
   assert.strictEqual(mainCpp.split("fsm.reset();").length - 1, 1, "which main.cpp calls once, at boot");
   assert.ok(tracker.includes("  stable_ = Voxel{-1,-1,0,0};"));
   assert.ok(fsmCpp.includes("if (presence_ && (now_ms - last_seen_ms_) > canary::cfg::detect().lost_timeout_ms) {"));

@@ -82,11 +82,13 @@ class TheFirmwareSaysWhatTheCardAssumes(unittest.TestCase):
         self.assertIn("s.voxel = voxel_tracker_.stable();", fsm)
         self.assertIn("confidence_ = vs.person_now ? vs.bbox.score : 0;", fsm)
         # the tracker is reset in PresenceFSM::reset(), which main.cpp calls
-        # once, at boot, and on the frame that starts a visit (sweep F152):
-        # between visits the cell stays where the last visit settled
+        # once, at boot, and in open_visit, where a visit starts (sweep F152;
+        # F186 made it the one place): between visits the cell stays where
+        # the last visit settled
         self.assertEqual(fsm.count("voxel_tracker_.reset();"), 2)
-        self.assertIn("    if (!presence_) voxel_tracker_.reset();\n"
-                      "    voxel_tracker_.update(vs.voxel, now_ms);\n", fsm)
+        self.assertIn("EventMsg& out_event) {\n  voxel_tracker_.reset();\n"
+                      "  voxel_tracker_.update(first_cell, seen_ms);\n", fsm)
+        self.assertEqual(fsm.count('emit(out_event, "presence_started")'), 1)
         main = (FW / "src/main.cpp").read_text(encoding="utf-8")
         self.assertEqual(main.count("fsm.reset();"), 1)
         disc = (FW / "src/ha/ha_discovery.cpp").read_text(encoding="utf-8")

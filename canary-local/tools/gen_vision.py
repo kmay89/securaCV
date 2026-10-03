@@ -728,15 +728,19 @@ EX_TS_MS, EX_UPTIME_S, EX_HEAP, EX_HEAP_MIN, EX_CHAIN = 41250, 41, 183424, 17103
 must(PRESENCE_FSM_CPP, "s.voxel = voxel_tracker_.stable();", "the rows publish the settled cell")
 must(VOXEL_TRACKER_CPP, "  stable_ = Voxel{-1,-1,0,0};", "the tracker's reset cell")
 # ...and it is reset in two places only: PresenceFSM::reset(), which main.cpp
-# calls once, at boot, and the frame that starts a visit, before that frame's
-# update (sweep F152), so each visit's presence_started names the cell it
-# began in and the cell the last visit settled in stays only until then, as
-# the pane's note says.
+# calls once, at boot, and open_visit, the one place a visit starts (its
+# presence_started), before it seeds the cell with the visit's first sighting
+# (sweep F152; F186 made open_visit the one place), so each visit's
+# presence_started names the cell it began in and the cell the last visit
+# settled in stays only until then, as the pane's note says.
 _fsm_src = read(PRESENCE_FSM_CPP)
+_open_visit = fn_body(PRESENCE_FSM_CPP, "bool PresenceFSM::open_visit(", "open_visit")
 if (_fsm_src.count("voxel_tracker_.reset();") != 2
         or "  voxel_tracker_.reset();\n}" not in _fsm_src
-        or "    if (!presence_) voxel_tracker_.reset();\n    voxel_tracker_.update(vs.voxel, now_ms);\n"
-           not in _fsm_src
+        or "EventMsg& out_event) {\n  voxel_tracker_.reset();\n  voxel_tracker_.update(first_cell, seen_ms);\n"
+           not in _open_visit
+        or _fsm_src.count('emit(out_event, "presence_started")') != 1
+        or '  return emit(out_event, "presence_started");' not in _open_visit
         or read(MAIN_CPP).count("fsm.reset();") != 1):
     die("the voxel tracker is no longer reset at boot and on the frame that starts a visit "
         "(and nowhere else): the pane note's \"each visit starts on its own cell\" is stale")
@@ -792,7 +796,7 @@ for needle in ("s.presence_ms = presence_ ? (now_ms - presence_start_ms_) : 0;",
                "  out_event = EventMsg{};\n  // Only the tick that ends a dwell reports its length (dwell_ended).\n"
                "  ended_dwell_ms_ = 0;\n",
                "s.visit_ms    = last_visit_ms_;",
-               "last_visit_ms_ = now_ms - presence_start_ms_;\n    return emit(out_event, \"presence_ended\");",
+               "  last_visit_ms_ = now_ms - presence_start_ms_;\n  return emit(out_event, \"presence_ended\");",
                "presence_start_ms_ = now_ms;",
                "      dwelling_ = true;\n      dwell_start_ms_ = now_ms;\n      return emit(out_event, \"dwell_started\");",
                "      ended_dwell_ms_ = now_ms - dwell_start_ms_;\n      dwelling_ = false;\n"

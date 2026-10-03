@@ -21,6 +21,10 @@ void PresenceFSM::reset() {
   interaction_emitted_=false;
   last_leave_seen_=0;
   pending_interaction_reason_=nullptr;
+  leave_owed_=false;
+  held_sighting_=false;
+  held_seen_ms_=0;
+  held_cell_=Voxel{};
 
   bbox_ = BBox{};
   confidence_=0;
@@ -39,14 +43,57 @@ static inline bool emit(EventMsg& out, const char* name, const char* reason=null
   return true;
 }
 
-// Sends the interaction_likely an ended visit still owes (see the
-// presence_started branch of tick), once, if its window is still open.
+// Sends the interaction_likely an ended visit still owes (see open_visit),
+// once, if its window is still open.
 bool PresenceFSM::send_pending_interaction(uint32_t now_ms, EventMsg& out_event) {
   if (!pending_interaction_reason_) return false;
   const char* reason = pending_interaction_reason_;
   pending_interaction_reason_ = nullptr;
   if ((now_ms - last_leave_ms_) > INTERACTION_AFTER_LEAVE_WINDOW_MS) return false;
   return emit(out_event, "interaction_likely", reason);
+}
+
+// presence_started: a new visit, which starts its own tracker (sweep F152):
+// the cell the last visit settled in, and the time it settled, say nothing
+// about this one. Without it a later visit's interaction clock
+// (stable_enter_ms) started in an earlier visit, so almost any later visit
+// ended in interaction_likely. The visit's first sighting seeds the settled
+// cell, so presence_started names the cell this visit began in, as the
+// first visit after boot always did.
+bool PresenceFSM::open_visit(const Voxel& first_cell, uint32_t seen_ms, uint32_t now_ms,
+                             EventMsg& out_event) {
+  voxel_tracker_.reset();
+  voxel_tracker_.update(first_cell, seen_ms);
+  // The visit that just ended reports interaction_likely on the first
+  // frame after its presence_ended. When this visit opens on that very
+  // frame, the leave-side code in tick never ran (a latch still set here
+  // says so: it is cleared once the report is sent or its window has
+  // closed), and clearing the latches would drop a qualified visit's
+  // report: hold its reason, and send it on the next frame if the window
+  // is still open. That row reads the new visit's frame (present, its
+  // confidence and cell); visit_ms still says how long the ended visit
+  // lasted.
+  pending_interaction_reason_ = dwell_latch_        ? "dwell_then_left"
+                                : interaction_latch_ ? "zone_interaction_then_left"
+                                                     : nullptr;
+  presence_ = true;
+  dwelling_ = false;
+  presence_start_ms_ = now_ms;
+  interaction_candidate_ = false;
+  dwell_latch_ = false;
+  interaction_latch_ = false;
+  interaction_emitted_ = false;
+  return emit(out_event, "presence_started");
+}
+
+// presence_ended: the stay is over. Latch its duration so the leave-side
+// events (presence_ended now, interaction_likely shortly after) can still
+// report how long the visit was after presence_ms resets to 0.
+bool PresenceFSM::end_visit(uint32_t now_ms, EventMsg& out_event) {
+  presence_ = false;
+  last_leave_ms_ = now_ms;
+  last_visit_ms_ = now_ms - presence_start_ms_;
+  return emit(out_event, "presence_ended");
 }
 
 bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_event) {
@@ -63,40 +110,38 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
   proximity_    = vs.proximity;
   voxel_mask_   = vs.voxel_mask;
 
+  // The frame after dwell_ended ends the stay, whatever it shows (sweep
+  // F186). dwell_ended declared the person gone, unseen for longer than the
+  // lost timeout (or the dwell end grace), and presence_ended waits for this
+  // frame only because a tick sends one event. Before, a sighting here kept
+  // the stay and, the stay being older than the dwell start, took the
+  // dwell_started branch again: a second dwell in one stay, a second page
+  // from the lingering alert, a second dwell_ended. A sighting here belongs
+  // to the next visit: held, it opens that visit on the next frame.
+  if (leave_owed_) {
+    leave_owed_ = false;
+    held_sighting_ = vs.person_now;
+    held_seen_ms_ = now_ms;
+    held_cell_ = vs.voxel;
+    return end_visit(now_ms, out_event);
+  }
+  // The held sighting opens the next visit here, the frame after the one it
+  // was seen on, when this frame has no sighting of its own (one that does
+  // opens it below, as any sighting does). The visit's clocks start on this
+  // frame, the one that sends its presence_started; it is held present
+  // through the lost timeout from the sighting, and starts on its cell.
+  if (held_sighting_) {
+    held_sighting_ = false;
+    if (!vs.person_now) {
+      last_seen_ms_ = held_seen_ms_;
+      return open_visit(held_cell_, held_seen_ms_, now_ms, out_event);
+    }
+  }
+
   if (vs.person_now) {
     last_seen_ms_ = now_ms;
-    // A new visit starts its own tracker (sweep F152): the cell the last
-    // visit settled in, and the time it settled, say nothing about this one.
-    // Without it a later visit's interaction clock (stable_enter_ms) started
-    // in an earlier visit, so almost any later visit ended in
-    // interaction_likely. Reset before the update, so the first sighting
-    // seeds the settled cell, and presence_started names the cell this
-    // visit began in, as the first visit after boot always did.
-    if (!presence_) voxel_tracker_.reset();
+    if (!presence_) return open_visit(vs.voxel, now_ms, now_ms, out_event);
     voxel_tracker_.update(vs.voxel, now_ms);
-
-    if (!presence_) {
-      // The visit that just ended reports interaction_likely on the first
-      // frame after its presence_ended. When someone is seen on that very
-      // frame, this one, the leave-side code below never ran (a latch still
-      // set here says so: it is cleared once the report is sent or its
-      // window has closed), and clearing the latches would drop a qualified
-      // visit's report: hold its reason, and send it on the next frame if
-      // the window is still open. That row reads the new visit's frame
-      // (present, its confidence and cell); visit_ms still says how long
-      // the ended visit lasted.
-      pending_interaction_reason_ = dwell_latch_        ? "dwell_then_left"
-                                    : interaction_latch_ ? "zone_interaction_then_left"
-                                                         : nullptr;
-      presence_ = true;
-      dwelling_ = false;
-      presence_start_ms_ = now_ms;
-      interaction_candidate_ = false;
-      dwell_latch_ = false;
-      interaction_latch_ = false;
-      interaction_emitted_ = false;
-      return emit(out_event, "presence_started");
-    }
 
     if (send_pending_interaction(now_ms, out_event)) return true;
 
@@ -128,6 +173,8 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
       // than the lost timeout cleared the dwell silently and ended the stay
       // on this tick. 0, the shipped value, leaves the lost timeout in charge.
       if ((now_ms - last_seen_ms_) <= DWELL_END_GRACE_MS) return false;
+      // The stay ends on the next frame (sweep F186, above).
+      leave_owed_ = true;
       // Latch the finished dwell, on the clock the running dwell used, so
       // the dwell_ended row says how long it lasted.
       ended_dwell_ms_ = now_ms - dwell_start_ms_;
@@ -135,13 +182,7 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
       return emit(out_event, "dwell_ended");
     }
 
-    presence_ = false;
-    last_leave_ms_ = now_ms;
-    // The stay is over — latch its duration so the leave-side events
-    // (presence_ended now, interaction_likely shortly after) can still
-    // report how long the visit was after presence_ms resets to 0.
-    last_visit_ms_ = now_ms - presence_start_ms_;
-    return emit(out_event, "presence_ended");
+    return end_visit(now_ms, out_event);
   }
 
   if (!presence_ && last_leave_ms_ != 0 && last_leave_ms_ != last_leave_seen_) {

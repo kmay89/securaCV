@@ -43,6 +43,24 @@ private:
   const char* pending_interaction_reason_=nullptr;
   bool send_pending_interaction(uint32_t now_ms, EventMsg& out_event);
 
+  // The visit boundaries (sweep F186): presence_started and presence_ended,
+  // with what each resets or latches. open_visit seeds the new visit's
+  // tracker with its first sighting (first_cell, seen at seen_ms).
+  bool open_visit(const Voxel& first_cell, uint32_t seen_ms, uint32_t now_ms, EventMsg& out_event);
+  bool end_visit(uint32_t now_ms, EventMsg& out_event);
+  // Set by dwell_ended, which declares the person gone: the next frame ends
+  // the stay (presence_ended) whatever it shows, since a tick sends one
+  // event. Before F186 a sighting on that frame kept the stay and started a
+  // second dwell in it.
+  bool leave_owed_=false;
+  // A sighting on that frame belongs to the next visit, which it opens on
+  // the frame after (presence_started), unless that frame has a sighting of
+  // its own. Its time and cell, so the visit is held present through the
+  // lost timeout from the sighting and starts on the sighting's cell.
+  bool held_sighting_=false;
+  uint32_t held_seen_ms_=0;
+  Voxel held_cell_{};
+
   // current
   BBox bbox_{};
   int confidence_=0;

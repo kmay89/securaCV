@@ -46,6 +46,15 @@
 // dwellers only, and a lost timeout longer than the grace still governs.
 // The shipped build (grace 0) runs the rest of the file.
 //
+// Pinned here (sweep F186), in both builds: one dwell per stay. The frame
+// after dwell_ended ends the stay (presence_ended) whatever it shows, and a
+// sighting on it opens the next visit on the frame after. Before, that
+// sighting kept the stay and started a second dwell in it at once (the
+// lingering alert paged twice, and a second dwell_ended followed): the
+// sweep item's probe P8, here as a test, with the one-frame and back-for-good
+// cases and a table of every way back after a dwell, from one frame away to
+// past the lost timeout and the grace.
+//
 // presence_fsm.cpp and voxel_tracker.cpp are linked verbatim; the only
 // stand-in is canary::cfg::detect(), the NVS-backed tuning, which is
 // replaced by a struct the test owns so no Arduino shim is needed.
@@ -205,29 +214,6 @@ static void test_linger_dwell_ended_reports_its_dwell() {
   assert(s.snap.confidence == 0 && !s.snap.presence);
   std::printf("  linger: dwell_ended carries %lu ms, presence_ended 0, visit %lu ms\n",
               (unsigned long)ended.snap.dwell_ms, (unsigned long)visit);
-}
-
-// The person is back on the frame after dwell_ended (the dwell had ended, the
-// stay had not): dwell_started fires again at once, from 0, and the ended
-// dwell's length is gone.
-static void test_return_after_dwell_ended_starts_from_zero() {
-  PresenceFSM fsm;
-  fsm.reset();
-  Seen s;
-  uint32_t t = 500;
-  assert(step(fsm, person(), t, s) && is(s, "presence_started"));
-  for (t += 100; t <= 500 + DWELL_START_MS; t += 100) step(fsm, person(), t, s);
-  assert(s.snap.dwelling);
-  const uint32_t last_seen = t - 100;
-  for (;; t += 100) {
-    if (step(fsm, empty(), t, s)) break;
-    assert(t < last_seen + LOST_TIMEOUT_MS + 1000);
-  }
-  assert(is(s, "dwell_ended") && s.snap.dwell_ms > 0);
-  t += 100;
-  assert(step(fsm, person(), t, s) && is(s, "dwell_started"));
-  assert(s.snap.dwelling && s.snap.dwell_ms == 0);
-  assert(s.snap.presence);
 }
 
 // A walk-by that never dwells: no dwell event, dwell_ms 0 on every row.
@@ -509,6 +495,189 @@ static void test_nothing_owed_unless_qualified_and_in_the_window() {
   }
 }
 
+// ---- sweep F186: a dweller seen on the frame between dwell_ended and presence_ended ----
+//
+// dwell_ended declares the person gone (unseen for longer than the lost
+// timeout, or than the dwell end grace when that is longer), and since a
+// tick sends one event, presence_ended follows on the next frame. Before
+// F186 a sighting on that next frame kept the stay and, the stay being older
+// than DWELL_START_MS, took the dwell_started branch again: a second dwell
+// in the same stay (the lingering alert pages on each dwell_started) and a
+// second dwell_ended. Now that frame ends the stay whatever it shows, and a
+// sighting on it opens the next visit on the frame after. Both builds run
+// these: the shipped grace 0 and the 4000 ms grace.
+
+// A dweller's stay: in (1,1) from t for DWELL_START_MS + 1 s, then empty
+// frames until dwell_ended; t ends on the frame after it.
+static void dwell_and_leave(PresenceFSM& fsm, uint32_t& t, Log& log) {
+  frames(fsm, t, log, person(1, 1), DWELL_START_MS + 1000);
+  empty_until(fsm, t, log, "dwell_ended");
+}
+
+static int count(const Log& log, const char* name) {
+  int n = 0;
+  for (const Seen& s : log.seen) n += is(s, name) ? 1 : 0;
+  return n;
+}
+
+// The sweep item's probe P8: dwell_started at 11.0 s, dwell_ended at 13.5 s
+// (grace 0; 16.0 s with the grace), then the person is seen from the next
+// frame for 0.5 s. Before F186: a second dwell_started on that frame and a
+// second dwell_ended 2 s later, then one presence_ended.
+static void test_seen_on_the_frame_after_dwell_ended_opens_the_next_visit() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Log log;
+  uint32_t t = 1000;
+  dwell_and_leave(fsm, t, log);
+  const uint32_t gap = t;
+  frames(fsm, t, log, person(0, 2), 500);
+  frames(fsm, t, log, empty(), settle_ms());
+  std::printf("  seen on the frame after dwell_ended: %s\n", log.events.c_str());
+  std::fflush(stdout);  // shown even when an assertion below aborts
+  assert(count(log, "dwell_started") == 1 && count(log, "dwell_ended") == 1);
+  assert(log.events == "presence_started dwell_started dwell_ended presence_ended presence_started "
+                       "interaction_likely:dwell_then_left presence_ended");
+  const Seen& started = nth(log, "presence_started");
+  const Seen& dwell = nth(log, "dwell_started");
+  const Seen& dend = nth(log, "dwell_ended");
+  const Seen& ended = nth(log, "presence_ended");
+  const Seen& again = nth(log, "presence_started", 1);
+  const Seen& late = nth(log, "interaction_likely");
+  const Seen& gone = nth(log, "presence_ended", 1);
+  assert(dwell.t == started.t + DWELL_START_MS);
+  // the one dwell's row carries its length, and nothing resumes or restarts
+  // it afterwards, so that is the length of the stay's dwell
+  assert(dend.snap.dwell_ms == dend.t - dwell.t);
+  // the sighting's frame ends the stay: presence_ended, with the stay's
+  // length to that frame and the cell it settled in; its confidence is the
+  // frame's box, as on every row
+  assert(gap == dend.t + 100 && ended.t == gap);
+  assert(!ended.snap.presence && !ended.snap.dwelling && ended.snap.dwell_ms == 0);
+  assert(ended.snap.visit_ms == ended.t - started.t);
+  assert(ended.snap.voxel.r == 1 && ended.snap.voxel.c == 1);
+  assert(ended.snap.confidence == 91);
+  // the next visit opens on the frame after, on its own cell, from 0
+  assert(again.t == gap + 100);
+  assert(again.snap.presence && !again.snap.dwelling);
+  assert(again.snap.presence_ms == 0 && again.snap.dwell_ms == 0);
+  assert(again.snap.voxel.r == 0 && again.snap.voxel.c == 2);
+  // the ended stay's interaction_likely, owed (F152) and sent on the frame
+  // after that, with the ended stay's length
+  assert(late.t == again.t + 100);
+  assert(late.snap.visit_ms == ended.snap.visit_ms);
+  // the 0.5 s visit ends on its own, never having dwelled
+  assert(gone.snap.visit_ms == gone.t - again.t && gone.snap.visit_ms < DWELL_START_MS);
+}
+
+// Seen on that frame only: the sighting still opens a visit, on the next
+// frame (empty: presence true with confidence 0, the sighting's cell), held
+// present through the lost timeout counted from the sighting.
+static void test_one_frame_seen_after_dwell_ended_still_opens_a_visit() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Log log;
+  uint32_t t = 1000;
+  dwell_and_leave(fsm, t, log);
+  const uint32_t gap = t;
+  frames(fsm, t, log, person(2, 2), 100);
+  frames(fsm, t, log, empty(), settle_ms());
+  assert(log.events == "presence_started dwell_started dwell_ended presence_ended presence_started "
+                       "interaction_likely:dwell_then_left presence_ended");
+  const Seen& again = nth(log, "presence_started", 1);
+  assert(again.t == gap + 100);
+  assert(again.snap.presence && again.snap.presence_ms == 0);
+  assert(again.snap.confidence == 0);
+  assert(again.snap.voxel.r == 2 && again.snap.voxel.c == 2);
+  const uint32_t lost = canary::cfg::detect().lost_timeout_ms;
+  const Seen& gone = nth(log, "presence_ended", 1);
+  assert(gone.t - gap > lost && gone.t - gap <= lost + 100);
+  assert(gone.snap.visit_ms == gone.t - again.t);
+}
+
+// Back on that frame for good: the next visit is a stay of its own, and its
+// dwell is its own, one per stay.
+static void test_back_for_good_dwells_once_in_the_next_stay() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Log log;
+  uint32_t t = 1000;
+  dwell_and_leave(fsm, t, log);
+  frames(fsm, t, log, person(1, 1), DWELL_START_MS + 1000);
+  frames(fsm, t, log, empty(), settle_ms());
+  assert(log.events == "presence_started dwell_started dwell_ended presence_ended presence_started "
+                       "interaction_likely:dwell_then_left dwell_started dwell_ended presence_ended "
+                       "interaction_likely:dwell_then_left");
+  const Seen& dwell2 = nth(log, "dwell_started", 1);
+  const Seen& dend2 = nth(log, "dwell_ended", 1);
+  assert(dwell2.t == nth(log, "presence_started", 1).t + DWELL_START_MS);
+  assert(dend2.snap.dwell_ms == dend2.t - dwell2.t);
+  assert(nth(log, "interaction_likely", 1).snap.visit_ms == nth(log, "presence_ended", 1).snap.visit_ms);
+}
+
+// Every way back after a dwell: away for 1 frame to past the longer of the
+// lost timeout and the grace, then seen for 1, 2, 5 or 40 frames, then gone.
+// On every frame of every walk: a stay holds at most one dwell, dwell_ended
+// carries the length of the dwell it ends, presence_ended goes out on the
+// very frame after dwell_ended, and the row's presence and dwelling agree
+// with the events so far. Some walks are seen first on exactly that frame.
+static void test_every_way_back_after_a_dwell() {
+  const uint32_t lost = canary::cfg::detect().lost_timeout_ms;
+  const uint32_t hold = lost > DWELL_END_GRACE_MS ? lost : DWELL_END_GRACE_MS;
+  const int most_away = (int)(hold / 100) + 5;
+  int walks = 0, through_the_gap = 0;
+  for (int away = 1; away <= most_away; ++away) {
+    for (const int back : {1, 2, 5, 40}) {
+      PresenceFSM fsm;
+      fsm.reset();
+      uint32_t t = 1000, dwell_at = 0;
+      bool in_stay = false, dwelling = false, dwelled = false, closing = false;
+      const auto frame = [&](const VisionSample& vs) {
+        Seen s;
+        const bool sent = step(fsm, vs, t, s);
+        if (closing) {
+          // the frame after dwell_ended
+          assert(sent && is(s, "presence_ended"));
+          if (vs.person_now) through_the_gap++;
+          closing = false;
+        }
+        if (sent) {
+          if (is(s, "presence_started")) {
+            assert(!in_stay);
+            in_stay = true;
+            dwelled = false;
+          } else if (is(s, "dwell_started")) {
+            assert(in_stay && !dwelled);  // one dwell per stay
+            dwelling = dwelled = true;
+            dwell_at = t;
+          } else if (is(s, "dwell_ended")) {
+            assert(dwelling);
+            assert(s.snap.dwell_ms == t - dwell_at);
+            dwelling = false;
+            closing = true;
+          } else if (is(s, "presence_ended")) {
+            assert(in_stay && !dwelling);
+            in_stay = false;
+          } else {
+            assert(is(s, "interaction_likely"));
+          }
+        }
+        assert(s.snap.presence == in_stay && s.snap.dwelling == dwelling);
+        t += 100;
+      };
+      for (const uint32_t end = t + DWELL_START_MS + 1000; t < end;) frame(person(1, 1));
+      for (int i = 0; i < away; ++i) frame(empty());
+      for (int i = 0; i < back; ++i) frame(person(0, 2));
+      for (const uint32_t end = t + settle_ms(); t < end;) frame(empty());
+      assert(!in_stay && !closing);
+      walks++;
+    }
+  }
+  assert(through_the_gap == 4);  // each `back`, once: away ends on dwell_ended
+  std::printf("  %d walks back after a dwell, 4 of them seen first on the frame after dwell_ended\n",
+              walks);
+}
+
 // ---- sweep F154: the dwell end grace (the build with a grace) ----
 #if VISION_DWELL_END_GRACE_MS > 0
 
@@ -627,6 +796,10 @@ int main() {
   test_one_frame_back_still_sends_it();
   test_back_to_back_visits_each_report();
   test_nothing_owed_unless_qualified_and_in_the_window();
+  test_seen_on_the_frame_after_dwell_ended_opens_the_next_visit();
+  test_one_frame_seen_after_dwell_ended_still_opens_a_visit();
+  test_back_for_good_dwells_once_in_the_next_stay();
+  test_every_way_back_after_a_dwell();
 #if VISION_DWELL_END_GRACE_MS > 0
   test_grace_holds_the_dweller_then_dwell_ended_fires();
   test_dweller_back_within_the_grace_keeps_the_dwell();
@@ -638,7 +811,6 @@ int main() {
   // the shipped grace: 0, the lost timeout ends every stay
   static_assert(DWELL_END_GRACE_MS == 0, "the shipped build");
   test_linger_dwell_ended_reports_its_dwell();
-  test_return_after_dwell_ended_starts_from_zero();
   test_walk_by_never_dwells();
   test_reset_clears_the_latch();
   std::printf("ALL VISION PRESENCE FSM TESTS PASSED\n");
