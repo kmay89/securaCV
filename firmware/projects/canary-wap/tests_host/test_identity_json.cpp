@@ -14,6 +14,12 @@
 // type, with the name read back byte for byte, and a length measured first
 // and written whole or not at all.
 
+// Arduino.h's global names first, as the sketch has them in front of every
+// header it includes: a header that collides with one (the first
+// identity_json.h's `boolean(...)` under a using-directive) fails here, not
+// in CI's ESP32 compiles.
+#include "arduino_globals.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <cstring>

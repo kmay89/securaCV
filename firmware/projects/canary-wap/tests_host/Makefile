@@ -387,11 +387,13 @@ clean: clean-wap-diagnostics
 # TXT values hold `"` and `\`: the cache parses under JSON.parse's rules
 # (json_strict.h), keeps exactly the adverts that fit (an oracle in the test
 # says which), each value as advertised, and is a complete document after
-# every advert; never a cut list.
+# every advert; never a cut list. Both this suite and the identity one include
+# arduino_globals.h (Arduino.h's global names, from arduino-esp32 3.3.8) before
+# the header they test, so a header that collides with one fails here.
 FSCACHE_BIN = test_fleet_scan_cache
 FSCACHE_SRC = test_fleet_scan_cache.cpp
 
-$(FSCACHE_BIN): $(FSCACHE_SRC) json_strict.h $(SRC_DIR)/fleet_scan_cache.h \
+$(FSCACHE_BIN): $(FSCACHE_SRC) json_strict.h arduino_globals.h $(SRC_DIR)/fleet_scan_cache.h \
                 $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/canary_wap.ino
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) \
 	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(FSCACHE_SRC)
@@ -416,7 +418,8 @@ clean: clean-fleet-scan-cache
 IDJSON_BIN = test_identity_json
 IDJSON_SRC = test_identity_json.cpp
 
-$(IDJSON_BIN): $(IDJSON_SRC) json_strict.h $(SRC_DIR)/identity_json.h $(SRC_DIR)/wap_json_writer.h
+$(IDJSON_BIN): $(IDJSON_SRC) json_strict.h arduino_globals.h $(SRC_DIR)/identity_json.h \
+               $(SRC_DIR)/wap_json_writer.h
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(IDJSON_SRC)
 
 .PHONY: run-identity-json clean-identity-json

@@ -30,6 +30,14 @@
  *    what fits rolls a refused piece back with rollback() (fleet_scan_cache.h
  *    keeps the adverts that fit).
  *
+ * Callers spell every call `wap_json::name(...)`, never `using namespace
+ * wap_json;`: the sketch's translation unit opens with Arduino.h, and a
+ * using-directive puts these names next to its globals (`typedef bool
+ * boolean;` made the first identity_json.h's unqualified `boolean(...)`
+ * ambiguous, so neither ESP32 build compiled it). The host tests include
+ * tests_host/arduino_globals.h, Arduino.h's global names, before the header
+ * they test, so such a collision fails make.
+ *
  * Pure hosted C++ (no Arduino, ESP-IDF or heap): any task, and host-tested
  * through its builders (tests_host/test_fleet_scan_cache.cpp,
  * test_identity_json.cpp).
@@ -172,7 +180,7 @@ inline bool number(Writer& w, uint64_t v) {
   return raw(w, digits, n);
 }
 
-inline bool boolean(Writer& w, bool v) { return v ? raw(w, "true", 4) : raw(w, "false", 5); }
+inline bool boolean_value(Writer& w, bool v) { return v ? raw(w, "true", 4) : raw(w, "false", 5); }
 
 inline bool ok(const Writer& w) { return !w.overflow; }
 
