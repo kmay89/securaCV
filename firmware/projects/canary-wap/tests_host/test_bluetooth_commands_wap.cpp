@@ -104,11 +104,17 @@
 namespace host_sim {
 inline std::map<std::string, std::vector<uint8_t>> main_nvs;
 inline std::recursive_mutex main_nvs_mu;
+// Called on every write, before it lands, when a one-thread test sets it: a
+// command's NVS save is the middle of that command on the loop task (sweep
+// F210 reads what another task would see there). The threaded test never
+// sets it.
+inline std::function<void(const char*)> on_main_nvs_write;
 }  // namespace host_sim
 class FakeMainNvs {
  public:
   size_t putBytes(const char* k, const void* v, size_t n) {
     host_sim::note("nvs_write");
+    if (host_sim::on_main_nvs_write) host_sim::on_main_nvs_write(k);
     std::lock_guard<std::recursive_mutex> g(host_sim::main_nvs_mu);
     const uint8_t* b = static_cast<const uint8_t*>(v);
     host_sim::main_nvs[k].assign(b, b + n);
@@ -2291,15 +2297,67 @@ void test_a_refused_bring_up_publishes_its_reason_whole() {
   std::printf("PASS a_refused_bring_up_publishes_its_reason_whole\n");
 }
 
+// Sweep F210: the Start Advertising and Pair handlers decide whether to
+// bring the stack up before they submit from whether Bluetooth is on, and
+// they read it as is_enabled(), the loop task's g_settings.enabled, in
+// place on the HTTP server's task, while the loop task's commands and its
+// first pass's load_saved() write it. They read read_enabled() now, the
+// settings the last pass published. What it answers: the boot state before
+// the first pass, the saved setting after the pass that loaded it, the
+// value before a command in the middle of that command (its NVS save comes
+// after its write of the flag and before its publish: the loop task's write
+// in flight, which a handler on another task could meet), and the command's
+// value as soon as its answer is posted. The threaded test below reads it
+// under TSAN.
+void test_the_handlers_read_enabled_from_the_view() {
+  boot(/*bring_up=*/false);
+  CHECK(bc::read_enabled() == bt_defaults::ENABLED);      // before the first pass: the boot state
+  {
+    FakeMainNvs nvs;
+    nvs.putBool("bt_enabled", false);                      // saved with Bluetooth off
+    host_sim::calls.clear();
+  }
+  loop_pass();                                             // load_saved(), then the pass's publish
+  CHECK(!bc::is_enabled() && !bc::read_enabled());
+  host_sim::task = "httpd";                                // the owner's tap brings the stack up
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  CHECK(bc::g_initialized && !bc::read_enabled());
+  // Each read made in the middle of a command, while it saves.
+  std::vector<bool> seen;
+  host_sim::on_main_nvs_write = [&](const char*) { seen.push_back(bc::read_enabled()); };
+  Rest r = rest(cmd_of(bc::BT_CMD_ENABLE));
+  host_sim::on_main_nvs_write = nullptr;
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::is_enabled());
+  CHECK(!seen.empty() && std::none_of(seen.begin(), seen.end(), [](bool on) { return on; }));
+  CHECK(bc::read_enabled());                               // published before the answer
+  seen.clear();
+  host_sim::on_main_nvs_write = [&](const char*) { seen.push_back(bc::read_enabled()); };
+  r = rest(cmd_of(bc::BT_CMD_DISABLE));
+  host_sim::on_main_nvs_write = nullptr;
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && !bc::is_enabled());
+  CHECK(!seen.empty() && std::all_of(seen.begin(), seen.end(), [](bool on) { return on; }));
+  CHECK(!bc::read_enabled());
+  // Pair turns it on (the command's auto-enable); the view says so after.
+  r = rest(cmd_of(bc::BT_CMD_PAIR_START));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::read_enabled());
+  std::printf("PASS the_handlers_read_enabled_from_the_view\n");
+}
+
 // For real on three threads: the bring-up worker runs init() while the
 // loop task runs its passes and the HTTP server's task reads what a handler
-// reads (is_initialized(), the init error, the published views) and, once
-// the stack is up, submits commands. `make tsan-bt-commands` runs it under
-// ThreadSanitizer: with init() writing the loop task's state (the settings,
-// the list, the state, g_initialized, the NimBLE objects) and the reason in
-// place, it reports those races; now the hand-over is a release and an
-// acquire. Played twice: a bring-up that comes up, and one the heap guard
-// refuses.
+// reads (is_initialized(), the init error, the published views, whether
+// Bluetooth is on) and, once the stack is up, submits commands. `make
+// tsan-bt-commands` runs it under ThreadSanitizer: with init() writing the
+// loop task's state (the settings, the list, the state, g_initialized, the
+// NimBLE objects) and the reason in place, it reports those races; now the
+// hand-over is a release and an acquire. And the Start Advertising and Pair
+// handlers' read of whether Bluetooth is on (sweep F210): read in place
+// (is_enabled(), the loop task's g_settings.enabled), TSAN reports it
+// against the loop task's first pass, whose load_saved() writes the saved
+// settings; read_enabled() reads the published view. Played twice: a
+// bring-up that comes up, and one the heap guard refuses.
 extern uint32_t g_opera_chain_height;
 extern uint8_t g_opera_chain_head[32];
 // What the sketch's bring-up worker registers after the channel's init()
@@ -2341,6 +2399,7 @@ void test_threads_bring_up_loop_and_reads() {
     std::atomic<bool> brought{false};
     std::atomic<bool> done{false};
     std::atomic<uint32_t> reads{0};
+    std::atomic<uint32_t> reads_on{0};
     std::atomic<uint32_t> commands{0};
     std::atomic<bool> reasons_whole{true};
     // The sketch tells the channel before it creates the worker, on the loop
@@ -2364,6 +2423,10 @@ void test_threads_bring_up_loop_and_reads() {
     std::thread httpd([&] {
       host_sim::task = "httpd";
       while (!done.load()) {
+        // What the Start Advertising and Pair handlers decide bring_up() from
+        // (F210), first: no lock of the views' taken yet this round. Used, so
+        // the read is not optimized away.
+        if (bc::read_enabled()) reads_on.fetch_add(1);
         const char* reason = bc::init_fail_reason();
         if (memchr(reason, '\0', 96) == nullptr) reasons_whole.store(false);
         bc::BluetoothStatus st;
@@ -2398,6 +2461,7 @@ void test_threads_bring_up_loop_and_reads() {
     if (!finalized) bc::bringup_worker_finished();
     bc::update();
     CHECK(reasons_whole.load() && reads.load() > 0);
+    CHECK(reads_on.load() > 0);          // the device saved no "off": the view says on
     if (refused) {
       CHECK(!bc::is_initialized() && !bc::g_initialized && bc::init_fail_reason()[0] != '\0');
       host_sim::internal_largest_block = 200 * 1024;
@@ -3927,6 +3991,7 @@ const Test kTests[] = {
     {"no_command_brings_the_stack_up", test_no_command_brings_the_stack_up},
     {"the_bring_up_hands_its_result_to_the_loop_task", test_the_bring_up_hands_its_result_to_the_loop_task},
     {"a_refused_bring_up_publishes_its_reason_whole", test_a_refused_bring_up_publishes_its_reason_whole},
+    {"the_handlers_read_enabled_from_the_view", test_the_handlers_read_enabled_from_the_view},
     {"threads_bring_up_loop_and_reads", test_threads_bring_up_loop_and_reads},
     {"commands_while_init_runs_are_kept", test_commands_while_init_runs_are_kept},
     {"the_advertising_waits_for_the_bring_up_worker", test_the_advertising_waits_for_the_bring_up_worker},

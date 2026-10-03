@@ -179,7 +179,8 @@ C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
     answers from the Result. The Bluetooth enable, advertise and pair
     handlers bring the stack up first (`if (... !bring_up()) { return`): no
     command runs `init()`, so without it a device whose boot bring-up failed
-    could never turn Bluetooth on.
+    could never turn Bluetooth on. The advertise and pair handlers decide it
+    from `bluetooth_channel::read_enabled()` (BV8).
 C4. Across the sketch (comments and strings blanked), no file but the
     channel's .cpp names `chirp_channel::<mutator>(` or
     `bluetooth_channel::<mutator>(`, and none says `using namespace` for
@@ -319,8 +320,8 @@ M1. `open_client()` sets `cfg.network.timeout_ms = (int)kNetworkTimeoutMs;`
     same.
 
 Bluetooth settings, events, views and bring-up (F144, F143, F138, F171,
-F167): rules of their own, in their own block below (`check_bluetooth_views`,
-`BV_MUTATIONS`).
+F167, F189, F196, F210): rules of their own, in their own block below
+(`check_bluetooth_views`, `BV_MUTATIONS`).
 
 BV1. A settings POST that turns Bluetooth on does it the way
      POST /api/bluetooth/enable does (F144). `handle_bluetooth_settings_set`
@@ -365,8 +366,8 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
 BV3. The Bluetooth status routes read only what the loop task published
      (F138). `bluetooth_channel.h` declares none of the live readers
      (`BT_LIVE_READERS`: `get_status`, `get_settings`, `get_scanned_devices`,
-     `get_paired_devices`, `is_scanning`, ...), and no HTTP handler in the
-     sketch names one. `handle_bluetooth_status`, `handle_bluetooth_scan_results`,
+     `get_paired_devices`, `is_scanning`, ..., and since F210 `is_enabled`),
+     and no HTTP handler in the sketch names one. `handle_bluetooth_status`, `handle_bluetooth_scan_results`,
      `handle_bluetooth_paired_list` and `handle_bluetooth_settings_get` each
      call their reader (`read_status`, `read_scan`, `read_paired`,
      `read_settings`) once and nothing else on the channel but the pure
@@ -514,6 +515,25 @@ BV7. No advertising start while the sketch's bring-up worker registers GATT
      the sketch calls either (both are loop-task only). That a start waits
      for the worker, over a stand-in whose advertising start walks the
      services, is `test_bluetooth_commands_wap.cpp`'s.
+
+BV8. Whether Bluetooth is on, as another task reads it (F210). The Start
+     Advertising and Pair handlers decide whether to bring the stack up
+     before they submit from it, and they read `is_enabled()`, the loop
+     task's `g_settings.enabled`, in place on the httpd task while the loop
+     task's commands and its first pass's `load_saved()` wrote it: a data
+     race, which TSAN reports in the threaded test when the read is put
+     back. They read `bluetooth_channel::read_enabled()` (C3's
+     `BT_BRING_UP_HANDLERS`). In `bluetooth_channel.cpp`, `read_enabled()`
+     is exactly `return read_settings().enabled;` (the settings the last pass
+     published; BV3 adds it to the readers, which name none of the live
+     state); `is_enabled()` is defined once, `static`, and called only from
+     `run_command()` (the commands that auto-enable, on the loop task); no
+     other file names `bluetooth_channel::is_enabled(`, and BV3 keeps it out
+     of `bluetooth_channel.h`. What `read_enabled()` answers before the first
+     pass, mid-command and after each command's answer, and the threads
+     under TSAN, are `test_bluetooth_commands_wap.cpp`'s
+     (`the_handlers_read_enabled_from_the_view`,
+     `threads_bring_up_loop_and_reads`).
 
 ## It proves it bites
 
@@ -1245,8 +1265,8 @@ BT_HANDLER_COMMANDS = {
 # failed could never turn Bluetooth on again.
 BT_BRING_UP_HANDLERS = {
     "handle_bluetooth_enable": "if(!bring_up()){return",
-    "handle_bluetooth_advertise_start": "if(!bluetooth_channel::is_enabled()&&!bring_up()){return",
-    "handle_bluetooth_pair_start": "if(!bluetooth_channel::is_enabled()&&!bring_up()){return",
+    "handle_bluetooth_advertise_start": "if(!bluetooth_channel::read_enabled()&&!bring_up()){return",
+    "handle_bluetooth_pair_start": "if(!bluetooth_channel::read_enabled()&&!bring_up()){return",
 }
 # The settings POSTs: each `if (input["<key>"]...) { ... }` block fills one
 # field and names that field (and only it) for the loop task.
@@ -2350,7 +2370,7 @@ def check_bluetooth_callbacks(cpp_src: str, errors: list[str]) -> None:
 # BV3 (F138): the status routes' reads.
 BT_LIVE_READERS = ("get_status", "get_state", "get_settings", "get_scanned_devices",
                    "get_paired_devices", "is_scanning", "is_connected", "get_connection_info",
-                   "get_pairing_state", "get_pairing_pin")
+                   "get_pairing_state", "get_pairing_pin", "is_enabled")
 BT_GET_ROUTES = (("handle_bluetooth_status", "read_status"),
                  ("handle_bluetooth_scan_results", "read_scan"),
                  ("handle_bluetooth_paired_list", "read_paired"),
@@ -2373,7 +2393,7 @@ BT_VIEW_CALLS = (
     (r"\bg_paired_view\s*\.\s*read\s*\(", ("read_paired",), "g_paired_view.read(", "the reader copies the view"),
 )
 SIG_BT_RUN_COMMAND = r"\bstatic\s+Result\s+run_command\s*\([^)]*\)"
-BT_READERS = ("read_status", "read_settings", "read_scan", "read_paired")
+BT_READERS = ("read_status", "read_settings", "read_scan", "read_paired", "read_enabled")
 # The JSON each GET route sends: `<object>.<key>` for every literal key it
 # sets (doc is the top level; conn, pair, stats and dev are its objects).
 BT_GET_KEYS = {
@@ -2436,7 +2456,7 @@ def check_bluetooth_reads(files: dict[str, str], errors: list[str]) -> None:
         if re.search(r"(?<![\w:.>])" + fn + r"\s*\(", hcode):
             errors.append(f"{BT_H}: declares {fn}() — the channel's state is the loop task's; another "
                           "task reads the published view (read_status, read_settings, read_scan, "
-                          "read_paired) (F138)")
+                          "read_paired, read_enabled) (F138, F210)")
     live_call = r"\bbluetooth_channel::(" + "|".join(BT_LIVE_READERS) + r")\s*\("
     for name, src in files.items():
         c = blank_comments_and_strings(src)
@@ -2446,7 +2466,7 @@ def check_bluetooth_reads(files: dict[str, str], errors: list[str]) -> None:
             m = re.search(live_call, c[s:e])
             if m:
                 errors.append(f"{name}: HTTP handler {hname}() reads bluetooth_channel::{m.group(1)}( — "
-                              "read the view the loop task published (F138)")
+                              "read the view the loop task published (F138, F210)")
     api = blank_comments_and_strings(files[BT_API])
     api_kept = blank_comments_only(files[BT_API])
     for h, reader in BT_GET_ROUTES:
@@ -3109,10 +3129,54 @@ def check_bluetooth_answer_lengths(api_src: str, errors: list[str]) -> None:
                           "Bluetooth answer goes out through send_doc(), at its own measured length (F196)")
 
 
+# BV8 (F210): whether Bluetooth is on, as another task reads it.
+SIG_BT_READ_ENABLED = r"\bbool\s+read_enabled\s*\(\s*\)"
+BT_READ_ENABLED_BODY = "returnread_settings().enabled;"
+# Who reads the loop task's own flag: the commands that auto-enable.
+BT_IS_ENABLED_CALLERS = ("run_command",)
+
+
+def check_bluetooth_enabled_read(files: dict[str, str], errors: list[str]) -> None:
+    """Rule BV8 (F210): the Start Advertising and Pair handlers decided from
+    is_enabled(), the loop task's g_settings.enabled read in place on the
+    httpd task, whether to bring the stack up; the loop task's commands and
+    its first pass's load_saved() write it. They read read_enabled() (C3's
+    BT_BRING_UP_HANDLERS), which is the published settings' flag;
+    is_enabled() is the loop task's alone: static, named by no other file,
+    called only by run_command() (BV3's BT_LIVE_READERS keeps it out of the
+    header and out of every handler)."""
+    code = blank_comments_and_strings(files[BT_CPP])
+    spans = named_bodies(code)
+    body = body_of(code, SIG_BT_READ_ENABLED, f"{BT_CPP}: read_enabled()", errors)
+    if body is not None and squash(body) != BT_READ_ENABLED_BODY:
+        errors.append(f"{BT_CPP}: read_enabled() must be exactly `return read_settings().enabled;` — "
+                      "another task reads whether Bluetooth is on from the settings the loop task "
+                      "published, never its flag in place (F210)")
+    decls = list(re.finditer(r"(\bstatic\s+)?\bbool\s+is_enabled\s*\(\s*\)\s*([{;])", code))
+    if sum(1 for m in decls if m.group(2) == "{") != 1 or any(m.group(1) is None for m in decls):
+        errors.append(f"{BT_CPP}: is_enabled() must be defined once, `static bool is_enabled()` — the "
+                      "flag is the loop task's; another task calls read_enabled() (F210)")
+    for m in re.finditer(r"(?<![\w:.>])is_enabled\s*\(", code):
+        where = enclosing_function(spans, m.start())
+        if where is not None and where not in BT_IS_ENABLED_CALLERS:
+            errors.append(f"{BT_CPP}: {where}() calls is_enabled() — only "
+                          f"{', '.join(BT_IS_ENABLED_CALLERS)} (the loop task's commands) reads the flag in "
+                          "place; another task reads read_enabled() (F210)")
+    for path, src in files.items():
+        if path == BT_CPP:
+            continue
+        hit = re.search(r"\bbluetooth_channel::is_enabled\s*\(", blank_comments_and_strings(src))
+        if hit:
+            errors.append(f"{path}: names bluetooth_channel::is_enabled( — the loop task's flag; read "
+                          "bluetooth_channel::read_enabled(), the published settings (F210)")
+
+
 def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
-    """Rules BV1..BV3 and BD1: the Bluetooth channel's settings enable (F144),
-    the NimBLE host task's events (F143), the status routes' reads (F138) and
-    the server callbacks' one dispatcher (F171)."""
+    """Rules BV1..BV8 and BD1: the Bluetooth channel's settings enable (F144),
+    the NimBLE host task's events (F143), the status routes' reads (F138),
+    the server callbacks' one dispatcher (F171), the bring-up's hand-over
+    and its worker (F167), the bond store (F189), the answers' lengths (F196)
+    and whether Bluetooth is on as another task reads it (F210)."""
     if BT_API not in files or BT_CPP not in files:
         errors.append(f"{SKETCH}: the Bluetooth channel's sources ({BT_API}, {BT_CPP}) are missing")
         return
@@ -3124,6 +3188,7 @@ def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
     check_bluetooth_bond_store(files, errors)
     check_bluetooth_answer_lengths(files[BT_API], errors)
     check_bluetooth_bringup_worker(files, errors)
+    check_bluetooth_enabled_read(files, errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -3477,8 +3542,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
               r"httpd_resp_set_status\(req,\s*http_status_line\(bluetooth_channel::not_run_status\(w\)\)\);",
               "")),
     ("bluetooth_channel.h declares disable again",
-     raw_other(BT_H, "bool is_enabled();\nbool is_advertising();",
-               "void disable();\nbool is_enabled();\nbool is_advertising();")),
+     raw_other(BT_H, "bool is_advertising();", "void disable();\nbool is_advertising();")),
     ("bluetooth_channel.cpp defines confirm_pairing without static",
      raw_other(BT_CPP, "static bool confirm_pairing(uint32_t pin) {\n", "bool confirm_pairing(uint32_t pin) {\n")),
     ("bluetooth_channel's update() drains after its early return",
@@ -3523,10 +3587,10 @@ MUTATIONS: list[tuple[str, Mutation]] = [
               r"if\s*\(!bring_up\(\)\)\s*\{[^}]*\}", "")),
     ("the Bluetooth advertise handler no longer brings the stack up",
      on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
-              r"if\s*\(!bluetooth_channel::is_enabled\(\)\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
+              r"if\s*\(!bluetooth_channel::read_enabled\(\)\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
     ("the Bluetooth pair handler no longer brings the stack up",
      on_other(BT_API, api_handler("handle_bluetooth_pair_start"),
-              r"if\s*\(!bluetooth_channel::is_enabled\(\)\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
+              r"if\s*\(!bluetooth_channel::read_enabled\(\)\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
     # Rule C3, what the command carries (the review's C-k, C-l, C-m, B-n, B-g).
     ("the Chirp ack handler dismisses a confirmation",
      on_other(CHIRP_API, api_handler("handle_chirp_ack"),
@@ -4215,6 +4279,31 @@ BV_MUTATIONS += [
     ("a store refusal posts at the full limit",
      on_other(BT_CPP, SIG_BT_STORE_STATUS, r"(e\.u\.store\.obj_type = event->overflow\.obj_type;\s*"
               r"\(void\)post_event\(e), EVENT_LOSSY_LIMIT\)", r"\1)")),
+]
+# Rule BV8 (F210): whether Bluetooth is on, as another task reads it.
+BV_MUTATIONS += [
+    ("the advertise handler reads the loop task's enabled flag in place again",
+     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"), r"bluetooth_channel::read_enabled\(\)",
+              "bluetooth_channel::is_enabled()")),
+    ("the pair handler reads the loop task's enabled flag in place again",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_start"), r"bluetooth_channel::read_enabled\(\)",
+              "bluetooth_channel::is_enabled()")),
+    ("bluetooth_channel.h declares is_enabled again",
+     raw_other(BT_H, "bool is_advertising();", "bool is_enabled();\nbool is_advertising();")),
+    ("read_enabled() reads the flag in place",
+     on_other(BT_CPP, SIG_BT_READ_ENABLED, r"return read_settings\(\)\.enabled;", "return g_settings.enabled;")),
+    ("read_enabled() reads the boot defaults",
+     on_other(BT_CPP, SIG_BT_READ_ENABLED, r"return read_settings\(\)\.enabled;",
+              "return kDefaultSettings.enabled;")),
+    ("is_enabled() is not static",
+     raw_other(BT_CPP, "static bool is_enabled() {", "bool is_enabled() {")),
+    ("a reader answers from is_enabled() (it runs on the httpd task)",
+     on_other(BT_CPP, r"\bvoid\s+read_status\s*\(\s*BluetoothStatus\s*\*\s*out\s*\)",
+              r"v\.status\.enabled\s*=\s*kDefaultSettings\.enabled;", "v.status.enabled = is_enabled();")),
+    ("the self-test reads bluetooth_channel::is_enabled()",
+     raw_other(f"{SKETCH}/selftest_api.h", "any_active = any_active || bluetooth_channel::is_advertising();",
+               "any_active = any_active || bluetooth_channel::is_advertising() || "
+               "bluetooth_channel::is_enabled();")),
 ]
 MUTATIONS += BV_MUTATIONS
 

@@ -1798,7 +1798,9 @@ static void disable() {
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE disabled", nullptr);
 }
 
-bool is_enabled() {
+// The loop task's (run_command()). Another task reads read_enabled(), the
+// settings the last pass published (sweep F210).
+static bool is_enabled() {
   return g_settings.enabled;
 }
 
@@ -2402,6 +2404,10 @@ BluetoothSettings read_settings() {
   StatusView v;
   if (!g_status_view.read(&v)) return kDefaultSettings;
   return v.settings;
+}
+
+bool read_enabled() {
+  return read_settings().enabled;
 }
 
 void read_scan(ScanView* out) {

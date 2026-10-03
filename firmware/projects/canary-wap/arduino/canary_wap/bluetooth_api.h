@@ -273,8 +273,10 @@ inline esp_err_t handle_bluetooth_disable(httpd_req_t* req) {
 inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
   // Auto-enable: clicking "Start Advertising" is unambiguous user intent.
   // Without this the call silently returns false when enabled=false in NVS.
-  // The stack comes up here; the enable itself is the command's.
-  if (!bluetooth_channel::is_enabled() && !bring_up()) {
+  // The stack comes up here; the enable itself is the command's. Whether
+  // Bluetooth is on is read from the view the loop task published, not its
+  // flag in place (sweep F210).
+  if (!bluetooth_channel::read_enabled() && !bring_up()) {
     return send_bt_error(req, "Bluetooth init failed");
   }
   bluetooth_channel::Result r;
@@ -390,8 +392,8 @@ inline esp_err_t handle_bluetooth_scan_clear(httpd_req_t* req) {
 
 // POST /api/bluetooth/pair/start - Start pairing mode
 inline esp_err_t handle_bluetooth_pair_start(httpd_req_t* req) {
-  // Auto-enable: same rationale as advertise/start.
-  if (!bluetooth_channel::is_enabled() && !bring_up()) {
+  // Auto-enable: same rationale as advertise/start (the published read too).
+  if (!bluetooth_channel::read_enabled() && !bring_up()) {
     return send_bt_error(req, "Bluetooth init failed");
   }
   bluetooth_channel::Result r;

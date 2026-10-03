@@ -257,13 +257,12 @@ const char* init_fail_reason();
 // (manufacturer="SecuraCV", model="Canary WAP", fw="unknown", etc.).
 void set_device_metadata(const char* fw_revision, const char* serial);
 
-// Two flags another task may read live. is_enabled(): whether the setting
-// says on (a REST handler decides from it whether to bring the stack up
-// first, F111). is_advertising(): NimBLE's own advertising state, which it
-// keeps under its own lock (the self-test reads it). What the status routes
-// show is read from the view below (read_status, read_settings, read_scan,
-// read_paired), never live (sweep F138).
-bool is_enabled();
+// The one flag another task may read live: NimBLE's own advertising state,
+// which it keeps under its own lock (the self-test reads it). What the
+// status routes show is read from the view below (read_status,
+// read_settings, read_scan, read_paired), never live (sweep F138), and so is
+// whether Bluetooth is on (read_enabled(), sweep F210: the setting is the
+// loop task's, which its commands and its first pass's load write).
 bool is_advertising();
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -436,6 +435,13 @@ struct PairedView {
 void read_status(BluetoothStatus* out);
 // Any task. The settings the last pass published.
 BluetoothSettings read_settings();
+// Any task. Whether the settings the last pass published say on: the Start
+// Advertising and Pair handlers decide from it whether to bring the stack up
+// before they submit (F111). They read the loop task's flag in place before
+// (sweep F210), a data race with its commands and its first pass's load of
+// the saved settings; a read a pass stale costs what a stale one always
+// did, a bring_up() that finds the stack up or a refusal the owner retries.
+bool read_enabled();
 // Any task. The scan list and the paired devices the last pass published.
 void read_scan(ScanView* out);
 void read_paired(PairedView* out);
