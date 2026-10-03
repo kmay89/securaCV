@@ -29,7 +29,8 @@
 //     rendered on a PLAIN display of the logical size puts there under the
 //     quarter turn the port draws — 90: (ly, H-1-lx), 180: (W-1-lx, H-1-ly),
 //     270: (W-1-ly, lx), the arithmetic glass_settings.h states and the
-//     library's own lv_display_rotate_area() computes (held here too);
+//     library's own lv_display_rotate_area() computes (held here too); the
+//     turn's own refresh, with nothing rebuilt, repaints the whole panel;
 //  3. the finger: rotation_map_touch() (display_dash.cpp's GT911 path) sends
 //     every native pixel to the logical pixel drawn there, and a logical
 //     point fed through lvgl_port_touch_feed() comes out of LVGL's own
@@ -327,12 +328,38 @@ void check_turn(uint8_t rot) {
   CHECK(table_off == 0, "%s: lv_display_rotate_area() puts %ld logical pixels elsewhere", tag,
         table_off);
 
-  // The same scene on a plain display of the logical size, then through the
-  // port onto a panel whose marks are cleared, so this frame alone counts.
+  // The same scene on a plain display of the logical size.
   size_reference(lw, lh);
   build_scene(lv_display_get_screen_active(s_ref));
   refresh(s_ref);
+
+  // The turn alone repaints the whole glass: the panel keeps scanning the
+  // old frame, so a turn that left any native pixel unpainted would leave
+  // the previous orientation there. The scene already on the port is laid
+  // out in absolute positions, so after the turn it is the same scene.
+  static bool s_scene_up = false;
+  if (s_scene_up) {
+    g_panel.clear_marks();
+    lv_refr_now(s_port);  // no rebuild, no invalidation of our own
+    long left = 0, stale = 0;
+    for (int ly = 0; ly < lh; ly++) {
+      for (int lx = 0; lx < lw; lx++) {
+        int px = 0, py = 0;
+        native_of(lr, lx, ly, &px, &py);
+        if (!g_panel.painted[(size_t)py * PW + px]) left++;
+        else if (g_panel.fb[(size_t)py * PW + px] != s_ref_fb[(size_t)ly * lw + lx]) stale++;
+      }
+    }
+    CHECK(left == 0 && stale == 0 && g_panel.off_panel == 0,
+          "%s: the turn's own refresh leaves %ld native pixels unpainted and %ld unlike the "
+          "turned scene (%ld off the panel)",
+          tag, left, stale, g_panel.off_panel);
+  }
+
+  // Then the scene built afresh through the port onto a panel whose marks
+  // are cleared, so this frame alone counts.
   build_scene(lv_display_get_screen_active(s_port));
+  s_scene_up = true;
   g_panel.clear_marks();
   refresh(s_port);
 
