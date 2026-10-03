@@ -412,6 +412,8 @@ test("the bridge refuses a request it cannot trust, by answering it, never by th
   assert.match(bridge.respond(JSON.stringify({ op: "new", core: "canary-display-watch" })).error, /no core canary-display-watch here/);
   assert.match(bridge.respond(JSON.stringify({ op: "call", id: 999, wrap: 0 })).error, /no instance 999/);
   assert.match(bridge.respond(JSON.stringify({ op: "call", id: made.id, wrap: 99 })).error, /no wrapped export 99/);
+  assert.match(bridge.respond(JSON.stringify({ op: "call", id: made.id, wrap: "constructor" })).error,
+    /no wrapped export constructor/, "an index, never a property of the wrapper list");
   assert.match(bridge.respond(JSON.stringify({ op: "eval", id: made.id })).error, /unknown request "eval"/);
 });
 

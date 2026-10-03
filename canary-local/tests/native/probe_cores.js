@@ -103,7 +103,7 @@ function bridgeOver(built, { distPrefix = "/canary-local/emulator/dist/" } = {})
       return { wrap: inst.wraps.length - 1 };
     }
     if (msg.op === "call") {
-      const fn = inst.wraps[msg.wrap];
+      const fn = Number.isInteger(msg.wrap) ? inst.wraps[msg.wrap] : undefined;
       if (!fn) throw new Error(`native core ${inst.core}: no wrapped export ${msg.wrap}`);
       calls.set(inst.core, calls.get(inst.core) + 1);
       return run(inst, msg, () => fn(...argsOf(msg)));
