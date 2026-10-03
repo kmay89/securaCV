@@ -79,6 +79,12 @@ class String {
   void toLowerCase() {
     for (char& ch : s_) ch = (char)tolower((unsigned char)ch);
   }
+  void toCharArray(char* buf, unsigned int size) const {
+    if (size == 0) return;
+    const size_t n = s_.size() < size - 1 ? s_.size() : size - 1;
+    memcpy(buf, s_.data(), n);
+    buf[n] = '\0';
+  }
   int indexOf(const char* needle) const {
     const size_t at = s_.find(needle);
     return at == std::string::npos ? -1 : (int)at;

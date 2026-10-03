@@ -27,6 +27,7 @@
 #include <NimBLEDevice.h>
 #include "log_level.h"
 #include "fleet_beacon.h"
+#include "ble_server_dispatch.h"   // F171: the server's callbacks, shared with the pairing channel
 
 // Forward declarations for witness chain integration
 // These are provided by the main .ino or ble_manager
@@ -255,13 +256,18 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
         g_beaconFp[1] = (uint8_t)strtol(hx, nullptr, 16);
     }
 
-    // Create server
+    // Create server (NimBLE's one: the pairing channel's too, on FULL)
     g_pServer = NimBLEDevice::createServer();
     if (!g_pServer) {
         Serial.println("[BLE] Failed to create BLE server");
         return false;
     }
-    g_pServer->setCallbacks(&g_serverCallbacks);
+    // A link up and down only (sweep F171). The server keeps one callbacks
+    // pointer; installing ours with setCallbacks() replaced the pairing
+    // channel's, and the library's defaults then answered every passkey
+    // (its onConfirmPassKey says yes). The dispatcher gives ours onConnect
+    // and onDisconnect and the channel everything, whichever init runs first.
+    ble_server_dispatch::install(g_pServer, ble_server_dispatch::kLink, &g_serverCallbacks);
 
     // Create service
     g_pService = g_pServer->createService(SCV_SERVICE_UUID);

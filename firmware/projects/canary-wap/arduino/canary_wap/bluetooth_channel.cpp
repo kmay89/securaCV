@@ -23,6 +23,7 @@
 #include <NimBLEUtils.h>
 #include <NimBLEAdvertising.h>
 #include <NimBLEScan.h>
+#include "ble_server_dispatch.h"   // F171: the server's callbacks, shared with Opera
 
 // Undefine NimBLE's log level macros that conflict with our LogLevel enum
 #ifdef LOG_LEVEL_DEBUG
@@ -993,13 +994,13 @@ bool init() {
     NimBLEDevice::deinit(true);
     return false;
   }
-  // NimBLE keeps one set of server callbacks per server. On the FULL
-  // profile ble_opera::init() (ble_manager.h, after this init()) takes the
-  // same server and installs its own, so these never run there: no link,
-  // passkey or bond reaches the channel, and the library's default answers
-  // a Numeric Comparison (a NEW item of the F143 review). The GATT and
-  // scan callbacks below are this file's on every profile.
-  g_server->setCallbacks(&g_server_callbacks);
+  // NimBLE keeps one set of server callbacks per server, and on the FULL
+  // profile Opera (ble_opera.h) wants that server's too. Both hand theirs to
+  // the one dispatcher (ble_server_dispatch.h, sweep F171), which gives
+  // these every callback, a passkey to confirm included, in whichever order
+  // the two inits run. Before F171 ble_opera::init() replaced them with its
+  // own, and the library's default answered every Numeric Comparison yes.
+  ble_server_dispatch::install(g_server, ble_server_dispatch::kPairing, &g_server_callbacks);
 
   // Create service
   g_service = g_server->createService(SERVICE_UUID);

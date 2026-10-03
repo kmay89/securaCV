@@ -53,10 +53,15 @@
 // and their drops are logged apart from a link's; and each field an event
 // carries reaches the state it did.
 //
+// And the FULL profile (sweep F171): NimBLE keeps one callbacks pointer
+// per server, and ble_opera::init() replaced the channel's with its own, so
+// the library's default answered every Numeric Comparison yes. Both now
+// install through one dispatcher (ble_server_dispatch.h); the FULL tests
+// build both inits (Opera's real header) over the stand-in, whose default
+// server callbacks answer as NimBLE-Arduino 2.5.0's do, in either order.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
-// radio; the Arduino compile is CI's (firmware.yml's canary-wap legs). On
-// the FULL profile Opera's server callbacks replace the channel's (see
-// init()), so the link, passkey and bond tests describe the DEV profile.
+// radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
 // Run: ./test_bluetooth_commands_wap [name]
 
@@ -148,6 +153,10 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #pragma GCC diagnostic ignored "-Wc++20-extensions"   // g_settings' designated initializer
 #include BLUETOOTH_CHANNEL_CPP
+// The FULL profile's other owner of the server's callbacks (sweep F171):
+// Opera, which ble_manager::init() brings up after the channel on the boot
+// worker. Its real header, over the same stand-in.
+#include "ble_opera.h"
 #pragma GCC diagnostic pop
 
 #include "http_status_line.h"   // the status line a Bluetooth not-run answer sends
@@ -274,6 +283,11 @@ void boot(bool bring_up = true, bool wipe = true) {
   memcpy(bc::g_settings.device_name, bc::kDefaultSettings.device_name, sizeof bc::g_settings.device_name);
   bc::g_settings.inactivity_timeout_ms = bc::kDefaultSettings.inactivity_timeout_ms;
   bc::g_settings.notify_on_connect = bc::kDefaultSettings.notify_on_connect;
+  // The server's callbacks' owners (sweep F171) and Opera's own flag, as at
+  // power-up: no module has installed anything yet.
+  ble_server_dispatch::g_dispatcher.set(ble_server_dispatch::kPairing, nullptr);
+  ble_server_dispatch::g_dispatcher.set(ble_server_dispatch::kLink, nullptr);
+  ble_opera::g_advertising = false;
   CHECK(host_sim::conn_heap == 0);                   // every pending copy was deleted once
   if (bring_up) {
     host_sim::task = "bringup";
@@ -2072,6 +2086,150 @@ void test_a_full_ring_answers_busy() {
   std::printf("PASS a_full_ring_answers_busy\n");
 }
 
+// ── The FULL profile: one server, two owners of its callbacks (F171) ────
+
+// What ble_manager::init() hands Opera (the device id hash, the firmware
+// version, the chain height and head it reads live).
+uint32_t g_opera_chain_height = 7;
+uint8_t g_opera_chain_head[32] = {0xAB};
+
+// ble_manager::init()'s Opera step, on the boot worker, as the FULL profile
+// runs it (after the channel's init(), unless a REST handler's bring_up()
+// ran the channel's later); then the loop task's finalize starts Opera's
+// advertising (ble_manager::operaStart()).
+void opera_init() {
+  host_sim::task = "bringup";
+  CHECK(ble_opera::init("A3F7B2C1D4E5F6A7", "9.9.9", &g_opera_chain_height, g_opera_chain_head));
+  host_sim::task = "loop";
+  ble_opera::startAdvertising();
+}
+
+// The server's callbacks are the one dispatcher, installed so NimBLE never
+// deletes it with the server.
+void the_dispatcher_is_installed() {
+  CHECK(host_sim::server->callbacks() == &ble_server_dispatch::g_dispatcher);
+  CHECK(!host_sim::server->callbacks_deleted_with_server());
+}
+
+// A phone pairs on a FULL build, the channel's init() first and Opera's
+// second (the boot worker's order). NimBLE keeps one callbacks pointer per
+// server, and before F171 ble_opera::init()'s setCallbacks() replaced the
+// channel's: the stack's Numeric Comparison reached Opera's object, which
+// does not override it, so NimBLE-Arduino's default answered yes on the
+// NimBLE host task, the owner never saw the six digits, and the channel
+// never saw the link or the bond. Now both go through the dispatcher: the
+// passkey reaches the channel and waits for the owner, only the owner's
+// confirm answers it (once, yes, on the loop task), the bond reaches the
+// paired list, and Opera still counts the link up and down.
+void test_full_profile_the_owner_answers_every_pairing() {
+  boot();
+  opera_init();
+  const uint32_t opera_total = ble_opera::getConnectionsTotal();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo phone = link(7, 0xA1);
+  host_sim::server->peers = {7};
+  host_sim::server->link_up(phone);
+  host_sim::calls.clear();
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  CHECK(ble_opera::getConnectionsTotal() == opera_total + 1 && ble_opera::getConnectedNow() == 1);
+  CHECK(host_sim::count("adv_start", "nimble") == 1);       // Opera re-advertises, as it always did
+  // The stack asks for the Numeric Comparison before the loop task's pass.
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 482913); });
+  CHECK(host_sim::passkey_answers.empty());                  // nobody said yes for the owner
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 7);
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 482913);
+  CHECK(bc::g_pending_pair_active && host_sim::passkey_answers.empty());
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.pairing.state == bc::PAIR_CONFIRMING && st.pairing.pin_displayed);
+  CHECK(st.pairing.pin_code == 482913);                      // the PIN box the owner compares
+
+  bc::Command c = cmd_of(bc::BT_CMD_PAIR_CONFIRM);
+  c.pin = 482913;
+  const Rest r = rest(c);
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(host_sim::passkey_answers.size() == 1 && host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].task == "loop" && host_sim::passkey_answers[0].handle == 7);
+
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
+  CHECK(bc::g_paired_count == 1 && bc::g_pairing.state == bc::PAIR_COMPLETE);
+
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  CHECK(ble_opera::getConnectedNow() == 0);
+  loop_pass();
+  CHECK(!bc::g_connection.connected);
+  CHECK(host_sim::passkey_answers.size() == 1 && host_sim::conn_heap == 0);
+  none_on_httpd();
+  the_dispatcher_is_installed();
+  std::printf("PASS full_profile_the_owner_answers_every_pairing\n");
+}
+
+// The other order: Opera's init() first, the channel's after it (a REST
+// handler's bring_up() after a boot whose channel init failed or lost the
+// race). Before F171 the channel's setCallbacks() then replaced Opera's,
+// and Opera never counted a link. Either order ends with the dispatcher
+// installed, both owners reached, and the passkey shown being the channel's
+// (not the library's 123456), which reaches the PIN box.
+void test_full_profile_either_init_order() {
+  boot(/*bring_up=*/false);
+  opera_init();
+  host_sim::task = "httpd";                                  // bring_up() on a handler's task
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  const uint32_t opera_total = ble_opera::getConnectionsTotal();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo phone = link(9, 0xB2);
+  host_sim::server->peers = {9};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  CHECK(ble_opera::getConnectionsTotal() == opera_total + 1);
+  uint32_t shown = 0;
+  on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  CHECK(shown != 123456 && shown < 1000000);
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 9);
+  CHECK(bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED && bc::g_pairing.pin_code == shown);
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 135790); });
+  CHECK(host_sim::passkey_answers.empty());
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pending_pair_active);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_REJECT)).r.ok);          // the owner says no
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  CHECK(ble_opera::getConnectedNow() == 0);
+  loop_pass();
+  CHECK(!bc::g_connection.connected && host_sim::conn_heap == 0);
+  the_dispatcher_is_installed();
+  std::printf("PASS full_profile_either_init_order\n");
+}
+
+// With no pairing owner (Opera alone: a build without the pairing channel,
+// or before it is up) the dispatcher answers a Numeric Comparison no and
+// shows a passkey nobody sees, where the library's defaults said yes and
+// 123456; Opera still sees the link, and nothing reaches the channel.
+void test_no_pairing_owner_fails_closed() {
+  boot(/*bring_up=*/false);
+  opera_init();
+  NimBLEConnInfo phone = link(5, 0xC5);
+  const uint32_t opera_total = ble_opera::getConnectionsTotal();
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  CHECK(ble_opera::getConnectionsTotal() == opera_total + 1);
+  uint32_t shown = 0;
+  on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  CHECK(shown != 123456 && shown < 1000000);
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 246810); });
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].task == "nimble" && host_sim::passkey_answers[0].handle == 5);
+  CHECK(bc::g_events.waiting() == 0 && host_sim::conn_heap == 0);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  CHECK(ble_opera::getConnectedNow() == 0);
+  the_dispatcher_is_installed();
+  std::printf("PASS no_pairing_owner_fails_closed\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2120,6 +2278,9 @@ const Test kTests[] = {
     {"no_command_brings_the_stack_up", test_no_command_brings_the_stack_up},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},
+    {"full_profile_the_owner_answers_every_pairing", test_full_profile_the_owner_answers_every_pairing},
+    {"full_profile_either_init_order", test_full_profile_either_init_order},
+    {"no_pairing_owner_fails_closed", test_no_pairing_owner_fails_closed},
 };
 
 }  // namespace bt_commands

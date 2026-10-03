@@ -7,7 +7,19 @@
  * recorded with the task the test is playing (host_sim::note), and the
  * passkey answers are kept (host_sim::passkey_answers) so a test can see one
  * pending pairing answered once. The server keeps the links the test says
- * are up (link_up), as the stack's getPeerInfoByHandle() answers them. */
+ * are up (link_up), as the stack's getPeerInfoByHandle() answers them.
+ *
+ * Since sweep F171 the server callbacks are NimBLE-Arduino 2.5.0's: every
+ * virtual it declares, and its defaults (NimBLEServer.cpp): a server starts
+ * with them, setCallbacks(nullptr) goes back to them, and the default
+ * onConfirmPassKey answers yes, onPassKeyDisplay shows 123456. So a test
+ * that installs a second module's callbacks over the channel's sees what a
+ * device would: the library's yes. setCallbacks' deleteCallbacks flag is
+ * kept (callbacks_deleted_with_server()), where NimBLE would delete the
+ * object when the server goes. A link names its over-the-air address and its
+ * identity address (getIdAddress(): the same unless the test gives it a
+ * resolvable private address over an identity, as phones use); the bond
+ * store is keyed by identity, as NimBLE's is (sweep F172). */
 #ifndef STUB_BT_NIMBLE_DEVICE_H
 #define STUB_BT_NIMBLE_DEVICE_H
 
@@ -15,6 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -46,6 +59,8 @@ class NimBLEAddress {
   }
   const ble_addr_t* getBase() const { return &a_; }
   uint8_t getType() const { return a_.type; }
+  // A resolvable private address: random, the two most significant bits 01.
+  bool isRpa() const { return a_.type == 1 && (a_.val[5] & 0xC0) == 0x40; }
   bool operator==(const NimBLEAddress& o) const {
     return a_.type == o.a_.type && memcmp(a_.val, o.a_.val, 6) == 0;
   }
@@ -103,10 +118,16 @@ class NimBLEConnInfo {
     ::operator delete(p);
   }
   uint16_t handle = 1;
-  NimBLEAddress address;
+  NimBLEAddress address;                 // over the air (peer_ota_addr)
+  // The identity (peer_id_addr), when the test gives one apart from the
+  // over-the-air address; NimBLE reports the same address for a peer that
+  // uses no private address.
+  NimBLEAddress id_address;
+  bool id_known = false;
   bool encrypted = false, authenticated = false, bonded = false;
   uint16_t getConnHandle() const { return handle; }
   NimBLEAddress getAddress() const { return address; }
+  NimBLEAddress getIdAddress() const { return id_known ? id_address : address; }
   bool isEncrypted() const { return encrypted; }
   bool isAuthenticated() const { return authenticated; }
   bool isBonded() const { return bonded; }
@@ -145,20 +166,42 @@ class NimBLEService {
 };
 
 class NimBLEServer;
+// NimBLE-Arduino 2.5.0's NimBLEServerCallbacks: the same virtuals, and its
+// defaults (defined below NimBLEDevice, which they call).
 class NimBLEServerCallbacks {
  public:
   virtual ~NimBLEServerCallbacks() = default;
   virtual void onConnect(NimBLEServer*, NimBLEConnInfo&) {}
   virtual void onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) {}
+  virtual void onMTUChange(uint16_t, NimBLEConnInfo&) {}
+  virtual uint32_t onPassKeyDisplay();                     // default: 123456
+  virtual void onPassKeyEntry(NimBLEConnInfo& connInfo);   // default: injects 123456
+  virtual void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin);   // default: yes
   virtual void onAuthenticationComplete(NimBLEConnInfo&) {}
-  virtual uint32_t onPassKeyDisplay() { return 0; }
-  virtual void onConfirmPassKey(NimBLEConnInfo&, uint32_t) {}
+  virtual void onIdentity(NimBLEConnInfo&) {}
+  virtual void onConnParamsUpdate(NimBLEConnInfo&) {}
+  virtual void onPhyUpdate(NimBLEConnInfo&, uint8_t, uint8_t) {}
 };
+
+namespace host_sim {
+inline NimBLEServerCallbacks default_server_callbacks;   // NimBLEServer.cpp's defaultCallbacks
+}  // namespace host_sim
 
 class NimBLEServer {
  public:
-  void setCallbacks(NimBLEServerCallbacks* cb) { cb_ = cb; }
+  void setCallbacks(NimBLEServerCallbacks* cb, bool deleteCallbacks = true) {
+    if (cb != nullptr) {
+      cb_ = cb;
+      delete_cb_ = deleteCallbacks;
+    } else {
+      cb_ = &host_sim::default_server_callbacks;
+      delete_cb_ = false;
+    }
+  }
+  // What the stack calls (m_pServerCallbacks).
   NimBLEServerCallbacks* callbacks() const { return cb_; }
+  // Whether NimBLE would delete the callbacks object with the server.
+  bool callbacks_deleted_with_server() const { return delete_cb_; }
   NimBLEService* createService(const NimBLEUUID&) {
     services_.emplace_back(new NimBLEService());
     return services_.back().get();
@@ -188,22 +231,39 @@ class NimBLEServer {
     std::lock_guard<std::mutex> g(links_mu_);
     links_.erase(handle);
   }
-  bool disconnect(uint16_t) {
+  bool disconnect(uint16_t handle) {
     host_sim::note("disconnect");
+    std::lock_guard<std::mutex> g(links_mu_);
+    disconnected.push_back(handle);
     return true;
   }
+  std::vector<uint16_t> disconnected;   // disconnect()'s handles, in order
   std::vector<uint16_t> peers;   // the links up, as the test sets them
  private:
   mutable std::mutex links_mu_;
   std::map<uint16_t, NimBLEConnInfo> links_;
-  NimBLEServerCallbacks* cb_ = nullptr;
+  NimBLEServerCallbacks* cb_ = &host_sim::default_server_callbacks;
+  bool delete_cb_ = false;
   std::vector<std::unique_ptr<NimBLEService>> services_;
+};
+
+// What an advertisement carries (ble_opera.h builds its beacon with it).
+class NimBLEAdvertisementData {
+ public:
+  bool setManufacturerData(const std::string& d) { mfg = d; return true; }
+  bool setName(const std::string& n, bool = true) { name = n; return true; }
+  bool addServiceUUID(const NimBLEUUID&) { return true; }
+  std::string mfg, name;
 };
 
 class NimBLEAdvertising {
  public:
   void addServiceUUID(const NimBLEUUID&) {}
   void setAppearance(uint16_t) {}
+  bool setName(const std::string&) { return true; }
+  bool enableScanResponse(bool) { return true; }
+  bool setAdvertisementData(const NimBLEAdvertisementData&) { return true; }
+  bool setScanResponseData(const NimBLEAdvertisementData&) { return true; }
   // NimBLE's own state, which it keeps under its own lock (ble_gap's):
   // read and written atomically here, so the threaded test finds only the
   // channel's races.
@@ -326,15 +386,37 @@ class NimBLEDevice {
     host_sim::passkey_answers.push_back({c.getConnHandle(), accept, host_sim::task});
     return true;
   }
+  static bool injectPassKey(const NimBLEConnInfo&, uint32_t) {
+    host_sim::note("passkey_entry");
+    return true;
+  }
+  // ble_gap_unpair(): the bond keyed by this address goes, if there is
+  // one. It answers 0 (true) when there was none, too (ble_store's delete
+  // of a missing key is not an error), so the record of what was asked for
+  // and what is left in host_sim::bonds is the test's evidence, not this.
   static bool deleteBond(const NimBLEAddress& a) {
     host_sim::note("bond_delete");
     host_sim::bonds_deleted.push_back(a);
+    host_sim::bonds.erase(std::remove(host_sim::bonds.begin(), host_sim::bonds.end(), a),
+                          host_sim::bonds.end());
     return true;
+  }
+  static bool isBonded(const NimBLEAddress& a) {
+    return std::find(host_sim::bonds.begin(), host_sim::bonds.end(), a) != host_sim::bonds.end();
   }
   static int getNumBonds() { return (int)host_sim::bonds.size(); }
   static NimBLEAddress getBondedAddress(int i) { return host_sim::bonds[(size_t)i]; }
   static NimBLEAddress getAddress() { return NimBLEAddress(); }
 };
+
+// NimBLE-Arduino 2.5.0's default server callbacks (NimBLEServer.cpp).
+inline uint32_t NimBLEServerCallbacks::onPassKeyDisplay() { return 123456; }
+inline void NimBLEServerCallbacks::onPassKeyEntry(NimBLEConnInfo& connInfo) {
+  NimBLEDevice::injectPassKey(connInfo, 123456);
+}
+inline void NimBLEServerCallbacks::onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t) {
+  NimBLEDevice::injectConfirmPasskey(connInfo, true);
+}
 
 // NimBLE's host C API, the calls update() and a link's connect (applied on
 // the loop task since F143) make.
