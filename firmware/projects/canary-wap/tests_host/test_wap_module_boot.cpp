@@ -311,6 +311,58 @@ static int test_a_stored_threshold_wins_over_the_saved_preset() {
   return 0;
 }
 
+// F166: the calibration's status reports the thresholds core.presence
+// runs. For each way the rows can stand, the motion threshold the status's
+// reader reports (read_presence_thresholds_in_use(), the handler's) is the
+// one the booted module classifies at: a motion one below it reads
+// "empty", the motion itself "subtle". Before F166 the status reported the
+// balanced 35 for every preset with no row stored, and "sensitive" ran 25.
+static int32_t status_motion_threshold(const char** source) {
+  Preferences prefs;
+  PresenceThresholdsInUse t = presence_thresholds_in_use_unread();
+  if (csi_module_settings_nvs::begin_read_only(prefs)) {
+    t = read_presence_thresholds_in_use(prefs);
+    prefs.end();
+  }
+  *source = presence_thresholds_source(t);
+  return t.thresholds.motion;
+}
+
+static bool module_runs_motion_threshold(int32_t threshold) {
+  reboot_and_boot();
+  hold(window_of((int8_t)(threshold - 1)));
+  const bool below_is_empty = presence_open("empty") && !presence_open("subtle");
+  reboot_and_boot();
+  hold(window_of((int8_t)threshold));
+  const bool at_is_subtle = presence_open("subtle");
+  return below_is_empty && at_is_subtle;
+}
+
+static int test_the_calibration_status_reports_what_the_module_runs() {
+  struct Case { int32_t preset, sens, mt; const char* source; int32_t want; };
+  const Case kCases[] = {
+    {-1, -1, -1, "preset", 35},   // nothing stored: balanced
+    { 0, -1, -1, "preset", 25},   // sensitive
+    { 2, -1, -1, "preset", 50},   // quiet
+    { 0, 80, -1, "preset", 13},   // sensitive, slider at 80: 25 - 12
+    { 2, 10, -1, "preset", 66},   // quiet, slider at 10: 50 + 16
+    { 0, -1, 45, "mixed",  45},   // a stored motion row wins over the preset
+  };
+  for (const Case& c : kCases) {
+    host_prefs().clear();
+    if (c.preset >= 0) store_int("cp.preset", c.preset);
+    if (c.sens >= 0) store_int("cp.sens", c.sens);
+    if (c.mt >= 0) store_int("cp.mt", c.mt);
+    const char* source = "";
+    const int32_t reported = status_motion_threshold(&source);
+    CHECK(reported == c.want);
+    CHECK(std::strcmp(source, c.source) == 0);
+    CHECK(module_runs_motion_threshold(reported));
+  }
+  host_prefs().clear();
+  return 0;
+}
+
 // anomaly.baseline's cooldown from the Tuning Lab (30 s; 600 s default): a
 // second motion spike 36 s after the first reports again, into the open
 // bundle, only under the stored cooldown.
@@ -765,6 +817,7 @@ int main() {
   if (test_a_saved_preset_applies_at_boot()) return 1;
   if (test_saved_thresholds_and_pet_mode_apply_at_boot()) return 1;
   if (test_a_stored_threshold_wins_over_the_saved_preset()) return 1;
+  if (test_the_calibration_status_reports_what_the_module_runs()) return 1;
   if (test_a_saved_anomaly_cooldown_applies_at_boot()) return 1;
   if (test_init_runs_once_per_boot_and_a_change_still_applies()) return 1;
   if (test_a_never_written_namespace_opens_nothing_at_boot()) return 1;

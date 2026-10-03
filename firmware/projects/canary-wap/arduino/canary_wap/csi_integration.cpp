@@ -886,7 +886,11 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
  *       {"state":"ready","samples":10,
  *        "max_motion":M,"max_breathing":B,
  *        "proposed":{"motion":X,"active":Y,"breathing":Z},
- *        "current":{"motion":X0,"active":Y0,"breathing":Z0}}
+ *        "current":{"motion":X0,"active":Y0,"breathing":Z0},
+ *        "current_source":"stored"|"preset"|"mixed"}
+ *       (current: the thresholds core.presence runs, sweep F166 —
+ *        each stored threshold row, else the preset and sensitivity
+ *        baseline; current_source: which of them it is)
  *     timed out (HAL not running):
  *       {"state":"timed_out"}
  *     never started:
@@ -916,23 +920,26 @@ esp_err_t handle_calibrate_status(httpd_req_t* req) {
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
-  /* Read the current persisted thresholds so the dashboard can render
-   * a "before / after" diff without an extra fetch. We read NVS rather
-   * than the module's runtime state to match what the user would see
-   * if they reopened the page (NVS is the source of truth across
-   * reboots). */
+  /* The thresholds core.presence runs, so the dashboard can render a
+   * "before / after" diff without an extra fetch: what its init() derives
+   * from NVS (the source of truth across reboots), not its runtime state.
+   * A stored threshold row wins; a threshold no row stores is the preset
+   * and sensitivity baseline (sweep F166: every absent row used to read as
+   * the balanced 35 / 75 / 30 whatever the preset). `current_source` says
+   * which: "stored", "preset" or "mixed". Through the key map, the rows
+   * core.presence reads (sweep F151); with NVS not open, what init() runs
+   * then. */
   Preferences prefs;
   bool prefs_ok = csi_module_settings_nvs::begin_read_only(prefs);
-  /* Through the key map, the rows core.presence reads (sweep F151); with
-   * NVS not open, the reader's own defaults. */
-  PresenceThresholds current = presence_threshold_defaults();
+  PresenceThresholdsInUse current = presence_thresholds_in_use_unread();
   if (prefs_ok) {
-    current = read_presence_thresholds(prefs);
+    current = read_presence_thresholds_in_use(prefs);
     prefs.end();
   }
-  const int32_t cur_motion = current.motion;
-  const int32_t cur_active = current.active;
-  const int32_t cur_breath = current.breathing;
+  const int32_t cur_motion = current.thresholds.motion;
+  const int32_t cur_active = current.thresholds.active;
+  const int32_t cur_breath = current.thresholds.breathing;
+  const char* cur_source = presence_thresholds_source(current);
 
   char buf[320];
   switch (g_calibration.state) {
@@ -956,14 +963,15 @@ esp_err_t handle_calibrate_status(httpd_req_t* req) {
         "{\"state\":\"ready\",\"samples\":%lu,"
          "\"max_motion\":%u,\"max_breathing\":%u,"
          "\"proposed\":{\"motion\":%u,\"active\":%u,\"breathing\":%u},"
-         "\"current\":{\"motion\":%ld,\"active\":%ld,\"breathing\":%ld}}",
+         "\"current\":{\"motion\":%ld,\"active\":%ld,\"breathing\":%ld},"
+         "\"current_source\":\"%s\"}",
         (unsigned long)g_calibration.samples,
         (unsigned)g_calibration.max_motion,
         (unsigned)g_calibration.max_breathing,
         (unsigned)g_calibration.proposed_motion,
         (unsigned)g_calibration.proposed_active,
         (unsigned)g_calibration.proposed_breathing,
-        (long)cur_motion, (long)cur_active, (long)cur_breath);
+        (long)cur_motion, (long)cur_active, (long)cur_breath, cur_source);
       break;
   }
   httpd_resp_send(req, buf, -1);

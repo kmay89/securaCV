@@ -571,12 +571,13 @@ static int test_the_calibration_writes_the_thresholds_the_module_reads() {
   {
     Preferences prefs;
     CHECK(prefs.begin("csi", /*readOnly=*/true));
-    const PresenceThresholds t = read_presence_thresholds(prefs);   // the status's "current"
+    const PresenceThresholdsInUse t = read_presence_thresholds_in_use(prefs);   // the status's "current"
     prefs.end();
-    CHECK(t.motion == 35 && t.active == 75 && t.breathing == 30);
+    CHECK(t.thresholds.motion == 35 && t.thresholds.active == 75 && t.thresholds.breathing == 30);
     // ...which is what the status answers when NVS does not open too.
-    const PresenceThresholds d = presence_threshold_defaults();
-    CHECK(d.motion == t.motion && d.active == t.active && d.breathing == t.breathing);
+    const PresenceThresholdsInUse d = presence_thresholds_in_use_unread();
+    CHECK(d.thresholds.motion == t.thresholds.motion && d.thresholds.active == t.thresholds.active &&
+          d.thresholds.breathing == t.thresholds.breathing);
   }
   {
     Preferences prefs;
@@ -594,9 +595,10 @@ static int test_the_calibration_writes_the_thresholds_the_module_reads() {
   {
     Preferences prefs;
     CHECK(prefs.begin("csi", /*readOnly=*/true));
-    const PresenceThresholds t = read_presence_thresholds(prefs);
+    const PresenceThresholdsInUse t = read_presence_thresholds_in_use(prefs);
     prefs.end();
-    CHECK(t.motion == 41 && t.active == 83 && t.breathing == 27);
+    CHECK(t.thresholds.motion == 41 && t.thresholds.active == 83 && t.thresholds.breathing == 27);
+    CHECK(std::strcmp(presence_thresholds_source(t), "stored") == 0);
   }
   CHECK(host_prefs().i32["csi/cp.mt"] == 41);
   CHECK(host_prefs().i32["csi/cp.at"] == 83);
@@ -610,6 +612,84 @@ static int test_the_calibration_writes_the_thresholds_the_module_reads() {
     prefs.end();
   }
   CHECK(csi_module_settings_int(nullptr, "core.presence.motion_threshold", -1) == 41);
+  host_prefs().clear();
+  return 0;
+}
+
+// ── F166: the calibration's status reports the thresholds in use ───────
+//
+// handle_calibrate_status() showed `current` as the stored threshold rows,
+// or the balanced 35 / 75 / 30 for any row not stored, while core.presence
+// runs its preset and sensitivity baseline for those (core_presence.cpp
+// on_init()): on a device that saved "sensitive" (25 / 60 / 20) or
+// "quiet" (50 / 90 / 40), or moved the slider, and stores no threshold,
+// the dashboard's before/after showed thresholds the module did not use.
+// It now reports read_presence_thresholds_in_use(): each stored row, else
+// the baseline from the stored preset and sensitivity, and says which.
+
+static PresenceThresholdsInUse status_current() {
+  Preferences prefs;
+  if (!csi_module_settings_nvs::begin_read_only(prefs)) return presence_thresholds_in_use_unread();
+  const PresenceThresholdsInUse t = read_presence_thresholds_in_use(prefs);
+  prefs.end();
+  return t;
+}
+static bool reads(const PresenceThresholdsInUse& t, int32_t m, int32_t a, int32_t b, const char* source) {
+  return t.thresholds.motion == m && t.thresholds.active == a && t.thresholds.breathing == b &&
+         std::strcmp(presence_thresholds_source(t), source) == 0;
+}
+
+static int test_the_calibration_status_reports_the_thresholds_in_use() {
+  host_prefs().clear();
+  reboot_and_boot();
+  // NVS that does not open (a first boot after an erase): what init() runs
+  // then, the balanced baseline, nothing stored.
+  CHECK(reads(status_current(), 35, 75, 30, "preset"));
+  CHECK(reads(presence_thresholds_in_use_unread(), 35, 75, 30, "preset"));
+
+  // Each preset, as the dashboard stores it, with no threshold row.
+  host_prefs().created.insert("csi");
+  CHECK(presence_post("{\"preset\":\"sensitive\"}"));
+  CHECK(reads(status_current(), 25, 60, 20, "preset"));
+  CHECK(presence_post("{\"preset\":\"quiet\"}"));
+  CHECK(reads(status_current(), 50, 90, 40, "preset"));
+  CHECK(presence_post("{\"preset\":\"balanced\"}"));
+  CHECK(reads(status_current(), 35, 75, 30, "preset"));
+  // The slider moves every threshold by up to 20, clamped to 5..120.
+  CHECK(presence_post("{\"preset\":\"sensitive\",\"sensitivity\":100}"));
+  CHECK(reads(status_current(), 5, 40, 5, "preset"));
+  CHECK(presence_post("{\"preset\":\"quiet\",\"sensitivity\":0}"));
+  CHECK(reads(status_current(), 70, 110, 60, "preset"));
+  CHECK(presence_post("{\"sensitivity\":75}"));
+  CHECK(reads(status_current(), 40, 80, 30, "preset"));
+  // Each is core_presence_baseline_thresholds(), the function init() uses.
+  const core_presence_thresholds_t base = core_presence_baseline_thresholds(2, 75);
+  CHECK(base.motion == 40 && base.active == 80 && base.breathing == 30);
+
+  // One threshold stored (the Tuning Lab's row): it wins, the others stay
+  // the preset's.
+  CHECK(tune_post("{\"core.presence.motion_threshold\":44}", reinit_module_model).changed == 1);
+  CHECK(reads(status_current(), 44, 80, 30, "mixed"));
+  // A calibration stores all three.
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/false));
+    const PresenceThresholds proposed = {41, 83, 27};
+    CHECK(store_presence_thresholds(prefs, proposed));
+    prefs.end();
+  }
+  CHECK(reads(status_current(), 41, 83, 27, "stored"));
+  // A later preset or slider change does not move them (sweep F127 decides
+  // whether it should); the status says so by reporting them as stored.
+  CHECK(presence_post("{\"preset\":\"sensitive\",\"sensitivity\":50}"));
+  CHECK(reads(status_current(), 41, 83, 27, "stored"));
+
+  // A row the module's getInt does not read (another type) is not stored:
+  // init() runs the baseline for it.
+  host_prefs().clear();
+  host_prefs().created.insert("csi");
+  host_prefs().flag["csi/cp.at"] = true;
+  CHECK(reads(status_current(), 35, 75, 30, "preset"));
   host_prefs().clear();
   return 0;
 }
@@ -951,21 +1031,23 @@ static std::vector<std::string> pin_problems(const std::string& integ) {
     out.push_back("the calibration's apply stores a proposal on another threshold's row");
   }
   const std::string status = code_body(integ, kCalibStatus);
-  if (count_of(status, "current=read_presence_thresholds(prefs);") != 1 ||
+  if (count_of(status, "current=read_presence_thresholds_in_use(prefs);") != 1 ||
       status.find("getInt") != std::string::npos) {
-    out.push_back("the calibration's status reads the thresholds other than through read_presence_thresholds()");
+    out.push_back("the calibration's status reads the thresholds other than through read_presence_thresholds_in_use()");
   }
-  // With NVS not open it answers the reader's own defaults, and each
-  // threshold goes out under its own name.
-  if (count_of(status, "PresenceThresholdscurrent=presence_threshold_defaults();"
-                       "if(prefs_ok){current=read_presence_thresholds(prefs);prefs.end();}"
-                       "constint32_tcur_motion=current.motion;"
-                       "constint32_tcur_active=current.active;"
-                       "constint32_tcur_breath=current.breathing;") != 1 ||
-      count_of(status, "(long)cur_motion,(long)cur_active,(long)cur_breath);") != 1) {
-    out.push_back("the calibration's status answers other defaults, or one threshold under another's name");
+  // With NVS not open it answers what init() runs then, each threshold
+  // goes out under its own name, and the source beside them (F166).
+  if (count_of(status, "PresenceThresholdsInUsecurrent=presence_thresholds_in_use_unread();"
+                       "if(prefs_ok){current=read_presence_thresholds_in_use(prefs);prefs.end();}"
+                       "constint32_tcur_motion=current.thresholds.motion;"
+                       "constint32_tcur_active=current.thresholds.active;"
+                       "constint32_tcur_breath=current.thresholds.breathing;"
+                       "constchar*cur_source=presence_thresholds_source(current);") != 1 ||
+      count_of(status, "(long)cur_motion,(long)cur_active,(long)cur_breath,cur_source);") != 1 ||
+      count_of(status, "\\\"current_source\\\":\\\"%s\\\"}\"") != 1) {
+    out.push_back("the calibration's status answers other defaults, one threshold under another's name, or no source");
   }
-  if (std::regex_search(integ, std::regex(R"(\b(store_presence_from_settings|read_presence_settings|store_presence_thresholds|read_presence_thresholds|presence_threshold_defaults|read_privacy_ceiling|store_privacy_ceiling_from_settings|apply_privacy_ceiling_from_nvs)\s*\([^)]*\)\s*\{)"))) {
+  if (std::regex_search(integ, std::regex(R"(\b(store_presence_from_settings|read_presence_settings|presence_settings_defaults|store_presence_thresholds|read_presence_thresholds_in_use|presence_thresholds_in_use_unread|presence_thresholds_source|core_presence_baseline_thresholds|read_privacy_ceiling|store_privacy_ceiling_from_settings|apply_privacy_ceiling_from_nvs)\s*\([^)]*\)\s*\{)"))) {
     out.push_back("csi_integration.cpp defines its own presence or ceiling store, reader or apply");
   }
   for (const std::string& lit : hand_spelled_setting_keys(integ)) {
@@ -1043,8 +1125,8 @@ static int test_csi_integration_is_thin_around_the_tested_code() {
     {"the calibration drops its store", "(void)store_presence_thresholds(prefs, proposed);", "(void)proposed;"},
     {"the calibration re-inits before it stores", "  reinit_module(\"core.presence\");\n\n  /* Mark the calibration",
      "\n  /* Mark the calibration"},
-    {"the calibration's status reads by hand", "current = read_presence_thresholds(prefs);",
-     "current.motion = prefs.getInt(\"cp.mt\", 35);"},
+    {"the calibration's status reads by hand", "current = read_presence_thresholds_in_use(prefs);",
+     "current.thresholds.motion = prefs.getInt(\"cp.mt\", 35);"},
     {"the settings POST stores the ceiling by hand",
      "const bool ceiling_changed = store_privacy_ceiling_from_settings(prefs, body);",
      "const bool ceiling_changed = strstr(body, \"\\\"privacy_ceiling\\\"\") != nullptr && prefs.putInt(\"cp.pc\", 1) > 0;"},
@@ -1059,16 +1141,24 @@ static int test_csi_integration_is_thin_around_the_tested_code() {
     {"GET maps preset 0 to quiet", "(preset_idx == 0) ? \"sensitive\"", "(preset_idx == 0) ? \"quiet\""},
     {"GET swaps two values in the body", "pet_mode ? \"true\" : \"false\", preset_str, (long)sensitivity,",
      "pet_mode ? \"true\" : \"false\", preset_str, (long)preset_idx,"},
-    {"the status reports active as motion (g02)", "const int32_t cur_motion = current.motion;",
-     "const int32_t cur_motion = current.active;"},
-    {"the status reports breathing as active", "const int32_t cur_active = current.active;",
-     "const int32_t cur_active = current.breathing;"},
-    {"the status swaps two values in the body", "(long)cur_motion, (long)cur_active, (long)cur_breath);",
-     "(long)cur_active, (long)cur_motion, (long)cur_breath);"},
+    {"the status reports active as motion (g02)", "const int32_t cur_motion = current.thresholds.motion;",
+     "const int32_t cur_motion = current.thresholds.active;"},
+    {"the status reports breathing as active", "const int32_t cur_active = current.thresholds.active;",
+     "const int32_t cur_active = current.thresholds.breathing;"},
+    {"the status swaps two values in the body", "(long)cur_motion, (long)cur_active, (long)cur_breath, cur_source);",
+     "(long)cur_active, (long)cur_motion, (long)cur_breath, cur_source);"},
     {"the status's NVS-closed fallback is its own literal (g04)",
-     "PresenceThresholds current = presence_threshold_defaults();", "PresenceThresholds current = {35, 75, 31};"},
-    {"the status keeps the defaults with NVS open", "current = read_presence_thresholds(prefs);",
-     "(void)read_presence_thresholds(prefs);"},
+     "PresenceThresholdsInUse current = presence_thresholds_in_use_unread();",
+     "PresenceThresholdsInUse current = {{35, 75, 31}, false, false, false};"},
+    {"the status keeps the defaults with NVS open", "current = read_presence_thresholds_in_use(prefs);",
+     "(void)read_presence_thresholds_in_use(prefs);"},
+    // F166: the balanced literal back for every absent row, and the source.
+    {"the status reports the balanced thresholds whatever the preset (F166)",
+     "current = read_presence_thresholds_in_use(prefs);",
+     "current.thresholds.motion = prefs.getInt(\"cp.mt\", 35); current.thresholds.active = prefs.getInt(\"cp.at\", 75);"},
+    {"the status names no source", "const char* cur_source = presence_thresholds_source(current);",
+     "const char* cur_source = \"stored\";"},
+    {"the status drops the source from the body", "\"\\\"current_source\\\":\\\"%s\\\"}\",", "\"}\","},
     {"the calibration stores the motion proposal as active (g03)",
      "proposed.active    = (int32_t)g_calibration.proposed_active;",
      "proposed.active    = (int32_t)g_calibration.proposed_motion;"},
@@ -1088,7 +1178,7 @@ static int test_csi_integration_is_thin_around_the_tested_code() {
      "  const PresenceThresholds proposed = {(int32_t)g_calibration.proposed_active,\n"
      "    (int32_t)g_calibration.proposed_motion, (int32_t)g_calibration.proposed_breathing};\n"},
     {"a local threshold default comes back", "void reinit_module(const char* module_id) {",
-     "PresenceThresholds presence_threshold_defaults(void) { return {35, 75, 30}; }\nvoid reinit_module(const char* module_id) {"},
+     "PresenceThresholdsInUse presence_thresholds_in_use_unread(void) { return {{35, 75, 30}, false, false, false}; }\nvoid reinit_module(const char* module_id) {"},
     {"a local ceiling apply comes back", "void reinit_module(const char* module_id) {",
      "void apply_privacy_ceiling_from_nvs() {}\nvoid reinit_module(const char* module_id) {"},
   };
@@ -1185,6 +1275,8 @@ int main(int argc, char** argv) {
      test_the_dashboard_writes_the_presence_rows_the_module_reads},
     {"the_calibration_writes_the_thresholds_the_module_reads",
      test_the_calibration_writes_the_thresholds_the_module_reads},
+    {"the_calibration_status_reports_the_thresholds_in_use",
+     test_the_calibration_status_reports_the_thresholds_in_use},
     {"the_privacy_ceiling_is_one_row", test_the_privacy_ceiling_is_one_row},
     {"no_sketch_source_spells_a_module_settings_key", test_no_sketch_source_spells_a_module_settings_key},
     {"csi_integration_is_thin_around_the_tested_code", test_csi_integration_is_thin_around_the_tested_code},

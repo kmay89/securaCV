@@ -91,9 +91,13 @@ struct PresenceSettings {
   int32_t sensitivity;   /* 0..100 */
 };
 
+/** What core.presence's init() reads for each of them when no row stores
+ *  it: off, balanced, 50. read_presence_settings()'s defaults. */
+PresenceSettings presence_settings_defaults(void);
+
 /** The stored pet mode, preset and sensitivity, each absent row
- *  core.presence's own default (off, balanced, 50), as GET /api/settings
- *  reports them. `prefs` is open on the "csi" namespace. */
+ *  core.presence's own default (presence_settings_defaults()), as
+ *  GET /api/settings reports them. `prefs` is open on the "csi" namespace. */
 PresenceSettings read_presence_settings(Preferences& prefs);
 
 /** Store a POST /api/settings body's "pet_mode" (true|false), "preset"
@@ -110,15 +114,39 @@ struct PresenceThresholds {
   int32_t breathing;
 };
 
-/** The balanced 35 / 75 / 30 the calibration's status has always shown for
- *  a threshold nothing stored: read_presence_thresholds()'s default for an
- *  absent row, and the status's whole answer when NVS does not open (as on
- *  a first boot after an erase, sweep F150), so the two cannot differ. */
-PresenceThresholds presence_threshold_defaults(void);
+/* The thresholds core.presence runs, and where each comes from (sweep
+ * F166). Its init() reads each core.presence.*_threshold row with the
+ * preset and sensitivity baseline as the read's default
+ * (core_presence_baseline_thresholds()), so a stored row wins and a
+ * threshold no row stores is that baseline. The calibration's status used
+ * to report every absent row as the balanced 35 / 75 / 30 whatever the
+ * preset, so on a device that saved "sensitive" or "quiet" (or moved the
+ * slider) and stores no threshold its before/after showed thresholds the
+ * module did not use. */
+struct PresenceThresholdsInUse {
+  PresenceThresholds thresholds;
+  bool motion_stored;     /* a row the module's getInt reads, so it wins */
+  bool active_stored;
+  bool breathing_stored;
+};
 
-/** The stored direct thresholds, each absent row its
- *  presence_threshold_defaults() value. */
-PresenceThresholds read_presence_thresholds(Preferences& prefs);
+/** What core.presence's init() derives from `prefs` (open on the "csi"
+ *  namespace): each threshold a row stores, as stored, and each other one
+ *  from the stored preset and sensitivity (read_presence_settings()). A row
+ *  counts as stored when getInt reads it, as the module's read does (a row
+ *  of another type reads as absent there too). Not the runtime nudge a
+ *  dismissal gives the module (on_dismiss(), lost at the next init()). */
+PresenceThresholdsInUse read_presence_thresholds_in_use(Preferences& prefs);
+
+/** The same with nothing readable (NVS does not open, as on a first boot
+ *  after an erase, sweep F150): the baseline of
+ *  presence_settings_defaults(), nothing stored. What init() runs then. */
+PresenceThresholdsInUse presence_thresholds_in_use_unread(void);
+
+/** "stored" when every threshold is a stored row (a calibration, the
+ *  Tuning Lab), "preset" when none is (the preset and sensitivity
+ *  baseline), "mixed" otherwise. */
+const char* presence_thresholds_source(const PresenceThresholdsInUse& in_use);
 
 /** Store a calibration's thresholds. `prefs` is open read-write on the "csi"
  *  namespace. True when all three rows were stored. */

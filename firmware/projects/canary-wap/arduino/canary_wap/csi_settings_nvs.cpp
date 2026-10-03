@@ -35,6 +35,7 @@
 
 #include <Preferences.h>
 
+#include "core_presence.h"   /* core_presence_baseline_thresholds() (F166) */
 #include "csi_event.h"
 #include "csi_module.h"
 #include "csi_module_settings_nvs.h"
@@ -150,12 +151,21 @@ void apply_quiet_hours_from_nvs(void) {
 
 /* ── core.presence: the dashboard and the calibration (sweep F151) ──── */
 
+PresenceSettings presence_settings_defaults(void) {
+  PresenceSettings s;
+  s.pet_mode    = false;
+  s.preset      = 1;    /* balanced */
+  s.sensitivity = 50;
+  return s;
+}
+
 PresenceSettings read_presence_settings(Preferences& prefs) {
   using csi_module_settings_nvs::nvs_key_for;
+  const PresenceSettings d = presence_settings_defaults();
   PresenceSettings s;
-  s.pet_mode    = prefs.getBool(nvs_key_for("core.presence.pet_mode"), false);
-  s.preset      = prefs.getInt(nvs_key_for("core.presence.preset"), 1);   /* balanced */
-  s.sensitivity = prefs.getInt(nvs_key_for("core.presence.sensitivity"), 50);
+  s.pet_mode    = prefs.getBool(nvs_key_for("core.presence.pet_mode"), d.pet_mode);
+  s.preset      = prefs.getInt(nvs_key_for("core.presence.preset"), d.preset);
+  s.sensitivity = prefs.getInt(nvs_key_for("core.presence.sensitivity"), d.sensitivity);
   return s;
 }
 
@@ -213,22 +223,54 @@ bool store_presence_from_settings(Preferences& prefs, const char* body) {
   return stored;
 }
 
-PresenceThresholds presence_threshold_defaults(void) {
-  PresenceThresholds t;
-  t.motion    = 35;
-  t.active    = 75;
-  t.breathing = 30;
+/* Nothing stored: the baseline core.presence's init() derives from the
+ * preset and sensitivity. */
+static PresenceThresholdsInUse presence_baseline_in_use(const PresenceSettings& settings) {
+  const core_presence_thresholds_t base =
+      core_presence_baseline_thresholds(settings.preset, settings.sensitivity);
+  PresenceThresholdsInUse t;
+  t.thresholds.motion    = base.motion;
+  t.thresholds.active    = base.active;
+  t.thresholds.breathing = base.breathing;
+  t.motion_stored = false;
+  t.active_stored = false;
+  t.breathing_stored = false;
   return t;
 }
 
-PresenceThresholds read_presence_thresholds(Preferences& prefs) {
-  using csi_module_settings_nvs::nvs_key_for;
-  const PresenceThresholds d = presence_threshold_defaults();
-  PresenceThresholds t;
-  t.motion    = prefs.getInt(nvs_key_for("core.presence.motion_threshold"), d.motion);
-  t.active    = prefs.getInt(nvs_key_for("core.presence.active_threshold"), d.active);
-  t.breathing = prefs.getInt(nvs_key_for("core.presence.breathing_threshold"), d.breathing);
+/* One threshold row over its baseline: init() reads it with getInt and the
+ * baseline as the default, so a row getInt reads wins. Two reads with
+ * different defaults tell a read row from a default without a sentinel. */
+static void presence_threshold_row(Preferences& prefs, const char* full_key, int32_t* value,
+                                   bool* stored) {
+  const char* key = csi_module_settings_nvs::nvs_key_for(full_key);
+  const int32_t a = prefs.getInt(key, 0);
+  const int32_t b = prefs.getInt(key, 1);
+  *stored = (a == b);
+  if (*stored) *value = a;
+}
+
+PresenceThresholdsInUse read_presence_thresholds_in_use(Preferences& prefs) {
+  PresenceThresholdsInUse t = presence_baseline_in_use(read_presence_settings(prefs));
+  presence_threshold_row(prefs, "core.presence.motion_threshold", &t.thresholds.motion,
+                         &t.motion_stored);
+  presence_threshold_row(prefs, "core.presence.active_threshold", &t.thresholds.active,
+                         &t.active_stored);
+  presence_threshold_row(prefs, "core.presence.breathing_threshold", &t.thresholds.breathing,
+                         &t.breathing_stored);
   return t;
+}
+
+PresenceThresholdsInUse presence_thresholds_in_use_unread(void) {
+  return presence_baseline_in_use(presence_settings_defaults());
+}
+
+const char* presence_thresholds_source(const PresenceThresholdsInUse& in_use) {
+  const int stored = (in_use.motion_stored ? 1 : 0) + (in_use.active_stored ? 1 : 0) +
+                     (in_use.breathing_stored ? 1 : 0);
+  if (stored == 3) return "stored";
+  if (stored == 0) return "preset";
+  return "mixed";
 }
 
 bool store_presence_thresholds(Preferences& prefs, const PresenceThresholds& thresholds) {
