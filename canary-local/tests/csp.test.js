@@ -22,6 +22,8 @@
 //   · a probe waits on a string predicate, which          → "no probe waits on a string"
 //     Playwright re-evaluates through eval in the page
 //     every frame and the policy refuses (A44)
+//   · that scan stops following a string through a        → "the string-predicate scan follows"
+//     wrapper, a name or parentheses
 //   · the gate is dropped from CI                         → "CI runs this gate"
 //
 // tests/csp_probe.mjs is the other half: real Chromium, every page, zero
@@ -353,34 +355,332 @@ test("the desktop Lab agrees: IPC origins on every page, no page source the app 
 // probe fails, not the page. A function predicate is evaluated once, inside
 // the DevTools call, which the policy does not govern, and then only called.
 // boot_probe.mjs and csp_probe.mjs both waited on that string (sweep A44).
+//
+// What the scan follows, all within the one file: the predicate as written at
+// the call, through any parentheses; a name, through every `name =` and
+// `name:` the file writes (a string there is refused, another name is
+// followed in turn); and a parameter of the function the call sits in (a
+// wrapper such as operator_probe.mjs's `wait = (fn, msg) =>
+// page.waitForFunction(fn, ...)`), through every call of that function in the
+// file, where the argument in that place must pass the same test. A name the
+// file never writes (an import, a loop variable, a method's parameter), a
+// parameter of an unnamed function, a wrapper the file never calls, and a
+// call this reader cannot cut into its arguments are refused rather than
+// trusted: the scan cannot see what they hold. What it
+// cannot follow at all is a value a written name gets some other way (a
+// ternary's arm, a call's return): `const p = ok ? f : "s"` passes it.
+
+// A small reader of JavaScript: where each bracket closes and where each
+// bracket's top-level commas sit, past strings, template literals, comments
+// and regex literals. Enough to cut a call into its arguments; not a parser.
+const readJsMemo = new Map();
+function readJs(src) {
+  if (readJsMemo.has(src)) return readJsMemo.get(src);
+  const pairs = new Map();             // open index → close index
+  const commas = new Map([[-1, []]]);  // open index (-1: top level) → its commas
+  const semis = new Map([[-1, []]]);   // same, for semicolons
+  const stack = [];                    // [kind, index]; kind "${" is a template substitution
+  const REGEX_AFTER = "(,=:[!&|?{};+-*%<>~^";
+  const REGEX_WORDS = new Set(["return", "typeof", "case", "void", "yield", "await", "in", "of", "delete", "throw", "else", "do"]);
+  let prev = "", word = "";
+  const template = (j) => {            // template text from j; the index code resumes at
+    for (; j < src.length; j++) {
+      if (src[j] === "\\") j++;
+      else if (src[j] === "`") return j + 1;
+      else if (src[j] === "$" && src[j + 1] === "{") { stack.push(["${", j + 1]); return j + 2; }
+    }
+    return src.length;
+  };
+  const quoted = (j, q) => {
+    for (j++; j < src.length; j++) {
+      if (src[j] === "\\") j++;
+      else if (src[j] === q || src[j] === "\n") return j + 1;
+    }
+    return src.length;
+  };
+  const regex = (j) => {               // past the regex literal at j, or j when there is none
+    let cls = false;
+    for (let k = j + 1; k < src.length; k++) {
+      const d = src[k];
+      if (d === "\\") k++;
+      else if (d === "\n") return j;
+      else if (cls) { if (d === "]") cls = false; }
+      else if (d === "[") cls = true;
+      else if (d === "/") { k++; while (/[a-z]/i.test(src[k] || "")) k++; return k; }
+    }
+    return j;
+  };
+  const top = () => (stack.length ? stack[stack.length - 1][1] : -1);
+  for (let i = 0; i < src.length;) {
+    const c = src[i], n = src[i + 1];
+    if (c === "/" && n === "/") { const e = src.indexOf("\n", i); i = e < 0 ? src.length : e; continue; }
+    if (c === "/" && n === "*") { const e = src.indexOf("*/", i + 2); i = e < 0 ? src.length : e + 2; continue; }
+    if (c === '"' || c === "'") { i = quoted(i, c); prev = c; word = ""; continue; }
+    if (c === "`") { i = template(i + 1); prev = "`"; word = ""; continue; }
+    if (c === "/" && (prev === "" || REGEX_AFTER.includes(prev) || REGEX_WORDS.has(word))) {
+      const e = regex(i);
+      if (e > i) { i = e; prev = "x"; word = ""; continue; }
+    }
+    if (c === "(" || c === "[" || c === "{") {
+      stack.push([c, i]);
+      commas.set(i, []);
+      semis.set(i, []);
+    } else if (c === ")" || c === "]" || c === "}") {
+      const t = stack.pop();
+      if (t && t[0] === "${") { i = template(i + 1); prev = "`"; word = ""; continue; }
+      if (t) pairs.set(t[1], i);
+    } else if (c === ",") commas.get(top()).push(i);
+    else if (c === ";") semis.get(top()).push(i);
+    if (/[\w$]/.test(c)) word = (/[\w$]/.test(src[i - 1] || "") ? word : "") + c;
+    else if (!/\s/.test(c)) word = "";
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  const read = { pairs, commas, semis };
+  readJsMemo.set(src, read);
+  return read;
+}
+
+const IDENT = String.raw`[A-Za-z_$][\w$]*`;
+const esc = (s) => s.replace(/\$/g, "\\$");
+const lineOf = (src, at) => src.slice(0, at).split("\n").length;
+// leading whitespace and comments off, trailing whitespace off
+const trivia = (s) => s.replace(/^(?:\s|\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, "").trimEnd();
+
+// The call's arguments, as source text, given the index of its "(".
+function argsAt(src, open) {
+  const { pairs, commas } = readJs(src);
+  const close = pairs.get(open);
+  if (close === undefined) return null;
+  const cuts = [open, ...commas.get(open), close];
+  const args = cuts.slice(1).map((to, k) => trivia(src.slice(cuts[k] + 1, to)));
+  if (args.length && args[args.length - 1] === "") args.pop();   // f(a, b,) and f()
+  return args;
+}
+
+// Every function in src: { name, params, from, to }. name is null for an
+// unnamed one (a callback); params holds each plain parameter's name in its
+// place (null for a destructured one); [from, to] spans parameters and body.
+const functionsMemo = new Map();
+function functionsIn(src) {
+  if (functionsMemo.has(src)) return functionsMemo.get(src);
+  const { pairs, commas, semis } = readJs(src);
+  const out = [];
+  const params = (open) => argsAt(src, open).map((p) => {
+    const m = new RegExp(`^(?:\\.\\.\\.)?(${IDENT})\\s*(?:=|$)`).exec(p);
+    return m ? m[1] : null;
+  });
+  const nameBefore = (at) => {
+    const m = new RegExp(`(?:^|[^\\w$.])(${IDENT})\\s*[:=]\\s*(?:async\\s+)?$`).exec(src.slice(Math.max(0, at - 160), at));
+    return m ? m[1] : null;
+  };
+  const enclosing = (at) => {
+    let best = -1;
+    for (const [o, c] of pairs) if (o < at && at < c && o > best) best = o;
+    return best;
+  };
+  // an arrow's body: a block, or an expression to the next comma or
+  // semicolon of the bracket around the arrow (or that bracket's close)
+  const bodyEnd = (from, arrowAt) => {
+    const b = /^\s*/.exec(src.slice(from))[0].length + from;
+    if (src[b] === "{" && pairs.has(b)) return pairs.get(b);
+    const o = enclosing(arrowAt);
+    const ends = [...commas.get(o), ...semis.get(o)].filter((x) => x > from);
+    return Math.min(o >= 0 ? pairs.get(o) : src.length, ...ends);
+  };
+  for (const [open] of pairs) {
+    if (src[open] !== "(") continue;
+    const close = pairs.get(open);
+    const after = src.slice(close + 1);
+    const arrow = /^\s*=>/.exec(after);
+    const before = src.slice(Math.max(0, open - 160), open);
+    const fnKw = new RegExp(`(?:^|[^\\w$.])function\\s*\\*?\\s*(${IDENT})?\\s*$`).exec(before);
+    if (arrow) {
+      const asyncAt = /async\s*$/.exec(before);
+      const start = asyncAt ? open - asyncAt[0].length : open;
+      out.push({ name: nameBefore(start), params: params(open), from: open, to: bodyEnd(close + 1 + arrow[0].length, open) });
+    } else if (fnKw) {
+      const brace = close + 1 + /^\s*/.exec(after)[0].length;
+      if (src[brace] !== "{" || !pairs.has(brace)) continue;
+      const start = open - (before.length - fnKw.index) + (fnKw[0].match(/^[^\w$]/) ? 1 : 0);
+      const asyncAt = /async\s+$/.exec(src.slice(Math.max(0, start - 16), start));
+      const name = fnKw[1] || nameBefore(asyncAt ? start - asyncAt[0].length : start);
+      out.push({ name, params: params(open), from: open, to: pairs.get(brace) });
+    }
+  }
+  // the one-parameter arrow without parentheses: x => ...
+  for (const m of src.matchAll(new RegExp(`(?<![\\w$.])(${IDENT})\\s*=>`, "g"))) {
+    const asyncAt = /async\s+$/.exec(src.slice(Math.max(0, m.index - 16), m.index));
+    out.push({ name: nameBefore(asyncAt ? m.index - asyncAt[0].length : m.index), params: [m[1]], from: m.index,
+      to: bodyEnd(m.index + m[0].length, m.index) });
+  }
+  functionsMemo.set(src, out);
+  return out;
+}
+
+const NOT_FN = "something other than a function";
+
+// What the predicate expr (written at index at) may be other than a function,
+// as a phrase ("something other than a function", "fn, which ..."), or null.
+function predicateProblem(src, expr, at, depth) {
+  const e = trivia(expr);
+  if (depth > 8) return `${e.slice(0, 30)}, followed further than the scan goes`;
+  if (new RegExp(`^(?:async\\s+)?(?:function\\b|${IDENT}\\s*=>)`).test(e)) return null;
+  const lead = /^(?:async\s*)?\(/.exec(e);
+  if (lead) {
+    const open = lead[0].length - 1;
+    const close = readJs(e).pairs.get(open);
+    if (close !== undefined && /^\s*=>/.test(e.slice(close + 1))) return null;
+    // (expr): the parentheses change nothing; look inside
+    if (open === 0 && close === e.length - 1) return predicateProblem(src, e.slice(1, close), at, depth + 1);
+    return NOT_FN;
+  }
+  if (new RegExp(`^${IDENT}(?:\\.${IDENT})*$`).test(e)) return nameProblem(src, e, at, depth + 1);
+  return NOT_FN;
+}
+
+// What the name (used at index at) may hold other than a function, as a
+// phrase that starts with the name, or null when everything the file gives it
+// is a function or another name that passes in turn.
+function nameProblem(src, name, at, depth) {
+  const dotted = name.includes(".");
+  const last = name.split(".").pop();
+  // `last = v` (not ==, ===, =>) and `last: v` (not ::); a dotted name's
+  // field may be written through any object (t.ready = …, { ready: … })
+  const give = new RegExp(String.raw`(?:^|[^\w$${dotted ? "" : "."}])${esc(last)}\s*(?::(?!:)|=(?![=>]))`, "gm");
+  let given = 0;
+  for (const m of src.matchAll(give)) {
+    given++;
+    const v = trivia(src.slice(m.index + m[0].length));
+    if (/^\(*\s*["'`]/.test(v)) return `${name}, which line ${lineOf(src, m.index)} gives a string`;
+    const other = new RegExp(`^\\(*\\s*(${IDENT}(?:\\.${IDENT})*)\\s*\\)*\\s*(?:[,;})\\n]|$)`).exec(v);
+    if (other && other[1] !== name && !["null", "undefined", "true", "false"].includes(other[1])) {
+      const p = nameProblem(src, other[1], m.index, depth + 1);
+      if (p) return `${name}, which line ${lineOf(src, m.index)} gives ${p}`;
+    }
+  }
+  if (dotted) return given ? null : `${name}, whose ${last} nothing in this file writes: the scan cannot see what it holds`;
+  const fn = functionsIn(src).filter((f) => f.from < at && at <= f.to && f.params.includes(name))
+    .sort((a, b) => b.from - a.from)[0];
+  if (!fn) return given ? null : `${name}, which nothing in this file writes (an import, a loop variable, a method's parameter?): the scan cannot see what it holds`;
+  if (!fn.name) return `${name}, a parameter of an unnamed function, whose arguments the scan cannot follow`;
+  const k = fn.params.indexOf(name);
+  let calls = 0;
+  for (const c of src.matchAll(new RegExp(String.raw`(?<![\w$.])${esc(fn.name)}\s*\(`, "g"))) {
+    if (/\bfunction\s*\*?\s*$/.test(src.slice(Math.max(0, c.index - 16), c.index))) continue;   // its own definition
+    calls++;
+    const open = c.index + c[0].length - 1;
+    const args = argsAt(src, open);
+    if (!args) return `${name}, which ${fn.name}(…) at line ${lineOf(src, c.index)} hands what the scan cannot read`;
+    if (args.length <= k) continue;   // nothing in that place: undefined, not a string
+    const p = predicateProblem(src, args[k], open, depth + 1);
+    if (p) return `${name}, which ${fn.name}(…) at line ${lineOf(src, c.index)} hands ${p}`;
+  }
+  if (!calls) return `${name}, a parameter of ${fn.name}, which this file never calls: the scan cannot see what reaches it`;
+  return null;
+}
+
+// Every waitForFunction call in src, and what is wrong with each one's predicate.
+function stringPredicates(src, file) {
+  const bad = [];
+  let calls = 0;
+  for (const m of src.matchAll(/\bwaitForFunction\s*\(/g)) {
+    calls++;
+    const open = m.index + m[0].length - 1;
+    const args = argsAt(src, open);
+    const first = args && args.length ? args[0] : "";
+    const p = first ? predicateProblem(src, first, open, 0) : "no predicate the scan can read";
+    if (p) bad.push(`${file}:${lineOf(src, m.index)}: waitForFunction(${first.slice(0, 40).split("\n")[0]}…) is handed ${p}`);
+  }
+  return { calls, bad };
+}
+
 test("no probe waits on a string: every waitForFunction predicate is a function", () => {
-  const FN = /^(?:async\s+)?(?:\(|function\b|[A-Za-z_$][\w$]*\s*=>)/;
-  const NAME = /^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*[,)]/;
   const bad = [];
   let calls = 0;
   // every probe and test beside this file (which names the call in its prose)
   for (const f of readdirSync(__dirname).filter((x) => /\.m?js$/.test(x) && x !== "csp.test.js").sort()) {
-    const src = read(join(__dirname, f));
-    for (const m of src.matchAll(/\bwaitForFunction\s*\(/g)) {
-      calls++;
-      const where = `${f}:${src.slice(0, m.index).split("\n").length}`;
-      const rest = src.slice(m.index + m[0].length).replace(/^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)+/, "");
-      if (FN.test(rest)) continue;
-      const name = NAME.exec(rest);
-      if (!name) {
-        bad.push(`${where}: waitForFunction(${rest.slice(0, 40).split("\n")[0]}…) is handed something other than a function`);
-        continue;
-      }
-      // a name passed through (a wrapper's parameter, a table's field): it
-      // must not be given a string anywhere in the file
-      const last = name[1].split(".").pop();
-      if (new RegExp(String.raw`(?:^|[^\w$.])${last.replace(/\$/g, "\\$")}\s*[:=]\s*["'\x60]`, "m").test(src)) {
-        bad.push(`${where}: waitForFunction(${name[1]}): ${last} is given a string in ${f}`);
-      }
-    }
+    const found = stringPredicates(read(join(__dirname, f)), f);
+    calls += found.calls;
+    bad.push(...found.bad);
   }
   assert.ok(calls > 0, "no waitForFunction call found: the scan is looking in the wrong place");
   assert.deepStrictEqual(bad, [], "a string predicate is eval'd by the page on every poll, and the policy refuses it");
+});
+
+// The scan itself, on the ways a string has reached (or could reach) the wait,
+// and on the function forms the probes use, which it must leave alone.
+test("the string-predicate scan follows a string through parentheses, names and wrappers", () => {
+  const refused = {
+    "boot_probe.mjs before A44": `await page.waitForFunction("window.__ready === true", null, { timeout: 90000 });`,
+    "a template literal": "await page.waitForFunction(`window.__ready === ${want}`);",
+    "a parenthesized string": `await page.waitForFunction(("window.__ready === true"), null, { timeout: 90000 });`,
+    "parentheses twice": `await page.waitForFunction(((  "window.__ready"  )));`,
+    "a concatenation": `await page.waitForFunction("window." + field);`,
+    "a named string": `const READY = "window.__ready === true";\nawait page.waitForFunction(READY);`,
+    "a named, parenthesized string": `const READY = ("window.__ready === true");\nawait page.waitForFunction(READY, null, {});`,
+    "a name given a name given a string": `const A = "window.__ready";\nconst B = A;\nawait page.waitForFunction(B);`,
+    "csp_probe.mjs before A44 (a table's field)":
+      `targets.push({ name: "h", ready: "window.__ready === true", settle: 1000 });\n` +
+      `for (const t of targets) if (t.ready) await page.waitForFunction(t.ready, null, { timeout: 90000 });`,
+    "a field written through an object": `targets.push({ ready: () => true });\nt.ready = "window.__ready";\n` +
+      `await page.waitForFunction(t.ready);`,
+    "a one-line wrapper (W1)": `const until = (pred) => page.waitForFunction(pred, null, { timeout: 90000 });\n` +
+      `await until("window.__ready === true");`,
+    "operator_probe.mjs's wait, handed a string (M-C)":
+      `const wait = (fn, msg) => page.waitForFunction(fn, null, { timeout: 3000 }).catch(() => fail(msg));\n` +
+      `await wait(() => /live · 2-of-3/.test(document.querySelector(".op-badge")?.textContent || ""), "no live badge");\n` +
+      `await wait("/DRILL PASSED/.test(document.querySelector('.op-term')?.textContent || '')", "drill never passed");`,
+    "a wrapper handed a parenthesized string": `const wait = (fn, msg) => page.waitForFunction(fn);\nawait wait(("x"), "m");`,
+    "a function declaration, second place": `async function waitFor(page, pred) {\n  await page.waitForFunction(pred);\n}\n` +
+      `await waitFor(page, () => true);\nawait waitFor(page, "window.__ready");`,
+    "a block-bodied async wrapper": `const settle = async (pred, ms) => {\n  await page.waitForFunction(pred, null, { timeout: ms });\n};\n` +
+      "await settle(`document.title === \"x\"`, 1000);",
+    "a wrapper of a wrapper": `const wait = (fn) => page.waitForFunction(fn);\nconst until = (p, why) => wait(p);\n` +
+      `await until(() => true, "a");\nawait until("window.__ready", "b");`,
+    "a wrapper's parameter given a string default": `const wait = (fn = "window.__ready") => page.waitForFunction(fn);\nawait wait();`,
+    "an unnamed callback's parameter": `preds.forEach((p) => page.waitForFunction(p));`,
+    "a one-parameter arrow callback": `preds.forEach(p => page.waitForFunction(p));`,
+    "an import": `import { READY } from "./ready.mjs";\nawait page.waitForFunction(READY);`,
+    "a loop variable": `for (const pred of PREDS) await page.waitForFunction(pred);`,
+    "a wrapper nobody here calls": `export const wait = (fn) => page.waitForFunction(fn);`,
+    "a wrapper call the reader cannot cut": `const wait = (fn) => page.waitForFunction(fn);\nawait wait(() => true, "unclosed"`,
+    "no predicate at all": `await page.waitForFunction();`,
+  };
+  for (const [what, src] of Object.entries(refused)) {
+    const { calls, bad } = stringPredicates(src, "fixture.mjs");
+    assert.ok(calls > 0, `${what}: the scan saw no call`);
+    assert.strictEqual(bad.length, 1, `${what}: the scan must refuse it, once; it said ${JSON.stringify(bad)}`);
+  }
+  const passed = {
+    "boot_probe.mjs now": `await page.waitForFunction(() => window.__ready === true, null, { timeout: 90000 });`,
+    "an argument": `await page.waitForFunction((n) => document.querySelectorAll(".pin-flag").length > n, 3, { timeout: 8000 });`,
+    "async, function, bare arrow": `await page.waitForFunction(async () => true);\n` +
+      `await page.waitForFunction(function () { return true; });\nawait page.waitForFunction(x => !x);`,
+    "a parenthesized function": `await page.waitForFunction((() => window.__ready === true));`,
+    "a regex literal holding a quote": `await page.waitForFunction(() => /'/.test(document.title), null, { timeout: 1000 });`,
+    "a template whose substitution holds a template":
+      `const wait = (fn, msg) => page.waitForFunction(fn).catch(() => fail(msg));\n` +
+      "await wait(() => true, `${late ? `(` : \"\"} late`);",
+    "a named function": `const READY = () => window.__ready === true;\nawait page.waitForFunction(READY);`,
+    "csp_probe.mjs now (a table's field)":
+      `targets.push({ name: "h", ready: () => window.__ready === true, settle: 1000 });\n` +
+      `for (const t of targets) if (t.ready) await page.waitForFunction(t.ready, null, { timeout: 90000 });`,
+    "operator_probe.mjs now, with every awkward literal":
+      `const wait = (fn, msg) => page.waitForFunction(fn, null, { timeout: 3000 }).catch(() => fail(msg));\n` +
+      `await wait(() => /"\\(,'/.test(document.querySelector(".op-term")?.textContent || ""), "a message, with a comma");\n` +
+      "await wait(() => /[)\"]/.test(document.title), `took ${elapsed(1, 2)} ms, (or \"more\")`);\n" +
+      `await wait(function () { return 1 / 2 > 0; }, 'it\\'s fine');`,
+    "a wrapper of a wrapper, functions all the way": `const wait = (fn) => page.waitForFunction(fn);\n` +
+      `const until = (p, why) => wait(p);\nawait until(() => true, "a string message is not the predicate");`,
+    "a function declaration": `async function waitFor(page, pred) {\n  await page.waitForFunction(pred);\n}\n` +
+      `await waitFor(page, () => true, "x");`,
+  };
+  for (const [what, src] of Object.entries(passed)) {
+    const { calls, bad } = stringPredicates(src, "fixture.mjs");
+    assert.ok(calls > 0, `${what}: the scan saw no call`);
+    assert.deepStrictEqual(bad, [], `${what}: a function predicate, refused`);
+  }
 });
 
 // ── CI wiring: this gate cannot be silently dropped ─────────────────────────
