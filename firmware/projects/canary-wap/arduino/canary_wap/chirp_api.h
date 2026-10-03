@@ -43,6 +43,11 @@
  *
  * Sweep F192: a mute or an unmute on a channel that is off is refused by
  * name, 409 chirp_disabled (send_mute_answer).
+ *
+ * Sweep F196: no answer outgrows the buffer it is serialized into. The
+ * nearby, recent and templates lists serialize to measureJson()'s length;
+ * every fixed buffer left is measured against its longest answer by
+ * firmware/scripts/check_wap_json_answers.py.
  */
 
 #ifndef SECURACV_CHIRP_API_H
@@ -227,15 +232,27 @@ inline esp_err_t handle_chirp_nearby(httpd_req_t* req) {
     dev["listening"] = devices[i].listening;
   }
 
-  // The copy is freed only once serialized: ArduinoJson 7 keeps a const
-  // char array (the copy's emoji) by pointer until then (rule CV7).
-  char buffer[3072];
-  serializeJson(doc, buffer);
+  // Serialized to its own length (sweep F196): 32 neighbors whose emoji
+  // are bytes JSON escapes (a presence beacon's emoji is the sender's, and
+  // unsigned) come to about 3.9 KB, and the 3072-byte stack buffer this
+  // answer had was left unterminated, the stack after it sent too. The copy
+  // is freed only once serialized: ArduinoJson 7 keeps a const char array
+  // (the copy's emoji) by pointer until then (rule CV7).
+  const size_t needed = measureJson(doc) + 1;
+  char* buffer = (char*)malloc(needed);
+  if (!buffer) {
+    free(t);
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
+    return ESP_FAIL;
+  }
+  serializeJson(doc, buffer, needed);
   free(t);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  return httpd_resp_sendstr(req, buffer);
+  esp_err_t ret = httpd_resp_sendstr(req, buffer);
+  free(buffer);
+  return ret;
 }
 
 // GET /api/chirp/recent - Recent community chirps
@@ -286,14 +303,21 @@ inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
     c["nonce"] = nonce_hex;
   }
 
-  char* buffer = (char*)malloc(4096);
+  // Serialized to its own length (sweep F196): a full list, sixteen
+  // ordinary chirps, is about 4.8 KB, more with a sender's emoji of bytes
+  // JSON escapes. The 4096-byte buffer this answer had was then filled with
+  // no terminator (the sized serializeJson() adds one only when the answer
+  // is shorter), so httpd_resp_sendstr() sent a cut answer and the heap past
+  // the buffer, and the dashboard showed no alerts.
+  const size_t needed = measureJson(doc) + 1;
+  char* buffer = (char*)malloc(needed);
   if (!buffer) {
     free(t);
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
     return ESP_FAIL;
   }
 
-  serializeJson(doc, buffer, 4096);
+  serializeJson(doc, buffer, needed);
   free(t);   // after the serialize: the doc points into the copy (rule CV7)
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -318,7 +342,9 @@ inline esp_err_t handle_chirp_enable(httpd_req_t* req) {
     doc["error"] = "Failed to enable chirp channel";
   }
 
-  char buffer[128];
+  // The session emoji's field holds 30 bytes, each up to 2 when escaped:
+  // past 128 counting both branches (check_wap_json_answers.py, sweep F196).
+  char buffer[160];
   serializeJson(doc, buffer);
 
   httpd_resp_set_type(req, "application/json");
@@ -521,13 +547,15 @@ inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
   details.add(JsonObject());
   details[5]["id"] = 12; details[5]["text"] = "spreading";
 
-  char* buffer = (char*)malloc(4096);
+  // Serialized to its own length (sweep F196), as every list answer here is.
+  const size_t needed = measureJson(doc) + 1;
+  char* buffer = (char*)malloc(needed);
   if (!buffer) {
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
     return ESP_FAIL;
   }
 
-  serializeJson(doc, buffer, 4096);
+  serializeJson(doc, buffer, needed);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   esp_err_t ret = httpd_resp_sendstr(req, buffer);

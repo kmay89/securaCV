@@ -817,6 +817,32 @@ fi
 
 echo ""
 
+# ── Check: canary-wap REST answers fit their buffers (sweep F196) ──
+# serializeJson() into a char array, or with a size, writes no further than
+# the buffer and terminates only an answer shorter than it: a full buffer
+# goes out cut and unterminated, with whatever memory follows it. The Chirp
+# confirm and mute refusals (F174), the nearby list with escaped emoji and
+# the full recent list (F196) went out that way. This measures every fixed
+# answer buffer in the canary-wap's *_api.h files and canary_wap.ino against
+# the longest answer it computes from the document's statements, refuses
+# what it cannot bound unless it is serialized to measureJson()'s length,
+# and mutates the sources in memory to prove it bites.
+section "Reliability: canary-wap REST answers fit their buffers"
+
+JSON_ANSWER_CHECK="$SCRIPT_DIR/check_wap_json_answers.py"
+if [ -f "$JSON_ANSWER_CHECK" ]; then
+  if JSON_ANSWER_OUT=$(python3 "$JSON_ANSWER_CHECK" 2>&1); then
+    check_pass "every canary-wap REST answer fits the buffer it is serialized into, or is sized by measureJson()"
+  else
+    check_fail "a canary-wap REST answer can outgrow its buffer (sent cut and unterminated) or cannot be measured"
+    echo "$JSON_ANSWER_OUT" | sed 's/^/    /'
+  fi
+else
+  check_fail "check_wap_json_answers.py missing — REST answer buffers unmeasured"
+fi
+
+echo ""
+
 # ── Check: the PlatformIO canary's mesh status routes (sweep F161) ──
 # GET /api/mesh and /api/mesh/peers ran on esp_http_server's task and read
 # mesh_session's state (the pairing number and outcome, the opera name, the

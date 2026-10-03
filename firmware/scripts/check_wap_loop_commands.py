@@ -1716,8 +1716,8 @@ CHIRP_ROUTE_SHAPE = {
 }
 # Where the nearby and recent handlers free their copy: right after the
 # serialize, the doc holding pointers into it until then.
-CHIRP_ROUTE_FREE = {"handle_chirp_nearby": "serializeJson(doc,buffer);free(t);",
-                    "handle_chirp_recent": "serializeJson(doc,buffer,4096);free(t);"}
+CHIRP_ROUTE_FREE = {"handle_chirp_nearby": "serializeJson(doc,buffer,needed);free(t);",
+                    "handle_chirp_recent": "serializeJson(doc,buffer,needed);free(t);"}
 CHIRP_FREE_EARLY = ('free(t);httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Memoryallocationfailed");'
                     "returnESP_FAIL;}")
 # How POST /api/chirp/send answers once its command ran (F146), from
@@ -3238,11 +3238,11 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"\n[ \t]*if\s*\(chirps\[i\]\.dismissed\)\s*continue;",
               "")),
     ("the nearby route frees its copy before it serializes (h07)",
-     on_other(CHIRP_API, api_handler("handle_chirp_nearby"), r"(serializeJson\(doc,\s*buffer\);)(\s*)free\(t\);",
-              r"free(t);\2\1")),
+     on_other(CHIRP_API, api_handler("handle_chirp_nearby"),
+              r"(serializeJson\(doc,\s*buffer,\s*needed\);)(\s*)free\(t\);", r"free(t);\2\1")),
     ("the recent route frees its copy only after it answers",
      on_other(CHIRP_API, api_handler("handle_chirp_recent"),
-              r"(serializeJson\(doc,\s*buffer,\s*4096\);)\s*free\(t\);", r"\1")),
+              r"(serializeJson\(doc,\s*buffer,\s*needed\);)\s*free\(t\);", r"\1")),
     ("the recent route reads past the copy's count",
      on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"const\s+size_t\s+count\s*=\s*t->count;",
               "const size_t count = chirp_channel::MAX_RECENT_CHIRPS;")),
