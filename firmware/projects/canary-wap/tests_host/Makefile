@@ -1090,6 +1090,32 @@ clean-mqtt-reinit:
 run: run-mqtt-reinit
 clean: clean-mqtt-reinit
 
+# Every Home Assistant discovery config asks for the entity id the docs give
+# it (sweep HA16): the REAL csi_mqtt.cpp over stubs/mqtt and a fake esp_mqtt
+# client that records the connect burst. All 27 configs of the build the host
+# compiles, each with one def_ent_id equal to <component>.<device id as Home
+# Assistant slugs it>_<object_id> and its unique id unchanged, each under its
+# 768-byte buffer at the longest device id, prefix and firmware version (the
+# buffer pinned against the source, whose path is passed in).
+HA_IDS_BIN = test_ha_discovery_ids
+HA_IDS_SRC = test_ha_discovery_ids.cpp
+
+$(HA_IDS_BIN): $(HA_IDS_SRC) beacon_source_scan.h $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
+               $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h \
+               $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	  -I stubs/mqtt -I $(SRC_DIR) -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \
+	  -o $@ $(HA_IDS_SRC) $(SRC_DIR)/csi_mqtt.cpp
+
+.PHONY: run-ha-discovery-ids clean-ha-discovery-ids
+run-ha-discovery-ids: $(HA_IDS_BIN)
+	$(call run_marked,$(HA_IDS_BIN))
+clean-ha-discovery-ids:
+	rm -f $(HA_IDS_BIN)
+
+run: run-ha-discovery-ids
+clean: clean-ha-discovery-ids
+
 # The hand-over from a requesting task to the loop task (sweep F96):
 # the REAL loop_command_ring.h. Commands run in post order across the ticket
 # wrap, a full ring refuses, each waiter collects its own result once, a

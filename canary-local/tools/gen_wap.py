@@ -766,6 +766,15 @@ TRIGGERS = [
 for sw in SWITCHES:
     # these appear inside the config-topic format strings, e.g. ".../mic_mute/config"
     must(CSI_MQTT_CPP, f'{sw["object_id"]}/config', f"HA switch {sw['object_id']}")
+    # and each asks Home Assistant for <component>.<id>_<object_id> (sweep HA16)
+    must(CSI_MQTT_CPP, f'"\\"def_ent_id\\":\\"{sw["component"]}.%s_{sw["object_id"]}\\","',
+         f"HA switch {sw['object_id']}'s entity id")
+# The sandbox's "ha" lines (binary_sensor.<id>_smoke_alarm, switch.<id>_mic_mute)
+# are the ids the configs ask for: every table entity's config carries
+# def_ent_id <component>.<device id, slugged>_<object_id> (sweep HA16;
+# firmware/projects/canary-wap/tests_host/test_ha_discovery_ids.cpp formats them).
+must(CSI_MQTT_CPP, '"\\"def_ent_id\\":\\"%s.%s_%s\\","\n', "HA entity ids from the discovery table")
+must(CSI_MQTT_CPP, "e.component, slug, e.object_id,", "HA entity ids from the discovery table")
 
 MQTT = {
     "prefix": MQTT_PREFIX,

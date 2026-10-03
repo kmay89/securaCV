@@ -1442,12 +1442,52 @@ const DiscoveryEntity ENTITIES[] = {
 #endif
 };
 
+/* The entity id each config asks Home Assistant for (sweep HA16):
+ * "def_ent_id" (default_entity_id, Home Assistant 2025.10 and later) is a
+ * full entity id, <component>.<device id slug>_<object_id>, the id the docs
+ * give (binary_sensor.<id>_smoke_alarm). Home Assistant keeps the part after
+ * the '.' as the object id when it first registers the entity; one already
+ * in its registry keeps the id it has, and an older release drops the key
+ * (its discovery schemas remove keys they do not know). Without it the id
+ * came from the device name and the entity name
+ * (binary_sensor.canary_<id>_smoke_alarm_heard).
+ *
+ * The slug is s_device_id the way Home Assistant's slugify treats an ASCII
+ * name: letters lowercased, digits kept, every run of anything else one '_'
+ * (an '_' included), none at either end. It is never longer than
+ * s_device_id (each '_' stands for at least one character), so a buffer of
+ * sizeof(s_device_id) holds it whole. */
+void device_id_slug(char* out, size_t cap) {
+  if (cap == 0) return;
+  size_t n = 0;
+  bool gap = false;
+  for (const char* p = s_device_id; *p; ++p) {
+    char c = *p;
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    const bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    if (!keep) {
+      gap = (n > 0);
+      continue;
+    }
+    if (gap && n + 1 < cap) out[n++] = '_';
+    gap = false;
+    if (n + 1 < cap) out[n++] = c;
+  }
+  out[n] = '\0';
+}
+
 /* Emit one entity's config payload. Returns true on enqueue success.
- * The discovery JSON is built into a fixed 768-byte buffer; current
- * worst-case payload is ~620 bytes (state-topic entity with full
- * device block + availability), so 768 leaves a comfortable margin. */
+ * The discovery JSON is built into a fixed 768-byte buffer. The longest
+ * body is the presence entity's: 762 bytes at the longest device id (32),
+ * prefix (31, what config_load reads back) and firmware version (23) the
+ * bridge holds, and 654 at a device's own 14-character id with that
+ * prefix. test_ha_discovery_ids.cpp formats every config at those lengths
+ * and holds each under the buffer; a body that does not fit is never
+ * published, and publish_discovery() stops at it. */
 bool publish_one_discovery(const DiscoveryEntity& e) {
   const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
+  char slug[sizeof(s_device_id)];
+  device_id_slug(slug, sizeof(slug));
 
   /* Topic: homeassistant/{component}/canary_<device_id>/{object_id}/config.
    * Validate against truncation — a clipped topic would publish to a
@@ -1479,6 +1519,7 @@ bool publish_one_discovery(const DiscoveryEntity& e) {
     "{"
       "\"name\":\"%s\","
       "\"uniq_id\":\"canary_%s_%s\","
+      "\"def_ent_id\":\"%s.%s_%s\","
       "\"stat_t\":\"%s/%s/%s\","
       "\"val_tpl\":\"%s\","
       "\"avty_t\":\"%s/%s/status\","
@@ -1494,6 +1535,7 @@ bool publish_one_discovery(const DiscoveryEntity& e) {
     "}",
     e.name,
     s_device_id, e.object_id,
+    e.component, slug, e.object_id,
     prefix, s_device_id, e.state_topic,
     e.val_tpl,
     prefix, s_device_id,
@@ -1514,6 +1556,8 @@ bool publish_update_discovery() {
 
   char topic[192];
   char body[768];
+  char slug[sizeof(s_device_id)];
+  device_id_slug(slug, sizeof(slug));
 
   /* HA `update` entity: installed/latest version with release notes and
    * an Install button; progress reported via the JSON state payload. */
@@ -1525,6 +1569,7 @@ bool publish_update_discovery() {
     "{"
       "\"name\":\"Firmware\","
       "\"uniq_id\":\"canary_%s_firmware\","
+      "\"def_ent_id\":\"update.%s_firmware\","
       "\"stat_t\":\"%s/%s/update/state\","
       "\"cmd_t\":\"%s/%s/update/cmd\","
       "\"pl_inst\":\"install\","
@@ -1540,6 +1585,7 @@ bool publish_update_discovery() {
       "}"
     "}",
     s_device_id,
+    slug,
     prefix, s_device_id,
     prefix, s_device_id,
     prefix, s_device_id,
@@ -1557,6 +1603,7 @@ bool publish_update_discovery() {
     "{"
       "\"name\":\"Auto Update\","
       "\"uniq_id\":\"canary_%s_auto_update\","
+      "\"def_ent_id\":\"switch.%s_auto_update\","
       "\"stat_t\":\"%s/%s/update/auto\","
       "\"cmd_t\":\"%s/%s/update/auto/cmd\","
       "\"ic\":\"mdi:update\","
@@ -1572,6 +1619,7 @@ bool publish_update_discovery() {
       "}"
     "}",
     s_device_id,
+    slug,
     prefix, s_device_id,
     prefix, s_device_id,
     prefix, s_device_id,
@@ -1595,10 +1643,13 @@ bool publish_mic_discovery() {
   if (tn <= 0 || (size_t)tn >= sizeof(topic)) return false;
 
   char body[768];
+  char slug[sizeof(s_device_id)];
+  device_id_slug(slug, sizeof(slug));
   const int n = snprintf(body, sizeof(body),
     "{"
       "\"name\":\"Microphone Mute\","
       "\"uniq_id\":\"canary_%s_mic_mute\","
+      "\"def_ent_id\":\"switch.%s_mic_mute\","
       "\"stat_t\":\"%s/%s/mic/state\","
       "\"cmd_t\":\"%s/%s/mic/cmd\","
       "\"pl_on\":\"mute\","
@@ -1618,6 +1669,7 @@ bool publish_mic_discovery() {
       "}"
     "}",
     s_device_id,
+    slug,
     prefix, s_device_id,
     prefix, s_device_id,
     prefix, s_device_id,
