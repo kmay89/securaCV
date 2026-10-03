@@ -219,8 +219,12 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
     assert.match(ino, /\.uri = "\/api\/status", \.method = HTTP_GET, \.handler = handle_status_auth \}/);
     const body = ino.split('static esp_err_t handle_device_info(httpd_req_t* req) {')[1].split('\n}\n')[0];
     assert.ok(!/api_auth_check/.test(body), 'handle_device_info takes no token');
-    assert.match(body, /"\\"mdns_host\\":\\"%s\\","/);
-    assert.match(body, /g_device\.mdns_hostname,/);
+    // The answer is identity_json.h's (sweep F212): the host the device
+    // advertises goes in as mdns_host and comes out under that key.
+    assert.match(body, /in\.mdns_host\s*=\s*g_device\.mdns_hostname;/);
+    assert.match(body, /identity_json::device_info\(in, json, need\);/);
+    const idj = fs.readFileSync(path.join(__dirname, 'identity_json.h'), 'utf8');
+    assert.match(idj, /raw\(w, ",\\"mdns_host\\":"\);\n  str\(w, in\.mdns_host\);/);
   });
   it('opens the host the device advertises, not its device id', async () => {
     const { link, asked } = await linkAfter(INFO);
