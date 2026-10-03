@@ -5005,9 +5005,10 @@ so — see D2 below.)
   rest test `snprintf()`'s length and refuse, or compose behind one length
   flag; none writes a string a person typed. `check_wap_json_answers.py` gains
   J5 (each `snprintf()` answer measured, every `%s` escaped by construction)
-  and J6 (the identity answers at their measured length): 15 mutations, 53
-  with J4's (on the integrated tree: 85 `serializeJson()` calls, 21 fixed
-  buffers, 13 `snprintf()` answer pieces). `tests_host/test_identity_json.cpp`
+  and J6 (the identity answers at their measured length). J5 and J6 hold 15
+  mutations and J4 10 (F211); the check refuses 53 in all (on the integrated
+  tree: 85 `serializeJson()` calls, 21 fixed buffers, 13 `snprintf()` answer
+  pieces). `tests_host/test_identity_json.cpp`
   (96 checks) holds the old bytes for ordinary input and gives back a name
   holding `"` and `\` as typed; writing the name raw again fails 13 checks,
   the AP SSID raw 5 (the other fields are device-made, and no test holds their
@@ -7310,7 +7311,8 @@ so — see D2 below.)
   glass shows what the shipped builds draw, as host-tested
   (`test_lvgl_port_turn`, `test_display_settings`) and as a native LVGL 9.5
   run outside CI showed (no CI job rendered with LVGL 9.5 then; since wave 15
-  `glass_turn_lvgl9.sh` and `check_lvgl9_quotes.py` do, F225). CI ran the
+  the wasm job ends with `glass_turn_lvgl9.sh` and `check_lvgl9_quotes.py`,
+  F225, not yet run in CI). CI ran the
   same probes green on the commit that landed the manifest claim
   (`41d53091`: 72 checks, the wasm job's boot, onboard, csp and render probes
   included). Not bench-tested.
@@ -7328,10 +7330,11 @@ so — see D2 below.)
   the bubble. Either draw it without a transform (a triangle), make it
   drawable on 8.4 (radius 0 passes natively; a centered pivot would center
   it), or drop it on 8.4. `test_splash_scenes` holds the tail object's box,
-  not what is drawn. Found by F158's review (#1762). Since wave 15 CI renders
-  the tail's styles through the real LVGL 9.5.0 (F225): a 145 px diamond hung
-  from the square's top-left corner, as this item says; `splash.cpp`'s own
-  tail is not rendered there yet (F246).
+  not what is drawn. Found by F158's review (#1762). Since wave 15 the wasm
+  job ends with `glass_turn_lvgl9.sh` (F225; not yet run in CI), which
+  renders the tail's styles through the real LVGL 9.5.0; natively they draw a
+  145 px diamond hung from the square's top-left corner, as this item says.
+  `splash.cpp`'s own tail is not rendered there yet (F246).
 - [x] **F204 [code] No emulator flavor builds the nightlight.**
   `canary-local/emulator/build.sh` builds the watch, dash, nightstand,
   touch169 and amoled241 glasses; none defines `CD_NIGHTLIGHT`, so the
@@ -7451,11 +7454,12 @@ so — see D2 below.)
   the refusal included (1956 checks; 141 fail against the base tree, and ten
   mutations of the new port each fail it). The emulator dist does not move:
   every changed line of `lvgl_port.cpp` is in its LVGL 9 branch, and the
-  emulator's objects are identical before and after. No CI job runs the real
-  LVGL 9.5 renderer; the quotes in `fake_lvgl9` were checked against the
-  library only by the scratch native runs (F225; since wave 15
-  `glass_turn_lvgl9.sh` renders the real port through LVGL 9.5.0 in CI and
-  `check_lvgl9_quotes.py` holds the quotes to the library). Not done:
+  emulator's objects are identical before and after. No CI job ran the real
+  LVGL 9.5 renderer then; the quotes in `fake_lvgl9` were checked against the
+  library only by the scratch native runs (since wave 15 the wasm job ends
+  with `glass_turn_lvgl9.sh`, which renders the real port through LVGL 9.5.0,
+  and `check_lvgl9_quotes.py`, which holds the quotes to the library; F225,
+  not yet run in CI). Not done:
   `main.cpp` picks the face from the saved setting, not from the turn the
   port wore (F223, done in wave 15).
   Host-tested, and run natively against LVGL 9.5.0 outside CI; the ESP32
@@ -7605,7 +7609,8 @@ so — see D2 below.)
   (F205's native run did exactly that, outside CI). It would also hold the
   paths only 9.5 takes, such as the splash tail F185 says only 9.5 draws.
   Found by F205 (#1762).
-  *Done (#1762):* CI renders the dash glass through the real LVGL 9.5.
+  *Done (#1762):* CI is wired to render the dash glass through the real LVGL
+  9.5; the step has not run there yet.
   `canary-local/emulator/test/glass_turn_lvgl9.sh`, `glass_turn.sh`'s sibling,
   reads the release from `sketch.yaml`'s `dash-core3` profile (`lvgl (9.5.0)`,
   the pin the core-3 Arduino dash and modes releases install) and refuses to

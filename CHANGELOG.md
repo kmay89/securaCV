@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### canary-wap's fleet scan keeps the adverts that fit and its identity answers escape a typed name, Bluetooth reads its on-switch from the published view and a nearby device's emoji is its session's, the log Acknowledge works on both dashboards, Home Assistant is asked for the documented entity ids, a turned display keeps its face on the glass, CI renders the dash glass through the real LVGL 9.5, a Vision box with a non-positive side reads no proximity, and the Lab's Nightlight card boots its own twin (#1762, wave 15)
+### canary-wap's fleet scan keeps the adverts that fit and its identity answers escape a typed name, Bluetooth reads its on-switch from the published view and a nearby device's emoji is its session's, the log Acknowledge works on both dashboards, Home Assistant is asked for the documented entity ids, a turned display keeps its face on the glass, CI is wired to render the dash glass through the real LVGL 9.5, a Vision box with a non-positive side reads no proximity, and the Lab's Nightlight card boots its own twin (#1762, wave 15)
 
 - **canary-wap: the fleet scan keeps the shortest adverts that fit, and the
   identity answers escape what a person typed (sweep F211, F212).** Eight mDNS
@@ -19,19 +19,19 @@
   The host suites now compile after Arduino.h's global names, which caught a
   `boolean` name clash that would have stopped both ESP32 builds.
   `check_wap_json_answers.py` measures the sketch's other `snprintf()`
-  answers, checks every `%s` in them and pins the fleet scan's glue (J4, J5,
-  J6; 53 mutations). **Host-tested** (`test_fleet_scan_cache.cpp`, 582
-  checks; `test_identity_json.cpp`, 96); the compiles are CI's; not
-  bench-tested. A control byte in the device name still breaks two answers
-  (F226).
+  answers, checks every `%s` in them and pins the fleet scan's glue (J4-J6,
+  25 mutations; 53 in the whole check). **Host-tested**
+  (`test_fleet_scan_cache.cpp`, 582 checks; `test_identity_json.cpp`, 96);
+  the compiles are CI's; not bench-tested. A control byte in the device name
+  still breaks two answers (F226).
 - **canary-wap: Bluetooth's on-switch read from the published view, a nearby
   Chirp device's emoji derived from its session, and a quiet first boot for
   the chirp namespace (sweep F210, F213, F220).** The Start Advertising and
   Pair handlers decide whether to bring the stack up from the settings the
   loop task published (`bluetooth_channel::read_enabled()`), not the loop
   task's flag read in place on the HTTP task, a race ThreadSanitizer reports
-  in the threaded test when the old read is put back; rule BV8 holds it
-  (`check_wap_loop_commands.py` now refuses 326 mutations). A presence
+  in the threaded test when the old read is put back; rule BV8 holds it (8
+  mutations; `check_wap_loop_commands.py` refuses 326 in all). A presence
   beacon's emoji field is no longer stored: a nearby row shows its session
   id's display, derived as a chirp's sender emoji is, so no device in range
   can put quotes, control bytes or markup into `GET /api/chirp/nearby`.
@@ -96,9 +96,9 @@
   and run natively against LVGL 8.4; the emulator dist moves for all six
   display flavors, and CI's pinned emsdk rebuilds it in this PR (the rebuilt
   dist was not run here); the ESP32 builds are CI's; nothing is bench-tested.
-- **The turned dash glass is rendered through the real LVGL 9.5 in CI (sweep
-  F225).** `canary-local/emulator/test/glass_turn_lvgl9.sh` builds the real
-  `lvgl_port.cpp` against the LVGL release the dash builds pin
+- **CI is wired to render the turned dash glass through the real LVGL 9.5
+  (sweep F225).** `canary-local/emulator/test/glass_turn_lvgl9.sh` builds the
+  real `lvgl_port.cpp` against the LVGL release the dash builds pin
   (`sketch.yaml`'s `lvgl (9.5.0)`, fetched once and cached under its own key)
   with the display's own `lv_conf.h`, and at every quarter turn holds each
   flushed native pixel equal to the same scene rendered on a plain display of
@@ -337,9 +337,9 @@
   each buffer comes from. `test_display_settings` holds the touch map against
   both majors' arithmetic. The emulator dist does not move. **Host-tested**,
   and run natively against LVGL 9.5.0 outside CI; no CI job ran the real LVGL
-  9.5 renderer then (F225, done in wave 15). The ESP32 builds are CI's. Not bench-tested: no turned
-  glass has shown a face, and neither the touch axes nor what the turn costs
-  on an S3 has been checked (F224).
+  9.5 renderer then (F225, wired in wave 15). The ESP32 builds are CI's. Not
+  bench-tested: no turned glass has shown a face, and neither the touch axes
+  nor what the turn costs on an S3 has been checked (F224).
 
 ### canary-wap's FULL builds wait for the owner's Bluetooth confirm and Remove forgets the phone, Chirp's cooldown is a timer and a refused confirm says why, the PIO mesh status reads one pass and the kernel wizard reads each pairing's outcome, the canary's diagnostics carry its egress counters and the WAP reports the presence thresholds it runs, the Vision keeps one dwell per stay, the Lab's probes run on the sources, and the emulator walks a turned dash (#1762, wave 13)
 
