@@ -10,9 +10,10 @@
 // mutated sources. Here tests/native/wasm32.js builds detection_pipeline.h
 // for wasm32 with the host's clang and wasm-ld (freestanding: no libc, no
 // C++ library, two stub headers) and for the host with g++, from build.sh's
-// Vision flags, and both read the same 104,976 boxes built from the int
-// range's ends: the grid test_vision_detection_pipeline.cpp holds the host
-// build to exact (__int128) arithmetic on. The two must agree on every field.
+// Vision flags, and both read the same boxes built from the int range's
+// ends: every four-way pick of the V[] that test_vision_detection_pipeline.cpp
+// holds the host build to exact (__int128) arithmetic on. The two must agree
+// on every field.
 // The last test puts each of A42's two long multiplies back in a scratch copy
 // of the header and requires the host build to miss it and the wasm32 build
 // to catch it, so the comparison is shown to see what it is here for.
@@ -100,8 +101,12 @@ test("the wasm32 build is freestanding with a 32-bit long, the host build has th
 test("the wasm32 build reads every extreme box as the host build does (sweep A49)", opts, async () => {
   w.assertTools();
   const [wasm, host] = await builds();
+  const V = hostGridValues(host.frameW);
+  assert.ok(V.includes(INT_MIN) && V.includes(INT_MAX),
+    "the host suite's V[] holds both ends of the int range (A42's boxes)");
   const boxes = grid(host.frameW);
-  assert.strictEqual(boxes.length / 4, 104976, "the host suite's grid");
+  assert.strictEqual(boxes.length / 4, V.length ** 4,
+    `every four-way pick of the host suite's ${V.length} V[] entries`);
   const a = wasm.read(boxes), b = host.read(boxes);
   const wrong = differences(boxes, a, b, wasm.fields);
   assert.deepStrictEqual(wrong.slice(0, 3), [], `${wrong.length} of ${boxes.length / 4} boxes read otherwise in ` +
