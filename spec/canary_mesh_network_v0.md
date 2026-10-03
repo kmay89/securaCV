@@ -1186,6 +1186,32 @@ copy answers 500 `out_of_memory`. Host-tested (`test_loop_snapshot.cpp`,
 under real threads and ThreadSanitizer too, and `test_mesh_commands_wap.cpp`);
 the Arduino compile is CI's; not bench-tested.
 
+**PlatformIO tree: the status routes read what the main loop published
+(sweep F161).** `GET /api/mesh` and `/api/mesh/peers` read the enable
+switch, the opera's id and name, the pairing state, code, number, outcome
+and reason, the member table and each member's transport entry from the
+HTTP server's task while `mesh_session::process()` wrote them, so one body
+could mix two passes (a pairing number with the outcome of a pairing
+started between the reads, a name read mid-rename). The main loop now
+builds a whole view and publishes it (`loop_snapshot.h`, the header
+canary-wap's routes read through, shared byte for byte): at the end of
+every pass, before the early return of a stopped session (whose transport
+table still ages), after each REST request it runs and before that
+request's result is posted, at `deinit()`, and once at the end of the boot's
+mesh setup, after the opera and its members are restored (the HTTP server
+is up before the first loop pass). Before any of these a read answers the
+state before `init()`. The view holds the pairing code only while
+`GET /api/mesh` shows it, and each member by fingerprint with its alerts
+and, once heard from its binding, its transport entry's state, RSSI and
+last-seen time; no key. The two routes read a whole copy and nothing else
+of the session's, so they never wait for the main loop. The peer list's
+members still come from the persisted pubkeys (NVS), joined by fingerprint
+against the view, and `last_seen_sec` is counted at the read; every field
+of both bodies is unchanged. `GET /api/mesh/alerts` still reads the alert
+history in place. Host-tested (`test_mesh_session.cpp`, a two-thread test
+included; `test_loop_snapshot.cpp` covers the shared header); the
+`[env:full]` compile is CI's; not bench-tested.
+
 ### 8.2 Response Formats
 
 ```json
@@ -1359,9 +1385,9 @@ count again) from its own. Until F133 the web UI read only `state`, and an
 initiator already in an opera returns to `ACTIVE` or `CONNECTING` after a
 timeout, a refusal or a cancel exactly as after a success, so the page
 called those pairings complete. The status buffer is 640 bytes (the widest
-body is 517). These fields are read from the HTTP server's task without a
-lock, as the rest of this tree's status is (canary-wap reads a view its loop
-publishes, F110). `pair/cancel` answers `{ok: true}` whether or not a
+body is 517). Since F161 these fields come, with the rest of the body, from
+the view the main loop publishes (§8.1), so the number and the outcome are
+always one pass's. `pair/cancel` answers `{ok: true}` whether or not a
 pairing was running; one that has already ended is left as it ended (F135,
 §5.2).
 
@@ -1373,8 +1399,9 @@ verified `TAMPER_ALERT` frames this boot. `state`/`last_seen_sec`/`rssi`
 are real joins against the ESP-NOW transport peer table:
 `mesh_session` reports each peer's bound radio MAC once a **fully
 verified** opera-authenticated frame (signature, opera_id and replay checks
-all passed) has arrived from it, and the handler joins that MAC into the
-transport table's liveness. The checks prove who signed a frame, not which
+all passed) has arrived from it, and the main loop joins that MAC into the
+transport table's liveness in the view it publishes for the route (F161,
+§8.1). The checks prove who signed a frame, not which
 radio sent it — the envelope signs no address (the F49 part 3 note below)
 — so a member's frame is taken only from that member's own binding (F70):
 from any other address, even one the transport table holds, it is dropped

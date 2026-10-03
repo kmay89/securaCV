@@ -817,6 +817,32 @@ fi
 
 echo ""
 
+# ── Check: the PlatformIO canary's mesh status routes (sweep F161) ──
+# GET /api/mesh and /api/mesh/peers ran on esp_http_server's task and read
+# mesh_session's state (the pairing number and outcome, the opera name, the
+# peer links, the transport table) while the main loop's process() wrote
+# it, so one body could mix two passes. The main loop now publishes a view
+# (each pass, its early return, each REST request before its result,
+# deinit, and setup's restore) and the two routes copy it. test_mesh_session
+# runs the view on the host; this holds securacv_network.cpp's handlers,
+# mesh_session.cpp's publish points and main.cpp's setup publish to it, and
+# mutates them in memory to prove it bites.
+section "Reliability: canary mesh status routes read the published view"
+
+MESH_STATUS_CHECK="$SCRIPT_DIR/check_canary_mesh_status.py"
+if [ -f "$MESH_STATUS_CHECK" ]; then
+  if MESH_STATUS_OUT=$(python3 "$MESH_STATUS_CHECK" 2>&1); then
+    check_pass "GET /api/mesh and /peers read only the view the main loop publishes; no canary HTTP handler reads the session's live state"
+  else
+    check_fail "a canary mesh status route reads the session's live state, or the main loop stopped publishing the view where the routes need it"
+    echo "$MESH_STATUS_OUT" | sed 's/^/    /'
+  fi
+else
+  check_fail "check_canary_mesh_status.py missing — the canary's mesh status reads are unchecked"
+fi
+
+echo ""
+
 # ── Check: web_ui.h size ──────────────────────────────────────
 section "Build: web_ui.h size"
 
