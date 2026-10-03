@@ -1670,6 +1670,13 @@ void test_a_mute_needs_a_channel_that_is_on() {
   CHECK(cc::g_state == cc::CHIRP_DISABLED);
   CHECK(std::string(cc::mute_refusal_error(r.r.mute_refusal)) == "chirp_disabled");
   CHECK(cc::mute_refusal_status(r.r.mute_refusal) == 409);
+  // The words the route answers and the dashboard shows (it falls back to the
+  // bare code when a message is empty), and none for a mute that ran.
+  CHECK(std::string(cc::mute_refusal_message(cc::MUTE_REFUSED_DISABLED)) == "Chirp channel is not enabled");
+  CHECK(std::string(cc::mute_refusal_message(cc::MUTE_REFUSED_DURATION)) ==
+        "Duration must be 15, 30, 60, or 120 minutes");
+  CHECK(cc::mute_refusal_message(cc::MUTE_REFUSED_NONE) == nullptr &&
+        cc::mute_refusal_error(cc::MUTE_REFUSED_NONE) == nullptr);
   cc::StatusView v = status_read();
   CHECK(v.state == cc::CHIRP_DISABLED && !v.muted && v.mute_remaining_ms == 0);
   CHECK(v.session_emoji[0] == '\0' && reason_of(v) == "disabled");

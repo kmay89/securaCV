@@ -1454,10 +1454,17 @@ Owner: U1.
     `"listening":false`.
   - Artifact: `docs/audit/repro/F194/listening-in-cooldown/`.
 - [ ] **Full Chirp lists come back whole**
-  - Setup: a canary-wap with Chirp on; sixteen recent chirps (a bench board
-    sending one every few seconds with the receiver's urgency filter at
-    info, or chirps from several boards); for nearby, as many neighbors as
-    the bench has.
+  - Setup: a canary-wap with Chirp on and its urgency filter at info, and
+    sixteen recent chirps, which takes at least six sender boards, each
+    sending three chirps inside the same 30 minutes (at 0, 5 and 20
+    minutes once its 10-minute presence wait is over). One board cannot
+    fill the list: its send cooldown is 5 minutes after its first chirp,
+    15 after its second and an hour after its third, so it sends at most
+    three chirps in the 30 minutes the receiver keeps each one; the
+    receiver takes at most four chirps a sender session key an hour,
+    relays included (a relay carries its origin's key); and a disable and
+    enable buys a new session only after another 10-minute presence wait.
+    For nearby, as many neighbors as the bench has.
   - Repro: `curl -s /api/chirp/recent | python3 -m json.tool`, the same for
     `/api/chirp/nearby` and `/api/chirp/templates`, and
     `curl -s /api/rf/status | python3 -m json.tool`; open the dashboard's
