@@ -33,9 +33,11 @@
  *     answer them with the library's defaults, which is the defect.
  *
  * With no pairing owner (a build without the pairing channel, or before it
- * is up) a Numeric Comparison is answered no and the passkey shown is a
- * random one nobody sees: that pairing fails closed instead of taking the
- * library's yes. (A pairing NimBLE runs by Just Works, which its tables
+ * is up: the channel attaches the Dispatcher when it creates the server and
+ * installs its callbacks once the loop task holds its state, sweep F167) a
+ * Numeric Comparison is answered no and the passkey shown is a random one
+ * nobody sees: that pairing fails closed instead of taking the library's
+ * yes. (A pairing NimBLE runs by Just Works, which its tables
  * pick for an initiator with no display or no yes/no, reaches no callback
  * here: it asks nobody, on any profile.)
  *
@@ -146,18 +148,30 @@ class Dispatcher final : public NimBLEServerCallbacks {
 // translation unit that includes this header).
 inline Dispatcher g_dispatcher;
 
-// Records `owner` for `role` (nullptr clears it), then puts the Dispatcher
-// on `server` as its callbacks. The one way a module installs server
-// callbacks: firmware/scripts/check_wap_loop_commands.py (rule BD1) refuses
-// a setCallbacks() of a server callbacks object anywhere else in the
-// sketch. NimBLE must not delete the Dispatcher when the server goes
+// Puts the Dispatcher on `server` as its callbacks, its owners as they
+// stand. The one setCallbacks() of a server callbacks object in the sketch:
+// firmware/scripts/check_wap_loop_commands.py (rule BD1) refuses one
+// anywhere else. NimBLE must not delete the Dispatcher when the server goes
 // (NimBLEDevice::deinit(true)): it is not on the heap, so the
 // deleteCallbacks flag is false. False when there is no server.
-inline bool install(NimBLEServer* server, Role role, NimBLEServerCallbacks* owner) {
-  g_dispatcher.set(role, owner);
+//
+// The pairing channel's init() attaches it as soon as it creates the server,
+// with no pairing owner yet (sweep F167): the channel's own callbacks are
+// installed by the loop task once it takes the bring-up's result, and until
+// then a Numeric Comparison is answered no here, never by NimBLE's default
+// server callbacks (yes, and 123456).
+inline bool attach(NimBLEServer* server) {
   if (server == nullptr) return false;
   server->setCallbacks(&g_dispatcher, false);
   return true;
+}
+
+// Records `owner` for `role` (nullptr clears it), then attaches the
+// Dispatcher to `server`. The one way a module installs its server
+// callbacks (rule BD1). False when there is no server.
+inline bool install(NimBLEServer* server, Role role, NimBLEServerCallbacks* owner) {
+  g_dispatcher.set(role, owner);
+  return attach(server);
 }
 
 // Whether a link observer (Opera) is registered: it advertises on the

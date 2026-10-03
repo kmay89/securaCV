@@ -222,11 +222,22 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 // and a REST handler (bluetooth_api.h) calls it, on esp_http_server's task,
 // when the owner turns Bluetooth on before it is up. Nothing else here may
 // run off the loop task but the readers below and submit().
+//
+// init() writes none of the loop task's state (sweep F167): it brings the
+// stack up, loads the saved settings and paired list into a hand-over, and
+// publishes it; update() takes it on the loop task's next pass, before that
+// pass's commands (so a handler that brought the stack up and then submits
+// finds it taken), and there turns Bluetooth on and advertises when the
+// settings say so. is_initialized(): any task; true once the stack is up
+// and the hand-over published.
 bool init();
 bool is_initialized();
 
 // Why the last init() attempt left the radio off ("" when initialized or
-// never attempted). Stable storage owned by the module; safe to hold.
+// never attempted). Any task. Each refusal is written whole before its
+// address is published (sweep F167), and a text a caller holds is not
+// written again until several later refusals have gone by: safe to hold
+// for an answer's length.
 const char* init_fail_reason();
 
 // Push device metadata into the BLE Device Information Service. Optional;

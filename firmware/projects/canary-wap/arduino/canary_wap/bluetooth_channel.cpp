@@ -49,6 +49,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>       // vTaskDelay: submit() waits for the loop task
 #include <ctype.h>                // isxdigit: parse_address()
+#include <stdarg.h>               // va_list: set_init_fail_reason()
 #include "ble_ota.h"
 #include "ble_presence.h"
 #include "ble_console.h"
@@ -65,11 +66,28 @@ namespace bluetooth_channel {
 // ════════════════════════════════════════════════════════════════════════════
 
 static BluetoothState g_state = BT_DISABLED;
+// The loop task's: it has taken the bring-up's result (adopt_init_result(),
+// sweep F167), so the settings, the paired list and the NimBLE objects below
+// are the stack's. Read and written only on the loop task; another task asks
+// is_initialized(), which reads g_stack_up.
 static bool g_initialized = false;
+// init()'s, for any task (sweep F167): the stack is up and its result handed
+// over (g_bringup). Written once by init() (release), read with acquire.
+static bool g_stack_up = false;
 // Why the last init() attempt left the radio off, in operator language.
 // Empty when initialized (or never attempted). Surfaced by the self-test
 // and /api/bluetooth so "Bluetooth broken" field reports carry the cause.
-static char g_init_fail_reason[96] = "";
+// init() runs on the bring-up worker or an HTTP handler's task while the
+// self-test and GET /api/bluetooth read the reason on theirs, and the old
+// buffer was rewritten in place under a reader (sweep F167). Now init()
+// writes a refusal whole into the next of INIT_FAIL_SLOTS buffers and then
+// publishes its address (release); a reader takes the address (acquire)
+// and reads text no one writes again until INIT_FAIL_SLOTS more refused
+// attempts have gone by. The fixed refusals are string literals.
+static const size_t INIT_FAIL_SLOTS = 4;
+static char g_init_fail_text[INIT_FAIL_SLOTS][96];
+static unsigned g_init_fail_slot = 0;              // init()'s, under its latch
+static const char* g_init_fail_reason = "";        // the published address
 // True while a caller is inside init()'s body — the bring-up worker and the
 // HTTP task can both reach init() now, and NimBLE init is not reentrant.
 static volatile bool g_init_in_progress = false;
@@ -148,6 +166,37 @@ static PairedDevice g_paired_devices[MAX_PAIRED_DEVICES];
 static size_t g_paired_count = 0;
 static bool g_paired_by_identity = false;   // the saved list's NVS_KEY_BT_PAIRED_ID
 
+// What init() brings up and loads, handed to the loop task (sweep F167).
+// init() runs on the BLE bring-up worker or on an HTTP handler's task
+// (bluetooth_api.h's bring_up()). It used to load the saved settings and
+// the paired list straight into g_settings and g_paired_devices, set the
+// state, set the NimBLE object pointers and g_initialized (a plain bool),
+// and with auto-advertise on call enable() and start_advertising(), all
+// while the loop task's update() drained commands, applied the NimBLE
+// events (F143) and published the views (F138) from the same state. Now
+// init() fills g_bringup and touches none of the loop task's state: it
+// brings the stack up, loads what it needs into g_bringup, and publishes it
+// (g_bringup_ready, release) as its last write to it. The loop task takes it
+// once, first thing in update() (adopt_init_result(): the settings, the
+// list and its rebuild, the objects, the channel's server callbacks, the
+// auto-advertise). After the publish nothing writes g_bringup again: a
+// later init() returns at once (g_stack_up).
+struct Bringup {
+  BluetoothSettings settings;
+  PairedDevice paired[MAX_PAIRED_DEVICES];
+  size_t paired_count;
+  bool paired_by_identity;
+  NimBLEServer* server;
+  NimBLEService* service;
+  NimBLECharacteristic* status_char;
+  NimBLECharacteristic* command_char;
+  NimBLECharacteristic* notify_char;
+  NimBLEAdvertising* advertising;
+  NimBLEScan* scanner;
+};
+static Bringup g_bringup;
+static bool g_bringup_ready = false;   // init() publishes (release), adopt_init_result() takes (acquire)
+
 // Scan results
 static ScannedDevice g_scanned_devices[MAX_SCANNED_DEVICES];
 static size_t g_scanned_count = 0;
@@ -196,9 +245,11 @@ static const char* NVS_KEY_BT_LONG_RANGE = "bt_long_range";
 
 static void set_state(BluetoothState new_state);
 static BluetoothState rest_state();
-static void load_settings();
+static bool init_running();
+static void adopt_init_result();
+static void load_settings(BluetoothSettings* out);
 static void save_settings();
-static void load_paired_devices();
+static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity);
 static void save_paired_devices();
 static void migrate_paired_devices();
 static void update_status_characteristic();
@@ -900,24 +951,27 @@ static void set_state(BluetoothState new_state) {
 // SETTINGS PERSISTENCE
 // ════════════════════════════════════════════════════════════════════════════
 
-static void load_settings() {
+// Into `out`, which holds the values a key the device never saved keeps
+// (init() starts it from kDefaultSettings). init()'s, on its own task: it
+// loads into its handoff (g_bringup, sweep F167), never into g_settings.
+static void load_settings(BluetoothSettings* out) {
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return;
 
   // Defaults (used when the device has never saved BT settings) come from
   // bt_defaults.h so the first-boot state matches the struct initializer.
-  g_settings.enabled = nvs->getBool(NVS_KEY_BT_ENABLED, bt_defaults::ENABLED);
-  g_settings.auto_advertise = nvs->getBool(NVS_KEY_BT_AUTO_ADV, bt_defaults::AUTO_ADVERTISE);
-  g_settings.allow_pairing = nvs->getBool(NVS_KEY_BT_ALLOW_PAIR, bt_defaults::ALLOW_PAIRING);
-  g_settings.require_pin = nvs->getBool(NVS_KEY_BT_REQ_PIN, bt_defaults::REQUIRE_PIN);
-  g_settings.tx_power = clamp_tx_power(nvs->getChar(NVS_KEY_BT_TX_PWR, 3));
-  g_settings.inactivity_timeout_ms = nvs->getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
-  g_settings.long_range_mode = nvs->getBool(NVS_KEY_BT_LONG_RANGE, bt_defaults::LONG_RANGE);
+  out->enabled = nvs->getBool(NVS_KEY_BT_ENABLED, bt_defaults::ENABLED);
+  out->auto_advertise = nvs->getBool(NVS_KEY_BT_AUTO_ADV, bt_defaults::AUTO_ADVERTISE);
+  out->allow_pairing = nvs->getBool(NVS_KEY_BT_ALLOW_PAIR, bt_defaults::ALLOW_PAIRING);
+  out->require_pin = nvs->getBool(NVS_KEY_BT_REQ_PIN, bt_defaults::REQUIRE_PIN);
+  out->tx_power = clamp_tx_power(nvs->getChar(NVS_KEY_BT_TX_PWR, 3));
+  out->inactivity_timeout_ms = nvs->getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
+  out->long_range_mode = nvs->getBool(NVS_KEY_BT_LONG_RANGE, bt_defaults::LONG_RANGE);
 
   size_t name_len = nvs->getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {
-    nvs->getBytes(NVS_KEY_BT_NAME, g_settings.device_name, name_len);
-    g_settings.device_name[name_len] = '\0';
+    nvs->getBytes(NVS_KEY_BT_NAME, out->device_name, name_len);
+    out->device_name[name_len] = '\0';
   }
 
 }
@@ -937,16 +991,18 @@ static void save_settings() {
 
 }
 
-static void load_paired_devices() {
+// Into `out` (MAX_PAIRED_DEVICES entries), `count` and `by_identity`.
+// init()'s, into its handoff (sweep F167), like load_settings().
+static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity) {
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return;
 
   size_t data_len = nvs->getBytesLength(NVS_KEY_BT_PAIRED);
-  if (data_len > 0 && data_len <= sizeof(g_paired_devices)) {
-    nvs->getBytes(NVS_KEY_BT_PAIRED, g_paired_devices, data_len);
-    g_paired_count = data_len / sizeof(PairedDevice);
+  if (data_len > 0 && data_len <= MAX_PAIRED_DEVICES * sizeof(PairedDevice)) {
+    nvs->getBytes(NVS_KEY_BT_PAIRED, out, data_len);
+    *count = data_len / sizeof(PairedDevice);
   }
-  g_paired_by_identity = nvs->getBool(NVS_KEY_BT_PAIRED_ID, false);
+  *by_identity = nvs->getBool(NVS_KEY_BT_PAIRED_ID, false);
 
 }
 
@@ -1108,15 +1164,34 @@ static DeviceType detect_device_type(const NimBLEAdvertisedDevice* device) {
 // PUBLIC API IMPLEMENTATION
 // ════════════════════════════════════════════════════════════════════════════
 
+// A refusal of the attempt under way, for any task (sweep F167): written
+// whole into the next slot, then its address published. init()'s alone,
+// under its latch. nullptr clears it.
+static void set_init_fail_reason(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void set_init_fail_reason(const char* fmt, ...) {
+  if (fmt == nullptr) {
+    __atomic_store_n(&g_init_fail_reason, (const char*)"", __ATOMIC_RELEASE);
+    return;
+  }
+  g_init_fail_slot = (g_init_fail_slot + 1) % INIT_FAIL_SLOTS;
+  char* text = g_init_fail_text[g_init_fail_slot];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(text, sizeof(g_init_fail_text[0]), fmt, args);
+  va_end(args);
+  __atomic_store_n(&g_init_fail_reason, (const char*)text, __ATOMIC_RELEASE);
+}
+
 bool init() {
-  if (g_initialized) return true;
+  if (__atomic_load_n(&g_stack_up, __ATOMIC_ACQUIRE)) return true;
 
   // Concurrency latch: init() can now be entered from the boot bring-up
   // worker task AND the HTTP task (a user tapping Enable/Advertise/Pair
-  // during the bring-up window auto-calls enable() -> init()). NimBLE init
-  // is not reentrant, so exactly one caller may run the body; the loser
-  // backs off with false and the API layer reports 503 "starting up" while
-  // the state reads BT_INITIALIZING. Cleared on every exit path (RAII).
+  // during the bring-up window has the handler bring the stack up, F111).
+  // NimBLE init is not reentrant, so exactly one caller may run the body;
+  // the loser backs off with false and the handler answers with the init
+  // error, while GET /api/bluetooth reads "initializing" (the loop task's
+  // view, from init_running()). Cleared on every exit path (RAII).
   bool expected = false;
   if (!__atomic_compare_exchange_n(&g_init_in_progress, &expected, true,
                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
@@ -1127,13 +1202,19 @@ bool init() {
       __atomic_store_n(&g_init_in_progress, false, __ATOMIC_RELEASE);
     }
   } latch_clear;
+  // Another caller brought it up between the first look and the latch.
+  if (__atomic_load_n(&g_stack_up, __ATOMIC_ACQUIRE)) return true;
 
-  set_state(BT_INITIALIZING);
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Initializing BLE", nullptr);
 
-  // Load settings
-  load_settings();
-  load_paired_devices();
+  // Load settings and the paired list into the handoff (sweep F167), never
+  // into the loop task's g_settings and g_paired_devices: update() reads
+  // and writes those on the loop task meanwhile.
+  Bringup& b = g_bringup;
+  memset(&b, 0, sizeof(b));
+  b.settings = kDefaultSettings;
+  load_settings(&b.settings);
+  load_paired_devices(b.paired, &b.paired_count, &b.paired_by_identity);
 
   // Initialize NimBLE. This is the single NimBLEDevice::init() owner for the
   // firmware: it runs before ble_manager::init() in setup() and owns the GAP
@@ -1141,7 +1222,7 @@ bool init() {
   // false when the controller/host stack can't come up (BT compiled out, radio
   // unavailable, or a coexistence/heap failure). Previously the result was
   // ignored and the code marched on to createServer() — which then returned
-  // null and crashed on the first g_server->... deref. Treat a failed init as a
+  // null and crashed on the first server->... deref. Treat a failed init as a
   // hard failure so the caller degrades gracefully (the documented contract).
   // Fail closed on low memory BEFORE bringing the controller up. The malloc
   // failure inside NimBLEDevice::init() asserts and panics rather than
@@ -1163,31 +1244,25 @@ bool init() {
                (unsigned)total, bt_defaults::MIN_INIT_TOTAL_FREE);
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                  "BLE not started: insufficient heap", detail);
-      snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
-               "Not started: internal RAM too low (largest block %u KB/%lu KB, free %u KB/%lu KB)",
-               (unsigned)(largest / 1024), bt_defaults::MIN_INIT_FREE_BLOCK / 1024,
-               (unsigned)(total / 1024), bt_defaults::MIN_INIT_TOTAL_FREE / 1024);
-      set_state(BT_DISABLED);
+      set_init_fail_reason(
+          "Not started: internal RAM too low (largest block %u KB/%lu KB, free %u KB/%lu KB)",
+          (unsigned)(largest / 1024), bt_defaults::MIN_INIT_FREE_BLOCK / 1024,
+          (unsigned)(total / 1024), bt_defaults::MIN_INIT_TOTAL_FREE / 1024);
       return false;
     }
   }
-  if (!NimBLEDevice::init(g_settings.device_name)) {
+  if (!NimBLEDevice::init(b.settings.device_name)) {
     log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE init failed", nullptr);
-    snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
-             "NimBLE stack init failed (controller/host bring-up)");
-    set_state(BT_DISABLED);
+    set_init_fail_reason("%s", "NimBLE stack init failed (controller/host bring-up)");
     return false;
   }
   // NimBLE 2.x takes the dBm value directly (int8_t). Don't pass the
   // ESP_PWR_LVL_* enum here — those values are indexes (e.g. P3 == 7), not
   // dBm, and would set the radio to a different power than intended. This is
-  // the ONLY place TX power is set; ble_manager no longer overrides it (it
-  // used to bump every combined build to +9 dBm, ignoring this NVS setting).
-  NimBLEDevice::setPower(g_settings.tx_power);
-
-  // A paired list saved before sweep F172 is rebuilt from the bond store
-  // (once; it needs the stack up).
-  migrate_paired_devices();
+  // where the boot's TX power is set (set_tx_power(), the owner's, on the loop
+  // task, is the other); ble_manager no longer overrides it (it used to bump
+  // every combined build to +9 dBm, ignoring this NVS setting).
+  NimBLEDevice::setPower(b.settings.tx_power);
 
   // Bump default ATT MTU to 247 (244-byte payload). The default is 23
   // (20-byte payload), which fragments every JSON status read into 3+ ATT
@@ -1200,7 +1275,7 @@ bool init() {
   // connections. The actual PHY upgrade happens after the link is up,
   // via a PHY update request in onConnect — discovery still uses 1M.
   // Bit masks: 0x01 = 1M, 0x02 = 2M, 0x04 = Coded.
-  if (g_settings.long_range_mode) {
+  if (b.settings.long_range_mode) {
     NimBLEDevice::setDefaultPhy(0x04, 0x04);
   } else {
     NimBLEDevice::setDefaultPhy(0x01 | 0x02, 0x01 | 0x02);
@@ -1214,75 +1289,76 @@ bool init() {
   // request (out of GATT resources / not initialized). Bail out cleanly rather
   // than dereferencing null on the createService() line below, and release the
   // stack we just brought up so a later retry starts from a clean slate.
-  g_server = NimBLEDevice::createServer();
-  if (!g_server) {
+  NimBLEServer* server = NimBLEDevice::createServer();
+  if (!server) {
     log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE createServer null", nullptr);
-    snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
-             "NimBLE createServer failed (host stack rejected)");
-    set_state(BT_DISABLED);
+    set_init_fail_reason("%s", "NimBLE createServer failed (host stack rejected)");
     NimBLEDevice::deinit(true);
     return false;
   }
   // NimBLE keeps one set of server callbacks per server, and on the FULL
-  // profile Opera (ble_opera.h) wants that server's too. Both hand theirs to
-  // the one dispatcher (ble_server_dispatch.h, sweep F171), which gives
-  // these every callback, a passkey to confirm included, in whichever order
-  // the two inits run. Before F171 ble_opera::init() replaced them with its
-  // own, and the library's default answered every Numeric Comparison yes.
-  ble_server_dispatch::install(g_server, ble_server_dispatch::kPairing, &g_server_callbacks);
+  // profile Opera (ble_opera.h) wants that server's too. Both go through the
+  // one dispatcher (ble_server_dispatch.h, sweep F171). Here it only goes on
+  // the server, with no pairing owner yet: until the loop task takes this
+  // bring-up (adopt_init_result(), sweep F167) and hands it the channel's
+  // callbacks, a Numeric Comparison is answered no and the passkey shown is
+  // one nobody sees, never NimBLE's default yes and 123456. So no event of
+  // the channel's server callbacks reaches the loop task before it holds
+  // the state they apply to.
+  ble_server_dispatch::attach(server);
 
   // Create service
-  g_service = g_server->createService(SERVICE_UUID);
+  NimBLEService* service = server->createService(SERVICE_UUID);
 
   // Create characteristics
-  g_status_char = g_service->createCharacteristic(
+  NimBLECharacteristic* status_char = service->createCharacteristic(
     STATUS_CHAR_UUID,
     NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
   );
-  g_status_char->setCallbacks(&g_char_callbacks);
+  status_char->setCallbacks(&g_char_callbacks);
 
-  g_command_char = g_service->createCharacteristic(
+  NimBLECharacteristic* command_char = service->createCharacteristic(
     COMMAND_CHAR_UUID,
     NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
   );
-  g_command_char->setCallbacks(&g_char_callbacks);
+  command_char->setCallbacks(&g_char_callbacks);
 
-  g_notify_char = g_service->createCharacteristic(
+  NimBLECharacteristic* notify_char = service->createCharacteristic(
     NOTIFY_CHAR_UUID,
     NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::INDICATE
   );
 
   // Start service
-  g_service->start();
+  service->start();
 
   // Register the OTA service on the same NimBLE server. It exposes its own
   // GATT service UUID so peers can discover and skip it independently of
   // the primary control surface, and so a half-completed OTA can't disturb
   // the control characteristics.
-  ble_ota::init(g_server, SECURACV_OTA_RELEASE_PUBKEY);
+  ble_ota::init(server, SECURACV_OTA_RELEASE_PUBKEY);
 
   // Offline console: read-only JSON snapshot of device state. Requires a
   // bonded link (the characteristic carries READ_ENC + READ_AUTHEN), so
   // a paired phone can pull `/api/status`-shaped data even when WiFi is
   // down.
-  ble_console::init(g_server);
+  ble_console::init(server);
 
   // BLE WiFi provisioning: scan + creds + state characteristics so a
   // paired phone can configure home WiFi without the captive AP. The
   // creds characteristic is write-only and rate-limited; reads of the
   // others require READ_ENC + READ_AUTHEN.
-  ble_provision::init(g_server);
+  ble_provision::init(server);
 
   // Read-only health-log export. Bonded peers can paginate through the
   // ring buffer over BLE for forensic recovery / on-site triage when
   // canary.local is unreachable.
-  ble_log_export::init(g_server);
+  ble_log_export::init(server);
 
   // Read-only witness-chain export. Surfaces the chain head + last
   // signed record so a paired phone can independently verify the
   // device's claimed chain state with the device's pubkey, no WiFi
   // path required.
-  ble_witness_export::init(g_server);
+  ble_witness_export::init(server);
 
   // SIG Standard Profiles — Device Information Service (manufacturer,
   // model, fw/hw/sw revision, serial), Battery Service, GAP Appearance.
@@ -1299,7 +1375,7 @@ bool init() {
       serial_for_dis = serial_fallback;
     }
     ble_standard_profiles::register_all(
-      g_server,
+      server,
       g_meta_manufacturer,
       g_meta_model,
       serial_for_dis,
@@ -1310,24 +1386,87 @@ bool init() {
   }
 
   // Set up advertising
-  g_advertising = NimBLEDevice::getAdvertising();
-  g_advertising->addServiceUUID(SERVICE_UUID);
+  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+  advertising->addServiceUUID(SERVICE_UUID);
   // Note: setScanResponse(bool) is deprecated in NimBLE 2.x
   // Scan response is automatically enabled when service UUIDs are added
   // Connection params are managed internally by NimBLE
 
   // Set up scanner
-  g_scanner = NimBLEDevice::getScan();
-  g_scanner->setScanCallbacks(&g_scan_callbacks);
-  g_scanner->setActiveScan(true);
-  g_scanner->setInterval(SCAN_INTERVAL_MS);
-  g_scanner->setWindow(SCAN_WINDOW_MS);
+  NimBLEScan* scanner = NimBLEDevice::getScan();
+  scanner->setScanCallbacks(&g_scan_callbacks);
+  scanner->setActiveScan(true);
+  scanner->setInterval(SCAN_INTERVAL_MS);
+  scanner->setWindow(SCAN_WINDOW_MS);
 
+  // Bring up the always-on presence sensor. The user-triggered scan in
+  // start_scan() preempts this; resume_continuous_scan() unwinds the swap
+  // when the user scan ends. ble_presence is read-only (no advertise, no
+  // connect, just listen) so it adds no attack surface beyond what we
+  // already have for legitimate scan results. (Before the hand-over below,
+  // so the loop task, which pauses and resumes it, finds it up.)
+  ble_presence::init();
+  ble_presence::start();
+
+  // Hand the result to the loop task (sweep F167): the objects, then the
+  // publish, the last write to g_bringup; then the flag other tasks read.
+  // The auto-advertise and the paired list's rebuild are the loop task's
+  // (adopt_init_result()): advertising starts on its next pass, which runs
+  // before any command a handler submits after this returns.
+  b.server = server;
+  b.service = service;
+  b.status_char = status_char;
+  b.command_char = command_char;
+  b.notify_char = notify_char;
+  b.advertising = advertising;
+  b.scanner = scanner;
+  __atomic_store_n(&g_bringup_ready, true, __ATOMIC_RELEASE);
+  set_init_fail_reason(nullptr);
+  __atomic_store_n(&g_stack_up, true, __ATOMIC_RELEASE);
+
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE initialized", b.settings.device_name);
+  return true;
+}
+
+// Whether init() is under way on some task (its latch is held): the loop
+// task's view reads "initializing" meanwhile, as GET /api/bluetooth did
+// when init() set the state itself.
+static bool init_running() {
+  return __atomic_load_n(&g_init_in_progress, __ATOMIC_ACQUIRE);
+}
+
+// The loop task, first in every update() pass (sweep F167): takes the
+// bring-up's result once it is published, and does there what init() used
+// to do on its own task: the settings and the paired list become the loop
+// task's, with the NimBLE objects; a list saved before F172 is rebuilt from
+// the bond store (it needs the stack up, which it now is); the channel's
+// server callbacks go to the dispatcher, so the stack's events reach this
+// task from here on and never before; and with auto-advertise on,
+// Bluetooth turns on and advertises. Before any command of the pass, so a
+// handler that brought the stack up (bring_up()) and then submitted finds
+// it taken.
+static void adopt_init_result() {
+  if (g_initialized || !__atomic_load_n(&g_bringup_ready, __ATOMIC_ACQUIRE)) return;
+  const Bringup& b = g_bringup;
+  g_settings = b.settings;
+  memcpy(g_paired_devices, b.paired, sizeof(g_paired_devices));
+  g_paired_count = b.paired_count;
+  g_paired_by_identity = b.paired_by_identity;
+  g_server = b.server;
+  g_service = b.service;
+  g_status_char = b.status_char;
+  g_command_char = b.command_char;
+  g_notify_char = b.notify_char;
+  g_advertising = b.advertising;
+  g_scanner = b.scanner;
   g_initialized = true;
-  g_init_fail_reason[0] = '\0';
-  set_state(BT_IDLE);
+  set_state(rest_state());
 
-  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE initialized", g_settings.device_name);
+  // A paired list saved before sweep F172 is rebuilt from the bond store
+  // (once; it needs the stack up).
+  migrate_paired_devices();
+
+  ble_server_dispatch::install(g_server, ble_server_dispatch::kPairing, &g_server_callbacks);
 
   // Auto-start advertising if enabled. NOTE: init() is only ever called
   // AFTER the provisioning join window has cleared (the loop's
@@ -1337,16 +1476,6 @@ bool init() {
     enable();
     start_advertising();
   }
-
-  // Bring up the always-on presence sensor. The user-triggered scan in
-  // start_scan() preempts this; resume_continuous_scan() unwinds the swap
-  // when the user scan ends. ble_presence is read-only (no advertise, no
-  // connect, just listen) so it adds no attack surface beyond what we
-  // already have for legitimate scan results.
-  ble_presence::init();
-  ble_presence::start();
-
-  return true;
 }
 
 [[maybe_unused]] static void deinit() {
@@ -1371,17 +1500,22 @@ bool init() {
   g_scanner = nullptr;
 
   g_initialized = false;
+  __atomic_store_n(&g_bringup_ready, false, __ATOMIC_RELEASE);
+  __atomic_store_n(&g_stack_up, false, __ATOMIC_RELEASE);
   set_state(BT_DISABLED);
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE deinitialized", nullptr);
 }
 
+// Any task: whether the stack is up and handed over (sweep F167). The loop
+// task takes it on its next pass (g_initialized, its own).
 bool is_initialized() {
-  return g_initialized;
+  return __atomic_load_n(&g_stack_up, __ATOMIC_ACQUIRE);
 }
 
+// Any task: the published refusal (sweep F167), whole.
 const char* init_fail_reason() {
-  return g_init_fail_reason;
+  return __atomic_load_n(&g_init_fail_reason, __ATOMIC_ACQUIRE);
 }
 
 void set_device_metadata(const char* fw_revision, const char* serial) {
@@ -1469,7 +1603,9 @@ static void stop_advertising() {
 }
 
 bool is_advertising() {
-  return g_advertising && g_advertising->isAdvertising();
+  // Any task (the self-test): NimBLE's own state, through its own object
+  // once the stack is up, not the loop task's g_advertising (sweep F167).
+  return is_initialized() && NimBLEDevice::getAdvertising()->isAdvertising();
 }
 
 static bool start_scan(uint32_t duration_ms) {
@@ -1908,7 +2044,9 @@ static void publish_status_view() {
   StatusView v;
   memset(&v, 0, sizeof(v));
   BluetoothStatus& status = v.status;
-  status.state = g_state;
+  // "initializing" while init() runs on its own task and its result is not
+  // taken yet (sweep F167: init() no longer sets the state itself).
+  status.state = (!g_initialized && init_running()) ? BT_INITIALIZING : g_state;
   status.enabled = g_settings.enabled;
   status.advertising = is_advertising();
   status.scanning = g_scanning;
@@ -2184,6 +2322,11 @@ static void log_drops(uint32_t dropped, DropLog& log, LogLevel level, const char
 }
 
 void update() {
+  // The bring-up's result, once init() has published it (sweep F167): the
+  // settings, the paired list and the stack's objects become this task's
+  // before anything below reads them, and the channel's server callbacks
+  // reach the stack only from here on.
+  adopt_init_result();
   // What the NimBLE host task reported since the last pass (sweep F143),
   // then the owner's commands (F111), both before the early return below:
   // a link that ends after Bluetooth is turned off still ends here, and a
