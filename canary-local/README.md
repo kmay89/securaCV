@@ -89,7 +89,9 @@ canary-local/
     web/bench.js        the power plane: cable, battery, switch, straps,
                         hardwired LEDs, ROM banners (DOM-free, tested)
     web/harness.html    bare oscilloscope page (dev + CI boot test);
-                        ?rotation=0..3 boots the dash glass turned (F184)
+                        ?rotation=0..3 boots the dash or the nightlight
+                        glass turned (F184, F204); ?timescale= sets the
+                        emulated clock's speed from power-on (F206)
     test/               native checks of emulator code (g++, no emsdk)
     dist/               committed artifacts + build stamps (*.meta.json)
 ```
@@ -955,11 +957,18 @@ fails on byte drift.
   both failures, Connecting, Success, the face) keeps every line on the
   glass, none cut and, where it settles, inked where the firmware says; the
   join QR stands upright (its finder patterns); and every frame is on one
-  glass. It walks the portal again on the dash glass turned portrait
-  (`?rotation=1`, 480x800, F184): the first frame already turned, and the QR
-  card and halo where `onboard_layout.h`'s stack seats them, the halo's
-  stroke inked where its circle says (`tests/onboard_glass.mjs`). The splash
-  is not read.
+  glass. It walks the portal again on each turned glass
+  (`tests/turned_glass.mjs` reads them from the sources): the dash turned
+  portrait (`?rotation=1`, 480x800, F184) and the nightlight stood on its
+  edge (320x180, F204, once its dist bundle is committed). There the first
+  frame is already turned; the splash is read from power-on on a clock slowed
+  to half speed (`?timescale=0.5`, F206): every line on the glass and none
+  cut, the bird clear of every line, and the bird and every line the first
+  meeting types seen whole; and the QR card and halo stand where
+  `onboard_layout.h`'s stack seats them, the halo's stroke inked where its
+  circle says (`tests/onboard_glass.mjs`), with the nightlight's card corners
+  held inside the stroke. `tests/boot_probe.mjs` boots each turned glass too
+  (its size, every frame on it, the face's bird).
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /

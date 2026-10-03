@@ -49,25 +49,30 @@
 //     top-left, top-right and bottom-left (qrUpright: a glass drawn mirrored,
 //     flipped or upside down moves one to bottom-right). Every frame the
 //     firmware drew is on one glass (framesOnGlass, off the harness's log of
-//     announced shapes). The splash is not read (the walk starts at the
-//     first-boot line).
-//     The same walk runs again on a turned glass (F184): the dash flavor
-//     booted with a saved portrait rotation (?rotation=1, staged in its
-//     settings flash before power-on), so main.cpp turns the glass before the
-//     splash and the scenes run on the 480x800 canvas a portrait dash shows
-//     (F156; the panel and the turn read from build.sh's pin map and
-//     glass_settings.h). Every check above holds there too, and more: the
-//     firmware's first frame was already turned (so the splash ran turned),
+//     announced shapes). A native walk's reads start at the first-boot line.
+//     The same walk runs again on each turned glass (F184, F204), read from
+//     the sources by turned_glass.mjs: the dash booted with a saved portrait
+//     rotation (?rotation=1, staged in its settings flash before power-on), so
+//     main.cpp turns the glass before the splash and the scenes run on the
+//     480x800 canvas a portrait dash shows (F156); and the nightlight booted
+//     with a saved landscape one (?rotation=1, staged in its own scv-nl key),
+//     so main.cpp turns its panel in hardware and the scenes run on 320x180
+//     (F157) — walked once its dist bundle is committed. Every check above
+//     holds there too, and more: the firmware's first frame was already
+//     turned; the splash itself is read (F206), from that first frame to the
+//     first-boot line on a clock slowed to half speed from power-on
+//     (?timescale=): every read on the turned glass, every line on it and
+//     none cut, the bird clear of every line (birdPerch), and the run must
+//     have seen the bird and every line kHello types whole (splashCoverage);
 //     the glass is the turned size, and on the Join scene the QR card and
 //     the halo stand where onboard_layout.h's stack seats them
 //     (onboardJoin; cardAtLayout within the anti-aliased edge, haloAtLayout
 //     exactly), the halo's stroke is inked on the glass where its circle
 //     says and nothing just outside it (haloInked), and the card stands over
-//     the halo's center with its sides inside the stroke (cardInHalo; its
-//     corners reach past the 800 px glass's ring, F155, and are printed, not
-//     held). The 320x180 landscape nightlight is not walked: no emulator
-//     flavor builds the nightlight. --walk native|turned runs one kind of
-//     walk only.
+//     the halo's center with its sides inside the stroke (cardInHalo; on the
+//     dash its corners reach past the 800 px glass's ring, F155, and are
+//     printed, not held; on the nightlight they are held inside the stroke,
+//     F157). --walk native|turned runs one kind of walk only.
 //  2. fleet.html, the watch sheet, "Try it": the same walk through the phone
 //     the Lab shows, with a securitypolicyviolation listener installed and the
 //     captive <iframe srcdoc> checked for the firmware's own styling (its
