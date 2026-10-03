@@ -173,6 +173,7 @@ CI:           firmware.yml "CSI Sketch Copy Sync", via check_csi_sync.sh
 
 from __future__ import annotations
 
+import functools
 import re
 import sys
 from pathlib import Path
@@ -227,6 +228,13 @@ def blank_comments_and_strings(src: str) -> str:
 def bodies(code: str, signature: str) -> list[tuple[int, int]]:
     """(start, end) of the body of every definition matching `signature`
     (a regex that ends just before the opening brace), braces excluded."""
+    return list(_body_spans(code, signature))
+
+
+# The self-tests re-check the same unchanged texts once per mutation: scan
+# each (text, signature) once. A fresh list goes back to every caller.
+@functools.lru_cache(maxsize=4096)
+def _body_spans(code: str, signature: str) -> tuple[tuple[int, int], ...]:
     spans = []
     for m in re.finditer(signature + r"\s*\{", code):
         open_at = m.end() - 1
@@ -239,7 +247,7 @@ def bodies(code: str, signature: str) -> list[tuple[int, int]]:
                 if depth == 0:
                     spans.append((open_at + 1, j))
                     break
-    return spans
+    return tuple(spans)
 
 
 def top_level_terms(cond: str, op: str) -> list[str]:

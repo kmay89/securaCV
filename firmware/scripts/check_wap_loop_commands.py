@@ -499,6 +499,11 @@ def named_bodies(code: str) -> list[tuple[str, int, int]]:
     """(name, start, end) of every function definition's body in `code`: a
     name, its parameter list, then `{`, after a return type (an identifier,
     `*`, `&`, `>` or a `::` qualifier ends what precedes the name)."""
+    return list(_named_bodies(code))
+
+
+@functools.lru_cache(maxsize=1024)
+def _named_bodies(code: str) -> tuple[tuple[str, int, int], ...]:
     out = []
     for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\(", code):
         name = m.group(1)
@@ -517,7 +522,7 @@ def named_bodies(code: str) -> list[tuple[str, int, int]]:
         end = close_brace(code, open_at)
         if end > 0:
             out.append((name, open_at + 1, end))
-    return out
+    return tuple(out)
 
 
 def enclosing_function(spans: list[tuple[str, int, int]], pos: int) -> str | None:
@@ -973,12 +978,17 @@ def call_sites(c: str, name: str) -> tuple[int, ...]:
     return tuple(out)
 
 
+@functools.lru_cache(maxsize=4096)
+def names_csi_mqtt_namespace(c: str) -> bool:
+    return re.search(r"\busing\s+namespace\s+csi_mqtt\b", c) is not None
+
+
 def check_mqtt_sketch(ino: str, others: dict[str, str], errors: list[str]) -> None:
     files = dict(others)
     files[INO] = ino
     code = {name: blank_comments_and_strings(src) for name, src in files.items()}
     for name, c in code.items():
-        if re.search(r"\busing\s+namespace\s+csi_mqtt\b", c):
+        if names_csi_mqtt_namespace(c):
             errors.append(f"{name}: `using namespace csi_mqtt` hides the bridge's callers from this "
                           "check — call it qualified")
     ino_code = code[INO]
@@ -1157,6 +1167,18 @@ def check_channel_internal(tag: str, ns: str, h_name: str, h_src: str, cpp_name:
                            mutators: tuple[str, ...], internal: dict[str, tuple[str, ...]],
                            errors: list[str]) -> None:
     """Rules C1, C2 for one channel."""
+    errors.extend(channel_internal_findings(tag, ns, h_name, h_src, cpp_name, cpp_src, mutators,
+                                            tuple(sorted(internal.items()))))
+
+
+# Pure in its arguments, and most self-test mutations leave both of a
+# channel's files as they were: answer those from the first run.
+@functools.lru_cache(maxsize=1024)
+def channel_internal_findings(tag: str, ns: str, h_name: str, h_src: str, cpp_name: str,
+                              cpp_src: str, mutators: tuple[str, ...],
+                              internal_items: tuple[tuple[str, tuple[str, ...]], ...]) -> tuple[str, ...]:
+    internal = dict(internal_items)
+    errors: list[str] = []
     hcode = namespace_block(blank_comments_and_strings(h_src), ns)
     for fn in mutators:
         if re.search(r"(?<![\w:.>])" + fn + r"\s*\(", hcode):
@@ -1216,6 +1238,7 @@ def check_channel_internal(tag: str, ns: str, h_name: str, h_src: str, cpp_name:
                 errors.append(f"{cpp_name}: {where}() calls init() — bringing the NimBLE stack up "
                               "can block past the loop task's watchdog, so no command does it; the "
                               "bring-up worker and a handler's bring_up() do (F111)")
+    return tuple(errors)
 
 
 @functools.lru_cache(maxsize=512)
@@ -2224,6 +2247,7 @@ BT_JS_READS = (
 )
 
 
+@functools.lru_cache(maxsize=1024)
 def js_function_body(src: str, name: str) -> str | None:
     m = re.search(r"\bfunction\s+" + name + r"\s*\([^)]*\)\s*\{", src)
     if m is None:
@@ -2342,20 +2366,38 @@ BT_DISPATCH_OWNERS = (
 CLASS_BASES_RE = r"\b(?:class|struct)\s+(\w+)\s*(?:final\s*)?:\s*([^{;()]+)\{"
 
 
+# BD1 reads every file of the sketch on every self-test mutation, and a
+# mutation changes one file: scan each distinct (blanked) text once.
+@functools.lru_cache(maxsize=4096)
+def class_bases_in(code: str) -> tuple[tuple[str, frozenset[str]], ...]:
+    """Each class or struct `code` declares with bases, and the bases' names
+    (each by its last `::` part), in declaration order."""
+    out = []
+    for m in re.finditer(CLASS_BASES_RE, code):
+        names = set()
+        for part in m.group(2).split(","):
+            words = [w for w in re.findall(r"[\w:]+", part)
+                     if w not in ("public", "protected", "private", "virtual")]
+            if words:
+                names.add(words[-1].split("::")[-1])
+        out.append((m.group(1), frozenset(names)))
+    return tuple(out)
+
+
+@functools.lru_cache(maxsize=None)
+def instances_in(code: str, cls: str) -> frozenset[str]:
+    """The objects of class `cls` that `code` declares (not pointers)."""
+    return frozenset(re.findall(r"\b" + cls + r"\s+(\w+)\s*(?:;|\{|=|\()", code))
+
+
 def derived_classes(blanked: dict[str, str], root: str) -> set[str]:
     """`root` and every class of the sketch derived from it, through any
     number of steps (a class derived from OperaServerCallbacks is a server
     callbacks class too). A base is named by its last `::` part."""
     bases: dict[str, set[str]] = {}
     for code in blanked.values():
-        for m in re.finditer(CLASS_BASES_RE, code):
-            names = set()
-            for part in m.group(2).split(","):
-                words = [w for w in re.findall(r"[\w:]+", part)
-                         if w not in ("public", "protected", "private", "virtual")]
-                if words:
-                    names.add(words[-1].split("::")[-1])
-            bases.setdefault(m.group(1), set()).update(names)
+        for cls, names in class_bases_in(code):
+            bases.setdefault(cls, set()).update(names)
     out = {root}
     grew = True
     while grew:
@@ -2372,8 +2414,24 @@ def instances_of(blanked: dict[str, str], classes: set[str]) -> set[str]:
     out = set()
     for code in blanked.values():
         for cls in classes:
-            out.update(re.findall(r"\b" + cls + r"\s+(\w+)\s*(?:;|\{|=|\()", code))
+            out |= instances_in(code, cls)
     return out
+
+
+@functools.lru_cache(maxsize=4096)
+def set_callbacks_firsts(code: str) -> tuple[str, ...]:
+    """The first argument of each `setCallbacks(` call in `code`, squashed."""
+    out = []
+    for m in re.finditer(r"\bsetCallbacks\s*\(", code):
+        close = matching_paren(code, m.end() - 1)
+        arg = squash(code[m.end():close]) if close > 0 else ""
+        out.append(arg.split(",")[0])
+    return tuple(out)
+
+
+@functools.lru_cache(maxsize=4096)
+def role_mentions(code: str, role: str) -> int:
+    return len(re.findall(r"\bble_server_dispatch::" + role + r"\b", code))
 
 
 def check_bluetooth_dispatch(files: dict[str, str], errors: list[str]) -> None:
@@ -2391,10 +2449,7 @@ def check_bluetooth_dispatch(files: dict[str, str], errors: list[str]) -> None:
     # its defaultCallbacks, whose onConfirmPassKey answers yes (the F171
     # defect by another spelling; the F171 review).
     for path, code in blanked.items():
-        for m in re.finditer(r"\bsetCallbacks\s*\(", code):
-            close = matching_paren(code, m.end() - 1)
-            arg = squash(code[m.end():close]) if close > 0 else ""
-            first = arg.split(",")[0]
+        for first in set_callbacks_firsts(code):
             if path == BT_DISPATCH_H and first == "&g_dispatcher":
                 continue
             name = re.fullmatch(r"&?(\w+)", first)
@@ -2443,7 +2498,7 @@ def check_bluetooth_dispatch(files: dict[str, str], errors: list[str]) -> None:
         if path == BT_DISPATCH_H:
             continue
         for role in ("kPairing", "kLink"):
-            n = len(re.findall(r"\bble_server_dispatch::" + role + r"\b", code))
+            n = role_mentions(code, role)
             owns = any(p == path and role in c for p, _sig, c in BT_DISPATCH_OWNERS)
             if n != (1 if owns else 0):
                 errors.append(f"{path}: names ble_server_dispatch::{role} {n} time(s) — each role "
