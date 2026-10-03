@@ -374,9 +374,15 @@ BV3. The Bluetooth status routes read only what the loop task published
 BD1. One set of NimBLE server callbacks, two owners (F171). NimBLE keeps one
      callbacks pointer per server, and on the FULL profile Opera's
      `setCallbacks()` replaced the pairing channel's, so the library's
-     default answered every Numeric Comparison yes. In the sketch, no file
-     hands an object of a class derived from `NimBLEServerCallbacks` to
-     `setCallbacks(` (by address, by name or new): each owner hands it to
+     default answered every Numeric Comparison yes. In the sketch, every
+     `setCallbacks(` but the dispatcher's own hands over an object of a
+     class derived (in any number of steps) from
+     `NimBLECharacteristicCallbacks`, by address, by name or new: never a
+     server callbacks object (of any class derived from
+     `NimBLEServerCallbacks`, however many steps down), a pointer variable,
+     or `nullptr` / `NULL` / `0`, which put NimBLE's default server
+     callbacks back (the F171 review). Each owner hands its server
+     callbacks to
      `ble_server_dispatch::install(`, `bluetooth_channel.cpp`'s `init()` as
      `kPairing` (`&g_server_callbacks`) and `ble_opera.h`'s `init()` as
      `kLink` (`&g_serverCallbacks`), each once, and no other file names a
@@ -1035,7 +1041,9 @@ BT_INTERNAL = {
     "clear_scan_results": ("start_scan",),
     "cancel_pairing": ("update", "reject_pairing",
                        "disable"),   # F143 review: turning Bluetooth off ends a pairing first
-    "disconnect": ("deinit", "disable", "handle_inactivity_timeout"),
+    # (The inactivity timeout drops only the recorded link since the F171
+    # review: every link was its reach on FULL, Opera's clients included.)
+    "disconnect": ("deinit", "disable"),
 }
 BT_HANDLERS = ("handle_bluetooth_enable", "handle_bluetooth_disable",
                "handle_bluetooth_advertise_start", "handle_bluetooth_advertise_stop",
@@ -2330,33 +2338,86 @@ BT_DISPATCH_OWNERS = (
     (BLE_OPERA_H, SIG_OPERA_INIT,
      "ble_server_dispatch::install(g_pServer,ble_server_dispatch::kLink,&g_serverCallbacks);"),
 )
-SERVER_CB_CLASS_RE = r"\bclass\s+(\w+)\s*(?:final\s*)?:\s*(?:public\s+)?NimBLEServerCallbacks\b"
+# A class or struct and its bases (`class X final : public A, private B {`).
+CLASS_BASES_RE = r"\b(?:class|struct)\s+(\w+)\s*(?:final\s*)?:\s*([^{;()]+)\{"
+
+
+def derived_classes(blanked: dict[str, str], root: str) -> set[str]:
+    """`root` and every class of the sketch derived from it, through any
+    number of steps (a class derived from OperaServerCallbacks is a server
+    callbacks class too). A base is named by its last `::` part."""
+    bases: dict[str, set[str]] = {}
+    for code in blanked.values():
+        for m in re.finditer(CLASS_BASES_RE, code):
+            names = set()
+            for part in m.group(2).split(","):
+                words = [w for w in re.findall(r"[\w:]+", part)
+                         if w not in ("public", "protected", "private", "virtual")]
+                if words:
+                    names.add(words[-1].split("::")[-1])
+            bases.setdefault(m.group(1), set()).update(names)
+    out = {root}
+    grew = True
+    while grew:
+        grew = False
+        for cls, bs in bases.items():
+            if cls not in out and bs & out:
+                out.add(cls)
+                grew = True
+    return out
+
+
+def instances_of(blanked: dict[str, str], classes: set[str]) -> set[str]:
+    """The objects the sketch declares of one of `classes` (not pointers)."""
+    out = set()
+    for code in blanked.values():
+        for cls in classes:
+            out.update(re.findall(r"\b" + cls + r"\s+(\w+)\s*(?:;|\{|=|\()", code))
+    return out
 
 
 def check_bluetooth_dispatch(files: dict[str, str], errors: list[str]) -> None:
     """Rule BD1 (F171)."""
     blanked = {path: blank_comments_and_strings(src) for path, src in files.items()}
-    classes = set()
-    for code in blanked.values():
-        classes.update(re.findall(SERVER_CB_CLASS_RE, code))
-    instances = set()
-    for code in blanked.values():
-        for cls in classes:
-            instances.update(re.findall(r"\b" + cls + r"\s+(\w+)\s*(?:;|\{|=|\()", code))
+    server_classes = derived_classes(blanked, "NimBLEServerCallbacks")
+    char_classes = derived_classes(blanked, "NimBLECharacteristicCallbacks")
+    char_instances = instances_of(blanked, char_classes)
+    # Every other setCallbacks( in the sketch is a characteristic's: its one
+    # argument a characteristic callbacks object the sketch declares (by
+    # address or name) or makes (new). Anything else is refused, whatever
+    # the receiver: a server callbacks object (an owner's own, a derived
+    # class's, a bare NimBLEServerCallbacks), a pointer variable the check
+    # cannot follow, and nullptr / NULL / 0, which put NimBLEServer back on
+    # its defaultCallbacks, whose onConfirmPassKey answers yes (the F171
+    # defect by another spelling; the F171 review).
     for path, code in blanked.items():
         for m in re.finditer(r"\bsetCallbacks\s*\(", code):
             close = matching_paren(code, m.end() - 1)
             arg = squash(code[m.end():close]) if close > 0 else ""
             first = arg.split(",")[0]
-            name = first.lstrip("&*")
-            new = re.match(r"new(\w+)", first)
             if path == BT_DISPATCH_H and first == "&g_dispatcher":
                 continue
-            if name in instances or (new is not None and new.group(1) in classes):
-                errors.append(f"{path}: setCallbacks({first}) installs server callbacks of its own — "
-                              "NimBLE keeps one pointer per server, so it replaces the other owner's "
-                              "(on FULL the library's default then answers every passkey yes): hand "
-                              "them to ble_server_dispatch::install() (F171)")
+            name = re.fullmatch(r"&?(\w+)", first)
+            new = re.fullmatch(r"new(\w+)(?:\(.*\)|\{.*\})?", first)
+            if name is not None and name.group(1) in char_instances:
+                continue
+            if new is not None and new.group(1) in char_classes:
+                continue
+            if first in ("nullptr", "NULL", "0"):
+                why = ("puts NimBLE's default server callbacks back, whose onConfirmPassKey answers "
+                       "every passkey yes")
+            elif (name is not None and name.group(1) in instances_of(blanked, server_classes)) or \
+                    (new is not None and new.group(1) in server_classes):
+                why = ("installs server callbacks of its own — NimBLE keeps one pointer per server, so "
+                       "it replaces the other owner's (on FULL the library's default then answers "
+                       "every passkey yes)")
+            else:
+                why = ("hands over something that is not one of the sketch's characteristic callbacks "
+                       "objects (a pointer variable, or an object the check cannot type), which could "
+                       "be the server's")
+            errors.append(f"{path}: setCallbacks({first}) {why}: server callbacks go to "
+                          "ble_server_dispatch::install(), and a characteristic's take an object of a "
+                          "NimBLECharacteristicCallbacks class (F171)")
     if BT_DISPATCH_H not in files:
         errors.append(f"{BT_DISPATCH_H}: missing — the server callbacks' dispatcher (F171)")
         return
@@ -3251,6 +3312,33 @@ BV_MUTATIONS += [
                "class StatusServerCallbacks : public NimBLEServerCallbacks {};\n"
                "static StatusServerCallbacks g_status_server_callbacks;\n"
                "static void hook() { g_server->setCallbacks(&g_status_server_callbacks); }")),
+    # The F171 review's four misses, and the other spellings of a null.
+    ("the channel puts NimBLE's default server callbacks back (setCallbacks(nullptr))",
+     on_other(BT_CPP, SIG_BT_INIT,
+              r"(ble_server_dispatch::install\(g_server,\s*ble_server_dispatch::kPairing,\s*&g_server_callbacks\);)",
+              r"\1 g_server->setCallbacks(nullptr);")),
+    ("Opera puts the defaults back with NULL",
+     on_other(BLE_OPERA_H, SIG_OPERA_INIT,
+              r"(ble_server_dispatch::install\(g_pServer,\s*ble_server_dispatch::kLink,\s*&g_serverCallbacks\);)",
+              r"\1 g_pServer->setCallbacks(NULL);")),
+    ("a module puts the defaults back with 0",
+     raw_other(f"{SKETCH}/ble_status_api.h", "static NimBLEServer* g_server = nullptr;",
+               "static NimBLEServer* g_server = nullptr;\n"
+               "static void hook() { g_server->setCallbacks(0, false); }")),
+    ("Opera installs its server callbacks through a pointer variable",
+     on_other(BLE_OPERA_H, SIG_OPERA_INIT,
+              r"(ble_server_dispatch::install\(g_pServer,\s*ble_server_dispatch::kLink,\s*&g_serverCallbacks\);)",
+              r"\1 NimBLEServerCallbacks* cbp = &g_serverCallbacks; g_pServer->setCallbacks(cbp);")),
+    ("a module puts a bare NimBLEServerCallbacks on the server",
+     raw_other(f"{SKETCH}/ble_status_api.h", "static NimBLEServer* g_server = nullptr;",
+               "static NimBLEServer* g_server = nullptr;\n"
+               "static void hook() { NimBLEDevice::getServer()->setCallbacks(new NimBLEServerCallbacks()); }")),
+    ("a module installs an object of a class derived from Opera's",
+     raw_other(f"{SKETCH}/ble_status_api.h", "static NimBLEServer* g_server = nullptr;",
+               "static NimBLEServer* g_server = nullptr;\n"
+               "class StatusSub : public ble_opera::OperaServerCallbacks {};\n"
+               "static StatusSub g_status_sub;\n"
+               "static void hook() { g_server->setCallbacks(&g_status_sub); }")),
 ]
 MUTATIONS += BV_MUTATIONS
 

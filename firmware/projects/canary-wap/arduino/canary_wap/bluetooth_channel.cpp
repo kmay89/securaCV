@@ -1044,7 +1044,16 @@ static void handle_inactivity_timeout() {
   uint32_t inactive_ms = millis() - g_connection.last_activity_ms;
   if (inactive_ms >= g_settings.inactivity_timeout_ms) {
     log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Disconnecting due to inactivity", nullptr);
-    disconnect();
+    // The recorded link only, the one whose activity this measured (the
+    // F171 review). disconnect() drops every link on the server, and since
+    // F171 the channel sees the FULL profile's links too: a second link
+    // beside the recorded one (Opera's GATT client, a BLE OTA or
+    // provisioning session, whose characteristics post no activity here)
+    // was cut with it. On DEV no second link comes up (the channel stops
+    // advertising while connected), so nothing changes there.
+    if (g_server) {
+      g_server->disconnect(g_connection_handle);
+    }
   }
 }
 

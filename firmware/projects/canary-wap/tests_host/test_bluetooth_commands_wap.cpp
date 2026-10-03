@@ -2738,6 +2738,63 @@ void test_another_links_encryption_leaves_the_record() {
   std::printf("PASS another_links_encryption_leaves_the_record\n");
 }
 
+// How far the channel's per-link rules reach on FULL, where since F171 it
+// sees every link on the shared server: a phone's, and Opera's GATT
+// clients, a BLE OTA, provisioning or console session (whose
+// characteristics post no activity to the channel). The inactivity timeout
+// measures the recorded link and drops only it (the F171 review: it dropped
+// every link, so a second link was cut with an idle phone). The owner's
+// Disconnect drops every link, and Bluetooth off refuses every link (F173),
+// Opera's clients included: both stated, and pinned here.
+void test_full_profile_the_timeout_ends_the_recorded_link_only() {
+  boot();
+  opera_init();
+  const uint32_t opera_now = ble_opera::getConnectedNow();
+  NimBLEConnInfo client = link(7, 0xC7);                     // Opera's client, say
+  NimBLEConnInfo phone = link(8, 0xD8);
+  host_sim::server->peers = {7, 8};
+  host_sim::server->link_up(client);
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), client); });
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 8);
+  CHECK(ble_opera::getConnectedNow() == opera_now + 2);
+  host_sim::now_ms += bc::g_settings.inactivity_timeout_ms;
+  loop_pass();
+  CHECK(health_says("Disconnecting due to inactivity") == 1);
+  CHECK(host_sim::server->disconnected == std::vector<uint16_t>{8});
+
+  // The owner's Disconnect: every link on the server (the command's two
+  // calls, ahead of the still-idle record's timeout on the same pass).
+  host_sim::server->disconnected.clear();
+  CHECK(rest(cmd_of(bc::BT_CMD_DISCONNECT)).r.ok);
+  const std::vector<uint16_t>& dropped = host_sim::server->disconnected;
+  CHECK(dropped.size() >= 2 && dropped[0] == 7 && dropped[1] == 8);
+  std::printf("PASS full_profile_the_timeout_ends_the_recorded_link_only\n");
+}
+
+// Bluetooth off on FULL: Opera's advertising can still let a client in (a
+// NEW decision of this sweep), Opera counts it, and the channel drops it
+// (F173), whatever service it came for.
+void test_full_profile_off_refuses_every_link() {
+  boot();
+  opera_init();
+  CHECK(rest(cmd_of(bc::BT_CMD_DISABLE)).r.ok && !bc::is_enabled());
+  const uint32_t opera_total = ble_opera::getConnectionsTotal();
+  NimBLEConnInfo client = link(9, 0xC9);
+  host_sim::server->peers = {9};
+  host_sim::server->link_up(client);
+  host_sim::server->disconnected.clear();
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), client); });
+  CHECK(ble_opera::getConnectionsTotal() == opera_total + 1);
+  loop_pass();
+  CHECK(host_sim::server->disconnected == std::vector<uint16_t>{9});
+  CHECK(!bc::g_connection.connected && bc::g_state == bc::BT_DISABLED);
+  CHECK(health_says("BLE link refused: Bluetooth is off") == 1);
+  std::printf("PASS full_profile_off_refuses_every_link\n");
+}
+
 // ── The state is what runs (F170) ───────────────────────────────────────
 
 // What GET /api/bluetooth shows: the state and the advertising flag.
@@ -3037,6 +3094,9 @@ const Test kTests[] = {
     {"a_link_ends_on_full_into_advertising", test_a_link_ends_on_full_into_advertising},
     {"a_reconcile_leaves_a_live_record_alone", test_a_reconcile_leaves_a_live_record_alone},
     {"another_links_encryption_leaves_the_record", test_another_links_encryption_leaves_the_record},
+    {"full_profile_the_timeout_ends_the_recorded_link_only",
+     test_full_profile_the_timeout_ends_the_recorded_link_only},
+    {"full_profile_off_refuses_every_link", test_full_profile_off_refuses_every_link},
     {"a_bond_the_stack_keeps_keeps_its_entry", test_a_bond_the_stack_keeps_keeps_its_entry},
     {"a_remove_during_a_scan_ends_the_scan_first", test_a_remove_during_a_scan_ends_the_scan_first},
     {"full_profile_remove_brings_the_beacon_back", test_full_profile_remove_brings_the_beacon_back},
