@@ -619,6 +619,24 @@ void check_frame(Run& G, const char* scene, const Says& says) {
         "%s: the card is %d px at (%d, %d); the stack places %d at (%d, %d)",
         n, G.card->w, G.card->x1, G.card->y1, G.j.stack.card,
         pw / 2 - G.j.stack.card / 2 + halo.x, G.j.stack.card_top);
+  // What the emulator's onboarding probe reads off the firmware (F184):
+  // onboard_ui_join_layout() names the halo and the card the stack places,
+  // in every scene, and they are the boxes drawn.
+  OnboardJoinBoxes jb = {-1, -1, -1, -1, -1, -1};
+  CHECK(onboard_ui_join_layout(&jb) &&
+            jb.ring_x == pw / 2 - halo.d / 2 + halo.x &&
+            jb.ring_y == halo.top && jb.ring_d == halo.d &&
+            jb.ring_x == G.ring->x1 && jb.ring_y == G.ring->y1 &&
+            jb.card_x == pw / 2 - G.j.stack.card / 2 + halo.x &&
+            jb.card_y == G.j.stack.card_top &&
+            jb.card_side == G.j.stack.card && jb.card_x == G.card->x1 &&
+            jb.card_y == G.card->y1 && jb.card_side == G.card->w,
+        "%s: onboard_ui_join_layout() says halo %d at (%d, %d), card %d at "
+        "(%d, %d); the stack places halo %d at (%d, %d), card %d at (%d, %d)",
+        n, jb.ring_d, jb.ring_x, jb.ring_y, jb.card_side, jb.card_x,
+        jb.card_y, halo.d, pw / 2 - halo.d / 2 + halo.x, halo.top,
+        G.j.stack.card, pw / 2 - G.j.stack.card / 2 + halo.x,
+        G.j.stack.card_top);
   if (card_up) {
     const lv_obj_t* qr = G.card->children.empty() ? nullptr : G.card->children[0];
     const onboardlayout::CardSpec spec =

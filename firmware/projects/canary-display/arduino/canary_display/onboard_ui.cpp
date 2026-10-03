@@ -715,6 +715,19 @@ bool onboard_ui_bird_seat(int* x, int* y, int* side) {
   return true;
 }
 
+bool onboard_ui_join_layout(OnboardJoinBoxes* out) {
+  if (!s_scr || !s_ring || !s_qr_card || out == nullptr) return false;
+  // lv_obj_align(TOP_MID, s_halo.x, top) on the panel, as onboard_ui_create()
+  // seats both (the content layer the card rides is the whole panel).
+  out->ring_x = s_glass.w / 2 - s_halo.d / 2 + s_halo.x;
+  out->ring_y = s_halo.top;
+  out->ring_d = s_halo.d;
+  out->card_x = s_glass.w / 2 - s_join.card / 2 + s_halo.x;
+  out->card_y = s_join.card_top;
+  out->card_side = s_join.card;
+  return true;
+}
+
 void onboard_ui_hint(const char* line, const char* narrow) {
   if (!s_hint) return;
   snprintf(s_hint_text, sizeof(s_hint_text), "%s", line ? line : "");

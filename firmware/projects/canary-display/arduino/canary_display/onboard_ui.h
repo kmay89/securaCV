@@ -56,4 +56,17 @@ void onboard_ui_finish();
 // The emulator's onboarding probe holds the drawn bird to it (F89).
 bool onboard_ui_bird_seat(int* x, int* y, int* side);
 
+// Where the Join scene's layout seats the halo and the QR card on this glass
+// (F184): each box's top-left on the panel and its side, as onboard_layout.h's
+// stack names them (small_join on small glass, wide_join on the 800x480
+// line) and onboard_ui_create() aligns them (TOP_MID, the halo's x offset).
+// The layout's answer, not LVGL's: the emulator's onboarding probe holds the
+// card it reads off the framebuffer and the arc LVGL laid out to it. False
+// while no onboarding screen is up.
+struct OnboardJoinBoxes {
+  int ring_x, ring_y, ring_d;     // the halo's box (the arc object's side)
+  int card_x, card_y, card_side;  // the QR card's box
+};
+bool onboard_ui_join_layout(OnboardJoinBoxes* out);
+
 }  // namespace canary::ui
