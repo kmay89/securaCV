@@ -8,10 +8,18 @@
 // which lands here and becomes RGBA pixels the page textures onto the
 // 3D device's screen. Backlight intent (day PWM ladder, 13-bit night
 // floor) is forwarded to JS so the on-screen glass really dims.
+//
+// A turned glass (F184): the panel keeps scanning its native landscape and
+// LVGL hands every flush in that frame, already turned by its software
+// rotation (lvgl_port_set_rotation: sw_rotate on the LVGL 8.4 this build
+// pins). The page's canvas is the glass as a person in front of it reads
+// it, so the framebuffer holds the TURNED frame — 480x800 for a portrait
+// dash — and the page reads it as it reads any other glass.
 #include "canary/hal/display.h"
 
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+#include <lvgl.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -32,10 +40,24 @@
 
 namespace {
 
-// RGBA8888 framebuffer shared with JS (browser-native byte order).
+// RGBA8888 framebuffer shared with JS (browser-native byte order), in the
+// frame the viewer sees: EMU_W x EMU_H, or turned (see glass_turn below).
 uint8_t* g_fb = nullptr;
 uint32_t g_flush_count = 0;   // dirty-region flushes since boot (teaching!)
 uint32_t g_dirty_serial = 0;  // bumped per flush; JS re-uploads on change
+
+#ifdef CD_FLAVOR_WATCH
+constexpr int kRoundMask = 1;
+#else
+constexpr int kRoundMask = 0;
+#endif
+
+// The quarter turns the framebuffer is held in (lv_disp_rot_t), and its
+// size in that frame. Landscape, the size every flavor always had, until
+// the firmware turns its glass.
+int g_turn = LV_DISP_ROT_NONE;
+int g_view_w = EMU_W;
+int g_view_h = EMU_H;
 
 // Touch state pushed by JS pointer events, drained by touch_read() each
 // loop pass — the same poll cadence the CST816S/GT911 get on hardware.
@@ -64,26 +86,86 @@ class EmuGFX : public Arduino_GFX {
 
 EmuGFX g_gfx;
 
+// The turn LVGL rendered this flush in: its software rotation, read off the
+// driver of the display being refreshed, so the framebuffer follows exactly
+// what LVGL did to the pixels (none, until lvgl_port_set_rotation turns the
+// dash glass). Outside a refresh (no flush comes from there today), the
+// default display — this build's only one.
+int lvgl_turn() {
+  lv_disp_t* d = _lv_refr_get_disp_refreshing();
+  if (d == nullptr) d = lv_disp_get_default();
+  if (d == nullptr || d->driver == nullptr || !d->driver->sw_rotate) {
+    return LV_DISP_ROT_NONE;
+  }
+  return (int)d->driver->rotated;
+}
+
+// The glass changed shape: hold the framebuffer in the new frame (cleared,
+// as the firmware repaints the whole canvas on a turn) and tell the page,
+// which sizes its canvas from js_display_ready.
+void glass_turn(int turn) {
+  g_turn = turn;
+  const bool side = turn == LV_DISP_ROT_90 || turn == LV_DISP_ROT_270;
+  g_view_w = side ? EMU_H : EMU_W;
+  g_view_h = side ? EMU_W : EMU_H;
+  for (size_t i = 0; i < (size_t)EMU_W * EMU_H; i++) {
+    g_fb[i * 4 + 0] = 0;
+    g_fb[i * 4 + 1] = 0;
+    g_fb[i * 4 + 2] = 0;
+    g_fb[i * 4 + 3] = 255;
+  }
+  js_display_ready(g_view_w, g_view_h, kRoundMask);
+}
+
+// A native panel pixel, where the viewer of the turned glass sees it: the
+// inverse of LVGL 8.4's draw_buf_rotate (lv_refr.c), which puts the logical
+// pixel (lx, ly) at native (ly, H-1-lx) for 90, (W-1-lx, H-1-ly) for 180 and
+// (W-1-ly, lx) for 270, W x H being the panel's native landscape.
+inline void native_to_view(int nx, int ny, int* vx, int* vy) {
+  switch (g_turn) {
+    case LV_DISP_ROT_90:  *vx = EMU_H - 1 - ny; *vy = nx;             break;
+    case LV_DISP_ROT_180: *vx = EMU_W - 1 - nx; *vy = EMU_H - 1 - ny; break;
+    case LV_DISP_ROT_270: *vx = ny;             *vy = EMU_W - 1 - nx; break;
+    default:              *vx = nx;             *vy = ny;             break;
+  }
+}
+
+// RGB565 (little-endian native, LV_COLOR_16_SWAP 0) → RGBA8888 with
+// low-bit replication so pure white is pure white.
+inline void put565(uint8_t* d, uint16_t c) {
+  const uint8_t r5 = (c >> 11) & 0x1F, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
+  d[0] = (uint8_t)((r5 << 3) | (r5 >> 2));
+  d[1] = (uint8_t)((g6 << 2) | (g6 >> 4));
+  d[2] = (uint8_t)((b5 << 3) | (b5 >> 2));
+  d[3] = 255;
+}
+
+// One flush, in the panel's native frame (x, y, w, h as LVGL handed it).
 inline void blit565(int16_t x, int16_t y, const uint16_t* src, int16_t w,
                     int16_t h) {
   if (!g_fb) return;
+  const int turn = lvgl_turn();
+  if (turn != g_turn) glass_turn(turn);
   for (int16_t row = 0; row < h; row++) {
     const int16_t fy = y + row;
     if (fy < 0 || fy >= EMU_H) continue;
     const uint16_t* s = src + (size_t)row * w;
-    uint8_t* d = g_fb + ((size_t)fy * EMU_W + x) * 4;
-    for (int16_t col = 0; col < w; col++) {
+    if (g_turn == LV_DISP_ROT_NONE) {
+      uint8_t* d = g_fb + ((size_t)fy * EMU_W + x) * 4;
+      for (int16_t col = 0; col < w; col++) {
+        const int16_t fx = x + col;
+        if (fx < 0 || fx >= EMU_W) { d += 4; s++; continue; }
+        put565(d, *s++);
+        d += 4;
+      }
+      continue;
+    }
+    for (int16_t col = 0; col < w; col++, s++) {
       const int16_t fx = x + col;
-      if (fx < 0 || fx >= EMU_W) { d += 4; s++; continue; }
-      const uint16_t c = *s++;
-      // RGB565 (little-endian native, LV_COLOR_16_SWAP 0) → RGBA8888 with
-      // low-bit replication so pure white is pure white.
-      const uint8_t r5 = (c >> 11) & 0x1F, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
-      d[0] = (uint8_t)((r5 << 3) | (r5 >> 2));
-      d[1] = (uint8_t)((g6 << 2) | (g6 >> 4));
-      d[2] = (uint8_t)((b5 << 3) | (b5 >> 2));
-      d[3] = 255;
-      d += 4;
+      if (fx < 0 || fx >= EMU_W) continue;
+      int vx = 0, vy = 0;
+      native_to_view(fx, fy, &vx, &vy);
+      put565(g_fb + ((size_t)vy * g_view_w + vx) * 4, *s);
     }
   }
 }
@@ -97,7 +179,7 @@ void Arduino_GFX::fillScreen(uint16_t color565) {
   for (int y = 0; y < EMU_H; y++) blit565(0, (int16_t)y, row, EMU_W, 1);
   g_flush_count++;
   g_dirty_serial++;
-  js_flush(0, 0, EMU_W, EMU_H, (int)g_dirty_serial);
+  js_flush(0, 0, g_view_w, g_view_h, (int)g_dirty_serial);
 }
 
 void Arduino_GFX::draw16bitRGBBitmap(int16_t x, int16_t y, uint16_t* bitmap,
@@ -118,11 +200,7 @@ bool display_init() {
     // Panel powers up dark, alpha opaque.
     for (size_t i = 0; i < (size_t)EMU_W * EMU_H; i++) g_fb[i * 4 + 3] = 255;
   }
-#ifdef CD_FLAVOR_WATCH
-  js_display_ready(EMU_W, EMU_H, 1);
-#else
-  js_display_ready(EMU_W, EMU_H, 0);
-#endif
+  js_display_ready(g_view_w, g_view_h, kRoundMask);
   return true;
 }
 
@@ -149,14 +227,24 @@ TouchSample touch_read() {
   return s;
 }
 
+#ifdef CD_FLAVOR_DASH
+// The page's finger lands on the canvas, and the canvas shows the glass as
+// its viewer sees it — turned with the firmware's rotation (glass_turn) — so
+// a pointer sample is already in the logical frame touch_read() promises.
+// There is no raw GT911 frame here to un-rotate (display_dash.cpp's job).
+void touch_set_rotation(uint8_t /*rot*/, int16_t /*native_w*/,
+                        int16_t /*native_h*/) {}
+#endif
+
 }  // namespace canary::hal
 
 // ── C exports for the page (framebuffer + input + diagnostics) ──────────
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE uint8_t* emu_fb_ptr(void) { return g_fb; }
-EMSCRIPTEN_KEEPALIVE int emu_fb_width(void) { return EMU_W; }
-EMSCRIPTEN_KEEPALIVE int emu_fb_height(void) { return EMU_H; }
+// The framebuffer's size in the frame it is held in (turned with the glass).
+EMSCRIPTEN_KEEPALIVE int emu_fb_width(void) { return g_view_w; }
+EMSCRIPTEN_KEEPALIVE int emu_fb_height(void) { return g_view_h; }
 EMSCRIPTEN_KEEPALIVE int emu_fb_serial(void) { return (int)g_dirty_serial; }
 EMSCRIPTEN_KEEPALIVE int emu_flush_count(void) { return (int)g_flush_count; }
 EMSCRIPTEN_KEEPALIVE int emu_backlight_level(void) { return g_backlight_level; }

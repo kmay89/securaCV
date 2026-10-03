@@ -165,6 +165,58 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* emu_screen_labels(void) {
   return out.c_str();
 }
 
+// Every arc on the active screen (F184), as the circle lv_arc draws its
+// indicator on: the center and radius lv_arc.c derives from the laid-out box
+// (get_center: the main part's padding off the box, half the smaller side;
+// the indicator's largest padding off that radius), the indicator's stroke
+// (it covers radius - stroke .. radius), and whether it and every parent are
+// unhidden — JSON [{x,y,w,h,cx,cy,r,stroke,shown}]. The onboarding halo is
+// one (onboard_ui.cpp's ring): the probe holds the Join scene's QR card,
+// read off the framebuffer, inside it. Read-only.
+namespace {
+
+void collect_arcs(lv_obj_t* obj, std::string& out) {
+  if (lv_obj_check_type(obj, &lv_arc_class)) {
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    const lv_coord_t pl = lv_obj_get_style_pad_left(obj, LV_PART_MAIN);
+    const lv_coord_t pr = lv_obj_get_style_pad_right(obj, LV_PART_MAIN);
+    const lv_coord_t pt = lv_obj_get_style_pad_top(obj, LV_PART_MAIN);
+    const lv_coord_t pb = lv_obj_get_style_pad_bottom(obj, LV_PART_MAIN);
+    const lv_coord_t arc_r = LV_MIN(lv_area_get_width(&a) - pl - pr,
+                                    lv_area_get_height(&a) - pt - pb) / 2;
+    const lv_coord_t indic_pad = LV_MAX4(
+        lv_obj_get_style_pad_left(obj, LV_PART_INDICATOR),
+        lv_obj_get_style_pad_right(obj, LV_PART_INDICATOR),
+        lv_obj_get_style_pad_top(obj, LV_PART_INDICATOR),
+        lv_obj_get_style_pad_bottom(obj, LV_PART_INDICATOR));
+    if (out.size() > 1) out += ",";
+    out += "{\"x\":" + std::to_string(a.x1) + ",\"y\":" + std::to_string(a.y1) +
+           ",\"w\":" + std::to_string(lv_area_get_width(&a)) +
+           ",\"h\":" + std::to_string(lv_area_get_height(&a)) +
+           ",\"cx\":" + std::to_string(a.x1 + arc_r + pl) +
+           ",\"cy\":" + std::to_string(a.y1 + arc_r + pt) +
+           ",\"r\":" + std::to_string(arc_r - indic_pad) + ",\"stroke\":" +
+           std::to_string((int)lv_obj_get_style_arc_width(obj, LV_PART_INDICATOR)) +
+           ",\"shown\":" + (shown(obj) ? "1" : "0") + "}";
+  }
+  const uint32_t n = lv_obj_get_child_cnt(obj);
+  for (uint32_t i = 0; i < n; ++i) {
+    collect_arcs(lv_obj_get_child(obj, (int32_t)i), out);
+  }
+}
+
+}  // namespace
+
+extern "C" EMSCRIPTEN_KEEPALIVE const char* emu_screen_arcs(void) {
+  static std::string out;
+  out = "[";
+  lv_obj_t* scr = lv_scr_act();
+  if (scr != nullptr) collect_arcs(scr, out);
+  out += "]";
+  return out.c_str();
+}
+
 // Where the canary mark is drawn (F64): its area on the panel and whether
 // it and every parent are unhidden, as {x,y,w,h,shown}; "null" while no
 // bird is alive. The bird keeps its base as a style offset from its
