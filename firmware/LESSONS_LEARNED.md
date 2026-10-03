@@ -2821,6 +2821,37 @@
   like, and TSAN found it in the first threaded run.
 - **Date learned:** 2026-10
 
+### A hand-over must not carry what the receiver owns, and moving a call to another task moves it past what that task's neighbors do
+- **What happened:** the canary-wap's Bluetooth `init()` runs on the BLE
+  bring-up worker or an HTTP handler's task, and sweep F167 made it fill a
+  hand-over the loop task takes instead of writing the loop task's state.
+  The hand-over carried the saved settings, read before NimBLE's bring-up
+  (about 21 s on a device), and the loop task adopted them whole: a Disable,
+  a name or a TX power the owner sent meanwhile came back undone, in RAM and
+  in NVS. And the auto-advertise, which `init()` had run on the worker before
+  the worker went on to register ble_status and Opera services, now ran on
+  the loop task in the middle of those registrations; an advertising start
+  starts the GATT server, which walks the service list the worker appends
+  to (the F167 review).
+- **Root cause:** the hand-over was drawn around what `init()` used to
+  touch, not around who owns each thing: the settings were the loop task's
+  the moment its commands could change them. And the call kept its place in
+  `init()`'s sequence on paper while its real neighbors (the rest of the
+  worker) moved to another task.
+- **Fix:** the loop task loads the saved settings and the paired list at its
+  first pass, before any command, and the adoption keeps them (re-applying
+  a TX power or PHY the stack was given before a change); the hand-over
+  carries only what `init()` made. The sketch tells the channel when its
+  bring-up worker starts and when its result is taken, and every advertising
+  start of the channel's in between is held; the adoption names the
+  dispatcher's owner without a second `setCallbacks()`.
+- **Regression check:** `test_bluetooth_commands_wap.cpp`'s
+  `commands_while_init_runs_are_kept` (a command run inside `init()`),
+  `the_advertising_waits_for_the_bring_up_worker` and the threaded bring-up
+  test (a worker that registers services over a stand-in whose advertising
+  start walks them); `check_wap_loop_commands.py` rules BV4 and BV7.
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

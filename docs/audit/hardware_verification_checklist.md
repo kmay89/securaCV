@@ -1295,25 +1295,35 @@ are not something a host test can run. Compile is CI's. Owner: U1.
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
 (`start_advertising()` sets the state from `rest_state()`, so pairing mode
-reads `"pairing"`; `init()`, on the BLE bring-up worker or an HTTP
-handler's task, fills a hand-over and publishes it, and the loop task's
-`update()` takes it, `adopt_init_result()`: the settings, the paired list
-and its rebuild, the state, the server callbacks and auto-advertise;
+reads `"pairing"`; the saved settings and paired list are the loop task's
+from its first pass, `load_saved()`; `init()`, on the BLE bring-up worker
+or an HTTP handler's task, fills a hand-over with the stack's objects and
+publishes it, and the loop task's `update()` takes it,
+`adopt_init_result()`: the objects, a TX power or PHY the owner changed
+meanwhile, the list's rebuild, the state, the server callbacks'
+owner and auto-advertise; every advertising start is held while the
+sketch's bring-up worker still registers services
+(`bringup_worker_started()` / `bringup_worker_finished()`, called by
+`canary_wap.ino`); Remove and Clear all are refused until the stack is up;
 `is_initialized()` and `init_fail_reason()` read what the bring-up
 published; `StoreCallbacks::onStoreStatus()` refuses a new phone's pairing
-that finds NimBLE's bond store full and never deletes a bond to make room;
+that finds NimBLE's bond store full, and a bond or CCCD record with no
+room, and never deletes a bond to make room;
 `apply_auth_complete()` lists a phone only when the store kept its bond;
 the first loop pass drops listed entries without a bond),
-`ble_server_dispatch.h` (`attach()` in `init()`, the channel's callbacks
-installed at the hand-over) and `bluetooth_api.h` (`send_doc()`: every
-answer serialized at its own measured length). Host-tested
-(`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE stand-in that
-models NimBLE-Arduino's 3-bond store, its full-store event at a Pairing
-Request and its default eviction of the oldest bond; the bring-up, the loop
-and a reader on threads under TSAN, `make tsan-bt-commands`) and held by
-`firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5 and BV6; a
-phone's real pairing, NimBLE's real store and the real bring-up worker are
-not something a host test can run. Compile is CI's. Owner: U1.
+`ble_server_dispatch.h` (`attach()` in `init()`, the channel named the
+pairing owner at the hand-over with `set_owner()`) and `bluetooth_api.h`
+(`send_doc()`: every answer serialized at its own measured length).
+Host-tested (`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE
+stand-in that models NimBLE-Arduino's 3-bond store and 8-record CCCD
+store, its full-store event at a Pairing Request, its default evictions
+(the oldest bond; for a CCCD the oldest but the writer's) and an
+advertising start that walks the server's services; the bring-up worker,
+the loop and a reader on threads under TSAN, `make tsan-bt-commands`) and
+held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6
+and BV7; a phone's real pairing, NimBLE's real stores and the real
+bring-up worker are not something a host test can run. Compile is CI's.
+Owner: U1.
 
 - [ ] **Pairing mode reads pairing**
   - Setup: one canary-wap flashed with the default FULL profile; the web
@@ -1334,10 +1344,32 @@ not something a host test can run. Compile is CI's. Owner: U1.
     and after the refusal.
   - Expected: `"disabled"` until the bring-up starts, `"initializing"`
     while it runs, then `"advertising"`, never a state that goes back; the two phones
-    listed, each once; the phones reconnect encrypted with no owner asked;
-    no crash or watchdog reset in the boot log. A refused bring-up's error
-    reads whole (no mixed or cut text).
+    listed, each once (`GET /api/bluetooth/paired` lists them, and
+    `GET /api/bluetooth/settings` shows the saved settings, from the first
+    seconds after boot, before the bring-up); the phones reconnect
+    encrypted with no owner asked; no crash or watchdog reset in the boot
+    log; the advertising starts only after the boot log's `BLE bring-up
+    finalized` line, and on the FULL build the phone's GATT browser lists
+    the status, OTA and Opera services on its first connect. A refused
+    bring-up's error reads whole (no mixed or cut text).
   - Artifact: `docs/audit/repro/F167/bring-up/`.
+- [ ] **What the owner does while the bring-up runs is kept**
+  - Setup: the FULL build with auto-advertise on, a device name and a TX
+    power saved apart from the defaults; a script ready to `POST` the
+    moment the web UI answers after a reboot.
+  - Repro: reboot; while `GET /api/bluetooth` reads `"initializing"`,
+    `POST /api/bluetooth/disable`; after the bring-up, read
+    `GET /api/bluetooth` and `GET /api/bluetooth/settings`, and reboot once
+    more. Repeat with a new device name instead (`POST
+    /api/bluetooth/settings {"device_name": ...}`), then with a TX power.
+    Separately, before the bring-up starts, `DELETE
+    /api/bluetooth/paired/all`.
+  - Expected: Bluetooth stays off after the bring-up and after the reboot
+    (before the F167 review it came back on and advertised); the new name
+    and the new TX power stay, and the other saved settings with them;
+    the early Clear all answers `Bluetooth is not up yet; nothing was
+    cleared` and the phones stay listed and bonded.
+  - Artifact: `docs/audit/repro/F167/commands-during-bring-up/`.
 - [ ] **A full bond store refuses a new phone and keeps the old ones**
   - Setup: the FULL build after `DELETE /api/bluetooth/paired/all`; four
     phones (or one phone and nRF Connect profiles with different
@@ -1355,6 +1387,17 @@ not something a host test can run. Compile is CI's. Owner: U1.
     held more phones than the store, the first boot's health log has
     `Paired list: entries without a bond dropped`.
   - Artifact: `docs/audit/repro/F189/bond-store/`.
+- [ ] **A full CCCD store keeps every bond**
+  - Setup: the FULL build with three phones paired; nRF Connect on each.
+  - Repro: on each phone, subscribe (enable notifications) to three of the
+    WAP's notifying characteristics, one phone after another; disconnect
+    and reconnect each.
+  - Expected: the ninth subscription's write is answered with an error on
+    that phone (its notifications still flow on that link), the health log
+    has `BLE bond store full: a record was not kept`, and all three phones
+    stay listed and reconnect encrypted (before the F189 review NimBLE's
+    default unpaired the oldest other phone to make room).
+  - Artifact: `docs/audit/repro/F189/cccd-store/`.
 - [ ] **The REST answers are whole**
   - Setup: the FULL build; a device name of 32 characters with quotes and
     backslashes (`POST /api/bluetooth/settings`); a scan in a room with
