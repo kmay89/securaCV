@@ -264,26 +264,27 @@ extern "C" {
 const csi_module_t* core_presence_module(void) { return &MODULE; }
 void core_presence_handle_dismiss(uint32_t event_id) { on_dismiss(event_id); }
 
-core_presence_thresholds_t core_presence_baseline_thresholds(int32_t preset, int32_t sensitivity) {
-  core_presence_thresholds_t t;
+core_presence_thresholds_t core_presence_baseline_thresholds(int32_t preset, int32_t sens) {
+  int32_t base_motion, base_active, base_breathing;
   switch (preset) {
-    case 0:  t.motion = 25; t.active = 60; t.breathing = 20; break;  /* sensitive */
-    case 2:  t.motion = 50; t.active = 90; t.breathing = 40; break;  /* quiet */
-    default: t.motion = 35; t.active = 75; t.breathing = 30; break;  /* balanced */
+    case 0: base_motion = 25; base_active = 60; base_breathing = 20; break;  // sensitive
+    case 2: base_motion = 50; base_active = 90; base_breathing = 40; break;  // quiet
+    default: base_motion = 35; base_active = 75; base_breathing = 30; break; // balanced
   }
   /* sens=0   → +20 (less sensitive); sens=50 → 0 (neutral);
    * sens=100 → -20 (more sensitive). The 40 multiplier is the full
    * ±20 span across the 0..100 slider range — (50-sens)*40/100
    * = -20..+20 as documented. */
-  const int32_t offset = ((50 - sensitivity) * 40) / 100;
+  const int32_t offset = ((50 - sens) * 40) / 100;
   auto clamp_threshold = [](int32_t v) -> int32_t {
     if (v < 5) return 5;
     if (v > 120) return 120;
     return v;
   };
-  t.motion    = clamp_threshold(t.motion + offset);
-  t.active    = clamp_threshold(t.active + offset);
-  t.breathing = clamp_threshold(t.breathing + offset);
+  core_presence_thresholds_t t;
+  t.motion    = clamp_threshold(base_motion    + offset);
+  t.active    = clamp_threshold(base_active    + offset);
+  t.breathing = clamp_threshold(base_breathing + offset);
   return t;
 }
 }
