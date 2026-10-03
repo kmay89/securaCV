@@ -118,6 +118,17 @@ function bridgeOver(built, { distPrefix = "/canary-local/emulator/dist/" } = {})
     throw new Error(`native core bridge: unknown request ${JSON.stringify(msg.op)}`);
   }
 
+  // One request body in, one reply out, never a throw: an error is answered,
+  // not a 500, so a page that catches the throw (as it would a wasm trap)
+  // does not also leave a failed load in its console.
+  function respond(text) {
+    try {
+      return answer(JSON.parse(text));
+    } catch (e) {
+      return { error: String((e && e.message) || e) };
+    }
+  }
+
   // The probe server's first stop: the stand-in in place of each dist core,
   // and the endpoint. True when it took the request.
   async function handle(req, res) {
@@ -131,20 +142,16 @@ function bridgeOver(built, { distPrefix = "/canary-local/emulator/dist/" } = {})
     }
     if (path !== ENDPOINT) return false;
     let reply;
-    try {
-      if (req.method !== "POST") throw new Error(`native core bridge: ${req.method} is not a request`);
+    if (req.method !== "POST") reply = { error: `native core bridge: ${req.method} is not a request` };
+    else {
       const chunks = [];
       let size = 0;
       for await (const c of req) {
         size += c.length;
-        if (size > BODY_CAP) throw new Error(`native core bridge: a request over ${BODY_CAP} bytes`);
-        chunks.push(c);
+        if (size <= BODY_CAP) chunks.push(c);
       }
-      reply = answer(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-    } catch (e) {
-      // answered, not a 500: a page that catches the throw (as it would a
-      // wasm trap) must not also leave a failed load in the console
-      reply = { error: String((e && e.message) || e) };
+      reply = size > BODY_CAP ? { error: `native core bridge: a request over ${BODY_CAP} bytes` }
+        : respond(Buffer.concat(chunks).toString("utf8"));
     }
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(reply));
@@ -189,7 +196,7 @@ function bridgeOver(built, { distPrefix = "/canary-local/emulator/dist/" } = {})
     `${n}: stand-in ${served.has(n) ? "served" : "NOT served"}, ${calls.get(n)} calls to this tree's ${built[n].plan.sources.length} sources`).join("; ");
   const used = () => Object.keys(built).every((n) => served.has(n) && calls.get(n) > 0);
 
-  return { answer, handle, standin, gotoIdle, summary, used, calls, ENDPOINT };
+  return { answer, respond, handle, standin, gotoIdle, summary, used, calls, ENDPOINT };
 }
 
 // null unless LAB_CORES=native; then each named core is built once (cores.js

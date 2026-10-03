@@ -287,6 +287,191 @@ test("a core that stops answering is killed when its call times out, not left ru
   assert.strictEqual(fakeCore().cwrap("num", "number", ["number"])(9), 9, "the next instance gets a fresh channel");
 });
 
+// ── The browser probes' bridge (probe_cores.js) and its stand-in factory ────
+//
+// Under LAB_CORES=native a probe's server answers emulator/dist/<core>.js with
+// native/core_standin.js, which forwards each call over a synchronous request
+// to the bridge. Here the stand-in runs in a vm context whose XMLHttpRequest
+// hands the body straight to the bridge (as the probe server does), over the
+// stand-in core: no compiler, no Chromium.
+const probeBridge = require("./native/probe_cores.js");
+const vm = require("node:vm");
+
+const BRIDGE_PLAN = { ...FAKE_PLAN, exportName: "createFakeCore", runtime: ["ccall", "cwrap", "UTF8ToString", "HEAPU8"],
+  memory: { buf: () => 8, big: () => 100000 }, exports: [...FAKE_PLAN.exports,
+    { name: "buf", ret: "uint8_t*", kind: "p", params: [] },
+    { name: "big", ret: "uint8_t*", kind: "p", params: [] },
+    { name: "sum", ret: "int", kind: "n", params: [] },
+    { name: "bump", ret: "void", kind: "v", params: [] }] };
+
+// The page side: the stand-in as served, evaluated in its own context, with
+// a synchronous XMLHttpRequest that posts to the bridge.
+function pageWith(bridge, name, factory) {
+  const sent = [];
+  class XMLHttpRequest {
+    open(method, url, isAsync) {
+      assert.strictEqual(method, "POST");
+      assert.strictEqual(url, probeBridge.ENDPOINT, "the stand-in posts to the bridge's endpoint only");
+      assert.strictEqual(isAsync, false, "every core call is a synchronous request, as a wasm call is synchronous");
+    }
+    setRequestHeader() {}
+    send(body) {
+      sent.push(JSON.parse(body).op);
+      this.status = 200;
+      this.responseText = JSON.stringify(bridge.respond(body));
+    }
+  }
+  const ctx = vm.createContext({ XMLHttpRequest });
+  vm.runInContext(bridge.standin(name), ctx, { filename: "core_standin.js" });
+  assert.strictEqual(typeof ctx[factory], "function", `the stand-in defines ${factory}`);
+  return { ctx, sent, create: () => ctx[factory]() };
+}
+
+const fakeBridge = () => probeBridge.bridgeOver({
+  "fake-core": { plan: BRIDGE_PLAN, bin: process.execPath, args: [join(__dirname, "native/fake_core.js")] },
+});
+
+test("unset or dist: the probes get no bridge and serve the committed dist; another value is refused", async () => {
+  for (const v of [undefined, "", "dist"]) {
+    const saved = process.env.LAB_CORES;
+    if (v === undefined) delete process.env.LAB_CORES;
+    else process.env.LAB_CORES = v;
+    try {
+      assert.strictEqual(await probeBridge.probeCores(["canary-vision-core"]), null, String(v));
+      process.env.LAB_CORES = "Native";
+      await assert.rejects(probeBridge.probeCores(["canary-vision-core"]), /expected "dist"/);
+    } finally {
+      if (saved === undefined) delete process.env.LAB_CORES;
+      else process.env.LAB_CORES = saved;
+    }
+  }
+});
+
+test("the stand-in has the dist module's shape, and its calls answer synchronously as the dist's do", async () => {
+  const bridge = fakeBridge();
+  const page = pageWith(bridge, "fake-core", "createFakeCore");
+  const pending = page.create();
+  assert.ok(pending instanceof vm.runInContext("Promise", page.ctx), "the factory returns a promise, as the dist's does");
+  const m = await pending;
+  assert.deepStrictEqual(Object.keys(m).sort(), ["HEAPU8", "UTF8ToString", "ccall", "cwrap", "nativeCore"]);
+  assert.strictEqual(m.nativeCore.name, "fake-core");
+  const num = m.cwrap("num", "number", ["number"]);
+  assert.deepStrictEqual([num(41.9), num(-1.5), num(2 ** 32 + 5), num(2 ** 31), num(NaN), num(true)],
+    [41, -1, 5, -(2 ** 31), 0, 1], "ToInt32, as a wasm call applies it");
+  assert.strictEqual(m.cwrap("str", "string", [])(), "hello from the fake core");
+  assert.deepStrictEqual([m.cwrap("num", "boolean", ["number"])(7), m.ccall("num", "boolean", ["number"], [7]),
+    m.ccall("num", "boolean", ["number"], [0])], [7, true, false], "cwrap's boolean is the raw number; ccall's converts");
+  // refused at cwrap, before a wrapper exists: the request was a cwrap, not a call
+  page.sent.length = 0;
+  assert.throws(() => m.cwrap("str", "number", []), /returns a C string: cwrap it as "string"/);
+  assert.throws(() => m.cwrap("gone", "number", []), /no export gone/);
+  assert.throws(() => m.cwrap("num", "number", ["string"]), /passes number arguments only, not string/);
+  assert.deepStrictEqual(page.sent, ["cwrap", "cwrap", "cwrap"]);
+  assert.throws(() => m.UTF8ToString(16), /no wasm heap to read a string from/, "as the native module, by the same code");
+  assert.strictEqual(bridge.calls.get("fake-core"), 6 + 1 + 3 + 1, "every call reached the bridge, and only calls counted");
+  // a core that dies fails the page's call, and the next one
+  assert.throws(() => m.cwrap("die", null, [])(), /native core exited \(code 3\)/);
+  assert.throws(() => num(1), /native core exited \(code 3\)/);
+  // each factory call is its own core, as each dist instance is its own heap
+  assert.strictEqual((await page.create()).cwrap("num", "number", ["number"])(9), 9);
+});
+
+test("a pointer export's window is mirrored in the page's heap, both ways, and grows as wasm memory does", async () => {
+  const page = pageWith(fakeBridge(), "fake-core", "createFakeCore");
+  const m = await page.create();
+  const ptr = m.cwrap("buf", "number", [])();
+  assert.ok(Number.isInteger(ptr) && ptr > 0, "an offset into the page's heap, as the dist returns one");
+  new Uint8Array(m.HEAPU8.buffer, ptr, 8).set([1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.strictEqual(m.cwrap("sum", "number", [])(), 36, "the page's writes reach the core before the call");
+  m.cwrap("bump", null, [])();
+  assert.deepStrictEqual([...new Uint8Array(m.HEAPU8.buffer, ptr, 8)], [2, 3, 4, 5, 6, 7, 8, 9],
+    "the core's writes reach the page after the call");
+  const before = m.HEAPU8.buffer;
+  const big = m.cwrap("big", "number", [])();
+  assert.ok(m.HEAPU8.buffer.byteLength >= big + 100000, "the heap grew to hold the new window");
+  assert.notStrictEqual(m.HEAPU8.buffer, before, "and the views were re-made over the grown buffer");
+  assert.strictEqual(before.byteLength, 0, "the old buffer is detached, as wasm memory growth detaches it");
+  assert.deepStrictEqual([...new Uint8Array(m.HEAPU8.buffer, ptr, 8)], [2, 3, 4, 5, 6, 7, 8, 9], "and kept its bytes");
+  assert.strictEqual(m.cwrap("sum", "number", [])(), 44);
+});
+
+test("the bridge refuses a request it cannot trust, by answering it, never by throwing at the server", () => {
+  const bridge = fakeBridge();
+  const made = bridge.respond(JSON.stringify({ op: "new", core: "fake-core" }));
+  assert.ok(made.id > 0 && !made.error, JSON.stringify(made));
+  const wrap = bridge.respond(JSON.stringify({ op: "cwrap", id: made.id, fn: "buf", ret: "number", argTypes: [] })).wrap;
+  const opened = bridge.respond(JSON.stringify({ op: "call", id: made.id, wrap, args: [], mem: [] }));
+  assert.strictEqual(opened.mem.length, 1, "the call that opened the window answers with it");
+  const [offset] = opened.mem[0];
+  const call = (mem) => bridge.respond(JSON.stringify({ op: "call", id: made.id, wrap, args: [], mem })).error;
+  assert.strictEqual(call([[offset, "00".repeat(8)]]), undefined, "the open window, whole");
+  for (const bad of [[[offset + 1, "00"]], [[offset, "00".repeat(9)]], [[offset, "zz".repeat(8)]], [["x", ""]], [7]]) {
+    assert.match(call(bad), /the page sent memory that is not an open window/, JSON.stringify(bad));
+  }
+  assert.match(bridge.respond("{").error, /JSON/);
+  assert.match(bridge.respond(JSON.stringify({ op: "new", core: "canary-display-watch" })).error, /no core canary-display-watch here/);
+  assert.match(bridge.respond(JSON.stringify({ op: "call", id: 999, wrap: 0 })).error, /no instance 999/);
+  assert.match(bridge.respond(JSON.stringify({ op: "call", id: made.id, wrap: 99 })).error, /no wrapped export 99/);
+  assert.match(bridge.respond(JSON.stringify({ op: "eval", id: made.id })).error, /unknown request "eval"/);
+});
+
+test("the probe server's first stop: the stand-in at each core's dist URL, the endpoint, nothing else", async () => {
+  const http = require("node:http");
+  const bridge = fakeBridge();
+  const server = http.createServer(async (req, res) => {
+    if (await bridge.handle(req, res)) return;
+    res.writeHead(404); res.end("fell through");
+  }).listen(0);
+  try {
+    const base = `http://localhost:${server.address().port}`;
+    const js = await fetch(`${base}/canary-local/emulator/dist/fake-core.js?v=1`);
+    assert.strictEqual(js.status, 200);
+    assert.match(js.headers.get("content-type"), /^text\/javascript/);
+    const text = await js.text();
+    assert.strictEqual(text, bridge.standin("fake-core"));
+    assert.ok(!text.includes(probeBridge.PLACEHOLDER), "served with its config written in");
+    assert.match(text, /"exportName":"createFakeCore"/);
+    for (const miss of ["/canary-local/emulator/dist/fake-core.meta.json", "/canary-local/emulator/dist/canary-vision-core.js",
+      "/canary-local/vision.html"]) {
+      assert.strictEqual(await (await fetch(base + miss)).text(), "fell through", miss);
+    }
+    const post = (body) => fetch(base + probeBridge.ENDPOINT, { method: "POST", body }).then((r) => r.json());
+    assert.ok((await post(JSON.stringify({ op: "new", core: "fake-core" }))).id > 0);
+    assert.match((await post("x".repeat((8 << 20) + 1))).error, /a request over/);
+    assert.match((await (await fetch(base + probeBridge.ENDPOINT)).json()).error, /GET is not a request/);
+  } finally {
+    server.close();
+  }
+});
+
+test("the stand-in asks the page's policy for nothing new: no eval, no inline code, same-origin requests only", () => {
+  const src = fs.readFileSync(join(__dirname, "native/core_standin.js"), "utf8").replace(/\/\/[^\n]*/g, "");
+  assert.doesNotMatch(src, /\beval\s*\(|\bFunction\s*\(|setTimeout\s*\(\s*["'`]|document\.write|importScripts|createElement/);
+  assert.doesNotMatch(src, /https?:/, "it posts to a path on the page's own origin");
+  assert.strictEqual(src.split(probeBridge.PLACEHOLDER).length, 2, "the bridge writes its config in one place");
+  assert.ok(probeBridge.ENDPOINT.startsWith("/") && !probeBridge.ENDPOINT.startsWith("//"));
+});
+
+test("every probe that drives a core page takes the bridge, before its own file lookup", () => {
+  const takers = [];
+  for (const f of fs.readdirSync(__dirname).filter((x) => /_probe\.mjs$/.test(x)).sort()) {
+    const src = fs.readFileSync(join(__dirname, f), "utf8");
+    const loadsCorePage = /canary-local\/(?:vision|eyes|smoke)\.html/.test(src);
+    const m = /probeCores\(\[([^\]]*)\]\)/.exec(src);
+    if (!loadsCorePage && !m) continue;
+    assert.ok(m, `${f} opens a page that loads a dist core but never asks probeCores for it`);
+    for (const name of m[1].match(/[\w-]+/g)) takers.push(`${f}:${name}`);
+    const server = src.indexOf("createServer(");
+    const handled = src.indexOf("if (cores && await cores.handle(req, res)) return;", server);
+    const lookup = src.indexOf("readFile(", server);
+    assert.ok(server > 0 && handled > server && handled < lookup, `${f}: the bridge answers before the file lookup`);
+    assert.match(src, /if \(cores\) await cores\.gotoIdle\(page, url/, `${f}: a native run waits without the core's requests`);
+    assert.match(src, /if \(cores && !cores\.used\(\)\) fail\(/, `${f}: a native run whose page never called the core fails`);
+  }
+  assert.deepStrictEqual(takers, ["audio_probe.mjs:canary-wap-audio", "eyes_probe.mjs:canary-vision-core",
+    "vision_probe.mjs:canary-vision-core"]);
+});
+
 // ── LAB_CORES=native only: the native core next to its committed dist ──────
 
 const native = { skip: cores.mode() !== "native" && "LAB_CORES=native only (builds with g++)" };
@@ -381,4 +566,52 @@ test("native audio core = committed dist, frame for frame (LAB_CORES=native)", n
       assert.strictEqual(n.proc(), want, `frame ${frame} (${hz} Hz) ` + STALE);
     }
   }
+});
+
+// What the browser probes run under LAB_CORES=native: the stand-in, in its
+// own context, over the bridge, over the native core. It must answer exactly
+// as cores.js's module over the same build does, the audio frame written
+// through the stand-in's own HEAP16 included.
+test("the probes' stand-in answers as the native module does, call for call (LAB_CORES=native)", native, async () => {
+  const bridge = await probeBridge.probeCores(["canary-vision-core", "canary-wap-audio"]);
+  const vis = [await pageWith(bridge, "canary-vision-core", "createCanaryVisionCore").create(),
+    await cores.coreFactory("canary-vision-core")()];
+  const [sv, dv] = vis.map((m) => ({
+    contract: m.cwrap("vision_emu_contract_json", "string", []),
+    config: m.cwrap("vision_emu_set_config", null, ["number", "number", "number", "number"]),
+    begin: m.cwrap("vision_emu_begin_frame", null, []),
+    push: m.cwrap("vision_emu_push_box", "number", Array(6).fill("number")),
+    tick: m.cwrap("vision_emu_tick_json", "string", ["number"]),
+  }));
+  assert.strictEqual(sv.contract(), dv.contract());
+  const r = lcg(41);
+  let t = 0;
+  for (let i = 0; i < 500; i++) {
+    if (r(100) === 0) { const cfg = [r(3), r(120), r(9000), r(9000)]; sv.config(...cfg); dv.config(...cfg); }
+    sv.begin(); dv.begin();
+    for (let b = r(4); b > 0; b--) {
+      const box = [r(640), r(480), r(300), r(400), r(100), r(3)];
+      assert.strictEqual(sv.push(...box), dv.push(...box));
+    }
+    t += 50 + r(300);
+    assert.strictEqual(sv.tick(t), dv.tick(t), `vision tick ${i}`);
+  }
+  const aud = [await pageWith(bridge, "canary-wap-audio", "createCanaryAudioCore").create(),
+    await cores.coreFactory("canary-wap-audio")()];
+  const [sa, da] = aud.map((m) => ({ m, N: m.cwrap("audio_emu_frame_samples", "number", [])(),
+    ptr: m.cwrap("audio_emu_frame_ptr", "number", []), proc: m.cwrap("audio_emu_process_frame", "string", []) }));
+  let ph = 0;
+  for (const [hz, frames] of [[0, 30], [3400, 25], [0, 25], [3400, 25], [0, 25], [3400, 25], [0, 90], [-1, 40]]) {
+    for (let f = 0; f < frames; f++) {
+      const pcm = new Int16Array(sa.N);
+      for (let i = 0; i < pcm.length; i++) {
+        if (hz <= 0) { pcm[i] = hz < 0 ? r(20000) - 10000 : 0; continue; }
+        ph += (2 * Math.PI * hz) / 16000;
+        pcm[i] = Math.round(8000 * Math.sin(ph));
+      }
+      for (const c of [sa, da]) new Int16Array(c.m.HEAP16.buffer, c.ptr(), c.N).set(pcm);
+      assert.strictEqual(sa.proc(), da.proc(), `audio frame ${f} at ${hz} Hz`);
+    }
+  }
+  assert.ok(bridge.calls.get("canary-vision-core") > 1000 && bridge.calls.get("canary-wap-audio") > 500, bridge.summary());
 });

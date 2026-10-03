@@ -89,7 +89,8 @@ try {
     fail((cores ? "LAB_CORES=native stand-in" : "committed") + " Canary Vision core factory did not load");
   if (!(await page.$(".eyes-start"))) fail("Start watching button missing");
 
-  // ── 2. the committed wasm decides presence, and its filter holds ──
+  // ── 2. the committed wasm (or, under LAB_CORES=native, this tree's
+  //    sources) decides presence, and its filter holds ──
   const verdicts = await page.evaluate(async () => {
     const m = await globalThis.createCanaryVisionCore();
     const contract = () => JSON.parse(m.cwrap("vision_emu_contract_json", "string", [])());
@@ -127,7 +128,7 @@ try {
     return { events, weakEvents };
   });
   if (verdicts.events[0] !== "presence_started")
-    fail("a strong box did NOT raise presence through the browser wasm: " + JSON.stringify(verdicts.events));
+    fail(`a strong box did NOT raise presence through ${cores ? "the native core" : "the browser wasm"}: ` + JSON.stringify(verdicts.events));
   if (!verdicts.events.includes("presence_ended"))
     fail("losing the box did NOT end presence: " + JSON.stringify(verdicts.events));
   if (verdicts.weakEvents.length)

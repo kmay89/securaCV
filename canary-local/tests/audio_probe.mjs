@@ -89,7 +89,8 @@ try {
     fail((cores ? "LAB_CORES=native stand-in" : "committed") + " Canary WAP acoustic core factory did not load");
   if (!(await page.$(".smoke-start"))) fail("Start listening button missing");
 
-  // ── 2. the committed wasm detects a synthesized T3, rejects off-band ──
+  // ── 2. the committed wasm (or, under LAB_CORES=native, this tree's
+  //    sources) detects a synthesized T3, rejects off-band ──
   const detect = await page.evaluate(async () => {
     const m = await globalThis.createCanaryAudioCore();
     const reset = m.cwrap("audio_emu_reset", null, []);
@@ -120,8 +121,8 @@ try {
     for (let c = 0; c < 2; c++) { emit(300, 25, offband); emit(0, 25, offband); emit(300, 25, offband); emit(0, 25, offband); emit(300, 25, offband); emit(0, 90, offband); }
     return { inband, offband };
   });
-  if (!detect.inband.t3) fail("synthesized T3 did NOT fire the smoke event through the browser wasm");
-  if (detect.offband.t3) fail("off-band rhythm WRONGLY read as smoke — the tone gate failed in wasm");
+  if (!detect.inband.t3) fail(`synthesized T3 did NOT fire the smoke event through ${cores ? "the native core" : "the browser wasm"}`);
+  if (detect.offband.t3) fail(`off-band rhythm WRONGLY read as smoke — the tone gate failed in ${cores ? "the native core" : "wasm"}`);
 
   // ── 3. the mic button opens the stream and the live bench appears ──
   await page.click(".smoke-start");
