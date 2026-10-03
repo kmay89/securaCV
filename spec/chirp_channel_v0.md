@@ -716,7 +716,10 @@ CHIRP_COOLDOWN       → Rate limited, cannot send new chirp
 On the canary-wap `CHIRP_COOLDOWN` is what an active channel reads as while
 the send cooldown's timer runs (§2.5.4); the channel never stores it, so a
 mute shows `muted` over a running cooldown, and the cooldown still refuses a
-send (sweep F178).
+send (sweep F178). A mute silences what comes in, not the owner, so a send
+made while muted goes out, and the channel reads `muted` until the mute runs
+out. Before F178 it read `cooldown`, then `active`, and its presence beacon
+said it was listening while the mute still dropped every chirp.
 
 ### 7.2 Transitions
 
@@ -765,6 +768,11 @@ A send that does not go out says why, in this order: `chirp_disabled`,
 clock is not set yet: the canary-wap sets it from GPS and has no SNTP, and
 origination is refused until it is, audit C10; sweep F146 — before it, this
 was answered as a `cooldown` with 0 seconds left), then `night_restricted`.
+The reason is the check that refused the send, read once. A gate that opens
+just as the send is refused (the cooldown running out, the ten minutes
+passing, the clock being set, 06:00) still names that gate, never none. It
+was read again after the send, and such a send answered no reason, or
+`cooldown` with 0 seconds (found in the F178 review).
 `GET /api/chirp` names the same cases in `cannot_send_reason`
 (`disabled`, `cooldown`, `presence_required`, `clock_unsynced`).
 `cooldown_remaining_sec`, in the status and in a send refused for the

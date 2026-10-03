@@ -1065,8 +1065,9 @@ lookups, `seconds_left()`), `chirp_api.h` (`send_confirm_answer()`,
 Chirp card in `web_ui.h` (`WebUiLogic.chirpSendGate`, `chirpActionNote`).
 Host-tested (`tests_host/test_chirp_commands_wap.cpp`:
 `a_refused_confirm_names_why`, `a_dismiss_says_whether_its_vote_went`,
-`a_mute_does_not_end_the_cooldown`,
-`a_send_just_after_the_cooldown_goes_out`; `web_ui_logic.test.js`) and held
+`a_mute_does_not_end_the_cooldown`, `a_send_while_muted_stays_muted`,
+`a_send_just_after_the_cooldown_goes_out`, `a_send_at_an_edge_names_why`;
+`web_ui_logic.test.js`) and held
 by `firmware/scripts/check_wap_loop_commands.py` (rules CV8-CV11). The
 handlers' JSON was checked only in a scratch harness over ArduinoJson 7.4.1
 (the library is not in the repo). Compile is CI's. Owner: U1.
@@ -1109,6 +1110,18 @@ handlers' JSON was checked only in a scratch harness over ArduinoJson 7.4.1
     seconds left; the send right after the countdown goes out (tier 2), not
     `cooldown` with 0 seconds.
   - Artifact: `docs/audit/repro/F178/mute-in-cooldown/`.
+- [ ] **A send made while muted leaves the channel muted**
+  - Setup: two canary-wap boards with Chirp on for ten minutes and the
+    clock set, MQTT connected on the first.
+  - Repro: on the first, mute 120 minutes and send a chirp; watch
+    `GET /api/chirp`, the `chirp_state` MQTT sensor and the second board's
+    nearby list for 10 minutes; have the second board send a chirp after
+    the first's 5-minute cooldown.
+  - Expected: the send goes out (tier 1). The first reads `muted`
+    throughout (`cannot_send_reason` `cooldown` for the first 5 minutes),
+    never `cooldown` or `active`. The second's nearby list shows the first
+    as not listening, and the first does not show the second's chirp.
+  - Artifact: `docs/audit/repro/F178/send-while-muted/`.
 
 ## One event-id space (F46) — on-device verification
 
