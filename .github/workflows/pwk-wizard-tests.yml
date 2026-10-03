@@ -2,7 +2,7 @@ name: PWK Wizard Tests
 
 # Scoped to the Privacy Witness Kernel add-on only. Runs the pairing-
 # wizard proxy unit tests (PR-8), the wizard page's pairing-screen tests
-# (F163), shellcheck over the entry scripts, the run_lib unit tests and the
+# (F163) and dashboard id tests (HA16), shellcheck over the entry scripts, the run_lib unit tests and the
 # kernel-config render check (which also covers the Docker sidecar's copy
 # of the same heredoc). The
 # custom_components/securacv tests are run separately by python.yml
@@ -70,6 +70,14 @@ jobs:
       # that, and a Canary that reports no pairing number is read the old way.
       - name: Run the wizard page's pairing tests
         run: node --test privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js
+
+      # The Lovelace dashboard the status screen generates names each zone's
+      # entities by the ids the kernel's MQTT bridge asks Home Assistant for
+      # (HA16): the digest's "zone:" key prefix dropped, slugged as the
+      # bridge slugs it. The test also reads the bridge's own Rust zone cases
+      # from src/bin/event_mqtt_bridge.rs.
+      - name: Run the wizard page's dashboard id tests
+        run: node --test privacy_witness_kernel/tests/test_wizard_dashboard_ids.test.js
 
       - name: Shellcheck add-on scripts
         run: |

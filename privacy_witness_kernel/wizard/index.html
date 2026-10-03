@@ -1716,6 +1716,36 @@ function downloadEvents() {
   window.location.href = base + "api/kernel/export" + query;
 }
 
+// A zone's entity id as the kernel's MQTT bridge asks Home Assistant for it
+// (src/bin/event_mqtt_bridge.rs: extract_zone_name, then ha_entity_id; sweep
+// HA16). The digest keys a zone by its raw zone id ("zone:front_door"), and
+// the bridge drops the "zone:" prefix, then slugs the whole object id the way
+// Home Assistant slugs an ASCII name: letters lowercased, digits kept, every
+// run of anything else one "_", none at either end. A non-ASCII character is
+// kept, as the bridge keeps it. Anything else names an entity nobody creates.
+function haSlug(s) {
+  let out = "";
+  let gap = false;
+  for (const c of s) {
+    const ascii = c.codePointAt(0) < 128;
+    if (ascii && !/[A-Za-z0-9]/.test(c)) {
+      gap = out.length > 0;
+      continue;
+    }
+    if (gap) {
+      out += "_";
+      gap = false;
+    }
+    out += ascii ? c.toLowerCase() : c;
+  }
+  return out;
+}
+
+function zoneEntityId(domain, zoneId, suffix) {
+  const zone = zoneId.startsWith("zone:") ? zoneId.slice("zone:".length) : zoneId;
+  return `${domain}.${haSlug(`pwk_${zone}_${suffix}`)}`;
+}
+
 function generateDashboard() {
   const zones = statusZones.length ? statusZones : ["front_door"];
   const lines = [
@@ -1738,14 +1768,13 @@ function generateDashboard() {
     "            name: Last event",
   ];
   zones.forEach(z => {
-    const id = z.toLowerCase().replace(/[^a-z0-9]/g, "_");
     lines.push(
       "      - type: entities",
       `        title: ${z}`,
       "        entities:",
-      `          - entity: sensor.pwk_${id}_events`,
+      `          - entity: ${zoneEntityId("sensor", z, "events")}`,
       "            name: Events",
-      `          - entity: binary_sensor.pwk_${id}_motion`,
+      `          - entity: ${zoneEntityId("binary_sensor", z, "motion")}`,
       "            name: Recent activity",
     );
   });
