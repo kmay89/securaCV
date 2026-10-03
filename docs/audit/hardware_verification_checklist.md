@@ -973,18 +973,21 @@ CI's. Owner: U1.
 - [ ] **The PlatformIO dashboard asks only for routes the firmware serves**
   - Setup: a PlatformIO canary on `[env:full]`, joined to a home network,
     the dashboard open with the browser's network panel.
-  - Repro: load the page and stay on it a minute; open Settings; on a
-    second board whose home network is out of range (state `failed`), press
-    Forget Network; reconnect it from the Wi-Fi card.
-  - Expected: no Bluetooth tab; one `GET /api/bluetooth` at load (404) and
-    no other `/api/bluetooth` request; the Wi-Fi card polls
-    `GET /api/wifi/status` (200), never `GET /api/wifi`, and reads
+  - Repro: load the page and stay on Status a minute; open Settings and
+    stay a minute; on the LAN without a token, unlock with it; on a second
+    board whose home network is out of range (state `failed`), press Forget
+    Network; reconnect it from the Wi-Fi card; then press Disconnect.
+  - Expected: no Bluetooth tab; one `GET /api/bluetooth` at load (404), one
+    more at the unlock, and no other `/api/bluetooth` request; on Status no
+    `GET /api/wifi/status` after the load's one, on Settings one on the way
+    in and then every 5 s (200), never `GET /api/wifi`; the card reads
     Connected with the home IP, "Saved" for the home network and the AP as
     On or Off; no Rotate Old Logs button; Forget posts
     `/api/wifi/disconnect`, after which the card reads AP Only and "Not
-    configured"; the reconnect's success names the network entered. No 404
-    in the network panel other than the one `/api/bluetooth` and the one
-    `/api/chirp` (F176).
+    configured"; the reconnect's success names the network entered;
+    Disconnect's confirmation says the network is forgotten, and after it
+    the card reads "Not configured". No 404 in the network panel other than
+    the `/api/bluetooth` and `/api/chirp` probes (F176).
   - Artifact: `docs/audit/repro/F198/dashboard-routes/`.
 - [ ] **The kernel wizard frees a Canary it leaves pairing**
   - Setup: Home Assistant with the add-on; a PlatformIO canary already in
@@ -995,11 +998,20 @@ CI's. Owner: U1.
     the network error, power the board back up and press "Start Pairing"
     at once. Repeat, pulling the new board's power instead and waiting for
     "A Canary became unreachable while completing" before retrying.
+    Once more: pull the new board's power during the code wait and, while
+    the wizard says "Checking both Canaries", press Cancel and start again
+    with both boards powered.
   - Expected: the wizard says what failed; the board still powered reads
     no running pairing in `GET /api/mesh` within a few seconds of that
     message (the wizard canceled it), and the immediate retry starts on it
-    instead of answering `pair_start_failed` (400). A board that reported no
-    pairing number (older firmware, canary-wap) is not canceled, as before.
+    instead of answering `pair_start_failed` (400), reaches its codes and
+    offers a ready "Codes match — confirm". After the Cancel and restart,
+    the new pairing is not canceled and reaches its codes; no message from
+    the abandoned attempt appears. A board that reported no pairing number
+    (older firmware, canary-wap) is not canceled, as before. (A confirm
+    whose answer is lost while the existing board already reports the
+    pairing paired, which the wizard waits out rather than canceling the
+    new board, is host-tested only.)
   - Artifact: `docs/audit/repro/F200/wizard-left-pairing/`.
 
 ## canary-wap Chirp and Bluetooth commands, MQTT network timeout (F111, F112) — on-device verification
