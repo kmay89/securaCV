@@ -62,8 +62,11 @@ import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { birdPerch, breathOnSeat, flourishHop } from "./bird_perch.mjs";
-import { linesOnGlass, linesCut, haloOf, cardInHalo } from "./onboard_glass.mjs";
+import { birdPerch, birdOnGlass, breathOnSeat, flourishHop } from "./bird_perch.mjs";
+import {
+  linesOnGlass, linesCut, haloOf, cardInHalo, framesOnGlass, cardAtLayout, haloAtLayout,
+  qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked,
+} from "./onboard_glass.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -124,12 +127,31 @@ const RUN = ONLY ? FLAVORS.filter((f) => f === ONLY) : FLAVORS;
 if (!RUN.length) { console.error(`ONBOARD_PROBE_FAIL: no dist bundle for ${ONLY || "any flavor"}`); process.exit(1); }
 // F184: the turned glass each flavor's firmware wears from a saved rotation.
 // The dash glass (main.cpp: lvgl_port_set_rotation before the splash) turned
-// portrait runs the walk on 480x800; its QR card's corners reach past the
-// ring there as on the 800x480 glass (F155, open), so they are printed, not
-// held. The landscape nightlight (320x180, corners inside the stroke, F157)
-// would join this table with a nightlight flavor; build.sh builds none.
+// portrait runs the walk on its panel's sides swapped; its QR card's corners
+// reach past the ring there as on the native glass (F155, open), so they are
+// printed, not held. The panel is the one build.sh wires for the flavor (its
+// pin map's LCD_WIDTH x LCD_HEIGHT) and the turn glass_settings.h's
+// ROT_PORTRAIT, read from the sources, not typed here. The landscape
+// nightlight (320x180, corners inside the stroke, F157) would join this
+// table with a nightlight flavor; build.sh builds none.
+const BUILD_SH = await readFile(join(ROOT, "canary-local/emulator/build.sh"), "utf8");
+const GLASS_SETTINGS = await readFile(join(ROOT, "firmware/projects/canary-display/include/canary/glass_settings.h"), "utf8");
+async function dashPanel() {
+  const pins = /\belse\s+PINS_DIR="\$FW\/boards\/([^"]+)\/pins"\s+CFG_DIR="\$FW\/configs\/canary-display\/dash"/
+    .exec(BUILD_SH)?.[1];
+  if (!pins) throw new Error("build.sh wires no pin map for the dash flavor");
+  const h = await readFile(join(ROOT, "firmware/boards", pins, "pins/pins.h"), "utf8");
+  const w = Number(/^#define LCD_WIDTH\s+(\d+)/m.exec(h)?.[1]);
+  const ht = Number(/^#define LCD_HEIGHT\s+(\d+)/m.exec(h)?.[1]);
+  if (!(w > 0 && ht > 0)) throw new Error(`boards/${pins}/pins/pins.h names no LCD_WIDTH/LCD_HEIGHT`);
+  return { w, h: ht };
+}
+const ROT_PORTRAIT = Number(/\bROT_PORTRAIT\s*=\s*(\d+)/.exec(GLASS_SETTINGS)?.[1]);
+if (!(ROT_PORTRAIT >= 0)) { console.error("ONBOARD_PROBE_FAIL: glass_settings.h names no ROT_PORTRAIT"); process.exit(1); }
+const DASH = await dashPanel();
 const TURNED = [
-  { flavor: "dash", rotation: 1, name: "portrait", glass: { w: 480, h: 800 }, corners: false },
+  // A quarter turn swaps the panel's sides: 480x800 for the dash's 800x480.
+  { flavor: "dash", rotation: ROT_PORTRAIT, name: "portrait", glass: { w: DASH.h, h: DASH.w }, corners: false },
 ].filter((t) => RUN.includes(t.flavor));
 // onboard_layout.h's card corner radius, the one cardInHalo measures with.
 const CARD_RADIUS = Number(/constexpr int kCardRadius = (\d+);/.exec(
@@ -364,13 +386,50 @@ async function walkHarness(flavor, turn = null) {
     const png = await E(() => document.getElementById("glass").toDataURL("image/png"));
     await writeFile(`${SHOTS}/${name}_${walkName}.png`, Buffer.from(png.split(",")[1], "base64"));
   };
-  // F184: no line of the scene on the glass leaves it, and none is cut to
-  // an ellipsis as its own text says — held on every walk.
+  // F184: one of onboard_glass.mjs' framebuffer reads, run in the page on
+  // the canvas as drawn (its source, evaluated there: it is self-contained),
+  // after `pre` (an in-page async expression whose value joins the args) —
+  // the firmware's answer and the pixels read in one turn of the page, with
+  // no frame landing between them.
+  const onCanvas = (fn, args = [], pre = "null") => E(`(async () => {
+    const extra = await (${pre});
+    const cv = document.getElementById("glass");
+    const fr = { w: cv.width, h: cv.height, data: cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data };
+    return (${fn.toString()})(fr, ...${JSON.stringify(args)}, ...(extra === null ? [] : [extra]));
+  })()`);
+  // F184: no line of the scene on the glass leaves it, none is cut to an
+  // ellipsis as its own text says, and each one that draws has ink on the
+  // glass inside the box the firmware reports for it — held on every walk.
   const holdLines = async (scene) => {
     const ls = await E(() => window.__emu.screenLabels());
     const glass = await E(() => ({ w: document.getElementById("glass").width, h: document.getElementById("glass").height }));
-    const off = linesOnGlass(ls, glass) || linesCut(ls);
+    const off = linesOnGlass(ls, glass) || linesCut(ls) ||
+      linesInked(await onCanvas(linesInk, [], "window.__emu.screenLabels()"));
     check(off === null, `${scene}: ${off}`);
+  };
+  // F184: the shapes the firmware announced for its glass, and the frames
+  // drawn (the harness logs both): on a turned walk the first frame is
+  // already on the turned glass, and on every walk the glass never changes
+  // shape once it has drawn.
+  const holdFrames = async (when) => {
+    const st = await E(() => ({ shapes: window.__state.shapes, frames: window.__state.flushes }));
+    const bad = framesOnGlass(st.shapes, st.frames, turn ? turn.glass : null);
+    check(bad === null, `${when}: ${bad}`);
+    return st;
+  };
+  // F184: the Connecting scene, read while the firmware says it is joining
+  // (after the scene's 260 ms fade): its lines and its bird.
+  const readConnecting = async (scene) => {
+    await new Promise((r) => setTimeout(r, 400));
+    const status = async () => JSON.parse((await E(() => window.__emu.http("GET", "/status"))).body || "{}").state;
+    const before = await status();
+    check(before === "connecting", `${scene}: the join left Connecting (${before}) before the probe could read it`);
+    await holdLines(`${scene}: the Connecting scene`);
+    const st = await E(birdState);
+    const perch = birdPerch(st);
+    check(perch === null, `${scene}: the Connecting scene: ${perch}`);
+    const after = await status();
+    check(after === "connecting", `${scene}: the join left Connecting (${after}) while the probe read it`);
   };
   // F89: read the bird again and again while `up` holds (its scene stands),
   // from `first` on, for at most `ms` of wall time: the reads breathOnSeat
@@ -425,6 +484,11 @@ async function walkHarness(flavor, turn = null) {
 
     // First boot: the firmware's own line, and the radio it configured.
     await until(async () => (await serial()).includes('First boot - onboarding AP "SecuraCV-'), "the first-boot serial line");
+    // F184: every frame so far on one glass — on a turned walk, the turned
+    // glass from the splash's first frame on (main.cpp wears the saved
+    // rotation before the splash; a firmware that turned it after the splash
+    // would pass every read below, the canvas having turned by then).
+    const framesAtBoot = await holdFrames("by the first-boot line");
     // F184: a turned walk's glass is the turned size, read off the canvas
     // the firmware's own framebuffer sizes (the HAL follows LVGL's rotation).
     if (turn) {
@@ -483,16 +547,32 @@ async function walkHarness(flavor, turn = null) {
       `the join scene paints over its QR card: ${card ? `${card.stray} px not the QR's black/white inside ` +
         `card ${JSON.stringify(card.box)} on ${card.panel.join("x")}, first at ${JSON.stringify(card.first)}` : "card gone"}`);
     await holdLines("the join scene");
-    // F184: on the turned glass the card stands in the halo where the layout
-    // puts it — over its center, its sides inside the stroke; its corners are
-    // held only where the layout keeps them inside (not on the 800 px glass,
-    // F155).
+    // F184: the QR stands upright on the glass, as a phone reads it: its
+    // three finder patterns at top-left, top-right and bottom-left (a glass
+    // drawn mirrored, flipped or upside down moves one to bottom-right).
+    const finders = await onCanvas(qrFinders, [card.box, CARD_RADIUS]);
+    const upright = qrUpright(finders);
+    check(upright === null, `the join scene: ${upright}`);
+    // F184: on the turned glass the card and the halo stand where the layout
+    // puts them — the card off the framebuffer and the arc LVGL laid out,
+    // each held to onboard_layout.h's stack as the firmware evaluates it
+    // (onboardJoin), the halo's stroke inked on the glass where its circle
+    // says, and the card over the halo's center with its sides inside the
+    // stroke; its corners are held only where the layout keeps them inside
+    // (not on the 800 px glass, F155).
     let inHalo = null;
-    if (turn) {
-      inHalo = cardInHalo(card, haloOf(await E(() => window.__emu.screenArcs())),
-        { corners: turn.corners, cornerR: CARD_RADIUS });
-      check(inHalo.fail === null, inHalo.fail);
-    }
+    const holdJoin = async (scene, joinCardNow) => {
+      const layout = await E(() => window.__emu.onboardJoin());
+      const halo = haloOf(await E(() => window.__emu.screenArcs()));
+      const bad = cardAtLayout(joinCardNow, layout) || haloAtLayout(halo, layout);
+      check(bad === null, `${scene}: ${bad}`);
+      const ink = haloInked(await onCanvas(haloInk, [halo]), 0, 3);
+      check(ink === null, `${scene}: ${ink}`);
+      const h = cardInHalo(joinCardNow, halo, { corners: turn.corners, cornerR: CARD_RADIUS });
+      check(h.fail === null, `${scene}: ${h.fail}`);
+      return h;
+    };
+    if (turn) inHalo = await holdJoin("the join scene", card);
     // F45: no line of the Join scene ends in an ellipsis, and the name and
     // key the firmware printed are on the glass — then nobody joins for 45 s
     // and the stuck-phone hint comes up; still none cut, and the name and
@@ -518,11 +598,10 @@ async function walkHarness(flavor, turn = null) {
     check(cutHint.length === 0, `with the stuck-phone hint up the join scene cuts ${cutHint.length} line(s) ` +
       `to an ellipsis (first dots at ${JSON.stringify(cutHint)}) (F45)`);
     await holdLines("the join scene with the stuck-phone hint");
-    if (turn) {
-      const hinted = cardInHalo(await E(joinCard), haloOf(await E(() => window.__emu.screenArcs())),
-        { corners: turn.corners, cornerR: CARD_RADIUS });
-      check(hinted.fail === null, `with the stuck-phone hint up: ${hinted.fail}`);
-    }
+    const cardHint = await E(joinCard);
+    const uprightHint = qrUpright(await onCanvas(qrFinders, [cardHint ? cardHint.box : [0, 0, -1, -1], CARD_RADIUS]));
+    check(uprightHint === null, `with the stuck-phone hint up: ${uprightHint}`);
+    if (turn) await holdJoin("with the stuck-phone hint up", cardHint);
     const hintLines = await E(glassLines);
     // A changed label is not enough: on round glass the title yields as the
     // hint arrives, so the wait above passes even if the hint never draws.
@@ -636,6 +715,7 @@ async function walkHarness(flavor, turn = null) {
     await E(() => { window.__nvs = []; window.__emu.opts.onNvsWrite = (ns, k) => window.__nvs.push(`${ns}/${k}`); });
     let r = await join("HomeNet", "wrong-horse");
     check(r.status === 200 && JSON.parse(r.body).ok === true, `POST /join → ${r.status} ${r.body}`);
+    await readConnecting("joining with a wrong key");
     let v = await verdict();
     check(v.state === "fail" && v.reason === PORTAL.join_failures.BadPassword, `wrong key verdict ${JSON.stringify(v)}`);
     await failFixOnGlass("BadPassword");
@@ -654,8 +734,24 @@ async function walkHarness(flavor, turn = null) {
 
     // The right key, with a zone: success, and only now the credentials.
     r = await join("HomeNet", "correct-horse", "UTC0");
+    await readConnecting("joining with the right key");
     v = await verdict();
     check(v.state === "success", `right key verdict ${JSON.stringify(v)}`);
+    // F184: the Success scene, read until the onboarding screen goes (at
+    // most 2.5 s): every line on the glass and none cut, and the bird on the
+    // glass through its earned hop (the hop crosses the lines as they fade
+    // in, so only the bird's on-glass half is held there).
+    let successReads = 0;
+    const tSuccess = Date.now();
+    while (Date.now() - tSuccess < 2500) {
+      const st = await E(birdState);
+      if (!st.seat) break;
+      successReads++;
+      const bad = linesOnGlass(st.labels, st.glass) || linesCut(st.labels) || birdOnGlass(st);
+      check(bad === null, `the Success scene: ${bad}`);
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    check(successReads > 0, "the Success scene was gone before the probe could read it");
     const nvs = await E(() => window.__nvs);
     check(nvs.includes("securacv/wifi_ssid") && nvs.includes("securacv/wifi_pass"), `credentials not persisted: ${nvs}`);
 
@@ -667,17 +763,24 @@ async function walkHarness(flavor, turn = null) {
     check(s1.includes("Onboarding complete."), "serial never said onboarding completed");
     check(s1.includes("Timezone chosen during setup."), "the zone the portal sent was not applied");
     check((await E(() => window.__emu.http("GET", "/"))).status === 0, "the portal still answers after teardown");
+    // F184: the face the boot ends on, after the handoff: every line on the
+    // glass, none cut, each inked; and every frame of the walk on one glass.
+    await new Promise((res) => setTimeout(res, 1500));
+    await holdLines("the face after onboarding");
+    const framesAtEnd = await holdFrames("by the end of the walk");
     await until(() => E(() => window.__state.mqtt.some((m) => m.dir === "out" && m.topic.endsWith("/status"))),
       "the display's MQTT status after onboarding", 30000);
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${walkName}.png` });
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
     const turned = turn
-      ? `${turn.glass.w}x${turn.glass.h} glass, every line on it, the QR card in the halo (offset ` +
-        `${inHalo.offset.join(",")}, sides ${inHalo.sides} px from its center, inner edge ${inHalo.inner}; ` +
-        `corners reach ${inHalo.reach}, F155), `
+      ? `${turn.glass.w}x${turn.glass.h} glass from the first frame, the QR card and halo where the layout ` +
+        `seats them (offset ${inHalo.offset.join(",")}, sides ${inHalo.sides} px from the center, inner edge ` +
+        `${inHalo.inner}; corners reach ${inHalo.reach}, F155), `
       : "";
-    console.log(`ONBOARD_PROBE_OK[${walkName}] ${ap.ssid}: ${turned}join card clean, no line cut and name + key on the glass ` +
-      `(with and without the stuck hint), ` +
+    console.log(`ONBOARD_PROBE_OK[${walkName}] ${ap.ssid}: ${turned}${framesAtEnd.frames} frames on one glass ` +
+      `(${framesAtBoot.shapes.length} shape(s) announced), every line read on the glass, inked and none cut ` +
+      `(Connecting and ${successReads} Success reads included), QR upright, ` +
+      `join card clean, no line cut and name + key on the glass (with and without the stuck hint), ` +
       `refused wrong key, "no page?" and both failures' fixes whole on the glass, captive DNS+302, served page pinned, ` +
       `3 verdicts from firmware, persisted on success, boot resumed`);
   } catch (e) {

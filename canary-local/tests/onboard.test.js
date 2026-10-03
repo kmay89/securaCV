@@ -14,6 +14,9 @@
 //   · the DNS plumbing misreads the firmware's reply shape     → "DNS"
 //   · the turned glass's reads pass a line off it, or a card
 //     outside its halo                                         → "turned glass (F184)"
+//   · the turned glass is drawn mirrored or flipped, its halo
+//     reported where it is not drawn, its lines inked nowhere,
+//     its first frame unturned, or its card off the layout      → "turned glass (F184)"
 //   · a saved rotation lands after power-on, or a dist without
 //     the binding boots unturned                               → "saved rotation (F184)"
 //   · the turned walk falls out of the probe or the glass test
@@ -401,22 +404,234 @@ test("turned glass (F184): cardInHalo holds the QR card over its halo's center, 
   assert.strictEqual(haloOf([{ ...halo, shown: false }]), null);
 });
 
+// A synthetic glass for the framebuffer reads (F184): w x h RGBA, black.
+function glassFrame(w, h) {
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let i = 3; i < data.length; i += 4) data[i] = 255;
+  return { w, h, data };
+}
+function paint(fr, x, y, v) {
+  const i = (y * fr.w + x) * 4;
+  fr.data[i] = fr.data[i + 1] = fr.data[i + 2] = v;
+}
+// The glass drawn wrong: mirrored left-right, flipped top-bottom, or both
+// (upside down). Each keeps the glass's shape, so no size check sees it.
+function redraw(fr, how) {
+  const out = glassFrame(fr.w, fr.h);
+  for (let y = 0; y < fr.h; y++) {
+    for (let x = 0; x < fr.w; x++) {
+      const sx = how === "mirror" || how === "upside-down" ? fr.w - 1 - x : x;
+      const sy = how === "flip" || how === "upside-down" ? fr.h - 1 - y : y;
+      const i = (sy * fr.w + sx) * 4, o = (y * fr.w + x) * 4;
+      for (let k = 0; k < 4; k++) out.data[o + k] = fr.data[i + k];
+    }
+  }
+  return out;
+}
+// A join card as onboard_ui draws it: a white card with 10 px rounded corners
+// (the glass shows behind them), 12 px padding, and a 21-module code at 4 px
+// a module: finders at three corners with their light separators, the timing
+// rows, and fixed pseudo-random data everywhere else (bottom-right included).
+function qrGlass() {
+  const fr = glassFrame(200, 160);
+  const N = 21, m = 4, pad = 12, R = 10;
+  const side = N * m + 2 * pad;
+  const left = 46, top = 20;
+  for (let y = top; y < top + side; y++) {
+    for (let x = left; x < left + side; x++) {
+      const px = x + 0.5, py = y + 0.5;
+      const ax = px < left + R ? left + R : px > left + side - R ? left + side - R : null;
+      const ay = py < top + R ? top + R : py > top + side - R ? top + side - R : null;
+      if (ax !== null && ay !== null && Math.hypot(px - ax, py - ay) > R) continue;
+      paint(fr, x, y, 255);
+    }
+  }
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 16) & 1;
+  const finder = (i, j) => i === 0 || i === 6 || j === 0 || j === 6 || (i >= 2 && i <= 4 && j >= 2 && j <= 4);
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      let d;
+      if (r < 8 && c < 8) d = r < 7 && c < 7 && finder(c, r);
+      else if (r < 8 && c >= N - 8) d = r < 7 && c >= N - 7 && finder(c - (N - 7), r);
+      else if (r >= N - 8 && c < 8) d = r >= N - 7 && c < 7 && finder(c, r - (N - 7));
+      else if (r === 6 || c === 6) d = (r + c) % 2 === 0;
+      else d = rnd() === 1;
+      if (!d) continue;
+      for (let y = 0; y < m; y++) for (let x = 0; x < m; x++) paint(fr, left + pad + c * m + x, top + pad + r * m + y, 0);
+    }
+  }
+  return { fr, card: [left, top, left + side - 1, top + side - 1] };
+}
+
+test("turned glass (F184): qrFinders/qrUpright hold the join QR upright, and a mirrored, flipped or upside-down glass fails", async () => {
+  const { qrFinders, qrUpright } = await import("./onboard_glass.mjs");
+  const { fr, card } = qrGlass();
+  const f = qrFinders(fr, card, 10);
+  assert.deepStrictEqual(f, { box: [58, 32, 141, 115], module: 4, tl: true, tr: true, bl: true, br: false });
+  assert.strictEqual(qrUpright(f), null);
+  // Drawn wrong, the glass keeps its shape and the card stays a white box,
+  // but a finder lands at bottom-right.
+  const box = (how) => {
+    const [x0, y0, x1, y1] = card;
+    const mx = how !== "flip", my = how !== "mirror";
+    return [mx ? fr.w - 1 - x1 : x0, my ? fr.h - 1 - y1 : y0, mx ? fr.w - 1 - x0 : x1, my ? fr.h - 1 - y0 : y1];
+  };
+  for (const how of ["mirror", "flip", "upside-down"]) {
+    const g = qrFinders(redraw(fr, how), box(how), 10);
+    assert.strictEqual(g.br, true, `${how}: a finder at bottom-right`);
+    assert.match(qrUpright(g), /finder patterns stand at .*br.* not top-left, top-right and bottom-left/, how);
+  }
+  // The glass behind the card's rounded corners is not the code's: read as
+  // if the card were square, the corners' dark bounds the code and no finder
+  // is found.
+  assert.match(qrUpright(qrFinders(fr, card, 0)), /stand at no corner/);
+  // A card with no code fails rather than passing on nothing.
+  const blank = glassFrame(40, 40);
+  for (let y = 5; y < 35; y++) for (let x = 5; x < 35; x++) paint(blank, x, y, 255);
+  assert.strictEqual(qrFinders(blank, [5, 5, 34, 34], 0), null);
+  assert.match(qrUpright(null), /holds no QR code/);
+});
+
+test("turned glass (F184): haloInk/haloInked hold the halo the firmware reports to the stroke on the glass", async () => {
+  const { haloInk, haloInked } = await import("./onboard_glass.mjs");
+  const ring = (v) => {
+    const fr = glassFrame(200, 200);
+    for (let y = 0; y < 200; y++) {
+      for (let x = 0; x < 200; x++) {
+        const d = Math.hypot(x - 100, y - 100);
+        if (d >= 47 && d < 50) paint(fr, x, y, v);
+      }
+    }
+    return fr;
+  };
+  const halo = { cx: 100, cy: 100, r: 50, stroke: 3 };
+  // The Join halo at its breath's faintest still reads (8 on black).
+  for (const v of [16, 8]) {
+    const ink = haloInk(ring(v), halo);
+    assert.deepStrictEqual(ink, { stroke: [v, v, v, v], outside: [0, 0, 0, 0] });
+    assert.strictEqual(haloInked(ink, 0, 3), null);
+  }
+  // A circle reported wider than drawn, with no stroke, or off center, reads
+  // the glass where its stroke should be.
+  assert.match(haloInked(haloInk(ring(16), { ...halo, r: 70 }), 0, 3), /right, left, bottom, top/);
+  assert.match(haloInked(haloInk(ring(16), { ...halo, stroke: 0 }), 0, 3), /not the one on the glass/);
+  assert.match(haloInked(haloInk(ring(16), { ...halo, cx: 50 }), 0, 3), /not the one on the glass at its (right|left)/);
+  // Ink outside the stroke (a ring drawn wider than reported) fails too.
+  const wide = ring(16);
+  for (let x = 152; x < 156; x++) paint(wide, x, 100, 40);
+  assert.match(haloInked(haloInk(wide, halo), 0, 3), /at its right/);
+  // A glass no brighter than the margin is not a stroke.
+  assert.match(haloInked(haloInk(ring(3), halo), 0, 3), /right, left, bottom, top/);
+});
+
+test("turned glass (F184): linesInk/linesInked find each drawn line's ink where the firmware says it is", async () => {
+  const { linesInk, linesInked } = await import("./onboard_glass.mjs");
+  const fr = glassFrame(300, 100);
+  for (let x = 24; x < 110; x += 3) for (let y = 34; y < 46; y++) paint(fr, x, y, 200);
+  const label = (extra = {}) => ({ x: 20, y: 30, w: 100, h: 20, shown: true, opa: 255, text: "Scan with your phone", ...extra });
+  const reads = linesInk(fr, [label()]);
+  assert.strictEqual(reads.length, 1);
+  assert.ok(reads[0].ink > 0);
+  assert.strictEqual(linesInked(reads), null);
+  // A flipped or mirrored glass draws the line elsewhere; a blank one nowhere.
+  for (const g of [redraw(fr, "flip"), redraw(fr, "mirror"), glassFrame(300, 100)]) {
+    assert.match(linesInked(linesInk(g, [label()])), /1 line\(s\) the firmware draws show no ink .*Scan with your phone/);
+  }
+  // Only lines that draw whole on the glass are read: hidden, fading, empty
+  // or off the glass (linesOnGlass names those) are not.
+  for (const extra of [{ shown: false }, { opa: 200 }, { text: " " }, { x: 250 }, { y: -1 }]) {
+    assert.deepStrictEqual(linesInk(glassFrame(300, 100), [label(extra)]), [], JSON.stringify(extra));
+  }
+});
+
+test("turned glass (F184): framesOnGlass holds every frame to one glass, a turned boot's from the first", async () => {
+  const { framesOnGlass } = await import("./onboard_glass.mjs");
+  const turned = { w: 480, h: 800 };
+  // main.cpp's order: display_init announces the panel, and the first flush
+  // after lvgl_port_set_rotation re-announces it turned before it lands.
+  assert.strictEqual(framesOnGlass([{ w: 800, h: 480, frames: 0 }, { w: 480, h: 800, frames: 0 }], 95, turned), null);
+  // The rotation worn after the splash: the splash drew on the native panel.
+  assert.match(framesOnGlass([{ w: 800, h: 480, frames: 0 }, { w: 480, h: 800, frames: 90 }], 200, turned),
+    /first frame on a 800x480 glass, not the 480x800/);
+  // A native walk: whatever the first frame was on, and nothing after.
+  assert.strictEqual(framesOnGlass([{ w: 800, h: 480, frames: 0 }], 10, null), null);
+  assert.match(framesOnGlass([{ w: 800, h: 480, frames: 0 }, { w: 480, h: 800, frames: 5 }], 9, null),
+    /changed to 480x800 after 5 frame\(s\) on 800x480/);
+  assert.match(framesOnGlass([{ w: 480, h: 800, frames: 0 }, { w: 800, h: 480, frames: 40 }], 60, turned),
+    /changed to 800x480 after 40/);
+  // Nothing drawn, or drawn before any announcement: no pass.
+  assert.match(framesOnGlass([{ w: 480, h: 800, frames: 0 }], 0, turned), /no frame/);
+  assert.match(framesOnGlass([{ w: 480, h: 800, frames: 3 }], 9, turned), /before it announced/);
+  assert.match(framesOnGlass([], 9, null), /before it announced/);
+});
+
+test("turned glass (F184): cardAtLayout and haloAtLayout hold the card and halo where onboard_layout.h seats them", async () => {
+  const { cardAtLayout, haloAtLayout, cardInHalo } = await import("./onboard_glass.mjs");
+  const layout = { ring: { x: 90, y: 250, d: 300, stroke: 3 }, card: { x: 124, y: 284, side: 232, radius: 10 } };
+  const halo = { cx: 240, cy: 400, r: 150, stroke: 3, shown: true };
+  const card = (dx = 0, dy = 0) => ({ box: [124 + dx, 284 + dy, 355 + dx, 515 + dy] });
+  assert.strictEqual(cardAtLayout(card(), layout), null);
+  assert.strictEqual(cardAtLayout(card(1, -1), layout), null, "within the anti-aliased edge");
+  // Cards cardInHalo passes, inside the halo but not where the layout puts
+  // them: 25 px right, 25 px up, 18 px down and right.
+  for (const [dx, dy] of [[25, 0], [0, -25], [18, 18]]) {
+    assert.strictEqual(cardInHalo(card(dx, dy), halo).fail, null, `${dx},${dy} is inside the halo`);
+    assert.match(cardAtLayout(card(dx, dy), layout), /seats it at \[124,284,355,515\]/, `${dx},${dy}`);
+  }
+  // Heirloom's stack (5 px up) is held to Heirloom's layout, not the default's.
+  assert.match(cardAtLayout(card(0, -5), layout), /edges off by \[0,-5,0,-5\]/);
+  assert.strictEqual(cardAtLayout(card(0, -5), { ...layout, card: { ...layout.card, y: 279 } }), null);
+  assert.match(cardAtLayout(card(), null), /names no Join layout/);
+  assert.match(cardAtLayout(null, layout), /no QR card/);
+  // The halo: its center, radius and stroke as the ring's box and stroke name them.
+  assert.strictEqual(haloAtLayout(halo, layout), null);
+  for (const bad of [{ r: 170 }, { stroke: 0 }, { cx: 90 }, { cy: 240 }]) {
+    assert.match(haloAtLayout({ ...halo, ...bad }, layout), /seats it about 240,400 \(r 150, stroke 3\)/, JSON.stringify(bad));
+  }
+  // A card and halo moved together (laid out from the landscape glass's dims
+  // on the portrait one) stay "inside" each other; the layout fails both.
+  const moved = { ...halo, cy: 240 };
+  assert.strictEqual(cardInHalo(card(0, -160), moved).fail, null);
+  assert.ok(cardAtLayout(card(0, -160), layout) && haloAtLayout(moved, layout));
+  assert.match(haloAtLayout(halo, null), /names no Join layout/);
+  assert.match(haloAtLayout(null, layout), /no halo/);
+});
+
+test("bird on glass (F184): birdOnGlass holds the moving bird on the glass; birdPerch keeps its message", async () => {
+  const { birdOnGlass, birdPerch } = await import("./bird_perch.mjs");
+  const glass = { w: 480, h: 800 };
+  const st = (b) => ({ bird: { w: 120, h: 120, shown: true, ...b }, glass, labels: [{ x: 0, y: 300, w: 480, h: 40, shown: true, opa: 255, text: "You're in." }] });
+  assert.strictEqual(birdOnGlass(st({ x: 180, y: 254 })), null, "the hop over a fading line is on the glass");
+  assert.match(birdPerch(st({ x: 180, y: 254 })) || "", /drawn over/, "birdPerch still holds it clear of text");
+  for (const b of [{ x: 180, y: -1 }, { x: 361, y: 254 }, { x: -1, y: 254 }, { x: 180, y: 681 }]) {
+    assert.match(birdOnGlass(st(b)), /off the 480x800 glass \(F64\)/, JSON.stringify(b));
+    assert.strictEqual(birdPerch(st(b)), birdOnGlass(st(b)));
+  }
+  assert.strictEqual(birdOnGlass(st({ x: 180, y: -50, shown: false })), null);
+  assert.strictEqual(birdOnGlass({ bird: null, glass }), null);
+});
+
 // A stand-in for the emulator module the shell drives: every export a cwrap
 // that records its call (and what a real one would return), and the
 // framebuffer/strings it reads.
-function fakeModule({ preset = true, arcs = true, presetAnswer = null } = {}) {
+const FAKE_JOIN = { ring: { x: 90, y: 250, d: 300, stroke: 3 }, card: { x: 124, y: 284, side: 232, radius: 10 } };
+function fakeModule({ preset = true, arcs = true, join = true, presetAnswer = null } = {}) {
   const calls = [];
   const factory = async () => ({
     cwrap: (name) => (...args) => {
       calls.push([name, ...args]);
       if (name === "emu_preset_rotation") return presetAnswer ?? (args[0] >= 0 && args[0] <= 3 ? 1 : 0);
       if (name === "emu_screen_arcs") return 8;
+      if (name === "emu_onboard_join") return 16;
       return 0;
     },
     _emu_preset_rotation: preset ? () => 0 : undefined,
     _emu_screen_arcs: arcs ? () => 0 : undefined,
+    _emu_onboard_join: join ? () => 0 : undefined,
     HEAPU8: new Uint8Array(16),
-    UTF8ToString: () => JSON.stringify([{ x: 90, y: 250, w: 300, h: 300, cx: 240, cy: 400, r: 150, stroke: 3, shown: 1 }]),
+    UTF8ToString: (ptr) => (ptr === 16 ? JSON.stringify(FAKE_JOIN)
+      : JSON.stringify([{ x: 90, y: 250, w: 300, h: 300, cx: 240, cy: 400, r: 150, stroke: 3, shown: 1 }])),
   });
   const canvas = { getContext: () => ({}), addEventListener: () => {} };
   return { calls, factory, canvas };
@@ -455,6 +670,16 @@ test("saved rotation (F184): the shell stages it before power-on, and a dist wit
   emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
   await emu.start({});
   await assert.rejects(emu.screenArcs(), /no emu_screen_arcs \(rebuild it\)/);
+  // The Join layout the firmware names (onboard_ui_join_layout), decoded;
+  // absent from an old dist, it throws rather than holding nothing.
+  m = fakeModule();
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  assert.deepStrictEqual(await emu.onboardJoin(), FAKE_JOIN);
+  m = fakeModule({ join: false });
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await assert.rejects(emu.onboardJoin(), /no emu_onboard_join \(rebuild it\)/);
 });
 
 test("turned wiring (F184): the firmware wears the saved rotation, the glass turns with LVGL, the probe walks it", () => {
@@ -474,9 +699,19 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   for (const step of ["settings_init();", "settings_mut().rotation = (uint8_t)rot;", "settings_mark_dirty();", "settings_loop("]) {
     assert.ok(emuMain.includes(step), `save_rotation goes through the settings store: ${step}`);
   }
+  // main.cpp wears the saved rotation once in setup(), after the glass comes
+  // up and BEFORE the splash and the onboarding (what the preset relies on;
+  // the turned walk's framesOnGlass holds the same order off the canvas).
   const mainCpp = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
-  assert.ok(mainCpp.includes("canary::ui::lvgl_port_set_rotation(canary::glass::settings().rotation);"),
-    "main.cpp wears the saved rotation before the splash (what the preset relies on)");
+  const setupBody = /\nvoid setup\(\) \{([\s\S]*?)\n\}\n/.exec(mainCpp)?.[1] || "";
+  const wear = "canary::ui::lvgl_port_set_rotation(canary::glass::settings().rotation);";
+  const at = (needle) => setupBody.indexOf(needle);
+  assert.strictEqual(setupBody.split(wear).length - 1, 1, "setup() wears the saved rotation exactly once");
+  assert.ok(at("g_display_ok = canary::ui::lvgl_port_init();") >= 0 && at("canary::ui::splash_play(") >= 0 &&
+    at("canary::net::provision_run(") >= 0, "setup() still names lvgl_port_init, splash_play and provision_run");
+  assert.ok(at(wear) > at("g_display_ok = canary::ui::lvgl_port_init();"), "the rotation is worn after lvgl_port_init()");
+  assert.ok(at(wear) < at("canary::ui::splash_play("), "the rotation is worn before the splash");
+  assert.ok(at(wear) < at("canary::net::provision_run("), "the rotation is worn before the onboarding");
   // The glass follows what LVGL did to the pixels, and tells the page its shape.
   const hal = read(join(ROOT, "emulator/src/emu_hal_display.cpp"));
   assert.ok(hal.includes("_lv_refr_get_disp_refreshing()") && hal.includes("d->driver->sw_rotate"));
@@ -485,24 +720,58 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   const binding = read(join(ROOT, "emulator/src/emu_bindings.cpp"));
   assert.match(binding, /EMSCRIPTEN_KEEPALIVE const char\* emu_screen_arcs\(void\)/);
   assert.ok(binding.includes("lv_obj_check_type(obj, &lv_arc_class)"));
+  // The Join layout the firmware evaluates (onboard_ui_join_layout), with the
+  // header's stroke and corner radius: what the probe holds the card and arc to.
+  assert.match(binding, /EMSCRIPTEN_KEEPALIVE const char\* emu_onboard_join\(void\)/);
+  assert.ok(binding.includes("canary::ui::onboard_ui_join_layout(&b)") &&
+    binding.includes("canary::ui::onboardlayout::kRingStroke") && binding.includes("canary::ui::onboardlayout::kCardRadius"));
   // The page: the harness passes only 0..3 and the shell stages it.
   const harness = read(join(ROOT, "emulator/web/harness.js"));
   assert.ok(harness.includes("const ROTATIONS = { 0: 0, 1: 1, 2: 2, 3: 3 };") &&
     harness.includes("rotation: rotationParam === null ? null : ROTATIONS[rotationParam],"));
+  // ...and logs every shape the firmware announces with the frames drawn by then.
+  assert.ok(/onDisplayReady: \(w, h, round\) => \{\s*state\.shapes\.push\(\{ w, h, frames: state\.flushes \}\);/.test(harness) &&
+    harness.includes("onFrame: () => { state.flushes++; },") && harness.includes("shapes: [] };"),
+  "the harness logs each announced glass shape with the frame count");
   // The probe walks the turned dash and holds the new reads on it.
   const probe = read(join(__dirname, "onboard_probe.mjs"));
-  assert.ok(probe.includes('{ flavor: "dash", rotation: 1, name: "portrait", glass: { w: 480, h: 800 }, corners: false }'));
+  // The turned glass is derived, not typed: the dash's pin map's panel with
+  // its sides swapped, at glass_settings.h's ROT_PORTRAIT.
+  assert.ok(probe.includes('{ flavor: "dash", rotation: ROT_PORTRAIT, name: "portrait", glass: { w: DASH.h, h: DASH.w }, corners: false }'));
+  assert.ok(probe.includes("const ROT_PORTRAIT = Number(/\\bROT_PORTRAIT\\s*=\\s*(\\d+)/.exec(GLASS_SETTINGS)?.[1]);") &&
+    probe.includes("const w = Number(/^#define LCD_WIDTH\\s+(\\d+)/m.exec(h)?.[1]);"), "TURNED reads the panel and the turn from the sources");
   assert.ok(probe.includes("const turnArg = turn ? `&rotation=${turn.rotation}` : \"\";"));
   assert.ok(probe.includes("check(cv[0] === turn.glass.w && cv[1] === turn.glass.h,"), "the turned walk checks the glass's size");
-  assert.ok(probe.includes("inHalo = cardInHalo(card, haloOf(await E(() => window.__emu.screenArcs())),"));
+  // Every frame on one glass, on a turned walk the turned one from the first
+  // frame: checked at the first-boot line and at the end of the walk.
+  assert.ok(probe.includes("const bad = framesOnGlass(st.shapes, st.frames, turn ? turn.glass : null);") &&
+    probe.includes('const framesAtBoot = await holdFrames("by the first-boot line");') &&
+    probe.includes('const framesAtEnd = await holdFrames("by the end of the walk");'));
+  // The card and halo held to the layout, the stroke inked, on both Join reads.
+  for (const needle of ["const bad = cardAtLayout(joinCardNow, layout) || haloAtLayout(halo, layout);",
+    "const ink = haloInked(await onCanvas(haloInk, [halo]), 0, 3);",
+    "const h = cardInHalo(joinCardNow, halo, { corners: turn.corners, cornerR: CARD_RADIUS });",
+    'if (turn) inHalo = await holdJoin("the join scene", card);',
+    'if (turn) await holdJoin("with the stuck-phone hint up", cardHint);']) {
+    assert.ok(probe.includes(needle), `the turned walk holds the Join layout: ${needle}`);
+  }
+  // The QR upright on every walk, before and after the hint.
+  assert.ok(probe.includes("const upright = qrUpright(finders);") && probe.includes("const uprightHint = qrUpright("));
   assert.ok(probe.includes("const helloLines = linesOnGlass(st.labels, st.glass) || linesCut(st.labels);") &&
     probe.includes("const pjLines = linesOnGlass(st.labels, st.glass) || linesCut(st.labels);"),
   "every bird read also holds the lines");
-  assert.ok(probe.includes("const off = linesOnGlass(ls, glass) || linesCut(ls);"), "every scene read holds the lines");
+  assert.ok(probe.includes("const off = linesOnGlass(ls, glass) || linesCut(ls) ||\n      linesInked(await onCanvas(linesInk, [], \"window.__emu.screenLabels()\"));"),
+    "every scene read holds the lines, and their ink");
   for (const scene of ['await holdLines("the join scene");', 'await holdLines("the join scene with the stuck-phone hint");',
-    'await holdLines("the phone-joined scene");', "await holdLines(`after a ${reason} failure`);"]) {
+    'await holdLines("the phone-joined scene");', "await holdLines(`after a ${reason} failure`);",
+    "await holdLines(`${scene}: the Connecting scene`);", 'await holdLines("the face after onboarding");']) {
     assert.ok(probe.includes(scene), `the probe holds the lines: ${scene}`);
   }
+  // Connecting after both joins it can read, and Success through the hop.
+  assert.ok(probe.includes('await readConnecting("joining with a wrong key");') &&
+    probe.includes('await readConnecting("joining with the right key");'));
+  assert.ok(probe.includes("const bad = linesOnGlass(st.labels, st.glass) || linesCut(st.labels) || birdOnGlass(st);") &&
+    probe.includes('check(successReads > 0, "the Success scene was gone before the probe could read it");'));
   assert.ok(probe.includes('if (WALK !== "native") for (const t of TURNED) { await walkHarness(t.flavor, t);'));
   // CI: the native glass test runs where an earlier red cannot skip it —
   // after the third-party cache is restored, before every step that reads

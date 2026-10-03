@@ -34,7 +34,11 @@ const factory = window[entry.factory];
 if (typeof factory !== "function") throw new Error("dist bundle for " + flavor + " exports no factory");
 
 const serial = document.getElementById("serial");
-const state = { booted: false, flushes: 0, serialText: "", mqtt: [], flavor };
+// shapes: every shape the firmware announced for its glass (onDisplayReady,
+// F184), with how many frames it had drawn by then — so a probe can tell the
+// glass the FIRST frame landed on (a saved rotation is worn before the
+// splash, main.cpp) from one the firmware turned to later.
+const state = { booted: false, flushes: 0, serialText: "", mqtt: [], flavor, shapes: [] };
 window.__state = state;
 
 const emu = new CanaryEmulator(factory, {
@@ -45,6 +49,7 @@ const emu = new CanaryEmulator(factory, {
     serial.scrollTop = serial.scrollHeight;
   },
   onDisplayReady: (w, h, round) => {
+    state.shapes.push({ w, h, frames: state.flushes });
     if (round) document.getElementById("glass").classList.add("round");
   },
   onFrame: () => { state.flushes++; },

@@ -258,3 +258,30 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* emu_onboard_seat(void) {
 #endif
   return out.c_str();
 }
+
+// Where the onboarding's Join stack seats the halo and the QR card on this
+// glass (F184): the boxes onboard_layout.h's stack names for it
+// (onboard_ui_join_layout), with the halo's stroke and the card's corner
+// radius from the same header, as
+// {ring:{x,y,d,stroke},card:{x,y,side,radius}}; "null" while no onboarding
+// screen is up. The probe holds the card it reads off the framebuffer and
+// the arc LVGL laid out (emu_screen_arcs) to these, so "the card in the
+// halo" means where the layout puts it, not merely inside. Read-only.
+extern "C" EMSCRIPTEN_KEEPALIVE const char* emu_onboard_join(void) {
+  static std::string out;
+  out = "null";
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+  canary::ui::OnboardJoinBoxes b = {0, 0, 0, 0, 0, 0};
+  if (canary::ui::onboard_ui_join_layout(&b)) {
+    out = "{\"ring\":{\"x\":" + std::to_string(b.ring_x) +
+          ",\"y\":" + std::to_string(b.ring_y) +
+          ",\"d\":" + std::to_string(b.ring_d) + ",\"stroke\":" +
+          std::to_string(canary::ui::onboardlayout::kRingStroke) +
+          "},\"card\":{\"x\":" + std::to_string(b.card_x) +
+          ",\"y\":" + std::to_string(b.card_y) +
+          ",\"side\":" + std::to_string(b.card_side) + ",\"radius\":" +
+          std::to_string(canary::ui::onboardlayout::kCardRadius) + "}}";
+  }
+#endif
+  return out.c_str();
+}

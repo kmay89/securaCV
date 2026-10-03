@@ -265,6 +265,9 @@ export class CanaryEmulator {
       // halo), and a saved rotation staged before power-on. Absent from a
       // dist built before them: screenArcs() and start({rotation}) say so.
       screenArcs: M._emu_screen_arcs ? M.cwrap("emu_screen_arcs", "number", []) : null,
+      // Where the Join stack seats the halo and the QR card (F184), absent
+      // from a dist built before it: onboardJoin() says so.
+      onboardJoin: M._emu_onboard_join ? M.cwrap("emu_onboard_join", "number", []) : null,
       presetRotation: M._emu_preset_rotation ? M.cwrap("emu_preset_rotation", "number", ["number"]) : null,
     };
 
@@ -467,6 +470,21 @@ export class CanaryEmulator {
     if (!this.c || this.dead) return null;
     if (!this.c.onboardSeat) throw new Error("this emulator dist has no emu_onboard_seat (rebuild it)");
     const ptr = await this.c.onboardSeat();
+    if (!ptr) return null;
+    return JSON.parse(this.module.UTF8ToString(ptr));
+  }
+
+  /** Where the onboarding's Join stack seats the halo and the QR card on
+   *  this glass (F184): {ring: {x, y, d, stroke}, card: {x, y, side,
+   *  radius}}, each box's top-left on the panel and its side, as
+   *  onboard_layout.h names them (emu_onboard_join); null while no
+   *  onboarding screen is up. The probe holds the card it reads off the
+   *  framebuffer and the arc LVGL laid out to it. Throws on a dist built
+   *  before the binding existed, as onboardSeat() does. */
+  async onboardJoin() {
+    if (!this.c || this.dead) return null;
+    if (!this.c.onboardJoin) throw new Error("this emulator dist has no emu_onboard_join (rebuild it)");
+    const ptr = await this.c.onboardJoin();
     if (!ptr) return null;
     return JSON.parse(this.module.UTF8ToString(ptr));
   }

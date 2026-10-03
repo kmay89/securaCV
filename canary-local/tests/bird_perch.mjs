@@ -20,15 +20,30 @@
 export function birdPerch(st) {
   const b = st.bird;
   if (!b || !b.shown) return null;
-  const { w, h } = st.glass;
-  if (b.x < 0 || b.y < 0 || b.x + b.w > w || b.y + b.h > h) {
-    return `the bird is drawn at ${b.x},${b.y} (${b.w}x${b.h}), off the ${w}x${h} glass (F64)`;
-  }
+  const off = birdOnGlass(st);
+  if (off !== null) return off;
   const over = st.labels.filter((l) => l.shown && l.opa > 0 && l.text.trim() !== "" &&
     l.x < b.x + b.w && b.x < l.x + l.w && l.y < b.y + b.h && b.y < l.y + l.h);
   if (over.length) {
     return `the bird (${b.x},${b.y} ${b.w}x${b.h}) is drawn over ` +
       `${JSON.stringify(over.map((l) => l.text))} (F64)`;
+  }
+  return null;
+}
+
+/**
+ * The bird, when on stage, drawn whole on the glass — the half of birdPerch
+ * that holds while it moves: the Success scene's earned hop crosses the
+ * scene's lines as they fade in (F184 reads it there). st: as birdPerch
+ * takes it. Returns a failure message, or null when the bird is off stage
+ * or on the glass.
+ */
+export function birdOnGlass(st) {
+  const b = st.bird;
+  if (!b || !b.shown) return null;
+  const { w, h } = st.glass;
+  if (b.x < 0 || b.y < 0 || b.x + b.w > w || b.y + b.h > h) {
+    return `the bird is drawn at ${b.x},${b.y} (${b.w}x${b.h}), off the ${w}x${h} glass (F64)`;
   }
   return null;
 }
