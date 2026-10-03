@@ -158,6 +158,11 @@ inline bool install(NimBLEServer* server, Role role, NimBLEServerCallbacks* owne
   return true;
 }
 
+// Whether a link observer (Opera) is registered: it advertises on the
+// server's advertiser for its own reasons (the fleet-link beacon), so the
+// pairing channel leaves that advertiser running through a phone's link.
+inline bool link_observed() { return g_dispatcher.owner(kLink) != nullptr; }
+
 }  // namespace ble_server_dispatch
 
 #endif  // SECURACV_BLE_SERVER_DISPATCH_H

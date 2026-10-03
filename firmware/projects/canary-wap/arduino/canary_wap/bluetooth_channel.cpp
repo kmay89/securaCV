@@ -545,8 +545,7 @@ static void apply_connect(const Event& e) {
   // F171) this callback never ran on FULL, so no FULL build stopped the
   // advertiser for a phone's link; stopping it here would take the beacon
   // the displays read off the air for the whole link.
-  if (g_advertising && g_advertising->isAdvertising() &&
-      ble_server_dispatch::g_dispatcher.owner(ble_server_dispatch::kLink) == nullptr) {
+  if (g_advertising && g_advertising->isAdvertising() && !ble_server_dispatch::link_observed()) {
     g_advertising->stop();
   }
 }
