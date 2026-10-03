@@ -122,7 +122,11 @@ test("bench facts cite files that still say them; the Nightlight's says what its
 
 test("the Nightlight's bench: USB is its only power, so pulling it kills the rail", async () => {
   const { BenchPower } = await importBench();
-  const { bench, events } = rig(benchProfile("canary-nightlight"), BenchPower);
+  const profile = benchProfile("canary-nightlight");
+  // its own block, not the plane's defaults (which fit no battery either)
+  assert.match(profile?.power?.usb || "", /^USB-C/, "the Nightlight's card carries its own bench (A54)");
+  assert.strictEqual(profile.power.switch?.controls, "battery", "its switch row names the battery path it would gate");
+  const { bench, events } = rig(profile, BenchPower);
   assert.strictEqual(bench.batteryFitted, false, "no battery fitted where the board has none");
   bench.setSwitch(false);
   assert.ok(bench.powered(), "the listed-as-none switch gates nothing: USB keeps the board up");
