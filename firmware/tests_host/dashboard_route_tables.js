@@ -370,8 +370,7 @@ function route(table, requests) {
   const lines = ["S"];
   for (const r of table) lines.push(`R ${r.method} ${r.uri}`);
   for (const q of requests) lines.push(`Q ${q.method} ${q.target}`);
-  const res = { stdout: ask(lines).join("\n"), status: 0 };
-  const out = res.stdout.split("\n");
+  const out = ask(lines);
   const regs = out.slice(1, 1 + table.length).map((l) => {
     const m = l.match(/^R (?:(\d+)|EXISTS (\d+))$/);
     assert.ok(m, `oracle answered ${l}`);
