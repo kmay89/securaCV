@@ -364,6 +364,14 @@ TIMELINE_JS = test_canary_timeline.test.js
 # rendering cannot come back.
 HEALTHLOG_JS = test_canary_health_logs.test.js
 
+# The canary dashboard's Community (Chirp) tab (securacv_webui.cpp; repo
+# sweep F176): nothing in the PlatformIO tree serves /api/chirp, so the tab
+# starts hidden, the page load's one GET /api/chirp keeps it hidden on a
+# 404, and the panel poll asks for nothing until a Chirp status answers —
+# the same lift-and-stub approach, plus a scan that fails once a route
+# appears (the gate can go then).
+CHIRPPANEL_JS = test_canary_community_panel.test.js
+
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
 # provision_core byte-math (A-only captive DNS, probe classification, JSON
@@ -968,6 +976,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(SETUPPAGE_JS)
 	$(NODE) --test $(TIMELINE_JS)
 	$(NODE) --test $(HEALTHLOG_JS)
+	$(NODE) --test $(CHIRPPANEL_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

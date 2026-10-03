@@ -985,7 +985,10 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <button class="nav-btn" data-panel="opera">
         Opera<span class="count" id="operaAlertCount" style="display:none">0</span>
       </button>
-      <button class="nav-btn" data-panel="community">
+      <!-- Community (Chirp): hidden until GET /api/chirp answers with a Chirp
+           status (F176). Nothing in this firmware's tree serves /api/chirp
+           today, so the tab stays hidden and is not polled. -->
+      <button class="nav-btn" data-panel="community" id="navCommunity" style="display:none">
         Community<span class="count" id="chirpCount" style="display:none">0</span>
       </button>
       <button class="nav-btn" data-panel="logs">
@@ -5884,10 +5887,20 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
 
     let chirpState = null;
+    // F176: the Community tab shows only once GET /api/chirp has answered
+    // with a Chirp status. No route in this firmware's tree serves Chirp
+    // (firmware/common/chirp/ holds only a header), so on today's firmware
+    // the page load's one call below answers 404, the tab stays hidden and
+    // nothing polls Chirp again.
+    let chirpServed = false;
 
     async function refreshChirpStatus() {
       const data = await api('/api/chirp');
       if (!data.state) return;
+      if (!chirpServed) {
+        chirpServed = true;
+        document.getElementById('navCommunity').style.display = '';
+      }
 
       chirpState = data;
 
@@ -6539,7 +6552,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (currentPanel === 'logs') loadLogs();
       else if (currentPanel === 'witness') loadWitness();
       else if (currentPanel === 'opera') refreshOpera();
-      else if (currentPanel === 'community') refreshChirpStatus();
+      else if (currentPanel === 'community' && chirpServed) refreshChirpStatus();
       else if (currentPanel === 'bluetooth') refreshBtStatus();
     }, 5000);
     /* Sensing panel polls at 1 Hz to match the CSI window cadence so the
