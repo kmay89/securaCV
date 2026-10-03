@@ -1196,10 +1196,13 @@ async function meshStartPairing() {
   const btn = document.getElementById("mesh-start-btn");
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Starting…';
-  // Back waits for the start (F217; see meshStarting).
+  // Back waits for the start (F217; see meshStarting). Back is disabled
+  // before the flag goes up, so a lookup that fails throws here with the
+  // flag still down, and closeMeshWizard() never waits on a start that is
+  // not running.
   const back = document.getElementById("mesh-back-btn");
-  meshStarting = true;
   back.disabled = true;
+  meshStarting = true;
 
   // Initiator starts pairing (add-another), joiner joins. A network error
   // (fetch reject / non-JSON body) throws out of api(); catch it so the UI

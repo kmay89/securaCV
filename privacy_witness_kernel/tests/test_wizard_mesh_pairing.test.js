@@ -48,7 +48,13 @@
 //     screen as it is (it used to hide it and end nothing, so the start went
 //     on out of sight and a reopened wizard's Start read "Starting…" until a
 //     reload); every way out of the start leaves Back working, and a start
-//     Back could not stop reaches the progress view, whose Cancel ends it.
+//     Back could not stop reaches the progress view, whose Cancel ends it;
+//   - (F217's review) every element the mesh section looks up is one the
+//     page's markup declares, the button with Back's id runs
+//     closeMeshWizard(), and a page whose Back lost its id cannot leave
+//     closeMeshWizard() waiting on a start that threw. The stub DOM answers
+//     getElementById() as a browser does, null for an id the markup lacks,
+//     so a lookup the markup cannot satisfy fails here as it would there.
 // The mesh section of the page's script is lifted out by literal markers
 // and run against a stub DOM, a scripted api() (the add-on proxy's routes,
 // told apart by the device address in the body) and an immediate delay(),
@@ -67,17 +73,28 @@ const vm = require("node:vm");
 const PAGE = process.env.WIZARD_PAGE || join(__dirname, "..", "wizard", "index.html");
 const src = readFileSync(PAGE, "utf8");
 
-function slice(from, to) {
-  const a = src.indexOf(from);
-  const b = a < 0 ? -1 : src.indexOf(to, a);
+function slice(text, from, to) {
+  const a = text.indexOf(from);
+  const b = a < 0 ? -1 : text.indexOf(to, a);
   assert.ok(a >= 0 && b > a, `marker not found: ${from}`);
-  return src.slice(a, b);
+  return text.slice(a, b);
 }
 
-const code =
-  slice("let meshInit = null;",
-        "// ---------------------------------------------------------------------------\n// Utilities") +
-  "\n;globalThis.__t = { meshStartPairing, meshConfirm, meshCancel, openMeshWizard, closeMeshWizard };\n";
+// The mesh section of a page's script, and the ids its markup declares (the
+// page outside its <script>: an element the script would create is not one
+// getElementById() finds on load).
+function lift(text) {
+  const section = slice(text, "let meshInit = null;",
+    "// ---------------------------------------------------------------------------\n// Utilities");
+  const markup = text.replace(/<script\b[\s\S]*?<\/script>/g, "");
+  const ids = new Set([...markup.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+  const code = section +
+    "\n;globalThis.__t = { meshStartPairing, meshConfirm, meshCancel, openMeshWizard, closeMeshWizard };\n";
+  return { section, markup, ids, code };
+}
+
+const LIFTED = lift(src);
+const code = LIFTED.code;
 
 const INIT = "10.0.0.11";
 const JOIN = "10.0.0.22";
@@ -100,9 +117,13 @@ const STARTS_HIDDEN = ["mesh-progress", "mesh-codes", "mesh-done", "mesh-done-no
 const THROW = Symbol("network error");
 const answer = (a) => { if (a === THROW) throw new TypeError("Failed to fetch"); return a; };
 
-function page(script) {
+// opts.page: another page's text to run in place of the wizard's (a test
+// that holds what a broken page would do).
+function page(script, opts = {}) {
+  const { code: pageCode, ids } = opts.page ? lift(opts.page) : LIFTED;
   const els = {};
   const el = (id) => {
+    assert.ok(ids.has(id), `no element with id "${id}" in the page's markup`);
     if (!els[id]) {
       const cls = new Set(STARTS_HIDDEN.includes(id) ? ["hidden"] : []);
       els[id] = {
@@ -122,7 +143,8 @@ function page(script) {
   let phase = "codes";
   const polls = { codes: { init: 0, join: 0 }, confirm: { init: 0, join: 0 } };
   const ctx = {
-    document: { getElementById: el },
+    // As a browser's: null for an id the markup does not declare.
+    document: { getElementById: (id) => (ids.has(id) ? el(id) : null) },
     currentStep: 1,
     delay: async () => { if (script.delay) await script.delay(); },
     console,
@@ -151,7 +173,7 @@ function page(script) {
     },
   };
   vm.createContext(ctx);
-  vm.runInContext(code, ctx);
+  vm.runInContext(pageCode, ctx);
   el("mesh-init-addr").value = INIT;
   el("mesh-join-addr").value = JOIN;
   return { t: ctx.__t, el, calls, polls, cancelSeen };
@@ -895,4 +917,49 @@ test("a reopened wizard's Start works after Back was pressed during a start", as
   await settle();
   assert.ok(visible(p, "mesh-codes"), "the next attempt reaches its codes");
   assert.strictEqual(p.calls.filter((c) => c === "api/mesh/pair/start init").length, 2);
+});
+
+test("the mesh section's lookups are in the page's markup, and Back is the button that closes", () => {
+  // Every getElementById() in the mesh section names its id as a literal
+  // (a template's ${...} matches any id), and the markup declares it.
+  const calls = LIFTED.section.match(/getElementById\(/g) || [];
+  const lits = [...LIFTED.section.matchAll(/getElementById\(\s*([`"'])((?:(?!\1).)*)\1\s*\)/g)].map((m) => m[2]);
+  assert.strictEqual(lits.length, calls.length, "every lookup names its id as a literal");
+  const missing = [...new Set(lits)].filter((id) => {
+    if (!id.includes("${")) return !LIFTED.ids.has(id);
+    const parts = id.split(/\$\{[^}]*\}/).map((x) => x.replace(/[.*+?^$()|[\]\\{}]/g, "\\$&"));
+    const re = new RegExp(`^${parts.join("[^\"]+")}$`);
+    return ![...LIFTED.ids].some((d) => re.test(d));
+  });
+  assert.deepStrictEqual(missing, [], "ids the mesh section looks up that the markup does not declare");
+  assert.ok(lits.includes("mesh-back-btn"), "the start looks Back up");
+  // The one element with Back's id is the button that runs
+  // closeMeshWizard(), on the form beside Start.
+  const tag = (id) => {
+    const found = LIFTED.markup.match(new RegExp(`<[a-z]+\\b[^>]*\\bid="${id}"[^>]*>`, "g")) || [];
+    assert.strictEqual(found.length, 1, `one element with id ${id}`);
+    return found[0];
+  };
+  assert.match(tag("mesh-back-btn"), /^<button\b/);
+  assert.match(tag("mesh-back-btn"), /\bonclick="closeMeshWizard\(\)"/);
+  assert.match(tag("mesh-start-btn"), /\bonclick="meshStartPairing\(\)"/);
+  const form = slice(LIFTED.markup, '<div id="mesh-form">', '<div id="mesh-progress"');
+  assert.ok(form.includes(tag("mesh-back-btn")) && form.includes(tag("mesh-start-btn")),
+    "Back and Start are both on the form");
+});
+
+test("a start that throws before it begins leaves closeMeshWizard() working", async () => {
+  // A page whose Back lost its id: the start's lookup comes back null and
+  // the start throws before any request. Nothing is running, so Back (the
+  // button still runs closeMeshWizard()) must close the wizard, not wait
+  // for a start that is gone.
+  const broken = src.replace(' id="mesh-back-btn"', "");
+  assert.notStrictEqual(broken, src);
+  const p = page(F133, { page: broken });
+  p.t.openMeshWizard();
+  await assert.rejects(p.t.meshStartPairing(), { name: "TypeError", message: /null/ });
+  assert.deepStrictEqual(p.calls, [], "no request went out");
+  p.t.closeMeshWizard();
+  assert.ok(!visible(p, "screen-mesh"), "Back closes the wizard");
+  assert.ok(visible(p, "screen-1"), "and the step behind it is back");
 });
