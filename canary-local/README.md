@@ -951,10 +951,15 @@ fails on byte drift.
   DNS A-only, the 302, GET / byte-for-byte, wrong key / absent SSID / 400
   from the firmware, credentials only on success, the AP torn down, the
   boot finishing), then the fleet page's phone end to end under its CSP.
-  Every scene it reads keeps every line on the glass and none cut, and it
-  walks the portal again on the dash glass turned portrait (`?rotation=1`,
-  480x800, F184), holding the QR card over its halo's center with its sides
-  inside the stroke (`tests/onboard_glass.mjs`).
+  Every scene it reads (Hello, Join with and without the hint, PhoneJoined,
+  both failures, Connecting, Success, the face) keeps every line on the
+  glass, none cut and, where it settles, inked where the firmware says; the
+  join QR stands upright (its finder patterns); and every frame is on one
+  glass. It walks the portal again on the dash glass turned portrait
+  (`?rotation=1`, 480x800, F184): the first frame already turned, and the QR
+  card and halo where `onboard_layout.h`'s stack seats them, the halo's
+  stroke inked where its circle says (`tests/onboard_glass.mjs`). The splash
+  is not read.
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /

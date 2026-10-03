@@ -36,20 +36,38 @@
 //     come back with the firmware's own reasons while GET / keeps answering;
 //     the right key succeeds, credentials land in NVS only then, the AP goes
 //     away, and the boot carries on to "The canary is singing" and MQTT.
-//     On every walk each scene it reads keeps every line on the glass
-//     (linesOnGlass) and none cut to an ellipsis as the label's own text
-//     says (linesCut: the framebuffer read cannot see the 36 px title
-//     face's dots).
+//     On every walk (F184) each scene it reads — Hello, Join with and
+//     without the hint, PhoneJoined, both failures, Connecting after the
+//     wrong-key and the right-key join, Success until the screen goes, and
+//     the face the boot ends on — keeps every line on the glass
+//     (linesOnGlass), none cut to an ellipsis as the label's own text says
+//     (linesCut: the framebuffer read cannot see the 36 px title face's
+//     dots) and, where it settles, each line's ink inside the box the
+//     firmware reports (linesInked); the bird is on the glass in each, and
+//     clear of the lines where it sits (Success's hop only on the glass:
+//     birdOnGlass). The join QR stands upright, its finder patterns at
+//     top-left, top-right and bottom-left (qrUpright: a glass drawn mirrored,
+//     flipped or upside down moves one to bottom-right). Every frame the
+//     firmware drew is on one glass (framesOnGlass, off the harness's log of
+//     announced shapes). The splash is not read (the walk starts at the
+//     first-boot line).
 //     The same walk runs again on a turned glass (F184): the dash flavor
 //     booted with a saved portrait rotation (?rotation=1, staged in its
 //     settings flash before power-on), so main.cpp turns the glass before the
 //     splash and the scenes run on the 480x800 canvas a portrait dash shows
-//     (F156). Every check above holds there too, and two more: the glass is
-//     the turned size, and the Join scene's QR card stands over the halo's
-//     center with its sides inside the stroke (cardInHalo; its corners reach
-//     past the 800 px glass's ring, F155, and are printed, not held). The
-//     320x180 landscape nightlight is not walked: no emulator flavor builds
-//     the nightlight. --walk native|turned runs one kind of walk only.
+//     (F156; the panel and the turn read from build.sh's pin map and
+//     glass_settings.h). Every check above holds there too, and more: the
+//     firmware's first frame was already turned (so the splash ran turned),
+//     the glass is the turned size, and on the Join scene the QR card and
+//     the halo stand where onboard_layout.h's stack seats them
+//     (onboardJoin; cardAtLayout within the anti-aliased edge, haloAtLayout
+//     exactly), the halo's stroke is inked on the glass where its circle
+//     says and nothing just outside it (haloInked), and the card stands over
+//     the halo's center with its sides inside the stroke (cardInHalo; its
+//     corners reach past the 800 px glass's ring, F155, and are printed, not
+//     held). The 320x180 landscape nightlight is not walked: no emulator
+//     flavor builds the nightlight. --walk native|turned runs one kind of
+//     walk only.
 //  2. fleet.html, the watch sheet, "Try it": the same walk through the phone
 //     the Lab shows, with a securitypolicyviolation listener installed and the
 //     captive <iframe srcdoc> checked for the firmware's own styling (its
