@@ -58,7 +58,7 @@ if (ONLY && !FLAVORS.includes(ONLY)) {
 }
 const RUN = ONLY ? [ONLY] : FLAVORS;
 // F206: the turned glasses, for the flavors this run boots.
-const TURNED = turnedGlasses(await readTurnedSources(ROOT, readFile)).filter((t) => RUN.includes(t.flavor));
+const TURNED = turnedGlasses(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));
 
 // Allowlist, not sanitization: the probe serves exactly the files the
 // harness needs, enumerated up front. Request paths are only ever used

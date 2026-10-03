@@ -782,7 +782,7 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   // The turned glass is derived, not typed: turned_glass.mjs reads each
   // flavor's pin map and turn from the sources (held in its own test below),
   // and the probe walks the ones whose flavor has a dist bundle.
-  assert.ok(probe.includes("const TURNED = turnedGlasses(await readTurnedSources(ROOT, readFile)).filter((t) => RUN.includes(t.flavor));"),
+  assert.ok(probe.includes("const TURNED = turnedGlasses(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));"),
     "TURNED comes from turned_glass.mjs, read from the sources");
   assert.ok(!/\bglass: \{ w: \d+/.test(probe) && !/\brotation: \d/.test(probe), "the probe types no glass or turn of its own");
   assert.ok(probe.includes("const turnArg = turn ? `&rotation=${turn.rotation}&timescale=${SPLASH_SCALE}` : \"\";"));
@@ -998,7 +998,7 @@ test("splash and turned boots (F206): the harness slows the clock from power-on;
   // boot_probe boots each turned glass whose flavor it boots, and holds the
   // turned size, every frame on that glass, and the face's bird.
   const boot = read(join(__dirname, "boot_probe.mjs"));
-  assert.ok(boot.includes("const TURNED = turnedGlasses(await readTurnedSources(ROOT, readFile)).filter((t) => RUN.includes(t.flavor));"));
+  assert.ok(boot.includes("const TURNED = turnedGlasses(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));"));
   assert.ok(boot.includes("for (const t of TURNED) { await bootOnce(t.flavor, t); booted.push(`${t.flavor}@${t.name}`); }"));
   const once = /async function bootOnce\(flavor, turn = null\) \{([\s\S]*?)\n\}\n/.exec(boot)?.[1] || "";
   assert.ok(once.includes("const turnArg = turn ? `&rotation=${turn.rotation}` : \"\";"));

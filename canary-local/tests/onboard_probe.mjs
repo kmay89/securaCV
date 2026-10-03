@@ -161,7 +161,7 @@ if (!RUN.length) { console.error(`ONBOARD_PROBE_FAIL: no dist bundle for ${ONLY 
 // layout keeps them inside the stroke (F157), so there they are held. A
 // flavor with no committed dist bundle is not walked (the dist is what a bare
 // checkout serves; the drift check names a missing bundle).
-const TURNED = turnedGlasses(await readTurnedSources(ROOT, readFile)).filter((t) => RUN.includes(t.flavor));
+const TURNED = turnedGlasses(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));
 // F206: the first meeting's lines the splash types, from story_scripts.h —
 // the turned walk reads the splash from power-on and must see each one whole.
 const HELLO_LINES = helloLines(await readFile(join(ROOT, "firmware/common/story/story_scripts.h"), "utf8"));
