@@ -1754,7 +1754,7 @@
     },
     {
      "file": "canary_vision_enclosure_xiao_indoor_front.stl",
-     "triangles": 5116,
+     "triangles": 6018,
      "mm": [
       45.2,
       96.697,
@@ -1859,7 +1859,7 @@
     },
     {
      "file": "canary_vision_enclosure_devkit_indoor_front.stl",
-     "triangles": 5124,
+     "triangles": 5988,
      "mm": [
       76.8,
       98.497,
@@ -2873,7 +2873,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_front.stl",
-     "triangles": 5116,
+     "triangles": 6018,
      "mm": [
       45.2,
       96.697,

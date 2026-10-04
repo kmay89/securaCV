@@ -62,7 +62,7 @@ aperture and radome window, as `features_mm`), each manifest-owned device's
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
 - [Design rules](./DESIGN_RULES.md) — the plastics-engineering checklist every shell here is held to (walls, coves, ribs, bosses, snaps, seals, drains, keys, lead-ins, print pose), each rule with the library module or CI gate that enforces it and the file-by-file status
 - [Audit, 2026-09](./AUDIT_2026_09.md) — an eleven-dimension design audit of every `.scad` here (ribs, drop, weather, openings, clearances, printability, assembly, repairability, parametric UX, aesthetics): what was found, what was fixed, and what is still open — each finding proved by a rendered probe rather than by reading a comment
-- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v04) · [Doorbell](#canary-vision--doorbell-v06) · [Sense radome](#canary-sense--radome-enclosure-v02)
+- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v06) · [Doorbell](#canary-vision--doorbell-v06) · [Sense radome](#canary-sense--radome-enclosure-v02)
 
 ## The complete file map
 
@@ -1057,7 +1057,7 @@ section for the material table, security-build slicing spec and mass budget.
 
 ---
 
-# Canary Vision — Enclosure (v0.4)
+# Canary Vision — Enclosure (v0.6)
 
 Parametric camera unit for the Canary Vision stack — **OV5647 camera**
 (Pi-cam v1.3 form factor) + **Grove Vision AI V2** (40 × 20 mm) + a selectable
@@ -1149,10 +1149,37 @@ and prints face-down in every preset; the hood prints drip-edge-down, spigot
 up, presses into the groove (`tol_press`) and is bonded with neutral-cure
 silicone.
 
+**v0.6 (2026-10): the camera hole moves to the lens, and the front prints
+clean.** These are the [doorbell v0.6](#canary-vision--doorbell-v06) findings
+applied here, and every front STL is re-cut:
+
+- **The camera hole was in the wrong place.** The posts sat on the camera
+  carrier's center and the aperture 2.5 mm above it. The vendor CAD
+  (`RPi cam Rev 1.3` in `boards/vendor/seeed_grove_vision_ai_v2.step.gz`)
+  puts the 21 × 12.5 hole grid 4.05 mm *above* the carrier's center and the
+  lens 1.7 mm *below* it, toward the ribbon edge, so on its posts the real
+  lens sat about 8 mm off the Ø10 hole. The posts now take the grid's offset
+  (`cam_grid_dy`) and the lens its own (`lens_dy` −1.7). The hole is cut to
+  the OV5647-62's lens: a Ø7.4 bore the Ø7.0 barrel nests 0.4 mm into (it
+  registers the lens and keeps the status LED's light off the back of the
+  disc), 0.4 mm of focus travel under the disc, then a cone at the
+  datasheet's 62° diagonal FOV + 4° a side (asserted).
+- **The disc seat prints clean face-down.** It is a counterbore on the bed,
+  and the layer over its floor bridged a ring round the hole, which prints
+  as strings. It now carries bridge steps (`core_bridge_steps`): a slot
+  layer, then a square layer, then the round hole. Set `bridge_layer` to your
+  slicer's layer height; the seat depth is asserted to land on whole layers.
+- **The vent/buzzer membrane seat moves inside.** On the outer face it was a
+  Ø12 pocket on the bed whose roof was a circle full of holes. Inside, it
+  prints on top, and the outer face carries only the Ø1 holes. Stick the
+  GORE patch over the cluster on the front's inner face.
+
 ## Assembly
 
 1. Screw the **OV5647** to the four posts inside the front face (M2
-   self-tappers, lens through the aperture); bond the clear disc into the seat.
+   self-tappers, ribbon edge toward the module; the lens barrel enters the
+   bore in the front); bond the clear disc into the seat. *(vent/buzzer)*
+   Stick the GORE patch over the vent cluster on the front's **inner** face.
    *(weather)* Press the **hood**'s spigot into the groove around the window
    (open side down) and bond it with neutral-cure silicone.
 2. *(xiao host)* Seat the **XIAO** in the module's socket — **both USB-C ports
@@ -1186,11 +1213,14 @@ silicone.
 | `usb_dx` / `xiao_usb_dx` | 0 / 0 | Port offsets along the bottom wall — measure if either port is off-center |
 | `dk_l/dk_w`, `vm_l/vm_w`, `cam_w/cam_h` | 39×25.4 / 40×20 / 25×24 | **Measure your boards** — DevKit revisions differ |
 | `standoff_h` | 3.5 | *(devkit)* **raise to ~10 if your DevKit has soldered pin headers** (3.5 keeps the clip beam under the strain budget) |
-| `cam_lens_h` / `cam_lens_sq` | 5.5 / 8.5 | the Pi-cam lens holder — the posts grow so it sits behind the front (measure yours) |
+| `cam_lens_h` / `cam_holder_h` / `cam_lens_sq` / `cam_barrel_d` | 5.0 / 3.65 / 8.8 / 7.0 | the OV5647-62 as the vendor CAD draws it: barrel top, holder top, holder square, barrel Ø (re-measure a different carrier) |
+| `cam_barrel_in` | 0.4 | how far the barrel stands into the front's bore; the rest under the disc is focus travel |
+| `cam_fov` / `cam_fov_margin` | 62 / 4 | the lens's diagonal FOV (datasheet) and the margin the hole's cone keeps around it |
+| `bridge_layer` | 0.2 | your slicer's layer height: the disc seat's bridge steps are this thick |
 | `screw_size` / `screw_head` / `head_seal` | m2 / pan / off | fastener from the catalog registry; `head_seal` rings each head with an O-ring in seal mode |
 | `opt_weep` / `seal_mid_posts` | preset / off | Ø2 drain at the bottom wall (on in `vision_weather`); an extra screw post per long wall for gasket squeeze |
-| `lens_dx/dy` | 0 / 2.5 | Lens center offset from the camera-board center — measure |
-| `cam_hole_x/y` | 21 / 12.5 | Pi-cam v1.3 mounting grid |
+| `lens_dx/dy` | 0 / −1.7 | Lens center offset from the camera-board center (vendor CAD) |
+| `cam_hole_x/y` / `cam_grid_dy` | 21 / 12.5 / 4.05 | Pi-cam mounting grid, and its center's offset above the carrier's center (vendor CAD) |
 | `lp/vent/mag_dx/dy` | — | Front-face feature offsets **from the module center** (valid for both hosts) |
 | `hinge_teeth` | true | `false` = smooth GoPro-compatible faces |
 | `tol_slide/press/hole` | 0.20/0.10/0.30 | Same per-printer tolerance trio as the WAP case |

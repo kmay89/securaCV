@@ -1225,7 +1225,7 @@
         }
       },
       "units": {},
-      "sha256": "55e8cf7855f99e2b431686bad01526b4ed2ac6acc10417b616db56066bdfef5f",
+      "sha256": "fad4d6b8e262de4e548b9e1896928ea968c758d0f161842adbea9da1b65a86c4",
       "groups": [
         {
           "name": "What to render",
@@ -1448,28 +1448,46 @@
               "desc": "hole grid (Y)"
             },
             {
+              "name": "cam_grid_dy",
+              "type": "number",
+              "default": 4.05,
+              "desc": "hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP"
+            },
+            {
               "name": "cam_post_d",
               "type": "number",
               "default": 3.6,
               "desc": "camera post diameter"
             },
             {
-              "name": "cam_post_h",
-              "type": "number",
-              "default": 4.0,
-              "desc": "post height = lens-board standoff from the front face — auto-raised to"
-            },
-            {
               "name": "cam_lens_h",
               "type": "number",
-              "default": 5.5,
-              "desc": "Pi-cam v1.3 lens holder height above the PCB face (drawing: 9.0 module"
+              "default": 5.0,
+              "desc": "lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)"
+            },
+            {
+              "name": "cam_holder_h",
+              "type": "number",
+              "default": 3.65,
+              "desc": "the square holder's top above the PCB face — vendor STEP; it stays behind the front"
             },
             {
               "name": "cam_lens_sq",
               "type": "number",
-              "default": 8.5,
-              "desc": "the holder's square (its 12.0 diagonal cannot enter a Ø10 aperture, so"
+              "default": 8.8,
+              "desc": "the holder's square — vendor STEP"
+            },
+            {
+              "name": "cam_barrel_d",
+              "type": "number",
+              "default": 7.0,
+              "desc": "the round lens barrel — vendor STEP; it nests in the front's bore (+ 2*tol_slide)"
+            },
+            {
+              "name": "cam_barrel_in",
+              "type": "number",
+              "default": 0.4,
+              "desc": "how far the barrel stands into that bore; the 2.0 front leaves 0.8 under the disc seat, so 0.4 of focus travel"
             },
             {
               "name": "cam_screw_d",
@@ -1481,19 +1499,13 @@
               "name": "lens_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "lens center offset from the camera-board center — MEASURE"
+              "desc": "lens center X offset from the camera-board center — vendor STEP"
             },
             {
               "name": "lens_dy",
               "type": "number",
-              "default": 2.5,
-              "desc": "(v1.3 lens sits ~2.5 mm above board center)"
-            },
-            {
-              "name": "cam_ap_d",
-              "type": "number",
-              "default": 10.0,
-              "desc": "lens aperture in the front face — asserted against cam_fov"
+              "default": -1.7,
+              "desc": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP"
             },
             {
               "name": "cam_fov",
@@ -1503,6 +1515,12 @@
               "step": 1,
               "max": 160,
               "desc": "lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)"
+            },
+            {
+              "name": "cam_fov_margin",
+              "type": "number",
+              "default": 4,
+              "desc": "degrees added to each side of the FOV cone the hole must clear"
             },
             {
               "name": "cam_disc_d",
@@ -1990,13 +2008,13 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE seat (outer face)"
+              "desc": "GORE-vent seat Ø, on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
               "type": "number",
               "default": 0.8,
-              "desc": "GORE-seat recess depth into the front's outer face — core_vent_pad_depth()"
+              "desc": "GORE-seat recess depth into the front's inner face — core_vent_pad_depth()"
             },
             {
               "name": "vent_hole_d",
@@ -2188,6 +2206,15 @@
         {
           "name": "Quality",
           "params": [
+            {
+              "name": "bridge_layer",
+              "type": "number",
+              "default": 0.2,
+              "min": 0.08,
+              "step": 0.04,
+              "max": 0.32,
+              "desc": "your slicer's layer height: the front's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+            },
             {
               "name": "span_max",
               "type": "number",

@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.5
+//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.6
 // @env cer=2 ip="~IP54" basis="weather preset"
 //  Stack: OV5647 camera (Pi-cam v1.3 form) + Grove Vision AI V2 (40 x 20)
 //         + a selectable HOST:
@@ -121,6 +121,27 @@
 //              per host so the outlet cradle reads vision_kh_spread("xiao") /
 //              ("devkit") through `use <>` instead of retyping them (its table
 //              had the xiao spread 0.4 stale). No geometry moved.
+//  v0.6 (2026-10-04): the camera hole moves to the lens, and the front's holes
+//  print clean face-down — the doorbell's v0.6 findings, applied here. Every
+//  front mesh moves:
+//    * THE CAMERA HOLE WAS IN THE WRONG PLACE, as the doorbell's was. The
+//      posts sat on the carrier's center and the aperture 2.5 above it; the
+//      vendor CAD ("RPi cam Rev 1.3" in boards/vendor/seeed_grove_vision_ai_
+//      v2.step.gz) puts the 21 x 12.5 hole grid 4.05 ABOVE the carrier's
+//      center and the lens 1.7 BELOW it, so on its posts the real lens sat
+//      ~8 mm off the Ø10 hole. The posts take the grid's offset (cam_grid_dy),
+//      the lens its own (lens_dy -1.7), and the hole is cut to the OV5647-62:
+//      a Ø7.0 + 2*tol_slide bore the barrel nests 0.4 into (it registers the
+//      lens and keeps the status LED's light off the back of the disc), then
+//      a cone at the datasheet's 62° diagonal FOV + cam_fov_margin (asserted);
+//    * the clear-disc seat is a counterbore on the bed of a face-down print,
+//      and the layer over its floor bridged a ring round the hole — the
+//      strings the doorbell's first print showed. It carries bridge steps now
+//      (core_bridge_steps; bridge_layer = your layer height, the seat depth
+//      asserted to land on whole layers);
+//    * the vent/buzzer membrane seat moves to the INNER face (core_vent_
+//      cluster seat_inner): an outer seat is a Ø12 pocket on the bed whose
+//      roof is a circle full of holes; inside, it prints on top.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, tearbore_x, soft_edge_plate,
@@ -194,21 +215,26 @@ pcb_t    = 1.0;    // PCB thickness (clips hook over this) — brd_t("grove_v2")
 board_clear = 0.6; // per-side clearance around each PCB
 stack_h  = 9.0;    // tallest top-side component over a PCB (Grove socket / USB boot) — devkit host
 
-/* [Camera mounting] — Pi-cam v1.3 pattern on the FRONT face */
+/* [Camera mounting] — the OV5647-62 (the Grove Vision AI V2 kit's camera, Pi-cam v1.3 form) on posts under the FRONT face */
+// Geometry measured off the vendor CAD ("RPi cam Rev 1.3" in boards/vendor/
+// seeed_grove_vision_ai_v2.step.gz); optics from Seeed's OV5647-62 datasheet
+// (62° FOV, EFL 3.2, F2.8, 25 x 24 x 7±0.2 module). The carrier hangs
+// ribbon-edge DOWN, toward the module below it. The same numbers as the
+// doorbell's camera, which found them (canary_vision_doorbell.scad v0.6).
 cam_hole_x = 21.0;  // hole grid (X)
 cam_hole_y = 12.5;  // hole grid (Y)
+cam_grid_dy = 4.05; // hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP
 cam_post_d = 3.6;   // camera post diameter
-cam_post_h = 4.0;   // post height = lens-board standoff from the front face — auto-raised to
-                    // clear the lens holder (see cam_lens_h)
-cam_lens_h = 5.5;   // Pi-cam v1.3 lens holder height above the PCB face (drawing: 9.0 module
-                    // - 1.0 PCB - 2.5 FPC connector) — MEASURE yours
-cam_lens_sq = 8.5;  // the holder's square (its 12.0 diagonal cannot enter a Ø10 aperture, so
-                    // the posts must hold the whole holder behind the front)
+cam_lens_h = 5.0;   // lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)
+cam_holder_h = 3.65; // the square holder's top above the PCB face — vendor STEP; it stays behind the front
+cam_lens_sq = 8.8;  // the holder's square — vendor STEP
+cam_barrel_d = 7.0; // the round lens barrel — vendor STEP; it nests in the front's bore (+ 2*tol_slide)
+cam_barrel_in = 0.4; // how far the barrel stands into that bore; the 2.0 front leaves 0.8 under the disc seat, so 0.4 of focus travel
 cam_screw_d = 1.6;  // M2 self-tap pilot in the posts
-lens_dx   = 0.0;    // lens center offset from the camera-board center — MEASURE
-lens_dy   = 2.5;    // (v1.3 lens sits ~2.5 mm above board center)
-cam_ap_d  = 10.0;   // lens aperture in the front face — asserted against cam_fov
+lens_dx   = 0.0;    // lens center X offset from the camera-board center — vendor STEP
+lens_dy   = -1.7;   // lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP
 cam_fov   = 62;     // lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)  // [40:1:160]
+cam_fov_margin = 4; // degrees added to each side of the FOV cone the hole must clear
 cam_disc_d = 14.0;  // clear-disc seat diameter (12-16 mm disc; 0 = bare aperture)
 cam_disc_t = 1.0;   // clear-disc thickness (disc sits 0.2 recessed)
 
@@ -316,8 +342,8 @@ hood_seat     = 0.6;  // groove in the front's show face the hood's spigot press
 lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press)
 lp_dx  = 8.0;      // light-pipe port center X, from the module center
 lp_dy  = -8.0;     // light-pipe port center Y, from the module center
-vent_pad_d     = 12.0;  // GORE seat (outer face)
-vent_pad_depth = 0.8;   // GORE-seat recess depth into the front's outer face — core_vent_pad_depth()
+vent_pad_d     = 12.0;  // GORE-vent seat Ø, on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()
+vent_pad_depth = 0.8;   // GORE-seat recess depth into the front's inner face — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
 vent_holes     = 10;    // more, smaller holes recover the open area at 1.0 mm
@@ -355,6 +381,7 @@ mark_h      = 16.0;  // bird height; the lib floors it at mark_min_h(mark_rib)
 mark_rib    = 0.7;   // mark stroke width
 
 /* [Quality] */
+bridge_layer = 0.2;  // your slicer's layer height: the front's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 // curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
 // exploding tiny holes into thousands of facets like a large $fn would
 $fa = 3; $fs = 0.4;
@@ -429,9 +456,14 @@ usb_axis = usb_soff + pcb_t + port_usbc_shell_h()/2 + usb_z;         // connecto
 // wall guaranteed above the opening: 1.5 in every mode; seal mode adds the plug recess frame
 usb_over = 1.5 + (e_seal && usb_cover ? usb_cov_pad : 0);
 cav_d   = max(cav_d_min, usb_axis + usb_h/2 + usb_over);
-// the Pi-cam lens holder: a square that cannot enter the round aperture must
-// sit wholly behind the front, so the posts grow to hold it there
-cam_post_eff = (cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3);
+// the camera hangs from its posts with the lens barrel cam_barrel_in into the
+// front's bore: the post length is the barrel's height less that entry, and
+// the bore is the barrel plus the catalog's slide fit (it registers the lens)
+cam_post_eff = cam_lens_h - cam_barrel_in;
+cam_ap_d     = cam_barrel_d + 2*tol_slide;
+cam_half     = cam_fov/2 + cam_fov_margin;            // the cone the hole must clear, per side
+cam_bore_top = lid_t - ((cam_disc_t > 0 && cam_disc_d > 0) ? cam_disc_t + 0.2 : 0);   // bore floor -> disc seat
+function cam_cone_d(z) = cam_ap_d + 2*max(0, z - cam_barrel_in)*tan(cam_half);         // the lens cone's Ø at front height z
 
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
@@ -464,6 +496,8 @@ vm_cy  = has_dk ? cam_cy - cam_h/2 - 2 - vm_l/2 : vm_cy_x;
 dk_cy  = -inner_y/2 + bot_margin + dk_l/2;                    // DevKit parked at the USB (bottom) wall
 lens_x = cam_cx + lens_dx;
 lens_y = cam_cy + lens_dy;
+cam_grid_cy = cam_cy + cam_grid_dy;                 // the hole grid's center (the posts)
+function cam_post_xy() = [for (sx = [1, -1], sy = [1, -1]) [cam_cx + sx*cam_hole_x/2, cam_grid_cy + sy*cam_hole_y/2]];
 usb_cx = (has_dk ? dk_cx : vm_cx) + usb_dx;                   // main/upper USB opening center (X)
 usb_zc = floor_t + usb_axis;                                  // opening centered on the connector axis
 // xiao host: the XIAO's USB-C hangs off its outward face, which is stack_sock_h
@@ -571,13 +605,27 @@ assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= cor
            " % the incompressible gasket props the plate open instead of sealing; narrow gasket_w or deepen gasket_groove"));
 assert(cam_disc_t == 0 || cam_disc_t + 0.2 < lid_t, "cam_disc_t too thick for lid_t");
 assert(cam_disc_d == 0 || cam_disc_d > cam_ap_d, "cam_disc_d must be larger than cam_ap_d");
-// the aperture at the disc's inner plane must pass the lens's field of view
-// (lens front sits cam_post_eff - cam_lens_h behind the front's inner face)
-cam_throw = (cam_post_eff - cam_lens_h) + lid_t - (cam_disc_t > 0 ? cam_disc_t + 0.2 : 0);
-cam_need  = 2*max(0, cam_throw)*tan(cam_fov/2) + 4.0;
-assert(cam_ap_d >= cam_need,
-       str("lens aperture ", cam_ap_d, " mm vignettes a ", cam_fov, "° lens ", cam_throw,
-           " mm behind the disc — needs ", round(cam_need*10)/10, " mm"));
+// the camera: the holder clears the front, the barrel keeps focus travel under
+// the disc, and nothing in the front crops the lens's field
+assert(cam_holder_h + 0.5 <= cam_post_eff - 1e-9,
+       str("the lens holder stands ", cam_post_eff - cam_holder_h, " mm under the front (< 0.5) — lower cam_barrel_in"));
+assert(cam_barrel_in >= 0.3 && cam_bore_top - cam_barrel_in >= 0.3 - 1e-9,
+       "the lens barrel needs >= 0.3 in its bore and >= 0.3 of focus travel under the disc — adjust cam_barrel_in");
+// the field leaves through the barrel's mouth (its OD bounds it from above);
+// spread at cam_half it must clear the disc seat's rim at the face
+_fov_at_face = cam_barrel_d + 2*(lid_t - cam_barrel_in)*tan(cam_half);
+assert(cam_disc_d == 0 || _fov_at_face <= cam_disc_d + 2*tol_slide,
+       str("the lens field is ", _fov_at_face, " mm across at the face — past the Ø", cam_disc_d, " disc; widen cam_disc_d"));
+assert(abs(lens_y - cam_cy) < cam_h/2 - cam_lens_sq/2 && abs(cam_grid_dy) + cam_hole_y/2 < cam_h/2,
+       "the lens or the hole grid falls off the camera carrier — check lens_dy / cam_grid_dy");
+// the front prints face-down: the disc seat's floor must sit on a whole layer,
+// or the bridge steps over it land between layers and the slicer merges them away
+assert(cam_disc_d == 0 || abs((lid_t - cam_bore_top)/bridge_layer - round((lid_t - cam_bore_top)/bridge_layer)) < 1e-6,
+       str("the disc seat depth (", lid_t - cam_bore_top, ") must be whole ", bridge_layer,
+           " mm layers — set bridge_layer to your slicer's layer height"));
+// the hood's clearance angle is taken from the lens axis at the barrel's top,
+// which stands lid_t - cam_barrel_in behind the front's outer face
+cam_throw = lid_t - cam_barrel_in;
 assert(!e_hood || atan((cam_disc_d/2 + 2.5)/(hood_len + cam_throw)) > cam_fov/2 + 3,
        str("the rain hood clips a ", cam_fov, "° lens — shorten hood_len or widen cam_disc_d"));
 // the hood's groove must leave a floor under it (it sits over the rib ring and the
@@ -624,7 +672,7 @@ hw_echo(str("Vision ", host), [
     e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(4, "#6 pan wall screw (bracket)") : "",
     e_mount && (m_style == "keyhole" || m_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
 ]);
-echo(str("Canary Vision enclosure v0.5 — outer ", out_x, " x ", out_y, " x ",
+echo(str("Canary Vision enclosure v0.6 — outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r,
          " mm prongs)  (host=", host, ", preset=", preset, ", seal=", e_seal, ", mount=", m_style, ")"));
 echo(str("piston plate: ", plate_t, " mm plate in a ", bore_x, " x ", bore_y, " bore, ledge ", ledge_w,
@@ -879,18 +927,29 @@ module shell_solid() {
             if (e_seal)
                 translate([0, 0, floor_t - 0.01]) linear_extrude(gasket_groove + 0.01) rim_ring2d(gasket_w);
             translate([0, 0, base_d]) {
-                // lens aperture + recessed clear-disc seat
-                translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
-                if (cam_disc_t > 0 && cam_disc_d > 0)
-                    translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
+                // the lens hole, cut to the lens: the barrel's bore up to the
+                // barrel's top, then a cone at the FOV half-angle (+ margin)
+                // out through the front — the recessed clear-disc seat over it
+                translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = cam_barrel_in + 1.01);
+                translate([lens_x, lens_y, cam_barrel_in])
+                    cylinder(d1 = cam_ap_d, d2 = cam_ap_d + 2*(lid_t - cam_barrel_in + 0.01)*tan(cam_half),
+                             h = lid_t - cam_barrel_in + 0.01);
+                if (cam_disc_t > 0 && cam_disc_d > 0) {
+                    translate([lens_x, lens_y, cam_bore_top])
                         cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
+                    // the front prints face-DOWN: the seat is a counterbore on the bed,
+                    // and the layer over its floor would bridge a ring round the cone
+                    core_bridge_steps(lens_x, lens_y, cam_bore_top, cam_cone_d(cam_bore_top),
+                                      cam_disc_d + 2*tol_slide, up = -1, layer = bridge_layer);
+                }
                 // the hood's seat: a hood_seat-deep groove in the show face on the
                 // collar's own footprint (a first-layer void on the face-down print)
                 if (e_hood)
                     translate([lens_x, lens_y, lid_t - hood_seat]) linear_extrude(hood_seat + 1) hood_ring2d();
                 if (e_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
                 if (e_vent || e_buzzer) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
-                                                  vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
+                                                  vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes,
+                                                  seat_inner = true);   // the membrane goes INSIDE: nothing to bridge on the bed
                 if (label_text != "")
                     translate([label_dx, label_dy, lid_t - label_depth])
                         linear_extrude(label_depth + 1) rotate(label_rot)
@@ -959,10 +1018,10 @@ module shell_solid() {
         // the plate key (canary_core_lib): a rib on the +Y bore wall
         if (lid_key) lid_key_rib(key_x, bore_y/2, 270, floor_t, plate_t + 0.5);
         translate([0, 0, base_d]) {
-            // camera-board posts on the inner face (Pi-cam v1.3 21 x 12.5 grid), tall
-            // enough that the lens holder sits wholly behind the front
-            for (sx = [1, -1], sy = [1, -1])
-                translate([cam_cx + sx*cam_hole_x/2, cam_cy + sy*cam_hole_y/2, -cam_post_eff])
+            // camera-board posts on the carrier's hole grid (cam_grid_dy above its
+            // center), the length that stands the lens barrel cam_barrel_in into the bore
+            for (c = cam_post_xy())
+                translate([c[0], c[1], -cam_post_eff])
                     difference() {
                         cylinder(d = cam_post_d, h = cam_post_eff + 0.1);  // 0.1 embeds into the face
                         translate([0, 0, -0.1]) cylinder(d = cam_screw_d, h = cam_post_eff - 0.8);
@@ -984,8 +1043,8 @@ module shell_solid() {
                     // keep-outs: lens/disc seat, camera posts, LED, vent, magnet
                     translate([lens_x, lens_y, -lid_rib_h - 0.1])
                         cylinder(d = max(cam_ap_d, cam_disc_d) + 3, h = lid_rib_h + 0.2);
-                    for (sx = [1, -1], sy = [1, -1])
-                        translate([cam_cx + sx*cam_hole_x/2, cam_cy + sy*cam_hole_y/2, -lid_rib_h - 0.1])
+                    for (c = cam_post_xy())
+                        translate([c[0], c[1], -lid_rib_h - 0.1])
                             cylinder(d = cam_post_d + 2, h = lid_rib_h + 0.2);
                     if (e_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -lid_rib_h - 0.1])
                         cylinder(d = lp_d + 4, h = lid_rib_h + 0.2);

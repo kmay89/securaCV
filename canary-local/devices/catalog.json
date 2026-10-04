@@ -2422,7 +2422,7 @@
   {
    "id": "vision_enclosure",
    "scad": "canary_vision_enclosure.scad",
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.5",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.6",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision",
@@ -2720,7 +2720,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 195,
+   "engineering_param_count": 203,
    "alternatives": [],
    "remix_of": null,
    "counts": {
