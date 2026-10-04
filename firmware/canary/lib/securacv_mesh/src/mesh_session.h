@@ -58,7 +58,10 @@
  *     at any reasonable cadence (>= 10 Hz).
  *   • Every mutator belongs to that same task. Another task (the REST
  *     handlers on the httpd task) reaches the F10 mutators only through
- *     the request slot at the end of this header, which process() drains.
+ *     the request slot near the end of this header, which process()
+ *     drains, reads the status only through the view the main loop
+ *     publishes (STATUS VIEW, the last section; F161), and reads the
+ *     alert history only through read_alerts() (TAMPER ALERTS; F197).
  */
 
 #ifndef SECURACV_MESH_SESSION_H
@@ -112,9 +115,17 @@ constexpr size_t MAX_SESSION_FRAME =
 using PairedCallback = void (*)(const uint8_t* opera_secret_or_null,
                                 uint32_t       confirmation_code);
 
-/* Fires on any error path (tamper, timeout, AEAD-fail). The integration
- * layer should tear down its pairing UI. */
-using FailedCallback = void (*)();
+/* Fires on any error path (tamper, timeout, AEAD-fail, cancel, a partner
+ * this device cannot hold). The integration layer should tear down its
+ * pairing UI. `why` says which (F118); `partner_fp` is the partner's
+ * fingerprint once the exchange named one (from the DISCOVER or OFFER),
+ * nullptr before. A PARTNER_REFUSED is a pairing the owner confirmed and
+ * this device refused: the partner is a member it could not hold (spec
+ * §5.2 — a deny-listed key, a new member for a full opera, an address
+ * another member holds, no transport room), and the owner should be told,
+ * because nothing else on the screen says why the pairing ended. */
+using FailedCallback = void (*)(mesh_pairing::FailReason why,
+                                const uint8_t* partner_fp);
 
 /* Fires when both ephemeral keys have been exchanged and the 6-digit
  * code is ready for the user to confirm on this device's screen. Both
@@ -122,9 +133,34 @@ using FailedCallback = void (*)();
  * same beat as its ACCEPT goes to the wire (F49 part 2). */
 using CodeReadyCallback = void (*)(uint32_t confirmation_code);
 
+/* Fires once per completed pairing, both roles, right after the
+ * PairedCallback returns and the session has tried to bind the new member
+ * to the address it paired from (bind_peer_mac, RADIO ADDRESSES below).
+ * `fp` is the member's fingerprint, `mac` that address, and `bound`
+ * whether the bind took. The integration layer persists the address
+ * (mesh_state::save_peer_mac) from here, and only when `bound` (F102).
+ * Until F102 main.cpp persisted it from the PairedCallback, which runs
+ * before the bind, so a bind the session refused — the address another
+ * member holds (a re-pair relayed from a member's copied address, F69), a
+ * full transport table, a member the callback could not register — was
+ * still written, and the next boot's restore, which binds peer_macs in
+ * blob order, could give that address to the wrong member (host-probed:
+ * the member whose address it really was then dropped every frame it
+ * sent). On `bound == false` the member keeps the binding it had (or
+ * none), in RAM and NVS. Since F118 the cases the session can foresee — an
+ * address another member holds, a full opera or transport table — fail the
+ * pairing before PAIRED (can_hold_partner), so no callback runs for them;
+ * `bound == false` is left to what it cannot foresee: a PairedCallback
+ * that did not register the member, a radio driver refusing the address.
+ * Main-loop task, like the PairedCallback. */
+using PairedPeerBoundCallback = void (*)(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
+                                         const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                                         bool          bound);
+
 void set_paired_callback(PairedCallback cb);
 void set_failed_callback(FailedCallback cb);
 void set_code_ready_callback(CodeReadyCallback cb);
+void set_paired_peer_bound_callback(PairedPeerBoundCallback cb);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * LIFECYCLE
@@ -175,8 +211,51 @@ bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRE
                              const char*   opera_name,
                              uint32_t      now_ms);
 bool start_pairing_joiner   (uint32_t now_ms);
+/* True when the owner's confirm was taken. False when there was nothing
+ * to confirm, and when the confirm ended the pairing (its NOTIFY_FAILED
+ * has then run): the partner refused at the confirm (F118:
+ * pairing_fail_reason() is PARTNER_REFUSED) or a sealing failure. */
 bool confirm_pairing_code   (uint32_t now_ms);
+/* Ends a running pairing (NOTIFY_FAILED, canceled). A pairing that already
+ * ended, PAIRED or FAILED, is left as it is (F135): no FailedCallback, and
+ * an initiator's PAIRED is still reported by the next process(). */
 void cancel_pairing         ();
+
+/* Why the current pairing is FAILED; NONE while it is not (F118). */
+mesh_pairing::FailReason pairing_fail_reason();
+
+/* F133 — the last pairing's outcome, for GET /api/mesh. pairing_seq()
+ * counts the pairings started since init() (start_pairing_initiator /
+ * start_pairing_joiner that started one; 0: none yet); pairing_outcome()
+ * is what the latest one came to (mesh_pairing::Outcome). A page that
+ * started pairing N reads its own result while pairing_seq() is N, and
+ * knows a later pairing (or a reboot, which starts the count again)
+ * replaced it once it is not. The POST pair/start and pair/join answers
+ * carry the N they started (RequestResult::pairing_seq). Main-loop task:
+ * GET /api/mesh reads them from the view the main loop publishes (STATUS
+ * VIEW below, F161), never live. */
+uint32_t              pairing_seq();
+mesh_pairing::Outcome pairing_outcome();
+
+/* F118 — spec §5.2: may this device hold `pubkey` as a member at `mac`?
+ * The PartnerGate the session hands every pairing it starts, so the
+ * pairing fails before the initiator seals the opera_secret, and before a
+ * joiner confirms or installs it, rather than completing with a member
+ * that cannot be bound. False for:
+ *   • a deny-listed key (§5.6; its DISCOVER/OFFER is dropped anyway);
+ *   • a new member when MAX_TRUSTED_PEERS are trusted (register_trusted_peer
+ *     would refuse it);
+ *   • an address another member is bound to (bind_peer_mac: one address,
+ *     one member) — a re-pair onto it, or a new member at it;
+ *   • a broadcast/group/zero address;
+ *   • an address not in the transport table when the table is full.
+ * A re-pair of a trusted member from its own address or from a free one is
+ * admitted (the bind moves it). These are exactly bind_peer_mac's and
+ * register_trusted_peer's refusals, so a pairing this admits binds, unless
+ * the radio driver refuses the address (the PairedPeerBoundCallback still
+ * reports that, F102). Main-loop task. */
+bool can_hold_partner(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN],
+                      const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 
 mesh_pairing::State pairing_state();
 uint32_t            pairing_confirmation_code();
@@ -197,10 +276,11 @@ uint32_t            pairing_confirmation_code();
 bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]);
 
 /* The pairing partner's radio MAC (F33 part 1), from AWAITING_CONFIRM on,
- * like get_paired_peer_pubkey(). The integration layer persists it from its
- * PairedCallback (mesh_state::save_peer_mac) so the next boot can bind it;
- * the session binds it for this boot itself (bind_peer_mac, right after the
- * callback returns, once the callback has registered the peer). */
+ * like get_paired_peer_pubkey(). The session binds it for this boot itself
+ * (bind_peer_mac, right after the PairedCallback returns, once the callback
+ * has registered the peer) and then hands it, with the bind's outcome, to
+ * the PairedPeerBoundCallback, from which the integration layer persists it
+ * (F102) — not from the PairedCallback, which runs before the bind. */
 bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -208,7 +288,13 @@ bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
  *
  * Call process() at any reasonable cadence; it drives the pairing
  * tick() (5-min timeout + initiator NOTIFY_PAIRED) and dispatches any
- * pending Actions out via mesh_transport.
+ * pending Actions out via mesh_transport. On an initiator that includes
+ * the copies of its COMPLETE (F134: every 2 s, to the member's address,
+ * for at most the pairing timeout); process() ends them when the member
+ * is no longer trusted and bound at the address it paired from or this
+ * device no longer holds that opera, and the receive path ends them when
+ * the member is heard. The copies need process()'s clock to advance:
+ * the same now_ms the receive path stamps frames with.
  * ────────────────────────────────────────────────────────────────────────── */
 
 void process(uint32_t now_ms);
@@ -236,7 +322,8 @@ void process(uint32_t now_ms);
  *
  *   send_beacon_event() — build a signed envelope carrying a BLE
  *   Scout beacon-event payload (state + label, see mesh_beacon.h)
- *   and broadcast it to every paired peer.
+ *   and send it to every member's bound radio MAC (MEMBERS ONLY,
+ *   below).
  *
  *     Threading: MUST be invoked from the same task as process()
  *     (the main loop). The outbound counter is incremented without
@@ -250,9 +337,24 @@ void process(uint32_t now_ms);
  *     than surface them.
  *
  *     Returns false if set_opera_secret() has not been called, if
- *     the underlying envelope serialization fails, or if the
- *     broadcast had no peers to send to. sender_fp is derived from
- *     the device pubkey passed to init().
+ *     the underlying envelope serialization fails, or if no bound
+ *     member took the send. sender_fp is derived from the device
+ *     pubkey passed to init().
+ *
+ * MEMBERS ONLY (F101). Every opera sender here — beacon events, channel
+ * locks, hub elections, tamper alerts, LEAVE, the rekey OFFER — sends one
+ * unicast to each trusted peer's bound radio MAC (RADIO ADDRESSES below)
+ * and to no other address, and its "sent" (leave_opera's `notified`)
+ * counts only those. Until F101 they used mesh_transport::broadcast(),
+ * which sends to every address in the transport table; while a pairing
+ * runs that includes the partner's, which an outsider gets there by
+ * answering the pairing from its own radio. So the outsider got every
+ * opera frame and it counted: with no member at all, send_tamper_alert()
+ * returned true and leave_opera() reported notified (host-probed). The
+ * frames are signed, not encrypted, so it learned nothing a radio in range
+ * could not overhear; the harm was a false "sent". A member with no
+ * binding is sent nothing: its radio is not in the table, and it is heard
+ * from nowhere until a pairing binds one (F70).
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN]);
@@ -330,33 +432,33 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
                        const char*              label,
                        uint32_t                 now_ms);
 
-/* Live-link view of the trusted peers: the address each peer's last
- * verified frame arrived from. It is recorded ONLY from a fully verified
- * opera-authenticated frame — signature, opera_id and replay checks all
- * passed — and only for an address already in the transport table (a
- * frame from any other address is dropped unread, RADIO ADDRESSES below).
- * That proves the frame is the peer's, not that the peer transmitted it:
- * the envelope signs no address, so any address in the table can deliver
- * one of the peer's frames this device has not heard yet, and become the
- * recorded one. Two such addresses need nothing from the peer: while a
- * pairing runs (either role), the partner's address is in the table, so an
- * outsider that answers the pairing from its own address can replay there
- * with no spoofing until the pairing ends (host-probed as initiator); and
- * ESP-NOW does not authenticate a source, so a radio copying another bound
- * member's address can too. The recorded address is not only a status value: the session
- * sends its rekey unicasts to the peer there (send_rekey_frame) and takes
- * it out of the transport table when it forgets the peer (forget_peer), so
- * such a replay steers the peer's rekey replies to that address, and a
- * later removal of the peer can strand the member whose address it was
- * (open, THREAT_MODEL "Opera mesh"). Best-effort liveness, not a binding:
- * a peer that moves to an address it did not pair from is not heard there
- * at all until it re-pairs (RADIO ADDRESSES below). mac_known is false
- * until the first verified frame this boot.
+/* Live-link view of the trusted peers: each peer's bound radio MAC
+ * (RADIO ADDRESSES below), once a fully verified opera-authenticated frame
+ * — signature, opera_id and replay checks all passed — has arrived from it.
+ * mac_known is false, and mac zero, until the first one this boot, and
+ * again after bind_peer_mac() moves the binding (a re-pair) until one
+ * arrives at the new address. A peer's frame from any other address is not
+ * taken at all (F70): the transport table also holds every other member's
+ * address and, while a pairing runs, the partner's, and the envelope signs
+ * no address, so any of those could deliver a frame of the peer's that this
+ * device has not heard yet. Until F70 such a frame was dispatched and its
+ * source became the peer's link, which the session also used for its rekey
+ * unicasts to the peer and took out of the transport table when it forgot
+ * the peer: an outsider that answered a pairing from its own radio got this
+ * device's REKEY_ACCEPT (host-probed), and a radio copying another member's
+ * address could make a later removal of the peer strand that member. Now
+ * the rekey unicasts go to the binding, forgetting the peer removes only
+ * the binding, and the link is the binding. ESP-NOW does not authenticate a
+ * source, so a radio copying the peer's OWN address can still deliver the
+ * peer's unheard frames; nothing tells it apart, and it moves no address.
+ * Best-effort liveness, not proof of presence: a peer that moves to an
+ * address it did not pair from is not heard there at all until it re-pairs.
  *
- * Returns the number of in-use entries written (≤ cap). Threading: the
- * table is mutated on the main loop; the REST handlers read it from the
- * httpd task, same as trusted_peer_count() — a torn 6-byte MAC read can
- * at worst garble one row of a status view for one poll. */
+ * Returns the number of in-use entries written (≤ cap). Main-loop task:
+ * the table is mutated there, and GET /api/mesh/peers reads each member's
+ * row from the view the main loop publishes (STATUS VIEW below, F161).
+ * Until F161 the handler called this from the httpd task, so one row could
+ * mix two passes. */
 struct PeerLink {
   uint8_t  fp [mesh_crypto::FINGERPRINT_LEN];
   uint8_t  mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
@@ -386,6 +488,8 @@ size_t get_peer_links(PeerLink* out, size_t cap);
  *
  * Frames are silently dropped (no error feedback) when:
  *   • sender_fp doesn't match any trusted peer (unknown sender);
+ *   • the frame did not come from that peer's bound radio MAC (F70 —
+ *     checked before the signature, so it spends no counter);
  *   • Ed25519 signature verification fails (forged or corrupted);
  *   • counter <= last_counter for that peer (replay);
  *   • opera_id in the header doesn't match our own (cross-opera leak —
@@ -429,16 +533,18 @@ size_t trusted_peer_count();
 /* ──────────────────────────────────────────────────────────────────────────
  * RADIO ADDRESSES — the transport peer table on the device (F33 part 1)
  *
- * mesh_transport delivers only frames from MACs in its table and
- * broadcast() sends only to them; before F33 nothing but the host tests
- * filled it, so on a device every frame dropped as recv_dropped_no_peer and
- * every broadcast reached nobody. The session now keeps it in step with the
+ * mesh_transport delivers only frames from MACs in its table, and the
+ * opera senders reach only the members' bound MACs in it (MEMBERS ONLY,
+ * above); before F33 nothing but the host tests filled it, so on a device
+ * every frame dropped as recv_dropped_no_peer and every opera send reached
+ * nobody. The session now keeps it in step with the
  * trusted peers:
  *   • bind_peer_mac(fp, mac) — a trusted peer's radio MAC goes into the
  *     transport table and is remembered with the peer (it replaces an older
- *     address of the same peer). Called at boot for every persisted
- *     (fingerprint, MAC) pair (main.cpp, mesh_state peer_macs) and by the
- *     session itself when a pairing completes. Refused for an untrusted
+ *     address of the same peer). Called at boot for the persisted
+ *     (fingerprint, MAC) pairs (restore_peer_macs below, from main.cpp's
+ *     mesh_state peer_macs) and by the session itself when a pairing
+ *     completes. Refused for an untrusted
  *     fingerprint, a broadcast/group/zero MAC, a MAC another peer holds, or
  *     a full transport table.
  *   • While a pairing runs, the partner's MAC — not a peer yet — is added
@@ -455,11 +561,18 @@ size_t trusted_peer_count();
  *     check from whatever address replays it. #1756 (F49 part 3) re-bound a
  *     peer on such a frame and persisted it; that let an outsider who
  *     recorded one re-point the member at its own radio, and is withdrawn.
+ *     For the same reason a peer's frame from an address the table DOES
+ *     hold — another member's, or a running pairing's partner — is dropped
+ *     unread too, unless it is that peer's own binding (F70, PeerLink above).
  *     So a peer whose radio MAC changed (a replaced module, a new
  *     locally-administered address) is heard again after a re-pair, which
  *     binds the address the partner paired from; re-pairing a device that
- *     is already trusted re-binds it, and main.cpp persists the new one.
- *     Two limits on that. The pairing does not authenticate the long-term
+ *     is already trusted re-binds it, and main.cpp persists the new one
+ *     once the bind took (PairedPeerBoundCallback; F102). A re-pair from
+ *     an address another member holds fails at the owner's confirm, before
+ *     anything is sealed (F118, can_hold_partner); until F118 it completed,
+ *     the bind was refused and nothing persisted. Either way the device
+ *     keeps the address it had. Two limits on that. The pairing does not authenticate the long-term
  *     key it binds: the 6-digit code and the CONFIRM hash cover only the
  *     ephemeral X25519 exchange, and the key is taken as the DISCOVER or
  *     OFFER carried it. So an outsider relaying an owner-run pairing, from
@@ -473,20 +586,80 @@ size_t trusted_peer_count();
  *   • A peer that is dropped — a verified LEAVE, unregister, a removal or a
  *     rotation that forgets it, clear_trusted_peers() — leaves the transport
  *     table with it.
- * online_peer_count(): trusted peers whose verified-frame MAC (PeerLink
- * mac_known, below) is in the transport table in the ACTIVE window — a
- * peer bound at boot that has not been heard this boot is NOT online, even
- * though its fresh transport entry starts ACTIVE. GET /api/mesh uses it.
+ * online_peer_count(): trusted peers heard from their binding (PeerLink
+ * mac_known, above) whose binding is in the transport table in the ACTIVE
+ * window — a peer bound at boot that has not been heard this boot is NOT
+ * online, even though its fresh transport entry starts ACTIVE, and neither
+ * is one re-bound and not yet heard at the new address. GET /api/mesh uses
+ * it.
  * Threading: bind_peer_mac is main-loop only (it mutates both tables);
- * online_peer_count only reads, like get_peer_links().
+ * online_peer_count only reads, like get_peer_links(), on the main loop
+ * too (the status routes read it from the published view, F161).
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool   bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
                      const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 size_t online_peer_count();
 
-/* Drop ONE trusted peer by fingerprint (empties its slot and MAC binding;
- * its replay counter becomes a tombstone). Returns true iff an entry was
+/* ──────────────────────────────────────────────────────────────────────────
+ * BOOT RESTORE OF THE STORED ADDRESSES  (F33 part 1; F119, F120)
+ *
+ * restore_peer_macs() binds the persisted (fingerprint, MAC) entries —
+ * mesh_state peer_macs, in blob order — and says what became of each, so
+ * the integration layer can drop the ones that must go (stored_mac_must_drop
+ * below says which). Call it after every
+ * stored pubkey has been registered (register_trusted_peer), as main.cpp's
+ * setup does. Per entry:
+ *   • UNTRUSTED (F120): its fingerprint is not a registered peer — a
+ *     member whose NVS removal failed (remove_trusted_peer drops the entry
+ *     best effort), or a deny-listed key. Never bound. It is to be dropped:
+ *     since F102 save_peer_mac refuses an address another fingerprint
+ *     holds, so a stale entry kept forever blocks storing that address for
+ *     the member that pairs from it next (bound for the boot, not stored,
+ *     unheard after the next reboot).
+ *   • SHARED (F119): another registered fingerprint's entry holds the same
+ *     address — a blob written before F102, when a re-pair from another
+ *     member's address was stored (in place, so the blob's order says
+ *     nothing about which entry is right) and upsert took an address
+ *     another fingerprint held. NEITHER is bound, and both are to be
+ *     dropped, so both members are heard from nowhere until each re-pairs.
+ *     Binding in blob order (the code before F119) gave the address to
+ *     whichever entry came first; in F102's scenario that was the member
+ *     that did not own it, and the owner was not heard at all. Keeping both
+ *     entries unbound would not let the owner's re-pair repair it: the
+ *     other entry still holds the address, so save_peer_mac refuses the
+ *     owner's, and after the next reboot it is unheard again. Dropping both
+ *     does, and logs once.
+ *   • BOUND: bound to its member.
+ *   • REFUSED: a registered fingerprint, the only one at its address, that
+ *     bind_peer_mac refused anyway (a broadcast/group/zero address, no room
+ *     in the transport table). Kept, as before.
+ * An entry whose address only an UNTRUSTED entry shares is not SHARED: a
+ * fingerprint that is not a member cannot own it. Writes n verdicts to
+ * `out` and returns how many entries were bound. Main-loop task. */
+enum class StoredMacVerdict : uint8_t {
+  BOUND = 0,
+  REFUSED,
+  UNTRUSTED,
+  SHARED,
+};
+size_t restore_peer_macs(const uint8_t (*fps)[mesh_crypto::FINGERPRINT_LEN],
+                         const uint8_t (*macs)[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                         size_t n, StoredMacVerdict* out);
+
+/* Whether the integration layer drops a stored entry from NVS after
+ * restore_peer_macs: true for SHARED and UNTRUSTED, and only when
+ * `peers_loaded` (the stored pubkey list was read and registered) — a
+ * failed read registers nobody, so every entry would come back UNTRUSTED
+ * and a drop would erase every member's address. BOUND and REFUSED entries
+ * are kept. The decision lives here, not in main.cpp, so the host suite
+ * holds every verdict × peers_loaded case; main.cpp's boot loop drops
+ * exactly what this says (the scripts/tests source pin holds it to that). */
+bool stored_mac_must_drop(StoredMacVerdict verdict, bool peers_loaded);
+
+/* Drop ONE trusted peer by fingerprint (empties its slot and takes its
+ * bound MAC, and no other address, out of the transport table; its replay
+ * counter becomes a tombstone). Returns true iff an entry was
  * removed. Used by the verified-LEAVE_OPERA receive path and by peer
  * removal. The NVS copy is the integration layer's
  * (mesh_state::remove_trusted_peer). */
@@ -527,7 +700,7 @@ void set_beacon_event_handler(beacon_event_received_fn fn);
  * csi_hal::set_channel_lock() with the proposed channel.
  *
  * send_channel_lock() works identically to send_beacon_event(): builds
- * a signed envelope, broadcasts to all trusted peers.
+ * a signed envelope and sends it to every member's bound radio MAC.
  *
  * Threading: send MUST be called from the main loop; the receive handler
  * runs on the same task as mesh_transport::process().
@@ -573,8 +746,9 @@ void set_hub_election_handler(hub_election_received_fn fn);
  *
  * leave_opera() makes this device forget its opera:
  *   1. if it holds an opera, it signs a LEAVE_OPERA frame (empty payload)
- *      under the current opera_id and broadcasts it — best effort, the
- *      return value says whether any peer took the frame;
+ *      under the current opera_id and sends it to every member's bound
+ *      radio MAC — best effort, the return value says whether any member
+ *      took the frame (a running pairing's partner does not count, F101);
  *   2. then cancels any pairing and wipes every opera-scoped RAM item:
  *      opera_id / sender_fp binding, trusted-peer table, opera name,
  *      alert history and counter. Two things are KEPT on purpose: the
@@ -612,9 +786,10 @@ void set_peer_left_handler(peer_left_fn fn);
  *
  * send_tamper_alert() builds a signed TAMPER_ALERT envelope carrying the
  * 6-byte mesh_alert payload (kind, severity, witness_seq — no free text)
- * and broadcasts it to every paired peer. Same return contract and task
- * contract as send_beacon_event(): false before set_opera_secret(), while
- * disabled, on an invalid payload (severity > 7), or when no peer took it.
+ * and sends it to every member's bound radio MAC. Same return contract and
+ * task contract as send_beacon_event(): false before set_opera_secret(),
+ * while disabled, on an invalid payload (severity > 7), or when no bound
+ * member took it.
  *
  * Receive side: a verified TAMPER_ALERT (signature + opera_id + replay
  * checks passed, payload decodes) increments the sender's
@@ -623,10 +798,25 @@ void set_peer_left_handler(peer_left_fn fn);
  * (oldest overwritten), then fires the tamper-alert handler. A malformed
  * payload is dropped silently and counts nothing.
  *
- * get_alerts() copies the ring newest-first. clear_alerts() empties the
- * history only; the per-peer and opera-wide counters keep counting for
- * the boot (canary-wap parity: its DELETE clears history, not
- * g_alerts_received). Nothing here is persisted — per boot, by design.
+ * clear_alerts() empties the history only; the per-peer and opera-wide
+ * counters keep counting for the boot (canary-wap parity: its DELETE
+ * clears history, not g_alerts_received). Nothing here is persisted — per
+ * boot, by design.
+ *
+ * read_alerts() is GET /api/mesh/alerts' read, on the httpd task (F197):
+ * the history is a loop_snapshot::Log (the header the status view and
+ * canary-wap's alerts route use, F110/F161) that the main loop's receive
+ * path appends to and clear_alerts() / deinit() / leave_opera() clear,
+ * each change under the log's lock, so a read copies every record whole
+ * and all from one moment, never a record half overwritten by a newer
+ * alert and never a body straddling a clear, and it never waits for the
+ * main loop. It answers at most `cap` records, newest first (the newest
+ * `cap` when more are held). Until F197 the route copied the ring in
+ * place (get_alerts()) while the main loop wrote it.
+ *
+ *   read_alerts()  any task.
+ *   clear_alerts() main-loop task only (the REST DELETE goes through the
+ *                  request slot, CLEAR_ALERTS).
  * ────────────────────────────────────────────────────────────────────────── */
 
 constexpr size_t MAX_ALERT_HISTORY = 16;
@@ -644,7 +834,7 @@ typedef void (*tamper_alert_received_fn)(
 
 void     set_tamper_alert_handler(tamper_alert_received_fn fn);
 uint32_t alerts_received();
-size_t   get_alerts(mesh_alert::Record* out, size_t cap);
+size_t   read_alerts(mesh_alert::Record* out, size_t cap);
 void     clear_alerts();
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -873,6 +1063,9 @@ enum class RequestStatus : uint8_t {
   OPERA_EXISTS,      /* PAIR_START {create} while the session holds an opera */
   NOT_PERSISTED,     /* PAIR_START {create}: the new secret could not be
                       * stored — no opera was created (F33 part 4) */
+  PARTNER_REFUSED,   /* PAIR_CONFIRM: this device cannot hold the partner
+                      * (can_hold_partner), so the confirm ended the
+                      * pairing and nothing was sent (F118) */
 };
 
 struct Request {
@@ -896,12 +1089,90 @@ struct RequestResult {
   RemoveResult  remove;     /* REMOVE */
   uint8_t       removed_pubkey[mesh_crypto::PUBKEY_LEN];  /* REMOVE, STARTED/COMMITTED */
   bool          created;    /* PAIR_START {create}: a new opera exists now */
+  uint32_t      pairing_seq;   /* PAIR_START / PAIR_JOIN, OK: the pairing it
+                                * started (pairing_seq(), F133) */
 };
 
 bool submit_request(const Request& req);
 bool take_request_result(RequestResult* out);
 bool withdraw_request();
 void abandon_request();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * STATUS VIEW (F161)
+ *
+ * GET /api/mesh and /api/mesh/peers run on the httpd task, and what they
+ * show (the enable switch, the opera's id and name, the pairing state, code,
+ * number, outcome and reason, the member table and each member's liveness
+ * from the transport table) is the main loop's, written by process(), the
+ * receive path it runs and the REST requests it executes. Until F161 the
+ * handlers read it in place, without a lock: each 32-bit value whole, but
+ * one body could mix two passes (a pairing number with the outcome of a
+ * pairing started between the reads, a name read mid-rename, a member's MAC
+ * half rewritten). canary-wap's routes had the same gap (F110).
+ *
+ * Now the main loop builds a whole StatusView and publishes it
+ * (loop_snapshot.h's Value<T>, the header canary-wap's routes read through
+ * too): process() publishes before every return, the pass's last act, a
+ * stopped or disabled session's included; the drain publishes after the
+ * REST request it executed and before the handler can collect the result,
+ * so a GET right after a POST's answer shows what the POST did; deinit()
+ * publishes the wiped state; and main.cpp's setup() publishes once after
+ * it has restored the opera, its members and their addresses, so a page
+ * read before the first loop pass does not show an empty opera. Before the
+ * first publish (the HTTP server is up before the mesh) a read answers the
+ * state before init(), which is also the state init() leaves, so init()
+ * publishes nothing.
+ * A publish of the same bytes takes no lock, so publishing every pass costs
+ * a compare. The handlers read the view with read_status() and nothing
+ * else of the session's: a read is one copy under the lock, never torn, and
+ * never waits for the main loop (no mesh_busy, no mesh_timeout).
+ *
+ * The view holds the pairing code only while GET /api/mesh shows it (its
+ * state reads PAIRING_CONFIRM), so no second copy of a code outlives its
+ * screen. It holds no key: members by fingerprint, with their liveness.
+ *
+ *   publish_status()  main-loop task (process(), the drain, deinit(), and
+ *                     main.cpp's setup() once). Builds the view from the
+ *                     live state and publishes it.
+ *   read_status()     any task. A whole copy of the last view published; the
+ *                     state before init() (enabled, no opera, no pairing, no
+ *                     member) until the first publish.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* One trusted member as the status routes show it. */
+struct MemberView {
+  uint8_t  fp[mesh_crypto::FINGERPRINT_LEN];
+  /* Verified TAMPER_ALERT frames from it since it was registered (F11). */
+  uint32_t alerts_received;
+  /* Heard from its binding this boot (get_peer_links' mac_known) and that
+   * address is in the transport table: the three fields below are the
+   * table's entry. False: the peer list shows it OFFLINE, "never". */
+  bool                      live;
+  mesh_transport::PeerState link_state;
+  int8_t                    rssi_dbm;
+  uint32_t                  last_seen_ms;   /* the transport's clock (millis) */
+};
+
+struct StatusView {
+  bool                     enabled;
+  bool                     has_opera;
+  uint8_t                  opera_id[mesh_crypto::OPERA_ID_LEN];   /* zero without an opera */
+  char                     opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_pairing::State      pairing_state;
+  uint32_t                 pairing_code;    /* 0 unless the state reads PAIRING_CONFIRM */
+  uint32_t                 pairing_seq;     /* F133 */
+  mesh_pairing::Outcome    pairing_outcome;
+  mesh_pairing::FailReason pairing_fail_reason;
+  uint32_t                 peers_total;     /* trusted_peer_count() */
+  uint32_t                 peers_online;    /* online_peer_count() */
+  uint32_t                 alerts_received; /* alerts_received() */
+  uint32_t                 member_count;    /* rows used in members[] */
+  MemberView               members[MAX_TRUSTED_PEERS];
+};
+
+void publish_status();
+void read_status(StatusView* out);
 
 }  /* namespace mesh_session */
 

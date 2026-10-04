@@ -151,6 +151,8 @@ static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa
 #endif
 #if FEATURE_DIAGNOSTICS
 #include "securacv_diagnostics.h"
+#include "diagnostics_json.h"              /* GET /api/diagnostics' body (F179) */
+#include "csi_event_egress_diagnostics.h"  /* its egress counters (include/) */
 #endif
 #if FEATURE_POWER_MONITOR
 #include "securacv_power.h"
@@ -1849,11 +1851,18 @@ void ScvNetworkManager::registerHttpHandlers(httpd_handle_t server) {
   httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs };
   register_route(server, &logs);
 
-  httpd_uri_t log_ack = { .uri = "/api/logs/*/ack", .method = HTTP_POST, .handler = handle_log_ack };
-  register_route(server, &log_ack);
-
   httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all };
   register_route(server, &ack_all);
+
+  // POST /api/logs/<seq>/ack. httpd_uri_match_wildcard takes a `*` only as a
+  // template's last character ("/api/logs/*/ack" matched no request: sweep
+  // F214), so the route is "/api/logs/*" and handle_log_ack reads the rest.
+  // It goes after every other POST /api/logs/... route: httpd answers with
+  // the first match in registration order, and refuses a later template
+  // this one already matches (firmware/tests_host/
+  // test_dashboard_route_match.test.js holds both).
+  httpd_uri_t log_ack = { .uri = "/api/logs/*", .method = HTTP_POST, .handler = handle_log_ack };
+  register_route(server, &log_ack);
 
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot };
   register_route(server, &reboot);
@@ -2822,18 +2831,42 @@ static esp_err_t handle_logs(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// The <seq> of POST /api/logs/<seq>/ack (sweep F214), read from the request
+// target: what follows its first "/api/logs/" must be decimal digits that fit
+// a uint32_t, then "/ack", then the end of the path (a query or fragment may
+// follow). Anything else is no log-ack request. canary_wap.ino carries the
+// same function; firmware/tests_host/test_log_ack_route.cpp runs both.
+static bool log_ack_seq_from_uri(const char* uri, uint32_t* seq) {
+  static const char kPrefix[] = "/api/logs/";
+  const char* p = strstr(uri, kPrefix);  // origin form: at 0; absolute form: after the authority
+  if (p == nullptr) return false;
+  p += sizeof(kPrefix) - 1;
+  const char* const digits = p;
+  uint32_t value = 0;
+  while (*p >= '0' && *p <= '9') {
+    const uint32_t d = (uint32_t)(*p - '0');
+    if (value > (UINT32_MAX - d) / 10u) return false;  // past uint32_t
+    value = value * 10u + d;
+    ++p;
+  }
+  if (p == digits || strncmp(p, "/ack", 4) != 0) return false;
+  p += 4;
+  if (*p != '\0' && *p != '?' && *p != '#') return false;
+  *seq = value;
+  return true;
+}
+
 static esp_err_t handle_log_ack(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  const char* uri = req->uri;
-  const char* seq_start = strstr(uri, "/logs/");
-  if (!seq_start) {
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid URI");
+  // Registered as POST /api/logs/*: a path that is not /api/logs/<seq>/ack
+  // gets the 404 httpd gives a request no route matches.
+  uint32_t seq = 0;
+  if (!log_ack_seq_from_uri(req->uri, &seq)) {
+    return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, nullptr);
   }
-  seq_start += 6;
-  uint32_t seq = atoi(seq_start);
 
   bool success = acknowledge_log_entry(seq, ACK_STATUS_ACKNOWLEDGED, "");
 
@@ -4786,7 +4819,13 @@ static esp_err_t handle_audio_test_status(httpd_req_t* req) {
 
 #if FEATURE_DIAGNOSTICS
 
-// GET /api/diagnostics — Full diagnostic snapshot as JSON
+// GET /api/diagnostics — Full diagnostic snapshot as JSON, with the
+// committed-event egress's counters (sweep F179). The body is built by
+// diagnostics_json.h (host-tested), into a stack buffer: no ArduinoJson heap
+// allocation during a diagnostics call, when memory pressure is the very
+// thing being diagnosed. This runs on the HTTP server's task, so the egress
+// counters come from the copy the loop task's pump publishes each pass
+// (csi_event_egress_diagnostics_json()), never from the pump's own state.
 static esp_err_t handle_diagnostics(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
@@ -4797,67 +4836,12 @@ static esp_err_t handle_diagnostics(httpd_req_t* req) {
     return http_send_error(req, 500, "diagnostics_unavailable");
   }
 
-  const char* degrade_name = "none";
-  switch (snap.heap.degrade_level) {
-    case DEGRADE_WARN:      degrade_name = "warn"; break;
-    case DEGRADE_CRITICAL:  degrade_name = "critical"; break;
-    case DEGRADE_EMERGENCY: degrade_name = "emergency"; break;
+  char egress[kCsiEventEgressDiagnosticsMax];
+  (void)csi_event_egress_diagnostics_json(egress, sizeof(egress));  /* "" spells null */
+  char buf[diagnostics_json::kJsonMax];
+  if (diagnostics_json::build(snap, FIRMWARE_VERSION, egress, buf, sizeof(buf)) == 0) {
+    return http_send_error(req, 500, "diagnostics_too_large");
   }
-
-  /* Build JSON with snprintf into a stack buffer. This avoids
-   * ArduinoJson heap allocation during a diagnostics call when
-   * memory pressure is the very thing being diagnosed. */
-  char buf[2048];
-  int pos = 0;
-
-  /* heap */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "{\"heap\":{\"free\":%u,\"min\":%u,\"largest_block\":%u,"
-    "\"psram_free\":%u,\"psram_total\":%u,"
-    "\"stack_hwm\":%u,\"fragmentation_pct\":%u,"
-    "\"degrade_level\":\"%s\"},",
-    snap.heap.free_heap, snap.heap.min_heap, snap.heap.largest_block,
-    snap.heap.psram_free, snap.heap.psram_total,
-    snap.heap.stack_hwm_main, snap.heap.fragmentation_pct,
-    degrade_name);
-
-  /* sd */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "\"sd\":{\"mounted\":%s,\"usage_pct\":%u,"
-    "\"total_writes\":%u,\"write_errors\":%u,"
-    "\"space_warning\":%s,\"space_critical\":%s},",
-    snap.sd.mounted ? "true" : "false",
-    snap.sd.usage_pct, snap.sd.total_writes, snap.sd.write_errors,
-    snap.sd.space_warning ? "true" : "false",
-    snap.sd.space_critical ? "true" : "false");
-
-  /* selftest */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "\"selftest\":{\"has_run\":%s,\"health_score\":%u,"
-    "\"passed\":%u,\"total\":%u,\"tests\":[",
-    snap.selftest.has_run ? "true" : "false",
-    snap.selftest.health_score,
-    snap.selftest.passed_count, snap.selftest.total_count);
-
-  for (uint8_t i = 0; i < snap.selftest.total_count && i < SELFTEST_COUNT; i++) {
-    if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "{\"name\":\"%s\",\"passed\":%s,\"ms\":%u}",
-      snap.selftest.tests[i].name ? snap.selftest.tests[i].name : "unknown",
-      snap.selftest.tests[i].passed ? "true" : "false",
-      snap.selftest.tests[i].duration_ms);
-    if ((size_t)pos >= sizeof(buf) - 64) break;  /* safety margin */
-  }
-
-  pos += snprintf(buf + pos, sizeof(buf) - pos, "]},");
-
-  /* system */
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "\"system\":{\"uptime_sec\":%u,\"boot_count\":%u,"
-    "\"reset_reason\":%u,\"firmware\":\"%s\"}}",
-    snap.uptime_sec, snap.boot_count,
-    snap.reset_reason, FIRMWARE_VERSION);
-
   return http_send_json(req, buf);
 }
 
@@ -5337,20 +5321,26 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // request to mesh_session's request slot and waits, bounded, for loop() to
 // execute it (mesh_call below). The pragma after this comment makes a
 // direct call to any of those nine a compile error in the rest of this
-// file. The GET handlers only read.
+// file. GET /api/mesh and /api/mesh/peers read nothing of the session's
+// live state either (F161): they copy the view the main loop publishes
+// after each pass and each request it runs (mesh_session::read_status), so
+// one body is one pass, and they never wait for the main loop.
+// GET /api/mesh/alerts copies the alert history the main loop changes under
+// its lock (F197: mesh_session::read_alerts), and does not wait either.
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
-// MAC. mesh_session bridges them — it records the source MAC of every
-// FULLY VERIFIED opera-authenticated frame against the sender's
-// fingerprint (get_peer_links), so per-peer state / last_seen / rssi
-// below are the transport table's real numbers once a peer has spoken
-// this boot. A peer that has not yet sent a verified frame reports
-// OFFLINE/never — best-effort by design, documented in
-// spec/canary_mesh_network_v0.md §8. (The table itself is filled by
-// mesh_session from each peer's persisted radio MAC — F33 part 1 — so a
-// peer's entry exists from boot; the verified-frame MAC is what says it
-// has actually been heard.)
+// MAC. mesh_session bridges them — each member's row in the view carries
+// its bound radio MAC's transport entry once a FULLY VERIFIED
+// opera-authenticated frame has arrived from it (a peer's frame from any
+// other address is not taken, F70), so per-peer state / last_seen / rssi
+// below are the transport table's real numbers, as of the main loop's last
+// pass, once a peer has spoken this boot. A peer that has
+// not yet sent a verified frame reports OFFLINE/never — best-effort by
+// design, documented in spec/canary_mesh_network_v0.md §8. (The table
+// itself is filled by mesh_session from each peer's persisted radio MAC —
+// F33 part 1 — so a peer's entry exists from boot; mac_known is what says
+// it has actually been heard.)
 // ════════════════════════════════════════════════════════════════════════════
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
@@ -5366,34 +5356,16 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  const bool has_opera = mesh_session::has_opera();
+  // F161: the view the main loop published at the end of its last pass (or
+  // after the request it last ran), copied whole: the enable switch, the
+  // opera, the pairing state and code, F133's pairing number, outcome and
+  // reason, the member counts and alerts_received all come from one pass.
+  // Never the live session state, which process() writes while this runs.
+  mesh_session::StatusView view;
+  mesh_session::read_status(&view);
 
-  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
-  const bool have_id = mesh_session::get_opera_id(opera_id);
-
-  char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
-  mesh_session::get_opera_name(opera_name, sizeof(opera_name));
-
-  const mesh_pairing::State pstate = mesh_session::pairing_state();
-  const size_t peers_total  = mesh_session::trusted_peer_count();
-  // Trusted peers heard this boot (verified frame) whose transport entry is
-  // in the ACTIVE window. Not the raw transport table any more: since F33
-  // the table holds every bound peer from boot, fresh entries start ACTIVE,
-  // and a peer that has said nothing is not online.
-  const size_t peers_online = mesh_session::online_peer_count();
-
-  // alerts_received: verified TAMPER_ALERT frames from any peer this boot
-  // (F10/F11 — counted only after signature + opera_id + replay checks).
-  const uint32_t alerts_received = mesh_session::alerts_received();
-  const uint32_t pairing_code    = mesh_session::pairing_confirmation_code();
-
-  char body[512];
-  if (!mesh_api::build_mesh_status_json(
-          body, sizeof(body),
-          mesh_session::is_enabled(), has_opera,
-          have_id ? opera_id : nullptr,
-          opera_name, pstate,
-          peers_total, peers_online, alerts_received, pairing_code)) {
+  char body[mesh_api::STATUS_JSON_CAP];
+  if (!mesh_api::build_mesh_status_json_from_view(body, sizeof(body), view)) {
     return http_send_error(req, 500, "encode_failed");
   }
   return http_send_json(req, body);
@@ -5404,10 +5376,12 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  // Trusted peers are the durable membership set (pubkeys); liveness
-  // comes from joining each fingerprint's verified-frame MAC
-  // (mesh_session::get_peer_links) against the live transport table
-  // (see section header + spec §8).
+  // Trusted peers are the durable membership set (pubkeys, NVS); liveness
+  // comes from the view the main loop published (F161): each member's row
+  // there carries its alerts and, once heard from its binding, the
+  // transport table's state, RSSI and last-seen time as that pass saw them
+  // (see section header + spec §8). The join and the uptime (last_seen_sec
+  // is counted here, at the read) are mesh_api::peer_views_from_status.
   uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
   size_t  count = 0;
   if (!mesh_state::load_trusted_peers(pubkeys, sizeof(pubkeys), &count)) {
@@ -5415,59 +5389,11 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   }
   if (count > mesh_state::MAX_TRUSTED_PEERS) count = mesh_state::MAX_TRUSTED_PEERS;
 
-  mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
-  const size_t n_links = mesh_session::get_peer_links(
-      links, sizeof(links) / sizeof(links[0]));
-
-  mesh_transport::Peer live[16];
-  const size_t n_live = mesh_transport::list_peers(
-      live, sizeof(live) / sizeof(live[0]));
-
-  const uint32_t now_ms = millis();
+  mesh_session::StatusView view;
+  mesh_session::read_status(&view);
 
   mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];
-  for (size_t i = 0; i < count; ++i) {
-    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
-    mesh_crypto::compute_fingerprint(pubkeys + i * mesh_crypto::PUBKEY_LEN, fp);
-    static const char kHex[] = "0123456789abcdef";
-    for (size_t b = 0; b < mesh_crypto::FINGERPRINT_LEN; ++b) {
-      views[i].fingerprint[2 * b]     = kHex[(fp[b] >> 4) & 0xF];
-      views[i].fingerprint[2 * b + 1] = kHex[fp[b] & 0xF];
-    }
-    views[i].fingerprint[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
-    views[i].name[0]      = '\0';          // best-effort: name unknown
-    views[i].state        = "OFFLINE";     // until a verified frame joins it
-    views[i].last_seen_sec = 0xFFFFFFFFu;  // "never" (UI shows 'never')
-    views[i].rssi          = 0;
-    views[i].alerts_received = 0;          // until the session has a link row
-
-    // fp → last verified MAC → live transport entry. A peer that has
-    // not sent a verified frame this boot, or whose MAC has left the
-    // transport table, keeps the OFFLINE/never defaults above.
-    for (size_t l = 0; l < n_links; ++l) {
-      if (memcmp(links[l].fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) {
-        continue;
-      }
-      // Per-peer alert attribution (F11) does not depend on liveness.
-      views[i].alerts_received = links[l].alerts_received;
-      if (!links[l].mac_known) break;
-      for (size_t t = 0; t < n_live; ++t) {
-        if (!live[t].in_use ||
-            memcmp(live[t].mac, links[l].mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
-          continue;
-        }
-        switch (live[t].state) {
-          case mesh_transport::PeerState::ACTIVE: views[i].state = "CONNECTED"; break;
-          case mesh_transport::PeerState::STALE:  views[i].state = "STALE";     break;
-          default:                                views[i].state = "OFFLINE";   break;
-        }
-        views[i].last_seen_sec = (now_ms - live[t].last_seen_ms) / 1000u;
-        views[i].rssi          = live[t].rssi_dbm;
-        break;
-      }
-      break;
-    }
-  }
+  mesh_api::peer_views_from_status(view, pubkeys, count, (uint32_t)millis(), views);
 
   // Sized for 8 worst-case rows (host-test pinned, mesh_api.h). 1024 held
   // the pre-F11 row; the alerts_received field needs the headroom.
@@ -5547,6 +5473,7 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   doc["ok"] = true;
   doc["created"] = res.created;
   doc["state"] = "PAIRING_INIT";
+  doc["pairing_seq"] = res.pairing_seq;   // F133: GET /api/mesh reports this pairing's outcome under it
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -5574,6 +5501,7 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   JsonDocument doc;
   doc["ok"] = true;
   doc["state"] = "PAIRING_JOIN";
+  doc["pairing_seq"] = res.pairing_seq;   // F133
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -5590,6 +5518,13 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
   mesh_session::RequestResult res;
   esp_err_t rc = ESP_OK;
   if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status == mesh_session::RequestStatus::PARTNER_REFUSED) {
+    // F118 (spec §5.2): this Canary cannot hold the partner — another
+    // member holds its radio address, or the opera is full — so the
+    // confirm ended the pairing and nothing was sent. The health log names
+    // the partner by fingerprint (main.cpp on_mesh_pairing_failed).
+    return http_send_error(req, 409, "partner_refused");
+  }
   if (res.status != mesh_session::RequestStatus::OK) {
     return http_send_error(req, 400, "confirm_failed");
   }
@@ -5805,10 +5740,14 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
+  // F197: the history as the main loop last left it, copied whole under the
+  // log's lock (every record whole, all from one moment, newest first),
+  // never the ring read in place while the receive path or a DELETE writes
+  // it. It does not wait for the main loop.
   static_assert(mesh_session::MAX_ALERT_HISTORY <= mesh_api::MAX_ALERTS_JSON,
                 "ALERTS_JSON_CAP is pinned for MAX_ALERTS_JSON rows");
   mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY];
-  const size_t n = mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY);
+  const size_t n = mesh_session::read_alerts(recs, mesh_session::MAX_ALERT_HISTORY);
 
   // Worst-case body (host-test pinned, mesh_api.h) — heap, not the httpd
   // task's stack.

@@ -218,14 +218,16 @@ or ticks Beacon frames. Every row below assumes both.
   - Post-fix expected: A emits dual-signed `BEACON_MSG_ALERT` at
     `hop_count = 0`. C verifies both signatures, transitions to
     `BEACON_STATE_ALARM`, plays `PATTERN_BEACON` (1200/1700/2200 Hz
-    sequence). HA `sensor.canary_<C>_beacon_state` flips to `Alarm`.
+    sequence). HA `sensor.<C>_beacon_state` flips to `Alarm` (`<C>` is
+    board C's device id as Home Assistant slugs it, as in the
+    `chirp.state` + `beacon.state` row below).
   - Artifact: `docs/audit/repro/beacon/happy_path/`.
 
 - [ ] **CANCEL propagates (and the originator adopts its own frames)**
   - Setup: continue from the happy path — A, B and C all in
     `BEACON_STATE_ALARM` for A's alert.
   - Check first: A itself shows `Alarm` (`GET /api/beacon` on A,
-    HA `sensor.canary_<A>_beacon_state`) — the originator adopts its own
+    HA `sensor.<A>_beacon_state`) — the originator adopts its own
     ALERT at hop 0; before the CANCEL pass it stayed `Normal`. B, the
     cosigner, shows `Alarm` too — it resolves its own fingerprint to its own
     key (spec §7.1 step 5); before the review follow-up it dropped the frame
@@ -382,15 +384,17 @@ or ticks Beacon frames. Every row below assumes both.
   - Setup: one board + MQTT broker + Home Assistant instance.
   - Repro: pair the device, wait one 30 s publish cycle.
   - Post-fix expected: HA's Settings → Devices → SecuraCV Canary
-    shows the four new sensors:
-    - `sensor.canary_<id>_chirp_state` (Normal/Trouble/Alarm/Supervisory)
-    - `sensor.canary_<id>_beacon_state` (Normal/Trouble/Alarm/Supervisory)
-    - `sensor.canary_<id>_beacon_airtime_pct` (%)
-    - `sensor.canary_<id>_beacon_active_template` (string)
+    shows the four new sensors (`<id>` the device id as Home Assistant
+    slugs it; these ids on Home Assistant 2025.10 or later, for an entity
+    it registers for the first time, sweep HA16):
+    - `sensor.<id>_chirp_state` (Normal/Trouble/Alarm/Supervisory)
+    - `sensor.<id>_beacon_state` (Normal/Trouble/Alarm/Supervisory)
+    - `sensor.<id>_beacon_airtime_pct` (%)
+    - `sensor.<id>_beacon_active_template` (string)
   - Artifact: `docs/audit/repro/ha/screenshots/`.
 
 - [ ] **Alarm triggers HA automation**
-  - Setup: HA automation: `state_changes -> sensor.canary_<id>_beacon_state
+  - Setup: HA automation: `state_changes -> sensor.<id>_beacon_state
     becomes "Alarm"`.
   - Repro: trigger a beacon alarm via the happy-path test above.
   - Post-fix expected: HA automation fires within one 30 s publish cycle.
@@ -415,7 +419,12 @@ firmware, live or backfilled, is now a finding.
   - Setup: an HA-enabled canary image (`release_ha`) with a card in,
     paired to Home Assistant; the MQTT broker on a host you can stop.
   - Repro: stop the broker; commit more than 12 events (presence changes
-    in front of the sensor); restart the broker.
+    in front of the sensor); restart the broker. Since sweep F81 a presence
+    row commits when its bundle closes, two minutes after the state's last
+    refresh or ten minutes after it opened, and `core.presence` opens at
+    most six bundles in each of its ceiling's hours (six 10-minute buckets,
+    sweep F132), so keep the broker down for a few hours, or count the
+    other modules' rows too (the serial log's commit lines).
   - Expected: the serial log shows `[EVT-LOG] /EVENTS/today.ndjson open`
     at boot and `[CSI] event backfill done: N event(s) from the card`
     after the reconnect; HA's event history holds the outage's rows in id
@@ -430,7 +439,9 @@ firmware, live or backfilled, is now a finding.
   - Expected: the pre-reboot backlog arrives in id order with no `replay`
     verdict on any backfilled body (at most ten of its rows may be missing
     — the NVS ceiling's stride). The post-reboot rows, presence included,
-    have higher ids and arrive after it, none refused.
+    have higher ids and arrive after it, none refused. A presence bundle
+    still open at the power cycle never commits (bundles live in RAM until
+    they close, sweep F81): that state is missing, not refused.
   - Artifact: `docs/audit/repro/F37/reboot/`.
 - [ ] **Another device's card is left alone**
   - Setup: a card taken from a canary-wap (or another canary).
@@ -446,6 +457,1270 @@ firmware, live or backfilled, is now a finding.
     commit on the canary-wap, the card's `/EVENTS` is unchanged; back in the
     canary, the backfill sends none of the canary-wap's rows.
   - Artifact: `docs/audit/repro/F37/canary-card-in-wap/`.
+
+## canary-wap event egress (F78) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_event_egress.cpp`
+(`csi_event_backfill.h`'s planner, a commit queue, a RAM hold for rows the
+card does not keep) over `csi_event_log.cpp`; `csi_mqtt::loop()` pumps it on
+the loop task. Host-tested
+(`firmware/projects/canary-wap/tests_host/test_wap_event_egress.cpp`) and held
+by `firmware/scripts/check_wap_event_egress.py`; the NimBLE host task
+committing while the loop task backfills is not something a host test can
+run. Compile is CI's. Owner: U1.
+
+- [ ] **A row committed in the reconnect window waits behind the backlog**
+  - Setup: a canary-wap with a card in, paired to Home Assistant; the MQTT
+    broker on a host you can stop.
+  - Repro: stop the broker; commit several events (walk in front of the
+    sensor, so presence bundles close too); start the broker and keep
+    walking while it reconnects.
+  - Expected: the serial log shows `[EVT] event backfill done: N event(s)
+    from the card`; HA's event history holds the outage's rows and the ones
+    committed during the reconnect, each once, in id order; HA shows no
+    `replay` verdict; no `[EVT] egress queue full` line.
+  - Artifact: `docs/audit/repro/F78/reconnect-window/`.
+- [ ] **A ble.scout close during the backfill stays in order**
+  - Setup: as above, with a paired Scout beacon.
+  - Repro: stop the broker, commit a backlog, start the broker, and take the
+    beacon out of range while the backlog drains (a departure commits on the
+    NimBLE host task).
+  - Expected: the departure arrives after the backlog, once; no `replay`
+    verdict; no watchdog or stack fault on the NimBLE host task.
+  - Artifact: `docs/audit/repro/F78/scout-close/`.
+- [ ] **A reboot during an outage keeps the card's backlog owed**
+  - Setup: a canary-wap with a card in, paired to Home Assistant.
+  - Repro: stop the broker; commit several events; power-cycle the
+    canary-wap; start the broker once it is back up.
+  - Expected: HA receives every row of the outage once, in id order, with
+    `"replay":true`, and no `replay` verdict. (Before F78 every commit
+    during the outage wrote the delivery ceiling past the backlog, and
+    this sent nothing.)
+  - Artifact: `docs/audit/repro/F78/reboot-in-outage/`.
+- [ ] **A short outage with no card loses no row**
+  - Setup: no card in; paired to HA; up more than 45 s since boot (until
+    then rows wait for a card that may still mount).
+  - Repro: stop the broker; commit up to eight events (presence, a tamper);
+    start the broker.
+  - Expected: all of them arrive in id order with `"replay":true`; past
+    eight, the serial log names how many the RAM hold dropped, oldest first.
+    Ambient `wifi.channel_activity` rows from the outage are not held and
+    do not arrive (they are live-UI only), and never push out an event.
+  - Artifact: `docs/audit/repro/F78/no-card/`.
+- [ ] **A card that mounts late, or remounts mid-backfill, keeps its
+  backlog first**
+  - Setup: a card in with rows still owed from an outage; paired to HA.
+  - Repro: (a) power-cycle with a slow card (or one seated after boot) and
+    commit a presence event before the card mounts; (b) during a backfill,
+    force an SD error (a card that briefly loses contact) so the log closes
+    and remounts, and commit an event meanwhile.
+  - Expected: in both, HA receives the card's owed rows first, then the new
+    event, each once, in id order, no `replay` verdict. If the card is not
+    back within 45 s the serial log says `event log card not open after 45
+    s` and the waiting events go out without it.
+  - Artifact: `docs/audit/repro/F78/late-card/`.
+
+## Canary base: rows the card cannot take (F103, F104) — on-device verification
+
+Code: `firmware/canary/src/csi_event_egress.cpp` (a RAM hold of eight rows,
+the canary-wap's 45 s card wait, `csi_event_backfill::kCardWaitMs`).
+Host-tested on the real egress and SD adapter
+(`firmware/tests_host/test_canary_event_egress.cpp`); the PlatformIO compile
+is CI's. Owner: U1. The serial lines below are the egress's own.
+
+- [ ] **A failed card append during an outage keeps the backlog owed**
+  - Setup: an HA-enabled canary (`release_ha`) with a card in, paired to
+    Home Assistant; the broker on a host you can stop; a card that starts
+    refusing writes on cue (one filled to capacity, or a worn card known to
+    fail writes).
+  - Repro: stop the broker; commit several events; make the next append
+    fail (fill the card) and commit one more; (a) start the broker; (b)
+    repeat, but power-cycle the canary before starting the broker.
+  - Expected: (a) HA receives the outage's card rows, then the row whose
+    append failed, each once, in id order, no `replay` verdict; (b) the
+    card rows arrive after the reboot, at most ten of the outage's first
+    rows missing (the NVS ceiling's stride, as in F37's reboot row), and
+    the failed row, held in RAM, is lost. Before F103 the failed row went
+    first and HA never received the card's rows, reboot or not.
+  - Artifact: `docs/audit/repro/F103/failed-append/`.
+- [ ] **A card that leaves mid-backlog and comes back within 45 s**
+  - Setup: as above, with an ordinary card.
+  - Repro: stop the broker; commit a backlog; start the broker; while the
+    backfill runs, pull the card and reseat it within 30 s (the storage
+    manager's recheck remounts it), committing an event while it is out.
+  - Expected: HA receives the whole backlog, then the event committed while
+    the card was out, each once, in id order. If the card stays out past
+    45 s the serial log says `[CSI] event log card not open after 45 s: N
+    event(s) waiting in RAM go out`, the waiting event goes, and the rows
+    left on the card are not sent when it returns.
+  - Artifact: `docs/audit/repro/F104/card-out/`.
+- [ ] **A card that mounts late at boot keeps its backlog first**
+  - Setup: a card with rows still owed from an outage (stop the broker,
+    commit, power off).
+  - Repro: power on with the card out and the broker up; once an event
+    commits (the serial log's commit lines; since sweep F81 a presence row
+    commits two to ten minutes after its state began, so this needs a row
+    from another module, or several tries), seat the card. The storage
+    manager re-probes every 30 s, and the wait is 45 s from boot, so the
+    event must commit early and the card go in at once.
+  - Expected: HA receives the card's owed rows first, then the new event,
+    each once, in id order.
+  - Artifact: `docs/audit/repro/F104/late-card/`.
+- [ ] **No card: the first 45 s after boot**
+  - Setup: no card; paired to HA.
+  - Repro: watch the serial log for an event that commits in the first
+    45 s after boot (since sweep F81 a presence row commits when its bundle
+    closes, two to ten minutes after the state began, so this may take a
+    few boots, or a module whose rows commit at once).
+  - Expected: it reaches HA about 45 s after boot (it waits for a card that
+    may still mount); events after that go at once. An ambient
+    `wifi.channel_activity` row from those 45 s does not arrive. Then
+    press reset within 45 s of such a commit line: that event never
+    arrives (it waited in RAM), while the tamper topic's boot verdict
+    still does.
+  - Artifact: `docs/audit/repro/F104/no-card/`.
+
+## The egress's counters and the event-id warning (F109, F82) — on-device verification
+
+Code: `firmware/canary/src/csi_event_egress.cpp` (`csi_event_egress_stats()`,
+`csi_event_egress_id_space_low()`) and `securacv_mqtt.cpp`
+(`mqtt_offline_queue_stats()`), carried by `main.cpp`'s
+`mqtt_publish_health_update()` as `csi_event_egress`, `offline_queue` and
+`event_id_space_low`; the canary-wap's `csi_mqtt::publish_health()` carries
+`event_id_space_low` too. The flag is `csi_event_id_floor::space_low()` of
+the allocator's next id. Host-tested (`test_canary_event_egress.cpp`,
+`test_csi_event_id_floor.cpp`, the canary-wap's `test_mqtt_reinit.cpp` and
+`test_wap_event_egress.cpp`, and `test_canary_health_trust.py` for the
+canary's worst-case packet against its 1792 B MQTT buffer); the compiles
+are CI's. Owner: U1. What each counter counts, and the rows none of them
+does, is in `docs/csi_developer_api.md`.
+
+- [ ] **The canary's health counts what its egress did**
+  - Setup: an HA-enabled canary (`release_ha`) with a card in, paired to
+    Home Assistant; `mosquitto_sub -v -t 'securacv/+/health'` on the broker
+    host, which you can stop.
+  - Repro: commit a few events with the broker up; stop the broker, commit
+    a few more, start it again and wait for `[CSI] event backfill done`;
+    then wait for the next health publish (once a minute).
+  - Expected: the health body holds a `csi_event_egress` object whose
+    `planner.live` counts the first rows, `planner.held` and
+    `planner.replayed` the outage's, and whose `dropped`, `held_dropped`,
+    `ambient_dropped` and `unsent_dropped` match any drop lines the serial
+    log printed (0 when none), and an `offline_queue` object of zeros. The
+    publish arrives whole (no missing health while it is the largest yet).
+  - Then take the card out, reboot, wait past the 45 s card wait, stop the
+    broker, commit fourteen events, start the broker again and wait for the
+    next health publish.
+  - Expected: Home Assistant receives the newest twelve;
+    `planner.queued` is 14 and `offline_queue.dropped_overflow` 2 (the
+    queue evicted the two oldest), `unsent_dropped` 0.
+  - Artifact: `docs/audit/repro/F109/health-counters/`.
+- [ ] **Both devices warn before the event-id space runs out**
+  - Setup: a canary and a canary-wap you can write NVS on (bench units
+    whose Home Assistant entries you will re-pin afterwards). Each keeps its
+    event-id floor and its delivery ceiling under its own names:
+    - canary: namespace `securacv`, floor `csi.evid`, ceiling `csi.evsent`;
+    - canary-wap: namespace `csi`, floor `ev.next`, ceiling `csi.evsent`.
+  - Repro: note both keys' values on each device, then write the floor key
+    to `4026531840` (0xF0000000) and reboot; watch the health topic. Then
+    write both keys back to the values you noted and reboot again.
+  - Expected: `"event_id_space_low":true` from the first health publish
+    after the first reboot, and `false` after the second; the device's
+    events after the first reboot carry ids at or above 4026531840. Home
+    Assistant then refuses the device's later events as replays (its mark
+    is past them) until the re-pin.
+  - Artifact: `docs/audit/repro/F82/id-space-low/`.
+
+## The canary's diagnostics carry its egress counters (F179) — on-device verification
+
+Code: `firmware/canary/src/csi_event_egress.cpp` (the pump publishes its
+counters as its last step every pass; `csi_event_egress_read_stats()`,
+`csi_event_egress_diagnostics_json()`, declared for the route in
+`include/csi_event_egress_diagnostics.h`), and `securacv_network.cpp`'s
+`handle_diagnostics()`, whose body `lib/securacv_diagnostics/src/diagnostics_json.h`
+builds. Host-tested (`firmware/tests_host/test_canary_event_egress.cpp`,
+`test_canary_diagnostics.cpp`); the PlatformIO compiles are CI's. Owner: U1.
+
+- [ ] **The canary's diagnostics carry the same counters as its health**
+  - Setup: an HA-enabled canary (`release_ha`, FEATURE_DIAGNOSTICS on) with a
+    card in; its API token; `mosquitto_sub -v -t 'securacv/+/health'` on a
+    broker you can stop.
+  - Repro: `curl -H 'Authorization: Bearer <token>' http://<canary>/api/diagnostics`;
+    commit a few events, stop the broker, commit a few more, and call the
+    route again; start the broker, wait for the next health publish and call
+    it once more.
+  - Expected: every response holds the keys it had before (`heap`, `sd`,
+    `selftest`, `system`, unchanged) and a `csi_event_egress` object with
+    the names the health publish uses (`dropped`, `held_dropped`,
+    `ambient_dropped`, `unsent_dropped`, `planner`), never `null` once the
+    loop is running (`null` is the answer only before its first pass). With
+    the broker stopped
+    the route still answers, and its `planner.held` counts the outage's
+    rows. The last response's object equals the health publish's, or is
+    newer by what the device did since. No request stalls the device (no
+    watchdog reset).
+  - Artifact: `docs/audit/repro/F179/canary-diagnostics/`.
+
+## The canary-wap's egress counters, and Home Assistant reading both devices' (F149, HA24) — on-device verification
+
+Code: the canary-wap's `csi_event_egress.cpp` (`pump()` publishes the
+counters through `loop_snapshot.h` as its last step; `read_stats()`;
+`stats_json()` in `csi_event_egress.h`), `csi_mqtt.cpp`'s
+`publish_egress()` (the retained `egress` topic, called right after
+`publish_health()` in `canary_wap.ino`'s loop) and `handle_diagnostics()`
+(`GET /api/diagnostics`, its body built by `wap_diagnostics.h`); Home
+Assistant's `binary_sensor.py` (Event ID Space Low) and `sensor.py` (the
+Health sensor's `csi_event_egress` and `offline_queue` attributes).
+Host-tested (`test_wap_event_egress.cpp`, `test_mqtt_reinit.cpp`,
+`test_wap_diagnostics.cpp`, `check_wap_event_egress.py` rule 12,
+`tests/test_egress_health.py`); the canary-wap's compiles are CI's. Owner: U1.
+
+- [ ] **The canary-wap's counters reach the broker and its diagnostics**
+  - Setup: a canary-wap (FULL build) with a card in, its MQTT bridge
+    pointed at a broker you can stop; `mosquitto_sub -v -t
+    'securacv/+/egress'` on the broker host; the device's API token.
+  - Repro: commit a few events with the broker up; stop the broker, commit
+    a few more, start it again and wait for the backfill to finish; wait for
+    the next health publish (once a minute on mains). Then
+    `curl -H 'Authorization: Bearer <token>' http://<wap>/api/diagnostics`.
+  - Expected: right after each health publish, a retained `egress` publish
+    whose `firmware_version` and `uptime` are that health's, and whose
+    `csi_event_egress` object holds `dropped`, `held_dropped`,
+    `ambient_dropped`, `unsent_dropped` and a `planner` object
+    (`planner.live` counts the first rows, `planner.held` and
+    `planner.replayed` the outage's). The diagnostics response carries the
+    same object as `csi_event_egress` (equal to the topic's, or newer by
+    what the device did since), and its HTTP request does not stall the
+    device (no watchdog reset).
+  - Artifact: `docs/audit/repro/F149/egress-topic/`.
+- [ ] **Home Assistant shows the flag and the counters**
+  - Setup: the integration with a canary (`release_ha`) and a canary-wap
+    paired, both on firmware that carries the keys above.
+  - Repro: open each device's page; then run the F82 row's floor write on
+    one of them and wait for its next health publish.
+  - Expected: each device shows an **Event ID Space Low** diagnostic binary
+    sensor, off; the Health sensor's attributes carry `csi_event_egress` on
+    both (the canary-wap's from its `egress` topic, after a Home Assistant
+    restart too) and `offline_queue` on the canary only. After the floor
+    write that device's Event ID Space Low turns on. Reboot the canary-wap:
+    its counters leave the Health sensor at its first health publish and
+    come back, started over, with the `egress` publish that follows it.
+  - Artifact: `docs/audit/repro/HA24/ha-entities/`.
+
+## canary-wap loop-task ownership (F96, F106) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
+(`submit()` posts a mesh owner command to a four-slot
+`loop_command_ring.h`; `update()` drains it first on every pass; the
+pre-reboot replay save is one more command from the httpd task) and
+`csi_mqtt.cpp` (`request_reinit()`; `csi_mqtt::loop()` serves the re-init:
+it detaches the old client, a one-shot `mqtt_retire` task stops and destroys
+it, and a later pass opens the new one). The `handle_mesh_*` handlers, the
+MQTT config and test handlers and the QR scanner hand their work to the loop
+task instead of doing it on their own.
+Host-tested (`tests_host/test_loop_command_ring.cpp`,
+`test_mesh_commands_wap.cpp`, `test_mqtt_reinit.cpp`) and held by
+`firmware/scripts/check_wap_loop_commands.py`; two real tasks on two cores
+are not something a host test can run. Compile is CI's. Owner: U1.
+
+- [ ] **Pairing, removal and the other mesh routes still answer as before**
+  - Setup: two canary-wap boards on this firmware, each with the web UI
+    open.
+  - Repro: pair them from the web UI (Create Opera on one, Join on the
+    other), confirming the code on the joiner first; rename the opera;
+    clear the alerts; turn the mesh off and on again; remove the other
+    board; leave the opera.
+  - Expected: every step answers as it did before (`{"ok":true}`, or the
+    same 400 errors for a refused step); no `mesh_busy` (409) or
+    `mesh_timeout` (503) in normal use; the removal starts the rekey (the
+    serial log's `opera: rekey transaction started after peer removal`).
+  - Artifact: `docs/audit/repro/F96/rest-routes/`.
+- [ ] **A busy loop answers `mesh_timeout`, and the command does not run**
+  - Setup: one board, mesh on.
+  - Repro: while the loop task is held (an SD card remount, or a debug
+    build with a deliberate 3 s stall in `loop()`), send
+    `POST /api/mesh/name` with a new name.
+  - Expected: `503 {"ok":false,"error":"mesh_timeout"}` within about 2 s;
+    after the stall, `GET /api/mesh` still shows the old name.
+  - Artifact: `docs/audit/repro/F96/timeout/`.
+- [ ] **Saving and testing the broker under publish load**
+  - Setup: a board paired to Home Assistant's broker, events committing
+    (walk in front of the sensor), the `/mqtt` page open.
+  - Repro: press Save and Test connection repeatedly, about once a second
+    for a minute, changing the topic prefix back and forth.
+  - Expected: no reboot, Guru Meditation or task watchdog; the page shows
+    `Saved.` and `Reached the broker (plain)` (or the TLS transport); HA
+    keeps receiving events between the reconnects; the serial log shows one
+    `[MQTT] bridge started` per re-init (presses that land while one waits
+    share it).
+  - Artifact: `docs/audit/repro/F106/save-under-load/`.
+- [ ] **"Test & save" with an unreachable broker IP does not reboot the board**
+  - Setup: one board with the companion page open; a broker address on the
+    LAN that nothing answers (an unused IP, so the TCP connect times out
+    rather than being refused).
+  - Repro: enter that IP and press Test & save; while the first attempt is
+    still connecting, press it again two or three times.
+  - Expected: no `task_wdt` / Guru Meditation and no reboot (uptime keeps
+    counting, and the rapid-reboot counter does not move); the config save
+    answers within about 2 s and the test within about 4 s (`ok:false`);
+    in the serial log each `[MQTT] bridge started` follows a
+    `[MQTT] previous client stopped after N ms` line, where N can reach
+    several seconds against that IP while the loop keeps running (the stop
+    waits out the rest of a connect attempt, which the client's network
+    timeout bounds at 2 s since F112, 10 s before, and then esp_mqtt's task
+    noticing the stop, up to half its 10 s reconnect wait; from esp-mqtt's
+    source). Then enter the real broker and press Test & save once:
+    `Reached the broker`.
+  - Artifact: `docs/audit/repro/F106/unreachable-broker/`.
+- [ ] **A reboot from the dashboard still saves the mesh's replay counters**
+  - Setup: two paired canary-wap boards exchanging heartbeats for a few
+    minutes.
+  - Repro: press Reboot on one (POST /api/reboot); repeat with the safe-mode
+    Retry button if a board is in safe mode.
+  - Expected: the board answers `Rebooting...` and restarts within about
+    3 s; after it boots, the pair keeps exchanging frames (the peer stays
+    `connected`), with no fault on either board.
+  - Artifact: `docs/audit/repro/F96/reboot-save/`.
+- [ ] **A QR hub provision still joins the fleet**
+  - Setup: an unprovisioned canary-wap with a camera; a canary-display
+    showing its provisioning QR with a hub.
+  - Repro: scan the code.
+  - Expected: the canary-wap joins Wi-Fi and comes up on the hub's broker
+    (its `status` topic says online) without a reboot, and the display
+    celebrates it.
+  - Artifact: `docs/audit/repro/F106/qr-hub/`.
+
+## canary-wap mesh status reads and membership (F110, F113, F116, F137) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
+(`publish_view()` at the end of every `update()` pass and after each owner
+command, `read_status()` and
+`read_alerts()` for the status routes through `loop_snapshot.h`;
+`persist_opera_config()` / `load_opera_config()` for a leave; `retire_rx()`
+and the `rx_tombs` NVS record for a re-added member; `persist_peers()`,
+which removes every `peer_<i>` at or above `peer_cnt` once the list is
+stored, `load_peers()` and `init()`, which remove what an older firmware
+left, and `persist_tx_floor_without_members()`, F137) and the three status
+handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
+`test_mesh_commands_wap.cpp`, `test_mesh_liveness_wap.cpp`) and held by
+`firmware/scripts/check_wap_loop_commands.py`. Compile is CI's. Owner: U1.
+
+- [ ] **The Opera page reads as before while the opera is busy**
+  - Setup: two paired canary-wap boards, the web UI's Opera page open on
+    one, the csi dashboard's Fleet sheet open on the other.
+  - Repro: start a new pairing and watch the code appear; cancel it; remove
+    and re-pair the other board; trigger a tamper alert on it a few times
+    (open its case) and clear the alerts.
+  - Expected: every page refresh answers (no `mesh_busy` or `mesh_timeout`
+    on a GET), the code shows while it is on screen and is gone as soon as
+    the cancel answers (not only at the next refresh), a removed member is
+    gone from the list the page reloads right after the removal, the peer
+    list and counts agree with each other on every refresh, and the alert
+    list shows each alert whole.
+  - Artifact: `docs/audit/repro/F110/status-routes/`.
+- [ ] **A board that left its opera founds a new one after a reboot**
+  - Setup: two paired boards.
+  - Repro: on one, Leave the opera; reboot it; turn the mesh on, Create
+    Opera and pair a third board (or the same one) with it.
+  - Expected: after the reboot the Opera page shows no opera (`has_opera`
+    false); the new pairing completes and both boards show each other
+    connected within about a minute.
+  - Artifact: `docs/audit/repro/F113/leave-reboot/`.
+- [ ] **A board removed and re-paired is heard at once, and a reflashed one too**
+  - Setup: two paired boards, A and B, exchanging heartbeats for a few
+    minutes.
+  - Repro: on A, remove B (its only member); wait out the 7-day deny-list
+    grace (a debug build with a short grace, or leave A powered for 7
+    days); re-pair A and B. Then erase B's flash, reflash it, and pair it
+    with A again (removing B's old entry on A first). Then, with a third
+    board C paired too, remove B while C stays (the opera rotates), wait
+    out the grace and re-pair B; if a board on a release from before F71
+    is at hand, repeat that last step with B on it.
+  - Expected: after each re-pair B shows connected on A within about a
+    minute, and A's serial log shows no `pairing COMPLETE never answered`.
+  - Artifact: `docs/audit/repro/F116/re-pair/`.
+- [ ] **A removed member, and every member after a leave, is gone from NVS**
+  - Setup: a canary-wap A paired with B and C, exchanging heartbeats for a
+    few minutes; `esptool.py` and ESP-IDF's `nvs_tool.py` on the bench
+    machine.
+  - Repro: on A, remove C; read A's NVS partition (`esptool.py read_flash`
+    at the `nvs` partition's offset and size) and list the `mesh`
+    namespace with `nvs_tool.py`. Then Leave the opera on A and read it
+    again.
+  - Expected: after the removal `peer_cnt` is 1 and only `peer_0` (B) is
+    there, `replay_ctrs` holds one 16-byte entry (B's), and no value holds
+    C's public key or radio address; C's 8-byte fingerprint appears only in
+    `rx_tombs` and, on a board with flash encryption on, `revoked` (without
+    it the deny-list is not stored, spec §5.5). After the leave there is no
+    `peer_*` key
+    besides `peer_cnt` (0), no `replay_ctrs`, and `tx_ctrs` is one 16-byte
+    entry whose first 8 bytes are zero. Before F137 the removal left
+    `peer_1` (C) and the leave left `peer_0` and `peer_1`.
+  - Artifact: `docs/audit/repro/F137/nvs-after-removal-and-leave/`.
+- [ ] **An older firmware's leftover member entries go at the first boot
+  after the update**
+  - Setup: two canary-wap boards with flash encryption on, A on a firmware
+    from before F137 (7f45142 or older) paired with B and C; the same tools.
+  - Repro: on A, remove C, and read A's NVS (`peer_1` holds C). Update A to
+    this firmware, let it boot, read it again. Then, on a second A paired
+    the same way on the older firmware, Leave the opera, update it, boot,
+    and read it.
+  - Expected: after the first boot on this firmware the removed member's
+    slot is gone (only `peer_0`, B) and the serial health log shows `opera:
+    removed stored member entries above the member count`; the left board
+    holds no `peer_*` slot, no `replay_ctrs`, a `tx_ctrs` of one 16-byte
+    entry whose first 8 bytes are zero, and logs `opera: removed stored
+    member entries no opera holds`. A second boot logs neither line. (On a
+    board with flash encryption off the stored members stay until its next
+    membership change; sweep F141.)
+  - Artifact: `docs/audit/repro/F137/older-firmware-leftovers/`.
+
+## PlatformIO canary mesh status reads, the kernel wizard's pairing outcome, the Community tab (F161, F163, F176) — on-device verification
+
+Code: `firmware/canary/lib/securacv_mesh/src/mesh_session.cpp`
+(`publish_status()` at the end of every `process()` pass and before its
+early return, in `drain_request()` before the result is posted, and in
+`deinit()`; `read_status()` through `loop_snapshot.h`), `main.cpp`'s one
+`publish_status()` at the end of the mesh setup, `handle_mesh_status` /
+`handle_mesh_peers` in `securacv_network.cpp`; the kernel wizard's
+`meshConfirm()` / `meshPollForCodes()` in
+`privacy_witness_kernel/wizard/index.html`; the Community nav button and
+`refreshChirpStatus()` in `securacv_webui.cpp`. Host-tested
+(`test_mesh_session.cpp`, a two-thread run included;
+`privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js`;
+`firmware/tests_host/test_canary_community_panel.test.js`) and held by
+`firmware/scripts/check_canary_mesh_status.py`. The `[env:full]` compile is
+CI's. Owner: U1.
+
+- [ ] **The Opera page reads as before while the opera is busy**
+  - Setup: two paired PlatformIO canaries on `[env:full]` with flash
+    encryption on, the web UI's Opera page open on one; a script polling
+    `GET /api/mesh` and `GET /api/mesh/peers` on it every 200 ms, logging
+    each body. (The peers rows are the members persisted in NVS, which a
+    board without flash encryption refuses to read: there every
+    `GET /api/mesh/peers` answers 500 `load_failed`, before and after
+    F161, and this row cannot be run.)
+  - Repro: start a pairing from the page and watch the code appear; cancel
+    it; rename the opera; trigger tamper alerts on the other board; reboot
+    the polled board and keep polling through its boot.
+  - Expected: both routes answer 200 and neither ever answers `mesh_busy`
+    or `mesh_timeout` (neither waits for the main loop). Within each body,
+    `pairing_seq` and `pairing_result` always belong together (a new
+    number first appears with `running`), `opera_name` is never a mix of
+    the old and new names, and the code appears only while `state` is
+    `PAIRING_CONFIRM` and is gone in the first body after the cancel's
+    answer. The two routes are two requests, so compare them only on polls
+    after the mesh setup with no pairing or removal between the two
+    reads: there the peers body's rows agree with `peers_total` /
+    `peers_online`. Through the reboot, from the HTTP server's start until
+    the mesh setup ends, `GET /api/mesh` reads no opera with `peers_total`
+    0 while the peers rows already list the persisted members (OFFLINE,
+    never heard); that window is expected. Once the setup ends, both read
+    the restored opera and its members, before the first loop pass.
+  - Artifact: `docs/audit/repro/F161/status-routes/`.
+- [ ] **The kernel wizard says what the pairing came to**
+  - Setup: Home Assistant with the add-on; a PlatformIO canary already in
+    an opera and a fresh one.
+  - Repro: run "Add another Canary", match the codes and confirm. Then run
+    it again with the new board unable to hear the existing one (on
+    another Wi-Fi channel, say), so no code shows, and let the wait run
+    out; then press "Start Pairing" again at once.
+  - Expected: the first run shows "Canary added" with the note that both
+    report the pairing finished, within a few seconds of the confirm, even
+    while both boards still read CONNECTING (F162). The second ends with
+    "Timed out waiting for the pairing code" after the code wait's two
+    minutes, or sooner, naming the board and the reason, if a board
+    reports its pairing failed first. The retry is not refused: the wizard
+    canceled each board still running its pairing, so neither waits out
+    its own 5-minute timeout. (A board that restarts mid-pairing, which
+    the wizard names as restarted, is host-tested only; a confirmation a
+    board rejects is the F200 row below.)
+  - Artifact: `docs/audit/repro/F163/wizard-outcome/`.
+- [ ] **No Community tab on the PlatformIO dashboard**
+  - Setup: a PlatformIO canary on `[env:full]`, the dashboard open with the
+    browser's network panel.
+  - Repro: load the page, stay on it a minute, switch through every tab.
+  - Expected: no Community tab; one `GET /api/chirp` at load (404) and no
+    other `/api/chirp` request.
+  - Artifact: `docs/audit/repro/F176/community-tab/`.
+
+## PlatformIO canary alert history, dashboard routes, the kernel wizard's left-behind pairing (F197, F198, F200) — on-device verification
+
+Code: `firmware/canary/lib/securacv_mesh/src/mesh_session.cpp` (the alert
+history is a `loop_snapshot.h` log: `dispatch_verified()` appends,
+`clear_alerts()` / `reset_alerts()` clear, `read_alerts()` copies it newest
+first), `handle_mesh_alerts` in `securacv_network.cpp`; the dashboard's
+Bluetooth nav button and `refreshBtStatus()`, `loadWifiStatus()` and
+`forgetWifi()` in `securacv_webui.cpp`; `meshCancelLeftRunning()` in
+`privacy_witness_kernel/wizard/index.html`. Host-tested
+(`test_mesh_session.cpp`, a two-thread run of stores and clears included;
+`firmware/tests_host/test_canary_dashboard_routes.test.js`;
+`privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js`) and held by
+`firmware/scripts/check_canary_mesh_status.py`. The `[env:full]` compile is
+CI's. Owner: U1.
+
+- [ ] **The Opera page's alert list reads whole while alerts arrive**
+  - Setup: two paired PlatformIO canaries on `[env:full]`; a script on one
+    polling `GET /api/mesh/alerts` every 100 ms, logging each body; a way to
+    make the other raise tamper alerts back to back (open its enclosure,
+    or the bench's tamper trigger).
+  - Repro: raise twenty or more alerts in a burst; press "Clear" on the
+    Opera page mid-burst; raise a few more.
+  - Expected: every body answers 200 and never `mesh_busy`; within a body
+    the alerts are newest first, each one's fields belong together (kind,
+    severity, sender and `witness_seq` as the sender's witness log has
+    them), at most 16; no body mixes alerts from before the clear with
+    alerts after it, and the first bodies after the clear's answer hold only
+    the later alerts. `alerts_received` in `GET /api/mesh` keeps counting
+    through the clear.
+  - Artifact: `docs/audit/repro/F197/alert-reads/`.
+- [ ] **The PlatformIO dashboard asks only for routes the firmware serves**
+  - Setup: a PlatformIO canary on `[env:full]`, joined to a home network,
+    the dashboard open with the browser's network panel.
+  - Repro: load the page and stay on Status a minute; open Settings and
+    stay a minute; on the LAN without a token, unlock with it; on a second
+    board whose home network is out of range (state `failed`), press Forget
+    Network; reconnect it from the Wi-Fi card; then press Disconnect.
+  - Expected: no Bluetooth tab; one `GET /api/bluetooth` at load (404), one
+    more at the unlock, and no other `/api/bluetooth` request; on Status no
+    `GET /api/wifi/status` after the load's one, on Settings one on the way
+    in and then every 5 s (200), never `GET /api/wifi`; the card reads
+    Connected with the home IP, "Saved" for the home network and the AP as
+    On or Off; no Rotate Old Logs button; Forget posts
+    `/api/wifi/disconnect`, after which the card reads AP Only and "Not
+    configured"; the reconnect's success names the network entered;
+    Disconnect's confirmation says the network is forgotten, and after it
+    the card reads "Not configured". No 404 in the network panel other than
+    the `/api/bluetooth` and `/api/chirp` probes (F176).
+  - Artifact: `docs/audit/repro/F198/dashboard-routes/`.
+- [ ] **The kernel wizard frees a Canary it leaves pairing**
+  - Setup: Home Assistant with the add-on; a PlatformIO canary already in
+    an opera and a fresh one (both on firmware with F133's pairing
+    numbers).
+  - Repro: run "Add another Canary" until the codes show, pull the existing
+    board's power, press "Codes match — confirm"; when the wizard reports
+    the network error, power the board back up and press "Start Pairing"
+    at once. Repeat, pulling the new board's power instead and waiting for
+    "A Canary became unreachable while completing" before retrying.
+    Once more: pull the new board's power during the code wait and, while
+    the wizard says "Checking both Canaries", press Cancel and start again
+    with both boards powered.
+  - Expected: the wizard says what failed; the board still powered reads
+    no running pairing in `GET /api/mesh` within a few seconds of that
+    message (the wizard canceled it), and the immediate retry starts on it
+    instead of answering `pair_start_failed` (400), reaches its codes and
+    offers a ready "Codes match — confirm". After the Cancel and restart,
+    the new pairing is not canceled and reaches its codes; no message from
+    the abandoned attempt appears. A board that reported no pairing number
+    (older firmware, canary-wap) is not canceled, as before. (A confirm
+    whose answer is lost while the existing board already reports the
+    pairing paired, which the wizard waits out rather than canceling the
+    new board, is host-tested only.)
+  - Artifact: `docs/audit/repro/F200/wizard-left-pairing/`.
+
+## The per-entry log acknowledge on both trees, the kernel wizard's Back during a start (F214, F217) — on-device verification
+
+Code: the `POST /api/logs/*` registration and `log_ack_seq_from_uri()` /
+`handle_log_ack()` in `firmware/canary/lib/securacv_network/src/securacv_network.cpp`
+and in `firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino`;
+`meshStarting` and the Back button (`mesh-back-btn`) in
+`privacy_witness_kernel/wizard/index.html`. Host-tested
+(`firmware/tests_host/test_dashboard_route_match.test.js` through a verbatim
+copy of IDF's `httpd_uri_match_wildcard()`, `test_log_ack_route.cpp` on both
+handlers, `privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js`).
+The compiles are CI's. F216 (the Bluetooth settings load's guard) has no
+device row: nothing in the PlatformIO tree serves `/api/bluetooth`, so the
+tab never shows. Owner: U1.
+
+- [ ] **Acknowledge on one log entry works on both dashboards**
+  - Setup: a PlatformIO canary on `[env:full]` and a canary-wap, each with
+    a few unread health-log entries (a reboot leaves some), each dashboard
+    open with the browser's network panel.
+  - Repro: on each, open the log list, press Acknowledge on one entry (on
+    canary-wap, type a reason), then Acknowledge All; then send
+    `POST /api/logs/42` and `POST /api/logs/x/ack` with the bearer token
+    (curl).
+  - Expected: the per-entry `POST /api/logs/<seq>/ack` answers 200
+    `{"ok":true}` (it answered 404 on canary-wap and 405 on the PlatformIO
+    canary) and that entry alone reads acknowledged in `GET /api/logs`;
+    Acknowledge All still answers 200 and acknowledges the rest (and on
+    canary-wap `POST /api/logs/rotate` still answers); the two curl requests
+    answer 404 "Nothing matches the given URI" and acknowledge nothing.
+  - Artifact: `docs/audit/repro/F214/log-ack/`.
+- [ ] **The wizard's Back waits for Start Pairing**
+  - Setup: Home Assistant with the add-on; two PlatformIO canaries as in
+    the F200 row, the existing one's address pointing at a host that does
+    not answer (so `pair/start` waits on the add-on's timeout).
+  - Repro: press "Start Pairing", then Back while it reads "Starting…";
+    after the wizard reports the failure, press Back; reopen the wizard,
+    correct the address and start again; at the codes press Cancel.
+  - Expected: Back is grayed out and does nothing while the start runs;
+    once the wizard reports the failure it works and closes the wizard; the
+    reopened wizard's Start reads "Start Pairing", starts and reaches its
+    codes; Cancel leaves neither board with a running pairing in
+    `GET /api/mesh`.
+  - Artifact: `docs/audit/repro/F217/wizard-back/`.
+
+## canary-wap Chirp and Bluetooth commands, MQTT network timeout (F111, F112) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+and `bluetooth_channel.cpp` (`submit()` posts an owner command to a
+four-slot `loop_command_ring.h`; each channel's `update()` drains it first
+on every pass), `chirp_api.h` and `bluetooth_api.h` (the POST handlers
+submit and answer from the result; a Bluetooth handler that turns
+Bluetooth on calls `init()` on its own task first), and `csi_mqtt.cpp`
+(`open_client()` sets the client's `network.timeout_ms` to
+`kNetworkTimeoutMs`, 2 s; the link is announced to the loop task only after
+the CONNECTED handler's burst, which esp_mqtt sends under the client's API
+lock). Host-tested (`tests_host/test_chirp_commands_wap.cpp`,
+`test_bluetooth_commands_wap.cpp` over a NimBLE stand-in,
+`test_mqtt_reinit.cpp` over a fake esp_mqtt) and held by
+`firmware/scripts/check_wap_loop_commands.py`; the real radio stacks, two
+tasks on two cores and a real stalled TCP link are not something a host
+test can run. Compile is CI's. Owner: U1.
+
+- [ ] **The Chirp routes still answer as before**
+  - Setup: one canary-wap with the web UI open on Community > Chirp; a
+    synced clock.
+  - Repro: turn Chirp on and off and on again; wait ten minutes; send a
+    template; send another at once; mute 30 minutes, unmute; untick
+    "relay"; with a second board nearby on Chirp, confirm and dismiss one of
+    its chirps.
+  - Expected: each step answers as before (`success:true` with the session
+    emoji on enable; the second send `cooldown` with its seconds; mute,
+    unmute and settings `success:true`, settings showing `relay_enabled:
+    false`); no `chirp_busy` (409) or `chirp_timeout` (503) in normal use.
+  - Artifact: `docs/audit/repro/F111/chirp-routes/`.
+- [ ] **Bluetooth pairing from the web UI, the PIN confirmed near the timeout**
+  - Setup: one canary-wap; a phone with nRF Connect (or the companion app).
+  - Repro: Bluetooth > Pair; connect from the phone; when the six digits
+    show on both screens, confirm in the web UI (once promptly; once about
+    58 s after pairing mode started, so the confirm meets the 60 s pairing
+    timeout). Then Disconnect, Clear scan results, trust / block / remove
+    the paired phone, rename the device, set TX power to -6, Disable and
+    Enable.
+  - Expected: no Guru Meditation, heap-poisoning abort or watchdog reset
+    (the near-timeout confirm used to race the timeout's cancel); each
+    route answers as before; the phone's bond is removed with the device.
+  - Artifact: `docs/audit/repro/F111/bt-pairing/`.
+- [ ] **Turning Bluetooth on before the bring-up still works, off the loop task**
+  - Setup: a canary-wap just provisioned onto Wi-Fi (the BLE bring-up is
+    deferred until the join window clears).
+  - Repro: within that window, press Bluetooth > Enable (or Pair) in the
+    web UI.
+  - Expected: `Bluetooth enabled` (or the init-failed reason the stack
+    gives) within a few seconds; no `task_wdt` on `loopTask` and no
+    reboot (the stack comes up on the HTTP request's task, as before).
+  - Artifact: `docs/audit/repro/F111/bt-early-enable/`.
+- [ ] **A stalled broker link does not trip the loop watchdog**
+  - Setup: a board connected to Home Assistant's broker, events committing.
+  - Repro: block the broker's traffic without closing the TCP connection
+    (an iptables DROP on the broker host for the board's IP, or pull the
+    broker host's network cable), keep walking in front of the sensor for
+    two minutes, then restore the link.
+  - Expected: no `task_wdt` / Guru Meditation and no reboot; the serial log
+    shows `[MQTT] disconnected (will retry)` once the link gives out: about
+    2 s after the publish that finds the TCP send buffer full, or when the
+    60 s keepalive goes unanswered, whichever comes first; HA shows the
+    board unavailable (the broker publishes its will) until the reconnect.
+    Events committed after the link failed reach HA after the reconnect
+    (from the card or the RAM hold, per F78), except QoS 0 rows the board
+    had already handed to the socket before the abort: those count as sent
+    and may be missing. Count them (compare the board's event ids with HA's
+    history for the window) and note the number.
+  - Artifact: `docs/audit/repro/F112/stalled-broker/`.
+- [ ] **A reconnect over a slow link does not trip the loop watchdog**
+  - Setup: a board connected to Home Assistant's broker with discovery on;
+    the broker host can shape the board's traffic (for example
+    `tc qdisc add dev <if> root netem rate 16kbit` for its IP).
+  - Repro: shape the link, restart the broker (or the board's Wi-Fi) so the
+    board reconnects and sends its status, discovery configs and cached
+    states over the slow link; keep walking in front of the sensor while it
+    does; then remove the shaping.
+  - Expected: no `task_wdt` / Guru Meditation and no reboot while
+    `[MQTT] connected` is followed by the burst; the HA entities come back;
+    events committed during the burst reach HA after it (the egress waits
+    for the link the bridge announces once the burst is sent).
+  - Artifact: `docs/audit/repro/F112/slow-reconnect/`.
+
+## canary-wap Bluetooth: settings on/off, NimBLE events, status views (F144, F143, F138) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
+(`set_settings()` turns Bluetooth off and on from the setting as it stood,
+and turning it off ends a pairing first; the NimBLE host task's callbacks
+post events to a 24-slot `loop_event_queue.h` that `update()` applies first
+on every pass, scan results and GATT activity only while fewer than 16
+wait, and a passkey to confirm that finds no room is answered no on the
+NimBLE task; a link's end ends the pairing awaiting its answer, and an
+answer goes only to the link the stack still holds on that handle;
+`publish_views()` at every end of `update()` and after each command) and
+`bluetooth_api.h` (the settings POST brings the stack up first when it says
+`"enabled": true`; the four GET routes read `read_status`, `read_scan`,
+`read_paired`, `read_settings`). Host-tested
+(`tests_host/test_bluetooth_commands_wap.cpp` over the NimBLE stand-in,
+three threads of it under `make tsan-bt-commands`;
+`test_loop_event_queue.cpp`) and held by
+`firmware/scripts/check_wap_loop_commands.py` rules BV1-BV3; a real NimBLE
+host task on the other core, a phone's bond and a crowded radio room are
+not something a host test can run. Compile is CI's. Owner: U1.
+
+**Either profile runs these rows since F171** (the next section). Before
+it, on the default FULL profile `ble_opera::init()` installed its own
+server callbacks over the channel's on the one NimBLE server, so the
+channel never saw a link, a passkey or a bond there and the library's
+default answered the Numeric Comparison: these rows needed a DEV build
+(`-DBUILD_PROFILE_DEV`, the pairing channel without Opera's BLE
+Discovery). Run them on a FULL build first; a DEV build is still the one
+without Opera's re-advertising after a connect.
+
+- [ ] **The settings' "enabled" turns Bluetooth off and on**
+  - Setup: one canary-wap (FULL or DEV profile) advertising (the default),
+    a phone connected to it in nRF Connect, a Bluetooth scan running from
+    the web UI.
+  - Repro: `POST /api/bluetooth/settings {"enabled": false}`; then
+    `GET /api/bluetooth`; then `POST /api/bluetooth/settings {"enabled":
+    true}` and `GET /api/bluetooth` again; then press Start Advertising.
+    Then Pair, let a phone reach the six digits, and post `{"enabled":
+    false}` before confirming them.
+  - Expected: after the first POST the phone drops, nRF Connect no longer
+    sees the device, the scan stops and the status says `"state":
+    "disabled"`, `"enabled": false` (and still disabled once the phone's
+    link has gone); after the second, `"state": "idle"`, `"enabled": true`,
+    and Start Advertising makes the device visible again. A reboot between
+    the two keeps it off. The pairing turned off mid-confirm fails on the
+    phone at once and the web UI's PIN box closes (no `"pairing"` object).
+  - Artifact: `docs/audit/repro/F144/settings-enabled/`.
+- [ ] **Pairing, bonding and scanning with the callbacks on the NimBLE task**
+  - Setup: one canary-wap (FULL or DEV profile); two phones with nRF
+    Connect.
+  - Repro: Bluetooth > Pair; pair the first phone (confirm the six digits in
+    the web UI); while it is paired, start a scan in a room with many BLE
+    devices; pair the second phone and let the pairing time out without
+    confirming; reject a third attempt; disconnect from the phone side.
+    Then Pair again, let the first phone reach its six digits, walk it out
+    of range (or turn its Bluetooth off) before confirming, connect the
+    second phone and let it reach its own digits, and press "Numbers match"
+    only when the web UI shows the second phone's.
+  - Expected: no Guru Meditation, heap-poisoning abort or watchdog reset;
+    the paired list shows the first phone after a reboot, under its
+    identity address (F172: the `address` field and the `name` read the
+    same, the address in capitals, and a phone with private addresses
+    keeps one entry across reconnects); `connection.address` reads as
+    `connection.name` does, the address the phone is using now; the scan
+    list fills (up to 16) and ends with `"scanning": false`; the timed-out
+    and rejected attempts fail on the phone and never show as paired;
+    advertising resumes after the disconnect. When the first phone walks
+    away mid-confirm the PIN box shows `Pairing: failed` with no digits
+    (health log: `Pairing link lost before confirmation`), the second
+    phone's digits replace it, and only the second phone's confirmation
+    bonds it. The health log has no `BLE link events dropped (queue full)`
+    warning in normal use; in a crowded room a `BLE scan/activity events
+    dropped (queue full)` line at debug level is expected (the stored log
+    usually keeps no debug lines). If the warning appears, note the count
+    and what the board was doing.
+  - Artifact: `docs/audit/repro/F143/pairing-and-scan/`.
+- [ ] **The Bluetooth panel reads as before**
+  - Setup: the web UI's Bluetooth tab open on a canary-wap (FULL or DEV
+    profile; before F171 only DEV showed the live connection card), with a
+    phone connected and a scan's results listed.
+  - Repro: leave the tab polling for two minutes while pairing, scanning,
+    removing the paired phone and renaming the device.
+  - Expected: every card fills as it did before (state, name, TX power, MTU,
+    battery, the live connection card with RSSI and distance, the PIN box,
+    the nearby list, the paired list); the paired list empties right after
+    a removal; no field flickers between two values.
+  - Artifact: `docs/audit/repro/F138/bt-panel/`.
+
+## canary-wap Bluetooth: the owner's confirm on FULL, Remove, links while off, dropped events, the state (F171, F172, F173, F169, F170) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/ble_server_dispatch.h`
+(one set of server callbacks: the pairing channel gets every callback,
+Opera onConnect and onDisconnect, whichever init runs first; no pairing
+owner answers a passkey no), `bluetooth_channel.cpp` (`init()` and
+`ble_opera.h`'s `init()` install through it; the paired list keeps each
+phone's identity address and Remove deletes the bond in the stack's form,
+with the radio quiet for the call (the owner's scan ends, the presence scan
+pauses, the shared advertiser stops: NimBLE refuses to forget a phone's
+IRK bond while it advertises or scans), keeping the entry and answering
+`The phone's bond was not removed; try again` when the stack keeps it;
+the inactivity timeout drops only the idle link the connection card shows;
+neither `New device paired` nor `BLE device connected` logs an address;
+a list saved before is rebuilt from the bond store once, health log `Paired
+list rebuilt from the bond store`; `format_address()` prints most
+significant first; `apply_connect()` drops a link while Bluetooth is off;
+`reconcile_link()` asks the stack after a link's event was dropped;
+`rest_state()` after a scan, a pairing or a link ends). Host-tested
+(`tests_host/test_bluetooth_commands_wap.cpp`, which builds the channel's
+and Opera's inits over a NimBLE stand-in with NimBLE-Arduino 2.5.0's
+default server callbacks) and held by
+`firmware/scripts/check_wap_loop_commands.py` rule BD1; a phone's real
+pairing, its private addresses, NimBLE's bond store and a stalled loop task
+are not something a host test can run. Compile is CI's. Owner: U1.
+
+- [ ] **A FULL build waits for the owner's confirm (Numeric Comparison)**
+  - Setup: one canary-wap flashed with the default FULL profile; a phone
+    with nRF Connect (or the system Bluetooth pane: a phone offers a
+    display and a yes/no, so it gets a Numeric Comparison); the web UI's
+    Bluetooth tab open.
+  - Repro: Bluetooth > Pair; connect from the phone and start bonding.
+    When both screens show six digits, wait 20 s without pressing
+    anything; then press "Numbers match". Repeat with a second attempt and
+    press reject (or let the 60 s pairing timeout run).
+  - Expected: the phone's pairing does not complete during the 20 s wait
+    (before F171 a FULL build bonded at once, with the web UI's PIN box
+    never filled); the PIN box shows the phone's six digits and the
+    connection card shows the link; only "Numbers match" bonds it, and the
+    paired list then shows it; the rejected or timed-out attempt fails on
+    the phone. `GET /api/ble/status`'s `opera.connected_now` still counts
+    the link while it is up, and a display or a second WAP keeps seeing
+    this WAP's fleet beacon through the link (the channel no longer stops
+    the shared advertiser for a link while Opera advertises on it). Then
+    connect a second phone (not paired) after the first and leave both
+    idle for the inactivity timeout (5 minutes by default): only the
+    second, the link the connection card shows, is dropped (health log
+    `Disconnecting due to inactivity`), and the first stays connected.
+  - Artifact: `docs/audit/repro/F171/full-confirm/`.
+- [ ] **Remove forgets the phone's bond**
+  - Setup: the FULL build above with the phone paired (an iPhone or a
+    recent Android: both use private addresses), the phone's own Bluetooth
+    pane open.
+  - Repro: note the phone's entry in `GET /api/bluetooth/paired`; turn the
+    phone's Bluetooth off and on and reconnect (it shows another private
+    address); then, with advertising on and the presence scan running (the
+    defaults) and a scan running from the web UI, `DELETE
+    /api/bluetooth/paired` with that `address` (or press Remove) and
+    reconnect from the phone. Pair it again and repeat with
+    `DELETE /api/bluetooth/paired/all`. Read the health log after each.
+  - Expected: one entry, its `address` the phone's identity address
+    (capitals, most significant byte first; the same before and after the
+    reconnect, `connection_count` up by one); the DELETE answers `Device
+    removed` (if it answers `The phone's bond was not removed; try again`,
+    the entry is still listed: note it, repeat, and count the tries), the
+    web UI's scan has ended, `"advertising"` is back on afterwards, and the
+    phone's link (if up) is dropped; after Remove the reconnect asks to
+    pair again (the phone may need "Forget this device" first: its own
+    bond is the phone's to drop) instead of coming back encrypted, and the
+    paired list does not fill itself again (before the F172 review a
+    phone with private addresses kept its bond: NimBLE refused the delete
+    while the WAP scanned or advertised, and Remove answered ok anyway).
+    No health-log line carries the phone's address (`New device paired`
+    has no detail). On a device updated from a build before F172, the
+    first boot's health log has `Paired list rebuilt from the bond store`
+    with what it kept, added and dropped.
+  - Artifact: `docs/audit/repro/F172/remove-bond/`.
+- [ ] **A link that comes up as Bluetooth goes off is dropped**
+  - Setup: the FULL build; a phone with nRF Connect set to reconnect
+    automatically.
+  - Repro: start a connect from the phone and, in the same second, turn
+    Bluetooth off in the web UI (or `POST /api/bluetooth/disable`); repeat
+    a few times. Then `GET /api/bluetooth`.
+  - Expected: never `"state": "connected"` with `"enabled": false`; a link
+    that came up is dropped within a loop pass (health log `BLE link
+    refused: Bluetooth is off`); a pairing asked meanwhile fails on the
+    phone. On FULL, Opera's own advertising may still let the phone try
+    again while Bluetooth is off (a NEW item of this wave): each try is
+    dropped.
+  - Artifact: `docs/audit/repro/F173/link-while-off/`.
+- [ ] **A dropped disconnect heals; the state follows what runs**
+  - Setup: the FULL build in a room with many BLE devices; a phone
+    connected; a scan from the web UI.
+  - Repro: walk the phone out of range while scans run back to back for a
+    few minutes (the aim is the health log's `BLE link events dropped
+    (queue full)` warning: note whether it appears at all). Separately:
+    with advertising on, run a scan and let it end; start pairing mode and
+    cancel it; disconnect the phone.
+  - Expected: if the warning appears, a later `BLE link gone, its end
+    dropped: ended from the stack's record` (or `BLE link up, its start
+    dropped`) follows within a pass, and `GET /api/bluetooth` never keeps
+    `"connected": true` for a phone that has gone; after each of the scan's
+    end, the canceled pairing and the disconnect, `"state"` is
+    `"advertising"` whenever `"advertising"` is true (before F170 it read
+    `"idle"`).
+  - Artifact: `docs/audit/repro/F169-F170/dropped-and-state/`.
+
+## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers (F190, F167, F189, F196 Bluetooth half) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
+(`start_advertising()` sets the state from `rest_state()`, so pairing mode
+reads `"pairing"`; the saved settings and paired list are the loop task's
+from its first pass, `load_saved()`; `init()`, on the BLE bring-up worker
+or an HTTP handler's task, fills a hand-over with the stack's objects and
+publishes it, and the loop task's `update()` takes it,
+`adopt_init_result()`: the objects, a TX power or PHY the owner changed
+meanwhile, the list's rebuild, the state, the server callbacks'
+owner and auto-advertise; every advertising start is held while the
+sketch's bring-up worker still registers services
+(`bringup_worker_started()` / `bringup_worker_finished()`, called by
+`canary_wap.ino`); Remove and Clear all are refused until the stack is up;
+`is_initialized()` and `init_fail_reason()` read what the bring-up
+published; `StoreCallbacks::onStoreStatus()` refuses a new phone's pairing
+that finds NimBLE's bond store full, and a bond or CCCD record with no
+room, and never deletes a bond to make room;
+`apply_auth_complete()` lists a phone only when the store kept its bond;
+the first loop pass drops listed entries without a bond),
+`ble_server_dispatch.h` (`attach()` in `init()`, the channel named the
+pairing owner at the hand-over with `set_owner()`) and `bluetooth_api.h`
+(`send_doc()`: every answer serialized at its own measured length).
+Host-tested (`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE
+stand-in that models NimBLE-Arduino's 3-bond store and 8-record CCCD
+store, its full-store event at a Pairing Request, its default evictions
+(the oldest bond; for a CCCD the oldest but the writer's) and an
+advertising start that walks the server's services; the bring-up worker,
+the loop and a reader on threads under TSAN, `make tsan-bt-commands`) and
+held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6
+and BV7; a phone's real pairing, NimBLE's real stores and the real
+bring-up worker are not something a host test can run. Compile is CI's.
+Owner: U1.
+
+- [ ] **Pairing mode reads pairing**
+  - Setup: one canary-wap flashed with the default FULL profile; the web
+    UI's Bluetooth tab open; advertising stopped (Stop Advertising).
+  - Repro: Bluetooth > Pair; `GET /api/bluetooth` within the 60 s window;
+    then cancel. Repeat from Bluetooth off (Pair turns it on).
+  - Expected: `"state": "pairing"` with `"advertising": true` for the
+    window (before F190 it read `"advertising"`, and the web UI showed no
+    pairing in progress); after the cancel or the timeout, `"advertising"`.
+  - Artifact: `docs/audit/repro/F190/pairing-state/`.
+- [ ] **The bring-up's result reaches the loop task whole**
+  - Setup: the FULL build with auto-advertise on and two phones already
+    paired; a serial console at boot.
+  - Repro: reboot and poll `GET /api/bluetooth` every 200 ms from power-on
+    until `"state"` is `"advertising"`; then `GET /api/bluetooth/paired`.
+    Separately, on a build where the bring-up is refused (a heap too small
+    for NimBLE, if one can be arranged), read `GET /api/bluetooth` during
+    and after the refusal.
+  - Expected: `"disabled"` until the bring-up starts, `"initializing"`
+    while it runs, then `"advertising"`, never a state that goes back; the two phones
+    listed, each once (`GET /api/bluetooth/paired` lists them, and
+    `GET /api/bluetooth/settings` shows the saved settings, from the first
+    seconds after boot, before the bring-up); the phones reconnect
+    encrypted with no owner asked; no crash or watchdog reset in the boot
+    log; the advertising starts only after the boot log's `BLE bring-up
+    finalized` line, and on the FULL build the phone's GATT browser lists
+    the status, OTA and Opera services on its first connect. A refused
+    bring-up's error reads whole (no mixed or cut text).
+  - Artifact: `docs/audit/repro/F167/bring-up/`.
+- [ ] **What the owner does while the bring-up runs is kept**
+  - Setup: the FULL build with auto-advertise on, a device name and a TX
+    power saved apart from the defaults; a script ready to `POST` the
+    moment the web UI answers after a reboot.
+  - Repro: reboot; while `GET /api/bluetooth` reads `"initializing"`,
+    `POST /api/bluetooth/disable`; after the bring-up, read
+    `GET /api/bluetooth` and `GET /api/bluetooth/settings`, and reboot once
+    more. Repeat with a new device name instead (`POST
+    /api/bluetooth/settings {"device_name": ...}`), then with a TX power.
+    Separately, before the bring-up starts, `DELETE
+    /api/bluetooth/paired/all`.
+  - Expected: Bluetooth stays off after the bring-up and after the reboot
+    (before the F167 review it came back on and advertised); the new name
+    and the new TX power stay, and the other saved settings with them;
+    the early Clear all answers `Bluetooth is not up yet; nothing was
+    cleared` and the phones stay listed and bonded.
+  - Artifact: `docs/audit/repro/F167/commands-during-bring-up/`.
+- [ ] **A full bond store refuses a new phone and keeps the old ones**
+  - Setup: the FULL build after `DELETE /api/bluetooth/paired/all`; four
+    phones (or one phone and nRF Connect profiles with different
+    identities); the health log open.
+  - Repro: pair three phones, each confirmed in the web UI. Pair the
+    fourth. Then pair the first again after "Forget this device" on it
+    only. Then Remove one of the three and pair the fourth again.
+  - Expected: three listed after the first three; the fourth's pairing
+    fails on the phone, the health log has `BLE pairing refused: the bond
+    store is full`, and the three stay listed and reconnect encrypted
+    (before F189 NimBLE's default unpaired the oldest bond, which stayed
+    listed, or the list grew past what the store held); the first phone
+    re-pairs (the store holds it); after the Remove the fourth pairs and
+    is listed. On a device updated from a build before F189 whose list
+    held more phones than the store, the first boot's health log has
+    `Paired list: entries without a bond dropped`.
+  - Artifact: `docs/audit/repro/F189/bond-store/`.
+- [ ] **A full CCCD store keeps every bond**
+  - Setup: the FULL build with three phones paired; nRF Connect on each.
+  - Repro: on each phone, subscribe (enable notifications) to three of the
+    WAP's notifying characteristics, one phone after another; disconnect
+    and reconnect each.
+  - Expected: the ninth subscription's write is answered with an error on
+    that phone (its notifications still flow on that link), the health log
+    has `BLE bond store full: a record was not kept`, and all three phones
+    stay listed and reconnect encrypted (before the F189 review NimBLE's
+    default unpaired the oldest other phone to make room).
+  - Artifact: `docs/audit/repro/F189/cccd-store/`.
+- [ ] **The REST answers are whole**
+  - Setup: the FULL build; a device name of 32 characters with quotes and
+    backslashes (`POST /api/bluetooth/settings`); a scan in a room with
+    many BLE devices.
+  - Repro: `GET /api/bluetooth/settings`, `GET /api/bluetooth/ota`,
+    `GET /api/bluetooth/scan/results` (after the scan), `GET
+    /api/bluetooth/paired`; each through `jq .`.
+  - Expected: every answer parses as one JSON document with nothing after
+    it; the name reads back as set.
+  - Artifact: `docs/audit/repro/F196/bt-answers/`.
+
+## canary-wap Chirp status reads and the unset-clock refusal (F138 Chirp half, F146) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`publish_view()`: the status at the end of every `update()` pass, after
+each owner command and from `init()`; the recent and nearby tables when a
+chirp frame, the 30-second prune, a command or `init()` changed them;
+`read_status()`, `read_nearby()` and `read_recent()` through
+`loop_snapshot.h`; the send command's `SEND_REFUSED_CLOCK_UNSYNCED`), the
+three GET handlers and the send handler in `chirp_api.h`, and the Chirp card
+in `web_ui.h` (`WebUiLogic.chirpSendGate`). Host-tested
+(`tests_host/test_chirp_commands_wap.cpp`, over real presence, witness and
+confirmation frames; `web_ui_logic.test.js`) and held by
+`firmware/scripts/check_wap_loop_commands.py` (rules CV1-CV7). The real
+radio, two tasks on two cores and the device's GPS clock are not something
+a host test can run. Compile is CI's. Owner: U1.
+
+- [ ] **The Chirp page reads as before while chirps arrive and age out**
+  - Setup: two canary-wap boards with Chirp on and a GPS fix (the clock
+    set), the web UI open on Community > Chirp on one.
+  - Repro: from the other board send a safety template (fire or smoke) and
+    confirm it from the first; refresh the page; mute 15 minutes and refresh
+    at once; dismiss the chirp and watch the list; power the other board
+    off and refresh after 4 minutes, then after 31.
+  - Expected: every refresh answers (no `chirp_busy` or `chirp_timeout` on
+    a GET); the nearby count and the list agree with each other; the chirp
+    shows (validated after the confirmation) and is gone from the list the
+    page reloads right after the dismiss; the mute shows at once; the other
+    board drops off nearby within about 3.5 minutes; no Guru Meditation or
+    watchdog reset. The boot log's `[HEAP] ... internal free=` lines read
+    within about 150 bytes of a build before F138 (only the 68-byte status
+    copy and two locks are static; the tables' copies are in PSRAM).
+  - Artifact: `docs/audit/repro/F138/chirp-status-routes/`.
+- [ ] **A send before the clock is set says so**
+  - Setup: a canary-wap with no GPS fix since boot (antenna off, or
+    indoors), Chirp on for ten minutes.
+  - Repro: open Community > Chirp; press Send.
+  - Expected: the card reads "Waiting for GPS time..." with Send off (not
+    "Ready"), `GET /api/chirp` answers `"cannot_send_reason":
+    "clock_unsynced"`, and a send posted anyway (`curl -X POST
+    /api/chirp/send` with the device's API token) answers
+    `{"success":false,"error":"clock_unsynced",...}`, not `cooldown`; once
+    GPS sets the clock the card says Ready and a send goes out.
+  - Artifact: `docs/audit/repro/F146/unset-clock-send/`.
+
+## canary-wap Chirp: refused confirms, dismiss votes, the cooldown timer (F174, F178) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`confirm_chirp()` and `dismiss_chirp()` report into the command `Result`;
+the send cooldown is `cooldown_left_ms()`, a timer, and `shown_state()` is
+what the state reads as), `mesh_network.h` (`ConfirmRefusal` and its
+lookups, `seconds_left()`), `chirp_api.h` (`send_confirm_answer()`,
+`send_dismiss_answer()`, the rounded `cooldown_remaining_sec`) and the
+Chirp card in `web_ui.h` (`WebUiLogic.chirpSendGate`, `chirpActionNote`).
+Host-tested (`tests_host/test_chirp_commands_wap.cpp`:
+`a_refused_confirm_names_why`, `a_dismiss_says_whether_its_vote_went`,
+`a_mute_does_not_end_the_cooldown`, `a_send_while_muted_stays_muted`,
+`a_send_just_after_the_cooldown_goes_out`, `a_send_at_an_edge_names_why`;
+`web_ui_logic.test.js`) and held
+by `firmware/scripts/check_wap_loop_commands.py` (rules CV8-CV11). The
+handlers' JSON was checked only in a scratch harness over ArduinoJson 7.4.1
+(the library is not in the repo). Compile is CI's. Owner: U1.
+
+- [ ] **A refused confirm says why, with its status**
+  - Setup: two canary-wap boards with Chirp on; the second sends a chirp
+    while the first has been on for less than ten minutes.
+  - Repro: on the first, press the eye (confirm) on the chirp; again after
+    ten minutes but with no GPS fix since boot; again with the clock set;
+    `curl -i -X POST /api/chirp/confirm` with a made-up nonce.
+  - Expected: the note under the list reads "Must be active for 10 minutes
+    before confirming", then "Waiting for the clock to be set from GPS time
+    before confirming" (each a `409` with `presence_required` /
+    `clock_unsynced`), then nothing (it went out, `200`); the made-up nonce
+    answers `404` `{"success":false,"error":"not_found",...}`, whole JSON
+    (no bytes after the closing brace). No auth prompt appears (no refusal
+    is a `403`).
+  - Artifact: `docs/audit/repro/F174/refused-confirm/`.
+- [ ] **A dismiss says when its suppress vote stayed home**
+  - Setup: as above, the first board on for less than ten minutes.
+  - Repro: dismiss the chirp (the cross); then, on a board on for ten
+    minutes with the clock set, dismiss another; sniff ESP-NOW or watch the
+    second board's log for the suppress vote.
+  - Expected: the first dismiss hides the chirp and the note reads
+    "Dismissed on this device only: a suppress vote needs 10 minutes
+    active" (`"vote_sent":false`, `"vote_error":"presence_required"`), and
+    no vote goes out; the second answers `"vote_sent":true` with no note,
+    and its vote is heard.
+  - Artifact: `docs/audit/repro/F174/dismiss-vote/`.
+- [ ] **A mute does not end the send cooldown**
+  - Setup: a canary-wap with Chirp on for ten minutes and the clock set.
+  - Repro: send a chirp; mute 15 minutes; press Send (or post one with
+    `curl`); unmute; send again; wait out the 5 minutes with the page open
+    and press Send within a second of the countdown ending.
+  - Expected: both sends in the cooldown are refused `cooldown` with the
+    time left, tier 1 (the card counts down with Send off, muted or not);
+    `GET /api/chirp` reads `"state":"muted"` then `"cooldown"`, with
+    `"cannot_send_reason":"cooldown"`; the card never says Ready with Send
+    on while a send would be refused, and a refused send never says 0
+    seconds left; the send right after the countdown goes out (tier 2), not
+    `cooldown` with 0 seconds.
+  - Artifact: `docs/audit/repro/F178/mute-in-cooldown/`.
+- [ ] **A send made while muted leaves the channel muted**
+  - Setup: two canary-wap boards with Chirp on for ten minutes and the
+    clock set, MQTT connected on the first.
+  - Repro: on the first, mute 120 minutes and send a chirp; watch
+    `GET /api/chirp`, the `chirp_state` MQTT sensor and the second board's
+    nearby list for 10 minutes; have the second board send a chirp after
+    the first's 5-minute cooldown.
+  - Expected: the send goes out (tier 1). The first reads `muted`
+    throughout (`cannot_send_reason` `cooldown` for the first 5 minutes),
+    never `cooldown` or `active`. The second's nearby list shows the first
+    as not listening, and the first does not show the second's chirp.
+  - Artifact: `docs/audit/repro/F178/send-while-muted/`.
+
+## canary-wap Chirp: a mute needs a channel that is on, the beacon through a cooldown, answers that fit (F192, F194, F196) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`mute()` and `unmute()` refuse a channel that is off and report a
+`MuteRefusal` into the command `Result`; `disable()` ends a running mute;
+`send_presence()` sets `listening` from `is_muted()` alone), `mesh_network.h`
+(`MuteRefusal` and its lookups), `chirp_api.h` (`send_mute_answer()`; the
+nearby, recent and templates lists serialized to `measureJson()`'s length),
+`rf_presence_api.h` (`GET /api/rf/status`, the same) and the Chirp card's
+mute buttons in `web_ui.h`. Host-tested (`tests_host/test_chirp_commands_wap.cpp`:
+`a_mute_needs_a_channel_that_is_on`, `a_disable_ends_the_mute`,
+`the_beacon_says_listening_through_a_cooldown`; `web_ui_logic.test.js`'s
+mute and unmute buttons) and held by
+`firmware/scripts/check_wap_loop_commands.py` (rules CV11, CV12) and
+`firmware/scripts/check_wap_json_answers.py` (every REST answer buffer
+measured). The handlers' JSON was checked only in a scratch harness over
+ArduinoJson 7.4.1 (the library is not in the repo). Compile is CI's.
+Owner: U1.
+
+- [ ] **A mute or an unmute on a channel that is off is refused**
+  - Setup: a canary-wap with Chirp off (the default after a flash).
+  - Repro: `curl -i -X POST /api/chirp/mute -d '{"duration_minutes":30}'`
+    and `curl -i -X POST /api/chirp/unmute` (with the Bearer token); read
+    `GET /api/chirp`; wait a minute; turn Chirp on from the dashboard.
+  - Expected: both answer `409`
+    `{"success":false,"error":"chirp_disabled","message":"Chirp channel is not enabled"}`;
+    the status still reads `"state":"disabled"`, `"muted":false`; no
+    presence beacon or mute frame goes out while the channel is off (sniff
+    ESP-NOW, or watch a second board's nearby list); turning Chirp on shows
+    a session emoji at once, and the second board lists this one.
+  - Artifact: `docs/audit/repro/F192/mute-while-off/`.
+- [ ] **A disable ends a running mute**
+  - Setup: a canary-wap with Chirp on.
+  - Repro: mute 120 minutes from the dashboard; turn Chirp off and on.
+  - Expected: after the turn on, `GET /api/chirp` reads `"state":"active"`,
+    `"muted":false`, the Unmute button is gone, and a second board's chirp
+    shows in the Community Activity list.
+  - Artifact: `docs/audit/repro/F192/disable-ends-mute/`.
+- [ ] **The presence beacon says listening through a send cooldown**
+  - Setup: two canary-wap boards with Chirp on for ten minutes and the
+    clock set.
+  - Repro: on the first, send a chirp; watch the second board's
+    `GET /api/chirp/nearby` for the first's row over the 5-minute cooldown;
+    then mute the first 15 minutes and watch again.
+  - Expected: through the cooldown the first's row says
+    `"listening":true` (it said false before F194), and a chirp the second
+    sends then shows on the first; while the first is muted its row says
+    `"listening":false`.
+  - Artifact: `docs/audit/repro/F194/listening-in-cooldown/`.
+- [ ] **Full Chirp lists come back whole**
+  - Setup: a canary-wap with Chirp on and its urgency filter at info, and
+    sixteen recent chirps, which takes at least six sender boards, each
+    sending three chirps inside the same 30 minutes (at 0, 5 and 20
+    minutes once its 10-minute presence wait is over). One board cannot
+    fill the list: its send cooldown is 5 minutes after its first chirp,
+    15 after its second and an hour after its third, so it sends at most
+    three chirps in the 30 minutes the receiver keeps each one; the
+    receiver takes at most four chirps a sender session key an hour,
+    relays included (a relay carries its origin's key); and a disable and
+    enable buys a new session only after another 10-minute presence wait.
+    For nearby, as many neighbors as the bench has.
+  - Repro: `curl -s /api/chirp/recent | python3 -m json.tool`, the same for
+    `/api/chirp/nearby` and `/api/chirp/templates`, and
+    `curl -s /api/rf/status | python3 -m json.tool`; open the dashboard's
+    Community Activity list.
+  - Expected: every answer parses as JSON with nothing after its closing
+    brace; the recent list carries all sixteen chirps (about 4.8 KB; it was
+    cut at 4096 bytes and followed by heap bytes) and the dashboard lists
+    them (it said no alerts). The boot log's free heap is unchanged at
+    idle (the lists' buffers are allocated per request and freed).
+  - Artifact: `docs/audit/repro/F196/full-lists/`.
+
+## canary-wap Chirp: a neighbor's emoji is its session's display (F213) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`handle_presence()` sets a nearby row's emoji with
+`generate_emoji_string()` of the beacon header's session id, as
+`handle_witness()` does a chirp's sender emoji, and never reads the beacon's
+own emoji field). Host-tested (`tests_host/test_chirp_commands_wap.cpp`:
+`a_beacon_emoji_is_its_session_display`, over forged beacons carrying quotes,
+backslashes, control bytes, markup and a full field with no terminator).
+Compile is CI's. Owner: U1.
+
+- [ ] **A neighbor's row shows the emoji that neighbor shows for itself**
+  - Setup: two canary-wap boards, A and B, with Chirp on.
+  - Repro: read A's `session_emoji` from its `GET /api/chirp` (and its Chirp
+    card); on B, `curl -s /api/chirp/nearby | python3 -m json.tool`; turn
+    Chirp off and on at A (a new session) and read both again after A's next
+    beacon (up to a minute).
+  - Expected: B's row for A carries exactly A's five emoji, before and after
+    A's new session (a new row for the new session; the old one ages out in
+    three minutes). A beacon whose emoji field differs from its session's
+    display needs a sender built for the purpose and is outside this row;
+    the host test covers it.
+  - Artifact: `docs/audit/repro/F213/nearby-emoji/`.
+
+## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed (F211, F212) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/fleet_scan_cache.h`
+(`fleet_scan_task()`'s cache, through `fill()`: every result of the browse
+offered, the shortest rows that fit together kept whole, at most eight,
+written in browse order, a complete document after every row),
+`identity_json.h` (GET `/api/device-info` and the provisioning receipt, every
+string escaped, each answer measured and written into a heap buffer of its own
+length), both on `wap_json_writer.h`, and their glue in `canary_wap.ino`.
+Host-tested (`tests_host/test_fleet_scan_cache.cpp`,
+`tests_host/test_identity_json.cpp`) and held by
+`firmware/scripts/check_wap_json_answers.py` (J4 the cache's writer, J5 the
+`snprintf()` answers measured and their `%s` escaped, J6 the identity answers'
+measured form). The old cache's failure was shown only in a scratch harness
+over ArduinoJson 7.4.1 (the library is not in the repo). Compile is CI's.
+Owner: U1.
+
+- [ ] **Long mDNS adverts cost their own rows, not the other Canaries'**
+  - Setup: a canary-wap on a LAN with at least one other Canary, and a
+    laptop on the same LAN that can publish a `_securacv._tcp` service
+    (`avahi-publish-service` on Linux, `dns-sd -R` on macOS).
+  - Repro: publish two services whose `name` and `model` TXT values are 255
+    bytes each, half of them `"` and `\`; open the Fleet sheet; read
+    `curl -s -H "Authorization: Bearer <token>" http://<wap>/api/fleet/scan
+    | python3 -m json.tool` twice, 15 seconds apart (the first read starts
+    the browse); then publish six more such services and read it again;
+    then stop them and publish one service with six 255-byte values of `"`
+    and read it again; then one whose `name` holds a control byte (for
+    example `printf 'x\001y'` as the TXT value) and open the Fleet sheet.
+  - Expected: every answer parses; `canaries` always lists the other Canary
+    (its row is short, and the shortest rows that fit in the 2560-byte cache
+    are the ones kept, whatever order mDNS answers in), and as many long
+    adverts as fit beside it (one such row is a little under 1 KB), each
+    value as published; with eight long adverts the list is not empty
+    (before F211 the cut cache emptied it, and the sheet showed only this
+    device, whichever device sent the long values); the single advert with
+    six long values is the row left out, never the Canary; the advert with
+    the control byte is listed with U+FFFD (the replacement character) in
+    that byte's place, and the sheet lists every device (before, that one
+    byte made the route's answer unparseable in the browser and the sheet
+    said it could not reach the device). An advert missing from the list is
+    one longer than the rows kept.
+  - Artifact: `docs/audit/repro/F211/long-adverts/`.
+- [ ] **A device name holding a quote or a backslash keeps /api/device-info whole**
+  - Setup: a canary-wap with its API token.
+  - Repro: `curl -X POST -H "Authorization: Bearer <token>"
+    -d '{"name":"kitchen \"north\" \\ door"}' http://<wap>/api/device-name`;
+    then `curl -s http://<wap>/api/device-info | python3 -m json.tool`; open
+    the dashboard and the companion page; read the provisioning receipt with
+    the token (`/api/provisioning-receipt`).
+  - Expected: the rename answers `"ok":true` (the route takes the name, as
+    it always did); the device-info answer parses and its `device_name` reads
+    `kitchen "north" \ door`; the dashboard shows the device; the receipt
+    parses and its token and AP password are unchanged. Before F212 the
+    device-info answer did not parse.
+  - Artifact: `docs/audit/repro/F212/quoted-name/`.
 
 ## One event-id space (F46) — on-device verification
 
@@ -475,7 +1750,9 @@ Owner: U1.
   - Repro: start presence, power-cycle mid-presence, let presence start and
     end again.
   - Expected: the post-reboot rows' ids are above every pre-reboot id; no
-    `replay` verdict.
+    `replay` verdict. The presence bundle open at the power cycle is never
+    committed, on either device (sweep F81 made the canary bundle like the
+    canary-wap).
   - Artifact: `docs/audit/repro/F46/reboot-bundle/`.
 - [ ] **A Scout arrival and a loop-task commit at once stay in order**
   - Setup: a canary with a paired BLE Scout beacon and an open presence
@@ -494,6 +1771,395 @@ Owner: U1.
   - Expected: the `"open":1` row's `id` is in [2147483648, 3221225472);
     the dashboard shows it as happening now, with no dismiss button.
   - Artifact: `docs/audit/repro/F46/open-row/`.
+
+## Bundled presence rows and the hourly ceiling (F80, F81) — on-device verification
+
+Code: `firmware/common/csi/src/csi_event.cpp` (the ceiling spends a slot by
+what `csi_bundler_admit()` did: an opening keeps it, a merge gives it back),
+`csi_bundler.cpp`, and the canary's `src/csi_modules_integration.cpp` +
+`src/main.cpp` (`securacv_csi_modules_tick()` once per loop, outside the CSI
+power gates, instead of a flush after every window), and
+`csi_event_wire.h` (`bundled` is the row's own count on every path).
+Host-tested on the real library (`firmware/tests_host/test_csi_bundler_ceiling.cpp`),
+on the canary's real bridge (`test_csi_modules_integration.cpp`, a stand-in
+for `main.cpp`'s loop) and on the wire builder (`test_csi_event_wire.cpp`);
+`main.cpp`'s call is held by `firmware/scripts/check_csi_bundle_tick.py` and
+compiled by CI; not run on a device. Owner: U1.
+
+- [ ] **A steady presence state is one row per bundle on the canary**
+  - Setup: a canary (`release_ha`) paired to Home Assistant, with a card in.
+  - Repro: move in front of the sensor for fifteen minutes, then leave the
+    room for five.
+  - Expected: no `events` body per refresh. One `core.presence` body about
+    ten minutes after the state began, with `"bundled"` above 1 and
+    `"duration_sec"` near 540; the next about two minutes after you leave,
+    `"bundled"` above 1. The card's `/EVENTS/today.ndjson` holds the same
+    rows. Before F81 every refresh (5 s, 20 s, then each minute) was its own
+    body with `"bundled":1` and `"duration_sec":0`, and the sixth spent the
+    hour's ceiling.
+  - Artifact: `docs/audit/repro/F81/steady-presence/`.
+- [ ] **A transition inside the first hour is not held back**
+  - Setup: as above, and a canary-wap beside it.
+  - Repro: twenty minutes in front of both sensors, then leave.
+  - Expected: the canary-wap's `GET /api/events/today` shows the new state
+    open within a few seconds of leaving; on both devices the new state's
+    row commits when its bundle closes. Known limit, not a finding: after
+    about an hour in ONE state the six-an-hour ceiling is full of that
+    state's own rows, and the transition then waits up to about ten
+    minutes for a slot (host-measured: 7 to 602 s, depending on when a slot
+    ages out; record the delay you see).
+  - Artifact: `docs/audit/repro/F81/transition/`.
+- [ ] **An anomaly row waits for its bundle on the canary**
+  - Setup: a canary (`release_ha`) paired to Home Assistant, the room empty
+    and quiet for a few minutes (`anomaly.baseline` learns the quiet).
+  - Repro: walk through the room once, briefly; note the time.
+  - Expected: the `anomaly.baseline` `unusual_motion` body reaches Home
+    Assistant about two minutes after the motion (its bundle closes on the
+    quiet gap; its ten-minute cooldown means nothing merges into it), with
+    `"bundled":1`, where before F81 it arrived within a second. Known
+    behavior, handed up as a decision, not a finding: every state-bearing
+    row but a `system.integrity` tamper now waits for its bundle, and a
+    restart inside those two minutes loses it.
+  - Artifact: `docs/audit/repro/F81/anomaly-latency/`.
+- [ ] **A bundle commits while CSI is shed**
+  - Setup: a canary with `FEATURE_POWER_POLICY` on a battery near the
+    battery-saver threshold (battery saver and low power shed CSI;
+    battery-normal does not).
+  - Repro: start presence; let the policy enter battery saver (the health
+    log's "Power policy: mode changed" entry names it); wait three minutes.
+  - Expected: the open presence bundle commits about two minutes after its
+    last observation, with no CSI window arriving (the loop's tick, not the
+    feed, closes it).
+  - Artifact: `docs/audit/repro/F81/csi-shed/`.
+
+## CSI modules' saved settings at boot (F93) — on-device verification
+
+Code: `firmware/common/csi/src/csi_module.cpp` (`csi_module_init_all()`
+runs each registered module's `init()` once; `csi_module_tick_all()` ticks
+none before it), `csi_module_settings_nvs.h` (the key map and NVS read rule
+both trees share, with one read-only handle for a boot), the canary's
+`src/csi_modules_integration.cpp` (`init_modules_from_nvs()`, at the end of
+`securacv_csi_modules_init()`) and the canary-wap's `csi_integration.cpp`
+(`init()` calls `csi_settings_nvs_init_modules()` right after
+`register_v1_modules()`) and `csi_settings_nvs.cpp` (its readers and that
+boot init). Host-tested on the canary's real
+bridge (`firmware/tests_host/test_csi_module_boot.cpp`) and on the
+canary-wap's real readers with the staged library and modules
+(`firmware/projects/canary-wap/tests_host/test_wap_module_boot.cpp`); the
+boot order is held by `check_event_egress_order.py` (rule 8) and
+`check_wap_event_egress.py` (rule 3) and compiled by CI; not run on a
+device. Owner: U1.
+
+- [ ] **A saved preset applies from the first minute after a reboot**
+  - Setup: a canary-wap on this firmware, dashboard open, on a board with
+    no stored presence threshold (no `cp.mt`, `cp.at` or `cp.bt` row in
+    the `csi` namespace): never calibrated, no Tuning Lab threshold
+    change, per-row reset, "Reset all" or bundle import. Each of those
+    stores the thresholds, and a stored threshold wins over the preset and
+    the sensitivity (at boot and at once, before F93 as after it), so on
+    such a board this row cannot pass. Erase NVS first when unsure.
+  - Repro: set the preset to "sensitive" (or the sensitivity slider to
+    100); `POST /api/reboot`; when it is back, make a small motion in
+    front of it (a hand wave at a few meters) within the first minute.
+  - Expected: `GET /api/events/today` shows a `subtle` (or stronger) open
+    row for it. Then set "quiet", reboot, repeat: the same motion stays
+    `empty`. Before F93 both boots ran on the balanced default until a
+    setting was changed.
+  - Artifact: `docs/audit/repro/F93/preset-after-reboot/`.
+- [ ] **A stored threshold still wins over the preset after a reboot**
+  - Setup: the board from the row above, then a calibration applied
+    (`POST /api/csi/calibrate/apply`) or the Tuning Lab's "Reset all".
+  - Repro: set the preset to "sensitive"; reboot; repeat the small motion.
+  - Expected: the board reads it by the stored thresholds (after "Reset
+    all", the balanced 35 / 75 / 30: the motion that read `subtle` above
+    stays `empty`), while `GET /api/settings` still reports
+    `"preset": "sensitive"`. Host-pinned by
+    `test_a_stored_threshold_wins_over_the_saved_preset`
+    (`test_wap_module_boot.cpp`). Not an F93 change; recorded so a
+    calibrated board is not read as F93 failing.
+  - Artifact: `docs/audit/repro/F93/threshold-over-preset/`.
+- [ ] **A Tuning Lab cooldown applies after a reboot**
+  - Setup: as above, `/tune` open.
+  - Repro: set `anomaly.baseline.cooldown_sec` to 30; reboot; leave the
+    room quiet for two minutes; walk through twice, about 40 s apart.
+  - Expected: two `unusual_motion` observations (one row, `"bundled":2`,
+    or two rows); with the default 600 s, one.
+  - Artifact: `docs/audit/repro/F93/cooldown-after-reboot/`.
+- [ ] **A canary with nothing stored behaves as before**
+  - Setup: a canary (`release_ha`) on this firmware, freshly flashed (no
+    canary-wap image ever stored settings on the board; nothing on the
+    canary writes them).
+  - Expected: presence and anomaly rows as on the previous firmware; the
+    boot log shows CSI armed as before and no `nvs_open failed` error line
+    when the modules initialize (sweep F125: the boot asks IDF's
+    `nvs_open()` whether the `csi` namespace exists, which nothing on the
+    canary creates, and opens nothing through Preferences when it does
+    not; before F125 this boot logged one Preferences
+    `nvs_open failed: NOT_FOUND` error line here). The other difference by
+    design: the activity ribbon's first 15-minute bucket starts when the
+    modules initialize in `setup()`, not at power-on.
+  - Artifact: `docs/audit/repro/F93/canary-defaults/`.
+
+## Tuning Lab Quiet Hours (F123, F128) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_tune_lab.cpp`
+(the Lab's knobs and `tune_post()`, which stores a POST and applies it) and
+`csi_settings_nvs.cpp` (the one Quiet Hours default, 23:00 to 07:00, off;
+its reader; the dashboard's store, by the same key map; its apply to the
+chokepoint). Host-tested
+(`firmware/projects/canary-wap/tests_host/test_wap_tune_lab.cpp`) with the
+staged CSI library; the handlers in `csi_integration.cpp` are compiled by CI
+and held to that code by the test's source pins; not run on a device.
+Owner: U1.
+
+- [ ] **A fresh device shows the Lab the window it runs**
+  - Setup: a canary-wap on this firmware with NVS erased, paired, `/tune`
+    open.
+  - Expected: the Quiet hours group shows Enabled off, Start 23:00, End
+    07:00, as the dashboard's Quiet hours row and `GET /api/settings`
+    (`"start_min":1380,"end_min":420`). "Save preset" downloads a file
+    with `"core.quiet_hours.start_min":1380` and
+    `"core.quiet_hours.end_min":420`. Before F123 the Lab showed 00:00 to
+    08:00.
+  - Artifact: `docs/audit/repro/F123/fresh-device-window/`.
+- [ ] **A Lab Quiet Hours change applies without a reboot**
+  - Setup: as above, the household time zone set, Quiet Hours off.
+  - Repro: in `/tune`, set Start to a minute just past now and End an hour
+    later, then turn Enabled on; walk in front of the device in the
+    window.
+  - Expected: no presence row while the window is open (anomaly rows still
+    pass); turn Enabled off in the Lab and the next row is preceded by one
+    `held_summary` row (`"note":"quiet_hours"`). No reboot and no dashboard
+    change in between. Before F128 the Lab change did nothing until a
+    reboot or a dashboard Quiet Hours change.
+  - Artifact: `docs/audit/repro/F128/lab-applies-at-once/`.
+- [ ] **The dashboard and the Lab keep one window**
+  - Setup: as above.
+  - Repro: in the dashboard, turn Quiet hours on for 22:00 to 06:00 and
+    save; open `/tune`; there, move Start to 22:30; reload the dashboard;
+    reboot the device and reload both.
+  - Expected: the Lab first shows Enabled on, Start 22:00, End 06:00; after
+    the Lab change the dashboard's Quiet hours row and `GET /api/settings`
+    show 22:30 (`"start_min":1350`), and after the reboot both pages still
+    do.
+  - Artifact: `docs/audit/repro/F123/dashboard-and-lab-one-window/`.
+
+## canary-wap first boot after an NVS erase (F150) — on-device verification
+
+Code: `firmware/common/csi/src/csi_module_settings_nvs.h`
+(`begin_read_only()`, staged into the canary-wap sketch) and its callers:
+every read-only open of the `csi` namespace in the sketch
+(`read_event_id_floor_rows()` and the other readers in
+`csi_settings_nvs.cpp`, `csi_event_egress.cpp`'s `begin()`, `csi_mqtt.cpp`,
+`csi_integration.cpp`, `canary_wap.ino`). Host-tested
+(`tests_host/test_wap_module_boot.cpp`, `test_wap_event_egress.cpp`,
+`test_mqtt_reinit.cpp`, whose NVS fakes count the error line
+Arduino-ESP32's `Preferences::begin()` logs for a namespace that is not
+there); that IDF's `nvs_open()` answers `ESP_ERR_NVS_NOT_FOUND` without an
+error-level line is from IDF's source as read (F125). Compile is CI's.
+Owner: U1.
+
+- [ ] **A first boot after an erase logs no `nvs_open failed` line for `csi`**
+  - Setup: a canary-wap board flashed from the `canary-wap-debug`
+    PlatformIO env (`CORE_DEBUG_LEVEL=4`), or an arduino-cli build with
+    Core Debug Level Error or above; `esptool.py erase_region` over its
+    `nvs` partition (or `erase_flash` and a reflash); a serial monitor.
+    Not the release image: it is built with Core Debug Level None
+    (`CORE_DEBUG_LEVEL=0`, as `canary-wap-default` is), which compiles
+    Arduino's error lines out, so it printed none before F150 either.
+  - Repro: boot it and let it reach the dashboard; reboot it once more.
+  - Expected: neither boot logs `[E][Preferences.cpp:...] begin(): nvs_open
+    failed: NOT_FOUND` for the CSI start-up (before F150 the first boot
+    logged two, from the event-id floor's read and the events egress's
+    ceiling read); the first boot prints `[EVT-LOG] event-id floor not
+    readable from NVS - the log is not reloaded this boot`, as before, and
+    the second does not. Lines from other namespaces (`mesh`, `securacv`)
+    are outside this row.
+  - Artifact: `docs/audit/repro/F150/first-boot-log/`.
+
+## canary-wap boot with no mesh namespace (F164) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`:
+every read-only open of the `mesh` namespace (the opera config, the member
+list, the deny-list, the last-seen tombstones, the send-counter record,
+`load_replay_counters()`) goes through
+`csi_module_settings_nvs::begin_read_only()`. Host-tested
+(`tests_host/test_mesh_liveness_wap.cpp`, whose `stubs/mesh_net` NVS counts
+the error line Arduino-ESP32's `Preferences::begin()` logs for a namespace
+that is not there); that IDF's `nvs_open()` answers `ESP_ERR_NVS_NOT_FOUND`
+without an error-level line is from IDF's source as read (F125). Compile is
+CI's. Owner: U1.
+
+- [ ] **A boot with no `mesh` namespace logs no `nvs_open failed` line for it**
+  - Setup: as the F150 row above (a `canary-wap-debug` build, NVS erased, a
+    serial monitor), on a board with flash encryption on if you have one
+    (five reads) and one without (three).
+  - Repro: boot it and let it reach the dashboard without turning the mesh
+    on or pairing; within five minutes of that boot, power-cycle it (not
+    the dashboard's or the API's reboot). Then turn the mesh on in the
+    dashboard (no pairing) and reboot once more. Only the boots before the
+    namespace exists show the fix: the sketch's replay save, every five
+    minutes of uptime and before a reboot through the API, opens `mesh`
+    read-write even with no peers, which creates it, and a boot that finds
+    it logged nothing before F164 either.
+  - Expected: no boot logs `[E][Preferences.cpp:...] begin(): nvs_open
+    failed: NOT_FOUND` for the mesh start-up (before F164 each of the first
+    two logged five, or three without flash encryption, when the second
+    came by a power cycle inside the first five minutes); `GET /api/mesh`
+    reports the mesh disabled, then, after the third boot, enabled with no
+    opera, as before.
+  - Artifact: `docs/audit/repro/F164/first-boot-log/`.
+
+## canary-wap first boot after an NVS erase: the securacv namespace (F201) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/setup_wizard.h`
+(`init()`), `canary_wap.ino` (`nvs_load_key()`) and `power_monitor.h`
+(`load_nvs_state()`): each read-only open of `securacv` that can come before
+`provision_device()`'s key store creates the namespace asks IDF's
+`nvs_open()` first (`csi_module_settings_nvs::begin_read_only()` /
+`probe_namespace()`). Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`,
+whose `stubs/first_boot` NVS counts the error line Arduino-ESP32's
+`Preferences::begin()` logs for a namespace that is not there, with source
+pins holding `setup()`'s order); that IDF's `nvs_open()` answers
+`ESP_ERR_NVS_NOT_FOUND` without an error-level line is from IDF's source as
+read (F125). Compile is CI's. Owner: U1.
+
+- [ ] **A first boot after an erase logs no `nvs_open failed` line for `securacv`**
+  - Setup: as the F150 row above (a `canary-wap-debug` build, NVS erased, a
+    serial monitor).
+  - Repro: boot it and let it reach the setup page; reboot it once more.
+  - Expected: neither boot logs `[E][Preferences.cpp:...] begin(): nvs_open
+    failed: NOT_FOUND` before or during `[PROV] Generating Ed25519 keypair`
+    (before F201 the first boot logged two, from the setup wizard's read and
+    the key read); the first boot opens the setup wizard and generates and
+    stores a key, as before, and the second loads it (`[PROV] Loaded existing
+    keypair from NVS`). The `beacon` namespace is outside this row: nothing
+    opens it while the Beacon runtime is unwired (F31).
+  - Artifact: `docs/audit/repro/F201/first-boot-log/`.
+
+## canary-wap first boot after an NVS erase: the chirp namespace (F220) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/nvs_store.h`
+(`NvsSession`'s read-only open asks IDF's `nvs_open()` first, through
+`csi_module_settings_nvs::begin_read_only()`), which `chirp_channel.cpp`'s
+`load_settings()` (from `chirp_channel::init()` in `setup()`) and the loop's
+self-test stamp read (`nvs_get_u32("st_chirp_at")` in `canary_wap.ino`) open
+through. Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`: the two
+functions and the stamp's block cut verbatim, over the real `nvs_store.h` and
+`stubs/first_boot`, which counts the error line `Preferences::begin()` logs
+for each refused open). Compile is CI's. Owner: U1.
+
+- [ ] **A first boot after an erase logs no `nvs_open failed` line for `chirp`**
+  - Setup: as the F150 row above (a `canary-wap-debug` build, NVS erased, a
+    serial monitor), with no GPS fix, so the clock stays unset.
+  - Repro: boot it past `[OK] Community chirp channel ready`; reboot it;
+    then give it a fix (or set the clock) and reboot once more; then change
+    the Chirp relay switch on the dashboard and reboot.
+  - Expected: no boot logs `[E][Preferences.cpp:...] begin(): nvs_open
+    failed: NOT_FOUND` around the Chirp init or in the loop's first pass
+    (before F220 each boot logged three until the clock was set or a Chirp
+    setting changed: the relay and filter reads and the self-test stamp
+    read; a minimal-profile build, which has no audible chirp, makes no
+    stamp read); after the clock is set the stamp is stored (the self-test
+    chirp does not play at once), and after the relay change the reboot
+    keeps it.
+  - Artifact: `docs/audit/repro/F220/first-boot-log/`.
+
+## Daily summary at 23:55 (F121) — on-device verification
+
+Code: `firmware/common/csi/src/meta_daily_summary.cpp` (staged into the
+canary-wap sketch) and each tree's clock feed: the canary's
+`updateCsiClockOffset()` (`firmware/canary/src/main.cpp`, through
+`securacv_csi_modules_set_clock()`) and the canary-wap's
+`update_csi_clock_offset()` (`canary_wap.ino`), which hand the module the
+household minute of day and the local date it falls on, on every loop pass
+with a synced clock; the module commits one row per local date. Host-tested
+(`firmware/tests_host/test_csi_daily_summary.cpp` and
+`firmware/projects/canary-wap/tests_host/test_wap_daily_summary.cpp`, each
+cutting its tree's feed out of the device source); the compiles are CI's.
+Owner: U1.
+
+- [ ] **One `daily_summary` row at 23:55, and only one**
+  - Setup: a canary-wap and a canary base, each with a GPS fix (the clock's
+    one source), the household time zone set, CSI windows flowing (a home
+    access point in range), an MQTT broker and
+    `mosquitto_sub -t 'securacv/+/events' -v`; Quiet Hours off on the
+    canary-wap.
+  - Repro: leave both running past 23:55 local time; before 00:00, reboot
+    each (dashboard or API) and watch until 00:05; leave them running to the
+    next night's 23:59.
+  - Expected: one `events` publish per device with `"type":"daily_summary"`
+    (`"module":"meta.daily_summary"`, `"event_type":"unknown"`, a `bundled`
+    count) between 23:55 and 23:59, none after the reboot, and one more the
+    next night. Before F121 there was none. A board with no GPS fix since
+    boot publishes none.
+  - Artifact: `docs/audit/repro/F121/daily-summary/`.
+
+## canary-wap dashboard presence settings and calibration (F151) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_settings_nvs.cpp`
+(`store_presence_from_settings()`, `store_presence_thresholds()`,
+`store_privacy_ceiling_from_settings()` and their readers, by the shared key
+map core.presence reads by) and the handlers in `csi_integration.cpp` that
+call them. Host-tested (`tests_host/test_wap_tune_lab.cpp`, whose source pins
+hold the handlers to those functions and keep every other sketch source from
+spelling a module setting's NVS key); the compile is CI's; not run on a
+device. Owner: U1.
+
+- [ ] **What the dashboard and the calibration save is what the device runs**
+  - Setup: a canary-wap on this firmware with NVS erased, the dashboard and
+    `/tune` open.
+  - Repro: in the dashboard set Pet mode on, the preset to "sensitive" and the
+    sensitivity slider to 75, and save; reload `/tune`. Run a calibration and
+    apply it; reload `/tune` again. Set the privacy ceiling to P1. Reboot and
+    reload both pages.
+  - Expected: `/tune` shows Pet mode on, Preset 0 and Sensitivity 75 after the
+    first save, and the calibration's proposed motion / active / breathing
+    thresholds after the apply (`GET /api/csi/calibrate/status` then shows them
+    as `current`); `GET /api/settings` reports `"pet_mode":true`,
+    `"preset":"sensitive"`, `"sensitivity":75` and `"privacy_ceiling":"p1"`,
+    and all of it survives the reboot.
+  - Artifact: `docs/audit/repro/F151/dashboard-and-calibration-rows/`.
+
+## canary-wap calibration status reports the thresholds in use (F166) — on-device verification
+
+Code: `core_presence_baseline_thresholds()` (`firmware/common/csi/src/core_presence.cpp`,
+staged), `read_presence_thresholds_in_use()` in
+`csi_settings_nvs.cpp`, `handle_calibrate_status()` in
+`csi_integration.cpp`, and the Tuning Lab's `tune_read_value()` in
+`csi_tune_lab.cpp`. Host-tested (`tests_host/test_wap_tune_lab.cpp`,
+`test_wap_module_boot.cpp`, which boots the module on each case and finds
+it classifying at the threshold the status reports); the compile is CI's;
+not run on a device. Owner: U1.
+
+- [ ] **The calibration's before/after shows what the device runs**
+  - Setup: a canary-wap on this firmware with NVS erased, the dashboard open.
+  - Repro: set the preset to "sensitive" and leave the slider at 50; start a
+    calibration and wait for it to finish; read `GET /api/csi/calibrate/status`.
+    Move the slider to 100 and start another; read the status when it is
+    ready. Apply that one, then set the preset to "quiet", start a third and
+    read the status again.
+  - Expected: the first status reports `"current":{"motion":25,"active":60,"breathing":20}`
+    and `"current_source":"preset"` (before F166: 35 / 75 / 30), and the
+    dashboard's "before" column shows those; the second `5 / 40 / 5`,
+    `"preset"`; the third the thresholds the second run applied, with
+    `"current_source":"stored"` (a stored threshold still wins over a later
+    preset, sweep F127).
+  - Artifact: `docs/audit/repro/F166/calibration-current/`.
+- [ ] **The Tuning Lab shows the thresholds the device runs, and a bundle round trip keeps them**
+  - Setup: a canary-wap on this firmware with NVS erased, the dashboard open,
+    the preset set to "sensitive" and the slider left at 50, no calibration
+    applied.
+  - Repro: open the Tuning Lab and read `GET /api/tune/coefficients`. Use
+    Save Preset, then Load Preset with the file it saved. Start a calibration
+    and read `GET /api/csi/calibrate/status` when it is ready.
+  - Expected: the motion, active and breathing threshold sliders, and those
+    rows' `"value"`, are 25 / 60 / 20, and their `"default"` is still
+    35 / 75 / 30. Before F166's review the values were 35 / 75 / 30. The
+    saved file carries 25 / 60 / 20. After the load, the status reports
+    `"current":{"motion":25,"active":60,"breathing":20}` with
+    `"current_source":"stored"`. Before, the load stored 35 / 75 / 30.
+  - Artifact: `docs/audit/repro/F166/tuning-lab-values/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 

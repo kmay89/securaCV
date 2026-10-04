@@ -18,6 +18,36 @@
 
 namespace canary::ha {
 
+// The device object every announcement embeds (sweep F181): this format with
+// the device id twice and this build's manufacturer, model and firmware
+// version. It used to sit in a fixed buffer that a long id overran, cut
+// mid-JSON, which made every entity's config invalid JSON (Home Assistant
+// ignores those). kDeviceObjectMost is the most it can take: the format
+// without its five %s, the longest id runtime_config.h accepts (device_id[48],
+// so 47 characters) twice, this build's strings and the terminator.
+// publish_discovery's buffer is checked against it at compile time, in every
+// flavor's build, and scripts/tests/test_ha_discovery_binary_sensors.py
+// formats it at the buffer's declared size for a 47-character id and every
+// flavor's model.
+static constexpr char kDeviceObjectFormat[] =
+    "\"device\":{"
+    "\"identifiers\":[\"securacv_%s\"],"
+    "\"name\":\"SecuraCV Canary Sense %s\","
+    "\"manufacturer\":\"%s\","
+    "\"model\":\"%s\","
+    "\"sw_version\":\"%s\""
+    "}";
+static constexpr size_t text_bytes(const char* s) { return *s ? 1 + text_bytes(s + 1) : 0; }
+static constexpr size_t conversions(const char* s) {
+  return *s ? (*s == '%' ? 1 : 0) + conversions(s + 1) : 0;
+}
+static_assert(conversions(kDeviceObjectFormat) == 5,
+              "the device object takes five %s: the id twice, manufacturer, model, version");
+static constexpr size_t kDeviceObjectMost =
+    text_bytes(kDeviceObjectFormat) - 2 * conversions(kDeviceObjectFormat) +
+    2 * (sizeof(canary::cfg::RuntimeConfig::device_id) - 1) +
+    text_bytes(MANUFACTURER) + text_bytes(MODEL) + text_bytes(CANARY_FW_VERSION) + 1;
+
 static bool publish_cfg(PubSubClient& mqtt, const char* topic, const char* payload) {
   const bool ok = mqtt.publish(topic, payload, true);
 
@@ -32,15 +62,15 @@ static bool publish_cfg(PubSubClient& mqtt, const char* topic, const char* paylo
 
 void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
   const char* DEVICE_ID = canary::cfg::get().device_id;  // shadows config.h's compiled default
-  char devObj[256];
-  snprintf(devObj, sizeof(devObj),
-           "\"device\":{"
-           "\"identifiers\":[\"securacv_%s\"],"
-           "\"name\":\"SecuraCV Canary Sense %s\","
-           "\"manufacturer\":\"%s\","
-           "\"model\":\"%s\","
-           "\"sw_version\":\"%s\""
-           "}",
+  // The device object, sized for the longest device id and every flavor's
+  // model (kDeviceObjectMost, above; sweep F181): 273 bytes at worst, on the
+  // wellbeing build, and it was 256, so it was cut mid-JSON from a
+  // 44-character id (39 on the wellbeing build).
+  char devObj[320];
+  static_assert(sizeof(devObj) >= kDeviceObjectMost,
+                "devObj cannot hold the device object for the longest device id and this "
+                "build's model: make it at least kDeviceObjectMost (sweep F181)");
+  snprintf(devObj, sizeof(devObj), kDeviceObjectFormat,
            DEVICE_ID, DEVICE_ID, MANUFACTURER, MODEL, CANARY_FW_VERSION);
 
   char availObj[256];
@@ -55,6 +85,13 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     snprintf(out, n, "%s/%s/%s/%s/config", HA_DISCOVERY_PREFIX, component, DEVICE_ID, objectId);
   };
 
+  // Binary sensors render payload_on/payload_off themselves (sweep HA25):
+  // HA compares the rendered text to "true"/"false" with plain equality, and
+  // `{{ value_json.x | default(false) }}` over a JSON boolean renders "True" /
+  // "False", which matched neither, so the entity stayed unknown. The
+  // default(false) inside the test reads a row without the field as off,
+  // with no template warning. scripts/tests/test_ha_discovery_binary_sensors.py
+  // renders every one the way HA does.
   // Presence (debounced radar occupancy)
   {
     char t[192], p[1024];
@@ -64,7 +101,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "\"name\":\"Presence\","
              "\"unique_id\":\"%s_presence\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.presence | default(false) }}\","
+             "\"value_template\":\"{{ 'true' if value_json.presence | default(false) else 'false' }}\","
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
              "\"device_class\":\"occupancy\","
@@ -256,7 +293,7 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "\"name\":\"Breathing confirmed\","
              "\"unique_id\":\"%s_breathing\","
              "\"state_topic\":\"%s\","
-             "\"value_template\":\"{{ value_json.breathing_locked | default(false) }}\","
+             "\"value_template\":\"{{ 'true' if value_json.breathing_locked | default(false) else 'false' }}\","
              "\"payload_on\":\"true\","
              "\"payload_off\":\"false\","
              "\"icon\":\"mdi:lungs\","

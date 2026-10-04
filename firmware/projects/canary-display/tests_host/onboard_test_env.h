@@ -225,6 +225,42 @@ inline std::vector<Env> load_envs() {
   return envs;
 }
 
+// The flavors main.cpp's setup() turns the glass for before `call` (its
+// splash_play(), or its provision_run()): a saved rotation applied under
+// the nightlight's guard and under the dash line's. A rotation under any
+// other guard is a canvas these tests do not know, and fails.
+inline void check_boot_rotation(const char* call, bool* nightlight, bool* dash) {
+  const std::string main_cpp = slurp(std::string(FW_DIR) +
+                                     "/projects/canary-display/src/main.cpp");
+  const size_t setup = main_cpp.find("void setup() {");
+  const size_t until = main_cpp.find(call, setup);
+  CHECK(setup != std::string::npos && until != std::string::npos,
+        "main.cpp: setup() or its %s) call not found", call);
+  *nightlight = *dash = false;
+  if (setup == std::string::npos || until == std::string::npos) return;
+  const std::vector<std::string> ls =
+      lines_of(main_cpp.substr(setup, until - setup));
+  std::vector<std::string> guards;
+  for (size_t i = 0; i < ls.size(); ++i) {
+    const std::string t = trim(ls[i]);
+    if (starts_with(t, "#if")) guards.push_back(t);
+    else if (starts_with(t, "#endif") && !guards.empty()) guards.pop_back();
+    else if (t.find("set_rotation(") != std::string::npos ||
+             t.find("set_panel_rotation(") != std::string::npos) {
+      bool known = false;
+      for (size_t g = 0; g < guards.size(); ++g) {
+        if (guards[g] == "#ifdef CD_NIGHTLIGHT") *nightlight = known = true;
+        if (guards[g] == "#ifdef CD_FLAVOR_DASH") *dash = known = true;
+      }
+      CHECK(known, "main.cpp turns the glass before %s) outside the "
+                   "nightlight's and the dash's guards: %s", call, t.c_str());
+    }
+  }
+  CHECK(*nightlight && *dash, "main.cpp no longer applies the nightlight's "
+                              "(%d) and the dash's (%d) saved rotation before "
+                              "%s)", *nightlight, *dash, call);
+}
+
 // ── LVGL's measure, from LVGL's font data (montserrat_metrics.h) ──────────
 typedef montserrat_metrics::Face Face;
 
@@ -302,7 +338,7 @@ struct Minted {
   // The PhoneJoined hint's forms: small glass (the hint, then its narrow
   // form), wide glass.
   std::vector<std::string> phone_small, phone_wide;
-  int bird_px;               // onboard_ui.cpp's watch-family brand mark
+  int bird_px;               // the small-glass brand mark (kSmallBirdPx)
 };
 static Minted g_minted;
 
@@ -401,9 +437,12 @@ inline void load_minted_core() {
   g_minted.hint_round = literals(body[0]);
   g_minted.hint_small = literals(body[1]);
   g_minted.hint_wide = literals(body[2]);
+  // Wide glass hands its narrow form too (F156): a dash or 7" glass turned
+  // portrait has a 464 px row, which the whole hint overruns.
   CHECK(g_minted.hint_round.size() == 1 && g_minted.hint_small.size() >= 1 &&
-            g_minted.hint_small.size() <= 2 && g_minted.hint_wide.size() == 1,
-        "stuck-phone hint forms: %d round, %d portrait, %d wide",
+            g_minted.hint_small.size() <= 2 && g_minted.hint_wide.size() == 2,
+        "stuck-phone hint forms: %d round, %d portrait, %d wide (want the "
+        "hint and its narrow form)",
         (int)g_minted.hint_round.size(), (int)g_minted.hint_small.size(),
         (int)g_minted.hint_wide.size());
   // The PhoneJoined hint, per glass, from the branch that sets it once the
@@ -434,12 +473,17 @@ inline void load_minted_core() {
         "form), %d wide", (int)g_minted.phone_small.size(),
         (int)g_minted.phone_wide.size());
 
-  // The brand mark's watch-family square, for the Join-scene seat check.
+  // The brand mark's square per glass family (onboard_layout.h's, F84):
+  // onboard_ui.cpp must create the mark at it on both branches.
   const std::string obui =
       slurp(fw + "/projects/canary-display/src/ui/onboard_ui.cpp");
-  g_minted.bird_px = -1;
-  const size_t bat = obui.find("constexpr int BIRD_PX = ");
-  if (bat != std::string::npos)
-    g_minted.bird_px = std::atoi(obui.c_str() + bat + 24);
-  CHECK(g_minted.bird_px > 0, "onboard_ui.cpp's BIRD_PX not found");
+  CHECK(obui.find("constexpr int BIRD_PX = onboardlayout::kSmallBirdPx;") !=
+                std::string::npos &&
+            obui.find("constexpr int BIRD_PX = onboardlayout::kWideBirdPx;") !=
+                std::string::npos &&
+            obui.find("canary_mark_create(s_content, BIRD_PX)") !=
+                std::string::npos,
+        "onboard_ui.cpp no longer creates the mark at onboard_layout.h's "
+        "kSmallBirdPx / kWideBirdPx");
+  g_minted.bird_px = kSmallBirdPx;
 }

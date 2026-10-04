@@ -57,6 +57,7 @@
 // firmware/common/power/power_logic.h; CI's check_power_sync.sh guards
 // against drift. Host-tested in firmware/common/power/test_power_logic.cpp.
 #include "power_logic.h"
+#include "csi_module_settings_nvs.h"  // begin_read_only(): the quiet probe (sweep F201)
 
 // ════════════════════════════════════════════════════════════════════════════
 // ENUMS
@@ -378,9 +379,14 @@ inline int16_t compute_trend_mv_per_min() {
 // INTERNAL: NVS persistence
 // ────────────────────────────────────────────────────────────────────────────
 
+// Runs after provision_device() stored the key, which created "securacv", so
+// on a boot that provisioned it finds the namespace. Only a boot whose
+// provisioning stored nothing reaches it without one; that open is asked
+// for quietly too, and reads every value's default, as the refused open did
+// (sweep F201).
 inline void load_nvs_state() {
   Preferences prefs;
-  if (prefs.begin("securacv", true)) {
+  if (csi_module_settings_nvs::begin_read_only(prefs, "securacv")) {
     s_state.charge_cycles  = prefs.getUInt("batt_cycles", 0);
     s_state.capacity_mah   = prefs.getUShort("batt_cap", CAPACITY_MAH);
     s_state.max_voltage_mv = prefs.getUShort("batt_max_mv", 0);

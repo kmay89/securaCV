@@ -294,6 +294,16 @@ Reset: 24 hours of no chirps
 - Max 4-5 chirps per day per device
 - Legitimate users rarely need >2 chirps/day
 
+**A timer, not a state** (canary-wap, sweep F178): the cooldown is the
+tier's cooldown counted from the last send, and every check reads that timer.
+Muting, unmuting and a mute that runs out leave it running, and it is over
+the moment it runs out, not when the device next gets round to it. Before
+F178 it was the `CHIRP_COOLDOWN` state, which a mute replaced: a send right
+after muting went out a tier up. The state still reads `cooldown` while the
+timer runs (§7.1). Note: the canary-wap resets the tiers 24 hours after the
+first chirp of the run of sends, not after 24 hours of no chirps, and
+re-enabling the channel or a reboot resets them too (filed with F178).
+
 ### 2.5.5 Defense: Presence Requirement (Anti-Drive-By)
 
 Devices must broadcast presence for **10 minutes** before they can send chirps.
@@ -431,6 +441,17 @@ chirp_presence = {
 ```
 
 - Sent every 60 seconds when chirp channel enabled
+- On the canary-wap `listening` is false exactly while a mute runs: that is
+  when it drops the chirps it hears. The send cooldown (§2.5.4) limits what
+  the device sends, not what it takes, so a device in its cooldown says it
+  is listening (sweep F194: it said it was not, and neighbors listed it as
+  deaf for the cooldown's 5 minutes to 4 hours).
+- The beacon is unsigned, so a receiver never shows its `emoji` field. The
+  canary-wap's nearby list shows the display of the header's `session_id`
+  (§2.3), derived as a witness's sender emoji is (it is what an honest
+  sender puts in the field), so every byte comes from the emoji set (sweep
+  F213: the field was stored as sent, and any device in range could put
+  quotes, control bytes or markup into `GET /api/chirp/nearby`).
 - No sensitive information shared
 - Allows UI to show "X devices nearby"
 
@@ -703,18 +724,37 @@ CHIRP_MUTED          → Temporarily ignoring chirps
 CHIRP_COOLDOWN       → Rate limited, cannot send new chirp
 ```
 
+On the canary-wap `CHIRP_COOLDOWN` is what an active channel reads as while
+the send cooldown's timer runs (§2.5.4); the channel never stores it, so a
+mute shows `muted` over a running cooldown, and the cooldown still refuses a
+send (sweep F178). A mute silences what comes in, not the owner, so a send
+made while muted goes out, and the channel reads `muted` until the mute runs
+out. Before F178 it read `cooldown`, then `active`, and its presence beacon
+said it was listening while the mute still dropped every chirp.
+
+A mute belongs to a channel that is on (sweep F192): a mute or an unmute on
+a channel that is off is refused, and a disable ends a running mute. A mute
+there set `CHIRP_MUTED` and so turned the channel on with no session: the
+status read `muted` and then `active` with an empty emoji, the channel's
+passes ran with an all-zero session id, and a later enable kept that empty
+session, since it starts one only from `DISABLED`.
+
 ### 7.2 Transitions
 
 ```
 DISABLED ──enable()──→ INITIALIZING
 INITIALIZING ──ready()──→ LISTENING
 LISTENING ──join_active()──→ ACTIVE
-ACTIVE ──mute(duration)──→ MUTED
+ACTIVE ──mute(duration)──→ MUTED      (DISABLED refuses mute and unmute)
 MUTED ──unmute/timeout──→ ACTIVE
 ACTIVE ──send_chirp()──→ COOLDOWN
-COOLDOWN ──timeout(5min)──→ ACTIVE
+COOLDOWN ──timeout(tier: 5 min to 4 h)──→ ACTIVE
 * ──disable()──→ DISABLED
 ```
+
+On the canary-wap the two COOLDOWN arrows are the timer starting and running
+out, not stored transitions: MUTED ──unmute/timeout──→ ACTIVE reads COOLDOWN
+again while the timer still runs.
 
 ## 8. API Endpoints
 
@@ -730,6 +770,76 @@ COOLDOWN ──timeout(5min)──→ ACTIVE
 | `/api/chirp/send` | POST | Send new chirp (human confirmed) |
 | `/api/chirp/ack` | POST | Acknowledge a chirp |
 | `/api/chirp/mute` | POST | Mute for duration |
+
+On the canary-wap the POST routes (`enable`, `disable`, `send`, `ack`,
+`dismiss`, `mute`, `unmute`, `confirm`, `settings`) change the channel on
+its own task: the handler hands the command to `chirp_channel::submit()`
+and the loop task's `update()` runs it (sweep F111). A command the loop
+task has not started within 2 s is withdrawn and answers `503
+{"success":false,"error":"chirp_timeout"}`; one refused because four
+others are waiting answers `409 {"success":false,"error":"chirp_busy"}`.
+Neither changed anything. Every other answer keeps its shape.
+
+A send that does not go out says why, in this order: `chirp_disabled`,
+`presence_required` (ten minutes on), `cooldown` (with
+`cooldown_remaining_sec` and `cooldown_tier`), `clock_unsynced` (the wall
+clock is not set yet: the canary-wap sets it from GPS and has no SNTP, and
+origination is refused until it is, audit C10; sweep F146 — before it, this
+was answered as a `cooldown` with 0 seconds left), then `night_restricted`.
+The reason is the check that refused the send, read once. A gate that opens
+just as the send is refused (the cooldown running out, the ten minutes
+passing, the clock being set, 06:00) still names that gate, never none. It
+was read again after the send, and such a send answered no reason, or
+`cooldown` with 0 seconds (found in the F178 review).
+`GET /api/chirp` names the same cases in `cannot_send_reason`
+(`disabled`, `cooldown`, `presence_required`, `clock_unsynced`).
+`cooldown_remaining_sec`, in the status and in a send refused for the
+cooldown, is the cooldown's timer (§2.5.4) in whole seconds rounded up, so
+`cooldown` never comes with 0 seconds, and `cannot_send_reason` is
+`cooldown` exactly while the timer runs, muted or not (sweep F178: a send
+in the pass after the timer ran out, or in its last second, was refused with
+0 seconds left, and the dashboard said Ready). The dashboard turns Send off
+for any `can_send` that is not true.
+
+A confirmation (`POST /api/chirp/confirm`, or `/api/chirp/ack` with
+`"type":"confirmed"`) that sends nothing says why, in this order:
+`chirp_disabled` (409), `presence_required` (409, ten minutes on),
+`clock_unsynced` (409), `not_found` (404, no chirp with that nonce in the
+recent list), `own_chirp` (409, the originator cannot confirm its own,
+§3.4), each with a `message` (sweep F174: every one was `not_found`, and the
+ack's a bare `{"success":false}`). A dismiss (`POST /api/chirp/dismiss`, or
+the ack with `"resolved"`) hides the chirp on this device whatever happens,
+and answers `"vote_sent"`: whether its signed suppress vote (§2.5.6) went
+out. When it did not, `"vote_error"` names why (`presence_required` or
+`clock_unsynced`) and `"message"` says the chirp is dismissed on this device
+only. A dismiss of a chirp that is not there answers `404 not_found`. No
+Chirp answer is a `403`: the dashboard reads a 403 as a bad token.
+
+A mute (`POST /api/chirp/mute`) or an unmute (`/unmute`) on a channel that
+is off answers `409` `chirp_disabled` with a `message` (sweep F192: the mute
+answered success and turned the channel on with no session, the unmute
+success for nothing); a mute's duration other than 15, 30, 60 or 120
+minutes answers `invalid_duration`, with the `200` it always had. The
+dashboard shows either under the Community Activity list.
+
+Every answer fits the buffer it is serialized into (sweep F196). The
+`nearby`, `recent` and `templates` lists are serialized to their own length:
+a full recent list (sixteen chirps, about 4.8 KB) was cut at 4096 bytes and
+sent with the heap bytes after it, and 32 neighbors whose emoji hold bytes
+JSON escapes (`"`, `\`) overran the nearby list's 3072-byte buffer the same
+way. (Since F213 a neighbor's emoji is its session id's display, never the
+beacon's bytes, so it holds no such byte; the list still goes out at its own
+length.) The other answers keep fixed buffers that
+`firmware/scripts/check_wap_json_answers.py` measures against their longest
+answer.
+
+The GET routes (`/api/chirp`, `/nearby`, `/recent`) read what the loop task
+last published, never the live session, cooldowns or tables (sweep F138):
+the status at the end of every pass and after each owner command, the
+recent and nearby tables whenever a chirp frame, the 30-second prune or a
+command changed them. A read never waits for the loop task, so it never
+answers `chirp_busy` or `chirp_timeout`; a read right after a POST's answer
+shows what the POST did. The answers keep their shape.
 
 ### 8.2 Response Formats
 

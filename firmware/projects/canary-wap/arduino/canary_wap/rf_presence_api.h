@@ -113,9 +113,16 @@ inline esp_err_t handle_rf_status(httpd_req_t* req) {
   // Session info (for privacy verification)
   doc["session_epoch"] = rf_presence::get_session_epoch();
 
-  char buffer[512];
-  serializeJson(doc, buffer);
-  return send_json_response(req, buffer);
+  // Serialized to its own length (sweep F196): state_name and last_event are
+  // const char* the snapshot fills, which no fixed buffer can be measured
+  // against (firmware/scripts/check_wap_json_answers.py).
+  const size_t needed = measureJson(doc) + 1;
+  char* buffer = (char*)malloc(needed);
+  if (!buffer) return send_error(req, "out of memory");
+  serializeJson(doc, buffer, needed);
+  esp_err_t ret = send_json_response(req, buffer);
+  free(buffer);
+  return ret;
 }
 
 // POST /api/rf/enable - Enable RF presence detection

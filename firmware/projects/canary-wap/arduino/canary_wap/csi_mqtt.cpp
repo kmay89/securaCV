@@ -3,10 +3,41 @@
  * @brief Implementation of the optional MQTT bridge declared in csi_mqtt.h.
  *
  * Threading model:
- *   - esp_mqtt_client maintains its own task. publishes are posted to
- *     that task's queue and the HTTP / main-loop callers return
- *     immediately. Event callbacks fire on the MQTT task; we keep them
- *     to flag-flips + Serial logs so we never block the network stack.
+ *   - esp_mqtt_client maintains its own task, which connects, reads, pings
+ *     and resends. A publish is NOT posted to that task: while the client
+ *     is connected, esp_mqtt_client_publish() takes the client's API lock
+ *     and writes the socket on the caller's task, so the loop task's
+ *     publishes wait on the network. A stalled write, and the esp_mqtt
+ *     task's own socket operation a publish waits behind, give up after the
+ *     client's network timeout, kNetworkTimeoutMs (sweep F112; csi_mqtt.h
+ *     says what it bounds and what it does not), set in open_client()
+ *     instead of esp_mqtt's 10 s default, which outlasted the loop task's
+ *     8 s panic watchdog. The link is announced to the loop task
+ *     (s_connected) only after the CONNECTED burst, which esp_mqtt sends
+ *     under the same lock, so a loop publish never waits behind it.
+ *     Event callbacks fire on the MQTT task; we keep them to flag-flips,
+ *     Serial logs and the reconnect republish, so we never block the
+ *     network stack.
+ *   - The client itself (s_client) is the loop task's (sweep F106): the
+ *     boot init() opens it there (setup()), every re-init is served there
+ *     (loop(), for request_reinit()), and the publishers run there. The
+ *     config POST and the test handler run on the httpd task, and a QR
+ *     provisioning on the scanner's; they request a re-init instead of
+ *     running one, because a re-init retires the client a loop-task publish
+ *     may be holding.
+ *   - The loop task never stops a client itself. esp_mqtt_client_stop()
+ *     takes the client's API lock, which the esp_mqtt task holds across a
+ *     whole connect attempt (the network timeout for the TCP/TLS connect,
+ *     again for the CONNECT write and again for the CONNACK; 10 s each
+ *     before F112 set it), and then waits for that task to exit: against an
+ *     unreachable broker it took ten seconds, and the loop task is
+ *     subscribed to an 8 s panic watchdog. So a
+ *     re-init detaches the client on the loop task (s_client = nullptr:
+ *     nothing on this task can reach it again, and its events are ignored)
+ *     and a one-shot worker (retire_task) stops and destroys it; a later
+ *     loop pass opens the new client once the worker says the old one is
+ *     gone. The esp_mqtt task's own publishes, from its event handler, use
+ *     that task's own client, which its stop waits for before the destroy.
  *
  * Privacy model:
  *   - Every successful publish increments csi_integration's outbound
@@ -25,13 +56,13 @@
 
 #include "csi_mqtt.h"
 #include "csi_integration.h"
-#include "csi_event_log.h"
+#include "csi_event_egress.h"
 #include "api_auth.h"
 #include "device_signature.h"
 #include "csi_event_wire.h"         /* staged copy of firmware/common/csi/src — the shared events body */
-#include "csi_event_backfill.h"     /* staged copy — ceiling_for, the delivery-ceiling rule (F47) */
-#include "csi_event_id_floor.h"     /* staged copy — must_persist, the shared write cadence */
+#include "csi_event_id_floor.h"     /* staged copy — space_low(): the health's event-id warning (F82) */
 #include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
+#include "csi_module_settings_nvs.h" /* staged copy — begin_read_only(), the quiet read-only open (F150) */
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -39,6 +70,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>       /* xTaskCreate: the retiring client's worker */
 
 extern "C" {
 #include "mqtt_client.h"
@@ -53,14 +86,30 @@ constexpr uint16_t    DEFAULT_PORT = 1883;
 constexpr uint16_t    DEFAULT_PORT_TLS = 8883;
 constexpr const char* DEFAULT_PREFIX = "securacv";
 
-esp_mqtt_client_handle_t s_client       = nullptr;
+/* The open client. Written only by the loop task (open_client, detach_client);
+ * read by it (publish_raw) and by the esp_mqtt task's event handler, which
+ * ignores every event whose client is not this one, so a detached client
+ * still being stopped never sets s_connected or publishes. */
+std::atomic<esp_mqtt_client_handle_t> s_client{nullptr};
 std::atomic<bool>        s_connected{false};
-/* Set to true on every CONNECTED event; drained on the main loop by
- * csi_mqtt::loop, which walks the SD log and replays anything past
- * s_last_published_event_id. We don't backfill from inside the MQTT
- * event callback because that fires on the MQTT task and would
- * contend with the main loop's append() path. */
-std::atomic<bool>        s_backfill_pending{false};
+/* The esp_mqtt task while its CONNECTED handler sends the connect burst
+ * (the retained status, the discovery set, the cached states, the
+ * subscribes), else nullptr. esp_mqtt dispatches CONNECTED with the
+ * client's API lock held, and every publish takes that lock: a loop-task
+ * publish that saw the link up would wait behind the whole burst, and only
+ * the link's throughput bounds it (each write restarts the network
+ * timeout). So s_connected turns true only once the burst is sent, the
+ * burst's own publishes pass publish_raw()'s gate as this task, and a
+ * DISCONNECTED during the burst (the burst's own failed write) clears this
+ * so the link is not announced (the F112 review). */
+std::atomic<TaskHandle_t> s_burst_task{nullptr};
+/* A broker is configured (accepting()): written by open_client() on the loop
+ * task, read by the egress on the loop task and by any task. */
+std::atomic<bool>        s_accepting{false};
+/* destination_epoch(): bumped by an init() whose destination_digest differs
+ * from the last one an init() loaded this boot (s_dest_known: one has). */
+std::atomic<uint32_t>    s_dest_epoch{0};
+bool                     s_dest_known = false;
 /* Inbound firmware-update commands. MQTT_EVENT_DATA fires on the
  * esp_mqtt task; flash-cycle decisions belong on the main loop, so the
  * handler only latches these flags and the .ino drains them via
@@ -82,24 +131,6 @@ std::atomic<int>         s_last_mic_state{-1};
 char                     s_last_update_state[512] = {};
 std::atomic<bool>        s_update_state_set{false};
 std::atomic<int>         s_last_update_auto{-1};
-/* Highest event_id published since boot. publish_event() and the
- * backfill replay both update it; on a clean run after an HA outage
- * the next CONNECTED triggers iterate_since(this) which only emits
- * the events the broker missed. Non-atomic because every read/write
- * is on the main-loop thread. Across a reboot init() restores it from
- * the delivery CEILING below (F47): replaying "today's full log" sent
- * up to MAX_BACKFILL ids Home Assistant's replay gate refuses — HA can
- * only have verified ids this device handed over, and the ceiling is
- * always above every one of those. */
-uint32_t                 s_last_published_event_id = 0;
-/* The delivery ceiling NVS holds (0 = none yet) under NVS_KEY_DELIVERED
- * (csi_mqtt.h): csi_event_backfill's rule over this sketch's own
- * iterate_since backfill — the same key the canary PIO tree's egress
- * writes, persisted BEFORE an id is handed over, capped at the id
- * allocator's persisted floor so a new boot's ids are never read as
- * delivered (csi_event_backfill::ceiling_for). */
-uint32_t                 s_delivered_ceiling = 0;
-bool                     s_watermark_restored = false;
 Config                   s_active_cfg   = {};
 /* Broker TLS state. The CA lives here (not in Config: a 3 KB PEM has no
  * business on an httpd handler's stack) because esp_mqtt keeps the pointer
@@ -114,6 +145,38 @@ char                          s_last_error[192]  = {};
 char                     s_device_id[33]      = {};
 char                     s_firmware_version[24] = {};
 char                     s_public_key_hex[65]   = {};
+/* The uptime the last health body carried, and whether one was built this
+ * boot (loop task: publish_health and publish_egress both run there). The
+ * egress topic names the health it follows with it (sweep F149), so Home
+ * Assistant can tell this boot's counters from a retained copy an earlier
+ * boot, or an older firmware with no egress topic, left on the broker. */
+uint32_t                 s_health_uptime      = 0;
+bool                     s_health_built       = false;
+/* Re-inits another task asked for (request_reinit, sweep F106): the
+ * number of the newest request, and of the newest one a loop-task init()
+ * has served. A request is served by an init() that began after it was
+ * made, so it reads the settings the requester saved. */
+std::atomic<uint32_t>    s_reinit_wanted{0};
+std::atomic<uint32_t>    s_reinit_served{0};
+/* A client a re-init detached, being stopped and destroyed by retire_task
+ * (loop task only), whether that worker exists yet, and the worker's word
+ * that stop and destroy returned. The new client opens only after it. */
+esp_mqtt_client_handle_t s_retiring          = nullptr;
+bool                     s_retire_started    = false;
+bool                     s_retire_create_failed_logged = false;
+std::atomic<bool>        s_retire_done{false};
+/* The worker's stack: esp_mqtt_client_stop() writes the DISCONNECT on the
+ * caller's task (a TLS write under mbedTLS), so the esp_mqtt task's own
+ * default stack (CONFIG_MQTT_TASK_STACK_SIZE, 6144) is the measure. */
+constexpr uint32_t       kRetireStackBytes   = 6144;
+/* set_update_auto_state() from any task; loop() publishes it. */
+std::atomic<bool>        s_update_auto_dirty{false};
+/* The config POST waits this long for its re-init, so the page's status
+ * refresh sees the new client; the test handler's whole answer, re-init
+ * and connect, comes within kTestBudgetMs (its connect wait always was). */
+constexpr uint32_t       kReinitWaitMs  = 2000;
+constexpr uint32_t       kTestBudgetMs  = 4000;
+constexpr uint32_t       kReinitPollMs  = 10;
 
 /* Build "{prefix}/{device_id}/{suffix}" into out. Returns out for
  * call-site composability. Out must be sized for prefix + device_id +
@@ -131,9 +194,18 @@ char* build_topic(char* out, size_t cap, const char* suffix) {
  * privacy-budget accounting and the disconnected-state guard live in
  * exactly one place. Returns true on enqueue success. */
 bool publish_raw(const char* topic, const char* payload, size_t len, bool retain) {
-  if (!s_client || !s_connected.load(std::memory_order_relaxed)) return false;
+  /* Read once: on the esp_mqtt task (the reconnect republish) the loop task
+   * may detach it meanwhile, and that task's own client outlives this call. */
+  esp_mqtt_client_handle_t client = s_client.load(std::memory_order_acquire);
+  if (!client) return false;
+  /* The link is up for every task once the connect burst is sent; during
+   * it, only for the esp_mqtt task sending it (s_burst_task). */
+  if (!s_connected.load(std::memory_order_relaxed) &&
+      s_burst_task.load(std::memory_order_relaxed) != xTaskGetCurrentTaskHandle()) {
+    return false;
+  }
   const int msg_id = esp_mqtt_client_publish(
-      s_client, topic, payload, (int)len, /*qos=*/0, retain ? 1 : 0);
+      client, topic, payload, (int)len, /*qos=*/0, retain ? 1 : 0);
   if (msg_id < 0) return false;
   /* Only counted on successful enqueue. esp_mqtt at QoS 0 may still
    * silently drop on the wire under network failure; the dashboard's
@@ -147,9 +219,18 @@ bool publish_raw(const char* topic, const char* payload, size_t len, bool retain
 void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
                         int32_t event_id, void* event_data) {
   esp_mqtt_event_handle_t e = (esp_mqtt_event_handle_t)event_data;
+  /* A client a re-init detached runs until its worker's stop returns: its
+   * connects, drops and errors are not the bridge's any more (they would
+   * set s_connected for a client nothing publishes to, or name the old
+   * broker's failure). */
+  if (!e || e->client != s_client.load(std::memory_order_acquire)) return;
   switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED: {
-      s_connected.store(true, std::memory_order_relaxed);
+      /* The connect burst below is sent before the link is announced
+       * (s_burst_task): the loop task's publishes wait for the API lock
+       * this task holds until it ends, so they wait for nothing. */
+      TaskHandle_t self = xTaskGetCurrentTaskHandle();
+      s_burst_task.store(self, std::memory_order_relaxed);
       s_last_error[0] = '\0';
       Serial.println("[MQTT] connected");
       /* Replace the LWT-published "offline" with a fresh "online" so
@@ -183,9 +264,9 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       {
         char cmd_topic[192];
         build_topic(cmd_topic, sizeof(cmd_topic), "update/cmd");
-        esp_mqtt_client_subscribe(s_client, cmd_topic, /*qos=*/1);
+        esp_mqtt_client_subscribe(e->client, cmd_topic, /*qos=*/1);
         build_topic(cmd_topic, sizeof(cmd_topic), "update/auto/cmd");
-        esp_mqtt_client_subscribe(s_client, cmd_topic, /*qos=*/1);
+        esp_mqtt_client_subscribe(e->client, cmd_topic, /*qos=*/1);
 
         if (s_update_state_set.load(std::memory_order_relaxed)) {
           char state_topic[192];
@@ -208,7 +289,7 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       {
         char mic_cmd_topic[192];
         build_topic(mic_cmd_topic, sizeof(mic_cmd_topic), "mic/cmd");
-        esp_mqtt_client_subscribe(s_client, mic_cmd_topic, /*qos=*/1);
+        esp_mqtt_client_subscribe(e->client, mic_cmd_topic, /*qos=*/1);
 
         const int mic_state = s_last_mic_state.load(std::memory_order_relaxed);
         if (mic_state >= 0) {
@@ -219,12 +300,20 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
         }
       }
 #endif
-      /* Flag the main loop to walk the SD log and backfill any events
-       * the broker missed during the outage. We don't drain here
-       * because the MQTT event handler runs on its own task and a
-       * file-system walk on this critical path would block reconnect
-       * fastpath callbacks. */
-      s_backfill_pending.store(true, std::memory_order_relaxed);
+      /* No events from here: the egress (csi_event_egress.cpp) runs on the
+       * main loop, sees the link up on its next pass and resumes the SD
+       * backfill itself, in id order, before anything committed since. A
+       * file-system walk on this task would block the reconnect fastpath,
+       * and a publish from it would race the backfill. */
+      /* The burst is sent: announce the link, unless a DISCONNECTED came
+       * meanwhile (the burst's own failed write aborts the connection and
+       * dispatches it on this task, clearing s_burst_task) or the loop task
+       * detached this client meanwhile (its re-init opens the next one only
+       * after this task lets go of the lock: the worker's stop takes it). */
+      if (s_burst_task.compare_exchange_strong(self, nullptr, std::memory_order_relaxed) &&
+          e->client == s_client.load(std::memory_order_acquire)) {
+        s_connected.store(true, std::memory_order_relaxed);
+      }
       break;
     }
     case MQTT_EVENT_DATA: {
@@ -308,6 +397,7 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       break;
     }
     case MQTT_EVENT_DISCONNECTED:
+      s_burst_task.store(nullptr, std::memory_order_relaxed);
       s_connected.store(false, std::memory_order_relaxed);
       Serial.println("[MQTT] disconnected (will retry)");
       break;
@@ -346,12 +436,54 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
   }
 }
 
-void teardown_client() {
-  if (!s_client) return;
-  esp_mqtt_client_stop(s_client);
-  esp_mqtt_client_destroy(s_client);
-  s_client = nullptr;
+/* The worker a re-init hands a detached client to (sweep F106 review): the
+ * stop can wait out a connect attempt, which the loop task must not. One
+ * worker per re-init, and only one at a time (serve_reinit opens nothing
+ * until it is done). */
+void retire_task(void* arg) {
+  esp_mqtt_client_handle_t client = static_cast<esp_mqtt_client_handle_t>(arg);
+  const uint32_t start = millis();
+  esp_mqtt_client_stop(client);      /* waits for the client's esp_mqtt task to exit */
+  esp_mqtt_client_destroy(client);
+  Serial.printf("[MQTT] previous client stopped after %lu ms\n",
+                (unsigned long)(millis() - start));
+  s_retire_done.store(true, std::memory_order_release);
+  vTaskDelete(nullptr);
+}
+
+/* Loop task: take the open client out of service. Nothing on this task can
+ * reach it after this (s_client is what every publish reads), and its event
+ * handler ignores it; retire_finished() hands it to the worker. */
+void detach_client() {
+  esp_mqtt_client_handle_t client = s_client.exchange(nullptr, std::memory_order_acq_rel);
   s_connected.store(false, std::memory_order_relaxed);
+  if (client) {
+    s_retiring = client;
+    s_retire_started = false;
+  }
+}
+
+/* Loop task: is the client a re-init detached gone? Starts its worker (and
+ * again on a later pass, if the task could not be created) and never waits. */
+bool retire_finished() {
+  if (s_retiring == nullptr) return true;
+  if (!s_retire_started) {
+    s_retire_done.store(false, std::memory_order_relaxed);
+    if (xTaskCreate(retire_task, "mqtt_retire", kRetireStackBytes, s_retiring,
+                    /*priority=*/1, nullptr) != pdPASS) {
+      if (!s_retire_create_failed_logged) {
+        Serial.println("[MQTT] could not start the old client's stop task; retrying");
+        s_retire_create_failed_logged = true;
+      }
+      return false;
+    }
+    s_retire_started = true;
+    s_retire_create_failed_logged = false;
+  }
+  if (!s_retire_done.load(std::memory_order_acquire)) return false;
+  s_retiring = nullptr;
+  s_retire_started = false;
+  return true;
 }
 
 }  /* namespace */
@@ -364,7 +496,7 @@ bool config_load(Config* out) {
   if (!out) return false;
   memset(out, 0, sizeof(*out));
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
+  if (!csi_module_settings_nvs::begin_read_only(prefs, SETTINGS_NS)) {
     /* No NVS yet (or namespace corrupt) — treat as disabled with
      * default port + prefix. Discovery defaults to true so a fresh
      * device with no NVS state still publishes HA auto-discovery on
@@ -437,7 +569,7 @@ namespace {
 void ca_load() {
   s_ca_pem[0] = '\0';
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  if (!csi_module_settings_nvs::begin_read_only(prefs, SETTINGS_NS)) return;
   if (prefs.isKey(NVS_KEY_CA)) {
     prefs.getString(NVS_KEY_CA, s_ca_pem, sizeof(s_ca_pem));
     s_ca_pem[sizeof(s_ca_pem) - 1] = '\0';
@@ -461,72 +593,43 @@ const char* last_error() { return s_last_error; }
  * Lifecycle
  * ────────────────────────────────────────────────────────────────────────── */
 
-bool init(const char* device_id,
-          const char* firmware_version,
-          const char* public_key_hex) {
-  if (device_id) {
+void set_identity(const char* device_id,
+                  const char* firmware_version,
+                  const char* public_key_hex) {
+  if (device_id && device_id != s_device_id) {
     strncpy(s_device_id, device_id, sizeof(s_device_id) - 1);
     s_device_id[sizeof(s_device_id) - 1] = '\0';
   }
-  if (firmware_version) {
+  if (firmware_version && firmware_version != s_firmware_version) {
     strncpy(s_firmware_version, firmware_version, sizeof(s_firmware_version) - 1);
     s_firmware_version[sizeof(s_firmware_version) - 1] = '\0';
   }
-  if (public_key_hex) {
+  if (public_key_hex && public_key_hex != s_public_key_hex) {
     strncpy(s_public_key_hex, public_key_hex, sizeof(s_public_key_hex) - 1);
     s_public_key_hex[sizeof(s_public_key_hex) - 1] = '\0';
   }
+}
 
-  /* Tear down any prior session so a /api/mqtt/config POST that flips
-   * enabled / changes broker comes up cleanly. Idempotent on first
-   * boot (s_client is nullptr). */
-  teardown_client();
-
-  /* F47: restore the delivery watermark from the persisted ceiling — on
-   * the boot-time init() ONLY. The ceiling is written kStride ahead of
-   * the id it covers, so on a runtime re-init (a /api/mqtt/config POST,
-   * the connection test) reading it back would jump a live watermark
-   * past ids committed but not yet handed over, and iterate_since()
-   * would then skip them for good; the RAM watermark is exact while the
-   * firmware runs, so a re-init keeps it. Only a reboot loses it, and
-   * only there is the stride's skip the accepted trade.
-   * The rule is csi_event_backfill::restore(), Planner::begin's, host-
-   * tested in test_csi_event_backfill.cpp. With no ceiling on record (the
-   * first boot of this firmware), every id below the restored id floor is
-   * treated as delivered — an earlier image may have published it, and HA
-   * would refuse it again — and the record starts here, written now so
-   * rows still on the card survive a reboot as owed instead of falling
-   * under the same assumption (a ceiling is never 0). A ceiling the id
-   * allocator did not follow (past kHoldLimit; an older firmware wrote one
-   * for a forged card line) is no record either (backlog F46): kept, it
-   * would read every row this boot commits as delivered, on every boot.
-   * A failed write retries on the next hand-over. */
-  if (!s_watermark_restored) {
-    s_watermark_restored = true;
-    Preferences prefs;
-    if (prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
-      s_delivered_ceiling = (uint32_t)prefs.getULong(NVS_KEY_DELIVERED, 0);
-      prefs.end();
-    }
-    const csi_event_backfill::Restored restored = csi_event_backfill::restore(
-        s_delivered_ceiling, csi_integration::event_id_floor_stored());
-    if (restored.through > s_last_published_event_id) {
-      s_last_published_event_id = restored.through;
-    }
-    if (restored.write != 0) {
-      s_delivered_ceiling = 0;   /* no record until the rewrite lands */
-      Preferences rw;
-      if (rw.begin(SETTINGS_NS, /*readOnly=*/false)) {
-        const uint32_t c = s_last_published_event_id + 1;
-        if (rw.putULong(NVS_KEY_DELIVERED, (unsigned long)c) > 0) {
-          s_delivered_ceiling = c;
-        }
-        rw.end();
-      }
-    }
-  }
-
+namespace {
+/* Loop task, with no client open: read the settings from NVS and open the
+ * client they name (or none: disabled, no host, a refused TLS mode). The
+ * boot init() and every served re-init run it; neither ever stops a client
+ * here (a re-init's old one is retire_task's). */
+bool open_client() {
+  /* The delivery watermark is not this function's: the egress restores it
+   * once per boot (csi_event_egress::begin, from csi_integration::init after
+   * the event-id floor), and a re-init keeps it. A re-init that changes the
+   * destination (host, port, user or prefix) bumps destination_epoch(), and
+   * the egress drops what waited for the old broker; the boot's first init
+   * only records it. */
+  const uint32_t prev_dest = destination_digest(s_active_cfg);
   if (!config_load(&s_active_cfg)) return false;
+  if (s_dest_known && destination_digest(s_active_cfg) != prev_dest) {
+    s_dest_epoch.fetch_add(1, std::memory_order_relaxed);
+  }
+  s_dest_known = true;
+  s_accepting.store(s_active_cfg.enabled && s_active_cfg.host[0] != '\0',
+                    std::memory_order_relaxed);
   if (!s_active_cfg.enabled) {
     Serial.println("[MQTT] disabled in NVS — bridge not started");
     return true;
@@ -597,17 +700,31 @@ bool init(const char* device_id,
   cfg.session.last_will.qos     = 1;
   cfg.session.last_will.retain  = 1;
   cfg.session.keepalive         = 60;
+  /* Sweep F112: every socket operation esp_mqtt runs for this client (the
+   * loop task's publish writes, and the connect, pings and resends it holds
+   * the API lock across) gives up after this long without progress, not
+   * after esp_mqtt's 10 s default, past the loop's 8 s watchdog. The
+   * nested IDF 5 field, like every field above: canary-wap builds only on
+   * Arduino-ESP32 3.x (IDF 5.5). */
+  cfg.network.timeout_ms        = (int)kNetworkTimeoutMs;
 
-  s_client = esp_mqtt_client_init(&cfg);
-  if (!s_client) {
+  esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
+  if (!client) {
     Serial.println("[MQTT] esp_mqtt_client_init returned null");
     return false;
   }
   esp_mqtt_client_register_event(
-      s_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, nullptr);
-  if (esp_mqtt_client_start(s_client) != ESP_OK) {
+      client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, nullptr);
+  /* The open client before its task starts: its handler checks it. A stale
+   * s_connected from a detached client's last event is cleared first. */
+  s_connected.store(false, std::memory_order_relaxed);
+  s_client.store(client, std::memory_order_release);
+  if (esp_mqtt_client_start(client) != ESP_OK) {
     Serial.println("[MQTT] esp_mqtt_client_start failed");
-    teardown_client();
+    s_client.store(nullptr, std::memory_order_release);
+    /* Never started: there is no esp_mqtt task to wait for, so the destroy
+     * returns at once (it stops only a running client). */
+    esp_mqtt_client_destroy(client);
     return false;
   }
   Serial.printf("[MQTT] bridge started: %s transport=%s prefix=%s\n", uri,
@@ -615,35 +732,93 @@ bool init(const char* device_id,
   return true;
 }
 
-/* iterate_since callback used by the backfill drain. We stop iterating
- * the moment either the broker drops OR a publish fails to enqueue
- * (queue full, network glitch, etc.) so the watermark doesn't tick
- * past a record that never reached HA — letting later successful
- * publishes "skip over" the failed one would permanently lose the
- * event on subsequent reconnects (PR #395 review r3213834314). The
- * next CONNECTED rearms s_backfill_pending and we resume from the
- * unchanged watermark. */
-static bool backfill_publish_cb(const csi_event_record_t* rec, void* /*user*/) {
-  if (!s_connected.load(std::memory_order_relaxed)) return false;
-  return publish_event_record(rec);
+/* Loop task: a re-init another task asked for (sweep F106). It never waits:
+ * the open client is detached and handed to retire_task, and the passes
+ * after that return at once until the worker says it is gone; then one
+ * open_client() serves every request made before it began, because it
+ * reads NVS afresh (and keeps the identity set_identity() stored). A
+ * request made while it runs waits for the next re-init. */
+void serve_reinit() {
+  if (!retire_finished()) return;                 /* the old client is still stopping */
+  if (s_reinit_wanted.load(std::memory_order_acquire) ==
+      s_reinit_served.load(std::memory_order_relaxed)) {
+    return;
+  }
+  if (s_client.load(std::memory_order_relaxed) != nullptr) {
+    detach_client();
+    if (!retire_finished()) return;               /* a later pass opens the new one */
+  }
+  const uint32_t wanted = s_reinit_wanted.load(std::memory_order_acquire);
+  (void)open_client();
+  s_reinit_served.store(wanted, std::memory_order_release);
+}
+}  /* namespace */
+
+bool init(const char* device_id,
+          const char* firmware_version,
+          const char* public_key_hex) {
+  set_identity(device_id, firmware_version, public_key_hex);
+  /* The boot's one call (start_http_server): no health has been built yet,
+   * so no egress publish names one. */
+  s_health_built = false;
+  /* The boot's open (setup()'s start_http_server, before loop() runs). A
+   * client already open, or still being retired, is never stopped here: that
+   * could wait out a connect attempt. Hand it to loop()'s re-init instead. */
+  if (s_client.load(std::memory_order_relaxed) != nullptr || s_retiring != nullptr) {
+    (void)request_reinit();
+    return true;
+  }
+  return open_client();
 }
 
 void loop() {
-  /* Backfill drain. esp_mqtt runs its own task and signals reconnect
-   * via s_backfill_pending; we drain on the main loop because the
-   * SD walk can take longer than the MQTT event callback should
-   * hold, and append() also runs on the main loop so we serialize
-   * naturally without a mutex. */
-  if (s_backfill_pending.exchange(false, std::memory_order_relaxed)) {
-    if (s_connected.load(std::memory_order_relaxed)) {
-      const size_t n = csi_event_log::iterate_since(
-          s_last_published_event_id, backfill_publish_cb, nullptr);
-      if (n > 0) {
-        Serial.printf("[MQTT] backfill replayed %u events past id=%lu\n",
-                      (unsigned)n, (unsigned long)s_last_published_event_id);
-      }
+  /* First, so the pump below sees a changed destination's epoch the pass the
+   * new client opens. */
+  serve_reinit();
+
+  /* The committed-event egress: the SD log, the live publishes and the
+   * reconnect backfill, on this (the main loop's) task. */
+  csi_event_egress::pump();
+
+  /* The auto-update switch's state, set from any task. */
+  if (s_update_auto_dirty.exchange(false, std::memory_order_acq_rel)) {
+    const int state = s_last_update_auto.load(std::memory_order_relaxed);
+    if (state >= 0) {
+      char topic[192];
+      build_topic(topic, sizeof(topic), "update/auto");
+      const char* pl = state ? "ON" : "OFF";
+      publish_raw(topic, pl, strlen(pl), /*retain=*/true);
     }
   }
+}
+
+uint32_t request_reinit() {
+  return s_reinit_wanted.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+bool reinit_done(uint32_t request) {
+  return (int32_t)(s_reinit_served.load(std::memory_order_acquire) - request) >= 0;
+}
+
+namespace {
+/* Any task but the loop task (it would wait for itself): wait up to
+ * timeout_ms for the loop task to serve `request`. True when it has. */
+bool wait_reinit(uint32_t request, uint32_t timeout_ms) {
+  const uint32_t start = millis();
+  while (!reinit_done(request)) {
+    if ((uint32_t)(millis() - start) >= timeout_ms) return false;
+    delay(kReinitPollMs);
+  }
+  return true;
+}
+}  /* namespace */
+
+bool accepting() {
+  return s_accepting.load(std::memory_order_relaxed);
+}
+
+uint32_t destination_epoch() {
+  return s_dest_epoch.load(std::memory_order_relaxed);
 }
 
 bool connected() {
@@ -657,6 +832,8 @@ bool connected() {
  *   events: {event_type, timestamp, zone, confidence, signed, motion,
  *            breathing, bpm, duration_sec, state}
  *   health: {battery, memory_free, uptime, firmware_version, public_key}
+ *   egress: csi_event_egress::stats_json (the canary's health
+ *           csi_event_egress object; HA's health sensor attributes)
  *   chain : {length, latest_hash, algorithm}
  *   counts: {total}
  *   status: {online, csi_running, wifi_connected, rssi}
@@ -678,7 +855,7 @@ bool connected() {
  * is_replay flips the JSON's `replay` field so HA Device Triggers can
  * filter backfill traffic out of their match expressions and avoid
  * re-firing automations for old events after a reconnect (PR #398
- * review r3214114357). Live publishes pass false; publish_event_record
+ * review r3214114357). Live publishes pass false; the SD backfill
  * passes true. Either way, sensors and binary_sensors that ignore the
  * replay flag still see the up-to-date state — only the trigger path
  * gates on it.
@@ -716,51 +893,9 @@ size_t build_event_body(char* body, size_t cap,
 }
 }  /* namespace */
 
-/* Single helper for the "publish-then-advance-watermark" pattern so the
- * live emit and backfill-replay paths agree on what counts as "HA has
- * seen this id" (PR #395 review r3213834627). publish_raw is the shared
- * chokepoint that already enforces "only count successful enqueues";
- * we just relay its outcome and advance the watermark when both the
- * enqueue succeeded AND the new id is higher than what we already
- * tracked. Returns the publish_raw outcome so callers can stop
- * mid-replay (PR #395 review r3213834314). */
-/* csi_event_backfill's persist_for, over this sketch's NVS (F47): before
- * an id is handed over, NVS must already hold a ceiling above it, capped
- * at the id allocator's persisted floor. A failed write leaves
- * s_delivered_ceiling unchanged so the next hand-over tries again; the
- * row still goes out — delivery cannot wait on flash, the same trade the
- * id floor makes. */
-static void persist_delivered_ceiling(uint32_t event_id) {
-  if (event_id == 0) return;
-  if (!csi_event_id_floor::must_persist(s_delivered_ceiling, event_id)) return;
-  const uint32_t c = csi_event_backfill::ceiling_for(
-      event_id, csi_integration::event_id_floor_stored());
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return;
-  const bool wrote = prefs.putULong(NVS_KEY_DELIVERED, (unsigned long)c) > 0;
-  prefs.end();
-  if (wrote) s_delivered_ceiling = c;
-}
-
-static bool publish_and_advance(const char* topic,
-                                const char* body, size_t n,
-                                bool retain,
-                                uint32_t event_id) {
-  persist_delivered_ceiling(event_id);
-  if (!publish_raw(topic, body, n, retain)) return false;
-  if (event_id > s_last_published_event_id) {
-    s_last_published_event_id = event_id;
-  }
-  return true;
-}
-
-void publish_event(uint32_t                  event_id,
-                   const char*               module_id,
-                   const char*               type_name,
-                   csi_event_category_t      category,
-                   csi_privacy_class_t       privacy,
-                   const csi_event_values_t* values) {
-  if (!values) return;
+EventSend publish_event_row(const csi_event_record_t& rec,
+                            uint16_t bundled_count,
+                            bool replay) {
   char topic[192];
   build_topic(topic, sizeof(topic), "events");
   /* body[] grew from 512 → 768 to accommodate the new sig envelope
@@ -769,14 +904,17 @@ void publish_event(uint32_t                  event_id,
    * topic + retained-flag overhead). */
   char body[768];
   const size_t n = build_event_body(body, sizeof(body),
-      event_id,
-      module_id, type_name, category, privacy, values,
-      /*timestamp_ms=*/(uint32_t)millis(),
-      /*bundled_count=*/1,
-      /*is_replay=*/false);
-  if (n == 0) return;
-  publish_and_advance(topic, body, n, /*retain=*/false, event_id);
+      rec.event_id,
+      rec.module_id, rec.type_name, rec.category, rec.privacy, &rec.values,
+      rec.first_seen_ms, bundled_count, replay);
+  if (n == 0) return EventSend::kUnbuildable;
+  return publish_raw(topic, body, n, /*retain=*/false) ? EventSend::kSent
+                                                      : EventSend::kNotNow;
+}
 
+bool publish_tamper_bridge(const char* module_id,
+                           const char* type_name,
+                           const csi_event_values_t* values) {
   /* Per-kind tamper bridge: the HA integration's tamper binary sensors —
    * the general one and the ten per-type ones — have subscribed to the
    * dedicated `tamper` topic since day one
@@ -788,38 +926,17 @@ void publish_event(uint32_t                  event_id,
    * publish and reads type/detail as attributes (the body is
    * csi_event_wire::build_tamper_bridge_body, the same one the canary PIO
    * tree publishes). state_name is chokepoint-sanitized ASCII, so no
-   * escaping is needed. LIVE emits only — the backfill replay path stays
+   * escaping is needed. LIVE commits only — the backfill replay path stays
    * off this topic on purpose: it carries no is_replay marker, and
    * re-firing tamper automations for old events is exactly what the
    * replay flag exists to prevent. */
   char tbody[128];
   const size_t tn = csi_event_wire::build_tamper_bridge_body(
       tbody, sizeof(tbody), module_id, type_name, values);
-  if (tn > 0) {
-    char ttopic[192];
-    build_topic(ttopic, sizeof(ttopic), "tamper");
-    publish_raw(ttopic, tbody, tn, /*retain=*/false);
-  }
-}
-
-bool publish_event_record(const csi_event_record_t* rec) {
-  if (!rec) return false;
-  char topic[192];
-  build_topic(topic, sizeof(topic), "events");
-  char body[768];
-  /* For backfill, anchor the timestamp at the event's first_seen_ms
-   * so HA's history places it at the right moment instead of "now".
-   * Bundled count comes straight from the on-disk record. is_replay
-   * marks the payload so HA Device Triggers can filter it out and
-   * avoid re-firing automations for old events (PR #398 review
-   * r3214114357). */
-  const size_t n = build_event_body(body, sizeof(body),
-      rec->event_id,
-      rec->module_id, rec->type_name, rec->category, rec->privacy, &rec->values,
-      rec->first_seen_ms, rec->bundled_count,
-      /*is_replay=*/true);
-  if (n == 0) return false;
-  return publish_and_advance(topic, body, n, /*retain=*/false, rec->event_id);
+  if (tn == 0) return false;
+  char ttopic[192];
+  build_topic(ttopic, sizeof(ttopic), "tamper");
+  return publish_raw(ttopic, tbody, tn, /*retain=*/false);
 }
 
 void publish_chain(uint32_t length, const uint8_t* latest_hash_32) {
@@ -884,8 +1001,8 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
    * passes the real state and HA gets SoC, charge state, and the
    * cycle-fade health estimate. The object is closed below, after the
    * optional tamper levels. Worst case (battery, the 11-char
-   * "discharging", 10-digit counters, a 23-char firmware version, both
-   * levels): 323 bytes, so 384 still fits with room to spare. */
+   * "discharging", 10-digit counters, a 23-char firmware version, the
+   * event-id flag, both levels): 350 bytes, so 384 still fits. */
   char body[384];
   int n;
   if (battery) {
@@ -924,6 +1041,15 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
   }
   if (n <= 0 || (size_t)n >= sizeof(body)) return;
   size_t len = (size_t)n;
+  /* The event-id space is running out (sweep F82), the canary PIO tree's
+   * flag of the same name: true once the allocator reaches
+   * csi_event_id_floor::kHoldLimit, and after it wraps, when Home Assistant
+   * starts refusing this device's events. A warning only: the recovery is
+   * not decided yet. */
+  n = snprintf(body + len, sizeof(body) - len, ",\"event_id_space_low\":%s",
+               csi_event_id_floor::space_low(csi_event_get_next_event_id()) ? "true" : "false");
+  if (n <= 0 || (size_t)n >= sizeof(body) - len) return;
+  len += (size_t)n;
   /* The tamper levels (F41), each only when the .ino reports it — see
    * MqttTamperLevels for why an absent key is the right answer. */
   if (tamper && tamper->sd_mounted >= 0) {
@@ -941,7 +1067,25 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
   if (len + 1 >= sizeof(body)) return;
   body[len++] = '}';
   body[len] = '\0';
+  s_health_uptime = uptime_sec;
+  s_health_built = true;
   publish_raw(topic, body, len, /*retain=*/true);
+}
+
+void publish_egress() {
+  /* Only after a health body this boot: the egress body names the health
+   * it follows, by the firmware version and the uptime that body carried. */
+  if (!s_health_built) return;
+  char object[csi_event_egress::kStatsJsonMax];
+  if (csi_event_egress::stats_json(csi_event_egress::stats(), object, sizeof(object)) == 0) return;
+  char topic[192];
+  build_topic(topic, sizeof(topic), "egress");
+  char body[kEgressBodyMax];
+  const int n = snprintf(body, sizeof(body),
+      "{\"firmware_version\":\"%s\",\"uptime\":%lu,\"csi_event_egress\":%s}",
+      s_firmware_version, (unsigned long)s_health_uptime, object);
+  if (n <= 0 || (size_t)n >= sizeof(body)) return;
+  publish_raw(topic, body, (size_t)n, /*retain=*/true);
 }
 
 void publish_update_state(const char* json_payload) {
@@ -958,12 +1102,12 @@ void publish_update_state(const char* json_payload) {
               /*retain=*/true);
 }
 
-void publish_update_auto_state(bool enabled) {
+void set_update_auto_state(bool enabled) {
+  /* Cached for the reconnect republish; loop() publishes it (an httpd
+   * handler sets it, and a publish from there could hold a client the
+   * loop task's re-init destroys: sweep F106). */
   s_last_update_auto.store(enabled ? 1 : 0, std::memory_order_relaxed);
-  char topic[192];
-  build_topic(topic, sizeof(topic), "update/auto");
-  const char* pl = enabled ? "ON" : "OFF";
-  publish_raw(topic, pl, strlen(pl), /*retain=*/true);
+  s_update_auto_dirty.store(true, std::memory_order_release);
 }
 
 bool take_pending_install() {
@@ -1298,12 +1442,52 @@ const DiscoveryEntity ENTITIES[] = {
 #endif
 };
 
+/* The entity id each config asks Home Assistant for (sweep HA16):
+ * "def_ent_id" (default_entity_id, Home Assistant 2025.10 and later) is a
+ * full entity id, <component>.<device id slug>_<object_id>, the id the docs
+ * give (binary_sensor.<id>_smoke_alarm). Home Assistant keeps the part after
+ * the '.' as the object id when it first registers the entity; one already
+ * in its registry keeps the id it has, and an older release drops the key
+ * (its discovery schemas remove keys they do not know). Without it the id
+ * came from the device name and the entity name
+ * (binary_sensor.canary_<id>_smoke_alarm_heard).
+ *
+ * The slug is s_device_id the way Home Assistant's slugify treats an ASCII
+ * name: letters lowercased, digits kept, every run of anything else one '_'
+ * (an '_' included), none at either end. It is never longer than
+ * s_device_id (each '_' stands for at least one character), so a buffer of
+ * sizeof(s_device_id) holds it whole. */
+void device_id_slug(char* out, size_t cap) {
+  if (cap == 0) return;
+  size_t n = 0;
+  bool gap = false;
+  for (const char* p = s_device_id; *p; ++p) {
+    char c = *p;
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    const bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    if (!keep) {
+      gap = (n > 0);
+      continue;
+    }
+    if (gap && n + 1 < cap) out[n++] = '_';
+    gap = false;
+    if (n + 1 < cap) out[n++] = c;
+  }
+  out[n] = '\0';
+}
+
 /* Emit one entity's config payload. Returns true on enqueue success.
- * The discovery JSON is built into a fixed 768-byte buffer; current
- * worst-case payload is ~620 bytes (state-topic entity with full
- * device block + availability), so 768 leaves a comfortable margin. */
+ * The discovery JSON is built into a fixed 768-byte buffer. The longest
+ * body is the presence entity's: 762 bytes at the longest device id (32),
+ * prefix (31, what config_load reads back) and firmware version (23) the
+ * bridge holds, and 654 at a device's own 14-character id with that
+ * prefix. test_ha_discovery_ids.cpp formats every config at those lengths
+ * and holds each under the buffer; a body that does not fit is never
+ * published, and publish_discovery() stops at it. */
 bool publish_one_discovery(const DiscoveryEntity& e) {
   const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
+  char slug[sizeof(s_device_id)];
+  device_id_slug(slug, sizeof(slug));
 
   /* Topic: homeassistant/{component}/canary_<device_id>/{object_id}/config.
    * Validate against truncation — a clipped topic would publish to a
@@ -1335,6 +1519,7 @@ bool publish_one_discovery(const DiscoveryEntity& e) {
     "{"
       "\"name\":\"%s\","
       "\"uniq_id\":\"canary_%s_%s\","
+      "\"def_ent_id\":\"%s.%s_%s\","
       "\"stat_t\":\"%s/%s/%s\","
       "\"val_tpl\":\"%s\","
       "\"avty_t\":\"%s/%s/status\","
@@ -1350,6 +1535,7 @@ bool publish_one_discovery(const DiscoveryEntity& e) {
     "}",
     e.name,
     s_device_id, e.object_id,
+    e.component, slug, e.object_id,
     prefix, s_device_id, e.state_topic,
     e.val_tpl,
     prefix, s_device_id,
@@ -1370,6 +1556,8 @@ bool publish_update_discovery() {
 
   char topic[192];
   char body[768];
+  char slug[sizeof(s_device_id)];
+  device_id_slug(slug, sizeof(slug));
 
   /* HA `update` entity: installed/latest version with release notes and
    * an Install button; progress reported via the JSON state payload. */
@@ -1381,6 +1569,7 @@ bool publish_update_discovery() {
     "{"
       "\"name\":\"Firmware\","
       "\"uniq_id\":\"canary_%s_firmware\","
+      "\"def_ent_id\":\"update.%s_firmware\","
       "\"stat_t\":\"%s/%s/update/state\","
       "\"cmd_t\":\"%s/%s/update/cmd\","
       "\"pl_inst\":\"install\","
@@ -1396,6 +1585,7 @@ bool publish_update_discovery() {
       "}"
     "}",
     s_device_id,
+    slug,
     prefix, s_device_id,
     prefix, s_device_id,
     prefix, s_device_id,
@@ -1413,6 +1603,7 @@ bool publish_update_discovery() {
     "{"
       "\"name\":\"Auto Update\","
       "\"uniq_id\":\"canary_%s_auto_update\","
+      "\"def_ent_id\":\"switch.%s_auto_update\","
       "\"stat_t\":\"%s/%s/update/auto\","
       "\"cmd_t\":\"%s/%s/update/auto/cmd\","
       "\"ic\":\"mdi:update\","
@@ -1428,6 +1619,7 @@ bool publish_update_discovery() {
       "}"
     "}",
     s_device_id,
+    slug,
     prefix, s_device_id,
     prefix, s_device_id,
     prefix, s_device_id,
@@ -1451,10 +1643,13 @@ bool publish_mic_discovery() {
   if (tn <= 0 || (size_t)tn >= sizeof(topic)) return false;
 
   char body[768];
+  char slug[sizeof(s_device_id)];
+  device_id_slug(slug, sizeof(slug));
   const int n = snprintf(body, sizeof(body),
     "{"
       "\"name\":\"Microphone Mute\","
       "\"uniq_id\":\"canary_%s_mic_mute\","
+      "\"def_ent_id\":\"switch.%s_mic_mute\","
       "\"stat_t\":\"%s/%s/mic/state\","
       "\"cmd_t\":\"%s/%s/mic/cmd\","
       "\"pl_on\":\"mute\","
@@ -1474,6 +1669,7 @@ bool publish_mic_discovery() {
       "}"
     "}",
     s_device_id,
+    slug,
     prefix, s_device_id,
     prefix, s_device_id,
     prefix, s_device_id,
@@ -2003,9 +2199,12 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  /* Reinit so the new credentials take effect immediately. init()
-   * tears down any prior client and re-opens. */
-  init(s_device_id, s_firmware_version, s_public_key_hex);
+  /* The new credentials take effect on the loop task, which tears the old
+   * client down and opens the new one (sweep F106: init() here destroyed
+   * the client under a loop-task publish). Wait a moment for it so the
+   * page's status refresh sees the new client; the save stands either
+   * way, and the re-init runs when the loop task gets to it. */
+  (void)wait_reinit(request_reinit(), kReinitWaitMs);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, "{\"ok\":true}", -1);
@@ -2021,18 +2220,20 @@ esp_err_t handle_test(httpd_req_t* req) {
     httpd_resp_sendstr(req, "{\"error\":\"unauthorized\"}");
     return ESP_OK;
   }
-  /* esp_mqtt's connect is async — give it a couple of seconds to
-   * either flip s_connected or return an error event. The MQTT task
-   * runs on its own core so this poll doesn't block the network
-   * stack; we just yield often enough that the WiFi worker stays
-   * responsive. */
-  init(s_device_id, s_firmware_version, s_public_key_hex);
-  uint32_t waited = 0;
-  while (!s_connected.load(std::memory_order_relaxed) && waited < 4000) {
+  /* A fresh connect, run by the loop task (sweep F106: init() here
+   * destroyed the client under a loop-task publish), then esp_mqtt's
+   * async connect: s_connected flips, or an error event lands. Both
+   * within the 4 s this always waited for the connect, polling with
+   * delay() so the WiFi worker stays responsive. The old client's
+   * s_connected is not read: only after the re-init has torn it down. */
+  const uint32_t start = millis();
+  const bool reinit = wait_reinit(request_reinit(), kTestBudgetMs);
+  uint32_t waited = (uint32_t)(millis() - start);
+  while (reinit && !s_connected.load(std::memory_order_relaxed) && waited < kTestBudgetMs) {
     delay(100);
-    waited += 100;
+    waited = (uint32_t)(millis() - start);
   }
-  const bool ok = s_connected.load(std::memory_order_relaxed);
+  const bool ok = reinit && s_connected.load(std::memory_order_relaxed);
   httpd_resp_set_type(req, "application/json");
   char body[320];
   snprintf(body, sizeof(body),

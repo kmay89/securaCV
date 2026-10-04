@@ -91,10 +91,15 @@ void csi_event_on_committed(uint32_t /*event_id*/,
 
 namespace {
 
+/* Register, then run the boot init a host runs (csi_module_init_all):
+ * csi_module_tick_all ticks no module whose init has not run (sweep F93). */
 void register_module_once() {
   static bool registered = false;
   if (!registered) {
     assert(csi_module_register(meta_empty_room_baseline_module()));
+    const size_t ran = csi_module_init_all(nullptr);
+    assert(ran == 1);
+    (void)ran;
     registered = true;
   }
 }
@@ -104,7 +109,7 @@ void fresh_world() {
   meta_empty_room_baseline_test_reset();
   register_module_once();
   /* test_reset clears the virtual clock too, so re-establish AFTER the
-   * register-triggered init() so start() reads a known now_ms. */
+   * boot init() so start() reads a known now_ms. */
   meta_empty_room_baseline_test_reset();
   meta_empty_room_baseline_test_set_now_ms(1000);
 }

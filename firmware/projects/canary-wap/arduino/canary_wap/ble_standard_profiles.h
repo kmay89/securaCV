@@ -67,6 +67,10 @@ static constexpr uint16_t GAP_APPEARANCE_CAMERA  = 0x0541;
 // copy and silently no-op. Caught by gemini-code-assist on PR #333;
 // requires C++17, which the project already builds with.
 inline NimBLECharacteristic* g_battery_char = nullptr;
+// Written by register_battery() on the task that runs bluetooth_channel's
+// init() (the BLE bring-up worker or an HTTP handler's) while the loop task
+// reads it for GET /api/bluetooth (sweep F167): stored and loaded whole
+// (__atomic), never torn.
 inline uint8_t               g_battery_level_pct = 100;
 
 // Build a single SIG service that exposes the static device-info strings.
@@ -101,7 +105,8 @@ inline void register_dis(NimBLEServer* server,
 inline void register_battery(NimBLEServer* server, uint8_t initial_pct) {
   NimBLEService* bas = server->createService(NimBLEUUID((uint16_t)SVC_BATTERY));
   if (!bas) return;
-  g_battery_level_pct = initial_pct > 100 ? 100 : initial_pct;
+  __atomic_store_n(&g_battery_level_pct, (uint8_t)(initial_pct > 100 ? 100 : initial_pct),
+                   __ATOMIC_RELAXED);
   g_battery_char = bas->createCharacteristic(
     NimBLEUUID((uint16_t)CHR_BATTERY_LEVEL),
     NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
@@ -115,14 +120,14 @@ inline void register_battery(NimBLEServer* server, uint8_t initial_pct) {
 // Update + notify subscribed clients. No-op until register_battery has run.
 inline void set_battery_level(uint8_t pct) {
   if (pct > 100) pct = 100;
-  g_battery_level_pct = pct;
+  __atomic_store_n(&g_battery_level_pct, pct, __ATOMIC_RELAXED);
   if (g_battery_char) {
     g_battery_char->setValue(&g_battery_level_pct, 1);
     g_battery_char->notify();
   }
 }
 
-inline uint8_t get_battery_level() { return g_battery_level_pct; }
+inline uint8_t get_battery_level() { return __atomic_load_n(&g_battery_level_pct, __ATOMIC_RELAXED); }
 
 // Single entry point — call after the main GATT service has been started
 // so this lives next to it on the same NimBLE server.

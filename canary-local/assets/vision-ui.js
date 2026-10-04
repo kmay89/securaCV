@@ -715,6 +715,51 @@ export function buildSerial(data, bus) {
 }
 
 // ── §the MQTT explorer ────────────────────────────────────────────────────
+// A sandbox event as main.cpp's publish_event_json writes it: the generated
+// example (every key, in the firmware's order, with the v/alg/fp/sig
+// envelope) with the sandbox's own values laid over it, and a reason, when
+// the event has one, right after its name, where the firmware puts it.
+// Its clocks and coarse features are the sandbox's too (sweep A37), as the
+// firmware takes them from its FSM snapshot on the tick that emits the
+// event. From the firmware core's FSM: presence_ms, dwell_ms (0 on
+// dwell_started, where the dwell starts; on dwell_ended the dwell it
+// closed, sweep F130), visit_ms (the last completed stay, latched at
+// presence_ended) and the voxel, the tracker's settled cell (sweep A39: it
+// lags the frame's cell by a few frames and keeps the last cell once the
+// frame is empty). From its detection pipeline: posture, proximity, the
+// person count's occupancy bucket and the occupied-cell mask. ts_ms is the
+// sandbox clock (as the core saw it) plus the pane's clock.t0_ms.
+export function vizEventPayload(example, name, snap, seq, clock = {}) {
+  const bb = snap.sample.bbox || { x: 0, y: 0, w: 0, h: 0, score: 0 };
+  const v = snap.fsm.voxel;
+  const present = !!snap.fsm.presence;
+  const ts = (clock.t0_ms || 0) + ((snap.t || 0) >>> 0);
+  const names = clock.occupancy || ["none", "one", "two", "several"];
+  const count = Math.max(0, snap.sample.person_count | 0);
+  const over = {
+    event: name, seq,
+    bucket_uptime_s: Math.floor(ts / 1000 / 600) * 600,
+    presence: present ? "present" : "clear", occupants: present ? "1" : "0",
+    ts_ms: ts,
+    presence_ms: snap.fsm.presence_ms | 0,
+    dwell_ms: snap.fsm.dwell_ms | 0,
+    visit_ms: snap.fsm.visit_ms | 0,
+    confidence: snap.fsm.confidence != null ? snap.fsm.confidence : bb.score,
+    voxel: { ...example.voxel, rows: v.rows, cols: v.cols, r: v.r, c: v.c },
+    bbox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
+    occupancy: names[Math.min(count, names.length - 1)],
+    posture: snap.sample.posture || "unknown",
+    proximity: snap.sample.proximity || "unknown",
+    occ_mask: snap.sample.voxel_mask >>> 0,
+  };
+  const out = {};
+  for (const k of Object.keys(example)) {
+    out[k] = k in over ? over[k] : example[k];
+    if (k === "event" && snap.reason) out.reason = snap.reason;
+  }
+  return out;
+}
+
 export function buildMqtt(data, bus) {
   const id = data.device.id_example;
   const wrap = el("div", "wap-mqtt");
@@ -722,7 +767,7 @@ export function buildMqtt(data, bus) {
   const dots = el("span", "hub-term-dots");
   dots.append(el("i"), el("i"), el("i"));
   bar.append(dots, el("span", "hub-term-title", "your broker · securacv/" + id + "/#"),
-    el("span", "hub-term-sim", "topics from topics.h · payloads from main.cpp"));
+    el("span", "hub-term-sim", "topics from topics.h · " + data.mqtt.pane.source));
   const scroll = el("div", "wap-term-scroll vis-mqtt-scroll");
   wrap.append(bar, scroll);
 
@@ -749,15 +794,20 @@ export function buildMqtt(data, bus) {
     "quiet — boot the device in the console (or just poke the sandbox) and the retained surfaces fill in");
   scroll.append(idle);
 
+  // Every payload is vision.json's (gen_vision.py), keyed as mqtt_mgr.cpp
+  // and main.cpp publish it; the sandbox only overlays its own values.
+  const pane = data.mqtt.pane;
+  const like = (suffix) => JSON.parse(pane.online.find((r) => r.suffix === suffix).payload);
+  const live = { state: like("state"), chain: like("chain"), cfg: like("cfg/state") };
+  const current = { state: live.state, chain: live.chain, "cfg/state": live.cfg };
+  let seq = live.chain.length;
+  // the sandbox clock's zero sits at the rows' own ts_ms
+  const clock = { t0_ms: pane.clock.t0_ms, occupancy: pane.occupancy };
   bus.on("online", () => {
     idle.remove();
-    const base = "securacv/" + id;
-    row(base + "/status", '"online"', true);
-    row(base + "/cfg/state", JSON.stringify(data.mqtt.cfg_state_example), true);
-    row(base + "/state", '{"presence":"empty","occupants":"none","confidence":0}', true);
-    row(base + "/health", '{"fw":"' + data.device.fw_version + '","public_key":"ed25519:…"}', true);
-    row(base + "/chain", '{"length":1,"head":"…"}', true);
-    row(base + "/aim/state", '"OFF"', true);
+    // a (re)connect republishes the retained surfaces as they stand now
+    for (const r of pane.online)
+      row("securacv/" + id + "/" + r.suffix, current[r.suffix] ? JSON.stringify(current[r.suffix]) : r.payload, r.retain);
   });
   bus.on("mqtt", () => {
     const n = data.mqtt.discovery.entities.length;
@@ -765,29 +815,36 @@ export function buildMqtt(data, bus) {
   });
   bus.on("sim-event", ({ name, snap }) => {
     const base = "securacv/" + id;
-    const bb = snap.sample.bbox || { x: 0, y: 0, w: 0, h: 0, score: 0 };
-    const v = snap.sample.voxel || { r: -1, c: -1 };
-    row(base + "/events", JSON.stringify({
-      event: name, ...(snap.reason ? { reason: snap.reason } : {}),
-      signed: true, confidence: bb.score,
-      voxel: { r: v.r, c: v.c }, bbox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
-    }), false);
-    row(base + "/state", JSON.stringify({
-      presence: snap.fsm.presence ? (snap.fsm.dwelling ? "dwelling" : "present") : "empty",
-      confidence: bb.score,
-    }), true);
+    const row2 = (suffix, obj, retain) => row(base + "/" + suffix, JSON.stringify(obj), retain);
+    const ev = vizEventPayload(JSON.parse(pane.events.payload), name, snap, ++seq, clock);
+    row2("events", ev, false);
+    // publish_state_now, on the same tick: the same snapshot, as the state row keys it
+    Object.assign(live.state, {
+      presence: !!snap.fsm.presence, dwelling: !!snap.fsm.dwelling,
+      presence_ms: ev.presence_ms, dwell_ms: ev.dwell_ms,
+      confidence: ev.confidence, voxel: ev.voxel, bbox: ev.bbox,
+      occupancy: ev.occupancy, posture: ev.posture, proximity: ev.proximity, occ_mask: ev.occ_mask,
+      last_event: name, uptime_s: Math.floor(ev.ts_ms / 1000), ts_ms: ev.ts_ms,
+    });
+    row2("state", live.state, true);
+    // the event advanced the chain; main.cpp republishes the signed head,
+    // whose hash this page cannot know, so it is elided whole once it moves
+    live.chain.length = seq;
+    live.chain.latest_hash = "…";
+    row2("chain", live.chain, true);
   });
   bus.on("cfg", ({ cfg }) => {
-    row("securacv/" + id + "/cfg/state", JSON.stringify({
+    Object.assign(live.cfg, {
       target: cfg.person_target, score: cfg.score_min,
       lost_ms: cfg.lost_timeout_ms, dwell_ms: cfg.dwell_start_ms,
-    }), true);
+    });
+    row("securacv/" + id + "/cfg/state", JSON.stringify(live.cfg), true);
   });
   bus.on("aim-frame", ({ payload }) => {
     row("securacv/" + id + "/aim", JSON.stringify(payload), false);
   });
   bus.on("aim-state", ({ on }) => {
-    row("securacv/" + id + "/aim/state", on ? '"ON"' : '"OFF"', true);
+    row("securacv/" + id + "/aim/state", on ? "ON" : "OFF", true);
   });
 
   // the topic reference table
@@ -815,7 +872,7 @@ export function buildMqtt(data, bus) {
     data.mqtt.discovery.entities.length + " Home Assistant entities, announced by the device itself"), ents);
 
   const outer = el("div");
-  outer.append(wrap, det, det2,
+  outer.append(wrap, el("p", "muted fineprint vis-mqtt-note", pane.clock.note), det, det2,
     el("p", "muted fineprint", data.mqtt.discovery.note));
   return outer;
 }

@@ -281,10 +281,23 @@ static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 // without a flag, and stays aligned across millis() rollover because the
 // offset and csi_event's own millis()-based consumer wrap together. Loop
 // task only — the offset is loop-owned (csi_event.h).
+//
+// The same household minute of day feeds meta.daily_summary, whose 23:55
+// row needs it (sweep F121), with the local date it falls on as a key that
+// changes when the date does, so the summary is one per date across DST and
+// zone changes (UTC's date if localtime_r fails, as local_minute_of_day()
+// falls back). Both callers pass a synced clock; the guard says so here too,
+// so an unsynced clock feeds neither: no offset, and no daily summary,
+// rather than one at boot + 23 h 55 min.
 static void updateCsiClockOffset(time_t wall_now) {
+  if (wall_now < WALL_CLOCK_FLOOR) return;  // unsynced: feed nothing
   const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
   const int32_t mono_min = (int32_t)(millis() / 60000UL);
   csi_event_set_clock_offset_minutes(wall_min - mono_min);
+  struct tm local_tm = {};
+  if (localtime_r(&wall_now, &local_tm) == nullptr) (void)gmtime_r(&wall_now, &local_tm);
+  securacv_csi_modules_set_clock(
+      (uint16_t)wall_min, (uint32_t)local_tm.tm_year * 366u + (uint32_t)local_tm.tm_yday);
 }
 
 static void syncClockFromGps() {
@@ -554,18 +567,9 @@ static void register_paired_peer() {
   if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
     const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
     const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
-    /* Its radio address (F33 part 1): the session binds it into the
-     * transport table for this boot once this callback returns; persist it
-     * so the next boot can bind it too (FE-gated, like the pubkey). */
-    uint8_t peer_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
-    if (mesh_session::get_paired_peer_mac(peer_mac)) {
-      uint8_t peer_fp[mesh_crypto::FINGERPRINT_LEN];
-      mesh_crypto::compute_fingerprint(peer_pub, peer_fp);
-      if (!mesh_state::save_peer_mac(peer_fp, peer_mac)) {
-        Serial.println("[WARN] Peer radio MAC not persisted — after a reboot "
-                       "this peer is not heard until it pairs again");
-      }
-    }
+    /* Its radio address (F33 part 1) is bound by the session once this
+     * callback returns, and persisted from on_mesh_paired_peer_bound()
+     * after that, only when the bind took (F102). */
     if (peer_save_ok && peer_set_ok) {
       Serial.println("[OK] Peer pubkey persisted + registered for RX");
     } else if (peer_set_ok && !peer_save_ok) {
@@ -587,6 +591,65 @@ static void register_paired_peer() {
     Serial.println("[WARN] Paired but mesh_session has no peer pubkey "
                    "available — receive from this peer won't work");
   }
+}
+
+/* The session's bind of a just-paired member to the address it paired from
+ * (F102). Persist the address only when the bind took: until F102 it was
+ * saved from register_paired_peer(), which runs before the bind, so an
+ * address the session refused — one another member holds, as a re-pair
+ * relayed from a member's copied address presents it (F69), or a full
+ * transport table — was written anyway, and the next boot's restore,
+ * which binds peer_macs in blob order, could hand it to the wrong member
+ * (host-probed: the member that owned it was then not heard at all). A
+ * refused bind keeps the member's previous binding, in RAM and in NVS — a
+ * new member has none, and is heard from nowhere until it pairs from an
+ * address no member holds — and lands in the health log by fingerprint.
+ * Since F118 the refusals the session can foresee end the pairing before
+ * this (on_mesh_pairing_failed logs them), so a false here is one it could
+ * not: the register above refused, or the radio driver did. FE-gated like
+ * the pubkey. */
+static void on_mesh_paired_peer_bound(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                                      const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                                      bool bound) {
+  if (!bound) {
+    char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+    mesh_fp_hex(fp, hex);
+    Serial.printf("[WARN] Paired peer %s: its radio address was not bound "
+                  "(another member holds it, or the table is full) and is not "
+                  "persisted\n", hex);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "Opera pairing address refused", hex);
+    return;
+  }
+  if (!mesh_state::save_peer_mac(fp, mac)) {
+    Serial.println("[WARN] Peer radio MAC not persisted — after a reboot "
+                   "this peer is not heard until it pairs again");
+  }
+}
+
+/* The pairing ended without a member (mesh_session FailedCallback). A
+ * PARTNER_REFUSED is a pairing this device's owner confirmed and this
+ * device refused (F118, spec §5.2): the partner is a member it could not
+ * hold — another member holds its radio address, the opera is full, a
+ * deny-listed key — so nothing was sealed, installed or stored. Until F118
+ * such a pairing reported success, registered and persisted the partner's
+ * key, and only the address bind failed (on_mesh_paired_peer_bound). It
+ * goes to the health log by fingerprint, as that refusal did, since the
+ * pairing screen says no more than that the pairing ended (the confirm
+ * itself answers 409 partner_refused when the refusal came at it). Other
+ * failures (timeout, cancel, a bad CONFIRM or COMPLETE) are Serial only,
+ * as before. */
+static void on_mesh_pairing_failed(mesh_pairing::FailReason why,
+                                   const uint8_t* partner_fp) {
+  if (why != mesh_pairing::FailReason::PARTNER_REFUSED) {
+    Serial.printf("[INFO] Opera pairing ended: %s\n", mesh_pairing::fail_reason_name(why));
+    return;
+  }
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1] = "?";
+  if (partner_fp != nullptr) mesh_fp_hex(partner_fp, hex);
+  Serial.printf("[WARN] Opera pairing refused: this Canary cannot hold %s "
+                "(another member holds its address, or the opera is full)\n", hex);
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Opera pairing refused", hex);
 }
 
 static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
@@ -1449,8 +1512,9 @@ void setup() {
       uint8_t peers_buf[mesh_state::MAX_TRUSTED_PEERS
                         * mesh_crypto::PUBKEY_LEN];
       size_t peers_count = 0;
-      if (mesh_state::load_trusted_peers(peers_buf, sizeof(peers_buf),
-                                         &peers_count)) {
+      const bool peers_loaded =
+          mesh_state::load_trusted_peers(peers_buf, sizeof(peers_buf), &peers_count);
+      if (peers_loaded) {
         size_t registered = 0;
         for (size_t i = 0; i < peers_count; ++i) {
           if (mesh_session::register_trusted_peer(
@@ -1465,19 +1529,50 @@ void setup() {
       }
       /* Put the trusted peers' radio MACs back into the transport table
        * (F33 part 1) — without them mesh_transport drops every frame they
-       * send (recv_dropped_no_peer) and broadcast() reaches nobody. An
-       * entry whose fingerprint is not a registered peer binds nothing. */
+       * send (recv_dropped_no_peer) and broadcast() reaches nobody. After
+       * the pubkeys above: restore_peer_macs binds only a registered
+       * fingerprint's entry. It binds neither entry of an address two
+       * members' entries share (F119: a blob from before F102; in blob
+       * order the wrong one could take it) and nothing for a fingerprint
+       * that is no longer a member (F120). Both kinds are dropped from NVS
+       * here, so the members re-pair and the re-pair is stored (a kept
+       * entry holds the address, and save_peer_mac refuses it to anyone
+       * else) — but only when the pubkey list was read: a failed read
+       * registers nobody, and every entry would look untrusted. */
       {
         mesh_state::PeerMac macs[mesh_state::MAX_TRUSTED_PEERS];
         size_t n_macs = 0;
-        if (mesh_state::load_peer_macs(macs, mesh_state::MAX_TRUSTED_PEERS, &n_macs)) {
-          size_t bound = 0;
+        if (mesh_state::load_peer_macs(macs, mesh_state::MAX_TRUSTED_PEERS, &n_macs) &&
+            n_macs > 0) {
+          uint8_t mac_fps[mesh_state::MAX_TRUSTED_PEERS][mesh_crypto::FINGERPRINT_LEN];
+          uint8_t mac_addrs[mesh_state::MAX_TRUSTED_PEERS][mesh_transport::MESH_TRANSPORT_MAC_LEN];
           for (size_t i = 0; i < n_macs; ++i) {
-            if (mesh_session::bind_peer_mac(macs[i].fingerprint, macs[i].mac)) ++bound;
+            memcpy(mac_fps[i], macs[i].fingerprint, sizeof(mac_fps[i]));
+            memcpy(mac_addrs[i], macs[i].mac, sizeof(mac_addrs[i]));
           }
-          if (n_macs > 0) {
-            Serial.printf("[OK] Bound %u/%u peer radio MACs from NVS\n",
-                          (unsigned)bound, (unsigned)n_macs);
+          mesh_session::StoredMacVerdict verdicts[mesh_state::MAX_TRUSTED_PEERS];
+          const size_t bound =
+              mesh_session::restore_peer_macs(mac_fps, mac_addrs, n_macs, verdicts);
+          Serial.printf("[OK] Bound %u/%u peer radio MACs from NVS\n",
+                        (unsigned)bound, (unsigned)n_macs);
+          /* Which entries go is mesh_session::stored_mac_must_drop's call
+           * (host-tested for every verdict and both peers_loaded values);
+           * this loop drops exactly those and nothing else. */
+          for (size_t i = 0; i < n_macs; ++i) {
+            if (!mesh_session::stored_mac_must_drop(verdicts[i], peers_loaded)) continue;
+            const bool dropped = mesh_state::remove_peer_mac(mac_fps[i]);
+            char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+            mesh_fp_hex(mac_fps[i], hex);
+            if (verdicts[i] == mesh_session::StoredMacVerdict::SHARED) {
+              Serial.printf("[WARN] Peer %s: its stored radio address is stored for another "
+                            "member too; not bound%s — re-pair it\n",
+                            hex, dropped ? ", entry dropped" : "");
+              log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+                         "Opera stored address shared; re-pair", hex);
+            } else {
+              Serial.printf("[INFO] Stored radio address of %s, no longer a member, %s\n",
+                            hex, dropped ? "dropped" : "not dropped (NVS)");
+            }
           }
         }
       }
@@ -1521,6 +1616,12 @@ void setup() {
      * pairing; its persistence is the integration layer's
      * responsibility before calling start_pairing_initiator). */
     mesh_session::set_paired_callback(&on_pairing_succeeded);
+    /* F102: the partner's address is persisted after the session's bind,
+     * and only when it took. */
+    mesh_session::set_paired_peer_bound_callback(&on_mesh_paired_peer_bound);
+    /* F118: a pairing the session refused (a partner it cannot hold) is
+     * logged by fingerprint. */
+    mesh_session::set_failed_callback(&on_mesh_pairing_failed);
     /* F10: a peer's signed LEAVE drops its NVS entry; a peer's verified
      * TAMPER_ALERT lands in the health log. Installed here rather than in
      * securacv_csi_modules_init() so they are live on mesh builds without
@@ -1533,6 +1634,12 @@ void setup() {
     mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
     /* F33 part 4: pair/start with no opera founds one; persisted first. */
     mesh_session::set_opera_create_handler(&on_mesh_opera_create);
+    /* F161: GET /api/mesh and /api/mesh/peers read the view the main loop
+     * publishes, and the HTTP server is already up. The first loop pass is
+     * still behind the camera, GPS and sensor setup below, so publish the
+     * opera, its members and their addresses restored above now, rather
+     * than show the empty session init() published until then. */
+    mesh_session::publish_status();
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }
@@ -1738,10 +1845,14 @@ void setup() {
   csi_config_t csi_cfg = CSI_CONFIG_DEFAULT;
   if (csi::init(csi_cfg)) {
     /* Register the v1 module pipeline (presence, breathing, activity
-     * ribbon, daily summary, anomaly baseline) BEFORE arming the
-     * features callback. The HAL won't deliver windows until start()
+     * ribbon, daily summary, anomaly baseline) and run each module's
+     * init() with its stored settings (sweep F93), AFTER
+     * csi_event_egress_begin() above restored the event-id floor and
+     * BEFORE arming the features callback, so no window ticks a module
+     * before its init. The HAL won't deliver windows until start()
      * succeeds, but registering early means a deferred-start retry
-     * doesn't race the first feature window. */
+     * doesn't race the first feature window. check_event_egress_order.py
+     * (rule 8) holds this order. */
     securacv_csi_modules_init();
 
     csi::set_features_callback([](const csi_features_t* f) {
@@ -2366,8 +2477,16 @@ void loop() {
 
   // Close the CSI bundles that are due, every loop and outside the CSI
   // gates above: the feature callback stops while battery saver or heap
-  // degradation skips csi::process(), and an open bundle (presence, or a
-  // system.integrity tamper) still has to close and commit on time.
+  // degradation skips csi::process(), and an open bundle (core.presence's,
+  // or any other row that names a state) still has to close and commit on
+  // time. A system.integrity tamper never waits for this: it seals its own
+  // key with csi_bundler_flush_key() the moment it emits. Under no #if
+  // either (#1763's placement): with FEATURE_CSI off no module registers
+  // (securacv_csi_modules_init() runs only under it, after csi::init), so
+  // nothing opens and the tick is a bounded scan that closes nothing, and
+  // no wrapper means no later gate can strand a bundle. On HA builds the
+  // row it commits queues for csi_event_egress_pump() below (sweep F81;
+  // firmware/scripts/check_csi_bundle_tick.py holds this placement).
   securacv_csi_modules_tick();
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -2972,6 +3091,52 @@ static void mqtt_publish_health_update() {
    * lapses and the flags go false. */
   doc["power_loss_detected"] = canary_pe::health_power_flag(millis());
   doc["unexpected_reboot"] = canary_pe::health_fault_flag(millis());
+
+  /* What the MQTT layer's offline queue dropped this boot (sweep F109's
+   * review), events and tamper alerts together, under its Stats names
+   * (mqtt_offline_queue.h). On a canary with no card an outage longer than
+   * its twelve slots evicts the oldest events here, after the egress
+   * counted them handed over (csi_event_egress.planner.queued); before,
+   * only the drain's health-log line said so. Loop task, as the queue. */
+  {
+    const mqtt_offline_queue::Stats qs = mqtt_offline_queue_stats();
+    JsonObject oqo = doc["offline_queue"].to<JsonObject>();
+    oqo["dropped_overflow"] = qs.dropped_overflow;
+    oqo["dropped_oversize"] = qs.dropped_oversize;
+    oqo["dropped_flushed"] = qs.dropped_flushed;
+  }
+
+#if FEATURE_CSI
+  /* What the committed-event egress did this boot (sweep F109): rows it
+   * dropped (a full egress queue, the RAM hold's oldest, ambient rows that
+   * had to wait, rows the MQTT layer refused with no card to keep them)
+   * and the backfill planner's counters, under the names the
+   * canary-wap's csi_event_egress::stats() uses (csi_event_egress.h). They
+   * reached only Serial before. Same task as the pump, so no torn read. */
+  {
+    const CsiEventEgressStats st = csi_event_egress_stats();
+    JsonObject ego = doc["csi_event_egress"].to<JsonObject>();
+    ego["dropped"] = st.dropped;
+    ego["held_dropped"] = st.held_dropped;
+    ego["ambient_dropped"] = st.ambient_dropped;
+    ego["unsent_dropped"] = st.unsent_dropped;
+    JsonObject plo = ego["planner"].to<JsonObject>();
+    plo["live"] = st.planner.live;
+    plo["held"] = st.planner.held;
+    plo["queued"] = st.planner.queued;
+    plo["replayed"] = st.planner.replayed;
+    plo["skipped"] = st.planner.skipped;
+    plo["untrusted"] = st.planner.untrusted;
+    plo["unsendable"] = st.planner.unsendable;
+    plo["truncated_unsent"] = st.planner.truncated_unsent;
+    plo["read_giveups"] = st.planner.read_giveups;
+  }
+  /* The event-id space is running out (sweep F82): true once the allocator
+   * reaches csi_event_id_floor::kHoldLimit, and after it wraps, when Home
+   * Assistant starts refusing this device's events. A warning only: the
+   * recovery is not decided yet. */
+  doc["event_id_space_low"] = csi_event_egress_id_space_low();
+#endif
 
   /* SD endurance metrics: lifetime write counters (NVS-persisted), wear
    * estimate against the configured TBW rating, and the replacement

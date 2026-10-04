@@ -15,7 +15,9 @@
 #include "mesh_pair_crypto.h"      // F33: clamped X25519 pairing keys, session key, 6-digit code
 #include "mesh_revocation.h"       // F33: spec §5.6 REVOCATION_GRACE_MS deny-list (staged, shared)
 #include "mesh_channel_policy.h"
+#include "loop_snapshot.h"        // F110: what the status routes read
 #include "csi_mem.h"
+#include "csi_module_settings_nvs.h"  // F164: begin_read_only(), the quiet open of "mesh"
 #include "airtime_governor.h"
 #include "log_level.h"
 #include "health_log.h"
@@ -35,6 +37,8 @@
 #include <mbedtls/sha256.h>
 #include <mbedtls/hkdf.h>
 #include <ChaChaPoly.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace mesh_network {
 
@@ -111,6 +115,40 @@ static uint8_t g_peer_count = 0;
 static mesh_revocation::List g_revoked;
 static bool g_revoked_stored = false;
 
+// Last-seen tombstones (sweep F116; the PlatformIO tree's CounterTombstone in
+// mesh_session.cpp). A member dropped from the table (remove_peer,
+// leave_opera) used to take its last-seen counter with it, and add_peer
+// started a re-added member's at 0: every frame it had signed before, in an
+// opera whose id had not changed (a removal of the last member rotates
+// nothing; a leave and a re-pair into the same opera), verified once more
+// as fresh, and one such frame, replayed from its address at the re-pair,
+// counted as the joiner heard and ended F100's COMPLETE resend. Now its
+// counter is parked here by fingerprint and opera_id, and add_peer starts
+// it there when it re-adds that member under that opera_id. Only then: its
+// old frames carry the opera_id they were signed in, and every other opera
+// drops them at the id check, so a tombstone restored in another opera (a
+// removal with a survivor rotates it at once, F95; a leave then a new
+// opera) guards nothing, and it shut out a member whose counters restart,
+// which every member on firmware from before F71 does at every boot. At
+// most MAX_RX_TOMBSTONES, oldest first (the oldest goes when a new one does
+// not fit), persisted as NVS_RX_TOMBS at every change; see retire_rx() for
+// which removal keeps one and which releases it.
+static constexpr size_t MAX_RX_TOMBSTONES = 8;
+struct RxTombstone {
+  uint8_t fingerprint[FINGERPRINT_SIZE];
+  uint8_t opera_id[OPERA_ID_SIZE];   // the opera the member was dropped from
+  uint64_t last_seen;
+};
+static RxTombstone g_rx_tombs[MAX_RX_TOMBSTONES];   // oldest first
+static uint8_t g_rx_tomb_count = 0;
+
+// The highest send counter this device can have signed, to any member, a
+// removed one included (sweep F99; see TX_COUNTER_RESERVE_BLOCK): every
+// counter send_to_peer spends since the boot, above the highest reservation
+// the boot read back (anything up to it may have been signed before). A new
+// member's counter starts one past it.
+static uint64_t g_tx_high_signed = 0;
+
 // BLE-Scout BEACON_EVENT handler (canary-wap parity for PIO
 // mesh_session::set_beacon_event_handler). nullptr means inbound
 // events get decoded then dropped silently — the integration
@@ -143,6 +181,13 @@ static uint32_t g_storm_window_start_ms = 0;
 static uint32_t g_storm_window_count    = 0;
 static uint32_t g_storm_pause_until_ms  = 0;
 static uint32_t g_storm_trigger_count   = 0;
+
+// Read-only: is the gate holding every send? send_to_peer asks first, so
+// a refused frame spends no counter (F71's write bound rests on it).
+static bool storm_paused() {
+  return g_storm_pause_until_ms != 0 &&
+         (int32_t)(millis() - g_storm_pause_until_ms) < 0;
+}
 
 static bool storm_gate() {
   const uint32_t now = millis();
@@ -181,10 +226,12 @@ static bool storm_gate() {
 //
 // Threading invariant (gemini P1 follow-up): every mutator of `g_rekey`
 // lives in the main loop task:
-//   - `remove_peer()` is invoked from the REST handler thread, but the
-//     existing wifi_provision serializer + Bearer-gate trampoline ensure
-//     it's called on the main task. (See mesh_network.cpp's other
-//     loop-driven mutators: handle_received_message, update().)
+//   - `remove_peer()` runs from update() (loop task): `POST /api/mesh/remove`
+//     hands MESH_CMD_REMOVE_PEER to submit(), and update() drains the
+//     command ring before anything else (sweep F96). This note used to say a
+//     "wifi_provision serializer" put the REST handler's call on the main
+//     task; no such serializer existed, and the handler called remove_peer()
+//     on esp_http_server's task.
 //   - `maybe_finalize_rekey()` is called from `update()` (loop task).
 //   - The case MSG_OPERA_REKEY_ACK branch in handle_received_message
 //     also runs on the loop task, because ESP-NOW frames are queued via
@@ -211,18 +258,54 @@ static RekeyState g_rekey = {};
 // Pairing
 static PairingSession g_pairing;
 
+// The owner's commands on their way to the loop task (sweep F96): posted by
+// submit() on esp_http_server's task, drained by update() on the loop task
+// (run_command). A portMUX spinlock guards the slots; it is held only to
+// copy a command or a result in or out, never while one runs.
+static loop_command_ring::Ring<Command, bool, COMMAND_SLOTS, loop_command_ring::PortMuxLock>
+    g_commands;
+// The loop task, recorded by init() (setup() runs it there, and loop() runs
+// on the same task): save_replay_counters_before_reboot() saves in place on
+// it and hands the save to it from any other task. Written once, before the
+// pre-reboot hook that reads it is installed; read with an acquire load.
+static TaskHandle_t g_loop_task = nullptr;
+// The initiator's last PAIR_COMPLETE, kept so it can be sent again (sweep
+// F100; see complete_resend_step). The frame is the one already on the air:
+// the opera_secret sealed under the finished pairing's session key, which
+// is wiped. Nothing here can seal anything again.
+struct CompleteResend {
+  bool active;
+  PairCompletePayload payload;
+  uint8_t fingerprint[FINGERPRINT_SIZE];   // the joiner, as a member
+  uint8_t opera_id[OPERA_ID_SIZE];         // the opera the sealed secret is
+  uint64_t rx_at_complete;                 // its last-seen counter then
+  uint32_t first_ms;
+  uint32_t last_ms;
+  uint16_t copies_sent;                    // sends the radio took
+};
+static CompleteResend g_complete_resend = {};
+static constexpr uint32_t COMPLETE_RESEND_MS = 2000;   // the DISCOVER's cadence
+
 // Alert history
-/* PSRAM-resident (csi_mem.h): ~2.9 KB of semantic alert metadata, loop-task
- * access only (all rx processing is deferred out of the ESP-NOW callback).
- * g_peers deliberately stays in internal SRAM: OperaPeer carries session
- * keys, and key material belongs on-die, not on an externally probeable
- * PSRAM bus. Allocated in init(); NULL disables alert history (records
- * dropped, count stays 0). */
-static MeshAlert* g_alert_history = nullptr;
+/* PSRAM-resident (csi_mem.h): ~2.9 KB of semantic alert metadata, written on
+ * the loop task only (all rx processing is deferred out of the ESP-NOW
+ * callback). g_peers deliberately stays in internal SRAM: OperaPeer carries
+ * session keys, and key material belongs on-die, not on an externally
+ * probeable PSRAM bus. Allocated in init(); none disables alert history
+ * (records dropped, count stays 0). A log another task reads whole
+ * (read_alerts, sweep F110): store_alert() and clear_alerts() change it
+ * under its lock. */
 static constexpr size_t ALERT_HISTORY_BYTES =
     MAX_ALERT_HISTORY * sizeof(MeshAlert);
-static size_t g_alert_count = 0;
-static size_t g_alert_head = 0;
+static loop_snapshot::Log<MeshAlert, MAX_ALERT_HISTORY, loop_command_ring::PortMuxLock>
+    g_alert_log;
+
+// What the status routes show (sweep F110): published by the loop task at
+// the end of every update() pass, after each owner command and by init()
+// (publish_view), read whole by read_status() from esp_http_server's task.
+// About 0.8 KB of internal SRAM; a pass that changed nothing it shows costs
+// a compare, not a copy.
+static loop_snapshot::Value<StatusView, loop_command_ring::PortMuxLock> g_status_view;
 
 // Callbacks
 static AlertCallback g_alert_callback = nullptr;
@@ -253,7 +336,10 @@ static bool verify_signature(const uint8_t* pubkey, const uint8_t* data, size_t 
 static void update_peer_state(OperaPeer* peer, PeerState new_state);
 static OperaPeer* find_peer_by_mac(const uint8_t* mac);
 static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp);
-static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name);
+// `opera_id`: the opera the member is added under (its tombstone, F116, is
+// that opera's); nullptr is this device's own, g_opera_config's.
+static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name,
+                     const uint8_t* opera_id = nullptr);
 static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len);
 static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* payload, size_t len);
 static bool broadcast_message(MessageType type, const uint8_t* payload, size_t len);
@@ -276,13 +362,33 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload);
 static bool persist_opera_config();
-static bool load_opera_config();
+static bool load_opera_config(bool* member_slots_without_opera);
 static bool persist_peers();
 static bool load_peers();
+static bool persist_tx_reservations();
+static void load_tx_reservations();
 static void persist_revocations();
 static void load_revocations();
 static bool is_revoked_pubkey(const uint8_t* pubkey);
+static const RxTombstone* find_rx_tombstone(const uint8_t* fingerprint, const uint8_t* opera_id);
+static bool retire_rx(const OperaPeer* peer, const uint8_t* opera_id);
+static void persist_rx_tombstones();
+static void load_rx_tombstones();
 static void store_alert(const MeshAlert* alert);
+static void publish_view();
+// The owner's commands (sweep F96). Internal: they change what update()
+// owns, so only the loop task runs them, through run_command() (update()'s
+// drain of g_commands) or update()'s own paths. A REST handler hands a
+// Command to submit() instead (mesh_network.h).
+static void set_enabled(bool enabled);
+static bool remove_peer(const uint8_t* fingerprint);
+static bool set_opera_name(const char* name);
+static bool leave_opera();
+static bool start_pairing_initiator(const char* opera_name);
+static bool start_pairing_joiner();
+static void cancel_pairing();
+static bool confirm_pairing();
+static void clear_alerts();
 
 // ════════════════════════════════════════════════════════════════════════════
 // ESP-NOW CALLBACKS
@@ -425,6 +531,39 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
   return nullptr;
 }
 
+// Another member than `self` holding `mac`, or nullptr.
+static OperaPeer* other_holder_of(const uint8_t* mac, const OperaPeer* self) {
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    if (&g_peers[i] != self && memcmp(g_peers[i].mac_addr, mac, 6) == 0) {
+      return &g_peers[i];
+    }
+  }
+  return nullptr;
+}
+
+// Drop the ESP-NOW registration of an address `self` no longer uses, unless
+// another member still holds it. Since F98 add_peer gives no two members
+// one address, but NVS an older firmware wrote can hold such a pair (its
+// add_peer appended a new key at a held address), and deleting the
+// registration there stranded the other member: esp_now_send refuses an
+// address that is not registered.
+static void release_mac(const uint8_t* mac, const OperaPeer* self) {
+  if (other_holder_of(mac, self) == nullptr) {
+    esp_now_del_peer(mac);
+  }
+}
+
+// A pairing refused because another member holds the address it came from
+// (one address, one member: rebind_peer, add_peer). fail_pairing's line
+// cannot say which refusal it was, and this one has a way through: remove
+// the member that holds the address. That is typically a device's own old
+// entry: an NVS erase or a reflash keeps its radio address and gives it a
+// new key, so it comes back as a new member where its old self still is.
+static void log_held_address() {
+  health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+             "opera: pairing refused: another member holds that radio address; remove it first");
+}
+
 // A pairing with a device this one already holds moves that member to the
 // address the pairing completed from (spec §8.3: a re-pair is how a member
 // whose radio address changed is heard again). Only a pairing this
@@ -443,8 +582,8 @@ static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
   if (memcmp(peer->mac_addr, mac, 6) == 0) {
     return true;
   }
-  const OperaPeer* holder = find_peer_by_mac(mac);
-  if (holder != nullptr && holder != peer) {
+  if (other_holder_of(mac, peer) != nullptr) {
+    log_held_address();
     return false;
   }
   if (!esp_now_is_peer_exist(mac)) {
@@ -456,14 +595,15 @@ static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
       return false;
     }
   }
-  esp_now_del_peer(peer->mac_addr);
+  release_mac(peer->mac_addr, peer);
   memcpy(peer->mac_addr, mac, 6);
   health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
              "opera: a re-pair moved a member to a new radio address");
   return true;
 }
 
-static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name) {
+static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name,
+                     const uint8_t* opera_id) {
   // F33: a deny-listed device is not taken back inside its grace.
   if (is_revoked_pubkey(pubkey)) {
     return false;
@@ -476,6 +616,15 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
     if (memcmp(g_peers[i].pubkey, pubkey, PUBKEY_SIZE) == 0) {
       return rebind_peer(&g_peers[i], mac);
     }
+  }
+  // One address, one member, as rebind_peer has it (sweep F98). A new key
+  // at an address another member holds was appended: the two entries shared
+  // one ESP-NOW registration, removing either deleted it for both, and the
+  // other was then sent nothing (esp_now_send refuses an unregistered
+  // address).
+  if (other_holder_of(mac, nullptr) != nullptr) {
+    log_held_address();
+    return false;
   }
   if (g_peer_count >= MAX_OPERA_SIZE) {
     return false;
@@ -496,8 +645,32 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
   // every peer's first frame carried counter 0, which the receive gate had
   // to admit past a fresh rx of 0 — and the exemption it used for that
   // ("rx > 0") admitted a counter-0 frame again on every replay.
-  peer->msg_counter_tx = 1;
-  peer->msg_counter_rx = 0;
+  //
+  // A new member starts one past the highest counter this device can have
+  // signed to anyone (sweep F99): 1 on a device that has signed none. The
+  // device may be one this one removed (or left), and a removal is
+  // one-sided: the removed device keeps its last-seen counter for this one,
+  // and a re-pair re-binds this device there, counters and all. A new
+  // member's counter started at 1, so this device's frames dropped there
+  // until it climbed back. Past what was signed, not past what was
+  // reserved: a reservation runs up to a block ahead, and a start there put
+  // the new member's counters that far ahead of every other member's,
+  // which widens sweep F72's open gap (a frame to one member, replayed at
+  // another from this device's address, silences this device there until
+  // its counter for that member catches up) by up to a block until the
+  // next boot levels them. It is "covered up to" that counter: nothing
+  // above it has been signed to anyone, so the record may say so for it
+  // (a reboot before its first send resumes above it), and its first send
+  // stores a block above it (reserve_tx_counter).
+  peer->msg_counter_tx = (g_tx_high_signed == UINT64_MAX) ? 0 : g_tx_high_signed + 1;
+  // Last-seen: where this device left it when it last dropped this key from
+  // this opera (sweep F116: a tombstone), so nothing the device signed in
+  // it before is fresh again; 0 for a key never held, held and never heard,
+  // or dropped from another opera (its frames from there carry that id).
+  const RxTombstone* tomb = find_rx_tombstone(
+      peer->fingerprint, opera_id != nullptr ? opera_id : g_opera_config.opera_id);
+  peer->msg_counter_rx = tomb != nullptr ? tomb->last_seen : 0;
+  peer->msg_counter_tx_reserved = g_tx_high_signed;
   peer->last_seen_ms = 0;
   peer->session_established = false;
 
@@ -564,6 +737,25 @@ static_assert(mesh_pair_frame::OFFER_LEN    == sizeof(PairOfferPayload),    "pai
 static_assert(mesh_pair_frame::CONFIRM_LEN  == sizeof(PairConfirmPayload),  "pair size drift");
 static_assert(mesh_pair_frame::COMPLETE_LEN == sizeof(PairCompletePayload), "pair size drift");
 
+// ESP-NOW sends only to a registered address, the broadcast one included
+// (esp_now_send returns ESP_ERR_ESPNOW_NOT_FOUND otherwise). The pairing
+// DISCOVER is this module's only broadcast, and it used to rely on another
+// module having registered the address: csi_probe::init, or a Chirp or
+// Beacon broadcast. The channel-change listener below deleted it, and
+// only Chirp's and Beacon's sends put it back (sweep F74). Registered with
+// the settings those three use (channel 0: follow the radio; unencrypted),
+// so whichever module registers it first, the others' sends still work;
+// one that finds it registered (ESP_ERR_ESPNOW_EXIST) has it.
+static bool ensure_broadcast_peer() {
+  if (esp_now_is_peer_exist(BROADCAST_ADDR)) return true;
+  esp_now_peer_info_t peer_info = {};
+  memcpy(peer_info.peer_addr, BROADCAST_ADDR, 6);
+  peer_info.channel = ESPNOW_CHANNEL;
+  peer_info.encrypt = false;
+  const esp_err_t err = esp_now_add_peer(&peer_info);
+  return err == ESP_OK || err == ESP_ERR_ESPNOW_EXIST;
+}
+
 static bool send_pair_frame(const uint8_t* mac, MessageType type,
                             const void* payload, size_t payload_len) {
   uint8_t frame[mesh_pair_frame::MAX_FRAME_LEN];
@@ -573,8 +765,120 @@ static bool send_pair_frame(const uint8_t* mac, MessageType type,
   return send_raw_message(mac, frame, n);
 }
 
+// Send counters are reserved ahead in NVS, per member (sweep F71; the
+// PlatformIO tree's F33 part 3 mesh_out_ctr, spec §3.3). Receivers keep,
+// and persist, their last-seen counter for each sender and drop a frame
+// whose counter is not above it; load_peers used to start every counter
+// at 1 again, so after a reboot each member that had heard this device
+// dropped its frames as replays until the counter for that member climbed
+// back past what the member last saw (one heartbeat per 30 s). Now no
+// counter above a member's stored reservation is signed until a new one,
+// TX_COUNTER_RESERVE_BLOCK ahead, is stored (persist_tx_reservations), and
+// a boot resumes every member one past the highest reservation stored for
+// any of them (load_tx_reservations). A crash anywhere, between a
+// reservation and its frame included, costs a gap of unused counters,
+// which receivers accept (they need only "higher"), never a counter signed
+// twice under one key. A reservation NVS refuses refuses the frame, and
+// the log says so.
+//
+// Flash wear: one write per 1024 counters spent to a member, of one record
+// holding every member's reservation (16 B each, at most 256 B), and one
+// write covers every member that needs a reservation at that moment. A
+// boot sets every member at the same counter and the heartbeat goes to
+// every member once per 30 s, so their counters cross a block together:
+// about 2880 heartbeats a day cost under 3 writes a day for the whole
+// opera. Counters out of step cost at most one write per member per 1024
+// frames to it: under 45 a day for a full opera of 16 at the heartbeat
+// cadence, next to the 288 writes a day of the same size the sketch's
+// 5-minute last-seen save already makes. A membership change adds one
+// (persist_peers). The storm gate bounds a flood too: send_to_peer spends
+// no counter while the gate holds (storm_paused), so at most 101 counters
+// go per 31 s (100 frames, the one that trips the gate, then 30 s of
+// silence): about one write per 5 minutes however fast a caller sends. A
+// frame refused after it is signed (an ESP-NOW error, the frame that trips
+// the gate) still spends its counter.
+//
+// A new member starts one past the highest counter this device can have
+// signed to anyone (g_tx_high_signed, sweep F99): it may be a device this
+// one removed or left, which kept its last-seen counter for this one. That
+// is every counter spent since the boot, and the highest reservation the
+// boot read back (a boot resumes every member above it). A removal holds
+// every survivor's reservation to it before the list is saved, so the
+// record still covers the removed member's counters when its entry is
+// gone; with no member left the record is rewritten once, as one entry
+// under an all-zero fingerprint holding the highest counter signed
+// (persist_tx_floor_without_members, sweep F137), and a boot reads it with
+// no member loaded too.
+//
+// Counting stays per member (one counter per sender is sweep F72's
+// option). A rotation leaves every counter where it is (sweep F95, see
+// maybe_finalize_rekey); it used to set them back to 1, under the
+// reservation each already had.
+static constexpr uint64_t TX_COUNTER_RESERVE_BLOCK = 1024;
+static const char* NVS_TX_RESERVED = "tx_ctrs";
+static constexpr size_t TX_RESERVE_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
+// Where every member resumes when no record says how far its counter went
+// (load_tx_reservations). Members stored with no record at all mean NVS
+// written by firmware from before F71, which counted from 1 at every boot:
+// no boot of it reached 2^40 (10,000 frames a second to one member for
+// over three years). A record that is there but unreadable may hide
+// counters this firmware signed above 2^40 since; at the rates above they
+// stay far below 2^48.
+static constexpr uint64_t TX_COUNTER_FLOOR_NO_RECORD = 1ULL << 40;
+static constexpr uint64_t TX_COUNTER_FLOOR_UNREADABLE = 1ULL << 48;
+// A reservation NVS refuses pauses that member's sends, and nothing else
+// would say why its members go STALE: logged at most once per interval
+// while the refusals last.
+static constexpr uint32_t TX_RESERVE_WARN_INTERVAL_MS = 300000;
+static bool g_tx_reserve_warned = false;
+static uint32_t g_tx_reserve_warned_ms = 0;
+
+static bool reserve_tx_counter(OperaPeer* peer) {
+  // Only a member in the table has a place in the record. (Equality, not
+  // a range check: relational comparison of a pointer from elsewhere with
+  // one into g_peers is unspecified.)
+  bool in_table = false;
+  for (uint8_t i = 0; i < g_peer_count && !in_table; i++) in_table = (&g_peers[i] == peer);
+  if (!in_table) return false;
+  const uint64_t next = peer->msg_counter_tx;
+  if (next == 0) return false;   // 2^64 frames to one member: never, but never wrap
+  if (next <= peer->msg_counter_tx_reserved) return true;
+  // One write covers every member past its reservation: after a boot that
+  // is all of them, and their first heartbeats cost one write, not one each.
+  uint64_t kept[MAX_OPERA_SIZE];
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    kept[i] = g_peers[i].msg_counter_tx_reserved;
+    const uint64_t n = g_peers[i].msg_counter_tx;
+    if (n == 0 || n <= kept[i]) continue;
+    g_peers[i].msg_counter_tx_reserved = (n - 1 > UINT64_MAX - TX_COUNTER_RESERVE_BLOCK)
+                                             ? UINT64_MAX
+                                             : n - 1 + TX_COUNTER_RESERVE_BLOCK;
+  }
+  if (!persist_tx_reservations()) {
+    for (uint8_t i = 0; i < g_peer_count; i++) g_peers[i].msg_counter_tx_reserved = kept[i];
+    const uint32_t now = millis();
+    if (!g_tx_reserve_warned || now - g_tx_reserve_warned_ms >= TX_RESERVE_WARN_INTERVAL_MS) {
+      g_tx_reserve_warned = true;
+      g_tx_reserve_warned_ms = now;
+      health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+                 "opera: send-counter reservation refused by NVS; sends to a member paused");
+    }
+    return false;
+  }
+  g_tx_reserve_warned = false;
+  return true;
+}
+
 static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* payload, size_t payload_len) {
   if (!peer || !g_opera_config.configured) {
+    return false;
+  }
+  // Ahead of the counter: a frame the storm gate will refuse spends none,
+  // and no reservation is written for it (see TX_COUNTER_RESERVE_BLOCK).
+  if (storm_paused()) {
+    return false;
+  }
+  if (!reserve_tx_counter(peer)) {
     return false;
   }
 
@@ -590,8 +894,10 @@ static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* paylo
   memcpy(msg + offset, g_device_fingerprint, FINGERPRINT_SIZE);
   offset += FINGERPRINT_SIZE;
 
-  // Counter (8 bytes, little-endian)
+  // Counter (8 bytes, little-endian). Spent from here on, sent or not
+  // (F99: a new member starts past it).
   uint64_t counter = peer->msg_counter_tx++;
+  if (counter > g_tx_high_signed) g_tx_high_signed = counter;
   for (int i = 0; i < 8; i++) {
     msg[offset++] = (counter >> (i * 8)) & 0xFF;
   }
@@ -759,8 +1065,8 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   // before a power cut. This used to re-point the member's address and its
   // ESP-NOW registration at such a frame's source. A member whose radio
   // address really changed is heard again after a re-pair with this device
-  // (add_peer), once its counter for this device passes the last one heard
-  // here (a member that rebooted restarts its counters: spec §3.3, open).
+  // (add_peer); a member that rebooted resumes its counters above the ones
+  // it may have signed before (reserve_tx_counter, spec §3.3).
   // ESP-NOW does not authenticate a source, so a radio copying the
   // member's own address still gets past this line; nothing below moves an
   // address.
@@ -869,10 +1175,9 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
         persist_opera_config();  // FE-gated; logs alert if refused
 
         // ── 3. Invalidate the session so both sides re-auth ──
+        // The counters carry on (sweep F95; see maybe_finalize_rekey).
         peer->session_established = false;
         memset(peer->session_key, 0, SESSION_KEY_SIZE);
-        peer->msg_counter_tx = 1;   // first counter of the new session (add_peer)
-        peer->msg_counter_rx = 0;
         health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
                    "opera: rekey applied (ACK sent under old opera_id); awaiting re-auth");
       }
@@ -1150,6 +1455,10 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
 
     memcpy(g_pairing.peer_pubkey, discover->pubkey, PUBKEY_SIZE);
     memcpy(g_pairing.peer_mac, mac, 6);
+    // A new partner and new keys: no CONFIRM counts from before them.
+    // (handle_pair_confirm takes one only in MESH_PAIRING_CONFIRM; this and
+    // the same line in handle_pair_accept keep it so if that check goes.)
+    g_pairing.peer_confirmed = false;
 
     // Send pairing offer
     PairOfferPayload offer;
@@ -1253,6 +1562,7 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
 
   // Compute confirmation code (matches the joiner's: same session key)
   g_pairing.confirmation_code = mesh_pair_crypto::confirmation_code(g_pairing.session_key);
+  g_pairing.peer_confirmed = false;   // only a CONFIRM under this key counts
 
   g_mesh_state = MESH_PAIRING_CONFIRM;
   g_pairing.code_displayed = true;
@@ -1262,8 +1572,106 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
   }
 }
 
+// A pairing this device cannot finish because add_peer refused the partner:
+// a deny-listed key (spec §5.6), a new member for a full opera, a re-pair
+// onto an address another member holds, or an address ESP-NOW cannot
+// register (its list holds 20). Nothing is sent or stored, the opera is as
+// it was, the owner's callback reports the failure, and the log says why
+// the code on the screen led nowhere (sweep F73). The pairing handlers used
+// to ignore add_peer's result: they persisted, went MESH_ACTIVE and
+// reported success, and the initiator sealed the opera_secret to a partner
+// it then did not hold.
+static void fail_pairing() {
+  const PairingRole role = g_pairing.role;
+  secure_wipe(&g_pairing, sizeof(g_pairing));
+  if (g_opera_config.configured) {
+    g_mesh_state = g_peer_count > 0 ? MESH_CONNECTING : MESH_NO_OPERA;
+  } else {
+    g_mesh_state = MESH_NO_OPERA;
+  }
+  health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+             "opera: pairing failed: partner refused (removed, opera full, or address unavailable)");
+  if (g_pairing_callback) {
+    g_pairing_callback(role, 0, false);
+  }
+}
+
+// The initiator's half of a pairing both owners confirmed: add the joiner,
+// seal the opera_secret to it in COMPLETE, and forget the pairing. Runs
+// from update() on the loop task (initiator_step), whichever owner
+// confirmed first. The joiner is added first, so a refusal ends the
+// pairing before the opera_secret leaves this device (F73); the joiner,
+// sent nothing, times out.
+static void initiator_complete() {
+  if (!add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device")) {
+    fail_pairing();
+    return;
+  }
+  persist_peers();
+
+  PairCompletePayload complete;
+
+  // Encrypt opera secret with session key
+  uint8_t nonce[NONCE_SIZE];
+  uint8_t tag[16];
+  encrypt_message(g_pairing.session_key, g_opera_config.opera_secret, OPERA_SECRET_SIZE,
+                 complete.encrypted_secret, nonce, tag);
+  memcpy(complete.nonce, nonce, NONCE_SIZE);
+  memcpy(complete.encrypted_secret + OPERA_SECRET_SIZE, tag, 16);
+
+  // F100: sent again until the joiner is heard (complete_resend_step), so
+  // a send refused here (the storm gate, the radio) or lost on the air is
+  // not the end of it, and the sends are counted: a COMPLETE that never
+  // went out is logged as that, not as one the joiner did not answer.
+  const bool sent = send_pair_frame(g_pairing.peer_mac, MSG_PAIR_COMPLETE, &complete, sizeof(complete));
+  const OperaPeer* joiner = find_peer_by_mac(g_pairing.peer_mac);
+  secure_wipe(&g_complete_resend, sizeof(g_complete_resend));
+  if (joiner != nullptr) {
+    g_complete_resend.active = true;
+    g_complete_resend.payload = complete;
+    memcpy(g_complete_resend.fingerprint, joiner->fingerprint, FINGERPRINT_SIZE);
+    memcpy(g_complete_resend.opera_id, g_opera_config.opera_id, OPERA_ID_SIZE);
+    g_complete_resend.rx_at_complete = joiner->msg_counter_rx;
+    g_complete_resend.first_ms = millis();
+    g_complete_resend.last_ms = g_complete_resend.first_ms;
+    g_complete_resend.copies_sent = sent ? 1 : 0;
+  }
+
+  // Clear sensitive pairing data, as the joiner does. Kept, the finished
+  // pairing's ephemeral key and confirmed code let a radio that overheard
+  // the OFFER send its own ACCEPT and CONFIRM until the timeout, and this
+  // branch sealed the opera_secret under that radio's session key.
+  const PairingRole role = g_pairing.role;
+  const uint32_t code = g_pairing.confirmation_code;
+  secure_wipe(&g_pairing, sizeof(g_pairing));
+
+  g_mesh_state = MESH_ACTIVE;
+
+  if (g_pairing_callback) {
+    g_pairing_callback(role, code, true);
+  }
+}
+
+// A CONFIRM counts only from the pairing partner: the address the
+// initiator's OFFER went to, or the joiner's came from. This took one from
+// any address, and a wrong hash from any radio ended the pairing once the
+// owner had confirmed.
+//
+// Either owner may confirm first (spec §5.2; sweep F75). This acted on the
+// joiner's CONFIRM only if the initiator's owner had confirmed already and
+// dropped it otherwise; neither side sends its CONFIRM twice, so a joiner's
+// owner who confirmed first left both devices waiting for the 2-minute
+// timeout. The initiator now keeps a verified CONFIRM (peer_confirmed) and
+// completes when its own owner confirms (initiator_step). The joiner's
+// next step is COMPLETE, which it takes only after its own owner confirmed
+// (handle_pair_complete); it checks the initiator's CONFIRM hash and needs
+// nothing else from it.
 static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
-  if (g_mesh_state != MESH_PAIRING_CONFIRM || !g_pairing.code_confirmed) {
+  // Only once the code is shown. Before the ACCEPT the session key is all
+  // zero and the code 0, so anyone can compute that CONFIRM's hash; kept,
+  // it would complete the pairing at the owner's confirm without the
+  // joiner's CONFIRM.
+  if (g_mesh_state != MESH_PAIRING_CONFIRM || memcmp(mac, g_pairing.peer_mac, 6) != 0) {
     return;
   }
 
@@ -1282,37 +1690,62 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     return;
   }
 
-  // If we're initiator, send the opera secret
   if (g_pairing.role == PAIR_ROLE_INITIATOR) {
-    PairCompletePayload complete;
+    g_pairing.peer_confirmed = true;   // initiator_step completes once its owner has
+  }
+}
 
-    // Encrypt opera secret with session key
-    uint8_t nonce[NONCE_SIZE];
-    uint8_t tag[16];
-    encrypt_message(g_pairing.session_key, g_opera_config.opera_secret, OPERA_SECRET_SIZE,
-                   complete.encrypted_secret, nonce, tag);
-    memcpy(complete.nonce, nonce, NONCE_SIZE);
-    memcpy(complete.encrypted_secret + OPERA_SECRET_SIZE, tag, 16);
+// Called from update(): an initiator whose owner and joiner have both
+// confirmed sends COMPLETE. Written when confirm_pairing() ran on the HTTP
+// server's task, to keep the peer table and NVS on the loop task; since
+// sweep F96 confirm_pairing() runs there too (update()'s command drain), and
+// this stays the one place a pairing completes from either order (F75).
+static void initiator_step() {
+  if (g_mesh_state == MESH_PAIRING_CONFIRM && g_pairing.role == PAIR_ROLE_INITIATOR &&
+      g_pairing.code_confirmed && g_pairing.peer_confirmed) {
+    initiator_complete();
+  }
+}
 
-    send_pair_frame(g_pairing.peer_mac, MSG_PAIR_COMPLETE, &complete, sizeof(complete));
-
-    // Add joiner to our opera
-    add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device");
-    persist_peers();
-
-    // Clear sensitive pairing data, as the joiner does. Kept, the finished
-    // pairing's ephemeral key and confirmed code let a radio that overheard
-    // the OFFER send its own ACCEPT and CONFIRM until the timeout, and this
-    // branch sealed the opera_secret under that radio's session key.
-    const PairingRole role = g_pairing.role;
-    const uint32_t code = g_pairing.confirmation_code;
-    secure_wipe(&g_pairing, sizeof(g_pairing));
-
-    g_mesh_state = MESH_ACTIVE;
-
-    if (g_pairing_callback) {
-      g_pairing_callback(role, code, true);
-    }
+// Called from update(): the initiator's COMPLETE, sent again every
+// COMPLETE_RESEND_MS until the joiner is heard (sweep F100). It went out
+// once and its send was not checked, so a COMPLETE lost on the air, or
+// refused by the storm gate, left the initiator holding a member that never
+// joined while the joiner timed out. Nothing on the wire acknowledges a
+// COMPLETE, so "heard" is the joiner's first verified frame since: a
+// joiner that took it is MESH_ACTIVE and sends its heartbeat (F76), and
+// one that already has it drops the copies (it is no longer pairing).
+// Bounded by PAIRING_TIMEOUT_MS after the first send, which outlasts the
+// joiner's own wait (its pairing started before this COMPLETE): at most 60
+// copies of a 61-byte frame. It stops early if the joiner is no longer a
+// member, or the opera rotated or was left (the copy seals a secret that is
+// no longer this opera's). One never answered is logged: the pairing was
+// reported a success, and the owner's only sign that the member may not
+// have joined is this line, which also says whether any copy was sent at
+// all (every send refused: the storm gate held, or the radio failed).
+static void complete_resend_step() {
+  if (!g_complete_resend.active) return;
+  const uint32_t now = millis();
+  const OperaPeer* joiner = find_peer_by_fingerprint(g_complete_resend.fingerprint);
+  bool done = joiner == nullptr || !g_opera_config.configured ||
+              memcmp(g_opera_config.opera_id, g_complete_resend.opera_id, OPERA_ID_SIZE) != 0 ||
+              joiner->msg_counter_rx > g_complete_resend.rx_at_complete;
+  if (!done && (uint32_t)(now - g_complete_resend.first_ms) >= PAIRING_TIMEOUT_MS) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               g_complete_resend.copies_sent == 0
+                   ? "opera: pairing COMPLETE could not be sent; the new member has not joined"
+                   : "opera: pairing COMPLETE never answered; the new member may not have joined");
+    done = true;
+  }
+  if (done) {
+    secure_wipe(&g_complete_resend, sizeof(g_complete_resend));
+    return;
+  }
+  if ((uint32_t)(now - g_complete_resend.last_ms) < COMPLETE_RESEND_MS) return;
+  g_complete_resend.last_ms = now;
+  if (send_pair_frame(joiner->mac_addr, MSG_PAIR_COMPLETE, &g_complete_resend.payload,
+                      sizeof(g_complete_resend.payload))) {
+    g_complete_resend.copies_sent++;
   }
 }
 
@@ -1334,21 +1767,37 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
   uint8_t opera_secret[OPERA_SECRET_SIZE];
   const uint8_t* tag = complete->encrypted_secret + OPERA_SECRET_SIZE;
 
+  // One that does not open under this pairing's key is dropped, and the
+  // pairing waits for one that does (or its timeout). It used to end the
+  // pairing, which let any radio cancel a confirmed pairing with 61 bytes
+  // of anything, and since F100 the copies an initiator sends of an earlier
+  // pairing's COMPLETE would end a later pairing of the same joiner: a
+  // COMPLETE sealed under another key is not this pairing's, whoever sent it.
   if (!decrypt_message(g_pairing.session_key, complete->encrypted_secret, OPERA_SECRET_SIZE,
                        complete->nonce, tag, opera_secret)) {
-    cancel_pairing();
+    secure_wipe(opera_secret, sizeof(opera_secret));
+    return;
+  }
+
+  // Hold the initiator first (F73): a refusal leaves this device's opera
+  // as it was, in RAM and in NVS. (The initiator has already added this
+  // device; it cannot know.) It is added under the opera it is joining,
+  // whose last-seen tombstone for it applies (F116), not the one it holds.
+  uint8_t opera_id[OPERA_ID_SIZE];
+  compute_opera_id(opera_secret, opera_id);
+  if (!add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Opera Creator", opera_id)) {
+    secure_wipe(opera_secret, sizeof(opera_secret));
+    fail_pairing();
     return;
   }
 
   // Initialize our opera config
   memcpy(g_opera_config.opera_secret, opera_secret, OPERA_SECRET_SIZE);
-  compute_opera_id(opera_secret, g_opera_config.opera_id);
+  secure_wipe(opera_secret, sizeof(opera_secret));
+  memcpy(g_opera_config.opera_id, opera_id, OPERA_ID_SIZE);
   g_opera_config.configured = true;
   g_opera_config.enabled = true;
   strncpy(g_opera_config.opera_name, "My Opera", MAX_OPERA_NAME_LEN);
-
-  // Add initiator as first peer
-  add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Opera Creator");
 
   // Persist
   persist_opera_config();
@@ -1382,6 +1831,11 @@ static bool flash_encryption_enabled() {
   return esp_flash_encryption_enabled();
 }
 
+// An opera is stored only while this device has one (sweep F113). With none
+// (after leave_opera(), or a set_enabled() or set_opera_name() before the
+// next pairing), the id and secret keys are removed. They used to be written
+// as they stood in RAM, all zero after a leave, and load_opera_config() took
+// the zero opera back as configured at the next boot.
 static bool persist_opera_config() {
   if (!flash_encryption_enabled()) {
     health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
@@ -1390,14 +1844,51 @@ static bool persist_opera_config() {
   }
   g_prefs.begin(NVS_NS, false);
   g_prefs.putBool(NVS_ENABLED, g_opera_config.enabled);
-  g_prefs.putBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
-  g_prefs.putBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+  if (g_opera_config.configured) {
+    g_prefs.putBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
+    g_prefs.putBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+  } else {
+    if (g_prefs.isKey(NVS_FLEET_ID)) g_prefs.remove(NVS_FLEET_ID);
+    if (g_prefs.isKey(NVS_FLEET_SECRET)) g_prefs.remove(NVS_FLEET_SECRET);
+  }
   g_prefs.putString(NVS_FLEET_NAME, g_opera_config.opera_name);
   g_prefs.end();
   return true;
 }
 
-static bool load_opera_config() {
+static bool all_zero(const uint8_t* p, size_t n) {
+  uint8_t acc = 0;
+  for (size_t i = 0; i < n; i++) acc |= p[i];
+  return acc == 0;
+}
+
+static void peer_slot_key(char (&key)[16], uint8_t i) {
+  snprintf(key, sizeof(key), "%s%d", NVS_PEER_PREFIX, i);
+}
+
+// Does NVS (an open handle) hold a member slot at or above `from`? No list
+// held more than MAX_OPERA_SIZE (add_peer refuses past it, and the
+// duplicate entries an older re-pair appended counted against it too).
+static bool stored_member_slots_from(Preferences& prefs, uint8_t from) {
+  for (uint8_t i = from; i < MAX_OPERA_SIZE; i++) {
+    char key[16];
+    peer_slot_key(key, i);
+    if (prefs.isKey(key)) return true;
+  }
+  return false;
+}
+
+// `member_slots_without_opera` is set when no opera loads on a board with
+// flash encryption on while NVS holds a member slot (init() removes them).
+// Members are stored after an opera (the joiner stores its opera before
+// its members, the initiator founds one before it adds any), so such
+// slots are what a leave on firmware from before F137 left (beside an
+// empty opera, before F113, or none), or a list stored after NVS refused
+// its opera: nothing loads them, as load_peers runs only with an opera.
+// Never set on a board with flash encryption off, whose stored members
+// are the subject of sweep F141's decision.
+static bool load_opera_config(bool* member_slots_without_opera) {
+  *member_slots_without_opera = false;
   if (!flash_encryption_enabled()) {
     // Refuse to load any stored secret. Wipe in-memory state and log loudly.
     memset(g_opera_config.opera_secret, 0, OPERA_SECRET_SIZE);
@@ -1409,7 +1900,10 @@ static bool load_opera_config() {
     return false;
   }
 
-  g_prefs.begin(NVS_NS, true);
+  // Read-only, through the quiet probe (sweep F164): a namespace never
+  // created opens nothing and logs nothing, and every read below is its
+  // default, as the refused open made it.
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);
   g_opera_config.enabled = g_prefs.getBool(NVS_ENABLED, false);
   size_t id_len = g_prefs.getBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
   size_t secret_len = g_prefs.getBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
@@ -1417,17 +1911,57 @@ static bool load_opera_config() {
   strncpy(g_opera_config.opera_name, name.c_str(), MAX_OPERA_NAME_LEN);
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   g_opera_config.configured = (id_len == OPERA_ID_SIZE && secret_len == OPERA_SECRET_SIZE);
+  // An all-zero id or secret is no opera (sweep F113): what a leave on
+  // firmware from before F113 stored (persist_opera_config). Taken as
+  // configured, it was kept by the next start_pairing_initiator() instead
+  // of founding one, and a joiner, which derives the opera_id from the
+  // secret it is sent, held another id than the initiator's stored zero
+  // one, so each dropped the other's frames. Refused, it is nothing to
+  // load, and the next pairing overwrites it.
+  const bool empty = g_opera_config.configured &&
+                     (all_zero(g_opera_config.opera_id, OPERA_ID_SIZE) ||
+                      all_zero(g_opera_config.opera_secret, OPERA_SECRET_SIZE));
+  *member_slots_without_opera =
+      (!g_opera_config.configured || empty) && stored_member_slots_from(g_prefs, 0);
   g_prefs.end();
+  if (empty) {
+    secure_wipe(g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+    memset(g_opera_config.opera_id, 0, OPERA_ID_SIZE);
+    g_opera_config.configured = false;
+    health_log(SCV_LOG_INFO, SCV_CAT_MESH,
+               "opera: the stored opera is empty (a leave on older firmware); none loaded");
+  }
   return g_opera_config.configured;
 }
 
+// The list is peer_cnt and peer_0..peer_<peer_cnt - 1>. Every slot at or
+// above the count is removed (sweep F137): a removal shifts the list down a
+// slot and a leave empties it, and the slots they freed used to stay, each
+// a former member's public key, radio address and name (or a survivor's
+// copy), on a flash that is not encrypted even on a fused board (spec
+// §5.5). Nothing loaded them, as load_peers reads peer_cnt entries.
+// isKey() first: Preferences::remove() of a key that is not there logs an
+// error-level line (nvs_erase_key fails NOT_FOUND), so a save that frees no
+// slot reads each one and writes nothing.
+//
+// The order is what makes a refused write safe (a full NVS refuses a set
+// and still erases): the live slots first, in order, then the count, and
+// the slots above it only once both are stored. A refused slot stops the
+// save there, before the count; a refused count stops it before any
+// removal. So a boot reads the list as it was or as it is now: a removal's
+// shift stopped part way holds the member after the last slot written
+// twice, which the boot's fold (fold_duplicate_peers) makes one, and a
+// slot written above a count that was not is the boot's to remove
+// (load_peers). The count first, then the removals whatever it answered,
+// left a count over slots that were gone: a boot loaded the removed
+// member back, lost a survivor, and loaded an absent slot as an all-zero
+// member (F137's review, host-probed). True when the list is stored.
 static bool persist_peers() {
   g_prefs.begin(NVS_NS, false);
-  g_prefs.putUChar(NVS_PEER_COUNT, g_peer_count);
-
-  for (uint8_t i = 0; i < g_peer_count; i++) {
+  bool ok = true;
+  for (uint8_t i = 0; ok && i < g_peer_count; i++) {
     char key[16];
-    snprintf(key, sizeof(key), "%s%d", NVS_PEER_PREFIX, i);
+    peer_slot_key(key, i);
 
     // Store pubkey + mac + name
     uint8_t peer_data[PUBKEY_SIZE + 6 + MAX_PEER_NAME_LEN];
@@ -1435,11 +1969,22 @@ static bool persist_peers() {
     memcpy(peer_data + PUBKEY_SIZE, g_peers[i].mac_addr, 6);
     memcpy(peer_data + PUBKEY_SIZE + 6, g_peers[i].name, MAX_PEER_NAME_LEN);
 
-    g_prefs.putBytes(key, peer_data, sizeof(peer_data));
+    ok = g_prefs.putBytes(key, peer_data, sizeof(peer_data)) == sizeof(peer_data);
+  }
+  if (ok) ok = g_prefs.putUChar(NVS_PEER_COUNT, g_peer_count) == 1;
+  for (uint8_t i = g_peer_count; ok && i < MAX_OPERA_SIZE; i++) {
+    char key[16];
+    peer_slot_key(key, i);
+    if (g_prefs.isKey(key)) g_prefs.remove(key);
   }
 
   g_prefs.end();
-  return true;
+  // F71: the send-counter record lists the members too, so stored members
+  // with no record mean NVS from before it (load_tx_reservations). Its own
+  // write and handle; a refusal leaves the last record, which still covers
+  // every counter signed.
+  persist_tx_reservations();
+  return ok;
 }
 
 // Before add_peer re-bound a member it already held (#1761), a re-pair
@@ -1454,8 +1999,8 @@ static bool persist_peers() {
 // takes the duplicate's address: the later pairing's, which is the only
 // thing spec §8.3 lets bind one. If another member holds that address, the
 // first entry keeps its own (one address, one member). Then the list is
-// saved and the fold logged, once.
-static void fold_duplicate_peers() {
+// saved (by load_peers) and the fold logged, once. True when one folded.
+static bool fold_duplicate_peers() {
   bool folded = false;
   for (uint8_t i = 0; i < g_peer_count; i++) {
     for (uint8_t j = i + 1; j < g_peer_count;) {
@@ -1483,64 +2028,98 @@ static void fold_duplicate_peers() {
     }
   }
   if (folded) {
-    persist_peers();
     health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
                "opera: folded a duplicate member entry into one");
   }
+  return folded;
 }
 
+// A slot that does not read whole (absent, or another length) is not
+// loaded: it used to count as a member, all zero (key, address and
+// fingerprint), which nothing would ever hear from. The members after it
+// move up; the next save stores the list as loaded.
+//
+// Slots above the stored count are removed here too (sweep F137, on its
+// review): persist_peers removes them at every save from F137 on, but an
+// older firmware's removal or leave left them, and a pairing whose count
+// write NVS refused leaves the new member's. Nothing else runs at a boot
+// that would (only a membership change saves the list), so a device
+// updated with its former members' entries on the flash kept them until
+// its next pairing or removal. Read on the load's own handle (isKey, no
+// write, nothing logged); the list is saved only when one is there, and
+// then the next boot finds none.
 static bool load_peers() {
-  g_prefs.begin(NVS_NS, true);
-  g_peer_count = g_prefs.getUChar(NVS_PEER_COUNT, 0);
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);   // F164
+  uint8_t stored = g_prefs.getUChar(NVS_PEER_COUNT, 0);
 
-  if (g_peer_count > MAX_OPERA_SIZE) {
-    g_peer_count = MAX_OPERA_SIZE;
+  if (stored > MAX_OPERA_SIZE) {
+    stored = MAX_OPERA_SIZE;
   }
 
-  for (uint8_t i = 0; i < g_peer_count; i++) {
+  g_peer_count = 0;
+  bool unreadable = false;
+  for (uint8_t i = 0; i < stored; i++) {
     char key[16];
-    snprintf(key, sizeof(key), "%s%d", NVS_PEER_PREFIX, i);
+    peer_slot_key(key, i);
 
     uint8_t peer_data[PUBKEY_SIZE + 6 + MAX_PEER_NAME_LEN];
     size_t len = g_prefs.getBytes(key, peer_data, sizeof(peer_data));
 
-    if (len == sizeof(peer_data)) {
-      memcpy(g_peers[i].pubkey, peer_data, PUBKEY_SIZE);
-      memcpy(g_peers[i].mac_addr, peer_data + PUBKEY_SIZE, 6);
-      memcpy(g_peers[i].name, peer_data + PUBKEY_SIZE + 6, MAX_PEER_NAME_LEN);
-      g_peers[i].name[MAX_PEER_NAME_LEN] = '\0';
-
-      compute_fingerprint(g_peers[i].pubkey, g_peers[i].fingerprint);
-      g_peers[i].state = PEER_OFFLINE;
-      g_peers[i].session_established = false;
-      // Same counter convention as add_peer (spec §3.3): the first frame this
-      // boot signs carries counter 1, never the static-zeroed 0 a strict
-      // receiver drops. rx starts at 0 here; load_replay_counters() raises it
-      // to the persisted high-water mark right after.
-      g_peers[i].msg_counter_tx = 1;
-      g_peers[i].msg_counter_rx = 0;
-
-      // Register with ESP-NOW
-      esp_now_peer_info_t peer_info = {};
-      memcpy(peer_info.peer_addr, g_peers[i].mac_addr, 6);
-      peer_info.channel = ESPNOW_CHANNEL;
-      peer_info.encrypt = false;
-      esp_now_add_peer(&peer_info);
+    if (len != sizeof(peer_data)) {
+      unreadable = true;
+      continue;
     }
+    OperaPeer& p = g_peers[g_peer_count++];
+    memcpy(p.pubkey, peer_data, PUBKEY_SIZE);
+    memcpy(p.mac_addr, peer_data + PUBKEY_SIZE, 6);
+    memcpy(p.name, peer_data + PUBKEY_SIZE + 6, MAX_PEER_NAME_LEN);
+    p.name[MAX_PEER_NAME_LEN] = '\0';
+
+    compute_fingerprint(p.pubkey, p.fingerprint);
+    p.state = PEER_OFFLINE;
+    p.session_established = false;
+    // Same counter convention as add_peer (spec §3.3): the first frame this
+    // boot signs carries counter 1, never the static-zeroed 0 a strict
+    // receiver drops — unless any counter was signed before, and then one
+    // past the highest reservation stored (load_tx_reservations, below).
+    // rx starts at the member's last-seen tombstone in this opera, if it
+    // has one (a member re-added since its removal: sweep F116; its
+    // counter may not be in "replay_ctrs" until the next 5-minute save),
+    // else at 0; load_replay_counters() raises it to the persisted
+    // high-water mark right after.
+    p.msg_counter_tx = 1;
+    const RxTombstone* tomb = find_rx_tombstone(p.fingerprint, g_opera_config.opera_id);
+    p.msg_counter_rx = tomb != nullptr ? tomb->last_seen : 0;
+    p.msg_counter_tx_reserved = 0;
+
+    // Register with ESP-NOW
+    esp_now_peer_info_t peer_info = {};
+    memcpy(peer_info.peer_addr, p.mac_addr, 6);
+    peer_info.channel = ESPNOW_CHANNEL;
+    peer_info.encrypt = false;
+    esp_now_add_peer(&peer_info);
   }
+  const bool stale_slots = stored_member_slots_from(g_prefs, stored);
 
   g_prefs.end();
-  fold_duplicate_peers();
+  if (unreadable) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               "opera: a stored member entry is unreadable; not loaded");
+  }
+  // F71: before anything is sent, and before the save below, whose
+  // persist_tx_reservations writes the record from what is in RAM.
+  load_tx_reservations();
+  const bool folded = fold_duplicate_peers();
+  if (folded || stale_slots) persist_peers();
+  if (stale_slots) {
+    health_log(SCV_LOG_INFO, SCV_CAT_MESH,
+               "opera: removed stored member entries above the member count");
+  }
   return true;
 }
 
 static void store_alert(const MeshAlert* alert) {
-  if (!g_alert_history) return;  /* alloc failed — history disabled */
-  g_alert_history[g_alert_head] = *alert;
-  g_alert_head = (g_alert_head + 1) % MAX_ALERT_HISTORY;
-  if (g_alert_count < MAX_ALERT_HISTORY) {
-    g_alert_count++;
-  }
+  (void)g_alert_log.append(*alert);   /* no storage (alloc failed): history disabled */
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1548,6 +2127,7 @@ static void store_alert(const MeshAlert* alert) {
 // ════════════════════════════════════════════════════════════════════════════
 
 bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const char* device_name) {
+  __atomic_store_n(&g_loop_task, xTaskGetCurrentTaskHandle(), __ATOMIC_RELEASE);
   if (g_initialized) {
     return true;
   }
@@ -1555,9 +2135,11 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   /* Alert history lives in PSRAM; allocate before anything can store an
    * alert (store_alert drops records while this is NULL). Sizing:
    * MAX_ALERT_HISTORY (32) x sizeof(MeshAlert) (~92 B) = ~2.9 KB. */
-  if (!g_alert_history) {
-    g_alert_history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
-    if (!g_alert_history) {
+  if (g_alert_log.storage() == nullptr) {
+    MeshAlert* history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
+    if (history != nullptr) {
+      g_alert_log.attach(history);
+    } else {
       health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                  "mesh: alert history alloc failed — history disabled");
     }
@@ -1572,6 +2154,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   // Initialize ESP-NOW
   if (esp_now_init() != ESP_OK) {
     g_mesh_state = MESH_ERROR;
+    publish_view();
     return false;
   }
 
@@ -1590,21 +2173,42 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
 
   // Subscribe to channel changes so we can re-register the ESP-NOW broadcast
   // peer when STA reconnects on a different channel. With peer.channel = 0
-  // (set in add_peer / load_peers / broadcast_message) ESP-NOW already follows
-  // the radio, but on some IDF versions the peer cache caches the channel —
-  // dropping and re-adding the broadcast peer guarantees a clean transition.
+  // (set in add_peer / load_peers / ensure_broadcast_peer) ESP-NOW already
+  // follows the radio, but on some IDF versions the peer cache caches the
+  // channel — dropping and re-adding the broadcast peer guarantees a clean
+  // transition. It used to only drop it, which left the pairing DISCOVER,
+  // the CSI probe's broadcast and every other module's that does not re-add
+  // it before sending with nothing to send to (sweep F74).
   mesh_channel_policy::register_listener(
       [](uint8_t /*old_ch*/, uint8_t /*new_ch*/) {
         if (esp_now_is_peer_exist(BROADCAST_ADDR)) {
           esp_now_del_peer(BROADCAST_ADDR);
         }
+        ensure_broadcast_peer();
       });
 
   // Load persisted config
-  load_opera_config();
+  bool member_slots_without_opera = false;
+  load_opera_config(&member_slots_without_opera);
   load_revocations();   // F33: the §5.6 deny-list
+  load_rx_tombstones(); // F116: before load_peers, which starts a member at its own
   if (g_opera_config.configured) {
     load_peers();
+  } else {
+    // F99: no member is loaded (none stored, or flash encryption is off and
+    // the opera was not), but a member added later starts above every
+    // counter this device reserved before.
+    load_tx_reservations();
+    if (member_slots_without_opera) {
+      // F137 (on its review): a leave on older firmware kept every slot,
+      // and the records by fingerprint with them. Saved as a leave saves
+      // now: no slot, the send-counter record's floor under no
+      // fingerprint (read just above), no last-seen record. Once.
+      (void)persist_peers();
+      (void)save_replay_counters();
+      health_log(SCV_LOG_INFO, SCV_CAT_MESH,
+                 "opera: removed stored member entries no opera holds");
+    }
   }
 
   g_start_time_ms = millis();
@@ -1618,6 +2222,9 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
     g_mesh_state = MESH_DISABLED;
   }
 
+  // F110: the HTTP server is up before init() (setup()), so the status
+  // routes see this boot's state from here, not only from the first pass.
+  publish_view();
   return true;
 }
 
@@ -1631,9 +2238,10 @@ void deinit() {
   g_espnow_initialized = false;
   g_initialized = false;
   g_mesh_state = MESH_DISABLED;
+  publish_view();
 }
 
-void set_enabled(bool enabled) {
+static void set_enabled(bool enabled) {
   g_opera_config.enabled = enabled;
   persist_opera_config();
 
@@ -1652,8 +2260,84 @@ bool is_enabled() {
   return g_opera_config.enabled;
 }
 
+// One owner command, on the loop task (update()'s drain of g_commands).
+// It publishes the view before it returns, so before the drain posts its
+// result and the handler answers (sweep F110's review): the dashboard reads
+// GET /api/mesh or /peers right after a POST answers (removePeer() then
+// loadPeers(), refreshOpera() after cancel, rename, enable and leave), while
+// the loop task may still be at the rest of this pass (rx, the rekey's NVS
+// write, the heartbeat), and the read must show what the command did.
+static bool run_command(const Command& cmd) {
+  bool ok = false;
+  switch (cmd.type) {
+    case MESH_CMD_SET_ENABLED:
+      set_enabled(cmd.flag);
+      ok = true;
+      break;
+    case MESH_CMD_PAIR_START: {
+      char name[MAX_OPERA_NAME_LEN + 1];
+      memcpy(name, cmd.name, sizeof(name));
+      name[MAX_OPERA_NAME_LEN] = '\0';
+      ok = start_pairing_initiator(cmd.flag ? name : nullptr);
+      break;
+    }
+    case MESH_CMD_PAIR_JOIN:
+      ok = start_pairing_joiner();
+      break;
+    case MESH_CMD_PAIR_CONFIRM:
+      ok = confirm_pairing();
+      break;
+    case MESH_CMD_PAIR_CANCEL:
+      cancel_pairing();
+      ok = true;
+      break;
+    case MESH_CMD_LEAVE:
+      ok = leave_opera();
+      break;
+    case MESH_CMD_REMOVE_PEER:
+      ok = remove_peer(cmd.fingerprint);
+      break;
+    case MESH_CMD_RENAME: {
+      char name[MAX_OPERA_NAME_LEN + 1];
+      memcpy(name, cmd.name, sizeof(name));
+      name[MAX_OPERA_NAME_LEN] = '\0';
+      ok = set_opera_name(name);
+      break;
+    }
+    case MESH_CMD_CLEAR_ALERTS:
+      clear_alerts();
+      ok = true;
+      break;
+    case MESH_CMD_SAVE_REPLAY:
+      ok = save_replay_counters();
+      break;
+  }
+  publish_view();   // F110: what this command did, before its handler answers
+  return ok;
+}
+
+loop_command_ring::Wait submit(const Command& cmd, bool* ok, uint32_t timeout_ms) {
+  bool result = false;
+  const loop_command_ring::Wait w = loop_command_ring::submit(
+      g_commands, cmd, &result, timeout_ms, COMMAND_POLL_MS,
+      []() { return (uint32_t)millis(); },
+      [](uint32_t ms) {
+        const TickType_t ticks = pdMS_TO_TICKS(ms);
+        vTaskDelay(ticks > 0 ? ticks : 1);
+      });
+  if (ok != nullptr) *ok = (w == loop_command_ring::Wait::kDone) && result;
+  return w;
+}
+
 void update() {
+  // The owner's commands first, and before the early return below: a
+  // disabled mesh still runs MESH_CMD_SET_ENABLED (sweep F96). Also before
+  // init(): the commands ran whether or not init() did before they moved
+  // here, and still do.
+  g_commands.drain(run_command);
+
   if (!g_initialized || g_mesh_state == MESH_DISABLED) {
+    publish_view();   // F110: what the commands above changed (enable, leave, ...)
     return;
   }
 
@@ -1688,6 +2372,11 @@ void update() {
     g_rx_pending = false;
   }
 
+  // F75: a pairing both owners confirmed, in either order.
+  initiator_step();
+  // F100: its COMPLETE, until the joiner is heard.
+  complete_resend_step();
+
   // v0.3 (audit O3): if a rekey is in flight, finalize when all peers have
   // ACKed or the timeout expires.
   maybe_finalize_rekey();
@@ -1699,8 +2388,15 @@ void update() {
     cancel_pairing();
   }
 
-  // Send periodic heartbeat
-  if (g_mesh_state == MESH_ACTIVE && now - g_last_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
+  // Send periodic heartbeat — while MESH_CONNECTING too (sweep F76). It
+  // went out only in MESH_ACTIVE, and ACTIVE needs a member heard, so an
+  // opera that had heard nobody sent nothing at all: every member after
+  // they all rebooted (init() leaves MESH_CONNECTING), and each side of a
+  // fresh pairing, which holds the other at PEER_UNKNOWN. Bounded like any
+  // heartbeat: one frame per member per HEARTBEAT_INTERVAL_MS, under the
+  // airtime governor's routine cap (send_heartbeat).
+  if ((g_mesh_state == MESH_ACTIVE || g_mesh_state == MESH_CONNECTING) &&
+      now - g_last_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
     send_heartbeat();
     g_last_heartbeat_ms = now;
   }
@@ -1747,14 +2443,21 @@ void update() {
       strncpy(discover.device_name, g_device_name, MAX_PEER_NAME_LEN);
       discover.role = (uint8_t)g_pairing.role;
 
+      ensure_broadcast_peer();   // F74: not another module's to provide
       send_pair_frame(BROADCAST_ADDR, MSG_PAIR_DISCOVER, &discover, sizeof(discover));
       last_discover = now;
     }
   }
+
+  // F110: the status routes see this pass whole, from here until the next.
+  publish_view();
 }
 
-MeshStatus get_status() {
-  MeshStatus status;
+// Zeroed first, padding included, so publish_view()'s compare sees only
+// what changed.
+static void fill_status(MeshStatus* out) {
+  memset(out, 0, sizeof(*out));
+  MeshStatus& status = *out;
   status.state = g_mesh_state;
   status.espnow_active = g_espnow_initialized;
   status.peers_total = g_peer_count;
@@ -1791,8 +2494,54 @@ MeshStatus get_status() {
     snprintf(status.opera_id_hex + i * 2, sizeof(status.opera_id_hex) - i * 2, "%02x", g_opera_config.opera_id[i]);
   }
   status.opera_id_hex[OPERA_ID_SIZE * 2] = '\0';
+}
 
+MeshStatus get_status() {
+  MeshStatus status;
+  fill_status(&status);
   return status;
+}
+
+// The loop task: what the status routes show, from this pass (sweep F110).
+// Called at the end of every update() pass, its early return included, after
+// each owner command (run_command(), before the handler answers), and by
+// init() and deinit(); nothing else publishes.
+static void publish_view() {
+  StatusView v;
+  memset(&v, 0, sizeof(v));
+  fill_status(&v.status);
+  v.status.uptime_ms = 0;            // read_status() counts it at the read
+  v.start_ms = g_start_time_ms;
+  v.enabled = g_opera_config.enabled;
+  v.has_opera = g_opera_config.configured;
+  memcpy(v.opera_name, g_opera_config.opera_name, sizeof(v.opera_name));
+  v.pairing_code_shown = g_mesh_state == MESH_PAIRING_CONFIRM && g_pairing.code_displayed;
+  v.pairing_code = v.pairing_code_shown ? g_pairing.confirmation_code : 0;
+  v.peer_count = g_peer_count;
+  for (uint8_t i = 0; i < g_peer_count && i < MAX_OPERA_SIZE; i++) {
+    PeerView& p = v.peers[i];
+    memcpy(p.name, g_peers[i].name, sizeof(p.name));
+    memcpy(p.fingerprint, g_peers[i].fingerprint, FINGERPRINT_SIZE);
+    p.state = g_peers[i].state;
+    p.rssi = g_peers[i].rssi;
+    p.alerts_received = g_peers[i].alerts_received;
+    p.last_seen_ms = g_peers[i].last_seen_ms;
+  }
+  (void)g_status_view.publish(v);
+}
+
+void read_status(StatusView* out) {
+  if (!g_status_view.read(out)) {
+    // Before init() publishes: what get_status() said then.
+    memset(out, 0, sizeof(*out));
+    out->status.state = MESH_DISABLED;
+    memset(out->status.opera_id_hex, '0', OPERA_ID_SIZE * 2);
+  }
+  out->status.uptime_ms = millis() - out->start_ms;
+}
+
+size_t read_alerts(MeshAlert* out, size_t cap) {
+  return g_alert_log.read(out, cap);
 }
 
 const char* state_name(MeshState state) {
@@ -1877,15 +2626,21 @@ uint8_t get_online_peer_count() {
   return count;
 }
 
-bool remove_peer(const uint8_t* fingerprint) {
+static bool remove_peer(const uint8_t* fingerprint) {
   for (uint8_t i = 0; i < g_peer_count; i++) {
     if (memcmp(g_peers[i].fingerprint, fingerprint, FINGERPRINT_SIZE) == 0) {
       // The slot is about to be overwritten by the shift below.
       uint8_t removed_fp[FINGERPRINT_SIZE];
       memcpy(removed_fp, g_peers[i].fingerprint, FINGERPRINT_SIZE);
 
-      // Remove from ESP-NOW
-      esp_now_del_peer(g_peers[i].mac_addr);
+      // F116: its last-seen counter outlives the entry (retire_rx), under
+      // the opera it was in (a rotation below stages a new id; it commits
+      // later, in maybe_finalize_rekey).
+      if (retire_rx(&g_peers[i], g_opera_config.opera_id)) persist_rx_tombstones();
+
+      // Remove from ESP-NOW, unless another member an older firmware stored
+      // at the same address still uses it (release_mac, F98).
+      release_mac(g_peers[i].mac_addr, &g_peers[i]);
 
       // Shift remaining peers
       for (uint8_t j = i; j < g_peer_count - 1; j++) {
@@ -1893,7 +2648,27 @@ bool remove_peer(const uint8_t* fingerprint) {
       }
       g_peer_count--;
 
+      // F99: the removed device keeps its last-seen counter for this one,
+      // and a re-pair starts it one past the highest counter this device
+      // can have signed (add_peer), the removed member's included. Each
+      // survivor's reservation is held to that counter (it is covered up to
+      // it: nothing above it has been signed), so the save below still
+      // covers what was signed to the removed member when its entry goes,
+      // and a boot after it resumes above it too. With no survivor the
+      // save below writes the record as one entry under no fingerprint,
+      // holding that counter (persist_tx_floor_without_members, F137).
+      for (uint8_t j = 0; j < g_peer_count; j++) {
+        if (g_peers[j].msg_counter_tx_reserved < g_tx_high_signed) {
+          g_peers[j].msg_counter_tx_reserved = g_tx_high_signed;
+        }
+      }
+
       persist_peers();
+      // F137: the last-seen record lists members by fingerprint, and kept
+      // the removed one's entry until the sketch's next 5-minute save.
+      // Saved now, as the survivors stand (with none, the key goes); what
+      // this device last heard from the removed member is its tombstone.
+      (void)save_replay_counters();
 
       // F33 (spec §5.6): refused re-entry for REVOCATION_GRACE_MS.
       mesh_revocation::add(g_revoked, removed_fp, millis());
@@ -1968,12 +2743,25 @@ static void maybe_finalize_rekey() {
   memcpy(g_opera_config.opera_id, g_rekey.pending_opera_id, OPERA_ID_SIZE);
 
   // Invalidate sessions everywhere; mark unacked peers stale.
+  //
+  // Every counter carries on across the rotation (sweep F95), in both
+  // directions and on both sides (the REKEY handler too), as the PlatformIO
+  // tree's rotation keeps its outbound counter (spec §5.6). They were reset
+  // here (tx 1, rx 0) "for the new session", but a frame is signed with
+  // the long-term key, which a rotation does not change, and the opera_id
+  // in its signed bytes is what kills a frame from before the rotation; the
+  // reset bought nothing and cost two things. A member the rotation did not
+  // reach (today every member: nothing opens an AUTH session, F95) kept its
+  // last-seen counter for this device, so after the re-pair that rejoins it
+  // it dropped this device's restarted frames until they climbed back. And
+  // the last-seen reset was in RAM only: "replay_ctrs" kept the old value
+  // until the next 5-minute save, so a reboot in between restored it, and
+  // the member's restarted counters dropped the same way. Kept, every
+  // counter only climbs, and RAM and the stored copy agree.
   for (uint8_t j = 0; j < g_peer_count; j++) {
     bool unacked = (g_rekey.pending_acks & (uint16_t)(1u << j)) != 0;
     g_peers[j].session_established = false;
     memset(g_peers[j].session_key, 0, SESSION_KEY_SIZE);
-    g_peers[j].msg_counter_tx = 1;   // first counter of the new session (add_peer)
-    g_peers[j].msg_counter_rx = 0;
     g_peers[j].state = unacked ? PEER_STALE : PEER_AUTHENTICATING;
   }
 
@@ -1995,34 +2783,44 @@ const OperaConfig* get_opera_config() {
   return &g_opera_config;
 }
 
-bool set_opera_name(const char* name) {
+static bool set_opera_name(const char* name) {
   strncpy(g_opera_config.opera_name, name, MAX_OPERA_NAME_LEN);
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   return persist_opera_config();
 }
 
-bool leave_opera() {
+static bool leave_opera() {
   // Broadcast leave message to peers
   broadcast_message(MSG_LEAVE_OPERA, nullptr, 0);
+
+  // Remove all peers. Their last-seen counters outlive them (F116,
+  // retire_rx), under the opera they were in, so before its id is cleared:
+  // a re-pair into the same opera (as a joiner of a member that kept it)
+  // re-adds them under that opera_id.
+  bool tombs_changed = false;
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    tombs_changed |= retire_rx(&g_peers[i], g_opera_config.opera_id);
+    esp_now_del_peer(g_peers[i].mac_addr);
+  }
+  g_peer_count = 0;
+  if (tombs_changed) persist_rx_tombstones();
 
   // Clear opera config
   memset(&g_opera_config, 0, sizeof(g_opera_config));
 
-  // Remove all peers
-  for (uint8_t i = 0; i < g_peer_count; i++) {
-    esp_now_del_peer(g_peers[i].mac_addr);
-  }
-  g_peer_count = 0;
-
-  // Persist
+  // Persist: with no opera configured, the id and secret keys are removed
+  // (sweep F113; they were stored as zeros and loaded back as an opera).
   persist_opera_config();
   persist_peers();
+  // F137: with no member left the last-seen record goes now, not at the
+  // sketch's next 5-minute save; each member heard has its tombstone.
+  (void)save_replay_counters();
 
   g_mesh_state = MESH_NO_OPERA;
   return true;
 }
 
-bool start_pairing_initiator(const char* opera_name) {
+static bool start_pairing_initiator(const char* opera_name) {
   if (g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN) {
     return false;  // Already pairing
   }
@@ -2052,7 +2850,7 @@ bool start_pairing_initiator(const char* opera_name) {
   return true;
 }
 
-bool start_pairing_joiner() {
+static bool start_pairing_joiner() {
   if (g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN) {
     return false;
   }
@@ -2065,7 +2863,7 @@ bool start_pairing_joiner() {
   return true;
 }
 
-void cancel_pairing() {
+static void cancel_pairing() {
   memset(&g_pairing, 0, sizeof(g_pairing));
 
   if (g_opera_config.configured) {
@@ -2079,12 +2877,21 @@ void cancel_pairing() {
   }
 }
 
-bool confirm_pairing() {
+static bool confirm_pairing() {
   if (g_mesh_state != MESH_PAIRING_CONFIRM || !g_pairing.code_displayed) {
     return false;
   }
 
   g_pairing.code_confirmed = true;
+
+  // F75: the joiner confirmed first, so it is owed the COMPLETE, which the
+  // next update() sends (initiator_step). Not a CONFIRM as well: two frames
+  // back to back can meet the joiner's one-frame receive buffer
+  // (espnow_recv_cb drops a frame while one is pending), and the COMPLETE
+  // would be the one dropped. The joiner does not need this side's CONFIRM.
+  if (g_pairing.role == PAIR_ROLE_INITIATOR && g_pairing.peer_confirmed) {
+    return true;
+  }
 
   // Send confirmation message
   PairConfirmPayload confirm;
@@ -2176,16 +2983,16 @@ bool broadcast_offline_imminent(AlertType reason, uint32_t final_seq, const uint
 }
 
 const MeshAlert* get_alerts(size_t* count) {
-  *count = g_alert_count;
-  return g_alert_history;
+  *count = g_alert_log.count();
+  return g_alert_log.storage();
 }
 
-void clear_alerts() {
-  g_alert_count = 0;
-  g_alert_head = 0;
-  if (!g_alert_history)
-    g_alert_history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
-  if (g_alert_history) memset(g_alert_history, 0, ALERT_HISTORY_BYTES);
+static void clear_alerts() {
+  if (g_alert_log.storage() == nullptr) {
+    MeshAlert* history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
+    if (history != nullptr) g_alert_log.attach(history);
+  }
+  g_alert_log.clear();
 }
 
 void set_alert_callback(AlertCallback callback) {
@@ -2212,14 +3019,23 @@ void send_heartbeat() {
   // Heartbeat is routine traffic — skip this tick if we'd blow the airtime
   // cap. The peer-stale timer (90 s) is long enough to tolerate a few skipped
   // heartbeats; the only consequence of skipping is a slightly delayed stale
-  // transition for peers that were also being noisy. broadcast_message()
-  // sends one signed frame to each peer it reaches, so that is the charge.
+  // transition for peers that were also being noisy. One signed frame goes
+  // to each member, so that is the charge.
   if (!airtime_governor::try_reserve_routine(millis(),
-          signed_frame_bytes(sizeof(payload)), broadcast_peer_count())) {
+          signed_frame_bytes(sizeof(payload)), g_peer_count)) {
     return;
   }
 
-  broadcast_message(MSG_HEARTBEAT, (uint8_t*)&payload, sizeof(payload));
+  // To every member, whatever its state (F76). broadcast_message() skips
+  // members below PEER_CONNECTED, and a heartbeat is how a member gets
+  // heard: one this device holds at PEER_UNKNOWN (a fresh pairing leaves
+  // its partner there) was never sent one, so the two never heard each
+  // other even with each MESH_ACTIVE through other members. The alerts and
+  // the Beacon, channel-lock and hub-election sends still go to
+  // PEER_CONNECTED and later only.
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    send_to_peer(&g_peers[i], MSG_HEARTBEAT, (uint8_t*)&payload, sizeof(payload));
+  }
 }
 
 void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors) {
@@ -2324,7 +3140,7 @@ static void persist_revocations() {
 static void load_revocations() {
   mesh_revocation::init(g_revoked);
   if (!flash_encryption_enabled()) return;
-  g_prefs.begin(NVS_NS, true);
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);   // F164
   uint8_t blob[mesh_revocation::BLOB_MAX];
   size_t got = 0;
   if (g_prefs.isKey(NVS_REVOKED)) {
@@ -2339,6 +3155,139 @@ static void load_revocations() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// LAST-SEEN TOMBSTONES (F116 — see g_rx_tombs)
+//
+// NVS key "rx_tombs": fingerprint (8 B) || opera_id (16 B) || last-seen
+// counter (u64) per tombstone, oldest first, at most MAX_RX_TOMBSTONES
+// (256 B). Removed when none is left. Not flash-encryption gated, like
+// "replay_ctrs" and "tx_ctrs" beside it: counts by fingerprint, the same
+// pairs "replay_ctrs" held for those devices while they were members, and
+// the opera_id every one of their frames carried in the clear. (Which
+// devices a household threw out is the deny-list's to keep, FE-gated; a
+// tombstone does not say whether its device was removed or left with
+// everyone else.) On an FE-off board no opera and no member is loaded at a
+// boot (spec §5.5), so the members it held then leave no tombstone; the
+// ones kept before that boot stay, and apply if it joins that opera again.
+// ════════════════════════════════════════════════════════════════════════════
+
+static const char* NVS_RX_TOMBS = "rx_tombs";
+static constexpr size_t RX_TOMB_ENTRY_SIZE = FINGERPRINT_SIZE + OPERA_ID_SIZE + sizeof(uint64_t);
+
+static int rx_tombstone_index(const uint8_t* fingerprint, const uint8_t* opera_id) {
+  for (uint8_t i = 0; i < g_rx_tomb_count; i++) {
+    if (memcmp(g_rx_tombs[i].fingerprint, fingerprint, FINGERPRINT_SIZE) == 0 &&
+        memcmp(g_rx_tombs[i].opera_id, opera_id, OPERA_ID_SIZE) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static const RxTombstone* find_rx_tombstone(const uint8_t* fingerprint, const uint8_t* opera_id) {
+  const int i = rx_tombstone_index(fingerprint, opera_id);
+  return i < 0 ? nullptr : &g_rx_tombs[i];
+}
+
+static void drop_rx_tombstone_at(uint8_t at) {
+  for (uint8_t i = at; i + 1 < g_rx_tomb_count; i++) g_rx_tombs[i] = g_rx_tombs[i + 1];
+  g_rx_tomb_count--;
+  memset(&g_rx_tombs[g_rx_tomb_count], 0, sizeof(RxTombstone));
+}
+
+// A member leaves the table of the opera `opera_id`: keep its last-seen
+// counter for a re-add into that opera, as the newest tombstone. Returns
+// whether the tombstones changed. One kept for the same key in another
+// opera is another tombstone, left as it is.
+//
+// - Its key holds a tombstone in this opera already (it was re-added into
+//   it since one was kept): a member heard above it since then raises it;
+//   one never heard above it (its last-seen is still the one the re-add
+//   restored) releases it. That release is the way out for a device whose
+//   own send counters went back while it kept its key (its send-counter
+//   record, "tx_ctrs", lost while the identity key stayed; or a member on
+//   firmware from before F71, which starts them at 1 at every boot and
+//   every add): re-added at its tombstone, its frames drop here until its
+//   counter climbs past it, which from a floor such as F71's 2^40 is
+//   never; removed again before it is heard, it leaves no tombstone, and
+//   the next re-pair into this opera starts it at 0, as every re-add did
+//   before F116. The cost is the window F116 closes: a frame it signed
+//   before that tombstone is fresh once more after that second re-add.
+//   (A device whose NVS was erased has a new key, hence a new fingerprint:
+//   no tombstone applies to it. A device that kept its NVS resumes its
+//   counters above everything it signed, F71, so above its tombstone; an
+//   older member updated to F71 starts above it at its first boot.)
+// - Otherwise, a member heard at all leaves one; when all are taken, the
+//   oldest goes. A member never heard needs none.
+static bool retire_rx(const OperaPeer* peer, const uint8_t* opera_id) {
+  const uint64_t seen = peer->msg_counter_rx;
+  const int at = rx_tombstone_index(peer->fingerprint, opera_id);
+  if (at >= 0) {
+    const uint64_t kept = g_rx_tombs[at].last_seen;
+    if (seen < kept) return false;   // keep the higher (add_peer and load_peers start it there)
+    drop_rx_tombstone_at((uint8_t)at);
+    if (seen == kept) return true;   // not heard above it since its re-add: released
+    // heard above it: kept again below, as the newest
+  }
+  if (seen == 0) return false;       // never heard: nothing to keep
+  if (g_rx_tomb_count == MAX_RX_TOMBSTONES) drop_rx_tombstone_at(0);   // the oldest
+  memcpy(g_rx_tombs[g_rx_tomb_count].fingerprint, peer->fingerprint, FINGERPRINT_SIZE);
+  memcpy(g_rx_tombs[g_rx_tomb_count].opera_id, opera_id, OPERA_ID_SIZE);
+  g_rx_tombs[g_rx_tomb_count].last_seen = seen;
+  g_rx_tomb_count++;
+  return true;
+}
+
+// Every change, from remove_peer and leave_opera on the loop task: one
+// write of at most 256 B per removal or leave. A write NVS refuses leaves
+// the last stored set: the change holds until the next boot.
+static void persist_rx_tombstones() {
+  uint8_t blob[MAX_RX_TOMBSTONES * RX_TOMB_ENTRY_SIZE];
+  size_t n = 0;
+  for (uint8_t i = 0; i < g_rx_tomb_count; i++) {
+    memcpy(blob + n, g_rx_tombs[i].fingerprint, FINGERPRINT_SIZE);
+    memcpy(blob + n + FINGERPRINT_SIZE, g_rx_tombs[i].opera_id, OPERA_ID_SIZE);
+    memcpy(blob + n + FINGERPRINT_SIZE + OPERA_ID_SIZE, &g_rx_tombs[i].last_seen, sizeof(uint64_t));
+    n += RX_TOMB_ENTRY_SIZE;
+  }
+  g_prefs.begin(NVS_NS, false);
+  if (n == 0) {
+    if (g_prefs.isKey(NVS_RX_TOMBS)) g_prefs.remove(NVS_RX_TOMBS);
+  } else {
+    g_prefs.putBytes(NVS_RX_TOMBS, blob, n);
+  }
+  g_prefs.end();
+}
+
+// At init(), before load_peers. A record that is not whole entries, or
+// holds more than MAX_RX_TOMBSTONES (getBytes refuses a value longer than
+// the buffer), is ignored and logged: the window F116 closes is open again
+// for the devices it named, as it was before F116, until it is rewritten.
+static void load_rx_tombstones() {
+  g_rx_tomb_count = 0;
+  memset(g_rx_tombs, 0, sizeof(g_rx_tombs));
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);   // F164
+  if (!g_prefs.isKey(NVS_RX_TOMBS)) {
+    g_prefs.end();
+    return;
+  }
+  uint8_t blob[MAX_RX_TOMBSTONES * RX_TOMB_ENTRY_SIZE];
+  const size_t got = g_prefs.getBytes(NVS_RX_TOMBS, blob, sizeof(blob));
+  g_prefs.end();
+  if (got == 0 || (got % RX_TOMB_ENTRY_SIZE) != 0) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               "opera: last-seen tombstones unreadable; ignored");
+    return;
+  }
+  for (size_t off = 0; off < got; off += RX_TOMB_ENTRY_SIZE) {
+    memcpy(g_rx_tombs[g_rx_tomb_count].fingerprint, blob + off, FINGERPRINT_SIZE);
+    memcpy(g_rx_tombs[g_rx_tomb_count].opera_id, blob + off + FINGERPRINT_SIZE, OPERA_ID_SIZE);
+    memcpy(&g_rx_tombs[g_rx_tomb_count].last_seen, blob + off + FINGERPRINT_SIZE + OPERA_ID_SIZE,
+           sizeof(uint64_t));
+    g_rx_tomb_count++;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // REPLAY COUNTER PERSISTENCE
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -2347,8 +3296,9 @@ constexpr size_t REPLAY_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
 
 bool save_replay_counters() {
   if (g_peer_count == 0) {
-    // No peers remain: drop any stale replay blob so a later re-pair can't
-    // restore counters that belong to peers that no longer exist.
+    // No peers remain: drop the blob, which holds members only. What this
+    // device last heard from each dropped member is its tombstone (F116),
+    // which a re-pair restores.
     g_prefs.begin(NVS_NS, false);
     if (g_prefs.isKey(NVS_REPLAY_KEY)) g_prefs.remove(NVS_REPLAY_KEY);
     g_prefs.end();
@@ -2368,8 +3318,20 @@ bool save_replay_counters() {
   return put == offset;
 }
 
+bool save_replay_counters_before_reboot() {
+  // Before init() there is no hook to call this, and no loop task recorded:
+  // only setup() (the loop task) could be here.
+  const TaskHandle_t loop_task = __atomic_load_n(&g_loop_task, __ATOMIC_ACQUIRE);
+  if (loop_task == nullptr || loop_task == xTaskGetCurrentTaskHandle()) {
+    return save_replay_counters();
+  }
+  bool ok = false;
+  (void)submit(make_command(MESH_CMD_SAVE_REPLAY), &ok);
+  return ok;
+}
+
 bool load_replay_counters() {
-  g_prefs.begin(NVS_NS, true);
+  (void)csi_module_settings_nvs::begin_read_only(g_prefs, NVS_NS);   // F164
   if (!g_prefs.isKey(NVS_REPLAY_KEY)) {
     g_prefs.end();
     return true;
@@ -2398,6 +3360,140 @@ bool load_replay_counters() {
     }
   }
   return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SEND COUNTER RESERVATIONS (F71 — see reserve_tx_counter)
+//
+// NVS key "tx_ctrs": fingerprint (8 B) || reservation (u64) for every member
+// (0: nothing reserved for it yet, so nothing signed to it). Written by
+// every reservation and by every persist_peers, so on this firmware a
+// device that stores members stores the record too: members with no record
+// mean NVS from before it (load_tx_reservations). Not flash-encryption
+// gated, like "replay_ctrs" beside it (the PlatformIO tree's mesh_out_ctr
+// isn't either): counts, not secrets, and a gate would restart the
+// counters at every boot of an FE-off board.
+// ════════════════════════════════════════════════════════════════════════════
+
+// With no member left (the last one removed, or a leave) the record is
+// kept for one number: a member added later starts past every counter this
+// device can have signed (F99, add_peer), and a boot reads that from it with
+// no member loaded. It used to be left as the last save wrote it, every
+// entry a former member's fingerprint (sweep F137), which the reader never
+// reads: load_tx_reservations takes the highest counter of any entry. So it
+// is written again as one entry under an all-zero fingerprint, holding
+// g_tx_high_signed: every counter spent this boot and the highest
+// reservation the boot read back (an unreadable record's floor included),
+// so past every counter signed, which is all a new member's start needs
+// (past what was signed, not what was reserved, as add_peer has it). A
+// record already in that form costs no write; none (nothing ever reserved)
+// stays none. True when the record says it, or there is none.
+static bool persist_tx_floor_without_members() {
+  uint8_t floor_entry[TX_RESERVE_ENTRY_SIZE] = {};
+  memcpy(floor_entry + FINGERPRINT_SIZE, &g_tx_high_signed, sizeof(uint64_t));
+  Preferences prefs;
+  if (!prefs.begin(NVS_NS, false)) return false;
+  bool ok = true;
+  if (prefs.isKey(NVS_TX_RESERVED)) {
+    uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
+    const size_t got = prefs.getBytes(NVS_TX_RESERVED, blob, sizeof(blob));
+    if (got != sizeof(floor_entry) || memcmp(blob, floor_entry, sizeof(floor_entry)) != 0) {
+      ok = prefs.putBytes(NVS_TX_RESERVED, floor_entry, sizeof(floor_entry)) == sizeof(floor_entry);
+    }
+  }
+  prefs.end();
+  return ok;
+}
+
+// Both use their own Preferences handle, not g_prefs: this runs on the send
+// path, which remove_peer() reached from the REST handler's task when this
+// was written, and a Preferences object another task has begun refuses a
+// second begin() (NVS itself takes concurrent handles). Since sweep F96
+// remove_peer() runs on the loop task (update()'s command drain); the own
+// handle stays, as it costs nothing and needs no reasoning about tasks. True only when the record is committed:
+// Preferences::putBytes returns the length only after nvs_commit succeeds,
+// on both cores canary-wap builds.
+static bool persist_tx_reservations() {
+  if (g_peer_count == 0) return persist_tx_floor_without_members();
+  uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
+  size_t n = 0;
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    memcpy(blob + n, g_peers[i].fingerprint, FINGERPRINT_SIZE);
+    memcpy(blob + n + FINGERPRINT_SIZE, &g_peers[i].msg_counter_tx_reserved, sizeof(uint64_t));
+    n += TX_RESERVE_ENTRY_SIZE;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NS, false)) return false;
+  const size_t put = prefs.putBytes(NVS_TX_RESERVED, blob, n);
+  prefs.end();
+  return put == n;
+}
+
+// Every member resumes one past the highest reservation stored for any of
+// them, so no counter signed before the boot is signed again, and the boot
+// leaves no member's counter ahead of another's. Each resuming from its own
+// reservation left them up to a block apart, and sweep F72's open gap (a
+// frame to one member, replayed at another from this device's address,
+// silences this device there until its counter for that member catches
+// up) grew by up to a block at every boot; aligned, a boot closes it.
+// Nothing is written here: the first send reserves for every member at
+// once (reserve_tx_counter), so a boot loop that never sends wears nothing.
+//
+// Members loaded and no record: NVS from before F71 (see persist_peers),
+// whose counters restarted at 1 at every boot. Every member resumes above
+// TX_COUNTER_FLOOR_NO_RECORD, which no such boot reached, so the first boot
+// after the update is heard at once, not only after each counter climbs
+// back past the old one. A record that is there but unreadable resumes
+// above TX_COUNTER_FLOOR_UNREADABLE, and the boot says so. That is above
+// everything signed since the update, unless the device has resumed from
+// that floor once already: a second unreadable record resumes below its
+// own history, and its members drop its frames until each counter climbs
+// back past the one they last heard (spec §3.3).
+//
+// It also runs with no member loaded (init(): an opera with none left, or
+// none loaded because flash encryption is off), for g_tx_high_signed alone:
+// anything up to `high` may have been signed, a member added later starts
+// one past it (add_peer, F99), and the device may be one that kept its
+// last-seen counter for this one. With no member
+// and no record nothing was reserved (or it was on a firmware from before
+// F71, whose counters restarted at 1 at every boot), and a new member starts
+// at 1.
+static void load_tx_reservations() {
+  uint64_t high = 0;
+  Preferences prefs;
+  const bool opened = csi_module_settings_nvs::begin_read_only(prefs, NVS_NS);   // F164
+  if (!opened || !prefs.isKey(NVS_TX_RESERVED)) {
+    if (opened) prefs.end();
+    if (g_peer_count == 0) return;
+    high = TX_COUNTER_FLOOR_NO_RECORD;
+    health_log(SCV_LOG_INFO, SCV_CAT_MESH,
+               "opera: no send-counter record; counters resume above 2^40");
+  } else {
+    uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
+    const size_t got = prefs.getBytes(NVS_TX_RESERVED, blob, sizeof(blob));
+    prefs.end();
+    if (got == 0 || (got % TX_RESERVE_ENTRY_SIZE) != 0) {
+      high = TX_COUNTER_FLOOR_UNREADABLE;
+      health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+                 "opera: send-counter reservations unreadable; counters resume above 2^48");
+    } else {
+      // Every entry, a member's that has since gone included: what matters
+      // is the highest counter this device can have signed.
+      for (size_t off = 0; off < got; off += TX_RESERVE_ENTRY_SIZE) {
+        uint64_t reserved;
+        memcpy(&reserved, blob + off + FINGERPRINT_SIZE, sizeof(uint64_t));
+        if (reserved > high) high = reserved;
+      }
+    }
+  }
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    // Covered up to `high`, and nothing above it signed; the next counter
+    // needs a reservation. At UINT64_MAX no counter is left: 0 makes
+    // reserve_tx_counter refuse.
+    g_peers[i].msg_counter_tx_reserved = high;
+    g_peers[i].msg_counter_tx = (high == UINT64_MAX) ? 0 : high + 1;
+  }
+  if (high > g_tx_high_signed) g_tx_high_signed = high;
 }
 
 size_t send_hub_election(mesh_hub_election::Event event,

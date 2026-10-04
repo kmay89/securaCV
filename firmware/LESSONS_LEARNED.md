@@ -190,8 +190,9 @@
   synchronizes with the WiFi coexistence layer and can block its caller far
   past the 8 s budget. Two consecutive crashes; one more would have tripped
   safe mode.
-- **The pattern (now used 4×):** SD mount worker (#820), MJPEG stream worker
-  (#822), fleet mDNS browse worker (#823), BLE bring-up worker (this fix).
+- **The pattern (now used 5×):** SD mount worker (#820), MJPEG stream worker
+  (#822), fleet mDNS browse worker (#823), BLE bring-up worker (this fix),
+  and the MQTT client's retire worker (sweep F106's review, below).
   The loop task is WDT-subscribed and owns the periodic state machine; its
   budget is milliseconds. Any call that *can* wait on another subsystem's
   semaphore (SD driver, httpd socket, mDNS component, BT controller/coex)
@@ -2187,6 +2188,39 @@
   only when it landed.
 - **Date learned:** 2026-09
 
+### A lifecycle promise in an interface header is not a call anybody makes
+- **What happened:** `csi_module.h` said the runtime "guarantees init() is
+  called exactly once before any tick(), with the module's persisted
+  settings". Nothing did: `csi_module_register()` only records a module, the
+  canary's bridge registered and ticked without ever calling `init()`, and
+  the canary-wap called it only from `reinit_module()` after a settings
+  POST, a calibration apply or a Tuning Lab change (sweep F93). So a saved
+  preset, threshold, pet mode or anomaly cooldown did nothing after a
+  reboot until the owner touched a setting again, and on the canary its
+  NVS-backed `csi_module_settings_*` overrides were dead code. Two host
+  tests asserted in comments that `register()` had already run `init()`.
+- **Root cause:** The guarantee lived in prose on the interface, and the
+  modules' static defaults equal what `init()` computes from an empty NVS,
+  so a device that was never configured behaves identically either way:
+  only a stored value shows the gap, and the canary-wap's re-init on every
+  change hid it within a boot.
+- **Fix:** `csi_module_init_all()` runs each registered module's `init()`
+  once (latched per module), and `csi_module_tick_all()` ticks no module
+  whose boot init has not run, so the promise holds by construction and a
+  host that forgets the call gets a dead pipeline, not quietly ignored
+  settings. Both trees call it once, after the event-id floor and the
+  egress and before the first tick, and both read settings by one rule
+  (`csi_module_settings_nvs.h`), through one read-only NVS handle for the
+  whole boot: the first cut opened one per setting, which on a canary
+  (no `csi` namespace) would have logged sixteen failed opens per boot.
+- **Regression check:** `firmware/tests_host/test_csi_module_boot.cpp` and
+  `firmware/projects/canary-wap/tests_host/test_wap_module_boot.cpp` boot
+  with stored rows and assert each applies from the first windows, each
+  module reads its rows once per boot, and the boot init commits nothing;
+  the static checks hold each tree's call site and order. When an interface
+  promises a lifecycle, test it with a value that differs from the default.
+- **Date learned:** 2026-10
+
 ## Event egress: the receiver remembers across reboots and outages
 
 ### An id floor written every N ids hands the same ids out again after a short boot
@@ -2355,7 +2389,7 @@
   the host's.
 - **Date learned:** 2026-10
 
-### A refund decided before the call it refunds (CSI hourly ceiling, F80)
+### A refund decided before the call it refunds, and a flush that hid it (CSI hourly ceiling, F80, F81)
 - **What happened:** The CSI chokepoint refunds an emit's hourly-ceiling
   slot when the emit only refreshes a bundle that is already open (it adds
   no row). It asked `csi_bundler_has_open()` whether the bundle was open,
@@ -2364,22 +2398,458 @@
   opened a new one: a new row, refunded as a refresh. One emit every 121 s
   committed 714 rows a day under a 6/hour ceiling (144 allowed). The canary
   hid it by closing every bundle on every window (F81), which also made
-  every refresh spend a slot, the opposite bug.
+  every refresh spend a slot, the opposite bug: real transitions were
+  dropped after about three minutes in one state. #1763 and #1762 found and
+  fixed both, in parallel.
 - **Root cause:** The question ("will this merge?") was asked of a state
   that the answering call changes before it acts. Time-based expiry inside
-  admit made the answer stale whenever the gap had just elapsed.
+  admit made the answer stale whenever the gap had just elapsed. And two
+  bugs in two layers canceled each other's symptom: the flush made the
+  leak unreachable on one tree, so fixing either alone moves the device in
+  a way neither fix intended (the canary ticking without F80 would have
+  refunded every 10-minute reopen).
 - **Fix:** Admit reports what it did, decided under its own lock after its
   own expiry: `CSI_BUNDLER_MERGED` (no new row) or `CSI_BUNDLER_BUFFERED`
-  (a new bundle). Only a merge is refunded. The canary ticks the bundler
-  (`csi_bundler_tick()`) once per main loop instead of flushing it in the
-  CSI callback; the tick sits outside the CSI power and heap gates, since
-  that callback stops while they hold and a bundle must still close.
+  (a new bundle). Only a merge is refunded; `has_open()` stays, as a
+  diagnostic. The canary ticks the bundler (`csi_bundler_tick()`) once per
+  main loop instead of flushing it in the CSI callback; the tick sits
+  outside the CSI power and heap gates, since that callback stops while
+  they hold and a bundle must still close. Both landed together (#1763's
+  mechanism; #1762's parallel fix was merged onto it). #1762's review then
+  found the canary's live body still saying `"bundled":1`, a literal that
+  was true of every canary row until F81 made its rows bundles (the
+  canary-wap's live body had said 1 for its bundles all along); the shared
+  wire builder now publishes the row's own count on every path.
 - **Regression check:** `firmware/tests_host/test_csi_bundler_ceiling.cpp`
   runs the real library on a clock the test moves (`CSI_TEST_CLOCK`): the
-  121 s probe stays at 144 rows a day (714 on the old library), no hour
-  holds more than the ceiling, and refreshes of an open bundle spend
-  nothing. When a decision depends on what a call will do, take it from
-  the call's result, not from a look before it.
+  121 s probe stays at 144 rows a day (714 on the old library), exactly 144
+  on a day anchored at the counter, the 10-minute window reopen at exactly
+  144 (286 before), and refreshes of an open bundle spend nothing. Its hour
+  is the counter's six 10-minute buckets, and the same file pins twelve rows
+  in one sliding 60 minutes at a bucket edge (F132): F80's Done text had said
+  "no hour holds more than the ceiling" until the review of the merge
+  measured a sliding hour. State a rate limit in the units its counter
+  keeps, and measure the claim in those units.
+  `test_csi_modules_integration.cpp` (the canary's real bridge playing the
+  main loop: no row and no slot per refresh, one row per closed bundle, a
+  close while CSI is shed), `test_csi_event_wire.cpp` (the body's `bundled`
+  is the row's own) and `firmware/scripts/check_csi_bundle_tick.py`
+  (`main.cpp`'s loop calls the tick, under no `#if`, outside the gates: no
+  host suite compiles `main.cpp`, so deleting the call passed every test).
+  When a decision depends on what a call will do, take it from the call's
+  result, not from a look before it. When a change alters what a row is,
+  look for every literal that described the old one; and when a host-side
+  workaround (a flush, a retry, a reset) hides a library bug, fix them as
+  one change.
+- **Date learned:** 2026-10
+
+### A live path and a backfill that each move one watermark need one owner, on one task
+- **What happened:** On the canary-wap, `MQTT_EVENT_CONNECTED` set the
+  link up on the esp_mqtt task and only flagged the SD backfill for the
+  loop task. A row committed in between went out live and moved the
+  delivery watermark past every unsent row, so the backfill then skipped
+  them, and Home Assistant would have refused them anyway (sweep F78). The
+  live publish also ran on whichever task committed, the NimBLE host task
+  included, under the chokepoint's commit lock, while the backfill wrote
+  the same watermark and NVS ceiling on the loop task with no lock. And
+  it wrote that ceiling before every publish attempt, connected or not,
+  so any commit during an outage covered the whole backlog, and a reboot
+  before the broker returned skipped every row on the card. (F47 says
+  "before an id is handed over"; an attempt that cannot go is not a
+  hand-over. The planner's not-on-card route has the same shape for a
+  row whose card append failed; the canary-wap's port holds that write
+  back until the row goes.)
+- **Root cause:** Two writers of one ordering decision. The live path
+  asked "is the link up?", when the question is "is anything older still
+  owed?", and it was answered on a different task from the backfill's.
+  Adopting the canary's planner alone would not have closed it: closed
+  bundles never reach the canary-wap's card (F77), so a planner that sends
+  off-card rows at once would let them overtake the backlog the same way.
+  Nor does "nothing older waits on the card" mean nothing older is owed:
+  the planner's `pending()` is false while the card is closed, so a card
+  that had not mounted yet after a reboot, or closed for a moment during
+  the backfill (an SD error's remount), let a new row go live past every
+  row still on it. The review found that with host probes after the first
+  fix had passed its own tests.
+- **Fix:** The commit hook only copies the row into a FreeRTOS queue
+  (never blocking, never publishing). One pump on the loop task logs,
+  publishes and moves the watermark, on `csi_event_backfill.h`'s Planner:
+  a row goes live only when nothing older waits on the card, on a card
+  that is not open but may hold older rows (for at most 45 s), or in RAM;
+  rows the card does not keep wait in a small RAM hold, merge into the
+  walk by id, and are not handed to the planner while older rows wait, so
+  a held row never writes the NVS ceiling while card rows wait. (The
+  backfill's own hand-over still writes it up to `kStride` ids ahead of
+  the row it sends, F47's trade, so a reboot mid-backfill can skip up to
+  ten card rows.)
+- **Regression check:**
+  `firmware/projects/canary-wap/tests_host/test_wap_event_egress.cpp` runs
+  the real egress, SD log and CSI library against a model of Home
+  Assistant's replay gate; its reconnect-window and commit-inside-the-walk
+  scenarios fail on the code before the fix, and its late-card,
+  closed-card, broker-change, ambient and dismissal-wait scenarios fail on
+  the first fix. `firmware/scripts/check_wap_event_egress.py` holds the
+  hook, the boot order, the single pump and begin callers and the
+  esp_mqtt handler (what the host build cannot compile), and proves each
+  rule with a mutation it must refuse. When two paths deliver into one
+  ordered stream, give the order one owner on one task, and ask what is
+  still owed (including what an absent card may still hold), not whether
+  the link is up.
+- **Date learned:** 2026-10
+
+### A fix on one device's port is not a fix on the other's, and a held ceiling alone does not stop an overtake
+- **What happened:** F78 gave the canary-wap's egress a RAM hold, a
+  bounded wait for a card that may hold older rows, and a held-back ceiling
+  for a failed card append. The canary runs the same planner through its
+  own port and got none of it (sweeps F103, F104). The F103 report said a
+  failed append during an outage wrote the NVS ceiling past the card's
+  backlog, so a reboot skipped it. A host probe on the planner showed it
+  was worse: with no reboot at all, the row went into the MQTT offline
+  queue, the watermark moved to it, and the queue (which drains before the
+  backfill, so queued tamper alerts go first) delivered it ahead of the
+  card's rows. The backfill never sent them, and Home Assistant would have
+  refused them. A row committed while the card was out for a moment did
+  the same.
+- **Root cause:** The planner's not-on-card route is right only when
+  nothing older is owed, and the hosts, not the planner, know whether a
+  card that is not open may still hold older rows. The canary-wap's port
+  answered that; the canary's handed every such row over at once. Its glue
+  had no host test of its own (the planner test runs a model world), so
+  the gap was visible only by reading both ports side by side.
+- **Fix:** The canary's port now holds such rows in RAM, behind the card's
+  rows, for at most the canary-wap's 45 s (`csi_event_backfill::kCardWaitMs`,
+  one constant for both), declines their ceiling write until they go
+  through the planner, and with a card open waits for the link too, since
+  a hand-over's ceiling runs `kStride` ids past the row. The offline queue
+  is then never given a row older rows wait ahead of, so its drain needs
+  no ceiling write of its own.
+- **Regression check:** `firmware/tests_host/test_canary_event_egress.cpp`
+  compiles the canary's real egress and SD adapter over the real
+  chokepoint, planner and offline queue; its F103 and F104 scenarios fail
+  on the egress before each fix. The implementer's own 16 mutations of the
+  hold each failed it, and review then found 18 more that passed: a close's
+  wait timed from boot (F104's loss back for any close after 45 s of
+  uptime), a 1 s wait, the hold dropping its newest row, held rows sent
+  with the wrong replay flag, a held row's failed publish popped. Each now
+  has a scenario (two further mutations change nothing a host can see). When one device's port gains a rule its sibling's port
+  needs, put the shared value in the shared header and give the sibling's
+  glue a test that compiles it; and do not take your own mutation set as
+  the measure of a suite: every timing constant and every clause a comment
+  states needs a scenario that a wrong value fails.
+- **Date learned:** 2026-10
+
+### A failed card append is not proof the row is not on the card
+- **What happened:** Both egresses hold a row whose SD append fails while
+  older rows wait (F78 on the canary-wap, F103 on the canary). Review of
+  F103 found a short write that lands every byte of the line but its
+  newline: `append()` reports it failed, so the row waits in RAM, and the
+  next append writes the newline first, which turns the fragment into a
+  whole line. The backfill walk then sent the card's copy, and the RAM copy
+  went too, before the next card row or when the hold flushed. Home
+  Assistant's replay gate passes an equal id, so its triggers fired twice.
+  The canary-wap had done it since F78.
+- **Root cause:** The hold treated "the append failed" as "the row is not
+  on the card". The card adapter seals a torn tail on the next write, which
+  is right for the log, so a failure can become a success one append later.
+- **Fix:** Both egresses drop a held row at or below the planner's
+  watermark instead of sending it (the canary's `delivered_from_card()`,
+  the canary-wap's `State::front_delivered()`): the walk only raises the
+  watermark past a row it sent, or one the planner already treats as
+  delivered.
+- **Regression check:** `test_canary_event_egress.cpp` and
+  `test_wap_event_egress.cpp` each run the scenario on both paths out of
+  the hold, through a fake card that lands all but a line's last byte
+  (`SD.short_by_next`); each fails on the egress before the fix.
+
+### A branch that two host tests transcribe is held by neither
+- **What happened:** The canary egress's ordering leans on one branch in
+  `securacv_mqtt.cpp`'s `publish_or_queue()`: while the MQTT offline queue
+  still drains an outage, a new event joins its back instead of going live
+  past the queued rows. Both host tests that replay outages
+  (`test_csi_event_backfill.cpp`, `test_canary_event_egress.cpp`) copied
+  that branch into their own model, and the static check held only the live
+  send's refusal, so deleting the branch from the firmware kept every gate
+  green (sweep F107). One of the two copies did not even match the firmware:
+  with the link up and the queue full of tamper alerts, it refused an event
+  the firmware sends live.
+- **Root cause:** A test that transcribes the code under test proves the
+  transcription. Nothing tied the copy to the source it describes.
+- **Fix:** The branch moved into the pure `mqtt_offline_queue.h`
+  (`publish_or_queue()`), which `securacv_mqtt.cpp` calls and all three
+  host tests compile, and a static rule holds the firmware to calling it.
+- **Regression check:** `check_event_egress_order.py` rule 9 (13 self-test
+  mutations, on the header and on `securacv_mqtt.cpp`);
+  `test_mqtt_offline_queue.cpp` and two `test_canary_event_egress.cpp`
+  scenarios fail when the branch is removed or moved after the live send.
+  When a host test has to model glue it cannot compile, look for a pure
+  header the glue could call instead, and model only what is left.
+- **Date learned:** 2026-10
+
+### A counter set read from one layer misses the loss in the next one
+- **What happened:** The canary's egress counters (sweep F109) carried the
+  backfill planner's Stats and the egress's own drops, and a review probe
+  found that on a canary with no card the commonest loss reached none of
+  them. route() discarded the planner's `Route::kUnsent` with `(void)`, so a
+  row the MQTT layer refused was in no counter, and a row its offline queue
+  took and later evicted was counted as `queued`, a hand-over. Only the
+  offline queue's own Stats knew, and they reached only a health-log line.
+- **Root cause:** The counters were chosen by what one module could see,
+  not by asking where a row can be lost on its way out. A discarded return
+  value was the loss, unrecorded.
+- **Fix:** route() counts a kUnsent that did not move the row into the RAM
+  hold as `unsent_dropped` (the canary-wap's Stats gains the field for its
+  never-builds drops), and the health publish carries the offline queue's
+  drops as `offline_queue`. The API doc defines each counter by path and
+  lists the rows none of them counts.
+- **Regression check:** `test_canary_event_egress.cpp`
+  (`test_card_less_losses_are_counted`, and the ceiling-held check in
+  `test_failed_append_in_an_outage_waits_its_turn`), the canary-wap's
+  `test_unbuildable_rows_are_skipped_not_stalled`, and
+  `test_canary_health_trust.py`. Before calling a set of loss counters
+  complete, walk each path a row can leave by and name the counter it ends
+  in; a `(void)` on a result that can mean "lost" is the first place to look.
+- **Date learned:** 2026-10
+
+## Tasks: work that changes a module's state runs on the task that owns it
+
+### A comment that promises a serializer is not a serializer, and "idempotent" is not "thread-safe"
+- **What happened:** canary-wap's mesh REST handlers called
+  `remove_peer`, `leave_opera`, `start_pairing_*`, `cancel_pairing`,
+  `confirm_pairing`, `set_enabled`, `set_opera_name` and `clear_alerts` on
+  esp_http_server's task, while `mesh_network::update()` read and wrote the
+  same peer table, pairing session, opera config (and its one `g_prefs` NVS
+  object) and alert history on the loop task. A note in `mesh_network.cpp`
+  said a "wifi_provision serializer" put those calls on the main task; it
+  did not exist (sweep F96). The MQTT bridge's `init()`, documented as
+  idempotent, ran from the config POST and the test handler (the httpd task)
+  and from the QR scanner, and tore the esp_mqtt client down under a
+  loop-task publish holding the old handle (sweep F106).
+- **Root cause:** a public mutator is callable from any task, and nothing
+  but a comment said which one owned it. Idempotent described what a second
+  call does, not what a concurrent one does.
+- **Fix:** the other task asks and the owner acts. The mesh's mutators are
+  internal to `mesh_network.cpp` (so the compiler refuses a new caller), a
+  handler hands a `Command` to `submit()`, which waits a bounded time on a
+  small lock-protected ring (`loop_command_ring.h`), and `update()` drains
+  it first on every pass (before its early return, or a disabled mesh could
+  never be enabled again). A command the loop task never reached is
+  withdrawn, so the 503 is true. The pre-reboot replay save, which POST
+  /api/reboot runs on the httpd task through a function pointer, is one more
+  command. The MQTT re-init is a coalescing request `csi_mqtt::loop()`
+  serves; the handlers wait for it, bounded.
+- **Regression check:** `test_loop_command_ring.cpp` (six requester threads
+  and one loop thread, including a run with a one-tick timeout where
+  withdrawals race the drain; clean under `make tsan-loop-ring`),
+  `test_mesh_commands_wap.cpp` and `test_mqtt_reinit.cpp` (a fake esp_mqtt
+  that records each call's task and notices a client destroyed under a
+  publish), and
+  `firmware/scripts/check_wap_loop_commands.py` in `regression_check.sh`,
+  which holds the handlers, the drain and the re-init path in the source and
+  proves each rule with a mutation it must refuse. When a handler on another
+  task must change what a loop owns, make the change unreachable from it and
+  give it a way to ask.
+- **Date learned:** 2026-10
+
+### Moving a call onto the loop task moves what it blocks on there too
+- **What happened:** the F106 fix ran the MQTT re-init on the loop task, so
+  the handlers no longer destroyed the client under a loop-task publish. The
+  re-init begins with `esp_mqtt_client_stop()`. That call takes the client's
+  API lock, which the esp_mqtt task holds across a whole connect attempt
+  (`network_timeout_ms`, 10 s by default, for the TCP connect and again for
+  the CONNACK), and then waits for that task to exit. The review modeled the
+  companion's "Test & save" against an unreachable broker: the second
+  re-init's stop waited about 9.9 s on the loop task, past its 8 s panic
+  watchdog. On the httpd task, which no watchdog watches, that wait had been
+  harmless (from source and a host model; not bench-probed).
+- **Root cause:** "run it on the task that owns the state" was applied to a
+  whole function. Only its state changes needed the owner. The blocking
+  wait inside it needed a task that is allowed to wait.
+- **Fix:** split it. The loop task detaches the client (`s_client = nullptr`:
+  no publish of its own can reach it, and the event handler ignores the old
+  client's events). A one-shot worker (`retire_task`) stops and destroys it,
+  and a later loop pass opens the new one once the worker says it is done.
+  A worker that cannot be created is retried. The client is never stopped
+  inline.
+- **Regression check:** `test_mqtt_reinit.cpp`'s
+  `a_stop_that_blocks_never_holds_the_loop` gives the fake stop a 9940 ms
+  lock wait and holds every loop pass under 1 s;
+  `check_wap_loop_commands.py` rule 6 allows `esp_mqtt_client_stop(` only
+  in `retire_task()`. Before you move a call onto the loop task, read what it
+  waits on.
+- **Date learned:** 2026-10
+
+### A publish is not a post: esp_mqtt writes the socket on the task that publishes
+- **What happened:** `csi_mqtt.cpp`'s threading note said publishes "are
+  posted to that task's queue and the main-loop callers return
+  immediately". They are not. While connected, `esp_mqtt_client_publish()`
+  takes the client's API lock and writes the message on the calling task
+  (`esp_mqtt_write()`), and the esp_mqtt task holds the same lock across its
+  own socket operations. Each wait is bounded by the client's network
+  timeout, which the bridge never set, so it was esp_mqtt's 10 s default,
+  past the loop task's 8 s panic watchdog: one publish over a stalled link
+  (Wi-Fi gone, the broker hung, the TCP send buffer full) was enough
+  (sweep F112; from esp-mqtt's source at the commit ESP-IDF 5.5.4 pins and a
+  host model, not bench-probed).
+- **Root cause:** a library's threading was described from memory, and the
+  description became the reason nobody looked at its timeouts.
+- **Fix:** every client carries `network.timeout_ms` = `kNetworkTimeoutMs`
+  (2 s, `csi_mqtt.h`), and the sketch `static_assert`s that three of them
+  (an esp_mqtt operation a publish waits behind, its own write, and room
+  for the rest of the pass) fit under the watchdog. A write that sends
+  nothing in 2 s fails and aborts the connection, so the rest of the pass
+  returns at once. `esp_mqtt_client_enqueue()` was not the fix: it takes
+  the same lock, and the event egress reads `publish()`'s result as
+  "written while connected".
+- **And the lock is held across more than socket calls.** The F112 review
+  found the wait the first fix's budget missed: esp_mqtt dispatches
+  `MQTT_EVENT_CONNECTED` with the API lock held, and the bridge's handler
+  sends its whole reconnect burst under it (the status, the discovery
+  configs, the cached states and the subscribes: 34 publishes, about
+  16.5 KB, and 3 subscribes in the host build). The
+  handler set the link up first, so a loop publish that came meanwhile
+  waited for the lock until the burst was sent, and since every write that
+  makes progress restarts the timeout, only the link's throughput bounded
+  that (at 250 ms a write, about 9 s in the host model). The link is now
+  announced after the burst (`s_burst_task`); the burst's own publishes pass
+  the gate as the esp_mqtt task. Two waits are left: one timeout (2 s) on a
+  stalled link, over this file's 1 s rule, and a link that trickles, which
+  restarts the timeout write after write; a publishing worker would be the
+  full answer. And a connect is not a wait the loop meets at all: an abort
+  clears the link before esp_mqtt's reconnect delay, so naming the
+  connect's three operations as the loop's budget was budgeting the wrong
+  thing.
+- **Regression check:** `test_mqtt_reinit.cpp`'s F112 tests (a fake that
+  follows esp-mqtt's write path and holds the API lock across the
+  esp_mqtt task's dispatches: a stalled link costs a busy pass one timeout,
+  not 10 s; a loop pass in the middle of the CONNECTED burst waits for no
+  lock; a burst cut short by its own failed write leaves the link down) and
+  `check_wap_loop_commands.py`'s rule M1 (the config line, the constants and
+  the `static_assert`). Before you call a library "asynchronous", find where
+  it writes, and what it holds while your callback runs.
+- **Date learned:** 2026-10
+
+### A command that can bring a stack up cannot run on the loop task
+- **What happened:** canary-wap's Bluetooth handlers changed the pairing,
+  scan and settings state on esp_http_server's task while
+  `bluetooth_channel::update()` changed it on the loop task (sweep F111): a
+  PIN confirm and the pairing timeout's cancel could both answer and delete
+  the one pending Numeric-Comparison pairing. Moving the handlers' calls to
+  the loop task, as the mesh's were, would have moved `enable()` there too,
+  and `enable()` brought the NimBLE stack up when it was not up yet: the
+  call that, run inline from `loop()`, once tripped the loop task's panic
+  watchdog about 21 s after boot (the BLE bring-up entry above).
+- **Root cause:** one function did two jobs with different owners: a state
+  change (the loop task's) and a blocking bring-up (any task's but the
+  loop's).
+- **Fix:** split them again. The commands never bring the stack up
+  (`enable()` refuses until `init()` has run); a handler that turns
+  Bluetooth on calls `init()` on its own task first (`bring_up()`, the call
+  `enable()` made there before), then submits the command.
+- **Regression check:** both halves. That no command brings the stack up:
+  `test_bluetooth_commands_wap.cpp`'s `no_command_brings_the_stack_up` and
+  `check_wap_loop_commands.py`'s rules C2 and C4 (no bare `init(` in
+  `bluetooth_channel.cpp`; `bluetooth_channel::init(` only in `bring_up()`
+  and the boot worker). That the handlers still do: rule C3 requires the
+  enable, advertise and pair handlers to call `bring_up()` before they
+  submit (no host test compiles the handlers), because a split that drops
+  that half fails quietly: a device whose boot bring-up failed can never
+  turn Bluetooth on from the dashboard, and every test still passes.
+- **Date learned:** 2026-10
+
+### A library that keeps one callbacks pointer has one owner, and its default answer is the library's, not yours
+- **What happened:** on the canary-wap's default FULL profile a phone's BLE
+  pairing was accepted with no owner confirm (sweep F171). The pairing
+  channel (`bluetooth_channel.cpp`) and Opera (`ble_opera.h`) each called
+  `setCallbacks()` on the one NimBLE server; NimBLE keeps one pointer, and
+  Opera's init ran second, so its object replaced the channel's. Opera
+  overrides only `onConnect` and `onDisconnect`, so NimBLE-Arduino's
+  defaults answered the rest: `onConfirmPassKey` injects yes,
+  `onPassKeyDisplay` shows 123456. The channel's passkey handling, its PIN
+  box, its paired list and its inactivity timeout were all dead on the
+  shipping profile, with every host test green.
+- **Root cause:** two modules each treated a singleton's single slot as
+  theirs, and nothing failed loudly when the second replaced the first. The
+  host stand-in hid it twice: its base callbacks did nothing (the library's
+  default says yes), and no test built both modules' inits.
+- **Fix:** one dispatcher (`ble_server_dispatch.h`) is the server's only
+  callbacks object, installed by whichever init runs first; each module
+  registers with a role (the pairing channel every callback, Opera a link's
+  start and end). With no pairing owner a passkey is answered no.
+- **Regression check:** `test_bluetooth_commands_wap.cpp` builds both inits
+  in both orders over a stand-in whose default callbacks are the library's
+  (the FULL tests fail at the library's yes with the old wiring);
+  `check_wap_loop_commands.py` rule BD1 refuses a `setCallbacks()` of any
+  server-callbacks object (or a null, which puts the defaults back)
+  outside the dispatcher. Two more from the same review: a stand-in's
+  defaults must be the library's defaults, and a BLE address on the air is
+  not the bond's key (a phone with private addresses is bonded under its
+  identity address, `getIdAddress()`, F172).
+- **And its refusals (the F172 review):** the stand-in's `deleteBond()`
+  deleted every bond and answered true, so the fix for Remove passed every
+  test while a device would still keep the bond: NimBLE's
+  `ble_gap_unpair()` answers `BLE_HS_EBUSY` and keeps a bond that carries
+  the phone's IRK while it advertises or scans, which the WAP nearly always
+  does, and the code threw the answer away. A stand-in returns what the
+  library returns, refusals included (`deleteBond()` now refuses a missing
+  key and a busy radio, `test_a_bond_the_stack_keeps_keeps_its_entry`), and
+  a call that can refuse has its answer checked.
+- **Date learned:** 2026-10
+
+### A list that mirrors a store must be no longer than the store, and "the link is bonded" is not "the bond was kept"
+- **What happened:** the canary-wap's paired list holds 8 phones; NimBLE-Arduino
+  keeps 3 bonds unless the build raises `CONFIG_BT_NIMBLE_MAX_BONDS` (sweep
+  F189). A fourth phone's pairing found the store full and NimBLE's default
+  answer unpaired the oldest bond (or, while the WAP advertised or scanned,
+  could not, and the pairing failed), while the channel listed the new phone
+  anyway: NimBLE reports the link bonded from the pairing's flags, not from
+  what the store kept. The list showed four phones for three bonds, and the
+  oldest one was asked to pair again with no word of why.
+- **Root cause:** the list and the store were two records of one fact with
+  no rule tying their sizes or their contents, and the host stand-in's store
+  had no size at all, so no test could reach the full path.
+- **Fix:** the channel answers NimBLE's store-status callback itself
+  (`NimBLEDevice::setDeviceCallbacks()`): a new phone that finds the store
+  full is refused and nothing is deleted to make room; a phone is listed
+  only when `NimBLEDevice::isBonded()` says the store holds it; the first
+  loop pass drops listed entries without a bond.
+- **Regression check:** the stand-in models the store's size, the full
+  event at a Pairing Request and the default eviction
+  (`test_bluetooth_commands_wap.cpp`'s bond-store tests fail on the old
+  wiring); `check_wap_loop_commands.py` rule BV5. The same review moved
+  `init()`'s result to the loop task (F167): a bring-up that writes the
+  loop task's state from another task is a race whatever the timing looks
+  like, and TSAN found it in the first threaded run.
+- **Date learned:** 2026-10
+
+### A hand-over must not carry what the receiver owns, and moving a call to another task moves it past what that task's neighbors do
+- **What happened:** the canary-wap's Bluetooth `init()` runs on the BLE
+  bring-up worker or an HTTP handler's task, and sweep F167 made it fill a
+  hand-over the loop task takes instead of writing the loop task's state.
+  The hand-over carried the saved settings, read before NimBLE's bring-up
+  (about 21 s on a device), and the loop task adopted them whole: a Disable,
+  a name or a TX power the owner sent meanwhile came back undone, in RAM and
+  in NVS. And the auto-advertise, which `init()` had run on the worker before
+  the worker went on to register ble_status and Opera services, now ran on
+  the loop task in the middle of those registrations; an advertising start
+  starts the GATT server, which walks the service list the worker appends
+  to (the F167 review).
+- **Root cause:** the hand-over was drawn around what `init()` used to
+  touch, not around who owns each thing: the settings were the loop task's
+  the moment its commands could change them. And the call kept its place in
+  `init()`'s sequence on paper while its real neighbors (the rest of the
+  worker) moved to another task.
+- **Fix:** the loop task loads the saved settings and the paired list at its
+  first pass, before any command, and the adoption keeps them (re-applying
+  a TX power or PHY the stack was given before a change); the hand-over
+  carries only what `init()` made. The sketch tells the channel when its
+  bring-up worker starts and when its result is taken, and every advertising
+  start of the channel's in between is held; the adoption names the
+  dispatcher's owner without a second `setCallbacks()`.
+- **Regression check:** `test_bluetooth_commands_wap.cpp`'s
+  `commands_while_init_runs_are_kept` (a command run inside `init()`),
+  `the_advertising_waits_for_the_bring_up_worker` and the threaded bring-up
+  test (a worker that registers services over a stand-in whose advertising
+  start walks them); `check_wap_loop_commands.py` rules BV4 and BV7.
 - **Date learned:** 2026-10
 
 ## How to Add an Entry

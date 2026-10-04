@@ -153,12 +153,16 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    the broker credentials (if you ran the one-command installer: username
    `canary`, password from **Settings → Apps → Mosquitto broker →
    Configuration → Logins**), save, and let it restart.
-2. If the wizard doesn't appear (or the Canary was set up before), open
-   `http://canary-<id>.local` (the device's unique hostname, shown in the
-   boot banner — e.g. `http://canary-s3-ab7k.local`) or `http://192.168.4.1`
-   in your browser. If you only have one Canary, plain `http://canary.local`
-   may also resolve, but each Canary always advertises its unique hostname
-   so multiple devices on the same network don't collide. `/setup` on any of
+2. If the wizard doesn't appear (or the Canary was set up before), open its
+   unique hostname or `http://192.168.4.1` in your browser. On a Canary WAP
+   the hostname is `http://canary-<name>.local` once you have named it, and
+   until then `http://canary-` plus four lowercase hex digits, the first two
+   bytes of its key fingerprint (e.g. `http://canary-7916.local`); at the
+   default log level its serial log names it on the
+   `[INFO/NETWORK] mDNS started | canary-7916` line. If you only have one
+   Canary, plain `http://canary.local` may also resolve, but each Canary
+   always advertises its unique hostname so multiple devices on the same
+   network don't collide. `/setup` on any of
    those addresses reopens the wizard. On a `firmware/canary` unit that is
    already set up, a page loaded over your home WiFi arrives without its API
    token, so its saves are refused. The page carries the token only for the
@@ -263,7 +267,7 @@ Within 30 seconds of the Canary connecting to MQTT:
    - **Witness Count** — total witness records created (`witness_count`; signed `counts` topic)
    - **Chain Length** — hash-chain length, with `latest_hash` and `algorithm` (`chain_length`; signed `chain` topic)
    - **Last Event** — latest witness event type, with zone, confidence, modality and attestation (`last_event`; signed `events` topic)
-   - **Health** — `healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version (`health_status`; `health` topic, unsigned)
+   - **Health** — `healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version, and the committed-event egress's counters (`csi_event_egress`, `offline_queue`) as attributes when the firmware sends them (`health_status`; `health` and `egress` topics, unsigned)
    - **GPS Fix** — GPS fix status, with satellites and HDOP (`gps_fix`; `health` topic, unsigned)
    - **SD Wear Estimate** — estimated SD-card wear percent, only when the firmware reports its `sd` object (`sd_wear`; `health` topic, unsigned; diagnostic)
    - **Radar Link** — `ok` / `stale` / `down` for the UART link to the radar module, canary-sense devices only (`radar_link`; `health` topic, unsigned; diagnostic)
@@ -274,6 +278,7 @@ Within 30 seconds of the Canary connecting to MQTT:
    - **Tamper** — any tamper detected, from the `health` and `tamper` topics (`tamper`; unsigned)
    - **Power Loss**, **SD Removed**, **SD Error**, **GPS Jamming**, **Unexpected Motion**, **Enclosure Open**, **GPIO Tamper**, **Watchdog Timeout**, **Unexpected Reboot**, **Memory Critical** — one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)
    - **SD Replacement Recommended** — the device recommends replacing its SD card (`sd_replace`; `health` topic, unsigned)
+   - **Event ID Space Low** — ON once the device's event-id counter nears the end of its space, and after it wraps (Home Assistant then refuses its events); only for devices whose health carries the flag, the Canary base and the canary-wap (`event_id_space_low`; `health` topic, unsigned; diagnostic)
    - **Motion** and **Occupancy** — standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)
    - **WiFi AP**, **WiFi Station**, **MQTT**, **Bluetooth**, **Mesh Network**, **Chirp Network** — per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it — see the [transport catalog](#transport-catalog))
    - **Mesh Connected** — Opera mesh peers present, with peer and relay counts (`mesh_connected`; `mesh` topic, unsigned)
@@ -537,6 +542,7 @@ Full background, threat model, and rotation procedure: see
 |-------|-----------|---------|
 | `securacv/{device_id}/status` | Device → HA | Device state, GPS, chain sequence (every 30s) |
 | `securacv/{device_id}/health` | Device → HA | System metrics (every 60s) |
+| `securacv/{device_id}/egress` | Device → HA | canary-wap only: its committed-event egress counters, right after each health publish, naming that health's `firmware_version` and `uptime` (retained) |
 | `securacv/{device_id}/events` | Device → HA | Witness record events |
 | `securacv/{device_id}/chain` | Device → HA | Hash chain state |
 | `securacv/{device_id}/tamper` | Device → HA | Tamper alerts (immediate) |
@@ -544,6 +550,56 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/update/state` | Device → HA | Firmware update entity state (retained) |
 | `securacv/{device_id}/update/cmd` | HA → Device | `install` — start a firmware update |
 | `homeassistant/*/securacv_*/config` | Device → HA | HA MQTT Discovery config (retained) |
+
+Three keys for a bench run or a field report, which the integration also
+shows (`mosquitto_sub -t 'securacv/+/health' -t 'securacv/+/egress'`):
+
+- `event_id_space_low` (Canary base and canary-wap, `health`): `true` once
+  the device's event-id counter nears the end of its space, about four
+  years before it wraps at the most a device can commit, and after a wrap.
+  Past the wrap Home Assistant refuses the device's events as replays. The
+  integration shows it as the **Event ID Space Low** binary sensor. The
+  recovery is not decided yet; the flag only warns.
+- `csi_event_egress` (Canary base in `health`; canary-wap in its retained
+  `egress` topic, since its health has no room for it, as
+  `{"firmware_version":…,"uptime":…,"csi_event_egress":{…}}`, the version
+  and uptime of the health publish it follows):
+  what its committed-event egress did since boot — `dropped` (commits its
+  egress queue had no room for),
+  `held_dropped` (rows dropped from its 8-row RAM hold, oldest first),
+  `ambient_dropped` (`wifi.channel_activity` rows that had to wait),
+  `unsent_dropped` (rows no card kept that the MQTT layer refused, lost)
+  and `planner`, the SD backfill's counters (`live`, `held`, `queued`,
+  `replayed`, `skipped`, `untrusted`, `unsendable`, `truncated_unsent`,
+  `read_giveups`).
+- `offline_queue` (Canary base, `health`): what the MQTT layer's 12-record
+  offline queue dropped since boot — `dropped_overflow` (evicted or refused
+  when full: an outage longer than the queue loses its oldest events here),
+  `dropped_oversize` and `dropped_flushed` (discarded when the broker
+  changed). Events and tamper alerts together. The canary-wap has no
+  offline queue.
+
+The **Health** sensor carries `csi_event_egress` and `offline_queue` as
+attributes of the same names, holding the counters the integration knows
+(`custom_components/securacv/const.py`); a device that sends none shows
+neither attribute. The counters start over at every boot and the `egress`
+topic is retained, so the sensor shows a canary-wap's only while they pair
+with its latest health: the same `firmware_version`, and an `uptime` no
+later than the health's. A body an earlier boot left on the broker, or one
+left behind by newer firmware after a rollback to firmware that publishes
+no `egress` topic, is not shown as current, after a Home Assistant restart
+too. Clearing the retained topic (`mosquitto_pub -r -n -t
+securacv/<device_id>/egress`) removes the attribute. Both devices also
+return `csi_event_egress` from their token-gated `GET /api/diagnostics`
+(the canary since sweep F179), so a bench run without a broker can read
+the counters too.
+
+These count paths, not rows: `planner.queued` counts a row handed to the
+offline queue even if the queue evicts it later (then it is in
+`offline_queue.dropped_overflow` too), and `planner.held` minus
+`planner.replayed` is not what is still owed. [The CSI developer
+API](csi_developer_api.md) defines each counter and lists the rows none of
+them counts.
 
 ### Transport catalog
 
@@ -961,6 +1017,17 @@ When enabled, PWK automatically creates these entities for each zone:
 | `sensor.pwk_<zone>_events` | Sensor | Total event count (state_class: total_increasing) |
 | `binary_sensor.pwk_<zone>_motion` | Binary Sensor | Motion detected (auto-off after 10 min) |
 | `sensor.pwk_last_event` | Sensor | Most recent event with full attributes |
+
+The bridge asks Home Assistant for these ids with `default_entity_id`, which
+Home Assistant 2025.10 and later honors when it first registers an entity;
+`<zone>` is the zone name as Home Assistant slugs it (`Front Door` becomes
+`front_door`). An entity your Home Assistant registered before keeps the id it
+has, and an older Home Assistant ignores the key and names the entity from the
+device name and the entity name
+(`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`). That was read from
+Home Assistant core's source, not seen in a running Home Assistant, so if an
+automation below cannot find its entity, look up the id under **Settings >
+Devices & Services**, on the Entities tab.
 
 ### Entity Attributes
 

@@ -1039,6 +1039,7 @@ footer p { max-width: 720px; margin: 0 auto; }
 .bench-chip.on .bench-chip-state { color: var(--canary); }
 .bench-chip:hover { border-color: #3a3a3a; }
 .bench-chip.on:hover { border-color: var(--canary); }
+.bench-chip:disabled, .bench-chip:disabled:hover { cursor: not-allowed; border-color: var(--edge); opacity: 0.6; }
 .bench-momentary:active, .bench-momentary.pressed { transform: translateY(1px); border-color: var(--canary); }
 .bench-switch.on { box-shadow: inset 0 0 0 1px var(--canary-deep); }
 .bench-soc { height: 4px; border-radius: 2px; background: #262626; margin-top: 6px; overflow: hidden; }

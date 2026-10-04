@@ -11,15 +11,22 @@
  *     used to come back undismissed, since only the ring was changed), leaves
  *     the others as they were, and does not turn the dismissal line into a
  *     row of its own; a dismissal whose record is outside the tail is ignored;
- *   - iterate_since() (MQTT backfill) does not replay the dismissal line;
- *   - nor a line whose id this device never handed out (at or above the
- *     allocator's next id: forged or foreign, backlog F46);
- *   - a dismissal that lands between the commit and the commit hook's copy
- *     of the ring row does not turn the original into a dismissal: append()
- *     writes it "dismissed":0, the queued dismissal follows, and after a
- *     reboot the event is restored (dismissed) and backfill still has it;
- *   - the queue is bounded, refuses id 0, and a dismissal with no card, or of
- *     an event no longer in the ring, writes nothing.
+ *   - a dismissal that lands before the events egress logs its original
+ *     does not turn the original into a dismissal: the original line says
+ *     "dismissed":0, the dismissal its own line, and after a reboot the event
+ *     is restored (dismissed);
+ *   - a dismissal never cuts the log (the egress's planner learns of a cut
+ *     only from its own appends): at MAX_BYTES it stays queued, and is
+ *     written once a committed row's append has cut the log, so it still
+ *     holds after a reboot; also when an earlier dismissal in the same flush
+ *     is what took the log to the cap;
+ *   - a dismissal queued while the log cannot take it (no card, or the card
+ *     not opened yet by the egress's first pump pass) waits and is written
+ *     once the log is open;
+ *   - the queue is bounded, refuses id 0, and a dismissal of an event no
+ *     longer in the ring writes nothing.
+ * The MQTT backfill's side (a dismissal line is never replayed, nor a line
+ * whose id this device never handed out) is test_wap_event_egress.cpp's.
  *
  * What it does not pin: the real SD driver, the HTTP handler, the loop task.
  * Bench territory (docs/CHANGELOG.md says which is which). */
@@ -112,10 +119,10 @@ static void reboot() {
   csi_event_log::arm_load();            // csi_integration::init, floor restored
 }
 
-static size_t count_cb_calls = 0;
-static bool count_cb(const csi_event_record_t* rec, void*) {
-  count_cb_calls++;
-  return rec->values.dismissed == 0;   // a dismissal line would stop the walk
+/* The events egress's first pump pass: the card's log opens for writing. */
+static void open_card() {
+  uint32_t size = 0, tail = 0;
+  (void)csi_event_log::poll(&size, &tail);
 }
 
 int main() {
@@ -132,6 +139,7 @@ int main() {
   CHECK(csi_event_log::load_into_ring() == 3, "three rows restored");
   CHECK(undismissed_in_ring(10) && undismissed_in_ring(11) && undismissed_in_ring(12),
         "none of them dismissed");
+  open_card();
 
   // ── The user dismisses one. ─────────────────────────────────────────────
   CHECK(csi_event_dismiss(11), "the ring dismisses event 11");
@@ -152,11 +160,6 @@ int main() {
     CHECK(lines[0] + "\n" == line_for(10, false) && lines[1] + "\n" == line_for(11, false)
           && lines[2] + "\n" == line_for(12, false), "the earlier lines are untouched");
   }
-
-  // ── MQTT backfill does not replay the dismissal line. ───────────────────
-  count_cb_calls = 0;
-  CHECK(csi_event_log::iterate_since(0, count_cb, nullptr) == 3 && count_cb_calls == 3,
-        "backfill replays the three records, not the dismissal");
 
   // ── Reboot: the dismissal holds. ────────────────────────────────────────
   reboot();
@@ -181,6 +184,7 @@ int main() {
         "the dismissal applies wherever it sits in the tail");
 
   // ── Bounds and no-card. ─────────────────────────────────────────────────
+  open_card();
   for (uint32_t id = 100; id < 108; ++id) {
     CHECK(csi_event_log::queue_dismissal(id), "queue slot");
   }
@@ -194,62 +198,125 @@ int main() {
         "with no card, nothing is written");
   SD.present = true;
   CHECK(card_lines().size() == before, "and the card is unchanged");
+  open_card();
+  {
+    CHECK(csi_event_log::flush_dismissals() == 1 && card_lines().size() == before + 1,
+          "the dismissal waited, and is written once the card is back");
+    csi_event_record_t r;
+    CHECK(csi_event_log_line::parse(card_lines().back().c_str(), &r) && r.event_id == 20 &&
+          r.values.dismissed == 1, "as event 20's dismissal line");
+  }
 
-  // ── A dismissal inside the commit hook's window. csi_integration.cpp's
-  //    hook publishes to MQTT and only then copies the ring row for append();
-  //    the HTTP task can dismiss the row in between. ───────────────────────
+  // ── A dismissal queued before the egress's first pump pass opens the
+  //    log (csi_integration::loop flushes before csi_mqtt::loop pumps). ───
+  {
+    reboot();
+    (void)csi_event_log::load_into_ring();
+    CHECK(csi_event_dismiss(20) && csi_event_log::queue_dismissal(20), "dismissed right after boot");
+    const size_t n = card_lines().size();
+    CHECK(csi_event_log::flush_dismissals() == 0 && card_lines().size() == n,
+          "before the log is open nothing is written");
+    open_card();
+    CHECK(csi_event_log::flush_dismissals() == 1 && card_lines().size() == n + 1,
+          "and the dismissal is written once it opens, not lost");
+  }
+
+  // ── A dismissal before the egress logs the original. The commit hook
+  //    only queues the row; csi_integration::loop writes queued dismissals
+  //    before csi_mqtt::loop's egress pump appends it, so the dismissal line
+  //    can land first. The original still says "dismissed":0. ─────────────
   {
     SD.files["/EVENTS/today.ndjson"] = "";
     reboot();
     CHECK(csi_event_log::load_into_ring() == 0, "an empty log: nothing restored");
+    open_card();
     std::string row = line_for(30, false);
     row.pop_back();
     csi_event_record_t committed;
     CHECK(csi_event_log_line::parse(row.c_str(), &committed) && csi_event_inject(&committed),
           "event 30 is in the ring (the commit)");
     CHECK(csi_event_dismiss(30) && csi_event_log::queue_dismissal(30),
-          "the owner dismisses it before the hook copies the row");
-    csi_event_record_t hook_copy;
-    CHECK(csi_event_find(30, &hook_copy) && hook_copy.values.dismissed == 1,
-          "so the hook's copy of the row already says dismissed");
-    CHECK(csi_event_log::append(&hook_copy), "the hook appends it");
+          "the owner dismisses it before the egress logs it");
     CHECK(csi_event_log::flush_dismissals() == 1, "the loop task writes the queued dismissal");
+    const std::string original = line_for(30, false);   // the egress logs the original
+    CHECK(csi_event_log::append_line(original.data(), original.size()).ok,
+          "then the egress appends the original");
     const std::vector<std::string> lines = card_lines();
     csi_event_record_t first, second;
     CHECK(lines.size() == 2 && csi_event_log_line::parse(lines[0].c_str(), &first) &&
           csi_event_log_line::parse(lines[1].c_str(), &second) &&
-          first.event_id == 30 && first.values.dismissed == 0 &&
-          second.event_id == 30 && second.values.dismissed == 1,
-          "the card holds the original (dismissed:0), then the dismissal");
-    count_cb_calls = 0;
-    CHECK(csi_event_log::iterate_since(0, count_cb, nullptr) == 1 && count_cb_calls == 1,
-          "backfill still replays the event, once");
+          first.event_id == 30 && first.values.dismissed == 1 &&
+          second.event_id == 30 && second.values.dismissed == 0,
+          "the card holds the dismissal, then the original (dismissed:0)");
     reboot();
     CHECK(csi_event_log::load_into_ring() == 1 && dismissed_in_ring(30),
           "after a reboot the event is back, dismissed, not lost");
   }
 
-  // ── A line this device never handed out is never replayed (F46). A card
-  //    is input: a forged line near the top of the id space would go out
-  //    signed with this device's key, and Home Assistant would refuse the
-  //    device's real events from then on. Every id it handed out is below
-  //    the allocator's next one. ─────────────────────────────────────────
+  // ── A dismissal never cuts the log. ─────────────────────────────────────
   {
+    std::string big;
+    uint32_t id = 50;
+    while (big.size() < csi_event_log::MAX_BYTES) big += line_for(id++, false);
+    SD.files["/EVENTS/today.ndjson"] = big;
     reboot();
-    const uint32_t next = csi_event_get_next_event_id();
-    SD.files["/EVENTS/today.ndjson"] = line_for(40, false) + line_for(0xFFFFFFF0u, false) +
-                                       line_for(next, false) + line_for(next - 1, false) +
-                                       line_for(41, false);
-    std::vector<uint32_t> seen;
-    auto collect = [](const csi_event_record_t* rec, void* user) {
-      static_cast<std::vector<uint32_t>*>(user)->push_back(rec->event_id);
-      return true;
-    };
-    CHECK(csi_event_log::iterate_since(0, collect, &seen) == 3,
-          "backfill replays the three lines this device could have written");
-    CHECK(seen.size() == 3 && seen[0] == 40 && seen[1] == next - 1 && seen[2] == 41,
-          "not the forged id near the top, not the allocator's next id");
-    CHECK(csi_event_get_next_event_id() == next, "and the walk allocated nothing");
+    csi_event_set_event_id_floor(100000);   // every id on this card was handed out
+    (void)csi_event_log::load_into_ring();
+    open_card();
+    const uint32_t last = id - 1;
+    CHECK(csi_event_dismiss(last) && csi_event_log::queue_dismissal(last), "dismiss the newest row");
+    const size_t before_size = SD.files["/EVENTS/today.ndjson"].size();
+    CHECK(csi_event_log::flush_dismissals() == 0 &&
+          SD.files["/EVENTS/today.ndjson"].size() == before_size,
+          "at MAX_BYTES the dismissal is not written, and the log is not cut");
+    CHECK(csi_event_log::flush_dismissals() == 0 &&
+          SD.files["/EVENTS/today.ndjson"].size() == before_size,
+          "nor on the next pass, while the log stays at the cap");
+    const std::string next = line_for(id, false);
+    const csi_event_backfill::AppendResult r = csi_event_log::append_line(next.data(), next.size());
+    CHECK(r.ok && r.cut > 0 && r.size == SD.files["/EVENTS/today.ndjson"].size(),
+          "a committed row's append cuts the oldest quarter, and says how much");
+    CHECK(csi_event_log::flush_dismissals() == 1, "then the waiting dismissal is written");
+    {
+      csi_event_record_t d;
+      CHECK(csi_event_log_line::parse(card_lines().back().c_str(), &d) && d.event_id == last &&
+            d.values.dismissed == 1, "as the last line, dismissed");
+    }
+    reboot();
+    csi_event_set_event_id_floor(100000);
+    CHECK(csi_event_log::load_into_ring() > 0 && dismissed_in_ring(last),
+          "after a reboot the row comes back dismissed, not undone by the cap");
+  }
+
+  // ── Two dismissals queued just under the cap: the first one's line takes
+  //    the log past MAX_BYTES, so the second must wait, not be taken from
+  //    the queue and refused. ─────────────────────────────────────────────
+  {
+    const size_t line_len = line_for(50, false).size();
+    std::string big;
+    uint32_t id = 50;
+    while (big.size() + line_len < csi_event_log::MAX_BYTES) big += line_for(id++, false);
+    SD.files["/EVENTS/today.ndjson"] = big;
+    reboot();
+    csi_event_set_event_id_floor(100000);
+    (void)csi_event_log::load_into_ring();
+    open_card();
+    const uint32_t a = id - 2, b = id - 1;
+    CHECK(csi_event_dismiss(a) && csi_event_log::queue_dismissal(a) &&
+          csi_event_dismiss(b) && csi_event_log::queue_dismissal(b),
+          "two rows dismissed while the log is just under the cap");
+    CHECK(csi_event_log::flush_dismissals() == 1 &&
+          SD.files["/EVENTS/today.ndjson"].size() >= csi_event_log::MAX_BYTES,
+          "the first dismissal is written and takes the log to the cap");
+    CHECK(csi_event_log::flush_dismissals() == 0, "the second waits while the log is at the cap");
+    const std::string next = line_for(id, false);
+    CHECK(csi_event_log::append_line(next.data(), next.size()).cut > 0,
+          "a committed row's append cuts the log");
+    CHECK(csi_event_log::flush_dismissals() == 1, "then the second dismissal is written, not lost");
+    reboot();
+    csi_event_set_event_id_floor(100000);
+    CHECK(csi_event_log::load_into_ring() > 0 && dismissed_in_ring(a) && dismissed_in_ring(b),
+          "after a reboot both rows come back dismissed");
   }
 
   if (g_fail == 0) {

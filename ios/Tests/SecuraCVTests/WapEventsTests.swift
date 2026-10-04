@@ -114,9 +114,10 @@ final class WapEventsTests: XCTestCase {
     }
 
     func testAnchoredDatesUseDeltasNeverAbsoluteBuckets() {
-        // Absolute buckets are boot-relative on every current device (no
-        // production caller of the clock-offset setter — review finding on
-        // #1611), so ONLY the deltas may be believed. Fixed clock so the
+        // An absolute bucket is household time on a device GPS has set and
+        // boot-relative on one it has not, and a row does not say which
+        // (WapEvents.swift's header; review finding on #1611, backlog A48),
+        // so ONLY the deltas may be believed. Fixed clock so the
         // expectations are bytes: now = 1_000_000_000, whose 10-minute
         // anchor is 999_999_600.
         let now = Date(timeIntervalSince1970: 1_000_000_000)

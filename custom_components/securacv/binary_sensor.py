@@ -22,7 +22,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_URL
+from homeassistant.const import CONF_URL, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from typing import Any as _Any  # noqa: F401  (used in _read_trust_view signature below)
 from homeassistant.helpers.entity import DeviceInfo
@@ -81,6 +81,7 @@ from . import (
 from .voice import json_status_online, status_online
 from .health_metrics import (
     canary_sd_replace_recommended,
+    event_id_space_low,
     replacement_recommended,
     storage_status,
 )
@@ -224,6 +225,19 @@ async def _setup_mqtt_binary_sensors(
             entities_added[device_id].add("sd_replace")
             new_entities.append(
                 SecuraCVCanarySDReplaceSensor(prefix, device_id, entry)
+            )
+
+        # The event-id space warning (HA24). Only devices whose health carries
+        # the flag (the canary base and the canary-wap since firmware sweep
+        # F82) get the sensor, so no other device grows one that stays unknown.
+        if (
+            topic_type == TOPIC_HEALTH
+            and "event_id_space_low" not in entities_added[device_id]
+            and event_id_space_low(parse_mqtt_json(msg.payload)) is not None
+        ):
+            entities_added[device_id].add("event_id_space_low")
+            new_entities.append(
+                SecuraCVCanaryEventIdSpaceLowSensor(prefix, device_id, entry)
             )
 
         # Individual tamper type sensors. Created on the first tamper OR
@@ -741,6 +755,51 @@ class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
         if data is None:
             return
         self._attr_is_on = canary_sd_replace_recommended(data)
+        self.async_write_ha_state()
+
+
+class SecuraCVCanaryEventIdSpaceLowSensor(SecuraCVCanaryBinarySensorBase):
+    """Problem sensor: the device's event-id space is running out (HA24).
+
+    The canary base and the canary-wap carry ``event_id_space_low`` in their
+    MQTT health (firmware sweep F82): true once the event-id allocator
+    reaches its hold limit, 2^28 ids before its ids wrap, and after a wrap.
+    Past the wrap the device's ids restart below the ones this integration
+    already verified, so its replay gate refuses the device's events. A
+    warning only: the device-side recovery is not decided yet, and nothing
+    here resets anything. Unknown when a health publish lacks the flag.
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:counter"
+
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(prefix, device_id, entry, "event_id_space_low")
+        self._attr_is_on: bool | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to MQTT health topic; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+                self._handle_message,
+            )
+        )
+
+    @callback
+    def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
+        """Handle health message for the event-id space flag."""
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
+            return
+        self._attr_is_on = event_id_space_low(data)
+        # Health is not signed: say so, as the other health entities do.
+        self._attr_extra_state_attributes = unsigned_trust_attrs(
+            self.hass, self._entry, self._device_id
+        )
         self.async_write_ha_state()
 
 

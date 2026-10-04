@@ -175,8 +175,11 @@ size_t list_peers(Peer* out, size_t max);
 bool send_to_peer(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
                   const uint8_t* data, size_t len);
 
-/* Broadcast to every paired peer (NOT FF:FF:FF:FF:FF:FF). Returns the
- * number of peers that accepted the send. */
+/* Send to every address in the peer table (NOT FF:FF:FF:FF:FF:FF).
+ * Returns the number of peers that accepted the send. The table can hold
+ * more than members: mesh_session adds a running pairing's partner too,
+ * so mesh_session's opera senders do not use this; they unicast to each
+ * member's bound MAC (mesh_session.h, MEMBERS ONLY; F101). */
 size_t broadcast(const uint8_t* data, size_t len);
 
 /* Send to an arbitrary MAC, including FF:FF:FF:FF:FF:FF, WITHOUT
@@ -226,6 +229,12 @@ namespace test {
   /* Replace esp_now_add_peer. Return false to simulate a driver failure. */
   using PeerAddHook = bool (*)(const uint8_t* mac);
   void set_peer_add_hook(PeerAddHook h);
+
+  /* Forget the storm limiter's window, count and pause. deinit()/init()
+   * keep them, and the virtual clock restarts at 0 between tests, so a
+   * suite's sends otherwise add up across tests in one 1-second window
+   * until the limiter pauses every later test's sends. */
+  void reset_storm_limiter();
 
   /* Inject an incoming frame as if ESP-NOW had delivered it. Drives the
    * recv path including peer last_seen + RSSI updates. */

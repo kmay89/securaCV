@@ -214,8 +214,9 @@ static void test_governor_airtime_pct() {
 // ─────────────────────────────────────────────────────────────────────────
 
 // mesh_network's broadcast_message() unicasts one signed frame to each
-// authenticated peer (38 B header + payload + 64 B signature), so a
-// heartbeat (12 B HeartbeatPayload) to 3 such peers puts 3 frames of 114 B on
+// authenticated peer (38 B header + payload + 64 B signature), and
+// send_heartbeat() one to each member, so a
+// heartbeat (12 B HeartbeatPayload) to 3 members puts 3 frames of 114 B on
 // the air: 3 x (192 + (114 + 59) x 8) = 3 x 1576 us, each with its own
 // preamble and framing — not one 342 B frame, and not one 114 B frame.
 static void test_governor_charges_each_frame_of_a_fan_out() {
@@ -302,9 +303,10 @@ static void test_mesh_charges_one_signed_frame_per_peer() {
 
   struct Site { const char* fn; const char* charge; const char* send; };
   const Site sites[] = {
+    /* the heartbeat goes to every member, heard or not (sweep F76). */
     {"send_heartbeat",
-     "airtime_governor::try_reserve_routine(millis(),signed_frame_bytes(sizeof(payload)),broadcast_peer_count())",
-     "broadcast_message(MSG_HEARTBEAT,"},
+     "airtime_governor::try_reserve_routine(millis(),signed_frame_bytes(sizeof(payload)),g_peer_count)",
+     "for(uint8_ti=0;i<g_peer_count;i++){send_to_peer(&g_peers[i],MSG_HEARTBEAT,"},
     {"broadcast_tamper_alert",
      "airtime_governor::force_reserve_urgent(millis(),signed_frame_bytes(sizeof(payload)),broadcast_peer_count());",
      "broadcast_message(MSG_TAMPER_ALERT,"},

@@ -65,14 +65,32 @@ export function mqttApply(store, msg) {
   return store;
 }
 
-// A sandbox/CSI event → the presence pill it lands the dashboard on (or null
-// if it doesn't move presence, e.g. a mic mute).
-export function pillForEvent(ev) {
-  return {
-    motion: "Motion", present: "Presence", subtle: "Presence",
-    empty: "Quiet", quiet: "Quiet", active: "Active",
-    smoke_alarm_t3: "Motion", co_alarm_t4: "Motion", silent_panic: "Presence",
-  }[ev] || null;
+// A sandbox scene → the presence pill it lands the dashboard sketch on (or
+// null if it doesn't move presence, e.g. a mic mute). The pill is the scene's
+// own, in the getting-started guide's vocabulary. Its `event` is the
+// firmware's word (core.presence's state, or the acoustic type), and the two
+// vocabularies differ: the firmware's `quiet` is a still, breathing person,
+// the guide's Quiet an empty room. So the pill is never derived from the
+// event (a map from one to the other used to turn `quiet` into Quiet).
+export function pillForScene(sc) {
+  return (sc && sc.pill) || null;
+}
+
+// A sandbox publish as csi_mqtt.cpp writes it (sweep A30): the topic's
+// payload as it stands now (the retained row, or the last event) with the
+// scene's fields laid over it and its counters moved on, every key kept in
+// the firmware's order. wap.json's `payload` is the first click's (laid over
+// the topic's example); this is the same overlay on whatever the topic says
+// by then, so a second click takes the next event id and chain length. A
+// publish with no fields to lay over (mic/state's bare word) goes out as is.
+export function scenePayload(current, pub) {
+  if (!pub.set && !pub.advance) return pub.payload;
+  const out = {};
+  for (const k of Object.keys(current)) {
+    out[k] = k in (pub.set || {}) ? pub.set[k]
+      : (pub.advance || []).includes(k) ? current[k] + 1 : current[k];
+  }
+  return JSON.stringify(out);
 }
 
 // ── the cable's spine (DOM-free; pinned in tests/wap.test.js) ─────────────
@@ -957,7 +975,7 @@ export function buildDashboard(data, bus) {
 
   bus.on("online", () => { setPill("Quiet", data.sensing.pills.find((p) => p.name === "Quiet")?.meaning); danceSpectrum(false); });
   bus.on("event", (e) => {
-    const name = pillForEvent(e.id === "smoke" ? "motion" : e.id === "co" ? "motion" : e.event);
+    const name = pillForScene(e);
     const meaning = data.sensing.pills.find((p) => p.name === name)?.meaning;
     if (name) setPill(name, meaning);
     const hot = ["wave", "smoke", "co"].includes(e.id);
@@ -974,6 +992,15 @@ export function buildDashboard(data, bus) {
 }
 
 // ── the MQTT explorer ─────────────────────────────────────────────────────
+// The pane's "how to read this": the topics that are not retained, read off
+// each topic's retained flag, then wap.json's note on what is elided and how
+// the sandbox's timing differs from the device's.
+export function paneNote(m, id) {
+  const live = m.topics.filter((t) => !t.retained).map((t) => withId(m.topic_pattern.replace("<suffix>", t.suffix), id));
+  return "prefix " + m.prefix + "; " + live.join(" and ") + (live.length === 1 ? " is" : " are") +
+    " not retained, every other topic is. " + m.pane_note;
+}
+
 export function buildMqtt(data, bus) {
   const m = data.mqtt, id = data.device.id_example;
   const wrap = el("div", "wap-mqtt");
@@ -1008,10 +1035,10 @@ export function buildMqtt(data, bus) {
   disc.append(dgrid);
   wrap.append(disc);
 
+  // which topics are not retained comes from each topic's own flag (the old
+  // note named events alone, though tamper is live-only too)
   const note = el("p", "ondevice wap-note");
-  note.append(el("strong", null, "How to read this: "), document.createTextNode(
-    "the topic tree and payloads are the exact strings csi_mqtt.cpp publishes (prefix " + m.prefix +
-    ", only " + withId(m.topic_pattern.replace("<suffix>", "events"), id) + " is non-retained). The broker is staged; the contract is real."));
+  note.append(el("strong", null, "How to read this: "), document.createTextNode(paneNote(m, id)));
   wrap.append(note);
 
   const store = {};
@@ -1033,18 +1060,32 @@ export function buildMqtt(data, bus) {
   }
   renderRetained();
 
+  // What each topic says now: its wap.json example until a scene moves it
+  // (`now`, parsed, for laying the next scene over; `said`, the retained
+  // string a scene last published).
+  const byTopic = Object.fromEntries(m.topics.map((t) => [t.suffix, t]));
+  const now = {};
+  for (const t of m.topics) if (!t.payload.startsWith('"')) now[t.suffix] = JSON.parse(t.payload);
+  const said = {};
+
   bus.on("mqtt", () => {
     // LWT is replaced by online on connect, then the retained snapshot lands
     const seq = [];
-    seq.push({ topic: withId(m.lwt.topic, id), payload: '{"online":true,"device_type":"canary-wap"}', retain: true });
+    seq.push({ topic: withId(m.lwt.topic, id), payload: '{"online":true,"device_type":"canary-wap"}' });
     for (const t of m.topics) {
       if (!t.retained) continue;
-      seq.push({ topic: withId(m.topic_pattern.replace("<suffix>", t.suffix), id), payload: t.payload, retain: true });
+      seq.push({ topic: withId(m.topic_pattern.replace("<suffix>", t.suffix), id), suffix: t.suffix });
     }
     (async () => {
       for (const msg of seq) {
         await sleep(160); if (!alive(wrap)) return;
-        mqttApply(store, msg); renderRetained();
+        // Each topic lands as it stands when its turn comes. The sandbox emits
+        // online, mqtt and the scene in one click, so the scene has usually
+        // moved chain and counts before the snapshot reaches them; landing the
+        // example then would take the retained chain back to the example's
+        // length until the next click.
+        const payload = msg.suffix ? (said[msg.suffix] ?? byTopic[msg.suffix].payload) : msg.payload;
+        mqttApply(store, { topic: msg.topic, payload, retain: true }); renderRetained();
       }
       pushStream(withId(m.discovery.prefix + "/…/config", id), m.discovery.counts.entities + " entities announced (retained)", "disc");
     })();
@@ -1052,9 +1093,11 @@ export function buildMqtt(data, bus) {
   bus.on("event", (e) => {
     for (const pub of e.mqtt || []) {
       const topic = withId(m.topic_pattern.replace("<suffix>", pub.suffix), id);
-      const retain = pub.suffix !== "events";
-      if (retain) { mqttApply(store, { topic, payload: pub.payload, retain: true }); renderRetained(); }
-      pushStream(topic, pub.payload, retain ? "" : "live");
+      const payload = scenePayload(now[pub.suffix], pub);
+      if (pub.set || pub.advance) now[pub.suffix] = JSON.parse(payload);
+      const retain = !!(byTopic[pub.suffix] && byTopic[pub.suffix].retained);
+      if (retain) { said[pub.suffix] = payload; mqttApply(store, { topic, payload, retain: true }); renderRetained(); }
+      pushStream(topic, payload, retain ? "" : "live");
     }
   });
   return wrap;

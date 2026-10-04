@@ -171,21 +171,40 @@ drive it unchanged, but the mod is documented, not required.
 ## The dash rows — orientation, brightness, clock
 
 **Orientation.** The 800×480 glass turns into a 480×800 column for a wall
-mount stood on end or a tall bedside face. LVGL software-rotates the whole UI
-(`lvgl_port_set_rotation` → `lv_display_set_rotation`); the panel keeps
-scanning its native landscape, and raw GT911 touch is un-rotated back into the
-logical frame in the HAL (`touch_set_rotation` → `rotation_map_touch`, the
-exact inverse of the render turn — host-tested by round-trip). Landing on an
+mount stood on end or a tall bedside face. `lvgl_port_set_rotation` hands
+LVGL the quarter turn (`lv_display_set_rotation`; Portrait is LVGL's 90°,
+Portrait, Flipped its 270°) and the UI lays itself out on the turned logical
+canvas. On LVGL 9, which the dash family ships, that call only swaps the
+canvas: LVGL renders logical areas and turns nothing, so the port's flush
+turns each rendered area into the panel's native landscape framebuffer
+(`lv_display_rotate_area` for where it lands, `lv_draw_sw_rotate` for its
+pixels, through a turn buffer the size of the draw buffer: 128,000 B more
+PSRAM). On LVGL 8 (the browser emulator) LVGL turns the areas itself
+(`sw_rotate`), the same quarter turns. The panel keeps scanning landscape,
+and raw GT911 touch is un-rotated back into the logical frame in the HAL
+(`touch_set_rotation` → `rotation_map_touch`, the exact inverse of the turn
+drawn). By that arithmetic Portrait puts the face's top along the panel's
+native left edge (the panel turned a quarter clockwise) and Portrait,
+Flipped along its right edge. A glass whose turn buffer could not be
+allocated refuses the turn, logs it and stays landscape. Landing on an
 option *is* choosing: the glass — panel and all — turns under your thumb, and
 the panel re-measures its canvas and rebuilds in the new shape. Portrait
 swaps the landscape poster (`dash_ui` / `nightstand7_ui`) for one shared
 portrait column, `portrait7_ui`.
 
-> **Bench-validation pending**, like the rest of the 7" line. LVGL's software
-> rotation in partial-render mode is the intended path; the coordinate + touch
-> math is proven on the host, but the panel render itself must be confirmed on
-> real glass. Landscape (rotation 0) is the default and a no-op, so boot is
-> never sideways.
+> **Bench-validation pending**, like the rest of the 7" line. The turn and
+> the touch are host-tested: `test_lvgl_port_turn` runs the real
+> `lvgl_port.cpp` against LVGL 9.5's quoted rotation code and holds, at every
+> quarter turn, that each native pixel shows the logical pixel LVGL's turn
+> puts there and that a raw touch on any pixel maps to the pixel drawn there;
+> CI renders a scene through the same port and the real LVGL 9.5.0 at every
+> quarter turn (`canary-local/emulator/test/glass_turn_lvgl9.sh`, natively on
+> a 64-bit host) and holds the panel pixel for pixel against the scene drawn
+> on a plain display of the logical size, for whole frames and for partial
+> updates whose areas start right of logical x 0. No turned panel has been
+> confirmed on real glass, nor the GT911's axes against the panel's.
+> Landscape (rotation 0) is the default and a no-op, so boot is never
+> sideways.
 
 **Brightness — "up to 50% sustained."** The 7"/dash backlight is binary
 (CH422G, no PWM — see *Dash hardware truth* above), so a brightness setting

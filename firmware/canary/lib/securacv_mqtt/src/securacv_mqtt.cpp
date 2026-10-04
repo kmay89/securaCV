@@ -261,21 +261,18 @@ static void offline_queue_ensure() {
 // the live link, queue on a miss. True = sent or buffered; false only
 // when the queue is inert or refuses (oversize), so callers keep their
 // own re-arm for exactly the payloads the queue cannot carry.
+// The order is mqtt_offline_queue::publish_or_queue(), the one the egress
+// host tests compile (backlog F107): while records from an outage are
+// still draining, a new one joins the back of the queue instead of going
+// live, so the replay stays in order and nothing jumps ahead of an older
+// alert or event. firmware/scripts/check_event_egress_order.py (rule 9)
+// holds this wrapper to it.
 static bool publish_or_queue(mqtt_offline_queue::Kind kind, const char* topic,
                              const char* payload, bool retained) {
-  if (payload == nullptr) return false;
-  const bool link_up = s_mqtt.connected();
-  if (link_up && !s_offline_q.empty()) {
-    // Records from the outage are still draining: join the back of the
-    // queue so the replay stays in order instead of a fresh publish
-    // jumping ahead of older alerts. A payload too big for a slot, or an
-    // event the full queue refuses (it keeps its tamper alerts), falls
-    // through to the live send — delivery beats ordering there.
-    if (s_offline_q.push(kind, retained, payload)) return true;
-  }
-  if (link_up && s_mqtt.publish(topic, payload, retained)) return true;
-  offline_queue_ensure();
-  return s_offline_q.push(kind, retained, payload);
+  return mqtt_offline_queue::publish_or_queue(
+      s_offline_q, s_mqtt.connected(), kind, retained, payload,
+      [&]() { return s_mqtt.publish(topic, payload, retained); },
+      offline_queue_ensure);
 }
 
 // Replay queued records front-to-back while the link is up, a few per
@@ -1042,6 +1039,10 @@ bool mqtt_publish_event_live(const char* json_payload) {
 
 uint32_t mqtt_destination_epoch() {
   return s_destination_epoch;
+}
+
+mqtt_offline_queue::Stats mqtt_offline_queue_stats() {
+  return s_offline_q.stats();
 }
 
 bool mqtt_publish_health(const char* json_payload) {

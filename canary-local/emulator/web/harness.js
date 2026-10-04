@@ -4,7 +4,8 @@
 import { CanaryEmulator, demoFleet } from "./emu-shell.js";
 
 // Which glass boots is a query parameter, not a hard-coded script tag:
-// ?flavor=watch (the default) | dash | nightstand | touch169 | amoled241,
+// ?flavor=watch (the default) | dash | nightstand | touch169 | amoled241 |
+// nightlight,
 // each a committed dist/canary-display-<flavor>.js exporting
 // createCanaryEmu<Flavor>. The boot probe walks every flavor this way, so
 // a display CI never booted cannot ship broken.
@@ -17,6 +18,7 @@ const FLAVORS = {
   nightstand:{ src: "../dist/canary-display-nightstand.js",factory: "createCanaryEmuNightstand" },
   touch169:  { src: "../dist/canary-display-touch169.js",  factory: "createCanaryEmuTouch169" },
   amoled241: { src: "../dist/canary-display-amoled241.js", factory: "createCanaryEmuAmoled241" },
+  nightlight:{ src: "../dist/canary-display-nightlight.js",factory: "createCanaryEmuNightlight" },
 };
 const q = new URLSearchParams(location.search);
 const wanted = (q.get("flavor") || "watch").toLowerCase();
@@ -34,7 +36,12 @@ const factory = window[entry.factory];
 if (typeof factory !== "function") throw new Error("dist bundle for " + flavor + " exports no factory");
 
 const serial = document.getElementById("serial");
-const state = { booted: false, flushes: 0, serialText: "", mqtt: [], flavor };
+// shapes: every shape the firmware announced for its glass (onDisplayReady,
+// F184), with how many frames it had drawn by then — so a probe can tell the
+// glass the FIRST frame landed on (a saved rotation is worn before the
+// splash, main.cpp) from one the firmware turned to later — and the quarter
+// turns it is worn at (A56; null from a dist built before the HAL said).
+const state = { booted: false, flushes: 0, serialText: "", mqtt: [], flavor, shapes: [] };
 window.__state = state;
 
 const emu = new CanaryEmulator(factory, {
@@ -44,7 +51,8 @@ const emu = new CanaryEmulator(factory, {
     serial.textContent = state.serialText.slice(-20000);
     serial.scrollTop = serial.scrollHeight;
   },
-  onDisplayReady: (w, h, round) => {
+  onDisplayReady: (w, h, round, turn) => {
+    state.shapes.push({ w, h, frames: state.flushes, turn });
     if (round) document.getElementById("glass").classList.add("round");
   },
   onFrame: () => { state.flushes++; },
@@ -71,11 +79,39 @@ document.getElementById("controls").addEventListener("click", (e) => {
   CONTROLS[b.dataset.emu](Number(b.dataset.arg));
 });
 
-await emu.start({
-  provisioned: q.get("provisioned") !== "0",
-  firstMeeting: q.get("meet") === "1",
-  seed: 1234,
-});
+// ?rotation=0..3: a saved rotation staged before power-on, so the glass boots
+// turned the way main.cpp brings up a unit that saved it: the dash's
+// canary::glass::Rotation (F184: 1 is the 480x800 portrait) or the
+// nightlight's quarter turns (F204: 1 is the 320x180 landscape). Only those
+// four values.
+const ROTATIONS = { 0: 0, 1: 1, 2: 2, 3: 3 };
+const rotationParam = q.get("rotation");
+if (rotationParam !== null && !Object.hasOwn(ROTATIONS, rotationParam)) {
+  throw new Error("rotation must be 0, 1, 2 or 3");
+}
+// ?timescale=<x>: the emulated clock's speed from power-on (F206), so a probe
+// can read the splash on a slowed clock from its first frame (0.5 = half
+// speed). A number above 0 and at most 64; anything else is refused.
+const timeScaleParam = q.get("timescale");
+const timeScale = timeScaleParam === null ? null : Number(timeScaleParam);
+if (timeScale !== null && !(Number.isFinite(timeScale) && timeScale > 0 && timeScale <= 64)) {
+  throw new Error("timescale must be a number above 0 and at most 64");
+}
+// A boot the shell refuses (a dist without a binding the query asks for) is
+// named on window.__harnessError, so a probe fails on the reason at once
+// instead of waiting out __ready.
+try {
+  await emu.start({
+    provisioned: q.get("provisioned") !== "0",
+    firstMeeting: q.get("meet") === "1",
+    seed: 1234,
+    rotation: rotationParam === null ? null : ROTATIONS[rotationParam],
+    timeScale,
+  });
+} catch (e) {
+  window.__harnessError = String((e && e.message) || e);
+  throw e;
+}
 if (q.get("hour") !== null) emu.setLocalHour(Number(q.get("hour")));
 state.booted = true;
 

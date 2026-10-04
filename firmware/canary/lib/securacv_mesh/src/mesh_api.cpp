@@ -71,7 +71,8 @@ bool build_mesh_status_json(char*  out,
                             size_t   peers_total,
                             size_t   peers_online,
                             uint32_t alerts_received,
-                            uint32_t pairing_code) {
+                            uint32_t pairing_code,
+                            const PairingReport* last_pairing) {
   if (out == nullptr || cap == 0) return false;
 
   const char* state = mesh_pairing::mesh_state_name(
@@ -108,6 +109,20 @@ bool build_mesh_status_json(char*  out,
   if (strcmp(state, "PAIRING_CONFIRM") == 0) {
     n = snprintf(out + pos, cap - pos, ",\"pairing_code\":%u",
                  (unsigned)pairing_code);
+    if (n < 0 || (size_t)n >= cap - pos) return false;
+    pos += (size_t)n;
+  }
+
+  /* F133: the last pairing's outcome, after every older field. The fail
+   * reason is "none" unless the outcome is FAILED. */
+  if (last_pairing != nullptr) {
+    const bool failed = last_pairing->outcome == mesh_pairing::Outcome::FAILED;
+    n = snprintf(out + pos, cap - pos,
+                 ",\"pairing_seq\":%lu,\"pairing_result\":\"%s\",\"pairing_fail_reason\":\"%s\"",
+                 (unsigned long)last_pairing->seq,
+                 mesh_pairing::outcome_name(last_pairing->outcome),
+                 mesh_pairing::fail_reason_name(failed ? last_pairing->fail_reason
+                                                       : mesh_pairing::FailReason::NONE));
     if (n < 0 || (size_t)n >= cap - pos) return false;
     pos += (size_t)n;
   }
@@ -155,6 +170,60 @@ bool build_mesh_peers_json(char*  out,
   out[pos++] = '}';
   out[pos]   = '\0';
   return true;
+}
+
+bool build_mesh_status_json_from_view(char* out, size_t cap,
+                                      const mesh_session::StatusView& view) {
+  PairingReport last;
+  last.seq         = view.pairing_seq;
+  last.outcome     = view.pairing_outcome;
+  last.fail_reason = view.pairing_fail_reason;
+  /* A published name is terminated by construction; terminate a copy anyway
+   * rather than trust a struct's last byte. */
+  char name[sizeof(view.opera_name)];
+  memcpy(name, view.opera_name, sizeof(name));
+  name[sizeof(name) - 1] = '\0';
+  return build_mesh_status_json(out, cap, view.enabled, view.has_opera,
+                                view.has_opera ? view.opera_id : nullptr, name,
+                                view.pairing_state, view.peers_total, view.peers_online,
+                                view.alerts_received, view.pairing_code, &last);
+}
+
+size_t peer_views_from_status(const mesh_session::StatusView& view,
+                              const uint8_t* pubkeys, size_t count,
+                              uint32_t now_ms, PeerView* out) {
+  if (out == nullptr || (pubkeys == nullptr && count > 0)) return 0;
+  const size_t members = view.member_count < mesh_session::MAX_TRUSTED_PEERS
+                             ? (size_t)view.member_count
+                             : mesh_session::MAX_TRUSTED_PEERS;
+  for (size_t i = 0; i < count; ++i) {
+    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+    mesh_crypto::compute_fingerprint(pubkeys + i * mesh_crypto::PUBKEY_LEN, fp);
+    PeerView& row = out[i];
+    to_hex(row.fingerprint, fp, mesh_crypto::FINGERPRINT_LEN);
+    row.name[0]         = '\0';          /* best-effort: name unknown */
+    row.state           = "OFFLINE";     /* until a verified frame joins it */
+    row.last_seen_sec   = 0xFFFFFFFFu;   /* "never" (the UI shows 'never') */
+    row.rssi            = 0;
+    row.alerts_received = 0;             /* until the view has a row for it */
+    for (size_t m = 0; m < members; ++m) {
+      const mesh_session::MemberView& mv = view.members[m];
+      if (memcmp(mv.fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) continue;
+      /* Per-peer alert attribution (F11) does not depend on liveness. */
+      row.alerts_received = mv.alerts_received;
+      if (mv.live) {
+        switch (mv.link_state) {
+          case mesh_transport::PeerState::ACTIVE: row.state = "CONNECTED"; break;
+          case mesh_transport::PeerState::STALE:  row.state = "STALE";     break;
+          default:                                row.state = "OFFLINE";   break;
+        }
+        row.last_seen_sec = (now_ms - mv.last_seen_ms) / 1000u;
+        row.rssi          = mv.rssi_dbm;
+      }
+      break;
+    }
+  }
+  return count;
 }
 
 static int hex_nibble(char c) {

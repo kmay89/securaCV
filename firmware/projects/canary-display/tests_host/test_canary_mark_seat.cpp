@@ -29,6 +29,14 @@
 // on stage after a layout pass (here: 100). The fake must reproduce those
 // numbers, so it is held to LVGL, not to itself.
 //
+// It also holds which animations a mood change stops (F222): the mark's own
+// (the breath, the hop, a wing flourish) and never its host's. The
+// nightlight's tumble animates the bird object itself (its translate slides
+// in from the edge that was up, nightlight_ui_tumble()) right after the face
+// is built, and the first mood comes on the next update; a mood change that
+// deleted every animation on the bird ended the slide at its first frame,
+// and the companion stayed a whole fling off its perch.
+//
 // Prints "ALL CANARY MARK SEAT TESTS PASSED" on success.
 
 #include "canary/ui/canary_mark.h"
@@ -245,12 +253,134 @@ static void test_new_bird_new_base() {
         "placed at x 18 y 204", s.x_lo, s.x_hi, s.y_lo, s.y_hi);
 }
 
+// 6. A host's own animation on the bird (F222). The nightlight's tumble, as
+//    nightlight_ui_tumble() starts it right after nightlight_ui_create():
+//    700 ms of translate from the edge that was up to 0; the face's update
+//    sets the first mood a frame later. Seat: the landscape perch on the
+//    320x180 glass (RIGHT_MID, -(96 - 93) / 2, -(180 / 12) for a 93 px bird),
+//    which the native runtime-turn boot (canary-local/emulator/test/
+//    runtime_turn.sh) reads as x 226, y 27..31 on LVGL 8.4.
+static void host_tx(void* var, int32_t v) {
+  lv_obj_set_style_translate_x((lv_obj_t*)var, (lv_coord_t)v, 0);
+}
+static void host_ty(void* var, int32_t v) {
+  lv_obj_set_style_translate_y((lv_obj_t*)var, (lv_coord_t)v, 0);
+}
+
+static void slide(lv_obj_t* bird, lv_anim_exec_xcb_t cb, int from) {
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, bird);
+  lv_anim_set_exec_cb(&a, cb);
+  lv_anim_set_values(&a, from, 0);
+  lv_anim_set_time(&a, 700);
+  lv_anim_start(&a);
+}
+
+// Running anims on `var` (any exec callback but `except`), or on any child.
+static int anims_on(const void* var, lv_anim_exec_xcb_t only = nullptr,
+                    lv_anim_exec_xcb_t except = nullptr) {
+  int n = 0;
+  for (const lv_anim_t* a : fake_lvgl::anims()) {
+    if (a->var != var) continue;
+    if (only != nullptr && a->exec_cb != only) continue;
+    if (except != nullptr && a->exec_cb == except) continue;
+    n++;
+  }
+  return n;
+}
+static int anims_on_children(const lv_obj_t* o) {
+  int n = 0;
+  for (const lv_obj_t* c : o->children) n += anims_on(c);
+  return n;
+}
+
+static void test_host_animation_survives_moods() {
+  std::printf("a host's animation on the bird (the nightlight's tumble):\n");
+  const int SEAT_X = 226, SEAT_Y = 29;
+  {
+    // The first mood after the tumble began, and a second mood mid-slide.
+    lv_obj_t* content = nullptr;
+    lv_obj_t* scr = glass(320, 180, &content);
+    lv_obj_t* bird = canary_mark_create(content, 93);
+    lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+    slide(bird, host_tx, 160);  // a quarter turn: in over the right edge
+    canary_mark_mood(CanaryMood::Idle);
+    CHECK(anims_on(bird, host_tx) == 1,
+          "the first mood stopped the host's slide (%d running)",
+          anims_on(bird, host_tx));
+    const Span early = watch(scr, bird, 300);
+    CHECK(early.x_hi > SEAT_X, "the slide starts off the perch (x %d..%d)",
+          early.x_lo, early.x_hi);
+    canary_mark_mood(CanaryMood::Worried);
+    CHECK(anims_on(bird, host_tx) == 1,
+          "a mood change mid-slide stopped the host's slide (%d running)",
+          anims_on(bird, host_tx));
+    watch(scr, bird, 600);  // the slide's last 400 ms, and then some
+    const Span s = watch(scr, bird, 3000);
+    std::printf("  after the slide: drawn x %d..%d y %d..%d\n", s.x_lo, s.x_hi,
+                s.y_lo, s.y_hi);
+    check_seat("landed after two moods", s, SEAT_X, SEAT_Y);
+    lv_obj_del(scr);
+  }
+  {
+    // Hidden mid-slide: the slide finishes behind the curtain, and the next
+    // on-stage mood shows the bird on its perch, not where the hide caught it.
+    lv_obj_t* content = nullptr;
+    lv_obj_t* scr = glass(320, 180, &content);
+    lv_obj_t* bird = canary_mark_create(content, 93);
+    lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+    canary_mark_mood(CanaryMood::Idle);
+    slide(bird, host_ty, -160);  // a half turn: it falls from above
+    watch(scr, bird, 200);
+    canary_mark_mood(CanaryMood::Hidden);
+    CHECK(anims_on(bird, host_ty) == 1,
+          "going off stage stopped the host's slide (%d running)",
+          anims_on(bird, host_ty));
+    watch(scr, bird, 800);
+    canary_mark_mood(CanaryMood::Idle);
+    check_seat("hidden mid-slide, back on stage", watch(scr, bird, 3000),
+               SEAT_X, SEAT_Y);
+    lv_obj_del(scr);
+  }
+  {
+    // ...while a mood change still stops all of the mark's own motion: a hop
+    // that a mood change left running would bounce over the new breath, and
+    // a wing flourish would keep flapping into the new pose.
+    lv_obj_t* content = nullptr;
+    lv_obj_t* scr = glass(320, 180, &content);
+    lv_obj_t* bird = canary_mark_create(content, 93);
+    lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+    canary_mark_mood(CanaryMood::Happy);  // the hop
+    canary_mark_react(CanaryReact::Greeting);  // one slow wing lift
+    CHECK(anims_on(bird) == 1 && anims_on_children(bird) == 1,
+          "Happy and a greeting run the hop and the wing (%d on the bird, %d "
+          "on its parts)", anims_on(bird), anims_on_children(bird));
+    slide(bird, host_tx, 160);
+    canary_mark_mood(CanaryMood::Idle);
+    CHECK(anims_on(bird, nullptr, host_tx) == 1,
+          "after the mood change the mark runs one motion on the bird, its "
+          "breath (%d)", anims_on(bird, nullptr, host_tx));
+    CHECK(anims_on_children(bird) == 0,
+          "the mood change stopped the wing flourish (%d running)",
+          anims_on_children(bird));
+    CHECK(anims_on(bird, host_tx) == 1, "...and left the host's slide (%d)",
+          anims_on(bird, host_tx));
+    canary_mark_mood(CanaryMood::Hidden);
+    CHECK(anims_on(bird, nullptr, host_tx) == 0,
+          "off stage the mark runs nothing on the bird (%d)",
+          anims_on(bird, nullptr, host_tx));
+    lv_obj_del(scr);
+  }
+}
+
 int main() {
   test_first_mood_before_layout();
   test_first_mood_after_layout();
   test_rebase_walk();
   test_every_anchor();
   test_new_bird_new_base();
+  test_host_animation_survives_moods();
   if (g_fail == 0) {
     std::printf("ALL CANARY MARK SEAT TESTS PASSED\n");
     return 0;

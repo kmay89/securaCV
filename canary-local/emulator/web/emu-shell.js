@@ -177,12 +177,12 @@ export class CanaryEmulator {
   }
 
   async start({ provisioned = true, firstMeeting = false, seed = null,
-                nvsImage = null } = {}) {
+                nvsImage = null, rotation = null, timeScale = null } = {}) {
     const shell = this;
     this.module = await this.factory({
       onSerial: (t) => shell.opts.onSerial?.(t),
       onFlush: (x, y, w, h) => shell._blit(),
-      onDisplayReady: (w, h, round) => shell._displayReady(w, h, round),
+      onDisplayReady: (w, h, round, turn) => shell._displayReady(w, h, round, turn),
       onBacklight: (level, duty13) => shell._backlight(level, duty13),
       onTone: (f, g) => shell.opts.onTone?.(f, g),
       onMqttPublish: (topic, payload, retained) => {
@@ -258,6 +258,17 @@ export class CanaryEmulator {
       screenLabels: M.cwrap("emu_screen_labels", "number", []),
       // Where the canary mark is drawn (emu_bindings.cpp, F64), the same way.
       markBox: M.cwrap("emu_mark_box", "number", []),
+      // Where the onboarding scene seats it (onboard_layout.h's bird_seat,
+      // F89). Absent from a dist built before it: onboardSeat() says so.
+      onboardSeat: M._emu_onboard_seat ? M.cwrap("emu_onboard_seat", "number", []) : null,
+      // Every arc on the glass as the circle it draws (F184: the onboarding
+      // halo), and a saved rotation staged before power-on. Absent from a
+      // dist built before them: screenArcs() and start({rotation}) say so.
+      screenArcs: M._emu_screen_arcs ? M.cwrap("emu_screen_arcs", "number", []) : null,
+      // Where the Join stack seats the halo and the QR card (F184), absent
+      // from a dist built before it: onboardJoin() says so.
+      onboardJoin: M._emu_onboard_join ? M.cwrap("emu_onboard_join", "number", []) : null,
+      presetRotation: M._emu_preset_rotation ? M.cwrap("emu_preset_rotation", "number", ["number"]) : null,
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
@@ -288,6 +299,21 @@ export class CanaryEmulator {
     // over the defaults above — setup() must read the restored flash no
     // matter how the event loop schedules the firmware's resume.
     if (nvsImage) this.nvsRestore(nvsImage);
+    // A saved rotation (0..3, canary::glass::Rotation; F184): the firmware
+    // stores it in its own settings flash on the way to setup(), so the dash
+    // glass boots turned — splash, onboarding and face — the way main.cpp
+    // brings up a unit that saved it. The other flavors' firmware ignores it,
+    // as their glass does. A dist built before the binding cannot do this,
+    // and says so rather than booting unturned.
+    if (rotation !== null && rotation !== undefined) {
+      if (!this.c.presetRotation) throw new Error("this emulator dist has no emu_preset_rotation (rebuild it)");
+      if (this.c.presetRotation(rotation) !== 1) throw new Error(`the firmware refused rotation ${rotation} (0..3)`);
+    }
+    // The emulated clock's speed from power-on (F206): set before the
+    // firmware's first line, so the splash itself runs on it — a probe that
+    // slowed the clock once the page was ready would find the splash half
+    // played. The same knob as setTimeScale(); every dist has it.
+    if (timeScale !== null && timeScale !== undefined) this.c.timeScale(timeScale);
 
     this._wireInput();
     this.c.power();
@@ -307,14 +333,20 @@ export class CanaryEmulator {
     }
   }
 
-  _displayReady(w, h, round) {
+  // The firmware announced its glass's shape, and with it (a dist built
+  // since sweep A56) the quarter turns the glass is worn at — LVGL's software
+  // rotation on the dash, the panel's hardware turn on the nightlight — which
+  // the canvas cannot say (turn 1 and turn 3 are the same shape, both read
+  // upright). null from a dist built before it.
+  _displayReady(w, h, round, turn) {
     this.fb.w = w;
     this.fb.h = h;
     this.round = !!round;
+    this.glassTurn = Number.isInteger(turn) && turn >= 0 && turn <= 3 ? turn : null;
     this.canvas.width = w;
     this.canvas.height = h;
     this.imageData = this.ctx.createImageData(w, h);
-    this.opts.onDisplayReady?.(w, h, this.round);
+    this.opts.onDisplayReady?.(w, h, this.round, this.glassTurn);
   }
 
   /** Take this instance off the bench: a replacement module owns the
@@ -438,6 +470,47 @@ export class CanaryEmulator {
     if (!ptr) return null;
     const b = JSON.parse(this.module.UTF8ToString(ptr));
     return b && { ...b, shown: b.shown === 1 };
+  }
+
+  /** Where the onboarding scene on the glass seats the bird: {x, y, w, h,
+   *  breath} — the box onboard_layout.h's bird_seat() names for this glass
+   *  and scene, evaluated by the firmware (emu_onboard_seat) — or null while
+   *  no onboarding screen is up. Throws on a dist built before the binding
+   *  existed, so a probe cannot mistake "not exported" for "no scene" (F89). */
+  async onboardSeat() {
+    if (!this.c || this.dead) return null;
+    if (!this.c.onboardSeat) throw new Error("this emulator dist has no emu_onboard_seat (rebuild it)");
+    const ptr = await this.c.onboardSeat();
+    if (!ptr) return null;
+    return JSON.parse(this.module.UTF8ToString(ptr));
+  }
+
+  /** Where the onboarding's Join stack seats the halo and the QR card on
+   *  this glass (F184): {ring: {x, y, d, stroke}, card: {x, y, side,
+   *  radius}}, each box's top-left on the panel and its side, as
+   *  onboard_layout.h names them (emu_onboard_join); null while no
+   *  onboarding screen is up. The probe holds the card it reads off the
+   *  framebuffer and the arc LVGL laid out to it. Throws on a dist built
+   *  before the binding existed, as onboardSeat() does. */
+  async onboardJoin() {
+    if (!this.c || this.dead) return null;
+    if (!this.c.onboardJoin) throw new Error("this emulator dist has no emu_onboard_join (rebuild it)");
+    const ptr = await this.c.onboardJoin();
+    if (!ptr) return null;
+    return JSON.parse(this.module.UTF8ToString(ptr));
+  }
+
+  /** Every arc on the glass, as the circle lv_arc draws its indicator on:
+   *  {x, y, w, h, cx, cy, r, stroke, shown} — the stroke covers r - stroke
+   *  .. r about (cx, cy) (emu_screen_arcs). The onboarding halo is one; the
+   *  probe holds the Join scene's QR card inside it (F184). Throws on a dist
+   *  built before the binding existed, as onboardSeat() does. */
+  async screenArcs() {
+    if (!this.c || this.dead) return [];
+    if (!this.c.screenArcs) throw new Error("this emulator dist has no emu_screen_arcs (rebuild it)");
+    const ptr = await this.c.screenArcs();
+    if (!ptr) return [];
+    return JSON.parse(this.module.UTF8ToString(ptr)).map(({ shown, ...a }) => ({ ...a, shown: shown === 1 }));
   }
 
   /** The phone asks the AP to associate: 1 joined · 0 no such network ·

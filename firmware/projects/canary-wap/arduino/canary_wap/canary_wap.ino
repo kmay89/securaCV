@@ -130,6 +130,7 @@
 #include "gnss_time.h"  // NMEA UTC date/time -> validated Unix epoch (GPS-derived system clock)
 #include "tz_rule.h"    // household time zone: local minute-of-day for the CSI offset (F28)
 #include "csi_event.h"  // csi_event_set_clock_offset_minutes — wall-clock bucket alignment
+#include "meta_daily_summary.h"  // meta_daily_summary_set_clock — the 23:55 summary's clock (F121)
 #include "nvs_store.h"
 #include "api_auth.h"
 #include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
@@ -163,10 +164,15 @@
 #include "tamper_events_module.h" // system.integrity watcher (fed from loop())
 #include "contact_tamper.h"      // enclosure contact debounce (FEATURE_TAMPER_GPIO)
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
+#include "csi_event_egress.h"    // the egress's counters, for GET /api/diagnostics (F149)
+#include "wap_diagnostics.h"     // pure, host-tested: GET /api/diagnostics's body (F149)
+#include "fleet_scan_cache.h"    // pure, host-tested: the fleet scan's cache keeps the adverts that fit (F211)
+#include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
+#include "csi_module_settings_nvs.h" // begin_read_only(): the quiet read-only open of "csi" (F150)
 #include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
 #include "usb_evidence_drive.h" // USB evidence drive / update drop-zone (opt-in build)
 #include "setup_page_html.h"     // Static captive-portal "open canary.local" page
@@ -179,6 +185,7 @@ extern "C" {
 }
 #include "csi_dashboard_html.h"  // CSI_DASHBOARD_HTML — the Phase-3 headline UI now served at /
 #include "mesh_network.h"
+#include "http_status_line.h"    // pure, host-tested: the status line of an error answer
 #include "mesh_channel_policy.h"  // Channel decision (STA-follow) for MQTT telemetry
 #include "airtime_governor.h"     // Rolling airtime stats for MQTT telemetry
 #include "bluetooth_channel.h"
@@ -1198,10 +1205,23 @@ static bool note_wall_clock(uint32_t unix_s);
 // and zone changes without a flag, and stays aligned across millis()
 // rollover because the offset and csi_event's own millis()-based consumer
 // wrap together. Loop task only — the offset is loop-owned (csi_event.h).
+//
+// The same household minute of day feeds meta.daily_summary, whose 23:55
+// row needs it (sweep F121), with the local date it falls on as a key that
+// changes when the date does, so the summary is one per date across DST and
+// zone changes (UTC's date if localtime_r fails, as local_minute_of_day()
+// falls back). Both callers pass a synced clock; the guard says so here too,
+// so an unsynced clock feeds neither: no offset, and no daily summary,
+// rather than one at boot + 23 h 55 min.
 static void update_csi_clock_offset(time_t wall_now) {
+  if (wall_now < GPS_CLOCK_FLOOR) return;  // unsynced: feed nothing
   const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
   const int32_t mono_min = (int32_t)(millis() / 60000UL);
   csi_event_set_clock_offset_minutes(wall_min - mono_min);
+  struct tm local_tm = {};
+  if (localtime_r(&wall_now, &local_tm) == nullptr) (void)gmtime_r(&wall_now, &local_tm);
+  meta_daily_summary_set_clock(
+      (uint16_t)wall_min, (uint32_t)local_tm.tm_year * 366u + (uint32_t)local_tm.tm_yday);
 }
 
 static void sync_clock_from_gps() {
@@ -1421,7 +1441,31 @@ static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uin
 static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
               "an NvsManager session wait must sit under the loop's task watchdog");
 
+// The loop task publishes MQTT, and esp_mqtt writes the socket on the
+// publishing task and holds its API lock across its own socket operations;
+// each one gives up after the client's network timeout (csi_mqtt.h, sweep
+// F112). kNetworkOpsBudget of them (an esp_mqtt operation a publish queued
+// behind, its own write, and room for the rest of the pass) must fit under
+// the watchdog. The esp_mqtt task's connect and CONNECTED burst are not
+// among them: a publish waits for neither (csi_mqtt.h). A link that trickles
+// restarts the timeout on every write, so this bounds a stall, not that.
+// firmware/scripts/check_wap_loop_commands.py reads this line, the
+// constants and the client config that sets the timeout.
+static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&
+                  csi_mqtt::kNetworkOpsBudget * csi_mqtt::kNetworkTimeoutMs <
+                      WATCHDOG_TIMEOUT_SEC * 1000u,
+              "the MQTT client's network timeout must keep a publish under the loop's task watchdog");
+
+// The key read is the first session on "securacv" (setup_wizard::init() only
+// probes it), and on a first boot after an NVS erase it comes before
+// nvs_store_key() creates the namespace. An absent namespace answers "no key"
+// without a Preferences open and its NOT_FOUND line, as the refused open did
+// (sweep F201).
 static bool nvs_load_key(uint8_t priv[32]) {
+  if (csi_module_settings_nvs::probe_namespace(NVS_MAIN_NS) ==
+      csi_module_settings_nvs::NamespaceState::kAbsent) {
+    return false;
+  }
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return false;
   if (nvs->getBytesLength(NVS_KEY_PRIV) != 32) return false;
@@ -2567,7 +2611,7 @@ static const char* csi_zone_id() {
     char  scratch[32];
     bool  found = false;
     Preferences prefs;
-    if (prefs.begin("csi", /*readOnly=*/true)) {
+    if (csi_module_settings_nvs::begin_read_only(prefs, "csi")) {
       String v = prefs.getString("core.zone_id", "");
       prefs.end();
       if (v.length() > 0 && v.length() < sizeof(scratch)) {
@@ -3295,9 +3339,7 @@ static esp_err_t http_send_json(httpd_req_t* req, const char* json) {
 }
 
 static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {
-  httpd_resp_set_status(req, status_code == 400 ? "400 Bad Request" :
-                              status_code == 404 ? "404 Not Found" :
-                              status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
+  httpd_resp_set_status(req, http_status_line(status_code));
   char response[128];
   snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
   return http_send_json(req, response);
@@ -3657,53 +3699,43 @@ static esp_err_t handle_system_metrics(httpd_req_t* req) {
 #endif
 
 // ────────────────────────────────────────────────────────────────────────────
-// GET /api/diagnostics — heap snapshot + SD health + degradation level
+// GET /api/diagnostics — heap snapshot + SD health + degradation level, and
+// the committed-event egress's counters (sweep F149)
 // ────────────────────────────────────────────────────────────────────────────
 
 #if FEATURE_SYS_MONITOR
 static esp_err_t handle_diagnostics(httpd_req_t* req) {
   g_health.http_requests++;
 
-  sys_monitor::DegradeLevel degrade = sys_monitor::get_degrade_level();
-  sys_monitor::SDHealthStats sd_h = sys_monitor::get_sd_health();
+  const sys_monitor::DegradeLevel degrade = sys_monitor::get_degrade_level();
+  const sys_monitor::SDHealthStats sd_h = sys_monitor::get_sd_health();
+  wap_diagnostics::Inputs in = {};
+  in.heap_free          = sys_monitor::g_sys_metrics.heap_free;
+  in.heap_min_free      = sys_monitor::g_sys_metrics.heap_min_free;
+  in.heap_largest_block = sys_monitor::g_sys_metrics.heap_largest_block;
+  in.heap_total         = sys_monitor::g_sys_metrics.heap_total;
+  in.degrade_level      = (uint8_t)degrade;
+  in.degrade_name       = sys_monitor::degrade_level_name(degrade);
+  in.sd_total_writes    = sd_h.total_writes;
+  in.sd_write_errors    = sd_h.write_errors;
+  in.sd_usage_pct       = sd_h.usage_pct;
+  in.sd_space_warning   = sd_h.space_warning;
+  in.sd_space_critical  = sd_h.space_critical;
+  in.uptime_sec         = sys_monitor::g_sys_metrics.uptime_sec;
 
-  char buf[512];
-  int len = snprintf(buf, sizeof(buf),
-    "{"
-    "\"ok\":true,"
-    "\"heap\":{"
-      "\"free\":%u,"
-      "\"min_free\":%u,"
-      "\"largest_block\":%u,"
-      "\"total\":%u"
-    "},"
-    "\"degradation\":{"
-      "\"level\":%u,"
-      "\"level_name\":\"%s\""
-    "},"
-    "\"sd_health\":{"
-      "\"total_writes\":%u,"
-      "\"write_errors\":%u,"
-      "\"usage_pct\":%u,"
-      "\"space_warning\":%s,"
-      "\"space_critical\":%s"
-    "},"
-    "\"uptime_sec\":%u"
-    "}",
-    (unsigned)sys_monitor::g_sys_metrics.heap_free,
-    (unsigned)sys_monitor::g_sys_metrics.heap_min_free,
-    (unsigned)sys_monitor::g_sys_metrics.heap_largest_block,
-    (unsigned)sys_monitor::g_sys_metrics.heap_total,
-    (unsigned)degrade,
-    sys_monitor::degrade_level_name(degrade),
-    (unsigned)sd_h.total_writes,
-    (unsigned)sd_h.write_errors,
-    (unsigned)sd_h.usage_pct,
-    sd_h.space_warning  ? "true" : "false",
-    sd_h.space_critical ? "true" : "false",
-    (unsigned)sys_monitor::g_sys_metrics.uptime_sec);
+  // The egress's counters as the loop task's last pump published them
+  // (this is the httpd task: csi_event_egress::stats() reads the pump's own
+  // state, which only the loop task may), in the names of the canary's MQTT
+  // health and of this device's egress topic. null before the first pump.
+  csi_event_egress::Stats egress_stats = {};
+  const bool have_egress = csi_event_egress::read_stats(&egress_stats);
 
-  if (len <= 0 || len >= (int)sizeof(buf)) {
+  // The body and its worst case (649 bytes) are wap_diagnostics.h's, host-
+  // tested (test_wap_diagnostics.cpp); check_wap_event_egress.py rule 12
+  // holds this buffer to its kJsonMax.
+  char buf[wap_diagnostics::kJsonMax];
+  if (wap_diagnostics::build_json(in, have_egress ? &egress_stats : nullptr,
+                                  buf, sizeof(buf)) == 0) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
   }
 
@@ -4145,17 +4177,42 @@ static esp_err_t handle_logs(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// The <seq> of POST /api/logs/<seq>/ack (sweep F214), read from the request
+// target: what follows its first "/api/logs/" must be decimal digits that fit
+// a uint32_t, then "/ack", then the end of the path (a query or fragment may
+// follow). Anything else is no log-ack request. securacv_network.cpp (the
+// PlatformIO canary) carries the same function;
+// firmware/tests_host/test_log_ack_route.cpp runs both.
+static bool log_ack_seq_from_uri(const char* uri, uint32_t* seq) {
+  static const char kPrefix[] = "/api/logs/";
+  const char* p = strstr(uri, kPrefix);  // origin form: at 0; absolute form: after the authority
+  if (p == nullptr) return false;
+  p += sizeof(kPrefix) - 1;
+  const char* const digits = p;
+  uint32_t value = 0;
+  while (*p >= '0' && *p <= '9') {
+    const uint32_t d = (uint32_t)(*p - '0');
+    if (value > (UINT32_MAX - d) / 10u) return false;  // past uint32_t
+    value = value * 10u + d;
+    ++p;
+  }
+  if (p == digits || strncmp(p, "/ack", 4) != 0) return false;
+  p += 4;
+  if (*p != '\0' && *p != '?' && *p != '#') return false;
+  *seq = value;
+  return true;
+}
+
 static esp_err_t handle_log_ack(httpd_req_t* req) {
   g_health.http_requests++;
   
-  // Extract sequence number from URI
-  const char* uri = req->uri;
-  const char* seq_start = strstr(uri, "/logs/");
-  if (!seq_start) {
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid URI");
+  // Registered as POST /api/logs/*: a path that is not /api/logs/<seq>/ack
+  // gets the 404 httpd gives a request no route matches (the body is left
+  // unread; httpd discards it).
+  uint32_t seq = 0;
+  if (!log_ack_seq_from_uri(req->uri, &seq)) {
+    return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, nullptr);
   }
-  seq_start += 6;
-  uint32_t seq = atoi(seq_start);
   
   // Read body for reason
   char content[128] = {0};
@@ -5753,20 +5810,35 @@ static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
 
 #if FEATURE_MESH_NETWORK
 
+// The owner's mesh commands run on the loop task, not here (sweep F96): the
+// peer table, the pairing session, the opera config and its NVS handle are
+// mesh_network::update()'s. A handler builds a Command and hands it to
+// mesh_network::submit(), which waits up to COMMAND_WAIT_MS for the loop
+// task to start it. When the command did not run, the answer says so:
+// 409 mesh_busy (four already waiting) or 503 mesh_timeout (the loop task
+// did not reach it in time; it was withdrawn and never runs), the
+// PlatformIO tree's codes (spec §8.3). "ok" always means it happened.
+
+// The three status routes read what update() last published (sweep F110),
+// never the live peer table, pairing session or alert history: those are
+// the loop task's, and a read from here could mix two of its passes.
+// read_status() and read_alerts() copy them whole and never wait for the
+// loop task. The responses are what they were.
+
 static esp_err_t handle_mesh_status(httpd_req_t* req) {
   g_health.http_requests++;
 
-  mesh_network::MeshStatus status = mesh_network::get_status();
-  const mesh_network::OperaConfig* config = mesh_network::get_opera_config();
-  const mesh_network::PairingSession* pairing = mesh_network::get_pairing_session();
+  mesh_network::StatusView v;
+  mesh_network::read_status(&v);
+  const mesh_network::MeshStatus& status = v.status;
 
   JsonDocument doc;
   doc["ok"] = true;
   doc["state"] = mesh_network::state_name(status.state);
-  doc["enabled"] = mesh_network::is_enabled();
-  doc["has_opera"] = mesh_network::has_opera();
+  doc["enabled"] = v.enabled;
+  doc["has_opera"] = v.has_opera;
   doc["opera_id"] = status.opera_id_hex;
-  doc["opera_name"] = config->opera_name;
+  doc["opera_name"] = v.opera_name;
   doc["peers_total"] = status.peers_total;
   doc["peers_online"] = status.peers_online;
   doc["peers_offline"] = status.peers_offline;
@@ -5779,8 +5851,8 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
   doc["uptime_ms"] = status.uptime_ms;
 
   // Include pairing code if in pairing confirm state
-  if (status.state == mesh_network::MESH_PAIRING_CONFIRM && pairing->code_displayed) {
-    doc["pairing_code"] = pairing->confirmation_code;
+  if (status.state == mesh_network::MESH_PAIRING_CONFIRM && v.pairing_code_shown) {
+    doc["pairing_code"] = v.pairing_code;
   }
 
   String response;
@@ -5791,15 +5863,16 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
 static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   g_health.http_requests++;
 
-  uint8_t count = mesh_network::get_peer_count();
+  mesh_network::StatusView v;
+  mesh_network::read_status(&v);
+  const uint8_t count = v.peer_count;
   JsonDocument doc;
   doc["ok"] = true;
   doc["count"] = count;
 
   JsonArray peers = doc["peers"].to<JsonArray>();
-  for (uint8_t i = 0; i < count; i++) {
-    const mesh_network::OperaPeer* peer = mesh_network::get_peer(i);
-    if (!peer) continue;
+  for (uint8_t i = 0; i < count && i < mesh_network::MAX_OPERA_SIZE; i++) {
+    const mesh_network::PeerView* peer = &v.peers[i];
 
     JsonObject p = peers.add<JsonObject>();
     p["name"] = peer->name;
@@ -5827,8 +5900,13 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
 static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
   g_health.http_requests++;
 
-  size_t count = 0;
-  const mesh_network::MeshAlert* alerts = mesh_network::get_alerts(&count);
+  // The copy is about 3 KB: the heap, not this task's stack.
+  mesh_network::MeshAlert* alerts = (mesh_network::MeshAlert*)malloc(
+      mesh_network::MAX_ALERT_HISTORY * sizeof(mesh_network::MeshAlert));
+  if (alerts == nullptr) {
+    return http_send_error(req, 500, "out_of_memory");
+  }
+  const size_t count = mesh_network::read_alerts(alerts, mesh_network::MAX_ALERT_HISTORY);
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5849,12 +5927,18 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
 
   String response;
   serializeJson(doc, response);
+  free(alerts);
   return http_send_json(req, response.c_str());
 }
 
 static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req) {
   g_health.http_requests++;
-  mesh_network::clear_alerts();
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_CLEAR_ALERTS), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
   return http_send_json(req, "{\"ok\":true}");
 }
 
@@ -5872,7 +5956,13 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
   }
 
   bool enabled = body["enabled"] | false;
-  mesh_network::set_enabled(enabled);
+  mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_SET_ENABLED);
+  cmd.flag = enabled;
+  bool ok = false;
+  const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
   log_health(SCV_LOG_INFO, SCV_CAT_MESH, enabled ? "Mesh enabled" : "Mesh disabled", nullptr);
 
   return http_send_json(req, "{\"ok\":true}");
@@ -5891,7 +5981,20 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
     opera_name = body["name"] | (const char*)nullptr;
   }
 
-  if (mesh_network::start_pairing_initiator(opera_name)) {
+  // The name rides in the command (truncated to MAX_OPERA_NAME_LEN, as
+  // start_pairing_initiator() stores it); none given keeps the default.
+  mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_PAIR_START);
+  if (opera_name) {
+    cmd.flag = true;
+    strncpy(cmd.name, opera_name, mesh_network::MAX_OPERA_NAME_LEN);
+    cmd.name[mesh_network::MAX_OPERA_NAME_LEN] = '\0';
+  }
+  bool ok = false;
+  const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing started (initiator)", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5901,7 +6004,13 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
 static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (mesh_network::start_pairing_joiner()) {
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_PAIR_JOIN), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing started (joiner)", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5911,7 +6020,13 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
 static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (mesh_network::confirm_pairing()) {
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_PAIR_CONFIRM), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing confirmed", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5920,7 +6035,12 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
 
 static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   g_health.http_requests++;
-  mesh_network::cancel_pairing();
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_PAIR_CANCEL), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
   log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing canceled", nullptr);
   return http_send_json(req, "{\"ok\":true}");
 }
@@ -5928,7 +6048,13 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
 static esp_err_t handle_mesh_leave(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (mesh_network::leave_opera()) {
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_LEAVE), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "Left opera", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5954,13 +6080,18 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
   }
 
   // Parse hex fingerprint
-  uint8_t fp[8];
+  mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_REMOVE_PEER);
   for (int i = 0; i < 8; i++) {
     char byte_hex[3] = { fp_hex[i*2], fp_hex[i*2+1], 0 };
-    fp[i] = (uint8_t)strtol(byte_hex, nullptr, 16);
+    cmd.fingerprint[i] = (uint8_t)strtol(byte_hex, nullptr, 16);
   }
 
-  if (mesh_network::remove_peer(fp)) {
+  bool ok = false;
+  const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "Peer removed", fp_hex);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5985,7 +6116,15 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
     return http_send_error(req, 400, "invalid_name");
   }
 
-  if (mesh_network::set_opera_name(name)) {
+  mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_RENAME);
+  strncpy(cmd.name, name, mesh_network::MAX_OPERA_NAME_LEN);   // length checked above
+  cmd.name[mesh_network::MAX_OPERA_NAME_LEN] = '\0';
+  bool ok = false;
+  const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Opera name changed", name);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -6847,10 +6986,12 @@ static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
 static volatile bool     g_fleet_scan_busy    = false;
 static uint32_t          g_fleet_scan_done_ms = 0;      // guarded by mux
 static bool              g_fleet_scan_have    = false;  // guarded by mux
-// Sized for the 8-device browse cap below: each entry serializes to ~200 B
-// worst-case (32-char name, 30-char hostname, TXT fields), so 8 × ~200 B +
-// wrapper ≈ 1.7 KB; 2560 leaves honest slack instead of truncating the whole
-// result at exactly the advertised capacity.
+// Sized for eight ordinary adverts (a 32-byte name, a 30-byte hostname and
+// short TXT values make a row of about 200 B, so eight are about 1.7 KB).
+// Adverts are other devices' bytes: each TXT value can be 255 bytes, so a
+// list can need several times this. fleet_scan_cache.h keeps the shortest
+// adverts that fit, whole, written in browse order, and the cache is a
+// complete document at every step (sweep F211); it never holds a cut list.
 //
 // Cache + handler snapshot live in PSRAM (csi_mem.h), allocated in setup():
 // 2 x 2.5 KB of internal DRAM back for the BLE budget. Both are only
@@ -6866,40 +7007,45 @@ static portMUX_TYPE      g_fleet_scan_mux = portMUX_INITIALIZER_UNLOCKED;
 static const uint32_t    FLEET_SCAN_TTL_MS = 10000;
 
 static void fleet_scan_task(void*) {
-  /* Nested scope: vTaskDelete(NULL) never returns, so JsonDocument's
-   * destructor (and its heap pool) only runs if the scope closes first —
-   * without it every scan leaked the doc's pool. */
-  {
-  JsonDocument doc;
-  JsonArray arr = doc["canaries"].to<JsonArray>();
-
-  // Blocking browse (~2 s). The mDNS component is internally thread-safe.
-  int n = MDNS.queryService("securacv", "tcp");
-  for (int i = 0; i < n && i < 8; i++) {
-    JsonObject o = arr.add<JsonObject>();
-    o["device_id"] = MDNS.txt(i, "device_id");
-    o["name"]      = MDNS.txt(i, "name");
-    o["mdns_host"] = MDNS.txt(i, "host");
-    o["fw"]        = MDNS.txt(i, "fw");
-    o["model"]     = MDNS.txt(i, "model");
-    // Device type + role (canonical TXT schema) — the SPA branches its
-    // per-type wizard steps and badges off dt ("canary-vision",
-    // "canary-sense", "canary-wap"); older firmware adverts return "".
-    o["dt"]        = MDNS.txt(i, "dt");
-    o["role"]      = MDNS.txt(i, "role");
-    o["ip"]        = MDNS.address(i).toString();
-    o["port"]      = MDNS.port(i);
-  }
-
   // Heap staging (not a function-local static): keeps the one-shot task's
   // stack small and leaves nothing shared between task instances. calloc,
   // not malloc: the full buffer is memcpy'd into the cache below, and the
-  // bytes past serializeJson's NUL must be zeros, not heap garbage.
+  // bytes past the document's NUL must be zeros, not heap garbage.
   char* staging = (char*)calloc(1, FLEET_SCAN_CACHE_SIZE);
   if (staging && g_fleet_scan_cache) {
-    size_t written = serializeJson(doc, staging, FLEET_SCAN_CACHE_SIZE);
-    if (written >= FLEET_SCAN_CACHE_SIZE) {
-      staging[FLEET_SCAN_CACHE_SIZE - 1] = '\0';
+    // The shortest adverts that fit, whole, written in browse order; a long
+    // advert never costs a shorter one its row (sweep F211).
+    fleet_scan_cache::Cache cache;
+    fleet_scan_cache::begin(cache, staging, FLEET_SCAN_CACHE_SIZE);
+
+    // Blocking browse (~2 s). The mDNS component is internally thread-safe.
+    const int n = MDNS.queryService("securacv", "tcp");
+    {
+      // One advert at a time, read from the browse's results by index (they
+      // stay readable until the next query); fill() reads a kept one twice,
+      // to measure it and to write it. The values live here until the next
+      // read, and this scope closes before vTaskDelete(NULL) below, which
+      // never returns, so nothing that owns heap outlives it.
+      String device_id, name, mdns_host, fw, model, dt, role, ip;
+      auto read_advert = [&](int i) -> fleet_scan_cache::Advert {
+        device_id = MDNS.txt(i, "device_id");
+        name      = MDNS.txt(i, "name");
+        mdns_host = MDNS.txt(i, "host");
+        fw        = MDNS.txt(i, "fw");
+        model     = MDNS.txt(i, "model");
+        // Device type + role (canonical TXT schema) — the SPA branches its
+        // per-type wizard steps and badges off dt ("canary-vision",
+        // "canary-sense", "canary-wap"); older firmware adverts return "".
+        dt        = MDNS.txt(i, "dt");
+        role      = MDNS.txt(i, "role");
+        ip        = MDNS.address(i).toString();
+        const fleet_scan_cache::Advert advert = {
+            device_id.c_str(), name.c_str(), mdns_host.c_str(), fw.c_str(),
+            model.c_str(), dt.c_str(), role.c_str(), ip.c_str(),
+            (uint16_t)MDNS.port(i)};
+        return advert;
+      };
+      fleet_scan_cache::fill(cache, n, read_advert);
     }
 
     portENTER_CRITICAL(&g_fleet_scan_mux);
@@ -6909,7 +7055,6 @@ static void fleet_scan_task(void*) {
     portEXIT_CRITICAL(&g_fleet_scan_mux);
   }
   free(staging);
-  }  /* scope closes: doc's destructor runs BEFORE the task dies */
 
   __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);
   vTaskDelete(NULL);
@@ -6939,7 +7084,7 @@ static esp_err_t handle_fleet_scan(httpd_req_t* req) {
   bool busy = __atomic_load_n(&g_fleet_scan_busy, __ATOMIC_ACQUIRE);
   if (stale && !busy) {
     __atomic_store_n(&g_fleet_scan_busy, true, __ATOMIC_RELEASE);
-    // Internal-RAM stack; the task builds a small JSON doc + mDNS browse.
+    // Internal-RAM stack; the task browses mDNS and writes the cache.
     if (xTaskCreate(fleet_scan_task, "fleet_scan", 6144, nullptr, 1, nullptr)
         != pdPASS) {
       __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);
@@ -7282,20 +7427,19 @@ static void qr_scan_task_fn(void* param) {
           strlcpy(pass, prov.pass, sizeof(pass));
           if (!prov.wifi_only && prov.host[0]) {
             // The display told us where the hub lives: point the MQTT
-            // bridge there and re-init (idempotent) so the fleet sees
-            // this canary the moment WiFi comes up — the display's
-            // "it's in the fleet" celebration keys on that.
+            // bridge there and re-init so the fleet sees this canary the
+            // moment WiFi comes up — the display's "it's in the fleet"
+            // celebration keys on that. The re-init runs on the loop task
+            // (sweep F106): this is the scanner's task, and init() tears
+            // down the client a loop-task publish may hold. setup() gave
+            // the bridge its identity (csi_mqtt::set_identity).
             csi_mqtt::Config mc;
             if (csi_mqtt::config_load(&mc)) {
               strlcpy(mc.host, prov.host, sizeof(mc.host));
               mc.port = prov.port;
               mc.enabled = true;
               if (csi_mqtt::config_save(mc)) {
-                // The same lowercase key as the boot init (HA20).
-                char pubkey_hex[mqtt_identity::KEY_HEX_CAP];
-                mqtt_identity::public_key_hex(pubkey_hex, g_device.pubkey);
-                csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION,
-                               pubkey_hex);
+                (void)csi_mqtt::request_reinit();
                 hub_saved = true;
               }
             }
@@ -7626,50 +7770,42 @@ static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
 static esp_err_t handle_device_info(httpd_req_t* req) {
   g_health.http_requests++;
 
-  const char* dev_name = setup_wizard::get_device_name();
-  char json[768];
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
-  snprintf(json, sizeof(json),
-    "{"
-    "\"device_id\":\"%s\","
-    "\"device_name\":\"%s\","
-    "\"mdns_host\":\"%s\","
-    "\"firmware\":\"%s\","
-    "\"pubkey_fp\":\"%s\","
-    "\"hw_token\":\"%s\","
-    "\"uptime_ms\":%lu,"
-    "\"chain_length\":%lu,"
-    // When this device's KEY was born, in days since the Unix epoch — a fact
-    // about the Canary, not about whoever paired it. `born_day` is 0 until the
-    // device has met a believable clock, and `born_exact` false means the day
-    // is when it was first DATED rather than born, so a reader must not call
-    // it a birthday. A day carries no time of day, on purpose (birth_day.h).
-    "\"born_day\":%lu,"
-    "\"born_exact\":%s,"
-    "\"auth_required\":true,"
-    "\"tls_enabled\":%s,"
-    "\"ap_auth\":\"%s\","
-    "\"provisioning_gate\":\"physical_button\""
-    "}",
-    g_device.device_id,
-    dev_name ? dev_name : "",
-    g_device.mdns_hostname,
-    FIRMWARE_VERSION,
-    g_device.fingerprint_hex,
-    hw_token,
-    (unsigned long)millis(),
-    (unsigned long)g_device.seq,
-    (unsigned long)g_device.born_day,
-    g_device.born_exact ? "true" : "false",
-    g_tls_enabled ? "true" : "false",
-    g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown"
-  );
+  identity_json::DeviceInfo in = {};
+  in.device_id    = g_device.device_id;
+  // Person-typed: the rename routes bound its length, not its bytes, so
+  // identity_json.h escapes it (sweep F212: a `"` broke this answer).
+  in.device_name  = setup_wizard::get_device_name();
+  in.mdns_host    = g_device.mdns_hostname;
+  in.firmware     = FIRMWARE_VERSION;
+  in.pubkey_fp    = g_device.fingerprint_hex;
+  in.hw_token     = hw_token;
+  in.uptime_ms    = (unsigned long)millis();
+  in.chain_length = (unsigned long)g_device.seq;
+  // When this device's KEY was born, in days since the Unix epoch — a fact
+  // about the Canary, not about whoever paired it. `born_day` is 0 until the
+  // device has met a believable clock, and `born_exact` false means the day
+  // is when it was first DATED rather than born, so a reader must not call
+  // it a birthday. A day carries no time of day, on purpose (birth_day.h).
+  in.born_day     = (unsigned long)g_device.born_day;
+  in.born_exact   = g_device.born_exact;
+  in.tls_enabled  = g_tls_enabled;
+  in.ap_auth      = g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown";
+
+  // Measured, then written into exactly that much heap (sweep F212): no
+  // fixed buffer to outgrow, and never a cut answer.
+  const size_t need = identity_json::device_info(in, nullptr, 0) + 1;
+  char* json = (char*)malloc(need);
+  if (!json) return http_send_error(req, 500, "out_of_memory");
+  identity_json::device_info(in, json, need);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  return httpd_resp_sendstr(req, json);
+  const esp_err_t ret = httpd_resp_sendstr(req, json);
+  free(json);
+  return ret;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -7677,39 +7813,36 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
-  char json[1024];
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
-  snprintf(json, sizeof(json),
-    "{\n"
-    "  \"device_id\": \"%s\",\n"
-    "  \"base_url\": \"%s://%s\",\n"
-    "  \"token\": \"%s\",\n"
-    "  \"pubkey_fp\": \"%s\",\n"
-    "  \"firmware\": \"%s\",\n"
-    "  \"hw_token\": \"%s\",\n"
-    "  \"ap_ssid\": \"%s\",\n"
-    "  \"ap_password\": \"%s\",\n"
-    "  \"tls_cert_fp\": \"%s\",\n"
-    "  \"provisioned_at\": \"boot:%lu\"\n"
-    "}",
-    g_device.device_id,
-    g_tls_enabled ? "https" : "http",
-    WiFi.softAPIP().toString().c_str(),
-    g_device.api_token_str,
-    g_device.fingerprint_hex,
-    FIRMWARE_VERSION,
-    hw_token,
-    g_device.ap_ssid,
-    g_device.ap_password,
-    g_tls_cert_fp_hex,
-    (unsigned long)g_device.boot_count
-  );
+  const String ap_ip = WiFi.softAPIP().toString();
+  identity_json::Receipt in = {};
+  in.device_id   = g_device.device_id;
+  in.tls_enabled = g_tls_enabled;
+  in.ap_ip       = ap_ip.c_str();
+  in.token       = g_device.api_token_str;
+  in.pubkey_fp   = g_device.fingerprint_hex;
+  in.firmware    = FIRMWARE_VERSION;
+  in.hw_token    = hw_token;
+  in.ap_ssid     = g_device.ap_ssid;
+  in.ap_password = g_device.ap_password;
+  in.tls_cert_fp = g_tls_cert_fp_hex;
+  in.boot_count  = (unsigned long)g_device.boot_count;
+
+  // Measured, then written into exactly that much heap (sweep F212). The
+  // receipt carries the API token and the AP password: wiped before free.
+  const size_t need = identity_json::provisioning_receipt(in, nullptr, 0) + 1;
+  char* json = (char*)malloc(need);
+  if (!json) return http_send_error(req, 500, "out_of_memory");
+  identity_json::provisioning_receipt(in, json, need);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  return httpd_resp_sendstr(req, json);
+  const esp_err_t ret = httpd_resp_sendstr(req, json);
+  secure_zero(json, need);
+  free(json);
+  return ret;
 }
 
 static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
@@ -8584,14 +8717,21 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs_auth };
   httpd_register_uri_handler(server, &logs);
 
-  httpd_uri_t log_ack = { .uri = "/api/logs/*/ack", .method = HTTP_POST, .handler = handle_log_ack_auth };
-  httpd_register_uri_handler(server, &log_ack);
-
   httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all_auth };
   httpd_register_uri_handler(server, &ack_all);
 
   httpd_uri_t logs_rotate = { .uri = "/api/logs/rotate", .method = HTTP_POST, .handler = handle_logs_rotate_auth };
   httpd_register_uri_handler(server, &logs_rotate);
+
+  // POST /api/logs/<seq>/ack. httpd_uri_match_wildcard takes a `*` only as a
+  // template's last character ("/api/logs/*/ack" matched no request: sweep
+  // F214), so the route is "/api/logs/*" and handle_log_ack reads the rest.
+  // It goes after every other POST /api/logs/... route: httpd answers with
+  // the first match in registration order, and refuses a later template
+  // this one already matches (firmware/tests_host/
+  // test_dashboard_route_match.test.js holds both).
+  httpd_uri_t log_ack = { .uri = "/api/logs/*", .method = HTTP_POST, .handler = handle_log_ack_auth };
+  httpd_register_uri_handler(server, &log_ack);
 
   httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness_auth };
   httpd_register_uri_handler(server, &witness);
@@ -10562,7 +10702,7 @@ static esp_err_t handle_ota_config(httpd_req_t* req) {
   if (input["auto_update"].is<bool>()) {
     const bool enabled = input["auto_update"].as<bool>();
     securacv_ota_set_auto_update(enabled);
-    csi_mqtt::publish_update_auto_state(enabled);
+    csi_mqtt::set_update_auto_state(enabled);   // the loop task publishes it (F106)
   }
 
   return http_send_json(req, "{\"ok\":true,\"message\":\"Update settings saved.\"}");
@@ -11024,6 +11164,16 @@ void setup() {
   }
   #endif
 
+  // The MQTT bridge's identity, before anything can ask it to re-init:
+  // a QR provisioning's request runs on the loop task with it (sweep
+  // F106), even when the AP, and the HTTP server whose boot init() sets
+  // it again, do not start. The same lowercase key as that init (HA20).
+  {
+    char mqtt_pubkey_hex[mqtt_identity::KEY_HEX_CAP];
+    mqtt_identity::public_key_hex(mqtt_pubkey_hex, g_device.pubkey);
+    csi_mqtt::set_identity(g_device.device_id, FIRMWARE_VERSION, mqtt_pubkey_hex);
+  }
+
   // Start WiFi Access Point
   #if FEATURE_WIFI_AP
   boot_stage("wifi-ap-start");
@@ -11085,7 +11235,9 @@ void setup() {
       });
 
       mesh_network::load_replay_counters();
-      pre_reboot_fn hook = []() { mesh_network::save_replay_counters(); };
+      // From any task: POST /api/reboot and the safe-mode retry call it on
+      // esp_http_server's task, which hands the save to the loop task.
+      pre_reboot_fn hook = []() { (void)mesh_network::save_replay_counters_before_reboot(); };
       __atomic_store_n(&g_pre_reboot_hook, hook, __ATOMIC_RELEASE);
 
       mesh_network::set_peer_state_callback([](const mesh_network::OperaPeer* peer,
@@ -11357,7 +11509,7 @@ void setup() {
     }
 
     // Seed the HA auto-update switch state (csi_mqtt caches + retains it).
-    csi_mqtt::publish_update_auto_state(securacv_ota_get_auto_update());
+    csi_mqtt::set_update_auto_state(securacv_ota_get_auto_update());
 
     // Witness the outcome of an install reboot. The engine (and the BLE
     // OTA path) recorded the install target the moment the boot partition
@@ -11553,6 +11705,13 @@ static void ble_bringup_finalize_if_done() {
   }
   g_ble_bringup_finalized = true;
 
+  // The worker registers no more GATT services: the pairing channel's
+  // advertising, held meanwhile (its auto-advertise among it), may start
+  // the server now (the F167 review; bluetooth_channel.h).
+  #if FEATURE_BLUETOOTH
+  bluetooth_channel::bringup_worker_finished();
+  #endif
+
   #if FEATURE_BLE
   if (g_ble_mgr_result == 1) {
     // spec/event_contract.md §10: route the lifecycle event through the
@@ -11612,8 +11771,19 @@ static void ble_discovery_start_if_due() {
   // Internal-RAM stack (no PSRAM task stacks with the prebuilt core). If the
   // task can't even be created, record the attempt so the self-test reports
   // FAIL rather than sitting on "Starting up…" forever.
+  // The pairing channel holds its advertising from here until the worker's
+  // result is taken (ble_bringup_finalize_if_done()): after its init() the
+  // worker registers more GATT services on the server an advertising start
+  // starts (the F167 review; bluetooth_channel.h). Before the create: the
+  // worker may run before xTaskCreate() returns.
+  #if FEATURE_BLUETOOTH
+  bluetooth_channel::bringup_worker_started();
+  #endif
   if (xTaskCreate(ble_bringup_task, "ble_bringup", 8192, nullptr, 1, nullptr)
       != pdPASS) {
+    #if FEATURE_BLUETOOTH
+    bluetooth_channel::bringup_worker_finished();   // no worker: nothing to wait for
+    #endif
     g_ble_init_attempted = true;
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                "BLE bring-up task create failed (out of memory)", nullptr);
@@ -11716,7 +11886,7 @@ void loop() {
     const int ota_auto_cmd = csi_mqtt::take_pending_auto();
     if (ota_auto_cmd >= 0) {
       securacv_ota_set_auto_update(ota_auto_cmd == 1);
-      csi_mqtt::publish_update_auto_state(ota_auto_cmd == 1);
+      csi_mqtt::set_update_auto_state(ota_auto_cmd == 1);
       log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM,
                  ota_auto_cmd == 1 ? "Auto-update turned on"
                                    : "Auto-update turned off", nullptr);
@@ -11942,8 +12112,10 @@ void loop() {
   // Update mesh network
   #if FEATURE_MESH_NETWORK
   mesh_network::update();
-  // Service the community chirp channel too (no-op until the user enables
-  // it; needed so cooldowns, bloom-filter resets and relay TTLs advance).
+  // Service the community chirp channel too: cooldowns, bloom-filter resets
+  // and relay TTLs advance here. Call it every pass, enabled or not: it
+  // drains the owner's REST commands first, POST /api/chirp/enable among
+  // them (sweep F111; check_wap_loop_commands.py rule C4).
   chirp_channel::update();
   {
     static uint32_t s_last_replay_save_ms = 0;
@@ -11956,7 +12128,8 @@ void loop() {
   }
   #endif
 
-  // Update Bluetooth (legacy channel)
+  // Update Bluetooth (legacy channel). Every pass, enabled or not: it
+  // drains the owner's REST commands first, an enable among them (F111).
   #if FEATURE_BLUETOOTH
   bluetooth_channel::update();
   #endif
@@ -12301,6 +12474,11 @@ void loop() {
       csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
                                (uint32_t)uptime_seconds(), batt_ptr,
                                &tamper_lv);
+      // What the committed-event egress dropped and sent this boot (sweep
+      // F149), on a retained topic of its own beside health: the object
+      // does not fit the health body. This task runs the pump, so it reads
+      // the counters directly.
+      csi_mqtt::publish_egress();
     }
 
 #if FEATURE_ACOUSTIC_EVENTS

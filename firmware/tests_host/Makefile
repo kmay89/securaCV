@@ -261,8 +261,38 @@ IDSPACE_HDRS = $(IDSPACE_DIR)/csi_event.h $(IDSPACE_DIR)/csi_bundler.h $(IDSPACE
                $(IDSPACE_DIR)/csi_types.h $(IDFLOOR_HDR)
 IDSPACE_BIN  = $(BUILD_DIR)/test_csi_event_id_space
 # The hourly ceiling against the bundler's refresh refund (backlog F80): the
-# same real library, on a clock the test moves (CSI_TEST_CLOCK).
+# same real library, on a clock the test moves (CSI_TEST_CLOCK). An emit
+# that reopens its own key's bundle after a quiet gap or the 10-minute
+# window spends a slot like any opening, so a day's rows stay within the
+# ceiling; a refresh that merges into its open bundle still gives its slot
+# back.
 CEILING_BIN  = $(BUILD_DIR)/test_csi_bundler_ceiling
+
+# The canary's CSI module bridge (canary/src/csi_modules_integration.cpp,
+# sweep F81), REAL, over the same library and the modules it registers,
+# against stubbed Arduino / Preferences / csi_hal hooks and a fake clock
+# (the test plays a stand-in for main.cpp's loop; check_csi_bundle_tick.py
+# holds main.cpp's own call): a same-state refresh inside a bundle's
+# 10-minute window commits no row and spends no ceiling, and a bundle
+# commits once, on its window or quiet gap, even while CSI is shed.
+MODINT_DIR  = ../common/csi/src
+MODINT_SRC  = ../canary/src/csi_modules_integration.cpp $(IDSPACE_SRC) \
+              $(MODINT_DIR)/core_presence.cpp $(MODINT_DIR)/core_breathing.cpp \
+              $(MODINT_DIR)/core_activity_ribbon.cpp $(MODINT_DIR)/meta_daily_summary.cpp \
+              $(MODINT_DIR)/anomaly_baseline.cpp $(MODINT_DIR)/wifi_channel_activity.cpp \
+              $(MODINT_DIR)/core_multilink_fusion.cpp $(MODINT_DIR)/meta_empty_room_baseline.cpp \
+              $(MODINT_DIR)/tamper_events_module.cpp
+MODINT_HDRS = ../canary/src/csi_modules_integration.h $(IDSPACE_HDRS) $(wildcard $(MODINT_DIR)/*.h) \
+              stubs/csi_modules/Preferences.h stubs/csi_modules/nvs.h stubs/csi_hal/Arduino.h
+MODINT_BIN  = $(BUILD_DIR)/test_csi_modules_integration
+
+# The CSI modules' boot init on the canary (sweep F93): the same REAL bridge,
+# library and modules over a fake NVS that outlives a modeled reboot. Each
+# registered module's init() runs once per boot, after the event-id floor
+# and before any tick, and commits nothing; a stored preset, sensitivity,
+# threshold, pet mode and anomaly cooldown apply from the boot's first
+# window; the key map and read rule are csi_module_settings_nvs.h's.
+MODBOOT_BIN = $(BUILD_DIR)/test_csi_module_boot
 
 # The canary's reconnect backfill from that log
 # (common/csi/src/csi_event_backfill.h, backlog F37): whole outages, reboots
@@ -272,6 +302,44 @@ CEILING_BIN  = $(BUILD_DIR)/test_csi_bundler_ceiling
 # each loop pass reads and sends a bounded amount.
 BACKFILL_HDRS = ../common/csi/src/csi_event_backfill.h $(EVLINE_HDRS) $(IDFLOOR_HDR)
 BACKFILL_BIN  = $(BUILD_DIR)/test_csi_event_backfill
+
+# The canary's committed-event egress itself (canary/src/csi_event_egress.cpp,
+# backlog F37, F103, F104), REAL, with the REAL SD event log adapter
+# (canary/src/csi_event_log.cpp) over a RAM card and the REAL chokepoint, the
+# planner above, the events body builder and the MQTT offline queue, against
+# a model of securacv_mqtt.cpp's event surfaces, the storage manager and Home
+# Assistant's replay gate: rows live, during an outage with and without a
+# card, across a reboot, a failed card append (held in RAM, its NVS ceiling
+# held back, behind the rows on the card), and while a card is not open but
+# may hold older rows (at boot, after a close), held for at most
+# kCardWaitMs.
+# stubs/canary_egress: Arduino (a clock the test
+# moves), Preferences, a FreeRTOS queue, a RAM SD card, the storage
+# manager's and the witness's calls.
+CANEGR_SRC  = ../canary/src/csi_event_egress.cpp ../canary/src/csi_event_log.cpp $(IDSPACE_SRC)
+CANEGR_HDRS = ../canary/src/csi_event_egress.h ../canary/src/csi_event_log.h \
+              ../canary/include/csi_event_egress_diagnostics.h \
+              ../canary/lib/securacv_mqtt/src/securacv_mqtt.h ../canary/include/canary_config.h \
+              ../common/csi/src/csi_event_wire.h ../common/mqtt/mqtt_offline_queue.h \
+              ../common/identity/device_signature.h $(BACKFILL_HDRS) $(IDSPACE_HDRS) \
+              $(wildcard stubs/canary_egress/*.h stubs/canary_egress/freertos/*.h)
+CANEGR_BIN  = $(BUILD_DIR)/test_canary_event_egress
+
+# The canary's GET /api/diagnostics body (sweep F179): the REAL
+# canary/lib/securacv_diagnostics/src/diagnostics_json.h builder and the REAL
+# csi_event_egress_stats_json() spelling of its egress counters. It reads
+# main.cpp (the MQTT health's names for the counters), securacv_diagnostics.cpp
+# (the longest self-test name) and securacv_network.cpp (the handler), each
+# path passed in so the read fails closed.
+CANDIAG_SRC  = test_canary_diagnostics.cpp
+CANDIAG_HDRS = ../canary/lib/securacv_diagnostics/src/diagnostics_json.h \
+               ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.h \
+               ../canary/include/csi_event_egress_diagnostics.h \
+               ../canary/src/csi_event_egress.h $(BACKFILL_HDRS)
+CANDIAG_READS = ../canary/src/main.cpp \
+                ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp \
+                ../canary/lib/securacv_network/src/securacv_network.cpp
+CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
@@ -295,6 +363,51 @@ TIMELINE_JS = test_canary_timeline.test.js
 # lift-and-stub approach, with Date poisoned so the old wall-clock
 # rendering cannot come back.
 HEALTHLOG_JS = test_canary_health_logs.test.js
+
+# The canary dashboard's Community (Chirp) tab (securacv_webui.cpp; repo
+# sweep F176): nothing in the PlatformIO tree serves /api/chirp, so the tab
+# starts hidden, the page load's one GET /api/chirp keeps it hidden on a
+# 404, and the panel poll asks for nothing until a Chirp status answers —
+# the same lift-and-stub approach, plus a scan that fails once a route
+# appears (the gate can go then).
+CHIRPPANEL_JS = test_canary_community_panel.test.js
+
+# The rest of that dashboard's routes (repo sweep F198): nothing in the
+# PlatformIO tree serves /api/bluetooth or anything under it, GET /api/wifi,
+# POST /api/wifi/forget or POST /api/logs/rotate. The Bluetooth tab is gated
+# the way the Community tab is, the Wi-Fi card reads GET /api/wifi/status and
+# Forget POST /api/wifi/disconnect (the route that clears the saved network),
+# and a scan holds every route the page names to one a source registers.
+DASHROUTES_JS = test_canary_dashboard_routes.test.js
+
+# POST /api/logs/<seq>/ack on both trees (repo sweep F214). Both registered
+# "/api/logs/*/ack", which esp_http_server's httpd_uri_match_wildcard never
+# matches (a `*` counts only at a template's end), so the per-entry
+# Acknowledge answered 404 on both dashboards. They register "/api/logs/*"
+# after the other POST /api/logs/... routes and the handler reads the rest.
+#   - test_log_ack_route.cpp runs both trees' log_ack_seq_from_uri() and
+#     handle_log_ack(), cut verbatim out of securacv_network.cpp and
+#     canary_wap.ino by cut_functions.awk, over stand-ins: an entry's path
+#     acknowledges it, any other path the route is handed answers httpd's 404.
+#   - test_dashboard_route_match.test.js reads both trees' primary route
+#     tables in registration order (dashboard_route_tables.js) and asks
+#     idf_uri_route_oracle (IDF's httpd_uri_match_wildcard, copied verbatim,
+#     and the first-match / refuse-a-duplicate loop around it) which route
+#     answers each request both dashboards make, then hands the URL each
+#     dashboard's per-entry Acknowledge builds to test_log_ack_route --parse
+#     (both trees' parsers) to hold it to the entry the handler reads. The
+#     oracle is C: IDF's function names a parameter `template`. It is built
+#     with -Wno-sign-compare, as IDF builds it (the copy is not edited).
+LOGACK_PIO_SRC  = ../canary/lib/securacv_network/src/securacv_network.cpp
+LOGACK_WAP_SRC  = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
+LOGACK_SIGS     = static bool log_ack_seq_from_uri(const char* uri, uint32_t* seq) {|static esp_err_t handle_log_ack(httpd_req_t* req) {
+LOGACK_PIO_INC  = $(BUILD_DIR)/log_ack_pio.inc
+LOGACK_WAP_INC  = $(BUILD_DIR)/log_ack_wap.inc
+LOGACK_BIN      = $(BUILD_DIR)/test_log_ack_route
+ROUTE_ORACLE    = $(BUILD_DIR)/idf_uri_route_oracle
+CC             ?= cc
+ORACLE_CFLAGS   = -std=c11 -O2 -Wall -Wextra -Wno-sign-compare -Werror
+ROUTEMATCH_JS   = test_dashboard_route_match.test.js
 
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
@@ -445,6 +558,11 @@ VISION_PIPE_HDR = $(VISION_INC)/canary/vision/detection_pipeline.h \
                   $(VISION_INC)/canary/detect_config.h \
                   $(VISION_INC)/canary/types.h
 VISION_PIPE_BIN = $(BUILD_DIR)/test_vision_detection_pipeline
+# The same suite under -fsanitize=undefined (sweep A42): its out-of-range
+# boxes once overflowed the pipeline's int and long arithmetic, undefined
+# behavior a compiler may resolve into any value, including the right one, so
+# the sanitizer fails an overflow the value checks could not see.
+VISION_PIPE_UBSAN_BIN = $(BUILD_DIR)/test_vision_detection_pipeline_ubsan
 
 # Canary Vision watch profiles (detect_profiles.h): the per-use-case preset
 # table behind HA's "Watch profile" select — room presence vs litter box.
@@ -455,6 +573,40 @@ VISPROF_HDR = $(VISION_INC)/canary/detect_profiles.h \
               $(VISION_INC)/canary/detect_config.h \
               ../common/fleet_link/fleet_beacon.h
 VISPROF_BIN = $(BUILD_DIR)/test_vision_profiles
+
+# Canary Vision presence FSM (src/state/presence_fsm.cpp + voxel_tracker.cpp,
+# linked verbatim): the clocks each event row carries, read from the snapshot
+# publish_event_json takes on the tick that emitted the event. Pins dwell_ended
+# reporting the dwell it closed (sweep F130), dwell_started's 0, visit_ms's own
+# latch, each visit's own interaction clock and opening cell (F152), one dwell
+# per stay (F186), and the dwell latched for the leave on the frame it starts
+# (F202). detect() is the test's struct, so no Arduino shim is linked.
+VISION_SRC = ../projects/canary-vision/src
+VISFSM_SRC = $(VISION_SRC)/state/presence_fsm.cpp $(VISION_SRC)/state/voxel_tracker.cpp
+VISFSM_HDR = $(VISION_INC)/canary/state/presence_fsm.h \
+             $(VISION_INC)/canary/state/voxel_tracker.h \
+             $(VISION_INC)/canary/detect_config.h \
+             $(VISION_INC)/canary/config.h \
+             $(VISION_INC)/canary/types.h
+VISFSM_BIN = $(BUILD_DIR)/test_vision_presence_fsm
+# The same suite built with a dwell end grace longer than the default lost
+# timeout (config.h's VISION_DWELL_END_GRACE_MS, 0 in every shipped build):
+# the grace holds a dweller past the lost timeout and dwell_ended still
+# fires with its length (sweep F154). main() picks the grace suite.
+VISFSM_GRACE_MS  = 4000
+VISFSM_GRACE_BIN = $(BUILD_DIR)/test_vision_presence_fsm_grace
+
+# The Vision core the Lab runs (emulator/dist/canary-vision-core.js), built
+# natively from the five sources build.sh's vision flavor hands em++, with the
+# emulator's Arduino shim and a one-macro emscripten.h stub. Holds the tick
+# JSON the Vision page's MQTT pane reads: the tracker's settled cell and
+# visit_ms (sweep A39), and dwell_ended's dwell (F130) through the ABI.
+EMU_DIR    = ../../canary-local/emulator
+VISCORE_SRC = $(VISION_SRC)/detect_config.cpp $(VISFSM_SRC) \
+              $(EMU_DIR)/vision/vision_core_bindings.cpp $(EMU_DIR)/vision/vision_core_shim.cpp
+VISCORE_HDR = $(VISFSM_HDR) $(VISION_CFG)/config.h $(wildcard $(EMU_DIR)/shim/*.h) \
+              stubs/emscripten/emscripten.h
+VISCORE_BIN = $(BUILD_DIR)/test_vision_core_bindings
 
 # Sentinel multi-sensor fusion brain (common/fusion/sentinel_fusion.*): the
 # board-agnostic evidence-fusion engine compiled by projects/canary-sentinel on
@@ -657,8 +809,24 @@ $(IDFLOOR_BIN): test_csi_event_id_floor.cpp $(IDFLOOR_HDR) Makefile | $(BUILD_DI
 $(EVLINE_BIN): test_csi_event_log_line.cpp $(EVLINE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_log_line.cpp -o $@
 
-$(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) Makefile | $(BUILD_DIR)
+$(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) $(MQTTQUEUE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
+
+$(CANEGR_BIN): test_canary_event_egress.cpp $(CANEGR_SRC) $(CANEGR_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	    -DFEATURE_CSI=1 -DFEATURE_HA_MQTT=1 -DFEATURE_SD_STORAGE=1 -DFEATURE_WATCHDOG=1 \
+	    -I stubs/canary_egress -I ../canary/include -I ../canary/src \
+	    -I ../canary/lib/securacv_mqtt/src -I ../common/csi/src -I ../common \
+	    test_canary_event_egress.cpp $(CANEGR_SRC) -o $@
+
+$(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD \
+	    -I ../canary/include -I ../canary/src -I ../canary/lib/securacv_diagnostics/src \
+	    -I ../common/csi/src \
+	    -DCANARY_MAIN_CPP='"$(abspath ../canary/src/main.cpp)"' \
+	    -DCANARY_DIAG_CPP='"$(abspath ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp)"' \
+	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
+	    $(CANDIAG_SRC) -o $@
 
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
@@ -667,6 +835,49 @@ $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makef
 $(CEILING_BIN): test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -DCSI_TEST_CLOCK -I $(IDSPACE_DIR) \
 	    test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) -o $@
+
+$(MODINT_BIN): test_csi_modules_integration.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
+	    test_csi_modules_integration.cpp $(MODINT_SRC) -o $@
+
+$(MODBOOT_BIN): test_csi_module_boot.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
+	    test_csi_module_boot.cpp $(MODINT_SRC) -o $@
+
+# meta.daily_summary on the canary (sweep F121): main.cpp's clock feed,
+# updateCsiClockOffset() cut verbatim (cut_functions.awk) with the
+# WALL_CLOCK_FLOOR line it guards on, over the same REAL bridge, library and
+# modules. A synced day crossing 23:55 commits exactly one row, a reboot
+# after it commits no second, an unsynced clock commits none, a first clock
+# inside the window waits for the next day, DST and zone changes keep one row
+# per local date, the minute is the household's, the row carries what
+# docs/csi_modules.md says, and a source pin holds loop()'s per-pass call
+# (main.cpp is read at run time, so it is a prerequisite). Hooked into `run`
+# and `clean` by prerequisite so it adds no hunk to their lists.
+DAILY_MAIN = ../canary/src/main.cpp
+DAILY_INC  = $(BUILD_DIR)/canary_clock_feed.inc
+DAILY_BIN  = $(BUILD_DIR)/test_csi_daily_summary
+
+$(DAILY_INC): $(DAILY_MAIN) cut_functions.awk Makefile | $(BUILD_DIR)
+	@test "$$(grep -cE '^static const time_t WALL_CLOCK_FLOOR = ' $(DAILY_MAIN))" = 1 || { \
+	  echo "main.cpp: no single WALL_CLOCK_FLOOR line for updateCsiClockOffset's guard" >&2; exit 1; }
+	@grep -nE '^static const time_t WALL_CLOCK_FLOOR = ' $(DAILY_MAIN) | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(DAILY_MAIN)"\n\2|' > $@.tmp
+	awk -v 'sigs=static void updateCsiClockOffset(' -f cut_functions.awk $(DAILY_MAIN) >> $@.tmp && mv $@.tmp $@
+
+$(DAILY_BIN): test_csi_daily_summary.cpp $(DAILY_INC) $(MODINT_SRC) $(MODINT_HDRS) \
+              ../common/time/tz_rule.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src -I ../common \
+	    -I $(BUILD_DIR) -DCANARY_MAIN_CPP='"$(abspath $(DAILY_MAIN))"' \
+	    test_csi_daily_summary.cpp $(MODINT_SRC) -o $@
+
+.PHONY: run-daily-summary
+run-daily-summary: $(DAILY_BIN)
+	./$(DAILY_BIN)
+run: run-daily-summary
 
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
@@ -720,14 +931,41 @@ $(CHAINPERSIST_BIN): test_chain_persist.cpp $(CHAINPERSIST_INC) $(CHAINPERSIST_H
 	$(CXX) $(CXXFLAGS) -I stubs/witness_glue -I ../canary/lib/securacv_witness/src \
 	    -I ../canary/include -I ../common -I $(BUILD_DIR) test_chain_persist.cpp -o $@
 
+$(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@
+
+$(LOGACK_WAP_INC): $(LOGACK_WAP_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_WAP_SRC) > $@.tmp && mv $@.tmp $@
+
+$(LOGACK_BIN): test_log_ack_route.cpp $(LOGACK_PIO_INC) $(LOGACK_WAP_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I $(BUILD_DIR) test_log_ack_route.cpp -o $@
+
+$(ROUTE_ORACLE): idf_uri_route_oracle.c Makefile | $(BUILD_DIR)
+	$(CC) $(ORACLE_CFLAGS) idf_uri_route_oracle.c -o $@
+
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
 $(VISION_PIPE_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_detection_pipeline.cpp -o $@
 
+$(VISION_PIPE_UBSAN_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -fsanitize=undefined -fno-sanitize-recover=all -I $(VISION_INC) -I $(VISION_CFG) \
+	    test_vision_detection_pipeline.cpp -o $@
+
 $(VISPROF_BIN): test_vision_profiles.cpp $(VISPROF_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) -I ../common/fleet_link test_vision_profiles.cpp -o $@
+
+$(VISFSM_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@
+
+$(VISFSM_GRACE_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DVISION_DWELL_END_GRACE_MS=$(VISFSM_GRACE_MS) -I $(VISION_INC) -I $(VISION_CFG) \
+	    test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@
+
+$(VISCORE_BIN): test_vision_core_bindings.cpp $(VISCORE_SRC) $(VISCORE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DARDUINO=10812 -I stubs/emscripten -I $(EMU_DIR)/shim -I $(EMU_DIR)/vision \
+	    -I $(VISION_INC) -I $(VISION_CFG) test_vision_core_bindings.cpp $(VISCORE_SRC) -o $@
 
 $(FUSION_BIN): test_sentinel_fusion.cpp $(FUSION_SRC) $(FUSION_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@
@@ -764,7 +1002,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -792,8 +1030,12 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(IDFLOOR_BIN)
 	./$(IDSPACE_BIN)
 	./$(CEILING_BIN)
+	./$(MODINT_BIN)
+	./$(MODBOOT_BIN)
 	./$(EVLINE_BIN)
 	./$(BACKFILL_BIN)
+	./$(CANEGR_BIN)
+	./$(CANDIAG_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
@@ -808,7 +1050,11 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(CHAINPERSIST_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
+	./$(VISION_PIPE_UBSAN_BIN)
 	./$(VISPROF_BIN)
+	./$(VISFSM_BIN)
+	./$(VISFSM_GRACE_BIN)
+	./$(VISCORE_BIN)
 	./$(FUSION_BIN)
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)
@@ -823,6 +1069,10 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(SETUPPAGE_JS)
 	$(NODE) --test $(TIMELINE_JS)
 	$(NODE) --test $(HEALTHLOG_JS)
+	$(NODE) --test $(CHIRPPANEL_JS)
+	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
+	./$(LOGACK_BIN)
+	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) LOG_ACK_ROUTE_BIN=$(abspath $(LOGACK_BIN)) $(NODE) --test $(ROUTEMATCH_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -88,7 +88,11 @@ canary-local/
     web/emu-shell.js    the bench: power, LAN, fleet, serial, a finger
     web/bench.js        the power plane: cable, battery, switch, straps,
                         hardwired LEDs, ROM banners (DOM-free, tested)
-    web/harness.html    bare oscilloscope page (dev + CI boot test)
+    web/harness.html    bare oscilloscope page (dev + CI boot test);
+                        ?rotation=0..3 boots the dash or the nightlight
+                        glass turned (F184, F204); ?timescale= sets the
+                        emulated clock's speed from power-on (F206)
+    test/               native checks of emulator code (g++, no emsdk)
     dist/               committed artifacts + build stamps (*.meta.json)
 ```
 
@@ -235,8 +239,9 @@ Three doors into the same live device, all driven by one scenario API
 - **Bench** — the physical test bench: the layer the firmware *can't*
   see, modeled where it lives (outside the silicon boundary, in
   `emulator/web/bench.js`). Pull the USB cable mid-frame, remove or
-  brown out the battery, flip the board's ON/OFF slide switch (it gates
-  the battery path only — its documented job), hold BOOT through RESET
+  brown out the battery (where the board has one: a board with no
+  battery path shows the chip inert), flip the board's ON/OFF slide
+  switch (it gates the battery path only — its documented job), hold BOOT through RESET
   and park the mask ROM in download mode, then recover. The hardwired
   lights (PWR on the rail, CHG/DONE on the charge chip, the watch's
   batteryless-CHG flicker) answer only to physics — no firmware here or
@@ -891,6 +896,41 @@ fails on byte drift.
 ## 8. Testing
 
 - `emulator/web/harness.html` — bare boot bench (also the CI probe).
+- `emulator/test/glass_turn.sh` — the turned dash glass, natively (F184):
+  the real `ui/lvgl_port.cpp` and the emulator's real display HAL built with
+  g++ against the pinned LVGL 8.4; at every quarter turn the framebuffer the
+  page reads equals the scene rendered unturned, pixel for pixel, and a fed
+  touch comes back out of LVGL's pointer where it went in. With no argument
+  it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
+  absent, so CI runs it before any step that reads the committed dist (a
+  stale dist turns those red and skips every later step).
+- `emulator/test/runtime_turn.sh` — the nightlight turned while it runs,
+  natively (F222): `build.sh`'s nightlight TU list (the real `main.cpp`, the
+  emulator's sources) built with g++ and booted on a virtual clock; a boot
+  turned at 7 s from each rotation to each other through
+  `nightlight_request_rotation()` must seat the companion where a boot at
+  that rotation seats it. Fetches LVGL, Crypto and ArduinoJson at
+  `build.sh`'s pins when absent, and CI runs it right after `glass_turn.sh`.
+  `tests/onboard.test.js` holds its TU lists, defines and language flags to
+  what `build.sh` hands em++ for the nightlight.
+
+- `emulator/test/glass_turn_lvgl9.sh` — the same turned dash glass on the
+  LVGL the dash builds ship (F225): the real `ui/lvgl_port.cpp` (its LVGL 9
+  branch, dash config) built with g++ against the LVGL 9.x release
+  `sketch.yaml`'s `dash-core3` profile pins (fetched into the gitignored
+  `emulator/test/third_party/lvgl`, which CI caches under its own key) and
+  the display's own `lv_conf.h`. At every quarter turn each native pixel the
+  port flushes equals the scene rendered on a plain display of the logical
+  size, for whole frames and for partial updates (a few objects changed, so
+  LVGL flushes only their areas, right of logical x 0 and narrower than the
+  canvas); nothing falls off the panel or goes unpainted, a raw touch lands
+  on the pixel drawn there, the splash's turned tail square draws, and a
+  glass with no turn buffer stays landscape. It first holds
+  `tests_host/fake_lvgl9/lvgl.h`'s quotes of LVGL 9.5 to the fetched source
+  (`emulator/test/check_lvgl9_quotes.py`). It reads no dist; CI runs it as
+  the wasm job's last step, whether the steps before it passed or failed
+  (`success() || failure()`), so an earlier red cannot skip it and its own
+  red skips no other step.
 - `tests/canary_local.test.js` — Node tests for the DOM-free logic:
   the witness signing canonical is pinned against `trust.cpp`'s locked
   format (and a WebCrypto round-trip verifies a real signature over
@@ -901,10 +941,23 @@ fails on byte drift.
   rail up ⇔ USB ∨ (battery ∧ switch ∧ charge>0); the switch gates only
   the battery; straps are sampled only at reset (BOOT low → download
   mode, even through `ESP.restart()`); LEDs follow the rail/charger and
-  never the firmware; brownout at 0 %; the ROM banners' exact text; and
-  every `BENCH_FIXES` flow stages cleanly. Registry `bench` blocks are
+  never the firmware; brownout at 0 %; the ROM banners' exact text;
+  every `BENCH_FIXES` flow stages cleanly; and a board whose block names
+  no battery can be fitted none and is offered no step that stages one,
+  so a USB pull always drops its rail. Registry `bench` blocks are
   validated (drivers name real wires, every LED carries its honesty
   note, witnesses carry no bench).
+- `tests/vision.test.js`, `tests/eyes.test.js` and `tests/audio.test.js`
+  drive the committed Vision and WAP audio cores in `emulator/dist/`. With
+  `LAB_CORES=native` they drive this tree's sources instead, built with g++
+  from the sources `build.sh` hands em++ and served to the same tests. That
+  proves a core change page-side before CI's pinned-emsdk rebuild lands, with
+  no emsdk. The browser probes that load those cores (`tests/vision_probe.mjs`,
+  `tests/eyes_probe.mjs`, `tests/audio_probe.mjs`) take the same variable:
+  their server answers the dist URL with a stand-in factory that forwards
+  each call to the native build, and the page is served as committed. CI
+  runs all six both ways. See
+  [`tests/native/README.md`](tests/native/README.md).
 - `tests/boot_probe.mjs` + CI (`.github/workflows/canary-local.yml`):
   rebuilds both flavors from the tree, boots the watch in headless
   Chromium, and asserts the framebuffer flushed, the boot banner sang,
@@ -913,7 +966,18 @@ fails on byte drift.
   Chromium: USB pull with battery ride-through (the firmware never
   notices), switch-off rail death (honest-dark glass + serial), power
   restore (ROM banner, then a true re-boot), BOOT+RESET into download
-  mode and back.
+  mode and back. Then the Nightlight's card (sweep A54): its twin boots the
+  nightlight flavor, Try it shows the firmware's Character ring, and its
+  bench is the C3-LCD-1.47's as `devices/registry.json` states it (USB-C
+  the only power, so a pull drops the rail at once; no lights listed; the
+  backlight row names the 50% cap the board's HAL enforces and the twin's
+  does not). A bench block that names no `power.battery` is a board with no
+  battery path (the Nightlight, the Nightstand stick): its battery chip is
+  inert and reads "none on this board", `BenchPower` refuses to fit a cell
+  there, and the troubleshooter leaves out every step that stages one
+  (`benchFixesFor`), so the probe clicks the chip and still sees the rail
+  drop. Each fact in a bench block may cite its file (`sources`), and
+  `tests/bench.test.js` holds every cited file to its quoted words.
 - `tests/wap.test.js` + `tests/wap_probe.mjs` — the WAP bench (§4i): the
   honesty test pins every SSID, route, MQTT topic, HA entity, boot line and
   wizard label to its firmware source and exercises the DOM-free serial/MQTT
@@ -930,12 +994,62 @@ fails on byte drift.
   DNS A-only, the 302, GET / byte-for-byte, wrong key / absent SSID / 400
   from the firmware, credentials only on success, the AP torn down, the
   boot finishing), then the fleet page's phone end to end under its CSP.
+  Every scene it reads (Hello, Join with and without the hint, PhoneJoined,
+  both failures, Connecting, Success, the face) keeps every line on the
+  glass, none cut and, where it settles, inked where the firmware says; the
+  join QR stands upright (its finder patterns); and every frame is on one
+  glass. It walks the portal again on each turned glass
+  (`tests/turned_glass.mjs` reads them from the sources): the dash turned
+  portrait (`?rotation=1`, 480x800, F184) and the nightlight stood on its
+  edge (320x180, F204, once its dist bundle is committed). There the first
+  frame is already turned; the splash is read from power-on on a clock slowed
+  to half speed (`?timescale=0.5`, F206): every line on the glass and none
+  cut, the bird clear of every line, and the bird and every line the first
+  meeting types seen whole, each line inked on the canvas inside the box the
+  firmware reports once a frame has landed; and the QR card and halo stand where
+  `onboard_layout.h`'s stack seats them, the halo's stroke inked where its
+  circle says (`tests/onboard_glass.mjs`), with the nightlight's card corners
+  held inside the stroke. `tests/boot_probe.mjs` boots each turned glass too,
+  turned clockwise and again counterclockwise (`bootTurns`: the dash at
+  `ROT_PORTRAIT` and `ROT_PORTRAIT_INV`, the nightlight at `Orient::R90` and
+  `R270`), and holds its size, every frame on it, the face's bird on stage
+  and clear of every line, and the turn the emulator's HAL announces with the
+  glass's shape, once the dist announces one: the saved rotation, 1 or 3
+  (A56). Both turns give the same glass, so that check is what tells them
+  apart. That announced turn
+  is what the Lab's 3D case turns by (`assets/scene3d.js` `glassTurn`): the
+  canvas alone cannot tell a glass turned clockwise from one turned
+  counterclockwise, and `tests/render_probe.mjs` draws the real Dash turned
+  1, 3 and 2 and finds its cable side left, right and on top.
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /
   frame grants against what the page actually loads; the probe opens every
   page (and the harness per flavor) in headless Chromium with a
   `securitypolicyviolation` listener in every frame and fails on one violation.
+  The test also holds every probe's `waitForFunction` to a function predicate
+  (a string is re-evaluated through `eval`, which no page allows, A44) and to
+  options stated third, where Playwright reads them (handed second they reach
+  the predicate and the wait runs 30 s whatever it says, A45).
+- `tests/probe_server.test.js` — every browser probe's server answers from
+  an index it builds before it starts, never from a path built from the URL
+  (sweep A46). The fourteen probes that serve the tree use
+  `tests/probe_server.mjs` (`indexTree` once, `lookup()` per request); the
+  bench, Board Room, workshop, boot and onboard probes build a fixed
+  allowlist `Map` of the files they serve and look a request up in it with
+  the same `lookup()`, whose one decode sits in its own `try`: a malformed
+  escape (`/%E0`) is a 404, where a bare `decodeURIComponent` in an async
+  handler threw and Node ended the probe (A52). Every probe server binds
+  127.0.0.1 and opens its pages there (A51 moved the last two). The test
+  refuses a probe whose request reaches `join`, `resolve` or a file read or
+  write, whose handler reads a file its index did not answer, whose index can
+  change while it serves, that names `fs` or `path` in a way the scan would
+  not see called, whose `listen` it cannot read or is not on loopback, or
+  that calls `decodeURIComponent`/`decodeURI` (or builds a `new URL` from the
+  request) outside a `try` that catches it; its header says what the scan
+  cannot follow. It holds each allowlist probe's real source mutated back to
+  the bare decode or an open `listen`, and `lookup()` itself on a scratch
+  tree, malformed escapes included.
 - `tests/vault.test.js` + `tests/vault_probe.mjs` — the Vault explainer (§4j):
   the honesty test pins the quorum constants, the three signing domains, the
   `VLT2`/`SVLT` magics and Invariants I & V to their source **and runs a real

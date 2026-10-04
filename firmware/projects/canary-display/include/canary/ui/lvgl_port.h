@@ -16,6 +16,9 @@ bool lvgl_port_init();
 // the logical canvas rotated to match a wall-mounted-portrait or tall bedside
 // device. A no-op on the SPI/round flavors (fixed glass). Also tells the HAL
 // how to un-rotate raw touch so a tap still lands where the finger points.
+// A turn the glass cannot draw (LVGL 9 with no turn buffer) is refused and
+// the glass stays landscape; lvgl_port_rotation() reports the turn WORN, so
+// a face chosen from it matches the canvas (canary/ui/dash_face.h).
 void lvgl_port_set_rotation(uint8_t rot);
 uint8_t lvgl_port_rotation();
 
@@ -38,9 +41,10 @@ void lvgl_port_set_panel_rotation(uint8_t rot);
 // LVGL-native surface is open, so the faces never see an LVGL click and the
 // policy above them is unchanged. The registered pointer device reports the
 // last fed sample; feed a release when the surface closes. Coordinates are
-// the HAL's logical frame (already un-rotated on the dash glass) — the v9
-// path re-encodes them so LVGL's own indev rotation lands them back where
-// the finger is (canary::glass::rotation_to_lvgl_indev).
+// the HAL's logical frame (already un-rotated on the dash glass) — the dash
+// path (LVGL 9, and LVGL 8 in the emulator) re-encodes them so LVGL's own
+// indev rotation lands them back where the finger is
+// (canary::glass::rotation_to_lvgl_indev).
 void lvgl_port_touch_feed(bool down, int16_t x, int16_t y);
 
 // ── Rendered brightness (binary-backlight glass) ─────────────────────────

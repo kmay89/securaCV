@@ -36,13 +36,19 @@
  *     the card is ready; it reads the log's tail and re-injects each record
  *     via csi_event_inject so /api/events/today returns the earlier boots'
  *     tail before any new event commits this boot.
- *   - append() is called from csi_event_on_committed() in
- *     csi_integration.cpp; one fsync-style flush per event so a
- *     hard power cut at most loses the in-flight line.
- *   - iterate_since(event_id, cb) is called from csi_mqtt's
- *     MQTT_EVENT_CONNECTED handler to replay any events that
- *     committed during an HA outage so HA's history backfills
- *     instead of just resuming.
+ *   - poll(), append_line() and read_at() are the card half of the events
+ *     egress (csi_event_egress.cpp): the egress's csi_event_backfill::Planner
+ *     appends every committed ring row and walks the log to replay what the
+ *     broker has not seen, in id order (backlog F78). One open and close
+ *     per line, so a hard power cut at most loses the line in flight; a
+ *     torn last line is sealed with '\n' before the next append, and the
+ *     parser refuses it.
+ *
+ * Threading: LOOP TASK ONLY. Every entry point below runs on the Arduino
+ * loop task: the egress's pump and csi_integration's loop and init. The
+ * commit hook, which can run on the NimBLE host task (ble.scout), only
+ * queues the row for the pump (csi_event_egress.h), so a commit never
+ * touches the card. queue_dismissal() is the one call safe from any task.
  *
  * Privacy: only fields the chokepoint already cleared for export
  * land in the log. Raw feature vectors never touch SD here. P2 is
@@ -56,6 +62,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "csi_event_backfill.h"   /* staged copy — AppendResult, the planner's card contract */
+
 namespace csi_event_log {
 
 /** Path prefix on SD; "/EVENTS/today.ndjson" today, daily rotation
@@ -68,10 +76,6 @@ constexpr const char* LOG_PATH = "/EVENTS/today.ndjson";
  *  before head-truncation kicks in. */
 constexpr size_t MAX_BYTES = 256u * 1024u;
 
-/** Cap on how many events backfill replays in one shot — bounds the
- *  HA "you missed N events" burst that follows a long outage. */
-constexpr size_t BACKFILL_MAX = 64;
-
 /**
  * Cold-boot init. Idempotent. Creates /EVENTS/ if missing. No-op when
  * the SD card isn't mounted (hooks for sd_is_available are sketch-side
@@ -81,17 +85,40 @@ constexpr size_t BACKFILL_MAX = 64;
  */
 bool init();
 
+/** What poll() saw. */
+enum class CardChange : uint8_t {
+  kUnchanged,  /* same state as the last poll */
+  kOpened,     /* a (new) card's log is usable: size and last row id reported */
+  kClosed,     /* the log stopped being usable (card gone, or a broken rewrite) */
+};
+
 /**
- * Append one record to the log, as committed: its "dismissed" is written 0
- * whatever `rec` says (a dismissal is its own later line; see
- * queue_dismissal()). Best-effort: returns false if the SD
- * card is unavailable, the file rolled over and we couldn't truncate,
- * or the write returned short. Callers (the chokepoint hook) should
- * NOT propagate the failure into csi_event_on_committed's return —
- * losing the on-disk copy must never block the live event from
- * reaching the dashboard or the MQTT bridge.
+ * Re-evaluate the card; the egress calls it once per pump pass, before any
+ * other card call. Cheap while nothing changes (the card type and the mount
+ * worker's flag, no file-system call). A card is looked at once while it
+ * stays in: one that is not this device's (a canary base's owner file) or
+ * whose log cannot be opened stays closed until it is pulled. On kOpened,
+ * `*size` is the log's size (0 when it does not exist yet) and `*tail_id`
+ * the id of its last row: the last whole line that is not a dismissal,
+ * looked for up to TAIL_SCAN_MAX bytes back (0 when there is none).
  */
-bool append(const csi_event_record_t* rec);
+CardChange poll(uint32_t* size, uint32_t* tail_id);
+
+/**
+ * Append one line (with its '\n') to the log, only while poll() has it open.
+ * Past MAX_BYTES the oldest quarter is dropped first (to a line start), and
+ * `cut` says how many bytes; `size` is the log's size afterwards, whatever
+ * happened. A torn last line is sealed with '\n' first. A rewrite whose
+ * rename failed leaves the survivors in the .tmp file for the next mount's
+ * reconcile, so the log closes until the card is pulled.
+ */
+csi_event_backfill::AppendResult append_line(const char* line, size_t len);
+
+/** Read up to `cap` bytes at byte offset `off`; the count read, 0 on error. */
+size_t read_at(uint32_t off, char* buf, size_t cap);
+
+/** How far back from the end poll() looks for the log's last row. */
+constexpr size_t TAIL_SCAN_MAX = 16u * 1024u;
 
 /** How far back from the end of the log load_into_ring() reads. The ring
  *  holds CSI_EVENT_RING_CAP (512) rows; at the usual 150-250 bytes a line,
@@ -119,16 +146,16 @@ constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
  * next call to try. If a live event is already in the ring by then (a card
  * that mounted late), it latches without reading the card, since inject
  * would refuse every row. A card that is not this device's (a canary base's
- * owner file) is left alone, as append() leaves it.
+ * owner file) is left alone, as poll() leaves it.
  *
  * The rows it restores are the log's newest, not today's: see "today is a
  * name, not a bound" above.
  *
  * It restores what the log holds, and the log holds less than the Today
- * sheet shows live: append() is fed from csi_event_find(), and a bundle
- * the bundler closes (csi_bundler.cpp commit_closed, through the
+ * sheet shows live: the egress logs only ring rows (csi_event_find), and a
+ * bundle the bundler closes (csi_bundler.cpp commit_closed, through the
  * chokepoint's csi_event_commit_bundle_) never enters the ring, so closed
- * bundles are neither on the card nor restored. Only direct (stateless /
+ * bundles are neither on the card nor restored (backlog F77). Only direct (stateless /
  * ambient) commits are. Found 2026-09 while wiring this. Since backlog F46
  * a closed bundle takes its event id from the same persisted allocator as
  * every other row, so the old reason not to log it (ids from a separate,
@@ -156,18 +183,23 @@ void arm_load();
  * Record on the card that the user dismissed `event_id` (csi_event_dismiss),
  * so load_into_ring() does not bring it back undismissed after a reboot.
  * queue_dismissal() is safe from any task (the HTTP handler) and only
- * queues; flush_dismissals(), on the loop task where append() runs, appends
- * the dismissed ring row as one more line in the usual format, with
+ * queues; flush_dismissals(), on the loop task where append_line() runs,
+ * appends the dismissed ring row as one more line in the usual format, with
  * "dismissed":1. That line adds one fact to the card: that the owner
  * acknowledged this event, and roughly when (by where it falls in the log;
  * it carries no time of its own beyond the record's). It is the owner's own
  * action, kept on the owner's own card and not replayed to MQTT: local, as
- * Invariant IV (local ownership, spec/invariants.md) asks. Best-effort like
- * append(): with no card, a card that is not ours, or a failed write, the
- * dismissal holds for this boot only. queue_dismissal() is false when the queue (8) is full.
- * iterate_since() does not replay dismissal lines.
+ * Invariant IV (local ownership, spec/invariants.md) asks. While the log
+ * cannot take it (no open log yet: before the egress's first pump pass, a
+ * remount, no card or a card that is not ours; or a log at MAX_BYTES, which
+ * a dismissal never cuts: the next committed row's append does), the
+ * dismissal stays queued, in RAM, and is written once the log can take it.
+ * A failed write drops it (logged), and a reboot drops the queue: then the
+ * dismissal holds for this boot only. queue_dismissal() is false when the
+ * queue (8) is full. The egress's backfill never replays a dismissal line
+ * (csi_event_egress.cpp send_backfill).
  *
- * append() always writes "dismissed":0 (the original), even when the ring
+ * The egress always logs "dismissed":0 (the original), even when the ring
  * row was dismissed between the commit and the hook's copy of it, so only a
  * flush_dismissals() line ever says 1 (csi_event_log.cpp, is_dismissal()).
  */
@@ -175,21 +207,10 @@ bool queue_dismissal(uint32_t event_id);
 size_t flush_dismissals();
 
 #ifdef CSI_TEST_HOST_BUILD
-/** Host tests only: forget this "boot"'s load latch, to simulate a reboot. */
+/** Host tests only: forget this "boot"'s RAM state (the load latch, the
+ *  open card and the dismissal queue), to simulate a reboot. */
 void test_rearm_load();
 #endif
-
-/**
- * Iterate events with id strictly greater than `since_event_id` and
- * call `cb(record, user)` for each, oldest-first, up to BACKFILL_MAX.
- * Stops on the first cb that returns false (so the MQTT publisher
- * can bail mid-replay if the broker disconnects again). A line whose id
- * is at or above the allocator's next id is skipped: this device never
- * handed it out (forged or foreign), and replayed it would go out signed
- * with this device's key (backlog F46).
- */
-typedef bool (*iterate_cb_t)(const csi_event_record_t* rec, void* user);
-size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user);
 
 }  /* namespace csi_event_log */
 

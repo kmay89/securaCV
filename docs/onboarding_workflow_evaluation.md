@@ -8,8 +8,8 @@ File references are to
 ## The onboarding flow (as traced)
 
 1. **Boot / identity** — `provision_device()` loads/creates the Ed25519
-   keypair, then derives a stable `device_id` (`canary-s3-AB7K`) and AP SSID
-   (`SecuraCV-AB7K`) from its public-key fingerprint (never the MAC —
+   keypair, then derives a stable `device_id` (`canary-s3-4dC2`) and AP SSID
+   (`SecuraCV-4dC2`) from its public-key fingerprint (never the MAC —
    event_contract §10), and derives the API token. (`canary_wap.ino`)
 2. **AP + captive portal** — `wifi_init_provisioning()` brings up
    `WIFI_AP_STA`, starts the SoftAP with a device-unique password, and (on first
@@ -48,8 +48,8 @@ stable per-device name to fall back to, and the router's DHCP client list showed
 two identical `canary` entries.
 
 **Fix:** every device now advertises a **unique** hostname,
-`canary-<name>.local` (friendly name) or `canary-<mac-suffix>.local`
-(`generate_mdns_hostname()`, reusing the RFC-1123 sanitizer from
+`canary-<name>.local` (friendly name) or `canary-<4 hex>.local`, the first two
+bytes of the key fingerprint (`generate_mdns_hostname()`, reusing the RFC-1123 sanitizer from
 `firmware/canary/lib/securacv_network`). `canary.local` is preserved as a
 **first-wins catch-all** via the IDF delegated-hostname API
 (`claim_catch_all_hostname()` → `mdns_delegate_hostname_add`), version-guarded

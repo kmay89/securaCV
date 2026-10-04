@@ -17,7 +17,7 @@ tests_host/montserrat_metrics.h:
   * kern_scale and line_height.
 
 The faces carried are the ones the onboarding's rows can set: every
-Character type ladder's body, label and caption sizes, parsed out of
+Character type ladder's title, body, label and caption sizes, parsed out of
 src/ui/character.cpp (so a ladder change regenerates the table, and CI
 names the stale file).
 
@@ -55,8 +55,10 @@ CODEPOINTS = list(range(0x20, 0x7F)) + [0xB0, 0x2022]
 # small glass sets the Join scene's low rows and the scenes' bodies in the
 # caption face and its titles in the body face, each stepping down to the
 # default Character's face of the same role, F65; the wide glass sets its
-# credentials in the label face and the hint in the caption face).
-ROLES = ("body", "label", "caption")
+# Join title in the title face, its credentials in the label face and the
+# hint in the caption face, and fits its scenes' titles and bodies through
+# the same ladder, F84).
+ROLES = ("title", "body", "label", "caption")
 
 
 def fail(msg: str) -> None:

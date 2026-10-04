@@ -87,6 +87,7 @@ EXPECTED_NAMES: dict[str, dict[str, str]] = {
         "tamper_unexpected_reboot": "Unexpected Reboot",
         "tamper_memory_critical": "Memory Critical",
         "sd_replace": "SD Replacement Recommended",
+        "event_id_space_low": "Event ID Space Low",
         "transport_wifi_ap": "WiFi AP",
         "transport_wifi_sta": "WiFi Station",
         "transport_mqtt": "MQTT",
@@ -146,6 +147,7 @@ BINARY_SENSOR_ENTITIES = [
         ],
     ),
     (bs_platform.SecuraCVCanarySDReplaceSensor, [_canary]),
+    (bs_platform.SecuraCVCanaryEventIdSpaceLowSensor, [_canary]),
     (
         bs_platform.SecuraCVCanaryTransportSensor,
         [

@@ -141,7 +141,7 @@ async function main() {
     for (const [k, v] of [
       ["SoftAP", d.ap.ssid_example + " · WPA2 · ch " + d.ap.channel + " · " + d.ap.max_clients + " client"],
       ["Password", d.ap.password_example + "  (" + d.ap.password_scheme.split(":")[0] + "…, unique per device)"],
-      ["Reach it", "canary.local · " + d.ap.mdns_example + " · " + d.ap.ip],
+      ["Reach it", "canary.local · " + d.ap.mdns_example + " (unnamed; canary-<name>.local once named) · " + d.ap.ip],
       ["Captive", "A→" + d.ap.ip + " (TTL " + d.captive.dns.a_ttl + "s); Apple 200 · Android 204 · Windows NCSI"],
       ["Times out", "abandoned portal reboots after " + d.ap.setup_timeout_min + " min; AP lingers " + d.ap.ap_grace_sec + "s after join"],
     ]) {
@@ -181,8 +181,9 @@ async function main() {
   function renderSandbox(d, b) {
     const s = section("sandbox", "try it", "The sandbox",
       "Every button drives a real signal path: it lands the presence pill, writes a witness " +
-      "record on the serial console, and publishes the exact MQTT the firmware would. Fire a T3 " +
-      "smoke cadence, hold the panic pad, mute the mic — watch all three surfaces move together.");
+      "record on the serial console, and publishes the firmware's own MQTT payloads (a presence " +
+      "row at the click, not when its bundle closes). Fire a T3 " +
+      "smoke cadence or mute the mic — watch all three surfaces move together.");
     const pad = el("div", "wap-sandbox");
     const readout = el("p", "muted wap-sandbox-read", "Power the device up above, or just tap a card — the bench will bring it online for you.");
     let seq = 0;

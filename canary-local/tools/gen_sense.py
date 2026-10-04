@@ -43,6 +43,7 @@ import json
 import re
 from pathlib import Path
 
+from _pseudonym import SALT_A, client_id, make_hostname, pseudonym
 from _tooling import die, repo_root
 
 REPO = repo_root()
@@ -142,11 +143,16 @@ if not sense_reg:
 # Illustrative values — a real unit derives its own from its NVS identity.
 EX_ID = DEVICE_ID_SEED                      # the compiled first-boot seed
 EX_FP = "b7e2c49a11f03d5c"                  # 16-hex Ed25519 fingerprint (witness.cpp fp_hex[16])
-EX_HOST = "canary-sense-001-b7e2c4"         # mdns make_hostname(): id hyphenated + 6-hex pseudonym
-EX_HWID = "9f41c2d8a06be375"                # salted MAC-free pseudonym (device_pseudonym)
+# The salted MAC-free pseudonym (device_pseudonym::device_id_hex): 16
+# characters of the unambiguous alphabet, derived here from an example salt
+# by the header's own construction (_pseudonym.py), never hand-typed hex
+# (sweep A28). make_hostname() appends its first six characters to the
+# hyphenated id, case kept; the MQTT client id carries all sixteen.
+EX_HWID = pseudonym(SALT_A)
+EX_HOST = make_hostname(EX_ID, EX_HWID, MDNS_CPP)
+EX_CLIENT_ID = client_id(EX_ID, EX_HWID, MQTT_CPP)
 EX_BROKER = "192.168.1.10"
 must(WITNESS_CPP, "fp_hex[16] = '\\0'", "16-hex fingerprint length")
-must(MDNS_CPP, '"%s-%.6s", base, devid_hex', "mdns hostname recipe")
 
 # --------------------------------------------------------------------------- #
 # 2. the radar — hardware envelope + the real UART wire protocol
@@ -395,6 +401,49 @@ for needle in ('boot_kv("Sensor",  "MR60BHA2 60GHz FMCW radar (UART)")',
                '"%lu ms debounce, %lu ms clear, %lu ms stall"'):
     must(MAIN_CPP, needle, f"radar boot scene {needle!r}")
 
+# main.cpp's MQTT scene, printed between the fleet advert and the one bounded
+# connect attempt: the scene art, a separator, then boot_kv lines in
+# boot_banner.cpp's "    %-12s%s" — the Device ID, the salted Hardware ID
+# (device_pseudonym::device_id_hex, sweep A28: the pseudonym this page's host
+# and client id are built from), the heartbeat and the HA prefix.
+MQTT_ART = ["              .   .   .  ))",
+            "           .  ((( o )))  ))     Connecting to MQTT...",
+            "              '   '   '"]
+SCENE_SRC = "\n".join(f'  boot_line("{line}");' for line in MQTT_ART) + """
+  boot_separator();
+  boot_kv("Device ID", canary::cfg::get().device_id);
+  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
+  if (device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex))) {
+    boot_kv("Hardware ID", devid_hex);  // salted pseudonym, not the raw MAC
+  }
+  boot_kvf("Heartbeat", "every %lu ms", (unsigned long)HEARTBEAT_MS);
+  boot_kv("HA prefix", HA_DISCOVERY_PREFIX);
+  boot_blank();"""
+must(MAIN_CPP, SCENE_SRC, "MQTT boot scene (art, separator, Device ID, Hardware ID, heartbeat, HA prefix, blank)")
+_main = read(MAIN_CPP)
+if not (_main.index("canary::net::mdns_init();") < _main.index(SCENE_SRC)
+        < _main.index("if (!mqtt_supervise(canary::ms_now())) {")):
+    die("main.cpp no longer prints the MQTT scene between mdns_init() and the first mqtt_supervise()")
+must(BANNER_CPP, 'out("    ------------------------------------------------\\n");', "boot_separator")
+must(BANNER_CPP, 'out("    %-12s%s\\n", key, value ? value : "--");', "boot_kv format")
+must(BANNER_CPP, 'out("    %-12s%s\\n", key, val);', "boot_kvf format")
+must(PROJECT_CFG_H, "HEARTBEAT_MS = CS_HEARTBEAT_MS;", "heartbeat config")
+must(PROJECT_CFG_H, "HA_DISCOVERY_PREFIX = CS_HA_DISCOVERY_PREFIX;", "HA prefix config")
+
+
+def boot_kv(key: str, value: str) -> str:
+    return f"    {key:<12}{value}"
+
+
+MQTT_SCENE = MQTT_ART + [
+    "    ------------------------------------------------",
+    boot_kv("Device ID", EX_ID),
+    boot_kv("Hardware ID", EX_HWID),
+    boot_kv("Heartbeat", f"every {grab_int(CFG_DEFAULT, 'CS_HEARTBEAT_MS')} ms"),
+    boot_kv("HA prefix", grab_str(CFG_DEFAULT, "CS_HA_DISCOVERY_PREFIX")),
+    "",
+]
+
 BOOT = [
     {"tag": "[BH1750]", "text": "ambient light sensor online", "src": '"BH1750", "ambient light sensor online"', "srcf": MAIN_CPP},
     {"tag": "[WITNESS]", "text": "Generated new Ed25519 identity (first boot).", "src": "Generated new Ed25519 identity (first boot).", "srcf": WITNESS_CPP},
@@ -403,7 +452,9 @@ BOOT = [
     {"tag": "", "text": ". . . . ."},
     {"tag": "[WIFI]", "text": "Connected IP=192.168.1.62 RSSI=-54dBm", "src": "Connected IP=%s RSSI=%ddBm", "srcf": WIFI_CPP},
     {"tag": "[MDNS]", "text": f"Fleet advert up as {EX_HOST}.local (_securacv._tcp)", "src": "Fleet advert up as %s.local", "srcf": MDNS_CPP},
-    {"tag": "[MQTT]", "text": f"Connecting {EX_BROKER}:1883 as {EX_ID} ...", "src": "Connecting %s:%u as %s ...", "srcf": MQTT_CPP},
+    # a line with no tag prints verbatim (sense-ui.js bootLines keeps its indent)
+    *({"tag": "", "text": line} for line in MQTT_SCENE),
+    {"tag": "[MQTT]", "text": f"Connecting {EX_BROKER}:1883 as {EX_CLIENT_ID} ...", "src": "Connecting %s:%u as %s ...", "srcf": MQTT_CPP},
     {"tag": "[MQTT]", "text": "Connected.", "src": '"MQTT", "Connected."', "srcf": MQTT_CPP},
     {"tag": "[DISC]", "text": "Home Assistant discovery published (retained).", "src": "Home Assistant discovery published (retained).", "srcf": DISC_CPP},
     {"tag": "[OTA]", "text": "Pull-OTA engine ready.", "src": '"OTA", "Pull-OTA engine ready."', "srcf": OTA_CPP},
@@ -477,8 +528,15 @@ STATE_PAYLOAD = ('{"device_id":"%s","device_type":"canary-sense","presence":true
                  '"presence_state":"present","occupants":"1","range":"mid","radar_ok":true,'
                  '"frame_errors":0,"lux":142.5,"last_event":"presence_detected","uptime_s":312,"ts_ms":312400}'
                  ) % EX_ID
-STATE_PAYLOAD_WELLBEING = ('{…,"breathing_locked":true,"breath_bpm":14,"heart_bpm":68,…}  '
-                           "(BPM fields null unless the lock holds — stale vitals never freeze in HA)")
+# The wellbeing build's state, whole: the vitals keys sit between lux and
+# last_event (publish_state_retained's #ifdef CANARY_SENSE_VITALS block). It
+# used to be an abbreviation ({…,"breathing_locked":true,…}), which the
+# sandbox could not lay a scene over (sweep A30).
+STATE_PAYLOAD_WELLBEING = ('{"device_id":"%s","device_type":"canary-sense","presence":true,'
+                           '"presence_state":"present","occupants":"1","range":"near","radar_ok":true,'
+                           '"frame_errors":0,"lux":142.5,"breathing_locked":true,"breath_bpm":14,"heart_bpm":68,'
+                           '"last_event":"presence_detected","uptime_s":312,"ts_ms":312400}') % EX_ID
+STATE_WELLBEING_NOTE = "BPM fields are null unless the lock holds — stale vitals never freeze in HA"
 EVENT_PAYLOAD = ('{"device_id":"%s","device_type":"canary-sense","event":"presence_detected",'
                  '"seq":313,"bucket_uptime_s":0,"presence":"present","occupants":"1","range":"mid",'
                  '"signed":true,"v":1,"alg":"ed25519","fp":"%s","sig":"…"}') % (EX_ID, EX_FP)
@@ -496,7 +554,7 @@ TOPICS = [
      "payload": EVENT_PAYLOAD,
      "note": "the FULL vocabulary that ever leaves the device about what the radar saw — no distance, no vitals, ever; time is a 10-minute uptime bucket"},
     {"suffix": "state", "retained": True, "cadence": "on change + heartbeat",
-     "payload": STATE_PAYLOAD, "wellbeing": STATE_PAYLOAD_WELLBEING},
+     "payload": STATE_PAYLOAD, "wellbeing": STATE_PAYLOAD_WELLBEING, "wellbeing_note": STATE_WELLBEING_NOTE},
     {"suffix": "status", "retained": True, "cadence": "on connect + 5 s heartbeat",
      "payload": '{"device_id":"%s","device_type":"canary-sense","status":"online","presence":true,"radar_ok":true,"rssi":-54,"heap_free":145120,"heap_min":128044,"degraded":"normal","ts_ms":312400}' % EX_ID},
     {"suffix": "chain", "retained": True, "cadence": "on each witnessed event",
@@ -532,6 +590,58 @@ for t in SUBSCRIBED:
         must(TOPICS_H, t["suffix"], f"cfg topic {t['suffix']}")
 must(MQTT_CPP, '\\"status\\":\\"offline\\"', "LWT payload")
 
+# The topics a sandbox scene lays its fields over are keyed as the firmware
+# publishes them (sweep A30): publish_state_retained's format (with and
+# without the vitals block), record_event_now's body and sign_event_envelope,
+# and publish_chain_retained's signed branch. A scene's field that is not a
+# key of its topic's payload is refused below.
+def _fn(path, signature):
+    text = read(path)
+    i = text.find(signature)
+    if i < 0:
+        die(f"{signature!r} not found in {path.relative_to(REPO)}")
+    j = text.find("\n}\n", i)
+    return text[i:j if j >= 0 else len(text)]
+
+
+def _keys(fragment):
+    return re.findall(r'\\"([a-z_0-9]+)\\":', fragment)
+
+
+def _between(text, start, end, label):
+    i = text.find(start)
+    j = text.find(end, i + len(start)) if i >= 0 else -1
+    if i < 0 or j < 0:
+        die(f"{label}: {start!r} … {end!r} not found")
+    return text[i:j]
+
+
+_state_fn = _fn(MQTT_CPP, "void publish_state_retained(")
+_vitals = _between(_state_fn, '#ifdef CANARY_SENSE_VITALS\n           "', "#endif", "the state's vitals block")
+STATE_KEYS_WELLBEING = _keys(_between(_state_fn, "snprintf(msg, sizeof(msg),", "canary::cfg::get()", "state format"))
+STATE_KEYS = [k for k in STATE_KEYS_WELLBEING if k not in _keys(_vitals)]
+EVENT_KEYS = (_keys(_between(_fn(MAIN_CPP, "static void record_event_now("), "const int n = snprintf(msg, sizeof(msg),",
+                             "canary::cfg::get()", "event format"))
+              + _keys(_fn(WITNESS_CPP, "bool sign_event_envelope(")))
+CHAIN_KEYS = _keys(_between(_fn(MQTT_CPP, "void publish_chain_retained("), "if (signed_ok) {", "} else {", "chain"))
+SENSE_KEYS = {"state": STATE_KEYS, "events": EVENT_KEYS, "chain": CHAIN_KEYS}
+for label, payload, keys in (("state", STATE_PAYLOAD, STATE_KEYS),
+                             ("state (wellbeing)", STATE_PAYLOAD_WELLBEING, STATE_KEYS_WELLBEING),
+                             ("events", EVENT_PAYLOAD, EVENT_KEYS),
+                             ("chain", next(t for t in TOPICS if t["suffix"] == "chain")["payload"], CHAIN_KEYS)):
+    if list(json.loads(payload)) != keys:
+        die(f"Sense {label} example keys {list(json.loads(payload))} are not the firmware's {keys}")
+if EVENT_KEYS[-4:] != ["v", "alg", "fp", "sig"] or len(STATE_KEYS_WELLBEING) != len(STATE_KEYS) + 3:
+    die("the Sense event envelope or the state's vitals block moved")
+# seq rides the chain: record_event_now's seq is chain_length() + 1, and the
+# chain head it then republishes is that length; the event goes out first.
+must(MAIN_CPP, "? canary::witness::chain_length() + 1", "seq is the next chain length")
+must(MAIN_CPP, "  canary::net::publish_event(TOPICS, msg);\n  canary::net::publish_chain_retained(TOPICS);",
+     "event, then the chain head")
+for word in ('case Presence::Present: return "present";', 'case Presence::Clear:   return "clear";',
+             'case CountBucket::TwoPlus: return "2+";', 'case RangeBand::Near: return "near";'):
+    must(MAIN_CPP, word, "the Sense's coarse vocabulary")
+
 # HA discovery entities, validated against ha_discovery.cpp object ids + names.
 def entity(comp, obj, name, state_topic, flavor="default", **kw):
     must(DISC_CPP, f'"{obj}"', f"HA entity object_id {obj}")
@@ -564,6 +674,30 @@ ENTITIES = [
 N_DEFAULT = sum(1 for e in ENTITIES if e["flavor"] == "default")
 N_WELLBEING = len(ENTITIES)
 
+# When the state row goes out (main.cpp): drive_fsms marks it dirty on a
+# presence change, a count change and any vitals change (and the lux loop on a
+# 5 lx move); the loop publishes it then, and on every heartbeat. A range band
+# that moves alone dirties nothing, so it waits for the heartbeat.
+# The count bucket follows every radar frame while presence waits out its
+# timers, and a count change while Present is a witnessed occupancy_changed:
+# so an emptying room records one to "0" before presence_cleared. The lab
+# keeps the count until Clear; the pane note says so.
+must(PRESENCE_H.with_suffix(".cpp"), "    count_ = frame.has_target ? bucket_of(frame.target_count) : CountBucket::Zero;",
+     "the count follows each frame")
+must(MAIN_CPP, "    if (g_presence.state() == Presence::Present) {\n      set_last_event(\"occupancy_changed\");\n"
+     "      record_event_now(\"occupancy_changed\", now);", "a count change while Present is witnessed")
+HEARTBEAT_MS = grab_int(CFG_DEFAULT, "CS_HEARTBEAT_MS")
+if grab_int(CFG_WELLBEING, "CS_HEARTBEAT_MS") != HEARTBEAT_MS:
+    die("the two Sense builds beat at different rates; the lab stages one")
+must(MAIN_CPP, "  if (g_state_dirty) {\n    publish_state_now(now);\n  }", "a dirty state row goes out in the loop")
+must(MAIN_CPP, "    refresh_snapshot(now);\n    canary::net::publish_heartbeat(TOPICS, g_snap);\n    publish_state_now(now);",
+     "the heartbeat republishes the state row")
+must(MAIN_CPP, "    g_state_dirty = true;\n  }\n\n  if (pev.count_changed) {", "a presence change dirties the state row")
+must(MAIN_CPP, "      record_event_now(\"occupancy_changed\", now);\n    }\n    g_state_dirty = true;\n  }",
+     "a count change dirties the state row")
+must(MAIN_CPP, "  if (vev.lock_changed) {\n    boot_linef(\"[vitals] breathing %s%s\", locked ? \"locked\" : \"lost\",\n"
+     "               vev.stalled ? \" (stall)\" : \"\");\n    g_state_dirty = true;", "a vitals lock change dirties the state row")
+
 MQTT = {
     "prefix": "securacv",
     "topic_pattern": "securacv/<device_id>/<suffix>",
@@ -573,6 +707,20 @@ MQTT = {
     "topics": TOPICS,
     "subscribed": SUBSCRIBED,
     "offline_note": "no broker? the witness keeps sensing and chaining — every transition still advances the NVS-persisted hash chain; an outage shows up as a jump in seq/chain length, never lost tamper evidence",
+    # the loop republishes the state row every heartbeat (the radar lab
+    # stages it, so a range band that moves alone still reaches the broker)
+    "heartbeat_ms": HEARTBEAT_MS,
+    # what the MQTT pane says about itself (A30 review); the pane adds the
+    # non-retained topics from each topic's own flag
+    "pane_note": "Every topic and every key, in its order, is the firmware's, and the radar lab publishes "
+                 "when the firmware would, at its own thresholds: an event and the chain head on a "
+                 "witnessed transition, the state row on a change and every heartbeat. One step is left "
+                 "out: when the room empties, the device records an occupancy_changed to 0 occupants before "
+                 "presence_cleared (its count follows each radar frame), and the lab does not. What this page "
+                 "cannot know reads …: each sig, the health topic's public_key, and a chain head's hash "
+                 "once it moves; the fp is an illustrative one, not the repo test key's. uptime_s, ts_ms "
+                 "and bucket_uptime_s keep the example's values, since the page has no device clock, and "
+                 "the status and health heartbeats are not staged.",
     "discovery": {
         "prefix": grab_str(CFG_DEFAULT, "CS_HA_DISCOVERY_PREFIX"),
         "config_topic": "homeassistant/<component>/<device_id>/<object_id>/config",
@@ -790,62 +938,124 @@ TUNING = {
 # 9. sandbox scenarios — every effect traces to a real firmware signal path
 # --------------------------------------------------------------------------- #
 
+# A scene's publishes are the firmware's whole payloads (sweep A30): the
+# topic's example with the scene's fields laid over it (`set`) and its
+# counters moved on (`advance`), key order kept — the WAP's scenePayload and
+# the Vision pane's vizEventPayload do the same. Before this a scene spelled
+# only what it changed: an events row with no envelope, chain {"length":+1}
+# (not JSON), and a state row of two or three keys that, pushed by the page,
+# replaced the retained state whole. A vitals scene lays over the wellbeing
+# build's state (`base`). Witnessed events advance seq and the chain head
+# together; the new head's hash is elided.
+CHAIN_NEXT = {"suffix": "chain", "set": {"latest_hash": "…"}, "advance": ["length"]}
+
+
+def event_pub(event, presence, occupants, rng):
+    return {"suffix": "events", "advance": ["seq"],
+            "set": {"event": event, "presence": presence, "occupants": occupants, "range": rng}}
+
+
+def state_pub(base=None, **fields):
+    pub = {"suffix": "state", "set": fields}
+    if base:
+        pub["base"] = base
+    return pub
+
+
 SANDBOX = [
     {"id": "walk", "label": "Walk into the room",
      "blurb": f"A target sustains past the {D['debounce_ms']} ms debounce → Present; the LED goes green and a signed event chains.",
      "state": "Present", "led": "green", "event": "presence_detected",
      "serial": "[presence] -> present",
-     "mqtt": [{"suffix": "events", "payload": '{"event":"presence_detected","presence":"present","occupants":"1","range":"mid","signed":true}'},
-              {"suffix": "state", "payload": '{"presence":true,"occupants":"1","range":"mid"}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}],
+     "mqtt": [event_pub("presence_detected", "present", "1", "mid"),
+              state_pub(presence=True, presence_state="present", occupants="1", range="mid",
+                        last_event="presence_detected"),
+              CHAIN_NEXT],
      "ha": "binary_sensor.<id>_presence -> ON"},
     {"id": "approach", "label": "Walk toward it",
      "blurb": "Range band steps far → mid → near as you close in — the host-side zone gate in action; raw centimeters never publish.",
      "state": "Present", "led": "green", "event": None,
      "serial": None,
-     "mqtt": [{"suffix": "state", "payload": '{"presence":true,"range":"near"}'}],
+     "mqtt": [state_pub(presence=True, presence_state="present", range="near")],
      "ha": "sensor.<id>_range_band: far → mid → near"},
     {"id": "sit", "label": "Sit still and breathe (wellbeing)",
      "blurb": f"Plausible vitals sustain {FSM['vitals']['lock_ms']} ms with exactly one target → the breathing lock confirms; BPM numerics go live (P1).",
      "state": "Present", "led": "green", "event": None,
      "serial": "[vitals] breathing locked",
-     "mqtt": [{"suffix": "state", "payload": '{"presence":true,"breathing_locked":true,"breath_bpm":14,"heart_bpm":68}'}],
+     "mqtt": [state_pub("wellbeing", presence=True, presence_state="present", occupants="1",
+                        breathing_locked=True, breath_bpm=14, heart_bpm=68)],
      "ha": "binary_sensor.<id>_breathing -> ON · sensors read 14 / 68 bpm"},
     {"id": "second", "label": "A second person walks in",
      "blurb": "The count bucket moves 1 → 2+; occupancy_changed chains, and vitals hard-suppress (BPM → null) — attribution refused, by code.",
      "state": "Present", "led": "green", "event": "occupancy_changed",
      "serial": "[vitals] breathing lost",
-     "mqtt": [{"suffix": "events", "payload": '{"event":"occupancy_changed","occupants":"2+","signed":true}'},
-              {"suffix": "state", "payload": '{"occupants":"2+","breathing_locked":false,"breath_bpm":null,"heart_bpm":null}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}],
+     "mqtt": [event_pub("occupancy_changed", "present", "2+", "near"),
+              state_pub("wellbeing", presence=True, presence_state="present", occupants="2+",
+                        breathing_locked=False, breath_bpm=None, heart_bpm=None, last_event="occupancy_changed"),
+              CHAIN_NEXT],
      "ha": "sensor.<id>_occupants -> 2+ · BPM entities -> unknown"},
     {"id": "leave", "label": "Everyone leaves",
      "blurb": f"No target for {D['clear_ms']} ms → Clear; the LED goes blue and presence_cleared chains.",
      "state": "Clear", "led": "blue", "event": "presence_cleared",
      "serial": "[presence] -> clear",
-     "mqtt": [{"suffix": "events", "payload": '{"event":"presence_cleared","presence":"clear","occupants":"0","signed":true}'},
-              {"suffix": "state", "payload": '{"presence":false,"occupants":"0"}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}],
+     "mqtt": [event_pub("presence_cleared", "clear", "0", "unknown"),
+              state_pub(presence=False, presence_state="clear", occupants="0", range="unknown",
+                        last_event="presence_cleared"),
+              CHAIN_NEXT],
      "ha": "binary_sensor.<id>_presence -> OFF"},
     {"id": "lights", "label": "Kill the lights — with someone inside",
      "blurb": "Lux collapses while radar presence persists: the tamper-corroboration pattern. Camera-blind means nothing to a radar.",
      "state": "Present", "led": "green", "event": None,
      "serial": None,
-     "mqtt": [{"suffix": "state", "payload": '{"presence":true,"lux":1.0}'}],
+     # a lux move of 5 lx or more dirties the state row; the page walks
+     # someone in first if the room is empty, and lays the lux over the row
+     # as it stands, so presence is whatever the radar says
+     "mqtt": [state_pub(lux=1.0)],
      "ha": "lights-out + presence — the tamper automation's trigger pair"},
     {"id": "stall", "label": "Unplug the radar UART",
      "blurb": f"No frame for {D['stall_ms']} ms → Unknown (amber LED); the radar_link problem sensor trips. Health, not a witness event — silence is never evidence.",
      "state": "Unknown", "led": "amber", "event": None,
      "serial": "[presence] -> unknown (radar stall)",
-     "mqtt": [{"suffix": "state", "payload": '{"radar_ok":false,"presence":false}'}],
+     # a stall drops the count and band with the link (mr60_presence.cpp)
+     "mqtt": [state_pub(presence=False, presence_state="unknown", occupants="0", range="unknown", radar_ok=False)],
      "ha": "binary_sensor.<id>_radar_link -> ON (problem)"},
     {"id": "identify", "label": "Press Identify in Home Assistant",
      "blurb": "The WS2812 flashes white at 2 Hz for 10 s and the identify echo mirrors the window — the 'which device is which' moment.",
      "state": None, "led": "white", "event": None,
      "serial": "[identify] flashing LED for 10 s",
-     "mqtt": [{"suffix": "identify", "payload": '"on"'}],
+     # the identify echo is a bare word, no quotes
+     "mqtt": [{"suffix": "identify", "payload": "on"}],
      "ha": "button.<id>_identify pressed"},
 ]
+# radar_ok is the presence state's "not unknown" (refresh_snapshot), and the
+# lux the state carries is "%.1f" of the BH1750's reading
+must(MAIN_CPP, "g_snap.radar_ok  = (g_presence.state() != Presence::Unknown);", "radar_ok")
+must(PRESENCE_H.with_suffix(".cpp"), "        state_ = Presence::Unknown;\n        count_ = CountBucket::Zero;\n"
+     "        range_ = RangeBand::Unknown;", "a stall drops count and band")
+must(MQTT_CPP, 'else           snprintf(lux_val, sizeof(lux_val), "%.1f", (double)s.lux);', "lux in one decimal")
+must(MAIN_CPP, "      if (g_snap.lux < 0 || fabsf(lux - g_snap.lux) >= 5.0f) {\n        g_snap.lux = lux;\n        g_state_dirty = true;",
+     "a 5 lx move dirties the state row")
+_BASES = {"state": STATE_PAYLOAD, "events": EVENT_PAYLOAD,
+          "chain": next(t for t in TOPICS if t["suffix"] == "chain")["payload"]}
+for sc in SANDBOX:
+    for pub in sc["mqtt"]:
+        label = f"sandbox {sc['id']} {pub['suffix']}"
+        if "set" not in pub and "advance" not in pub:
+            if pub["suffix"] != "identify" or pub["payload"] not in ("on", "off"):
+                die(f"{label}: a publish with no fields to lay over must be a bare word the firmware writes")
+            continue
+        base = STATE_PAYLOAD_WELLBEING if pub.get("base") == "wellbeing" else _BASES[pub["suffix"]]
+        obj = json.loads(base)
+        for k in list(pub.get("set", {})) + pub.get("advance", []):
+            if k not in obj:
+                die(f"{label}: {k!r} is not a key of the topic's payload {list(obj)}")
+        for k in pub.get("advance", []):
+            obj[k] += 1
+        obj.update(pub.get("set", {}))
+        pub.setdefault("set", {})
+        pub.setdefault("advance", [])
+        pub["payload"] = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+must(MQTT_CPP, 'publish_checked("IDFY", topics.identify_echo, active ? "on" : "off",', "the identify echo is a bare on/off")
 must(MAIN_CPP, '"[identify] flashing LED for 10 s"', "identify serial line")
 for sc in SANDBOX:
     for pub in sc.get("mqtt", []):

@@ -186,6 +186,14 @@ inline int join_bird_top(const Stack& s, int bird) {
 constexpr int kSceneBirdOff = -64;
 constexpr int kBirdBreath = 2;  // canary_mark's breath, either way of the seat
 
+// The brand mark's square: small glass (the watch branch of onboard_ui.cpp)
+// and wide glass (the dash line), whose bird keeps one seat in every scene,
+// its center kWideBirdOff above the panel's center: inside its halo, over
+// the scene's title (bird_seat below).
+constexpr int kSmallBirdPx = 40;
+constexpr int kWideBirdPx = 64;
+constexpr int kWideBirdOff = -104;
+
 // ── What the text rows say (F45) ──────────────────────────────────────────
 //
 // Round glass has always split the credentials: the network name on the
@@ -231,6 +239,12 @@ constexpr char kPassFmt[] = "pass  %s";     // split glass, the row under
 // Wide glass (the dash line) has room for words, with and without a QR.
 constexpr char kWideScanFmt[] = "or join \"%s\"  •  password  %s";
 constexpr char kWideTypeFmt[] = "\"%s\"  •  password  %s";
+// ...and the same words over two rows where the panel's row cannot hold
+// them on one (the 480x800 portrait dash glass, wide_join_lines, F156): the
+// network name on the credentials row, the key on the row under it.
+constexpr char kWideScanNameFmt[] = "or join \"%s\"";
+constexpr char kWideNameFmt[] = "\"%s\"";
+constexpr char kWidePassFmt[] = "password  %s";
 
 // Room for any line this scene sets: the coach line (onboard_ui's 96-byte
 // buffer) and the joined credentials (a 32-byte SSID, the separator, a
@@ -512,11 +526,23 @@ constexpr int kRoundRingRimGap = 2;  // the round ring is 236 px on 240
 
 struct Ring {
   int d;    // outer diameter (the arc object's side)
-  int top;  // y of its top edge; it is centered on the panel horizontally
+  int top;  // y of its top edge
+  // Its x offset from the panel's centered seat (lv_obj_align TOP_MID's x):
+  // 0, centered, on every glass but landscape small glass (F157), where the
+  // halo stands beside the text. The QR card rides the same offset.
+  int x;
 };
+
+// The ring's center, at twice the scale (an odd diameter keeps its
+// half-pixel center): on a panel g_w wide, aligned TOP_MID with ring.x.
+inline int ring_cx2(int g_w, const Ring& ring) {
+  return 2 * (g_w / 2 - ring.d / 2 + ring.x) + ring.d;
+}
+inline int ring_cy2(const Ring& ring) { return 2 * ring.top + ring.d; }
 
 inline Ring halo_ring(const Glass& g, const Stack& s, const Rows& r) {
   Ring ring;
+  ring.x = 0;
   if (g.round) {
     const int dia = g.w < g.h ? g.w : g.h;
     ring.d = dia - 2 * kRoundRingRimGap;
@@ -533,11 +559,11 @@ inline Ring halo_ring(const Glass& g, const Stack& s, const Rows& r) {
 // True when the card's rounded corners (kCardRadius) are at least kMinGap
 // inside the ring's stroke. Integer math at twice the scale (the ring of
 // odd diameter keeps its half-pixel center); both are lv_obj_align'ed
-// TOP_MID on a panel g.w wide.
+// TOP_MID on a panel g.w wide, the card at the ring's x offset.
 inline bool card_inside_ring(const Glass& g, const Ring& ring, const Stack& s) {
-  const int cx2 = 2 * (g.w / 2 - ring.d / 2) + ring.d;
-  const int cy2 = 2 * ring.top + ring.d;
-  const int x0 = g.w / 2 - s.card / 2;
+  const int cx2 = ring_cx2(g.w, ring);
+  const int cy2 = ring_cy2(ring);
+  const int x0 = g.w / 2 - s.card / 2 + ring.x;
   const int dx_a = roundframe::iabs(2 * (x0 + kCardRadius) - cx2);
   const int dx_b = roundframe::iabs(2 * (x0 + s.card - kCardRadius) - cx2);
   const int dy_a = roundframe::iabs(2 * (s.card_top + kCardRadius) - cy2);
@@ -551,20 +577,58 @@ inline bool card_inside_ring(const Glass& g, const Ring& ring, const Stack& s) {
   return r2 > 0 && dx * dx + dy * dy <= r2 * r2;
 }
 
+// Where the scenes' text sits across the glass: the column the centered
+// lines and the Join rows are fitted to. On every glass but landscape small
+// glass that is the panel less its side pads, centered (x 0), and the scene
+// lines keep scene_copy()'s offsets (dy 0); round glass fits each row to the
+// disc's chord inside it. Landscape small glass sets it beside the halo
+// (land_join, F157).
+struct Column {
+  int x;      // its center's offset from the panel's center (the align's x)
+  int w;      // its width
+  int dy;     // how far the scene lines sit from scene_copy()'s offsets
+  bool side;  // it stands beside the halo (landscape small glass)
+};
+
+// A glass's Join stack, its halo and its text column: small_join() on small
+// glass (the watch branch of onboard_ui.cpp), wide_join() on the 800x480
+// line (its wide branch).
+struct SmallJoin {
+  Stack stack;
+  Ring halo;
+  Column col;
+};
+
+inline Column centered_column(const Glass& g) {
+  Column c;
+  c.x = 0;
+  c.w = g.w - 2 * roundframe::kRectSidePad;
+  c.dy = 0;
+  c.side = false;
+  return c;
+}
+
+// Landscape small glass: a small glass wider than it is tall. No display
+// ships one, but the nightlight wears its saved landscape rotation, 320x180,
+// before provision_run() (F157), and a stack of title, card and rows that
+// tall does not fit there.
+inline bool small_landscape(const Glass& g) { return !g.round && g.w > g.h; }
+
+// Defined below, with the scene lines it lays out (F157).
+inline SmallJoin land_join(const Glass& g, const Rows& r);
+
 // The small-glass Join stack and its halo (the watch branch of
 // onboard_ui.cpp): join_stack, halo_ring, and on rectangular glass the
 // canvas trimmed two px at a time, never below qr_floor(), until the card
 // is inside the ring (card_inside_ring). The rows do not move, so neither
-// does the ring.
-struct SmallJoin {
-  Stack stack;
-  Ring halo;
-};
-
+// does the ring. Landscape small glass composes the scene sideways instead
+// (land_join, F157).
 inline SmallJoin small_join(const Glass& g, const Rows& r) {
+  if (small_landscape(g)) return land_join(g, r);
   SmallJoin j;
   j.stack = join_stack(g, r);
   j.halo = halo_ring(g, j.stack, r);
+  j.col = centered_column(g);
   if (g.round) return j;
   const int floor_qr = qr_floor(r.card.qr);
   while (!card_inside_ring(g, j.halo, j.stack) &&
@@ -587,8 +651,8 @@ inline SmallJoin small_join(const Glass& g, const Rows& r) {
 // test holds the seat, not the hop.) Integer math at twice the scale, so a
 // ring of odd diameter keeps its half-pixel center.
 inline int scene_bird_top(const Glass& g, const Ring& ring, int bird) {
-  const int cx2 = 2 * (g.w / 2 - ring.d / 2) + ring.d;
-  const int cy2 = 2 * ring.top + ring.d;
+  const int cx2 = ring_cx2(g.w, ring);
+  const int cy2 = ring_cy2(ring);
   const int r2 = ring.d - 2 * kRingStroke;
   const int x0 = 2 * (g.w / 2 - bird / 2);
   const int dx_a = roundframe::iabs(x0 - cx2);
@@ -636,8 +700,8 @@ inline int scene_bird_top(const Glass& g, const Ring& ring, int bird) {
 //    the ladder reaches the shorter form in the Character's face before
 //    the whole line in the default face. The host test pins where each
 //    shows, and proves every line of every scene reads whole on every
-//    small-glass env with both ladders. (Wide glass sets its titles and
-//    bodies content-sized; only its network name is fitted.)
+//    small-glass env with both ladders. Wide glass follows the same rule
+//    inside its own halo (F84, wide_ring below).
 //  * Nothing is cut — except a network name, the user's own words, which
 //    no shorter form can say: name_line.
 
@@ -715,8 +779,22 @@ inline const char* join_title(bool qr) {
   return qr ? "Scan me" : "On your phone";
 }
 
+// The wide glass's Join title (the dash line), on its stack's title row in
+// the title face: the whole instruction where the row holds it (the 800 px
+// panel's), else fewer of its own words. A dash or 7" glass turned portrait
+// runs its onboarding on 480x800 (F156), and there neither whole form holds
+// the 464 px row in the 36 px title face, the only one either ladder sets a
+// title in (553 and 605 px): it read "Scan with your phone ca..." under
+// LV_LABEL_LONG_DOT.
+inline Forms wide_join_title(bool qr) {
+  return qr ? make_forms("Scan with your phone camera", "Scan with your phone")
+            : make_forms("On your phone, join this network",
+                         "Join this network");
+}
+
 // The width a centered scene line may take, its top at y_top with line
-// height h (see the rule above).
+// height h (see the rule above). Landscape small glass fits its lines to its
+// text column instead (scene_line).
 inline int scene_line_w(const Glass& g, const Ring& ring, int y_top, int h) {
   if (g.round) {
     const int dia = g.w < g.h ? g.w : g.h;
@@ -731,6 +809,248 @@ inline int scene_line_w(const Glass& g, const Ring& ring, int y_top, int h) {
   const int b = roundframe::iabs(y_top + h - cy);
   const int chord = 2 * roundframe::half_chord_at(r, a > b ? a : b);
   return chord < w ? chord : w;
+}
+
+// Where a centered scene line sits and how wide it may be: the offsets
+// onboard_ui.cpp aligns it CENTER with, and its width. `off` is its
+// scene_copy() offset, `h` its line height. Every glass but landscape small
+// glass keeps it centered across at that offset, scene_line_w() wide; there
+// it sits in the text column beside the halo (land_join, F157), shifted by
+// the column's dy, as wide as the column.
+struct LineSeat {
+  int x;
+  int y;
+  int w;
+};
+
+inline LineSeat scene_line(const Glass& g, const Ring& ring, const Column& col,
+                           int off, int h) {
+  LineSeat ls;
+  if (col.side) {
+    ls.x = col.x;
+    ls.y = off + col.dy;
+    ls.w = col.w;
+    return ls;
+  }
+  ls.x = 0;
+  ls.y = off;
+  ls.w = scene_line_w(g, ring, g.h / 2 + off - h / 2, h);
+  return ls;
+}
+
+// ── The scenes on wide glass (F84) ───────────────────────────────────────
+//
+// The 800x480 glass (the dash, dash7 and nightstand7 envs; the wide branch
+// of onboard_ui.cpp) keeps one 300 px halo, centered: concentric with its
+// Join card, between the Join title row and the credentials row (the host
+// test holds it clear of both). Its scene titles and bodies used to be
+// content-sized in the title and body faces (36 px, and 24 or 28), so they
+// ran through it: "No address from the router" spanned x 150..650 where the
+// ring's sides are near 254 and 546, "Let's get you connected." and
+// "looking for your canaries" touched them, a long network name ran through
+// both, and every scene's title box overlapped its body's by 4 px (6 in
+// Hello) (F84, measured in native LVGL 8.4).
+//
+// The rule is the small glass's (F65): every centered line is fitted by
+// fit_line (a network name by name_line) to scene_line_w at its latitude,
+// inside this ring's inner chord, in the same faces — the title in the
+// Character's body face, the body in its caption face, each stepping down
+// to the default Character's face of the same role. No title face could
+// do it: the chord is about 284 px at a title's latitude, and at 36 px only
+// "Hello.", "Joining", "You're in." and "No address" are that narrow. So
+// the two shorter forms show here too ("Check your phone", "No address"),
+// at both ladders, for the halo's chord: the trade F86 names for the
+// touch169 and the AMOLED. The Join title keeps the title face on its row
+// (it sits above the ring).
+constexpr int kWideRingD = 300;
+
+inline Ring wide_ring(const Glass& g) {
+  Ring ring;
+  ring.d = kWideRingD;
+  ring.top = (g.h - ring.d) / 2;  // lv_obj_center
+  ring.x = 0;
+  return ring;
+}
+
+// The wide glass's Join stack, halo and column (the wide branch of
+// onboard_ui.cpp): join_stack, wide_ring and the panel's row. Its note row
+// sits under a row as tall as the credentials row, since a split puts the
+// key there in the credentials' face (wide_join_lines, F156).
+inline SmallJoin wide_join(const Glass& g, const Rows& r) {
+  SmallJoin j;
+  j.stack = join_stack(g, r);
+  j.stack.note_top =
+      j.stack.hint_top + (r.creds_h > r.hint_h ? r.creds_h : r.hint_h);
+  j.halo = wide_ring(g);
+  j.col = centered_column(g);
+  return j;
+}
+
+// ── The Join rows on wide glass (F156) ───────────────────────────────────
+//
+// The 800x480 glass sets one worded credentials line (kWideScanFmt, or
+// kWideTypeFmt when no code rendered) in the Character's label face, and
+// the stuck-phone hint on the row under it in the caption face. Turned
+// portrait, a dash or 7" glass runs its onboarding on 480x800, and on its
+// 464 px row the line can be 655 px (773 under Heirloom) and the hint 513
+// (644): content-sized, they ran off both edges.
+//
+// The rule is the small glass's (join_lines, F45), in the wide glass's words
+// and faces:
+//  * The worded line stays whole on one row where the row holds it in the
+//    label face. Otherwise it splits: the network name ("or join "<name>"",
+//    or the quoted name when no code rendered) on the credentials row, and
+//    "password  <key>" (else the bare key) on the row under it, both in the
+//    credentials' face; a standing hint then takes the note row.
+//  * The hint tries its forms, longest first, in the caption face and then
+//    the default Character's; the narrow form drops "can't join?" and keeps
+//    the fix.
+//  * Every row tries the default Character's face of its role before it
+//    gives up; the host test proves no row fails for any name or key the
+//    unit can mint, on either canvas, at either ladder.
+// creds_m measures in the credentials' faces (own, floor), hint_m in the
+// caption faces.
+template <class CredsMeasure, class HintMeasure>
+inline JoinLines wide_join_lines(bool qr, int row_w, const char* ssid,
+                                 const char* pass, const char* hint,
+                                 const char* hint_narrow, CredsMeasure creds_m,
+                                 HintMeasure hint_m) {
+  JoinLines j = JoinLines();
+  char joined[kLineCap];
+  snprintf(joined, sizeof(joined), qr ? kWideScanFmt : kWideTypeFmt, ssid,
+           pass);
+  j.split = creds_m(joined, false) > row_w;
+  const bool hinted = hint != nullptr && hint[0] != '\0';
+  const char* hints[2] = {hint, hint_narrow};
+  if (!j.split) {
+    set_line(j.creds, joined, false, true);
+    if (hinted) {
+      fit_line(j.low, hints, 2, row_w, hint_m);
+    } else {
+      set_line(j.low, "", false, true);
+    }
+    set_line(j.note, "", false, true);
+    return j;
+  }
+  char named[kLineCap];
+  snprintf(named, sizeof(named), qr ? kWideScanNameFmt : kWideNameFmt, ssid);
+  const char* names[2] = {named, ssid};
+  fit_line(j.creds, names, 2, row_w, creds_m);
+  char labeled[kLineCap];
+  snprintf(labeled, sizeof(labeled), kWidePassFmt, pass);
+  const char* keys[2] = {labeled, pass};
+  fit_line(j.low, keys, 2, row_w, creds_m);
+  if (hinted) {
+    fit_line(j.note, hints, 2, row_w, hint_m);
+  } else {
+    set_line(j.note, "", false, true);
+  }
+  return j;
+}
+
+// The bird's seat in a scene: its box's top-left on the panel (it is
+// aligned TOP_MID, at x - (g.w / 2 - d / 2)) and its side. Small glass: the
+// Join scene's (join_bird_top, while no QR is up) or every other scene's
+// (scene_bird_top, in the halo `ring`); landscape small glass: the card's
+// seat, the halo's center, in every scene (land_join, F157); wide glass: one
+// seat for every scene. onboard_ui.cpp seats the bird here, and the
+// emulator's onboarding probe holds the box the bird is drawn in to it
+// (F89).
+struct Seat {
+  int x;
+  int y;
+  int d;
+};
+
+inline Seat bird_seat(const Glass& g, bool wide, const Stack& s,
+                      const Ring& ring, ObStage st) {
+  Seat seat;
+  seat.d = wide ? kWideBirdPx : kSmallBirdPx;
+  seat.x = g.w / 2 - seat.d / 2;
+  if (wide) {
+    seat.y = g.h / 2 - seat.d / 2 + kWideBirdOff;
+  } else if (small_landscape(g)) {
+    seat.x += ring.x;
+    seat.y = join_bird_top(s, seat.d);
+  } else if (st == ObStage::Join) {
+    seat.y = join_bird_top(s, seat.d);
+  } else {
+    seat.y = scene_bird_top(g, ring, seat.d);
+  }
+  return seat;
+}
+
+// ── Landscape small glass (F157) ─────────────────────────────────────────
+//
+// The nightlight wears its saved rotation before provision_run() (its own
+// NVS key), and setup can reopen from loop(), so a landscape one runs the
+// first-boot scenes on 320x180. The small glass's stack does not fit there:
+// small_join() gave a 124 px halo (118 under Heirloom) whose inner chord
+// held a 96 px line, so nine scene lines per ladder could not read whole;
+// the QR card's corners reached past its stroke, the note row ran off the
+// glass, the bird's seat crossed the stroke, and the Success hop lifted the
+// bird's box to y -7, the top edge through its head.
+//
+// The rule: the scene turns sideways.
+//  * The halo stands at the panel's right, kMinGap from its edge and
+//    centered down it, the smallest ring (even, so the centers agree) that
+//    holds the QR card at its floor canvas — the family's canvas trimmed two
+//    px at a time, never below qr_floor(), so the join code keeps its module
+//    pitch — with the card's rounded corners kMinGap inside its stroke,
+//    concentric. The bird sits at the card's seat, the halo's center, in
+//    every scene: inside the stroke over its breath and its hop.
+//  * The text takes the rest of the panel as one column, from the panel's
+//    side pad to kMinGap short of the halo. Every centered scene line is
+//    fitted to the column's width (fit_line, name_line) and keeps its
+//    scene_copy() offset, shifted by the column's dy; the Join title sits at
+//    the scenes' title latitude; the credentials, hint and note rows stack
+//    under the lowest scene body, kMinGap clear of it. dy centers that
+//    block, the highest title through the note row, down the panel.
+//  * `fits` says the halo and the block are on the glass.
+// The nightlight's own landscape face keeps its bird in its right column
+// too (nightlight_ui.cpp), so the bird ends the setup on the side it
+// lives on.
+inline SmallJoin land_join(const Glass& g, const Rows& r) {
+  SmallJoin j;
+  Stack s = Stack();
+  s.qr = r.card.qr;
+  while (s.qr - 2 >= qr_floor(r.card.qr)) s.qr -= 2;
+  s.card = s.qr + 2 * r.card.pad;
+  Ring ring;
+  ring.x = 0;
+  ring.d = s.card + (s.card & 1);
+  for (;;) {
+    ring.top = (g.h - ring.d) / 2;
+    s.card_top = ring.top + (ring.d - s.card) / 2;
+    if (card_inside_ring(g, ring, s)) break;
+    ring.d += 2;
+  }
+  const int x1 = g.w - kMinGap - ring.d;  // the halo's left edge
+  ring.x = x1 - (g.w / 2 - ring.d / 2);
+  Column col;
+  col.side = true;
+  const int left = roundframe::kRectSidePad;
+  col.w = x1 - kMinGap - left;
+  col.x = left + col.w / 2 - g.w / 2;
+  // The block before its shift: the highest title, the lowest body (both
+  // LV_ALIGN_CENTER'ed in their own faces' line heights), and the rows.
+  const int t_off =
+      kSceneTitleOff < kHelloTitleOff ? kSceneTitleOff : kHelloTitleOff;
+  const int b_off = kSceneBodyOff > kHelloBodyOff ? kSceneBodyOff : kHelloBodyOff;
+  const int top = g.h / 2 - r.title_h / 2 + t_off;
+  const int creds = g.h / 2 - r.creds_h / 2 + b_off + r.creds_h + kMinGap;
+  const int bottom = creds + r.creds_h + 2 * r.hint_h;
+  col.dy = (g.h - top - bottom) / 2;
+  s.title_top = g.h / 2 - r.title_h / 2 + kSceneTitleOff + col.dy;
+  s.creds_top = creds + col.dy;
+  s.hint_top = s.creds_top + r.creds_h;
+  s.note_top = s.hint_top + r.hint_h;
+  s.fits = top + col.dy >= 0 && bottom + col.dy <= g.h && col.w > 0 &&
+           ring.top >= kMinGap && ring.top + ring.d + kMinGap <= g.h;
+  j.stack = s;
+  j.halo = ring;
+  j.col = col;
+  return j;
 }
 
 // The Connecting scene's body: the network name the phone just sent. Whole

@@ -38,17 +38,22 @@ extern "C" {
 #endif
 
 /**
- * Initialize the module pipeline once at boot, after the canary CSI
- * HAL has been started. Registers the v1 modules — core.presence,
- * core.breathing, core.activity_ribbon, meta.daily_summary,
- * anomaly.baseline — with the common chokepoint, opens any persisted
- * settings from NVS, and primes per-module state.
+ * Initialize the module pipeline once at boot, after csi::init() and
+ * after csi_event_egress_begin() has restored the event-id floor, and
+ * before the features callback is installed. Registers the v1 modules
+ * (core.presence, core.breathing, core.activity_ribbon,
+ * meta.daily_summary, anomaly.baseline and the rest) with the common
+ * chokepoint, then runs each one's init() once through
+ * csi_module_init_all(), which reads its stored settings from NVS by the
+ * rule both trees share (csi_module_settings_nvs.h; sweep F93). A
+ * setting that is not stored, or a namespace that will not open, reads as
+ * the module's built-in default.
  *
- * Idempotent: a second call is a no-op (re-registering the same module
- * id replaces the prior registration in place; settings are re-read).
+ * A second call changes nothing a module sees: the registry refuses an id
+ * it already holds, and no module's init() runs twice. Settings are read
+ * at boot only; nothing on the canary changes them while it runs.
  *
- * @return true on success; false if init failed (e.g. settings open
- *         failure mid-init — modules then run with built-in defaults).
+ * @return true.
  */
 bool securacv_csi_modules_init(void);
 
@@ -99,11 +104,28 @@ void securacv_csi_modules_tamper_watch_contact(int enclosure_open);
  * Close the CSI bundles that are due (their 10-minute window or 2-minute
  * quiet gap has elapsed) — csi_bundler_tick(). Call once per main loop,
  * OUTSIDE the CSI power/degrade gates: the feature callback stops while
- * they skip csi::process(), and an open bundle (presence, or a
- * system.integrity tamper) must still close and commit on time. Safe to
- * call before init().
+ * they skip csi::process(), and an open bundle (core.presence's, or any
+ * other row that names a state) must still close and commit on time. A
+ * system.integrity tamper does not wait for it: the module seals its own
+ * key with csi_bundler_flush_key() at emit. Safe to call before init():
+ * with no module registered nothing opens, and the tick is a bounded scan
+ * that closes nothing. The feed above closes no bundle, so this is what
+ * commits one; same rule as the canary-wap's csi_integration::loop().
+ * Loop task; on HA builds the row queues for the event egress pump.
  */
 void securacv_csi_modules_tick(void);
+
+/**
+ * Hand meta.daily_summary the household minute of day (0..1439), the same
+ * local wall time the chokepoint's clock offset is derived from (sweep F28),
+ * and a key for the local date it falls on (years since 1900 * 366 + day of
+ * the year), so the summary is one per date across DST and zone changes.
+ * main.cpp's updateCsiClockOffset() calls it on every loop pass with a
+ * synced wall clock and never before one, so an unsynced canary commits no
+ * daily summary (sweep F121). Plain-typed, like the calls above, to keep
+ * main.cpp free of the module headers. Loop task only.
+ */
+void securacv_csi_modules_set_clock(uint16_t local_minute_of_day, uint32_t local_date);
 
 /**
  * Tear down the pipeline. Optional — only needed if the host wants

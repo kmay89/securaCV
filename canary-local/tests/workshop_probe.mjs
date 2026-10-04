@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MIME = {
@@ -44,15 +45,15 @@ await allow("canary-local/enclosures/preview");
 await allow("docs/hardware/enclosure");
 
 const server = createServer(async (req, res) => {
-  const key = decodeURIComponent(req.url.split("?")[0].split("#")[0]);
-  const path = SERVABLE.get(key);
+  const path = lookup(SERVABLE, req.url);   // decodes inside its own try: /%E0 is a 404 (A52)
   if (!path) { res.writeHead(404); res.end(); return; }
   try {
     const data = await readFile(path);
     res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(data);
   } catch { res.writeHead(404); res.end(); }
-}).listen(0);
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
 
 const browser = await pw.chromium.launch(
@@ -83,7 +84,7 @@ step("packages ok");
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length >= 2;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 
 step("meshes in scene");
 // ── honesty ribbon: deviate one option → custom; restore → exact ──
@@ -122,7 +123,7 @@ await page.locator(".ws-chip", { hasText: "lid" }).first().click();
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length === 1;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 const specs = await page.locator(".ws-specs").textContent();
 for (const needle of ["triangles", "cm³", "mm", "print-validated"]) {
   if (!specs.includes(needle)) fail(`spec strip missing "${needle}"`);
@@ -131,7 +132,7 @@ await page.locator(".ws-chip", { hasText: "all" }).click();
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length >= 2;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 
 // ── the parameter-set download says exactly what it is ──
 const how = await page.locator(".ws-check").textContent();
@@ -162,7 +163,7 @@ await addon.check();
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length >= 4;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 
 step("addon meshes ok");
 // ── dreaming mode hides the deep sheet ──
@@ -214,7 +215,7 @@ await page.locator(".ws-device", { hasText: "Canary Dash" }).click();
 await page.waitForFunction(() => {
   const cv = document.querySelector(".ws-canvas");
   return cv && cv.__scene && cv.__scene.parts.length >= 1;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 if (!(await page.locator(".ws-soon").count())) {
   fail("dash configure should carry a coming-soon card (no tick-box options)");
 }

@@ -113,6 +113,18 @@ EMSCRIPTEN_KEEPALIVE int vision_emu_push_box(int x, int y, int w, int h,
   return 1;
 }
 
+// One frame through the firmware: the SSCMA boxes staged since begin_frame,
+// sample_from_boxes, PresenceFSM::tick, then the snapshot publish_event_json
+// and publish_state_retained read on that tick. "sample" is the frame's own
+// reading (its cell is the primary box's); "fsm" is what the device
+// publishes: the clocks (presence_ms, dwell_ms, and visit_ms, the last
+// completed stay the FSM latches at presence_ended; dwell_ended's dwell_ms
+// and visit_ms both run to the frame that declared the person gone, so they
+// include the lost timeout) and the voxel tracker's settled cell, which
+// moves only once the person has been seen away from it three times in a
+// row and keeps the last cell once the frame is empty (sweep A39). Each
+// visit starts its own tracker, so a visit's presence_started names the
+// cell that visit began in (sweep F152).
 EMSCRIPTEN_KEEPALIVE const char* vision_emu_tick_json(unsigned int now_ms) {
   g_sample = canary::vision::detection::sample_from_boxes(
       g_boxes, canary::cfg::detect());
@@ -144,7 +156,9 @@ EMSCRIPTEN_KEEPALIVE const char* vision_emu_tick_json(unsigned int now_ms) {
       "\"person_count\":%u,\"posture\":\"%s\","
       "\"proximity\":\"%s\",\"voxel_mask\":%u},"
       "\"fsm\":{\"presence\":%s,\"dwelling\":%s,"
-      "\"confidence\":%d,\"presence_ms\":%lu,\"dwell_ms\":%lu},"
+      "\"confidence\":%d,\"presence_ms\":%lu,\"dwell_ms\":%lu,"
+      "\"visit_ms\":%lu,"
+      "\"voxel\":{\"r\":%d,\"c\":%d,\"rows\":%u,\"cols\":%u}},"
       "\"event\":%s,\"reason\":%s}",
       g_sample.person_now ? "true" : "false", bbox,
       g_sample.voxel.r, g_sample.voxel.c, (unsigned)g_sample.voxel.rows,
@@ -155,7 +169,11 @@ EMSCRIPTEN_KEEPALIVE const char* vision_emu_tick_json(unsigned int now_ms) {
       g_snapshot.presence ? "true" : "false",
       g_snapshot.dwelling ? "true" : "false", g_snapshot.confidence,
       (unsigned long)g_snapshot.presence_ms,
-      (unsigned long)g_snapshot.dwell_ms, event_json, reason_json);
+      (unsigned long)g_snapshot.dwell_ms,
+      (unsigned long)g_snapshot.visit_ms,
+      g_snapshot.voxel.r, g_snapshot.voxel.c,
+      (unsigned)g_snapshot.voxel.rows, (unsigned)g_snapshot.voxel.cols,
+      event_json, reason_json);
   return g_json;
 }
 

@@ -14,14 +14,19 @@
 //      and returns to idle.
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set). Prints
-// EYES_PROBE_OK / exits 0 on success.
+// EYES_PROBE_OK / exits 0 on success. With LAB_CORES=native, step 2 drives
+// this tree's Vision sources instead of the committed wasm
+// (tests/native/README.md).
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, dirname, resolve, sep } from "node:path";
+import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { indexTree, lookup } from "./probe_server.mjs";
+import { probeCores } from "./native/probe_cores.js";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
+const FILES = indexTree(ROOT);
 const TYPES = {
   ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
   ".json": "application/json", ".css": "text/css", ".svg": "image/svg+xml",
@@ -34,18 +39,28 @@ const pw = await (async () => {
 
 const fail = (m) => { console.error("EYES_PROBE_FAIL:", m); process.exit(1); };
 
+// LAB_CORES=native (sweep A41): the page's core (canary-vision-core) is built
+// from this tree's sources (tests/native/cores.js, as the Node page tests
+// build it) and reached through a stand-in factory served at its dist URL
+// (tests/native/probe_cores.js). Unset (or "dist"), this is null and the
+// committed dist is served as always.
+const cores = await probeCores(["canary-vision-core"]);
+
 const server = createServer(async (req, res) => {
   try {
-    const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    if (rel === "/favicon.ico") { res.writeHead(204); return res.end(); }
-    const p = resolve(join(ROOT, rel));
-    if (p !== ROOT && !p.startsWith(ROOT + sep)) { res.writeHead(403); return res.end(); }
-    const file = rel.endsWith("/") ? join(p, "index.html") : p;
+    if (cores && await cores.handle(req, res)) return;
+    const path = req.url.split("?")[0];
+    if (path === "/favicon.ico") { res.writeHead(204); return res.end(); }
+    // the URL never becomes a path: it is looked up in the tree's index
+    // (probe_server.mjs), so the path that reaches readFile is the index's
+    const file = lookup(FILES, req.url);
+    if (!file) { res.writeHead(404); return res.end("not found"); }
     const body = await readFile(file);
     res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
     res.end(body);
   } catch { res.writeHead(404); res.end("not found"); }
-}).listen(0);
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
 
 const errors = [];
@@ -58,7 +73,11 @@ page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + 
 page.on("pageerror", (e) => errors.push("pageerror: " + String(e)));
 
 try {
-  await page.goto(`http://localhost:${port}/canary-local/eyes.html`, { waitUntil: "networkidle", timeout: 45000 });
+  const url = `http://127.0.0.1:${port}/canary-local/eyes.html`;
+  // Under LAB_CORES=native each core call is a request, which "networkidle"
+  // would count; the bridge waits for the same quiet without them.
+  if (cores) await cores.gotoIdle(page, url, { timeout: 45000 });
+  else await page.goto(url, { waitUntil: "networkidle", timeout: 45000 });
 
   // ── 1. page renders the safeguards + real-firmware chip + gated button ──
   await page.waitForSelector(".eyes-disclaimer", { timeout: 15000 });
@@ -71,10 +90,11 @@ try {
     fail("runtime chip did not identify the real firmware wasm: " + chipText);
 
   if (!(await page.evaluate(() => typeof globalThis.createCanaryVisionCore === "function")))
-    fail("committed Canary Vision core factory did not load");
+    fail((cores ? "LAB_CORES=native stand-in" : "committed") + " Canary Vision core factory did not load");
   if (!(await page.$(".eyes-start"))) fail("Start watching button missing");
 
-  // ── 2. the committed wasm decides presence, and its filter holds ──
+  // ── 2. the committed wasm (or, under LAB_CORES=native, this tree's
+  //    sources) decides presence, and its filter holds ──
   const verdicts = await page.evaluate(async () => {
     const m = await globalThis.createCanaryVisionCore();
     const contract = () => JSON.parse(m.cwrap("vision_emu_contract_json", "string", [])());
@@ -112,7 +132,7 @@ try {
     return { events, weakEvents };
   });
   if (verdicts.events[0] !== "presence_started")
-    fail("a strong box did NOT raise presence through the browser wasm: " + JSON.stringify(verdicts.events));
+    fail(`a strong box did NOT raise presence through ${cores ? "the native core" : "the browser wasm"}: ` + JSON.stringify(verdicts.events));
   if (!verdicts.events.includes("presence_ended"))
     fail("losing the box did NOT end presence: " + JSON.stringify(verdicts.events));
   if (verdicts.weakEvents.length)
@@ -129,7 +149,7 @@ try {
   const playing = await page.waitForFunction(() => {
     const v = document.querySelector(".eyes-stage video");
     return !!v && !!v.srcObject && v.readyState >= 2 && v.videoWidth > 0;
-  }, { timeout: 10000 }).then(() => true).catch(() => false);
+  }, null, { timeout: 10000 }).then(() => true).catch(() => false);
   if (!playing) fail("the fake camera stream did not reach the sensor pane");
   await page.click(".eyes-stop");
   await page.waitForSelector(".eyes-start", { timeout: 5000 })
@@ -141,7 +161,8 @@ try {
   if (!released) fail("Stop did not release the camera tracks");
 
   if (errors.length) fail("page errors:\n  " + errors.join("\n  "));
-  console.log("EYES_PROBE_OK");
+  if (cores && !cores.used()) fail("LAB_CORES=native, but the page never ran the native core: " + cores.summary());
+  console.log("EYES_PROBE_OK" + (cores ? ` (LAB_CORES=native: ${cores.summary()})` : ""));
   process.exit(0);
 } catch (e) {
   fail(String((e && e.stack) || e));

@@ -1,0 +1,763 @@
+/* Host stand-in for NimBLE-Arduino 2.x (the canary-wap Bluetooth channel
+ * host harness, test_bluetooth_commands_wap.cpp, sweep F111): the classes
+ * and calls bluetooth_channel.cpp and ble_standard_profiles.h make, with
+ * just enough state to answer them. Nothing here is a radio. Every call
+ * that would act on the radio or the bond store (advertising start/stop, a
+ * scan start/stop, a disconnect, a passkey answer, a bond delete) is
+ * recorded with the task the test is playing (host_sim::note), and the
+ * passkey answers are kept (host_sim::passkey_answers) so a test can see one
+ * pending pairing answered once. The server keeps the links the test says
+ * are up (link_up), as the stack's getPeerInfoByHandle() answers them.
+ *
+ * Since sweep F171 the server callbacks are NimBLE-Arduino 2.5.0's: every
+ * virtual it declares, and its defaults (NimBLEServer.cpp): a server starts
+ * with them, setCallbacks(nullptr) goes back to them, and the default
+ * onConfirmPassKey answers yes, onPassKeyDisplay shows 123456. So a test
+ * that installs a second module's callbacks over the channel's sees what a
+ * device would: the library's yes. setCallbacks' deleteCallbacks flag is
+ * kept (callbacks_deleted_with_server()), where NimBLE would delete the
+ * object when the server goes. A link names its over-the-air address and its
+ * identity address (getIdAddress(): the same unless the test gives it a
+ * resolvable private address over an identity, as phones use); the bond
+ * store is keyed by identity, as NimBLE's is (sweep F172).
+ *
+ * And deleteBond() answers as ble_gap_unpair() does (NimBLE-Arduino 2.3.8
+ * and 2.5.0, ble_gap.c, the same file in both): it first ends a live link to
+ * that address, then answers false for an address with no bond (the store's
+ * BLE_HS_ENOENT), and false with the bond kept (BLE_HS_EBUSY) for a bond
+ * that carries the peer's IRK (host_sim::store_bond(addr, true): a phone
+ * that uses private addresses hands it over) while the advertiser runs or a
+ * discovery does (this scanner's, or the presence loop's on the same
+ * scanner, host_sim::presence_disc). Before the F172 review it deleted
+ * every bond and answered true, so no test could see the refusal a device
+ * meets.
+ *
+ * And the bond store's size and its store-full path (sweep F189), as
+ * NimBLE-Arduino 2.3.8 and 2.5.0 have them (the same ble_sm.c, ble_store.c,
+ * ble_store_util.c and ble_gap.c in both): the store holds
+ * CONFIG_BT_NIMBLE_MAX_BONDS bonds (nimconfig.h's default, 3, which no WAP
+ * build overrides; host_sim::max_bonds). A pairing that starts while the
+ * bonds stored and the pairings under way fill it asks the device callbacks
+ * first (BLE_STORE_EVENT_FULL, ble_sm_chk_store_overflow(); a nonzero answer
+ * refuses the pairing before it starts: host_sim::pairing_starts()); a bond
+ * that then finds no room asks again (BLE_STORE_EVENT_OVERFLOW, from
+ * ble_store_write(); a nonzero answer leaves it unstored:
+ * host_sim::persist_bond()). NimBLE's default answer
+ * (NimBLEDeviceCallbacks::onStoreStatus() = ble_store_util_status_rr())
+ * lets FULL proceed and answers OVERFLOW by ble_gap_unpair_oldest_peer(),
+ * which goes through ble_gap_unpair()'s busy guard like deleteBond(). The
+ * stack persists a bond before it reports the link's authentication, so a
+ * test pairs a phone through pairing_starts() and persist_bond() first. */
+#ifndef STUB_BT_NIMBLE_DEVICE_H
+#define STUB_BT_NIMBLE_DEVICE_H
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <algorithm>
+#include <atomic>
+#include <functional>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "Arduino.h"
+
+struct ble_addr_t {
+  uint8_t type;
+  uint8_t val[6];
+};
+
+// As NimBLE-Arduino 2.5.0's (src/NimBLEAddress.cpp): the native form keeps
+// the bytes least significant first (getBase()->val, as the stack hands
+// them over), toString() prints them most significant first, and the
+// byte-array constructor takes them in the printed order, reversing them
+// into the native form (std::reverse_copy). A copy of getBase()->val put
+// back through that constructor comes out reversed; the ble_addr_t
+// constructor keeps them as they are.
+class NimBLEAddress {
+ public:
+  NimBLEAddress() { memset(&a_, 0, sizeof a_); }
+  NimBLEAddress(const ble_addr_t address) : a_(address) {}
+  NimBLEAddress(const uint8_t* addr, uint8_t type) {
+    for (int i = 0; i < 6; ++i) a_.val[i] = addr[5 - i];
+    a_.type = type;
+  }
+  const ble_addr_t* getBase() const { return &a_; }
+  uint8_t getType() const { return a_.type; }
+  // A resolvable private address: random, the two most significant bits 01.
+  bool isRpa() const { return a_.type == 1 && (a_.val[5] & 0xC0) == 0x40; }
+  bool operator==(const NimBLEAddress& o) const {
+    return a_.type == o.a_.type && memcmp(a_.val, o.a_.val, 6) == 0;
+  }
+  bool operator!=(const NimBLEAddress& o) const { return !(*this == o); }
+  std::string toString() const {
+    char b[18];
+    snprintf(b, sizeof b, "%02x:%02x:%02x:%02x:%02x:%02x", a_.val[5], a_.val[4],
+             a_.val[3], a_.val[2], a_.val[1], a_.val[0]);
+    return b;
+  }
+ private:
+  ble_addr_t a_;
+};
+
+class NimBLEUUID {
+ public:
+  NimBLEUUID(const char* s) : s_(s ? s : "") {}
+  explicit NimBLEUUID(uint16_t u) {
+    char b[8];
+    snprintf(b, sizeof b, "%04x", (unsigned)u);
+    s_ = b;
+  }
+  bool operator==(const NimBLEUUID& o) const { return s_ == o.s_; }
+ private:
+  std::string s_;
+};
+
+namespace NIMBLE_PROPERTY {
+enum : uint16_t {
+  READ = 0x0001, READ_ENC = 0x0002, READ_AUTHEN = 0x0004, READ_AUTHOR = 0x0008,
+  WRITE = 0x0010, WRITE_NR = 0x0020, WRITE_ENC = 0x0040, WRITE_AUTHEN = 0x0080,
+  WRITE_AUTHOR = 0x0100, BROADCAST = 0x0200, NOTIFY = 0x0400, INDICATE = 0x0800,
+};
+}  // namespace NIMBLE_PROPERTY
+
+#define BLE_HS_IO_DISPLAY_YESNO 1
+
+// NimBLE's store status codes (host/ble_store.h, host/ble_hs.h; the same in
+// NimBLE-Arduino 2.3.8 and 2.5.0), which NimBLEDevice.h brings in.
+#define BLE_STORE_OBJ_TYPE_OUR_SEC   1
+#define BLE_STORE_OBJ_TYPE_PEER_SEC  2
+#define BLE_STORE_OBJ_TYPE_CCCD      3
+#define BLE_STORE_OBJ_TYPE_PEER_ADDR 6
+#define BLE_STORE_OBJ_TYPE_CSFC      8
+#define BLE_STORE_EVENT_OVERFLOW     1
+#define BLE_STORE_EVENT_FULL         2
+#define BLE_HS_ENOENT                5
+#define BLE_HS_ENOMEM                6
+#define BLE_HS_EBUSY                 15
+#define BLE_HS_EUNKNOWN              17
+#define BLE_HS_ESTORE_CAP            27
+// The record an OVERFLOW names (host/ble_store.h): the stand-in carries the
+// CCCD's, whose peer the default answer spares.
+struct ble_store_value_cccd {
+  ble_addr_t peer_addr;
+  uint16_t chr_val_handle;
+  uint16_t flags;
+  unsigned value_changed : 1;
+};
+union ble_store_value {
+  struct ble_store_value_cccd cccd;
+};
+struct ble_store_status_event {
+  int event_code;
+  union {
+    struct {
+      int obj_type;
+      const union ble_store_value* value;
+    } overflow;
+    struct {
+      int obj_type;
+      uint16_t conn_handle;
+    } full;
+  };
+};
+
+// NimBLE-Arduino 2.x's device callbacks: the store's status. The default
+// (defined below NimBLEDevice) is ble_store_util_status_rr().
+class NimBLEDeviceCallbacks {
+ public:
+  virtual ~NimBLEDeviceCallbacks() = default;
+  virtual int onStoreStatus(struct ble_store_status_event* event, void* arg);
+};
+
+namespace host_sim {
+// Heap copies of a NimBLEConnInfo alive (the pending Numeric Comparison's,
+// sweep F143): one owner deletes each once, so it comes back to 0.
+inline std::atomic<int> conn_heap{0};
+}  // namespace host_sim
+
+// One link's view, copied by value (bluetooth_channel.cpp keeps a heap copy
+// of the one awaiting a Numeric Comparison answer).
+class NimBLEConnInfo {
+ public:
+  static void* operator new(size_t n) {
+    ++host_sim::conn_heap;
+    return ::operator new(n);
+  }
+  static void operator delete(void* p) {
+    if (p == nullptr) return;
+    --host_sim::conn_heap;
+    ::operator delete(p);
+  }
+  uint16_t handle = 1;
+  NimBLEAddress address;                 // over the air (peer_ota_addr)
+  // The identity (peer_id_addr), when the test gives one apart from the
+  // over-the-air address; NimBLE reports the same address for a peer that
+  // uses no private address.
+  NimBLEAddress id_address;
+  bool id_known = false;
+  bool encrypted = false, authenticated = false, bonded = false;
+  uint16_t getConnHandle() const { return handle; }
+  NimBLEAddress getAddress() const { return address; }
+  NimBLEAddress getIdAddress() const { return id_known ? id_address : address; }
+  bool isEncrypted() const { return encrypted; }
+  bool isAuthenticated() const { return authenticated; }
+  bool isBonded() const { return bonded; }
+};
+
+class NimBLECharacteristic;
+class NimBLECharacteristicCallbacks {
+ public:
+  virtual ~NimBLECharacteristicCallbacks() = default;
+  virtual void onWrite(NimBLECharacteristic*, NimBLEConnInfo&) {}
+  virtual void onRead(NimBLECharacteristic*, NimBLEConnInfo&) {}
+};
+
+class NimBLECharacteristic {
+ public:
+  void setCallbacks(NimBLECharacteristicCallbacks* cb) { cb_ = cb; }
+  void setValue(const uint8_t* v, size_t n) { value_.assign((const char*)v, n); }
+  void setValue(const char* v) { value_ = v ? v : ""; }
+  std::string getValue() const { return value_; }
+  void notify() { ++notifies; }
+  unsigned notifies = 0;
+ private:
+  NimBLECharacteristicCallbacks* cb_ = nullptr;
+  std::string value_;
+};
+
+class NimBLEService {
+ public:
+  NimBLECharacteristic* createCharacteristic(const NimBLEUUID&, uint32_t) {
+    chars_.emplace_back(new NimBLECharacteristic());
+    return chars_.back().get();
+  }
+  void start() {}
+  // What NimBLEServer::start() does to a service (2.5.0's resetGATT() and
+  // start_internal(): every characteristic, by walking the service's vector).
+  size_t gatt_register() const {
+    size_t n = 0;
+    for (const auto& c : chars_) n += (c != nullptr);
+    return n;
+  }
+ private:
+  std::vector<std::unique_ptr<NimBLECharacteristic>> chars_;
+};
+
+class NimBLEServer;
+// NimBLE-Arduino 2.5.0's NimBLEServerCallbacks: the same virtuals, and its
+// defaults (defined below NimBLEDevice, which they call).
+class NimBLEServerCallbacks {
+ public:
+  virtual ~NimBLEServerCallbacks() = default;
+  virtual void onConnect(NimBLEServer*, NimBLEConnInfo&) {}
+  virtual void onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) {}
+  virtual void onMTUChange(uint16_t, NimBLEConnInfo&) {}
+  virtual uint32_t onPassKeyDisplay();                     // default: 123456
+  virtual void onPassKeyEntry(NimBLEConnInfo& connInfo);   // default: injects 123456
+  virtual void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin);   // default: yes
+  virtual void onAuthenticationComplete(NimBLEConnInfo&) {}
+  virtual void onIdentity(NimBLEConnInfo&) {}
+  virtual void onConnParamsUpdate(NimBLEConnInfo&) {}
+  virtual void onPhyUpdate(NimBLEConnInfo&, uint8_t, uint8_t) {}
+};
+
+namespace host_sim {
+inline NimBLEServerCallbacks default_server_callbacks;   // NimBLEServer.cpp's defaultCallbacks
+}  // namespace host_sim
+
+class NimBLEServer {
+ public:
+  void setCallbacks(NimBLEServerCallbacks* cb, bool deleteCallbacks = true) {
+    host_sim::note("set_server_callbacks");   // which task (m_pServerCallbacks, no lock in NimBLE)
+    if (cb != nullptr) {
+      cb_ = cb;
+      delete_cb_ = deleteCallbacks;
+    } else {
+      cb_ = &host_sim::default_server_callbacks;
+      delete_cb_ = false;
+    }
+  }
+  // What the stack calls (m_pServerCallbacks).
+  NimBLEServerCallbacks* callbacks() const { return cb_; }
+  // Whether NimBLE would delete the callbacks object with the server.
+  bool callbacks_deleted_with_server() const { return delete_cb_; }
+  // The server's service list, appended to and walked as NimBLE-Arduino's
+  // own (m_svcVec): no lock, so the threaded tests see, under TSAN, a walk
+  // (an advertising start, below) that overlaps another task's createService
+  // (the F167 review: the sketch's bring-up worker registers ble_status and
+  // Opera after the channel's init() returns).
+  NimBLEService* createService(const NimBLEUUID&) {
+    host_sim::note("svc_create");
+    services_.emplace_back(new NimBLEService());
+    return services_.back().get();
+  }
+  // NimBLEServer::start() (2.5.0: resetGATT() walks every service and its
+  // characteristics; 2.3.8: ble_gatts_start() and the same walk), which
+  // NimBLEAdvertising::start() calls first.
+  size_t gatt_start() const {
+    size_t n = 0;
+    for (const auto& sv : services_) n += sv->gatt_register();
+    return n;
+  }
+  size_t services() const { return services_.size(); }
+  bool updateConnParams(uint16_t, uint16_t, uint16_t, uint16_t, uint16_t) {
+    host_sim::note("conn_params");
+    return true;
+  }
+  std::vector<uint16_t> getPeerDevices() const {
+    ++peer_devices_calls;
+    return peers;
+  }
+  // The stack's own record of a link (ble_gap_conn_find): what is up on
+  // `handle` now. NimBLE answers a handle with no link with an empty
+  // NimBLEConnInfo (handle 0, address 00:00:00:00:00:00).
+  NimBLEConnInfo getPeerInfoByHandle(uint16_t handle) const {
+    ++peer_info_calls;
+    std::lock_guard<std::mutex> g(links_mu_);
+    const auto it = links_.find(handle);
+    if (it != links_.end()) return it->second;
+    NimBLEConnInfo none;
+    none.handle = 0;
+    return none;
+  }
+  // The test plays the stack: a link comes up on its handle, or goes.
+  void link_up(const NimBLEConnInfo& c) {
+    std::lock_guard<std::mutex> g(links_mu_);
+    links_[c.getConnHandle()] = c;
+  }
+  void link_down(uint16_t handle) {
+    std::lock_guard<std::mutex> g(links_mu_);
+    links_.erase(handle);
+  }
+  bool disconnect(uint16_t handle) {
+    host_sim::note("disconnect");
+    std::lock_guard<std::mutex> g(links_mu_);
+    disconnected.push_back(handle);
+    return true;
+  }
+  // ble_gap_unpair()'s first step (ble_hs_conn_find_by_addr, then
+  // ble_gap_terminate_with_conn): the link whose identity is `identity` is
+  // ended. The termination is the stack's own and asynchronous (its
+  // disconnect event follows, as the test plays it), so the link stays up
+  // here; its handle is kept apart from disconnect()'s.
+  void unpair_ends_link(const NimBLEAddress& identity) {
+    std::lock_guard<std::mutex> g(links_mu_);
+    for (const auto& kv : links_) {
+      if (kv.second.getIdAddress() == identity) {
+        host_sim::note("unpair_terminate");
+        ended_by_unpair.push_back(kv.first);
+        return;
+      }
+    }
+  }
+  std::vector<uint16_t> disconnected;   // disconnect()'s handles, in order
+  std::vector<uint16_t> ended_by_unpair;   // the links deleteBond() ended, in order
+  // How often the channel asked the stack for its links (a test can see a
+  // pass that asks nothing).
+  mutable std::atomic<unsigned> peer_devices_calls{0};
+  mutable std::atomic<unsigned> peer_info_calls{0};
+  std::vector<uint16_t> peers;   // the links up, as the test sets them
+ private:
+  mutable std::mutex links_mu_;
+  std::map<uint16_t, NimBLEConnInfo> links_;
+  NimBLEServerCallbacks* cb_ = &host_sim::default_server_callbacks;
+  bool delete_cb_ = false;
+  std::vector<std::unique_ptr<NimBLEService>> services_;
+};
+
+// What an advertisement carries (ble_opera.h builds its beacon with it).
+class NimBLEAdvertisementData {
+ public:
+  bool setManufacturerData(const std::string& d) { mfg = d; return true; }
+  bool setName(const std::string& n, bool = true) { name = n; return true; }
+  bool addServiceUUID(const NimBLEUUID&) { return true; }
+  std::string mfg, name;
+};
+
+namespace host_sim {
+size_t server_start();   // NimBLEServer::start() on the one server (below NimBLEDevice)
+}  // namespace host_sim
+
+class NimBLEAdvertising {
+ public:
+  void addServiceUUID(const NimBLEUUID&) {}
+  void setAppearance(uint16_t) {}
+  bool setName(const std::string&) { return true; }
+  bool enableScanResponse(bool) { return true; }
+  bool setAdvertisementData(const NimBLEAdvertisementData&) { return true; }
+  bool setScanResponseData(const NimBLEAdvertisementData&) { return true; }
+  // NimBLE's own state, which it keeps under its own lock (ble_gap's):
+  // read and written atomically here, so the threaded test finds only the
+  // channel's races.
+  bool start() {
+    (void)host_sim::server_start();   // NimBLEAdvertising::start() -> NimBLEServer::start()
+    host_sim::note("adv_start");
+    __atomic_store_n(&advertising_, true, __ATOMIC_RELEASE);
+    return true;
+  }
+  bool stop() {
+    host_sim::note("adv_stop");
+    __atomic_store_n(&advertising_, false, __ATOMIC_RELEASE);
+    return true;
+  }
+  bool isAdvertising() const { return __atomic_load_n(&advertising_, __ATOMIC_ACQUIRE); }
+ private:
+  bool advertising_ = false;
+};
+
+class NimBLEAdvertisedDevice {
+ public:
+  NimBLEAddress address;
+  int rssi = -60;
+  std::string name;
+  bool connectable = true;
+  std::vector<NimBLEUUID> services;   // the service UUIDs it advertises
+  NimBLEAddress getAddress() const { return address; }
+  int getRSSI() const { return rssi; }
+  bool haveName() const { return !name.empty(); }
+  std::string getName() const { return name; }
+  bool isConnectable() const { return connectable; }
+  bool isAdvertisingService(const NimBLEUUID& u) const {
+    for (const NimBLEUUID& s : services) {
+      if (s == u) return true;
+    }
+    return false;
+  }
+  bool haveAppearance() const { return false; }
+  uint16_t getAppearance() const { return 0; }
+};
+
+class NimBLEScanResults {};
+
+class NimBLEScanCallbacks {
+ public:
+  virtual ~NimBLEScanCallbacks() = default;
+  virtual void onResult(const NimBLEAdvertisedDevice*) {}
+  virtual void onScanEnd(const NimBLEScanResults&, int) {}
+};
+
+class NimBLEScan {
+ public:
+  void setScanCallbacks(NimBLEScanCallbacks* cb, bool = false) { cb_ = cb; }
+  NimBLEScanCallbacks* callbacks() const { return cb_; }
+  void setActiveScan(bool) {}
+  void setInterval(uint16_t) {}
+  void setWindow(uint16_t) {}
+  bool start(uint32_t, bool = false, bool = true) {
+    host_sim::note("scan_start");
+    __atomic_store_n(&scanning_, true, __ATOMIC_RELEASE);
+    return true;
+  }
+  bool stop() {
+    host_sim::note("scan_stop");
+    __atomic_store_n(&scanning_, false, __ATOMIC_RELEASE);
+    return true;
+  }
+  bool isScanning() const { return __atomic_load_n(&scanning_, __ATOMIC_ACQUIRE); }
+ private:
+  NimBLEScanCallbacks* cb_ = nullptr;
+  bool scanning_ = false;
+};
+
+namespace host_sim {
+struct PasskeyAnswer {
+  uint16_t handle;
+  bool accept;
+  std::string task;
+};
+inline std::mutex passkey_mu;
+inline std::vector<PasskeyAnswer> passkey_answers;
+inline bool nimble_up = false;
+inline std::unique_ptr<NimBLEServer> server;
+inline NimBLEAdvertising advertising;
+inline NimBLEScan scan;
+inline std::vector<NimBLEAddress> bonds;
+inline std::vector<NimBLEAddress> bonds_deleted;   // deleteBond's arguments, in order
+// The bonds that carry the peer's IRK (keyed as `bonds` is).
+inline std::vector<NimBLEAddress> bond_irks;
+// The presence loop's endless scan on the same NimBLE scanner (ble_presence,
+// which the test plays): a discovery to ble_gap_disc_active() as much as
+// the owner's scan is.
+inline std::atomic<bool> presence_disc{false};
+// What deleteBond() refused for a busy radio (BLE_HS_EBUSY), in order.
+inline std::vector<NimBLEAddress> bonds_busy;
+// Run as deleteBond() starts: a test plays another task acting in that
+// window (Opera's onConnect restarting the advertiser on the NimBLE host
+// task, a chirp).
+inline std::function<void()> before_unpair;
+inline bool has_irk(const NimBLEAddress& a) {
+  return std::find(bond_irks.begin(), bond_irks.end(), a) != bond_irks.end();
+}
+// The stack stores a bond under `identity`; `irk` when the peer handed over
+// its identity resolving key (a phone using resolvable private addresses).
+inline void store_bond(const NimBLEAddress& identity, bool irk) {
+  if (std::find(bonds.begin(), bonds.end(), identity) == bonds.end()) bonds.push_back(identity);
+  if (irk && !has_irk(identity)) bond_irks.push_back(identity);
+}
+// ble_gap_adv_active() || ble_gap_disc_active().
+inline bool radio_busy() {
+  return advertising.isAdvertising() || scan.isScanning() || presence_disc.load();
+}
+// The bond store's size (CONFIG_BT_NIMBLE_MAX_BONDS, nimconfig.h's default).
+inline size_t max_bonds = 3;
+// Pairings under way (ble_sm_num_procs()), counted into the store-full check.
+inline int sm_procs = 0;
+// NimBLEDevice::setDeviceCallbacks()'s (nullptr: NimBLE's defaults).
+inline NimBLEDeviceCallbacks default_device_callbacks;
+inline NimBLEDeviceCallbacks* device_callbacks = &default_device_callbacks;
+// The store's status events, by code, as the stack raised them.
+inline unsigned full_events = 0;
+inline unsigned overflow_events = 0;
+// The CCCD records (a bonded peer's subscription, kept across links):
+// CONFIG_BT_NIMBLE_MAX_CCCDS, nimconfig.h's default 8, which no WAP build
+// raises. Keyed by the peer's identity and the characteristic's handle.
+struct CccdRecord {
+  NimBLEAddress peer;
+  uint16_t chr_val_handle;
+};
+inline size_t max_cccds = 8;
+inline std::vector<CccdRecord> cccds;
+// What the radio was last set to: setPower()'s dBm, setDefaultPhy()'s mask.
+inline int8_t tx_power = 0;
+inline uint8_t default_phy = 0;
+}  // namespace host_sim
+
+namespace host_sim {
+int gap_unpair(const NimBLEAddress& a);   // ble_gap_unpair() (below NimBLEDevice)
+}  // namespace host_sim
+
+class NimBLEDevice {
+ public:
+  static bool isInitialized() { return host_sim::nimble_up; }
+  static bool init(const std::string&) {
+    host_sim::note("nimble_init");
+    host_sim::nimble_up = true;
+    return true;
+  }
+  static bool deinit(bool) {
+    host_sim::nimble_up = false;
+    host_sim::server.reset();
+    return true;
+  }
+  static bool setPower(int8_t dbm) {
+    host_sim::note("set_power");
+    host_sim::tx_power = dbm;
+    return true;
+  }
+  static bool setMTU(uint16_t) { return true; }
+  static bool setDefaultPhy(uint8_t tx_mask, uint8_t) {
+    host_sim::default_phy = tx_mask;
+    return true;
+  }
+  static void setSecurityAuth(bool, bool, bool) {}
+  static void setSecurityIOCap(uint8_t) {}
+  static NimBLEServer* createServer() {
+    if (!host_sim::server) host_sim::server.reset(new NimBLEServer());
+    return host_sim::server.get();
+  }
+  static NimBLEServer* getServer() { return host_sim::server.get(); }
+  static NimBLEAdvertising* getAdvertising() { return &host_sim::advertising; }
+  static NimBLEScan* getScan() { return &host_sim::scan; }
+  static bool injectConfirmPasskey(const NimBLEConnInfo& c, bool accept) {
+    host_sim::note("passkey_answer");
+    std::lock_guard<std::mutex> g(host_sim::passkey_mu);
+    host_sim::passkey_answers.push_back({c.getConnHandle(), accept, host_sim::task});
+    return true;
+  }
+  static bool injectPassKey(const NimBLEConnInfo&, uint32_t) {
+    host_sim::note("passkey_entry");
+    return true;
+  }
+  // ble_gap_unpair() (NimBLEDevice::deleteBond() is `== 0` of it): a live
+  // link to the address is ended first, whatever follows. No bond under the
+  // address (neither PEER_SEC nor OUR_SEC holds it): false, the store's
+  // error. A bond that carries the peer's IRK while the advertiser or a
+  // discovery runs: false, BLE_HS_EBUSY, and the bond stays (its IRK cannot
+  // leave the controller's resolving list meanwhile). Otherwise the bond
+  // goes: true.
+  static bool deleteBond(const NimBLEAddress& a) {
+    host_sim::note("bond_delete");
+    host_sim::bonds_deleted.push_back(a);
+    return host_sim::gap_unpair(a) == 0;
+  }
+  static void setDeviceCallbacks(NimBLEDeviceCallbacks* cb) {
+    host_sim::device_callbacks = cb != nullptr ? cb : &host_sim::default_device_callbacks;
+  }
+  static bool isBonded(const NimBLEAddress& a) {
+    return std::find(host_sim::bonds.begin(), host_sim::bonds.end(), a) != host_sim::bonds.end();
+  }
+  static int getNumBonds() { return (int)host_sim::bonds.size(); }
+  static NimBLEAddress getBondedAddress(int i) { return host_sim::bonds[(size_t)i]; }
+  static NimBLEAddress getAddress() { return NimBLEAddress(); }
+};
+
+inline size_t host_sim::server_start() { return server ? server->gatt_start() : 0; }
+
+// NimBLE-Arduino 2.5.0's default server callbacks (NimBLEServer.cpp).
+inline uint32_t NimBLEServerCallbacks::onPassKeyDisplay() { return 123456; }
+inline void NimBLEServerCallbacks::onPassKeyEntry(NimBLEConnInfo& connInfo) {
+  NimBLEDevice::injectPassKey(connInfo, 123456);
+}
+inline void NimBLEServerCallbacks::onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t) {
+  NimBLEDevice::injectConfirmPasskey(connInfo, true);
+}
+
+// ble_gap_unpair() itself, its answer (0, the store's BLE_HS_ENOENT, or
+// BLE_HS_EBUSY): deleteBond()'s and the store-full path's.
+inline int host_sim::gap_unpair(const NimBLEAddress& a) {
+  if (before_unpair) before_unpair();
+  if (server) server->unpair_ends_link(a);
+  if (!NimBLEDevice::isBonded(a)) return BLE_HS_ENOENT;
+  if (has_irk(a) && radio_busy()) {
+    note("bond_delete_busy");
+    bonds_busy.push_back(a);
+    return BLE_HS_EBUSY;
+  }
+  bonds.erase(std::remove(bonds.begin(), bonds.end(), a), bonds.end());
+  bond_irks.erase(std::remove(bond_irks.begin(), bond_irks.end(), a), bond_irks.end());
+  // ble_store_util_delete_peer(): the peer's CCCD records go with its bond.
+  cccds.erase(std::remove_if(cccds.begin(), cccds.end(),
+                             [&](const CccdRecord& r) { return r.peer == a; }),
+              cccds.end());
+  return 0;
+}
+
+// ble_store_util_status_rr() (ble_store_util.c), NimBLE-Arduino's default
+// onStoreStatus(): FULL proceeds; OVERFLOW of a bond's keys unpairs the
+// oldest bond (ble_gap_unpair_oldest_peer(): the store's first, through
+// ble_gap_unpair()'s busy guard), and OVERFLOW of a CCCD or CSFC record
+// unpairs the oldest bond but the writing peer's
+// (ble_gap_unpair_oldest_except(): BLE_HS_ENOMEM when the peer's is the
+// only one); its answer is the write's (the F189 review: the stand-in
+// answered a CCCD with BLE_HS_EUNKNOWN and unpaired nothing).
+inline int NimBLEDeviceCallbacks::onStoreStatus(struct ble_store_status_event* event, void*) {
+  switch (event->event_code) {
+    case BLE_STORE_EVENT_OVERFLOW:
+      switch (event->overflow.obj_type) {
+        case BLE_STORE_OBJ_TYPE_OUR_SEC:
+        case BLE_STORE_OBJ_TYPE_PEER_SEC:
+        case BLE_STORE_OBJ_TYPE_PEER_ADDR:
+          if (host_sim::bonds.empty()) return BLE_HS_ENOENT;
+          host_sim::note("unpair_oldest");
+          return host_sim::gap_unpair(host_sim::bonds.front());
+        case BLE_STORE_OBJ_TYPE_CCCD:
+        case BLE_STORE_OBJ_TYPE_CSFC: {
+          if (host_sim::bonds.empty()) return BLE_HS_ENOENT;
+          const NimBLEAddress spared(event->overflow.value->cccd.peer_addr);
+          for (const NimBLEAddress& b : host_sim::bonds) {
+            if (b != spared) {
+              host_sim::note("unpair_oldest_except");
+              const NimBLEAddress victim = b;
+              return host_sim::gap_unpair(victim);
+            }
+          }
+          return BLE_HS_ENOMEM;
+        }
+        default:
+          return BLE_HS_EUNKNOWN;
+      }
+    case BLE_STORE_EVENT_FULL:
+      return 0;
+    default:
+      return BLE_HS_EUNKNOWN;
+  }
+}
+
+namespace host_sim {
+// The phone's Pairing Request on `handle` (the WAP is the responder):
+// ble_sm_pair_req_rx()'s ble_sm_chk_store_overflow(), for the peer's keys
+// and then this side's. With the bonds stored and the pairings under way
+// at the store's size, the device callbacks hear BLE_STORE_EVENT_FULL; a
+// nonzero answer refuses the pairing before it starts (Pairing Failed: no
+// keys, no bond, no authentication event), and is returned. 0: the pairing
+// is under way.
+inline int pairing_starts(uint16_t handle) {
+  for (const int type : {BLE_STORE_OBJ_TYPE_PEER_SEC, BLE_STORE_OBJ_TYPE_OUR_SEC}) {
+    if (bonds.size() + (size_t)sm_procs < max_bonds) continue;
+    ble_store_status_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.event_code = BLE_STORE_EVENT_FULL;
+    ev.full.obj_type = type;
+    ev.full.conn_handle = handle;
+    ++full_events;
+    const int rc = device_callbacks->onStoreStatus(&ev, nullptr);
+    if (rc != 0) return rc;
+  }
+  ++sm_procs;
+  return 0;
+}
+// That pairing ends bonded: ble_sm_persist_keys() writes the bond under the
+// peer's identity (ble_store_write()). A record the store holds is
+// rewritten in place; a new one that finds no room raises
+// BLE_STORE_EVENT_OVERFLOW until the device callbacks make room (0) or give
+// up (nonzero: not stored, that answer returned). The stack reports the
+// link's authentication after this, bonded either way.
+inline int persist_bond(const NimBLEAddress& identity, bool irk) {
+  if (sm_procs > 0) --sm_procs;
+  if (NimBLEDevice::isBonded(identity)) {
+    store_bond(identity, irk);
+    return 0;
+  }
+  while (bonds.size() >= max_bonds) {
+    ble_store_status_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.event_code = BLE_STORE_EVENT_OVERFLOW;
+    ev.overflow.obj_type = BLE_STORE_OBJ_TYPE_OUR_SEC;
+    ++overflow_events;
+    const int rc = device_callbacks->onStoreStatus(&ev, nullptr);
+    if (rc != 0) return rc;
+  }
+  store_bond(identity, irk);
+  return 0;
+}
+// A bonded peer writes a characteristic's CCCD (it subscribes): NimBLE
+// persists the record (ble_gatts_clt_cfg_access() -> ble_store_write_cccd(),
+// only for a bonded link). A record the store holds is rewritten; a new one
+// that finds the CCCD store full raises BLE_STORE_EVENT_OVERFLOW (the CCCD
+// as its value) until the device callbacks make room (0) or give up: that
+// answer is returned, and ble_gatts_clt_cfg_access() returns it as the
+// access's, so the phone's Write Request is answered with an ATT error
+// (ble_att_svr_write(), 2.5.0). The subscription itself is already set in
+// RAM for the link.
+inline int persist_cccd(const NimBLEAddress& peer, uint16_t chr_val_handle) {
+  for (const CccdRecord& r : cccds) {
+    if (r.peer == peer && r.chr_val_handle == chr_val_handle) return 0;
+  }
+  while (cccds.size() >= max_cccds) {
+    ble_store_value value;
+    memset(&value, 0, sizeof value);
+    value.cccd.peer_addr = *peer.getBase();
+    value.cccd.chr_val_handle = chr_val_handle;
+    value.cccd.flags = 1;
+    ble_store_status_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.event_code = BLE_STORE_EVENT_OVERFLOW;
+    ev.overflow.obj_type = BLE_STORE_OBJ_TYPE_CCCD;
+    ev.overflow.value = &value;
+    ++overflow_events;
+    const int rc = device_callbacks->onStoreStatus(&ev, nullptr);
+    if (rc != 0) return rc;
+  }
+  cccds.push_back({peer, chr_val_handle});
+  return 0;
+}
+}  // namespace host_sim
+
+// NimBLE's host C API, the calls update() and a link's connect (applied on
+// the loop task since F143) make.
+inline int ble_gap_set_prefered_le_phy(uint16_t, uint8_t, uint8_t, uint16_t) {
+  host_sim::note("le_phy");
+  return 0;
+}
+inline int ble_gap_conn_rssi(uint16_t, int8_t* out) {
+  *out = -50;
+  return 0;
+}
+inline uint16_t ble_att_mtu(uint16_t) { return 247; }
+
+#endif

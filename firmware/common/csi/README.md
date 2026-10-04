@@ -124,7 +124,14 @@ Symlink (or copy) `firmware/common/csi/` into your Arduino libraries folder
 If you want more than the raw features, register modules. Each module declares
 its privacy class and event allow-list up front, and the runtime enforces both
 on emit. See `csi_module.h` for the contract and `firmware/examples/modules/`
-for a stub example.
+for a stub example. After registering, call `csi_module_init_all(nullptr)`
+once at boot, before the first window: it runs each module's `init()`
+(which reads its stored settings), and `csi_module_tick_all()` ticks no
+module whose `init()` has not run. Stored settings are read through the
+weak `csi_module_settings_*` helpers, which return the default unless the
+host overrides them; `csi_module_settings_nvs.h` is the NVS rule both
+SecuraCV firmware trees override them with (they pass its read session to
+`csi_module_init_all()` in place of `nullptr`).
 
 The five modules listed above are the v1 set; `docs/csi_modules.md` covers
 the events each one emits, the tunables they expose, and how to add your

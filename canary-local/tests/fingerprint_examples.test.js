@@ -21,16 +21,23 @@
 // spelling is pinned to the source that writes it. An example no rule covers
 // fails: read how its product spells it, then add the rule.
 //
-// What it does not see. It reads the generated JSON and nothing else, so an
-// example a page's hand-written script spells for itself is out of its
-// reach: the Vision page's simulated MQTT pane (assets/vision-ui.js) writes
-// its health row's public_key as "ed25519:…", and canary-vision sends 64
-// bare lowercase hex digits. And it checks the examples that are there, not
-// the ones that are missing: the Home Assistant page's WAP chain line
-// (gen_homeassistant.py) carries no fp at all, so nothing here reads it.
-// Both were found in this sweep's review and are open items of their own.
+// The pages' hand-written scripts are read too (sweep A26), under a stricter
+// policy: a payload field a script writes (an object key, bare or quoted,
+// JSON inside a string included, or a property assignment) spells no fp or
+// key value itself; it may only interpolate a generated field this walk
+// already holds to a rule. The Vision page's MQTT pane wrote its health
+// row's public_key as "ed25519:…" (canary-vision sends 64 bare lowercase hex
+// digits); its rows come from vision.json now.
 //
-// The WAP's examples are also the repo's Ed25519 test key's (seed 0x42 x 32):
+// Since A27 it also checks the examples that are missing: every events,
+// chain and counts example must carry the signature envelope, so the Home
+// Assistant page's old WAP chain line (no v, alg or fp) fails below. Since
+// A28 and A29 it holds the names a key or a salt derives (the WAP's device
+// id, SSID and unnamed host; the Sense and Vision pseudonym, host and MQTT
+// client id) to the derivation, not just to a shape.
+//
+// The WAP's examples (and, since A26, the Vision pane's) are also the repo's
+// Ed25519 test key's (seed 0x42 x 32):
 // the key the WAP's tests_host/test_mqtt_identity.cpp builds its events body
 // with, and that Home Assistant's tests/test_fingerprint_case.py fixtures
 // (WAP_EVENT and friends) are signed by. Each of those derives the key from
@@ -52,6 +59,20 @@ const WAP = "firmware/projects/canary-wap/arduino/canary_wap";
 
 const read = (rel) => readFileSync(join(REPO, rel), "utf8");
 
+// ── the repo's Ed25519 test key ────────────────────────────────────────────
+// seed 0x42 x 32 -> Ed25519 public key -> SHA256("securacv:pubkey:fingerprint"
+// || 0x00 || pubkey)[0..8], canary_wap.ino's compute_fingerprint.
+function testKey() {
+  const pkcs8 = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.alloc(32, 0x42)]);
+  const priv = crypto.createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
+  const pub = crypto.createPublicKey(priv).export({ format: "der", type: "spki" }).subarray(-32);
+  const fp = crypto.createHash("sha256")
+    .update("securacv:pubkey:fingerprint").update(Buffer.from([0])).update(pub)
+    .digest().subarray(0, 8);
+  return { pub, fp, fpHex: fp.toString("hex") };
+}
+const KEY = testKey();
+
 // ── what a rule is ─────────────────────────────────────────────────────────
 // page: the devices/*.json file. where: the JSON path the example sits at.
 // labels: what names it (the property, the payload key, or the word before
@@ -59,9 +80,15 @@ const read = (rel) => readFileSync(join(REPO, rel), "utf8");
 // ("any" where the product parses either). pins: [file, literal] pairs that
 // make the spelling the source's, not this file's belief.
 const PAYLOAD = /^\.mqtt\.topics\[\d+\]\.payload$/;
+// The Hub page's "Meet the fleet" wire lines are the WAP's payloads (A27),
+// and so are a sandbox scene's publishes (A30: each is a topic's example with
+// the scene's fields laid over it).
+const WAP_WIRE = /^(?:\.mqtt\.topics\[\d+\]\.payload|\.sandbox\[\d+\]\.mqtt\[\d+\]\.payload|\.terminal\.chapters\[\d+\]\.steps\[\d+\]\.out\[\d+\])$/;
+const WAP_PAGES = ["wap.json", "homeassistant.json"];
+const VISION_PANE = /^\.mqtt\.pane\.(?:online\[\d+\]|events)\.payload$/;
 const RULES = [
   {
-    page: "wap.json", where: PAYLOAD, labels: ["fp"], len: 16, kase: "lower",
+    page: WAP_PAGES, where: WAP_WIRE, labels: ["fp"], len: 16, kase: "lower",
     what: "the WAP's envelope fp (mqtt_identity::fingerprint_hex, sweep HA20)",
     pins: [
       [`${WAP}/mqtt_identity.h`, 'kLowerHex[] = "0123456789abcdef"'],
@@ -72,7 +99,7 @@ const RULES = [
     ],
   },
   {
-    page: "wap.json", where: PAYLOAD, labels: ["public_key"], len: 64, kase: "lower",
+    page: WAP_PAGES, where: WAP_WIRE, labels: ["public_key"], len: 64, kase: "lower",
     what: "the WAP's health public_key (mqtt_identity::public_key_hex)",
     pins: [
       [`${WAP}/mqtt_identity.h`, "constexpr size_t KEY_BYTES   = 32;"],
@@ -91,7 +118,7 @@ const RULES = [
     ],
   },
   {
-    page: "sense.json", where: /^(?:\.mqtt\.topics\[\d+\]\.payload|\.serial\.boot\[\d+\]\.text|\.device\.fp_example)$/,
+    page: "sense.json", where: /^(?:\.mqtt\.topics\[\d+\]\.payload|\.sandbox\[\d+\]\.mqtt\[\d+\]\.payload|\.serial\.boot\[\d+\]\.text|\.device\.fp_example)$/,
     labels: ["fp", "fp_example"], len: 16, kase: "lower",
     what: "the Sense's fp (witness.cpp fp_hex)",
     pins: [
@@ -105,6 +132,27 @@ const RULES = [
     what: "the Sense's health public_key (device_signature::pubkey_hex)",
     pins: [
       ["firmware/projects/canary-sense/src/net/mqtt_mgr.cpp", "device_signature::pubkey_hex(),"],
+      ["firmware/common/identity/device_signature.cpp", "hex_encode(pub, 32, s_pubkey_hex, sizeof(s_pubkey_hex));"],
+      ["firmware/common/identity/device_signature.cpp", 'static const char H[] = "0123456789abcdef";'],
+    ],
+  },
+  {
+    // the Vision page's MQTT pane (sweep A26): rows gen_vision.py keys as
+    // mqtt_mgr.cpp / main.cpp publish them
+    page: "vision.json", where: VISION_PANE, labels: ["fp"], len: 16, kase: "lower",
+    what: "the Vision's envelope fp (witness.cpp fp_hex, device_signature::fingerprint_hex)",
+    pins: [
+      ["firmware/projects/canary-vision/src/witness.cpp", 'static const char H[] = "0123456789abcdef";'],
+      ["firmware/projects/canary-vision/src/witness.cpp", "fp_hex[16] = '\\0';"],
+      ["firmware/projects/canary-vision/src/witness.cpp", "device_signature::init(s_priv, s_pub, canary::cfg::get().device_id, fp_hex);"],
+      ["firmware/projects/canary-vision/src/net/mqtt_mgr.cpp", "device_signature::fingerprint_hex(),"],
+    ],
+  },
+  {
+    page: "vision.json", where: VISION_PANE, labels: ["public_key"], len: 64, kase: "lower",
+    what: "the Vision's health public_key (device_signature::pubkey_hex)",
+    pins: [
+      ["firmware/projects/canary-vision/src/net/mqtt_mgr.cpp", "device_signature::pubkey_hex());"],
       ["firmware/common/identity/device_signature.cpp", "hex_encode(pub, 32, s_pubkey_hex, sizeof(s_pubkey_hex));"],
       ["firmware/common/identity/device_signature.cpp", 'static const char H[] = "0123456789abcdef";'],
     ],
@@ -166,9 +214,10 @@ function examplesIn(page, data) {
 }
 
 const PAGES = readdirSync(DEVICES).filter((f) => f.endsWith(".json")).sort();
-const EXAMPLES = PAGES.flatMap((page) => examplesIn(page, JSON.parse(readFileSync(join(DEVICES, page), "utf8"))));
+const DATA = Object.fromEntries(PAGES.map((page) => [page, JSON.parse(readFileSync(join(DEVICES, page), "utf8"))]));
+const EXAMPLES = PAGES.flatMap((page) => examplesIn(page, DATA[page]));
 
-const rulesFor = (ex) => RULES.filter((r) => r.page === ex.page && r.where.test(ex.path) && r.labels.includes(ex.label));
+const rulesFor = (ex) => RULES.filter((r) => [].concat(r.page).includes(ex.page) && r.where.test(ex.path) && r.labels.includes(ex.label));
 
 // null when the value is spelled by the rule, else what is wrong with it.
 function shapeProblem(value, rule) {
@@ -234,14 +283,7 @@ test("every fp / pubkey example in the generated JSON has the length and case it
 });
 
 test("the WAP page's fingerprint is the repo test key's, as the firmware test and HA spell it", () => {
-  // seed 0x42 x 32 -> Ed25519 public key -> SHA256("securacv:pubkey:fingerprint"
-  // || 0x00 || pubkey)[0..8], canary_wap.ino's compute_fingerprint.
-  const pkcs8 = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.alloc(32, 0x42)]);
-  const priv = crypto.createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
-  const pub = crypto.createPublicKey(priv).export({ format: "der", type: "spki" }).subarray(-32);
-  const fp = crypto.createHash("sha256")
-    .update("securacv:pubkey:fingerprint").update(Buffer.from([0])).update(pub)
-    .digest().subarray(0, 8).toString("hex");
+  const { pub, fpHex: fp } = KEY;
   assert.ok(read(`${WAP}/canary_wap.ino`).includes('sha256_domain("securacv:pubkey:fingerprint", pub, 32, hash);'),
     "compute_fingerprint's domain moved; re-derive the test key's fp");
   assert.ok(read(`${WAP}/canary_wap.ino`).includes("uint8_t sep = 0x00;"), "sha256_domain's separator moved");
@@ -252,11 +294,598 @@ test("the WAP page's fingerprint is the repo test key's, as the firmware test an
 
   const wap = EXAMPLES.filter((e) => e.page === "wap.json" && !e.value.includes("…"));
   const fps = wap.filter((e) => e.label === "fp");
-  assert.strictEqual(fps.length, 3, "events, chain and counts each carry an fp");
+  assert.strictEqual(fps.filter((e) => e.path.startsWith(".mqtt.topics")).length, 3,
+    "events, chain and counts each carry an fp");
+  assert.ok(fps.filter((e) => e.path.startsWith(".sandbox")).length >= 3, "and so do the sandbox's signed publishes (A30)");
   for (const e of fps) assert.strictEqual(e.value, fp, `${e.path}: not the test key's fp`);
   const boot = wap.filter((e) => e.label === "fingerprint");
   assert.strictEqual(boot.length, 1, "one [PROV] fingerprint line");
   assert.strictEqual(boot[0].value, fp.toUpperCase(), "the boot line is the same 8 bytes, in hex_to_str's capitals");
   for (const e of wap.filter((x) => x.label === "public_key"))
     assert.strictEqual(e.value, pub.toString("hex"), `${e.path}: not the test key`);
+});
+
+// ── the WAP's names (sweep A29) ────────────────────────────────────────────
+// canary_wap.ino derives three names from pubkey_fp[0..1], and none of them
+// from the MAC:
+//   device id  generate_device_id: DEVICE_ID_PREFIX + unambiguous_suffix16
+//   SSID       generate_ap_ssid:   "SecuraCV-" + the same suffix, same case
+//   mDNS host  generate_mdns_hostname with no friendly name set:
+//              "canary-%02x%02x", four lowercase hex digits, no "-s3-"
+// The page used to show a device id and an SSID that spelled one suffix in
+// two cases (which one device cannot produce; sweep A29 has the old pair) and
+// a host whose last character was not hex (only a friendly name could make
+// it). Now every one is the test key's, derived here from the seed, so a page
+// that shows fp 7916ca487912fa1b shows the names that key's device has. HA's
+// tests/test_fingerprint_case.py calls the same device canary-s3-4dC2; it is
+// outside canary-local.yml's path filter, so it is derived here, not read.
+const INO = read(`${WAP}/canary_wap.ino`);
+const WAP_NAME_PINS = [
+  'snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix)',
+  'snprintf(out, cap, "SecuraCV-%s", suffix)',
+  "out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];",
+  "v = (uint16_t)(v / UNAMBIGUOUS_LEN);",
+  'snprintf(out, cap, "canary-%02x%02x",\n           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);',
+];
+const FP_SUFFIX_CALL = "unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),\n" +
+  "                       suffix);";
+
+function wapNames(fp) {
+  const alphabet = INO.match(/UNAMBIGUOUS_ALPHABET\[\] =\s*"([^"]+)";/)[1];
+  const prefix = INO.match(/#else\s*static const char\* DEVICE_ID_PREFIX = "([^"]+)";/)[1];
+  let v = (fp[0] << 8) | fp[1];
+  let suffix = "";
+  for (let i = 0; i < 4; i++) {
+    suffix += alphabet[v % alphabet.length];
+    v = Math.floor(v / alphabet.length);
+  }
+  const hex2 = (b) => b.toString(16).padStart(2, "0");
+  return { id: prefix + suffix, ssid: "SecuraCV-" + suffix, host: `canary-${hex2(fp[0])}${hex2(fp[1])}.local` };
+}
+const WAP_NAMES = wapNames(KEY.fp);
+
+// Every string in the generated JSON, with its page and path.
+function* allStrings() {
+  for (const page of PAGES)
+    for (const [path, s] of strings(DATA[page], "")) yield { page, path, s };
+}
+// Placeholders a page may show instead of a value: a SoftAP name nobody owns.
+const SSID_PLACEHOLDER = "SecuraCV-XXXX";
+
+test("the WAP's names derive from the test key the way canary_wap.ino derives them", () => {
+  for (const pin of WAP_NAME_PINS) assert.ok(INO.includes(pin), `canary_wap.ino no longer has ${JSON.stringify(pin)}`);
+  assert.strictEqual(INO.split(FP_SUFFIX_CALL).length - 1, 2,
+    "generate_device_id and generate_ap_ssid no longer both encode pubkey_fp[0..1]");
+  // the derivation itself, on values a reader can check by hand: 0x7916 is
+  // 30998 = 2 + 34*54 + 10*54^2 -> digits 2, 34, 10, 0 -> "4dC2"
+  assert.deepStrictEqual(wapNames(Buffer.from([0x79, 0x16])),
+    { id: "canary-s3-4dC2", ssid: "SecuraCV-4dC2", host: "canary-7916.local" });
+  assert.strictEqual(KEY.fpHex.slice(0, 4), "7916", "the seed's fingerprint moved");
+});
+
+test("every WAP device id, SSID and unnamed host a generated page shows is the test key's", () => {
+  const found = { id: [], ssid: [], host: [] };
+  const problems = [];
+  for (const { page, path, s } of allStrings()) {
+    for (const m of s.matchAll(/\bcanary-[cs]3-[A-Za-z0-9]+/g)) found.id.push({ page, path, v: m[0] });
+    for (const m of s.matchAll(/\bSecuraCV-[A-Za-z0-9]+/g))
+      if (m[0] !== SSID_PLACEHOLDER) found.ssid.push({ page, path, v: m[0] });
+    for (const m of s.matchAll(/\bcanary-[0-9A-Fa-f]{4}\.local\b/g)) found.host.push({ page, path, v: m[0] });
+  }
+  for (const kind of ["id", "ssid", "host"])
+    for (const f of found[kind])
+      if (f.v !== WAP_NAMES[kind]) problems.push(`${f.page} ${f.path}: ${f.v} is not the test key's ${kind} (${WAP_NAMES[kind]})`);
+  assert.deepStrictEqual(problems, []);
+
+  const wap = DATA["wap.json"];
+  assert.strictEqual(wap.device.id_example, WAP_NAMES.id);
+  assert.strictEqual(wap.ap.ssid_example, WAP_NAMES.ssid);
+  assert.strictEqual(wap.ap.mdns_example, WAP_NAMES.host);
+  // the boot log's Device ID and AP lines, and the ready block's two rows
+  const onWap = (kind) => found[kind].filter((f) => f.page === "wap.json").length;
+  assert.ok(onWap("id") >= 3, `wap.json: ${onWap("id")} device ids found (the sweep's match broke?)`);
+  assert.ok(onWap("ssid") >= 3, `wap.json: ${onWap("ssid")} SSIDs found (the sweep's match broke?)`);
+});
+
+// ── the salted device pseudonym (sweep A28) ────────────────────────────────
+// canary-sense and canary-vision print a "Hardware ID", name their MQTT client
+// and their mDNS host after device_pseudonym::device_id_hex: SHA-256 of
+// "canary:device-id:v1:" || a per-device salt, rendered as 16 characters of
+// the 54-character unambiguous alphabet (no 0/O/o, no 1/I/i/l/L). The Sense
+// page showed 9f41c2d8a06be375 and the Vision page b3f2a9c41d5e (12): hex,
+// which no unit prints. The Sense host, canary-sense-001-b7e2c4, borrowed
+// the fingerprint's first six digits, where make_hostname appends the
+// pseudonym's first six characters, case kept. The generators now derive
+// each from an example salt (_pseudonym.py), the two salts the shared
+// header's host test derives with, and this derives them again.
+const PSEUDO_H = "firmware/common/identity/device_pseudonym.h";
+const PSEUDO_HOST_TEST = "firmware/projects/canary-wap/tests_host/test_device_pseudonym_common.cpp";
+const PSEUDO_PINS = [
+  [PSEUDO_H, 'constexpr char   DOMAIN[]    = "canary:device-id:v1:";'],
+  [PSEUDO_H, 'constexpr char     ALPHABET[]     = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";'],
+  [PSEUDO_H, "constexpr unsigned ALPHABET_LIMIT = 216;"],
+  [PSEUDO_H, "constexpr size_t TOKEN_BYTES = 8;"],
+  [PSEUDO_H, "constexpr size_t HEX_LEN     = TOKEN_BYTES * 2;"],
+  [PSEUDO_H, "memcpy(input + off, detail::DOMAIN, detail::DOMAIN_LEN); off += detail::DOMAIN_LEN;"],
+  [PSEUDO_H, "memcpy(input + off, secret, secret_len);"],
+  [PSEUDO_H, "if (hash[i] < detail::ALPHABET_LIMIT) {"],
+  [PSEUDO_H, "out_hex[produced++] = detail::ALPHABET[hash[i] % detail::ALPHABET_LEN];"],
+  [PSEUDO_H, "out_hex[produced] = detail::ALPHABET[produced];"],
+  [PSEUDO_HOST_TEST, "memset(secret,  0x11, sizeof(secret));"],
+  [PSEUDO_HOST_TEST, "memset(secret2, 0x22, sizeof(secret2));"],
+];
+const PSEUDO_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+const PSEUDO_SHAPE = new RegExp(`^[${PSEUDO_ALPHABET}]{16}$`);
+
+function pseudonym(salt) {
+  const h = crypto.createHash("sha256").update("canary:device-id:v1:").update(salt).digest();
+  let out = "";
+  for (const b of h) {
+    if (out.length >= 16) break;
+    if (b < 216) out += PSEUDO_ALPHABET[b % 54];
+  }
+  while (out.length < 16) out += PSEUDO_ALPHABET[out.length];
+  return out;
+}
+// mdns_mgr.cpp's make_hostname: the id cut to 23 bytes, '_', ' ' and '.'
+// turned to '-', then '-' and the pseudonym's first six characters.
+function makeHostname(deviceId, pseudo) {
+  const base = (deviceId || "canary").slice(0, 23).replace(/[_ .]/g, "-");
+  return `${base}-${pseudo.slice(0, 6)}`;
+}
+
+// The pages whose product prints the pseudonym, the salt each example uses,
+// and the sources that spell the recipe.
+const PSEUDO_PAGES = {
+  "sense.json": { project: "firmware/projects/canary-sense", salt: 0x11 },
+  "vision.json": { project: "firmware/projects/canary-vision", salt: 0x22 },
+};
+function projectPins(project) {
+  return [
+    [`${project}/src/main.cpp`, 'boot_kv("Hardware ID", devid_hex);'],
+    [`${project}/src/net/mdns_mgr.cpp`, "char base[24];"],
+    [`${project}/src/net/mdns_mgr.cpp`, 'copy_str(base, sizeof(base), device_id && device_id[0] ? device_id : "canary");'],
+    [`${project}/src/net/mdns_mgr.cpp`, "if (*p == '_' || *p == ' ' || *p == '.') *p = '-';"],
+    [`${project}/src/net/mdns_mgr.cpp`, 'snprintf(out, cap, "%s-%.6s", base, devid_hex);'],
+    [`${project}/src/net/mqtt_mgr.cpp`, 'String clientId = String("securacv-") + cfg.device_id + "-" + devid_hex;'],
+    [`${project}/src/net/mqtt_mgr.cpp`, '"Connecting %s:%u as %s ...\\n", cfg.mqtt_host, cfg.mqtt_port, clientId.c_str()'],
+  ];
+}
+// What each page's product prints, derived.
+function pseudoNames(page) {
+  const { salt } = PSEUDO_PAGES[page];
+  const id = DATA[page].device.id_example;
+  const p = pseudonym(Buffer.alloc(32, salt));
+  return { pseudonym: p, host: `${makeHostname(id, p)}.local`, client: `securacv-${id}-${p}` };
+}
+
+// Every pseudonym example, wherever it sits: a hwid-named property, a
+// "Hardware ID <x>" console line, and the client id a "Connecting <broker>
+// as <x> ..." line names.
+const HWID_PROP = /^(?:[a-z]+_)*(?:hwid|hardware_id|pseudonym)(?:_[a-z]+)*$/i;
+function pseudoExamples() {
+  const out = [];
+  for (const page of PAGES)
+    for (const [path, s, prop] of strings(DATA[page], "")) {
+      if (prop) continue; // fp-family properties: the RULES above
+      const key = path.split(".").pop();
+      if (HWID_PROP.test(key)) out.push({ page, path, kind: "pseudonym", value: s });
+      for (const m of s.matchAll(/\bHardware ID\s+(\S+)/g)) out.push({ page, path, kind: "console", value: m[1] });
+      for (const m of s.matchAll(/\bConnecting \S+ as (\S+) \.\.\./g)) out.push({ page, path, kind: "client", value: m[1] });
+    }
+  return out;
+}
+
+// Every .local host a generated page names: a fixed name, a template (it
+// ends in a <placeholder>, so the match below skips it), or an example a
+// product derives — the WAP's unnamed fallback (sweep A29) or make_hostname.
+const FIXED_HOSTS = new Set(["canary.local", "homeassistant.local"]);
+function hostExamples() {
+  const out = [];
+  for (const page of PAGES)
+    for (const [path, s] of strings(DATA[page], "")) {
+      const key = path.split(".").pop();
+      if (/^host_example$/.test(key)) { out.push({ page, path, value: `${s}.local` }); continue; }
+      for (const m of s.matchAll(/(?<![\w.<>-])[A-Za-z0-9][A-Za-z0-9_-]*\.local\b/g))
+        if (!FIXED_HOSTS.has(m[0])) out.push({ page, path, value: m[0] });
+    }
+  return out;
+}
+const HOST_RULES = {
+  "wap.json": () => WAP_NAMES.host,
+  "homeassistant.json": () => WAP_NAMES.host,
+  "sense.json": () => pseudoNames("sense.json").host,
+  "vision.json": () => pseudoNames("vision.json").host,
+};
+
+test("the pseudonym recipe is the firmware's, and the derivation reproduces it", () => {
+  for (const [file, literal] of [...PSEUDO_PINS, ...Object.values(PSEUDO_PAGES).flatMap((p) => projectPins(p.project))])
+    assert.ok(read(file).includes(literal), `${file} no longer has ${JSON.stringify(literal)}`);
+  for (const { project } of Object.values(PSEUDO_PAGES)) {
+    const body = read(`${project}/src/net/mdns_mgr.cpp`).split("void make_hostname(")[1].split("\n}\n")[0];
+    assert.ok(!/tolower|toupper/.test(body), `${project}'s make_hostname changes case now; the example host must follow`);
+  }
+  // the derivation on its own: 16 characters, the alphabet only, stable
+  const a = pseudonym(Buffer.alloc(32, 0x11));
+  assert.match(a, PSEUDO_SHAPE);
+  assert.strictEqual(a, pseudonym(Buffer.alloc(32, 0x11)));
+  assert.notStrictEqual(a, pseudonym(Buffer.alloc(32, 0x22)));
+  assert.strictEqual(makeHostname("canary_sense_001", a), `canary-sense-001-${a.slice(0, 6)}`);
+  assert.strictEqual(makeHostname("a.b c_d", "XYZabcdef"), "a-b-c-d-XYZabc", "case kept, separators hyphenated");
+});
+
+test("every Hardware ID and MQTT client id a generated page shows is the pseudonym its product prints", () => {
+  const found = pseudoExamples();
+  const problems = [];
+  for (const ex of found) {
+    const at = `${ex.page} ${ex.path}`;
+    if (!PSEUDO_PAGES[ex.page]) { problems.push(`${at}: ${ex.kind} ${ex.value} on a page with no pseudonym rule`); continue; }
+    const want = pseudoNames(ex.page);
+    if (ex.kind === "pseudonym" || ex.kind === "console") {
+      if (!PSEUDO_SHAPE.test(ex.value))
+        problems.push(`${at}: "${ex.value}" is not 16 characters of the unambiguous alphabet (device_pseudonym::HEX_LEN)`);
+      else if (ex.value !== want.pseudonym) problems.push(`${at}: "${ex.value}" is not the example salt's pseudonym (${want.pseudonym})`);
+    } else if (ex.value !== want.client) {
+      problems.push(`${at}: client id "${ex.value}" is not mqtt_mgr.cpp's securacv-<id>-<pseudonym> (${want.client})`);
+    }
+  }
+  assert.deepStrictEqual(problems, []);
+  const count = (page, kind) => found.filter((e) => e.page === page && e.kind === kind).length;
+  assert.ok(count("sense.json", "pseudonym") >= 1, "sense.json: the hwid example went missing (the sweep's match broke?)");
+  // each page's console prints the line its product prints (main.cpp's
+  // boot_kv("Hardware ID", devid_hex)), not only a property no page renders
+  for (const page of Object.keys(PSEUDO_PAGES))
+    assert.strictEqual(count(page, "console"), 1, `${page}: its serial console shows no Hardware ID line`);
+  assert.ok(count("sense.json", "client") >= 1 && count("vision.json", "client") >= 1, "a Connecting line went missing");
+});
+
+test("every .local host a generated page names is a fixed name, a template, or the host its product derives", () => {
+  const found = hostExamples();
+  const problems = [];
+  for (const ex of found) {
+    const rule = HOST_RULES[ex.page];
+    if (!rule) { problems.push(`${ex.page} ${ex.path}: host ${ex.value} on a page with no host rule`); continue; }
+    if (ex.value !== rule()) problems.push(`${ex.page} ${ex.path}: host ${ex.value} is not the one its product derives (${rule()})`);
+  }
+  assert.deepStrictEqual(problems, []);
+  assert.ok(found.some((e) => e.page === "wap.json"), "wap.json: the unnamed host went missing");
+  assert.ok(found.filter((e) => e.page === "sense.json").length >= 2, "sense.json: host_example and the [MDNS] line");
+});
+
+// The templates too (an example host is only one unit's): a card's
+// network.mdns names the shape its firmware composes. The Sense and Vision
+// cards said canary-<fp>.local, a host neither advertises; the WAP's named
+// only canary-<name>.local, though an unnamed WAP answers at canary-<4 hex>.
+// Each product family that derives its host is read from the source that
+// composes it; no template anywhere may promise a host built from the
+// fingerprint or the MAC (generate_mdns_hostname: "never the MAC").
+const DISPLAY_HOST_H = "firmware/projects/canary-display/include/canary/net/hostname.h";
+const PSEUDO_HOST_FMT = 'snprintf(out, cap, "%s-%.6s", base, devid_hex);';
+const HOST_TEMPLATES = {
+  "canary-display": { want: ["<device-id>-<pseudonym>.local"], pins: [[DISPLAY_HOST_H, PSEUDO_HOST_FMT]] },
+  "canary-sense": { want: ["<device-id>-<pseudonym>.local"],
+    pins: [["firmware/projects/canary-sense/src/net/mdns_mgr.cpp", PSEUDO_HOST_FMT]] },
+  "canary-vision": { want: ["<device-id>-<pseudonym>.local"],
+    pins: [["firmware/projects/canary-vision/src/net/mdns_mgr.cpp", PSEUDO_HOST_FMT]] },
+  "canary-wap": { want: ["canary-<name>.local", "canary-<4 hex>.local"],
+    pins: [[`${WAP}/canary_wap.ino`, 'snprintf(out, cap, "canary-%s", label);'],
+      [`${WAP}/canary_wap.ino`, WAP_NAME_PINS[4]]] },
+};
+const BAD_TEMPLATE = /<[^<>]*\b(?:fp|fingerprint|mac(?:-suffix)?)\b[^<>]*>[\w<>-]*\.local\b/i;
+
+test("every mDNS template names the host its firmware composes, never one from the fp or the MAC", () => {
+  for (const { pins } of Object.values(HOST_TEMPLATES))
+    for (const [file, literal] of pins)
+      assert.ok(read(file).includes(literal), `${file} no longer has ${JSON.stringify(literal)}`);
+  const problems = [];
+  for (const { page, path, s } of allStrings())
+    if (BAD_TEMPLATE.test(s)) problems.push(`${page} ${path}: ${s.match(BAD_TEMPLATE)[0]} is no host a Canary advertises`);
+  const reg = DATA["registry.json"].devices;
+  let held = 0;
+  for (const dev of reg) {
+    const rule = HOST_TEMPLATES[dev.family];
+    if (!rule) continue;
+    held++;
+    for (const want of rule.want)
+      if (!String(dev.network && dev.network.mdns).includes(want))
+        problems.push(`registry.json ${dev.id}: network.mdns ${JSON.stringify(dev.network && dev.network.mdns)} does not name ${want}`);
+  }
+  // each product page shows its registry card's network block as it stands
+  for (const [page, id] of [["sense.json", "canary-sense"], ["vision.json", "canary-vision"], ["wap.json", "canary-wap"]])
+    assert.deepStrictEqual(DATA[page].device.network, reg.find((d) => d.id === id).network, `${page}: not its registry card's network`);
+  for (const want of HOST_TEMPLATES["canary-wap"].want)
+    assert.ok(DATA["wap.json"].ap.mdns.includes(want), `wap.json ap.mdns does not list ${want}`);
+  assert.deepStrictEqual(problems, []);
+  assert.ok(held >= 12, `only ${held} registry cards held to a host template (a family renamed?)`);
+  // the WAP page's "Reach it" row says which host the example is
+  assert.ok(read("canary-local/assets/wap.js").includes(
+    '["Reach it", "canary.local · " + d.ap.mdns_example + " (unnamed; canary-<name>.local once named) · " + d.ap.ip],'),
+  "wap.js's Reach it row no longer says the example host is the unnamed one");
+});
+
+// ── a signed topic's example carries its envelope (sweep A27) ──────────────
+// The checks above read the fps that are present; an example with no fp at
+// all passed them. The Home Assistant page's WAP chain line was one:
+// {"length":1284,"latest_hash":"9f2c…","sig":"ed25519:…"}, no v, alg or fp,
+// which HA's signature.py reads as unsigned ("Payload missing sig/fp/alg
+// fields") under a note saying the integration verifies it. events, chain
+// and counts are the topics a Canary signs, so every example of one carries
+// v, alg, fp and sig (a sig or hash elided with "…" is still an example of
+// the field). Two kinds of string are examples: a topic-contract entry (an
+// object with that suffix and a payload) and a wire line ("<prefix>/<id>/
+// chain {…}"). A sandbox scene's publishes are examples too (sweep A30):
+// they used to spell only the fields the scene changed ({"length":+1} is not
+// even JSON) and were exempt; each is now the topic's example with the
+// scene's fields laid over it, and held like any other.
+const SIGNED_TOPIC = /^(?:events|chain|counts)$/;
+const ENVELOPE_PINS = [
+  ["firmware/common/identity/device_signature.h", "constexpr int         SCHEMA_V    = 1;"],
+  ["firmware/common/identity/device_signature.h", 'constexpr const char* ALG_NAME    = "ed25519";'],
+  [`${WAP}/device_signature.h`, "constexpr int         SCHEMA_V    = 1;"],
+  [`${WAP}/device_signature.h`, 'constexpr const char* ALG_NAME    = "ed25519";'],
+  [`${WAP}/csi_mqtt.cpp`, '"\\"alg\\":\\"%s\\",\\"fp\\":\\"%s\\",\\"sig\\":\\"%s\\"}",'],
+  ["firmware/common/identity/device_signature.h", "constexpr size_t SIG_B64URL_LEN = 86;"],
+  [`${WAP}/device_signature.h`, "constexpr size_t SIG_B64URL_LEN = 86;"],
+];
+// A whole Ed25519 sig is 64 bytes, 86 base64url characters with no padding
+// (device_signature::SIG_B64URL_LEN); an elided one is a shorter prefix
+// and "…"; a bare "…" elides it all.
+function sigProblem(sig) {
+  if (typeof sig !== "string") return `sig ${JSON.stringify(sig)} is not a string`;
+  if (sig === "…") return null;
+  const elided = sig.endsWith("…");
+  const body = elided ? sig.slice(0, -1) : sig;
+  if (!/^[A-Za-z0-9_-]+$/.test(body)) return `sig ${JSON.stringify(sig)} is not base64url`;
+  if (elided ? body.length >= 86 : body.length !== 86)
+    return `sig ${JSON.stringify(sig)} is ${body.length} characters; a whole one is 86 (SIG_B64URL_LEN)`;
+  return null;
+}
+
+function* objects(node, path) {
+  if (Array.isArray(node)) { for (let i = 0; i < node.length; i++) yield* objects(node[i], `${path}[${i}]`); return; }
+  if (node && typeof node === "object") {
+    yield [path, node];
+    for (const [k, v] of Object.entries(node)) yield* objects(v, `${path}.${k}`);
+  }
+}
+function signedExamples() {
+  const out = [];
+  for (const page of PAGES) {
+    for (const [path, o] of objects(DATA[page], ""))
+      if (typeof o.suffix === "string" && SIGNED_TOPIC.test(o.suffix) && typeof o.payload === "string")
+        out.push({ page, path, suffix: o.suffix, payload: o.payload });
+    for (const [path, s] of strings(DATA[page], "")) {
+      const m = s.match(/^[a-z]+\/[^/\s]+\/(events|chain|counts) (\{.*\})$/);
+      if (m) out.push({ page, path, suffix: m[1], payload: m[2] });
+    }
+  }
+  return out;
+}
+
+test("the sig check: base64url, 86 characters whole, a shorter prefix elided", () => {
+  assert.strictEqual(sigProblem("…"), null);
+  assert.strictEqual(sigProblem("A".repeat(86)), null);
+  assert.strictEqual(sigProblem("Zm9v_-…"), null);
+  assert.match(sigProblem("ed25519"), /7 characters/, "a word is not a whole sig");
+  assert.match(sigProblem("x"), /1 characters/);
+  assert.match(sigProblem("ed25519:…"), /not base64url/, "the Hub page's old chain sig");
+  assert.match(sigProblem("A".repeat(86) + "…"), /86 characters/, "elides nothing");
+  assert.match(sigProblem(null), /not a string/);
+});
+
+test("every events, chain and counts example carries the v / alg / fp / sig envelope HA reads", () => {
+  for (const [file, literal] of ENVELOPE_PINS)
+    assert.ok(read(file).includes(literal), `${file} no longer has ${JSON.stringify(literal)}`);
+  const found = signedExamples();
+  const problems = [];
+  for (const ex of found) {
+    const at = `${ex.page} ${ex.path} (${ex.suffix})`;
+    let p;
+    try { p = JSON.parse(ex.payload); } catch { problems.push(`${at}: not JSON: ${ex.payload}`); continue; }
+    const missing = ["v", "alg", "fp", "sig"].filter((k) => !(k in p));
+    if (missing.length) { problems.push(`${at}: no ${missing.join(", ")} — HA reads it as unsigned`); continue; }
+    if (p.v !== 1) problems.push(`${at}: v ${p.v}, not device_signature::SCHEMA_V (1)`);
+    if (p.alg !== "ed25519") problems.push(`${at}: alg ${p.alg}, not device_signature::ALG_NAME`);
+    const sp = sigProblem(p.sig);
+    if (sp) problems.push(`${at}: ${sp}`);
+    if (typeof p.fp !== "string") problems.push(`${at}: fp ${JSON.stringify(p.fp)} is not a string`);
+  }
+  assert.deepStrictEqual(problems, []);
+  const on = (page) => found.filter((e) => e.page === page).length;
+  assert.ok(on("wap.json") >= 3 && on("sense.json") >= 2, "the topic contracts' signed examples went missing");
+  assert.ok(on("homeassistant.json") >= 2, "the Hub page's chain and counts wire lines went missing");
+});
+
+test("the Hub page's fleet wire lines are the WAP page's retained topics, verbatim", () => {
+  const wap = DATA["wap.json"];
+  const fleet = DATA["homeassistant.json"].terminal.chapters.find((c) => c.id === "fleet");
+  const lines = fleet.steps.flatMap((s) => s.out);
+  assert.ok(lines.length >= 4, "the fleet step prints its wire");
+  for (const line of lines) {
+    const m = line.match(/^([a-z]+)\/([^/\s]+)\/(\S+) (.*)$/);
+    assert.ok(m, `not a "<topic> <payload>" line: ${line}`);
+    const [, prefix, id, suffix, payload] = m;
+    assert.strictEqual(prefix, wap.mqtt.prefix);
+    assert.strictEqual(id, WAP_NAMES.id, "the device is the test key's WAP");
+    const t = wap.mqtt.topics.find((x) => x.suffix === suffix);
+    assert.ok(t && t.retained, `${suffix}: not one of the WAP's retained topics`);
+    assert.strictEqual(payload, t.payload, `${suffix}: not gen_wap.py's payload`);
+  }
+  const suffixes = lines.map((l) => l.split(" ")[0].split("/").pop());
+  for (const want of ["health", "chain", "counts"]) assert.ok(suffixes.includes(want), `no ${want} line`);
+  // the command asks for exactly those topics: the WAP retains more, and a
+  // bare '<prefix>/#' with -C 4 would print whichever four came first
+  const cmd = fleet.steps[0].cmd;
+  assert.deepStrictEqual([...cmd.matchAll(/-t '([^']+)'/g)].map((m) => m[1]),
+    suffixes.map((x) => `${wap.mqtt.prefix}/+/${x}`), cmd);
+  assert.ok(cmd.includes(`-C ${lines.length}`), cmd);
+
+  // the demo below is the same device, and reads its numbers off those lines
+  const demo = DATA["homeassistant.json"].ha_demo;
+  assert.strictEqual(demo.device_id, WAP_NAMES.id, "the demo below is the same device");
+  assert.ok(demo.device_name.endsWith(` ${WAP_NAMES.id}`), demo.device_name);
+  assert.ok(demo.drill.notification.body.includes(`Canary ${WAP_NAMES.id} `), demo.drill.notification.body);
+  const payload = (sfx) => JSON.parse(wap.mqtt.topics.find((t) => t.suffix === sfx).payload);
+  const entity = (id) => demo.entities.find((e) => e.object_id === id).initial;
+  // the WAP's own Witness Records and Uptime (sweep A36), the states their
+  // value templates read off these lines
+  assert.strictEqual(entity("witness_count"), payload("counts").total.toLocaleString("en-US"));
+  assert.strictEqual(entity("uptime"), String(payload("health").uptime));
+});
+
+test("the Vision pane's fp and key are the test key's (canary-vision derives its fp the WAP's way)", () => {
+  const witness = read("firmware/projects/canary-vision/src/witness.cpp");
+  assert.ok(witness.includes('constexpr const char* DOMAIN_FINGERPRINT = "securacv:pubkey:fingerprint";'));
+  assert.ok(witness.includes("sha256_domain(DOMAIN_FINGERPRINT, s_pub, sizeof(s_pub), fp_hash);"));
+  assert.ok(read("firmware/common/witness/witness_chain.h").includes("const unsigned char wc_sep = 0x00;"),
+    "wc_sha256_domain's separator moved; re-derive the test key's fp");
+  const vision = EXAMPLES.filter((e) => e.page === "vision.json" && VISION_PANE.test(e.path));
+  const fps = vision.filter((e) => e.label === "fp");
+  assert.ok(fps.length >= 2, "the pane's chain and events rows each carry an fp");
+  for (const e of fps) assert.strictEqual(e.value, KEY.fpHex, `${e.path}: not the test key's fp`);
+  const keys = vision.filter((e) => e.label === "public_key");
+  assert.strictEqual(keys.length, 1, "one health public_key");
+  assert.ok(KEY.pub.toString("hex").startsWith(keys[0].value.replace(/…$/, "")), "the health key is the test key's, elided");
+  const signedRows = signedExamples().filter((e) => e.page === "vision.json").map((e) => e.suffix).sort();
+  assert.deepStrictEqual(signedRows, ["chain", "events"], "the envelope rule reads the pane's chain and events rows");
+});
+
+// ── the pages' hand-written scripts (sweep A26's decision) ─────────────────
+// The JSON walk cannot see an example a page script spells for itself, and
+// the Vision pane's "public_key":"ed25519:…" was one. So the scripts are
+// read too, under a stricter policy than the JSON: a payload field a page
+// script writes spells no fp / fingerprint / pubkey / public_key value of its
+// own. A payload field is an object key followed by a string value — bare
+// (`fp: "…"`), quoted in either quote, or the escaped `\"fp\":\"…` of JSON
+// written inside a string literal — or a property assignment (`w.fp = "…"`),
+// and the value may sit in any quote, template literals included. Its value
+// may only interpolate one from the page's generated data, `${data.<path>}`,
+// and only a <path> that resolves, in the page's devices/<page>.json, to an
+// example the JSON walk above already holds to exactly one rule
+// (sense-ui.js's `"fp":"${data.device.fp_example}"` was one, until sweep A31
+// built that row from sense.json's events example). A literal, a
+// bare "…" or any other expression fails: move the payload into the
+// generator, where a rule can read it. A plain declaration
+// (`const MQTT_FP_PLACEHOLDER = "AA:BB:CC:…"`, the broker certificate's
+// input hint in flash.js) is not a payload field and is not read. The
+// console-line words `seed` and `pinned` are not read in scripts either,
+// where `seed: 20260719` is a PRNG seed, not a key.
+// The pages' own scripts and the pages themselves (inline <script>s).
+const SCRIPT_DIRS = [["canary-local/assets", /\.m?js$/], ["canary-local", /\.html$/]];
+// NAME, plus the camelCase spellings a script may use (publicKey, fpHex).
+const SCRIPT_NAME = "(?:[a-z]+_)*(?:fp|fingerprint|pub_?key|public_?key)(?:_[a-z]+)*(?:Hex)?";
+const QUOTE = "\\\\?[\"'`]"; // a quote, maybe escaped inside a string literal
+const SCRIPT_KEYED = new RegExp(
+  `(?:(?<![\\w$.])${QUOTE}?(${SCRIPT_NAME})${QUOTE}?\\s*:|\\.(${SCRIPT_NAME})\\s*=(?!=))\\s*${QUOTE}([^"'\`\\\\\\n]*)`, "gi");
+const SCRIPT_LINE = /\b(fingerprint|fp|pubkey|public[-_ ]key)(?:\s*[:=]\s*|\s+)([0-9A-Fa-f]{4,}…?|…)(?![0-9A-Za-z_…])/gi;
+
+// The one script value the policy lets stand, each named with its reason. A
+// dead entry (its value no longer in the script) fails, so the list cannot
+// outlive what it excuses.
+const SCRIPT_EXEMPT = [
+  {
+    file: "canary-local/assets/guides.js", label: "fp", value: "0000000000000000",
+    why: "the \"Failed is loud on purpose\" drill's forged chain head: a deliberately foreign fp (all " +
+      "zeros, no key's), in the envelope fp's shape. The display's trust::evaluate_chain checks " +
+      "length, latest_hash and sig, not fp, so the drill fails on the sig; fp is only the " +
+      "correlator mqtt_mgr.cpp stores beside the verdict.",
+    pins: [
+      ["firmware/projects/canary-display/src/net/mqtt_mgr.cpp",
+        "const auto verdict = canary::trust::evaluate_chain(device_id, length, hash, sig);"],
+    ],
+  },
+];
+
+// devices/<page>.json for assets/<page>-ui.js, assets/<page>.js, <page>.html.
+const pageOf = (file) => `${file.replace(/^.*\//, "").replace(/(?:-ui)?\.(?:m?js|html)$/, "")}.json`;
+
+function scriptVerdict(file, label, value) {
+  const m = value.match(/^\$\{data((?:\.[A-Za-z_][A-Za-z0-9_]*)+)\}$/);
+  if (!m) return `${file}: ${label} "${value}" is spelled in the script — move it into the generator's data`;
+  const page = pageOf(file);
+  if (!DATA[page]) return `${file}: ${label} "${value}" — no devices/${page} for this script to read it from`;
+  const hits = EXAMPLES.filter((e) => e.page === page && e.path === m[1]);
+  if (hits.length !== 1 || rulesFor(hits[0]).length !== 1)
+    return `${file}: ${label} "${value}" — ${page} ${m[1]} is not an example the JSON walk holds to a rule`;
+  return null;
+}
+
+function scriptExamplesIn(file, src) {
+  const out = [];
+  for (const m of src.matchAll(SCRIPT_KEYED)) out.push({ file, label: m[1] || m[2], value: m[3] });
+  for (const m of src.matchAll(SCRIPT_LINE)) out.push({ file, label: m[1], value: m[2] });
+  return out;
+}
+function scriptExamples() {
+  const out = [];
+  for (const [dir, ext] of SCRIPT_DIRS)
+    for (const f of readdirSync(join(REPO, dir)).filter((x) => ext.test(x)).sort())
+      out.push(...scriptExamplesIn(`${dir}/${f}`, read(`${dir}/${f}`)));
+  return out;
+}
+const exemptFor = (ex) => SCRIPT_EXEMPT.find((x) => x.file === ex.file && x.label === ex.label && x.value === ex.value);
+
+test("the script policy: only an interpolated, rule-held generated field passes", () => {
+  const sense = "canary-local/assets/sense-ui.js";
+  assert.strictEqual(scriptVerdict(sense, "fp", "${data.device.fp_example}"), null);
+  assert.match(scriptVerdict("canary-local/assets/vision-ui.js", "public_key", "ed25519:…"), /spelled in the script/,
+    "the Vision pane's old health row");
+  assert.match(scriptVerdict(sense, "fp", "b7e2c49a11f03d5c"), /spelled in the script/, "even a correct literal");
+  assert.match(scriptVerdict(sense, "fp", "…"), /spelled in the script/);
+  assert.match(scriptVerdict(sense, "fp", "${fp}"), /spelled in the script/, "not a data path");
+  assert.match(scriptVerdict(sense, "fp", "${data.device.name}"), /not an example/, "a field no rule holds");
+  assert.match(scriptVerdict(sense, "fp", "${data.device.nope}"), /not an example/);
+  assert.match(scriptVerdict("canary-local/assets/app.js", "fp", "${data.device.fp_example}"), /no devices\/app\.json/);
+  assert.strictEqual(pageOf("canary-local/assets/vision-ui.js"), "vision.json");
+  assert.strictEqual(pageOf("canary-local/assets/wap.js"), "wap.json");
+  assert.strictEqual(pageOf("canary-local/vision.html"), "vision.json");
+});
+
+test("the script walk reads every way a script writes a payload field", () => {
+  const f = "canary-local/assets/x.js";
+  const seen = (src) => scriptExamplesIn(f, src).map((e) => [e.label, e.value]);
+  // an object literal, in every quoting (the forms the A26 review found unread)
+  assert.deepStrictEqual(seen('const h = { fw: v, public_key: "ed25519:…" };'), [["public_key", "ed25519:…"]]);
+  assert.deepStrictEqual(seen('({ v: 1, alg: "ed25519", fp: "7f3a9c21", sig: "x" })'), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen("{ 'fp': '7f3a9c21' }"), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen('{ "fp": "7f3a9c21" }'), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen("{ publicKey: `${data.device.fp_example}` }"), [["publicKey", "${data.device.fp_example}"]]);
+  // JSON written inside a string literal, plain or escaped
+  assert.deepStrictEqual(seen(`'{"fp":"7f3a9c21"}'`), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen('"{\\"fp\\":\\"${data.device.fp_example}\\"}"'), [["fp", "${data.device.fp_example}"]]);
+  // a property assignment
+  assert.deepStrictEqual(seen('row.fp = "7f3a9c21";'), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen("row.fpHex = '7916ca48';"), [["fpHex", "7916ca48"]]);
+  // a console line a script prints
+  assert.deepStrictEqual(seen('log("fingerprint: 7916CA48…")'), [["fingerprint", "7916CA48…"]]);
+  // not payload fields: a comparison, a ternary's member, a declaration, a word
+  for (const src of ['if (p.fp === "x") {}', 'const v = ok ? w.fp : "none";',
+    'const MQTT_FP_PLACEHOLDER = "AA:BB:CC:…";', '{ fps: "60" }', '{ hasFingerprint: "yes" }'])
+    assert.deepStrictEqual(seen(src), [], src);
+  // and each form the walk reads, written with a literal, fails the policy
+  for (const src of ['{ fp: "7f3a9c21" }', 'row.fp = "7f3a9c21";', "{ 'public_key': '…' }"])
+    for (const ex of scriptExamplesIn("canary-local/assets/sense-ui.js", src))
+      assert.match(scriptVerdict(ex.file, ex.label, ex.value), /spelled in the script/, src);
+});
+
+test("no page script spells an fp or key example of its own", () => {
+  for (const x of SCRIPT_EXEMPT)
+    for (const [file, literal] of x.pins)
+      assert.ok(read(file).includes(literal), `${x.file}'s exemption: ${file} no longer has ${JSON.stringify(literal)}`);
+  const found = scriptExamples();
+  const problems = found.filter((ex) => !exemptFor(ex)).map((ex) => scriptVerdict(ex.file, ex.label, ex.value)).filter(Boolean);
+  assert.deepStrictEqual(problems, []);
+  for (const x of SCRIPT_EXEMPT) {
+    const hits = found.filter((ex) => exemptFor(ex) === x);
+    assert.strictEqual(hits.length, 1, `${x.file} ${x.label} "${x.value}": a dead or doubled exemption (${hits.length} found)`);
+    // a forgery still has the wire's shape, so the drill fails where it says
+    assert.strictEqual(shapeProblem(x.value, RULES[0]), null, `${x.file}: the forged fp is not shaped as an envelope fp`);
+  }
+  // the walk reads the scripts at all: guides.js's forged fp is in it (the
+  // exemption's one hit, above), and so would a payload field a script wrote
+  assert.ok(found.some((e) => e.file.endsWith("/guides.js") && e.label === "fp"),
+    "the script walk found nothing (its match broke?)");
+  // sense-ui.js writes no fp of its own any more: its events and chain rows
+  // are sense.json's examples with the lab's values laid over (sweep A31)
+  assert.ok(!found.some((e) => e.file.endsWith("/sense-ui.js")), "sense-ui.js spells an fp field again");
 });

@@ -42,6 +42,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# `cmd | grep -q` is a trap under pipefail: grep stops reading at its first
+# match, the command still writing into the pipe dies of SIGPIPE (141), and
+# the pipeline reports that death as a failure. A line that is in the log
+# reads as missing whenever the log runs on past it. So read the whole
+# output first and grep the copy.
+logs_have() {
+    local out
+    out=$(docker logs "$1" 2>&1) || true
+    grep -qF -- "$2" <<<"$out"
+}
+running() {
+    [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = "true" ]
+}
+
 echo "==> Building sidecar image ($IMG)"
 docker build -f docker/sidecar/Dockerfile -t "$IMG" .
 
@@ -77,11 +91,11 @@ docker run -d --name "$SIDECAR" --network "$NET" \
 echo "==> Waiting for the bridge to subscribe"
 subscribed=0
 for _ in $(seq 1 60); do
-    if docker logs "$SIDECAR" 2>&1 | grep -q "Subscribed to frigate/events"; then
+    if logs_have "$SIDECAR" "Subscribed to frigate/events"; then
         subscribed=1
         break
     fi
-    if ! docker ps -q --no-trunc | grep -q "$(docker inspect -f '{{.Id}}' "$SIDECAR")"; then
+    if ! running "$SIDECAR"; then
         break
     fi
     sleep 1
@@ -100,7 +114,7 @@ docker run --rm --network "$NET" eclipse-mosquitto:2 \
 echo "==> Waiting for ingest"
 ingested=0
 for _ in $(seq 1 60); do
-    if docker logs "$SIDECAR" 2>&1 | grep -q "Event logged"; then
+    if logs_have "$SIDECAR" "Event logged"; then
         ingested=1
         break
     fi
@@ -148,7 +162,7 @@ for _ in $(seq 1 60); do
         lan_up=1
         break
     fi
-    if ! docker ps -q --no-trunc | grep -q "$(docker inspect -f '{{.Id}}' "$SIDECAR_LAN")"; then
+    if ! running "$SIDECAR_LAN"; then
         break
     fi
     sleep 1
@@ -158,7 +172,7 @@ if [ "$lan_up" -ne 1 ]; then
     docker logs "$SIDECAR_LAN" >&2 || true
     exit 1
 fi
-if docker logs "$SIDECAR_LAN" 2>&1 | grep -q "SECURACV_API_BIND=all: witness_api binds 0.0.0.0:8799"; then
+if logs_have "$SIDECAR_LAN" "SECURACV_API_BIND=all: witness_api binds 0.0.0.0:8799"; then
     echo "✓ the entrypoint announced the LAN bind once, with the exposure notice"
 else
     echo "❌ no SECURACV_API_BIND=all startup notice in the LAN-mode sidecar's log" >&2
@@ -241,8 +255,8 @@ docker rm -f "$SIDECAR_LAN" >/dev/null 2>&1 || true
 
 echo "==> Checking the HA Discovery config topic is retained"
 # Generous window: the publisher polls the event API every 30s.
-if docker run --rm --network "$NET" eclipse-mosquitto:2 \
-    mosquitto_sub -h "$BROKER" -t 'homeassistant/#' -C 1 -W 90 | grep -q .; then
+if discovery=$(docker run --rm --network "$NET" eclipse-mosquitto:2 \
+    mosquitto_sub -h "$BROKER" -t 'homeassistant/#' -C 1 -W 90) && [ -n "$discovery" ]; then
     echo "✓ retained discovery payload present"
 else
     echo "❌ no retained homeassistant/# discovery payload found" >&2

@@ -10,8 +10,10 @@
  * Build: drop the .cpp next to your sketch's other source files, then call
  *
  *     csi_module_register(stub_door_opens_module());
+ *     csi_module_init_all(nullptr);
  *
- * once at boot.
+ * once at boot, before the first CSI window (registration alone runs no
+ * init(), and csi_module_tick_all() ticks no module before its init).
  */
 
 #ifndef SECURACV_EXAMPLE_STUB_DOOR_OPENS_H

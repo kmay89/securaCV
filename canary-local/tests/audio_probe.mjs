@@ -14,14 +14,19 @@
 //      it and returns to idle.
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set). Prints
-// AUDIO_PROBE_OK / exits 0 on success.
+// AUDIO_PROBE_OK / exits 0 on success. With LAB_CORES=native, step 2 drives
+// this tree's acoustic sources instead of the committed wasm
+// (tests/native/README.md).
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, dirname, resolve, sep } from "node:path";
+import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { indexTree, lookup } from "./probe_server.mjs";
+import { probeCores } from "./native/probe_cores.js";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
+const FILES = indexTree(ROOT);
 const TYPES = {
   ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
   ".json": "application/json", ".css": "text/css", ".svg": "image/svg+xml",
@@ -34,18 +39,28 @@ const pw = await (async () => {
 
 const fail = (m) => { console.error("AUDIO_PROBE_FAIL:", m); process.exit(1); };
 
+// LAB_CORES=native (sweep A41): the page's core (canary-wap-audio) is built
+// from this tree's sources (tests/native/cores.js, as the Node page tests
+// build it) and reached through a stand-in factory served at its dist URL
+// (tests/native/probe_cores.js). Unset (or "dist"), this is null and the
+// committed dist is served as always.
+const cores = await probeCores(["canary-wap-audio"]);
+
 const server = createServer(async (req, res) => {
   try {
-    const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    if (rel === "/favicon.ico") { res.writeHead(204); return res.end(); }
-    const p = resolve(join(ROOT, rel));
-    if (p !== ROOT && !p.startsWith(ROOT + sep)) { res.writeHead(403); return res.end(); }
-    const file = rel.endsWith("/") ? join(p, "index.html") : p;
+    if (cores && await cores.handle(req, res)) return;
+    const path = req.url.split("?")[0];
+    if (path === "/favicon.ico") { res.writeHead(204); return res.end(); }
+    // the URL never becomes a path: it is looked up in the tree's index
+    // (probe_server.mjs), so the path that reaches readFile is the index's
+    const file = lookup(FILES, req.url);
+    if (!file) { res.writeHead(404); return res.end("not found"); }
     const body = await readFile(file);
     res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
     res.end(body);
   } catch { res.writeHead(404); res.end("not found"); }
-}).listen(0);
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
 
 const errors = [];
@@ -58,7 +73,11 @@ page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + 
 page.on("pageerror", (e) => errors.push("pageerror: " + String(e)));
 
 try {
-  await page.goto(`http://localhost:${port}/canary-local/smoke.html`, { waitUntil: "networkidle", timeout: 45000 });
+  const url = `http://127.0.0.1:${port}/canary-local/smoke.html`;
+  // Under LAB_CORES=native each core call is a request, which "networkidle"
+  // would count; the bridge waits for the same quiet without them.
+  if (cores) await cores.gotoIdle(page, url, { timeout: 45000 });
+  else await page.goto(url, { waitUntil: "networkidle", timeout: 45000 });
 
   // ── 1. page renders the safeguards + real-firmware chip + gated button ──
   await page.waitForSelector(".smoke-disclaimer", { timeout: 15000 });
@@ -71,10 +90,11 @@ try {
     fail("runtime chip did not identify the real firmware wasm: " + chipText);
 
   if (!(await page.evaluate(() => typeof globalThis.createCanaryAudioCore === "function")))
-    fail("committed Canary WAP acoustic core factory did not load");
+    fail((cores ? "LAB_CORES=native stand-in" : "committed") + " Canary WAP acoustic core factory did not load");
   if (!(await page.$(".smoke-start"))) fail("Start listening button missing");
 
-  // ── 2. the committed wasm detects a synthesized T3, rejects off-band ──
+  // ── 2. the committed wasm (or, under LAB_CORES=native, this tree's
+  //    sources) detects a synthesized T3, rejects off-band ──
   const detect = await page.evaluate(async () => {
     const m = await globalThis.createCanaryAudioCore();
     const reset = m.cwrap("audio_emu_reset", null, []);
@@ -105,8 +125,8 @@ try {
     for (let c = 0; c < 2; c++) { emit(300, 25, offband); emit(0, 25, offband); emit(300, 25, offband); emit(0, 25, offband); emit(300, 25, offband); emit(0, 90, offband); }
     return { inband, offband };
   });
-  if (!detect.inband.t3) fail("synthesized T3 did NOT fire the smoke event through the browser wasm");
-  if (detect.offband.t3) fail("off-band rhythm WRONGLY read as smoke — the tone gate failed in wasm");
+  if (!detect.inband.t3) fail(`synthesized T3 did NOT fire the smoke event through ${cores ? "the native core" : "the browser wasm"}`);
+  if (detect.offband.t3) fail(`off-band rhythm WRONGLY read as smoke — the tone gate failed in ${cores ? "the native core" : "wasm"}`);
 
   // ── 3. the mic button opens the stream and the live bench appears ──
   await page.click(".smoke-start");
@@ -119,7 +139,8 @@ try {
     .catch(() => fail("Stop did not return to the idle Start button"));
 
   if (errors.length) fail("page errors:\n  " + errors.join("\n  "));
-  console.log("AUDIO_PROBE_OK");
+  if (cores && !cores.used()) fail("LAB_CORES=native, but the page never ran the native core: " + cores.summary());
+  console.log("AUDIO_PROBE_OK" + (cores ? ` (LAB_CORES=native: ${cores.summary()})` : ""));
   process.exit(0);
 } catch (e) {
   fail(String((e && e.stack) || e));

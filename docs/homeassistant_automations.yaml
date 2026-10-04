@@ -3,7 +3,7 @@
 # Copy-paste these automations into your HA configuration.yaml or
 # create them via the HA UI (Settings > Automations > Create Automation).
 #
-# Replace XXXX with your Canary device ID (e.g., canary-s3-a3f7).
+# Replace XXXX with your Canary device ID (e.g., canary-s3-4dC2).
 # Replace "mobile_app_your_phone" with your companion app service name.
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -9,7 +9,8 @@
 // runs the same mesh_network.cpp on host stubs, for behavior. This pins:
 //
 //   1. The replay counter convention, the same in both trees: the first
-//      counter a sender signs is 1 (add_peer, and both rekey resets), and
+//      counter a sender signs is 1 (add_peer on a device that has signed
+//      none; a rotation resets no counter since F95), and
 //      the receiver drops counter <= last-seen with NO exemption. The old
 //      gate, `counter <= rx && rx > 0`, existed so the old counter-0 first
 //      frame could pass a fresh rx of 0 — and passed a counter-0 frame
@@ -25,8 +26,9 @@
 //      where any signature did it (a keyless DoS). A verified frame does
 //      not prove which radio sent it, so a replayed one passed too:
 //      test_mesh_address_wap runs that against the real file. The PIO
-//      session records the source of a verified frame as a liveness link,
-//      after its replay gate, which the pin's last checks hold.
+//      session has the same source rule since F70 (it used to record the
+//      source of a verified frame as the member's address, from any address
+//      in its transport table), which the pin's last checks hold.
 //   3. Every handler of a fixed-size struct payload takes payload_len and
 //      refuses any other size, exactly (the PIO decoders' rule). The PIO
 //      tree's TAMPER_ALERT is mesh_alert::PAYLOAD_LEN = 6 bytes; read as
@@ -115,24 +117,37 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   const std::string code = load(MESH_NETWORK_CPP);
   const std::string sq   = squeeze(code);
 
-  // The sender: add_peer starts at 1, and so do the two rekey resets (the
-  // rekey-apply branch of handle_received_message, and maybe_finalize_rekey).
+  // The sender: add_peer starts at 1 on a device that has signed no
+  // counter (F99: one past the highest it can have signed otherwise), and
+  // so does load_peers before the reservations are read. A rotation resets no
+  // counter since F95 (the rekey-apply branch of handle_received_message
+  // and maybe_finalize_rekey set them back to tx 1, rx 0; they carry on
+  // now, as on the PIO tree, and test_mesh_liveness_wap runs it).
   // No reset to 0 remains anywhere in the file.
+  // Since F99 a new member starts one past the highest counter the device
+  // can have signed to anyone: 1 on a device that has signed none
+  // (g_tx_high_signed starts at 0; test_mesh_liveness_wap runs both).
   const std::string add = squeeze(function_body(code, "add_peer"));
   CHECK(!add.empty());
-  CHECK(count(add, "peer->msg_counter_tx=1;") == 1);
+  CHECK(count(add, "peer->msg_counter_tx=(g_tx_high_signed==UINT64_MAX)?0:g_tx_high_signed+1;") == 1);
+  CHECK(count(sq, "staticuint64_tg_tx_high_signed=0;") == 1);
   // Peers restored from NVS take the same convention (Codex P1 on #1752):
   // a static-zeroed tx would sign counter 0 and the strict gate drops it.
+  // The receiver's last-seen starts at 0, or since F116 at the tombstone
+  // a member this device dropped left (test_mesh_liveness_wap runs it).
   const std::string ld = squeeze(function_body(code, "load_peers"));
-  CHECK(count(ld, "g_peers[i].msg_counter_tx=1;") == 1);
-  CHECK(count(ld, "g_peers[i].msg_counter_rx=0;") == 1);
-  CHECK(count(add, "peer->msg_counter_rx=0;") == 1);
+  // (Each entry is `p`, the next free place: a slot that does not read
+  // whole is not loaded, F137's review.)
+  CHECK(count(ld, "OperaPeer&p=g_peers[g_peer_count++];") == 1);
+  CHECK(count(ld, "p.msg_counter_tx=1;") == 1);
+  CHECK(count(ld, "p.msg_counter_rx=tomb!=nullptr?tomb->last_seen:0;") == 1);
+  CHECK(count(add, "peer->msg_counter_rx=tomb!=nullptr?tomb->last_seen:0;") == 1);
   CHECK(count(sq, "msg_counter_tx=0;") == 0);
-  CHECK(count(sq, "msg_counter_tx=1;") == 4);  // add_peer, rekey apply, maybe_finalize_rekey, load_peers
+  CHECK(count(sq, "msg_counter_tx=1;") == 1);  // load_peers
   const std::string fin = squeeze(function_body(code, "maybe_finalize_rekey"));
   CHECK(!fin.empty());
-  CHECK(count(fin, "g_peers[j].msg_counter_tx=1;") == 1);
-  CHECK(count(fin, "g_peers[j].msg_counter_rx=0;") == 1);
+  CHECK(count(fin, "msg_counter_tx=") == 0);
+  CHECK(count(fin, "msg_counter_rx=") == 0);
   const std::string tx = squeeze(function_body(code, "send_to_peer"));
   CHECK(!tx.empty());
   CHECK(count(tx, "uint64_tcounter=peer->msg_counter_tx++;") == 1);  // signs the stored value: 1 first
@@ -145,10 +160,10 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   CHECK(count(rx, "msg_counter_rx>0") == 0);
   CHECK(count(sq, "msg_counter_rx>0") == 0);
   CHECK(count(rx, "&&peer->msg_counter_rx") == 0);
-  // The rekey-apply branch resets the session's counters to the same
-  // convention (tx 1, rx 0) as add_peer.
-  CHECK(count(rx, "peer->msg_counter_tx=1;") == 1);
-  CHECK(count(rx, "peer->msg_counter_rx=0;") == 1);
+  // The rekey-apply branch leaves the counters alone (F95): the only
+  // write to one in the receive path is the replay gate's record.
+  CHECK(count(rx, "peer->msg_counter_tx=") == 0);
+  CHECK(count(rx, "peer->msg_counter_rx=") == 1);
 
   // The PIO tree says the same thing: its outbound counter starts at 0 and
   // the first one it hands out is +1, and its receive gate is `<=` with no
@@ -246,23 +261,48 @@ void test_no_frame_moves_a_members_address() {
   // runs it.)
   const std::string add = squeeze(function_body(code, "add_peer"));
   CHECK(count(add, "returnrebind_peer(&g_peers[i],mac);") == 1);
+  // Since F98 a new key at an address another member holds is refused too,
+  // ahead of the append, and both refusals say so on a line of their own
+  // (test_mesh_address_wap and test_mesh_liveness_wap run them).
+  CHECK(count(add, "if(other_holder_of(mac,nullptr)!=nullptr){log_held_address();returnfalse;}") == 1);
+  CHECK(before(add, "returnrebind_peer(&g_peers[i],mac);", "if(other_holder_of(mac,nullptr)!=nullptr){log_held_address();returnfalse;}"));
+  CHECK(before(add, "if(other_holder_of(mac,nullptr)!=nullptr){log_held_address();returnfalse;}", "esp_now_add_peer(&peer_info)"));
   const std::string rb = squeeze(function_body(code, "rebind_peer"));
   CHECK(!rb.empty());
-  CHECK(count(rb, "if(holder!=nullptr&&holder!=peer){returnfalse;}") == 1);
-  CHECK(before(rb, "esp_now_add_peer(&peer_info)", "esp_now_del_peer(peer->mac_addr);"));
-  CHECK(before(rb, "esp_now_del_peer(peer->mac_addr);", "memcpy(peer->mac_addr,mac,6);"));
-  // The PIO session records its liveness link (peer->mac, never the
-  // transport binding) after its replay gate. It does not re-bind from a
-  // frame at all (spec §8.3); its frames from an unbound address are
-  // dropped before this function runs.
+  CHECK(count(rb, "if(other_holder_of(mac,peer)!=nullptr){log_held_address();returnfalse;}") == 1);
+  // The old address is released (its registration dropped unless another
+  // member an older firmware stored there still holds it, F98) after the
+  // new one is registered, and before the member moves.
+  CHECK(before(rb, "esp_now_add_peer(&peer_info)", "release_mac(peer->mac_addr,peer);"));
+  CHECK(before(rb, "release_mac(peer->mac_addr,peer);", "memcpy(peer->mac_addr,mac,6);"));
+  // The PIO session has the same rule since F70: a member's frame is taken
+  // only from the member's own binding (radio_mac), compared between its
+  // lookup and its signature check, and after its replay gate the frame
+  // only marks the member heard. Until F70 it recorded the frame's source
+  // as the member's address (peer->mac), from any address in its transport
+  // table. Its frames from an address the table does not hold are dropped
+  // before this function runs, and nothing here writes an address (spec
+  // §8.3).
   const std::string pio = load(MESH_SESSION_CPP);
   const std::string prx = squeeze(function_body(pio, "on_opera_frame"));
   CHECK(!prx.empty());
+  const std::string pio_lookup = "TrustedPeer*peer=find_trusted_peer(sender_fp_in_frame);";
+  const std::string pio_source =
+      "if(!peer->radio_mac_set||memcmp(mac,peer->radio_mac,mesh_transport::MESH_TRANSPORT_MAC_LEN)!=0){return;}";
+  const std::string pio_verify = "mesh_envelope::parse_and_verify(";
   const std::string pio_replay = "if(hdr.counter<=peer->last_counter)return;";
-  const std::string pio_bind   = "memcpy(peer->mac,mac,mesh_transport::MESH_TRANSPORT_MAC_LEN);peer->mac_known=true;";
-  CHECK(count(prx, pio_bind) == 1);
-  CHECK(before(prx, "mesh_envelope::parse_and_verify(", pio_replay));
-  CHECK(before(prx, pio_replay, pio_bind));
+  const std::string pio_heard  = "peer->heard=true;";
+  CHECK(count(prx, pio_lookup) == 1);
+  CHECK(count(prx, pio_source) == 1);
+  CHECK(count(prx, pio_heard) == 1);
+  CHECK(before(prx, pio_lookup, pio_source));
+  CHECK(before(prx, pio_source, pio_verify));
+  CHECK(before(prx, pio_verify, pio_replay));
+  CHECK(before(prx, pio_replay, pio_heard));
+  CHECK(count(prx, "memcpy(") == 0);
+  CHECK(count(prx, "bind_peer_mac(") == 0);
+  CHECK(count(prx, "mesh_transport::add_peer(") == 0);
+  CHECK(count(prx, "mesh_transport::remove_peer(") == 0);
   std::printf("PASS no_frame_moves_a_members_address\n");
 }
 

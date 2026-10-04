@@ -21,7 +21,9 @@ const ROOT = join(__dirname, "..");
 const REPO = join(ROOT, "..");
 const read = (p) => readFileSync(p, "utf8");
 
-const visionFactory = require(join(ROOT, "emulator/dist/canary-vision-core.js"));
+// The committed emulator/dist/canary-vision-core.js; LAB_CORES=native builds
+// this tree's sources instead (tests/native/README.md, sweep A40).
+const visionFactory = require("./native/cores.js").coreFactory("canary-vision-core");
 
 async function sensor() {
   return import("../assets/eyes-bench.js");

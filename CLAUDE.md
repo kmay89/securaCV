@@ -203,6 +203,37 @@ is stale against its firmware core") — which run in the **page logic tests**
 job. So a version bump goes red in a job whose name says nothing about the
 emulator, and reading only the drift check will tell you the dist is fine.
 
+**A stale dist no longer stops you proving the sources.** The page tests that
+drive a WebAssembly core (`vision.test.js`, `eyes.test.js`, `audio.test.js`)
+run on the committed dist by default; `LAB_CORES=native node --test
+canary-local/tests/vision.test.js canary-local/tests/eyes.test.js
+canary-local/tests/audio.test.js` builds the Vision and audio cores with g++
+from the sources `build.sh` hands em++ (no emsdk) and runs the same tests on
+them. The page logic tests job runs both, the native step even when the dist
+step failed: native green and dist red after a core change means the sources
+are right and the dist needs the rebuild below. A native pass proves the
+sources, not the bytes; the dist is still what ships. Under the same variable
+`native_cores.test.js` drives each native core next to its dist, call for
+call, on fixed scenarios: a difference is a stale dist or an input where
+64-bit g++ and wasm32 clang disagree, and agreement says nothing about inputs
+those scenarios never send. The Chromium probes that drive those two cores
+(`vision_probe.mjs`, `eyes_probe.mjs`, `audio_probe.mjs`) take the same
+variable: their server answers the core's dist URL with a stand-in that
+forwards each call to the native build over synchronous same-origin requests,
+the page served as committed, and the wasm job runs each probe both ways. The
+native step runs whenever its own dist step ran, red or green; an earlier red
+step in the job (the onboard probe on a stale display dist, say) skips both.
+A native probe pass makes the same claim as a native test pass. The display
+flavors have no native stand-in; they boot only in Chromium.
+`vision_wasm32.test.js` needs neither `LAB_CORES` nor the dist: it builds the
+Vision detection pipeline (`detection_pipeline.h`) for wasm32 with the host's
+clang and wasm-ld, freestanding, beside a g++ build, and holds the two to each
+other on the host suite's extreme-box grid. So a box product taken in a 32-bit
+`long`, which every 64-bit build passes, shows from the sources before any
+rebuild. Without clang or wasm-ld it skips and names the tool; CI sets
+`VISION_WASM32=require`. It is the host's clang, not emscripten's, and not the
+dist. See `canary-local/tests/native/README.md`.
+
 Fixing it needs emsdk **6.0.3** exactly, which most working environments can't
 install. Don't fight that — use **Actions → "Rebuild emulator dist (pinned
 emsdk)"**, dispatched on your branch: it rebuilds where the toolchain lives and

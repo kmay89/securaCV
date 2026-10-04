@@ -4,6 +4,7 @@
 #
 #   ./build.sh watch     → dist/canary-display-watch.js   (240×240 round)
 #   ./build.sh dash      → dist/canary-display-dash.js    (800×480 panel)
+#   ./build.sh nightlight → dist/canary-display-nightlight.js (180×320, turns)
 #   ./build.sh vision    → dist/canary-vision-core.js     (real witness core)
 #   ./build.sh all
 #
@@ -71,14 +72,16 @@ if [[ "$FLAVOR" == "all" ]]; then
   "$0" nightstand
   "$0" touch169
   "$0" amoled241
+  "$0" nightlight
   "$0" vision
   "$0" audio
   exit 0
 fi
 [[ "$FLAVOR" == "watch" || "$FLAVOR" == "dash" || "$FLAVOR" == "nightstand" || \
    "$FLAVOR" == "touch169" || "$FLAVOR" == "amoled241" || \
+   "$FLAVOR" == "nightlight" || \
    "$FLAVOR" == "vision" || "$FLAVOR" == "audio" ]] || {
-  echo "usage: $0 [watch|dash|nightstand|touch169|amoled241|vision|audio|all]" >&2
+  echo "usage: $0 [watch|dash|nightstand|touch169|amoled241|nightlight|vision|audio|all]" >&2
   exit 2
 }
 
@@ -290,6 +293,16 @@ elif [[ "$FLAVOR" == "amoled241" ]]; then
   # big emissive glass (CD_AMOLED_GLASS) — pointer events are the FT6336.
   PINS_DIR="$FW/boards/waveshare-esp32s3-amoled241/pins"
   CFG_DIR="$FW/configs/canary-display/amoled241"
+elif [[ "$FLAVOR" == "nightlight" ]]; then
+  # The Canary Nightlight (env canary-display-nightlight-c3): the C3 pocket
+  # board's 180x320 ST7789T, riding the nightstand flavor with its own face
+  # (CD_NIGHTLIGHT in its config.h). The one flavor whose glass turns in
+  # hardware: a saved rotation (its own NVS key, staged by the page through
+  # emu_preset_rotation) is worn before the splash, so a landscape unit boots
+  # on the 320x180 canvas (F204). No touch panel and no IMU here; pointer
+  # events reach nothing, and auto-orient stays off (emu_hal_display.cpp).
+  PINS_DIR="$FW/boards/waveshare-esp32c3-lcd147/pins"
+  CFG_DIR="$FW/configs/canary-display/nightlight"
 else
   PINS_DIR="$FW/boards/waveshare-esp32s3-lcd43/pins"
   CFG_DIR="$FW/configs/canary-display/dash"
@@ -301,6 +314,7 @@ case "$FLAVOR" in
   nightstand) EXPORT_NAME="createCanaryEmuNightstand" ;;
   touch169)   EXPORT_NAME="createCanaryEmuTouch169" ;;
   amoled241)  EXPORT_NAME="createCanaryEmuAmoled241" ;;
+  nightlight) EXPORT_NAME="createCanaryEmuNightlight" ;;
   *)          EXPORT_NAME="createCanaryEmuDash" ;;
 esac
 OBJ="$BUILD/$FLAVOR"
@@ -349,6 +363,17 @@ DEFINES=(
   -DARDUINOJSON_ENABLE_ARDUINO_PRINT=0
   -DARDUINOJSON_ENABLE_PROGMEM=0
 )
+# The nightlight env's lean budget (canary-display.ini: -DCD_LEAN_BUILD=1):
+# lv_conf.h drops the 36/48 faces and keeps LVGL's stock 30 ms refresh, and
+# character.cpp takes its lean type ladder — the faces the board's glass
+# wears, so the twin lays its scenes out in them. LVGL compiles with it too
+# (CFLAGS), as on the board. The env's ESP-NOW receive and First Light pair
+# demo (-DFEATURE_ESPNOW / -DFEATURE_PAIR_DEMO) are not mirrored: that radio
+# band has no shim (net/espnow_peer.cpp is not compiled), the same reason
+# the dash twin is the plain dash env and not dash-espnow.
+if [[ "$FLAVOR" == "nightlight" ]]; then
+  DEFINES+=(-DCD_LEAN_BUILD=1)
+fi
 
 WARN=(-Wall -Wno-unused-parameter)
 OPT=(-O2)
@@ -376,9 +401,11 @@ FIRMWARE_SRCS=(
 # The portrait flavors are the only ones whose UI calls into the shared
 # color/look engine (the same LDF lesson the nightstand-s3 PlatformIO env
 # documents) — adding these TUs to watch/dash would perturb their bytes
-# for nothing, so they join per-flavor.
+# for nothing, so they join per-flavor. The nightlight is one of them: it
+# rides the nightstand flavor (CD_FLAVOR_NIGHTSTAND), its lamp is a look-
+# engine scene, and its env compiles the same three color TUs.
 if [[ "$FLAVOR" == "nightstand" || "$FLAVOR" == "touch169" || \
-      "$FLAVOR" == "amoled241" ]]; then
+      "$FLAVOR" == "amoled241" || "$FLAVOR" == "nightlight" ]]; then
   FIRMWARE_SRCS+=(
     "$FW/common/color/color_engine.cpp"
     "$FW/common/color/look_engine.cpp"

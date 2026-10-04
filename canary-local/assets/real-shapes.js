@@ -78,11 +78,11 @@ const standUp = M4.rotX(-Math.PI / 2);    // flat print → upright (z → y)
 //   world = G · T(devicePos − standCenter) · R_device · T(−meshCenter)
 // so every part's seat comes from the SCAD's own cradle geometry, not from
 // per-part hand offsets. G = standUp (print z → screen y) + a vertical trim.
-function seatPart(scene, parsed, { G, D, R = M4.ident(), color = shell(), gloss = 0.22, role }) {
+function seatPart(scene, parsed, { G, D, R = M4.ident(), color = shell(), gloss = 0.22, role, stand = false }) {
   const c = parsed.bbox.center;
   const model = M4.mul(G, M4.mul(M4.translate(D[0], D[1], D[2]),
     M4.mul(R, M4.translate(-c[0], -c[1], -c[2]))));
-  scene.addMesh(parsed.mesh, { color, gloss, model, role: roleFor(color, role) });
+  scene.addMesh(parsed.mesh, { color, gloss, model, role: roleFor(color, role), stand });
 }
 
 // canary_watch_station.scad (v0.2) — the drum sinks pocket_dep = 11 into the
@@ -112,7 +112,7 @@ async function realWatch(scene) {
   const p0 = [0, 3.028 - cS[1], 27.356 - cS[2]];         // the ledger's seat_scad.pos, stand-centered
   const a = [0, -Math.sin(A), Math.cos(A)];
   const along = (s) => [p0[0], p0[1] + a[1] * s, p0[2] + a[2] * s];
-  seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18 });
+  seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18, stand: true });
   seatPart(scene, drum, { G, D: along(10.5), R: Ra, gloss: 0.22 });           // drum center: drum_h / 2
   seatPart(scene, bezel, { G, D: along(20.095), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out; fig.d − bezel height / 2
   scene.addMesh(screenPlane(39.4, 39.4, true), {         // the glass in the Ø39.4 aperture (face_fig_mm)
@@ -157,6 +157,12 @@ async function realWatch(scene) {
 // as modeled they overlap it (OpenSCAD's intersection of stand() with back()
 // at this seat is two pad-sized solids) — buried inside the fin here, and a
 // CAD question for the stand, not for this card.
+// A glass worn portrait (A47) turns the case and leaves the stand: the stand
+// is cut for the landscape case (scene3d.js, "the glass turns"), so the
+// turned case stands alone, face-on. turnPose's seat undoes this seat — the
+// module frame G · T(C) · Ra, inverted — so the case's center lands on the
+// origin, its face toward the viewer and its glass's top up; its face-on
+// size is the frame's outline and the case's depth, back pads and all.
 async function realDash(scene) {
   const [frame, back, stand] = await Promise.all([
     load("canary_dash_display_frame.stl"),
@@ -171,13 +177,17 @@ async function realDash(scene) {
   const C = [0, 6.22 - cS[1], 43.49 - cS[2]];            // module center (derivation above)
   const w = [0, -Math.cos(25 * Math.PI / 180), Math.sin(25 * Math.PI / 180)]; // face normal
   const off = (s) => [C[0], C[1] + w[1] * s, C[2] + w[2] * s];
-  seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18 });
+  seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18, stand: true });
   seatPart(scene, frame, { G, D: off(1.5), R: M4.mul(Ra, rotXpi), gloss: 0.22 });  // face-down print → face out
   seatPart(scene, back, { G, D: off(-11.3), R: Ra, color: shell2(), gloss: 0.22 }); // pads toward the fin
   scene.addMesh(screenPlane(101.3, 61.2, false), {       // glass behind the 2.5 mm bezel lip
     screen: true,
     model: M4.mul(G, M4.mul(M4.translate(...off(7.4)), Ra)),
   });
+  scene.turnPose = {
+    seat: M4.rigidInverse(M4.mul(G, M4.mul(M4.translate(...C), Ra))),   // the module frame, undone
+    size: [frame.bbox.size[0], frame.bbox.size[1], frame.bbox.size[2] + back.bbox.size[2]],
+  };
   scene.dist = 270;
 }
 

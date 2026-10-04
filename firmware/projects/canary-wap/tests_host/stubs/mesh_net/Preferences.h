@@ -1,11 +1,56 @@
 /* Host stand-in for the Arduino-ESP32 Preferences (NVS) class: one
  * in-memory store per simulated device (host_sim::nvs points at the
  * current one). getBytes refuses a buffer smaller than the value, as the
- * real one does. */
+ * real one does. A test can count the writes each key took
+ * (host_sim::nvs_writes, "<namespace>/<key>") and make every write fail
+ * (host_sim::nvs_writes_fail): on the Arduino-ESP32 cores canary-wap
+ * builds with (PlatformIO's pinned 3.3.8, the Arduino CLI leg's latest
+ * 3.x), putBytes returns 0 when nvs_set_blob or nvs_commit fails (a full
+ * or worn partition), and the value is not stored. A zero-length
+ * putBytes (or a null value) is refused the same way and writes nothing,
+ * as the real one's `!value || !len` guard has it: the old value stays.
+ * putString("") does store an empty value (nvs_set_str stores ""), and
+ * returns strlen, 0.
+ *
+ * remove() and isKey() follow Arduino-ESP32's Preferences.cpp, which is
+ * byte-identical in 3.3.8 (PlatformIO's pin) and 3.3.12 (the latest 3.x
+ * tag when sweep F137 read it): remove() refuses a read-only handle or a
+ * null key before NVS sees it (false, nothing logged), and otherwise calls
+ * nvs_erase_key(), which answers ESP_ERR_NVS_NOT_FOUND for a key that is
+ * not there; Preferences logs that at error level ("nvs_erase_key fail")
+ * and returns false. Each such line counts in host_sim::nvs_error_logs, and
+ * each key it did remove in host_sim::nvs_removes ("<namespace>/<key>").
+ * isKey() logs nothing, and is false for a key longer than NVS's 15
+ * characters.
+ *
+ * A test can also refuse the writes to some keys only
+ * (host_sim::nvs_fail_keys, "<namespace>/<key>"), as a partition that
+ * fills part way through a save does: IDF refuses each set it has no
+ * room for (ESP_ERR_NVS_NOT_ENOUGH_SPACE) and still erases, so remove()
+ * goes on working under either switch.
+ *
+ * begin() follows Arduino-ESP32's Preferences::begin() over IDF's
+ * nvs_open() (sweep F164). Namespaces are NVS's: one exists once a
+ * read-write begin() created it (IDF writes the namespace entry at that
+ * open, whether or not a key is ever stored; the store keeps a marker
+ * entry for it, host_sim::nvs_namespace_marker(), which no "<ns>/" key
+ * walk sees and only a whole-store clear(), an erase, removes) or a key
+ * is stored in it. A read-only begin() of a namespace that does not exist
+ * fails, as nvs_open() answers ESP_ERR_NVS_NOT_FOUND, and so does every
+ * begin() while host_sim::nvs_open_fails models NVS refusing every open
+ * (a fault, not a missing namespace); Preferences logs each failed open at
+ * error level ("nvs_open failed: ..."), and each counts one
+ * host_sim::nvs_error_logs. A begin() on a handle already begun is
+ * refused without a line, as Arduino's `if (_started) return false;` has
+ * it. A handle that is not begun reads every default and writes nothing,
+ * as the real one does. host_sim::nvs_begins counts every begin() call,
+ * opened or refused. nvs.h beside this file answers IDF's nvs_open() from
+ * the same store, and logs nothing. */
 #ifndef STUB_MESH_NET_PREFERENCES_H
 #define STUB_MESH_NET_PREFERENCES_H
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -15,25 +60,66 @@ namespace host_sim {
 using NvsStore = std::map<std::string, std::vector<uint8_t>>;
 inline NvsStore default_nvs;
 inline NvsStore* nvs = &default_nvs;
+inline std::map<std::string, unsigned> nvs_writes;
+inline std::map<std::string, unsigned> nvs_removes;
+inline unsigned nvs_error_logs = 0;
+inline bool nvs_writes_fail = false;
+inline std::set<std::string> nvs_fail_keys;
+inline bool nvs_open_fails = false;   /* NVS refuses every open (a fault) */
+inline unsigned nvs_begins = 0;       /* Preferences::begin() calls, opened or refused */
+inline unsigned nvs_probes = 0;       /* nvs_open() calls (nvs.h), which log nothing */
+
+/* The entry that records a namespace a read-write open created. Not of
+ * the "<ns>/<key>" form, so no key walk of a namespace sees it. */
+inline std::string nvs_namespace_marker(const std::string& ns) {
+  return std::string("\x01namespace:") + ns;
+}
+/* Does the current device's NVS hold namespace `ns`? */
+inline bool nvs_has_namespace(const std::string& ns) {
+  if (nvs->count(nvs_namespace_marker(ns)) != 0) return true;
+  const std::string prefix = ns + "/";
+  auto it = nvs->lower_bound(prefix);
+  return it != nvs->end() && it->first.compare(0, prefix.size(), prefix) == 0;
+}
+inline void nvs_create_namespace(const std::string& ns) { (*nvs)[nvs_namespace_marker(ns)]; }
 }  // namespace host_sim
 
 class Preferences {
  public:
   bool begin(const char* name, bool read_only = false) {
-    ns_ = name ? name : "";
+    ++host_sim::nvs_begins;
+    if (started_ || name == nullptr) return false;
+    if (host_sim::nvs_open_fails || (read_only && !host_sim::nvs_has_namespace(name))) {
+      ++host_sim::nvs_error_logs;   // log_e("nvs_open failed: %s", nvs_error(err))
+      return false;
+    }
+    if (!read_only) host_sim::nvs_create_namespace(name);
+    ns_ = name;
     ro_ = read_only;
+    started_ = true;
     return true;
   }
-  void end() {}
-  bool isKey(const char* key) { return host_sim::nvs->count(k(key)) != 0; }
-  bool remove(const char* key) { return !ro_ && host_sim::nvs->erase(k(key)) != 0; }
+  void end() { started_ = false; }
+  bool isKey(const char* key) {
+    if (!started_ || key == nullptr || strlen(key) > 15) return false;
+    return host_sim::nvs->count(k(key)) != 0;
+  }
+  bool remove(const char* key) {
+    if (!started_ || ro_ || key == nullptr) return false;
+    host_sim::note_side_effect();
+    if (host_sim::nvs->erase(k(key)) == 0) {
+      ++host_sim::nvs_error_logs;   // log_e("nvs_erase_key fail: %s %s", key, ...)
+      return false;
+    }
+    ++host_sim::nvs_removes[k(key)];
+    return true;
+  }
   size_t putBytes(const char* key, const void* v, size_t n) {
-    if (ro_) return 0;
-    const uint8_t* b = static_cast<const uint8_t*>(v);
-    (*host_sim::nvs)[k(key)].assign(b, b + n);
-    return n;
+    if (v == nullptr || n == 0) return 0;   // refused before nvs_set_blob
+    return store(key, v, n) ? n : 0;
   }
   size_t getBytes(const char* key, void* buf, size_t max_len) {
+    if (!started_) return 0;
     auto it = host_sim::nvs->find(k(key));
     if (it == host_sim::nvs->end() || it->second.size() > max_len) return 0;
     if (!it->second.empty()) memcpy(buf, it->second.data(), it->second.size());
@@ -49,8 +135,12 @@ class Preferences {
     uint8_t b = 0;
     return getBytes(key, &b, 1) == 1 ? b : def;
   }
-  size_t putString(const char* key, const char* v) { return putBytes(key, v, strlen(v)); }
+  size_t putString(const char* key, const char* v) {
+    if (v == nullptr) return 0;
+    return store(key, v, strlen(v)) ? strlen(v) : 0;
+  }
   String getString(const char* key, const char* def = "") {
+    if (!started_) return String(def);
     auto it = host_sim::nvs->find(k(key));
     if (it == host_sim::nvs->end()) return String(def);
     std::string s(it->second.begin(), it->second.end());
@@ -58,8 +148,18 @@ class Preferences {
   }
  private:
   std::string k(const char* key) const { return ns_ + "/" + key; }
+  bool store(const char* key, const void* v, size_t n) {
+    if (!started_) return false;
+    if (!ro_) host_sim::note_side_effect();
+    if (ro_ || host_sim::nvs_writes_fail || host_sim::nvs_fail_keys.count(k(key)) != 0) return false;
+    const uint8_t* b = static_cast<const uint8_t*>(v);
+    (*host_sim::nvs)[k(key)].assign(b, b + n);
+    ++host_sim::nvs_writes[k(key)];
+    return true;
+  }
   std::string ns_;
   bool ro_ = false;
+  bool started_ = false;
 };
 
 #endif

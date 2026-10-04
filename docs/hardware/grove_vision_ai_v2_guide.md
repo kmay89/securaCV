@@ -352,7 +352,13 @@ How the events read for a litter box: `presence_started` = cat arrived,
 `dwell_started` = a real visit (stayed past 8 s, not a walk-by sniff),
 `interaction_likely` (reason `dwell_then_left` or
 `zone_interaction_then_left`) = **visit completed**, `presence_ended` =
-cat gone. The lost timeout is deliberately long because a digging cat
+cat gone. A visit completes when it dwelled, or when the cat stayed in one
+cell of the voxel grid for 2.5 s of it; each visit is judged on its own,
+so a short sniff after a real visit is not another completed visit, and a
+cat seen again on the frame right after `presence_ended` does not cost
+the visit before it its completion (it follows one frame later)
+(`firmware/projects/canary-vision/README.md`, "When `interaction_likely`
+fires"). The lost timeout is deliberately long because a digging cat
 drops detection frames constantly — a short timeout fragments one visit
 into five.
 

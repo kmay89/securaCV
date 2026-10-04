@@ -8,10 +8,13 @@
  * Pure: no Arduino, no SD, no MQTT, no clock. The host does the I/O through
  * a Port and passes the link state and time in. Used by the canary PIO tree
  * (src/csi_event_egress.cpp over its loop-task SD adapter,
- * src/csi_event_log.cpp); the canary-wap sketch carries a staged copy
- * (check_csi_sync.sh) but still drives its own csi_event_log backfill.
- * Host-tested by firmware/tests_host/test_csi_event_backfill.cpp, which
- * replays whole outages against a model of Home Assistant's replay gate.
+ * src/csi_event_log.cpp) and, from a staged copy (check_csi_sync.sh), by the
+ * canary-wap sketch (csi_event_egress.cpp over its csi_event_log.cpp
+ * adapter, backlog F78). Host-tested by
+ * firmware/tests_host/test_csi_event_backfill.cpp, which replays whole
+ * outages against a model of Home Assistant's replay gate, and on the
+ * canary-wap by tests_host/test_wap_event_egress.cpp, against the real SD
+ * event log and CSI library.
  *
  * The rule every choice below serves: Home Assistant's replay gate
  * (custom_components/securacv/sensor.py `_replay_gate`) refuses a signed
@@ -43,7 +46,16 @@
  *   - not on the card (no card, append failed): the MQTT layer's
  *     publish-or-queue path, as before F37. That raises the watermark past
  *     any rows still waiting on the card: they stay on the card, but HA
- *     would now refuse them, so they are not sent.
+ *     would now refuse them, so they are not sent. So the hosts do not hand
+ *     the planner such a row while older rows may wait: both egresses hold
+ *     it in RAM while the card is not open but may hold older rows, for at
+ *     most kCardWaitMs, and hand it over once nothing older waits (backlog
+ *     F78 on the canary-wap, F104 on the canary). A row whose append fails
+ *     reaches this route from inside commit(): both hosts' Ports then
+ *     decline its ceiling write (persist_ceiling() reports a failure) and
+ *     keep it in RAM instead of handing it over (hand_to_queue() returns
+ *     false: kUnsent, the watermark unmoved) while older rows wait or the
+ *     link is down, and commit it again once it can go (F78, F103).
  *
  * Backfill runs (pass()) only while the link is up; the Port's live publish
  * refuses while the MQTT offline queue still holds records, so queued
@@ -104,6 +116,16 @@ constexpr size_t   kFreshIds       = 8;
 constexpr uint8_t  kReadFailLimit  = 3;
 /* How much of the log's tail the host reads to find its last id. */
 constexpr size_t   kTailRead       = 1024;
+/* How long a host holds rows the card cannot take behind a card that is not
+ * open but may hold older rows (backlog F78, F104): from boot until the
+ * card's log first opens, and from a close while rows waited on it until it
+ * opens again. The planner does not hold rows (pending() is false while the
+ * card is closed); both hosts' egresses do, in RAM, and give up the card
+ * after this long. Both trees' storage managers re-probe a lost or absent
+ * card every 30 s and give the boot mount 4 s before a later pass adopts
+ * it, so 45 s covers one remount. A device with no card waits this long once
+ * per boot. */
+constexpr uint32_t kCardWaitMs     = 45000;
 
 static_assert(kReadChunk >= csi_event_log_line::kLineMax,
               "one read must hold a whole line");
@@ -129,8 +151,7 @@ inline uint32_t ceiling_for(uint32_t id, uint32_t id_floor) {
   return (id_floor > id && id_floor < c) ? id_floor : c;
 }
 
-/* The delivery record a host restores at boot: Planner::begin's rule, and
- * the canary-wap's csi_mqtt::init applies it to its own backfill. From the
+/* The delivery record a host restores at boot: Planner::begin's rule. From the
  * ceiling NVS holds (`nvs_ceiling`, 0 = none) and the event-id floor NVS
  * holds (`id_floor`, 0 = none): `through` is the watermark, `write` the
  * ceiling to persist now (0 = keep the one NVS holds).
@@ -274,11 +295,15 @@ enum class Route : uint8_t {
   kNotOwed,  /* no broker configured: logged, owed to nobody */
 };
 
+/* They count paths, not a ledger of rows: docs/csi_developer_api.md says
+ * what each counts and lists the rows none of them does. */
 struct Stats {
-  uint32_t live;
-  uint32_t held;
-  uint32_t queued;
-  uint32_t replayed;
+  uint32_t live;               /* on the card and sent at once */
+  uint32_t held;               /* on the card, left for the backfill (counted again in
+                                  replayed if it goes; held - replayed is not "owed") */
+  uint32_t queued;             /* not on the card, handed to the host's MQTT layer
+                                  (live or into its offline queue, or a RAM-held row) */
+  uint32_t replayed;           /* sent by the backfill from the card, earlier boots' too */
   uint32_t skipped;            /* lines passed over: delivered, torn or foreign to the format */
   uint32_t untrusted;          /* lines whose id this device never handed out (also skipped) */
   uint32_t unsendable;         /* lines whose body would not build */

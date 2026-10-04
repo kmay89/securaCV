@@ -147,3 +147,141 @@ describe('otaBannerVisible', () => {
     assert.equal(L.otaBannerVisible(true, null, ''), false);
   });
 });
+
+// The Chirp send card, from GET /api/chirp's answer (chirp_api.h). The route
+// names cannot_send_reason "clock_unsynced" when only the wall clock stops a
+// send (sweep F146); the card said "Ready" with Send on, and the send was
+// refused (as a cooldown, before F146).
+describe('chirpSendGate', () => {
+  const ready = { presence_met: true, cooldown_remaining_sec: 0, can_send: true };
+  it('is Ready with Send on when the device can send', () => {
+    assert.deepEqual({ ...L.chirpSendGate(ready) },
+                     { text: 'Ready', sendDisabled: false, presenceHint: false });
+  });
+  it('waits for GPS time, Send off, when the clock is not set', () => {
+    const g = L.chirpSendGate({ ...ready, can_send: false, cannot_send_reason: 'clock_unsynced' });
+    assert.equal(g.sendDisabled, true);
+    assert.equal(g.presenceHint, false);
+    assert.match(g.text, /GPS time/);
+    assert.notEqual(g.text, 'Ready');
+  });
+  it('keeps the warm-up first, with its hint', () => {
+    const g = L.chirpSendGate({ ...ready, presence_met: false, can_send: false,
+                                cannot_send_reason: 'presence_required' });
+    assert.equal(g.text, 'Warming up…');
+    assert.equal(g.sendDisabled, true);
+    assert.equal(g.presenceHint, true);
+  });
+  it('counts a cooldown down as m:ss', () => {
+    const g = L.chirpSendGate({ ...ready, cooldown_remaining_sec: 125, can_send: false,
+                                cannot_send_reason: 'cooldown' });
+    assert.equal(g.text, '2:05');
+    assert.equal(g.sendDisabled, true);
+    assert.equal(g.presenceHint, false);
+  });
+  // Sweep F178: GET /api/chirp could answer a cooldown with 0 s left (its
+  // last second, or the pass after it ran out), and the card said Ready
+  // with Send on for a send the device refused. The route rounds up now,
+  // but the card turns Send off for any can_send that is not true.
+  it('turns Send off for a cooldown that reads 0 s', () => {
+    const g = L.chirpSendGate({ ...ready, cooldown_remaining_sec: 0, can_send: false,
+                                cannot_send_reason: 'cooldown' });
+    assert.equal(g.sendDisabled, true);
+    assert.notEqual(g.text, 'Ready');
+    assert.equal(g.presenceHint, false);
+  });
+  it('turns Send off for any can_send false, a reason it has no words for included', () => {
+    for (const why of ['disabled', 'some_future_reason', undefined]) {
+      const g = L.chirpSendGate({ ...ready, can_send: false, cannot_send_reason: why });
+      assert.equal(g.sendDisabled, true, String(why));
+      assert.notEqual(g.text, 'Ready', String(why));
+    }
+    assert.equal(L.chirpSendGate({ ...ready, can_send: undefined }).sendDisabled, true);
+  });
+});
+
+// What the Chirp list says after a confirm or a dismiss (sweep F174), from
+// the answers chirp_api.h's send_confirm_answer() and send_dismiss_answer()
+// build (their shapes: test_chirp_commands_wap.cpp and rule CV9).
+describe('chirpActionNote', () => {
+  it('says why a confirm was refused, in the device\'s words', () => {
+    assert.equal(L.chirpActionNote({ success: false, error: 'clock_unsynced',
+                                     message: 'Waiting for the clock to be set from GPS time before confirming' }),
+                 'Waiting for the clock to be set from GPS time before confirming');
+    assert.equal(L.chirpActionNote({ success: false, error: 'not_found' }), 'not_found');
+  });
+  it('says a dismiss whose vote stayed home hid the chirp here only', () => {
+    const m = 'Dismissed on this device only: a suppress vote needs 10 minutes active';
+    assert.equal(L.chirpActionNote({ success: true, vote_sent: false, vote_error: 'presence_required', message: m }), m);
+    assert.match(L.chirpActionNote({ success: true, vote_sent: false }), /this device only/);
+  });
+  it('says nothing for a confirm or a dismiss that went out', () => {
+    assert.equal(L.chirpActionNote({ success: true }), '');
+    assert.equal(L.chirpActionNote({ success: true, vote_sent: true }), '');
+  });
+  it('says what api() reports when the request itself failed', () => {
+    assert.equal(L.chirpActionNote({ ok: false, error: 'Network error' }), 'Network error');
+    assert.equal(L.chirpActionNote(null), '');
+  });
+});
+
+// The mute and unmute buttons show a refused answer under the Community
+// Activity list (sweep F192: a mute or an unmute on a channel that is off is
+// 409 chirp_disabled; both answers were thrown away). The two functions are
+// the page's glue, outside the WEBUI_LOGIC block, so each is lifted out of
+// web_ui.h whole and run with stand-ins for api(), the page and the status
+// refresh.
+function glueFunction(name) {
+  const src = fs.readFileSync(UI, 'utf8');
+  const start = src.indexOf(`async function ${name}(`);
+  if (start < 0) throw new Error(`${name}() not found in web_ui.h`);
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  throw new Error(`${name}() has no closing brace`);
+}
+async function runGlue(name, answer, ...args) {
+  const calls = [];
+  const note = { textContent: 'stale' };
+  let refreshed = 0;
+  const sandbox = {
+    WebUiLogic: L,
+    api: async (endpoint, method, body) => { calls.push({ endpoint, method, body }); return answer; },
+    document: { getElementById: (id) => (id === 'chirpActionNote' ? note : { textContent: '' }) },
+    refreshChirpStatus: () => { refreshed++; },
+  };
+  vm.runInNewContext(`${glueFunction(name)}\nglobalThis.__run = ${name};`, sandbox);
+  await sandbox.__run(...args);
+  return { calls, note: note.textContent, refreshed };
+}
+
+describe('the Chirp mute and unmute buttons', () => {
+  const off = { success: false, error: 'chirp_disabled', message: 'Chirp channel is not enabled' };
+  it('a mute on a channel that is off says so', async () => {
+    const r = await runGlue('muteChirps', off, 30);
+    // Built in the sandbox's realm: compared as JSON, not by prototype.
+    assert.equal(JSON.stringify(r.calls),
+                 JSON.stringify([{ endpoint: '/api/chirp/mute', method: 'POST', body: { duration_minutes: 30 } }]));
+    assert.equal(r.note, 'Chirp channel is not enabled');
+    assert.equal(r.refreshed, 1);
+  });
+  it('an unmute on a channel that is off says so', async () => {
+    const r = await runGlue('unmuteChirps', off);
+    assert.equal(r.calls.length, 1);
+    assert.equal(r.calls[0].endpoint, '/api/chirp/unmute');
+    assert.equal(r.note, 'Chirp channel is not enabled');
+    assert.equal(r.refreshed, 1);
+  });
+  it('a mute that runs clears the note', async () => {
+    const r = await runGlue('muteChirps', { success: true }, 15);
+    assert.equal(r.note, '');
+    assert.equal(r.refreshed, 1);
+  });
+  it('a duration the channel lacks says which it offers', async () => {
+    const r = await runGlue('muteChirps', { success: false, error: 'invalid_duration',
+                                            message: 'Duration must be 15, 30, 60, or 120 minutes' }, 7);
+    assert.equal(r.note, 'Duration must be 15, 30, 60, or 120 minutes');
+  });
+});

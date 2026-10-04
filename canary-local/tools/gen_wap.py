@@ -20,7 +20,12 @@ Sources of truth (all in-repo, deterministic, offline):
       setup_wizard.h        NVS keys, setup timeout, DNS port, device-name cap
       setup_page_html.h     CAPTIVE_PORTAL_HTML  (rendered verbatim)
       boot_banner.cpp       boot scene text
-      csi_mqtt.cpp          MQTT prefix, topics, HA discovery entity/trigger set
+      csi_mqtt.cpp          MQTT prefix, topics, each topic's payload keys,
+                            HA discovery entity/trigger set
+      csi_event_wire.h      the events and tamper bodies' keys (the one wire builder)
+      core_presence.cpp, acoustic_events_module.cpp, tamper_events_module.cpp
+                            the module / type / state an events example names
+      csi_event_id_floor.h  where event ids start (kIdSpaceBase)
       mqtt_identity.h       the spelling of the MQTT fp and public_key (lowercase)
   docs/getting_started_canary.md   sensing pills, dashboard cards
   canary-local/devices/registry.json   fw_train + the canary-wap card facts
@@ -45,6 +50,12 @@ BOOT_BANNER_CPP = FW / "boot_banner.cpp"
 CAPTIVE_PROBE_H = FW / "captive_probe.h"
 CSI_MQTT_CPP = FW / "csi_mqtt.cpp"
 MQTT_IDENTITY_H = FW / "mqtt_identity.h"
+EVENT_WIRE_H = FW / "csi_event_wire.h"
+ID_FLOOR_H = FW / "csi_event_id_floor.h"
+EGRESS_H = FW / "csi_event_egress.h"
+CORE_PRESENCE_CPP = FW / "core_presence.cpp"
+ACOUSTIC_CPP = FW / "acoustic_events_module.cpp"
+TAMPER_CPP = FW / "tamper_events_module.cpp"
 COMPANION_H = FW / "companion_pwa.h"
 DOC = REPO / "docs/getting_started_canary.md"
 REGISTRY = REPO / "canary-local/devices/registry.json"
@@ -84,6 +95,43 @@ def grab(path: Path, pattern: str, label: str, flags=0) -> str:
     if not m:
         die(f"{label}: pattern /{pattern}/ not found in {path.relative_to(REPO)}")
     return m.group(1)
+
+
+def fn_body(path: Path, signature: str, label: str) -> str:
+    """A function's text, from its signature to the closing brace in column 0."""
+    text = read(path)
+    i = text.find(signature)
+    if i < 0:
+        die(f"{label}: {signature!r} not found in {path.relative_to(REPO)}")
+    j = text.find("\n}\n", i)
+    return text[i:j if j >= 0 else len(text)]
+
+
+def between(text: str, start: str, end: str, label: str) -> str:
+    i = text.find(start)
+    j = text.find(end, i + len(start)) if i >= 0 else -1
+    if i < 0 or j < 0:
+        die(f"{label}: {start!r} … {end!r} not found")
+    return text[i:j]
+
+
+def fmt_keys(fragment: str) -> list:
+    """The JSON keys a C format string writes, in order."""
+    return re.findall(r'\\"([a-z_0-9]+)\\":', fragment)
+
+
+def keyed_as(payload: str, keys: list, label: str, optional=()) -> str:
+    """Refuse an example whose keys are not the firmware's, in its order.
+    `optional` keys are ones the firmware writes only sometimes; an example
+    may carry any of them, in their place."""
+    try:
+        ex = list(json.loads(payload).keys())
+    except ValueError:
+        die(f"MQTT {label}: example is not JSON: {payload}")
+    want = [k for k in keys if k not in optional or k in ex]
+    if ex != want:
+        die(f"MQTT {label}: example keys {ex} are not the firmware's {want}")
+    return payload
 
 
 # --------------------------------------------------------------------------- #
@@ -147,13 +195,6 @@ for needle in ("Set up your Canary", "canary.local", "192.168.4.1"):
 must(CAPTIVE_PROBE_H, "Microsoft NCSI", "Windows NCSI body")
 must(CAPTIVE_PROBE_H, "Microsoft Connect Test", "Windows connecttest body")
 
-# Example (illustrative) values — every real device's are unique + private.
-EX_SUFFIX = "AB7K"
-EX_ID = "canary-s3-ab7k"
-EX_SSID = f"{AP_SSID_PREFIX}{EX_SUFFIX}"
-EX_PASS = "cv-7Q2M9XKP4RTN"
-EX_MDNS = "canary-ab7k.local"
-
 # The fingerprint: the repo's Ed25519 test key's (seed 0x42 x 32, public key
 # 2152f8d1...81db12), the key the WAP's tests_host/test_mqtt_identity.cpp and
 # Home Assistant's tests/test_fingerprint_case.py sign with, so the page, the
@@ -164,6 +205,51 @@ EX_MDNS = "canary-ab7k.local"
 # line prints g_device.fingerprint_hex, which hex_to_str spells in capitals.
 EX_FP = "7916ca487912fa1b"
 EX_FP_SERIAL = EX_FP.upper()
+
+# Every other identity example on the page is the same key's (sweep A29), as
+# the firmware derives each one from pubkey_fp[0..1]:
+#   device id  generate_device_id: DEVICE_ID_PREFIX + unambiguous_suffix16
+#   SSID       generate_ap_ssid:   "SecuraCV-" + the same suffix, same case
+#   mDNS host  generate_mdns_hostname, with no friendly name set:
+#              "canary-%02x%02x", four lowercase hex digits, no "-s3-"
+# so the page shows the device id Home Assistant's tests use (DEVICE_ID,
+# canary-s3-4dC2), the SSID that device raises, and the host it advertises
+# until it is named (canary-<name> after). A name the page used to show
+# (canary-ab7k.local) is one only a friendly name could produce. The AP
+# password stays illustrative: it is HMAC-derived from the PRIVATE key, a
+# credential rather than an identity, and no host test pins that derivation.
+UNAMBIGUOUS = grab(INO, r'UNAMBIGUOUS_ALPHABET\[\] =\s*"([^"]+)";', "UNAMBIGUOUS_ALPHABET")
+DEVICE_ID_PREFIX = grab(INO, r'#else\s*static const char\* DEVICE_ID_PREFIX = "([^"]+)";',
+                        "the S3 DEVICE_ID_PREFIX")
+_FP_SUFFIX_CALL = ("unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | "
+                   "g_device.pubkey_fp[1]),\n                       suffix);")
+if read(INO).count(_FP_SUFFIX_CALL) != 2:
+    die("generate_device_id and generate_ap_ssid no longer both encode pubkey_fp[0..1] — "
+        "re-derive the identity examples")
+must(INO, 'snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix)', "device id format")
+must(INO, "out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];", "unambiguous_suffix16 digit")
+must(INO, "v = (uint16_t)(v / UNAMBIGUOUS_LEN);", "unambiguous_suffix16 radix step")
+must(INO, 'snprintf(out, cap, "canary-%02x%02x",\n           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);',
+     "unnamed mDNS host fallback")
+if AP_SSID_PREFIX != "SecuraCV-":
+    die(f"AP_SSID_PREFIX {AP_SSID_PREFIX!r} is not generate_ap_ssid's literal \"SecuraCV-\"")
+
+
+def unambiguous_suffix16(v: int) -> str:
+    """canary_wap.ino's unambiguous_suffix16: four base-54 digits, least first."""
+    out = ""
+    for _ in range(4):
+        out += UNAMBIGUOUS[v % len(UNAMBIGUOUS)]
+        v //= len(UNAMBIGUOUS)
+    return out
+
+
+_FP0, _FP1 = bytes.fromhex(EX_FP)[:2]
+EX_SUFFIX = unambiguous_suffix16((_FP0 << 8) | _FP1)
+EX_ID = f"{DEVICE_ID_PREFIX}{EX_SUFFIX}"
+EX_SSID = f"{AP_SSID_PREFIX}{EX_SUFFIX}"
+EX_PASS = "cv-7Q2M9XKP4RTN"
+EX_MDNS = "canary-%02x%02x.local" % (_FP0, _FP1)
 must(MQTT_IDENTITY_H, 'kLowerHex[] = "0123456789abcdef"', "envelope fp spelled in lowercase")
 must(INO, "mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);",
      "envelope fp spelled by mqtt_identity::fingerprint_hex")
@@ -176,7 +262,9 @@ must(INO, 'Serial.printf("[PROV] Public key fingerprint: %s\\n", g_device.finger
 AP = {
     "ssid_example": EX_SSID,
     "ssid_prefix": AP_SSID_PREFIX,
-    "ssid_note": "last 4 chars are your device's pubkey fingerprint (unambiguous alphabet, no 0/O/1/I/l) — never the MAC",
+    "ssid_note": "the last 4 chars are the first two bytes of your device's pubkey fingerprint "
+                 "in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L), the same suffix, in the same "
+                 "case, as its device id — never the MAC",
     "password_example": EX_PASS,
     "password_scheme": 'WPA2-PSK, device-unique: HMAC-SHA256(privkey, "securacv:ap-password:v1") -> "cv-" + 12 chars',
     "password_note": "printed on the serial console at first boot and on the box card; no shared default; release builds fail closed",
@@ -186,7 +274,7 @@ AP = {
     "hidden": False,
     "http_port": HTTP_PORT,
     "https_port": HTTPS_PORT,
-    "mdns": ["canary.local", "canary-<name>.local"],
+    "mdns": ["canary.local", "canary-<name>.local", "canary-<4 hex>.local"],
     "mdns_example": EX_MDNS,
     "mdns_services": [
         {"service": "_http._tcp", "port": 80},
@@ -424,15 +512,154 @@ must(CSI_MQTT_CPP, '"%s/%s/%s"', "MQTT build_topic format")
 must(CSI_MQTT_CPP, '{\\"online\\":false}', "MQTT LWT payload")
 must(CSI_MQTT_CPP, '\\"device_type\\":\\"canary-wap\\"', "MQTT status device_type")
 
+# Every topic's example is keyed as the firmware publishes it (sweep A32):
+# its keys, in their order, are the snprintf format's (or, for the events and
+# tamper bodies, csi_event_wire.h's, the one builder both trees publish
+# through), and this file refuses to write when they differ. Values are
+# illustrative. Before this the events example carried seven of the wire
+# body's seventeen keys plus the envelope, and a state ("motion") no module
+# emits.
+_wire_ev = fn_body(EVENT_WIRE_H, "inline size_t build_event_body(", "events body")
+EVENT_ENVELOPE_KEYS = fmt_keys(between(_wire_ev, "if (signed_ok) {", "} else {", "the signed envelope"))
+_ev_fmt = between(_wire_ev, "const int n = snprintf(body, cap,", "if (n <= 0", "the events body format")
+EVENT_KEYS = fmt_keys(_ev_fmt)
+if EVENT_ENVELOPE_KEYS != ["v", "alg", "fp", "sig"] or not _ev_fmt.replace(" ", "").count('"%s"\n"}"'):
+    die("csi_event_wire.h's body no longer ends in the v/alg/fp/sig envelope")
+must(EVENT_WIRE_H, '"\\"event_type\\":\\"%s\\","', "event_type rides the body")
+must(EVENT_WIRE_H, "    (unsigned long)event_id,\n    state_s,\n", "event_type is the state name")
+TAMPER_KEYS = fmt_keys(fn_body(EVENT_WIRE_H, "inline size_t build_tamper_bridge_body(", "tamper body"))
+
+
+def _signed(sig: str) -> list:
+    return fmt_keys(between(fn_body(CSI_MQTT_CPP, sig, sig), "if (signed_ok) {", "} else {", sig))
+
+
+_health = fn_body(CSI_MQTT_CPP, "void publish_health(", "health")
+HEALTH_KEYS = (fmt_keys(between(_health, "} else {", "if (n <= 0", "health without a battery"))
+               + fmt_keys(between(_health, "if (n <= 0", "if (len + 1", "health's tamper levels")))
+HEALTH_OPTIONAL = ("sd_mounted", "enclosure_open")
+_ota = fn_body(INO, "static void ota_publish_update_state() {", "update/state")
+UPDATE_KEYS = list(dict.fromkeys(re.findall(r'doc\["([a-z_]+)"\]', _ota)))
+# The egress topic's body (sweep F149) names the health it follows (its
+# firmware version and uptime), then carries csi_event_egress::stats_json() of
+# stats() under `csi_event_egress`: the canary health's object of that name,
+# the planner's counters nested under `planner`.
+must(CSI_MQTT_CPP, 'build_topic(topic, sizeof(topic), "egress");', "the egress topic")
+must(CSI_MQTT_CPP, "csi_event_egress::stats_json(csi_event_egress::stats(), object, sizeof(object))",
+     "the egress object is stats_json()")
+EGRESS_BODY_KEYS = fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_egress(", "egress"))
+if EGRESS_BODY_KEYS[-1:] != ["csi_event_egress"]:
+    die(f"egress: publish_egress() no longer ends its body in csi_event_egress: {EGRESS_BODY_KEYS}")
+_egress = fmt_keys(between(read(EGRESS_H), "inline size_t stats_json(", "(unsigned long)s.dropped", "egress"))
+if "planner" not in _egress:
+    die("egress: stats_json() no longer nests the planner's counters under `planner`")
+EGRESS_KEYS = _egress[:_egress.index("planner") + 1]
+EGRESS_PLANNER_KEYS = _egress[_egress.index("planner") + 1:]
+KEYS = {
+    "status": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_status(", "status")),
+    "events": EVENT_KEYS + EVENT_ENVELOPE_KEYS,
+    "chain": _signed("void publish_chain("),
+    "health": HEALTH_KEYS,
+    "counts": _signed("void publish_counts("),
+    "tamper": TAMPER_KEYS,
+    "sensing": fmt_keys(between(read(INO), "char sensing_json[320];", "if (sn > 0", "sensing")),
+    "mesh": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_mesh(", "mesh")),
+    "chirp": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_chirp_state(", "chirp")),
+    "beacon": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_beacon_state(", "beacon")),
+    "update/state": UPDATE_KEYS,
+    "egress": EGRESS_BODY_KEYS,
+}
+OPTIONAL = {"health": HEALTH_OPTIONAL, "update/state": ("release_url", "release_summary")}
+# the bare-string topics: what csi_mqtt.cpp writes, verbatim
+must(CSI_MQTT_CPP, 'const char* pl = state ? "ON" : "OFF";', "update/auto is a bare ON/OFF (published from loop(), F106)")
+must(CSI_MQTT_CPP, 'const char* pl = muted ? "muted" : "live";', "mic/state is a bare muted/live")
+# The health example is the FULL profile's, the build the boot log above
+# narrates: an SD card mounted this boot, so sd_mounted rides every health
+# publish (F41); FEATURE_TAMPER_GPIO is off in every shipped profile, so
+# enclosure_open does not.
+must(INO, "tamper_lv.sd_mounted = (g_hw.sd_state != SD_ABSENT) ? 1 : 0;", "sd_mounted once a card mounted")
+must(FW / "build_config.h", "#define FEATURE_TAMPER_GPIO   0\n  #endif\n  #define FEATURE_WATCHDOG      1\n"
+     "  #define FEATURE_STATE_LOG     1\n  #define FEATURE_MESH_NETWORK  1", "FULL ships without the tamper contact")
+
+# Event ids start at kIdSpaceBase on every device (sweep F46), so an example
+# id below it is one no WAP sends.
+ID_SPACE_BASE = int(grab(ID_FLOOR_H, r"constexpr uint32_t kIdSpaceBase = (0x[0-9A-Fa-f]+)u;", "kIdSpaceBase"), 16)
+EX_EVENT_ID = ID_SPACE_BASE + 1234
+EX_UPTIME_S = 312
+
+# What an events example may name: a module the WAP registers, a type its
+# manifest declares, a state that type emits, and the category and privacy
+# class the wire then spells (csi_event_wire.h's category_word/privacy_word).
+PRESENCE_STATES = re.findall(r'"([a-z]+)"', grab(CORE_PRESENCE_CPP,
+    r"const char\* STATE_NAMES\[STATE__COUNT\] = \{\s*([^}]*)\}", "core.presence's STATE_NAMES"))
+must(CORE_PRESENCE_CPP, '(void)csi_event_emit("core.presence", "presence_changed", &v);', "core.presence emit")
+must(CORE_PRESENCE_CPP, "  v.category       = CSI_CATEGORY_EVENT;\n  v.present_fields = CSI_FIELD_STATE_NAME", "presence rows are events")
+must(ACOUSTIC_CPP, 'type_name = "smoke_alarm_t3"; state = "smoke_alarm";', "smoke row")
+must(ACOUSTIC_CPP, 'type_name = "co_alarm_t4";    state = "co_alarm";', "CO row")
+must(TAMPER_CPP, 'emit_kind("sd_remove")', "the SD-removed tamper kind")
+EMITTERS = {
+    ("core.presence", "presence_changed"): {"states": PRESENCE_STATES, "category": "event", "privacy": "p0",
+                                            "csi": True},
+    ("acoustic.events", "smoke_alarm_t3"): {"states": ["smoke_alarm"], "category": "anomaly", "privacy": "p0",
+                                            "csi": False},
+    ("acoustic.events", "co_alarm_t4"): {"states": ["co_alarm"], "category": "anomaly", "privacy": "p0",
+                                         "csi": False},
+}
+must(EVENT_WIRE_H, 'return (c == CSI_CATEGORY_AMBIENT) ? "ambient"\n       : (c == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";',
+     "category words")
+must(EVENT_WIRE_H, 'return (p == CSI_PRIVACY_P2) ? "p2" : (p == CSI_PRIVACY_P1) ? "p1" : "p0";', "privacy words")
+
+
+def event_body(**over) -> str:
+    """An events body as csi_event_wire.h builds it, signed by the test key."""
+    body = {"event_id": EX_EVENT_ID, "event_type": "", "timestamp": EX_UPTIME_S, "zone": "",
+            "confidence": "tentative", "signed": True, "module": "core.presence", "type": "presence_changed",
+            "category": "event", "privacy": "p0", "state": "", "motion": 0, "breathing": 0, "bpm": 0,
+            "duration_sec": 0, "bundled": 1, "replay": False,
+            "v": 1, "alg": "ed25519", "fp": EX_FP, "sig": "…"}
+    body.update(over)
+    body["event_type"] = body["state"]
+    return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+
+
+def check_event(payload: str, label: str) -> None:
+    e = json.loads(payload)
+    em = EMITTERS.get((e.get("module"), e.get("type")))
+    if not em:
+        die(f"{label}: no WAP module emits {e.get('module')}/{e.get('type')}")
+    if e["state"] not in em["states"] or e["event_type"] != e["state"]:
+        die(f"{label}: {e['module']}/{e['type']} does not emit state {e['state']!r} (it emits {em['states']})")
+    if (e["category"], e["privacy"]) != (em["category"], em["privacy"]):
+        die(f"{label}: {e['module']}/{e['type']} is {em['category']}/{em['privacy']}, not "
+            f"{e['category']}/{e['privacy']}")
+    if not em["csi"] and (e["motion"] or e["breathing"] or e["bpm"]):
+        die(f"{label}: {e['module']} carries no CSI scores")
+    if e["event_id"] < ID_SPACE_BASE:
+        die(f"{label}: event_id {e['event_id']} is below kIdSpaceBase ({ID_SPACE_BASE})")
+
+
 TOPICS = [
     {"suffix": "status", "retained": True, "cadence": "on connect + ~30 s",
      "payload": '{"online":true,"device_type":"canary-wap","csi_running":true,"wifi_connected":true,"rssi":-58}'},
     {"suffix": "events", "retained": False, "cadence": "per committed CSI event",
-     "payload": '{"event_id":1234,"event_type":"motion","state":"motion","motion":72,"breathing":8,"signed":true,"v":1,"alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
+     "payload": event_body(state="active", motion=78, breathing=8)},
     {"suffix": "chain", "retained": True, "cadence": "on each new record",
      "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "health", "retained": True, "cadence": "~60 s",
-     "payload": '{"battery":100,"battery_present":false,"memory_free":204800,"uptime":312,"firmware_version":"' + FW_VERSION + '","public_key":"…"}'},
+     "payload": '{"battery":100,"battery_present":false,"memory_free":204800,"uptime":' + str(EX_UPTIME_S)
+                + ',"firmware_version":"' + FW_VERSION + '","public_key":"…","event_id_space_low":false,'
+                + '"sd_mounted":true}',
+     "note": "event_id_space_low turns true once the event-id allocator nears the end of its space "
+             "(sweep F82); Home Assistant shows it as the Event ID Space Low binary sensor"},
+    {"suffix": "egress", "retained": True, "cadence": "~60 s, after health",
+     "payload": '{"firmware_version":"' + FW_VERSION + '","uptime":86400,"csi_event_egress":{"dropped":0,'
+                '"held_dropped":0,"ambient_dropped":0,"unsent_dropped":0,"planner":{"live":12,"held":0,'
+                '"queued":3,"replayed":0,"skipped":0,"untrusted":0,"unsendable":0,"truncated_unsent":0,'
+                '"read_giveups":0}}}',
+     "note": "what the committed-event egress dropped and sent since boot (sweep F149), named by the "
+             "firmware_version and uptime of the health publish it follows; its own topic because the health "
+             "body has no room; Home Assistant shows it as the Health sensor's csi_event_egress while it "
+             "pairs with the current health"},
     {"suffix": "counts", "retained": True, "cadence": "on each new record",
      "payload": '{"v":1,"total":312,"alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "tamper", "retained": False, "cadence": "per committed system.integrity event (live only, never backfill)",
@@ -452,6 +679,21 @@ TOPICS = [
     {"suffix": "update/auto", "retained": True, "cadence": "on toggle", "payload": '"ON" | "OFF"'},
     {"suffix": "mic/state", "retained": True, "cadence": "on mute toggle", "payload": '"muted" | "live"'},
 ]
+for t in TOPICS:
+    if t["suffix"] in KEYS:
+        keyed_as(t["payload"], KEYS[t["suffix"]], t["suffix"], OPTIONAL.get(t["suffix"], ()))
+    elif t["suffix"] not in ("update/auto", "mic/state"):
+        die(f"MQTT topic {t['suffix']!r} has no firmware key list to hold its example to")
+check_event(next(t for t in TOPICS if t["suffix"] == "events")["payload"], "the events example")
+_egress_example = json.loads(next(t for t in TOPICS if t["suffix"] == "egress")["payload"])["csi_event_egress"]
+if list(_egress_example.keys()) != EGRESS_KEYS:
+    die(f"MQTT egress: example csi_event_egress keys {list(_egress_example)} are not the firmware's "
+        f"{EGRESS_KEYS}")
+if list(_egress_example["planner"].keys()) != EGRESS_PLANNER_KEYS:
+    die(f"MQTT egress: example planner keys {list(_egress_example['planner'])} are not the firmware's "
+        f"{EGRESS_PLANNER_KEYS}")
+must(FW / "chirp_channel.cpp", 'case CHIRP_LISTENING:    return "listening";', "chirp state word")
+must(FW / "beacon_channel.cpp", 'case BEACON_STATE_NORMAL:      return "Normal";', "beacon state word")
 SUBSCRIBED = [
     {"suffix": "update/cmd", "payload": '"install"'},
     {"suffix": "update/auto/cmd", "payload": '"ON" | "OFF"'},
@@ -524,6 +766,15 @@ TRIGGERS = [
 for sw in SWITCHES:
     # these appear inside the config-topic format strings, e.g. ".../mic_mute/config"
     must(CSI_MQTT_CPP, f'{sw["object_id"]}/config', f"HA switch {sw['object_id']}")
+    # and each asks Home Assistant for <component>.<id>_<object_id> (sweep HA16)
+    must(CSI_MQTT_CPP, f'"\\"def_ent_id\\":\\"{sw["component"]}.%s_{sw["object_id"]}\\","',
+         f"HA switch {sw['object_id']}'s entity id")
+# The sandbox's "ha" lines (binary_sensor.<id>_smoke_alarm, switch.<id>_mic_mute)
+# are the ids the configs ask for: every table entity's config carries
+# def_ent_id <component>.<device id, slugged>_<object_id> (sweep HA16;
+# firmware/projects/canary-wap/tests_host/test_ha_discovery_ids.cpp formats them).
+must(CSI_MQTT_CPP, '"\\"def_ent_id\\":\\"%s.%s_%s\\","\n', "HA entity ids from the discovery table")
+must(CSI_MQTT_CPP, "e.component, slug, e.object_id,", "HA entity ids from the discovery table")
 
 MQTT = {
     "prefix": MQTT_PREFIX,
@@ -586,41 +837,172 @@ SENSING = {
 # 8. sandbox scenarios (the fun bit) — every effect traces to a real signal
 # --------------------------------------------------------------------------- #
 
+# A scene's publishes are the firmware's whole payloads (sweep A30): each one
+# is the topic's example above with the scene's fields laid over it (`set`)
+# and its counters moved on (`advance`), key order kept, the way the Vision
+# pane's vizEventPayload lays the sandbox over its example (A26). `payload` is
+# what the first click publishes; wap-ui.js's scenePayload lays the same
+# fields over the topic's payload as it then stands, so a second click takes
+# the next event id and the next chain length. Before this a scene published
+# only the fields it changed: an events row with no envelope, and chain
+# {"length":+1}, which is not JSON, replacing the retained chain row.
+#
+# A committed row and every acoustic or mute detection create a witness
+# record (csi_event_commit_witness and create_witness_record), and the loop
+# publishes counts then chain whenever records_created moves, so every scene
+# advances both. The chain's head moves with it, and the page cannot know
+# the new hash, so it is elided whole once it moves.
+must(INO, "      csi_mqtt::publish_counts(g_health.records_created);\n"
+          "      csi_mqtt::publish_chain(g_device.seq, g_device.chain_head);", "counts then chain, together")
+must(INO, "create_witness_record(payload, cb.size(), RECORD_WITNESS_EVENT, &g_last_record);\n        }\n"
+          "        const bool life_safety =", "an acoustic detection is a witness record")
+must(INO, 'cb.write_text("event_type"); cb.write_text("mic_mute");', "a mute is a witness record")
+must(FW / "securacv_audio.cpp", 'case AUDIO_EVENT_T3_SMOKE_ALARM: return "smoke_alarm_t3";', "acoustic_event word (T3)")
+must(FW / "securacv_audio.cpp", 'case AUDIO_EVENT_T4_CO_ALARM:    return "co_alarm_t4";', "acoustic_event word (T4)")
+TOPIC_PAYLOAD = {t["suffix"]: t["payload"] for t in TOPICS}
+RECORD = [{"suffix": "counts", "advance": ["total"]},
+          {"suffix": "chain", "set": {"latest_hash": "…"}, "advance": ["length"]}]
+
+
+def presence_row(state, motion, breathing):
+    return {"suffix": "events", "advance": ["event_id"],
+            "set": {"event_type": state, "confidence": "tentative", "module": "core.presence",
+                    "type": "presence_changed", "category": "event", "privacy": "p0", "state": state,
+                    "motion": motion, "breathing": breathing, "bpm": 0}}
+
+
+def lay_over(payload: str, set_: dict, advance: list, label: str) -> str:
+    obj = json.loads(payload)
+    for k in list(set_) + list(advance):
+        if k not in obj:
+            die(f"sandbox {label}: {k!r} is not a key of the topic's payload {list(obj)}")
+    for k in advance:
+        if not isinstance(obj[k], int) or isinstance(obj[k], bool):
+            die(f"sandbox {label}: {k!r} is not a counter")
+        obj[k] += 1
+    obj.update(set_)
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+# A presence scene's state is the one core.presence's derive_target_state
+# lands its scores in under the balanced preset at the neutral slider (the
+# default: preset 1, sensitivity 50, so the offset is 0) with pet mode off.
+# Scores at the together gate are refused, since the streak decides those.
+# Its console line and event word are that state, so the three
+# surfaces a click moves say the same word. The pill is the getting-started
+# guide's vocabulary (Quiet / Presence / Motion / Active), which is not the
+# firmware's; which one the page should speak is an open decision, so the
+# blurb names both.
+_BAL = re.search(r"default: base_motion = (\d+); base_active = (\d+); base_breathing = (\d+); break; // balanced",
+                 read(CORE_PRESENCE_CPP))
+if not _BAL:
+    die("core.presence's balanced preset: not found in core_presence.cpp — firmware changed?")
+BALANCED = tuple(int(x) for x in _BAL.groups())  # (motion, active, breathing)
+must(CORE_PRESENCE_CPP, "  const int32_t preset = csi_module_settings_int(s, \"core.presence.preset\",      1);\n"
+     "  const int32_t sens   = csi_module_settings_int(s, \"core.presence.sensitivity\", 50);", "balanced, neutral by default")
+must(CORE_PRESENCE_CPP, "  const int together_gate = (s_active_threshold + 20 > 127) ? 127 : (s_active_threshold + 20);\n"
+     "  if (motion >= together_gate && streak >= 5) return STATE_TOGETHER;\n"
+     "  if (motion >= s_active_threshold)                     return STATE_ACTIVE;", "together, then active")
+must(CORE_PRESENCE_CPP, "  if (breathing >= s_breathing_threshold) {\n"
+     "    if (s_pet_mode && streak < s_pet_mode_required_win) return STATE_SUBTLE;\n    return STATE_QUIET;\n  }\n"
+     "  if (motion >= s_motion_threshold) return STATE_SUBTLE;\n  return STATE_EMPTY;", "quiet, subtle, empty")
+
+
+def derive_state(motion: int, breathing: int) -> str:
+    m_thr, a_thr, b_thr = BALANCED
+    if motion >= min(a_thr + 20, 127):
+        return None  # together or active, by the streak: a scene must not sit on that line
+    if motion >= a_thr:
+        return "active"
+    if breathing >= b_thr:
+        return "quiet"
+    if motion >= m_thr:
+        return "subtle"
+    return "empty"
+
+
+def presence_scene(id_, label, blurb, pill, state, motion, breathing):
+    if derive_state(motion, breathing) != state:
+        die(f"sandbox {id_}: motion {motion}, breathing {breathing} is {derive_state(motion, breathing)!r} "
+            f"under core.presence's balanced thresholds {BALANCED}, not {state!r}")
+    return {"id": id_, "label": label, "blurb": blurb, "pill": pill, "event": state,
+            "serial": "witness record: state=" + state,
+            "mqtt": [presence_row(state, motion, breathing)] + RECORD}
+
+
+_EX = json.loads(TOPIC_PAYLOAD["events"])
+if derive_state(_EX["motion"], _EX["breathing"]) != _EX["state"]:
+    die(f"the events example's motion {_EX['motion']}, breathing {_EX['breathing']} do not land in "
+        f"{_EX['state']!r} under core.presence's balanced thresholds {BALANCED}")
+
 SANDBOX = [
-    {"id": "wave", "label": "Wave your arm",
-     "blurb": "Room-scale movement lights the CSI motion gauge.",
-     "pill": "Motion", "event": "motion", "serial": "witness record: state=motion",
-     "mqtt": [{"suffix": "events", "payload": '{"event_type":"motion","state":"motion","motion":74}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}]},
-    {"id": "sit", "label": "Sit still and breathe",
-     "blurb": "Micro-motion settles the device into Presence; the breathing band lights up.",
-     "pill": "Presence", "event": "subtle", "serial": "witness record: state=subtle",
-     "mqtt": [{"suffix": "events", "payload": '{"event_type":"subtle","state":"subtle","breathing":11,"bpm":14}'}]},
-    {"id": "leave", "label": "Leave the room",
-     "blurb": "The field goes still; presence clears to Quiet.",
-     "pill": "Quiet", "event": "empty", "serial": "witness record: state=empty",
-     "mqtt": [{"suffix": "events", "payload": '{"event_type":"empty","state":"empty"}'}]},
+    presence_scene("wave", "Wave your arm",
+                   "Room-scale movement lights the CSI motion gauge; the firmware calls it active (the guide's Motion pill).",
+                   "Motion", "active", 78, 8),
+    presence_scene("sit", "Sit still and breathe",
+                   "A still, breathing person lights the breathing band; the firmware calls it quiet (the guide's Presence pill).",
+                   "Presence", "quiet", 12, 41),
+    presence_scene("leave", "Leave the room",
+                   "The field goes still; the firmware reports empty (the guide's Quiet pill).",
+                   "Quiet", "empty", 2, 3),
     {"id": "smoke", "label": "Fire a T3 smoke cadence",
      "blurb": "The mic matches the NFPA-72 smoke pattern; the Acoustic card turns red and a signed sensing event fires an HA notification.",
      "pill": "Motion", "event": "smoke_alarm_t3", "serial": "acoustic: matched smoke_alarm_t3",
-     "mqtt": [{"suffix": "sensing", "payload": '{"acoustic_event":"smoke_alarm_t3","t3_detected":1}'}],
+     "mqtt": [{"suffix": "sensing", "set": {"acoustic_event": "smoke_alarm_t3"}, "advance": ["t3_detected"]}] + RECORD,
      "ha": "binary_sensor.<id>_smoke_alarm -> ON"},
     {"id": "co", "label": "Fire a T4 CO cadence",
      "blurb": "The mic matches the UL-2034 CO pattern.",
-     "event": "co_alarm_t4", "serial": "acoustic: matched co_alarm_t4",
-     "mqtt": [{"suffix": "sensing", "payload": '{"acoustic_event":"co_alarm_t4","t4_detected":1}'}],
+     "pill": "Motion", "event": "co_alarm_t4", "serial": "acoustic: matched co_alarm_t4",
+     "mqtt": [{"suffix": "sensing", "set": {"acoustic_event": "co_alarm_t4"}, "advance": ["t4_detected"]}] + RECORD,
      "ha": "binary_sensor.<id>_co_alarm -> ON"},
-    {"id": "panic", "label": "Long-press the panic pad",
-     "blurb": "A silent panic event is signed into the witness chain — no LED, no beep in the room.",
-     "event": "silent_panic", "serial": "witness record: silent_panic (signed)",
-     "mqtt": [{"suffix": "events", "payload": '{"event_type":"silent_panic","signed":true}'},
-              {"suffix": "chain", "payload": '{"length":+1}'}]},
     {"id": "mute", "label": "Mute the microphone",
      "blurb": "POST /api/audio/mute uninstalls the I2S driver and tri-states the mic GPIOs; the switch signs the change into the chain.",
      "event": "mic_mute", "serial": "audio: I2S driver uninstalled (muted)",
-     "mqtt": [{"suffix": "mic/state", "payload": '"muted"'}],
+     # publish_mic_state writes the bare word, no quotes
+     "mqtt": [{"suffix": "mic/state", "payload": "muted"}] + RECORD,
      "ha": "switch.<id>_mic_mute -> ON"},
 ]
+# The canary-wap has no touch pad: the silent-panic scene this page used to
+# stage ({"event_type":"silent_panic"}) is firmware/canary's (securacv_touch),
+# and no WAP module emits it, so there is no payload of the WAP's to lay it
+# over. It is gone rather than dressed in a WAP envelope.
+for sc in SANDBOX:
+    for pub in sc["mqtt"]:
+        label = f"{sc['id']} {pub['suffix']}"
+        if "set" in pub or "advance" in pub:
+            pub.setdefault("set", {})
+            pub.setdefault("advance", [])
+            pub["payload"] = lay_over(TOPIC_PAYLOAD[pub["suffix"]], pub["set"], pub["advance"], label)
+            keyed_as(pub["payload"], KEYS[pub["suffix"]], label, OPTIONAL.get(pub["suffix"], ()))
+            if pub["suffix"] == "events":
+                check_event(pub["payload"], f"sandbox {label}")
+        elif pub["suffix"] != "mic/state" or pub["payload"] not in ("muted", "live"):
+            die(f"sandbox {label}: a publish with no fields to lay over must be a bare word the firmware writes")
+for word in ("smoke_alarm_t3", "co_alarm_t4"):
+    must(CSI_MQTT_CPP, f"value_json.acoustic_event == '{word}'", f"HA reads {word}")
+
+# What the MQTT pane says about itself (A30 review): its keys are the
+# firmware's, but some values are elided and the sandbox's timing is
+# compressed, so the note says which (the pane adds the non-retained topics
+# from each topic's own flag). A non-ambient row is a bundle the device
+# commits, with its witness record, when the bundle closes; the acoustic
+# module bundles a row beside each alarm and mute, which no scene publishes.
+BUNDLER_H = FW / "csi_bundler.h"
+must(BUNDLER_H, "#define CSI_BUNDLER_WINDOW_MS  (10u * 60u * 1000u)", "the 10-minute bundle window")
+must(BUNDLER_H, "#define CSI_BUNDLER_MAX_GAP_MS (2u * 60u * 1000u)", "the 2-minute quiet gap")
+must(FW / "csi_bundler.cpp", "  /* Ambient bypasses the bundler entirely. */\n  if (values->category == CSI_CATEGORY_AMBIENT) {",
+     "only ambient rows skip the bundler")
+must(ACOUSTIC_CPP, '(void)csi_event_emit("acoustic.events",\n                       muted ? "mic_muted" : "mic_unmuted", &v);',
+     "a mute is an acoustic.events row too")
+if any("sig" not in json.loads(t["payload"]) for t in TOPICS if t["suffix"] in ("events", "chain", "counts")):
+    die("the pane note says each signed row's sig is elided")
+MQTT["pane_note"] = (
+    "Every topic and every key, in its order, is the firmware's. What this page cannot know reads …: each sig, "
+    "the health topic's public_key, and a chain head's hash once a scene moves it. The timing is compressed: "
+    "the device commits a presence row, and the witness record that moves counts and chain, when the row's "
+    "bundle closes (a 2-minute quiet gap or a 10-minute window), where the sandbox publishes them at the click "
+    "and keeps the example's timestamp; and the smoke, CO and mute scenes leave out the acoustic.events row the "
+    "device bundles beside them. The broker is staged; the contract is real.")
 
 # --------------------------------------------------------------------------- #
 # 8.5 flashing — the bench skills (parsed from the firmware README + build

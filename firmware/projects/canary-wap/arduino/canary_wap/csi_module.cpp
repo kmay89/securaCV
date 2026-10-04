@@ -24,6 +24,11 @@ namespace {
 
 const csi_module_t* g_modules[CSI_MODULE_MAX] = {nullptr};
 size_t              g_module_count = 0;
+/* g_inited[i]: module i's boot init has run (csi_module_init_all, sweep
+ * F93). Both trees write it during setup() and read it in the tick their
+ * CSI features callback runs from loop(), one task (Arduino's loopTask),
+ * and install that callback only after the init: no lock. */
+bool                g_inited[CSI_MODULE_MAX] = {false};
 
 /* Cache the id of the module that last emitted each pending event_id so
  * dismiss callbacks can route correctly. The array is intentionally tiny
@@ -78,8 +83,23 @@ bool csi_module_register(const csi_module_t* module) {
   for (size_t i = 0; i < g_module_count; ++i) {
     if (strcmp(g_modules[i]->id, module->id) == 0) return false;
   }
+  g_inited[g_module_count] = false;
   g_modules[g_module_count++] = module;
   return true;
+}
+
+size_t csi_module_init_all(const csi_module_settings_t* settings) {
+  size_t ran = 0;
+  for (size_t i = 0; i < g_module_count; ++i) {
+    if (g_inited[i]) continue;
+    const csi_module_t* m = g_modules[i];
+    if (m && m->init) {
+      m->init(settings);
+      ++ran;
+    }
+    g_inited[i] = true;
+  }
+  return ran;
 }
 
 size_t csi_module_count(void) { return g_module_count; }
@@ -95,6 +115,9 @@ const csi_module_t* csi_module_find(const char* id) {
 void csi_module_tick_all(const csi_features_t* features) {
   if (!features) return;
   for (size_t i = 0; i < g_module_count; ++i) {
+    /* Never before the module's boot init: it would run on the static
+     * defaults, not the stored settings (F93). */
+    if (!g_inited[i]) continue;
     const csi_module_t* m = g_modules[i];
     if (m && m->tick) m->tick(features);
   }
@@ -111,6 +134,16 @@ void csi_module_dispatch_dismiss(uint32_t event_id) {
       return;
     }
   }
+}
+
+void csi_module_test_reset(void) {
+  for (size_t i = 0; i < CSI_MODULE_MAX; ++i) {
+    g_modules[i] = nullptr;
+    g_inited[i]  = false;
+  }
+  g_module_count = 0;
+  memset(g_dismiss_routes, 0, sizeof(g_dismiss_routes));
+  g_dismiss_route_head = 0;
 }
 
 /* Internal hook called by csi_event::emit() so dismiss can route later. */

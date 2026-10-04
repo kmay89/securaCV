@@ -47,10 +47,14 @@ for dst in "$STAGED"/csi_*.h "$STAGED"/csi_*.cpp \
     # Sketch-local files that share a csi_*/core_* prefix but are not part
     # of the firmware/common/csi library. csi_integration is the host-side
     # wiring; csi_dashboard_html is the headline UI; csi_mqtt is the
-    # optional Home Assistant bridge — none of these are portable across
-    # consumers of the CSI library, so they live next to the sketch only.
+    # optional Home Assistant bridge; csi_settings_nvs holds the sketch's
+    # Preferences-backed csi_module_settings_* overrides, the modules'
+    # boot init (sweep F93) and the stored Quiet Hours (F123, F128);
+    # csi_tune_lab holds the Tuning Lab's knobs and its POST (F123, F128) —
+    # none of these are portable across consumers of the CSI library, so
+    # they live next to the sketch only.
     case "$name" in
-        csi_integration.h|csi_integration.cpp|csi_dashboard_html.h|csi_mqtt.h|csi_mqtt.cpp|csi_event_log.h|csi_event_log.cpp) continue ;;
+        csi_integration.h|csi_integration.cpp|csi_dashboard_html.h|csi_mqtt.h|csi_mqtt.cpp|csi_event_log.h|csi_event_log.cpp|csi_event_egress.h|csi_event_egress.cpp|csi_settings_nvs.h|csi_settings_nvs.cpp|csi_tune_lab.h|csi_tune_lab.cpp) continue ;;
     esac
     if [ ! -f "$CANONICAL/$name" ]; then
         echo "::error::Stale staged file (no canonical source): $dst"
@@ -359,34 +363,27 @@ if ! grep -qF 'SD.exists(csi_event_log_line::kOwnerPath)' "$STAGED/csi_event_log
 fi
 
 # ── One event-id space on the canary-wap (backlog F46) ──
-# The canary's glue is held by check_event_egress_order.py (rule 4); the
-# canary-wap's three touch points are held here. At boot the id floor is
-# restored as boot_floor(<floor>, <delivery ceiling>), so it never sits below
-# the one id space and is held above csi.evsent; the MQTT backfill restores
-# its watermark with csi_event_backfill::restore(), so a ceiling the
-# allocator did not follow is no record; and the backfill never replays a
-# card line at or above the allocator's next id (a forged or foreign line,
-# signed with this device's key, would raise Home Assistant's mark past
-# every real id). test_csi_event_backfill.cpp runs restore() and
-# test_csi_event_log_dismiss.cpp the third on the host; the glue that calls
-# them is in ESP32-only TUs.
+# The canary's glue is held by check_event_egress_order.py (rule 4). On the
+# canary-wap the id floor is restored at boot as boot_floor(<floor>,
+# <delivery ceiling>), so it never sits below the one id space and is held
+# above csi.evsent. Its events egress (csi_event_egress.cpp, backlog F78)
+# runs csi_event_backfill.h's Planner, whose begin() restores the watermark
+# with restore() (a ceiling the allocator did not follow is no record) and
+# whose walk never sends or credits a card line at or above the allocator's
+# next id; check_wap_event_egress.py (rule 5, below) holds the egress to
+# handing it that floor and that bound. test_csi_event_backfill.cpp runs the
+# planner and test_wap_event_egress.cpp the egress on the host. The two rows
+# are read by csi_settings_nvs.cpp's read_event_id_floor_rows() (sweep F150:
+# the boot's first read of the namespace, made quietly on a first boot after
+# an NVS erase), which test_wap_module_boot.cpp runs.
 WAP_INTEG="$STAGED/csi_integration.cpp"
 if ! grep -qF 'csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(persisted, delivered));' "$WAP_INTEG" \
-   || ! grep -qF 'prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0)' "$WAP_INTEG"; then
+   || ! grep -qF 'read_event_id_floor_rows(NVS_KEY_EVENT_ID, csi_mqtt::NVS_KEY_DELIVERED, &persisted, &delivered)' "$WAP_INTEG" \
+   || ! grep -qF '*ceiling = (uint32_t)prefs.getULong(ceiling_key, 0);' "$STAGED/csi_settings_nvs.cpp"; then
     echo "::error::$WAP_INTEG must restore the event-id floor as"
     echo "         csi_event_id_floor::boot_floor(persisted, delivered), the delivery ceiling read"
-    echo "         from csi_mqtt::NVS_KEY_DELIVERED (backlog F46)."
-    drift=1
-fi
-if ! grep -qF 'csi_event_backfill::restore(' "$STAGED/csi_mqtt.cpp"; then
-    echo "::error::$STAGED/csi_mqtt.cpp must restore its delivery watermark with"
-    echo "         csi_event_backfill::restore() (Planner::begin's rule, host-tested): a ceiling the"
-    echo "         id allocator did not follow is no record (backlog F46)."
-    drift=1
-fi
-if ! grep -qF 'rec->event_id < csi_event_get_next_event_id();' "$STAGED/csi_event_log.cpp"; then
-    echo "::error::$STAGED/csi_event_log.cpp: iterate_since() must not replay a card line at or"
-    echo "         above csi_event_get_next_event_id() (backlog F46)."
+    echo "         from csi_mqtt::NVS_KEY_DELIVERED (backlog F46) by read_event_id_floor_rows()"
+    echo "         (csi_settings_nvs.cpp, sweep F150)."
     drift=1
 fi
 
@@ -396,9 +393,28 @@ fi
 # publishes the tamper bridge before it commits the row; it also hands the
 # planner the allocator's id floor and drops the backlog on a broker change.
 # Those are the firmware's job (securacv_mqtt.cpp, csi_event_egress.cpp),
-# and this check holds the source to them. Each run it also mutates the
-# source in memory, to prove the check bites.
+# and this check holds the source to them. It also holds the canary's CSI
+# boot (rule 8, sweep F93): setup() restores the floor, then the bridge
+# registers the modules and runs their boot init once, before the first
+# tick (test_csi_module_boot.cpp boots the bridge; main.cpp is CI's to
+# compile). Each run it also mutates the source in memory, to prove the
+# check bites.
 if ! python3 firmware/scripts/check_event_egress_order.py; then
+    drift=1
+fi
+
+# ── The canary-wap's event egress (backlog F78) ──
+# test_wap_event_egress.cpp drives the egress against the real SD event log
+# and CSI library, and models what it cannot compile: the commit hook in
+# csi_integration.cpp (it only enqueues), the boot order (the egress begins
+# after the id floor), the loop task's pump in csi_mqtt.cpp (and nothing
+# from the esp_mqtt task). This check holds those sources to the model, and
+# the egress to its order rules (live rows wait behind the card and RAM
+# backlog, the tamper bridge goes first). Its boot-order rule also holds the
+# modules' boot init (sweep F93: once, after register_v1_modules(), before
+# the first tick), which test_wap_module_boot.cpp models. It mutates the
+# sources in memory each run to prove it bites.
+if ! python3 firmware/scripts/check_wap_event_egress.py; then
     drift=1
 fi
 
@@ -414,14 +430,25 @@ if ! python3 firmware/scripts/check_csi_commit_order.py; then
     drift=1
 fi
 
+# ── The canary's bundle tick (sweep F81) ──
+# The canary closes CSI bundles on time with csi_bundler_tick(), which its
+# main loop runs through securacv_csi_modules_tick() once per pass, outside
+# the CSI power and degrade gates; the bridge's feed closes nothing.
+# test_csi_modules_integration.cpp plays a stand-in for that loop (no host
+# suite compiles main.cpp), so this check holds main.cpp's call to that
+# shape. It mutates the source in memory each run to prove it bites.
+if ! python3 firmware/scripts/check_csi_bundle_tick.py; then
+    drift=1
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources,"
     echo "and the canary CSI library must stay a thin adapter over them."
     echo "Re-stage with: firmware/projects/canary-wap/setup.sh arduino"
-    echo "(An event-log owner, event egress order or commit order error above is a rule"
+    echo "(An event-log owner, event egress order, commit order or bundle tick error above is a rule"
     echo " about the source, not a copy: fix the code it names.)"
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order; the chokepoint commits in id order."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order on both devices; the CSI modules run their boot init once, after the floor and before the first tick, on both devices; the chokepoint commits in id order; the canary ticks its bundles."

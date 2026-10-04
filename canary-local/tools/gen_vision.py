@@ -30,7 +30,9 @@ Sources of truth (all in-repo, deterministic, offline):
       src/vision/vision_mgr.cpp       I2C link and production-core call
       src/state/presence_fsm.cpp      the event vocabulary
       src/ha/ha_discovery.cpp         the HA discovery entity set
-      src/net/{wifi_mgr,mqtt_mgr}.cpp boot log lines
+      src/net/{wifi_mgr,mqtt_mgr}.cpp boot log lines; the retained payloads
+                                      the MQTT pane shows (their keys, in order)
+      src/witness.cpp                 the signed event envelope, the fp spelling
       README.md                       host-board envs, quickstart, tuning table
   firmware/common/boot/boot_banner.cpp   the shared boot banner scenes
   docs/hardware/grove_vision_ai_v2_guide.md      module specs, ports, protocol
@@ -45,6 +47,7 @@ import json
 import re
 from pathlib import Path
 
+from _pseudonym import SALT_B, client_id, pseudonym
 from _tooling import die, repo_root
 
 REPO = repo_root()
@@ -58,9 +61,11 @@ MAIN_CPP = FW / "src/main.cpp"
 VISION_MGR_CPP = FW / "src/vision/vision_mgr.cpp"
 DETECTION_PIPELINE_H = FW / "include/canary/vision/detection_pipeline.h"
 PRESENCE_FSM_CPP = FW / "src/state/presence_fsm.cpp"
+VOXEL_TRACKER_CPP = FW / "src/state/voxel_tracker.cpp"
 HA_DISCOVERY_CPP = FW / "src/ha/ha_discovery.cpp"
 WIFI_MGR_CPP = FW / "src/net/wifi_mgr.cpp"
 MQTT_MGR_CPP = FW / "src/net/mqtt_mgr.cpp"
+WITNESS_CPP = FW / "src/witness.cpp"
 FW_README = FW / "README.md"
 BOOT_BANNER_CPP = REPO / "firmware/common/boot/boot_banner.cpp"
 GUIDE = REPO / "docs/hardware/grove_vision_ai_v2_guide.md"
@@ -384,9 +389,11 @@ must(DETECTION_PIPELINE_H, "if (box.target != det.person_target) continue;", "cl
 must(DETECTION_PIPELINE_H, "if (box.score < det.score_min) continue;", "score filter")
 must(DETECTION_PIPELINE_H, "if (box.score > best_score) {", "best-box rule")
 # voxel mapping — center of the box, integer grid math (refactored into
-# point_to_cell() upstream in #1071; same math, verified where it now lives)
-must(DETECTION_PIPELINE_H, "point_to_cell(box.x + (box.w / 2), box.y + (box.h / 2), rows, cols, row, col);", "voxel center")
-must(DETECTION_PIPELINE_H, "c = (px * safe_cols) / FRAME_W;", "voxel col math")
+# point_to_cell() upstream in #1071; same math, verified where it now lives),
+# taken in int64_t so no out-of-range box overflows it (sweep A42)
+must(DETECTION_PIPELINE_H, "point_to_cell((int64_t)box.x + (box.w / 2), (int64_t)box.y + (box.h / 2), rows, cols, row, col);",
+     "voxel center")
+must(DETECTION_PIPELINE_H, "const int64_t col = (px * safe_cols) / FRAME_W;", "voxel col math")
 
 EVENTS = re.findall(r'emit\(out_event,\s*"([a-z_]+)"', read(PRESENCE_FSM_CPP))
 if len(set(EVENTS)) < 5:
@@ -468,7 +475,14 @@ must(HA_DISCOVERY_CPP, "Home Assistant discovery published (retained).", "discov
 must(MAIN_CPP, "Ed25519 identity ready (events signed)", "witness ready line")
 
 EX_IP = "192.168.1.117"
-EX_HEX = "b3f2a9c41d5e"
+# The salted MAC-free pseudonym main.cpp prints as "Hardware ID"
+# (device_pseudonym::device_id_hex): 16 characters of the unambiguous
+# alphabet, derived from an example salt by the header's own construction
+# (_pseudonym.py) — not hex, which no unit prints (sweep A28). The MQTT
+# client id the connect line names carries it too.
+EX_HWID = pseudonym(SALT_B)
+EX_CLIENT_ID = client_id(DEVICE_ID, EX_HWID, MQTT_MGR_CPP)
+must(MAIN_CPP, 'boot_kv("Hardware ID", devid_hex);', "Hardware ID boot line")
 
 SERIAL = {
     "port_hint": "the XIAO's USB-C · USB-CDC serial · 115200 8N1  (pio device monitor)",
@@ -504,9 +518,9 @@ SERIAL = {
         {"tag": "", "text": "              ,_,  ))"},
         {"tag": "", "text": "             (o.o)  ))     Connecting to MQTT..."},
         {"tag": "[--]", "text": f"Device ID  {DEVICE_ID}"},
-        {"tag": "[--]", "text": f"Hardware ID  {EX_HEX}  (salted pseudonym — never the MAC)"},
+        {"tag": "[--]", "text": f"Hardware ID  {EX_HWID}  (salted pseudonym — never the MAC)"},
         {"tag": "[OK]", "text": "Witness  Ed25519 identity ready (events signed)"},
-        {"tag": "[MQTT]", "text": f"Connecting 192.168.1.10:1883 as {DEVICE_ID} ..."},
+        {"tag": "[MQTT]", "text": f"Connecting 192.168.1.10:1883 as {EX_CLIENT_ID} ..."},
         {"tag": "[MQTT]", "text": "Connected."},
         {"tag": "[DISC]", "text": "Home Assistant discovery published (retained)."},
     ],
@@ -567,10 +581,11 @@ ENTITIES = [n for n in raw_names if "%" not in n] + number_names
 if "Presence" not in ENTITIES or "Aim assist" not in ENTITIES:
     die(f"HA entity parse broke: {ENTITIES}")
 ENTITY_META = {
-    "Presence": ("binary_sensor", "someone is here (motion class)"),
-    "Dwelling": ("binary_sensor", "someone has stayed — occupancy class"),
+    "Presence": ("binary_sensor", "someone is here — occupancy class"),
+    "Dwelling": ("binary_sensor", "someone has stayed past the dwell start"),
     "Confidence": ("sensor", "best-box score, 0–100 %"),
-    "Voxel": ("sensor", f"the occupied cell of the {VOXEL_COLS}×{VOXEL_ROWS} grid, as \"r,c\""),
+    "Voxel": ("sensor", f"the cell of the {VOXEL_COLS}×{VOXEL_ROWS} grid the subject last settled in, as "
+                        "\"r,c\"; it stays after they leave, and reads -1,-1 only until someone is seen"),
     "Occupancy": ("sensor", "coarse count bucket — none / one / two / several, never an exact tally"),
     "Posture": ("sensor", "coarse posture ordinal from box shape — upright / horizontal / ambiguous"),
     "Proximity": ("sensor", "coarse distance ordinal from box area — near / mid / far"),
@@ -613,17 +628,223 @@ MQTT = {
                           "simply appears in Home Assistant."},
     "cfg_state_example": {"target": PERSON_TARGET, "score": SCORE_MIN,
                           "lost_ms": LOST_TIMEOUT_MS, "dwell_ms": DWELL_START_MS,
-                          "profile": PROFILES[0]["key"]},
-    "event_example": {
-        "device_id": DEVICE_ID, "device_type": DEVICE_TYPE,
-        "event": "presence_started", "seq": 42, "presence": "present",
-        "occupants": "one", "range": "near", "signed": True,
-        "confidence": 91, "voxel": {"rows": VOXEL_ROWS, "cols": VOXEL_COLS, "r": 1, "c": 1},
-        "bbox": {"x": 96, "y": 88, "w": 64, "h": 128},
-    },
+                          "profile": PROFILES[0]["key"],
+                          "profile_label": PROFILES[0]["label"]},
 }
 must(MAIN_CPP, '\\"voxel\\":{\\"rows\\":%u,\\"cols\\":%u,\\"r\\":%d,\\"c\\":%d}', "event voxel keys")
 must(MAIN_CPP, '\\"bbox\\":{\\"x\\":%d,\\"y\\":%d,\\"w\\":%d,\\"h\\":%d}', "event bbox keys")
+
+# --------------------------------------------------------------------------- #
+# 8b. the MQTT pane — what the firmware publishes, keyed as it publishes it
+# --------------------------------------------------------------------------- #
+# The page's simulated broker pane (assets/vision-ui.js buildMqtt) used to
+# hand-write its rows: a health row of {"fw":…,"public_key":"ed25519:…"}
+# and a chain row of {"length":1,"head":"…"}, neither of which this
+# firmware sends (sweep A26). Every row now comes from here, and each
+# example's keys — nested ones too, in order — must equal the keys of the
+# snprintf format that publishes it, or this file refuses to write. Values
+# are illustrative; the page overlays the sandbox's own (event, presence,
+# confidence, voxel, bbox, seq, chain length, tuning) on these.
+#
+# The key is the repo's Ed25519 test key (seed 0x42 x 32), the one the WAP
+# page, the WAP's host tests and Home Assistant's tests use: canary-vision
+# derives its fp the same way (witness.cpp: SHA256("securacv:pubkey:
+# fingerprint" || 0x00 || pubkey)[0..8], 16 lowercase), so a Vision holding
+# that key would print this fp. tests/fingerprint_examples.test.js derives
+# both from the seed.
+EX_FP = "7916ca487912fa1b"
+EX_PUBKEY = "2152f8d1…"   # elided; device_signature::pubkey_hex sends 64 lowercase
+must(WITNESS_CPP, 'constexpr const char* DOMAIN_FINGERPRINT = "securacv:pubkey:fingerprint";', "fp domain")
+must(WITNESS_CPP, 'static const char H[] = "0123456789abcdef";', "fp spelled lowercase")
+must(WITNESS_CPP, "fp_hex[16] = '\\0';", "fp is 16 hex digits")
+
+
+def fn_body(path: Path, signature: str, label: str) -> str:
+    text = read(path)
+    i = text.find(signature)
+    if i < 0:
+        die(f"{label}: {signature!r} not found in {path.relative_to(REPO)}")
+    j = text.find("\n}\n", i)
+    return text[i:j if j >= 0 else len(text)]
+
+
+def between(text: str, start: str, end: str, label: str) -> str:
+    i = text.find(start)
+    j = text.find(end, i + len(start)) if i >= 0 else -1
+    if i < 0 or j < 0:
+        die(f"{label}: {start!r} … {end!r} not found")
+    return text[i:j]
+
+
+def fmt_keys(fragment: str) -> list:
+    """The JSON keys an snprintf format writes, in order (nested included)."""
+    return re.findall(r'\\"([a-z_]+)\\":', fragment)
+
+
+def flat_keys(obj: dict) -> list:
+    out = []
+    for k, v in obj.items():
+        out.append(k)
+        if isinstance(v, dict):
+            out += flat_keys(v)
+    return out
+
+
+def keyed_as(example: dict, keys: list, label: str) -> dict:
+    if flat_keys(example) != keys:
+        die(f"MQTT pane {label}: example keys {flat_keys(example)} are not the firmware's {keys}")
+    return example
+
+
+def payload(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+STATUS_KEYS = fmt_keys(fn_body(MQTT_MGR_CPP, "void publish_status_retained(", "status"))
+STATE_KEYS = fmt_keys(fn_body(MQTT_MGR_CPP, "void publish_state_retained(", "state"))
+HEALTH_KEYS = fmt_keys(fn_body(MQTT_MGR_CPP, "void publish_health_retained(", "health"))
+CHAIN_KEYS = fmt_keys(between(fn_body(MQTT_MGR_CPP, "void publish_chain_retained(", "chain"),
+                              "if (signed_ok) {", "} else {", "signed chain"))
+CFG_KEYS = fmt_keys(fn_body(MQTT_MGR_CPP, "bool publish_detect_cfg_retained(", "cfg/state"))
+_ev = fn_body(MAIN_CPP, "static void publish_event_json(", "events")
+EVENT_KEYS_REASON = fmt_keys(between(_ev, "if (reason) {", "} else {", "event with a reason"))
+_ev_plain = between(_ev, "} else {", "canary::net::publish_event(", "event without a reason")
+EVENT_KEYS = fmt_keys(_ev_plain)
+ENVELOPE_KEYS = fmt_keys(fn_body(WITNESS_CPP, "bool sign_event_envelope(", "event envelope"))
+if '"%s"' not in _ev_plain or ENVELOPE_KEYS != ["v", "alg", "fp", "sig"]:
+    die(f"the event body no longer ends in sign_event_envelope's v/alg/fp/sig ({ENVELOPE_KEYS})")
+if EVENT_KEYS_REASON != [k for e in EVENT_KEYS for k in ([e, "reason"] if e == "event" else [e])]:
+    die("an event's reason no longer follows its name; the page inserts it there")
+for needle in ('const char* presence  = snap.presence ? "present" : "clear";',
+               'const char* occupants = snap.presence ? "1" : "0";',
+               'const char* range     = "unknown";'):
+    must(MAIN_CPP, needle, "the event's coarse witness fields")
+must(MQTT_MGR_CPP, 'publish_checked("AIM", topics.aim_state, enabled ? "ON" : "OFF", true);', "aim/state")
+must(MQTT_MGR_CPP, "publish_status_retained(g_topics, \"online\");", "status on connect")
+
+EX_TS_MS, EX_UPTIME_S, EX_HEAP, EX_HEAP_MIN, EX_CHAIN = 41250, 41, 183424, 171032, 12
+# The state row's voxel is the tracker's settled cell (snapshot.voxel =
+# voxel_tracker_.stable()). Until someone has been seen it is the tracker's
+# reset value, Voxel{-1,-1,0,0}: no rows or cols either, which is what the
+# device's first state row prints (the example used to say 3 x 3).
+must(PRESENCE_FSM_CPP, "s.voxel = voxel_tracker_.stable();", "the rows publish the settled cell")
+must(VOXEL_TRACKER_CPP, "  stable_ = Voxel{-1,-1,0,0};", "the tracker's reset cell")
+# ...and it is reset in two places only: PresenceFSM::reset(), which main.cpp
+# calls once, at boot, and open_visit, the one place a visit starts (its
+# presence_started), before it seeds the cell with the visit's first sighting
+# (sweep F152; F186 made open_visit the one place), so each visit's
+# presence_started names the cell it began in and the cell the last visit
+# settled in stays only until then, as the pane's note says.
+_fsm_src = read(PRESENCE_FSM_CPP)
+_open_visit = fn_body(PRESENCE_FSM_CPP, "bool PresenceFSM::open_visit(", "open_visit")
+if (_fsm_src.count("voxel_tracker_.reset();") != 2
+        or "  voxel_tracker_.reset();\n}" not in _fsm_src
+        or "EventMsg& out_event) {\n  voxel_tracker_.reset();\n  voxel_tracker_.update(first_cell, seen_ms);\n"
+           not in _open_visit
+        or _fsm_src.count('emit(out_event, "presence_started")') != 1
+        or '  return emit(out_event, "presence_started");' not in _open_visit
+        or read(MAIN_CPP).count("fsm.reset();") != 1):
+    die("the voxel tracker is no longer reset at boot and on the frame that starts a visit "
+        "(and nowhere else): the pane note's \"each visit starts on its own cell\" is stale")
+VOXEL_IDLE = {"rows": 0, "cols": 0, "r": -1, "c": -1}
+PANE_ONLINE = [
+    ("status", True, keyed_as({
+        "device_id": DEVICE_ID, "device_type": DEVICE_TYPE, "status": "online", "ip": EX_IP,
+        "rssi": -52, "heap_free": EX_HEAP, "heap_min": EX_HEAP_MIN, "degraded": "normal",
+        "ts_ms": EX_TS_MS}, STATUS_KEYS, "status")),
+    ("cfg/state", True, keyed_as(MQTT["cfg_state_example"], CFG_KEYS, "cfg/state")),
+    ("state", True, keyed_as({
+        "device_id": DEVICE_ID, "device_type": DEVICE_TYPE, "profile": PROFILES[0]["key"],
+        "presence": False, "dwelling": False, "presence_ms": 0, "dwell_ms": 0, "confidence": 0,
+        "voxel": VOXEL_IDLE, "bbox": {"x": 0, "y": 0, "w": 0, "h": 0},
+        "occupancy": "none", "posture": "unknown", "proximity": "unknown", "occ_mask": 0,
+        "last_event": "boot", "uptime_s": EX_UPTIME_S, "ts_ms": EX_TS_MS}, STATE_KEYS, "state")),
+    ("health", True, keyed_as({
+        "battery": 100, "battery_present": False, "memory_free": EX_HEAP, "uptime": EX_UPTIME_S,
+        "firmware_version": FW_VERSION, "public_key": EX_PUBKEY}, HEALTH_KEYS, "health")),
+    ("chain", True, keyed_as({
+        "v": 1, "length": EX_CHAIN, "latest_hash": "5d0e…", "algorithm": "ed25519",
+        "alg": "ed25519", "fp": EX_FP, "sig": "…"}, CHAIN_KEYS, "chain")),
+]
+EVENT_PANE = keyed_as({
+    "device_id": DEVICE_ID, "device_type": DEVICE_TYPE, "profile": PROFILES[0]["key"],
+    "event": "presence_started", "seq": EX_CHAIN + 1, "bucket_uptime_s": 0,
+    "presence": "present", "occupants": "1", "range": "unknown", "signed": True,
+    "ts_ms": EX_TS_MS, "presence_ms": 0, "dwell_ms": 0, "visit_ms": 0, "confidence": 91,
+    "voxel": {"rows": VOXEL_ROWS, "cols": VOXEL_COLS, "r": 1, "c": 1},
+    "bbox": {"x": 96, "y": 88, "w": 64, "h": 128},
+    "occupancy": "one", "posture": "upright", "proximity": "mid", "occ_mask": 16,
+    "v": 1, "alg": "ed25519", "fp": EX_FP, "sig": "…"}, EVENT_KEYS + ENVELOPE_KEYS, "events")
+# The sandbox's clock and box move the event's and state's clocks and coarse
+# features too (sweep A37), the way the firmware's own snapshot does: the
+# page's VisionSim feeds the committed WASM core (canary-local/emulator/
+# vision, built from presence_fsm.cpp, voxel_tracker.cpp and
+# detection_pipeline.h), which returns the FSM snapshot's presence_ms,
+# dwell_ms (0 on dwell_started, where the FSM sets dwell_start_ms_; on
+# dwell_ended the length of the dwell it closed, latched in ended_dwell_ms_
+# for that tick because dwelling_ is cleared before the snapshot, sweep F130;
+# 0 on the rest, which are not dwelling), visit_ms (last_visit_ms_, the
+# last completed stay; it and dwell_ended's length both run to the frame
+# that declared the person gone, lost timeout included) and voxel (the
+# tracker's settled cell, sweep A39, which PresenceFSM resets at boot and on
+# the frame that starts a visit, sweep F152, so each visit opens on its own),
+# and the frame's posture, proximity, person count and occupied-cell mask.
+# ts_ms is that clock plus the example's ts_ms (the sandbox clock starts
+# where these rows stand) and bucket_uptime_s its 10-minute bucket.
+OPTICAL_H = FW / "include/canary/vision/optical_features.h"
+CORE_BINDINGS = REPO / "canary-local/emulator/vision/vision_core_bindings.cpp"
+for needle in ("s.presence_ms = presence_ ? (now_ms - presence_start_ms_) : 0;",
+               "s.dwell_ms    = dwelling_ ? (now_ms - dwell_start_ms_) : ended_dwell_ms_;",
+               "  out_event = EventMsg{};\n  // Only the tick that ends a dwell reports its length (dwell_ended).\n"
+               "  ended_dwell_ms_ = 0;\n",
+               "s.visit_ms    = last_visit_ms_;",
+               "  last_visit_ms_ = now_ms - presence_start_ms_;\n  return emit(out_event, \"presence_ended\");",
+               "presence_start_ms_ = now_ms;",
+               "      dwelling_ = true;\n      dwell_start_ms_ = now_ms;\n      return emit(out_event, \"dwell_started\");",
+               "      ended_dwell_ms_ = now_ms - dwell_start_ms_;\n      dwelling_ = false;\n"
+               "      return emit(out_event, \"dwell_ended\");",
+               "s.posture      = posture_;", "s.proximity    = proximity_;", "s.voxel_mask   = voxel_mask_;",
+               "s.ts_ms      = now_ms;"):
+    must(PRESENCE_FSM_CPP, needle, "the FSM snapshot the pane derives its clocks from")
+must(MAIN_CPP, "    publish_event_json(ev.event_name, ev.reason, now_ms, vs);\n    publish_state_now(now_ms);",
+     "the event and the state go out on the tick's own clock")
+must(MAIN_CPP, "const uint32_t bucket_uptime_s = (now_ms / 1000UL / 600UL) * 600UL;", "the 10-minute bucket")
+must(MAIN_CPP, "    last_heartbeat_ms = now_ms;\n    publish_heartbeat_now(now_ms);\n    publish_state_now(now_ms);",
+     "the heartbeat's state row carries the running dwell")
+for needle in ('"\\"person_count\\":%u,\\"posture\\":\\"%s\\","',
+               '"\\"proximity\\":\\"%s\\",\\"voxel_mask\\":%u},"',
+               '"\\"confidence\\":%d,\\"presence_ms\\":%lu,\\"dwell_ms\\":%lu,"',
+               '"\\"visit_ms\\":%lu,"',
+               '"\\"voxel\\":{\\"r\\":%d,\\"c\\":%d,\\"rows\\":%u,\\"cols\\":%u}},"',
+               "(unsigned long)g_snapshot.visit_ms,",
+               "g_snapshot.voxel.r, g_snapshot.voxel.c,",
+               "return JSON.parse(tickJson(nowMs >>> 0));"):
+    must(CORE_BINDINGS if "JSON" not in needle else REPO / "canary-local/emulator/web/vision-core.js",
+         needle, "the WASM core returns what the pane reads")
+_occ = fn_body(OPTICAL_H, "inline const char* occupancy_name(int count) {", "occupancy_name")
+OCCUPANCY = re.findall(r'return "([a-z]+)";', _occ)
+if OCCUPANCY != ["none", "one", "two", "several"] or "if (count <= 0)" not in _occ or "if (count == 2)" not in _occ:
+    die(f"occupancy_name's buckets moved: {OCCUPANCY}")
+MQTT["pane"] = {
+    "source": "payload keys from mqtt_mgr.cpp + main.cpp",
+    "clock": {"t0_ms": EX_TS_MS,
+              "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, "
+                      "visit_ms (the last completed stay), the voxel (its tracker's settled cell, which "
+                      "trails the frame's cell by a few frames and stays put once the frame is empty; each "
+                      "visit starts on its own cell, the one presence_started saw), "
+                      "posture, proximity, occupancy and occ_mask come from the firmware core this page runs, "
+                      "and ts_ms is its clock. dwell_ms is the core's too: 0 on dwell_started, where the "
+                      "dwell starts, the length of the dwell it closed on dwell_ended, and 0 on the other "
+                      "events, which are not dwelling. That length and visit_ms run to the frame that "
+                      "declared the person gone, so both include the lost timeout. A running dwell rides "
+                      "the state heartbeat, which this "
+                      "pane does not stage. One value stays illustrative: a moved chain head's hash is "
+                      "elided."},
+    "occupancy": OCCUPANCY,
+    "online": [{"suffix": s, "retain": r, "payload": payload(o)} for s, r, o in PANE_ONLINE]
+              + [{"suffix": "aim/state", "retain": True, "payload": "OFF"}],
+    "events": {"suffix": "events", "retain": False, "payload": payload(EVENT_PANE)},
+}
 
 # --------------------------------------------------------------------------- #
 # 9. aim assist — the boxes-only preview (payload keys from main.cpp)

@@ -2,8 +2,9 @@
 // csi_events from the SD event log once the MQTT broker returns (backlog
 // F37). Whole outages are replayed against a model world: a card holding
 // the log in the shared line format (csi_event_log_line.h), the canary's
-// MQTT layer with its 12-slot offline queue (tamper alerts outrank events,
-// mqtt_offline_queue.h), NVS, the event-id allocator with its floor
+// MQTT layer with its 12-slot offline queue (the real mqtt_offline_queue.h:
+// tamper alerts outrank events, and its publish_or_queue() order, backlog
+// F107), NVS, the event-id allocator with its floor
 // (csi_event_id_floor.h), and Home Assistant's replay gate
 // (custom_components/securacv/sensor.py `_replay_gate`: a verified events
 // body whose event_id is below the last verified one is refused).
@@ -38,12 +39,12 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <deque>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "csi_event_backfill.h"
+#include "../common/mqtt/mqtt_offline_queue.h"
 
 using namespace csi_event_backfill;
 
@@ -125,9 +126,12 @@ struct World : Port {
   // MQTT
   bool configured = true;
   bool connected = true;
-  struct Queued { bool tamper; uint32_t id; bool deferred; };
-  std::deque<Queued> offline;      // the 12-slot offline queue
-  size_t offline_cap = 12;
+  // The 12-slot offline queue: the real one (mqtt_offline_queue.h, its drop
+  // policy included), each record's payload naming its id and replay flag.
+  static constexpr size_t kOfflineSlots = 12;
+  static constexpr size_t kOfflineSlotBytes = 24;
+  uint8_t offline_storage[kOfflineSlots * mqtt_offline_queue::slot_stride(kOfflineSlotBytes)];
+  mqtt_offline_queue::Queue offline;
   std::vector<Wire> wire;
   int sends = 0;                   // publishes this pass (live + backfill)
   uint32_t unbuildable_id = 0;
@@ -140,6 +144,11 @@ struct World : Port {
   int nvs_writes = 0;
   // HA
   Ha ha;
+
+  World() { offline.init(offline_storage, sizeof(offline_storage), kOfflineSlotBytes); }
+  // The queue points into this World's own storage.
+  World(const World&) = delete;
+  World& operator=(const World&) = delete;
 
   AppendResult card_append(const char* line, size_t len) override {
     AppendResult r = {false, (uint32_t)log.size(), 0};
@@ -241,35 +250,43 @@ struct World : Port {
     return true;
   }
 
-  // The MQTT layer's publish_or_queue (securacv_mqtt.cpp) + its queue's
-  // drop policy (mqtt_offline_queue.h): live when up and nothing queued,
-  // else buffered; when full the oldest EVENT goes, a tamper alert never
-  // gives way to an event.
+  // The MQTT layer's publish_or_queue (securacv_mqtt.cpp): the real order
+  // (mqtt_offline_queue::publish_or_queue, backlog F107) over the real queue
+  // and its drop policy (when full the oldest EVENT goes, a tamper alert
+  // never gives way to an event). Live when up and nothing queued, else
+  // behind the records already queued. The live send here never fails.
   bool publish_or_queue(bool tamper, uint32_t id, bool deferred) {
     if (!configured) return false;
-    if (connected && offline.empty()) {
-      if (!tamper) handed_over(id);
-      wire.push_back({tamper, id, false});
-      if (!tamper) ha.receive(id, deferred, false);
-      return true;
-    }
-    if (offline.size() == offline_cap) {
-      auto ev = offline.begin();
-      while (ev != offline.end() && ev->tamper) ++ev;
-      if (ev == offline.end() && !tamper) return false;
-      offline.erase(ev == offline.end() ? offline.begin() : ev);
-    }
-    if (!tamper) handed_over(id);
-    offline.push_back({tamper, id, deferred});
-    return true;
+    char payload[kOfflineSlotBytes];
+    std::snprintf(payload, sizeof(payload), "%u %d", (unsigned)id, deferred ? 1 : 0);
+    const mqtt_offline_queue::Kind kind =
+        tamper ? mqtt_offline_queue::KIND_TAMPER : mqtt_offline_queue::KIND_EVENT;
+    const uint32_t queued_before = offline.stats().queued;
+    const bool ok = mqtt_offline_queue::publish_or_queue(
+        offline, connected, kind, false, payload,
+        [&]() {
+          if (!tamper) handed_over(id);
+          wire.push_back({tamper, id, false});
+          if (!tamper) ha.receive(id, deferred, false);
+          return true;
+        },
+        []() {});
+    // Buffered: handed over too (nothing writes NVS in between).
+    if (!tamper && offline.stats().queued != queued_before) handed_over(id);
+    return ok;
   }
   // mqtt_loop(): drain up to 4 queued records while the link is up.
   void mqtt_loop() {
-    for (int b = 0; b < 4 && connected && !offline.empty(); ++b) {
-      const Queued q = offline.front();
+    mqtt_offline_queue::Kind kind;
+    const char* payload;
+    for (int b = 0; b < 4 && connected && offline.front(&kind, nullptr, &payload); ++b) {
+      unsigned id = 0;
+      int deferred = 0;
+      std::sscanf(payload, "%u %d", &id, &deferred);
       offline.pop_front();
-      wire.push_back({q.tamper, q.id, false});
-      if (!q.tamper) ha.receive(q.id, q.deferred, false);
+      const bool tamper = kind == mqtt_offline_queue::KIND_TAMPER;
+      wire.push_back({tamper, (uint32_t)id, false});
+      if (!tamper) ha.receive((uint32_t)id, deferred != 0, false);
     }
   }
 };
@@ -1085,6 +1102,17 @@ static int test_broker_change_drops_the_backlog() {
 }
 
 static int test_card_lost_while_rows_wait() {
+  // The rule since backlog F104: a card that closes while rows wait on it is
+  // waited for. Neither host hands the planner a row committed meanwhile:
+  // both egresses hold it in RAM for up to kCardWaitMs (the canary's
+  // csi_event_egress.cpp, test_canary_event_egress.cpp; the canary-wap's,
+  // test_wap_event_egress.cpp), so a card back within the wait loses
+  // nothing. This pins what is left of the old rule, the planner's side once
+  // the host has given the card up: rows handed over with the card closed
+  // take the not-on-card route, and the rows still on the card are given
+  // up. Before F104 the canary handed every such row over at once, so this
+  // was the rule for any close, however short.
+  static_assert(kCardWaitMs == 45000, "the hosts' card wait (both egresses use this constant)");
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
@@ -1094,6 +1122,8 @@ static int test_card_lost_while_rows_wait() {
   for (int i = 0; i < 8; ++i) h.tick(1);      // held on the card
   w.card_in = false;
   p.card_close();
+  CHECK(!p.pending());                         // the planner cannot see the card's rows now
+  h.now += kCardWaitMs;                        // the host's wait is over
   for (int i = 0; i < 4; ++i) h.tick(1);      // no card: the offline queue
   w.connected = true;
   h.drain();

@@ -18,6 +18,25 @@
 // Now admit says which it was (CSI_BUNDLER_MERGED: no new row; BUFFERED: a
 // new bundle), decided after its own expiry, and only a merge is refunded.
 //
+// Three tests came with #1762, which fixed the same item in parallel (its
+// own test_csi_bundle_ceiling.cpp, folded in here when #1763 merged). They
+// start the day where the module's counter is created, so a day is exactly
+// 24 of its hours, and pin the exact count as well as the bound: the gap
+// probe commits exactly 144 rows (every hour still gets its six, not
+// fewer); the WINDOW reopen (a key refreshed every 60 s, whose bundle
+// closes on its 10-minute window inside a refresh's admit, beside one new
+// state every 10 minutes) commits exactly 144 (286 rows a day before F80,
+// 143 of them the refreshed key); and thirty merges into one open bundle
+// leave five of the six slots for new states.
+//
+// What "an hour" means here (backlog F132): the counter keeps six 10-minute
+// buckets, the current one and the five before it, and refuses an emit when
+// they hold the ceiling. So the ceiling bounds OPENINGS in each of the
+// counter's hours (any six consecutive buckets), not committed rows in every
+// sliding 60 minutes: rows commit when their bundles close, two to ten
+// minutes after they opened, and openings can bunch at a bucket edge. The
+// last test pins how far apart the two can get: twice the ceiling.
+//
 // Build/run: make -C firmware/tests_host (the CI "host tests" job).
 
 #include <cstdint>
@@ -49,13 +68,15 @@ static constexpr uint8_t kCeiling = 6;   // core.presence's default per hour
 
 // ── Every committed row, with the time it committed ─────────────────────
 static uint32_t g_rows = 0;
+static uint32_t g_rows_by_state_a = 0;
 static uint32_t g_row_ms[4096];
 
 extern "C" void csi_event_on_committed(uint32_t, const char*, const char*,
                                        csi_event_category_t, csi_privacy_class_t,
-                                       const csi_event_values_t*) {
+                                       const csi_event_values_t* v) {
   if (g_rows < sizeof(g_row_ms) / sizeof(g_row_ms[0])) g_row_ms[g_rows] = g_now_ms;
   ++g_rows;
+  if (v && std::strcmp(v->state_name, "a") == 0) ++g_rows_by_state_a;
 }
 
 // ── A module: one state-bearing type under a 6/hour ceiling ─────────────
@@ -76,8 +97,17 @@ static const csi_module_t kModule = {
 static void power_on() {
   g_now_ms = 1000;
   g_rows = 0;
+  g_rows_by_state_a = 0;
   csi_event_test_reset();
   (void)csi_module_register(&kModule);
+}
+
+// power_on(), and the module's ceiling counter created now, without an
+// emit (an override of 0 keeps the manifest's ceiling): the day starts
+// here, so it is exactly 24 of the counter's hours.
+static void power_on_counter_anchored() {
+  power_on();
+  csi_event_set_module_ceiling("test.ceiling", 0);
 }
 
 static csi_event_values_t presence(const char* state) {
@@ -147,7 +177,11 @@ static int test_emits_just_past_the_gap_spend_the_ceiling() {
               (unsigned)(step / kSecond), (unsigned)g_rows, (unsigned)kCeiling);
   CHECK(g_rows > 0);
   CHECK(g_rows <= 24u * kCeiling);
-  CHECK(max_rows_in_an_hour() <= kCeiling + 1u);   // +1: the flush at the end
+  // +1 (7 measured, with or without the final flush's row): a row commits
+  // when its bundle closes, after the bucket that counted its opening, and
+  // the ceiling counts in its own 10-minute buckets, not per sliding 60
+  // minutes (F132).
+  CHECK(max_rows_in_an_hour() <= kCeiling + 1u);
   return 0;
 }
 
@@ -176,8 +210,10 @@ static int test_refreshes_of_an_open_bundle_stay_free() {
   return 0;
 }
 
-// A mix: refreshes inside the gap, then gaps past it, alternating. Rows in
-// any hour stay at the ceiling.
+// A mix: refreshes inside the gap, then gaps past it, alternating. Openings
+// stay at the ceiling in each of the counter's hours; committed rows in a
+// sliding hour reach one more (7 measured: commit-at-close against the
+// counter's 10-minute buckets, F132).
 static int test_mixed_refreshes_and_gaps_hold_the_ceiling() {
   power_on();
   for (int round = 0; round < 200; ++round) {
@@ -194,11 +230,137 @@ static int test_mixed_refreshes_and_gaps_hold_the_ceiling() {
   return 0;
 }
 
+// #1762's gap probe, on an anchored day: one state-bearing emit every 121 s,
+// nothing else ticking the bundler. Each emit finds its key's bundle 121 s
+// old, so the admit closes it (gap >= 120 s) and opens a new one: every one
+// is a row, and the ceiling allows six openings in each of the counter's
+// hours. Exactly 144, so not starved either: every hour still gets its six.
+static int test_a_gap_reopen_spends_exactly_the_ceiling() {
+  power_on_counter_anchored();
+  const uint32_t start = g_now_ms;
+  const uint32_t step = CSI_BUNDLER_MAX_GAP_MS + kSecond;
+  while (g_now_ms + step <= start + 24 * kHour) {
+    (void)emit("a");
+    g_now_ms += step;
+  }
+  csi_event_flush_bundles();   // the last bundle commits too
+  std::printf("  gap reopen, anchored day: %u rows (ceiling allows %u)\n",
+              (unsigned)g_rows, (unsigned)(24u * kCeiling));
+  CHECK(g_rows <= 24u * kCeiling);
+  CHECK(g_rows == 24u * kCeiling);
+  return 0;
+}
+
+// #1762's window probe: state "a" refreshed every 60 s, so its bundle never
+// reaches the quiet gap and closes on its 10-minute window, at a refresh,
+// inside that refresh's admit (nothing else ticks). The reopened bundle is a
+// row like any other. Beside it the module tries one new state every 10
+// minutes. Six openings in each of the counter's hours in all, exactly 144
+// rows a day (a sliding 60 minutes of committed rows reaches 8 here, two of
+// them the final flush's, which closes two bundles early: F132). Before F80
+// every window reopen of "a" was refunded and the new states had the ceiling
+// to themselves, 286 rows a day (143 of them "a").
+static int test_a_window_reopen_spends_the_ceiling() {
+  power_on_counter_anchored();
+  const uint32_t start = g_now_ms;
+  int k = 0;
+  for (uint32_t t = 0; t + kMinute <= 24 * kHour; t += kMinute) {
+    g_now_ms = start + t;
+    (void)emit("a");
+    if (t % (10 * kMinute) == 0) {
+      char s[16];
+      std::snprintf(s, sizeof(s), "s%d", k++);
+      (void)emit(s);
+    }
+  }
+  g_now_ms = start + 24 * kHour - 1;
+  csi_event_flush_bundles();
+  std::printf("  window reopen: %u rows in a day (%u of state a; ceiling allows %u)\n",
+              (unsigned)g_rows, (unsigned)g_rows_by_state_a, (unsigned)(24u * kCeiling));
+  CHECK(g_rows <= 24u * kCeiling);
+  CHECK(g_rows == 24u * kCeiling);
+  CHECK(max_rows_in_an_hour() <= 2u * kCeiling);
+  return 0;
+}
+
+// What F80 must not break, counted in slots: thirty refreshes of "a" inside
+// one bundle, then new states. The merges gave their slots back, so five
+// new states open (six slots, one spent on "a"), the sixth is refused at the
+// ceiling, and the lot commits as six rows, one of them "a".
+static int test_a_merge_gives_its_slot_back() {
+  power_on_counter_anchored();
+  CHECK(emit("a") != 0);
+  for (int i = 1; i <= 30; ++i) {
+    g_now_ms += 15 * kSecond;   // 7.5 minutes, gaps of 15 s: one bundle
+    CHECK(emit("a") != 0);
+  }
+  int opened = 0;
+  for (int i = 0; i < 5; ++i) {
+    char s[16];
+    std::snprintf(s, sizeof(s), "t%d", i);
+    if (emit(s) != 0) ++opened;
+  }
+  CHECK(opened == 5);
+  CHECK(emit("u") == 0);        // the sixth new state is over the ceiling
+  csi_event_flush_bundles();
+  CHECK(g_rows == 6);
+  CHECK(g_rows_by_state_a == 1);
+  return 0;
+}
+
+// The ceiling's hour is its own six 10-minute buckets (backlog F132). Six
+// new states just before the end of the counter's first bucket fill it; the
+// bucket rotates out of the six fifty minutes later, and six more open at
+// once. Each six-bucket hour held six openings, yet one sliding 60 minutes
+// holds twelve committed rows, about fifty minutes apart end to end. A fix
+// that counts a true sliding hour changes this pin.
+static int test_a_sliding_hour_can_hold_twice_the_ceiling() {
+  power_on_counter_anchored();
+  const uint32_t start = g_now_ms;   // the counter's first bucket starts here
+  g_now_ms = start + 10 * kMinute - 6 * kSecond;
+  for (int i = 0; i < kCeiling; ++i) {
+    char s[16];
+    std::snprintf(s, sizeof(s), "a%d", i);
+    CHECK(emit(s) != 0);
+    g_now_ms += kSecond;
+  }
+  CHECK(emit("over") == 0);                  // the six buckets are full
+  while (g_now_ms < start + 60 * kMinute - kSecond) {
+    g_now_ms += kSecond;
+    csi_bundler_tick();
+  }
+  CHECK(g_rows == kCeiling);                 // the first six closed on their gap
+  CHECK(emit("still") == 0);                 // the first bucket still counts
+  g_now_ms = start + 60 * kMinute;           // ...until it rotates out
+  for (int i = 0; i < kCeiling; ++i) {
+    char s[16];
+    std::snprintf(s, sizeof(s), "b%d", i);
+    CHECK(emit(s) != 0);
+    g_now_ms += kSecond;
+  }
+  CHECK(emit("over") == 0);
+  for (int i = 0; i < 20 * 60; ++i) {
+    g_now_ms += kSecond;
+    csi_bundler_tick();
+  }
+  const uint32_t span_s = (g_row_ms[g_rows - 1] - g_row_ms[0]) / kSecond;
+  std::printf("  bucket edge: %u rows, %u in one sliding hour, %u s from first to last\n",
+              (unsigned)g_rows, (unsigned)max_rows_in_an_hour(), (unsigned)span_s);
+  CHECK(g_rows == 2u * kCeiling);
+  CHECK(span_s < 51u * 60u);
+  CHECK(max_rows_in_an_hour() == 2u * kCeiling);
+  return 0;
+}
+
 int main() {
   if (test_admit_reports_merge_after_its_own_expiry()) return 1;
   if (test_emits_just_past_the_gap_spend_the_ceiling()) return 1;
   if (test_refreshes_of_an_open_bundle_stay_free()) return 1;
   if (test_mixed_refreshes_and_gaps_hold_the_ceiling()) return 1;
+  if (test_a_gap_reopen_spends_exactly_the_ceiling()) return 1;
+  if (test_a_window_reopen_spends_the_ceiling()) return 1;
+  if (test_a_merge_gives_its_slot_back()) return 1;
+  if (test_a_sliding_hour_can_hold_twice_the_ceiling()) return 1;
   std::printf("test_csi_bundler_ceiling: %d checks passed\n", g_checks);
   return 0;
 }

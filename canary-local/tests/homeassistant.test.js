@@ -46,17 +46,43 @@ test("upstream snapshot is well-formed and self-dating", () => {
   assert.ok(data.upstream.source.startsWith("https://"), "snapshot must name its source");
 });
 
-test("every demo entity is one the doc actually promises", () => {
-  const catalog = new Set(data.entity_catalog.map((e) => e.name));
-  for (const ent of data.ha_demo.entities) {
-    if (ent.from_section === "ota") {
-      assert.ok(doc.includes(`**${ent.name}**`), `OTA entity '${ent.name}' vanished from the doc`);
-    } else {
-      assert.ok(catalog.has(ent.name), `demo entity '${ent.name}' not in the parsed catalog`);
-      assert.ok(doc.includes(`**${ent.name}**`), `entity '${ent.name}' not in the doc text`);
-    }
-    assert.ok(["sensor", "binary_sensor", "switch", "update"].includes(ent.kind), ent.kind);
+// Sweep A36: the demo's device is the fleet step's WAP, and it used to show
+// the setup guide's firmware/canary entities (Die Temperature, SD Card
+// Healthy, Tamper Detected) that csi_mqtt.cpp's discovery table never
+// announces. Every entity it draws is now one of the WAP's, by object_id,
+// with the table's name, component and unit, on the WAP's own config topic.
+const wap = JSON.parse(readFileSync(join(ROOT, "devices/wap.json"), "utf8"));
+const csiMqtt = readFileSync(join(REPO, "firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp"), "utf8");
+test("every demo entity is one the demo's WAP announces (csi_mqtt.cpp's discovery table)", () => {
+  const disc = wap.mqtt.discovery;
+  const table = new Map([...disc.entities, ...disc.switches].map((e) => [e.object_id, e]));
+  const demo = data.ha_demo;
+  assert.ok(demo.entities.length >= 6);
+  for (const ent of demo.entities) {
+    const e = table.get(ent.object_id);
+    assert.ok(e, `demo entity ${ent.object_id} is not one the WAP announces`);
+    assert.deepStrictEqual([ent.name, ent.kind, ent.unit], [e.name, e.component, e.unit], ent.object_id);
+    // the name and object_id are csi_mqtt.cpp's own
+    assert.ok(csiMqtt.includes(`"${ent.object_id}"`) || csiMqtt.includes(`${ent.object_id}/config`), ent.object_id);
+    assert.ok(csiMqtt.includes(`"${ent.name}"`) || csiMqtt.includes(`\\"name\\":\\"${ent.name}\\"`), ent.name);
   }
+  for (const gone of ["Die Temperature", "SD Card Healthy", "Tamper Detected"])
+    assert.ok(!demo.entities.some((e) => e.name === gone) && !csiMqtt.includes(`"${gone}"`), gone + ": no WAP announces it");
+  // the card is the WAP's discovery device ("Canary %s"), on its config topics
+  assert.ok(csiMqtt.includes('"\\"name\\":\\"Canary %s\\","'));
+  assert.strictEqual(demo.device_name, "Canary " + wap.device.id_example);
+  assert.strictEqual(demo.config_topic, disc.config_topic.replace("<id>", wap.device.id_example));
+  assert.ok(csiMqtt.includes('"%s/%s/canary_%s/%s/config"'), "the WAP's config topic shape");
+  // values read off the fleet step's wire lines
+  const wire = (sfx) => JSON.parse(wap.mqtt.topics.find((t) => t.suffix === sfx).payload);
+  const initial = (id) => demo.entities.find((e) => e.object_id === id).initial;
+  assert.strictEqual(initial("witness_count"), wire("counts").total.toLocaleString("en-US"));
+  assert.strictEqual(initial("chain_length"), wire("chain").length.toLocaleString("en-US"));
+  assert.strictEqual(initial("uptime"), String(wire("health").uptime));
+  assert.strictEqual(initial("rssi"), String(wire("status").rssi));
+  assert.strictEqual(demo.chain_length, wire("chain").length, "the timeline starts at the printed chain");
+  assert.strictEqual(demo.entities.find((e) => e.name === demo.tick_entity).object_id, "witness_count");
+  assert.strictEqual(demo.entities.find((e) => e.name === demo.chain_entity).object_id, "chain_length");
 });
 
 test("every MQTT topic in the JSON is in the doc's topic reference", () => {
@@ -165,9 +191,96 @@ test("staleness self-report math", async () => {
   assert.strictEqual(daysOld("not-a-date"), null, "garbage dates report null, not NaN");
 });
 
+// The demo itself, on a few lines of fake DOM: the discovery it plays names
+// the WAP's config topics, and the card's liveness tick counts the witness
+// records and chain on from the values the fleet step printed (it used to
+// start a counter at 1284 under an entity, Witness Count, no WAP announces).
+test("the demo plays the WAP's discovery and counts on from the printed chain", async () => {
+  const { withFakeDom } = require("./fixtures/fake_dom.js");
+  const saved = { IO: globalThis.IntersectionObserver, raf: globalThis.requestAnimationFrame,
+                  si: globalThis.setInterval, st: globalThis.setTimeout, rnd: Math.random };
+  let observe = null, tick = null;
+  globalThis.IntersectionObserver = class { constructor(cb) { observe = cb; } observe() {} disconnect() {} };
+  globalThis.requestAnimationFrame = (fn) => fn();
+  globalThis.setInterval = (fn) => { tick = fn; return 1; };
+  globalThis.setTimeout = (fn) => saved.st(fn, 0);   // the demo's pacing, compressed
+  Math.random = () => 0;
+  try {
+    await withFakeDom(async () => {
+      const { buildHaDemo } = await import("../assets/hub-ha-ui.js");
+      const demo = data.ha_demo;
+      const wrap = buildHaDemo(demo, { ha: data.upstream.ha_version });
+      const wait = () => new Promise((r) => saved.st(r, 5));
+      const topics = [];
+      const disc = wrap.all("hub-ha-wait")[0];
+      // record every line the discovery ribbon shows
+      const proto = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(disc), "textContent");
+      Object.defineProperty(disc, "textContent", {
+        get() { return proto.get.call(this); },
+        set(v) { if (/\(retained\)$/.test(v)) topics.push(v); proto.set.call(this, v); },
+      });
+      observe([{ isIntersecting: true }]);
+      for (let i = 0; i < 400 && !/^discovered in/.test(disc.textContent); i++) await wait();
+      assert.strictEqual(topics.length, demo.entities.length, "one retained config topic per entity");
+      assert.match(disc.textContent, /^discovered in/, "discovery never finished");
+      const id = data.ha_demo.device_id;
+      for (const t of topics) assert.match(t, new RegExp(`^homeassistant/(sensor|binary_sensor|switch|update)/canary_${id}/[a-z_]+/config  \\(retained\\)$`), t);
+      assert.ok(topics.includes(`homeassistant/update/canary_${id}/firmware/config  (retained)`), topics.join("\n"));
+      const value = (name) => wrap.all("hub-ha-row").find((r) => r.all("hub-ha-name")[0].children[0].textContent === name)
+        .all("hub-ha-value")[0].textContent;
+      // discovery verifies the retained head the fleet step printed; it is
+      // not a new record, so nothing moves yet
+      const chain = demo.chain_length;
+      assert.strictEqual(wrap.all("hub-ha-chain")[0].textContent, `chain ${chain} · verified ✓ (Ed25519, pinned key)`);
+      assert.strictEqual(value(demo.tick_entity), chain.toLocaleString("en-US"));
+      tick();
+      assert.strictEqual(value(demo.tick_entity), (chain + 1).toLocaleString("en-US"), "the witness count ticks on from the wire, not from 1284");
+      assert.strictEqual(value(demo.chain_entity), (chain + 1).toLocaleString("en-US") + " blocks", "with the chain beside it, in its unit");
+      assert.strictEqual(wrap.all("hub-ha-chain")[0].textContent, `chain ${chain + 1} · verified ✓ (Ed25519, pinned key)`);
+
+      // The drill and the mic switch, clicked: each detection or mute is a
+      // witness record (the WAP signs it into its chain), and an alarm that
+      // clears is not.
+      const tlRows = () => wrap.all("hub-ha-tlrow").map((r) => [r.all("hub-ha-tltext")[0].textContent, r.all("hub-ha-tlsig")[0].textContent]);
+      const moved = (n) => {
+        assert.strictEqual(value(demo.tick_entity), (chain + n).toLocaleString("en-US"), "Witness Records at +" + n);
+        assert.strictEqual(value(demo.chain_entity), (chain + n).toLocaleString("en-US") + " blocks", "Chain Length at +" + n);
+        assert.strictEqual(wrap.all("hub-ha-chain")[0].textContent, `chain ${chain + n} · verified ✓ (Ed25519, pinned key)`);
+      };
+      const drillBtn = wrap.all("hub-ha-drill")[0];
+      drillBtn.click();   // the detection lands before the drill's first pause
+      const [alertText, alertSig] = tlRows()[0];
+      assert.strictEqual(alertText, `acoustic_event: ${demo.drill.acoustic_event} — NFPA 72 T3 cadence matched`,
+        "the drill names the word the WAP's sensing topic carries");
+      assert.strictEqual(alertSig, "✓ #" + (chain + 2), "the detection is a witness record");
+      assert.strictEqual(value(demo.drill.trigger_entity), "on");
+      moved(2);
+      for (let i = 0; i < 400 && drillBtn.disabled; i++) await wait();
+      assert.ok(!drillBtn.disabled, "the drill never finished");
+      assert.deepStrictEqual(tlRows()[0], ["acoustic_event cleared — alarm stopped", "✓"], "a clear is not a record");
+      assert.deepStrictEqual(tlRows()[1], [alertText, alertSig]);
+      assert.strictEqual(value(demo.drill.trigger_entity), "off");
+      moved(2);
+
+      const mic = wrap.all("hub-ha-switch")[0];
+      mic.click();
+      assert.deepStrictEqual(tlRows()[0], ["mic muted (source: ha) — signed into the witness chain", "✓ #" + (chain + 3)]);
+      moved(3);
+      mic.click();
+      assert.deepStrictEqual(tlRows()[0], ["mic live (source: ha) — signed into the witness chain", "✓ #" + (chain + 4)]);
+      moved(4);
+    });
+  } finally {
+    globalThis.IntersectionObserver = saved.IO; globalThis.requestAnimationFrame = saved.raf;
+    globalThis.setInterval = saved.si; globalThis.setTimeout = saved.st; Math.random = saved.rnd;
+  }
+});
+
 test("the drill's trigger entity exists in the demo's entity list", () => {
   const names = new Set(data.ha_demo.entities.map((e) => e.name));
   assert.ok(names.has(data.ha_demo.drill.trigger_entity));
+  // and turns on at the word the WAP's sensing topic carries for a T3 cadence
+  assert.ok(csiMqtt.includes(`value_json.acoustic_event == '${data.ha_demo.drill.acoustic_event}'`));
 });
 
 // The routes src/api/mod.rs answers with a 2xx before it ever reads a bearer

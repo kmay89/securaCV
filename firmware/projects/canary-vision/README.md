@@ -139,6 +139,80 @@ Base:
 - `securacv/<device_id>/cfg/state` (retained; live detection settings + watch profile)
 - `securacv/<device_id>/cfg/{target,score,lost,dwell,profile}/set` (commands)
 
+### The clocks and the cell on an event row
+
+Every `events` row, and the `state` row published on the same tick, is read
+from the presence FSM's snapshot right after the frame that emitted the
+event (`publish_event_json` in `src/main.cpp`, `PresenceFSM::snapshot` in
+`src/state/presence_fsm.cpp`). So the clocks and the cell mean:
+
+| Field | On which rows | Value |
+|---|---|---|
+| `presence_ms` | every row | how long the current stay has lasted; 0 on `presence_started` (it starts on that frame) and once the stay has ended |
+| `dwell_ms` | every row | the running dwell while dwelling; on `dwell_ended`, the length of the dwell it closed, counted to the frame that declared the person gone, so it includes the lost timeout (below), and held until the next frame; otherwise 0. `dwell_started` reads 0 because the dwell starts on that frame |
+| `visit_ms` | `events` rows (the `state` row has no such key) | the length of the last **completed** stay, from `presence_started` to the frame that declared the person gone, so it includes the lost timeout too; latched at `presence_ended` and kept until the next one ends; 0 before any stay has ended |
+| `voxel` | every row | the voxel tracker's settled cell, not the frame's: it moves to a new cell only once the person has been seen away from it three times in a row (`VOXEL_STABLE_N` in `src/state/voxel_tracker.cpp`), and it keeps the last cell once the frame is empty, so `presence_ended` still names where the person was. Each visit starts its own tracker, so `presence_started` names the cell the person was first seen in on that visit, and the rows between visits keep naming where the last visit settled until then. Before anyone has been seen since boot it is `r`/`c` -1 with `rows`/`cols` 0 |
+
+Neither length stops at the last sighting. The FSM declares the person gone
+on the first frame more than `lost_ms` after it last saw them (the lost
+timeout in the table above: 1.5 s by default, 4 s in the `litter_box`
+preset, settable from 0.25 s to 60 s), and `dwell_ended`'s `dwell_ms` and
+`visit_ms` both run to that frame. So with the default timeout a dwell whose
+subject was last seen 1.9 s after it started reports about 3.5 s. A dweller
+is held for `DWELL_END_GRACE_MS` instead (`include/canary/config.h`) when
+that is longer than the lost timeout: they stay present and dwelling until
+they have gone unseen for longer than the grace, a dweller seen again within
+it keeps the dwell, and `dwell_ended` (with the dwell's length, which then
+includes the grace) and `presence_ended` follow once it has passed. The
+grace is compile-time and 0 in every shipped build, so the lost timeout
+ends every stay on a device today.
+
+`presence_ended` goes out on the frame after `dwell_ended`, whatever that
+frame shows: `dwell_ended` has already declared the person gone, and the
+stay waits that one frame only because a frame sends one event. Someone
+seen on that frame starts the next visit, whose `presence_started` follows
+on the frame after, with the same events a return one frame later sends.
+When that next frame is empty, the visit opens from the sighting's cell and
+is held present through the lost timeout from it; when the next frame has a
+sighting of its own, the visit opens from that one (its cell, and the lost
+timeout from it), as any sighting opens a visit. So a stay has at most one
+dwell, and the lingering alert, which pages on `dwell_started`, pages once
+per stay. Before this the sighting kept the stay and started a second
+dwell in it at once, with a second `dwell_ended`.
+
+### When `interaction_likely` fires
+
+`interaction_likely` is sent once a visit has ended, when that visit
+qualified: it dwelled (reason `dwell_then_left`), or the person stayed in
+one settled cell for `ZONE_INTERACTION_MS` (2.5 s) of that visit (reason
+`zone_interaction_then_left`). A visit counts as dwelled from the frame that
+sends `dwell_started`, so a person last seen on that very frame still
+leaves a visit that reports `dwell_then_left`. Each visit is judged on its own: the tracker
+and its clock start again on the frame that starts the visit, so a short
+visit after a long one does not inherit the earlier visit's time in a cell.
+
+It goes out on the frame after `presence_ended`, within
+`INTERACTION_AFTER_LEAVE_WINDOW_MS` (3 s) of it. When someone is seen on
+that very frame, the frame starts the next visit (`presence_started`) and
+the ended visit's `interaction_likely` follows on the frame after, still
+inside the window. The same goes for a dweller seen on the frame after
+`dwell_ended`: that frame sends `presence_ended`, the next one the new
+visit's `presence_started`, and the one after that the ended visit's
+`interaction_likely` (`dwell_then_left`). Its `visit_ms` says how long the ended visit lasted
+either way. The rest of the row is the frame it was sent from, after the
+visit: `confidence` 0 (no box) on the usual frame, or, when it was held
+back a frame, the next visit's box, with `presence` true and the next
+visit's cell. So its confidence says nothing about the visit it reports.
+
+A running dwell is on the `state` rows (each heartbeat republishes
+one) and the dwell's final length on its `dwell_ended` row. The behavior is
+host-tested in
+[`firmware/tests_host/test_vision_presence_fsm.cpp`](../../tests_host/test_vision_presence_fsm.cpp),
+and the Lab's Vision page runs the same FSM and tracker (its WebAssembly core,
+held to them by
+[`firmware/tests_host/test_vision_core_bindings.cpp`](../../tests_host/test_vision_core_bindings.cpp)),
+so its MQTT pane shows these values as the device computes them.
+
 Discovery (retained):
 - `homeassistant/binary_sensor/<device_id>/presence/config`
 - `homeassistant/binary_sensor/<device_id>/dwelling/config`
@@ -186,11 +260,11 @@ Compile-tested; not yet bench-tested against a TLS broker.
 stateDiagram-v2
   [*] --> Idle
 
-  Idle --> Present: person_now
-  Present --> Idle: lost_timeout
-  Present --> Dwelling: present >= dwell_start_ms
-  Dwelling --> Present: (optional) dwell_end_grace
-  Dwelling --> Idle: lost_timeout
+  Idle --> Present: person_now (presence_started)
+  Present --> Idle: unseen > lost_timeout (presence_ended)
+  Present --> Dwelling: present >= dwell_start_ms (dwell_started)
+  Dwelling --> Leaving: unseen > max(lost_timeout, dwell_end_grace) (dwell_ended)
+  Leaving --> Idle: next frame, seen or not (presence_ended)
 
   state Present {
     [*] --> Watching
@@ -199,11 +273,20 @@ stateDiagram-v2
 
   state Dwelling {
     [*] --> Counting
-    Counting --> Counting: person_now continues
+    Counting --> Counting: person_now continues, or back within the grace
   }
 
-  Idle --> InteractionLikely: leave & qualified & within window
+  note right of Leaving
+    Seen on that frame: the sighting opens the next visit,
+    presence_started on the frame after (one dwell per stay)
+  end note
+
+  Idle --> InteractionLikely: next frame, this visit qualified, within window
   InteractionLikely --> Idle: after publish
+  note right of InteractionLikely
+    Seen again on that very frame: presence_started goes first,
+    and interaction_likely follows on the frame after, while Present
+  end note
 ```
 
 ## License

@@ -14,23 +14,44 @@
 // occupancy, voxel, posture and proximity) is compiled from this one header.
 namespace canary::vision::detection {
 
-inline void point_to_cell(int px, int py, int rows, int cols, int& r, int& c) {
-  const int safe_cols = (cols <= 0) ? 1 : cols;
-  const int safe_rows = (rows <= 0) ? 1 : rows;
-  c = (px * safe_cols) / FRAME_W;
-  r = (py * safe_rows) / FRAME_H;
-  if (c < 0) c = 0;
-  if (c > (safe_cols - 1)) c = safe_cols - 1;
-  if (r < 0) r = 0;
-  if (r > (safe_rows - 1)) r = safe_rows - 1;
+// The cell under a point, clamped to the grid. The point is a box's center,
+// and the box is whatever the caller hands over, so the center and the
+// products below are taken in int64_t, where no int box can overflow them
+// (sweep A42). In int, x + w/2 overflowed for a box near the int range's
+// ends, and px * cols for a center past INT_MAX / cols: a signed overflow,
+// undefined, which a host build and the emulator's wasm32 clang resolved
+// differently, so the same box landed in different cells. Only the Lab's
+// sandbox and the core's ABI can send such a box. The device's SSCMA boxes
+// have uint16 fields, which reach neither overflow. A box whose int math did
+// not overflow lands where it did.
+inline void point_to_cell(int64_t px, int64_t py, int rows, int cols, int& r, int& c) {
+  const int64_t safe_cols = (cols <= 0) ? 1 : cols;
+  const int64_t safe_rows = (rows <= 0) ? 1 : rows;
+  const int64_t col = (px * safe_cols) / FRAME_W;
+  const int64_t row = (py * safe_rows) / FRAME_H;
+  c = (int)(col < 0 ? 0 : (col > safe_cols - 1 ? safe_cols - 1 : col));
+  r = (int)(row < 0 ? 0 : (row > safe_rows - 1 ? safe_rows - 1 : row));
 }
+
+// A box's area, in int64_t (sweep A42). In a 32-bit long (the ESP32's and
+// wasm32's) w * h overflowed once it passed INT32_MAX, where a 64-bit host's
+// long held it, so the builds read the same box's proximity differently.
+// This product, and classify_proximity's area * 100, are the only overflows
+// the device's uint16 SSCMA boxes could reach, though a 240x240 model does
+// not return a box that large.
+// A box with a side that is not positive has no area, so its proximity reads
+// unknown, as its posture does (classify_posture). The bare product is
+// positive when both sides are negative, and a -100 by -100 box read mid
+// (sweep F221). Only the Lab's sandbox and the core's ABI can send a negative
+// side; the device's SSCMA sides are unsigned.
+inline int64_t area_of(int w, int h) { return (w <= 0 || h <= 0) ? 0 : (int64_t)w * h; }
 
 inline void bbox_to_voxel(const BBox& box, Voxel& voxel) {
   const int cols = (VOXEL_COLS == 0) ? 1 : VOXEL_COLS;
   const int rows = (VOXEL_ROWS == 0) ? 1 : VOXEL_ROWS;
   int row = 0;
   int col = 0;
-  point_to_cell(box.x + (box.w / 2), box.y + (box.h / 2), rows, cols, row, col);
+  point_to_cell((int64_t)box.x + (box.w / 2), (int64_t)box.y + (box.h / 2), rows, cols, row, col);
   voxel.cols = (uint8_t)cols;
   voxel.rows = (uint8_t)rows;
   voxel.c = col;
@@ -57,7 +78,7 @@ VisionSample sample_from_boxes(const Boxes& boxes, const canary::cfg::DetectConf
 
     int row = 0;
     int col = 0;
-    point_to_cell(box.x + (box.w / 2), box.y + (box.h / 2), rows, cols, row, col);
+    point_to_cell((int64_t)box.x + (box.w / 2), (int64_t)box.y + (box.h / 2), rows, cols, row, col);
     const int bit = row * cols + col;
     if (bit >= 0 && bit < 16) mask |= (uint16_t)(1u << bit);
 
@@ -85,7 +106,7 @@ VisionSample sample_from_boxes(const Boxes& boxes, const canary::cfg::DetectConf
     bbox_to_voxel(best, out.voxel);
     out.posture = canary::vision::optical::classify_posture(best.w, best.h);
     out.proximity = canary::vision::optical::classify_proximity(
-        (long)best.w * best.h, (long)FRAME_W * FRAME_H);
+        area_of(best.w, best.h), area_of(FRAME_W, FRAME_H));
   }
   return out;
 }

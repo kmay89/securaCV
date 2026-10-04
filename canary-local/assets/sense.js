@@ -128,7 +128,7 @@ async function main() {
 
   const sSand = section("sandbox", "try it", "The sandbox",
     "Every card drives a real signal path: the lab moves, the console prints the firmware's " +
-    "line, and the exact MQTT the device would publish streams on the broker.");
+    "line, and the firmware's own payloads stream on the broker when its FSM gets there.");
   sSand.append(buildSandbox(data, bus));
 
   renderKeepGoing(data);

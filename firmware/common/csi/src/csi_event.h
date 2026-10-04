@@ -118,10 +118,12 @@ uint32_t csi_event_emit(const char*               module_id,
                         const csi_event_values_t* values);
 
 /**
- * Force-flush any open bundles. Called by the runtime at shutdown,
- * at the daily-summary boundary, and when the user opens the Today sheet
- * (so the most recent activity shows up promptly even if the bundle
- * window is still open).
+ * Force-close every open bundle now; each commits through the chokepoint
+ * and takes its event id then. No firmware calls it today: both trees close
+ * bundles with csi_bundler_tick() once per main loop, which closes only the
+ * ones past their 10-minute window or quiet gap. (The canary called this
+ * after every CSI window until sweep F81, so no bundle there ever merged a
+ * refresh.) Tests use it to commit whatever is open.
  */
 void csi_event_flush_bundles(void);
 

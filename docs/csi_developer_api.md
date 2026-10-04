@@ -181,6 +181,40 @@ the integration's per-type tamper sensors match. On the canary base that
 bridge carries the SD and enclosure kinds only: its boot story already
 reaches the tamper topic through the power-events classifier.
 
+Every row that names a state, other than an ambient one, goes through the
+bundler: a `core.presence` state, `core.breathing`'s confirmed and lost,
+`anomaly.baseline`'s unusual motion, `core.multilink_fusion`'s confirmed
+motion, `meta.empty_room_baseline`'s status and, on BLE builds, a
+`ble.scout` arrival or departure. Such a row is committed, and published,
+when its bundle closes: two minutes after its last observation, or ten
+minutes after it opened, whichever comes first. So it reaches the broker
+two to ten minutes after its first observation, and a row that never merges
+(an `anomaly.baseline` row, whose cooldown is ten minutes by default) two
+minutes after it. The body's `timestamp` is the close, and rows arrive in
+the order their bundles close, not the order their states began. A return
+to a state within two minutes joins the bundle still open for it, so a
+row's span can take in a brief other state. The row carries every
+observation it collapsed (`bundled`, the same count live, from the offline
+queue and in a replay, at least 1 for a row committed directly) and the
+span from the first to the last (`duration_sec`). A bundle still open at a
+reboot or a power cut is never committed; `system.integrity` closes its own
+key the moment it emits for that reason, so a tamper commits at once. Both
+trees close bundles the same way, once per main loop (`csi_bundler_tick`);
+until sweep F81 the canary base closed every bundle after each CSI window,
+so each of its observations was a row of its own, committed within a
+second. A module's hourly ceiling counts rows: a bundle that opens spends
+one slot, an observation merged into its open bundle spends none, and a
+bundle that reopens after its ten minutes or its quiet gap spends one like
+any other opening (sweep F80). The ceiling's hour is its six 10-minute
+buckets, not a sliding 60 minutes, so one sliding hour can hold up to twice
+the ceiling's rows (sweep F132). A state held for an hour therefore spends
+six slots on its own rows, which is all of `core.presence`'s six an hour:
+until one ages out, the next transition is refused, and so is every further
+observation of the held state (measured on the host: after an hour or more
+in one state the transition waits up to about ten minutes, 7 to 602 s
+depending on when a slot ages out, and the held state's rows carry one
+observation each).
+
 Both trees also keep an SD event log, `/EVENTS/today.ndjson`, one committed
 row per line in one shared format
 (`firmware/common/csi/src/csi_event_log_line.h`, so a tool reads either
@@ -205,8 +239,14 @@ those bodies `"replay":true`. On the canary base
   F46). That allocator starts at 0xC0000000 on every device, above every id
   an older firmware handed out (its bundler's ids started at 0x80000000 each
   boot), so an upgraded device's next rows are above Home Assistant's
-  stored mark and nothing is reset, on the device or in Home Assistant. At
-  boot the id floor is held at or above the delivery ceiling (NVS
+  stored mark and nothing is reset, on the device or in Home Assistant. The
+  space holds 2^30 ids; at the wrap ids restart at 1 and Home Assistant
+  refuses the device from then on. Both devices' MQTT health carries
+  `event_id_space_low` (sweep F82), true once the allocator's next id
+  reaches 0xF0000000 (2^28 ids before the wrap, about four years at the
+  most a device can commit) and after a wrap. It only warns: what recovers
+  the device is still a decision. Home Assistant shows it as the device's
+  Event ID Space Low diagnostic binary sensor (HA24). At boot the id floor is held at or above the delivery ceiling (NVS
   `csi.evsent`), unless that ceiling is past 0xF0000000 (an older firmware
   wrote one for a forged card line): the floor and the backfill both treat
   such a ceiling as no record. A card line at or above the allocator's next
@@ -226,12 +266,160 @@ those bodies `"replay":true`. On the canary base
   canary-wap on firmware from before that rule does not know the file, and
   would append its own rows to a canary's log, which that canary then
   replays under its own key;
+- a row the card cannot take waits in RAM (8 rows, the oldest dropped
+  first) instead of overtaking the card's rows (sweeps F103, F104): one
+  committed while the card is not open but may hold older rows (from boot
+  until its log first opens, and after it closes with rows still waiting,
+  for at most 45 s, the canary-wap's wait), and one whose append failed
+  while older rows wait or the broker is unreachable. It goes in id order
+  with the card's rows once nothing older waits, and writes no NVS delivery
+  ceiling until then, so a reboot never reads the card's rows as delivered
+  on its account. Past the 45 s the card is given up: the waiting rows go,
+  and rows on a card that comes back later are never sent (the backfill
+  starts past them, and no counter shows them). An ambient row
+  (`wifi.channel_activity`, "live UI only") is never held: one that cannot
+  go at once is dropped and counted. RAM does not survive a reboot, and a
+  broker change drops what waits (owed to neither broker, as the offline
+  queue's flush).
+  So on a canary with an SD slot but no usable card (none in, another
+  device's, or one that never mounts), a row committed in the first 45 s
+  after boot arrives up to 45 s late, or not at all if the canary reboots
+  or its broker changes first: such a canary in a boot loop shorter than
+  45 s delivers no events-topic row (tamper alerts do not wait). A failed
+  append can still have landed every byte but the newline; the next append
+  seals that line and the backfill sends it, and the waiting copy, now at
+  or below the delivered watermark, is dropped, not sent twice;
 - with no card, rows use the MQTT offline queue (12 records) as before, where
   tamper alerts outrank events: once the queue is full, a new row pushes out
   the oldest queued event, never a tamper alert. A body built while the
-  broker is unreachable says `"replay":true`. With no broker configured, rows
+  broker is unreachable says `"replay":true`. While the queue still drains
+  an outage, a row handed to it joins its back instead of going live, so it
+  never overtakes the outage's rows (`mqtt_offline_queue.h`'s
+  `publish_or_queue()`, sweep F107). With no broker configured, rows
   are logged and owed to nobody, and a broker configured later (or a changed
-  one) does not receive the old backlog.
+  one) does not receive the old backlog;
+- what the egress did since boot rides its MQTT health (sweep F109) as a
+  `csi_event_egress` object, under the names the canary-wap's
+  `csi_event_egress::stats()` uses, beside an `offline_queue` object (the
+  MQTT layer's queue). They count paths, not a ledger of rows: a row can
+  pass through two of them, and some rows pass through none (below). They
+  start over at every boot. The canary's token-gated `GET /api/diagnostics`
+  (FEATURE_DIAGNOSTICS builds) carries the same `csi_event_egress` object
+  (sweep F179), beside the keys it always had (`heap`, `sd`, `selftest`,
+  `system`; its body is built by `diagnostics_json.h`, host-tested, 1352
+  bytes at the widest in a 2048-byte buffer). That route runs on the HTTP
+  server's task, so it reads a copy the loop task's pump publishes as its
+  last step every pass (`csi_event_egress_read_stats()`): at most one pass
+  old, never torn, and `null` before the first pass. It has no
+  `offline_queue` object; the health has. The canary-wap publishes the same
+  `csi_event_egress` object on a retained `egress` topic of its own and in
+  its own `GET /api/diagnostics` (sweep F149, below). The Home Assistant
+  integration shows both objects as attributes of the device's Health
+  sensor (HA24). Each one counts:
+  - `dropped`: commits the full egress queue refused (the loop task was
+    stuck). The row is on neither the card nor the wire.
+  - `held_dropped`: rows the RAM hold dropped to make room, oldest first,
+    and, on the canary, rows that had to wait while the hold had no memory.
+  - `ambient_dropped`: ambient rows that had to wait (they are never held).
+  - `unsent_dropped`: rows no card kept that were lost at the hand-over to
+    the MQTT layer: it refused them (an offline queue with no memory, or one
+    full of tamper alerts while the broker is unreachable) and nothing kept
+    them. The canary-wap has no offline queue (a refused row waits in its
+    hold), so there it counts only rows whose body would not build, which a
+    canary body always does.
+  - `planner.live`: rows on the card sent at once.
+  - `planner.held`: rows on the card left for the backfill. Each is counted
+    again in `planner.replayed` when the backfill sends it, but `held` minus
+    `replayed` is not "still owed": `replayed` also counts rows an earlier
+    boot left on the card, and a broker change or a card given up after its
+    45 s wait abandons held rows without counting them.
+  - `planner.queued`: rows not on the card handed to the MQTT layer, sent
+    live or into its offline queue, and rows from the RAM hold that went
+    once nothing older waited. On a canary with no card every row lands
+    here, sent at once or not; a row the offline queue later evicts is still
+    counted here and is in `offline_queue.dropped_overflow`.
+  - `planner.replayed`: rows the backfill sent from the card, an earlier
+    boot's included.
+  - `planner.skipped`: card lines (or damaged runs) the backfill walked
+    past: delivered already, torn, foreign to the format, or (also counted
+    as `planner.untrusted`) carrying an id this device never handed out. A
+    card that opens with nothing owed on it is not walked, so its lines are
+    not counted.
+  - `planner.unsendable`: card lines the backfill could never send: a body
+    that would not build, and on the canary-wap a dismissal line (never
+    replayed).
+  - `planner.truncated_unsent`: retention cuts of the log that dropped rows
+    still waiting.
+  - `planner.read_giveups`: walks abandoned after repeated failed card reads.
+  - `offline_queue.dropped_overflow`, `dropped_oversize`, `dropped_flushed`
+    (canary only): records the MQTT offline queue evicted or refused when
+    full, refused as larger than a slot, or discarded at a broker change.
+    Events and tamper alerts share the queue, so these count both. An event
+    a full queue of tamper alerts refuses with the broker unreachable is in
+    `dropped_overflow` and in `unsent_dropped`.
+
+  Rows in no counter: a RAM-held row sent ahead of a card row (it leaves
+  through the backfill's send, which counts only the card row), rows the
+  hold drops at a broker change (owed to nobody), card rows abandoned when
+  the 45 s card wait runs out or the broker changes, and a held row whose
+  card copy was already sent.
+
+The canary-wap (`csi_event_egress.cpp` over its `csi_event_log.cpp` adapter,
+sweep F78) runs the same planner with the same order: a row goes out live
+only when nothing older waits, the backfill walks the card in id order, two
+rows per pass, and never below the delivered watermark, which survives a
+reboot through the same NVS ceiling. As on the canary base, with no broker
+configured, or after the broker changes (host, port, user or topic prefix),
+the rows waiting are owed to nobody and the new broker is not sent them. It
+differs from the canary base in five ways:
+
+- the commit hook only queues the row (16 deep; a full queue drops and
+  counts). Logging, publishing and the watermark all happen on the loop
+  task, so a row ble.scout commits on the NimBLE host task neither
+  publishes there nor races the backfill;
+- it has no MQTT offline queue. Rows its card does not keep wait in RAM
+  instead (8 rows, the oldest dropped first) while anything older waits or
+  the broker is unreachable, and go out in id order with the card's rows.
+  These are closed bundles (presence, `system.integrity` tampers), which
+  never reach its card (sweep F77), every row when there is no card or the
+  card is not open, and a row whose card append failed. "Anything older"
+  includes a card that is not open but may hold older rows: from boot until
+  its log first opens (a slow card mounts after boot), and after it closes
+  with rows still waiting (an SD error's remount), for at most 45 s; past
+  that the RAM rows go, and rows on a card that comes back later are never
+  sent (no counter shows them). An ambient row (`wifi.channel_activity`, "live UI only") is never
+  held: one that cannot go out at once is dropped and counted. RAM does not
+  survive a reboot. The canary base holds the same rows the same way (its
+  card keeps closed bundles, so those are not among them), but once nothing
+  older waits and no card is open its offline queue takes them while the
+  broker is unreachable;
+- it writes no owner file and leaves a card that has one alone;
+- the tamper-topic bridge publishes when the loop task takes the row from
+  the queue, before the row itself, whatever the backfill is doing;
+- its counters (the same `csi_event_egress` object as the canary's health,
+  name for name, built by `csi_event_egress::stats_json()`; sweep F149) do
+  not ride its health: that body has 34 of its 384 bytes spare at worst and
+  the object is up to 319. They go on a retained topic of their own,
+  `{prefix}/{device_id}/egress`, published right after each health publish
+  (about every 60 s, stretched on battery) as
+  `{"firmware_version":…,"uptime":…,"csi_event_egress":{…}}`: the version
+  and uptime that health carried, so a reader can tell this boot's counters
+  from a retained body an earlier boot, or a firmware with no `egress`
+  topic, left on the broker (Home Assistant shows them only while they pair
+  with the latest health). Up to 405 bytes; nothing goes out before the
+  boot's first health. They are also in the token-gated
+  `GET /api/diagnostics` as `csi_event_egress` (`null` before the loop
+  task's first pass), whose body `wap_diagnostics.h` builds (649 bytes at
+  the widest, in a 768-byte buffer; host-tested). The diagnostics route runs
+  on the HTTP server's task, so it reads a copy the loop task publishes at
+  the end of every pass (`read_stats()`, `loop_snapshot.h`): at most one
+  pass old, and never torn. It has no `offline_queue` object (no offline
+  queue).
+
+A dismissal line on its card (`"dismissed":1`) is the owner's local record
+and is never replayed. A dismissal the log cannot take yet (no open log, or
+a log at its size cap, which only a committed row's append cuts) waits in
+RAM, up to eight, until it can; a reboot drops it.
 
 ### `POST /api/events/dismiss`
 
@@ -257,12 +445,42 @@ the Lab from the dashboard (long-press on the version chip, or
 | --- | --- |
 | `GET /tune` | the Tuning Lab UI |
 | `GET /api/tune/coefficients` | every registered tuning knob, current values |
-| `POST /api/tune/coefficients` | update one knob; persists to NVS |
-| `GET /api/tune/preset` | export a signed JSON tuning bundle |
-| `POST /api/tune/preset` | import a signed JSON tuning bundle |
+| `POST /api/tune/coefficients` | update one or more knobs; persists to NVS; applies at once and from every boot |
+| `GET /api/tune/preset` | export every knob's current value as one flat, unsigned JSON object (a download named `tuning-preset.json`) |
+| `POST /api/tune/preset` | import such an object: the same handler as `POST /api/tune/coefficients`, which checks no signature |
 
-Tuning bundles ride the existing witness-chain export format — no new
-persistence layer.
+A tuning bundle is that flat object, one `"<full_key>": value` pair per
+knob (`{"core.presence.preset":1,"core.presence.sensitivity":50,...}`). It
+is not signed and it is not part of the witness chain or its export: an
+import checks only that each key names a knob and its value is a number
+(or `true` / `false`), and clamps each value to that knob's range. The Lab
+saves a bundle as a file your browser downloads and loads one from a file
+you pick; the device keeps no copy, only the knob values it stores.
+
+A coefficient POST re-runs the `init()` of the module it belongs to
+(`core.presence`, `core.breathing`, `anomaly.baseline`), so the new value
+lands on the next tick, and every module reads its stored values in its
+boot `init()` (sweep F93). The three `core.quiet_hours.*` knobs belong to
+no module: a POST that stores one re-applies the stored Quiet Hours window
+to the chokepoint at once, as a Quiet Hours change through
+`POST /api/settings` does (sweep F128), and every boot applies it too.
+Their declared defaults are the device's own, off and 23:00 to 07:00
+(sweep F123), so a device that never stored them shows the Lab, and
+exports, the window it runs. Each knob's `value` (and what a bundle
+exports) is what the device runs: its stored row, or, with none, its
+declared `default`, except for `core.presence`'s three thresholds. For a
+threshold no row stores, the Lab reports the preset and sensitivity
+baseline `core.presence` runs, the calibration status's `current` below.
+Before F166's review it reported their declared balanced 35 / 75 / 30
+whatever the preset, so a bundle exported and loaded back stored those as
+rows, which moved the thresholds. Their declared `default` is still the
+balanced 35 / 75 / 30, and that is what the reset buttons store. A bundle import is the same handler,
+so it stores every coefficient in the bundle, the three presence
+thresholds included. So do the Lab's per-row **reset** and **Reset all**,
+which POST each coefficient's default as a stored value. A stored
+`core.presence.motion_threshold`, `active_threshold` or
+`breathing_threshold` wins over the dashboard's preset and sensitivity
+(they set only the default of those reads), at boot as after a change.
 
 ---
 
@@ -326,17 +544,20 @@ open; falls back to declared defaults for unset keys.
 
 ```json
 {
-  "ok": true,
   "pet_mode": false,
   "preset": "balanced",
   "sensitivity": 50,
-  "quiet_hours": { "enabled": false, "start_min": 0, "end_min": 480 },
+  "quiet_hours": { "enabled": false, "start_min": 1380, "end_min": 420 },
   "privacy_ceiling": "p0",
   "filter_foreign": true,
   "tz": "EST5EDT,M3.2.0,M11.1.0",
   "tz_iana": "America/New_York"
 }
 ```
+
+Apart from the zone, that is what a device that never stored a setting
+reports. Its Quiet Hours read off, 1380 to 420 (23:00 to 07:00): the one
+default the chokepoint and the Tuning Lab share (sweep F123).
 
 `tz` / `tz_iana` are the household time zone (repo sweep F28, option A —
 maintainer to confirm): the POSIX rule the device applies, and the IANA name
@@ -353,6 +574,16 @@ reports `night_mode: true`).
 
 Writes one or more dashboard settings, then drives `reinit_module()`
 for the affected module(s) so the new value lands on the next tick.
+Saved values also apply from every boot: the modules read them in their
+boot `init()` (sweep F93; before it, a boot ran on the modules' defaults
+until the next settings change). The calibration's apply and the Tuning
+Lab's coefficients behave the same way, its Quiet Hours knobs included
+(sweep F128; see the Tuning Lab section above). The
+preset and sensitivity set only the default of `core.presence`'s three
+thresholds: once a threshold is stored directly (the calibration's apply
+stores all three; so do the Tuning Lab's reset buttons and a bundle
+import), the stored threshold wins, at boot as at once, while
+`GET /api/settings` keeps reporting the saved preset.
 The wire keys are deliberately short (the dashboard's controls surface,
 not the full module-tunable surface):
 
@@ -365,6 +596,29 @@ not the full module-tunable surface):
 | `"tz"` | string | Household time zone as a POSIX rule (≤ 47 characters, e.g. `"CET-1CEST,M3.5.0,M10.5.0/3"`). `""` alone clears the zone (back to UTC). The rule must fit the strict POSIX grammar in `tz_rule::posix_valid`: names of 3 to 10 letters (or `<…>`), offsets up to 24 h, and a zone with summer time names **both** change dates; nothing may trail it. Anything else is refused (`400`, `"bad time zone"`) and nothing in the body is written, because the C library under the ESP32 Arduino core 2.0.x (newlib 4.1) does not fall back to UTC on a rule it cannot read: it keeps part of the previous zone. |
 | `"tz_iana"` | string | The same, as an IANA zone name (`"Europe/Berlin"`), mapped on the device through the fleet's table (`firmware/common/time/tz_rule.h`). A zone the table does not know is refused (`400`, `"unknown zone"`) — never stored, never silently UTC. A typed `"tz"` wins when both are sent. |
 | `"filter_foreign"` | bool | CSI transmitter filter: accept frames only from the router this Canary is associated with (and registered peer Canaries); everything else is counted under `frames_dropped_foreign` on `/api/status` and never buffered. Default on. Off restores every decoded frame on the channel. Applied to the HAL at once and persisted; `/api/status` reports `filter_armed` (the setting is on and the Canary has associated, so the filter is comparing). |
+
+Each module setting a POST carries is stored on the shared key map's row
+for its module key (`firmware/common/csi/src/csi_module_settings_nvs.h`):
+`pet_mode`, `preset` and `sensitivity` on `core.presence.pet_mode`,
+`.preset` and `.sensitivity`, `privacy_ceiling` on `core.privacy_ceiling`,
+the rows `core.presence`'s `init()`, the boot and the Tuning Lab read, and
+`GET /api/settings` reads them back the same way. So does the calibration's
+apply, on `core.presence.motion_threshold`, `.active_threshold` and
+`.breathing_threshold` (sweep F151: the handlers spelled these NVS keys by
+hand, and a key misspelled there saved a value no module read).
+
+The calibration's status (`GET /api/csi/calibrate/status`, when a run is
+ready) reports as `current` the thresholds `core.presence` runs, as its
+`init()` derives them from what is stored: each threshold row stored, and
+for a threshold no row stores, the preset and sensitivity baseline
+(`core_presence_baseline_thresholds()`, the function `init()` uses:
+sensitive 25 / 60 / 20, balanced 35 / 75 / 30, quiet 50 / 90 / 40, each
+moved by up to 20 by the slider and kept within 5..120). Beside it,
+`current_source` says which: `"stored"` (all three rows: a calibration, or
+the Tuning Lab), `"preset"` (none) or `"mixed"`. Before sweep F166 every
+absent row read as the balanced numbers whatever the preset. It reads NVS,
+not the module's runtime state, so the one-point nudge a dismissal gives
+the module until its next `init()` does not show.
 
 ```bash
 curl -X POST http://canary.local/api/settings \
@@ -464,8 +718,10 @@ without recompiling. The override is read once per boot.
 
 ## Quiet Hours gating
 
-The dashboard's Quiet Hours range (NVS keys `qh.en`, `qh.start`, `qh.end`)
-is collected in the household's local time. The chokepoint compares it
+The dashboard's Quiet Hours range (NVS keys `qh.en`, `qh.start`, `qh.end`,
+the shared key map's rows for `core.quiet_hours.enabled` / `start_min` /
+`end_min`, which the Tuning Lab reads and writes too) is collected in the
+household's local time. The chokepoint compares it
 against the device's own clock, which follows the household time zone once
 one is set (`tz` above — seeded at setup from the phone's zone, which the
 setup wizard sends as `tz_iana` on `/api/wifi/connect`; applied with
@@ -483,8 +739,18 @@ always pass through** — the night-time category is precisely when
 unusual activity matters most.
 
 The host wires this in `firmware/projects/canary-wap/arduino/canary_wap/
-csi_integration.cpp::register_v1_modules()` (boot-time NVS read) and
-the `/api/settings` POST handler (live re-apply on dashboard change).
+csi_settings_nvs.cpp::apply_quiet_hours_from_nvs()`, which
+`csi_integration.cpp`'s `register_v1_modules()` calls at boot, the
+`/api/settings` POST handler calls on a Quiet Hours change, and the Tuning
+Lab's POST (`csi_tune_lab.cpp`'s `tune_post()`, also the bundle import)
+calls when it stores a `core.quiet_hours.*` knob (sweep F128). A device
+that never stored the range runs it off, 23:00 to 07:00
+(`kQuietHoursDefault*` in `csi_settings_nvs.h`, sweep F123). The
+`/api/settings` POST stores the range through
+`store_quiet_hours_from_settings()` beside it, by the same key map, so
+what the dashboard saves is what `GET /api/settings`, the boot and the
+Tuning Lab read (`test_wap_tune_lab.cpp` runs both writers against the
+reader).
 
 ---
 

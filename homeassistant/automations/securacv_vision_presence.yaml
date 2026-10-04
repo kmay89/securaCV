@@ -16,7 +16,19 @@
 #
 # These trigger on the firmware's raw MQTT event stream
 # (securacv/<device_id>/events), so they carry the event's reason field —
-# richer than watching the last_event sensor flip.
+# richer than watching the last_event sensor flip. The message reads the
+# clocks each event actually carries (firmware/projects/canary-vision/README.md,
+# "The clocks and the cell on an event row"): dwell_started reports how long
+# the person has been in view (presence_ms), interaction_likely how long the
+# visit lasted (visit_ms, counted to the frame that declared the person gone,
+# so it includes the device's lost timeout). dwell_ms is 0 on both: the dwell
+# starts on dwell_started's frame, and interaction_likely follows
+# presence_ended. The confidence is printed for dwell_started only: it is the
+# best person box's score on the frame the event was sent from, and
+# interaction_likely is sent after the visit has ended, from the empty frame
+# after presence_ended (where it reads 0) or, when someone is seen again on
+# that very frame, from the next visit's following frame (where it is that
+# visit's box). Either way it says nothing about the visit it reports.
 
 # ---------------------------------------------------------------------------
 # A) Dwell / interaction alert
@@ -60,8 +72,10 @@
           {%- if trigger.payload_json.reason is defined %}
           ({{ trigger.payload_json.reason }})
           {%- endif %}
-          — confidence {{ trigger.payload_json.confidence | default(0) }}%,
-          dwell {{ ((trigger.payload_json.dwell_ms | default(0)) / 1000) | round(0) }}s
+          — {{ 'confidence %d%%, in view %ds so far' % (trigger.payload_json.confidence | default(0) | int,
+                 ((trigger.payload_json.presence_ms | default(0)) / 1000) | round | int)
+             if trigger.payload_json.event == 'dwell_started'
+             else 'stayed %ds' % (((trigger.payload_json.visit_ms | default(0)) / 1000) | round | int) }}
         data:
           tag: "securacv-vision-DEVICE_ID"
           group: "SecuraCV"

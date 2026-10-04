@@ -1,7 +1,7 @@
 // tests_host/fake_lvgl/lvgl.h — LVGL 8's object POSITION model, for host
-// tests that compile a real display TU (src/ui/canary_mark.cpp, and
-// src/ui/onboard_ui.cpp with src/ui/round_frame.cpp) with no LVGL on the
-// machine.
+// tests that compile a real display TU (src/ui/canary_mark.cpp,
+// src/ui/onboard_ui.cpp with src/ui/round_frame.cpp, and src/ui/splash.cpp)
+// with no LVGL on the machine.
 //
 // Only what those TUs call, and only the semantics a placement test reads:
 // where each object's box lands, and what a label says in which font at
@@ -12,6 +12,8 @@
 //    pos write the offset alone. Nothing moves until a layout pass.
 //  * A new object's box starts at its parent's content origin
 //    (lv_obj_constructor), so before any layout pass lv_obj_get_x/y read 0.
+//    The content box is the object's box inset by its padding and its
+//    border (lv_obj_get_content_coords; lv_obj_get_x/y subtract both).
 //  * A layout pass (lv_obj_update_layout -> lv_obj_refr_pos) places each
 //    object at its anchor in the parent's content box plus its offset (and
 //    its translate). lv_obj_get_x/y read that laid-out box relative to the
@@ -20,14 +22,25 @@
 //    lv_anim_start applies the start value at once when early_apply is set
 //    and replaces a running anim on the same var and exec_cb (lv_anim.c).
 //  * A label is LV_SIZE_CONTENT until sized (lv_label_constructor): a
-//    layout pass gives it its text's width and its font's line height.
+//    layout pass gives it its text's width and its font's line height; a
+//    label given a width in LV_LABEL_LONG_WRAP takes as many lines as LVGL
+//    8.4 wraps its text into at that width (lv_txt_get_size, through
+//    ../lv_txt_wrap.h).
+//  * An object whose height is LV_SIZE_CONTENT takes its children's
+//    (lv_obj_pos.c calc_content_height, the top aligns): the lowest
+//    visible child's bottom plus the padding and border at both edges.
+//  * lv_obj_align_to(obj, base, LV_ALIGN_OUT_TOP_MID, x, y) updates the
+//    layout, then places obj on base's top edge, centered, as a
+//    TOP_LEFT offset from obj's parent's content origin (lv_obj_pos.c).
 //    LV_PCT sizes resolve against the parent's content box when set (every
 //    caller here sizes a child of an already-sized parent).
 //  * Text width is lv_txt_get_width at letter_space 0: each glyph's
 //    lv_font_get_glyph_width given the letter after it. A test supplies the
 //    font's glyph widths (lv_font_t::glyph_w) from LVGL's own font data.
 // Timers are recorded, never fired (the blink/flourish cadence places
-// nothing). Anims advance on fake_lvgl::run(ms) — linear, with playback and
+// nothing). lv_timer_handler() is a refresh: it calls the test's
+// fake_lvgl::refresh_hook(), where a test reads the glass, and fires no
+// timer either. Anims advance on fake_lvgl::run(ms) — linear, with playback and
 // repeats — so a test can watch the breath and the hop move the bird.
 //
 // The numbers a test pins were measured with the real LVGL 8.4.0 and the
@@ -44,6 +57,8 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+
+#include "../lv_txt_wrap.h"
 
 #define LVGL_VERSION_MAJOR 8
 
@@ -82,6 +97,8 @@ enum {
   LV_ALIGN_LEFT_MID,
   LV_ALIGN_RIGHT_MID,
   LV_ALIGN_CENTER,
+  LV_ALIGN_OUT_TOP_LEFT,
+  LV_ALIGN_OUT_TOP_MID,
 };
 typedef uint8_t lv_align_t;
 
@@ -139,18 +156,26 @@ struct _lv_obj_t {
   lv_align_t align;   // LV_STYLE_ALIGN
   lv_coord_t w, h;    // LV_STYLE_WIDTH / HEIGHT (px only)
   bool content_w, content_h;  // LV_SIZE_CONTENT: sized on layout
-  lv_coord_t pad;     // pad_all (the content box's inset)
+  lv_coord_t pad;     // pad_all (the content box's inset, with border)
+  lv_coord_t border;  // LV_STYLE_BORDER_WIDTH
   lv_coord_t x1, y1;  // the laid-out box (absolute); moves only on layout
   uint32_t flags;
   std::vector<lv_event_cb_t> on_delete;
-  // What the onboarding test reads (nothing else styles anything here).
+  // What the onboarding and splash tests read (nothing else styles
+  // anything here).
   int kind;                   // fake_lvgl::Kind
   std::string text;           // a label's text; a QR code's payload
+  // lv_label_set_text(_fmt) calls that left the text as it was (or passed
+  // NULL, LVGL's "refresh the text"): each still invalidates the label in
+  // LVGL 8.4 (lv_label_refr_text), so each is a redraw of an unchanged line.
+  int same_text_sets;
   const lv_font_t* font;      // LV_STYLE_TEXT_FONT (inherited when null)
   int long_mode;              // a label's lv_label_set_long_mode
   int text_align;             // LV_STYLE_TEXT_ALIGN
   lv_coord_t radius;          // LV_STYLE_RADIUS
   uint32_t bg_color;          // LV_STYLE_BG_COLOR
+  uint32_t text_color;        // LV_STYLE_TEXT_COLOR as set on the object
+  bool text_color_set;        // (not inherited: the test reads what it set)
   lv_coord_t arc_w_main, arc_w_ind;  // LV_STYLE_ARC_WIDTH per part
 };
 
@@ -172,6 +197,7 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   o->align = LV_ALIGN_DEFAULT;
   o->sx = o->sy = o->tx = o->ty = 0;
   o->pad = 0;
+  o->border = 0;
   o->content_w = o->content_h = false;
   o->kind = fake_lvgl::kObj;
   o->font = nullptr;
@@ -179,6 +205,9 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   o->text_align = LV_TEXT_ALIGN_AUTO;
   o->radius = 0;
   o->bg_color = 0;
+  o->text_color = 0;
+  o->same_text_sets = 0;
+  o->text_color_set = false;
   o->arc_w_main = o->arc_w_ind = 0;
   if (parent == nullptr) {
     // A screen: the display's size, at the origin. The first one is active
@@ -190,8 +219,8 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   } else {
     // lv_obj_constructor: the box starts at the parent's content origin.
     o->w = o->h = 100;  // LV_OBJ default size; every caller here sets one
-    o->x1 = (lv_coord_t)(parent->x1 + parent->pad);
-    o->y1 = (lv_coord_t)(parent->y1 + parent->pad);
+    o->x1 = (lv_coord_t)(parent->x1 + parent->pad + parent->border);
+    o->y1 = (lv_coord_t)(parent->y1 + parent->pad + parent->border);
     parent->children.push_back(o);
   }
   return o;
@@ -221,6 +250,9 @@ inline void lv_obj_add_event_cb(lv_obj_t* o, lv_event_cb_t cb,
 }
 
 namespace fake_lvgl {
+// The content box's inset: the padding and the border.
+inline int inset(const lv_obj_t* o) { return o->pad + o->border; }
+
 // A width or height as lv_obj_set_size stores it: px, LV_PCT of the
 // parent's content box, or LV_SIZE_CONTENT (resolved on layout).
 inline lv_coord_t dim(const lv_obj_t* o, lv_coord_t v, bool horiz,
@@ -232,7 +264,7 @@ inline lv_coord_t dim(const lv_obj_t* o, lv_coord_t v, bool horiz,
   }
   if ((v & LV_COORD_TYPE_SPEC) && o->parent != nullptr) {
     const int pct = v & ~LV_COORD_TYPE_SPEC;
-    const int base = (horiz ? o->parent->w : o->parent->h) - 2 * o->parent->pad;
+    const int base = (horiz ? o->parent->w : o->parent->h) - 2 * inset(o->parent);
     return (lv_coord_t)(base * pct / 100);
   }
   return v;
@@ -242,6 +274,9 @@ inline lv_coord_t dim(const lv_obj_t* o, lv_coord_t v, bool horiz,
 inline void lv_obj_set_size(lv_obj_t* o, lv_coord_t w, lv_coord_t h) {
   o->w = fake_lvgl::dim(o, w, true, &o->content_w);
   o->h = fake_lvgl::dim(o, h, false, &o->content_h);
+}
+inline void lv_obj_set_width(lv_obj_t* o, lv_coord_t w) {
+  o->w = fake_lvgl::dim(o, w, true, &o->content_w);
 }
 inline void lv_obj_set_height(lv_obj_t* o, lv_coord_t h) {
   o->h = fake_lvgl::dim(o, h, false, &o->content_h);
@@ -261,6 +296,9 @@ inline void lv_obj_align(lv_obj_t* o, lv_align_t a, lv_coord_t x, lv_coord_t y) 
   lv_obj_set_pos(o, x, y);
 }
 inline void lv_obj_center(lv_obj_t* o) { lv_obj_align(o, LV_ALIGN_CENTER, 0, 0); }
+inline void lv_obj_set_style_translate_x(lv_obj_t* o, lv_coord_t v, lv_style_selector_t) {
+  o->tx = v;
+}
 inline void lv_obj_set_style_translate_y(lv_obj_t* o, lv_coord_t v, lv_style_selector_t) {
   o->ty = v;
 }
@@ -268,10 +306,12 @@ inline lv_coord_t lv_obj_get_style_x(const lv_obj_t* o, uint32_t) { return o->sx
 inline lv_coord_t lv_obj_get_style_y(const lv_obj_t* o, uint32_t) { return o->sy; }
 // lv_obj_pos.c: the laid-out box relative to the parent's content origin.
 inline lv_coord_t lv_obj_get_x(const lv_obj_t* o) {
-  return o->parent ? (lv_coord_t)(o->x1 - o->parent->x1 - o->parent->pad) : o->x1;
+  return o->parent ? (lv_coord_t)(o->x1 - o->parent->x1 - fake_lvgl::inset(o->parent))
+                   : o->x1;
 }
 inline lv_coord_t lv_obj_get_y(const lv_obj_t* o) {
-  return o->parent ? (lv_coord_t)(o->y1 - o->parent->y1 - o->parent->pad) : o->y1;
+  return o->parent ? (lv_coord_t)(o->y1 - o->parent->y1 - fake_lvgl::inset(o->parent))
+                   : o->y1;
 }
 inline lv_coord_t lv_obj_get_width(const lv_obj_t* o) { return o->w; }
 inline lv_coord_t lv_obj_get_height(const lv_obj_t* o) { return o->h; }
@@ -289,7 +329,11 @@ inline void lv_obj_set_style_bg_color(lv_obj_t* o, lv_color_t c, lv_style_select
   o->bg_color = c.full;
 }
 inline void lv_obj_set_style_bg_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
-inline void lv_obj_set_style_border_width(lv_obj_t*, lv_coord_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_border_width(lv_obj_t* o, lv_coord_t w, lv_style_selector_t) {
+  o->border = w;
+}
+inline void lv_obj_set_style_border_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_transform_angle(lv_obj_t*, lv_coord_t, lv_style_selector_t) {}
 inline void lv_obj_set_style_pad_all(lv_obj_t* o, lv_coord_t p, lv_style_selector_t) {
   o->pad = p;
 }
@@ -304,7 +348,11 @@ inline lv_obj_t* lv_label_create(lv_obj_t* parent) {
   return o;
 }
 inline void lv_label_set_text(lv_obj_t* o, const char* t) {
-  if (t != nullptr) o->text = t;
+  if (t == nullptr || o->text == t) {
+    o->same_text_sets++;
+    return;
+  }
+  o->text = t;
 }
 inline void lv_label_set_text_fmt(lv_obj_t* o, const char* fmt, ...) {
   char buf[512];
@@ -312,6 +360,7 @@ inline void lv_label_set_text_fmt(lv_obj_t* o, const char* fmt, ...) {
   va_start(ap, fmt);
   vsnprintf(buf, sizeof(buf), fmt, ap);
   va_end(ap);
+  if (o->text == buf) o->same_text_sets++;
   o->text = buf;
 }
 inline void lv_label_set_long_mode(lv_obj_t* o, int m) { o->long_mode = m; }
@@ -329,8 +378,15 @@ inline const lv_font_t* lv_obj_get_style_text_font(const lv_obj_t* o,
 inline void lv_obj_set_style_text_align(lv_obj_t* o, int a, lv_style_selector_t) {
   o->text_align = a;
 }
-inline void lv_obj_set_style_text_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_text_color(lv_obj_t* o, lv_color_t c,
+                                        lv_style_selector_t) {
+  o->text_color = c.full;
+  o->text_color_set = true;
+}
 inline void lv_obj_set_style_text_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
+// Not modeled: text widths are measured at letter_space 0 (no caller here
+// reads a spaced label's box).
+inline void lv_obj_set_style_text_letter_space(lv_obj_t*, lv_coord_t, lv_style_selector_t) {}
 
 inline lv_obj_t* lv_arc_create(lv_obj_t* parent) {
   lv_obj_t* o = lv_obj_create(parent);
@@ -386,17 +442,62 @@ inline void lv_scr_load_anim(lv_obj_t* scr, int, uint32_t, uint32_t,
   if (auto_del && old != nullptr && old != scr) lv_obj_del(old);
 }
 
+namespace fake_lvgl {
+// lv_font_get_glyph_width as lv_txt_wrap.h's letter measure.
+struct FontGlyphW {
+  const lv_font_t* f;
+  int operator()(uint32_t a, uint32_t b) const {
+    return lv_font_get_glyph_width(f, a, b);
+  }
+};
+
+// lv_obj_refr_size for what is LV_SIZE_CONTENT, children first (LVGL's
+// layout_update_core sizes the children before their parent): a label
+// takes its text's extent, an object its children's.
+inline void refr_size(lv_obj_t* c) {
+  if (c->kind == kLabel) {
+    if (!c->content_w && !c->content_h) return;
+    const lv_font_t* f = lv_obj_get_style_text_font(c, LV_PART_MAIN);
+    if (c->content_w) c->w = (lv_coord_t)(f ? text_width(f, c->text) : 0);
+    if (c->content_h) {
+      int lines = 1;
+      if (f != nullptr && !c->content_w && c->long_mode == LV_LABEL_LONG_WRAP) {
+        FontGlyphW g = {f};
+        lines = lvwrap::line_count(c->text.c_str(), g, c->w - 2 * inset(c));
+      }
+      c->h = (lv_coord_t)(f ? lines * f->line_height : 0);
+    }
+    return;
+  }
+  for (size_t i = 0; i < c->children.size(); ++i) refr_size(c->children[i]);
+  if (!c->content_h) return;
+  // calc_content_height: the lowest visible child (top aligns: its offset,
+  // translate and height below the content origin), then both insets.
+  int bottom = 0;
+  for (size_t i = 0; i < c->children.size(); ++i) {
+    const lv_obj_t* k = c->children[i];
+    if (k->flags & LV_OBJ_FLAG_HIDDEN) continue;
+    if (k->align != LV_ALIGN_DEFAULT && k->align != LV_ALIGN_TOP_LEFT &&
+        k->align != LV_ALIGN_TOP_MID && k->align != LV_ALIGN_TOP_RIGHT) {
+      fprintf(stderr, "fake_lvgl: a content-sized object's child is "
+                           "aligned %d (only the top aligns are modeled)\n",
+                   (int)k->align);
+      abort();
+    }
+    bottom = std::max(bottom, k->sy + k->ty + k->h);
+  }
+  c->h = (lv_coord_t)(bottom + 2 * inset(c));
+}
+}  // namespace fake_lvgl
+
 // lv_obj_refr_pos, for the whole tree under `o` (lv_obj_update_layout).
-// A LV_SIZE_CONTENT label takes its text's extent first (lv_obj_refr_size).
+// What is LV_SIZE_CONTENT takes its extent first (lv_obj_refr_size).
 inline void lv_obj_update_layout(lv_obj_t* o) {
   for (size_t i = 0; i < o->children.size(); ++i) {
     lv_obj_t* c = o->children[i];
-    if (c->kind == fake_lvgl::kLabel && (c->content_w || c->content_h)) {
-      const lv_font_t* f = lv_obj_get_style_text_font(c, LV_PART_MAIN);
-      if (c->content_w) c->w = (lv_coord_t)(f ? fake_lvgl::text_width(f, c->text) : 0);
-      if (c->content_h) c->h = (lv_coord_t)(f ? f->line_height : 0);
-    }
-    const int pw = o->w - 2 * o->pad, ph = o->h - 2 * o->pad;
+    fake_lvgl::refr_size(c);
+    const int in = fake_lvgl::inset(o);
+    const int pw = o->w - 2 * in, ph = o->h - 2 * in;
     int x = c->sx + c->tx, y = c->sy + c->ty;
     switch (c->align) {
       case LV_ALIGN_TOP_MID: x += pw / 2 - c->w / 2; break;
@@ -409,10 +510,45 @@ inline void lv_obj_update_layout(lv_obj_t* o) {
       case LV_ALIGN_CENTER: x += pw / 2 - c->w / 2; y += ph / 2 - c->h / 2; break;
       default: break;  // DEFAULT / TOP_LEFT: the offset alone
     }
-    c->x1 = (lv_coord_t)(o->x1 + o->pad + x);
-    c->y1 = (lv_coord_t)(o->y1 + o->pad + y);
+    c->x1 = (lv_coord_t)(o->x1 + in + x);
+    c->y1 = (lv_coord_t)(o->y1 + in + y);
     lv_obj_update_layout(c);
   }
+}
+
+// lv_obj_align_to (lv_obj_pos.c): the screen's layout first, then obj on
+// base's outside edge as a TOP_LEFT offset from obj's parent's content
+// origin. Only LV_ALIGN_OUT_TOP_MID is modeled (the splash's tail).
+inline void lv_obj_align_to(lv_obj_t* o, const lv_obj_t* base, lv_align_t a,
+                            lv_coord_t x_ofs, lv_coord_t y_ofs) {
+  lv_obj_t* root = o;
+  while (root->parent != nullptr) root = root->parent;
+  lv_obj_update_layout(root);
+  if (a != LV_ALIGN_OUT_TOP_MID || o->parent == nullptr) {
+    fprintf(stderr, "fake_lvgl: lv_obj_align_to(%d) is not modeled\n",
+                 (int)a);
+    abort();
+  }
+  const int x = base->w / 2 - o->w / 2 + x_ofs + base->x1 - o->parent->x1 -
+                fake_lvgl::inset(o->parent);
+  const int y = -o->h + y_ofs + base->y1 - o->parent->y1 -
+                fake_lvgl::inset(o->parent);
+  lv_obj_set_style_align(o, LV_ALIGN_TOP_LEFT, 0);
+  lv_obj_set_pos(o, (lv_coord_t)x, (lv_coord_t)y);
+}
+
+// The display's top layer: a screen-sized object that is never the active
+// screen (lv_disp_get_layer_top). Sized to the display as it stands.
+inline lv_obj_t* lv_layer_top() {
+  static lv_obj_t* top = nullptr;
+  if (top == nullptr) {
+    lv_obj_t* const act = fake_lvgl::active_screen();
+    top = lv_obj_create(nullptr);
+    fake_lvgl::active_screen() = act;
+  }
+  top->w = (lv_coord_t)fake_lvgl::disp_w();
+  top->h = (lv_coord_t)fake_lvgl::disp_h();
+  return top;
 }
 
 // ── timers: recorded, never fired ─────────────────────────────────────────
@@ -435,6 +571,19 @@ inline void lv_timer_del(lv_timer_t* t) { delete t; }
 inline void lv_timer_set_period(lv_timer_t* t, uint32_t p) { t->period = p; }
 inline void lv_timer_pause(lv_timer_t* t) { t->paused = true; }
 inline void lv_timer_resume(lv_timer_t* t) { t->paused = false; }
+
+namespace fake_lvgl {
+// What lv_timer_handler() calls: a test's refresh, where it reads the glass.
+inline void (*&refresh_hook())() {
+  static void (*hook)() = nullptr;
+  return hook;
+}
+}  // namespace fake_lvgl
+// A refresh, not a timer pass: no timer fires (see the top of this file).
+inline uint32_t lv_timer_handler() {
+  if (fake_lvgl::refresh_hook() != nullptr) fake_lvgl::refresh_hook()();
+  return 5;
+}
 
 // ── anims (lv_anim.c's start/delete rules; linear, playback, repeats) ─────
 struct _lv_anim_t;
@@ -459,6 +608,7 @@ inline int32_t lv_anim_path_linear(const lv_anim_t*) { return 0; }
 inline int32_t lv_anim_path_ease_in_out(const lv_anim_t*) { return 0; }
 inline int32_t lv_anim_path_overshoot(const lv_anim_t*) { return 0; }
 inline int32_t lv_anim_path_ease_out(const lv_anim_t*) { return 0; }
+inline int32_t lv_anim_path_ease_in(const lv_anim_t*) { return 0; }
 inline void lv_anim_init(lv_anim_t* a) {
   memset(a, 0, sizeof(*a));
   a->time = 500;

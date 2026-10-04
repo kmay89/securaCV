@@ -40,7 +40,8 @@ exercise.
 - **Captive DNS redirector** runs for the whole life of the AP. It answers
   `A` queries with `192.168.4.1` and returns NODATA (NOERROR, ANCOUNT=0) for
   `AAAA`/`HTTPS`/other QTYPEs. Truncated/malformed queries are dropped.
-- **mDNS**: a unique `canary-<name>.local` (or `canary-<mac>.local`) plus a
+- **mDNS**: a unique `canary-<name>.local` (or, unnamed, `canary-<4 hex>.local`:
+  the first two bytes of the key fingerprint, e.g. `canary-7916.local`) plus a
   first-wins delegated `canary.local` catch-all (AP always; home LAN when a
   single Canary is present).
 

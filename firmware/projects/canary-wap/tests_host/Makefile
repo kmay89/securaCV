@@ -306,8 +306,9 @@ clean: clean-evlog-load
 
 # A dismissal survives that refill: csi_event_log::queue_dismissal /
 # flush_dismissals write the dismissed row as one more line, load_into_ring
-# restores the event dismissed, iterate_since does not replay the dismissal,
-# and a dismissal inside the commit hook's window does not lose the original.
+# restores the event dismissed, a dismissal before the egress logs the
+# original does not lose it, and a dismissal the log cannot take yet (no
+# open log, a log at MAX_BYTES) waits instead of being dropped.
 # Same REAL sources and RAM card as the load test above.
 EVDISMISS_BIN = test_csi_event_log_dismiss
 EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
@@ -324,6 +325,294 @@ clean-evlog-dismiss:
 	rm -f $(EVDISMISS_BIN)
 run: run-evlog-dismiss
 clean: clean-evlog-dismiss
+
+# The committed-event egress (backlog F78): the REAL csi_event_egress.cpp,
+# csi_event_log.cpp over the RAM card and the staged CSI chokepoint, with
+# the staged csi_event_backfill.h planner, against a model of Home
+# Assistant's replay gate. A row committed between a reconnect and the
+# loop's drain (a direct row, a closed bundle) waits behind the backlog;
+# a commit inside the backfill walk publishes nothing and moves no
+# watermark; reboots, no broker or a changed one, dismissals, send, append
+# and body-build failures, forged card lines, the RAM hold (its failure
+# paths, ambient rows, a card not open yet or closed for a moment), torn
+# tails and failed rewrites, and the queue bound. stubs/egress: a FreeRTOS
+# queue, Preferences, a clock the test moves.
+EGRESS_BIN = test_wap_event_egress
+EGRESS_SRC = test_wap_event_egress.cpp
+EGRESS_LIB = $(SRC_DIR)/csi_event_egress.cpp $(EVLOAD_LIB)
+
+$(EGRESS_BIN): $(EGRESS_SRC) $(EGRESS_LIB) $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/csi_event_log.h \
+               $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_backfill.h $(SRC_DIR)/csi_event_log_line.h \
+               $(SRC_DIR)/csi_event_id_floor.h $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
+               $(wildcard $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/loop_command_ring.h) \
+               $(wildcard stubs/egress/*.h stubs/egress/freertos/*.h stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/egress -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EGRESS_SRC) $(EGRESS_LIB)
+
+.PHONY: run-wap-egress clean-wap-egress
+run-wap-egress: $(EGRESS_BIN)
+	$(call run_marked,$(EGRESS_BIN))
+clean-wap-egress:
+	rm -f $(EGRESS_BIN)
+run: run-wap-egress
+clean: clean-wap-egress
+
+# GET /api/diagnostics's body (sweep F149): the REAL wap_diagnostics.h the
+# handler builds it with. Every key, the egress counters as an object (null
+# before the first pump), and the widest body inside the route's kJsonMax
+# buffer; sys_monitor.h is read (its path passed in, so the read fails closed)
+# for the longest degradation-level name. check_wap_event_egress.py rule 12
+# holds the handler to the builder and the buffer.
+DIAG_BIN = test_wap_diagnostics
+DIAG_SRC = test_wap_diagnostics.cpp
+
+$(DIAG_BIN): $(DIAG_SRC) $(SRC_DIR)/wap_diagnostics.h $(SRC_DIR)/csi_event_egress.h \
+             $(SRC_DIR)/csi_event_backfill.h $(SRC_DIR)/sys_monitor.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) \
+	  -DSYS_MONITOR_H='"$(abspath $(SRC_DIR))/sys_monitor.h"' -o $@ $(DIAG_SRC)
+
+.PHONY: run-wap-diagnostics clean-wap-diagnostics
+run-wap-diagnostics: $(DIAG_BIN)
+	$(call run_marked,$(DIAG_BIN))
+clean-wap-diagnostics:
+	rm -f $(DIAG_BIN)
+
+run: run-wap-diagnostics
+clean: clean-wap-diagnostics
+
+# The fleet scan's cache (sweep F211): the REAL fleet_scan_cache.h (on the
+# REAL wap_json_writer.h) the worker task writes GET /api/fleet/scan's cache
+# with, through fill(), the task's whole browse, at the sketch's own
+# FLEET_SCAN_CACHE_SIZE, read from canary_wap.ino (its path passed in, so the
+# read fails closed). Eight adverts whose 255-byte TXT values hold `"` and `\`:
+# the cache parses under JSON.parse's rules (json_strict.h) and keeps exactly
+# the shortest adverts that fit (an oracle in the test says which, and a brute
+# force that no more could fit), in browse order, each value as advertised; a
+# long advert never costs a shorter one its row, wherever it falls in the
+# browse; results past the eighth are offered too; and the cache is a
+# complete document after every advert, never a cut list. Both this suite and
+# the identity one include arduino_globals.h (Arduino.h's global names, from
+# arduino-esp32 3.3.8) before the header they test, so a header that collides
+# with one fails here.
+FSCACHE_BIN = test_fleet_scan_cache
+FSCACHE_SRC = test_fleet_scan_cache.cpp
+
+$(FSCACHE_BIN): $(FSCACHE_SRC) json_strict.h arduino_globals.h $(SRC_DIR)/fleet_scan_cache.h \
+                $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/canary_wap.ino
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(FSCACHE_SRC)
+
+.PHONY: run-fleet-scan-cache clean-fleet-scan-cache
+run-fleet-scan-cache: $(FSCACHE_BIN)
+	$(call run_marked,$(FSCACHE_BIN))
+clean-fleet-scan-cache:
+	rm -f $(FSCACHE_BIN)
+
+run: run-fleet-scan-cache
+clean: clean-fleet-scan-cache
+
+# The identity answers (sweep F212): the REAL identity_json.h (on the REAL
+# wap_json_writer.h) that GET /api/device-info and the provisioning receipt are
+# built with. The old answers' bytes for every ordinary input (the old snprintf
+# formats are spelled in the test, verbatim), an answer that parses under
+# JSON.parse's rules for every name a person can type (`"`, `\`, control
+# bytes; the rename routes refuse none of them), and a length measured first
+# and written whole or not at all. check_wap_json_answers.py rule J6 holds the
+# two handlers to the measured form.
+IDJSON_BIN = test_identity_json
+IDJSON_SRC = test_identity_json.cpp
+
+$(IDJSON_BIN): $(IDJSON_SRC) json_strict.h arduino_globals.h $(SRC_DIR)/identity_json.h \
+               $(SRC_DIR)/wap_json_writer.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(IDJSON_SRC)
+
+.PHONY: run-identity-json clean-identity-json
+run-identity-json: $(IDJSON_BIN)
+	$(call run_marked,$(IDJSON_BIN))
+clean-identity-json:
+	rm -f $(IDJSON_BIN)
+
+run: run-identity-json
+clean: clean-identity-json
+
+# The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
+# sketch's csi_module_settings_* readers, by the shared
+# csi_module_settings_nvs.h rule, and its boot init through one read-only
+# handle), the staged CSI library and modules over a
+# typed NVS that outlives a modeled reboot (stubs/module_boot), booted in
+# csi_integration::init()'s order: a saved preset, threshold, pet mode and
+# anomaly cooldown apply from the boot's first windows, each module's
+# init() runs once per boot and commits nothing, and a settings change
+# still applies at once. It reads csi_integration.cpp's register_v1_modules()
+# to keep its module list the device's.
+MODBOOT_BIN = test_wap_module_boot
+MODBOOT_SRC = test_wap_module_boot.cpp
+MODBOOT_LIB = $(SRC_DIR)/csi_settings_nvs.cpp $(SRC_DIR)/csi_tune_lab.cpp \
+              $(SRC_DIR)/csi_event.cpp $(SRC_DIR)/csi_bundler.cpp \
+              $(SRC_DIR)/csi_module.cpp $(SRC_DIR)/core_presence.cpp $(SRC_DIR)/core_breathing.cpp \
+              $(SRC_DIR)/core_activity_ribbon.cpp $(SRC_DIR)/meta_daily_summary.cpp \
+              $(SRC_DIR)/meta_quiet_hours.cpp $(SRC_DIR)/anomaly_baseline.cpp \
+              $(SRC_DIR)/wifi_channel_activity.cpp $(SRC_DIR)/core_multilink_fusion.cpp \
+              $(SRC_DIR)/meta_empty_room_baseline.cpp $(SRC_DIR)/ble_events_module.cpp \
+              $(SRC_DIR)/tamper_events_module.cpp
+
+$(MODBOOT_BIN): $(MODBOOT_SRC) $(MODBOOT_LIB) $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_module_settings_nvs.h \
+                $(SRC_DIR)/csi_settings_nvs.h $(SRC_DIR)/csi_tune_lab.h \
+                $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_bundler.h $(SRC_DIR)/csi_integration.cpp \
+                $(SRC_DIR)/acoustic_events_module.cpp $(SRC_DIR)/vault_events_module.cpp $(SRC_DIR)/ble_scout.cpp \
+                $(wildcard stubs/module_boot/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(MODBOOT_SRC) $(MODBOOT_LIB)
+
+.PHONY: run-wap-module-boot clean-wap-module-boot
+run-wap-module-boot: $(MODBOOT_BIN)
+	$(call run_marked,$(MODBOOT_BIN))
+clean-wap-module-boot:
+	rm -f $(MODBOOT_BIN)
+run: run-wap-module-boot
+clean: clean-wap-module-boot
+
+# The Tuning Lab and its Quiet Hours (sweeps F123, F128): the REAL
+# csi_tune_lab.cpp (the knobs' table and the POST's store-and-apply) and
+# csi_settings_nvs.cpp (the one Quiet Hours default, its reader, the
+# dashboard's store and the apply to the chokepoint), with the staged CSI
+# library and modules over the same fake NVS (stubs/module_boot). The Lab
+# declares the device's own Quiet Hours default, which the dashboard starts
+# from too; a Quiet Hours knob or bundle import applies to the chokepoint at
+# once; every knob applies to its own group; the dashboard and the Lab write
+# the rows the reader reads, under their stored names. It reads
+# csi_integration.cpp to hold its handlers thin around that code
+# (mutation-checked).
+TUNELAB_BIN = test_wap_tune_lab
+TUNELAB_SRC = test_wap_tune_lab.cpp
+TUNELAB_LIB = $(SRC_DIR)/csi_tune_lab.cpp $(SRC_DIR)/csi_settings_nvs.cpp \
+              $(SRC_DIR)/csi_event.cpp $(SRC_DIR)/csi_bundler.cpp $(SRC_DIR)/csi_module.cpp \
+              $(SRC_DIR)/core_presence.cpp $(SRC_DIR)/core_breathing.cpp \
+              $(SRC_DIR)/anomaly_baseline.cpp $(SRC_DIR)/meta_quiet_hours.cpp
+
+$(TUNELAB_BIN): $(TUNELAB_SRC) $(TUNELAB_LIB) $(SRC_DIR)/csi_tune_lab.h $(SRC_DIR)/csi_settings_nvs.h \
+                $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_event.h \
+                $(SRC_DIR)/csi_integration.cpp $(SRC_DIR)/csi_dashboard_html.h \
+                $(wildcard stubs/module_boot/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(TUNELAB_SRC) $(TUNELAB_LIB)
+
+.PHONY: run-wap-tune-lab clean-wap-tune-lab
+run-wap-tune-lab: $(TUNELAB_BIN)
+	$(call run_marked,$(TUNELAB_BIN))
+clean-wap-tune-lab:
+	rm -f $(TUNELAB_BIN)
+run: run-wap-tune-lab
+clean: clean-wap-tune-lab
+
+# meta.daily_summary (sweep F121): canary_wap.ino's clock feed,
+# update_csi_clock_offset() cut verbatim (firmware/tests_host/
+# cut_functions.awk) with the GPS_CLOCK_FLOOR line it guards on, over the
+# staged CSI library and modules booted as csi_integration::init() boots
+# them (the sketch's real csi_settings_nvs.cpp, over stubs/module_boot). A
+# synced day crossing 23:55 commits exactly one row, a reboot after it
+# commits no second, an unsynced clock commits none, a first clock inside
+# the window waits for the next day, Quiet Hours over 23:55 hold the row, DST
+# and zone changes keep one row per local date, the minute is the
+# household's, the row carries what docs/csi_modules.md says, and a source
+# pin holds loop()'s per-pass call (the sketch is read at run time, so it is
+# a prerequisite through the cut). Hooked into `run` and `clean` by
+# prerequisite so it adds no hunk to their lists.
+DAILY_BIN = test_wap_daily_summary
+DAILY_SRC = test_wap_daily_summary.cpp
+DAILY_INC = test_wap_daily_summary_clock.inc
+DAILY_INO = $(SRC_DIR)/canary_wap.ino
+DAILY_CUT = ../../../tests_host/cut_functions.awk
+
+$(DAILY_INC): $(DAILY_INO) $(DAILY_CUT) Makefile
+	@test "$$(grep -cE '^static const time_t GPS_CLOCK_FLOOR = ' $(DAILY_INO))" = 1 || { \
+	  echo "canary_wap.ino: no single GPS_CLOCK_FLOOR line for update_csi_clock_offset's guard" >&2; exit 1; }
+	@grep -nE '^static const time_t GPS_CLOCK_FLOOR = ' $(DAILY_INO) | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(DAILY_INO)"\n\2|' > $@.tmp
+	awk -v 'sigs=static void update_csi_clock_offset(' -f $(DAILY_CUT) $(DAILY_INO) >> $@.tmp && mv $@.tmp $@
+
+$(DAILY_BIN): $(DAILY_SRC) $(DAILY_INC) $(MODBOOT_LIB) $(SRC_DIR)/csi_settings_nvs.h \
+              $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/meta_daily_summary.h \
+              $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_wire.h $(SRC_DIR)/tz_rule.h \
+              $(wildcard stubs/module_boot/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/module_boot -I $(SRC_DIR) -I . -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -o $@ $(DAILY_SRC) $(MODBOOT_LIB)
+
+.PHONY: run-wap-daily-summary clean-wap-daily-summary
+run-wap-daily-summary: $(DAILY_BIN)
+	$(call run_marked,$(DAILY_BIN))
+clean-wap-daily-summary:
+	rm -f $(DAILY_BIN) $(DAILY_INC)
+run: run-wap-daily-summary
+clean: clean-wap-daily-summary
+
+# A first boot after an NVS erase and the "securacv" namespace (sweep F201):
+# setup_wizard.h's init(), canary_wap.ino's nvs_load_key() / nvs_store_key()
+# (with its NVS_KEY_PRIV line) over the real nvs_store.h, and power_monitor.h's
+# load_nvs_state(), each cut verbatim (firmware/tests_host/cut_functions.awk),
+# over a fake NVS that models namespaces and counts Preferences' error line
+# (stubs/first_boot; Arduino.h from stubs/nvs_store, the recursive mutex from
+# the canary suite's stubs/nvs_manager). Run in setup()'s order, which the
+# suite's source pins hold: a first boot logs no line, a provisioned boot
+# reads as before, an NVS fault keeps its lines. Hooked into `run` and
+# `clean` by prerequisite so it adds no hunk to their lists. And the "chirp"
+# namespace (sweep F220): chirp_channel.cpp's load_settings() and
+# save_settings(), and the loop()'s self-test stamp read in canary_wap.ino
+# (its `if (!s_selftest_nvs_loaded) {` block, cut by line), through the real
+# nvs_store.h's NvsSession, whose read-only open now asks IDF first.
+FIRSTBOOT_BIN    = test_wap_first_boot_nvs
+FIRSTBOOT_SRC    = test_wap_first_boot_nvs.cpp
+FIRSTBOOT_WIZ    = test_wap_first_boot_nvs_wizard.inc
+FIRSTBOOT_KEY    = test_wap_first_boot_nvs_key.inc
+FIRSTBOOT_PWR    = test_wap_first_boot_nvs_power.inc
+FIRSTBOOT_CHIRP  = test_wap_first_boot_nvs_chirp.inc
+FIRSTBOOT_STAMP  = test_wap_first_boot_nvs_stamp.inc
+FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR) $(FIRSTBOOT_CHIRP) $(FIRSTBOOT_STAMP)
+FIRSTBOOT_CUT    = ../../../tests_host/cut_functions.awk
+
+$(FIRSTBOOT_WIZ): $(SRC_DIR)/setup_wizard.h $(FIRSTBOOT_CUT) Makefile
+	awk -v 'sigs=inline bool init() {' -f $(FIRSTBOOT_CUT) $(SRC_DIR)/setup_wizard.h > $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_PWR): $(SRC_DIR)/power_monitor.h $(FIRSTBOOT_CUT) Makefile
+	awk -v 'sigs=inline void load_nvs_state() {' -f $(FIRSTBOOT_CUT) $(SRC_DIR)/power_monitor.h > $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_KEY): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
+	@test "$$(grep -cE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single NVS_KEY_PRIV line for nvs_load_key()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
+	awk -v 'sigs=static bool nvs_load_key(|static bool nvs_store_key(' -f $(FIRSTBOOT_CUT) \
+	  $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_CHIRP): $(SRC_DIR)/chirp_channel.cpp $(FIRSTBOOT_CUT) Makefile
+	awk -v 'sigs=static void load_settings() {|static void save_settings() {' -f $(FIRSTBOOT_CUT) \
+	  $(SRC_DIR)/chirp_channel.cpp > $@.tmp && mv $@.tmp $@
+
+# The stamp read is a block inside loop(), not a function: cut from its one
+# opening line to the first line that closes it at the same depth, or fail.
+$(FIRSTBOOT_STAMP): $(SRC_DIR)/canary_wap.ino Makefile
+	awk -v 'start=    if (!s_selftest_nvs_loaded) {' -v 'stop=    }' \
+	  '$$0 == start { n++; if (n == 1) { printf "#line %d \"%s\"\n", FNR, FILENAME; on = 1 } } \
+	   on { print } on && $$0 == stop { on = 0; done = 1 } \
+	   END { if (n != 1 || on || !done) { print "canary_wap.ino: the self-test stamp read is not one block" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_BIN): $(FIRSTBOOT_SRC) $(FIRSTBOOT_INCS) $(SRC_DIR)/nvs_store.h $(SRC_DIR)/nvs_session_depth.h \
+                  $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/first_boot/*.h) \
+                  stubs/nvs_store/Arduino.h $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/first_boot -I stubs/nvs_store -I $(NVSLOCK_FREERTOS) \
+	  -I $(SRC_DIR) -I . -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(FIRSTBOOT_SRC)
+
+.PHONY: run-wap-first-boot-nvs clean-wap-first-boot-nvs
+run-wap-first-boot-nvs: $(FIRSTBOOT_BIN)
+	$(call run_marked,$(FIRSTBOOT_BIN))
+clean-wap-first-boot-nvs:
+	rm -f $(FIRSTBOOT_BIN) $(FIRSTBOOT_INCS)
+run: run-wap-first-boot-nvs
+clean: clean-wap-first-boot-nvs
 
 # The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
 # closed: all-or-nothing reservations, value-independent refusals, exact
@@ -648,7 +937,7 @@ MESH_ADDR_LINK = $(SRC_DIR)/airtime_governor.cpp $(SRC_DIR)/mesh_channel_policy.
                  $(SRC_DIR)/mesh_channel_hop.cpp $(SRC_DIR)/mesh_hub_election.cpp \
                  $(SRC_DIR)/mesh_crypto.cpp
 
-$(MESH_ADDR_BIN): $(MESH_ADDR_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
+$(MESH_ADDR_BIN): $(MESH_ADDR_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_ADDR_SRC) $(MESH_ADDR_LINK) -lcrypto
 
 .PHONY: run-mesh-address clean-mesh-address
@@ -659,6 +948,255 @@ clean-mesh-address:
 
 run: run-mesh-address
 clean: clean-mesh-address
+
+# Whether a canary-wap opera comes up, stays reachable, and says so when a
+# pairing fails (sweep F71, F73, F74, F75, F76), on the same harness and
+# link as test_mesh_address_wap: send counters that survive a reboot, a
+# refused partner reported as a failure, the DISCOVER's broadcast
+# registration, the owners confirming in either order, and an unheard opera
+# announcing itself.
+MESH_LIVE_BIN = test_mesh_liveness_wap
+MESH_LIVE_SRC = test_mesh_liveness_wap.cpp
+
+$(MESH_LIVE_BIN): $(MESH_LIVE_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_LIVE_SRC) $(MESH_ADDR_LINK) -lcrypto
+
+.PHONY: run-mesh-liveness clean-mesh-liveness
+run-mesh-liveness: $(MESH_LIVE_BIN)
+	$(call run_marked,$(MESH_LIVE_BIN))
+clean-mesh-liveness:
+	rm -f $(MESH_LIVE_BIN)
+
+run: run-mesh-liveness
+clean: clean-mesh-liveness
+
+# The owner's mesh commands run on the loop task (sweep F96), on the same
+# harness and link as test_mesh_address_wap: the REAL mesh_network.cpp's
+# submit() and update()'s drain, a removal, every command, a disabled mesh
+# turning back on, a command the loop task does not reach (withdrawn), a full
+# ring, the post order, and a pairing driven over REST end to end — with no
+# NVS write or ESP-NOW call made from the handler's side.
+MESH_CMD_BIN = test_mesh_commands_wap
+MESH_CMD_SRC = test_mesh_commands_wap.cpp
+
+$(MESH_CMD_BIN): $(MESH_CMD_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(MESH_ADDR_LINK)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_CMD_SRC) $(MESH_ADDR_LINK) -lcrypto
+
+.PHONY: run-mesh-commands clean-mesh-commands
+run-mesh-commands: $(MESH_CMD_BIN)
+	$(call run_marked,$(MESH_CMD_BIN))
+clean-mesh-commands:
+	rm -f $(MESH_CMD_BIN)
+
+run: run-mesh-commands
+clean: clean-mesh-commands
+
+# The owner's Chirp commands run on the loop task (sweep F111): the REAL
+# chirp_channel.cpp, #included and compiled on the host against
+# stubs/mesh_net (an ESP-NOW send log, an in-memory NVS, OpenSSL's Ed25519
+# and SHA-256) with the real airtime governor, and the test's own wall clock.
+# The handler's side submits, the loop task's update() drains: enable on a
+# disabled channel, every command, a refused send's reason, a command the
+# loop task never reaches (withdrawn), a full ring (busy) and the post
+# order, with no NVS write or ESP-NOW call made from the handler's side.
+# And the status routes' view (sweep F138): what GET /api/chirp, /nearby and
+# /recent read is what the loop task last published (loop_snapshot.h), from
+# real presence, witness and confirmation frames, the prune and each command.
+CHIRP_CMD_BIN = test_chirp_commands_wap
+CHIRP_CMD_SRC = test_chirp_commands_wap.cpp
+
+$(CHIRP_CMD_BIN): $(CHIRP_CMD_SRC) $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/chirp_channel.cpp $(SRC_DIR)/mesh_network.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/airtime_governor.cpp
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_CMD_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
+
+.PHONY: run-chirp-commands clean-chirp-commands
+run-chirp-commands: $(CHIRP_CMD_BIN)
+	$(call run_marked,$(CHIRP_CMD_BIN))
+clean-chirp-commands:
+	rm -f $(CHIRP_CMD_BIN)
+
+run: run-chirp-commands
+clean: clean-chirp-commands
+
+# The owner's Bluetooth commands run on the loop task (sweep F111): the REAL
+# bluetooth_channel.cpp, #included and compiled on the host against
+# stubs/bt (a NimBLE-Arduino 2.x stand-in that records each radio, bond and
+# passkey call with the task that made it, and an in-memory main NVS). A PIN
+# confirm, reject and cancel answer the pending pairing once, on the loop
+# task, the timeout's pass included; every command's radio, bond and NVS
+# calls are the loop task's; settings apply only the fields named; no
+# command brings the stack up (init() is the handler's or the worker's);
+# withdrawn, busy and post order through the real submit() and update().
+# And a settings POST's "enabled" turns Bluetooth off and on the way
+# POST /disable and /enable do (sweep F144); the NimBLE host task's
+# callbacks change nothing until update() applies their events on the loop
+# task, the pending pairing's copy has one owner, and a full event queue
+# keeps a link's room and fails a pairing closed (sweep F143). And the
+# FULL profile's wiring (sweep F171): the channel's init() and Opera's
+# (ble_opera.h) in either order through one server-callback dispatcher
+# (ble_server_dispatch.h), so a passkey waits for the owner's confirm.
+BT_CMD_BIN = test_bluetooth_commands_wap
+BT_CMD_SRC = test_bluetooth_commands_wap.cpp
+
+BT_CMD_DEPS = $(BT_CMD_SRC) $(wildcard stubs/bt/*.h stubs/bt/freertos/*.h) $(SRC_DIR)/bluetooth_channel.cpp $(SRC_DIR)/bluetooth_channel.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_event_queue.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/ble_standard_profiles.h $(SRC_DIR)/bt_defaults.h $(SRC_DIR)/ble_heap_guard.h $(SRC_DIR)/ble_server_dispatch.h $(SRC_DIR)/ble_opera.h $(SRC_DIR)/ble_config.h $(SRC_DIR)/fleet_beacon.h
+
+$(BT_CMD_BIN): $(BT_CMD_DEPS)
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $@ $(BT_CMD_SRC)
+
+# `make tsan-bt-commands` runs the same suite under -fsanitize=thread (not
+# part of `run`: it needs a sanitizer runtime). Its threaded test plays the
+# NimBLE host task, the loop task and the HTTP server's on three threads
+# (sweep F143): a callback that wrote the channel's state is a race there.
+.PHONY: run-bt-commands clean-bt-commands tsan-bt-commands
+run-bt-commands: $(BT_CMD_BIN)
+	$(call run_marked,$(BT_CMD_BIN))
+tsan-bt-commands: $(BT_CMD_DEPS)
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $(BT_CMD_BIN)_tsan $(BT_CMD_SRC)
+	./$(BT_CMD_BIN)_tsan
+clean-bt-commands:
+	rm -f $(BT_CMD_BIN) $(BT_CMD_BIN)_tsan
+
+run: run-bt-commands
+clean: clean-bt-commands
+
+# The MQTT bridge re-inits on the loop task (sweep F106): the REAL
+# csi_mqtt.cpp over stubs/mqtt (an in-memory NVS, a request/response httpd,
+# and a fake esp_mqtt client the test defines, which records the task of
+# every call and notices a client destroyed under a publish). The config
+# POST, the test handler and a QR provisioning only request a re-init;
+# loop() runs one per batch of requests; a publish in flight keeps its
+# client; the waits are bounded; the auto-update switch set from the httpd
+# task is published by loop(). And the loop task's publishes are bounded
+# (sweep F112): every client carries csi_mqtt.h's network timeout, over a
+# stalled link a busy pass waits out one timeout, not esp_mqtt's 10 s, and a
+# pass never waits behind the CONNECTED burst esp_mqtt sends under its lock.
+# Also the health publish's event-id space warning (sweep F82), against a
+# stubbed allocator, and the egress counters' retained topic (sweep F149),
+# against a stubbed csi_event_egress::stats().
+MQTT_REINIT_BIN = test_mqtt_reinit
+MQTT_REINIT_SRC = test_mqtt_reinit.cpp
+
+$(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
+                  $(SRC_DIR)/csi_event_egress.h \
+                  $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp
+
+.PHONY: run-mqtt-reinit clean-mqtt-reinit
+run-mqtt-reinit: $(MQTT_REINIT_BIN)
+	$(call run_marked,$(MQTT_REINIT_BIN))
+clean-mqtt-reinit:
+	rm -f $(MQTT_REINIT_BIN)
+
+run: run-mqtt-reinit
+clean: clean-mqtt-reinit
+
+# Every Home Assistant discovery config asks for the entity id the docs give
+# it (sweep HA16): the REAL csi_mqtt.cpp over stubs/mqtt and a fake esp_mqtt
+# client that records the connect burst. All 27 configs of the build the host
+# compiles, each one JSON object a strict reader takes (no key twice, nothing
+# after it), each with one def_ent_id equal to <component>.<device id as Home
+# Assistant slugs it>_<object_id> and its unique id unchanged, each under its
+# 768-byte buffer at the longest device id, prefix and firmware version (the
+# buffer pinned against the source, whose path is passed in).
+HA_IDS_BIN = test_ha_discovery_ids
+HA_IDS_SRC = test_ha_discovery_ids.cpp
+
+$(HA_IDS_BIN): $(HA_IDS_SRC) beacon_source_scan.h $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
+               $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h \
+               $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	  -I stubs/mqtt -I $(SRC_DIR) -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \
+	  -o $@ $(HA_IDS_SRC) $(SRC_DIR)/csi_mqtt.cpp
+
+.PHONY: run-ha-discovery-ids clean-ha-discovery-ids
+run-ha-discovery-ids: $(HA_IDS_BIN)
+	$(call run_marked,$(HA_IDS_BIN))
+clean-ha-discovery-ids:
+	rm -f $(HA_IDS_BIN)
+
+run: run-ha-discovery-ids
+clean: clean-ha-discovery-ids
+
+# The hand-over from a requesting task to the loop task (sweep F96):
+# the REAL loop_command_ring.h. Commands run in post order across the ticket
+# wrap, a full ring refuses, each waiter collects its own result once, a
+# command not started by the timeout is withdrawn and never runs, one already
+# started is waited for, and with real threads (six requesters, one loop
+# thread) every command runs once, on the loop thread, and with a one-tick
+# timeout no withdrawn command runs and no slot is lost while withdrawals
+# race the drain. `make tsan-loop-ring` builds and runs the same suite under
+# -fsanitize=thread (not part of `run`: it needs a sanitizer runtime).
+LOOP_RING_BIN = test_loop_command_ring
+LOOP_RING_SRC = test_loop_command_ring.cpp
+
+$(LOOP_RING_BIN): $(LOOP_RING_SRC) $(SRC_DIR)/loop_command_ring.h
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I $(SRC_DIR) -o $@ $(LOOP_RING_SRC)
+
+.PHONY: run-loop-ring clean-loop-ring tsan-loop-ring
+run-loop-ring: $(LOOP_RING_BIN)
+	$(call run_marked,$(LOOP_RING_BIN))
+tsan-loop-ring: $(LOOP_RING_SRC) $(SRC_DIR)/loop_command_ring.h
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_RING_BIN)_tsan $(LOOP_RING_SRC)
+	./$(LOOP_RING_BIN)_tsan
+clean-loop-ring:
+	rm -f $(LOOP_RING_BIN) $(LOOP_RING_BIN)_tsan
+
+run: run-loop-ring
+clean: clean-loop-ring
+
+# What the loop task publishes for other tasks to read whole (sweep F110):
+# the REAL loop_snapshot.h, which the mesh status routes read through. A
+# Value read is the last publish, whole, and the same bytes take no lock; a
+# Log read is one moment's records in storage order, and starts over when
+# the loop task changes the log between two of its copies (driven
+# deterministically by a lock that runs the loop task's step there), or ends
+# with one copy under one hold; with real threads (one writer, four
+# readers) no read is torn. `make tsan-loop-snapshot` runs it under
+# -fsanitize=thread (not part of `run`: it needs a sanitizer runtime).
+LOOP_SNAP_BIN = test_loop_snapshot
+LOOP_SNAP_SRC = test_loop_snapshot.cpp
+
+$(LOOP_SNAP_BIN): $(LOOP_SNAP_SRC) $(SRC_DIR)/loop_snapshot.h
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I $(SRC_DIR) -o $@ $(LOOP_SNAP_SRC)
+
+.PHONY: run-loop-snapshot clean-loop-snapshot tsan-loop-snapshot
+run-loop-snapshot: $(LOOP_SNAP_BIN)
+	$(call run_marked,$(LOOP_SNAP_BIN))
+tsan-loop-snapshot: $(LOOP_SNAP_SRC) $(SRC_DIR)/loop_snapshot.h
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_SNAP_BIN)_tsan $(LOOP_SNAP_SRC)
+	./$(LOOP_SNAP_BIN)_tsan
+clean-loop-snapshot:
+	rm -f $(LOOP_SNAP_BIN) $(LOOP_SNAP_BIN)_tsan
+
+run: run-loop-snapshot
+clean: clean-loop-snapshot
+
+# What another task reports, handed to the loop task to apply (sweep F143):
+# the REAL loop_event_queue.h, which the NimBLE host task's Bluetooth
+# callbacks post through. Post order is apply order across the wrap; a full
+# queue refuses and counts; a post under a lower limit (a scan result)
+# leaves the reserve to the rest (a link up or down, a passkey); consume()
+# applies what waited when it started, with no lock held; with real threads
+# (three producers, one consumer) every event is applied once or counted,
+# in each producer's order. `make tsan-loop-events` runs it under
+# -fsanitize=thread (not part of `run`: it needs a sanitizer runtime).
+LOOP_EV_BIN = test_loop_event_queue
+LOOP_EV_SRC = test_loop_event_queue.cpp
+
+$(LOOP_EV_BIN): $(LOOP_EV_SRC) $(SRC_DIR)/loop_event_queue.h
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I $(SRC_DIR) -o $@ $(LOOP_EV_SRC)
+
+.PHONY: run-loop-events clean-loop-events tsan-loop-events
+run-loop-events: $(LOOP_EV_BIN)
+	$(call run_marked,$(LOOP_EV_BIN))
+tsan-loop-events: $(LOOP_EV_SRC) $(SRC_DIR)/loop_event_queue.h
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_EV_BIN)_tsan $(LOOP_EV_SRC)
+	./$(LOOP_EV_BIN)_tsan
+clean-loop-events:
+	rm -f $(LOOP_EV_BIN) $(LOOP_EV_BIN)_tsan
+
+run: run-loop-events
+clean: clean-loop-events
 
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,
@@ -925,6 +1463,7 @@ NVSLOCK_SRC        = test_nvs_store_lock.cpp
 NVSBAL_SRC         = test_nvs_session_balance.cpp
 NVSLOCK_FREERTOS   = ../../../tests_host/stubs/nvs_manager
 NVSLOCK_DEPS       = $(NVSLOCK_SRC) $(SRC_DIR)/nvs_store.h $(SRC_DIR)/nvs_session_depth.h \
+                     $(SRC_DIR)/csi_module_settings_nvs.h \
                      $(SRC_DIR)/canary_wap.ino $(wildcard stubs/nvs_store/*.h) \
                      $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
 NVSLOCK_FLAGS      = -Werror -I stubs/nvs_store -I $(NVSLOCK_FREERTOS) -I $(SRC_DIR) \

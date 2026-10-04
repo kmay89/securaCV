@@ -169,6 +169,11 @@ on:
       # table must name exactly the routes mod.rs answers before the token check
       - "src/api/mod.rs"
       - "custom_components/securacv/manifest.json"
+      # gen_homeassistant.py's "Meet the fleet" note says what these two do
+      # with the WAP's wire lines (TOFU pin, envelope check) and refuses to
+      # generate when they move, so the Hub data drift step runs on them
+      - "custom_components/securacv/signature.py"
+      - "custom_components/securacv/__init__.py"
       - "hacs.json"
       - "sbom/README.md"
       # files desktop_parity.test.js reads outside every tree above: the udev
@@ -195,6 +200,9 @@ on:
       # Wall contract vectors against both vendored walls
       - "firmware/canary/include/canary/runtime_config.h"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
+      # vision_wasm32.test.js crosses the host suite's extreme-box values,
+      # read from the suite itself so the two grids cannot drift (sweep A49)
+      - "firmware/tests_host/test_vision_detection_pipeline.cpp"
       # …and the files they only check exist (a rename or delete fails them
       # just the same): each concept's docs in the registry (canary_local;
       # the glob also takes two research notes no concept names yet, so a new
@@ -377,6 +385,11 @@ on:
       # table must name exactly the routes mod.rs answers before the token check
       - "src/api/mod.rs"
       - "custom_components/securacv/manifest.json"
+      # gen_homeassistant.py's "Meet the fleet" note says what these two do
+      # with the WAP's wire lines (TOFU pin, envelope check) and refuses to
+      # generate when they move, so the Hub data drift step runs on them
+      - "custom_components/securacv/signature.py"
+      - "custom_components/securacv/__init__.py"
       - "hacs.json"
       - "sbom/README.md"
       # files desktop_parity.test.js reads outside every tree above: the udev
@@ -403,6 +416,9 @@ on:
       # Wall contract vectors against both vendored walls
       - "firmware/canary/include/canary/runtime_config.h"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
+      # vision_wasm32.test.js crosses the host suite's extreme-box values,
+      # read from the suite itself so the two grids cannot drift (sweep A49)
+      - "firmware/tests_host/test_vision_detection_pipeline.cpp"
       # …and the files they only check exist (a rename or delete fails them
       # just the same): each concept's docs in the registry (canary_local;
       # the glob also takes two research notes no concept names yet, so a new
@@ -452,7 +468,7 @@ jobs:
         with:
           node-version: "22"
       # The path-filter gate (sweep CI2): every node and python3 process in the
-      # three test steps below records the repo paths it reads (node: opens,
+      # five test steps below records the repo paths it reads (node: opens,
       # stats, listings, existence checks; python3: opens and listings only,
       # CPython audits no stat or exists call; shell tools such as the Witness
       # Wall step's cmp are not recorded), and the step after the last of them
@@ -463,6 +479,7 @@ jobs:
       # as `node --test <files>` or `python3 -m unittest discover` without
       # this env block is named by the gate as a suite it never heard from.
       - name: Node tests (shipped source, repo convention)
+        id: dist-node-tests
         env:
           PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
           NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
@@ -483,11 +500,13 @@ jobs:
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/fingerprint_examples.test.js
           node --test canary-local/tests/onboard.test.js
+          node --test canary-local/tests/glass_turn_lvgl9.test.js
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/vision_checklist.test.js
           node --test canary-local/tests/vision_session.test.js
           node --test canary-local/tests/eyes.test.js
           node --test canary-local/tests/audio.test.js
+          node --test canary-local/tests/native_cores.test.js
           node --test canary-local/tests/board_identity.test.js
           node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
@@ -513,11 +532,55 @@ jobs:
           node --test canary-local/tests/mic.test.js
           node --test canary-local/tests/board_facts.test.mjs
           node --test canary-local/tests/csp.test.js
+          node --test canary-local/tests/probe_server.test.js
           node --test canary-local/tests/scene_figures.test.js
           node --test canary-local/tests/real_shapes.test.js
           node --test canary-local/tests/body_dims.test.js
           node --test canary-local/tests/device_models.test.js
           node --test canary-local/tests/settings_rollers.test.js
+      - name: Core-driving page tests on this tree's sources (LAB_CORES=native, g++, no emsdk)
+        # The step above runs these three on the committed emulator/dist cores.
+        # Here tests/native/cores.js builds the Vision and WAP audio cores from
+        # the sources, flags and include paths build.sh hands em++ (read from
+        # build.sh), with the runner's g++, and serves them to the same tests
+        # (sweep A40). It runs whenever the step above ran, red or green, and
+        # not when the run is stopped (the `if:`), because its answer matters
+        # most when that step is red: green here and red above on a core
+        # change means the sources are right and the dist is stale (Actions ->
+        # "Rebuild emulator dist (pinned emsdk)"). The dist still ships; this
+        # proves the sources.
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+        run: |
+          node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/eyes.test.js
+          node --test canary-local/tests/audio.test.js
+      - name: Vision pipeline as wasm32 from this tree's sources (the runner's clang + wasm-ld, not emscripten)
+        # Sweep A49. The dist is wasm32, whose long is 32 bits (the ESP32's
+        # too); the step above and every firmware host suite build with the
+        # runner's 64-bit long, so a box product put back in long passes them
+        # all. tests/native/wasm32.js builds detection_pipeline.h for wasm32
+        # with the runner's clang and wasm-ld (freestanding: no libc, two stub
+        # headers) and for the host with g++, from build.sh's Vision flags, and
+        # the test holds the two to each other on the extreme-box grid, then
+        # shows it catches A42's two long multiplies that the host build
+        # misses. It is the host's clang, not emscripten's: it settles the
+        # long width, not every compiler difference. The image installs
+        # lld-<n> beside each clang-<n> (wasm-ld-18 for its default clang
+        # 18); VISION_WASM32=require makes a missing tool a failure that names
+        # it, not a skip. It reads the sources, not the dist, so it runs
+        # whenever the dist step ran, red or green (the `if:`).
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        env:
+          VISION_WASM32: require
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+        run: node --test canary-local/tests/vision_wasm32.test.js
       - name: Witness Wall emulator copies in sync (Flasher <-> Lab)
         # One canonical emulator (the website repo), vendored by
         # scripts/vendor_witness_emulator.sh into both apps — byte-identical,
@@ -599,11 +662,21 @@ jobs:
           fi
       - name: Board-facts snapshot shape (vendor pin maps — refreshed by board-facts-freshness.yml)
         run: python3 canary-local/tools/gen_board_facts.py
+      - name: WAP data drift (parsed from the canary-wap firmware + docs)
+        # Before the Hub step: gen_homeassistant.py prints the WAP's retained
+        # topics from wap.json in its "Meet the fleet" step, so a stale
+        # wap.json is named here, with both generators, in one round.
+        run: |
+          python3 canary-local/tools/gen_wap.py
+          if ! git diff --exit-code -- canary-local/devices/wap.json; then
+            echo "::error::generated WAP data stale — run canary-local/tools/gen_wap.py, then canary-local/tools/gen_homeassistant.py (the Hub page's fleet step reads wap.json), and commit both (the firmware moved)"
+            exit 1
+          fi
       - name: Hub data drift (deterministic run — upstream snapshot preserved verbatim)
         run: |
           python3 canary-local/tools/gen_homeassistant.py
           if ! git diff --exit-code -- canary-local/devices/homeassistant.json; then
-            echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit"
+            echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit (it reads devices/wap.json: after a gen_wap.py change, run gen_wap.py first)"
             exit 1
           fi
       - name: Hub image drift (derived from the Hub snapshot + flasher safety gate + HA assets)
@@ -637,7 +710,7 @@ jobs:
         run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 
       - name: Every file the logic tests read is inside this workflow's path filter
-        # Reads the recordings the three test steps above left (the suites are
+        # Reads the recordings the five test steps above left (the suites are
         # not run again) and matches each path against on.pull_request.paths
         # with GitHub's pattern rules. A miss is a test that a PR editing that
         # file never runs: it fails here naming the test, the file, the test
@@ -683,13 +756,6 @@ jobs:
           python3 canary-local/tools/gen_start.py
           if ! git diff --exit-code -- canary-local/devices/start.json; then
             echo "::error::generated guide data stale — run canary-local/tools/gen_start.py and commit"
-            exit 1
-          fi
-      - name: WAP data drift (parsed from the canary-wap firmware + docs)
-        run: |
-          python3 canary-local/tools/gen_wap.py
-          if ! git diff --exit-code -- canary-local/devices/wap.json; then
-            echo "::error::generated WAP data stale — run canary-local/tools/gen_wap.py and commit (the firmware moved)"
             exit 1
           fi
       - name: Vision data drift (parsed from the canary-vision firmware + docs)
@@ -831,6 +897,34 @@ jobs:
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
+      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL (native g++, F184, F204)
+        # ui/lvgl_port.cpp's dash rotation and the HAL that turns the emulator's
+        # framebuffer with it (src/emu_hal_display.cpp) — and, built a second
+        # time with the nightlight's config, its hardware turn
+        # (display_set_rotation, lvgl_port_set_panel_rotation) — with g++ against
+        # build.sh's pinned LVGL (the cached checkout, or fetched into it at
+        # build.sh's LVGL_TAG on a cold cache, which the dist build then
+        # reuses): at every quarter turn the glass the page reads equals the
+        # scene rendered unturned at the logical size, pixel for pixel, and a
+        # fed touch comes back out of LVGL's pointer where it went in. Proves
+        # the sources, not the dist's bytes (the onboard probe reads those).
+        # Runs BEFORE every step that reads the committed dist: a stale dist
+        # turns the probes below red and skips every later step, and this is
+        # the one proof of these sources that does not need the dist.
+        run: bash canary-local/emulator/test/glass_turn.sh
+      - name: Runtime turn — the nightlight turned while it runs seats its companion on the perch (native g++, F222)
+        # build.sh's whole nightlight TU list (the real main.cpp and firmware,
+        # the emulator's sources) with g++ against build.sh's pinned LVGL 8.4,
+        # Crypto and ArduinoJson (the cached checkouts, or fetched into them at
+        # build.sh's pins on a cold cache, which the dist build then reuses),
+        # booted natively on a virtual clock: a unit turned at 7 s from each
+        # rotation to each other through nightlight_request_rotation() (the
+        # app's picker) must seat its companion where a boot at that rotation
+        # seats it. Proves the sources, not the dist's bytes. Before every step
+        # that reads the committed dist, for the step above's reason; bounded,
+        # since a firmware loop that stops yielding would never end.
+        timeout-minutes: 10
+        run: bash canary-local/emulator/test/runtime_turn.sh
       # Weekly key: playwright (installed unpinned below) moves its pinned
       # Chromium build over time; a weekly rotation keeps the ~150 MB
       # browser download to at most one run per week while never letting
@@ -868,15 +962,37 @@ jobs:
         run: node canary-local/tests/boardroom_probe.mjs
       - name: Bench probe — the physical test bench drives the live firmware
         run: node canary-local/tests/bench_probe.mjs
-      - name: Render probe — studio shaders compile and every device shades on a real GPU
+      - name: Render probe — studio shaders compile, every device shades on a real GPU, a turned glass reads upright (A47)
         run: node canary-local/tests/render_probe.mjs
       - name: Scene lifecycle probe — forty 3D cards on one page share one WebGL context, none evicted, every one draws
         run: node canary-local/tests/scene_lifecycle_probe.mjs
       - name: WAP probe — first-boot, captive portal, serial + MQTT
         run: node canary-local/tests/wap_probe.mjs
       - name: Vision probe — two ports, model load + preview, boot, MQTT, aim
+        id: vision-probe
+        run: node canary-local/tests/vision_probe.mjs
+      - name: Vision probe on this tree's sources (LAB_CORES=native, g++, no emsdk)
+        # The step above drove the committed dist core in Chromium. Here the
+        # probe builds the core from the sources build.sh hands em++ (read by
+        # tests/native/cores.js, as the logic job's native step builds it) and
+        # its server answers the dist URL with a stand-in factory that forwards
+        # each call to that build (tests/native/probe_cores.js, sweep A41). It
+        # runs whenever the step above ran, red or green: green here and red
+        # above on a core change means the sources are right and the dist is
+        # stale (Actions -> "Rebuild emulator dist (pinned emsdk)").
+        if: ${{ (success() || failure()) && steps.vision-probe.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
         run: node canary-local/tests/vision_probe.mjs
       - name: Eyes probe — webcam bench renders, real wasm decides presence in-browser, camera path
+        id: eyes-probe
+        run: node canary-local/tests/eyes_probe.mjs
+      - name: Eyes probe on this tree's sources (LAB_CORES=native, g++, no emsdk)
+        # As the Vision probe's native step: this tree's sources through the
+        # stand-in factory, whenever the step above ran (sweep A41).
+        if: ${{ (success() || failure()) && steps.eyes-probe.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
         run: node canary-local/tests/eyes_probe.mjs
       - name: Sense probe — radar lab, serial, MQTT + flavor-gated entities
         run: node canary-local/tests/sense_probe.mjs
@@ -885,6 +1001,14 @@ jobs:
       - name: Proving Ground probe — twin boots, knobs sync, auto drills pass
         run: node canary-local/tests/radar_dev_probe.mjs
       - name: Audio probe — smoke bench renders, real wasm detects T3 / rejects off-band, mic path
+        id: audio-probe
+        run: node canary-local/tests/audio_probe.mjs
+      - name: Audio probe on this tree's sources (LAB_CORES=native, g++, no emsdk)
+        # As the Vision probe's native step: this tree's sources through the
+        # stand-in factory, whenever the step above ran (sweep A41).
+        if: ${{ (success() || failure()) && steps.audio-probe.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
         run: node canary-local/tests/audio_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs
@@ -902,10 +1026,21 @@ jobs:
           # meta.json carries a git stamp (the merge-base with origin/main,
           # see build.sh) that legitimately differs on a PR merge ref and in
           # this shallow checkout — the drift gate is the code bundles.
-          if ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
+          # A flavor build.sh builds that the committed dist lacks (a new one,
+          # F204's nightlight) leaves an UNTRACKED bundle, which git diff
+          # cannot see: name it, and mark it intent-to-add so the binary patch
+          # below carries it too.
+          new_bundles="$(git ls-files --others --exclude-standard -- 'canary-local/emulator/dist/*.js')"
+          if [ -n "$new_bundles" ]; then
+            echo "── bundles this tree builds that the committed dist lacks ──"
+            mapfile -t new_list <<< "$new_bundles"
+            printf '· %s\n' "${new_list[@]}"
+            git add -N -- "${new_list[@]}"
+          fi
+          if [ -n "$new_bundles" ] || ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
             echo "── first differing bytes per artifact (diagnosis) ──"
             for f in canary-local/emulator/dist/*.js; do
-              git show "HEAD:$f" > /tmp/committed.js || continue
+              git show "HEAD:$f" > /tmp/committed.js 2>/dev/null || continue
               off=$(cmp /tmp/committed.js "$f" | awk '{print $5}' | tr -d ',')
               [ -n "$off" ] || continue
               start=$(( off > 80 ? off - 80 : 1 ))
@@ -947,3 +1082,35 @@ jobs:
         run: node canary-local/tests/boot_probe.mjs
       - name: Artifact stamps
         run: cat canary-local/emulator/dist/*.meta.json
+      # The dash family and nightstand-c6 ship LVGL 9.5, not the emulator's
+      # 8.4: its own checkout, cached under its own key (the release is
+      # sketch.yaml's dash-core3 pin, which the script reads; the path is the
+      # script's gitignored default, apart from build.sh's third_party).
+      # These two steps close the job and run whether the steps before them
+      # passed or failed (success() || failure(): anything but a canceled
+      # run): an earlier red (glass_turn.sh, which compiles the same
+      # lvgl_port.cpp against 8.4, or a stale dist turning a probe red)
+      # cannot hide the LVGL 9.5 result, and a red here, a failed cold-cache
+      # clone included, skips no other step.
+      - name: Cache LVGL 9 (the dash builds' release)
+        if: ${{ success() || failure() }}
+        uses: actions/cache@v6
+        with:
+          path: canary-local/emulator/test/third_party
+          key: canary-local-lvgl9-${{ hashFiles('firmware/projects/canary-display/arduino/canary_display/sketch.yaml') }}
+      - name: Turned glass — the real LVGL 9.5 through ui/lvgl_port.cpp's 9.x flush (native g++, F225)
+        # ui/lvgl_port.cpp's LVGL 9 branch (dash config) with g++ against the
+        # release the dash builds pin (fetched into the cache above on a cold
+        # cache), compiled with the display's own lv_conf.h: at every quarter
+        # turn each native pixel the port flushes equals the scene rendered on
+        # a plain display of the logical size under the turn the port draws,
+        # nothing falls off the panel and nothing is left unpainted, for whole
+        # frames and for partial updates (areas right of logical x 0, narrower
+        # than the canvas); touch lands on what is drawn; the splash's turned
+        # tail square draws; a glass with no turn buffer stays landscape.
+        # First it holds tests_host/fake_lvgl9's quotes of LVGL 9.5 to the
+        # fetched source (check_lvgl9_quotes.py, after its own drift
+        # self-test). Proves the sources on a 64-bit host, not an ESP32 build;
+        # it reads no dist.
+        if: ${{ success() || failure() }}
+        run: bash canary-local/emulator/test/glass_turn_lvgl9.sh

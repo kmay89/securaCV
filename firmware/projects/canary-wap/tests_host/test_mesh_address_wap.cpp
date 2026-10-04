@@ -248,9 +248,11 @@ void test_another_members_frame_from_another_address_moves_nothing() {
   // msg_counter_tx), and the envelope names no destination, so A judges a
   // frame B sent C by A's last-seen counter for B. B's counter for C runs
   // ahead of its counter for A whenever B sent C frames A was not sent:
-  // broadcast_message skips a member in PEER_UNKNOWN or
-  // PEER_AUTHENTICATING (one paired after B booted, say). That is set up
-  // directly here: three heartbeats with A at PEER_UNKNOWN in B's table.
+  // the alerts and the Beacon, channel-lock and hub-election sends skip a
+  // member in PEER_UNKNOWN or PEER_AUTHENTICATING (a fresh pairing's
+  // partner, until it is heard). That is set up directly here: three Beacon
+  // events with A at PEER_UNKNOWN in B's table. (This used heartbeats,
+  // which skipped such a member too until F76.)
   fresh_opera();
   deliver(A, B.mac, b_heartbeat_to(A));          // A's last-seen for B: 1
   {
@@ -258,7 +260,9 @@ void test_another_members_frame_from_another_address_moves_nothing() {
     mn::OperaPeer* pa = entry(B, A);
     const mn::PeerState keep = pa->state;
     pa->state = mn::PEER_UNKNOWN;
-    for (int i = 0; i < 3; ++i) mn::send_heartbeat();
+    for (int i = 0; i < 3; ++i) {
+      CHECK(mn::send_beacon_event(mesh_beacon::BeaconState::ARRIVED, "hall") == 1);
+    }
     pa->state = keep;
   }
   const Frame ahead = sent_to(B, C.mac).back();
@@ -327,9 +331,9 @@ void test_a_member_whose_address_changed_is_not_heard_until_re_paired() {
   // swapped module comes back with a new key and joins as a new member.
   // Until then A keeps sending
   // to the address the pairing bound and drops B's frames from the new
-  // one. (B reboots to change its address, so its counters restart at 1;
-  // its frame 1 would drop as a replay either way, and frame 2 is the one
-  // the old code re-bound on.)
+  // one. (B reboots to change its address; since F71 its counter for A
+  // resumes above every one A has heard, so these frames would pass the
+  // replay gate, and only the address drops them.)
   fresh_opera();
   deliver(A, B.mac, b_heartbeat_to(A));
   const uint8_t old_mac[6] = {B.mac[0], B.mac[1], B.mac[2], B.mac[3], B.mac[4], B.mac[5]};
@@ -337,7 +341,10 @@ void test_a_member_whose_address_changed_is_not_heard_until_re_paired() {
   boot(B);
   for (int i = 0; i < 2; ++i) {
     const Frame f = b_heartbeat_to(A);
+    CHECK(counter_of(f) > 1);                    // fresh to the replay gate
+    const uint32_t failures = a_view_of_b().auth_failures;
     deliver(A, B.mac, f);
+    CHECK(a_view_of_b().auth_failures == failures + 1);   // the address drops it
   }
   mn::OperaPeer* pb = entry(A, B);
   CHECK(same_mac(pb->mac_addr, old_mac));
@@ -452,18 +459,19 @@ void test_a_re_pair_re_binds_the_member_it_holds() {
   become(B);
   CHECK(mn::g_peer_count == 2);
   CHECK(same_mac(entry(B, A)->mac_addr, A.mac));
-  // B rebooted to change its address, so its counter for A restarted at 1
-  // (F71, open): A drops B's frames 1..3 as replays, from B's new
-  // address too, and hears frame 4.
-  for (uint64_t want = 1; want <= 3; ++want) {
+  // B rebooted to change its address. Its counter for A resumes one past
+  // the block it reserved before the reboot (F71, test_mesh_liveness_wap),
+  // so A hears B's very first frame after the re-pair, from B's new
+  // address. (Until F71 B's counter restarted at 1, and this pinned that
+  // A dropped B's frames 1..3 as replays and first heard frame 4.)
+  {
     const Frame f = b_heartbeat_to(A);
-    CHECK(counter_of(f) == want);
+    CHECK(counter_of(f) == mn::TX_COUNTER_RESERVE_BLOCK + 1);
     const uint32_t received = a_view_of_b().received;
     deliver(A, B.mac, f);
-    CHECK(a_view_of_b().received == received);
+    CHECK(a_view_of_b().received == received + 1);
+    CHECK(entry(A, B)->msg_counter_rx == mn::TX_COUNTER_RESERVE_BLOCK + 1);
   }
-  deliver(A, B.mac, b_heartbeat_to(A));
-  CHECK(entry(A, B)->msg_counter_rx == 4);
   // A frame from the old address now drops like one from any other.
   const uint64_t rx = entry(A, B)->msg_counter_rx;
   deliver(A, old_mac, b_heartbeat_to(A));
@@ -531,6 +539,92 @@ void test_a_re_pair_cannot_take_another_members_address() {
   CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
   CHECK(A.espnow.has(B.mac) && A.espnow.has(C.mac));
   std::printf("PASS a_re_pair_cannot_take_another_members_address\n");
+}
+
+// ── One address, one member (sweep F98) ─────────────────────────────────
+//
+// Only the re-pair (rebind_peer) refused an address another member holds;
+// add_peer appended a NEW key at one. The two entries then shared one
+// ESP-NOW registration, removing either deleted it for both, and A sent the
+// other nothing (host-probed with the #1761 harness: A's next heartbeat to
+// C was not sent). add_peer now refuses it too, and NVS an older firmware
+// wrote with such a pair keeps the registration while either entry holds
+// the address.
+
+// A key no device in this file holds.
+void new_key(uint8_t pub[32]) {
+  uint8_t priv[32];
+  host_sim::fill_random(priv, sizeof priv);
+  Ed25519::derivePublicKey(pub, priv);
+}
+
+void test_a_new_key_at_another_members_address_is_refused() {
+  fresh_opera();
+  uint8_t pub[32];
+  new_key(pub);
+  become(A);
+  CHECK(!mn::add_peer(pub, C.mac, "K"));
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  CHECK(A.espnow.has(C.mac));
+  CHECK(a_heartbeat_reaches(C.mac));
+  // The same key at an address no member holds is a new member as before.
+  const uint8_t free_mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0xE1};
+  become(A);
+  CHECK(mn::add_peer(pub, free_mac, "K"));
+  CHECK(mn::g_peer_count == 3);
+  CHECK(A.espnow.has(free_mac) && A.espnow.has(C.mac));
+  std::printf("PASS a_new_key_at_another_members_address_is_refused\n");
+}
+
+// A's NVS as an older firmware's add_peer could leave it: a member K at
+// C's address beside C. Returns K's key.
+void two_members_at_cs_address(uint8_t k_pub[32]) {
+  fresh_opera();
+  new_key(k_pub);
+  become(A);
+  mn::OperaPeer& k = mn::g_peers[mn::g_peer_count++];
+  memset(&k, 0, sizeof k);
+  memcpy(k.pubkey, k_pub, 32);
+  mn::compute_fingerprint(k_pub, k.fingerprint);
+  memcpy(k.mac_addr, C.mac, 6);
+  strcpy(k.name, "K");
+  k.msg_counter_tx = 1;
+  CHECK(mn::persist_peers());
+  boot(A);
+  CHECK(mn::g_peer_count == 3);
+  CHECK(A.espnow.has(C.mac));
+}
+
+void test_removing_a_member_keeps_an_address_another_member_holds() {
+  uint8_t k_pub[32];
+  two_members_at_cs_address(k_pub);
+  uint8_t fp[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(k_pub, fp);
+  become(A);
+  CHECK(mn::remove_peer(fp));
+  CHECK(A.espnow.has(C.mac));                   // C still holds it
+  CHECK(a_heartbeat_reaches(C.mac));
+  // The last holder's removal does release it.
+  mn::compute_fingerprint(C.pub, fp);
+  become(A);
+  CHECK(mn::remove_peer(fp));
+  CHECK(!A.espnow.has(C.mac));
+  std::printf("PASS removing_a_member_keeps_an_address_another_member_holds\n");
+}
+
+void test_a_re_pair_away_from_a_shared_address_keeps_it_for_the_other() {
+  // C re-pairs from a new address; K, at the address C leaves, keeps its
+  // registration. rebind_peer used to delete the old address's.
+  uint8_t k_pub[32];
+  two_members_at_cs_address(k_pub);
+  const uint8_t moved[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0xC2};
+  become(A);
+  CHECK(mn::add_peer(C.pub, moved, "C"));
+  CHECK(same_mac(entry(A, C)->mac_addr, moved));
+  CHECK(A.espnow.has(moved) && A.espnow.has(C.mac));
+  CHECK(a_heartbeat_reaches(C.mac));            // K's frames still go out
+  std::printf("PASS a_re_pair_away_from_a_shared_address_keeps_it_for_the_other\n");
 }
 
 // ── Only a pairing both owners confirmed binds an address ──────────────
@@ -815,6 +909,10 @@ void test_an_old_duplicate_entry_folds_into_one_at_boot() {
   mn::g_prefs.begin(mn::NVS_NS, true);
   CHECK(mn::g_prefs.getUChar(mn::NVS_PEER_COUNT, 0) == 2);
   mn::g_prefs.end();
+  // ... and the slot it freed goes (sweep F137): peer_2 held the duplicate,
+  // B's key under the later pairing's address and name.
+  CHECK(A.nvs.count("mesh/peer_0") == 1 && A.nvs.count("mesh/peer_1") == 1);
+  CHECK(A.nvs.count("mesh/peer_2") == 0);
   boot(A);                                       // so the next boot has nothing to fold
   CHECK(mn::g_peer_count == 2);
   CHECK(same_mac(entry(A, B)->mac_addr, new_mac));
@@ -863,6 +961,9 @@ int main() {
   test_a_re_pair_the_radio_cannot_register_moves_nothing();
   test_a_re_pair_is_not_refused_by_a_full_opera();
   test_a_re_pair_cannot_take_another_members_address();
+  test_a_new_key_at_another_members_address_is_refused();
+  test_removing_a_member_keeps_an_address_another_member_holds();
+  test_a_re_pair_away_from_a_shared_address_keeps_it_for_the_other();
   test_a_joiner_does_not_complete_before_its_owner_confirms();
   test_a_joiner_takes_the_first_offer_only();
   test_an_initiator_takes_one_accept_from_where_its_offer_went();

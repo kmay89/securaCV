@@ -20,12 +20,29 @@
 //     firmware minted bundle ids from 0x8000_0000 too).
 //   * `time_bucket` (0…143 ten-minute buckets) is the ONLY time information
 //     on this wire — no epoch, no ISO string. That is Invariant III working,
-//     not an omission. And the buckets are BOOT-RELATIVE on every current
-//     device: `csi_event_set_clock_offset_minutes` has no production caller
-//     (only a host test), so a bucket's absolute value means nothing —
-//     while the DELTAS between buckets are exact, because they share one
-//     clock. `anchoredDates` builds times from exactly those two truths and
-//     nothing more (review finding on #1611).
+//     not an omission. What a bucket's absolute value means depends on a
+//     clock the wire does not report: the firmware calls
+//     `csi_event_set_clock_offset_minutes` on every loop pass once its
+//     system clock is set (canary_wap.ino `update_csi_clock_offset`; GPS is
+//     the WAP's only wall-clock source, it has no SNTP), with the household
+//     time zone's minute of day (UTC while no zone is set, backlog F28).
+//     So on a device with a GPS fix bucket 0 starts at the household's
+//     midnight, and on one without (no receiver, or before the first fix)
+//     buckets count from boot. A row does not say which, so this file
+//     never reads a bucket as a time of day. The DELTAS between buckets are
+//     a row-to-row age while the offset holds still: every row of a page
+//     shares one boot's uptime (the ring empties on reboot), and the offset
+//     moves when the clock is first set (a jump of any size), at a DST
+//     change (an hour), when the household zone is set or changed (the
+//     difference between the two zones' UTC offsets: up to many hours, and
+//     not always whole hours), and by a minute at a time as the clock is
+//     drift-corrected. Even between those it never quite holds still: each
+//     pass floors two clocks to the whole minute (local wall time and
+//     uptime), and their minute boundaries do not line up, so the offset
+//     takes two adjacent values in turn within every minute, and a row
+//     stamped near a 10-minute boundary can land one bucket either side.
+//     `anchoredDates` builds times from the deltas and nothing more (review
+//     finding on #1611; backlog A48).
 //   * This is a RECORD, not a siren. State-bearing rows sit in an open
 //     bundle until a two-minute quiet gap or the ten-minute window closes
 //     it (csi_bundler_admit returns BUFFERED; nothing calls
@@ -158,13 +175,18 @@ struct WapEventRow: Codable, Sendable, Equatable {
     /// Dates for a newest-first page of rows, anchored at the fetch time —
     /// the strongest claim this wire supports, and not one inch more.
     ///
-    /// Absolute buckets are boot-relative on every current device (no
-    /// production caller of the clock-offset setter), so mapping a bucket
-    /// to a time of day would misdate events by hours. What IS exact is the
-    /// spacing: all rows share the device's clock, so the mod-144 delta
-    /// between a row's bucket and the newest row's bucket is a true
-    /// 10-minute-granular age difference — correct even across the ring's
-    /// midnight wrap. The newest row is anchored at the fetch time's own
+    /// An absolute bucket is household time on a device whose clock GPS has
+    /// set and boot-relative on one it has not, and a row does not say
+    /// which (see the header), so mapping a bucket to a time of day would
+    /// misdate events by hours on the second kind. What holds on both is
+    /// the spacing: all rows share one boot's uptime, so while the clock
+    /// offset holds still the mod-144 delta between a row's bucket and the
+    /// newest row's bucket is a true 10-minute-granular age difference —
+    /// correct even across the ring's midnight wrap. (A row from before the
+    /// clock was first set, or from the other side of a DST change or a
+    /// household zone change, is off by that jump, and the per-pass
+    /// recompute can put a delta one bucket out near a 10-minute boundary.)
+    /// The newest row is anchored at the fetch time's own
     /// bucket ("no later than now"), and every older row steps back by its
     /// delta. Both facts stay coarse: every result lands on the 10-minute
     /// grid (Invariant III) and never in the future.

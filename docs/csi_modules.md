@@ -29,9 +29,13 @@ typedef struct csi_module {
 ```
 
 A module declares (a) the events it can emit, (b) the fields each event
-carries, (c) its default settings. The runtime calls `tick()` once per CSI
-window; modules may call `csi_event_emit()` from inside `tick()`. Modules
-**must not** reach into each other's state.
+carries, (c) its default settings. The host calls `init()` once at boot,
+through `csi_module_init_all()`, after the modules register and before the
+first CSI window; the runtime then calls `tick()` once per CSI window, and
+never ticks a module whose boot `init()` has not run. Modules may call
+`csi_event_emit()` from inside `tick()`; `init()` must not emit (it runs
+during the host's boot, before the canary-wap refills its Today ring from
+the SD log). Modules **must not** reach into each other's state.
 
 ### The breathing time base
 
@@ -208,9 +212,37 @@ You don't have to deduplicate same-state events yourself. The bundler in
 tuple within a 10-minute window into one row with an aggregated duration.
 You emit; the runtime does the rest.
 
+The row commits, and reaches the broker, when its bundle closes: two
+minutes after the last observation or ten minutes after the first,
+whichever comes first, so two to ten minutes after the state began, with
+every observation counted in `bundled`. Until then it lives in RAM, and a
+reboot or power cut loses it. A row that must reach the broker at once
+(`system.integrity`'s tamper kinds) closes its own key with
+`csi_bundler_flush_key()` right after the emit, and gives up merging for
+it. Ambient rows and rows without a `state_name` bypass the bundler and
+commit at the emit.
+
 If your module would naturally emit hundreds of events per hour during
 a noisy period, set `default_ceiling_per_hour` defensively — the runtime
 caps the burst and the bundler still surfaces a single summary row.
+
+The ceiling counts rows, not emits. An emit that opens a bundle spends one
+slot; an emit merged into its key's open bundle spends none; and a bundle
+reopened after its 10-minute window or its 2-minute quiet gap spends one
+like any opening. Re-emitting a held state to refresh its row is therefore
+free inside the window, but a state held past the window reopens every 10
+minutes, which is 6 slots an hour. A ceiling at or under that rate is full
+after about an hour in one state, and then the module's next transition is
+refused until a slot ages out, up to about ten minutes (the ceiling is
+checked before the bundler runs, so the held state's own refreshes are
+refused too). Size the ceiling
+above the window rate plus the transitions you need to keep.
+
+The ceiling's hour is six 10-minute buckets, the current one and the five
+before it, not a sliding 60 minutes. Any six consecutive buckets hold at
+most the ceiling's openings, but openings that bunch at a bucket edge can
+put up to twice the ceiling in one sliding hour, and a bundled row commits
+when its bundle closes, after the bucket that counted it (sweep F132).
 
 ## Dismiss feedback
 
@@ -237,7 +269,22 @@ static void on_init(const csi_module_settings_t* s) {
 ```
 
 Settings keys must start with the module id — that's the convention the
-host uses to namespace NVS storage and the Tuning Lab UI.
+Tuning Lab UI groups by. Both firmware trees read them by one rule,
+[`csi_module_settings_nvs.h`](../firmware/common/csi/src/csi_module_settings_nvs.h):
+NVS namespace `"csi"`, the short key its table maps the dotted key to (NVS
+keys are 15 characters at most), a typed read, and your default for a key
+the table does not map, a row that is absent or a namespace that will not
+open. So a new setting needs a row in that table before any device stores
+or reads it. The library's own helpers are weak and return the default; a
+host that stores settings overrides them (the canary in its module bridge,
+the canary-wap in `csi_settings_nvs.cpp`).
+
+`init()` reads them once per boot (sweep F93: before it, neither tree ran
+`init()` at boot, so a stored value applied on the canary-wap only after a
+settings change in the same boot, and never on the canary). After a
+settings change the canary-wap re-runs the module's `init()` directly
+(`reinit_module()`), so write `init()` to reset your state and re-read
+everything. The canary has no surface that writes these rows.
 
 ## Registering at boot
 
@@ -250,7 +297,25 @@ void register_csi_modules() {
 }
 ```
 
-That's the whole story. The chokepoint, bundler, ceiling, witness chain,
+Then run every registered module's `init()` once, before the first CSI
+window can reach `csi_module_tick_all()`:
+
+```c
+register_csi_modules();
+csi_module_init_all(nullptr);   // each module's init(), once
+```
+
+`nullptr` suits a sketch on the library's weak settings helpers (every
+setting reads as its default). A host that stores settings passes its own
+handle; both SecuraCV trees pass a read session
+(`csi_module_settings_nvs.h`), so a boot opens NVS once for every
+module's settings, not once per key.
+
+Both trees do this at a fixed point in their boot: after the event-id floor
+is restored and the events egress has begun, so nothing a module commits
+can take an id from below the floor (`check_wap_event_egress.py` rule 3 and
+`check_event_egress_order.py` rule 8 hold the order). That's the whole
+story. The chokepoint, bundler, ceiling, witness chain,
 SSE stream, dashboard ribbon, and Tuning Lab all keep working without
 further wiring.
 
@@ -271,7 +336,7 @@ alongside them — the host's `register_v1_modules()` is a one-line edit.
 | `core.presence` | P0 | `presence_changed` | RF-presence FSM. Each transition emits `presence_changed` with `state_name` carrying the FSM state (`empty` / `sensing` / `subtle` / `quiet` / `active` / `together`). Honors the `pet_mode` toggle by gating breathing-confirmation on a sustained Goertzel lock in the human band. |
 | `core.breathing` | P0 | `breathing_confirmed`, `breathing_lost` | Goertzel lock on the 0.15–0.45 Hz band. Promotes confidence to `confirmed` after the configured confirm-window of consecutive locks. |
 | `core.activity_ribbon` | P0 | `ribbon_bucket_advanced` | Writes the 96-slot 15-minute ring that the dashboard renders as the aurora-strip activity ribbon. NVS-persisted. |
-| `meta.daily_summary` | P0 | `daily_summary` | One row per day at the bucket boundary: total active minutes, longest quiet stretch, anomaly count. |
+| `meta.daily_summary` | P0 | `daily_summary` | One row per household day, at the first module tick in its last five minutes (23:55 to 23:59 local time; UTC while no zone is set). The row's `bundled` is how many committed rows it walked (the newest 64 the RAM event ring holds, whatever their module) and its `note` reads `a<A> q<Q> x<X>`: the rows among them whose state is `active`, whose state is `empty`, and whose category is anomaly. Counts of rows, not minutes or stretches. Closed bundles never reach the ring (sweep F77), so a day of presence changes reads `a0 q0 x0` today, and no published surface carries `note` (the MQTT events body, the card line and `/api/events/today` leave it out): a reader sees the type and the count. It needs a synced wall clock (GPS, on both trees) and CSI windows ticking the modules in that window: an unsynced device commits none, and a boot or first sync inside 23:55 to 23:59 commits none that day. One row per local date: the host passes the date beside the minute, so a DST change at midnight, a zone change or a clock step neither skips a date's row nor commits a second one for a date it returns to; a date on which 23:55 never happens (a spring-forward over it) has none, and a clock stepped back more than a date can summarize an earlier date again (the latch is RAM). canary-wap Quiet Hours spanning 23:55 hold it like any other non-anomaly row (the chokepoint exempts only `meta.quiet_hours`, though its step-4b comment says it holds rows from non-meta modules; a decision). |
 | `anomaly.baseline` | P0 | `unusual_motion`, `unusual_breathing` | 60-window rolling baseline of motion / breathing scalars; emits when the current sample exceeds the baseline by `spike_ratio` (default 2.5×) AND clears the absolute floor. Per-channel cooldown prevents notification floods; ranges are clamped at NVS read so a corrupt slot can't break the detector. |
 | `core.multilink_fusion` | P0 | `motion_confirmed` | Two-link motion confirmation: emits on the rising edge when the local window and at least one fresh paired peer's window (under 3 s old) both clear the motion threshold. Registered in both trees, but no production path calls `core_multilink_fusion_ingest_peer_features()` yet, so with no peer windows it never fires. Host-tested (`firmware/common/csi/test_core_multilink_fusion.cpp`). |
 | `meta.empty_room_baseline` | P0 | `baseline_status` | Empty-room calibration: while a calibration runs, accumulates each window's 32-slot vector into an in-RAM mean and emits `baseline_status` (`calibrated` / `canceled` / `failed`) with the window count. Registered in both trees; nothing in the firmware starts a calibration yet, nothing reads the mean, and the mean lives in RAM only. |

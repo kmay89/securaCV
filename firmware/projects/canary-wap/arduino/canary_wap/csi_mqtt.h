@@ -7,8 +7,30 @@
  *
  * Backed by ESP-IDF's native esp_mqtt client (mqtt_client.h). Bundled
  * with arduino-esp32 — no lib_deps addition. ESP-IDF runs the MQTT
- * task internally and handles auto-reconnect, so callers publish from
- * any context without thinking about threading.
+ * task internally and handles auto-reconnect.
+ *
+ * Threading (sweep F106): the client is the loop task's. It opens it — at
+ * boot from setup() (init()), then from loop() when request_reinit() asked
+ * — and the publish_*() functions are called from it too (and, for the
+ * reconnect republish, from the esp_mqtt task's own event handler). Another
+ * task asks: request_reinit() for a re-init (the config POST, POST
+ * /api/mqtt/test and a QR provisioning do), and set_update_auto_state() for
+ * the auto-update switch (an httpd handler sets it). A publish from another
+ * task could hold the old handle while a re-init retires it.
+ *
+ * The loop task never STOPS a client: esp_mqtt_client_stop() can wait out a
+ * whole connect attempt (the esp_mqtt task holds the client's lock across
+ * it: a TCP/TLS connect, the CONNECT write and the CONNACK wait, each given
+ * the client's network timeout, kNetworkTimeoutMs below), and then waits for
+ * that task to exit. A re-init detaches the old client (no loop publish can
+ * reach it, and its events are ignored), a one-shot worker task stops and
+ * destroys it, and a later loop pass opens the new one once the worker is
+ * done.
+ *
+ * The loop task's publishes do run esp_mqtt: esp_mqtt_client_publish()
+ * takes the same lock and, while connected, writes the socket on the
+ * caller's task. Each of those waits is bounded by kNetworkTimeoutMs, set
+ * on every client (sweep F112), not esp_mqtt's 10 s default.
  *
  * Topic schema (locked against custom_components/securacv/const.py +
  * docs/homeassistant_setup.md):
@@ -85,6 +107,53 @@ constexpr size_t MAX_PASS_LEN   = 128;
 constexpr size_t MAX_PREFIX_LEN = 32;
 constexpr size_t MAX_CA_LEN     = 3071;   /* PEM bytes, NUL excluded (mqtt_transport_logic.h kCaPemMax) */
 
+/* The client's network timeout (esp_mqtt_client_config_t's
+ * network.timeout_ms; sweep F112): how long esp_mqtt lets one socket
+ * operation go without progress before it gives up. Its default is 10 s,
+ * and the loop task, which publishes, is subscribed to an 8 s panic
+ * watchdog (WATCHDOG_TIMEOUT_SEC in canary_wap.ino).
+ *
+ * From esp-mqtt's source at the commit ESP-IDF 5.5.4 pins (6af4446; the
+ * pinned core 3.3.8 is built on IDF 5.5.4), not probed on a device:
+ * esp_mqtt_client_publish() takes the client's API lock and, while
+ * connected, writes the message on the caller's task through
+ * esp_mqtt_write(), which hands this timeout to every
+ * esp_transport_write(). A write that sends nothing within it fails the
+ * publish (-1, which publish_raw() reports) and aborts the connection
+ * (DISCONNECTED, which clears the bridge's link), and a publish to a client
+ * that is not connected returns -1 as soon as it has the lock. The esp_mqtt
+ * task holds the same lock across its own socket operations, each given
+ * this timeout too: a keepalive ping, a resend, the rest of a long incoming
+ * message. A link that stops costs a loop pass one timeout: whichever
+ * operation meets the stall (its own write, or the esp_mqtt task's it
+ * queued behind) gives up and aborts, and every publish after that returns
+ * at publish_raw()'s gate. The timeout restarts on every partial write or
+ * read, so it bounds a stall, not a slow trickle: a link that makes a
+ * little progress just inside the timeout, write after write, holds a
+ * publish longer.
+ *
+ * What the loop task does not wait for: the esp_mqtt task's connect (the
+ * TCP/TLS connect, the CONNECT write and the CONNACK wait, three operations
+ * in a row under the lock) and its CONNECTED burst (the status, the
+ * discovery set, the cached states and the subscribes, sent under the lock
+ * from the event handler). publish_raw() lets nothing but that burst
+ * through until the burst is sent (csi_mqtt.cpp's s_burst_task), an abort
+ * clears the link before esp_mqtt waits out its reconnect delay with the
+ * lock released, and refresh_connection_after_ms (which reconnects in the
+ * same locked pass as its abort) is not set. Only the re-init's worker
+ * waits out a connect (esp_mqtt_client_stop, F106).
+ *
+ * kNetworkOpsBudget of them must fit under the loop's watchdog: two back to
+ * back (an esp_mqtt operation that finishes just inside the timeout, then
+ * the publish's own write meeting the stall), and one more for the rest of
+ * the pass. canary_wap.ino static_asserts it, and
+ * firmware/scripts/check_wap_loop_commands.py holds this file to setting it
+ * on the client. A side effect: a broker that takes longer than this to
+ * answer one step of a connect (the TCP connect, a TLS handshake read, the
+ * CONNACK) fails that attempt, and esp_mqtt retries it 10 s later. */
+constexpr uint32_t kNetworkTimeoutMs = 2000;
+constexpr uint32_t kNetworkOpsBudget = 3;
+
 /* Configuration mirror of the NVS row. password is loaded but
  * intentionally never returned by handle_config_get. */
 struct Config {
@@ -124,11 +193,22 @@ const char* transport_name();
 const char* last_error();
 
 /**
- * Cold-boot init. Reads NVS, opens the esp_mqtt client if enabled, and
- * arms the LWT. Idempotent — a second call (e.g. after a config POST)
- * tears down the existing client and re-opens with the new credentials.
- * Safe to call before WiFi STA is up; the client stays disconnected
- * until TCP can establish.
+ * The identity every publish carries (copied). setup() calls it before the
+ * network starts, so a re-init a QR provisioning asks for has it even if
+ * the HTTP server (and the boot init() in it) never started. Loop task,
+ * before any re-init is requested; init() takes the same three again.
+ */
+void set_identity(const char* device_id,
+                  const char* firmware_version,
+                  const char* public_key_hex);
+
+/**
+ * Cold-boot init, on the loop task (setup()'s start_http_server). Reads
+ * NVS, opens the esp_mqtt client if enabled, and arms the LWT. Called once;
+ * a call that finds a client open does not stop it (that can block for
+ * seconds) but asks loop() for a re-init and returns true. Safe to call
+ * before WiFi STA is up; the client stays disconnected until TCP can
+ * establish.
  *
  *   device_id        the canary's device_id (g_device.device_id) — copied
  *   firmware_version the FIRMWARE_VERSION literal — copied
@@ -141,46 +221,106 @@ bool init(const char* device_id,
           const char* public_key_hex);
 
 /**
- * Per-tick pump. Currently a no-op (esp_mqtt manages its own task and
- * supervises reconnection internally), but reserved as the place to
- * land any future main-loop synchronization (e.g. backfill events from
- * the SD ring once SD persistence lands).
+ * Per-tick pump, main loop. esp_mqtt manages its own task and supervises
+ * reconnection internally. This runs, on the loop task, never waiting: a
+ * re-init request_reinit() asked for (detach the open client and start the
+ * worker that stops it; on a later pass, once it is gone, open the new one:
+ * one open serves every request made before it began, since it reads NVS
+ * afresh); then the committed-event egress (csi_event_egress::pump): the SD
+ * event log, the live publishes and the reconnect backfill; then the
+ * auto-update switch state set_update_auto_state() left.
  */
 void loop();
+
+/**
+ * Any task: ask the loop task to re-run init() (the broker settings in
+ * NVS changed, or the owner asked for a fresh connect). Returns the
+ * request's number for reinit_done(). Sweep F106: init() ran on the httpd
+ * task here, and destroyed the client under a publish on the loop task.
+ */
+uint32_t request_reinit();
+
+/** Any task: has a re-init whose NVS read began after `request` was made
+ *  opened its client (or found the bridge disabled)? */
+bool reinit_done(uint32_t request);
 
 /** True iff the underlying MQTT client is connected to the broker. */
 bool connected();
 
-/**
- * Push one CSI event to {prefix}/{device_id}/events. Called from the
- * csi_event_on_committed() strong override after the chokepoint has
- * cleared the event. No-op when MQTT is disabled or disconnected.
- *
- * event_id is the same id csi_event allocated; tracked internally as
- * the high-water-mark of "events HA has seen" so a subsequent MQTT
- * reconnect knows where to start the backfill replay.
- */
-void publish_event(uint32_t                  event_id,
-                   const char*               module_id,
-                   const char*               type_name,
-                   csi_event_category_t      category,
-                   csi_privacy_class_t       privacy,
-                   const csi_event_values_t* values);
+/* ── The events egress's wire ──────────────────────────────────────────
+ * csi_event_egress.cpp decides which committed csi_event goes out when,
+ * and keeps the delivery watermark; these are the publishes it asks for.
+ * The egress is their only caller, on the loop task. publish_raw only
+ * checks that the client exists and is connected; that is enough because
+ * a re-init detaches the client on the same task (loop(), sweep F106), and
+ * only a detached client is ever stopped. Before, a config POST or a test
+ * ran init() on the httpd task and could destroy the client under one of
+ * these publishes. */
+
+/* What one publish attempt did. */
+enum class EventSend : uint8_t {
+  kSent,         /* handed to esp_mqtt */
+  kNotNow,       /* not connected, or the client refused the publish */
+  kUnbuildable,  /* the body does not build: this row can never go out */
+};
 
 /**
- * Replay an on-disk event during MQTT-reconnect backfill. Same wire
- * format as publish_event but anchors the timestamp at the original
- * first_seen_ms (so HA's history places the event at the right
- * moment instead of "now") and uses the persisted bundled_count.
- * Called by the main-loop drain triggered when the MQTT bridge
- * reconnects after an outage.
- *
- * Returns true on successful enqueue so the backfill iterator can
- * stop mid-replay if a publish fails — letting later successes
- * advance the watermark past a failed record would permanently
- * skip it on subsequent reconnects.
+ * Publish one committed csi_event on {prefix}/{device_id}/events, in the
+ * shared body (csi_event_wire.h): signed, its event_id, the row's
+ * first_seen_ms as the timestamp, `bundled_count`, and `replay` (HA Device
+ * Triggers filter replayed rows out, so old events do not re-fire
+ * automations after a reconnect).
  */
-bool publish_event_record(const csi_event_record_t* rec);
+EventSend publish_event_row(const csi_event_record_t& rec,
+                            uint16_t bundled_count,
+                            bool replay);
+
+/**
+ * The per-kind tamper bridge: a system.integrity row republished on
+ * {prefix}/{device_id}/tamper in the shape HA's tamper binary sensors
+ * parse (csi_event_wire::build_tamper_bridge_body). Not retained. Returns
+ * false when the row is not a tamper kind or the publish failed.
+ */
+bool publish_tamper_bridge(const char* module_id,
+                           const char* type_name,
+                           const csi_event_values_t* values);
+
+/** A broker is configured (the bridge is enabled and names a host): the
+ *  committed events are owed to it. False rows are logged and owed to
+ *  nobody (csi_event_egress.h). Any task. */
+bool accepting();
+
+/**
+ * Where a committed event is delivered: the broker's host, port and user,
+ * and this device's topic prefix (a different prefix is a different topic
+ * tree, so another consumer). A password, TLS or discovery change is the
+ * same destination. A 32-bit FNV-1a digest, fields separated by a NUL, so
+ * init() can tell a change without keeping a second Config: two different
+ * destinations share a digest with probability 2^-32.
+ */
+inline uint32_t destination_digest(const Config& c) {
+  uint32_t h = 2166136261u;
+  auto mix = [&h](unsigned char b) { h = (h ^ b) * 16777619u; };
+  auto mix_str = [&mix](const char* s) {
+    for (; *s; ++s) mix((unsigned char)*s);
+    mix(0);
+  };
+  mix_str(c.host);
+  mix((unsigned char)(c.port & 0xFF));
+  mix((unsigned char)(c.port >> 8));
+  mix_str(c.user);
+  mix_str(c.prefix);
+  return h;
+}
+
+/**
+ * Bumped by an init() (a config POST, a QR provisioning) that changes the
+ * destination (destination_digest) from the one an earlier init() this boot
+ * loaded; the boot's first init() only records it. The events egress drops
+ * its backlog on a change, as the canary's does on mqtt_destination_epoch():
+ * what waited for one broker is not the next one's to see. Any task.
+ */
+uint32_t destination_epoch();
 
 /**
  * Publish HA MQTT auto-discovery payloads for the canary's full entity
@@ -263,9 +403,13 @@ struct MqttTamperLevels {
  * Push the canonical health snapshot to {prefix}/{device_id}/health.
  * Schema (matches custom_components/securacv/sensor.py health handler):
  *   battery, battery_present, memory_free, uptime, firmware_version,
- *   public_key — plus charge_state, battery_health_pct, battery_mv
- *   when a battery is present, and sd_mounted / enclosure_open when
- *   `tamper` reports them (binary_sensor.py's per-type tamper sensors).
+ *   public_key, event_id_space_low — plus charge_state,
+ *   battery_health_pct, battery_mv when a battery is present, and
+ *   sd_mounted / enclosure_open when `tamper` reports them
+ *   (binary_sensor.py's per-type tamper sensors). event_id_space_low
+ *   (sweep F82) is true once the event-id allocator reaches
+ *   csi_event_id_floor::kHoldLimit, and after it wraps; Home Assistant's
+ *   Event ID Space Low binary sensor follows it (binary_sensor.py, HA24).
  * The HA sensor derives "healthy/warning/critical" from battery +
  * memory_free; charging devices and mains-powered devices (battery
  * nullptr → battery=100) never trip the battery thresholds.
@@ -273,6 +417,30 @@ struct MqttTamperLevels {
 void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
                     const MqttBatteryInfo* battery = nullptr,
                     const MqttTamperLevels* tamper = nullptr);
+
+/**
+ * Push the committed-event egress's counters to {prefix}/{device_id}/egress
+ * (sweep F149), retained, right after the health publish and at its
+ * cadence (the sketch's loop() calls it as the statement after
+ * publish_health()). The body names the health it follows, then carries
+ * the counters under the key the canary PIO tree's health uses:
+ *   {"firmware_version":"<v>","uptime":<s>,"csi_event_egress":{...}}
+ * `firmware_version` and `uptime` are the ones the last health body
+ * carried; the object is csi_event_egress::stats_json() of
+ * csi_event_egress::stats() (dropped, held_dropped, ambient_dropped,
+ * unsent_dropped and the backfill planner's counters under `planner`), so
+ * Home Assistant reads both devices' counters with one parser, and shows
+ * these only while they pair with the device's current health: a retained
+ * body an earlier boot, or a firmware with no egress topic, left behind
+ * names another version or a later uptime. Nothing is published before
+ * this boot's first health body. A topic of its own because the health
+ * body has 34 of its 384 bytes spare at worst and the object is up to 319;
+ * the whole body is up to 405 (a 23-character version, every counter at
+ * 4294967295). The counters start over at every boot. Loop task only:
+ * stats() reads the pump's state, which the pump writes there.
+ */
+constexpr size_t kEgressBodyMax = 448;
+void publish_egress();
 
 /**
  * Push the witness count to {prefix}/{device_id}/counts. Used by the
@@ -388,8 +556,9 @@ int take_pending_mic_mute();
  * (installed_version / latest_version / in_progress / update_percentage /
  * release_summary / release_url) to {prefix}/{device_id}/update/state —
  * retained and republished on reconnect so HA stays in sync across
- * broker restarts. publish_update_auto_state mirrors the auto-update
- * switch the same way ("ON"/"OFF" on {prefix}/{device_id}/update/auto).
+ * broker restarts (loop task). set_update_auto_state mirrors the
+ * auto-update switch the same way ("ON"/"OFF" on
+ * {prefix}/{device_id}/update/auto), from any task.
  *
  * Inbound commands arrive on the esp_mqtt task, so they are NOT
  * delivered via callback — csi_mqtt parses them into pending flags the
@@ -398,7 +567,11 @@ int take_pending_mic_mute();
  * matching the module's "caller owns the cadence" contract.
  */
 void publish_update_state(const char* json_payload);
-void publish_update_auto_state(bool enabled);
+
+/* The auto-update switch's state, from any task (an httpd handler sets it):
+ * cached for the reconnect republish, and published by loop() on the loop
+ * task (sweep F106). */
+void set_update_auto_state(bool enabled);
 
 /** True exactly once after HA pressed Install on the update entity. */
 bool take_pending_install();
@@ -418,10 +591,12 @@ void set_api_token_provider(const char* (*fn)());
 /* HTTP handlers — registered by csi_integration::init alongside the
  * other CSI routes. Auth-gated by either the cv_session cookie or a
  * Bearer header carrying the api_token (the same dual-mode
- * CSI_AUTH_OR_RETURN uses). The /test handler forces a reconnect with
- * current NVS settings and reports the broker's reachability
- * synchronously, so the dashboard's "Test connection" button gives a
- * real signal rather than a spinner. */
+ * CSI_AUTH_OR_RETURN uses). The /test handler asks the loop task for a
+ * reconnect with current NVS settings (request_reinit), waits for it, and
+ * reports the broker's reachability within about 4 s, so the dashboard's
+ * "Test connection" button gives a real signal rather than a spinner. The
+ * config POST saves, asks for the same re-init and waits up to 2 s for it,
+ * so the page's status refresh sees the new client. */
 esp_err_t handle_config_get(httpd_req_t* req);
 esp_err_t handle_config_post(httpd_req_t* req);
 esp_err_t handle_test(httpd_req_t* req);

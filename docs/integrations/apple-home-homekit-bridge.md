@@ -39,9 +39,10 @@ stands: the events — absolutely; the video — never.
 | Carbon Monoxide Sensor | `binary_sensor.<canary_id>_co_alarm` ("CO Alarm Heard", `device_class: carbon_monoxide`) | Same detector, UL 2034 T4 cadence — a separate entity, so it needs its own include line |
 | Occupancy Sensor | `binary_sensor.securacv_canary_<device_id>_occupancy` (`device_class: occupancy`) | The integration itself, natively — phase A1, shipped. A template is now only needed for a presence source the integration does not own (§5) |
 
-The kernel's and the WAP's ids in this table are the ones this tree
-documents. Their publishers do not set them, so your install may show
-different ones; §4 says what to look for.
+The kernel's and the WAP's ids in this table are the ones their publishers
+ask Home Assistant for. Whether your install shows them depends on its
+version and on when the entity was first registered; §4 says what to look
+for.
 
 ## 2) Architecture
 
@@ -112,17 +113,18 @@ so it is bridged too and stays off. To keep it out, list its exact id under
 `exclude_entities`, which Home Assistant checks before the globs.
 
 **The kernel's per-zone motion and the WAP's smoke and CO sensors are left
-out of the list on purpose.** This tree documents their ids as
+out of the list on purpose.** Their MQTT discovery configs ask for
 `binary_sensor.pwk_<zone>_motion` and `binary_sensor.<canary_id>_smoke_alarm`
-/ `_co_alarm` (the table in §1), but neither publisher sets an id. Their MQTT
-discovery payloads carry a name (**PWK <zone> Motion**, **Smoke Alarm
-Heard**, **CO Alarm Heard**) and a unique id, and no `default_entity_id`, so
-Home Assistant builds each id from the device's name and the entity's. Read
-from Home Assistant core's source (`homeassistant/components/mqtt/entity.py`),
-not seen in a running Home Assistant, a new install would name them
-`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion` and
-`binary_sensor.canary_<id>_smoke_alarm_heard` / `_co_alarm_heard`, which the
-patterns this recipe used to list do not match. Find each one under
+/ `_co_alarm` (the table in §1; `<canary_id>` is the device id as Home
+Assistant slugs it, `canary-s3-4dC2` becoming `canary_s3_4dc2`) with
+`default_entity_id`. Read from Home Assistant core's source
+(`homeassistant/components/mqtt/entity.py`), not seen in a running Home
+Assistant: Home Assistant 2025.10 and later gives an entity that id when it
+first registers it. An entity it registered before keeps the id it has, and
+an older Home Assistant ignores the key and builds the id from the device's
+name and the entity's (`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`,
+`binary_sensor.canary_<canary_id>_smoke_alarm_heard` / `_co_alarm_heard`).
+Until a running Home Assistant has confirmed the new ids, find each one under
 **Settings > Devices & Services**, on the Entities tab, and add it under
 `include_entities` (its exact id) or `include_entity_globs` (a pattern).
 

@@ -16,6 +16,7 @@
 
 #include <Arduino.h>
 #include "canary_config.h"
+#include "mqtt/mqtt_offline_queue.h"  // mqtt_offline_queue::Stats
 
 #if FEATURE_HA_MQTT
 
@@ -30,15 +31,17 @@
 // (5) + topic length (2) + topic + payload. It refuses anything larger,
 // silently. The health payload is the largest periodic publish: ~1000 B
 // with realistic values, including the 64-hex public_key Home Assistant
-// pins. With every field at its type's widest it reaches ~1200 B, a
-// 1272 B packet on a topic at its 63-char cap. The old 1024 B buffer did
-// not hold that worst case even before the key. 1280 does, with 8 B to
-// spare since chain_persist_failures joined (F55): almost any new health
-// key needs a larger buffer first.
+// pins. With every field at its type's widest it reached ~1200 B, a
+// 1272 B packet on a topic at its 63-char cap, which the old 1280 B buffer
+// held with 8 B to spare (F55). The event egress's counters and the
+// event-id space flag (sweeps F109, F82) and the offline queue's drops
+// bring the worst case to a 1745 B packet: 1792 holds it with 47 B to spare
+// (+512 B of heap for the client's buffer). Almost any new health key needs
+// a larger buffer first.
 // custom_components/securacv/tests/test_canary_health_trust.py holds every
 // health key to it.
 #ifndef MQTT_BUFFER_SIZE
-  #define MQTT_BUFFER_SIZE        1280
+  #define MQTT_BUFFER_SIZE        1792
 #endif
 #ifndef MQTT_RECONNECT_MIN_MS
   #define MQTT_RECONNECT_MIN_MS   1000
@@ -218,6 +221,14 @@ bool mqtt_publish_event_live(const char* json_payload);
 // records of its own (the SD event log's backfill) drops them on a change:
 // what waited for one broker is not the next one's to see.
 uint32_t mqtt_destination_epoch();
+
+// The offline queue's counters this boot (mqtt_offline_queue.h Stats, events
+// and tamper alerts together). All zero until the first push allocates the
+// queue, and for good if that allocation fails (an inert queue counts no
+// refusal: the event egress counts the rows it loses then, as its
+// unsent_dropped). The health publish carries the drops (`offline_queue`).
+// Loop task, as every push and the drain.
+mqtt_offline_queue::Stats mqtt_offline_queue_stats();
 
 // Health: system metrics (QoS 0, every 60s)
 bool mqtt_publish_health(const char* json_payload);

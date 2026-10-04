@@ -52,8 +52,8 @@ function shimFetch(log) {
 }
 function fakeScene() {
   return {
-    buildGen: 0, parts: [], dist: 0,
-    clearParts() { this.buildGen++; this.parts = []; },
+    buildGen: 0, parts: [], dist: 0, turnPose: null,
+    clearParts() { this.buildGen++; this.parts = []; this.turnPose = null; },
     addMesh(builder, opts = {}) { const p = { builder, ...opts }; this.parts.push(p); return p; },
   };
 }
@@ -157,4 +157,130 @@ test("the Watch card seats its drum where the CAD ledger measures it", async () 
   close(glassAt, drumH - knob("flush"), "glass plane");
   close(glassW, row.face_fig_mm.w, "glass width");
   close(glassH, row.face_fig_mm.h, "glass height");
+});
+
+// A47: a glass worn portrait turns the Dash's case and leaves its stand. The
+// sheet shows the real shape (app.js runs upgradeRealShape after the figure),
+// and the desk stand is cut for the landscape case — the plug's channel under
+// the USB-C in its bottom wall, the screw lobes on the pedestal
+// (canary_dash_display.scad) — so the turned case stands alone, face-on,
+// over a shadow sized for it. Turning the whole scene stood the stand on its
+// side and leaned the case sideways (the review of #<W14>).
+test("A47: a turned glass turns the Dash's case and leaves its stand", async () => {
+  const { upgradeRealShape } = await import("../assets/real-shapes.js");
+  const { partModels, turnModel, turnedShadow, M4 } = await import("../assets/scene3d.js");
+  const real = globalThis.fetch;
+  globalThis.fetch = shimFetch([]);
+  const scene = fakeScene();
+  try {
+    assert.ok(await upgradeRealShape(scene, "canary-display-dash"), "the Dash card upgrades");
+  } finally {
+    globalThis.fetch = real;
+  }
+  const { parseSTL } = await import("../assets/stl.js");
+  const stl = (f) => parseSTL(readFileSync(join(ROOT, "enclosures/preview", f)).buffer);
+  const frame = stl("canary_dash_display_frame.stl"), back = stl("canary_dash_display_back.stl");
+  const stands = scene.parts.filter((p) => p.stand);
+  assert.strictEqual(stands.length, 1, "the stand is the one part that holds the case");
+  assert.strictEqual(stands[0].builder.pos.length, stl("canary_dash_display_stand.stl").mesh.pos.length,
+    "the part marked as the stand is the stand's mesh");
+  const pose = scene.turnPose;
+  assert.ok(pose, "the real Dash names its case's pose");
+  assert.deepStrictEqual(pose.size.map((v) => +v.toFixed(3)),
+    [frame.bbox.size[0], frame.bbox.size[1], frame.bbox.size[2] + back.bbox.size[2]].map((v) => +v.toFixed(3)),
+    "the case's face-on size is the frame's outline and the case's depth");
+
+  // Unturned: every part as built, the stand among them.
+  const flat = (m) => Array.from(m).map((v) => +v.toFixed(4) || 0);
+  const still = partModels(scene.parts, 0, pose);
+  assert.strictEqual(still.length, scene.parts.length);
+  for (const { part, model } of still) assert.strictEqual(model, part.model);
+
+  // Turned: the stand is left out, and only the case turns.
+  const turned = partModels(scene.parts, 1, pose);
+  assert.strictEqual(turned.length, scene.parts.length - 1, "the stand does not turn with the case");
+  assert.ok(turned.every(({ part }) => !part.stand));
+  // The glass: face-on at the case's center, 7.4 (the ledger's glass plane)
+  // in front of it, turned a quarter turn clockwise — exactly the figure's
+  // turned screen, so scene_figures.test.js's corner arithmetic holds here.
+  const glass = turned.find(({ part }) => part.screen);
+  assert.deepStrictEqual(flat(glass.model), flat(M4.mul(turnModel(1), M4.translate(0, 0, 7.4))),
+    "the turned glass faces the viewer, upright for the turned texture");
+  // The case's body, every vertex through its turned model: h wide and w
+  // tall, centered on the origin — standing, not leaning.
+  const [w, h] = pose.size;
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const { part, model } of turned) {
+    if (part.screen) continue;
+    const pos = part.builder.pos;
+    for (let i = 0; i < pos.length; i += 3) {
+      for (let k = 0; k < 3; k++) {
+        const v = model[k] * pos[i] + model[4 + k] * pos[i + 1] + model[8 + k] * pos[i + 2] + model[12 + k];
+        lo[k] = Math.min(lo[k], v); hi[k] = Math.max(hi[k], v);
+      }
+    }
+  }
+  const close = (got, want, what) => assert.ok(Math.abs(got - want) < 0.05, `${what}: ${got.toFixed(3)}, want ${want.toFixed(3)}`);
+  close(hi[0] - lo[0], h, "turned width");
+  close(hi[1] - lo[1], w, "turned height");
+  close((hi[0] + lo[0]) / 2, 0, "centered across");
+  close((hi[1] + lo[1]) / 2, 0, "centered up");
+  // The shadow the turned case stands on: just under its foot.
+  const sh = turnedShadow({ y: -40.5, rx: 73.2, rz: 33.7, alpha: 0.3 }, 1, pose);
+  assert.ok(sh.y <= lo[1] && sh.y > lo[1] - 3, `the shadow (y ${sh.y.toFixed(2)}) is under the case's foot (${lo[1].toFixed(2)})`);
+});
+
+// A56: the case turns the way the visitor turned the glass. Its USB-C leaves
+// the case's bottom wall (canary_dash_display.scad), and glass_settings.h's
+// turns say where that wall goes: ROT_PORTRAIT is the glass turned clockwise
+// (the cable side on the viewer's left), ROT_PORTRAIT_INV counterclockwise
+// (on the right), ROT_LANDSCAPE_INV upside down (on top, the cable-up
+// mount). A47 turned the case clockwise for both portrait turns, so the
+// other way stood the cable side where the first turn puts it.
+test("A56: the real Dash's cable side lands where the visitor's turn puts it", async () => {
+  const { upgradeRealShape } = await import("../assets/real-shapes.js");
+  const { partModels, M4 } = await import("../assets/scene3d.js");
+  const real = globalThis.fetch;
+  globalThis.fetch = shimFetch([]);
+  const scene = fakeScene();
+  try {
+    assert.ok(await upgradeRealShape(scene, "canary-display-dash"), "the Dash card upgrades");
+  } finally {
+    globalThis.fetch = real;
+  }
+  const pose = scene.turnPose;
+  const [w, h] = pose.size;
+  const apply = (m, pos, i) => [0, 1, 2].map((k) => m[k] * pos[i] + m[4 + k] * pos[i + 1] + m[8 + k] * pos[i + 2] + m[12 + k]);
+  // The bottom wall: every case vertex within 1 mm of the seated case's foot,
+  // read face-on (the seat alone), so the wall is picked before any turn.
+  const body = scene.parts.filter((p) => !p.stand && !p.screen);
+  let foot = Infinity;
+  for (const p of body) {
+    const m = M4.mul(pose.seat, p.model);
+    for (let i = 0; i < p.builder.pos.length; i += 3) foot = Math.min(foot, apply(m, p.builder.pos, i)[1]);
+  }
+  const wall = (turn) => {
+    const at = new Map(partModels(scene.parts, turn, pose).map(({ part, model }) => [part, model]));
+    const sum = [0, 0];
+    let n = 0;
+    for (const p of body) {
+      const seated = M4.mul(pose.seat, p.model);
+      for (let i = 0; i < p.builder.pos.length; i += 3) {
+        if (apply(seated, p.builder.pos, i)[1] > foot + 1) continue;
+        const v = apply(at.get(p), p.builder.pos, i);
+        sum[0] += v[0]; sum[1] += v[1]; n++;
+      }
+    }
+    assert.ok(n > 100, `the bottom wall has vertices (${n})`);
+    return [sum[0] / n, sum[1] / n];
+  };
+  const [x1, y1] = wall(1), [x3, y3] = wall(3), [x2, y2] = wall(2);
+  assert.ok(x1 < -0.4 * h && Math.abs(y1) < 0.2 * w, `turned clockwise, the cable side is on the left (${x1.toFixed(1)}, ${y1.toFixed(1)})`);
+  assert.ok(x3 > 0.4 * h && Math.abs(y3) < 0.2 * w, `turned counterclockwise, it is on the right (${x3.toFixed(1)}, ${y3.toFixed(1)})`);
+  assert.ok(y2 > 0.4 * h && Math.abs(x2) < 0.2 * w, `upside down, it is on top (${x2.toFixed(1)}, ${y2.toFixed(1)})`);
+  // and the stand stays out of every turn, the case centered for each
+  for (const t of [1, 2, 3]) {
+    const turned = partModels(scene.parts, t, pose);
+    assert.strictEqual(turned.length, scene.parts.length - 1, `turn ${t}: the stand is left out`);
+  }
 });

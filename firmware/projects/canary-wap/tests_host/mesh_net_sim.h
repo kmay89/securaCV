@@ -36,6 +36,9 @@ struct Device {
   uint8_t peer_count = 0;
   mesh_revocation::List revoked = {};
   bool revoked_stored = false;
+  mn::RxTombstone rx_tombs[mn::MAX_RX_TOMBSTONES] = {};
+  uint8_t rx_tomb_count = 0;
+  uint64_t tx_high_signed = 0;
   mn::MeshState state = mn::MESH_DISABLED;
   bool espnow_initialized = false;
   uint32_t messages_sent = 0, messages_received = 0, message_errors = 0;
@@ -43,8 +46,15 @@ struct Device {
   uint32_t last_heartbeat_ms = 0, last_peer_check_ms = 0;
   uint32_t storm_window_start_ms = 0, storm_window_count = 0;
   uint32_t storm_pause_until_ms = 0, storm_trigger_count = 0;
+  bool tx_reserve_warned = false;
+  uint32_t tx_reserve_warned_ms = 0;
   mn::RekeyState rekey = {};
   mn::PairingSession pairing = {};
+  // The owner's commands waiting for this device's loop task (F96).
+  decltype(mn::g_commands) commands;
+  mn::CompleteResend complete_resend = {};
+  // What its status routes read (F110).
+  decltype(mn::g_status_view) status_view;
   // The device's radio and flash.
   host_sim::EspNow espnow;
   host_sim::NvsStore nvs;
@@ -61,6 +71,9 @@ inline void save(Device& d) {
   d.peer_count = mn::g_peer_count;
   d.revoked = mn::g_revoked;
   d.revoked_stored = mn::g_revoked_stored;
+  memcpy(d.rx_tombs, mn::g_rx_tombs, sizeof d.rx_tombs);
+  d.rx_tomb_count = mn::g_rx_tomb_count;
+  d.tx_high_signed = mn::g_tx_high_signed;
   d.state = mn::g_mesh_state;
   d.espnow_initialized = mn::g_espnow_initialized;
   d.messages_sent = mn::g_messages_sent;
@@ -74,8 +87,13 @@ inline void save(Device& d) {
   d.storm_window_count = mn::g_storm_window_count;
   d.storm_pause_until_ms = mn::g_storm_pause_until_ms;
   d.storm_trigger_count = mn::g_storm_trigger_count;
+  d.tx_reserve_warned = mn::g_tx_reserve_warned;
+  d.tx_reserve_warned_ms = mn::g_tx_reserve_warned_ms;
   d.rekey = mn::g_rekey;
   d.pairing = mn::g_pairing;
+  d.commands = mn::g_commands;
+  d.complete_resend = mn::g_complete_resend;
+  d.status_view = mn::g_status_view;
 }
 
 inline void load(Device& d) {
@@ -89,6 +107,9 @@ inline void load(Device& d) {
   mn::g_peer_count = d.peer_count;
   mn::g_revoked = d.revoked;
   mn::g_revoked_stored = d.revoked_stored;
+  memcpy(mn::g_rx_tombs, d.rx_tombs, sizeof d.rx_tombs);
+  mn::g_rx_tomb_count = d.rx_tomb_count;
+  mn::g_tx_high_signed = d.tx_high_signed;
   mn::g_mesh_state = d.state;
   mn::g_espnow_initialized = d.espnow_initialized;
   mn::g_messages_sent = d.messages_sent;
@@ -102,8 +123,13 @@ inline void load(Device& d) {
   mn::g_storm_window_count = d.storm_window_count;
   mn::g_storm_pause_until_ms = d.storm_pause_until_ms;
   mn::g_storm_trigger_count = d.storm_trigger_count;
+  mn::g_tx_reserve_warned = d.tx_reserve_warned;
+  mn::g_tx_reserve_warned_ms = d.tx_reserve_warned_ms;
   mn::g_rekey = d.rekey;
   mn::g_pairing = d.pairing;
+  mn::g_commands = d.commands;
+  mn::g_complete_resend = d.complete_resend;
+  mn::g_status_view = d.status_view;
   mn::g_rx_pending = false;
   host_sim::espnow = &d.espnow;
   host_sim::nvs = &d.nvs;
@@ -119,12 +145,11 @@ inline void become(Device& d) {
 // A device powering up: RAM gone, flash and identity kept. Runs the real
 // mesh_network::init() (NVS opera config, peers, deny-list) and the
 // sketch's load_replay_counters() right after it, as canary_wap.ino does.
-// The broadcast address is registered here because on a device something
-// else registers it: csi_probe::init (the CSI active probe the WAP brings up
-// whenever csi_hal runs), and chirp_channel's or beacon_channel's broadcast
-// sends. mesh_network.cpp never registers it itself, and its channel-change
-// listener deletes it; of those three only chirp and beacon add it back, so
-// after a channel change a pairing DISCOVER relies on one of them.
+// Nothing here registers the ESP-NOW broadcast address. This used to,
+// standing in for csi_probe::init and chirp's and Beacon's broadcast sends,
+// because mesh_network.cpp sent its DISCOVER relying on them and its
+// channel-change listener deleted the registration; since F74 the DISCOVER
+// registers it and the listener re-adds it (test_mesh_liveness_wap).
 inline void boot(Device& d) {
   if (g_cur != nullptr && g_cur != &d) save(*g_cur);
   Device fresh;
@@ -138,15 +163,11 @@ inline void boot(Device& d) {
   g_cur = &d;
   mn::init(d.priv, d.pub, d.name);
   mn::load_replay_counters();
-  // The channel policy's first poll reports a channel change, and the
-  // listener init() registered drops the broadcast registration. Settle it
-  // here (the policy is one per image, and every simulated device shares
-  // the channel), then register broadcast (see above), so no update()
-  // later drops it from under a test.
+  // The channel policy's first poll reports a channel change, and runs the
+  // listener init() registered. Settle it here (the policy is one per
+  // image, and every simulated device shares the channel), so no update()
+  // later runs it from under a test.
   mesh_channel_policy::poll_radio();
-  esp_now_peer_info_t bc = {};
-  memset(bc.peer_addr, 0xFF, 6);
-  if (!esp_now_is_peer_exist(bc.peer_addr)) esp_now_add_peer(&bc);
 }
 
 inline void make_device(Device& d, const char* name, uint8_t mac_last) {

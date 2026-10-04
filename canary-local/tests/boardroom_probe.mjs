@@ -11,6 +11,7 @@ import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MIME = {
@@ -42,15 +43,15 @@ await allow("canary-local/devices");
 await allow("canary-local/boards");
 
 const server = createServer(async (req, res) => {
-  const key = decodeURIComponent(req.url.split("?")[0].split("#")[0]);
-  const path = SERVABLE.get(key);
+  const path = lookup(SERVABLE, req.url);   // decodes inside its own try: /%E0 is a 404 (A52)
   if (!path) { res.writeHead(404); res.end(); return; }
   try {
     const data = await readFile(path);
     res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(data);
   } catch { res.writeHead(404); res.end(); }
-}).listen(0);
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
 
 const browser = await pw.chromium.launch(
@@ -84,12 +85,12 @@ if (pills !== boardCount) fail(`expected ${boardCount} board pills, saw ${pills}
 await page.waitForFunction(() => {
   const cv = document.querySelector(".broom-3d");
   return cv && cv.__scene && cv.__scene.parts.length >= 5;
-}, { timeout: 15000 });
+}, null, { timeout: 15000 });
 
 step("mesh in scene");
 // ── pin flags hang off the pinout's own anchors ──
 await page.waitForFunction(() => document.querySelectorAll(".pin-flag").length >= 5,
-  { timeout: 15000 });
+  null, { timeout: 15000 });
 const flagText = await page.locator(".broom-overlay").textContent();
 for (const needle of ["D1", "D6", "D7", "BAT+"]) {
   if (!flagText.includes(needle)) fail(`missing pin flag "${needle}"`);
@@ -136,7 +137,7 @@ step("harness in scene");
 await page.locator(".wire-nav .primary", { hasText: "next" }).click();
 await page.waitForFunction(() =>
   document.querySelector(".wire-counter")?.textContent.includes("step 1"),
-  { timeout: 5000 });
+  null, { timeout: 5000 });
 if (!(await page.locator(".wire-step-card.on h5").textContent()).includes(build.steps[0].title)) {
   fail("step 1 card not active after next");
 }
@@ -153,7 +154,7 @@ for (const [bid, b] of Object.entries(boards.boards).slice(1)) {
   await page.waitForFunction(() => {
     const cv = document.querySelector(".broom-3d");
     return cv && cv.__scene && cv.__scene.parts.length >= 3;
-  }, { timeout: 15000 });
+  }, null, { timeout: 15000 });
   const hasBuild = wiring.builds.some((w) => w.board === bid);
   const disabled = await page.locator(".broom-modes .tab", { hasText: "wire it" }).isDisabled();
   if (disabled === hasBuild) fail(`${bid}: wire-it disabled=${disabled} but harness exists=${hasBuild}`);

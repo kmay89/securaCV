@@ -37,6 +37,7 @@
 
 #include "mesh_network.h"
 #include "csi_mem.h"
+#include "loop_snapshot.h"       // F138: what the status routes read
 #include "airtime_governor.h"
 #include "nvs_store.h"
 #include "health_log.h"
@@ -45,6 +46,8 @@
 #include <WiFi.h>
 #include <mbedtls/sha256.h>
 #include <Ed25519.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>       /* vTaskDelay: submit() waits for the loop task */
 #include <time.h>
 #include <string.h>
 
@@ -135,6 +138,47 @@ struct SelfTestSeenEntry {
 static SelfTestSeenEntry* g_selftest_seen = nullptr;
 static constexpr size_t SELFTEST_SEEN_BYTES =
     MAX_NEARBY_CACHE * sizeof(SelfTestSeenEntry);
+
+// The owner's commands on their way to the loop task (sweep F111): posted by
+// submit() on esp_http_server's task (chirp_api.h's handlers), drained by
+// update() on the loop task (run_command). A portMUX spinlock guards the
+// slots; it is held only to copy a command or a result in or out, never
+// while one runs.
+static loop_command_ring::Ring<Command, Result, COMMAND_SLOTS, loop_command_ring::PortMuxLock>
+    g_commands;
+
+// What the status routes show (sweep F138): published by the loop task
+// (publish_view: the status at the end of every update() pass, after each
+// owner command and from init(); the two tables only when g_tables_changed
+// says something changed them), read whole by read_status(), read_nearby()
+// and read_recent() from esp_http_server's task. The 68-byte status is a
+// static copy in internal SRAM, like the mesh's (a publish that changed
+// nothing costs a 68-byte compare). The two tables' copies are not: they
+// live in g_view_tables, one PSRAM block init() allocates with the tables
+// they copy from (csi_mem.h; the internal heap on a board without PSRAM),
+// so the PSRAM diet's internal-heap budget for the BLE stack keeps what
+// it reclaimed. Their locks and flags stay here, on-die (a spinlock never
+// lives in PSRAM). The same block holds the scratch publish_view() builds
+// the next table in, so a pass reads the PSRAM tables only when they
+// changed. Sizes (the host's layout, the device's too: the_view_sizes):
+// 1284 + 836 bytes of published copies plus a 1284-byte scratch.
+static loop_snapshot::Value<StatusView, loop_command_ring::PortMuxLock> g_status_view;
+static loop_snapshot::AttachedValue<NearbyTable, loop_command_ring::PortMuxLock> g_nearby_view;
+static loop_snapshot::AttachedValue<RecentTable, loop_command_ring::PortMuxLock> g_recent_view;
+union ViewScratch {
+  NearbyTable nearby;
+  RecentTable recent;
+};
+struct ViewTables {
+  NearbyTable nearby;     // g_nearby_view's published copy
+  RecentTable recent;     // g_recent_view's
+  ViewScratch scratch;    // publish_view()'s build
+};
+static ViewTables* g_view_tables = nullptr;
+// Something changed the recent or nearby table since they were last
+// published: a chirp frame handled (on_espnow_recv), update()'s prune, an
+// owner command (run_command), init(). publish_view() clears it.
+static bool g_tables_changed = true;
 
 // Callbacks
 static ChirpReceivedCallback g_chirp_callback = nullptr;
@@ -258,6 +302,7 @@ static void prune_stale_nearby();
 static void prune_old_chirps();
 static void load_settings();
 static void save_settings();
+static void publish_view();
 static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int8_t rssi_dbm);
 static const TemplateEntry* find_template(ChirpTemplate id);
 static ChirpCategory template_to_category(ChirpTemplate id);
@@ -280,6 +325,23 @@ static bool pubkey_rate_check_and_record(const uint8_t* pubkey);
 static bool nearby_has_pubkey_with_presence(const uint8_t* pubkey);
 static bool wall_clock_is_synced();
 static uint32_t wall_clock_now_seconds();
+// The owner's commands' bodies: they change what update() reads and writes,
+// so only the loop task runs them, through run_command() (update()'s drain
+// of g_commands). A REST handler, on esp_http_server's task, hands a Command
+// to submit() instead (mesh_network.h, sweep F111). deinit(),
+// send_all_clear() and clear_chirps() have no caller; they stay here, as
+// internal as the rest, for the loop task alone.
+static bool enable();
+static void disable();
+static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
+                       ChirpDetailSlot detail, uint8_t ttl_minutes,
+                       SendRefusal* why, uint32_t* cooldown_left);
+static bool confirm_chirp(const uint8_t* nonce, ConfirmRefusal* why);
+static bool dismiss_chirp(const uint8_t* nonce, bool* vote_sent, ConfirmRefusal* vote_refusal);
+static bool mute(uint8_t duration_minutes, MuteRefusal* why);
+static bool unmute(MuteRefusal* why);
+static void set_relay_enabled(bool enabled);
+static void set_urgency_filter(ChirpUrgency min_urgency);
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATE MANAGEMENT
@@ -383,6 +445,29 @@ static uint32_t get_cooldown_for_tier(uint8_t tier) {
     case 3: return COOLDOWN_TIER_3_MS;
     default: return COOLDOWN_TIER_4_MS;
   }
+}
+
+// The send cooldown (spec 2.5.4): a timer, `cooldown_ms` (the tier's)
+// counted from the last send, none before the first (tier 0). It was a
+// state, CHIRP_COOLDOWN, and every gate read the state: a mute overwrote it
+// (so a send right after muting went out, a tier up), and update() ended it
+// only after its drain, so a send drained in the pass after the timer ran
+// out was refused as a cooldown with 0 s left (sweep F178). Every gate reads
+// this now, the live one through get_cooldown_remaining_ms() and the view
+// through read_status(); the state only reads "cooldown" (shown_state()).
+static uint32_t cooldown_left_ms(uint8_t tier, uint32_t last_send_ms, uint32_t cooldown_ms,
+                                 uint32_t now) {
+  if (tier == 0) return 0;
+  const uint32_t elapsed = now - last_send_ms;
+  return elapsed < cooldown_ms ? cooldown_ms - elapsed : 0;
+}
+
+// What a stored state reads as: an active channel whose cooldown runs reads
+// CHIRP_COOLDOWN, as it always did. g_state never holds CHIRP_COOLDOWN, so
+// a mute cannot overwrite the cooldown, and an unmute or the mute's timeout
+// reads "cooldown" again while the timer still runs (sweep F178).
+static ChirpState shown_state(ChirpState stored, uint32_t cooldown_left) {
+  return (stored == CHIRP_ACTIVE && cooldown_left > 0) ? CHIRP_COOLDOWN : stored;
 }
 
 static void reset_cooldown_if_stale() {
@@ -618,7 +703,12 @@ static void send_presence() {
   esp_fill_random(hdr->nonce, 8);
 
   strncpy(payload->emoji, g_session.emoji_display, EMOJI_DISPLAY_SIZE);
-  payload->listening = (g_state == CHIRP_ACTIVE || g_state == CHIRP_LISTENING) ? 1 : 0;
+  // Listening is whether this device takes a chirp: handle_witness() drops
+  // them while the mute runs, and only then (is_muted(), the one test both
+  // read). The send cooldown limits what this device sends, not what it
+  // hears; the beacon said not listening while it ran, so neighbors' nearby
+  // lists showed a device in its cooldown as deaf (sweep F194).
+  payload->listening = is_muted() ? 0 : 1;
 
   if (g_last_chirp_sent_ms == 0) {
     payload->last_chirp_age_min = 255;
@@ -656,7 +746,15 @@ static void handle_presence(const uint8_t* data, size_t len, int8_t rssi) {
   }
   if (device) {
     memcpy(device->session_id, hdr->session_id, SESSION_ID_SIZE);
-    strncpy(device->emoji, payload->emoji, EMOJI_DISPLAY_SIZE);
+    // The emoji the row shows is the display of the session id it is keyed
+    // on (spec §2.3), derived here as a witness's sender emoji is
+    // (generate_emoji_string()), never the beacon's own field: a presence
+    // frame is unsigned, so that field held whatever bytes any device in
+    // range put there (quotes, control bytes, markup, 31 bytes with no
+    // terminator), and GET /api/chirp/nearby serialized them whole (sweep
+    // F213). A canary-wap beacon carries generate_emoji_string() of its own
+    // session id, so an honest neighbor shows the emoji it sends.
+    generate_emoji_string(hdr->session_id, device->emoji);
     device->last_seen_ms = millis();
     device->rssi = rssi;
     device->listening = payload->listening != 0;
@@ -675,7 +773,7 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   cache_nonce(hdr->nonce);
 
   if (payload->urgency < (uint8_t)g_urgency_filter) return;
-  if (g_muted && millis() < g_mute_until_ms) return;
+  if (is_muted()) return;   // what the presence beacon's `listening` says (sweep F194)
   if (memcmp(hdr->session_id, g_session.session_id, SESSION_ID_SIZE) == 0) return;
 
   // audit C6: session_id MUST derive from carried session_pubkey
@@ -1031,6 +1129,9 @@ static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int
   if (rssi > 0) rssi = 0;
   if (rssi < -120) rssi = -120;
 
+  // A chirp frame may change the recent or nearby table: the pass that
+  // handled it publishes them (sweep F138).
+  g_tables_changed = true;
   switch (hdr->msg_type) {
     case CHIRP_MSG_PRESENCE:        handle_presence(data, (size_t)len, rssi); break;
     case CHIRP_MSG_WITNESS:         handle_witness(data, (size_t)len, rssi);  break;
@@ -1092,6 +1193,111 @@ static void save_settings() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// THE STATUS ROUTES' VIEW (sweep F138)
+// ════════════════════════════════════════════════════════════════════════════
+
+// The loop task: what GET /api/chirp, /nearby and /recent show, from this
+// pass. Called at the end of every update() pass, its early return
+// included, after each owner command (run_command(), before the drain posts
+// the result) and from init(); nothing else publishes. The status every
+// time (a compare when nothing it shows changed); the tables only when
+// g_tables_changed, and only once init() has their block. The flag is
+// cleared right after that guard: a pass nothing marked builds no table
+// and reads no PSRAM (an_idle_pass_does_not_rebuild_the_tables).
+static void publish_view() {
+  StatusView s;
+  memset(&s, 0, sizeof(s));
+  s.state = g_state;
+  strncpy(s.session_emoji, g_session.emoji_display, EMOJI_DISPLAY_SIZE - 1);
+  s.nearby_count = (uint8_t)g_nearby_count;
+  s.recent_chirp_count = (uint8_t)g_recent_chirp_count;
+  s.cooldown_tier = get_cooldown_tier();
+  s.relay_enabled = g_relay_enabled;
+  s.muted = g_muted;
+  s.last_chirp_sent_ms = g_cooldown.last_chirp_ms;
+  s.cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
+  s.mute_until_ms = g_mute_until_ms;
+  s.session_start_ms = g_session_start_ms;
+  (void)g_status_view.publish(s);
+
+  if (!g_tables_changed || g_view_tables == nullptr) return;
+  g_tables_changed = false;
+
+  NearbyTable* n = &g_view_tables->scratch.nearby;
+  memset(n, 0, sizeof(*n));
+  for (size_t i = 0; i < g_nearby_count && i < MAX_NEARBY_CACHE; i++) {
+    const NearbyDevice& d = g_nearby_devices[i];
+    NearbyView& v = n->devices[n->count++];
+    strncpy(v.emoji, d.emoji, EMOJI_DISPLAY_SIZE - 1);
+    v.rssi = d.rssi;
+    v.listening = d.listening;
+    v.last_seen_ms = d.last_seen_ms;
+  }
+  (void)g_nearby_view.publish(*n);
+
+  RecentTable* r = &g_view_tables->scratch.recent;
+  memset(r, 0, sizeof(*r));
+  for (size_t i = 0; i < g_recent_chirp_count && i < MAX_RECENT_CHIRPS; i++) {
+    const ReceivedChirp& c = g_recent_chirps[i];
+    RecentView& v = r->chirps[r->count++];
+    strncpy(v.sender_emoji, c.sender_emoji, EMOJI_DISPLAY_SIZE - 1);
+    v.template_id = c.template_id;
+    v.detail = c.detail;
+    v.urgency = c.urgency;
+    v.hop_count = c.hop_count;
+    v.confirm_count = c.confirm_count;
+    v.validated = c.validated;
+    v.suppressed = c.suppressed;
+    v.relayed = c.relayed;
+    v.dismissed = c.dismissed;
+    memcpy(v.nonce, c.nonce, sizeof(v.nonce));
+    v.received_ms = c.received_ms;
+  }
+  (void)g_recent_view.publish(*r);
+}
+
+void read_status(StatusView* out) {
+  if (!g_status_view.read(out)) {
+    // Before init() publishes: what get_status() said then.
+    memset(out, 0, sizeof(*out));
+    out->state = CHIRP_DISABLED;
+    out->relay_enabled = true;
+  }
+  // What counts in time, counted now, from what the loop task published,
+  // as get_status(), has_presence_requirement() and can_send_chirp() count it.
+  // The cooldown is its timer (sweep F178), muted or not, and it is over at
+  // the read the moment it runs out, not at the next pass.
+  const uint32_t now = millis();
+  out->cooldown_remaining_ms = cooldown_left_ms(out->cooldown_tier, out->last_chirp_sent_ms,
+                                                out->cooldown_ms, now);
+  out->state = shown_state(out->state, out->cooldown_remaining_ms);
+  out->mute_remaining_ms = (out->muted && now < out->mute_until_ms) ? out->mute_until_ms - now : 0;
+  out->presence_met = out->session_start_ms != 0 &&
+                      (now - out->session_start_ms) >= PRESENCE_REQUIRED_MS;
+  out->clock_synced = wall_clock_is_synced();
+  out->night_mode = is_night_mode();
+  out->can_send = out->state != CHIRP_DISABLED && out->cooldown_remaining_ms == 0 &&
+                  out->presence_met && out->clock_synced;
+}
+
+void read_nearby(NearbyTable* out) {
+  if (!g_nearby_view.read(out)) memset(out, 0, sizeof(*out));
+}
+
+void read_recent(RecentTable* out) {
+  if (!g_recent_view.read(out)) memset(out, 0, sizeof(*out));
+}
+
+const char* cannot_send_reason(const StatusView& v) {
+  if (v.can_send) return nullptr;
+  if (v.state == CHIRP_DISABLED) return "disabled";
+  if (v.cooldown_remaining_ms > 0) return "cooldown";
+  if (!v.presence_met) return "presence_required";
+  if (!v.clock_synced) return "clock_unsynced";
+  return nullptr;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // PUBLIC API
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1108,8 +1314,10 @@ bool init() {
     g_pubkey_rate = (PubkeyRateEntry*)csi_large_calloc(PUBKEY_RATE_BYTES);
   if (!g_selftest_seen)
     g_selftest_seen = (SelfTestSeenEntry*)csi_large_calloc(SELFTEST_SEEN_BYTES);
+  if (!g_view_tables)
+    g_view_tables = (ViewTables*)csi_large_calloc(sizeof(ViewTables));
   if (!g_recent_chirps || !g_nearby_devices || !g_bloom || !g_pubkey_rate ||
-      !g_selftest_seen) {
+      !g_selftest_seen || !g_view_tables) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                "chirp: table alloc failed — channel disabled");
     return false;  /* fail-safe: caller treats false as chirp unavailable */
@@ -1126,12 +1334,18 @@ bool init() {
   load_settings();
   g_initialized = true;
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp channel v0.2 initialized");
+  // The first view, with the settings just loaded: the HTTP server may
+  // already be up (sweep F138). The tables' copies live in g_view_tables.
+  g_nearby_view.attach(&g_view_tables->nearby);
+  g_recent_view.attach(&g_view_tables->recent);
+  g_tables_changed = true;
+  publish_view();
   return true;
 }
 
-void deinit() { if (!g_initialized) return; disable(); g_initialized = false; }
+[[maybe_unused]] static void deinit() { if (!g_initialized) return; disable(); g_initialized = false; }
 
-bool enable() {
+static bool enable() {
   if (!g_initialized) return false;
   if (g_state != CHIRP_DISABLED) return true;
   set_state(CHIRP_INITIALIZING);
@@ -1144,35 +1358,126 @@ bool enable() {
   return true;
 }
 
-void disable() {
+static void disable() {
   if (g_state == CHIRP_DISABLED) return;
   memset(&g_session, 0, sizeof(g_session));
   g_nearby_count = 0;
   g_recent_chirp_count = 0;
+  // A mute is the running channel's: it ends with it. It outlived a disable,
+  // so the next enable's new session read "active" while every chirp was
+  // still dropped and the status said muted (sweep F192).
+  g_muted = false;
+  g_mute_until_ms = 0;
   set_state(CHIRP_DISABLED);
 }
 
 bool is_enabled() { return g_state != CHIRP_DISABLED; }
 
+// One owner command, on the loop task (update()'s drain of g_commands). The
+// Result is read here, right after the command, so a REST answer describes
+// the state the command left.
+static Result run_command(const Command& cmd) {
+  Result r;
+  memset(&r, 0, sizeof(r));
+  switch (cmd.type) {
+    case CHIRP_CMD_ENABLE:
+      r.ok = enable();
+      if (r.ok) {
+        strncpy(r.session_emoji, g_session.emoji_display, EMOJI_DISPLAY_SIZE - 1);
+        r.session_emoji[EMOJI_DISPLAY_SIZE - 1] = '\0';
+      }
+      break;
+    case CHIRP_CMD_DISABLE:
+      disable();
+      r.ok = true;
+      break;
+    case CHIRP_CMD_SEND:
+      // Why it was refused is the check that refused it, read once in the
+      // send: the channel off, the presence requirement, the cooldown (the
+      // timer, not the state, sweep F178, with its time left), a wall clock
+      // not set yet (answered as a cooldown with 0 s left until sweep F146),
+      // or night. Named after the send from fresh reads, a gate that opened
+      // in between was missed: a send refused as the cooldown ran out
+      // answered no reason, or a cooldown with 0 s left.
+      r.ok = send_chirp(cmd.template_id, cmd.urgency, cmd.detail, cmd.ttl_minutes,
+                        &r.refusal, &r.cooldown_remaining_ms);
+      r.cooldown_tier = get_cooldown_tier();
+      break;
+    case CHIRP_CMD_CONFIRM:
+      // Why it was refused, by name (sweep F174: the handler answered every
+      // refusal not_found).
+      r.ok = confirm_chirp(cmd.nonce, &r.confirm_refusal);
+      break;
+    case CHIRP_CMD_DISMISS:
+      // Hidden here whatever the vote does; whether the vote went out, and
+      // if not why (sweep F174: the answer said nothing of it).
+      r.ok = dismiss_chirp(cmd.nonce, &r.vote_sent, &r.confirm_refusal);
+      break;
+    case CHIRP_CMD_MUTE:
+      // Refused by name on a channel that is off (sweep F192: it turned the
+      // channel on with no session) or for a duration the channel lacks.
+      r.ok = mute(cmd.duration_minutes, &r.mute_refusal);
+      break;
+    case CHIRP_CMD_UNMUTE:
+      r.ok = unmute(&r.mute_refusal);
+      break;
+    case CHIRP_CMD_SETTINGS:
+      if (cmd.set_relay) set_relay_enabled(cmd.relay_enabled);
+      if (cmd.set_filter) set_urgency_filter(cmd.urgency_filter);
+      r.ok = true;
+      r.relay_enabled = g_relay_enabled;
+      r.urgency_filter = g_urgency_filter;
+      break;
+  }
+  // The view shows the command before the drain posts its result: the
+  // dashboard reads the status (and the recent list after a dismiss) right
+  // after a POST's answer, while this pass may still be running (sweep F138).
+  g_tables_changed = true;
+  publish_view();
+  return r;
+}
+
+loop_command_ring::Wait submit(const Command& cmd, Result* result, uint32_t timeout_ms) {
+  Result r;
+  memset(&r, 0, sizeof(r));
+  const loop_command_ring::Wait w = loop_command_ring::submit(
+      g_commands, cmd, &r, timeout_ms, COMMAND_POLL_MS,
+      []() { return (uint32_t)millis(); },
+      [](uint32_t ms) {
+        const TickType_t ticks = pdMS_TO_TICKS(ms);
+        vTaskDelay(ticks > 0 ? ticks : 1);
+      });
+  if (w != loop_command_ring::Wait::kDone) memset(&r, 0, sizeof(r));
+  if (result != nullptr) *result = r;
+  return w;
+}
+
 void update() {
-  if (g_state == CHIRP_DISABLED) return;
+  // The owner's commands first, and before the early return below: a
+  // disabled channel still runs CHIRP_CMD_ENABLE (sweep F111).
+  g_commands.drain(run_command);
+
+  if (g_state == CHIRP_DISABLED) {
+    publish_view();
+    return;
+  }
   uint32_t now = millis();
   reset_cooldown_if_stale();
   if (g_muted && now >= g_mute_until_ms) {
     g_muted = false;
     if (g_state == CHIRP_MUTED) set_state(CHIRP_ACTIVE);
   }
-  if (g_state == CHIRP_COOLDOWN) {
-    uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
-    if (now - g_cooldown.last_chirp_ms >= cooldown_ms) set_state(CHIRP_ACTIVE);
-  }
+  // No cooldown to end here: it is a timer, over when it runs out, not at
+  // this pass (sweep F178).
   if (now - g_last_presence_ms >= PRESENCE_INTERVAL_MS) send_presence();
   static uint32_t last_prune_ms = 0;
   if (now - last_prune_ms > 30000) {
     prune_stale_nearby();
     prune_old_chirps();
+    g_tables_changed = true;
     last_prune_ms = now;
   }
+  publish_view();
 }
 
 ChirpStatus get_status() {
@@ -1182,13 +1487,8 @@ ChirpStatus get_status() {
   status.nearby_count = (uint8_t)g_nearby_count;
   status.recent_chirp_count = (uint8_t)g_recent_chirp_count;
   status.last_chirp_sent_ms = g_cooldown.last_chirp_ms;
-  if (g_state == CHIRP_COOLDOWN && g_cooldown.last_chirp_ms > 0) {
-    uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
-    uint32_t elapsed = millis() - g_cooldown.last_chirp_ms;
-    status.cooldown_remaining_ms = (elapsed < cooldown_ms) ? cooldown_ms - elapsed : 0;
-  } else {
-    status.cooldown_remaining_ms = 0;
-  }
+  status.cooldown_remaining_ms = get_cooldown_remaining_ms();
+  status.state = shown_state(g_state, status.cooldown_remaining_ms);
   status.relay_enabled = g_relay_enabled;
   status.muted = g_muted;
   status.mute_remaining_ms = (g_muted && millis() < g_mute_until_ms)
@@ -1229,19 +1529,34 @@ const char* urgency_name(ChirpUrgency urgency) {
   }
 }
 
-bool is_active() { return g_state == CHIRP_ACTIVE || g_state == CHIRP_LISTENING; }
+bool is_active() {
+  const ChirpState shown = shown_state(g_state, get_cooldown_remaining_ms());
+  return shown == CHIRP_ACTIVE || shown == CHIRP_LISTENING;
+}
 
 bool has_presence_requirement() {
   if (g_session_start_ms == 0) return false;
   return (millis() - g_session_start_ms) >= PRESENCE_REQUIRED_MS;
 }
 
-bool can_send_chirp() {
-  if (g_state == CHIRP_DISABLED || g_state == CHIRP_COOLDOWN) return false;
-  if (!has_presence_requirement()) return false;
-  if (!wall_clock_is_synced()) return false;
-  return true;
+// Why a send cannot go out now, or SEND_REFUSED_NONE: the gate
+// can_send_chirp() answers and send_chirp() refuses on, each condition read
+// once, in the order a refusal is named (the channel off, the presence
+// requirement, the cooldown, a wall clock not set yet; a cooldown needs a
+// send, and a send needs the presence requirement met, so the order is
+// can_send_chirp()'s old one too). `cooldown_left`, when given, is the
+// timer's reading this gate used.
+static SendRefusal send_gate(uint32_t* cooldown_left) {
+  const uint32_t left = get_cooldown_remaining_ms();
+  if (cooldown_left != nullptr) *cooldown_left = left;
+  if (g_state == CHIRP_DISABLED) return SEND_REFUSED_DISABLED;
+  if (!has_presence_requirement()) return SEND_REFUSED_PRESENCE;
+  if (left > 0) return SEND_REFUSED_COOLDOWN;   // the timer (sweep F178)
+  if (!wall_clock_is_synced()) return SEND_REFUSED_CLOCK_UNSYNCED;
+  return SEND_REFUSED_NONE;
 }
+
+bool can_send_chirp() { return send_gate(nullptr) == SEND_REFUSED_NONE; }
 
 bool is_night_mode() {
   if (!wall_clock_is_synced()) return true;  // conservative when unsynced
@@ -1271,10 +1586,8 @@ uint8_t get_cooldown_tier() {
 }
 
 uint32_t get_cooldown_remaining_ms() {
-  if (g_state != CHIRP_COOLDOWN) return 0;
-  uint32_t cooldown_ms = get_cooldown_for_tier(g_cooldown.chirps_sent_today);
-  uint32_t elapsed = millis() - g_cooldown.last_chirp_ms;
-  return (elapsed >= cooldown_ms) ? 0 : cooldown_ms - elapsed;
+  return cooldown_left_ms(get_cooldown_tier(), g_cooldown.last_chirp_ms,
+                          get_cooldown_for_tier(g_cooldown.chirps_sent_today), millis());
 }
 
 const char* get_validation_status(const ReceivedChirp* chirp) {
@@ -1284,15 +1597,38 @@ const char* get_validation_status(const ReceivedChirp* chirp) {
   return "awaiting_confirmation";
 }
 
-bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
-                ChirpDetailSlot detail, uint8_t ttl_minutes) {
-  if (!can_send_chirp()) return false;
+const char* get_validation_status(const RecentView* chirp) {
+  if (!chirp) return "unknown";
+  if (chirp->suppressed) return "suppressed";
+  if (chirp->validated) return "validated";
+  return "awaiting_confirmation";
+}
+
+// `why` (when given) is the check that refused the send, and
+// `cooldown_left` the timer's reading when that was the cooldown: read once,
+// here, not again after the send came back false, when a gate could have
+// opened since and the answer named the next one, or none (the reviewers of
+// sweep F178: a send refused as the cooldown ran out answered no reason, or
+// a cooldown with 0 s left). Neither is written for a send that went out,
+// an unknown template (the handler refuses one first) or a frame that could
+// not be signed.
+static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
+                       ChirpDetailSlot detail, uint8_t ttl_minutes,
+                       SendRefusal* why, uint32_t* cooldown_left) {
+  uint32_t left = 0;
+  const SendRefusal gate = send_gate(&left);
+  if (gate != SEND_REFUSED_NONE) {
+    if (why != nullptr) *why = gate;
+    if (cooldown_left != nullptr && gate == SEND_REFUSED_COOLDOWN) *cooldown_left = left;
+    return false;
+  }
   const TemplateEntry* entry = find_template(template_id);
   if (!entry) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK, "chirp: invalid template");
     return false;
   }
   if (is_night_mode() && !entry->night_allowed) {
+    if (why != nullptr) *why = SEND_REFUSED_NIGHT;
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: template not allowed at night");
     return false;
   }
@@ -1332,7 +1668,8 @@ bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   g_cooldown.last_chirp_ms = now;
   g_last_chirp_sent_ms = now;
   cache_nonce(hdr->nonce);
-  set_state(CHIRP_COOLDOWN);
+  // The cooldown starts here, as a timer (get_cooldown_remaining_ms()); the
+  // state stays as it was, so a mute cannot overwrite it (sweep F178).
 
   char log_detail[96];
   snprintf(log_detail, sizeof(log_detail), "chirp sent: %s (%s, tier %u)",
@@ -1341,11 +1678,11 @@ bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   return true;
 }
 
-bool send_all_clear(ChirpTemplate clear_type) {
+[[maybe_unused]] static bool send_all_clear(ChirpTemplate clear_type) {
   if (clear_type != TPL_CLR_RESOLVED &&
       clear_type != TPL_CLR_SAFE &&
       clear_type != TPL_CLR_FALSE_ALARM) clear_type = TPL_CLR_RESOLVED;
-  return send_chirp(clear_type, CHIRP_URG_INFO, DETAIL_NONE, 15);
+  return send_chirp(clear_type, CHIRP_URG_INFO, DETAIL_NONE, 15, nullptr, nullptr);
 }
 
 const ReceivedChirp* get_recent_chirps(size_t* count) {
@@ -1367,21 +1704,36 @@ const ReceivedChirp* get_pending_chirps(size_t* count) {
   return pending;
 }
 
-bool confirm_chirp(const uint8_t* nonce) {
+// This device's signed confirmation of a neighbor's chirp ("I see this
+// too"), or why it sent none, in *why (CONFIRM_REFUSED_NONE when it went
+// out): the channel off, then the checks in the order they always ran (the
+// presence requirement, the wall clock, the chirp itself). Every refusal
+// was answered not_found (sweep F174).
+static bool confirm_chirp(const uint8_t* nonce, ConfirmRefusal* why) {
+  *why = CONFIRM_REFUSED_NONE;
+  if (!is_enabled()) {
+    *why = CONFIRM_REFUSED_DISABLED;
+    return false;
+  }
   if (!has_presence_requirement()) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
                "chirp: refused confirm — presence requirement not met");
+    *why = CONFIRM_REFUSED_PRESENCE;
     return false;
   }
   if (!wall_clock_is_synced()) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
                "chirp: refused confirm — time unsynced");
+    *why = CONFIRM_REFUSED_CLOCK_UNSYNCED;
     return false;
   }
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     if (memcmp(g_recent_chirps[i].nonce, nonce, 8) != 0) continue;
     if (memcmp(g_recent_chirps[i].sender_pubkey, g_session.session_pubkey,
-               SESSION_PUBKEY_SIZE) == 0) return false;
+               SESSION_PUBKEY_SIZE) == 0) {
+      *why = CONFIRM_REFUSED_OWN_CHIRP;   // the originator cannot confirm its own (spec 3.4)
+      return false;
+    }
 
     uint8_t buf[sizeof(ChirpHeader) + sizeof(ChirpAckPayload)];
     memset(buf, 0, sizeof(buf));
@@ -1411,15 +1763,28 @@ bool confirm_chirp(const uint8_t* nonce) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: confirmed witness (signed)");
     return true;
   }
+  *why = CONFIRM_REFUSED_NOT_FOUND;
   return false;
 }
 
-bool dismiss_chirp(const uint8_t* nonce) {
+// Hides a chirp here (true when there is one with that nonce), and sends this
+// device's signed suppress vote when it may originate: *vote_sent, or why
+// not in *vote_refusal (the presence requirement, then the wall clock;
+// CONFIRM_REFUSED_NOT_FOUND when there is no such chirp). The vote stayed
+// home without a word (sweep F174).
+static bool dismiss_chirp(const uint8_t* nonce, bool* vote_sent, ConfirmRefusal* vote_refusal) {
+  *vote_sent = false;
+  *vote_refusal = CONFIRM_REFUSED_NONE;
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     if (memcmp(g_recent_chirps[i].nonce, nonce, 8) == 0) {
       g_recent_chirps[i].dismissed = true;
+      if (!has_presence_requirement()) {
+        *vote_refusal = CONFIRM_REFUSED_PRESENCE;
+      } else if (!wall_clock_is_synced()) {
+        *vote_refusal = CONFIRM_REFUSED_CLOCK_UNSYNCED;
+      }
       // C7: broadcast a signed suppress vote so neighbors can converge.
-      if (has_presence_requirement() && wall_clock_is_synced()) {
+      if (*vote_refusal == CONFIRM_REFUSED_NONE) {
         uint8_t buf[sizeof(ChirpHeader) + sizeof(ChirpSuppressVotePayload)];
         memset(buf, 0, sizeof(buf));
         ChirpHeader* hdr = (ChirpHeader*)buf;
@@ -1441,15 +1806,17 @@ bool dismiss_chirp(const uint8_t* nonce) {
           Ed25519::sign(payload->signature, g_session.session_privkey,
                         g_session.session_pubkey, canonical, cl);
           broadcast_message(buf, sizeof(buf));
+          *vote_sent = true;
         }
       }
       return true;
     }
   }
+  *vote_refusal = CONFIRM_REFUSED_NOT_FOUND;
   return false;
 }
 
-void clear_chirps() { g_recent_chirp_count = 0; }
+[[maybe_unused]] static void clear_chirps() { g_recent_chirp_count = 0; }
 
 uint8_t get_nearby_count() { return (uint8_t)g_nearby_count; }
 const NearbyDevice* get_nearby_devices(size_t* count) {
@@ -1457,9 +1824,21 @@ const NearbyDevice* get_nearby_devices(size_t* count) {
   return g_nearby_devices;
 }
 
-bool mute(uint8_t duration_minutes) {
+// `why` (when given) names a refusal: the channel off, checked first, then
+// a duration the channel does not offer. A mute set CHIRP_MUTED whatever
+// the state, so on a channel that was off it turned the channel on with no
+// session, and broadcast its mute frame under the all-zero session id
+// (sweep F192).
+static bool mute(uint8_t duration_minutes, MuteRefusal* why) {
+  if (g_state == CHIRP_DISABLED) {
+    if (why != nullptr) *why = MUTE_REFUSED_DISABLED;
+    return false;
+  }
   if (duration_minutes != 15 && duration_minutes != 30 &&
-      duration_minutes != 60 && duration_minutes != 120) return false;
+      duration_minutes != 60 && duration_minutes != 120) {
+    if (why != nullptr) *why = MUTE_REFUSED_DURATION;
+    return false;
+  }
   g_muted = true;
   g_mute_until_ms = millis() + (duration_minutes * 60000UL);
 
@@ -1481,17 +1860,25 @@ bool mute(uint8_t duration_minutes) {
   return true;
 }
 
-void unmute() {
+// Refused on a channel that is off (`why`: MUTE_REFUSED_DISABLED): there is
+// no mute there to end, since a disable ends one and a mute is refused
+// there (sweep F192).
+static bool unmute(MuteRefusal* why) {
+  if (g_state == CHIRP_DISABLED) {
+    if (why != nullptr) *why = MUTE_REFUSED_DISABLED;
+    return false;
+  }
   g_muted = false;
   g_mute_until_ms = 0;
   if (g_state == CHIRP_MUTED) set_state(CHIRP_ACTIVE);
+  return true;
 }
 
 bool is_muted() { return g_muted && millis() < g_mute_until_ms; }
 
-void set_relay_enabled(bool enabled) { g_relay_enabled = enabled; save_settings(); }
+static void set_relay_enabled(bool enabled) { g_relay_enabled = enabled; save_settings(); }
 bool is_relay_enabled() { return g_relay_enabled; }
-void set_urgency_filter(ChirpUrgency min_urgency) { g_urgency_filter = min_urgency; save_settings(); }
+static void set_urgency_filter(ChirpUrgency min_urgency) { g_urgency_filter = min_urgency; save_settings(); }
 ChirpUrgency get_urgency_filter() { return g_urgency_filter; }
 
 void set_chirp_callback(ChirpReceivedCallback callback) { g_chirp_callback = callback; }

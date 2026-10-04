@@ -294,7 +294,9 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
       if (handle_out) *handle_out = fresh->handle;
       /* New bundle: caller should NOT persist directly. The bundle commits
        * later through the close path (commit_closed), and takes its event
-       * id then. */
+       * id then. An OPENING even when this key's own bundle was open a
+       * moment ago and expire_overdue() above just closed it: that close
+       * is a row, and so is this bundle (backlog F80). */
       outcome = CSI_BUNDLER_BUFFERED;
     }
   }  /* lock released */

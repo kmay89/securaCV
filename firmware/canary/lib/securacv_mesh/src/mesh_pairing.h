@@ -194,24 +194,118 @@ static_assert(sizeof(PairCompletePayload) ==
  *     → derive session_key + code
  *     → NOTIFY_CODE_READY (UI prompt)
  *
- *   confirm_code() [after user OK]           confirm_code() [after user OK]
- *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — joiner accepts
- *                                              the initiator's confirm hash
- *   handle (CONFIRM) ◄──────────────────────  (joiner already moved to
- *     → verify hash matches                   AWAITING_COMPLETE after sending
- *     → SEND_COMPLETE (AEAD(opera_secret))►   its own confirm, so a peer-side
- *     → tick() returns NOTIFY_PAIRED          confirm here is a no-op drop)
- *                                            handle (COMPLETE)
+ *   The owners confirm in either order (spec §5.2; F97). Every COMPLETE
+ *   goes out with the initiator's own CONFIRM immediately in front of it
+ *   (Action::leading_confirm). Initiator's owner first:
+ *
+ *   confirm_code() [after user OK]
+ *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — hash checked
+ *                                              (a pre-F97 joiner drops it)
+ *                                            confirm_code() [after user OK]
+ *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash)
+ *     → verify hash matches
+ *     → SEND_COMPLETE: CONFIRM (hash) ────►   handle (CONFIRM) — hash checked
+ *                      then AEAD(secret) ─►   handle (COMPLETE) — taken once
+ *     → tick() returns NOTIFY_PAIRED            this owner confirmed
  *                                            → decrypt → NOTIFY_PAIRED
  *
+ *   Joiner's owner first:
+ *
+ *                                            confirm_code() [after user OK]
+ *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash)
+ *     → verify hash, keep it (peer_confirmed)
+ *   confirm_code() [after user OK]
+ *     → SEND_COMPLETE: CONFIRM (hash) ────►   handle (CONFIRM) — hash checked
+ *                      then AEAD(secret) ─►   handle (COMPLETE)
+ *     → tick() returns NOTIFY_PAIRED          → decrypt → NOTIFY_PAIRED
+ *
+ *   A CONFIRM counts only from the partner's address and only once the
+ *   code is shown (AWAITING_CONFIRM or later). Until F97 a CONFIRM was
+ *   taken only after this side's own owner confirmed and was sent once,
+ *   so in either order one was dropped: the joiner's owner first left both
+ *   sides waiting for the 5-minute timeout, and the initiator's owner first
+ *   left the initiator PAIRED and the joiner dropping the COMPLETE.
+ *
+ *   An updated joiner takes the COMPLETE without the CONFIRM in front of
+ *   it. That CONFIRM is for a joiner on firmware before F97, which reads a
+ *   CONFIRM only after its own owner confirmed and takes a COMPLETE only
+ *   after such a CONFIRM: with it, an updated initiator pairs such a joiner
+ *   in either order; without it, the initiator would report PAIRED and the
+ *   joiner drop the COMPLETE. canary-wap (F75) sends the COMPLETE alone,
+ *   because its receive buffer holds one frame; this tree's transport ring
+ *   holds eight.
+ *
+ *   The other mix (F117): an initiator on firmware before F97 drops a
+ *   CONFIRM that arrives before its own owner confirms, and answers only a
+ *   CONFIRM read after it, with a COMPLETE alone. So when the joiner's
+ *   owner confirms first, the joiner's one CONFIRM was dropped and both
+ *   sides timed out. An updated joiner now re-sends its CONFIRM once it has
+ *   read the initiator's CONFIRM after its own owner confirmed (moving to
+ *   AWAITING_COMPLETE): that CONFIRM is the sign the initiator's owner has
+ *   confirmed too, so a pre-F97 initiator is now waiting for exactly this.
+ *   tick() sends it CONFIRM_RESEND_FIRST_MS after that, then every
+ *   CONFIRM_RESEND_INTERVAL_MS, at most CONFIRM_RESEND_MAX times, only to
+ *   the partner and only while no COMPLETE has come. An updated initiator
+ *   sends its COMPLETE right behind its CONFIRM, so between two updated
+ *   devices the COMPLETE lands first and nothing is re-sent; one that came
+ *   late would reach an initiator already PAIRED, which drops it.
+ *
+ *   Joiner's owner first, initiator on firmware before F97:
+ *
+ *                                            confirm_code() [after user OK]
+ *   (dropped: owner not confirmed) ◄────────  → SEND_CONFIRM (hash)
+ *   confirm_code() [after user OK]
+ *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — hash checked
+ *                                              → AWAITING_COMPLETE
+ *                                            tick() [+CONFIRM_RESEND_FIRST_MS]
+ *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash) again
+ *     → SEND_COMPLETE (alone) ───────────►   handle (COMPLETE) → NOTIFY_PAIRED
+ *
+ *   A lost COMPLETE (F134, canary-wap's F100 shape): nothing on the wire
+ *   acknowledges a COMPLETE, and the initiator reports PAIRED once it sent
+ *   one. So it keeps the frames it sent — its leading CONFIRM and the
+ *   sealed COMPLETE, the bytes already on the air; the session key stays
+ *   wiped — and tick() sends them again every COMPLETE_RESEND_INTERVAL_MS,
+ *   to the partner only, for at most COMPLETE_RESEND_WINDOW_MS after the
+ *   first send (the joiner's own wait ends before that), or until the
+ *   integration layer calls stop_complete_resend() (it heard the joiner, or
+ *   the joiner is no longer a member, or the opera changed). A joiner that
+ *   took the COMPLETE drops the copies (PAIRED); one still waiting, in
+ *   AWAITING_CONFIRM_PEER or AWAITING_COMPLETE, takes the next one. A
+ *   joiner's CONFIRM reaching a PAIRED initiator is still dropped and
+ *   prompts no copy: the next timed copy is at most 2 s away, and the
+ *   CONFIRM authenticates nothing a radio in range could not replay or
+ *   reflect (F94). Until F134 the COMPLETE went once; one lost on the air
+ *   left the initiator holding a member that never joined, while the
+ *   joiner re-sent its CONFIRM (F117) to an initiator that dropped it and
+ *   timed out.
+ *
  * On any failure or 5-minute timeout, both sides transition to FAILED
- * and the integration layer is told via NOTIFY_FAILED.
+ * and the integration layer is told via NOTIFY_FAILED, with the reason
+ * (Action::fail_reason).
+ *
+ *   A device that cannot hold its partner fails the pairing (spec §5.2,
+ *   F118): the PartnerGate the integration layer passed to start_* is
+ *   asked at this side's owner's confirm, before its CONFIRM goes out; on
+ *   the initiator again before the opera_secret is sealed into the
+ *   COMPLETE; on the joiner again before a COMPLETE is opened. A refusal
+ *   is NOTIFY_FAILED (PARTNER_REFUSED) and nothing is sent. So a refusing
+ *   joiner sends no CONFIRM and its initiator seals nothing to it and
+ *   times out, and a refusing initiator seals and sends nothing. Until
+ *   F118 nothing was asked: the initiator sealed the secret first, both
+ *   sides reported PAIRED, and the session's bind of the partner's address
+ *   (an address another member holds, a full table) failed after that, so
+ *   the partner became a member heard from nowhere and sent nothing.
  *
  * Key lifecycle:
  *   • Ephemeral keypair: generated at start_*, wiped on terminate.
  *   • Session key: derived from x25519 once both ephemeral pubs are
  *     known, used to AEAD-encrypt the opera_secret on the COMPLETE
  *     message, wiped on terminate AND on PAIRED transition.
+ *   • The sent COMPLETE (initiator, F134): the sealed frame and the
+ *     leading CONFIRM as they went on the air, kept for the copies and
+ *     wiped when they stop (stop_complete_resend, the window's end,
+ *     context_init). It opens only under the session key, which is wiped.
  *   • Opera secret: held in RAM by the initiator (loaded from NVS) and
  *     by the joiner only between COMPLETE-receive and the integration
  *     layer reading it out via consume_opera_secret(). The integration
@@ -225,8 +319,10 @@ enum class State : uint8_t {
   DISCOVERING_JOINER,       /* joiner:    broadcasting DISCOVER(JOIN), waiting for initiator OFFER */
   AWAITING_ACCEPT,          /* initiator: sent OFFER, awaiting joiner ACCEPT */
   AWAITING_CONFIRM,         /* both:      have session_key + code, awaiting user_confirm() */
-  AWAITING_CONFIRM_PEER,    /* both:      sent our CONFIRM hash, awaiting peer's CONFIRM */
-  AWAITING_COMPLETE,        /* joiner:    sent CONFIRM, awaiting encrypted opera_secret */
+  AWAITING_CONFIRM_PEER,    /* both:      owner confirmed, sent our CONFIRM hash; the initiator
+                               awaits the joiner's CONFIRM, the joiner takes a COMPLETE here too */
+  AWAITING_COMPLETE,        /* joiner:    sent CONFIRM and checked the initiator's, awaiting the
+                               encrypted opera_secret */
   PAIRED,                   /* terminal:  success — opera_secret available on joiner */
   FAILED,                   /* terminal:  any error path or 5-min timeout */
 };
@@ -272,6 +368,53 @@ enum class ActionType : uint8_t {
   NOTIFY_FAILED,         /* integration: clear pairing UI; log */
 };
 
+/* Why a pairing ended in FAILED (F118). Every NOTIFY_FAILED carries one
+ * (Action::fail_reason), and the context keeps it (PairingContext::
+ * fail_reason) until the next start_*. */
+enum class FailReason : uint8_t {
+  NONE = 0,          /* not failed */
+  CANCELED,          /* cancel(): the owner, a disable, a leave */
+  TIMEOUT,           /* PAIRING_TIMEOUT_MS passed */
+  BAD_CONFIRM,       /* the partner's CONFIRM hash did not match */
+  BAD_COMPLETE,      /* the COMPLETE did not open under the session key */
+  CRYPTO,            /* key generation, derivation or sealing failed */
+  PARTNER_REFUSED,   /* this device cannot hold the partner (PartnerGate, F118) */
+};
+
+/* A short lowercase name for logs ("partner_refused"). */
+const char* fail_reason_name(FailReason r);
+
+/* What a pairing came to, as GET /api/mesh reports it (F133), with a
+ * sequence number the session keeps, so a page can tell its own pairing's
+ * result from an earlier one's:
+ *   NONE     no pairing (IDLE: none since boot, or about to start one);
+ *   RUNNING  between start_* and an end, and an initiator's PAIRED until its
+ *            NOTIFY_PAIRED has been returned (the member is not yet
+ *            registered);
+ *   PAIRED   done: the joiner opened the COMPLETE, or the initiator sent it
+ *            (nothing acknowledges a COMPLETE; F134's copies go on after);
+ *   FAILED   ended without a member; fail_reason says why.
+ * Until F133 the page read only the steady state, and an initiator that
+ * already held an opera returned to exactly the state a success leaves
+ * (ACTIVE or CONNECTING) after a timeout, a refusal or a cancel. */
+enum class Outcome : uint8_t { NONE = 0, RUNNING, PAIRED, FAILED };
+const char* outcome_name(Outcome o);   /* "none", "running", "paired", "failed" */
+
+/* May this device hold the partner — `peer_pubkey` at `peer_mac` — as a
+ * member (F118; spec §5.2: a device that cannot hold its partner fails the
+ * pairing)? The integration layer answers from its own tables:
+ * mesh_session's answers false for a deny-listed key, a new member for a
+ * full opera, an address another member holds, or an address the transport
+ * has no room for — exactly the cases in which it could not register the
+ * partner and bind it to that address once the pairing completed. Asked at
+ * this device's owner's confirm, before any CONFIRM goes out (both roles);
+ * on the initiator again before the opera_secret is sealed into the
+ * COMPLETE; on the joiner again before a COMPLETE is opened. A false ends
+ * the pairing (FailReason::PARTNER_REFUSED). nullptr admits everyone (the
+ * pure state-machine tests). */
+using PartnerGate = bool (*)(const uint8_t peer_pubkey[mesh_crypto::PUBKEY_LEN],
+                             const uint8_t peer_mac[6]);
+
 constexpr size_t MAX_ACTION_PAYLOAD =
     sizeof(PairCompletePayload) > sizeof(PairOfferPayload) ?
     sizeof(PairCompletePayload) : sizeof(PairOfferPayload);
@@ -284,15 +427,47 @@ struct Action {
   uint32_t   confirmation_code;                    /* non-zero for NOTIFY_CODE_READY,
                                                       and for the joiner's SEND_ACCEPT
                                                       (its code-derivation beat, F49) */
+  /* SEND_COMPLETE only (F97): the initiator's own PAIR_CONFIRM, to go to
+   * peer_mac immediately before the COMPLETE, as its own frame. Every
+   * COMPLETE carries one. An updated joiner does not need it; a joiner on
+   * firmware before F97 takes a COMPLETE only after reading the
+   * initiator's CONFIRM once its own owner has confirmed, so without this
+   * CONFIRM it drops the COMPLETE while the initiator reports PAIRED.
+   * Built before the session key is wiped. */
+  bool               leading_confirm_present;
+  PairConfirmPayload leading_confirm;
+  /* NOTIFY_FAILED only: why (F118). NONE on every other action. */
+  FailReason         fail_reason;
 };
 
 /* Pairing timeout. Matches canary-wap (5 min). Crossing this fires
  * a FAILED transition + NOTIFY_FAILED action. */
 constexpr uint32_t PAIRING_TIMEOUT_MS = 5 * 60 * 1000;
 
+/* The joiner's CONFIRM re-send (F117, above): the first one this long after
+ * it read the initiator's CONFIRM in AWAITING_CONFIRM_PEER, then one every
+ * interval, at most CONFIRM_RESEND_MAX in all, while it waits in
+ * AWAITING_COMPLETE. The delay lets an updated initiator's COMPLETE, sent
+ * right behind its CONFIRM, land first; the bound keeps a joiner whose
+ * initiator never answers from repeating itself to the timeout. */
+constexpr uint32_t CONFIRM_RESEND_FIRST_MS    = 1000;
+constexpr uint32_t CONFIRM_RESEND_INTERVAL_MS = 2000;
+constexpr uint8_t  CONFIRM_RESEND_MAX         = 3;
+
+/* The initiator's COMPLETE copies (F134, above): one every interval after
+ * the first send, for at most the window after it — the pairing timeout,
+ * which the joiner's own wait (from its start_joiner, before any COMPLETE)
+ * cannot outlast. At most 150 copies, each the leading CONFIRM (33 bytes on
+ * the wire) and the COMPLETE (61), unless stop_complete_resend() ends them
+ * first. canary-wap's F100 uses the same 2 s over its own (2-minute)
+ * pairing timeout. */
+constexpr uint32_t COMPLETE_RESEND_INTERVAL_MS = 2000;
+constexpr uint32_t COMPLETE_RESEND_WINDOW_MS   = PAIRING_TIMEOUT_MS;
+
 /* Per-context state. Treat as opaque from the integration side — only
- * the API below should touch fields. Sized so multiple contexts can sit
- * on the stack without pressure (~250 B). */
+ * the API below should touch fields. About 440 B on the x86-64 host build
+ * since F134's kept COMPLETE (336 before it); the session keeps its one
+ * context in static storage, and the host tests hold two on the stack. */
 struct PairingContext {
   State    state;
   Role     role;
@@ -332,12 +507,46 @@ struct PairingContext {
    * screens. Set by confirm_code(); used to gate SEND_CONFIRM. */
   bool     user_confirmed;
 
+  /* Initiator only (F97): the joiner's CONFIRM arrived, from the partner's
+   * address and with the right hash, before this device's own owner
+   * confirmed. confirm_code() then returns the SEND_COMPLETE (its own
+   * CONFIRM rides in front of it, as with every COMPLETE). Cleared by
+   * fail() and at PAIRED. */
+  bool     peer_confirmed;
+
   /* One-shot flag: set when the initiator transitions to PAIRED after
    * SEND_COMPLETE. The next tick() reads it, clears it, and returns
    * NOTIFY_PAIRED so the integration layer gets a definitive success
    * signal on the initiator side (the joiner gets it inline when
    * COMPLETE decrypts). */
   bool     pending_notify_paired;
+
+  /* Joiner only (F117): the CONFIRM re-send to a pre-F97 initiator. Armed
+   * when the initiator's CONFIRM is read in AWAITING_CONFIRM_PEER;
+   * confirm_resend_ms is when it was armed or last re-sent, and
+   * confirm_resends how many went. tick() sends them. */
+  bool     confirm_resend_armed;
+  uint8_t  confirm_resends;
+  uint32_t confirm_resend_ms;
+
+  /* F118: the integration layer's admission check, set at start_* (see
+   * PartnerGate). nullptr admits. */
+  PartnerGate partner_gate;
+
+  /* Why the pairing is FAILED; NONE until then (F118). */
+  FailReason  fail_reason;
+
+  /* Initiator only (F134): the COMPLETE it sent and the CONFIRM in front
+   * of it, byte for byte, kept for the copies tick() sends while
+   * complete_resend_armed. complete_first_ms is the first send,
+   * complete_last_ms the last one, complete_copies how many copies went
+   * (not counting the first). Wiped when the copies stop. */
+  bool                complete_resend_armed;
+  PairCompletePayload kept_complete;
+  PairConfirmPayload  kept_confirm;
+  uint32_t            complete_first_ms;
+  uint32_t            complete_last_ms;
+  uint16_t            complete_copies;
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -353,21 +562,25 @@ void context_init(PairingContext& ctx);
 
 /* Begin pairing as the initiator (an existing opera member who has a
  * valid opera_secret). Generates an ephemeral keypair and returns an
- * Action with type=BROADCAST_DISCOVER. */
+ * Action with type=BROADCAST_DISCOVER. `gate` is asked before this side
+ * confirms and before it seals the opera_secret (PartnerGate, F118). */
 Action start_initiator(PairingContext& ctx,
                        const uint8_t  device_pub[mesh_crypto::PUBKEY_LEN],
                        const uint8_t  device_priv[mesh_crypto::PRIVKEY_LEN],
                        const uint8_t  opera_secret[mesh_crypto::OPERA_SECRET_LEN],
                        const char*    opera_name,
-                       uint32_t       now_ms);
+                       uint32_t       now_ms,
+                       PartnerGate    gate = nullptr);
 
 /* Begin pairing as the joiner (a new device with no opera_secret yet).
- * State becomes AWAITING_OFFER; no message goes out (the initiator's
- * DISCOVER is the trigger). */
+ * State becomes DISCOVERING_JOINER and a DISCOVER(role=JOINER) goes out.
+ * `gate` is asked before this side confirms and before it opens a
+ * COMPLETE (PartnerGate, F118). */
 Action start_joiner(PairingContext& ctx,
                     const uint8_t  device_pub[mesh_crypto::PUBKEY_LEN],
                     const uint8_t  device_priv[mesh_crypto::PRIVKEY_LEN],
-                    uint32_t       now_ms);
+                    uint32_t       now_ms,
+                    PartnerGate    gate = nullptr);
 
 /* Feed an incoming message into the state machine. msg_type identifies
  * the PAIR_* phase (see message types below). Returns the next action;
@@ -394,17 +607,44 @@ Action receive(PairingContext& ctx,
 
 /* Periodic tick from the main loop. now_ms is the current monotonic
  * time. Returns NOTIFY_FAILED if the 5-minute timeout has elapsed
- * since start_*, NONE otherwise. */
+ * since start_*; on an initiator the deferred NOTIFY_PAIRED, then each due
+ * copy of its COMPLETE (SEND_COMPLETE with its leading CONFIRM, the bytes
+ * first sent, to the partner; F134); on a joiner waiting for its COMPLETE
+ * a due CONFIRM re-send (SEND_CONFIRM, F117); NONE otherwise. receive()'s
+ * and confirm_code()'s now_ms must come from the same clock. */
 Action tick(PairingContext& ctx, uint32_t now_ms);
 
+/* F134: end the initiator's COMPLETE copies and wipe the kept frames. The
+ * integration layer calls it once the copies are no longer wanted: it heard
+ * the joiner (a verified frame of its own: it holds the opera_secret), the
+ * joiner is no longer a member at the address it paired from, or the opera
+ * the COMPLETE carried was left or rotated. Returns whether copies were
+ * running. The pairing stays PAIRED. */
+bool stop_complete_resend(PairingContext& ctx);
+
+/* F134: is the initiator still sending copies of its COMPLETE? */
+bool complete_resend_running(const PairingContext& ctx);
+
+/* F133: what this pairing came to (Outcome, above). */
+Outcome outcome_of(const PairingContext& ctx);
+
 /* User-driven confirmation that the 6-digit code matches on both
- * screens. Valid only in AWAITING_CONFIRM / AWAITING_CONFIRM_PEER.
- * Returns SEND_CONFIRM. */
+ * screens. Valid only in AWAITING_CONFIRM (a second call returns NONE).
+ * Returns SEND_CONFIRM, or — on an initiator that already holds the
+ * joiner's verified CONFIRM (F97) — SEND_COMPLETE (with its leading
+ * CONFIRM), after which the next tick() returns NOTIFY_PAIRED and the
+ * copies begin (F134; now_ms is their first send). Returns
+ * NOTIFY_FAILED (PARTNER_REFUSED) instead, sending nothing, when the
+ * context's PartnerGate refuses the partner (F118). */
 Action confirm_code(PairingContext& ctx, uint32_t now_ms);
 
-/* Abort pairing from any state. Wipes the ephemeral key + session
- * key + opera_secret. Returns NOTIFY_FAILED so the integration layer
- * tears down UI. */
+/* Abort a running pairing: FAILED (CANCELED), the ephemeral key, session
+ * key and opera_secret wiped, and NOTIFY_FAILED returned so the
+ * integration layer tears down its UI. A pairing that has already ended,
+ * PAIRED or FAILED, or never started (IDLE), is left as it is and NONE is
+ * returned (F135): a cancel that lands after the initiator's COMPLETE went
+ * out no longer turns a PAIRED context FAILED, so its NOTIFY_PAIRED still
+ * fires, and a FAILED one does not report its failure twice. */
 Action cancel(PairingContext& ctx);
 
 /* Read out and zero the joiner's received opera_secret. Returns true

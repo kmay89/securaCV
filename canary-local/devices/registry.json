@@ -537,10 +537,82 @@
         "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
+      "emulator": {
+        "module": "emulator/dist/canary-display-nightlight.js",
+        "factory": "createCanaryEmuNightlight"
+      },
       "docs": [
         "docs/hardware/display_nightstand_line.md"
       ],
-      "status": "in development — rides the nightstand flavor's HAL (CD_NIGHTLIGHT face); pocket case in the catalog, no committed STL yet"
+      "status": "in development — CI-verified twin (its own nightlight flavor), bench pending; pocket case in the catalog, no committed STL yet",
+      "bench": {
+        "power": {
+          "usb": "USB-C — power + serial (the C3's own USB-Serial/JTAG, no bridge chip)",
+          "switch": {
+            "label": "— (no battery path)",
+            "controls": "battery",
+            "note": "the board has no battery path for a switch to gate: USB-C feeds it through a diode-OR, with no charger IC, so pulling the cable is the only way its rail goes down"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO9 strapping pin, sampled at reset — this firmware also reads it while running: a press wakes the glass, a double press summons or dismisses the lamp, a hold acknowledges, a triple press turns the face a quarter"
+          },
+          {
+            "id": "reset",
+            "label": "RST",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "backlight": {
+          "cap_pct": 50,
+          "note": "the board's HAL clips the backlight at 50% duty, the nightlight's heat budget in the closed pocket case; this twin's display HAL sets the level as asked, so its glow can read brighter than the glass"
+        },
+        "sources": [
+          {
+            "fact": "USB-C is power and serial, through the C3's USB-Serial/JTAG",
+            "file": "firmware/boards/waveshare-esp32c3-lcd147/pins/pins.h",
+            "quote": "#define HAS_USB_CDC             1     // USB-Serial/JTAG only (no USB-OTG on C3)"
+          },
+          {
+            "fact": "the power path: USB-C only, through a diode-OR, no battery and no charger IC",
+            "file": "firmware/boards/waveshare-esp32c3-lcd147/pins/pins.h",
+            "quote": "#define HAS_BATTERY             0     // USB-C powered (VBUS→VSYS diode-OR, no charger IC)"
+          },
+          {
+            "fact": "BOOT is GPIO9, a strapping pin",
+            "file": "firmware/boards/waveshare-esp32c3-lcd147/pins/pins.h",
+            "quote": "#define BOOT_BUTTON_PIN         9     // BOOT/user (also a strapping pin)"
+          },
+          {
+            "fact": "BOOT is read while running (the triple press is the nightlight's)",
+            "file": "firmware/projects/canary-display/src/main.cpp",
+            "quote": "boot_line(\"[input] triple-press -> turn the face\");"
+          },
+          {
+            "fact": "the board's two buttons, BOOT and RST",
+            "file": "docs/hardware/enclosure/canary_c3_lcd147.scad",
+            "quote": "The BOOT/RST buttons and the USB-C"
+          },
+          {
+            "fact": "the backlight cap, 50% duty",
+            "file": "firmware/configs/canary-display/nightlight/config.h",
+            "quote": "#define CD_BL_MAX_PCT           50"
+          },
+          {
+            "fact": "the cap is applied in the board's HAL",
+            "file": "firmware/projects/canary-display/src/hal/display_1in47.cpp",
+            "quote": "exio_write_reg(EXIO_REG_PWM, duty8 > kCap ? kCap : duty8);"
+          },
+          {
+            "fact": "the twin's HAL sets the level as asked",
+            "file": "canary-local/emulator/src/emu_hal_display.cpp",
+            "quote": "g_backlight_level = level;"
+          }
+        ]
+      }
     },
     {
       "id": "canary-vision",
@@ -555,7 +627,7 @@
       "shows": [],
       "modality": "camera",
       "network": {
-        "mdns": "canary-<fp>.local (advertise-only)",
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
         "web": "SPA on device (LittleFS)",
         "mqtt": "presence/dwelling/confidence + signed chain"
       },
@@ -595,7 +667,7 @@
       "shows": [],
       "modality": "wifi-csi",
       "network": {
-        "mdns": "canary.local + canary-<name>.local",
+        "mdns": "canary.local + canary-<name>.local (unnamed: canary-<4 hex>.local)",
         "web": "full dashboard on device (:80)",
         "mqtt": "sensing + witness chain + mesh"
       },
@@ -634,7 +706,7 @@
       "shows": [],
       "modality": "radar",
       "network": {
-        "mdns": "canary-<fp>.local (advertise-only)",
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
         "web": "none",
         "mqtt": "presence/occupants/range + signed chain"
       },

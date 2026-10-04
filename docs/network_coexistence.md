@@ -68,7 +68,10 @@ neither                           →  channel = 6            (fallback)
 On the firmware build, the policy samples `WiFi.status()` / `WiFi.channel()`
 each iteration of `mesh_network::update()`. When the effective channel
 changes, listeners fire — the Opera implementation uses one to drop the
-ESP-NOW broadcast peer so it re-registers cleanly on the new channel.
+ESP-NOW broadcast peer and register it again at once, so it is registered
+cleanly on the new channel. (Until sweep F74 it only dropped it, and only
+a Chirp or Beacon broadcast put it back; the Opera pairing DISCOVER now
+registers it too, where it is sent.)
 
 ESP-NOW peer entries are now created with `peer.channel = 0`, which the
 ESP-IDF treats as "use current radio channel." This is the only correct
@@ -157,9 +160,17 @@ which creates these three entities under the canary device:
 
 | Entity | Type | What it shows |
 |--------|------|---------------|
-| `sensor.canary_<id>_mesh_airtime_pct` | sensor (`%`) | Rolling 10 s airtime utilization |
-| `sensor.canary_<id>_mesh_channel` | sensor | 2.4 GHz channel the mesh is on (1–13) |
-| `binary_sensor.canary_<id>_mesh_channel_locked_to_sta` | binary_sensor | On = mesh is following your home WiFi |
+| `sensor.<id>_mesh_airtime_pct` | sensor (`%`) | Rolling 10 s airtime utilization |
+| `sensor.<id>_mesh_channel` | sensor | 2.4 GHz channel the mesh is on (1–13) |
+| `binary_sensor.<id>_mesh_channel_locked_to_sta` | binary_sensor | On = mesh is following your home WiFi |
+
+`<id>` is the device id as Home Assistant slugs it (`canary-s3-4dC2` becomes
+`canary_s3_4dc2`). The firmware asks for these ids with `default_entity_id`,
+which Home Assistant 2025.10 and later honors when it first registers an
+entity; an entity registered before keeps its id, and an older Home Assistant
+names it from the device and entity names
+(`sensor.canary_<id>_mesh_airtime`). Read from Home Assistant core's source,
+not seen in a running Home Assistant.
 
 State is published every 30 s on `{prefix}/{device_id}/mesh`; the JSON
 payload also carries `routine_allowed`, `routine_denied`, and
@@ -210,13 +221,13 @@ In the field, with two Canaries paired into one Opera, both in STA on the
 home network:
 
 1. Set your router to channel 11 (or any non-default).
-2. Observe `sensor.canary_<id>_mesh_channel` in HA — both Canaries should
-   report 11 and `binary_sensor.canary_<id>_mesh_channel_locked_to_sta`
+2. Observe `sensor.<id>_mesh_channel` in HA — both Canaries should
+   report 11 and `binary_sensor.<id>_mesh_channel_locked_to_sta`
    should be ON.
 3. Run an iperf3 flow at 30 Mbps between two laptops on the same WiFi.
 4. Tamper one Canary; the other should report the tamper event within 5 s,
    and the iperf3 throughput should drop by < 5% during the burst.
-5. Watch `sensor.canary_<id>_mesh_airtime_pct` — should stay ≤ 2% over a
+5. Watch `sensor.<id>_mesh_airtime_pct` — should stay ≤ 2% over a
    10-minute average.
 
 See the v1.0 plan in this branch for the broader acceptance criteria.

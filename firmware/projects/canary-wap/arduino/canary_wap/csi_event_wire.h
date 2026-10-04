@@ -69,10 +69,29 @@ inline const char* privacy_word(csi_privacy_class_t p) {
   return (p == CSI_PRIVACY_P2) ? "p2" : (p == CSI_PRIVACY_P1) ? "p1" : "p0";
 }
 
+/* The body's `"bundled"`: how many observations the row collapsed. A closed
+ * bundle carries its count in its values (csi_bundler.cpp counts each
+ * roll-in), as do the rows that summarize others (meta.quiet_hours'
+ * held_summary, meta.daily_summary); a card line's count is on the parsed
+ * record only (csi_event_log_line.h fills no values count), so the caller
+ * passes that one. The body says the larger of the two, and at least 1: a
+ * row committed directly is one observation. Every path that publishes a
+ * row (live, the offline queue, a card replay, either tree) therefore says
+ * the same count for it, whatever literal its caller passes. Until sweep
+ * F81 the live callers passed 1, which a canary row then always was. */
+inline uint16_t bundled_on_wire(const csi_event_values_t* values,
+                                uint16_t                  caller_count) {
+  uint16_t n = caller_count;
+  if (values && values->bundled_count > n) n = values->bundled_count;
+  return n ? n : (uint16_t)1;
+}
+
 /* Build the body. timestamp_ms is the device-monotonic millisecond mark the
- * event committed at (published as whole seconds); is_replay marks a
- * backfill republish so HA device triggers can skip it. Returns the byte
- * count written (excluding NUL), or 0 on overflow — never a clipped body. */
+ * event committed at (published as whole seconds); bundled_count is the
+ * caller's count for the row (bundled_on_wire() above decides what the body
+ * says); is_replay marks a backfill republish so HA device triggers can skip
+ * it. Returns the byte count written (excluding NUL), or 0 on overflow —
+ * never a clipped body. `bundled` is not in the signed canonical. */
 inline size_t build_event_body(char* body, size_t cap,
                                uint32_t                  event_id,
                                const char*               module_id,
@@ -162,7 +181,7 @@ inline size_t build_event_body(char* body, size_t cap,
     (unsigned)values->breathing_score,
     (unsigned)values->breathing_rate_bpm,
     (unsigned)values->duration_sec,
-    (unsigned)bundled_count,
+    (unsigned)bundled_on_wire(values, bundled_count),
     is_replay ? "true" : "false",
     sig_kv);
   if (n <= 0 || (size_t)n >= cap) return 0;

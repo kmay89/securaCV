@@ -355,6 +355,7 @@ export const BENCH_FIXES = [
           "CHG goes out when charging finishes or USB leaves, DONE only " +
           "glows while a full battery sits on USB. We just unplugged USB — " +
           "watch the charge lights drop while the board rides the battery.",
+        battery: true, // stages a battery: never offered where the board has none
         stage: async (ctx) => {
           ctx.bench?.setBattery(true);
           ctx.bench?.setSwitch(true);
@@ -397,6 +398,7 @@ export const BENCH_FIXES = [
           "Battery back in: CHG goes steady while filling, then hands over " +
           "(off on the watch, DONE on the dash) when the cell is full. Use " +
           "the bench's fast-forward to watch the handover without waiting.",
+        battery: true, // stages a battery: never offered where the board has none
         stage: async (ctx) => {
           ctx.bench?.setUsb(true);
           ctx.bench?.setBattery(true);
@@ -509,6 +511,7 @@ export const BENCH_FIXES = [
           "So if pulling USB kills it, either the switch is OFF, no " +
           "battery is fitted, or the battery is flat. Staged: switch OFF, " +
           "USB out — instant dark.",
+        battery: true, // stages a battery: never offered where the board has none
         stage: async (ctx) => {
           ctx.bench?.setUsb(true);
           ctx.bench?.setBattery(true);
@@ -522,6 +525,7 @@ export const BENCH_FIXES = [
           "Switch ON, healthy battery, pull USB: the firmware never even " +
           "notices — same uptime, same fleet, same everything. That's the " +
           "whole point of the battery. Watch the serial log: no reboot.",
+        battery: true, // stages a battery: never offered where the board has none
         stage: async (ctx) => {
           ctx.bench?.setUsb(true);
           ctx.bench?.setBattery(true);
@@ -596,6 +600,18 @@ export const BENCH_FIXES = [
     ],
   },
 ];
+
+// The flows a bench offers. A board with no battery path (its bench block
+// names no `power.battery`) cannot fit a cell, so a step that stages one
+// would show a rail going down under words about riding the battery: such
+// steps are left out there, and a flow left with no steps is not offered
+// (sweep A54; BenchPower refuses the battery as well).
+export function benchFixesFor(profile) {
+  if (profile?.power?.battery) return BENCH_FIXES;
+  return BENCH_FIXES
+    .map((f) => ({ ...f, steps: f.steps.filter((st) => !st.battery) }))
+    .filter((f) => f.steps.length);
+}
 
 // Witnesses (no glass): the decoder cards the page shows instead of an
 // emulator — LED grammar + chirp meanings, from canary_qr_onboarding.md

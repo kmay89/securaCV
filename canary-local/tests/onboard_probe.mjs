@@ -1,7 +1,7 @@
 // canary-local/tests/onboard_probe.mjs — the display's REAL first-boot portal,
 // walked in a browser. CI: canary-local.yml, "firmware → wasm → boots".
 //
-//   node canary-local/tests/onboard_probe.mjs [--shots DIR] [--flavor NAME]
+//   node canary-local/tests/onboard_probe.mjs [--shots DIR] [--flavor NAME] [--walk native|turned]
 //
 // The emulator compiles net/provision.cpp verbatim, so a first meeting (no
 // Wi-Fi stored) must land in the firmware's own SoftAP + captive portal. Two
@@ -9,7 +9,14 @@
 //
 //  1. The harness, per committed display flavor (?meet=1): the firmware says
 //     its first-boot line on serial and raises "SecuraCV-XXXX" with the key it
-//     printed; the glass's Join scene shows its QR card with nothing painted
+//     printed; the Hello scene before it (read on a clock slowed tenfold, as
+//     it stands for 2.6 s) and the PhoneJoined scene after it show the bird
+//     on the glass, clear of every line, and breathing exactly about the
+//     seat onboard_layout.h names for that glass and scene, which the
+//     firmware reports itself: read through a whole swing of its breath,
+//     its drawn top reaches the seat less the breath and the seat plus
+//     the breath less 1 px and never passes either (F64, F89: birdPerch,
+//     breathOnSeat; --shots saves onboard_hello_<flavor>.png); the glass's Join scene shows its QR card with nothing painted
 //     over it (read off the framebuffer — F43, see joinCard; --shots saves
 //     onboard_join_<flavor>.png), no line cut to an ellipsis, and the network
 //     name and key it printed readable on the glass, before and after the
@@ -29,6 +36,45 @@
 //     come back with the firmware's own reasons while GET / keeps answering;
 //     the right key succeeds, credentials land in NVS only then, the AP goes
 //     away, and the boot carries on to "The canary is singing" and MQTT.
+//     On every walk (F184) each scene it reads — Hello, Join with and
+//     without the hint, PhoneJoined, both failures, Connecting after the
+//     wrong-key and the right-key join, Success until the screen goes, and
+//     the face the boot ends on — keeps every line on the glass
+//     (linesOnGlass), none cut to an ellipsis as the label's own text says
+//     (linesCut: the framebuffer read cannot see the 36 px title face's
+//     dots) and, where it settles, each line's ink inside the box the
+//     firmware reports (linesInked); the bird is on the glass in each, and
+//     clear of the lines where it sits (Success's hop only on the glass:
+//     birdOnGlass). The join QR stands upright, its finder patterns at
+//     top-left, top-right and bottom-left (qrUpright: a glass drawn mirrored,
+//     flipped or upside down moves one to bottom-right). Every frame the
+//     firmware drew is on one glass (framesOnGlass, off the harness's log of
+//     announced shapes). A native walk's reads start at the first-boot line.
+//     The same walk runs again on each turned glass (F184, F204), read from
+//     the sources by turned_glass.mjs: the dash booted with a saved portrait
+//     rotation (?rotation=1, staged in its settings flash before power-on), so
+//     main.cpp turns the glass before the splash and the scenes run on the
+//     480x800 canvas a portrait dash shows (F156); and the nightlight booted
+//     with a saved landscape one (?rotation=1, staged in its own scv-nl key),
+//     so main.cpp turns its panel in hardware and the scenes run on 320x180
+//     (F157) — walked once its dist bundle is committed. Every check above
+//     holds there too, and more: the firmware's first frame was already
+//     turned; the splash itself is read (F206), from that first frame to the
+//     first-boot line on a clock slowed to half speed from power-on
+//     (?timescale=): every read on the turned glass, every line on it and
+//     none cut, the bird clear of every line (birdPerch), and the run must
+//     have seen the bird and every line kHello types whole (splashCoverage)
+//     and each of those lines inked on the canvas inside the box the
+//     firmware reports for it, once a frame has landed (splashInk);
+//     the glass is the turned size, and on the Join scene the QR card and
+//     the halo stand where onboard_layout.h's stack seats them
+//     (onboardJoin; cardAtLayout within the anti-aliased edge, haloAtLayout
+//     exactly), the halo's stroke is inked on the glass where its circle
+//     says and nothing just outside it (haloInked), and the card stands over
+//     the halo's center with its sides inside the stroke (cardInHalo; on the
+//     dash its corners reach past the 800 px glass's ring, F155, and are
+//     printed, not held; on the nightlight they are held inside the stroke,
+//     F157). --walk native|turned runs one kind of walk only.
 //  2. fleet.html, the watch sheet, "Try it": the same walk through the phone
 //     the Lab shows, with a securitypolicyviolation listener installed and the
 //     captive <iframe srcdoc> checked for the firmware's own styling (its
@@ -41,7 +87,13 @@ import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { birdPerch } from "./bird_perch.mjs";
+import { birdPerch, birdOnGlass, breathOnSeat, flourishHop } from "./bird_perch.mjs";
+import {
+  linesOnGlass, linesCut, haloOf, cardInHalo, framesOnGlass, cardAtLayout, haloAtLayout,
+  qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked, linesSettled,
+} from "./onboard_glass.mjs";
+import { turnedGlasses, readTurnedSources, helloLines, splashCoverage, splashInk, isWholeLine } from "./turned_glass.mjs";
+import { lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
@@ -60,6 +112,12 @@ const shotsIdx = process.argv.indexOf("--shots");
 const SHOTS = shotsIdx > 0 ? process.argv[shotsIdx + 1] : null;
 const flavorIdx = process.argv.indexOf("--flavor");
 const ONLY = flavorIdx > 0 ? process.argv[flavorIdx + 1] : null;
+const walkIdx = process.argv.indexOf("--walk");
+const WALK = walkIdx > 0 ? process.argv[walkIdx + 1] : null;
+if (WALK !== null && WALK !== "native" && WALK !== "turned") {
+  console.error(`ONBOARD_PROBE_FAIL: --walk takes native or turned, not ${WALK}`);
+  process.exit(1);
+}
 
 const PORTAL = JSON.parse(await readFile(join(ROOT, "canary-local/devices/display_portal.json"), "utf8"));
 // The coach lines the glass is handed (F50), read from the sources the
@@ -94,6 +152,28 @@ const FLAVORS = (await readdir(DIST))
   .sort();
 const RUN = ONLY ? FLAVORS.filter((f) => f === ONLY) : FLAVORS;
 if (!RUN.length) { console.error(`ONBOARD_PROBE_FAIL: no dist bundle for ${ONLY || "any flavor"}`); process.exit(1); }
+// F184, F204: the turned glass each flavor's firmware wears from a saved
+// rotation, read from the sources by turned_glass.mjs (never typed here): the
+// dash turned portrait in software (480x800, glass_settings.h's ROT_PORTRAIT)
+// and the nightlight stood on its edge in hardware (320x180, io/orientation.h's
+// Orient::R90), each on the panel build.sh's pin map names for the flavor. The
+// dash's QR card corners reach past the ring there as on its native glass
+// (F155, open), so they are printed, not held; the landscape nightlight's
+// layout keeps them inside the stroke (F157), so there they are held. A
+// flavor with no committed dist bundle is not walked (the dist is what a bare
+// checkout serves; the drift check names a missing bundle).
+const TURNED = turnedGlasses(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));
+// F206: the first meeting's lines the splash types, from story_scripts.h —
+// the turned walk reads the splash from power-on and must see each one whole.
+const HELLO_LINES = helloLines(await readFile(join(ROOT, "firmware/common/story/story_scripts.h"), "utf8"));
+// F206: the clock the turned walk's splash runs on, from power-on (the
+// harness's ?timescale=): half speed, so each read of the bird's hops and the
+// typed lines lands at least twice as often in emulated time.
+const SPLASH_SCALE = 0.5;
+// onboard_layout.h's card corner radius, the one cardInHalo measures with.
+const CARD_RADIUS = Number(/constexpr int kCardRadius = (\d+);/.exec(
+  await readFile(join(ROOT, "firmware/projects/canary-display/include/canary/ui/onboard_layout.h"), "utf8"))?.[1]);
+if (!(CARD_RADIUS > 0)) { console.error("ONBOARD_PROBE_FAIL: onboard_layout.h names no kCardRadius"); process.exit(1); }
 if (SHOTS) await mkdir(SHOTS, { recursive: true });
 
 // Allowlist, not sanitization (same stance as the sibling probes).
@@ -107,17 +187,20 @@ for (const d of ["canary-local", "canary-local/assets", "canary-local/devices", 
   "canary-local/enclosures/preview", "canary-local/emulator/web", "canary-local/emulator/dist",
   "canary-local/models", "docs/hardware/enclosure"]) await allow(d);
 
+// lookup() decodes inside its own try: a malformed escape is a 404, not a
+// URIError that ends the probe (sweep A52).
 const server = createServer(async (req, res) => {
-  const key = decodeURIComponent(req.url.split("?")[0].split("#")[0]);
-  if (key === "/favicon.ico") { res.writeHead(204); res.end(); return; }
-  const path = SERVABLE.get(key);
+  if (req.url.split("?")[0] === "/favicon.ico") { res.writeHead(204); res.end(); return; }
+  const path = lookup(SERVABLE, req.url);
   if (!path) { res.writeHead(404); res.end(); return; }
   try {
     const data = await readFile(path);
     res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(data);
   } catch { res.writeHead(404); res.end(); }
-}).listen(0);
+});
+// Loopback only (sweep A51), and the pages are opened there.
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const port = server.address().port;
 
 const browser = await pw.chromium.launch(
@@ -294,8 +377,22 @@ function coachOnGlass(lines, forms) {
     texts.some((t, i) => i + 1 < texts.length && `${t} ${texts[i + 1]}` === f));
 }
 
+// What the bird probes read in the page (F64, F89): the bird's drawn box,
+// every label, the glass, and the seat the onboarding scene names for the
+// bird (onboard_layout.h's bird_seat, from the firmware). Runs in the page.
+async function birdState() {
+  return {
+    bird: await window.__emu.markBox(),
+    labels: await window.__emu.screenLabels(),
+    glass: { w: document.getElementById("glass").width, h: document.getElementById("glass").height },
+    seat: await window.__emu.onboardSeat(),
+  };
+}
+
 // ── 1. the harness, per flavor ──────────────────────────────────────────────
-async function walkHarness(flavor) {
+async function walkHarness(flavor, turn = null) {
+  // A turned walk (F184) is named for its turn: dash@portrait.
+  const walkName = turn ? `${flavor}@${turn.name}` : flavor;
   const page = await browser.newPage({ viewport: { width: 1000, height: 620 } });
   const errors = [];
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
@@ -307,7 +404,95 @@ async function walkHarness(flavor) {
   const shotAs = async (name) => {
     if (!SHOTS) return;
     const png = await E(() => document.getElementById("glass").toDataURL("image/png"));
-    await writeFile(`${SHOTS}/${name}_${flavor}.png`, Buffer.from(png.split(",")[1], "base64"));
+    await writeFile(`${SHOTS}/${name}_${walkName}.png`, Buffer.from(png.split(",")[1], "base64"));
+  };
+  // F184: one of onboard_glass.mjs' framebuffer reads, run in the page on
+  // the canvas as drawn (its source, evaluated there: it is self-contained),
+  // after `pre` (an in-page async expression whose value joins the args) —
+  // the firmware's answer and the pixels read in one turn of the page, with
+  // no frame landing between them. That alone does not pair them: the
+  // answer can be a step ahead of the last frame (A63, inkOnFrame below).
+  const onCanvas = (fn, args = [], pre = "null") => E(`(async () => {
+    const extra = await (${pre});
+    const cv = document.getElementById("glass");
+    const fr = { w: cv.width, h: cv.height, data: cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data };
+    return (${fn.toString()})(fr, ...${JSON.stringify(args)}, ...(extra === null ? [] : [extra]));
+  })()`);
+  // A63: each line's ink, off a frame drawn after the line read whole. The
+  // labels are the firmware's object tree between two passes of its loop;
+  // the canvas is the last frame LVGL flushed. LVGL 8.4 runs the display
+  // refresh before the animations in one lv_timer_handler pass (each new
+  // timer goes to the head of the list, and the refresh timer is made after
+  // the animation timer), so a fade's step lands after its pass's frame and
+  // a line reads faded in for up to a refresh period (16 ms emulated) while
+  // the glass still shows the step before. A clock step finishes a 260 ms
+  // fade in one such step: after stepTime(5000) the phone-joined scene read
+  // fully faded in for about 30 ms of wall time while the canvas still held
+  // all three of its lines dark. So each pass reads the labels, waits for the
+  // next frame, and reads the labels and the pixels in one turn: a line that
+  // drew whole before that frame is on it (linesSettled's held). A still
+  // glass draws no frame at all, so 300 ms with none means nothing was left
+  // to draw. The read stands once no line is ahead of it and every held line
+  // is inked; otherwise it is taken again, and the fifth is judged as it is.
+  // keep: which reads count (the splash counts kHello's whole lines).
+  const inkOnFrame = async (keep = () => true) => {
+    for (let pass = 0; ; pass++) {
+      const before = await E(async () => ({ frames: window.__state.flushes, labels: await window.__emu.screenLabels() }));
+      const t0 = Date.now();
+      while (Date.now() - t0 < 300 && (await E(() => window.__state.flushes)) <= before.frames) {
+        await new Promise((r) => setTimeout(r, 2));
+      }
+      const reads = (await onCanvas(linesInk, [], "window.__emu.screenLabels()")).filter(keep);
+      const { held, ahead } = linesSettled(before.labels, reads);
+      if ((ahead.length === 0 && linesInked(held) === null) || pass === 4) return reads;
+    }
+  };
+  // F184: no line of the scene on the glass leaves it, none is cut to an
+  // ellipsis as its own text says, and each one that draws has ink on the
+  // glass inside the box the firmware reports for it — held on every walk.
+  const holdLines = async (scene) => {
+    const ls = await E(() => window.__emu.screenLabels());
+    const glass = await E(() => ({ w: document.getElementById("glass").width, h: document.getElementById("glass").height }));
+    const off = linesOnGlass(ls, glass) || linesCut(ls) || linesInked(await inkOnFrame());
+    check(off === null, `${scene}: ${off}`);
+  };
+  // F184: the shapes the firmware announced for its glass, and the frames
+  // drawn (the harness logs both): on a turned walk the first frame is
+  // already on the turned glass, and on every walk the glass never changes
+  // shape once it has drawn.
+  const holdFrames = async (when) => {
+    const st = await E(() => ({ shapes: window.__state.shapes, frames: window.__state.flushes }));
+    const bad = framesOnGlass(st.shapes, st.frames, turn ? turn.glass : null);
+    check(bad === null, `${when}: ${bad}`);
+    return st;
+  };
+  // F184: the Connecting scene, read while the firmware says it is joining
+  // (after the scene's 260 ms fade): its lines and its bird.
+  const readConnecting = async (scene) => {
+    await new Promise((r) => setTimeout(r, 400));
+    const status = async () => JSON.parse((await E(() => window.__emu.http("GET", "/status"))).body || "{}").state;
+    const before = await status();
+    check(before === "connecting", `${scene}: the join left Connecting (${before}) before the probe could read it`);
+    await holdLines(`${scene}: the Connecting scene`);
+    const st = await E(birdState);
+    const perch = birdPerch(st);
+    check(perch === null, `${scene}: the Connecting scene: ${perch}`);
+    const after = await status();
+    check(after === "connecting", `${scene}: the join left Connecting (${after}) while the probe read it`);
+  };
+  // F89: read the bird again and again while `up` holds (its scene stands),
+  // from `first` on, for at most `ms` of wall time: the reads breathOnSeat
+  // takes, each stamped with when it was read.
+  const readScene = async (first, up, ms) => {
+    const reads = [{ ...first, at: Date.now() }];
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      await new Promise((r) => setTimeout(r, 50));
+      const st = await E(birdState);
+      if (!up(st)) break;
+      reads.push({ ...st, at: Date.now() });
+    }
+    return reads;
   };
   // Poll /status until the firmware leaves "connecting".
   const verdict = () => until(async () => {
@@ -332,6 +517,7 @@ async function walkHarness(flavor) {
     // network; the other two reasons' titles are test_onboard_layout's and
     // test_onboard_scenes' to hold.
     await new Promise((r) => setTimeout(r, 400));
+    await holdLines(`after a ${reason} failure`);
     const cutFail = await E(joinEllipses);
     check(cutFail.length === 0, `after a ${reason} failure the glass cuts ${cutFail.length} line(s) to an ` +
       `ellipsis (first dots at ${JSON.stringify(cutFail)}; lines: ` +
@@ -339,11 +525,120 @@ async function walkHarness(flavor) {
   };
 
   try {
-    await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&meet=1&flavor=${flavor}`);
-    await page.waitForFunction(() => window.__ready === true, null, { timeout: 90000 });
+    const turnArg = turn ? `&rotation=${turn.rotation}&timescale=${SPLASH_SCALE}` : "";
+    await page.goto(`http://127.0.0.1:${port}/canary-local/emulator/web/harness.html?hour=10&meet=1&flavor=${flavor}${turnArg}`);
+    await page.waitForFunction(() => window.__ready === true || window.__harnessError, null, { timeout: 90000 });
+    const harnessError = await E(() => window.__harnessError || null);
+    check(!harnessError, `the harness did not boot: ${harnessError}`);
+
+    // F206: on a turned walk, the first meeting's splash, read from power-on
+    // on the slowed clock until the onboarding takes the glass (the
+    // first-boot line): every read on the turned glass, every line on it and
+    // none cut (linesOnGlass, linesCut), and the bird, where it is on stage,
+    // on the glass and clear of every line (birdPerch). The run must have
+    // seen the bird and every line kHello types whole, so a walk that missed
+    // the splash fails instead of passing on nothing. Those reads are the
+    // firmware's own account (its object tree); the framebuffer is read too:
+    // each whole line, the first time a read shows it at full strength, is
+    // read again on the canvas once a frame has landed after it (linesInk:
+    // ink inside the box the firmware reports), and every line must have
+    // been seen inked so — a HAL that laid the splash out right and drew it
+    // somewhere else fails here.
+    let splashRead = null, splashInked = null;
+    if (turn) {
+      const reads = [];
+      const inkReads = [];
+      const inkedTexts = new Set();
+      // kHello's whole lines off a frame drawn after they read whole
+      // (inkOnFrame, A63). This used to wait for two flushes past the read, or
+      // 2 s without them. On a still glass the second flush can be the next
+      // beat's: on "Dark means all is well. If I glow, look at me." and "Add
+      // another of me and we compare notes." it came about 1.6 s on, near the
+      // end of the line's 950 or 850 ms hold on the half-speed clock (1.9 or
+      // 1.7 s of wall time), and when it came after, the read found the next
+      // line and the line was never seen inked.
+      const inkSplash = async () => {
+        const whole = await inkOnFrame((r) => HELLO_LINES.some((line) => isWholeLine(r.text, line)));
+        inkReads.push(...whole);
+        for (const r of whole) if (r.ink > 0) inkedTexts.add(r.text);
+        const dark = splashInk(whole, HELLO_LINES).dark;
+        return dark.length ? `${dark.length} whole line(s) of the splash show no ink where the firmware says ` +
+          `they are, a frame after: ${JSON.stringify(dark.map((r) => ({ text: r.text, box: r.box })))}` : null;
+      };
+      const t0 = Date.now();
+      // From the firmware's first frame: before it, the canvas is the page's,
+      // not yet the glass the firmware announced (framesOnGlass holds that
+      // first frame to the turned glass).
+      await until(() => E(() => window.__state.flushes > 0), "the firmware's first frame", 60000, 20);
+      while (!(await serial()).includes('First boot - onboarding AP "SecuraCV-')) {
+        check(Date.now() - t0 < 240000, `the splash never handed the glass to the onboarding (${reads.length} reads)`);
+        const st = await E(birdState);
+        check(st.glass.w === turn.glass.w && st.glass.h === turn.glass.h,
+          `the splash: the ${flavor} glass is ${st.glass.w}x${st.glass.h}, not the ${turn.name} ` +
+          `${turn.glass.w}x${turn.glass.h} it boots turned to (F206)`);
+        const bad = linesOnGlass(st.labels, st.glass) || linesCut(st.labels) || birdPerch(st);
+        check(bad === null, `the splash: ${bad} (F206)`);
+        reads.push(st);
+        if (st.labels.some((l) => l.shown && l.opa >= 250 && !inkedTexts.has(l.text) &&
+            HELLO_LINES.some((line) => isWholeLine(l.text, line)))) {
+          const dark = await inkSplash();
+          check(dark === null, `the splash: ${dark} (F206)`);
+        }
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      splashRead = splashCoverage(reads, HELLO_LINES);
+      check(splashRead.bird > 0 && splashRead.missing.length === 0,
+        `the splash was not read whole: ${splashRead.reads} reads, the bird on stage in ${splashRead.bird}, ` +
+        `never seen whole: ${JSON.stringify(splashRead.missing)} (F206)`);
+      splashInked = splashInk(inkReads, HELLO_LINES);
+      check(splashInked.missing.length === 0,
+        `the splash was not seen drawn: ${inkReads.length} canvas reads, never inked whole at full strength: ` +
+        `${JSON.stringify(splashInked.missing)} (F206)`);
+      await E(() => window.__emu.setTimeScale(1));
+    }
 
     // First boot: the firmware's own line, and the radio it configured.
     await until(async () => (await serial()).includes('First boot - onboarding AP "SecuraCV-'), "the first-boot serial line");
+    // F184: every frame so far on one glass — on a turned walk, the turned
+    // glass from the splash's first frame on (main.cpp wears the saved
+    // rotation before the splash; a firmware that turned it after the splash
+    // would pass every read below, the canvas having turned by then).
+    const framesAtBoot = await holdFrames("by the first-boot line");
+    // F184: a turned walk's glass is the turned size, read off the canvas
+    // the firmware's own framebuffer sizes (the HAL follows LVGL's rotation).
+    if (turn) {
+      const cv = await E(() => [document.getElementById("glass").width, document.getElementById("glass").height]);
+      check(cv[0] === turn.glass.w && cv[1] === turn.glass.h,
+        `booted with saved rotation ${turn.rotation}, the ${flavor} glass is ${cv.join("x")}, not the ` +
+        `${turn.name} ${turn.glass.w}x${turn.glass.h} main.cpp turns it to (F184)`);
+    }
+    // F89: the Hello scene, which stands only for the welcome beat (2.6 s)
+    // before the AP comes up — the emulated clock runs at a tenth of its
+    // speed while the probe reads it, from the bird's first breath to the
+    // scene's end: on the glass, clear of every line, and breathing exactly
+    // about the seat onboard_layout.h names (its breath's swing starts with
+    // the scene and both of its ends fall inside it).
+    await E(() => window.__emu.setTimeScale(0.1));
+    try {
+      const helloUp = (st) => st.labels.some((l) => l.shown && l.opa > 0 && l.text === "Hello.") &&
+        st.bird && st.bird.shown && st.seat;
+      const first = await until(async () => {
+        const st = await E(birdState);
+        return helloUp(st) ? st : null;
+      }, "the Hello scene with its bird", 20000, 50);
+      await shotAs("onboard_hello");
+      const hello = await readScene(first, helloUp, 60000);
+      for (const st of hello) {
+        const helloPerch = birdPerch(st);
+        check(helloPerch === null, `Hello: ${helloPerch}`);
+        const helloLines = linesOnGlass(st.labels, st.glass) || linesCut(st.labels);
+        check(helloLines === null, `Hello: ${helloLines}`);
+      }
+      const helloSeat = breathOnSeat(hello);
+      check(helloSeat === null, `Hello: ${helloSeat}`);
+    } finally {
+      await E(() => window.__emu.setTimeScale(1));
+    }
     const ap = await until(() => E(() => window.__emu.softAp()), "the SoftAP to come up");
     const s0 = await serial();
     check(/^SecuraCV-[2-9A-HJ-NP-Za-km-z]{4}$/.test(ap.ssid), `SoftAP SSID ${ap.ssid} is not SecuraCV-XXXX`);
@@ -366,6 +661,33 @@ async function walkHarness(flavor) {
     check(card && card.stray === 0,
       `the join scene paints over its QR card: ${card ? `${card.stray} px not the QR's black/white inside ` +
         `card ${JSON.stringify(card.box)} on ${card.panel.join("x")}, first at ${JSON.stringify(card.first)}` : "card gone"}`);
+    await holdLines("the join scene");
+    // F184: the QR stands upright on the glass, as a phone reads it: its
+    // three finder patterns at top-left, top-right and bottom-left (a glass
+    // drawn mirrored, flipped or upside down moves one to bottom-right).
+    const finders = await onCanvas(qrFinders, [card.box, CARD_RADIUS]);
+    const upright = qrUpright(finders);
+    check(upright === null, `the join scene: ${upright}`);
+    // F184: on the turned glass the card and the halo stand where the layout
+    // puts them — the card off the framebuffer and the arc LVGL laid out,
+    // each held to onboard_layout.h's stack as the firmware evaluates it
+    // (onboardJoin), the halo's stroke inked on the glass where its circle
+    // says, and the card over the halo's center with its sides inside the
+    // stroke; its corners are held only where the layout keeps them inside
+    // (not on the 800 px glass, F155).
+    let inHalo = null;
+    const holdJoin = async (scene, joinCardNow) => {
+      const layout = await E(() => window.__emu.onboardJoin());
+      const halo = haloOf(await E(() => window.__emu.screenArcs()));
+      const bad = cardAtLayout(joinCardNow, layout) || haloAtLayout(halo, layout);
+      check(bad === null, `${scene}: ${bad}`);
+      const ink = haloInked(await onCanvas(haloInk, [halo]), 0, 3);
+      check(ink === null, `${scene}: ${ink}`);
+      const h = cardInHalo(joinCardNow, halo, { corners: turn.corners, cornerR: CARD_RADIUS });
+      check(h.fail === null, `${scene}: ${h.fail}`);
+      return h;
+    };
+    if (turn) inHalo = await holdJoin("the join scene", card);
     // F45: no line of the Join scene ends in an ellipsis, and the name and
     // key the firmware printed are on the glass — then nobody joins for 45 s
     // and the stuck-phone hint comes up; still none cut, and the name and
@@ -390,6 +712,11 @@ async function walkHarness(flavor) {
     const cutHint = await E(joinEllipses);
     check(cutHint.length === 0, `with the stuck-phone hint up the join scene cuts ${cutHint.length} line(s) ` +
       `to an ellipsis (first dots at ${JSON.stringify(cutHint)}) (F45)`);
+    await holdLines("the join scene with the stuck-phone hint");
+    const cardHint = await E(joinCard);
+    const uprightHint = qrUpright(await onCanvas(qrFinders, [cardHint ? cardHint.box : [0, 0, -1, -1], CARD_RADIUS]));
+    check(uprightHint === null, `with the stuck-phone hint up: ${uprightHint}`);
+    if (turn) await holdJoin("with the stuck-phone hint up", cardHint);
     const hintLines = await E(glassLines);
     // A changed label is not enough: on round glass the title yields as the
     // hint arrives, so the wait above passes even if the hint never draws.
@@ -424,19 +751,35 @@ async function walkHarness(flavor) {
     const cutPhone = await E(joinEllipses);
     check(cutPhone.length === 0, `the phone-joined scene cuts ${cutPhone.length} line(s) to an ellipsis (first ` +
       `dots at ${JSON.stringify(cutPhone)}; lines: ${JSON.stringify((await E(glassLines)).map((l) => l.text))}) (F65)`);
+    await holdLines("the phone-joined scene");
 
     // F64: the PhoneJoined scene puts the bird on stage, and it sits where
     // the scene placed it: on the glass, clear of every line of text.
     // Before F64 it sat behind the title; after #1755 re-seated it per
-    // scene, it left the glass.
-    const perchAt = await E(async () => ({
-      bird: await window.__emu.markBox(),
-      labels: await window.__emu.screenLabels(),
-      glass: { w: document.getElementById("glass").width, h: document.getElementById("glass").height },
-    }));
-    check(perchAt.bird && perchAt.bird.shown, "the PhoneJoined scene shows no bird (F64)");
-    const perch = birdPerch(perchAt);
-    check(perch === null, `PhoneJoined: ${perch}`);
+    // scene, it left the glass. F89: and it breathes exactly about the seat
+    // onboard_layout.h names for this glass and scene, read through a whole
+    // swing (the scene stands until the phone posts; canary_mark's breath
+    // is a 1.4 s half-swing at most x1.25, so 4 s of reads hold one).
+    // An idle flourish may hop the bird inside those 4 s; then the scene
+    // is read again (flourishHop), at most twice more.
+    let phoneJoined = [];
+    for (let k = 0; k < 3; k++) {
+      const perchAt = await E(birdState);
+      check(perchAt.bird && perchAt.bird.shown, "the PhoneJoined scene shows no bird (F64)");
+      phoneJoined = await readScene(perchAt, (st) => st.bird && st.bird.shown, 4000);
+      check(phoneJoined.length > 1 && phoneJoined[phoneJoined.length - 1].at - phoneJoined[0].at >= 3500,
+        `PhoneJoined: the bird left the stage after ${phoneJoined.length} reads (F64)`);
+      for (const st of phoneJoined) {
+        const perch = birdPerch(st);
+        check(perch === null, `PhoneJoined: ${perch}`);
+        const pjLines = linesOnGlass(st.labels, st.glass) || linesCut(st.labels);
+        check(pjLines === null, `PhoneJoined: ${pjLines}`);
+      }
+      if (!flourishHop(phoneJoined)) break;
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    const onSeat = breathOnSeat(phoneJoined);
+    check(onSeat === null, `PhoneJoined: ${onSeat}`);
 
     // Captive DNS: the firmware's dns_build_response.
     const dns = await E(async () => {
@@ -487,6 +830,7 @@ async function walkHarness(flavor) {
     await E(() => { window.__nvs = []; window.__emu.opts.onNvsWrite = (ns, k) => window.__nvs.push(`${ns}/${k}`); });
     let r = await join("HomeNet", "wrong-horse");
     check(r.status === 200 && JSON.parse(r.body).ok === true, `POST /join → ${r.status} ${r.body}`);
+    await readConnecting("joining with a wrong key");
     let v = await verdict();
     check(v.state === "fail" && v.reason === PORTAL.join_failures.BadPassword, `wrong key verdict ${JSON.stringify(v)}`);
     await failFixOnGlass("BadPassword");
@@ -505,8 +849,24 @@ async function walkHarness(flavor) {
 
     // The right key, with a zone: success, and only now the credentials.
     r = await join("HomeNet", "correct-horse", "UTC0");
+    await readConnecting("joining with the right key");
     v = await verdict();
     check(v.state === "success", `right key verdict ${JSON.stringify(v)}`);
+    // F184: the Success scene, read until the onboarding screen goes (at
+    // most 2.5 s): every line on the glass and none cut, and the bird on the
+    // glass through its earned hop (the hop crosses the lines as they fade
+    // in, so only the bird's on-glass half is held there).
+    let successReads = 0;
+    const tSuccess = Date.now();
+    while (Date.now() - tSuccess < 2500) {
+      const st = await E(birdState);
+      if (!st.seat) break;
+      successReads++;
+      const bad = linesOnGlass(st.labels, st.glass) || linesCut(st.labels) || birdOnGlass(st);
+      check(bad === null, `the Success scene: ${bad}`);
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    check(successReads > 0, "the Success scene was gone before the probe could read it");
     const nvs = await E(() => window.__nvs);
     check(nvs.includes("securacv/wifi_ssid") && nvs.includes("securacv/wifi_pass"), `credentials not persisted: ${nvs}`);
 
@@ -518,26 +878,42 @@ async function walkHarness(flavor) {
     check(s1.includes("Onboarding complete."), "serial never said onboarding completed");
     check(s1.includes("Timezone chosen during setup."), "the zone the portal sent was not applied");
     check((await E(() => window.__emu.http("GET", "/"))).status === 0, "the portal still answers after teardown");
+    // F184: the face the boot ends on, after the handoff: every line on the
+    // glass, none cut, each inked; and every frame of the walk on one glass.
+    await new Promise((res) => setTimeout(res, 1500));
+    await holdLines("the face after onboarding");
+    const framesAtEnd = await holdFrames("by the end of the walk");
     await until(() => E(() => window.__state.mqtt.some((m) => m.dir === "out" && m.topic.endsWith("/status"))),
       "the display's MQTT status after onboarding", 30000);
-    if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${flavor}.png` });
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${walkName}.png` });
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
-    console.log(`ONBOARD_PROBE_OK[${flavor}] ${ap.ssid}: join card clean, no line cut and name + key on the glass ` +
-      `(with and without the stuck hint), ` +
+    const turned = turn
+      ? `${turn.glass.w}x${turn.glass.h} glass from the first frame, the splash read whole (${splashRead.reads} ` +
+        `reads, the bird in ${splashRead.bird}, all ${splashRead.seen.length} lines, each inked on the canvas ` +
+        `in its box: ${splashInked.inked.length} lines), the QR card and halo where ` +
+        `the layout seats them (offset ${inHalo.offset.join(",")}, sides ${inHalo.sides} px from the center, inner ` +
+        `edge ${inHalo.inner}; corners reach ${inHalo.reach}${turn.corners ? ", held inside" : ", F155"}), `
+      : "";
+    console.log(`ONBOARD_PROBE_OK[${walkName}] ${ap.ssid}: ${turned}${framesAtEnd.frames} frames on one glass ` +
+      `(${framesAtBoot.shapes.length} shape(s) announced), every line read on the glass, inked and none cut ` +
+      `(Connecting and ${successReads} Success reads included), QR upright, ` +
+      `join card clean, no line cut and name + key on the glass (with and without the stuck hint), ` +
       `refused wrong key, "no page?" and both failures' fixes whole on the glass, captive DNS+302, served page pinned, ` +
       `3 verdicts from firmware, persisted on success, boot resumed`);
   } catch (e) {
-    if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${flavor}_fail.png` }).catch(() => {});
-    console.error(`ONBOARD_PROBE_FAIL[${flavor}]:`, e.message);
-    failures.push(flavor);
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${walkName}_fail.png` }).catch(() => {});
+    console.error(`ONBOARD_PROBE_FAIL[${walkName}]:`, e.message);
+    failures.push(walkName);
   }
   await page.close();
 }
 
-for (const f of RUN) await walkHarness(f);
+const walked = [];
+if (WALK !== "turned") for (const f of RUN) { await walkHarness(f); walked.push(f); }
+if (WALK !== "native") for (const t of TURNED) { await walkHarness(t.flavor, t); walked.push(`${t.flavor}@${t.name}`); }
 
 // ── 2. the Lab's phone, on fleet.html ───────────────────────────────────────
-if (!ONLY || ONLY === "watch") {
+if ((!ONLY || ONLY === "watch") && WALK !== "turned") {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   const errors = [];
@@ -545,7 +921,7 @@ if (!ONLY || ONLY === "watch") {
   page.on("pageerror", (e) => errors.push(String(e)));
   const phone = page.locator(".ob-wrap");
   try {
-    await page.goto(`http://localhost:${port}/canary-local/fleet.html#canary-display-watch`);
+    await page.goto(`http://127.0.0.1:${port}/canary-local/fleet.html#canary-display-watch`);
     await page.waitForSelector(".tabs .tab", { timeout: 30000 });
     // The page's own violations, from here on. The captive frame is sandboxed
     // without scripts, so nothing can listen INSIDE it — a style it is refused
@@ -601,5 +977,5 @@ if (failures.length) {
   console.error(`ONBOARD_PROBE_FAIL: ${failures.join(", ")}`);
   process.exit(1);
 }
-console.log(`ONBOARD_PROBE_OK all: ${RUN.join(", ")}${!ONLY || ONLY === "watch" ? " + fleet.html phone" : ""}`);
+console.log(`ONBOARD_PROBE_OK all: ${walked.join(", ")}${!ONLY || ONLY === "watch" ? " + fleet.html phone" : ""}`);
 process.exit(0);

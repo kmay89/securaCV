@@ -212,13 +212,21 @@ bool clear_trusted_peers();
  *
  *   save_peer_mac()   — insert, or replace that fingerprint's address.
  *                       False on null, FE off, a full table with a new
- *                       fingerprint, or an NVS failure.
+ *                       fingerprint, an address another fingerprint
+ *                       holds (F102), or an NVS failure. main.cpp calls
+ *                       it only for an address the session bound
+ *                       (mesh_session PairedPeerBoundCallback).
  *   load_peer_macs()  — every stored entry; true with count 0 when none.
  *                       False on null, cap < MAX_TRUSTED_PEERS, FE off, a
- *                       read failure or a malformed blob.
+ *                       read failure or a malformed blob. main.cpp hands
+ *                       them to mesh_session::restore_peer_macs at boot.
  *   remove_peer_mac() — drop one fingerprint's entry; true when it is gone
  *                       afterwards (idempotent). remove_trusted_peer() calls
- *                       it for the removed pubkey's fingerprint.
+ *                       it for the removed pubkey's fingerprint, best
+ *                       effort; main.cpp's boot restore for every entry
+ *                       restore_peer_macs calls UNTRUSTED (no longer a
+ *                       member, F120) or SHARED (an address two members'
+ *                       entries hold, from before F102, F119).
  *   clear_peer_macs() — erase the key; idempotent.
  * Host build: save/remove/clear → true, load → true with count 0.
  *
@@ -247,8 +255,11 @@ namespace peer_mac_blob {
 bool valid_len(size_t len);
 /* Insert fingerprint → mac, or replace that fingerprint's MAC, in
  * blob[0 .. *len) (capacity PEER_MACS_BLOB_MAX); *len is updated. False —
- * blob untouched — on a malformed *len or a full blob with a new
- * fingerprint. */
+ * blob untouched — on a malformed *len, a full blob with a new
+ * fingerprint, or a mac another fingerprint's entry holds (F102: one
+ * address, one member, as bind_peer_mac refuses it; the boot restore
+ * binds in blob order, so a second holder took the address from the
+ * first). */
 bool upsert(uint8_t* blob, size_t* len,
             const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
             const uint8_t mac[PEER_MAC_LEN]);

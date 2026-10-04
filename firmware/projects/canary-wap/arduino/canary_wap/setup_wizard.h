@@ -28,6 +28,7 @@
 #include <WiFiUdp.h>
 
 #include "captive_dns.h"          // pure DNS response builder (host-tested)
+#include "csi_module_settings_nvs.h"  // begin_read_only(): the quiet probe (sweep F201)
 #include "provisioning_logic.h"   // pure timeout/teardown decisions (host-tested)
 
 namespace setup_wizard {
@@ -44,9 +45,14 @@ static char s_device_name[DEVICE_NAME_MAX + 1] = {0};
 static WiFiUDP s_dns_udp;
 static bool s_dns_running = false;
 
+// The boot's first open of "securacv": on a first boot after an NVS erase
+// the namespace is not there yet (provision_device() creates it, after this,
+// when it stores the key), so it is asked for quietly. An absent namespace
+// opens nothing and logs nothing, and reads as a first boot, as the refused
+// open did (sweep F201).
 inline bool init() {
   Preferences prefs;
-  if (prefs.begin("securacv", true)) {
+  if (csi_module_settings_nvs::begin_read_only(prefs, "securacv")) {
     s_first_boot = !prefs.getBool("setup_ok", false);
     prefs.getString("dev_name", s_device_name, sizeof(s_device_name));
     prefs.end();

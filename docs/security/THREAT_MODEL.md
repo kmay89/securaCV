@@ -232,6 +232,8 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | TLS client cannot verify the WAP's self-signed certificate | The iPhone app pins the receipt's `tls_cert_fp` and refuses an https Canary whose certificate does not match or that has no pin on record (`DeviceAPI.swift`, `PinnedTrustDelegate`); browsers show their self-signed warning. No API asks the client for a certificate — the kernel's rustls config is `with_no_client_auth()` and the WAP's `httpd_ssl_config_t` carries only the server certificate and key |
 | HTTPS server fails to start on the WAP | Serves plain HTTP and logs `[HTTPS] Server start FAILED — falling back to HTTP`; setup mode is HTTP-only by design (both stated, never silent) |
 | Firmware corrupt | Refuse to boot **on the opt-in secure-provisioning tier only** (secure boot is NOT enabled on default builds — see [Scope of this principle](#scope-of-this-principle)); the default tier relies on the OTA signature check before the image is written |
+| A phone asks to pair with the WAP over BLE | A Numeric Comparison (what a phone that shows six digits and a yes/no gets, as current phones do) is answered yes only by the owner's confirm of the six digits in the web UI (`require_pin`; the phone's link and digits must still be the ones shown), on every profile that compiles the pairing channel; with no pairing channel to ask, it is answered no. Until F171 (2026-10) the default FULL profile's Opera module replaced the channel's NimBLE server callbacks, NimBLE-Arduino's default answered every Numeric Comparison yes, with no owner and no MITM check, and a Passkey Entry took the library's fixed 123456: one dispatcher (`ble_server_dispatch.h`) now gives the security callbacks to the channel alone. Not every pairing asks the owner (NimBLE 2.3.8's pairing tables, read from source): a DisplayOnly or NoInputNoOutput initiator, and on legacy pairing a DisplayYesNo one, pairs by Just Works, with no owner and no MITM protection (the channel neither lists that bond nor gives its link the authenticated characteristics, but NimBLE stores the bond). NimBLE-Arduino keeps 3 bonds by default and, when a new one found the store full, unpaired the oldest (when its busy guard allowed); since F189 (2026-10) the channel refuses a new phone's pairing that finds the store full (the phone's pairing fails; a phone the store holds still re-pairs) and never deletes a bond to make room (nor for a bonded phone's subscription record, whose 8-record store NimBLE's default made room in by unpairing another phone, the F189 review), so such a stranger's bonds can no longer push the owner's out, but three of them fill the store and the owner's next pairing is refused until Clear all (`DELETE /api/bluetooth/paired/all`, which deletes every bond the stack keeps; the health log says `BLE pairing refused: the bond store is full`); a keyboard-only initiator pairs by Passkey Entry, which needs the six digits the WAP shows in the PIN box and writes to the health log, in or out of pairing mode (filed in the 2026-09 sweep). A build without the pairing channel pairs by Just Works under NimBLE's defaults. Host-tested over a NimBLE stand-in (both modules' inits); not bench-tested |
+| The owner removes a paired phone | Its bond is deleted from NimBLE's store under the phone's identity address (the key NimBLE keeps it by), with the radio quiet for the call: NimBLE refuses to forget a bond that carries the phone's IRK (a phone using private addresses hands its IRK over) while it advertises or scans (`ble_gap_unpair()`, `BLE_HS_EBUSY`), so the loop task ends the owner's scan, pauses the presence scan and stops the shared advertiser (Opera's beacon with it, on FULL) for the delete and starts them again after. When the stack keeps the bond anyway (another task restarted the advertiser in that window), the phone stays listed and the owner is told to try again; only a phone whose bond is gone must pair again. Until F172 the delete named a byte-reversed over-the-air address, and until the F172 review the stack's refusal went unnoticed and Remove answered ok: either way the phone kept its bond and came back encrypted with no owner asked. A link that comes up while Bluetooth is off is dropped (F173). Host-tested over a stand-in that answers as `ble_gap_unpair()` does; not bench-tested |
 | Watchdog trigger | Reboot, resume from last good state |
 | NVS corruption | Generate new identity (fresh start) |
 
@@ -609,13 +611,16 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   and re-sent from any radio in range and still pass signature, `opera_id`
   and counter. The PlatformIO tree therefore takes no radio address from a
   frame: an opera frame from an address its transport table does not hold
-  is dropped before verification, and a member's address is bound only by a
-  completed pairing (or restored from NVS at boot), so a changed radio MAC
-  means a re-pair — with the two limits in the next bullet. F49 part 3
-  (#1756) briefly re-bound and persisted a member's address on such a
-  frame, which let an outsider re-point the member at its own radio (host
-  probe: the receiver's next rotation sent its OFFER to the outsider, and
-  the 60 s commit dropped the member when it stayed silent); withdrawn,
+  is dropped before verification, and so, since F70, is a member's frame
+  from any address but the member's own binding (the bullet on where a
+  verified frame's source is recorded, below); a member's address is bound
+  only by a completed pairing (or restored from NVS at boot), so a changed
+  radio MAC means a re-pair — with the limits in the bullet on the pairing
+  code below. F49 part 3 (#1756) briefly re-bound and persisted a member's
+  address on such a frame, which let an outsider re-point the member at
+  its own radio (host probe: the receiver's next rotation sent its OFFER
+  to the outsider, and the 60 s commit dropped the member when it stayed
+  silent); withdrawn,
   spec §8.3. canary-wap re-pointed a member's address, and its ESP-NOW
   registration, at the source of any frame that passed its checks; a host
   probe against its real `mesh_network.cpp` showed that a frame the
@@ -642,7 +647,40 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   in range can read (pre-existing). Now, as on the PlatformIO tree, the
   joiner takes the first OFFER and a COMPLETE only after its owner
   confirmed, and the initiator takes one ACCEPT, from where its OFFER
-  went, and wipes the pairing once COMPLETE is sent. Host-tested only.
+  went, and wipes the pairing once COMPLETE is sent. Since F75 the owners
+  may confirm in either order (the initiator keeps a joiner's early
+  CONFIRM), and a CONFIRM counts only from the pairing partner's address,
+  and only once the code is shown: the joiner's genuine CONFIRM re-sent
+  from another radio no longer completes a pairing, and a wrong hash from
+  another radio no longer cancels one. The address check does not stop a
+  reflection (open): the CONFIRM hash is the same in both directions, so
+  the initiator's own CONFIRM, re-sent to it from the joiner's address,
+  counts as the joiner's, and the initiator then holds a joiner whose owner
+  never confirmed (the joiner drops the COMPLETE; host-probed, the same
+  before F75, and on the PlatformIO tree, which computes the same hash,
+  the same before and after F97). A hash bound to the sender's role would
+  stop it (a wire change). Since F73 a pairing whose partner the device cannot hold (a
+  deny-listed key, a full opera, an address another member holds) fails
+  and is logged: the initiator adds the joiner before anything is sent, so
+  it no longer seals the `opera_secret` to a partner it then refuses, and a
+  refusing joiner keeps its own opera. The PlatformIO tree does the same
+  since F118, and earlier: the check runs at the owner's confirm, before
+  any CONFIRM goes out, so a joiner that cannot hold its initiator never
+  gets the secret sealed to it (canary-wap's joiner refuses at the
+  COMPLETE, after its initiator has added it). Since F98 that includes a new key at
+  an address another member holds, which `add_peer` used to append: the two
+  entries shared one ESP-NOW registration, and removing either stranded the
+  other. Such a refusal is logged on its own line. Its routine case is a
+  device whose NVS was erased or that was reflashed: it keeps its radio
+  address with a new key, and each member that holds its old entry refuses
+  it until that entry is removed, which on canary-wap splits that member
+  from the opera until F48 (the rotation below). Since F100 the initiator sends its COMPLETE again every 2 s until
+  it hears the joiner, for at most the 2-minute pairing timeout, and logs
+  one never answered (it went once, unchecked); the copies are the frame
+  already on the air, and the pairing key stays wiped. A joiner drops a
+  COMPLETE it cannot open under its pairing key instead of ending the
+  pairing, which any radio could do with 61 bytes from any address.
+  Host-tested only.
 - **Still open on canary-wap: a radio copying a member's own address.**
   ESP-NOW does not authenticate a source, so a radio that copies member
   B's bound address passes canary-wap's address check. It can deliver B's
@@ -653,10 +691,61 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   for B moves up, so B's own frames drop as replays until B's counter for
   the receiver catches up. No address moves (host-probed; open). A
   destination in the signed bytes would stop the cross-member case (a wire
-  change); the power-cut window is the counter-save cadence. Separately, a
-  rebooted canary-wap restarts its per-member counters at 1 (spec §3.3), so
-  every member that heard it drops its frames until they climb back past
-  what that member last saw (host-probed; open).
+  change); the power-cut window is the counter-save cadence. Since F71 a
+  rebooted canary-wap no longer restarts its per-member send counters at 1:
+  each is reserved ahead in NVS, and a boot resumes every member above the
+  highest counter it reserved for any of them (spec §3.3), and no counter
+  is signed twice. A rotation keeps the counters (since F95's counter fix;
+  it used to restart them at 1, and a member that had not switched, or
+  rebooted before its 5-minute last-seen save, dropped the restarted
+  frames), and a new member starts above every counter the device can
+  have signed, a removed member's included (F99: a device re-paired after a
+  removal or a leave kept its last-seen counter and dropped a counter that
+  restarted at 1). It starts level with the busiest member, not at the
+  reservation a block ahead of it, which would have widened the
+  cross-member gap above by up to a block at every pairing; after a busy
+  member is removed the new one starts as far ahead of the others as that
+  member's traffic was, until the next boot. The first boot after the update finds no record and resumes above
+  2^40, which no older boot reached, so it is heard at once too. An
+  unreadable record resumes above 2^48, above anything signed since the
+  update; a second unreadable record resumes below the device's own
+  history, and its members drop its frames until each counter climbs back.
+  A boot also brings every member's counter level, so the cross-member gap
+  above starts again from nothing at each boot rather than growing by up
+  to a reservation block (host-tested).
+- **A re-added member's old frames stay replays on canary-wap (F116).**
+  A member a canary-wap dropped (removed, or left behind at its own leave)
+  used to take its last-seen counter with it, and a re-pair started it at
+  0. In an opera whose id had not changed (removing the last member
+  rotates nothing; a re-pair into the same opera after a leave) every
+  frame the member had signed before, alerts included, was fresh once
+  more, and one replayed from its address at the re-pair counted as the
+  joiner heard and ended the COMPLETE resend (host-probed). The PlatformIO
+  tree already kept such counters as tombstones; canary-wap now does too,
+  in NVS (`rx_tombs`), each for the opera the member was dropped from, and
+  a re-add into that opera on either side of the pairing, or a boot,
+  starts the member there. In any other opera the old frames drop at the
+  `opera_id` check (a removal with a survivor rotates the opera at once),
+  so no tombstone applies there. Limits: eight at most, so a ninth drop
+  evicts the oldest, whose window reopens at its next re-add; and a
+  removal of a member not heard above the tombstone its re-add restored
+  releases it, so the next re-add starts at 0 again. That release is the
+  owner's way back for a device whose own counters went back while it kept
+  its key (its send-counter record lost), which would otherwise drop at its
+  tombstone for good; it reopens the window for that member. Every member
+  on firmware from before F71 is in that class: it starts its counters at
+  1 at every boot and every add, so after a removal and a re-pair into the
+  same opera it stays unheard until it is updated (F71's first boot starts
+  it above) or removed again and re-paired after the deny-list grace.
+  Update it first. Not covered: a frame the member signed after its
+  removal (the removal is one-sided, so it goes on signing above its
+  tombstone) is fresh at the re-pair, and one replayed there still ends
+  the COMPLETE resend; a frame the member sent another member and this
+  device has not heard is still fresh here (the cross-member gap above,
+  open), and so is one heard since the last 5-minute last-seen save before
+  a reboot; and on a board without flash encryption a boot loads no opera
+  and no member, so the members it held then leave no tombstone and a
+  re-pair into the same opera starts them at 0. Host-tested only.
 - **The 6-digit pairing code does not cover the long-term keys**
   (pre-existing; found in the review of the F49 part 3 withdrawal). The
   code and the CONFIRM hash are derived from the ephemeral X25519 session
@@ -670,6 +759,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   already-trusted member's key re-binds that member to the outsider's radio
   and persists it, and the member's own frames then drop as coming from an
   unbound address until another re-pair, which runs the same exchange.
+  (From an address no other member holds: since F118 the PlatformIO tree
+  fails a re-pair from an address another member holds at the owner's
+  confirm; from F102 until then it completed, refused the bind and
+  persisted nothing; before F102 it persisted the address anyway, below.)
   Claiming its own key makes the outsider a trusted member, able to sign a
   rotation that removes a real one. Host-probed on the PlatformIO tree,
   with the same results before #1756, on #1756 and after the withdrawal.
@@ -678,36 +771,198 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   re-binds that member to the relay's radio there too (host-probed;
   before, the relay added a duplicate entry no lookup reached); the move
   is logged as a health WARNING, the owner's only sign. What the code
-  does bind is the ephemeral exchange: by construction (not probed end to
-  end), a relay that swaps an ephemeral key shows different codes on the
-  two screens, which is what keeps the `opera_secret` sealed in COMPLETE
-  from it. Fixing the key substitution needs both long-term keys in the
-  code and the CONFIRM hash, or a transcript signed with them: a wire
-  change on both trees, open. On the PlatformIO tree the re-pair also
+  does bind is the ephemeral exchange, and only weakly. A relay that swaps
+  one ephemeral key shows different codes on the two screens, but the code
+  has 10^6 values and nothing commits either side's ephemeral before the
+  other side's is sent, so a relay that swaps both picks its second
+  ephemeral after it has seen the first and grinds it until the two codes
+  match. Both owners then confirm the same code, and the relay opens the
+  COMPLETE and holds the `opera_secret` (host-probed on canary-wap against
+  its real pairing handlers, 2026-10-02: about 1.5 million X25519 tries,
+  under 3 minutes on one host core, and the search splits across cores,
+  against a 2-minute pairing timeout; the relay presented both devices' own
+  long-term keys, so this is not the key substitution above). The
+  PlatformIO tree derives its code the same way, in the same OFFER and
+  ACCEPT order (read from code, not probed). Fixing both needs a
+  commitment to one side's ephemeral before it sees the other's (as
+  Bluetooth's numeric comparison commits to a nonce) or a much longer
+  code, together with both long-term keys in the code and the CONFIRM
+  hash, or a transcript signed with them: a wire change on both trees,
+  open. On the PlatformIO tree the re-pair also
   cannot start while eight members are bound: the transport table has no
   slot for the new address, so the pairing's replies cannot be sent until
   a member leaves or is removed (host-probed).
-- **Still open: where a verified frame's source is recorded.** The
-  PlatformIO receiver notes the address each member's last verified frame
-  arrived from (its liveness link), and that can be any address in the
-  transport table, not only the member's own binding. Two get there without
-  the member. While a pairing runs, the partner's address is in the
-  table, so an outsider that answers the pairing from its own address can
+- **Where a verified frame's source is recorded: closed on the PlatformIO
+  tree (F70).** Until F70 the PlatformIO receiver took a member's verified
+  frame from any address in its transport table and recorded that address
+  as the member's (its liveness link), and the table holds more than the
+  member's own binding. While a pairing runs, the partner's address is in
+  it, so an outsider that answered the pairing from its own address could
   deliver a member's not-yet-heard frame there with no spoofing until the
-  pairing ends (probed with the receiver as initiator; as joiner it adds
-  the address of whoever sends it an OFFER the same way, not probed). And
-  because ESP-NOW does not
-  authenticate the source address, a radio that copies another bound
-  member's address can do the same. No binding moves, but the receiver
-  then records that address for the signer: its rekey replies to the
-  signer go there (host probe: a replayed `REKEY_OFFER` from the pairing
-  partner's address got the receiver's `REKEY_ACCEPT` sent to the
-  outsider), and a later removal of the signer takes that address out of
-  the transport table, which strands the member whose address was copied.
-  Host-probed on the PlatformIO tree, the same before #1756. A likely fix,
-  not built: record the link only when the frame comes from the signer's
-  own bound address, and send rekey unicasts and drop addresses by that
-  binding.
+  pairing ended (as initiator or as joiner); and because ESP-NOW does not
+  authenticate the source address, a radio that copied another bound
+  member's address could do the same. No binding moved, but the receiver
+  sent its rekey replies to the member at the recorded address (host
+  probe: a replayed `REKEY_OFFER` from the pairing partner's address got
+  the receiver's `REKEY_ACCEPT` sent to the outsider), and a later removal
+  of the member took that address out of the transport table, stranding
+  the member whose address was copied. The same before #1756. Now a
+  member's frame from any address but its own binding is dropped before
+  verification, as on canary-wap: it spends no counter, reaches no handler
+  and records nothing. A member with no binding at all (none restored at
+  boot, or a pairing whose bind was refused) has no address its frames
+  are taken from until a pairing binds one. The rekey unicasts go to the binding, forgetting a
+  member removes only the binding, and the liveness link is the binding
+  once a verified frame has arrived from it. What remains is a radio that
+  copies the member's *own* address: it still gets the member's
+  not-yet-heard frames dispatched, as on canary-wap. Nothing can tell it
+  apart, it moves no address, and on this tree the member's later frames
+  still count above it (one counter per sender). Host-tested
+  (`test_mesh_session`, four tests that fail on the code before F70); not
+  bench-verified.
+- **PlatformIO pairing and sends (F97, F101, F102; host-tested only).**
+  Three gaps the F70 work found, closed:
+  - *Either confirm order.* Until F97 the PlatformIO pairing took a
+    CONFIRM only after its own owner had confirmed and sent its own once,
+    so no order completed with frames delivered as sent. Worse than a
+    timeout, an initiator confirmed first reported success and held a
+    member whose joiner had dropped the COMPLETE (host-probed). canary-wap's
+    F75 rules now hold here: a CONFIRM counts only from the partner's
+    address and once the code is shown (before it, the all-zero session
+    key makes the hash anyone's), the initiator keeps a joiner's early
+    CONFIRM, and the joiner takes the COMPLETE only after its own owner
+    confirmed. Every PlatformIO COMPLETE goes out with the initiator's own
+    CONFIRM in front of it, so a joiner on firmware before F97 completes
+    too, in either order; without it, an updated initiator would report
+    success with such a joiner, which drops the COMPLETE (host-probed). A
+    pre-F97 initiator with an updated joiner completed only when the
+    initiator's owner confirmed first; otherwise both timed out and
+    neither kept the other. Since F117 the updated joiner re-sends its
+    CONFIRM, at most three times and only to its partner, once it has read
+    the initiator's CONFIRM after its own owner confirmed, and that pair
+    completes in both orders (host-probed against the pre-F97 library);
+    the copies carry the hash its first CONFIRM already put on the air. The
+    reflection above stays open.
+  - *Opera sends to members only.* Until F101 every opera sender (tamper
+    alert, beacon event, channel lock, hub election, LEAVE, rekey OFFER)
+    went to every address in the transport table, which, while a pairing
+    runs, includes the partner's: an outsider answering a pairing got them
+    all, and they counted as sent (with no member, a tamper alert reported
+    sent and a leave reported `notified`; host-probed). The frames are
+    signed, not encrypted, so this disclosed nothing a radio in range could
+    not overhear; the harm was a false "sent". Now each goes to the
+    members' bound radio MACs only, and only those sends count.
+  - *An address persisted only once bound.* Until F102 `main.cpp` persisted
+    a just-paired member's address before the session's bind, which refuses
+    an address another member holds, and the boot restore binds stored
+    addresses in order. So a re-pair of member J relayed from member C's
+    copied address (the relay above) was written as J's address, and after
+    a reboot J held it and C, refused its own, was not heard at all
+    (host-probed). The address is now persisted from a callback that runs
+    after the bind, only when it took, and NVS refuses an address another
+    fingerprint holds; a refused bind is logged by fingerprint and leaves
+    the member's previous binding as it was.
+  Pinned by host tests in `test_mesh_pairing`, `test_mesh_session` and
+  `test_mesh_state` that fail on the code before each fix, and a source pin
+  on `main.cpp`'s wiring; the canary build is CI's; not bench-verified.
+- **PlatformIO refusals and stored addresses (F118-F120; host-tested
+  only).**
+  - *A partner the device cannot hold fails the pairing (F118).* Until
+    F118 the PlatformIO initiator sealed the `opera_secret` before anything
+    checked the partner, both sides reported success, and the partner's
+    key was registered and stored; only the address bind then failed. A
+    re-pair relayed from another member's copied address (the relay above)
+    thus left a trusted member heard from nowhere, sent nothing and holding
+    a slot. Now the pairing asks first — at the owner's confirm, again
+    before the seal and before the joiner opens the secret — and a refusal
+    sends, seals and stores nothing, answers the confirm `409
+    partner_refused` and is logged by fingerprint. The relay can still
+    claim a member's key from an address no member holds (above; F69).
+  - *Stored addresses at boot (F119, F120).* A `peer_macs` blob written
+    before F102 can hold one address under two fingerprints, and the boot
+    restore bound in stored order, which in F102's scenario gave the address
+    to the member that did not own it. Now neither entry is bound, both are
+    dropped and the shared address is logged, so both members re-pair. An
+    entry whose fingerprint is no longer a member is dropped too: kept, it
+    held its address in NVS for good, so the next member to pair from that
+    address was unheard after every reboot. Nothing is dropped when the
+    pubkey list could not be read.
+  Pinned by host tests in `test_mesh_pairing` and `test_mesh_session`
+  that fail with each check removed (each of the partner gate's refusals,
+  each place it is asked, the boot restore's drop decision for every
+  verdict), and the `main.cpp` source pin, which holds its restore loop and
+  its refusal log to their exact form; the canary build is CI's; not
+  bench-verified.
+- **PlatformIO pairing endings (F133-F135; host-tested only).**
+  - *A lost COMPLETE (F134).* Nothing acknowledges a COMPLETE, and until
+    F134 the initiator sent it once and reported success, so one lost on
+    the air left it holding a member that never joined, the same harm as
+    the reflection above. Now it sends the frames it already put on the
+    air (its CONFIRM and the sealed COMPLETE, byte for byte; the pairing
+    key stays wiped and nothing is sealed again) every 2 s, to the
+    partner's address only, for at most the 5-minute pairing timeout, and
+    stops when it hears the joiner (a verified fresh frame from the address
+    it paired from: its fingerprint is public, so a forged, relayed or
+    replayed frame bearing it ends nothing), when the joiner is no longer a
+    member bound where it paired from, or when the opera is left or
+    rotated. The
+    copies disclose nothing the first send did not: the same ciphertext,
+    to the same address. No frame redirects them or brings one early: a
+    CONFIRM reaching a completed initiator, the joiner's, replayed or
+    reflected, is dropped (host-tested, with third-party, replayed and
+    reflected pairing frames of every type). A joiner still takes a copy
+    only after its own owner confirmed; so the reflection above now ends in
+    a pairing when the joiner's owner confirms within the window, and still
+    leaves the initiator holding a member that never joined when that owner
+    does not. An initiator on firmware before F134 keeps the old harm. The
+    cost: this tree's members send nothing on a timer, so the copies
+    usually run their whole window, at most 149 copies of two frames.
+  - *A cancel after the end (F135).* A `pair/cancel` that landed after the
+    initiator's COMPLETE went out used to fail the completed pairing: the
+    joiner held the `opera_secret` while the initiator never trusted or
+    stored it. A cancel now ends only a running pairing, and leaves a
+    completed one's COMPLETE copies running.
+  - *The pairing screen (F133).* The web UI called any pairing that ended
+    in `ACTIVE` or `CONNECTING` complete, a timeout, a refusal (above) or a
+    cancel included. `GET /api/mesh` now reports the last pairing's number,
+    outcome and failure reason, and the page reports a failure as one.
+  Pinned by host tests in `test_mesh_pairing` and `test_mesh_session`, a
+  node test of the page's poll and a source pin of the handlers' wiring
+  (`scripts/tests/test_canary_mesh_status_wiring.py`), each failing on the
+  code before its fix and by mutation; an interop probe in scratch ran the pairing library
+  against the pre-F117, wave-10 and pre-F97 libraries; the canary build is
+  CI's; not bench-verified.
+- **A canary-wap that left its opera stored an all-zero one (F113).** Its
+  leave saved the zeroed opera config as it stood, the next boot loaded the
+  zero `opera_id` and `opera_secret` as an opera, and the next pairing it
+  started kept that opera and sealed the zero secret, which anyone can
+  know, to the joiner (whose `opera_id`, derived from it, then differed
+  from the initiator's stored zero one, so the two never heard each
+  other; host-probed). The id and secret are now removed while no opera
+  is configured, and a boot loads no all-zero id or secret, so NVS an
+  older firmware's leave wrote is refused too. Host-tested only.
+- **canary-wap kept its former members in NVS (F137).** Its member list is
+  `peer_cnt` and `peer_0`..`peer_<n-1>`, each a public key, radio address
+  and name, and a save removed no slot: after a removal the freed slot
+  stayed, and after a leave every one did (host-probed), plaintext on the
+  flash (next bullet), though nothing loaded them. The two counter
+  records named them by fingerprint as well (`replay_ctrs` until the next
+  5-minute save, `tx_ctrs` for good once no member was left). A save now
+  removes every slot at or above the count, the last-seen record is saved
+  at each removal and leave, and the send-counter record with no member
+  left keeps its one counter under no fingerprint. The save stores the
+  live slots and the count before it removes anything, so a full NVS
+  that refuses a write leaves a list a boot reads whole (it used to leave
+  a count over removed slots: the removed member back, a survivor lost,
+  an all-zero member). A device updated with an older firmware's leftovers
+  loses them at its first boot: the slots above the count, and, with
+  flash encryption on and no opera, every slot an older leave kept. On an
+  FE-off board the stored members stay until the next membership change
+  (no opera loads there, so nothing reads them; sweep F141 decides what a
+  boot does with them). What a dropped member leaves on purpose, by
+  fingerprint only: its deny-list entry (spec §5.6, seven days,
+  flash-encryption gated) when it was removed, and its last-seen
+  tombstone (F116) when it was heard. Host-tested only.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused
@@ -734,6 +989,19 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   (v0.2 audit O3; on canary-wap that is now spec v0.3's transactional flow,
   #454, and on the PlatformIO tree the variant below — "Outstanding work"
   has what neither has proven yet).
+  - **canary-wap: the rotation reaches no member (sweep F95, open;
+    host-probed).** Its `MSG_OPERA_REKEY` is sealed under a per-member AUTH
+    session key, and nothing opens a session: no code sends
+    `AUTH_CHALLENGE`, and the exchange cannot complete as it stands (its
+    `AUTH_RESPONSE` makes a 262 B signed frame against ESP-NOW's 250 B, and
+    it runs X25519 over the long-term Ed25519 keys, so the two sides' keys
+    would not agree; spec §3.1). So a removal moves the remover alone to a
+    new `opera_id`; every survivor stays on the old one, split from the
+    remover until it re-pairs with it, and keeps trusting the removed
+    device, which only the remover now drops. The §5.6 caveat that the
+    removed device cannot impersonate a member after the rotation does not
+    hold on canary-wap yet. The fix is a wire and derivation change, with
+    the crypto review (F48).
   - PlatformIO tree (spec §5.6 PlatformIO subsection, `mesh_rekey.{h,cpp}`):
     no per-peer session keys exist there, so the rotation runs an
     ephemeral X25519 exchange per removal inside signed envelopes, the ACK

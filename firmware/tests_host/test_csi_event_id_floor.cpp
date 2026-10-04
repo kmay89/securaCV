@@ -27,6 +27,7 @@ using csi_event_id_floor::kHoldLimit;
 using csi_event_id_floor::kIdSpaceBase;
 using csi_event_id_floor::kStride;
 using csi_event_id_floor::must_persist;
+using csi_event_id_floor::space_low;
 
 static int g_checks = 0;
 #define CHECK(cond)                                                     \
@@ -318,19 +319,74 @@ static int test_boot_loop_cost_and_headroom() {
   CHECK(last - first == (uint32_t)(boots - 1) * kStride);
   // The space: 2^30 ids. A boot every 5 s (17,280 a day) at kStride ids a
   // boot lasts about 17 years. The most a device can commit in a day (the
-  // header's sum): the uncapped ambient module at one row a second, the
-  // other 15 modules at the 255/hour override, and bundles the hourly
-  // ceiling refunded, one per bundler slot (8) per 2-minute gap. That
-  // lasts about 16 years; the shipped defaults about 65.
+  // header's sum): the uncapped ambient module at one row a second and the
+  // other 15 modules at the 255/hour override, bundled rows included (every
+  // bundle opening spends the ceiling since sweep F80, which removed the
+  // 8 x 720 rows a day a refunded refresh could reopen;
+  // test_csi_bundler_ceiling.cpp holds the library to it). That lasts about
+  // 16.5 years; the shipped defaults about 75.
   const uint64_t space = 0x100000000ull - kIdSpaceBase;
   CHECK(space == (1ull << 30));
   CHECK(space / (17280ull * kStride) / 365 >= 17);
-  const uint64_t worst = 86400ull + 15ull * 255 * 24 + 8ull * (24 * 60 / 2);
-  CHECK(worst == 183960);
-  CHECK(space / worst == 5836);                 // days: about 16 years
-  const uint64_t shipped = 86400ull / 5 + 15ull * 60 * 24 + 8ull * (24 * 60 / 2);
-  CHECK(shipped == 44640);
-  CHECK(space / shipped / 365 >= 65);
+  const uint64_t worst = 86400ull + 15ull * 255 * 24;
+  CHECK(worst == 178200);
+  CHECK(space / worst == 6025);                 // days: about 16.5 years
+  const uint64_t shipped = 86400ull / 5 + 15ull * 60 * 24;
+  CHECK(shipped == 38880);
+  CHECK(space / shipped / 365 >= 75);
+  return 0;
+}
+
+// Backlog F82: the health flag that warns before the space runs out. It is
+// up from the moment the allocator's next id reaches kHoldLimit, through the
+// wrap (ids from 1 again, below the space), and on every boot after it (the
+// floor saturates at 0xFFFFFFFF, which each boot reissues first). It is
+// down everywhere a healthy device's allocator can be.
+static int test_space_low_warns_before_the_wrap() {
+  CHECK(!space_low(kIdSpaceBase));
+  CHECK(!space_low(kIdSpaceBase + 1));
+  CHECK(!space_low(kHoldLimit - 1));
+  CHECK(space_low(kHoldLimit));
+  CHECK(space_low(0xFFFFFFFFu));
+  CHECK(space_low(1));                       // wrapped
+  CHECK(space_low(kIdSpaceBase - 1));
+  // At the most a device can commit (178,200 a day), the flag comes up
+  // about four years before the wrap.
+  CHECK((0x100000000ull - kHoldLimit) / 178200 / 365 == 4);
+  // A device run to the end, booting every 100 ids.
+  Device d;
+  d.nvs = kHoldLimit - 250;
+  bool flagged = false;
+  uint32_t flagged_at = 0;
+  bool wrapped = false;
+  for (int b = 0; b < 3000 && !wrapped; ++b) {
+    boot(&d);
+    if (space_low(d.next_id) && !flagged) {
+      flagged = true;
+      flagged_at = d.next_id;
+    }
+    for (int i = 0; i < 100; ++i) {
+      const uint32_t id = allocate(&d);
+      if (id < kIdSpaceBase) wrapped = true;
+      if (!flagged && space_low(d.next_id)) {
+        flagged = true;
+        flagged_at = id;
+      }
+      // Once up, it stays up, wrap included.
+      if (flagged && !space_low(d.next_id)) CHECK(false);
+    }
+    if (!flagged) CHECK(d.next_id < kHoldLimit);
+  }
+  CHECK(flagged && flagged_at == kHoldLimit - 1);   // the id that brings next to kHoldLimit
+  d.nvs = 0xFFFFFFF0u;                                // skip ahead to the wrap
+  boot(&d);
+  for (int i = 0; i < 40; ++i) {
+    (void)allocate(&d);
+    CHECK(space_low(d.next_id));
+  }
+  CHECK(d.next_id < kIdSpaceBase);                    // it wrapped
+  boot(&d);
+  CHECK(d.next_id == 0xFFFFFFFFu && space_low(d.next_id));
   return 0;
 }
 
@@ -348,6 +404,7 @@ int main() {
   if (test_boot_floor_rules()) return 1;
   if (test_the_ceiling_covers_a_failed_floor_write()) return 1;
   if (test_boot_loop_cost_and_headroom()) return 1;
+  if (test_space_low_warns_before_the_wrap()) return 1;
   std::printf("test_csi_event_id_floor: %d checks passed\n", g_checks);
   return 0;
 }

@@ -21,6 +21,12 @@
 // firmware/scripts/check_csi_sync.sh (setup.sh arduino re-stages it).
 #include "nvs_session_depth.h"
 
+// begin_read_only(): IDF's nvs_open() asked before Preferences::begin(), so a
+// namespace never created opens nothing and logs nothing (sweeps F125, F150,
+// F201; NvsSession's read-only open below, F220). A staged copy of
+// firmware/common/csi/src/csi_module_settings_nvs.h, held by check_csi_sync.sh.
+#include "csi_module_settings_nvs.h"
+
 // ════════════════════════════════════════════════════════════════════════════
 // NVS NAMESPACES (centralized definitions)
 // ════════════════════════════════════════════════════════════════════════════
@@ -340,12 +346,12 @@ class NvsSession {
 public:
   // Open NVS partition with specified namespace. readOnly=true for read-only access.
   explicit NvsSession(const char* ns = NVS_CHIRP_NS, bool readOnly = true) : m_open(false) {
-    m_open = m_prefs.begin(ns, readOnly);
+    m_open = open_session(ns, readOnly);
   }
 
   // Legacy constructor for backward compatibility (uses chirp namespace)
   explicit NvsSession(bool readOnly) : m_open(false) {
-    m_open = m_prefs.begin(NVS_CHIRP_NS, readOnly);
+    m_open = open_session(NVS_CHIRP_NS, readOnly);
   }
 
   // Prevent ambiguity with nullptr (nullptr could match both const char* and bool)
@@ -403,6 +409,21 @@ public:
   NvsSession& operator=(const NvsSession&) = delete;
 
 private:
+  // A read-only open asks IDF's nvs_open() first (sweep F220): the chirp
+  // namespace exists only once something wrote it (a relay or filter change,
+  // the self-test chirp's first stamp), and chirp_channel::init()'s settings
+  // read in setup() and the loop's self-test stamp read come before that on
+  // a first boot after an NVS erase. Each went to Preferences::begin(), which
+  // logs "nvs_open failed: NOT_FOUND" at error level for a namespace that is
+  // not there, on a build that keeps Arduino's error log. Now an absent
+  // namespace opens nothing and logs nothing, and every read is a miss, as
+  // the refused open made it; a namespace that is there, or an NVS fault, goes
+  // to Preferences as before. A read-write open creates the namespace.
+  bool open_session(const char* ns, bool readOnly) {
+    if (readOnly) return csi_module_settings_nvs::begin_read_only(m_prefs, ns);
+    return m_prefs.begin(ns, false);
+  }
+
   Preferences m_prefs;
   bool m_open;
 };

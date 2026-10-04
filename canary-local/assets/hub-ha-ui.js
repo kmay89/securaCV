@@ -3,11 +3,13 @@
 // Honesty first: unlike the display emulator (which is the shipping
 // firmware in wasm), this is NOT Home Assistant's frontend — it is a
 // staged sketch of it. What keeps it honest is that everything it shows
-// is drift-gated: the entity names come from docs/homeassistant_setup.md
-// §Step 4 (parsed by gen_homeassistant.py — the demo cannot show an
-// entity the doc stopped promising), the topics are the doc's own MQTT
-// contract, and the behaviors (mic toggles signed into the chain, smoke
-// cadence → critical push) restate what the integration actually does.
+// is drift-gated: the device card is the one the Hub page's fleet step
+// WAP announces (sweep A36) — its name, its entities from csi_mqtt.cpp's
+// discovery table by object_id (gen_homeassistant.py reads them from
+// wap.json and refuses one the WAP does not announce), each config topic
+// in the WAP's own shape, and starting values off the wire lines printed
+// above — and the behaviors (mic toggles signed into the chain, smoke
+// cadence → critical push) restate what the firmware and integration do.
 //
 // The set pieces:
 //   · MQTT discovery, live: entities pop into the device card one by one,
@@ -25,7 +27,6 @@ const el = (tag, cls, text) => {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 
 export function buildHaDemo(demo, vars) {
   const wrap = el("div", "hub-ha");
@@ -95,31 +96,48 @@ export function buildHaDemo(demo, vars) {
   wrap.append(ribbon);
 
   // ── state ──
-  const entState = new Map(); // name → {row, valueEl, value}
-  let seq = 1284;
+  const entState = new Map(); // name → {row, valueEl, value, unit}
+  // the chain the fleet step printed: each signed record moves it (and the
+  // witness count, which the WAP publishes beside it) on by one
+  let seq = demo.chain_length;
   let discovered = false;
   let drilling = false;
 
-  function timelineAdd(text, cls = "") {
+  // A row that is a new witness record (a mute toggle, an acoustic
+  // detection: the WAP signs each into its chain) moves the chain and the
+  // count on; one that is not (the device appearing, an alarm clearing)
+  // leaves them where they are.
+  function timelineAdd(text, cls = "", record = true) {
     const row = el("div", "hub-ha-tlrow " + cls);
     const t = new Date();
     const hh = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
-    seq += 1;
+    if (record) {
+      seq += 1;
+      bumpCount();
+    }
     row.append(
       el("span", "hub-ha-tltime", hh),
       el("span", "hub-ha-tltext", text),
-      el("span", "hub-ha-tlsig", "✓ #" + seq));
+      el("span", "hub-ha-tlsig", record ? "✓ #" + seq : "✓"));
     tl.prepend(row);
     while (tl.children.length > 6) tl.lastChild.remove();
-    tlStatus.textContent = `chain ${seq} · verified ✓ (Ed25519, pinned key)`;
   }
 
   function setValue(name, value, alert = false) {
     const s = entState.get(name);
     if (!s) return;
     s.value = value;
-    s.valueEl.textContent = value;
+    s.valueEl.textContent = value + (s.unit ? " " + s.unit : "");
     s.row.classList.toggle("alert", alert);
+  }
+
+  // the WAP's counts total and chain length move together, on each record
+  let count = Number(String((demo.entities.find((e) => e.name === demo.tick_entity) || {}).initial).replace(/,/g, ""));
+  function bumpCount() {
+    count += 1;
+    setValue(demo.tick_entity, count.toLocaleString("en-US"));
+    setValue(demo.chain_entity, seq.toLocaleString("en-US"));
+    tlStatus.textContent = `chain ${seq} · verified ✓ (Ed25519, pinned key)`;
   }
 
   function entityRow(ent) {
@@ -155,7 +173,7 @@ export function buildHaDemo(demo, vars) {
       row.append(attrs);
       row.addEventListener("click", () => row.classList.toggle("open"));
     }
-    entState.set(ent.name, { row, valueEl: value, value: ent.initial });
+    entState.set(ent.name, { row, valueEl: value, value: ent.initial, unit: ent.unit });
     return row;
   }
 
@@ -170,13 +188,16 @@ export function buildHaDemo(demo, vars) {
       row.classList.add("landing");
       rows.append(row);
       discovery.textContent =
-        `homeassistant/${ent.kind}/securacv_${slug(ent.name)}/config  (retained)`;
+        demo.config_topic.replace("<component>", ent.kind).replace("<object_id>", ent.object_id) + "  (retained)";
       requestAnimationFrame(() => row.classList.remove("landing"));
     }
     await sleep(500);
     discovery.textContent = "discovered in " + (demo.entities.length * 0.26).toFixed(1) +
       " s — on a real network: under 30 s from first MQTT publish";
-    timelineAdd("device discovered — key pinned on first contact (TOFU)");
+    // the retained chain head the fleet step printed, verified against the
+    // key just pinned: no new record
+    tlStatus.textContent = `chain ${seq} · verified ✓ (Ed25519, pinned key)`;
+    timelineAdd("device discovered — key pinned on first contact (TOFU)", "", false);
     // gentle liveness: uptime/witness count tick so the card feels inhabited
     liveTick();
   }
@@ -184,12 +205,11 @@ export function buildHaDemo(demo, vars) {
   let tickTimer = null;
   function liveTick() {
     if (tickTimer) return;
-    let count = 1284;
     tickTimer = setInterval(() => {
       if (!document.body.contains(wrap)) { clearInterval(tickTimer); return; }
       if (Math.random() < 0.4 && !drilling) {
-        count += 1;
-        setValue("Witness Count", count.toLocaleString() + " records");
+        seq += 1;
+        bumpCount();
       }
     }, 4000);
   }
@@ -200,7 +220,7 @@ export function buildHaDemo(demo, vars) {
     drillBtn.disabled = true;
 
     setValue(demo.drill.trigger_entity, "on", true);
-    timelineAdd("acoustic_event: smoke_t3 — NFPA 72 T3 cadence matched", "alert");
+    timelineAdd("acoustic_event: " + demo.drill.acoustic_event + " — NFPA 72 T3 cadence matched", "alert");
     await sleep(500);
 
     autoState.className = "hub-ha-auto firing";
@@ -221,7 +241,7 @@ export function buildHaDemo(demo, vars) {
 
     toast.classList.remove("show");
     setValue(demo.drill.trigger_entity, "off", false);
-    timelineAdd("acoustic_event cleared — alarm stopped");
+    timelineAdd("acoustic_event cleared — alarm stopped", "", false);
     autoState.className = "hub-ha-auto idle";
     autoState.textContent = "idle — armed";
     drilling = false;

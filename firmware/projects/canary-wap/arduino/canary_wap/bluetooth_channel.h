@@ -23,6 +23,9 @@
 #define SECURACV_BLUETOOTH_CHANNEL_H
 
 #include <Arduino.h>
+#include <string.h>
+
+#include "loop_command_ring.h"  // F111: the owner's commands handed to the loop task
 
 namespace bluetooth_channel {
 
@@ -213,13 +216,38 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 // PUBLIC API
 // ════════════════════════════════════════════════════════════════════════════
 
-// Initialization
+// Initialization. init() brings the NimBLE stack up, which can block its
+// caller past the loop task's 8 s watchdog (canary_wap.ino's BLE bring-up
+// note), so it never runs on the loop task: the bring-up worker calls it,
+// and a REST handler (bluetooth_api.h) calls it, on esp_http_server's task,
+// when the owner turns Bluetooth on before it is up. Nothing else here may
+// run off the loop task but the readers below and submit().
+//
+// init() writes none of the loop task's state (sweep F167): it brings the
+// stack up and publishes what it made in a hand-over; update() takes it on
+// the loop task's next pass, before that pass's commands (so a handler that
+// brought the stack up and then submits finds it taken), and there turns
+// Bluetooth on and advertises when the settings say so. The saved settings
+// and paired list are the loop task's from its first update() pass, before
+// any command runs (the F167 review). is_initialized(): any task; true once
+// the stack is up and the hand-over published.
 bool init();
-void deinit();
 bool is_initialized();
 
+// The sketch's BLE bring-up worker (canary_wap.ino), on the loop task (the
+// F167 review): started before the sketch creates it, finished when its
+// result is taken (the finalize stage) or it could not be created. After
+// init() returns the worker goes on registering GATT services on the same
+// server (ble_status, Opera), so in between the channel starts no
+// advertising: a start asked for meanwhile is made when it finishes.
+void bringup_worker_started();
+void bringup_worker_finished();
+
 // Why the last init() attempt left the radio off ("" when initialized or
-// never attempted). Stable storage owned by the module; safe to hold.
+// never attempted). Any task. Each refusal is written whole before its
+// address is published (sweep F167), and a text a caller holds is not
+// written again until several later refusals have gone by: safe to hold
+// for an answer's length.
 const char* init_fail_reason();
 
 // Push device metadata into the BLE Device Information Service. Optional;
@@ -229,52 +257,196 @@ const char* init_fail_reason();
 // (manufacturer="SecuraCV", model="Canary WAP", fw="unknown", etc.).
 void set_device_metadata(const char* fw_revision, const char* serial);
 
-// Enable/disable
-bool enable();
-void disable();
-bool is_enabled();
-
-// Advertising
-bool start_advertising();
-void stop_advertising();
+// The one flag another task may read live: NimBLE's own advertising state,
+// which it keeps under its own lock (the self-test reads it). What the
+// status routes show is read from the view below (read_status,
+// read_settings, read_scan, read_paired), never live (sweep F138), and so is
+// whether Bluetooth is on (read_enabled(), sweep F210: the setting is the
+// loop task's, which its commands and its first pass's load write).
 bool is_advertising();
 
-// Scanning
-bool start_scan(uint32_t duration_ms = SCAN_DURATION_MS);
-void stop_scan();
-bool is_scanning();
-const ScannedDevice* get_scanned_devices(size_t* count);
-void clear_scan_results();
+// ──────────────────────────────────────────────────────────────────────────
+// The owner's commands (sweep F111)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// What the owner asks for over REST (bluetooth_api.h): turn Bluetooth on or
+// off, advertise, scan, pair (start, confirm the PIN, reject, cancel),
+// disconnect, manage the paired devices, change the settings, the name and
+// the TX power. The REST handlers run on esp_http_server's task, and what
+// these change (the pairing session and the pending Numeric-Comparison
+// pairing it deletes, the scan, the connection, the settings and their NVS
+// keys, the state) is also update()'s, on the loop task: its pairing
+// timeout cancels the pairing, its scan timeout stops the scan, its
+// inactivity check disconnects. Before F111 a confirm on the HTTP task and
+// the timeout's cancel on the loop task could both find the pending pairing
+// and both delete it. So the functions that do these are internal to
+// bluetooth_channel.cpp, and a handler hands a Command to submit() instead:
+// submit() posts it to a ring of COMMAND_SLOTS (loop_command_ring.h, as the
+// mesh's and Chirp's submit() do) that update() drains first thing on every
+// pass (a disabled or not-yet-started channel included, so BT_CMD_ENABLE
+// can turn it on), and waits for its Result.
+//
+// A command never brings the stack up (that is init()'s, off the loop
+// task): BT_CMD_ENABLE, the auto-enable of ADVERTISE_START and PAIR_START,
+// and a BT_CMD_SETTINGS that turns Bluetooth on (sweep F144) fail with
+// BT_REFUSED_NOT_ENABLED when init() has not run.
+//
+// The wait is bounded for a command the loop task has not started: after
+// timeout_ms it is withdrawn and never runs. kDone: it ran, and *result is
+// what it did. kBusy (every slot taken) and kWithdrawn: it did not run and
+// will not, and *result is zeroed; the handler answers not_run_status() /
+// not_run_error(): 409 bluetooth_busy and 503 bluetooth_timeout. Never call
+// submit() from the loop task: it would wait for itself.
+//
+// The NimBLE host task's callbacks (a connect, a passkey to confirm, a bond,
+// a scan result) do not write it either (sweep F143): each posts an event
+// that update() applies on the loop task, before the commands
+// (bluetooth_channel.cpp, "BLE CALLBACKS").
 
-// Pairing
-bool start_pairing();
-void cancel_pairing();
-bool confirm_pairing(uint32_t pin);
-bool reject_pairing();
-PairingState get_pairing_state();
-uint32_t get_pairing_pin();
+enum CommandType : uint8_t {
+  BT_CMD_ENABLE = 0,
+  BT_CMD_DISABLE,
+  BT_CMD_ADVERTISE_START,  // turns Bluetooth on first when it is off
+  BT_CMD_ADVERTISE_STOP,
+  BT_CMD_SCAN_START,       // duration_ms
+  BT_CMD_SCAN_STOP,
+  BT_CMD_SCAN_CLEAR,
+  BT_CMD_PAIR_START,       // turns Bluetooth on first when it is off
+  BT_CMD_PAIR_CANCEL,
+  BT_CMD_PAIR_CONFIRM,     // pin
+  BT_CMD_PAIR_REJECT,
+  BT_CMD_DISCONNECT,
+  BT_CMD_PAIRED_REMOVE,    // address
+  BT_CMD_PAIRED_CLEAR,
+  BT_CMD_PAIRED_TRUST,     // address, flag: trusted
+  BT_CMD_PAIRED_BLOCK,     // address, flag: blocked
+  BT_CMD_SETTINGS,         // the fields set_mask names, from settings; enabled
+                           // turns Bluetooth on or off as ENABLE / DISABLE do
+  BT_CMD_NAME,             // name
+  BT_CMD_POWER,            // power
+};
 
-// Connection management
-bool disconnect();
-bool is_connected();
-const ConnectionInfo* get_connection_info();
+// BT_CMD_SETTINGS: which fields of Command::settings the POST named. The
+// loop task applies them to the settings it holds, so two posts do not
+// undo each other's other fields.
+enum SettingsField : uint16_t {
+  BT_SET_ENABLED           = 1u << 0,
+  BT_SET_AUTO_ADVERTISE    = 1u << 1,
+  BT_SET_ALLOW_PAIRING     = 1u << 2,
+  BT_SET_REQUIRE_PIN       = 1u << 3,
+  BT_SET_DEVICE_NAME       = 1u << 4,
+  BT_SET_TX_POWER          = 1u << 5,
+  BT_SET_INACTIVITY        = 1u << 6,
+  BT_SET_NOTIFY_ON_CONNECT = 1u << 7,
+  BT_SET_LONG_RANGE        = 1u << 8,
+};
 
-// Paired devices
-const PairedDevice* get_paired_devices(size_t* count);
-bool remove_paired_device(const uint8_t* address);
-bool clear_all_paired_devices();
-bool set_device_trusted(const uint8_t* address, bool trusted);
-bool set_device_blocked(const uint8_t* address, bool blocked);
+struct Command {
+  CommandType       type;
+  bool              flag;
+  int8_t            power;
+  uint8_t           address[BLE_ADDRESS_LENGTH];
+  uint32_t          pin;
+  uint32_t          duration_ms;
+  // One past MAX_DEVICE_NAME_LEN, so a name too long to keep stays too
+  // long here, and set_device_name() refuses it as it always did.
+  char              name[MAX_DEVICE_NAME_LEN + 2];
+  uint16_t          set_mask;
+  BluetoothSettings settings;
+};
 
-// Settings
-BluetoothSettings get_settings();
-bool set_settings(const BluetoothSettings& settings);
-bool set_device_name(const char* name);
-bool set_tx_power(int8_t power);
+// Why ENABLE, ADVERTISE_START, PAIR_START or a SETTINGS that turns
+// Bluetooth on did not run, or why PAIRED_REMOVE / PAIRED_CLEAR left a
+// phone's bond.
+enum Refusal : uint8_t {
+  BT_REFUSED_NONE = 0,     // it ran (ok says how it went)
+  BT_REFUSED_NOT_ENABLED,  // Bluetooth off and not brought up (init() has not run);
+                           // a refused SETTINGS applied none of its fields
+  BT_REFUSED_CONNECTED,    // ADVERTISE_START: a device is connected
+  BT_REFUSED_BOND_KEPT,    // PAIRED_REMOVE / PAIRED_CLEAR: NimBLE kept a bond
+                           // (ble_gap_unpair() busy); its entry stays listed
+  BT_REFUSED_NOT_UP,       // PAIRED_REMOVE / PAIRED_CLEAR: the stack is not up, so
+                           // its bond store cannot be reached; nothing changed
+};
+
+// What a command did, as the loop task saw it right after the command ran.
+struct Result {
+  bool    ok;              // the command's own answer (DISABLE, the stops, CANCEL, CLEAR: true)
+  Refusal refusal;
+  bool    allow_pairing;   // PAIR_START: the setting when it was refused
+};
+
+// A command of `type` with every other field zero.
+inline Command make_command(CommandType type) {
+  Command cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.type = type;
+  return cmd;
+}
+
+static const size_t   COMMAND_SLOTS   = 4;
+static const uint32_t COMMAND_WAIT_MS = 2000;   // for the loop task to start it
+static const uint32_t COMMAND_POLL_MS = 5;
+
+loop_command_ring::Wait submit(const Command& cmd, Result* result,
+                               uint32_t timeout_ms = COMMAND_WAIT_MS);
+
+// The REST answer to a command that did not run (any Wait but kDone).
+inline int not_run_status(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? 409 : 503;
+}
+inline const char* not_run_error(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? "bluetooth_busy" : "bluetooth_timeout";
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// What the status routes show (sweep F138)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// GET /api/bluetooth, /scan/results, /paired and /settings run on
+// esp_http_server's task. What they show is the loop task's: update(), the
+// owner's commands and the NimBLE host task's events, which update()
+// applies (F143), change it. Read in place, one answer could mix two
+// passes: a paired device's name read mid-shift after a removal, a scan
+// list read while a result is added, a pairing PIN read while a cancel
+// wipes it. update() publishes what the routes show at the end of every
+// pass (its early return included) and after each owner command it runs
+// (before the command's handler answers, so a GET right after a POST shows
+// what it did); the readers below copy the last one whole
+// (loop_snapshot.h) and never wait for the loop task. Before the first
+// pass publishes, they answer what the channel holds at boot: Bluetooth
+// disabled, the default settings, no devices.
+
+// The scan list, as GET /api/bluetooth/scan/results shows it.
+struct ScanView {
+  bool scanning;
+  uint8_t count;
+  ScannedDevice devices[MAX_SCANNED_DEVICES];
+};
+
+// The paired devices, as GET /api/bluetooth/paired shows them.
+struct PairedView {
+  uint8_t count;
+  PairedDevice devices[MAX_PAIRED_DEVICES];
+};
+
+// Any task. The status the last pass published, its advertising and
+// connected times counted to the read (as get_status() counted them).
+void read_status(BluetoothStatus* out);
+// Any task. The settings the last pass published.
+BluetoothSettings read_settings();
+// Any task. Whether the settings the last pass published say on: the Start
+// Advertising and Pair handlers decide from it whether to bring the stack up
+// before they submit (F111). They read the loop task's flag in place before
+// (sweep F210), a data race with its commands and its first pass's load of
+// the saved settings; a read a pass stale costs what a stale one always
+// did, a bring_up() that finds the stack up or a refusal the owner retries.
+bool read_enabled();
+// Any task. The scan list and the paired devices the last pass published.
+void read_scan(ScanView* out);
+void read_paired(PairedView* out);
 
 // Status
-BluetoothStatus get_status();
-BluetoothState get_state();
 const char* state_name(BluetoothState state);
 
 // Callbacks
@@ -283,10 +455,16 @@ void set_pairing_callback(PairingCallback cb);
 void set_scan_callback(ScanCallback cb);
 void set_data_callback(DataCallback cb);
 
-// Update (call from loop)
+// Update (call from loop). Applies what the NimBLE host task reported, then
+// runs the owner's commands (above), first on every pass, a disabled or
+// not-yet-started channel's included.
 void update();
 
-// Utilities
+// Utilities. An address's bytes are kept as the stack keeps them, least
+// significant first; format_address() prints them most significant first
+// ("AB:89:67:45:23:01", as the phone shows its own), and parse_address()
+// reads that form back into the same bytes, refusing anything else
+// (sweep F172).
 void format_address(const uint8_t* addr, char* out);
 bool parse_address(const char* str, uint8_t* out);
 const char* device_type_name(DeviceType type);

@@ -182,14 +182,18 @@ bool ring_ensure() {
 uint32_t            g_next_event_id = csi_event_id_floor::kIdSpaceBase;
 csi_privacy_class_t g_privacy_ceiling = CSI_PRIVACY_P0;
 
-/* Per-module hourly counters (sliding 60-minute window via 6 × 10-minute
- * sub-buckets). When the bucket the emit() falls into would exceed the
- * ceiling, the emit is suppressed (counted as dropped, not buffered). */
+/* Per-module hourly counters: six 10-minute buckets, the current one
+ * (buckets[5]) and the five before it. An emit is suppressed (counted as
+ * dropped, not buffered) when the six already hold the ceiling. So any six
+ * consecutive buckets hold at most the ceiling's openings, but the hour is
+ * the buckets', not a sliding 60 minutes: one sliding hour can hold up to
+ * twice the ceiling, and a bundled row commits when its bundle closes, after
+ * the bucket that counted it (backlog F132). */
 struct ModuleCounter {
   char     id[CSI_EVENT_NAME_MAX];
   uint8_t  ceiling_override;     /* 0 = use manifest default */
   uint16_t buckets[6];           /* counts per 10-minute slot */
-  uint32_t bucket_anchor_ms;     /* start time of buckets[0] */
+  uint32_t bucket_anchor_ms;     /* start time of buckets[5], the current slot */
 };
 ModuleCounter g_counters[CSI_EVENT_MODULE_CEILING_CAP] = {};
 size_t        g_counter_count = 0;

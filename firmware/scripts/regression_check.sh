@@ -785,6 +785,92 @@ fi
 
 echo ""
 
+# ── Check: canary-wap loop-task ownership (sweep F96, F106, F110-F112, F138, F143) ──
+# The mesh's, Chirp's and Bluetooth's owner commands (pair, confirm, cancel,
+# send, mute, enable, settings and the rest) and the MQTT client's teardown
+# and rebuild belong to the loop task. The REST handlers ran them on
+# esp_http_server's task (and a QR provisioning on the scanner's), racing
+# mesh_network::update(), chirp_channel::update(), bluetooth_channel::update()
+# and the loop task's publishes. The mesh status routes read the state update()
+# writes; they read the copies it publishes instead (F110), as the Chirp and
+# Bluetooth status routes now do (F138), and the NimBLE host task's callbacks
+# post events update() applies (F143). The loop's
+# publishes wait on the network inside esp_mqtt, so every client carries a
+# network timeout under the loop's watchdog (F112). The host tests run the
+# hand-over and the copies (test_mesh_commands_wap, test_chirp_commands_wap,
+# test_bluetooth_commands_wap, test_mqtt_reinit, test_loop_command_ring,
+# test_loop_snapshot, test_loop_event_queue); this holds the sketch's source
+# to them, and mutates it in memory to prove it bites.
+section "Reliability: canary-wap loop-task ownership"
+
+LOOP_CMD_CHECK="$SCRIPT_DIR/check_wap_loop_commands.py"
+if [ -f "$LOOP_CMD_CHECK" ]; then
+  if LOOP_CMD_OUT=$(python3 "$LOOP_CMD_CHECK" 2>&1); then
+    check_pass "mesh, Chirp and Bluetooth commands and MQTT re-inits run on the loop task; mesh, Chirp and Bluetooth status routes read its copies; NimBLE callbacks post to it; MQTT network waits sit under its watchdog"
+  else
+    check_fail "a canary-wap HTTP path changes the mesh, Chirp, Bluetooth or the MQTT client off the loop task, reads live what the loop task owns, or an MQTT wait can outlast the watchdog"
+    echo "$LOOP_CMD_OUT" | sed 's/^/    /'
+  fi
+else
+  check_fail "check_wap_loop_commands.py missing — loop-task ownership unchecked"
+fi
+
+echo ""
+
+# ── Check: canary-wap REST answers fit their buffers (sweep F196) ──
+# serializeJson() into a char array, or with a size, writes no further than
+# the buffer and terminates only an answer shorter than it: a full buffer
+# goes out cut and unterminated, with whatever memory follows it. The Chirp
+# confirm and mute refusals (F174), the nearby list with escaped emoji and
+# the full recent list (F196) went out that way. This measures every fixed
+# answer buffer in the canary-wap's *_api.h files and canary_wap.ino against
+# the longest answer it computes from the document's statements, refuses
+# what it cannot bound unless it is serialized to measureJson()'s length,
+# and mutates the sources in memory to prove it bites.
+section "Reliability: canary-wap REST answers fit their buffers"
+
+JSON_ANSWER_CHECK="$SCRIPT_DIR/check_wap_json_answers.py"
+if [ -f "$JSON_ANSWER_CHECK" ]; then
+  if JSON_ANSWER_OUT=$(python3 "$JSON_ANSWER_CHECK" 2>&1); then
+    check_pass "every canary-wap REST answer fits the buffer it is serialized into, or is sized by measureJson()"
+  else
+    check_fail "a canary-wap REST answer can outgrow its buffer (sent cut and unterminated) or cannot be measured"
+    echo "$JSON_ANSWER_OUT" | sed 's/^/    /'
+  fi
+else
+  check_fail "check_wap_json_answers.py missing — REST answer buffers unmeasured"
+fi
+
+echo ""
+
+# ── Check: the PlatformIO canary's mesh status routes (sweep F161) ──
+# GET /api/mesh and /api/mesh/peers ran on esp_http_server's task and read
+# mesh_session's state (the pairing number and outcome, the opera name, the
+# peer links, the transport table) while the main loop's process() wrote
+# it, so one body could mix two passes. The main loop now publishes a view
+# (each pass, its early return, each REST request before its result,
+# deinit, and setup's restore) and the two routes copy it. test_mesh_session
+# runs the view on the host; this holds securacv_network.cpp's handlers,
+# mesh_session.cpp's publish points and main.cpp's setup publish to it, and
+# mutates them in memory to prove it bites. GET /api/mesh/alerts (F197)
+# reads the alert history the same way: a log the main loop appends to and
+# clears under its lock, copied whole by read_alerts().
+section "Reliability: canary mesh status routes read the published view"
+
+MESH_STATUS_CHECK="$SCRIPT_DIR/check_canary_mesh_status.py"
+if [ -f "$MESH_STATUS_CHECK" ]; then
+  if MESH_STATUS_OUT=$(python3 "$MESH_STATUS_CHECK" 2>&1); then
+    check_pass "GET /api/mesh and /peers read only the view the main loop publishes, /alerts only its locked log; no canary HTTP handler reads the session's live state"
+  else
+    check_fail "a canary mesh status route reads the session's live state, or the main loop stopped publishing the view where the routes need it"
+    echo "$MESH_STATUS_OUT" | sed 's/^/    /'
+  fi
+else
+  check_fail "check_canary_mesh_status.py missing — the canary's mesh status reads are unchecked"
+fi
+
+echo ""
+
 # ── Check: web_ui.h size ──────────────────────────────────────
 section "Build: web_ui.h size"
 

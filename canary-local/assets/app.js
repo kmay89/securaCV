@@ -23,7 +23,7 @@ import { buildOnboardPhone } from "./onboard-phone.js";
 import {
   DISPLAY_TOUR,
   DISPLAY_FIXES,
-  BENCH_FIXES,
+  benchFixesFor,
   LED_GRAMMAR,
   CHIRP_GRAMMAR,
   ledSequence,
@@ -81,7 +81,7 @@ async function main() {
   renderCards();
   // The models cross-fade to the active finish live (role-tagged shell parts
   // read it per-frame — no rebuild). On a first visit, run the ambient
-  // showcase: a slow, calm cycle through the palette that demos customisation
+  // showcase: a slow, calm cycle through the palette that demos customization
   // until the visitor picks a swatch. Honor a saved choice and reduced motion.
   if (!hasUserChoice() && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
     startFinishShowcase();
@@ -459,7 +459,9 @@ async function buildDisplaySheet(ctx, side, stage) {
     ctx.emu = new CanaryEmulator(factory, {
       canvas: glass,
       onSerial: serialAppend,
-      onDisplayReady: () => {},
+      // Each shape the firmware announces carries the turn it wears the
+      // glass at (A56): the 3D case turns that way, not just "on its side".
+      onDisplayReady: (w, h, round, turn) => { ctx.scene.firmwareTurn = turn ?? null; },
       onFrame: () => {},
       onBacklight: (glow) => {
         ctx.scene.setGlow(glow);
@@ -495,7 +497,16 @@ async function buildDisplaySheet(ctx, side, stage) {
         await boot({ preserve: true });
       },
     });
-    ctx.scene.src = glass; // 3D screen textures from the live panel
+    // The 3D screen textures from the live panel. The canvas turns with the
+    // glass (a portrait dash is 480x800), so the scene is handed the panel's
+    // own shape too and turns the device's body when the canvas is that
+    // shape turned on its side (scene3d.js glassTurn, A47), the way the
+    // firmware turned it (onDisplayReady above, A56): a turned glass reads
+    // upright on a turned case, out of its landscape-only stand, instead of
+    // stretching across the landscape screen. Until the first frame sizes it
+    // the canvas is 300x150, which turns nothing.
+    ctx.scene.src = glass;
+    ctx.scene.glass = { w: dev.glass.w, h: dev.glass.h };
     // A preserved image (reboot / bench power event) is preseeded before
     // power-on, so setup() always reads the surviving flash — never a
     // race against the firmware's resume. A "meet again" reboot must not
@@ -911,6 +922,13 @@ function benchView(ctx, guideCtx, noteLine) {
 
   const usb = chip("USB-C cable", profile.power?.usb, () => bench.setUsb(!bench.usb));
   const bat = chip("battery", profile.power?.battery, () => bench.setBattery(!bench.batteryFitted));
+  // A board with no battery path offers nothing to fit: the chip stays,
+  // inert, so the bench says so instead of fitting a cell the board has
+  // not got (sweep A54; BenchPower refuses one too).
+  if (!bench.batteryPath) {
+    bat.b.disabled = true;
+    bat.b.title = "no battery path on this board — USB is its only power";
+  }
   const soc = el("div", "bench-soc");
   const socFill = el("div", "bench-soc-fill");
   soc.append(socFill);
@@ -952,6 +970,11 @@ function benchView(ctx, guideCtx, noteLine) {
   const dMode = diagRow("mode");
   const dUp = diagRow("uptime");
   const dBl = diagRow("backlight");
+  // A cap the board's own HAL enforces and the twin's does not (the
+  // nightlight's heat budget): say it beside the level, so the twin's
+  // brighter glow is not read as the glass's (sweep A54).
+  const blCap = profile.backlight?.cap_pct;
+  if (blCap) dBl.title = profile.backlight.note || "";
   const dFlush = diagRow("frames flushed");
   const dLink = diagRow("Wi-Fi / broker");
   const dMqtt = diagRow("MQTT session");
@@ -963,7 +986,8 @@ function benchView(ctx, guideCtx, noteLine) {
     usb.b.classList.toggle("on", bench.usb);
     usb.st.textContent = bench.usb ? "plugged" : "unplugged";
     bat.b.classList.toggle("on", bench.batteryFitted);
-    bat.st.textContent = bench.batteryFitted ? `fitted · ${Math.round(bench.soc)}%` : "removed";
+    bat.st.textContent = !bench.batteryPath ? "none on this board"
+      : bench.batteryFitted ? `fitted · ${Math.round(bench.soc)}%` : "removed";
     soc.style.visibility = bench.batteryFitted ? "visible" : "hidden";
     socFill.style.width = `${Math.round(bench.soc)}%`;
     socFill.classList.toggle("low", bench.soc < 15);
@@ -1003,9 +1027,10 @@ function benchView(ctx, guideCtx, noteLine) {
     try {
       const night = await ctx.emu.c.nightDuty();
       const level = await ctx.emu.c.backlight();
-      dBl.textContent = night >= 0
+      dBl.textContent = (night >= 0
         ? `night floor · 13-bit duty ${night}/8191`
-        : `day ladder · ${level}/255`;
+        : `day ladder · ${level}/255`) +
+        (blCap ? ` · the board caps it at ${blCap}% duty, this twin does not` : "");
       dFlush.textContent = String(await ctx.emu.c.flushCount());
       dMqtt.textContent = (await ctx.emu.c.mqttConnected()) ? "connected" : "down / reconnecting";
     } catch {
@@ -1027,7 +1052,7 @@ function benchView(ctx, guideCtx, noteLine) {
   // ── Debug mode: the symptom-first bench flows ─────────────────────────
   const trouble = el("details", "bench-trouble");
   trouble.append(el("summary", null, "Troubleshoot — the bench debug flows"));
-  trouble.append(fixView(guideCtx, BENCH_FIXES, noteLine));
+  trouble.append(fixView(guideCtx, benchFixesFor(profile), noteLine));
 
   wrap.append(ledRow, ledCap, controls, diag, trouble);
   refresh();

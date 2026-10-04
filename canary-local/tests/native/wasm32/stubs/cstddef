@@ -1,0 +1,11 @@
+// canary-local/tests/native/wasm32/stubs/cstddef: the one C++ library name
+// the Vision pipeline's headers ask for (canary/config.h's size_t), for the
+// freestanding wasm32 build in ../../wasm32.js (sweep A49). That build has
+// no C++ library and no libc; clang's own freestanding <stddef.h> has the
+// type.
+#pragma once
+#include <stddef.h>
+namespace std {
+using ::size_t;
+using ::ptrdiff_t;
+}  // namespace std

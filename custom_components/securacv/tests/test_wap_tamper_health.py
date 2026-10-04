@@ -69,6 +69,7 @@ def _wap_health(*, lid_open: bool, card_in: bool) -> str:
         "uptime": 3600,
         "firmware_version": "2.0.0",
         "public_key": "ab" * 32,
+        "event_id_space_low": False,   # sweep F82; the Event ID Space Low sensor (HA24)
         "sd_mounted": card_in,
         "enclosure_open": lid_open,
     }

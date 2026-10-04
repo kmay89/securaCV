@@ -119,10 +119,11 @@ ORIENT_BIN = test_orientation
 ORIENT_SRC = test_orientation.cpp
 
 # Display settings geometry (canary/glass_settings.h): the 7"/dash orientation
-# helpers (logical dims, the touch un-rotation round-tripped against the
-# forward render rotation, the LVGL 9 pointer feed inverted against LVGL's
-# own indev rotation) and the rendered brightness scrim (clamp + the
-# monotone opacity curve). Pure inline logic — no LVGL, no board.
+# helpers (logical dims, the touch un-rotation round-tripped against the turn
+# the glass draws — LVGL 9's lv_display_rotate_area and LVGL 8's
+# draw_buf_rotate, quoted, which agree — the LVGL 9 pointer feed inverted
+# against LVGL's own indev rotation) and the rendered brightness scrim
+# (clamp + the monotone opacity curve). Pure inline logic — no LVGL, no board.
 DISPSET_BIN = test_display_settings
 DISPSET_SRC = test_display_settings.cpp
 
@@ -246,7 +247,8 @@ $(ROUNDFRAME11_BIN): $(ROUNDFRAME11_SRC)
 ONBOARD_BIN = test_onboard_layout
 ONBOARD_SRC = test_onboard_layout.cpp
 
-$(ONBOARD_BIN): $(ONBOARD_SRC) onboard_test_env.h ../include/canary/ui/onboard_layout.h montserrat_metrics.h \
+$(ONBOARD_BIN): $(ONBOARD_SRC) onboard_test_env.h ../include/canary/ui/onboard_layout.h \
+	  ../include/canary/ui/splash_layout.h montserrat_metrics.h \
 	  ../../../common/network/wifi_join_policy.h ../../../common/network/provision_core.h
 	$(CXX) -std=gnu++11 -O2 -Wall -Wextra $(INC) -I ../../../common \
 	  '-DFW_DIR="$(abspath ../../..)"' -o $@ $(ONBOARD_SRC)
@@ -304,7 +306,7 @@ MARKSEAT_BIN = test_canary_mark_seat
 MARKSEAT_SRC = test_canary_mark_seat.cpp
 
 $(MARKSEAT_BIN): $(MARKSEAT_SRC) ../src/ui/canary_mark.cpp ../include/canary/ui/canary_mark.h \
-	  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h
+	  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h lv_txt_wrap.h
 	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl $(INC) -I ../../../configs/canary-display/watch \
 	  -o $@ $(MARKSEAT_SRC) ../src/ui/canary_mark.cpp
 
@@ -317,23 +319,25 @@ clean-mark-seat:
 run: run-mark-seat
 clean: clean-mark-seat
 
-# What the onboarding scenes DRAW on small glass (F64, F65, F66): the REAL
+# What the onboarding scenes DRAW (F64, F65, F66, F84): the REAL
 # src/ui/onboard_ui.cpp, round_frame.cpp and canary_mark.cpp against
 # fake_lvgl/lvgl.h, driven through every scene the way provision.cpp drives
-# them, on every small-glass env with both type ladders, QR or not. Every
+# them, on every display env with both type ladders, QR or not, and on the
+# panels main.cpp turns before provision_run() (F156, F157). Every
 # label reads whole (its text no wider than the label, in the font it
 # carries, measured with LVGL's own glyph data), nothing overlaps, and the
 # labels, the QR card and the bird's breath are clear of the halo's stroke,
-# which is small_join()'s; the bird draws at onboard_layout.h's seat.
-# test_onboard_layout holds the rules, this holds the glass to them. Two
-# builds, because round vs rectangular glass is the config's call: the
-# watch's (the round watch) and the nightstand's (the 172/180x320 portrait
-# glass, the touch169, the AMOLED). Hooked into `run` and `clean` by
-# prerequisite.
+# which is small_join()'s (wide_ring()'s on wide glass); the bird draws at
+# onboard_layout.h's seat (bird_seat). test_onboard_layout holds the rules,
+# this holds the glass to them. Three builds, because round, rectangular
+# small and wide glass are the config's call: the watch's (the round
+# watch), the nightstand's (the 172/180x320 portrait glass, the touch169,
+# the AMOLED) and the dash's (the 800x480 dash, dash7 and nightstand7).
+# Hooked into `run` and `clean` by prerequisite.
 SCENES_SRC = test_onboard_scenes.cpp ../src/ui/onboard_ui.cpp \
   ../src/ui/round_frame.cpp ../src/ui/canary_mark.cpp
 SCENES_DEPS = $(SCENES_SRC) onboard_test_env.h montserrat_metrics.h \
-  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h \
+  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h lv_txt_wrap.h \
   ../include/canary/ui/onboard_layout.h ../include/canary/ui/onboard_ui.h \
   ../include/canary/ui/round_frame.h ../include/canary/ui/canary_mark.h \
   ../../../common/network/wifi_join_policy.h ../../../common/network/provision_core.h
@@ -346,13 +350,16 @@ test_onboard_scenes_round: $(SCENES_DEPS)
 	$(CXX) $(SCENES_FLAGS) -I ../../../configs/canary-display/watch -o $@ $(SCENES_SRC)
 test_onboard_scenes_rect: $(SCENES_DEPS)
 	$(CXX) $(SCENES_FLAGS) -I ../../../configs/canary-display/nightstand -o $@ $(SCENES_SRC)
+test_onboard_scenes_wide: $(SCENES_DEPS)
+	$(CXX) $(SCENES_FLAGS) -I ../../../configs/canary-display/dash -o $@ $(SCENES_SRC)
 
 .PHONY: run-onboard-scenes clean-onboard-scenes
-run-onboard-scenes: test_onboard_scenes_round test_onboard_scenes_rect
+run-onboard-scenes: test_onboard_scenes_round test_onboard_scenes_rect test_onboard_scenes_wide
 	$(call run_marked,test_onboard_scenes_round)
 	$(call run_marked,test_onboard_scenes_rect)
+	$(call run_marked,test_onboard_scenes_wide)
 clean-onboard-scenes:
-	rm -f test_onboard_scenes_round test_onboard_scenes_rect
+	rm -f test_onboard_scenes_round test_onboard_scenes_rect test_onboard_scenes_wide
 
 run: run-onboard-scenes
 clean: clean-onboard-scenes
@@ -437,3 +444,113 @@ clean-io-cores:
 
 run: run-io-cores
 clean: clean-io-cores
+
+# The boot splash's seats (canary/ui/splash_layout.h, F88): on every canvas
+# the splash runs on (each display env's panel, and the panel turned for the
+# two flavors main.cpp rotates before splash_play), the bird's whole box over
+# its breath and highest hop stays on the canvas, only the seats that needed
+# it move (the landscape nightlight's first meeting), and where the bird
+# moved the speech bubble hangs under it, its tallest form (the script's
+# lines wrapped the way LVGL 8.4 wraps a label, held to the heights a native
+# harness drew) on the canvas and clear of the bird; the bubble is as wide
+# as bubble_w() gives each canvas (F160). The test is C++17
+# (story_scripts.h's inline variables); the header alone is held to gnu++11
+# first, since the core-2.0.17 sketch compiles it there. Hooked into `run`
+# and `clean` by prerequisite.
+SPLASH_BIN = test_splash_layout
+SPLASH_SRC = test_splash_layout.cpp
+
+$(SPLASH_BIN): $(SPLASH_SRC) splash_test_env.h lv_txt_wrap.h onboard_test_env.h \
+	  ../include/canary/ui/splash_layout.h montserrat_metrics.h ../../../common/story/story.h ../../../common/story/story_scripts.h
+	echo '#include "canary/ui/splash_layout.h"' | \
+	  $(CXX) -std=gnu++11 -Wall -Wextra -Werror $(INC) -fsyntax-only -x c++ -
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -I ../../../common \
+	  '-DFW_DIR="$(abspath ../../..)"' -o $@ $(SPLASH_SRC)
+
+.PHONY: run-splash-layout clean-splash-layout
+run-splash-layout: $(SPLASH_BIN)
+	$(call run_marked,$(SPLASH_BIN))
+clean-splash-layout:
+	rm -f $(SPLASH_BIN)
+
+run: run-splash-layout
+clean: clean-splash-layout
+
+# Where the boot splash DRAWS the bird and the speech bubble (F88): the REAL
+# src/ui/splash.cpp and canary_mark.cpp against fake_lvgl/lvgl.h, with the
+# Arduino clock, Preferences and the pseudonym faked beside it, playing the
+# first meeting (the whole script) and hello again on every canvas of the
+# build's glass with both type ladders. The bird breathes down to exactly
+# the seat splash_layout.h names and hops under kHopReach, on the canvas;
+# the bubble sits where seat() says (hung under a moved bird, centered
+# otherwise) in whatever height its typed line wraps to, on the canvas, its
+# sides too (F160), and clear of a moved bird, with its tail object on its
+# top edge at every refresh (F158; only the LVGL 9 builds draw the tail);
+# its tallest is test_splash_layout's measure. Three
+# builds, because the glass family is the config's call: the watch's (the
+# round watch), the nightstand's (every CD_FLAVOR_NIGHTSTAND canvas,
+# the nightlight's turned one included) and the dash's (the wide glass).
+# Hooked into `run` and `clean` by prerequisite.
+SPLASH_SCENES_SRC = test_splash_scenes.cpp ../src/ui/splash.cpp ../src/ui/canary_mark.cpp
+SPLASH_SCENES_DEPS = $(SPLASH_SCENES_SRC) splash_test_env.h onboard_test_env.h \
+  lv_txt_wrap.h montserrat_metrics.h fake_lvgl/lvgl.h fake_lvgl/Arduino.h \
+  fake_lvgl/Preferences.h fake_lvgl/esp_random.h fake_lvgl/identity/device_pseudonym.h \
+  ../include/canary/ui/splash_layout.h ../include/canary/ui/splash.h \
+  ../include/canary/ui/canary_mark.h ../include/canary/ui/round_frame_core.h \
+  ../../../common/story/story.h ../../../common/story/story_scripts.h
+# fake_lvgl comes before ../../../common: its identity/device_pseudonym.h
+# stands in for the NVS-backed one.
+SPLASH_SCENES_FLAGS = $(CXXFLAGS) -Werror -I fake_lvgl $(INC) -I ../../../common \
+  '-DFW_DIR="$(abspath ../../..)"'
+
+test_splash_scenes_round: $(SPLASH_SCENES_DEPS)
+	$(CXX) $(SPLASH_SCENES_FLAGS) -I ../../../configs/canary-display/watch -o $@ $(SPLASH_SCENES_SRC)
+test_splash_scenes_rect: $(SPLASH_SCENES_DEPS)
+	$(CXX) $(SPLASH_SCENES_FLAGS) -I ../../../configs/canary-display/nightstand -o $@ $(SPLASH_SCENES_SRC)
+test_splash_scenes_wide: $(SPLASH_SCENES_DEPS)
+	$(CXX) $(SPLASH_SCENES_FLAGS) -I ../../../configs/canary-display/dash -o $@ $(SPLASH_SCENES_SRC)
+
+.PHONY: run-splash-scenes clean-splash-scenes
+run-splash-scenes: test_splash_scenes_round test_splash_scenes_rect test_splash_scenes_wide
+	$(call run_marked,test_splash_scenes_round)
+	$(call run_marked,test_splash_scenes_rect)
+	$(call run_marked,test_splash_scenes_wide)
+clean-splash-scenes:
+	rm -f test_splash_scenes_round test_splash_scenes_rect test_splash_scenes_wide
+
+run: run-splash-scenes
+clean: clean-splash-scenes
+
+# The dash glass's LVGL 9 flush (F205): the REAL src/ui/lvgl_port.cpp, dash
+# config, LVGL 9 branch, against fake_lvgl9/lvgl.h — LVGL 9.5's display
+# layer, its rotation arithmetic quoted from lvgl v9.5.0 — and a recording
+# Arduino_GFX over the panel's native 800x480 framebuffer. The test plays
+# LVGL's partial render mode (logical bands into the registered draw buffer,
+# the registered flush callback) and reads back which logical pixel the glass
+# shows at every native pixel, at every quarter turn: the face turned the way
+# lv_display_rotate_area() turns it, nothing off the panel, nothing left
+# unpainted, a raw touch at any pixel (rotation_map_touch, as display_dash.cpp
+# maps the GT911) landing on the pixel drawn there, the turn buffer's size and
+# tier (PSRAM first; internal RAM only when the draw buffer fell back there,
+# every request scripted and recorded), and a glass with no turn buffer
+# staying landscape, its face too (dash_face.h, the choice main.cpp makes;
+# F223). Hooked into `run` and `clean` by prerequisite.
+PORTTURN_BIN = test_lvgl_port_turn
+PORTTURN_SRC = test_lvgl_port_turn.cpp ../src/ui/lvgl_port.cpp
+
+$(PORTTURN_BIN): $(PORTTURN_SRC) fake_lvgl9/lvgl.h fake_lvgl9/Arduino.h \
+	  fake_lvgl9/Arduino_GFX_Library.h fake_lvgl9/esp_heap_caps.h \
+	  ../include/canary/glass_settings.h ../include/canary/ui/lvgl_port.h \
+	  ../include/canary/ui/dash_face.h \
+	  ../include/canary/hal/display.h ../include/canary/log.h
+	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl9 $(INC) -I ../../../configs/canary-display/dash \
+	  -I ../../../boards/waveshare-esp32s3-lcd43/pins -o $@ $(PORTTURN_SRC)
+
+.PHONY: run-lvgl-port-turn clean-lvgl-port-turn
+run-lvgl-port-turn: $(PORTTURN_BIN)
+	$(call run_marked,$(PORTTURN_BIN))
+clean-lvgl-port-turn:
+	rm -f $(PORTTURN_BIN)
+
+run: run-lvgl-port-turn
+clean: clean-lvgl-port-turn

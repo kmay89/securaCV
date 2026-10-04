@@ -808,7 +808,20 @@ const WizardLogic = (function () {
     return '';
   }
 
-  return { isPairToken, connectOutcome, capabilityNotice, connectBody, tzNotice };
+  // The host the close-out link opens, from /api/device-info's mdns_host:
+  // the label this Canary advertises over mDNS (canary_wap.ino's
+  // generate_mdns_hostname: canary-<name> once named, canary-<4 hex> of
+  // the key fingerprint until then). Repo sweep F129: the link used to stay
+  // on the shared canary.local, or after the recovery-kit save be built from
+  // the device id, a host no Canary advertises. Only a single
+  // RFC 1123 label is taken as-is; anything else returns '' and the static
+  // canary.local link stays.
+  function closeOutHost(info) {
+    const h = info && typeof info.mdns_host === 'string' ? info.mdns_host : '';
+    return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(h) ? h : '';
+  }
+
+  return { isPairToken, connectOutcome, capabilityNotice, connectBody, tzNotice, closeOutHost };
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
 /* WIZARD_LOGIC:END */
@@ -1712,29 +1725,19 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     requestAnimationFrame(() => focusActiveStepHeading());
   }
 
-  // Mirrors canary_wap.ino's sanitize loop (lowercase [a-z0-9-], any
-  // other byte becomes '-', trim leading/trailing hyphens, fall back to
-  // "canary" if empty). Kept here so the JS can construct the same
-  // hostname the device just registered with mDNS.
-  function sanitizeMdnsHostname(raw) {
-    let out = '';
-    for (const ch of String(raw || '').toLowerCase()) {
-      out += /[a-z0-9-]/.test(ch) ? ch : '-';
-    }
-    out = out.replace(/^-+|-+$/g, '');
-    return out || 'canary';
-  }
-
+  // /api/device-info is the public route that names the host the device
+  // advertises; it needs no token, and this page holds none. /api/status,
+  // which the link used to read, answers 401 unless the page holds the
+  // session cookie the recovery-kit save issues, and even then it names the
+  // device id, a host no Canary advertises.
   async function updateMdnsLinkFromDevice() {
     const link = $w('wiz-link-mdns');
     if (!link) return;
     try {
-      const r = await fetch('/api/status', { cache: 'no-store' });
+      const r = await fetch('/api/device-info', { cache: 'no-store' });
       if (!r.ok) return;
-      const j = await r.json();
-      const id = j && j.device_id ? j.device_id : '';
-      if (!id) return;
-      const host = sanitizeMdnsHostname(id);
+      const host = WizardLogic.closeOutHost(await r.json());
+      if (!host) return;
       link.href = 'http://' + host + '.local/';
       link.textContent = 'Open ' + host + '.local';
     } catch (_) {
@@ -1744,10 +1747,11 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
 
   // Point the close-out links at the right place. The IP fallback is only
   // shown when we captured one during step 4; the mDNS link is rewritten
-  // from the device's actual per-device hostname (canary-s3-XXXX.local) so
-  // two Canaries on one LAN don't race for `canary.local`. Best-effort: on
-  // fetch error the static canary.local link stays in place. Used by both
-  // the all-passed close-out and the "Continue anyway" failure escape hatch.
+  // to the host this device advertises (canary-<name>.local, or
+  // canary-<4 hex>.local while unnamed) so two Canaries on one LAN don't
+  // race for `canary.local`. Best-effort: on fetch error the static
+  // canary.local link stays in place. Used by both the all-passed close-out
+  // and the "Continue anyway" failure escape hatch.
   function prepareFinishLinks() {
     const ipLink = $w('wiz-link-ip');
     if (connectedStaIp) {

@@ -6,7 +6,11 @@ pure `firmware/common/csi/src/csi_event_backfill.h`, and
 `firmware/tests_host/test_csi_event_backfill.cpp` replays whole outages
 against it. That test runs the planner inside a model world, and two of the
 properties it asserts are properties of the model, not of the planner
-(rules 1-3 below; the model also supplies three glue values, rules 4-6):
+(rules 1-3 below; the model also supplies three glue values, rules 4-6).
+`firmware/tests_host/test_canary_event_egress.cpp` (backlog F103, F104)
+compiles the egress itself, so its RAM hold and card wait are held by
+behavior; it still models `securacv_mqtt.cpp` and `main.cpp`, which this
+check holds. The two model properties:
 
 - the model's live publish refuses while the MQTT offline queue still holds
   records, and
@@ -38,12 +42,15 @@ and a deleted epoch bump or `not_owed()` call; rules 3-6 refuse those.
    through the buffering `mqtt_publish_event()`.
 3. In `csi_event_egress_pump()`, each dequeued row (`xQueueReceive(`)
    publishes its tamper bridge (`mqtt_publish_tamper(`, once in the pump)
-   BEFORE the planner commits it (`s_backfill.commit(`). Between the
-   dequeue and that publish there is no control flow (no `if`, `continue`,
-   `return`, ...) and nothing reads the backfill's state (`s_backfill`,
-   `s_replay_run`, `s_dest_epoch`, `s_port`, `csi_event_log::`) or the link
-   state (`link.connected`, `mqtt_connected(`); `s_backfill.pending(` is
-   not read anywhere before it. The `if` around the publish tests only
+   BEFORE it is routed (`route(`, whose body commits it to the planner
+   through one `s_backfill.commit(`, or holds it in RAM; the pump never
+   calls `s_backfill.commit(` itself). Between the dequeue and that publish
+   there is no control flow (no `if`, `continue`, `return`, ...) and
+   nothing reads the backfill's state (`s_backfill`, `s_replay_run`,
+   `s_dest_epoch`, `s_port`, `csi_event_log::`, the RAM hold `s_hold`, the
+   card wait `s_card_wait`, `s_not_owed_at_open`) or the link state
+   (`link.connected`, `mqtt_connected(`); `s_backfill.pending(` is not read
+   anywhere before it. The `if` around the publish tests only
    `link.accepting`, that the body built, and the boot-story filter — so an
    `if (false ...` decoy, or a gate on the backlog, is refused. So a tamper
    alert never waits on the card or the backlog, and it queues through an
@@ -74,7 +81,10 @@ cannot check for itself:
    `if` whose `||` condition holds `!link.accepting` and a comparison of
    `s_dest_epoch` with `mqtt_destination_epoch()` calls
    `s_backfill.not_owed(` and stores the new epoch. Without it a new broker
-   is sent the old one's backlog.
+   is sent the old one's backlog. The one other term it may hold is
+   `opened_unowed` (a change made before the card's log opened, applied
+   when it opens, backlog F104): any other term could drop the backlog
+   every pass.
 6. The epoch itself, in securacv_mqtt.cpp. `apply_pending_reload()` bumps
    `s_destination_epoch` under an `if` on the same flag that guards the
    offline queue's flush (`s_offline_q.clear(`), and
@@ -91,19 +101,69 @@ queue and drops them. So:
 7. The pump's prefix. Its link is `const` and comes from `current_link()`.
    The dequeue loop's header is exactly
    `for (int budget = kPumpBudget; budget > 0; --budget)`. Before that
-   loop, outside the card-poll `switch` and the epoch `if` (rule 5), no
-   statement reads the backfill's or the link's state (the rule-3 list),
-   and nothing leaves or loops (`return`, `continue`, `break`, `goto`,
-   `for`, `while`, `do`) but the opening `if (!s_queue) return;`.
+   loop, outside the card-poll `switch`, the card wait's expiry (an `if`
+   on `s_card_wait` and `kCardWaitMs` that neither leaves nor loops) and
+   the epoch `if` (rule 5), no statement reads the backfill's or the link's
+   state (the rule-3 list), and nothing leaves or loops (`return`,
+   `continue`, `break`, `goto`, `for`, `while`, `do`) but the opening
+   `if (!s_queue) return;`.
    `boot_story_bridged_elsewhere()` is one `return` of
    `strcmp(kind, "...") == 0` terms, naming exactly the three boot kinds
    the system.integrity story already narrates (`power_loss`, `watchdog`,
    `unexpected_reboot`).
 
+The modules' boot (sweep F93) is the last rule. Registration initializes
+no CSI module, and the library ticks none before its init, so on the canary
+the boot order is: the floor, then the modules and their init, then the
+first tick. `firmware/tests_host/test_csi_module_boot.cpp` boots the real
+bridge in that order but cannot compile `main.cpp`:
+
+8. The boot. In `firmware/canary/src/main.cpp`'s `setup()`,
+   `csi_event_egress_begin();` (it restores the event-id floor) and
+   `securacv_csi_modules_init();` each appear once, in that order, both
+   before `csi::set_features_callback(` (the first window's tick) and
+   `csi::start(`. In the bridge
+   (`firmware/canary/src/csi_modules_integration.cpp`),
+   `securacv_csi_modules_init()` runs `init_modules_from_nvs();` once,
+   after its last `csi_module_register(` and `ble_scout_init(`, as a
+   statement of its own body (no `if`, block or `#if` around it), and
+   `init_modules_from_nvs()` holds the tree's one `csi_module_init_all(`
+   call, handed the boot's settings session (`&boot`), so every module's
+   init() reads through one NVS handle. Across `firmware/canary/src` and
+   `firmware/canary/lib` those are the only calls of `csi_module_init_all(`
+   and `init_modules_from_nvs(`, and `setup()`'s the only call of
+   `securacv_csi_modules_init(`.
+
+Rule 1 holds the live send's refusal; the other half of the order is what a
+buffered publish does while the offline queue still drains (backlog F107).
+Every row the egress hands over off the card (its RAM hold's flush included)
+goes through `mqtt_publish_event()`, and before F107 nothing held that a row
+sent then joins the back of the queue rather than going live past the
+outage's queued rows: both host tests transcribed the branch, so deleting it
+from `securacv_mqtt.cpp` kept every gate green. The order now lives in
+`firmware/common/mqtt/mqtt_offline_queue.h`'s `publish_or_queue()`, which
+`test_mqtt_offline_queue.cpp`, `test_csi_event_backfill.cpp` and
+`test_canary_event_egress.cpp` compile:
+
+9. The publish-or-queue order. In `mqtt_offline_queue.h`'s
+   `publish_or_queue()`, one `if (link_up && !q.empty())` whose statement is
+   `if (q.push(kind, retained, payload)) return true;` comes before the one
+   live `send()`, and that send is guarded by `link_up &&`. In
+   `securacv_mqtt.cpp`, the static `publish_or_queue()` is the one statement
+   `return mqtt_offline_queue::publish_or_queue(s_offline_q,
+   s_mqtt.connected(), kind, retained, payload, [&]() { return
+   s_mqtt.publish(topic, payload, retained); }, offline_queue_ensure);` and
+   pushes nothing itself; `mqtt_publish_event()` and `mqtt_publish_tamper()`
+   end `return publish_or_queue(mqtt_offline_queue::KIND_EVENT,
+   s_topic_events, ...)` (`KIND_TAMPER`, `s_topic_tamper`) and call neither
+   `s_mqtt.publish(` nor `s_offline_q.push(`. Its mutations run on
+   `securacv_mqtt.cpp` and the header together.
+
 ## It proves it bites
 
 Each run applies a set of mutations to the sources, in memory, and requires
-the check to fail on every one. The reviewers' edits are in that set. So
+the check to fail on every one (rule 8 has its own set, on `main.cpp` and
+the bridge, and so does rule 9, on `securacv_mqtt.cpp` and the header). The reviewers' edits are in that set. So
 the check is proven against the code as it stands. If a refactor moves an
 anchor a mutation needs, the run fails and says so; it does not pass quietly.
 
@@ -113,6 +173,7 @@ CI:           firmware.yml "CSI Sketch Copy Sync", via check_csi_sync.sh
 
 from __future__ import annotations
 
+import functools
 import re
 import sys
 from pathlib import Path
@@ -121,6 +182,10 @@ from typing import Callable
 REPO = Path(__file__).resolve().parents[2]
 MQTT_CPP = "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
 EGRESS_CPP = "firmware/canary/src/csi_event_egress.cpp"
+MAIN_CPP = "firmware/canary/src/main.cpp"
+BRIDGE_CPP = "firmware/canary/src/csi_modules_integration.cpp"
+QUEUE_H = "firmware/common/mqtt/mqtt_offline_queue.h"
+CANARY_DIRS = ("firmware/canary/src", "firmware/canary/lib")
 
 
 class AnchorMissing(Exception):
@@ -163,6 +228,13 @@ def blank_comments_and_strings(src: str) -> str:
 def bodies(code: str, signature: str) -> list[tuple[int, int]]:
     """(start, end) of the body of every definition matching `signature`
     (a regex that ends just before the opening brace), braces excluded."""
+    return list(_body_spans(code, signature))
+
+
+# The self-tests re-check the same unchanged texts once per mutation: scan
+# each (text, signature) once. A fresh list goes back to every caller.
+@functools.lru_cache(maxsize=4096)
+def _body_spans(code: str, signature: str) -> tuple[tuple[int, int], ...]:
     spans = []
     for m in re.finditer(signature + r"\s*\{", code):
         open_at = m.end() - 1
@@ -175,7 +247,7 @@ def bodies(code: str, signature: str) -> list[tuple[int, int]]:
                 if depth == 0:
                     spans.append((open_at + 1, j))
                     break
-    return spans
+    return tuple(spans)
 
 
 def top_level_terms(cond: str, op: str) -> list[str]:
@@ -251,6 +323,26 @@ def enclosing_if(text: str, pos: int) -> tuple[int, str, int, int] | None:
     return None
 
 
+def top_level_statement(body: str, pos: int) -> bool:
+    """`pos` starts a statement of `body` itself: inside no nested `{}`
+    block or open `#if`, and not the statement an unbraced `if`, `else`,
+    `for` or `while` controls (the code before it ends in `;`, `{` or `}`)."""
+    head = body[:pos]
+    if head.count("{") != head.count("}"):
+        return False
+    depth = 0
+    for line in head.splitlines():
+        directive = line.strip()
+        if re.match(r"#\s*if", directive):
+            depth += 1
+        elif re.match(r"#\s*endif\b", directive):
+            depth -= 1
+    if depth != 0:
+        return False
+    code = "\n".join(l for l in head.splitlines() if not l.strip().startswith("#")).rstrip()
+    return code == "" or code[-1] in ";{}"
+
+
 def call_args(text: str, call: str) -> list[str] | None:
     """The top-level arguments of the first `call` (e.g. `f(`), squashed."""
     at = text.find(call)
@@ -273,6 +365,16 @@ SIG_RELOAD = r"\bvoid\s+apply_pending_reload\s*\(\s*(?:void)?\s*\)"
 SIG_EPOCH = r"\buint32_t\s+mqtt_destination_epoch\s*\(\s*(?:void)?\s*\)"
 SIG_BOOT_STORY = r"\bbool\s+boot_story_bridged_elsewhere\s*\(\s*const\s+char\s*\*\s*kind\s*\)"
 SIG_RESTORE = r"\bvoid\s+restore_event_id_floor\s*\(\s*(?:void)?\s*\)"
+SIG_ROUTE = r"\bvoid\s+route\s*\([^)]*\)"
+SIG_SETUP = r"\bvoid\s+setup\s*\(\s*(?:void)?\s*\)"
+SIG_LOOP = r"\bvoid\s+loop\s*\(\s*(?:void)?\s*\)"
+SIG_MODULES_INIT = r"\bbool\s+securacv_csi_modules_init\s*\(\s*(?:void)?\s*\)"
+SIG_MODULES_FEED = r"\bvoid\s+securacv_csi_modules_feed\s*\([^)]*\)"
+SIG_BOOT_INIT_FN = r"\bsize_t\s+init_modules_from_nvs\s*\(\s*(?:void)?\s*\)"
+SIG_WRAPPER = r"\bstatic\s+bool\s+publish_or_queue\s*\([^)]*\)"
+SIG_SHARED_ORDER = r"\binline\s+bool\s+publish_or_queue\s*\([^)]*\)"
+SIG_PUB_EVENT = r"\bbool\s+mqtt_publish_event\s*\([^)]*\)"
+SIG_PUB_TAMPER = r"\bbool\s+mqtt_publish_tamper\s*\([^)]*\)"
 
 # What the tamper bridge's `if` may test (each `&&` term, squashed).
 BRIDGE_TERMS = (
@@ -283,6 +385,7 @@ BRIDGE_TERMS = (
 # The backfill's and the link's state: none of it may stand between a
 # dequeued row and its tamper bridge.
 BACKLOG_STATE = ("s_backfill", "s_replay_run", "s_dest_epoch", "s_port", "csi_event_log::",
+                 "s_hold", "s_card_wait", "s_not_owed_at_open",
                  "link.connected", "mqtt_connected(")
 CONTROL_FLOW = r"\b(?:if|else|for|while|do|switch|return|continue|break|goto)\b"
 # The allocator's floor as NVS holds it, read atomically or plainly.
@@ -365,17 +468,21 @@ def check_pump_order(egress_src: str, errors: list[str]) -> None:
     where = f"{EGRESS_CPP}: csi_event_egress_pump()"
     deq = body.find("xQueueReceive(")
     tamper = body.find("mqtt_publish_tamper(", deq)
-    commit = body.find("s_backfill.commit(", deq)
+    routes = [m.start() for m in re.finditer(r"\broute\s*\(", body)]
+    commit = routes[0] if len(routes) == 1 and routes[0] > deq else -1
     if body.count("xQueueReceive(") != 1:
         errors.append(f"{where}: expected one row dequeue (xQueueReceive), "
                       f"found {body.count('xQueueReceive(')}")
         return
+    if "s_backfill.commit(" in body:
+        errors.append(f"{where}: the pump commits a row itself (s_backfill.commit) — every "
+                      "dequeued row goes through route(), after its tamper bridge")
     if tamper < 0 or commit < 0:
         errors.append(f"{where}: each dequeued row must publish its tamper bridge "
-                      "(mqtt_publish_tamper) and be committed (s_backfill.commit)")
+                      "(mqtt_publish_tamper) and then be routed, once (route)")
         return
     if tamper > commit:
-        errors.append(f"{where}: the tamper bridge must publish BEFORE the row is committed "
+        errors.append(f"{where}: the tamper bridge must publish BEFORE the row is routed "
                       "to the planner — a tamper alert never waits on the card or the backlog")
     bridge_args = call_args(body, "mqtt_publish_tamper(")
     if bridge_args is None or len(bridge_args) != 2 or bridge_args[1] != "false":
@@ -391,7 +498,19 @@ def check_pump_order(egress_src: str, errors: list[str]) -> None:
         if gate in between:
             errors.append(f"{where}: the tamper bridge must not be gated on `{gate}` — it "
                           "publishes (or queues through an outage) whatever the backfill is doing")
-    if "s_backfill.pending(" in body[:tamper]:
+    # The card poll may read it (a close while rows wait starts the card wait,
+    # backlog F104); rule 7 holds that switch to never leave the pump.
+    before = body[:tamper]
+    sw = re.search(r"\bswitch\s*\(\s*csi_event_log::poll\(", before)
+    if sw:
+        open_b = before.find("{", matching_paren(before, before.find("(", sw.start())))
+        depth = 0
+        for j in range(open_b, len(before)):
+            depth += {"{": 1, "}": -1}.get(before[j], 0)
+            if depth == 0:
+                before = before[:sw.start()] + before[j + 1:]
+                break
+    if "s_backfill.pending(" in before:
         errors.append(f"{where}: s_backfill.pending() is read before the tamper bridge — "
                       "the bridge must not depend on the backlog")
     # Nothing between the dequeue statement and the bridge's `if` may branch
@@ -418,6 +537,10 @@ def check_pump_order(egress_src: str, errors: list[str]) -> None:
     if passes < 0:
         errors.append(f"{where}: the backfill pass (s_backfill.pass) must run after the rows "
                       "are committed")
+    span = the_body(code, SIG_ROUTE, f"{EGRESS_CPP}: route()", errors)
+    if span is not None and code[span[0]:span[1]].count("s_backfill.commit(") != 1:
+        errors.append(f"{EGRESS_CPP}: route() must commit the row to the planner through one "
+                      "s_backfill.commit() (or hold it in RAM)")
 
 
 def check_floor_glue(egress_src: str, errors: list[str]) -> None:
@@ -502,11 +625,17 @@ def check_epoch_glue(egress_src: str, errors: list[str]) -> None:
     epochs = ["mqtt_destination_epoch()"] + [
         m.group(1) for m in re.finditer(r"\b(\w+)\s*=\s*mqtt_destination_epoch\s*\(\s*\)", body)]
     terms = [unwrap(t) for t in top_level_terms(unwrap(guard[1]), "||")]
-    compares = any(t in (f"{e}!=s_dest_epoch", f"s_dest_epoch!={e}") for t in terms for e in epochs)
-    if "!link.accepting" not in terms or not compares:
+    is_compare = [any(t in (f"{e}!=s_dest_epoch", f"s_dest_epoch!={e}") for e in epochs)
+                  for t in terms]
+    if "!link.accepting" not in terms or not any(is_compare):
         errors.append(f"{where}: s_backfill.not_owed() must run when no broker is configured "
                       "(!link.accepting) OR the destination epoch moved (s_dest_epoch != "
                       "mqtt_destination_epoch()), as one `||` condition")
+    for t, cmp in zip(terms, is_compare):
+        if not cmp and t not in ("!link.accepting", "opened_unowed"):
+            errors.append(f"{where}: s_backfill.not_owed() also runs on `{t}` — beyond no broker "
+                          "and a changed one, only a change seen before the card's log opened "
+                          "(opened_unowed) may drop the backlog")
     if not re.search(r"\bs_dest_epoch\s*=(?!=)", body[guard[2]:guard[3]]):
         errors.append(f"{where}: the not_owed() branch must store the new epoch in s_dest_epoch, "
                       "or it drops the backlog on every pass after a broker change")
@@ -596,6 +725,21 @@ def check_pump_prefix(egress_src: str, errors: list[str]) -> None:
     epoch_if = enclosing_if(body, call) if 0 <= call < loop.start() else None
     if epoch_if:
         blank(epoch_if[0], epoch_if[3])
+    # The card wait's expiry (backlog F104): an `if` on s_card_wait and
+    # kCardWaitMs, which may only end the wait and log, never leave or loop.
+    for m in re.finditer(r"\bif\s*\(", body[:loop.start()]):
+        close = matching_paren(body, m.end() - 1)
+        cond = squash(body[m.end():close]) if close > 0 else ""
+        if not cond.startswith("s_card_wait&&") or "kCardWaitMs" not in cond:
+            continue
+        expiry = enclosing_if(body, m.end())
+        if expiry is None or expiry[3] > loop.start():
+            continue
+        flow = re.search(PREFIX_FLOW, body[expiry[2]:expiry[3]])
+        if flow:
+            errors.append(f"{where}: `{flow.group(0)}` in the card wait's expiry — it may only "
+                          "end the wait, never hold the rows back")
+        blank(expiry[0], expiry[3])
     rest = "".join(prefix)
     for gate in BACKLOG_STATE:
         if gate in rest:
@@ -621,6 +765,187 @@ def check_boot_story_filter(egress_src: str, errors: list[str]) -> None:
             f"{EGRESS_CPP}: boot_story_bridged_elsewhere() must be one `return` of "
             "`strcmp(kind, \"...\") == 0` terms naming exactly "
             f"{sorted(BOOT_STORY_KINDS)} — any other test, or kind, silences tamper bridges")
+
+
+def call_sites(files: dict[str, str], name: str) -> list[str]:
+    """The file of every call of `name(` (comments and strings blanked); a
+    declaration or definition (`bool name(`, `size_t name(`) is not a call."""
+    sites = []
+    for path, src in files.items():
+        if name not in src:
+            continue
+        code = blank_comments_and_strings(src)
+        for m in re.finditer(r"\b" + name + r"\s*\(", code):
+            if not re.search(r"\b(?:bool|size_t|void)\s+$", code[:m.start()]):
+                sites.append(path)
+    return sites
+
+
+def check_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> list[str]:
+    """Rule 8 (sweep F93): the floor, then the modules and their boot init,
+    then the first tick."""
+    errors: list[str] = []
+    code = blank_comments_and_strings(main_src)
+    span = the_body(code, SIG_SETUP, f"{MAIN_CPP}: setup()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        begin, init = "csi_event_egress_begin();", "securacv_csi_modules_init();"
+        b, i = body.find(begin), body.find(init)
+        callback, start = body.find("csi::set_features_callback("), body.find("csi::start(")
+        if body.count(begin) != 1 or body.count(init) != 1:
+            errors.append(f"{MAIN_CPP}: setup() must call `{begin}` and `{init}` once each")
+        elif not 0 <= b < i:
+            errors.append(f"{MAIN_CPP}: setup() must restore the event-id floor (`{begin}`) "
+                          f"before `{init}` registers the modules and runs their boot init — "
+                          "anything they commit takes its id from the restored floor "
+                          "(F46, F83, F93)")
+        elif callback < 0 or start < 0 or not i < callback or not i < start:
+            errors.append(f"{MAIN_CPP}: setup() must call `{init}` before "
+                          "csi::set_features_callback( and csi::start( — the library ticks no "
+                          "module before its boot init, so a window ahead of it is a dead "
+                          "pipeline (F93)")
+    code = blank_comments_and_strings(bridge_src)
+    span = the_body(code, SIG_MODULES_INIT, f"{BRIDGE_CPP}: securacv_csi_modules_init()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        boot_init = "init_modules_from_nvs();"
+        if body.count("init_modules_from_nvs(") != 1 or body.count(boot_init) != 1:
+            errors.append(f"{BRIDGE_CPP}: securacv_csi_modules_init() must run the modules' boot "
+                          f"init, `{boot_init}`, exactly once — registration initializes nothing, "
+                          "so a stored setting would never apply on the canary (F93)")
+        else:
+            at = body.find(boot_init)
+            last = max([m.start() for m in re.finditer(r"\bcsi_module_register\s*\(", body)] +
+                       [m.start() for m in re.finditer(r"\bble_scout_init\s*\(", body)] + [-1])
+            if last < 0 or at < last:
+                errors.append(f"{BRIDGE_CPP}: securacv_csi_modules_init() must call `{boot_init}` "
+                              "after its last csi_module_register( and ble_scout_init( — it "
+                              "initializes only the modules registered so far (F93)")
+            if not top_level_statement(body, at):
+                errors.append(f"{BRIDGE_CPP}: `{boot_init}` must be a statement of "
+                              "securacv_csi_modules_init()'s own body — no `if`, block or `#if` "
+                              "around it: every boot initializes the modules (F93)")
+    span = the_body(code, SIG_BOOT_INIT_FN, f"{BRIDGE_CPP}: init_modules_from_nvs()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        args = call_args(body, "csi_module_init_all(")
+        if body.count("csi_module_init_all(") != 1 or args is None or len(args) != 1 or \
+                not args[0].startswith("&"):
+            errors.append(f"{BRIDGE_CPP}: init_modules_from_nvs() must call csi_module_init_all( "
+                          "once, with the boot's settings session (`&boot`) — every module's "
+                          "init() reads through one NVS handle, so a missing namespace costs one "
+                          "open, not one per setting (F93)")
+    files = dict(others)
+    files[MAIN_CPP] = main_src
+    files[BRIDGE_CPP] = bridge_src
+    for name, home in (("csi_module_init_all", "init_modules_from_nvs()"),
+                       ("init_modules_from_nvs", "securacv_csi_modules_init()")):
+        sites = call_sites(files, name)
+        if sites != [BRIDGE_CPP]:
+            errors.append(f"firmware/canary: `{name}(` must be called once, in {BRIDGE_CPP}'s "
+                          f"{home} (found {len(sites)}: "
+                          f"{', '.join(sorted(set(sites))) or 'none'}) (F93)")
+    sites = call_sites(files, "securacv_csi_modules_init")
+    span = the_body(blank_comments_and_strings(main_src), SIG_SETUP, f"{MAIN_CPP}: setup()", [])
+    in_setup = span is not None and \
+        "securacv_csi_modules_init(" in blank_comments_and_strings(main_src)[span[0]:span[1]]
+    if sites != [MAIN_CPP] or not in_setup:
+        errors.append(f"firmware/canary: `securacv_csi_modules_init(` must be called once, in "
+                      f"{MAIN_CPP}'s setup() (found {len(sites)}: "
+                      f"{', '.join(sorted(set(sites))) or 'none'}) (F93)")
+    return errors
+
+
+def lambda_body(arg: str) -> str | None:
+    """The squashed body of a `[...](...) { ... }` lambda argument, or None."""
+    m = re.fullmatch(r"\[[^\]]*\]\(\)(?:->bool)?\{(.*)\}", arg)
+    return m.group(1) if m else None
+
+
+def check_publish_order(mqtt_src: str, queue_src: str) -> list[str]:
+    """Rule 9: the publish-or-queue order, shared and used (backlog F107)."""
+    errors: list[str] = []
+    # The order itself, in mqtt_offline_queue.h.
+    code = blank_comments_and_strings(queue_src)
+    where = f"{QUEUE_H}: publish_or_queue()"
+    span = the_body(code, SIG_SHARED_ORDER, where, errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        sends = [m.start() for m in re.finditer(r"\bsend\s*\(\s*\)", body)]
+        joins = []
+        for m in re.finditer(r"\bif\s*\(", body):
+            got = enclosing_if(body, m.end())
+            if got is None or got[0] != m.start():
+                continue
+            terms = sorted(unwrap(t) for t in top_level_terms(unwrap(got[1]), "&&"))
+            stmt = squash(body[got[2]:got[3]])
+            if terms == ["!q.empty()", "link_up"] and \
+                    "if(q.push(kind,retained,payload))returntrue;" in stmt:
+                joins.append(got)
+        if len(sends) != 1:
+            errors.append(f"{where}: expected one live send (`send()`), found {len(sends)}")
+        elif len(joins) != 1:
+            errors.append(
+                f"{where}: while the link is up and the offline queue still holds records, a new "
+                "record must join its back: one `if (link_up && !q.empty()) { if (q.push(kind, "
+                "retained, payload)) return true; }` (found "
+                f"{len(joins)}). Without it a new event goes live ahead of the outage's queued "
+                "rows, and Home Assistant's replay gate refuses every one of them.")
+        else:
+            if joins[0][3] > sends[0]:
+                errors.append(f"{where}: the queued records' turn must come BEFORE the live send — "
+                              "a record sent first overtakes the outage's queued rows")
+            send_if = enclosing_if(body, sends[0])
+            if send_if is None or "link_up" not in \
+                    [unwrap(t) for t in top_level_terms(unwrap(send_if[1]), "&&")]:
+                errors.append(f"{where}: the live send must be guarded by `link_up &&`")
+    # The canary's MQTT layer runs it, for both of its queued surfaces.
+    code = blank_comments_and_strings(mqtt_src)
+    where = f"{MQTT_CPP}: publish_or_queue()"
+    span = the_body(code, SIG_WRAPPER, where, errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        flat = squash(body)
+        call = "returnmqtt_offline_queue::publish_or_queue("
+        args = call_args(flat, "mqtt_offline_queue::publish_or_queue(")
+        ok = flat.startswith(call) and args is not None and \
+            matching_paren(flat, len(call) - 1) == len(flat) - 2 and flat.endswith(");")
+        if ok:
+            send = lambda_body(args[5]) if len(args) == 7 else None
+            ensure = args[6] if len(args) == 7 else ""
+            ok = args[:5] == ["s_offline_q", "s_mqtt.connected()", "kind", "retained", "payload"] \
+                and send == "returns_mqtt.publish(topic,payload,retained);" \
+                and (ensure == "offline_queue_ensure" or
+                     lambda_body(ensure) == "offline_queue_ensure();")
+        if not ok:
+            errors.append(
+                f"{where}: must be the one statement `return mqtt_offline_queue::publish_or_queue("
+                "s_offline_q, s_mqtt.connected(), kind, retained, payload, [&]() { return "
+                "s_mqtt.publish(topic, payload, retained); }, offline_queue_ensure);` — the order "
+                "the egress host tests compile (backlog F107)")
+        for extra in ("s_offline_q.push(", "s_offline_q.clear("):
+            if extra in body:
+                errors.append(f"{where}: must not call {extra} itself")
+    for sig, name, kind, topic in ((SIG_PUB_EVENT, "mqtt_publish_event", "KIND_EVENT",
+                                    "s_topic_events"),
+                                   (SIG_PUB_TAMPER, "mqtt_publish_tamper", "KIND_TAMPER",
+                                    "s_topic_tamper")):
+        where = f"{MQTT_CPP}: {name}()"
+        span = the_body(code, sig, where, errors)
+        if span is None:
+            continue
+        body = code[span[0]:span[1]]
+        args = call_args(body, "publish_or_queue(")
+        last = squash(body).rsplit(";", 2)[-2] if ";" in body else ""
+        if args is None or not last.startswith("returnpublish_or_queue(") or len(args) != 4 or \
+                args[0] != f"mqtt_offline_queue::{kind}" or args[1] != topic:
+            errors.append(f"{where}: must end `return publish_or_queue(mqtt_offline_queue::{kind}, "
+                          f"{topic}, ...)` — the one way a {name.split('_')[-1]} leaves the "
+                          "device, behind the outage's queued records")
+        for bypass in ("s_mqtt.publish(", "s_offline_q.push("):
+            if bypass in body:
+                errors.append(f"{where}: calls {bypass} past the publish-or-queue order")
+    return errors
 
 
 def check(mqtt_src: str, egress_src: str) -> list[str]:
@@ -686,10 +1011,20 @@ MUTATIONS: list[tuple[str, Mutation]] = [
                                 "if (link.connected &&", need="xQueueReceive("))),
     ("row committed before its tamper bridge",
      lambda m, e: (m, mutate_in(
-         mutate_in(e, SIG_PUMP, r"\n[ \t]*\(void\)\s*s_backfill\.commit\([^;]*\);", "",
+         mutate_in(e, SIG_PUMP, r"\n[ \t]*route\(to_record\(ev\),\s*link\);", "",
                    need="xQueueReceive("),
          SIG_PUMP, r"(xQueueReceive\([^;]*;)",
-         r"\1 (void)s_backfill.commit(to_record(ev), link, s_port);", need="xQueueReceive("))),
+         r"\1 route(to_record(ev), link);", need="xQueueReceive("))),
+    ("the pump commits a row directly, ahead of its bridge",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(xQueueReceive\([^;]*;)",
+                                r"\1 (void)s_backfill.commit(to_record(ev), link, s_port);",
+                                need="xQueueReceive("))),
+    ("route() never commits a row",
+     lambda m, e: (m, mutate_in(e, SIG_ROUTE,
+                                r"const\s+csi_event_backfill::Route\s+r\s*=\s*"
+                                r"s_backfill\.commit\(([^;]*)\);",
+                                r"s_hold.push(\1); "
+                                r"const csi_event_backfill::Route r = csi_event_backfill::Route::kHeld;"))),
     ("backfill pass before the rows",
      lambda m, e: (m, mutate_in(
          mutate_in(e, SIG_PUMP, r"s_backfill\.pass\(", "s_backfill.stats(",
@@ -705,7 +1040,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      lambda m, e: (m, mutate_in(
          e, SIG_PUMP,
          r"(if\s*\(\s*link\.accepting\s*&&.*?mqtt_publish_tamper\([^;]*;\s*\})"
-         r"(.*?\(void\)\s*s_backfill\.commit\([^;]*;)",
+         r"(.*?route\([^;]*;)",
          r"if (false) mqtt_publish_tamper(tb, false);\2 \1", need="xQueueReceive("))),
     ("a dequeued row can skip its tamper bridge",
      lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(char\s+tb\[128\]\s*;)",
@@ -744,6 +1079,15 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("a broker change keeps the old backlog",
      lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\n[ \t]*s_backfill\.not_owed\([^;]*;", "",
                                 need="xQueueReceive("))),
+    ("the backlog is dropped on every pass",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\|\|\s*opened_unowed\s*\)", "|| true)",
+                                need="xQueueReceive("))),
+    ("the tamper bridge waits for the card",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"if\s*\(\s*link\.accepting\s*&&",
+                                "if (link.accepting && !s_card_wait &&", need="xQueueReceive("))),
+    ("the card wait's expiry holds the rows back",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(kCardWaitMs\)\s*\{)",
+                                r"\1 if (s_hold.count > 0) return;", need="xQueueReceive("))),
     ("the destination epoch is never compared",
      lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\s*\|\|\s*epoch\s*!=\s*s_dest_epoch", "",
                                 need="xQueueReceive("))),
@@ -795,6 +1139,162 @@ MUTATIONS: list[tuple[str, Mutation]] = [
 ]
 
 
+BootMutation = Callable[[str, str], "tuple[str, str]"]
+
+
+def on_main(sig: str, pat: str, repl: str) -> BootMutation:
+    return lambda mn, br: (mutate_in(mn, sig, pat, repl), br)
+
+
+def on_bridge(sig: str, pat: str, repl: str) -> BootMutation:
+    return lambda mn, br: (mn, mutate_in(br, sig, pat, repl))
+
+
+BOOT_INIT_LINE = r"\n[ \t]*init_modules_from_nvs\(\);"
+BOOT_INIT_CALL = r"(init_modules_from_nvs\(\);)"
+BOOT_MUTATIONS: list[tuple[str, BootMutation]] = [
+    ("the bridge never runs the modules' boot init",
+     on_bridge(SIG_MODULES_INIT, BOOT_INIT_LINE, "")),
+    ("the boot init runs before the modules register",
+     lambda mn, br: (mn, mutate_in(mutate_in(br, SIG_MODULES_INIT, BOOT_INIT_LINE, ""),
+                                   SIG_MODULES_INIT, r"(csi_event_set_privacy_ceiling\()",
+                                   r"init_modules_from_nvs(); \1"))),
+    ("the boot init runs before the last module registers",
+     lambda mn, br: (mn, mutate_in(mutate_in(br, SIG_MODULES_INIT, BOOT_INIT_LINE, ""),
+                                   SIG_MODULES_INIT, r"(csi_module_register\(tamper_events_module\(\)\);)",
+                                   r"init_modules_from_nvs(); \1"))),
+    ("the boot init runs only on a second call",
+     on_bridge(SIG_MODULES_INIT, BOOT_INIT_CALL, r"if (s_initialized) \1")),
+    ("the boot init sits in a block",
+     on_bridge(SIG_MODULES_INIT, BOOT_INIT_CALL, r"{ if (!s_initialized) { \1 } }")),
+    ("the boot init is compiled out on builds without the Scout",
+     on_bridge(SIG_MODULES_INIT, BOOT_INIT_CALL,
+               "\n#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN\n  \\1\n#endif\n")),
+    ("the boot init reads every setting through a handle of its own",
+     on_bridge(SIG_BOOT_INIT_FN, r"csi_module_init_all\(&boot\)", "csi_module_init_all(nullptr)")),
+    ("the boot init initializes nothing",
+     on_bridge(SIG_BOOT_INIT_FN, r"const\s+size_t\s+ran\s*=\s*csi_module_init_all\(&boot\);",
+               "const size_t ran = 0;")),
+    ("the feed runs the boot init again",
+     on_bridge(SIG_MODULES_FEED, r"(csi_module_tick_all\(f\);)", r"init_modules_from_nvs(); \1")),
+    ("the feed initializes every module",
+     on_bridge(SIG_MODULES_FEED, r"(csi_module_tick_all\(f\);)", r"csi_module_init_all(nullptr); \1")),
+    ("setup() registers the modules before it restores the floor",
+     lambda mn, br: (mutate_in(mutate_in(mn, SIG_SETUP, r"\n[ \t]*csi_event_egress_begin\(\);", ""),
+                               SIG_SETUP, r"(securacv_csi_modules_init\(\);)",
+                               r"\1 csi_event_egress_begin();"), br)),
+    ("setup() never restores the floor",
+     on_main(SIG_SETUP, r"\n[ \t]*csi_event_egress_begin\(\);", "")),
+    ("setup() installs the first tick before the modules' boot init",
+     lambda mn, br: (mutate_in(mutate_in(mn, SIG_SETUP, r"\n[ \t]*securacv_csi_modules_init\(\);", ""),
+                               SIG_SETUP, r"(csi::set_features_callback\(.*?\}\);)",
+                               r"\1 securacv_csi_modules_init();"), br)),
+    ("loop() initializes the modules again",
+     on_main(SIG_LOOP, r"(securacv_csi_modules_tick\(\);)", r"\1 securacv_csi_modules_init();")),
+]
+
+
+def self_test_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> list[str]:
+    problems = []
+    for name, mutate in BOOT_MUTATIONS:
+        try:
+            mn, br = mutate(main_src, bridge_src)
+        except AnchorMissing as missing:
+            problems.append(f"self-test: boot mutation '{name}' no longer applies "
+                            f"(anchor {missing}) — the source changed shape; update this guard's "
+                            "mutations with it")
+            continue
+        if (mn, br) == (main_src, bridge_src):
+            problems.append(f"self-test: boot mutation '{name}' changed nothing")
+        elif not check_boot(mn, br, others):
+            problems.append(f"self-test: the check did not bite on boot mutation '{name}'")
+    return problems
+
+
+QueueMutation = Callable[[str, str], "tuple[str, str]"]
+
+
+def on_mqtt(sig: str, pat: str, repl: str) -> QueueMutation:
+    return lambda m, h: (mutate_in(m, sig, pat, repl), h)
+
+
+def on_queue(pat: str, repl: str) -> QueueMutation:
+    return lambda m, h: (m, mutate_in(h, SIG_SHARED_ORDER, pat, repl))
+
+
+QUEUE_JOIN = r"[ \t]*if\s*\(\s*link_up\s*&&\s*!q\.empty\(\)\s*\)\s*\{[^}]*\}\n"
+QUEUE_MUTATIONS: list[tuple[str, QueueMutation]] = [
+    # The order itself (also caught by test_mqtt_offline_queue and
+    # test_canary_event_egress, which compile it).
+    ("the shared order sends live while the outage still drains",
+     on_queue(QUEUE_JOIN, "")),
+    ("the shared order sends live before it joins the queue",
+     on_queue(r"(" + QUEUE_JOIN + r")([ \t]*if\s*\(\s*link_up\s*&&\s*send\(\)\s*\)\s*return\s+true\s*;\n)",
+              r"\2\1")),
+    ("the shared order joins the queue only while the link is down",
+     on_queue(r"if\s*\(\s*link_up\s*&&\s*!q\.empty\(\)\s*\)", "if (!link_up && !q.empty())")),
+    ("the shared order joins the queue only when it is empty",
+     on_queue(r"(if\s*\(\s*link_up\s*&&\s*)!(q\.empty\(\)\s*\))", r"\1\2")),
+    ("the shared order sends live without asking the link",
+     on_queue(r"if\s*\(\s*link_up\s*&&\s*send\(\)\s*\)", "if (send())")),
+    # securacv_mqtt.cpp: the order is the one it runs.
+    ("the MQTT layer's own order again, live first",
+     on_mqtt(SIG_WRAPPER, r"return\s+mqtt_offline_queue::publish_or_queue\(.*\);",
+             "if (payload == nullptr) return false;\n"
+             "  if (s_mqtt.connected() && s_mqtt.publish(topic, payload, retained)) return true;\n"
+             "  offline_queue_ensure();\n"
+             "  return s_offline_q.push(kind, retained, payload);")),
+    ("the MQTT layer hands the order a link that is never up",
+     on_mqtt(SIG_WRAPPER, r"s_mqtt\.connected\(\)", "false")),
+    ("the MQTT layer sends live ahead of the order",
+     on_mqtt(SIG_WRAPPER, r"(return\s+mqtt_offline_queue::publish_or_queue\()",
+             r"if (s_mqtt.connected() && s_mqtt.publish(topic, payload, retained)) return true; \1")),
+    ("the MQTT layer queues past the storage hook",
+     on_mqtt(SIG_WRAPPER, r"(return\s+mqtt_offline_queue::publish_or_queue\()",
+             r"if (!s_mqtt.connected()) return s_offline_q.push(kind, retained, payload); \1")),
+    ("the order's live send publishes nothing",
+     on_mqtt(SIG_WRAPPER, r"return\s+s_mqtt\.publish\(topic,\s*payload,\s*retained\);", "return true;")),
+    ("an event goes live past the queued records",
+     on_mqtt(SIG_PUB_EVENT, r"(return\s+publish_or_queue\()",
+             r"if (s_mqtt.publish(s_topic_events, json_payload, false)) return true;\n  \1")),
+    ("a tamper alert goes live past the queued records",
+     on_mqtt(SIG_PUB_TAMPER, r"(return\s+publish_or_queue\()",
+             r"if (s_mqtt.publish(s_topic_tamper, json_payload, retained)) return true;\n  \1")),
+    ("an event is queued as a tamper alert",
+     on_mqtt(SIG_PUB_EVENT, r"mqtt_offline_queue::KIND_EVENT", "mqtt_offline_queue::KIND_TAMPER")),
+]
+
+
+def self_test_queue(mqtt_src: str, queue_src: str) -> list[str]:
+    problems = []
+    for name, mutate in QUEUE_MUTATIONS:
+        try:
+            m, h = mutate(mqtt_src, queue_src)
+        except AnchorMissing as missing:
+            problems.append(f"self-test: publish-order mutation '{name}' no longer applies "
+                            f"(anchor {missing}) — the source changed shape; update this guard's "
+                            "mutations with it")
+            continue
+        if (m, h) == (mqtt_src, queue_src):
+            problems.append(f"self-test: publish-order mutation '{name}' changed nothing")
+        elif not check_publish_order(m, h):
+            problems.append(f"self-test: the check did not bite on publish-order mutation '{name}'")
+    return problems
+
+
+def canary_others() -> dict[str, str]:
+    """Every other source file of the canary tree, by repo-relative path."""
+    out = {}
+    for d in CANARY_DIRS:
+        for path in sorted((REPO / d).rglob("*")):
+            if path.suffix not in (".cpp", ".h", ".c"):
+                continue
+            rel = path.relative_to(REPO).as_posix()
+            if rel not in (MAIN_CPP, BRIDGE_CPP):
+                out[rel] = path.read_text(encoding="utf-8", errors="replace")
+    return out
+
+
 def self_test(mqtt_src: str, egress_src: str) -> list[str]:
     problems = []
     for name, mutate in MUTATIONS:
@@ -815,17 +1315,26 @@ def self_test(mqtt_src: str, egress_src: str) -> list[str]:
 def main() -> int:
     mqtt_src = (REPO / MQTT_CPP).read_text(encoding="utf-8")
     egress_src = (REPO / EGRESS_CPP).read_text(encoding="utf-8")
-    errors = check(mqtt_src, egress_src)
+    main_src = (REPO / MAIN_CPP).read_text(encoding="utf-8")
+    bridge_src = (REPO / BRIDGE_CPP).read_text(encoding="utf-8")
+    queue_src = (REPO / QUEUE_H).read_text(encoding="utf-8")
+    others = canary_others()
+    errors = (check(mqtt_src, egress_src) + check_boot(main_src, bridge_src, others)
+              + check_publish_order(mqtt_src, queue_src))
     for err in errors:
         print(f"::error::{err}")
-    problems = self_test(mqtt_src, egress_src)
+    problems = (self_test(mqtt_src, egress_src) + self_test_boot(main_src, bridge_src, others)
+                + self_test_queue(mqtt_src, queue_src))
     for problem in problems:
         print(f"::error::{problem}")
     if errors or problems:
         return 1
-    print(f"Event egress order holds: the live publish waits for the offline queue, the "
-          f"planner's sends never buffer, the tamper bridge goes first, the planner gets the "
-          f"id floor and the broker-change epoch ({len(MUTATIONS)} mutations refused).")
+    print(f"Event egress order holds: the live publish waits for the offline queue, and a "
+          f"new record joins the queue's back while it drains (one shared order, run by both "
+          f"queued surfaces); the planner's sends never buffer, the tamper bridge goes first, "
+          f"the planner gets the id floor and the broker-change epoch; the modules register "
+          f"and run their boot init after the floor and before the first tick "
+          f"({len(MUTATIONS) + len(BOOT_MUTATIONS) + len(QUEUE_MUTATIONS)} mutations refused).")
     return 0
 
 

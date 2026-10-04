@@ -28,6 +28,8 @@
 #include "mesh_beacon.h"        // BEACON_EVENT wire format (PR canary-wap parity)
 #include "mesh_channel_hop.h"   // CHANNEL_LOCK wire format + HopTracker (PR 4b)
 #include "mesh_hub_election.h"  // HUB_ELECTION wire format + HubMonitor (PR 4c)
+#include "loop_command_ring.h"  // F96, F111: owner commands handed to the loop task
+#include <string.h>
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -192,6 +194,7 @@ struct OperaPeer {
   PeerState state;
   uint64_t msg_counter_tx;                  // Outgoing message counter
   uint64_t msg_counter_rx;                  // Last received counter
+  uint64_t msg_counter_tx_reserved;         // Highest tx counter stored in NVS (F71)
   uint32_t last_seen_ms;                    // Last heartbeat received
   uint32_t last_tx_ms;                      // Last message sent
   int8_t rssi;                              // Signal strength
@@ -240,6 +243,7 @@ struct PairingSession {
   uint32_t started_ms;
   bool code_displayed;
   bool code_confirmed;
+  bool peer_confirmed;                      // F75: the partner's CONFIRM arrived and verified
 };
 
 // Alert record
@@ -384,8 +388,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
 // Shutdown mesh network
 void deinit();
 
-// Enable or disable mesh networking
-void set_enabled(bool enabled);
+// Is mesh networking on? (Turned on and off by MESH_CMD_SET_ENABLED.)
 bool is_enabled();
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -399,8 +402,61 @@ void update();
 // Status
 // ──────────────────────────────────────────────────────────────────────────
 
-// Get current mesh status
+// Get current mesh status. The loop task's (as every reader of the live
+// state below: get_peer*, get_opera_config, get_pairing_session,
+// get_alerts, is_*/has_opera); another task reads the published view
+// (read_status, read_alerts).
 MeshStatus get_status();
+
+// ──────────────────────────────────────────────────────────────────────────
+// The status routes' view (sweep F110)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// GET /api/mesh, /api/mesh/peers and /api/mesh/alerts run on
+// esp_http_server's task, and what they show (the peer table, the pairing
+// session, the opera config, the alert history) is update()'s, written on
+// the loop task. Read in place, a response could mix two passes: a
+// member's name read mid-shift after a removal, a pairing code read while
+// cancel_pairing() wipes it, an alert half overwritten. update() publishes
+// a StatusView at the end of every pass (an early return included) and
+// after each owner command it drains (before the command's handler answers,
+// so a read right after a POST shows what it did), and init() publishes the
+// first; read_status() copies the last one whole, and
+// read_alerts() copies the alert history whole, from one moment
+// (loop_snapshot.h). Neither waits for the loop task. Neither carries a
+// key: a PeerView is what the peer list shows, and the opera_secret and
+// session keys stay in the live table.
+
+// One member, as the peer list shows it.
+struct PeerView {
+  char name[MAX_PEER_NAME_LEN + 1];
+  uint8_t fingerprint[FINGERPRINT_SIZE];
+  PeerState state;
+  int8_t rssi;
+  uint8_t alerts_received;
+  uint32_t last_seen_ms;                    // 0: never heard
+};
+
+// One pass, as the status routes show it.
+struct StatusView {
+  MeshStatus status;                        // uptime_ms: as of the read
+  uint32_t start_ms;                        // what uptime_ms counts from
+  bool enabled;
+  bool has_opera;
+  char opera_name[MAX_OPERA_NAME_LEN + 1];
+  bool pairing_code_shown;                  // MESH_PAIRING_CONFIRM, code displayed
+  uint32_t pairing_code;                    // 0 unless shown
+  uint8_t peer_count;                       // == status.peers_total
+  PeerView peers[MAX_OPERA_SIZE];
+};
+
+// Any task. The last pass update() published; before init() publishes the
+// first, a disabled mesh with no opera (what get_status() said then).
+void read_status(StatusView* out);
+
+// Any task. Copies the alert history (at most `cap` alerts, in the order
+// it is stored, which get_alerts() returns too) and returns how many.
+size_t read_alerts(MeshAlert* out, size_t cap);
 
 // Get mesh state as string
 const char* state_name(MeshState state);
@@ -437,9 +493,6 @@ bool get_self_fingerprint(uint8_t out[FINGERPRINT_SIZE]);
 // Get online peer count
 uint8_t get_online_peer_count();
 
-// Remove peer from opera (requires re-keying)
-bool remove_peer(const uint8_t* fingerprint);
-
 // ──────────────────────────────────────────────────────────────────────────
 // Opera management
 // ──────────────────────────────────────────────────────────────────────────
@@ -447,27 +500,9 @@ bool remove_peer(const uint8_t* fingerprint);
 // Get opera configuration
 const OperaConfig* get_opera_config();
 
-// Set opera name
-bool set_opera_name(const char* name);
-
-// Leave current opera
-bool leave_opera();
-
 // ──────────────────────────────────────────────────────────────────────────
 // Pairing
 // ──────────────────────────────────────────────────────────────────────────
-
-// Start pairing as initiator (existing opera member or creating new opera)
-bool start_pairing_initiator(const char* opera_name = nullptr);
-
-// Start pairing as joiner (joining existing opera)
-bool start_pairing_joiner();
-
-// Cancel ongoing pairing
-void cancel_pairing();
-
-// Confirm pairing code matches
-bool confirm_pairing();
 
 // Get pairing session state
 const PairingSession* get_pairing_session();
@@ -488,11 +523,78 @@ bool broadcast_power_alert(AlertType type, uint16_t voltage_mv, uint16_t estimat
 // Broadcast offline imminent to all peers (call just before shutdown)
 bool broadcast_offline_imminent(AlertType reason, uint32_t final_seq, const uint8_t* final_chain_hash);
 
-// Get recent alerts
+// Get recent alerts: the loop task's (another task copies them with
+// read_alerts, sweep F110).
 const MeshAlert* get_alerts(size_t* count);
 
-// Clear alert history
-void clear_alerts();
+// ──────────────────────────────────────────────────────────────────────────
+// Owner commands (sweep F96)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// What the owner asks for over REST: turn the mesh on or off, pair, confirm
+// the code, cancel, leave, remove a member, rename the opera, clear the
+// alert list. The REST handlers run on esp_http_server's task, and what
+// these change (the peer table, the pairing session, the opera config and
+// its one NVS handle, the alert history) is update()'s, on the loop task.
+// So the functions that do it are internal to mesh_network.cpp, and a
+// handler hands a Command to submit() instead: submit() posts it to a ring
+// of COMMAND_SLOTS that update() drains first thing on every pass (a
+// disabled mesh included, so MESH_CMD_SET_ENABLED can turn it back on), and
+// waits for the result.
+//
+// The wait is bounded for a command the loop task has not started: after
+// timeout_ms it is withdrawn and never runs. kDone: it ran, and *ok is what
+// it returned (true for the commands that cannot fail: SET_ENABLED,
+// PAIR_CANCEL, CLEAR_ALERTS). kBusy (every slot taken) and kWithdrawn: it
+// did not run and will not, and *ok is false; the handler answers with
+// not_run_status() / not_run_error(), the PlatformIO tree's codes for the
+// same two cases (spec §8.3): 409 mesh_busy and 503 mesh_timeout. A command
+// the loop task has started is waited for until it is done (it never waits
+// on another task). Never call submit() from the loop task: it would wait
+// for itself, and the command would be withdrawn.
+
+enum CommandType : uint8_t {
+  MESH_CMD_SET_ENABLED = 0,  // flag: on (true) or off
+  MESH_CMD_PAIR_START,       // the initiator; flag: name is the new opera's name (else the default)
+  MESH_CMD_PAIR_JOIN,
+  MESH_CMD_PAIR_CONFIRM,
+  MESH_CMD_PAIR_CANCEL,
+  MESH_CMD_LEAVE,
+  MESH_CMD_REMOVE_PEER,      // fingerprint
+  MESH_CMD_RENAME,           // name
+  MESH_CMD_CLEAR_ALERTS,
+  MESH_CMD_SAVE_REPLAY,      // the replay counters to NVS (save_replay_counters_before_reboot)
+};
+
+struct Command {
+  CommandType type;
+  bool        flag;
+  uint8_t     fingerprint[FINGERPRINT_SIZE];
+  char        name[MAX_OPERA_NAME_LEN + 1];
+};
+
+// A command of `type` with every other field zero.
+inline Command make_command(CommandType type) {
+  Command cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.type = type;
+  return cmd;
+}
+
+static const size_t   COMMAND_SLOTS   = 4;
+static const uint32_t COMMAND_WAIT_MS = 2000;   // for the loop task to start it
+static const uint32_t COMMAND_POLL_MS = 5;
+
+loop_command_ring::Wait submit(const Command& cmd, bool* ok,
+                               uint32_t timeout_ms = COMMAND_WAIT_MS);
+
+// The REST answer to a command that did not run (any Wait but kDone).
+inline int not_run_status(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? 409 : 503;
+}
+inline const char* not_run_error(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? "mesh_busy" : "mesh_timeout";
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Callbacks
@@ -523,9 +625,19 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 // Save/load per-peer msg_counter_rx to NVS so replay defense survives
 // reboots. Called from canary_wap.ino at boot (load) and periodically
 // from loop (save every 5 min) + on clean shutdown.
+//
+// save_replay_counters() reads the peer table and writes through the mesh's
+// one Preferences handle, so it runs on the loop task only (the periodic
+// save). Before a reboot, call save_replay_counters_before_reboot() from any
+// task: on the loop task (init()'s, which is setup()'s and loop()'s) it saves
+// in place; from another (POST /api/reboot and the safe-mode retry run on
+// esp_http_server's task) it hands MESH_CMD_SAVE_REPLAY to submit() and
+// waits up to COMMAND_WAIT_MS. True when the blob was written; false when
+// the save failed or did not run (the 5-minute save is the one before it).
 // ════════════════════════════════════════════════════════════════════════════
 
 bool save_replay_counters();
+bool save_replay_counters_before_reboot();
 bool load_replay_counters();
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -688,7 +800,9 @@ enum ChirpState : uint8_t {
   CHIRP_LISTENING,         // Receiving chirps, passive mode
   CHIRP_ACTIVE,            // Full participation
   CHIRP_MUTED,             // Temporarily ignoring chirps
-  CHIRP_COOLDOWN           // Rate limited after sending
+  CHIRP_COOLDOWN           // Rate limited after sending: what an active channel
+                           // reads as while the send cooldown runs. Shown, never
+                           // stored: the cooldown is a timer (sweep F178)
 };
 
 // Chirp message types
@@ -999,31 +1113,387 @@ typedef void (*ChirpStateCallback)(ChirpState old_state, ChirpState new_state);
 // Initialize chirp channel (call once at boot, does NOT enable)
 bool init();
 
-// Shutdown chirp channel
-void deinit();
-
-// Enable chirp channel (generates new session identity)
-bool enable();
-
-// Disable chirp channel (discards session identity)
-void disable();
-
-// Check if enabled
+// Check if enabled (turned on and off by CHIRP_CMD_ENABLE / CHIRP_CMD_DISABLE)
 bool is_enabled();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Main loop
 // ──────────────────────────────────────────────────────────────────────────
 
-// Call from main loop to process messages
+// Call from main loop to process messages. Runs the owner's commands first
+// (below), on every pass, the disabled channel's included.
 void update();
+
+// ──────────────────────────────────────────────────────────────────────────
+// The owner's commands (sweep F111)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// What the owner asks for over REST (chirp_api.h): turn the channel on or
+// off, send a chirp, confirm or dismiss one, mute, unmute, and change the
+// relay and urgency-filter settings. The REST handlers run on
+// esp_http_server's task, and what these change (the session identity, the
+// cooldowns, the recent and nearby tables, the mute and relay state) is
+// update()'s, on the loop task, where it is read and written with no lock.
+// So the functions that do it are internal to chirp_channel.cpp, and a
+// handler hands a Command to submit() instead: submit() posts it to a ring
+// of COMMAND_SLOTS (loop_command_ring.h, as mesh_network::submit() does,
+// sweep F96) that update() drains first thing on every pass (a disabled
+// channel included, so CHIRP_CMD_ENABLE can turn it on), and waits for its
+// Result.
+//
+// The wait is bounded for a command the loop task has not started: after
+// timeout_ms it is withdrawn and never runs. kDone: it ran, and *result is
+// what it did, read on the loop task right after it ran. kBusy (every slot
+// taken) and kWithdrawn: it did not run and will not, and *result is
+// zeroed; the handler answers not_run_status() / not_run_error(): 409
+// chirp_busy and 503 chirp_timeout, the codes the mesh answers with for the
+// same two cases. A command the loop task has started is waited for until
+// it is done. Never call submit() from the loop task: it would wait for
+// itself, and the command would be withdrawn.
+
+enum CommandType : uint8_t {
+  CHIRP_CMD_ENABLE = 0,
+  CHIRP_CMD_DISABLE,
+  CHIRP_CMD_SEND,       // template_id, urgency, detail, ttl_minutes
+  CHIRP_CMD_CONFIRM,    // nonce: "I see this too"
+  CHIRP_CMD_DISMISS,    // nonce
+  CHIRP_CMD_MUTE,       // duration_minutes
+  CHIRP_CMD_UNMUTE,
+  CHIRP_CMD_SETTINGS,   // set_relay: relay_enabled; set_filter: urgency_filter
+};
+
+struct Command {
+  CommandType     type;
+  ChirpTemplate   template_id;
+  ChirpUrgency    urgency;
+  ChirpDetailSlot detail;
+  uint8_t         ttl_minutes;
+  uint8_t         duration_minutes;
+  uint8_t         nonce[8];
+  bool            set_relay;
+  bool            relay_enabled;
+  bool            set_filter;
+  ChirpUrgency    urgency_filter;
+};
+
+// Why a CHIRP_CMD_SEND did not go out, checked in the order the send handler
+// has always named them: the channel off, the presence requirement, then
+// can_send_chirp()'s two (the cooldown, then a wall clock that has not
+// synced yet), then night mode. The clock had no refusal of its own: it was
+// answered as a cooldown with 0 seconds left, which told the owner to wait
+// for nothing (sweep F146).
+enum SendRefusal : uint8_t {
+  SEND_REFUSED_NONE = 0,  // it went out, or failed for a reason none of these names
+  SEND_REFUSED_DISABLED,
+  SEND_REFUSED_PRESENCE,
+  SEND_REFUSED_COOLDOWN,
+  SEND_REFUSED_CLOCK_UNSYNCED,  // time() still below MIN_UNIX_TIME: the sketch's one clock
+                                // source, GPS (canary_wap.ino has no SNTP), has not set it
+  SEND_REFUSED_NIGHT,
+};
+
+// POST /api/chirp/send's answer to a refusal: its "error" and "message"
+// (nullptr for SEND_REFUSED_NONE, which names no reason).
+inline const char* send_refusal_error(SendRefusal why) {
+  switch (why) {
+    case SEND_REFUSED_DISABLED:       return "chirp_disabled";
+    case SEND_REFUSED_PRESENCE:       return "presence_required";
+    case SEND_REFUSED_COOLDOWN:       return "cooldown";
+    case SEND_REFUSED_CLOCK_UNSYNCED: return "clock_unsynced";
+    case SEND_REFUSED_NIGHT:          return "night_restricted";
+    case SEND_REFUSED_NONE:           break;
+  }
+  return nullptr;
+}
+inline const char* send_refusal_message(SendRefusal why) {
+  switch (why) {
+    case SEND_REFUSED_DISABLED:       return "Chirp channel is not enabled";
+    case SEND_REFUSED_PRESENCE:       return "Must be active for 10 minutes before sending";
+    case SEND_REFUSED_COOLDOWN:       return "Please wait before sending another chirp";
+    case SEND_REFUSED_CLOCK_UNSYNCED: return "Waiting for the clock to be set from GPS time before sending";
+    case SEND_REFUSED_NIGHT:          return "This template is not available during night hours (10pm-6am)";
+    case SEND_REFUSED_NONE:           break;
+  }
+  return nullptr;
+}
+
+// A time left, in whole seconds rounded up, as the routes answer
+// cooldown_remaining_sec: a cooldown that still runs never reads 0 s. Its
+// last second read 0 while a send was still refused for it, and the card
+// said Ready (sweep F178).
+inline uint32_t seconds_left(uint32_t ms) {
+  return ms / 1000u + (ms % 1000u != 0u ? 1u : 0u);
+}
+
+// Why a CHIRP_CMD_CONFIRM sent no signed confirmation ("I see this too"), in
+// the order confirm_chirp() checks: the channel off, the presence
+// requirement, a wall clock not set yet (origination waits for it, audit
+// C10), then the chirp itself: none in the recent list with that nonce, or
+// one this device sent (the originator cannot confirm its own, spec 3.4).
+// POST /api/chirp/confirm answered every one of them not_found, and
+// /api/chirp/ack's "confirmed" a bare success:false (sweep F174).
+//
+// A CHIRP_CMD_DISMISS uses the same names: NOT_FOUND when there is no such
+// chirp, and otherwise why its signed suppress vote did not go out
+// (PRESENCE or CLOCK_UNSYNCED). A dismiss hides the chirp here whatever the
+// vote does, and said nothing when the vote stayed home.
+enum ConfirmRefusal : uint8_t {
+  CONFIRM_REFUSED_NONE = 0,  // it went out (failed with NONE: the frame could not be
+                             // signed, which the fixed-size canonical buffer rules out)
+  CONFIRM_REFUSED_DISABLED,
+  CONFIRM_REFUSED_PRESENCE,
+  CONFIRM_REFUSED_CLOCK_UNSYNCED,
+  CONFIRM_REFUSED_NOT_FOUND,
+  CONFIRM_REFUSED_OWN_CHIRP,
+};
+
+// A refused confirm's (or a dismiss's not-found) "error", "message" and HTTP
+// status: 404 for a chirp that is not there, 409 for the others (the
+// request is sound, the channel's state refuses it). Never 403: the
+// dashboard reads a 403 as a bad token and asks for it again.
+inline const char* confirm_refusal_error(ConfirmRefusal why) {
+  switch (why) {
+    case CONFIRM_REFUSED_DISABLED:       return "chirp_disabled";
+    case CONFIRM_REFUSED_PRESENCE:       return "presence_required";
+    case CONFIRM_REFUSED_CLOCK_UNSYNCED: return "clock_unsynced";
+    case CONFIRM_REFUSED_NOT_FOUND:      return "not_found";
+    case CONFIRM_REFUSED_OWN_CHIRP:      return "own_chirp";
+    case CONFIRM_REFUSED_NONE:           break;
+  }
+  return "confirm_failed";
+}
+inline const char* confirm_refusal_message(ConfirmRefusal why) {
+  switch (why) {
+    case CONFIRM_REFUSED_DISABLED:       return "Chirp channel is not enabled";
+    case CONFIRM_REFUSED_PRESENCE:       return "Must be active for 10 minutes before confirming";
+    case CONFIRM_REFUSED_CLOCK_UNSYNCED: return "Waiting for the clock to be set from GPS time before confirming";
+    case CONFIRM_REFUSED_NOT_FOUND:      return "Chirp not found or already dismissed";
+    case CONFIRM_REFUSED_OWN_CHIRP:      return "This device sent this chirp and cannot confirm it";
+    case CONFIRM_REFUSED_NONE:           break;
+  }
+  return "The confirmation could not be signed";
+}
+inline int confirm_refusal_status(ConfirmRefusal why) {
+  switch (why) {
+    case CONFIRM_REFUSED_NOT_FOUND:      return 404;
+    case CONFIRM_REFUSED_DISABLED:
+    case CONFIRM_REFUSED_PRESENCE:
+    case CONFIRM_REFUSED_CLOCK_UNSYNCED:
+    case CONFIRM_REFUSED_OWN_CHIRP:      return 409;
+    case CONFIRM_REFUSED_NONE:           break;
+  }
+  return 500;
+}
+
+// What a dismiss whose suppress vote did not go out says beside its
+// success: the chirp is hidden here, and why no neighbor heard the vote.
+inline const char* vote_unsent_message(ConfirmRefusal why) {
+  switch (why) {
+    case CONFIRM_REFUSED_PRESENCE:
+      return "Dismissed on this device only: a suppress vote needs 10 minutes active";
+    case CONFIRM_REFUSED_CLOCK_UNSYNCED:
+      return "Dismissed on this device only: no suppress vote until the clock is set from GPS time";
+    case CONFIRM_REFUSED_NONE:
+    case CONFIRM_REFUSED_DISABLED:
+    case CONFIRM_REFUSED_NOT_FOUND:
+    case CONFIRM_REFUSED_OWN_CHIRP:      break;
+  }
+  return "Dismissed on this device only: the suppress vote could not be signed";
+}
+
+// Why a CHIRP_CMD_MUTE or CHIRP_CMD_UNMUTE did not run: the channel is off
+// (checked first, as for a send or a confirm), or a mute's duration is not
+// one the channel offers. A mute on a channel that was off turned it on
+// with no session: is_enabled() read true, the status route read "muted"
+// and then "active" with an empty emoji, the passes ran with an all-zero
+// session id, and a later enable answered success with an empty emoji,
+// since enable() starts a session only from CHIRP_DISABLED (sweep F192).
+// There is nothing to mute or unmute on a channel that is off, and a
+// disable ends a running mute, so neither command finds one there.
+enum MuteRefusal : uint8_t {
+  MUTE_REFUSED_NONE = 0,
+  MUTE_REFUSED_DISABLED,
+  MUTE_REFUSED_DURATION,   // MUTE only: not 15, 30, 60 or 120 minutes
+};
+
+// POST /api/chirp/mute's and /unmute's answer to a refusal: its "error",
+// "message" and HTTP status. The channel off is 409, as a confirm's is (the
+// request is sound, the channel's state refuses it); a duration the channel
+// does not offer keeps the 200 it has always answered (whether every Chirp
+// refusal carries a status is sweep F195's decision). Never 403: the
+// dashboard reads a 403 as a bad token.
+inline const char* mute_refusal_error(MuteRefusal why) {
+  switch (why) {
+    case MUTE_REFUSED_DISABLED: return "chirp_disabled";
+    case MUTE_REFUSED_DURATION: return "invalid_duration";
+    case MUTE_REFUSED_NONE:     break;
+  }
+  return nullptr;
+}
+inline const char* mute_refusal_message(MuteRefusal why) {
+  switch (why) {
+    case MUTE_REFUSED_DISABLED: return "Chirp channel is not enabled";
+    case MUTE_REFUSED_DURATION: return "Duration must be 15, 30, 60, or 120 minutes";
+    case MUTE_REFUSED_NONE:     break;
+  }
+  return nullptr;
+}
+inline int mute_refusal_status(MuteRefusal why) {
+  return why == MUTE_REFUSED_DISABLED ? 409 : 200;
+}
+
+// What a command did, as the loop task saw it right after the command ran.
+struct Result {
+  bool         ok;                     // the command's own answer (DISABLE, SETTINGS: true)
+  SendRefusal  refusal;                // SEND that failed: why
+  ConfirmRefusal confirm_refusal;      // CONFIRM that failed: why; DISMISS: NOT_FOUND, or why
+                                       // its suppress vote did not go out (sweep F174)
+  MuteRefusal  mute_refusal;           // MUTE or UNMUTE that failed: why (sweep F192)
+  bool         vote_sent;              // DISMISS: its signed suppress vote went out
+  uint8_t      cooldown_tier;          // SEND: get_cooldown_tier() after the attempt
+  uint32_t     cooldown_remaining_ms;  // SEND refused for the cooldown (> 0 whenever it is)
+  bool         relay_enabled;          // SETTINGS: the setting after the command
+  ChirpUrgency urgency_filter;         // SETTINGS: the setting after the command
+  char         session_emoji[EMOJI_DISPLAY_SIZE];  // ENABLE: the session's emoji
+};
+
+// A command of `type` with every other field zero.
+inline Command make_command(CommandType type) {
+  Command cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.type = type;
+  return cmd;
+}
+
+static const size_t   COMMAND_SLOTS   = 4;
+static const uint32_t COMMAND_WAIT_MS = 2000;   // for the loop task to start it
+static const uint32_t COMMAND_POLL_MS = 5;
+
+loop_command_ring::Wait submit(const Command& cmd, Result* result,
+                               uint32_t timeout_ms = COMMAND_WAIT_MS);
+
+// The REST answer to a command that did not run (any Wait but kDone).
+inline int not_run_status(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? 409 : 503;
+}
+inline const char* not_run_error(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? "chirp_busy" : "chirp_timeout";
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Status
 // ──────────────────────────────────────────────────────────────────────────
 
-// Get current chirp channel status
+// Get current chirp channel status. The loop task's, as is every reader of
+// the live state in this namespace (get_status, get_recent_chirps,
+// get_pending_chirps, get_nearby_*, get_cooldown_*, has_presence_requirement,
+// can_send_chirp, is_*, get_session_*); another task reads the published
+// view (read_status, read_nearby, read_recent, below).
 ChirpStatus get_status();
+
+// ──────────────────────────────────────────────────────────────────────────
+// The status routes' view (sweep F138)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// GET /api/chirp, /api/chirp/nearby and /api/chirp/recent run on
+// esp_http_server's task, and what they show (the session, the cooldowns,
+// the mute, the recent and nearby tables) is update()'s, written on the
+// loop task, and by the chirp frames mesh_network::update() hands
+// dispatch_espnow_message() there. Read in place, a response could mix two
+// passes: a row read while prune_old_chirps() shifts the table under it, a
+// count from one pass with rows from another, an emoji read while disable()
+// wipes the session. So the loop task publishes what the routes show and
+// they read whole copies (loop_snapshot.h, as the mesh's routes do since
+// sweep F110):
+//   - a StatusView at the end of every update() pass (its early return
+//     included), after each owner command run_command() runs (before the
+//     drain posts its result, so a read right after a POST's answer shows
+//     what it did), and from init();
+//   - the two tables (a NearbyTable and a RecentTable: what each route
+//     shows of a row, no key or signature) only when something changed them:
+//     a chirp frame handled, update()'s 30-second prune, an owner command,
+//     init(). The tables are in PSRAM and copying them every pass would read
+//     them every pass; most passes change nothing. Their published copies
+//     are in PSRAM too (chirp_channel.cpp's g_view_tables), so they take
+//     nothing back from the internal heap the PSRAM diet freed for the BLE
+//     stack; only the 68-byte status's copy is static.
+// read_status(), read_nearby() and read_recent() never wait for the loop
+// task. What counts in time (the cooldown and mute left, the presence
+// requirement, the wall clock) is counted at the read, from what the loop
+// task published, as the live readers counted it.
+
+// One pass, as GET /api/chirp shows it.
+struct StatusView {
+  ChirpState state;                       // published: the stored state; read: what it reads as
+                                          // (CHIRP_COOLDOWN while an active channel's cooldown runs)
+  char session_emoji[EMOJI_DISPLAY_SIZE];
+  uint8_t nearby_count;
+  uint8_t recent_chirp_count;
+  uint8_t cooldown_tier;                  // get_cooldown_tier()
+  bool relay_enabled;
+  bool muted;                             // the flag; mute_remaining_ms says if it still runs
+  uint32_t last_chirp_sent_ms;            // 0 if never
+  uint32_t cooldown_ms;                   // the tier's cooldown, counted from last_chirp_sent_ms
+  uint32_t mute_until_ms;
+  uint32_t session_start_ms;              // 0: never enabled since boot
+  // Counted at the read by read_status() (the loop task publishes them 0):
+  uint32_t cooldown_remaining_ms;         // the cooldown timer, whatever the state (sweep F178)
+  uint32_t mute_remaining_ms;
+  bool presence_met;                      // has_presence_requirement()
+  bool clock_synced;                      // time() at or past MIN_UNIX_TIME
+  bool night_mode;                        // is_night_mode()
+  bool can_send;                          // can_send_chirp()
+};
+
+// One nearby device, as GET /api/chirp/nearby shows it.
+struct NearbyView {
+  char emoji[EMOJI_DISPLAY_SIZE];
+  int8_t rssi;
+  bool listening;
+  uint32_t last_seen_ms;
+};
+struct NearbyTable {
+  uint8_t count;
+  NearbyView devices[MAX_NEARBY_CACHE];
+};
+
+// One received chirp, as GET /api/chirp/recent shows it.
+struct RecentView {
+  char sender_emoji[EMOJI_DISPLAY_SIZE];
+  ChirpTemplate template_id;
+  ChirpDetailSlot detail;
+  ChirpUrgency urgency;
+  uint8_t hop_count;
+  uint8_t confirm_count;
+  bool validated;
+  bool suppressed;
+  bool relayed;
+  bool dismissed;
+  uint8_t nonce[8];
+  uint32_t received_ms;
+};
+struct RecentTable {
+  uint8_t count;
+  RecentView chirps[MAX_RECENT_CHIRPS];
+};
+
+// Any task. The last pass update() published, with its time-counted fields
+// counted now; before init() publishes the first, a disabled channel (what
+// get_status() said then).
+void read_status(StatusView* out);
+
+// Any task. The last tables published (count 0 before the first).
+void read_nearby(NearbyTable* out);
+void read_recent(RecentTable* out);
+
+// Why a read view cannot send (GET /api/chirp's cannot_send_reason), in the
+// order the route has always checked: "disabled", "cooldown",
+// "presence_required", then "clock_unsynced" (sweep F146: the route named no
+// reason for it, and the dashboard said Ready). nullptr when it can send.
+// "cooldown" exactly while the timer runs (cooldown_remaining_ms > 0), muted
+// or not: it read the state, which a mute overwrote and which a pass ended
+// only after the timer had (sweep F178).
+const char* cannot_send_reason(const StatusView& v);
 
 // Get state name as string
 const char* state_name(ChirpState state);
@@ -1037,21 +1507,17 @@ const char* urgency_name(ChirpUrgency urgency);
 // Check if active and can receive chirps
 bool is_active();
 
-// Check if can send chirp (not in cooldown)
+// Check if can send chirp: on, the cooldown timer run out, the presence
+// requirement met and the wall clock set (night mode is the template's)
 bool can_send_chirp();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sending chirps (HUMAN-IN-THE-LOOP)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Send a chirp to the community using structured templates (NO FREE TEXT)
-// IMPORTANT: This should only be called after human confirmation!
-// Returns false if rate-limited, disabled, or presence requirement not met
-bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
-                ChirpDetailSlot detail = DETAIL_NONE, uint8_t ttl_minutes = 15);
-
-// Send an all-clear (de-escalation)
-bool send_all_clear(ChirpTemplate clear_type = TPL_CLR_RESOLVED);
+// Sending is CHIRP_CMD_SEND (above): structured templates only, NO FREE
+// TEXT, and only after human confirmation. It is refused when rate-limited,
+// disabled, or the presence requirement is not met.
 
 // Check if presence requirement is met (10 min)
 bool has_presence_requirement();
@@ -1059,7 +1525,9 @@ bool has_presence_requirement();
 // Get current cooldown tier (1-4)
 uint8_t get_cooldown_tier();
 
-// Get cooldown remaining for current tier
+// The send cooldown left (spec 2.5.4): the tier's cooldown counted from the
+// last send. A timer, not a state: a mute, its timeout and an unmute leave it
+// running, and it is over the moment it runs out (sweep F178)
 uint32_t get_cooldown_remaining_ms();
 
 // Get template display text (for UI)
@@ -1084,18 +1552,12 @@ const ReceivedChirp* get_recent_chirps(size_t* count);
 // Get pending chirps (unvalidated, awaiting confirmation)
 const ReceivedChirp* get_pending_chirps(size_t* count);
 
-// Confirm a chirp ("I see this too") - adds witness count
-// If enough confirmations, chirp becomes validated and relays
-bool confirm_chirp(const uint8_t* nonce);
+// Confirming a chirp ("I see this too": a signed ACK) is CHIRP_CMD_CONFIRM;
+// dismissing one from display (a signed suppress vote) is CHIRP_CMD_DISMISS.
 
-// Dismiss a chirp from display (contributes to suppress voting)
-bool dismiss_chirp(const uint8_t* nonce);
-
-// Clear all recent chirps
-void clear_chirps();
-
-// Get validation status text
+// Get validation status text (a live chirp, or one row of a read RecentTable)
 const char* get_validation_status(const ReceivedChirp* chirp);
+const char* get_validation_status(const RecentView* chirp);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Nearby devices (anonymous)
@@ -1111,11 +1573,8 @@ const NearbyDevice* get_nearby_devices(size_t* count);
 // Mute control
 // ──────────────────────────────────────────────────────────────────────────
 
-// Mute chirps for duration (15, 30, 60, or 120 minutes)
-bool mute(uint8_t duration_minutes);
-
-// Unmute chirps
-void unmute();
+// Muting (15, 30, 60 or 120 minutes) is CHIRP_CMD_MUTE; unmuting is
+// CHIRP_CMD_UNMUTE.
 
 // Check if muted
 bool is_muted();
@@ -1124,12 +1583,9 @@ bool is_muted();
 // Settings
 // ──────────────────────────────────────────────────────────────────────────
 
-// Enable/disable relaying other chirps
-void set_relay_enabled(bool enabled);
+// Relaying other chirps, and the minimum urgency to display (filters lower
+// urgency); both are changed by CHIRP_CMD_SETTINGS.
 bool is_relay_enabled();
-
-// Set minimum urgency to display (filters lower urgency)
-void set_urgency_filter(ChirpUrgency min_urgency);
 ChirpUrgency get_urgency_filter();
 
 // ──────────────────────────────────────────────────────────────────────────

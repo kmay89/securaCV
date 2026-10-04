@@ -171,6 +171,335 @@ test("sandbox scenarios only publish to real topics", () => {
       assert.ok(suffixes.has(pub.suffix), "sandbox publishes unknown topic: " + pub.suffix);
 });
 
+// Sweeps A30 and A31: the Sense page's MQTT rows are the firmware's whole
+// payloads. A sandbox scene used to spell only the fields it changed (an
+// events row with no envelope, chain {"length":+1}, a three-key state that
+// the pane pushed over the retained state row), and the pane's lab handler
+// hand-wrote its events row (no v, alg, sig or bucket_uptime_s) and its chain
+// row (no fp: HA's signature.py reads that as unsigned).
+const fnKeys = (src, signature, from, to) => {
+  let body = src.split(signature)[1].split("\n}\n")[0];
+  if (from) body = body.slice(body.indexOf(from), body.indexOf(to, body.indexOf(from)));
+  return [...body.matchAll(/\\"([a-z_0-9]+)\\":/g)].map((m) => m[1]);
+};
+const witnessCpp = read(join(PRJ, "src/witness.cpp"));
+const senseKeys = () => {
+  const stateWell = fnKeys(mqttCpp, "void publish_state_retained(", "snprintf(msg, sizeof(msg),", "canary::cfg::get()");
+  const vitals = ["breathing_locked", "breath_bpm", "heart_bpm"];
+  return {
+    state: stateWell.filter((k) => !vitals.includes(k)),
+    stateWellbeing: stateWell,
+    events: [...fnKeys(mainCpp, "static void record_event_now(", "const int n = snprintf(msg, sizeof(msg),", "canary::cfg::get()"),
+             ...fnKeys(witnessCpp, "bool sign_event_envelope(")],
+    chain: fnKeys(mqttCpp, "void publish_chain_retained(", "if (signed_ok) {", "} else {"),
+  };
+};
+const topicEx = (sfx) => JSON.parse(data.mqtt.topics.find((t) => t.suffix === sfx).payload);
+
+test("the state, events and chain examples are keyed as the firmware publishes them", () => {
+  const want = senseKeys();
+  assert.ok(mqttCpp.includes('#ifdef CANARY_SENSE_VITALS\n           "\\"breathing_locked\\":%s,"'), "the vitals block moved");
+  assert.deepStrictEqual(Object.keys(topicEx("state")), want.state);
+  const state = data.mqtt.topics.find((t) => t.suffix === "state");
+  assert.deepStrictEqual(Object.keys(JSON.parse(state.wellbeing)), want.stateWellbeing, "the wellbeing state, whole");
+  assert.deepStrictEqual(Object.keys(topicEx("events")), want.events);
+  assert.deepStrictEqual(Object.keys(topicEx("chain")), want.chain);
+});
+
+test("every sandbox publish is its topic's payload with the scene's fields laid over it", () => {
+  const wellbeing = JSON.parse(data.mqtt.topics.find((t) => t.suffix === "state").wellbeing);
+  let n = 0;
+  for (const sc of data.sandbox) {
+    for (const pub of sc.mqtt) {
+      const at = `${sc.id} → ${pub.suffix}`;
+      if (!pub.set && !pub.advance) {
+        // publish_identify_echo writes the bare word
+        assert.ok(mqttCpp.includes('publish_checked("IDFY", topics.identify_echo, active ? "on" : "off",'));
+        assert.deepStrictEqual([pub.suffix, pub.payload], ["identify", "on"], at);
+        continue;
+      }
+      const base = pub.base === "wellbeing" ? wellbeing : topicEx(pub.suffix);
+      const got = JSON.parse(pub.payload);
+      assert.deepStrictEqual(Object.keys(got), Object.keys(base), `${at}: every key of the topic, in its order`);
+      for (const k of pub.advance) assert.strictEqual(got[k], base[k] + 1, `${at}: ${k}`);
+      for (const [k, v] of Object.entries(pub.set)) assert.deepStrictEqual(got[k], v, `${at}: ${k}`);
+      for (const k of Object.keys(base))
+        if (!(k in pub.set) && !pub.advance.includes(k)) assert.deepStrictEqual(got[k], base[k], `${at}: ${k} kept`);
+      n++;
+    }
+  }
+  assert.ok(n >= 12, "the scenes' publishes went missing");
+  // a witnessed event's seq is the chain length it leaves (record_event_now)
+  assert.ok(mainCpp.includes("? canary::witness::chain_length() + 1"));
+  for (const sc of data.sandbox) {
+    const ev = sc.mqtt.find((p) => p.suffix === "events");
+    const ch = sc.mqtt.find((p) => p.suffix === "chain");
+    assert.strictEqual(!!ev, !!ch, sc.id + ": an event and its chain head go together");
+    if (ev) assert.strictEqual(JSON.parse(ev.payload).seq, JSON.parse(ch.payload).length, sc.id);
+  }
+});
+
+test("the lab's events and chain rows are sense.json's, laid over (senseEventPayload)", async () => {
+  const { senseEventPayload, senseChainPayload } = await import("../assets/sense-ui.js");
+  const ex = topicEx("events");
+  const e = { event: "presence_cleared", presence: "clear", occupants: "0", range: "unknown" };
+  const ev = senseEventPayload(ex, e, 500);
+  assert.deepStrictEqual(Object.keys(ev), Object.keys(ex), "every key, in record_event_now's order");
+  assert.deepStrictEqual([ev.event, ev.presence, ev.occupants, ev.range, ev.seq], [e.event, e.presence, e.occupants, e.range, 500]);
+  for (const k of ["v", "alg", "fp", "sig", "bucket_uptime_s", "signed", "device_id", "device_type"])
+    assert.deepStrictEqual(ev[k], ex[k], k + " rides along");
+  const chain = senseChainPayload(topicEx("chain"), 500);
+  assert.deepStrictEqual(Object.keys(chain), Object.keys(topicEx("chain")));
+  assert.strictEqual(chain.length, 500);
+  assert.strictEqual(chain.latest_hash, "…");
+  assert.strictEqual(chain.fp, data.device.fp_example, "the envelope fp HA's verifier needs");
+});
+
+test("the MQTT pane publishes a lab event, then the chain head at its seq", async () => {
+  const { withFakeDom, withFakeClock, fakeBus } = require("./fixtures/fake_dom.js");
+  await withFakeDom(() => withFakeClock(async (clock) => {
+    const { buildMqtt } = await import("../assets/sense-ui.js");
+    const bus = fakeBus();
+    const wrap = buildMqtt(data, bus);
+    const topic = (sfx) => `securacv/${data.device.id_example}/${sfx}`;
+    const stream = () => wrap.all("wap-mqtt-ev").map((r) => [r.children[0].textContent, r.children[1].textContent]);
+    const retained = () => Object.fromEntries(wrap.all("wap-mqtt-row").map((r) => [r.children[0].textContent, r.children[1].textContent]));
+    const chain0 = topicEx("chain").length;
+    bus.emit("mqtt");
+    bus.emit("labevent", { event: "presence_detected", presence: "present", occupants: "1", range: "near" });
+    bus.emit("labevent", { event: "occupancy_changed", presence: "present", occupants: "2+", range: "near" });
+    const evs = stream().filter(([t]) => t === topic("events")).map(([, p]) => JSON.parse(p));
+    assert.strictEqual(evs.length, 2);
+    assert.deepStrictEqual(Object.keys(evs[0]), Object.keys(topicEx("events")));
+    assert.deepStrictEqual([evs[0].event, evs[0].seq, evs[0].occupants], ["occupancy_changed", chain0 + 2, "2+"]);
+    for (const k of ["v", "alg", "fp", "sig"]) assert.ok(k in evs[0], k);
+    const chain = JSON.parse(retained()[topic("chain")]);
+    assert.strictEqual(chain.length, chain0 + 2, "the head sits at the last event's seq");
+    assert.strictEqual(chain.fp, data.device.fp_example);
+
+    // a pushed scene (lights) replaces the retained state with the whole row
+    bus.emit("sandboxpub", { pubs: data.sandbox.find((s) => s.id === "lights").mqtt });
+    const state = JSON.parse(retained()[topic("state")]);
+    assert.deepStrictEqual(Object.keys(state), Object.keys(topicEx("state")));
+    assert.strictEqual(state.lux, 1);
+    assert.ok(retained()[topic("state")].includes('"lux":1.0'), "publish_state_retained's %.1f");
+    bus.emit("sandboxpub", { pubs: data.sandbox.find((s) => s.id === "identify").mqtt });
+    assert.ok(stream().some(([t, p]) => t === topic("identify") && p === "on"), "the bare identify echo, not retained");
+    assert.ok(!(topic("identify") in retained()));
+    await clock.advance(150 * data.mqtt.topics.length + 200);   // let the retained snapshot finish
+    assert.strictEqual(JSON.parse(retained()[topic("chain")]).length, chain0 + 2, "the snapshot lands the chain as it stands");
+  }));
+});
+
+test("the state row: the lab's snapshot over the build's example, published when main.cpp would", async () => {
+  const { senseLabSnapshot, senseStateDue, senseStatePayload, senseStateJson } = await import("../assets/sense-ui.js");
+  const st = data.mqtt.topics.find((t) => t.suffix === "state");
+  const templates = { base: JSON.parse(st.payload), wellbeing: JSON.parse(st.wellbeing) };
+  const fsm = (state, count, range) => ({ state, count, range });
+  // presence-only build: no vitals keys at all
+  const clear = senseLabSnapshot(fsm("clear", "0", "unknown"), null);
+  assert.deepStrictEqual(clear, { presence: false, presence_state: "clear", occupants: "0", range: "unknown", radar_ok: true });
+  assert.strictEqual(senseLabSnapshot(fsm("unknown", "0", "unknown"), null).radar_ok, false, "radar_ok is not-unknown");
+  // wellbeing: BPMs only while locked with exactly one target (bpm_valid)
+  const v = { locked: true, breath_bpm: 14, heart_bpm: 68 };
+  assert.strictEqual(senseLabSnapshot(fsm("present", "1", "near"), v).breath_bpm, 14);
+  const two = senseLabSnapshot(fsm("present", "2+", "near"), v);
+  assert.deepStrictEqual([two.breathing_locked, two.breath_bpm, two.heart_bpm], [true, null, null],
+    "a second person drops the BPMs at once; the lock rides out lost_ms");
+  // due: any change but the range band alone, and every heartbeat
+  const a = senseLabSnapshot(fsm("present", "1", "mid"), null);
+  assert.ok(senseStateDue(a, null, false), "the first (boot) publish");
+  assert.ok(!senseStateDue({ ...a, range: "near" }, a, false), "a range band alone waits for the heartbeat");
+  assert.ok(senseStateDue({ ...a, range: "near" }, a, true), "...and goes out on it");
+  assert.ok(senseStateDue({ ...a, occupants: "2+" }, a, false));
+  assert.ok(senseStateDue(senseLabSnapshot(fsm("present", "1", "mid"), { ...v, locked: false }), a, false), "a build switch");
+  // the row: the build's keys in the firmware's order, lux carried over
+  const row = senseStatePayload(templates, { ...templates.base, lux: 1.0 }, clear);
+  assert.deepStrictEqual(Object.keys(row), Object.keys(templates.base));
+  assert.strictEqual(row.lux, 1.0);
+  assert.strictEqual(row.presence_state, "clear");
+  const wrow = senseStatePayload(templates, templates.base, two);
+  assert.deepStrictEqual(Object.keys(wrow), Object.keys(templates.wellbeing));
+  assert.ok(senseStateJson(row).includes('"lux":1.0'), "publish_state_retained's %.1f");
+  assert.ok(mainCpp.includes("if (g_state_dirty) {\n    publish_state_now(now);"), "the dirty row goes out in the loop");
+  assert.ok(mainCpp.includes("canary::net::publish_heartbeat(TOPICS, g_snap);\n    publish_state_now(now);"), "and on the heartbeat");
+  assert.strictEqual(data.mqtt.heartbeat_ms, cint(cfgDefault, "CS_HEARTBEAT_MS"));
+});
+
+// The radar lab, the MQTT pane and the sandbox on one bus, on the fake DOM and
+// the test's clock. Each lab-driven scene is clicked and the lab's frame loop
+// runs until its FSM gets there; the pane must then have published exactly
+// the rows sense.json lists for that scene (seq and the chain length counted
+// on from the rows before). The pane used to publish no state row from the
+// lab at all, so the walk, approach, sit, second, leave and stall rows were
+// data no page rendered.
+test("each sandbox scene, played through the radar lab, publishes the rows sense.json lists", async () => {
+  const { withFakeDom, withFakeClock, fakeBus } = require("./fixtures/fake_dom.js");
+  const { buildRadarLab, buildMqtt, buildSandbox } = await import("../assets/sense-ui.js");
+  const topic = (sfx) => `securacv/${data.device.id_example}/${sfx}`;
+  const scene = (id) => data.sandbox.find((s) => s.id === id);
+  const rowOf = (id, sfx) => scene(id).mqtt.find((p) => p.suffix === sfx).payload;
+  const at = (payload, k, n) => JSON.stringify({ ...JSON.parse(payload), [k]: n });
+  const cfg = data.fsm.presence, vit = data.fsm.vitals;
+  const chain0 = topicEx("chain").length;
+
+  async function bench(fn) {
+    await withFakeDom(() => withFakeClock(async (clock) => {
+      const bus = fakeBus();
+      buildRadarLab(data, bus);
+      const pane = buildMqtt(data, bus);
+      const pad = buildSandbox(data, bus);
+      let t = performance.now();
+      const run = async (ms) => { for (let e = 0; e < ms; e += 50) { t += 50; clock.frame(t); } await clock.advance(ms); };
+      const click = (id) => pad.all("wap-sand-card").find((c) => c.children[0].textContent === scene(id).label).click();
+      let seen = new Set();
+      // the rows published since the last call, oldest first (the stream
+      // prepends, so new rows sit at the top)
+      const fresh = () => {
+        const rows = pane.all("wap-mqtt-ev").filter((r) => !seen.has(r));
+        rows.forEach((r) => seen.add(r));
+        return rows.reverse().map((r) => [r.children[0].textContent, r.children[1].textContent])
+          .filter(([tp]) => tp.startsWith("securacv/"));
+      };
+      const retained = () => Object.fromEntries(pane.all("wap-mqtt-row").map((r) => [r.children[0].textContent, r.children[1].textContent]));
+      await run(200);   // the lab's first frame: Unknown -> Clear, the boot publish
+      fresh();
+      await fn({ run, click, fresh, retained });
+    }));
+  }
+
+  // presence-only build: walk in, close in, everyone leaves
+  await bench(async ({ run, click, fresh, retained }) => {
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    // mr60_presence.cpp's count and band follow every frame while presence
+    // waits out the debounce, and drive_fsms dirties the row on the count
+    // change: so the device publishes a clear row counting one occupant first
+    const counting = JSON.stringify({ ...JSON.parse(rowOf("walk", "state")), presence: false, presence_state: "clear" });
+    assert.deepStrictEqual(fresh(), [[topic("state"), counting], [topic("events"), rowOf("walk", "events")],
+      [topic("state"), rowOf("walk", "state")]], "walk: the debounce window's row, the event, then the state row");
+    assert.strictEqual(retained()[topic("chain")], rowOf("walk", "chain"));
+    assert.strictEqual(retained()[topic("state")], rowOf("walk", "state"), "the retained snapshot did not land the example over it");
+
+    click("approach");
+    await run(200);
+    assert.deepStrictEqual(fresh(), [], "a range band alone dirties nothing (drive_fsms)");
+    await run(data.mqtt.heartbeat_ms);
+    assert.deepStrictEqual(fresh(), [[topic("state"), rowOf("approach", "state")]], "the heartbeat carries it");
+
+    click("leave");
+    await run(cfg.clear_ms + 500);
+    assert.deepStrictEqual(fresh(), [[topic("events"), at(rowOf("leave", "events"), "seq", chain0 + 2)],
+      [topic("state"), rowOf("leave", "state")]]);
+    assert.strictEqual(retained()[topic("chain")], at(rowOf("leave", "chain"), "length", chain0 + 2));
+  });
+
+  // the lights go out with someone inside; the lux rides every later row
+  await bench(async ({ run, click, fresh, retained }) => {
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    fresh();
+    click("lights");
+    assert.deepStrictEqual(fresh(), [[topic("state"), rowOf("lights", "state")]]);
+    await run(data.mqtt.heartbeat_ms + 200);
+    assert.strictEqual(retained()[topic("state")], rowOf("lights", "state"), "the heartbeat keeps the lux");
+  });
+  await bench(async ({ run, click, retained }) => {
+    click("lights");   // an empty room: the scene walks someone in first
+    await run(cfg.debounce_ms + 700);
+    assert.strictEqual(retained()[topic("state")], rowOf("lights", "state"));
+  });
+
+  // the radar UART unplugged: Unknown, count and band dropped, radar_ok false
+  await bench(async ({ run, click, fresh }) => {
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    fresh();
+    click("stall");
+    await run(cfg.stall_ms + 500);
+    assert.deepStrictEqual(fresh(), [[topic("state"), rowOf("stall", "state")]], "health, not a witness event");
+  });
+
+  // wellbeing: the lock confirms, then a second person suppresses it
+  await bench(async ({ run, click, fresh, retained }) => {
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    click("approach");
+    await run(data.mqtt.heartbeat_ms + 200);
+    fresh();
+    click("sit");
+    await run(vit.lock_ms + 500);
+    const sit = fresh();
+    assert.deepStrictEqual(sit[sit.length - 1], [topic("state"), rowOf("sit", "state")], "the lock and its BPMs");
+    click("second");
+    await run(200);
+    const now = fresh();
+    assert.deepStrictEqual(now[0], [topic("events"), at(rowOf("second", "events"), "seq", chain0 + 2)]);
+    const held = JSON.parse(now[1][1]);
+    assert.deepStrictEqual([held.occupants, held.breathing_locked, held.breath_bpm, held.heart_bpm, held.last_event],
+      ["2+", true, null, null, "occupancy_changed"], "the BPMs go at once; the lock rides out lost_ms");
+    await run(vit.lost_ms + 500);
+    assert.strictEqual(retained()[topic("state")], rowOf("second", "state"));
+  });
+});
+
+test("the MQTT pane's note names the non-retained topics and what the lab leaves out", async () => {
+  const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
+  const live = data.mqtt.topics.filter((t) => !t.retained).map((t) => t.suffix);
+  assert.deepStrictEqual(live, ["events", "identify"]);
+  await withFakeDom(async () => {
+    const { buildMqtt } = await import("../assets/sense-ui.js");
+    const note = buildMqtt(data, fakeBus()).all("wap-note")[0].textContent;
+    for (const sfx of live) assert.ok(note.includes(`securacv/${data.device.id_example}/${sfx}`), sfx);
+    assert.doesNotMatch(note, /exact strings/);
+    for (const k of ["sig", "public_key", "hash", "fp", "uptime_s", "ts_ms", "bucket_uptime_s"]) assert.ok(note.includes(k), k);
+    assert.match(note, /occupancy_changed to 0 occupants before presence_cleared/, "the step the lab leaves out");
+  });
+  assert.doesNotMatch(read(join(ROOT, "assets/sense.js")), /exact MQTT/, "the sandbox lede");
+});
+
+// record_event_now chains first and returns before publishing while the
+// broker is down; the loop's publish phase is skipped too. So before the
+// bench connects nothing reaches the pane, and the snapshot on connect lands
+// the chain and the state as they stand (an offline gap is a jump in length).
+test("before the broker is up, the lab's events chain but publish nothing", async () => {
+  const { withFakeDom, withFakeClock, fakeBus } = require("./fixtures/fake_dom.js");
+  assert.ok(mainCpp.includes("  if (!canary::net::mqtt_connected()) return;"), "record_event_now's offline return");
+  await withFakeDom(() => withFakeClock(async (clock) => {
+    const { buildMqtt } = await import("../assets/sense-ui.js");
+    const bus = fakeBus();
+    const wrap = buildMqtt(data, bus);
+    const topic = (sfx) => `securacv/${data.device.id_example}/${sfx}`;
+    const retained = () => Object.fromEntries(wrap.all("wap-mqtt-row").map((r) => [r.children[0].textContent, r.children[1].textContent]));
+    bus.emit("labevent", { event: "presence_detected", presence: "present", occupants: "1", range: "mid" });
+    bus.emit("labstate", { snap: { presence: true, presence_state: "present", occupants: "1", range: "mid", radar_ok: true } });
+    assert.deepStrictEqual(wrap.all("wap-mqtt-ev"), [], "nothing streams offline");
+    assert.deepStrictEqual(retained(), {}, "nothing is retained offline");
+    bus.emit("mqtt");
+    await clock.advance(150 * data.mqtt.topics.length + 200);
+    assert.strictEqual(JSON.parse(retained()[topic("chain")]).length, topicEx("chain").length + 1, "the chain moved offline");
+    assert.strictEqual(JSON.parse(retained()[topic("state")]).last_event, "presence_detected");
+    assert.ok(!wrap.all("wap-mqtt-ev").some((r) => r.children[0].textContent === topic("events")), "the offline event is not replayed");
+  }));
+});
+
+test("a stall drops the count with the link, as mr60_presence.cpp does", async () => {
+  const { makePresenceFSM } = await import("../assets/sense-ui.js");
+  const cfg = data.fsm.presence;
+  const fsm = makePresenceFSM(cfg);
+  let t = 1000;
+  fsm.reset(t);
+  const two = { hasTarget: true, count: 2, distanceCm: 200 };
+  fsm.tick(two, t);
+  fsm.tick(two, t + cfg.debounce_ms);
+  assert.deepStrictEqual([fsm.state, fsm.count], ["present", "2+"]);
+  const ev = fsm.tick(null, t + cfg.debounce_ms + cfg.stall_ms);
+  assert.deepStrictEqual([fsm.state, fsm.count, fsm.range], ["unknown", "0", "unknown"]);
+  assert.ok(ev.stalled && ev.countChanged);
+  const presence = read(join(REPO, "firmware/common/sensors/mmwave_mr60/mr60_presence.cpp"));
+  assert.ok(presence.includes("        state_ = Presence::Unknown;\n        count_ = CountBucket::Zero;"));
+});
+
 // ── 7. serial log lines trace to firmware sources ──────────────────────────
 test("boot banner + radar scene anchors exist in the sources", () => {
   const banner = read(join(REPO, "firmware/common/boot/boot_banner.cpp"));
@@ -179,6 +508,27 @@ test("boot banner + radar scene anchors exist in the sources", () => {
   assert.ok(mainCpp.includes("Who is in the room?"));
   assert.ok(data.serial.banner.some((l) => l.includes("SecuraCV Canary Sense")));
   assert.ok(data.serial.banner.some((l) => l.includes("MR60BHA2 60GHz FMCW radar")));
+});
+
+test("the console prints main.cpp's MQTT scene, Hardware ID included, where setup() prints it", async () => {
+  // main.cpp: the fleet advert, then the scene (art, separator, boot_kv rows
+  // in boot_banner.cpp's "    %-12s%s"), then the one bounded connect.
+  const kv = (k, v) => "    " + k.padEnd(12) + v;
+  const boot = data.serial.boot;
+  const at = (pred, what) => { const i = boot.findIndex(pred); assert.ok(i >= 0, "no " + what); return i; };
+  const mdns = at((s) => s.tag === "[MDNS]", "[MDNS] line");
+  const art = at((s) => s.text.endsWith("Connecting to MQTT..."), "MQTT scene");
+  const hw = at((s) => s.text === kv("Hardware ID", data.device.hwid_example), "Hardware ID line");
+  const conn = at((s) => s.tag === "[MQTT]" && s.text.startsWith("Connecting "), "[MQTT] connect line");
+  assert.ok(mdns < art && art < hw && hw < conn, "the scene sits between the advert and the connect");
+  assert.strictEqual(boot[hw - 1].text, kv("Device ID", data.device.id_example));
+  assert.strictEqual(boot[hw + 1].text, kv("Heartbeat", "every " + cint(cfgDefault, "CS_HEARTBEAT_MS") + " ms"));
+  assert.ok(mainCpp.includes('boot_kv("Hardware ID", devid_hex);'));
+  // the page shows the scene as printed: a line with no tag keeps its indent
+  const { bootLines } = await import("../assets/sense-ui.js");
+  const lines = bootLines(data.serial).map((l) => l.text);
+  assert.ok(lines.includes(kv("Hardware ID", data.device.hwid_example)), "the Hardware ID line lost its indent");
+  assert.ok(lines.includes("           .  ((( o )))  ))     Connecting to MQTT..."));
 });
 
 test("runtime serial lines are main.cpp's own printf formats", () => {

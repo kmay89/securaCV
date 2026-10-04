@@ -167,6 +167,7 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #ifdef CD_FLAVOR_DASH
 #include "canary/ui/portrait7_ui.h"   // the 7"/dash portrait column (rotated)
 #include "canary/ui/lvgl_port.h"      // set_rotation / set_dim
+#include "canary/ui/dash_face.h"      // which face: the turn the port wore
 #endif
 #if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
 #include "canary/ui/portrait_ui.h"
@@ -888,13 +889,13 @@ static void handle_touch(uint32_t now) {
 // Face orientation (7"/dash glass)
 // ----------------------------------------------------------------------------
 // The 7"/dash face has two layouts: the landscape poster (dash_ui /
-// nightstand7_ui) and the portrait column (portrait7_ui), chosen by the saved
-// rotation. Turning the glass in Settings swaps which one is live on the next
-// rebuild. On the round watch / SPI nightstands this is inert.
+// nightstand7_ui) and the portrait column (portrait7_ui), chosen by the turn
+// the port wore (dash_face.h): the saved rotation, unless the port refused it
+// for want of a turn buffer, when the glass and its face stay landscape.
+// Turning the glass in Settings swaps which one is live on the next rebuild.
+// On the round watch / SPI nightstands this is inert.
 #ifdef CD_FLAVOR_DASH
-static bool dash_is_portrait() {
-  return canary::glass::rotation_is_portrait(canary::glass::settings().rotation);
-}
+static bool dash_is_portrait() { return canary::ui::dash_face_portrait(); }
 static void dash_face_create() {
   if (dash_is_portrait()) { canary::ui::portrait7_ui_create(); return; }
 #ifdef CD_NIGHTSTAND7

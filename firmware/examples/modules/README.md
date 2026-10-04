@@ -31,13 +31,16 @@ recursive-compile of `src/` skips it; it builds standalone for CI.)
    contributing it back to SecuraCV, into `firmware/common/csi/src/`
    alongside the other v1 modules so arduino-cli's 1.5-format recursive
    compile picks it up).
-2. Register at boot:
+2. Register at boot, then run each registered module's `init()` once
+   (registration alone initializes nothing, and `csi_module_tick_all()`
+   ticks no module before its `init()`):
 
    ```cpp
    #include "stub_door_opens.h"
 
    void register_csi_modules() {
      csi_module_register(stub_door_opens_module());
+     csi_module_init_all(nullptr);
    }
    ```
 

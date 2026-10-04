@@ -5,8 +5,11 @@
  * Pure, I/O-free helpers that render the JSON bodies for the GET mesh
  * endpoints:
  *
- *   GET /api/mesh         → build_mesh_status_json()
- *   GET /api/mesh/peers   → build_mesh_peers_json()
+ *   GET /api/mesh         → build_mesh_status_json_from_view() (F161), which
+ *                           renders the published view through
+ *                           build_mesh_status_json()
+ *   GET /api/mesh/peers   → peer_views_from_status() (F161), then
+ *                           build_mesh_peers_json()
  *   GET /api/mesh/alerts  → build_mesh_alerts_json()   (F10)
  *
  * Why a separate, pure module:
@@ -38,6 +41,7 @@
 #include "mesh_crypto.h"    /* OPERA_ID_LEN, FINGERPRINT_LEN */
 #include "mesh_pairing.h"   /* mesh_pairing::State, mesh_state_name */
 #include "mesh_alert.h"     /* mesh_alert::Record (F10) */
+#include "mesh_session.h"   /* mesh_session::StatusView (F161) */
 
 #include <stdint.h>
 #include <stddef.h>
@@ -53,7 +57,13 @@ namespace mesh_api {
  *                     empty names (the handler has no name source), every
  *                     number at its widest.
  *   ALERTS_JSON_CAP — MAX_ALERTS_JSON rows (mesh_session::MAX_ALERT_HISTORY)
- *                     at their widest. */
+ *                     at their widest.
+ *   STATUS_JSON_CAP — GET /api/mesh with a 32-byte opera name of control
+ *                     bytes (each escaped to six), the pairing code and the
+ *                     last pairing's report (F133) at their widest: 517
+ *                     bytes, past the 512 the handler used to allocate
+ *                     (426 before F133). */
+constexpr size_t STATUS_JSON_CAP  = 640;
 constexpr size_t PEERS_JSON_CAP   = 1536;
 constexpr size_t MAX_ALERTS_JSON  = 16;
 constexpr size_t ALERTS_JSON_CAP  = 3072;
@@ -73,7 +83,31 @@ constexpr size_t ALERTS_JSON_CAP  = 3072;
  *
  * pairing_code is the 6-digit confirmation code; it is only serialized
  * when pairing_state maps to PAIRING_CONFIRM.
+ *
+ * F133 — the last pairing's outcome, when `last_pairing` is given: three
+ * fields added after the others, so a page that reads only the old ones
+ * parses the body as before. The parameter has no default: a caller must
+ * pass its report, and a call that leaves it out does not compile (only the
+ * tests of the old body pass nullptr, by name). Since F161 the one caller
+ * on the device is build_mesh_status_json_from_view(), below, which fills
+ * the report from the published view:
+ *   pairing_seq          pairings started since boot (0: none); the POST
+ *                        pair/start and pair/join answers name theirs;
+ *   pairing_result       "none" | "running" | "paired" | "failed"
+ *                        (mesh_pairing::outcome_name);
+ *   pairing_fail_reason  why it failed (mesh_pairing::fail_reason_name:
+ *                        "timeout", "canceled", "partner_refused", ...),
+ *                        "none" unless pairing_result is "failed".
+ * Until F133 the page could read only `state`, and an initiator already in
+ * an opera returns to ACTIVE or CONNECTING after a failure as after a
+ * success, so the page called a timeout, a refusal or a cancel complete.
  * ────────────────────────────────────────────────────────────────────────── */
+struct PairingReport {
+  uint32_t                 seq;
+  mesh_pairing::Outcome    outcome;
+  mesh_pairing::FailReason fail_reason;
+};
+
 bool build_mesh_status_json(char*  out,
                             size_t cap,
                             bool   enabled,
@@ -84,7 +118,15 @@ bool build_mesh_status_json(char*  out,
                             size_t   peers_total,
                             size_t   peers_online,
                             uint32_t alerts_received,
-                            uint32_t pairing_code);
+                            uint32_t pairing_code,
+                            const PairingReport* last_pairing);
+
+/* F161 — GET /api/mesh's body from the view the main loop published
+ * (mesh_session::read_status): build_mesh_status_json() with every field
+ * taken from that one view, the last pairing's report included, so one
+ * body is one main-loop pass. What handle_mesh_status sends. */
+bool build_mesh_status_json_from_view(char* out, size_t cap,
+                                      const mesh_session::StatusView& view);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/peers — peer list
@@ -95,7 +137,9 @@ bool build_mesh_status_json(char*  out,
  * does not read it today, but HA and the spec do.
  *
  * The handler builds an array of PeerView from the persisted trusted-peer
- * set, best-effort-joined against the live transport peer table. `state`
+ * set, best-effort-joined against the published view's members
+ * (peer_views_from_status, F161), which carry the transport table's
+ * liveness as the main loop last saw it. `state`
  * is one of the strings the UI styles: "CONNECTED" / "STALE" / "OFFLINE"
  * (a peer with no live match defaults to "OFFLINE"). fingerprint is the
  * 16-hex-char (FINGERPRINT_LEN*2) lowercase fingerprint.
@@ -114,6 +158,23 @@ bool build_mesh_peers_json(char*  out,
                            size_t cap,
                            const PeerView* peers,
                            size_t          count);
+
+/* F161 — the rows of GET /api/mesh/peers: one per persisted member pubkey
+ * (`count` of them, PUBKEY_LEN bytes each, in their NVS order), joined by
+ * fingerprint against the members of the view the main loop published.
+ * A member the view lists takes its alerts_received from it; one the view
+ * marks live takes its state ("CONNECTED" for an ACTIVE transport entry,
+ * "STALE", else "OFFLINE"), RSSI and last_seen_sec, the age of its
+ * last_seen_ms at `now_ms` (uptime, counted at the read). Any other row is
+ * "OFFLINE", last_seen_sec 0xFFFFFFFF ("never"), RSSI 0, no alerts. Names
+ * are "" (the handler has no name source). Writes `count` rows to `out`
+ * (the caller's array holds them) and returns `count`; 0 for a null `out`,
+ * or null `pubkeys` with a count. Until F161 handle_mesh_peers did this
+ * join itself on the httpd task, against the session's peer links and the
+ * transport table read live. */
+size_t peer_views_from_status(const mesh_session::StatusView& view,
+                              const uint8_t* pubkeys, size_t count,
+                              uint32_t now_ms, PeerView* out);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/alerts — received alert history (F10)
