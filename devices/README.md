@@ -204,6 +204,10 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   of `[cad.scad, *cad.also]` and `--check`s each, and the linter proves each
   file is the source of a listed enclosure set (`vision-doorbell`). The
   first write moved zero doorbell bytes — the eleven knobs already agreed.
+  Since v0.6 the two cases also share the OV5647-62's nine camera facts
+  (`brd_ov5647_*()` in the registry: the hole grid and its offset, the lens
+  offset, the barrel and holder) — the camera both hang on posts, owned
+  once here so its hole cannot sit in a different place in either.
   **The blast radius of a Vision knob edit is now two released, fit-checked
   cases:** the edit writes both files, `--dry-run` prints both diffs and
   names both, and the change owes both preview sets (26 for the Vision, 12
