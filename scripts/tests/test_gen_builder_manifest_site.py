@@ -66,12 +66,12 @@ NEW_TOP = {"board_registry", "board_facts"}
 NEW_FIG = {"seams_mm", "knobs", "features_mm"}
 ASSEMBLED = ENC / "assembled_dims.json"
 # The face features gen_assembled_dims.py records (the case's own cut
-# variables, echoed back): the Combo's Ø10 lens aperture at (lens_x, lens_y)
+# variables, echoed back): the Combo's Ø7.4 lens bore at (lens_x, lens_y)
 # and its 24 x 24 radome window at (rad_cx, rad_cy), each a center from the
 # measured envelope's min corner (x along w, z along h) and its extent.
 FEATURES = {
     "device.canary-combo": {
-        "lens": {"h": 10.0, "w": 10.0, "x": 22.6, "z": 60.1},
+        "lens": {"h": 7.4, "w": 7.4, "x": 22.6, "z": 55.9},
         "radome": {"h": 24.0, "w": 24.0, "x": 58.8, "z": 31.6},
     },
 }
@@ -441,7 +441,8 @@ class ScratchTree(unittest.TestCase):
                 elif what == "missing key":
                     del lens["z"]
                 elif what == "off the face":
-                    lens["x"] = 84.0          # the Ø10 aperture past the 86.4 edge
+                    # centered on the face's +X edge: half the lens off it, whatever its size
+                    lens["x"] = d["devices"]["device.canary-combo"]["fig"]["w"]
                 else:
                     lens["x"] = bad[what]
             with self.subTest(what), _Tree() as root:

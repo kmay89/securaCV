@@ -6651,7 +6651,7 @@
    ]
   },
   "canary_combo.scad": {
-   "title": "Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6714,6 +6714,81 @@
        "name": "vm_w",
        "default": "20.0",
        "comment": "Grove Vision AI V2 width — the measured 1x2 form, brd_w(\"grove_v2\")"
+      },
+      {
+       "name": "cam_w",
+       "default": "25.0",
+       "comment": "OV5647 carrier width (X) — brd_w(\"ov5647\"), canary_board_lib"
+      },
+      {
+       "name": "cam_h",
+       "default": "24.0",
+       "comment": "OV5647 carrier height (Y) — brd_l(\"ov5647\")"
+      },
+      {
+       "name": "cam_hole_x",
+       "default": "21.0",
+       "comment": "hole grid (X) — brd_ov5647_hole_x(), the vendor CAD"
+      },
+      {
+       "name": "cam_hole_y",
+       "default": "12.5",
+       "comment": "hole grid (Y) — brd_ov5647_hole_y(), the vendor CAD"
+      },
+      {
+       "name": "cam_grid_dy",
+       "default": "4.05",
+       "comment": "hole-grid center ABOVE the carrier's center (toward its top edge) — brd_ov5647_grid_dy(), the vendor CAD"
+      },
+      {
+       "name": "cam_lens_h",
+       "default": "5.0",
+       "comment": "lens barrel top above the PCB face — brd_ov5647_lens_h(), the vendor CAD"
+      },
+      {
+       "name": "cam_holder_h",
+       "default": "3.65",
+       "comment": "the square holder's top above the PCB face — brd_ov5647_holder_h(), the vendor CAD"
+      },
+      {
+       "name": "cam_lens_sq",
+       "default": "8.8",
+       "comment": "the holder's square — brd_ov5647_holder_sq(), the vendor CAD"
+      },
+      {
+       "name": "cam_barrel_d",
+       "default": "7.0",
+       "comment": "the round lens barrel — brd_ov5647_barrel_d(), the vendor CAD"
+      },
+      {
+       "name": "cam_barrel_in",
+       "default": "0.4",
+       "comment": "how far the barrel stands into its bore; the 2.0 face leaves 0.8 under the disc seat, so 0.4 of focus travel"
+      },
+      {
+       "name": "lens_dx",
+       "default": "0.0",
+       "comment": "lens center X offset from the carrier's center — brd_ov5647_lens_dx(), the vendor CAD"
+      },
+      {
+       "name": "lens_dy",
+       "default": "-1.7",
+       "comment": "lens center Y offset from the carrier's center: BELOW it, toward the ribbon edge — brd_ov5647_lens_dy(), the vendor CAD"
+      },
+      {
+       "name": "cam_fov",
+       "default": "62",
+       "range": [
+        40.0,
+        1.0,
+        160.0
+       ],
+       "comment": "lens diagonal field of view (OV5647-62)"
+      },
+      {
+       "name": "cam_fov_margin",
+       "default": "4",
+       "comment": "degrees added to each side of the FOV cone the hole must clear"
       },
       {
        "name": "v_stack_sock",
@@ -6907,6 +6982,16 @@
         6.0
        ],
        "comment": "how far the USB awning's drip edge stands off the bottom wall"
+      },
+      {
+       "name": "bridge_layer",
+       "default": "0.2",
+       "range": [
+        0.08,
+        0.04,
+        0.32
+       ],
+       "comment": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
       }
      ]
     },
@@ -7095,6 +7180,29 @@
        "default": "-inner_y/2 + board_clear + sm_l/2"
       },
       {
+       "name": "cam_grid_cy",
+       "default": "cam_cy + cam_grid_dy",
+       "comment": "the hole grid's center (the posts)"
+      },
+      {
+       "name": "cam_post_h",
+       "default": "cam_lens_h - cam_barrel_in"
+      },
+      {
+       "name": "cam_ap_d",
+       "default": "cam_barrel_d + 2*tol_slide"
+      },
+      {
+       "name": "cam_half",
+       "default": "cam_fov/2 + cam_fov_margin",
+       "comment": "the cone the hole must clear, per side"
+      },
+      {
+       "name": "cam_bore_top",
+       "default": "lid_t - (cam_disc_t + 0.2)",
+       "comment": "bore floor -> disc seat"
+      },
+      {
        "name": "v_usb_zc",
        "default": "floor_t + v_standoff + pcb_t + port_usbc_shell_h()/2"
       },
@@ -7172,6 +7280,18 @@
       {
        "name": "weep_x",
        "default": "(v_cx + col_v/2 + s_cx - col_s/2)/2"
+      },
+      {
+       "name": "cam_throw",
+       "default": "lid_t - cam_barrel_in"
+      },
+      {
+       "name": "_cone_at_seat",
+       "default": "cam_cone_d(cam_bore_top)"
+      },
+      {
+       "name": "_fov_at_face",
+       "default": "cam_barrel_d + 2*(lid_t - cam_barrel_in)*tan(cam_half)"
       },
       {
        "name": "cam_pilot",
