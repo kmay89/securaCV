@@ -18,7 +18,7 @@ What is pinned and why:
     output, so a same-named local of a column-0 module can never be hit
     (parse_scad stops at the first `^module`);
   • the board registry (canary_board_lib.scad) parses completely — nine rows,
-    eleven facts — and a row that drifts from the literal shape is a failure,
+    twenty facts — and a row that drifts from the literal shape is a failure,
     never a shorter registry; each reference form resolves; an unknown row,
     dim or fact fails naming the manifest and the library;
   • a reference is declared only where the knob's help comment already cites
@@ -27,7 +27,9 @@ What is pinned and why:
     twelve — the Touch 1.69's glass pair crosswise, as its comment says), the
     knobs that merely equal a row stay numbers, and a mutated registry value
     moves exactly the lines that reference it — every case that names the
-    row moves (the three ws147 cases, since the C6 joined) and no other;
+    row moves (the three ws147 cases, since the C6 joined) and no other —
+    the OV5647's nine camera facts joined later, named by both Vision-build
+    cases (the case and its doorbell), so REFS lists them for each;
   • the one display case no manifest can own yet is refused by construction,
     not by omission: the 7" frame's panel-library reads. The C6's `model`
     ternaries became the 1.47 literals they always evaluated to and the
@@ -137,6 +139,18 @@ REFS = {
     ("canary_vision_enclosure.scad", "cam_w"): 'brd_w("ov5647")',
     ("canary_vision_enclosure.scad", "cam_h"): 'brd_l("ov5647")',
     ("canary_vision_enclosure.scad", "pcb_t"): 'brd_t("grove_v2")',
+    # the OV5647-62's mounting and lens geometry, off the vendor CAD — the
+    # facts both Vision-build cases hang their camera by (v0.6: the posts on
+    # the hole grid's offset, the hole on the lens), so the two cannot drift
+    ("canary_vision_enclosure.scad", "cam_hole_x"): "brd_ov5647_hole_x()",
+    ("canary_vision_enclosure.scad", "cam_hole_y"): "brd_ov5647_hole_y()",
+    ("canary_vision_enclosure.scad", "cam_grid_dy"): "brd_ov5647_grid_dy()",
+    ("canary_vision_enclosure.scad", "lens_dx"): "brd_ov5647_lens_dx()",
+    ("canary_vision_enclosure.scad", "lens_dy"): "brd_ov5647_lens_dy()",
+    ("canary_vision_enclosure.scad", "cam_lens_h"): "brd_ov5647_lens_h()",
+    ("canary_vision_enclosure.scad", "cam_holder_h"): "brd_ov5647_holder_h()",
+    ("canary_vision_enclosure.scad", "cam_lens_sq"): "brd_ov5647_holder_sq()",
+    ("canary_vision_enclosure.scad", "cam_barrel_d"): "brd_ov5647_barrel_d()",
     ("canary_sense_enclosure.scad", "radar_l"): 'brd_l("mr60")',
     ("canary_sense_enclosure.scad", "radar_w"): 'brd_w("mr60")',
     ("canary_sense_enclosure.scad", "xiao_l"): 'brd_l("xiao")',
@@ -174,6 +188,15 @@ REFS = {
     ("canary_vision_doorbell.scad", "cam_w"): 'brd_w("ov5647")',
     ("canary_vision_doorbell.scad", "cam_h"): 'brd_l("ov5647")',
     ("canary_vision_doorbell.scad", "pcb_t"): 'brd_t("grove_v2")',
+    ("canary_vision_doorbell.scad", "cam_hole_x"): "brd_ov5647_hole_x()",
+    ("canary_vision_doorbell.scad", "cam_hole_y"): "brd_ov5647_hole_y()",
+    ("canary_vision_doorbell.scad", "cam_grid_dy"): "brd_ov5647_grid_dy()",
+    ("canary_vision_doorbell.scad", "lens_dx"): "brd_ov5647_lens_dx()",
+    ("canary_vision_doorbell.scad", "lens_dy"): "brd_ov5647_lens_dy()",
+    ("canary_vision_doorbell.scad", "cam_lens_h"): "brd_ov5647_lens_h()",
+    ("canary_vision_doorbell.scad", "cam_holder_h"): "brd_ov5647_holder_h()",
+    ("canary_vision_doorbell.scad", "cam_lens_sq"): "brd_ov5647_holder_sq()",
+    ("canary_vision_doorbell.scad", "cam_barrel_d"): "brd_ov5647_barrel_d()",
 }
 NUMBERS = {
     "canary_wap_enclosure.scad": ["board_h", "board_clear", "stack_camera", "stack_plain"],
@@ -332,7 +355,9 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
         self.assertEqual(vision["xiao_l"].slugs, ["canary-vision"])
         self.assertEqual(sorted(vision), sorted(
             ["vm_l", "vm_w", "xiao_l", "xiao_w", "stack_sock_h", "xiao_below", "vm_front_h",
-             "cam_w", "cam_h", "pcb_t", "board_clear", "dk_l", "dk_w", "stack_h"]))
+             "cam_w", "cam_h", "pcb_t", "board_clear", "dk_l", "dk_w", "stack_h",
+             "cam_hole_x", "cam_hole_y", "cam_grid_dy", "lens_dx", "lens_dy", "cam_lens_h",
+             "cam_holder_h", "cam_lens_sq", "cam_barrel_d"]))
         # same case, same host: the XIAO S3 manifest asserts nothing of its own
         s3 = json.loads((DEVICES / "canary-vision-xiao-s3" / "device.json")
                         .read_text(encoding="utf-8"))
@@ -360,10 +385,11 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
         # 54 + the C6's trio + the 1.69's two offsets + the doorbell's eleven
-        # + the Watch's stand recline + the WAP's three Sense-camera facts;
-        # 8 files + the C6 + the doorbell; 29 references + 3 + 8 + 3
-        self.assertIn("74 manifest-owned knobs across 10 case file(s)", out.getvalue())
-        self.assertIn("(43 of them resolved from canary_board_lib.scad)", out.getvalue())
+        # + the Watch's stand recline + the WAP's three Sense-camera facts
+        # + the OV5647's nine camera facts in each Vision-build case;
+        # 8 files + the C6 + the doorbell; 29 references + 3 + 8 + 3 + 18
+        self.assertIn("92 manifest-owned knobs across 10 case file(s)", out.getvalue())
+        self.assertIn("(61 of them resolved from canary_board_lib.scad)", out.getvalue())
 
     def test_the_printed_order_names_the_carry_and_its_check(self):
         # REGEN_ORDER is what a write and a failed --check print. Step 10 must
@@ -401,7 +427,7 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
 
 
 class BoardRegistry(unittest.TestCase):
-    def test_committed_lib_parses_nine_rows_and_eleven_facts(self):
+    def test_committed_lib_parses_nine_rows_and_twenty_facts(self):
         reg = gcp.parse_board_registry()
         self.assertEqual(reg.path, LIB)
         self.assertEqual(list(reg.rows), ["xiao", "grove_v2", "ov5647", "mr60", "dk_c3",
@@ -423,7 +449,15 @@ class BoardRegistry(unittest.TestCase):
                                            "brd_ws169_glass_h",
                                            # the XIAO ESP32-S3 Sense camera, off Seeed's model
                                            "brd_xiao_sense_cam_h", "brd_xiao_sense_cam_dx",
-                                           "brd_xiao_sense_cam_dy", "brd_xiao_sense_cam_fp"])
+                                           "brd_xiao_sense_cam_dy", "brd_xiao_sense_cam_fp",
+                                           # the OV5647-62 camera, off the vendor CAD
+                                           "brd_ov5647_hole_x", "brd_ov5647_hole_y",
+                                           "brd_ov5647_grid_dy", "brd_ov5647_lens_dx",
+                                           "brd_ov5647_lens_dy", "brd_ov5647_lens_h",
+                                           "brd_ov5647_holder_h", "brd_ov5647_holder_sq",
+                                           "brd_ov5647_barrel_d"])
+        self.assertEqual((reg.facts["brd_ov5647_grid_dy"].value, reg.facts["brd_ov5647_lens_dy"].value,
+                          reg.facts["brd_ov5647_barrel_d"].value), (4.05, -1.7, 7.0))
         self.assertEqual((reg.facts["brd_xiao_sense_cam_h"].value,
                           reg.facts["brd_xiao_sense_cam_dx"].value,
                           reg.facts["brd_xiao_sense_cam_dy"].value,
@@ -832,7 +866,7 @@ class AManifestMayOwnASecondCaseFile(unittest.TestCase):
         door, vision = owned[DOORBELL_REL], owned[VISION_REL]
         self.assertEqual(sorted(door),
                          sorted(k for k, o in vision.items() if "canary-vision" in o.slugs))
-        self.assertEqual(len(door), 11)
+        self.assertEqual(len(door), 20)   # the eleven board knobs + the OV5647's nine camera facts
         for k, o in door.items():
             self.assertEqual(o.slugs, ["canary-vision"], k)
             self.assertEqual((o.value, o.ref, o.cite, o.where),

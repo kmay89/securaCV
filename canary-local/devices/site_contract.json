@@ -5,6 +5,7 @@
     "canary-local/boards/seeed_grove_vision_ai_v2.glb",
     "canary-local/boards/seeed_round_display_xiao.glb",
     "canary-local/boards/seeed_xiao_esp32s3_sense.glb",
+    "canary-local/devices/assembly.json",
     "canary-local/devices/build.json",
     "canary-local/devices/catalog.json",
     "canary-local/devices/enclosures.json",

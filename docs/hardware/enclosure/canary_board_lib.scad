@@ -119,6 +119,29 @@ function brd_xiao_sense_cam_dx() = -6.95;  // module center along the length, fr
 function brd_xiao_sense_cam_dy() = -0.64;  // module center across the width, from the board center, + = the long edge on the LEFT with the USB toward you and the parts up (see above)
 function brd_xiao_sense_cam_fp() = 8.0;    // module footprint, square side (the lens barrel's envelope)
 
+// OV5647-62 CAMERA — the Grove Vision AI V2 kit's camera (Pi-cam v1.3 form,
+// the "ov5647" row above), read off the vendor CAD: the "RPi cam Rev 1.3"
+// posed inside boards/vendor/seeed_grove_vision_ai_v2.step.gz, "drawing"
+// rung. In the carrier's frame (its center the origin, +Y toward the edge
+// AWAY from the ribbon connector): the four Ø2.1 holes sit on a 21 x 12.3
+// grid (12.5 nominal, the Pi-cam pattern) centered 4.05 ABOVE the carrier's
+// center; the lens is centered on the carrier across X and 1.7 BELOW its
+// center, beside the lower hole row; its Ø7.0 round barrel tops out 5.0
+// over the PCB face (Seeed's datasheet: a 25 x 24 x 7±0.2 module), on an
+// 8.8 square holder 3.65 tall. Every case that hung this camera on posts at
+// the carrier's center with the lens 2.5 above it put the real lens ~8 mm
+// off its hole — the doorbell's and the Vision's v0.6 found it. Their
+// manifests own these knobs, so the two cases cannot drift apart again.
+function brd_ov5647_hole_x()   = 21.0;   // mounting-hole grid across the carrier (X)
+function brd_ov5647_hole_y()   = 12.5;   // mounting-hole grid along it (Y) — 12.3 in the model, the 12.5 nominal carried
+function brd_ov5647_grid_dy()  = 4.05;   // hole-grid center ABOVE the carrier's center (away from the ribbon edge)
+function brd_ov5647_lens_dx()  = 0.0;    // lens center across the carrier, from its center
+function brd_ov5647_lens_dy()  = -1.7;   // lens center along it, from its center: BELOW, toward the ribbon edge
+function brd_ov5647_lens_h()   = 5.0;    // lens barrel top above the PCB face
+function brd_ov5647_holder_h() = 3.65;   // the square holder's top above the PCB face
+function brd_ov5647_holder_sq() = 8.8;   // the holder's square side
+function brd_ov5647_barrel_d() = 7.0;    // the round lens barrel's diameter
+
 // ---------------------------------------------------------------------------
 //  Self-check — registry integrity + the pinned lessons. Call once from an
 //  adopter (the fit coupon does).
@@ -144,5 +167,14 @@ module board_selfcheck() {
            "board: the measured XIAO is WIDER than spec — that is the whole lesson");
     assert(brd_stack_sock_measured() < brd_stack_sock_unmeasured(),
            "board: the measured seated stack is shorter than the legacy guess");
+    // the OV5647's lens and hole grid sit ON its carrier — and the lens sits
+    // below the carrier's center while the grid sits above it (the v0.6 bug)
+    assert(abs(brd_ov5647_lens_dx()) + brd_ov5647_holder_sq()/2 < brd_w("ov5647")/2
+           && abs(brd_ov5647_lens_dy()) + brd_ov5647_holder_sq()/2 < brd_l("ov5647")/2
+           && brd_ov5647_hole_x()/2 < brd_w("ov5647")/2
+           && brd_ov5647_grid_dy() + brd_ov5647_hole_y()/2 < brd_l("ov5647")/2,
+           "board: the OV5647's lens holder or hole grid runs off its carrier");
+    assert(brd_ov5647_lens_dy() < 0 && brd_ov5647_grid_dy() > 0,
+           "board: the OV5647's lens is BELOW the carrier's center and its hole grid ABOVE — the case bug v0.6 fixed");
     echo("canary_board_lib: self-check OK");
 }

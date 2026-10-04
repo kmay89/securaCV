@@ -284,7 +284,13 @@ class LedgerShape(unittest.TestCase):
         vision = figs["device.canary-vision"]["knobs"]
         self.assertEqual(set(vision), {"vm_l", "vm_w", "xiao_l", "xiao_w", "stack_sock_h",
                                        "xiao_below", "vm_front_h", "cam_w", "cam_h", "pcb_t",
-                                       "board_clear"})
+                                       "board_clear",
+                                       # the OV5647-62's camera facts (v0.6): the site's Vision
+                                       # model can read the lens offset here, never retype it
+                                       "cam_hole_x", "cam_hole_y", "cam_grid_dy", "lens_dx",
+                                       "lens_dy", "cam_lens_h", "cam_holder_h", "cam_lens_sq",
+                                       "cam_barrel_d"})
+        self.assertEqual((vision["lens_dy"], vision["cam_grid_dy"]), (-1.7, 4.05))
         # every owned knob reaches exactly the figure its manifest draws (a
         # shared case file reaches two figures by slug: the devkit's knobs are
         # the devkit figure's, the XIAO manifests' the Vision figure's)
@@ -324,7 +330,8 @@ class LedgerShape(unittest.TestCase):
         for rid, row in reg.items():
             self.assertIn(row["evidence"], {"measured", "drawing", "spec", "unmeasured"}, rid)
         facts = self.dims["board_facts"]
-        self.assertEqual(len(facts), 11)
+        self.assertEqual(len(facts), 20)   # + the OV5647-62's nine camera facts (v0.6)
+        self.assertEqual(facts["brd_ov5647_lens_dy"], -1.7)
         self.assertEqual(facts["brd_xiao_w_measured"], 17.8)
         self.assertEqual(facts["brd_xiao_sense_cam_h"], 12.7)
         self.assertEqual(facts["brd_stack_sock_measured"], 6.5)
