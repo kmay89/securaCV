@@ -16,7 +16,7 @@
 // portraits, the 800x480 dash (a centered sheet) and its 480x800 column all
 // render the same rows at their own size. Input is LVGL-native (main.cpp
 // feeds the pointer device only while this is open — settings_ui.h).
-#include "flavor_config.h"
+#include <config.h>
 #include <Arduino.h>
 #include <lvgl.h>
 #include <ctype.h>
@@ -25,7 +25,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "settings_ui.h"
+#include "canary/ui/settings_ui.h"
 
 #if defined(FEATURE_TOUCH) && FEATURE_TOUCH
 
@@ -37,7 +37,7 @@
 // non-fleet gears this build carries; entering one is a confirm-gated
 // latch-and-reboot through the mode glue (which owns the NVS grammar).
 #define CD_SET_MODES 1
-#include "mode_glue.h"
+#include "canary/mode/mode_glue.h"
 #endif
 // Arcade is dash-first (mode_glue compiles its gear on the dash only);
 // the Settings row must not offer a gear the dispatcher can't enter.
@@ -49,7 +49,7 @@
 #if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
     defined(HAS_MICROPHONE) && HAS_MICROPHONE
 #define CD_SET_MIC 1
-#include "mic_alarm.h"
+#include "canary/io/mic_alarm.h"
 #endif
 
 #if defined(CD_FLAVOR_DASH) && defined(FEATURE_STANDALONE_WEATHER) && \
@@ -60,7 +60,7 @@
 // the emulator build, so status degrades to the stored knobs there.
 #define CD_SET_WX 1
 #if !defined(EMU_BUILD_FLAVOR)
-#include "wx_direct.h"
+#include "canary/net/wx_direct.h"
 #endif
 #endif
 
@@ -77,27 +77,27 @@
 #endif
 
 #include <WiFi.h>                    // localIP for the network page
-#include "commission_ui.h"
-#include "help_verdict.h"   // the "get help" QR's pure verdict → URL
-#include "lvgl_port.h"     // canvas size, rotation, dim, touch feed
-#include "theme.h"
-#include "character.h"
-#include "clock_styles.h"
-#include "glass_settings.h"
-#include "display.h"
-#include "runtime_config.h"   // the wifi-forget doorway
-#include "mqtt_mgr.h"      // hub link state
-#include "ota_mgr.h"      // version + signed OTA facade
-#include "wifi_mgr.h"     // live link state for the network page
-#include "hostname.h"     // the glass's .local name (one recipe)
-#include "wifi_join_policy.h"  // join_failure_label (shared words)
+#include "canary/ui/commission_ui.h"
+#include "canary/ui/help_verdict.h"   // the "get help" QR's pure verdict → URL
+#include "canary/ui/lvgl_port.h"     // canvas size, rotation, dim, touch feed
+#include "canary/ui/theme.h"
+#include "canary/ui/character.h"
+#include "canary/ui/clock_styles.h"
+#include "canary/glass_settings.h"
+#include "canary/hal/display.h"
+#include "canary/runtime_config.h"   // the wifi-forget doorway
+#include "canary/net/mqtt_mgr.h"      // hub link state
+#include "canary/net/ota_mgr.h"      // version + signed OTA facade
+#include "canary/net/wifi_mgr.h"     // live link state for the network page
+#include "canary/net/hostname.h"     // the glass's .local name (one recipe)
+#include "network/wifi_join_policy.h"  // join_failure_label (shared words)
 #if !defined(EMU_BUILD_FLAVOR) && defined(FEATURE_MDNS_DISCOVERY) && \
     FEATURE_MDNS_DISCOVERY
-#include "discovery.h"    // discovery_up — is the .local name real
+#include "canary/net/discovery.h"    // discovery_up — is the .local name real
 #endif
 #include "pins.h"                    // HAS_ISOLATED_IO (board -I path)
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
-#include "field_io.h"      // siren arm/disarm — 4.3B isolated output
+#include "canary/io/field_io.h"      // siren arm/disarm — 4.3B isolated output
 #endif
 
 namespace canary::ui {

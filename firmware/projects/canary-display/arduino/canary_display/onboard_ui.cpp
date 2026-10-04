@@ -3,7 +3,7 @@
 // One file serves both flavors; only geometry branches on CD_FLAVOR_*. The
 // scenes are deliberately spare — a setup flow earns trust by being calm,
 // not busy. Every animation here is enumerated in onboard_ui.h's budget.
-#include "flavor_config.h"
+#include <config.h>
 // Nightstand borrows the watch's small-portrait modal rendering (see
 // splash.cpp for the rationale); the standing face is portrait_ui.cpp.
 #if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
@@ -16,12 +16,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "onboard_ui.h"
-#include "onboard_layout.h"
-#include "round_frame.h"
-#include "theme.h"
-#include "canary_mark.h"
-#include "provision_core.h"  // shared onboarding pure helpers (common/)
+#include "canary/ui/onboard_ui.h"
+#include "canary/ui/onboard_layout.h"
+#include "canary/ui/round_frame.h"
+#include "canary/ui/theme.h"
+#include "canary/ui/canary_mark.h"
+#include "network/provision_core.h"  // shared onboarding pure helpers (common/)
 
 namespace canary::ui {
 

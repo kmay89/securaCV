@@ -1,6 +1,6 @@
 #pragma once
 #include <stdint.h>
-#include "playground.h"
+#include "canary/playground/playground.h"
 
 // Dev Playground glass (800x480, dash flavor only): a bench instrument
 // face, not a fleet face. Left: the always-visible PIN TRACKER — every

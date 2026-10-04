@@ -20,21 +20,21 @@
 // Not compiled on the Nightlight (CD_NIGHTLIGHT): that build shares this
 // flavor's HAL and modal surfaces but swaps the standing face for
 // nightlight_ui.cpp — the same arrangement dash_ui has with CD_NIGHTSTAND7.
-#include "flavor_config.h"
+#include <config.h>
 #if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
 
 #include <lvgl.h>
 #include <stdio.h>
 
-#include "portrait_ui.h"
-#include "theme.h"
-#include "canary_mark.h"
-#include "character.h"
-#include "look_state.h"
-#include "settings_ui.h"
+#include "canary/ui/portrait_ui.h"
+#include "canary/ui/theme.h"
+#include "canary/ui/canary_mark.h"
+#include "canary/ui/character.h"
+#include "canary/ui/look_state.h"
+#include "canary/ui/settings_ui.h"
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
-#include "lantern.h"
-#include "hallway.h"
+#include "canary/care/lantern.h"
+#include "canary/care/hallway.h"
 #endif
 #include "color/look_engine.h"
 #include "color/plumage.h"

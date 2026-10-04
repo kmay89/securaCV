@@ -1,5 +1,5 @@
 #pragma once
-#include "flavor_config.h"   // CD_FLAVOR_* selectors
+#include <config.h>   // CD_FLAVOR_* selectors
 #include <stdint.h>
 
 class Arduino_GFX;  // moononournation GFX — the one graphics type the UI sees

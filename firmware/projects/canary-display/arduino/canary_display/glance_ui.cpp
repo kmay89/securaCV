@@ -4,7 +4,7 @@
 // a dark room in under a second; motion is rationed — a 220 ms page fade,
 // a 2 s breath on an unacked alert, the 900 ms hold-to-ack sweep, and
 // nothing else moves, ever.
-#include "flavor_config.h"
+#include <config.h>
 #ifdef CD_FLAVOR_WATCH
 
 #include <Arduino.h>
@@ -13,23 +13,23 @@
 #include <string.h>
 #include <ctype.h>
 
-#include "glance_ui.h"
-#include "round_frame.h"
-#include "theme.h"
-#include "canary_mark.h"
-#include "character.h"
-#include "trust.h"
-#include "version.h"
+#include "canary/ui/glance_ui.h"
+#include "canary/ui/round_frame.h"
+#include "canary/ui/theme.h"
+#include "canary/ui/canary_mark.h"
+#include "canary/ui/character.h"
+#include "canary/trust.h"
+#include "canary/version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
 #include <time.h>
-#include "fleet_cards.h"
-#include "journal_instance.h"
+#include "canary/fleet/fleet_cards.h"
+#include "canary/fleet/journal_instance.h"
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
-#include "care_glue.h"
+#include "canary/care/care_glue.h"
 #if (defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER) || \
     (defined(FEATURE_COMFORT_WORDS) && FEATURE_COMFORT_WORDS)
-#include "bedside.h"
+#include "canary/care/bedside.h"
 #endif
 #endif
 

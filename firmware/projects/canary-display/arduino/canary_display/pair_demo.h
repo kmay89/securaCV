@@ -37,7 +37,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "fleet_model.h"  // BeaconStatus + Via (pure)
+#include "canary/fleet/fleet_model.h"  // BeaconStatus + Via (pure)
 
 namespace canary {
 namespace pair {

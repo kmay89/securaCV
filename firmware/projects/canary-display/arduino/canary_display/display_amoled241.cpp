@@ -36,7 +36,7 @@
 //    it, not patched in afterwards. Bench-verify colors and geometry on
 //    first boot — a wrong MADCTL shows mirrored geometry, a wrong color
 //    order swaps red/blue.
-#include "flavor_config.h"
+#include <config.h>
 #if defined(CD_FLAVOR_NIGHTSTAND) && defined(CD_AMOLED_GLASS)
 
 #include <Arduino.h>
@@ -48,8 +48,8 @@
 
 #include "pins.h"
 
-#include "display.h"
-#include "log.h"
+#include "canary/hal/display.h"
+#include "canary/log.h"
 
 namespace canary::hal {
 

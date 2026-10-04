@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include "topics.h"
+#include "canary/topics.h"
 
 namespace canary::net {
 

@@ -1,9 +1,9 @@
 // src/ui/round_frame.cpp — the circle's LVGL glue (see round_frame_core.h
 // for the geometry and the why).
-#include "flavor_config.h"
+#include <config.h>
 #include <lvgl.h>
 
-#include "round_frame.h"
+#include "canary/ui/round_frame.h"
 
 namespace canary::ui {
 

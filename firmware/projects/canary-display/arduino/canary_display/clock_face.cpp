@@ -1,12 +1,12 @@
 // src/ui/clock_face.cpp — the drawn Analog dial. See the header.
-#include "flavor_config.h"
+#include <config.h>
 #ifdef CD_FLAVOR_DASH
 
 #include <lvgl.h>
 #include <math.h>
 
-#include "clock_face.h"
-#include "motion.h"
+#include "canary/ui/clock_face.h"
+#include "canary/ui/motion.h"
 
 namespace canary::ui {
 

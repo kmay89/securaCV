@@ -13,7 +13,7 @@
 #ifndef CANARY_MODE_MODE_GLUE_H
 #define CANARY_MODE_MODE_GLUE_H
 
-#include "mode_registry.h"
+#include "canary/mode/mode_registry.h"
 
 namespace canary {
 namespace mode {

@@ -5,7 +5,7 @@
 // exposes the bare panel and flushes arrive via draw16bitRGBBitmap.
 // Backlight is real PWM (LEDC), which is what makes the bedside near-dark
 // floor possible.
-#include "flavor_config.h"
+#include <config.h>
 #ifdef CD_FLAVOR_WATCH
 
 #include <Arduino.h>
@@ -13,9 +13,9 @@
 #include <Arduino_GFX_Library.h>
 
 #include "pins.h"
-#include "display.h"
-#include "core_compat.h"
-#include "log.h"
+#include "canary/hal/display.h"
+#include "canary/hal/core_compat.h"
+#include "canary/log.h"
 
 namespace canary::hal {
 

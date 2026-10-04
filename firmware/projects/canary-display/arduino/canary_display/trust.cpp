@@ -4,7 +4,7 @@
 // (build_chain_canonical + _verify_raw) and the signer in
 // firmware/common/identity/device_signature.cpp. Any change to the
 // canonical format lands in all three in lockstep (SCHEMA_V bump).
-#include "trust.h"
+#include "canary/trust.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -13,7 +13,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <Ed25519.h>
-#include "log.h"
+#include "canary/log.h"
 #endif
 
 namespace canary::trust {

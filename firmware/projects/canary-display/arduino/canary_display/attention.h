@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <cstddef>
 
-#include "fleet_model.h"
+#include "canary/fleet/fleet_model.h"
 
 // Attention policy — who gets to make noise, when, and what happens to the
 // noise that wasn't allowed (display_care_wave.md §2).

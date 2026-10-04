@@ -1,6 +1,6 @@
 #pragma once
 #include <stdint.h>
-#include "fleet_model.h"
+#include "canary/fleet/fleet_model.h"
 
 // TOFU trust store + on-device Ed25519 chain verification.
 //

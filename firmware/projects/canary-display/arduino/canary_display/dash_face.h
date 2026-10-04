@@ -12,8 +12,8 @@
 // setting still says portrait then, and a face picked from it was the
 // 480-wide column laid out on the 800x480 canvas (F223). Read from the port,
 // the face is always the one the canvas is shaped for.
-#include "glass_settings.h"
-#include "lvgl_port.h"
+#include "canary/glass_settings.h"
+#include "canary/ui/lvgl_port.h"
 
 namespace canary::ui {
 

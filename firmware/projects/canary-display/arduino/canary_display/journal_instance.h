@@ -3,8 +3,8 @@
 // Journal template itself stays dependency-free and host-testable.
 #pragma once
 
-#include "config.h"
-#include "journal.h"
+#include "canary/config.h"
+#include "canary/fleet/journal.h"
 
 namespace canary::fleet {
 

@@ -6,8 +6,8 @@
 // note can breathe (envelope), chirp (glissando), and trill (warble) on a
 // single square-wave piezo voice. Loudness for a given play() is resolved
 // once from the volume model and then scaled by the per-tick envelope.
-#include "chime.h"
-#include "core_compat.h"
+#include "canary/hal/chime.h"
+#include "canary/hal/core_compat.h"
 
 #include <Arduino.h>
 #include <Preferences.h>

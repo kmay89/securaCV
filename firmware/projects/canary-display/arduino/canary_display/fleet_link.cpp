@@ -20,7 +20,7 @@
 // connect blocks up to its timeout). That is acceptable here because the whole
 // sequence only fires on an explicit request while off-grid, and returns
 // immediately on every other loop pass.
-#include "flavor_config.h"
+#include <config.h>
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
 
 #include <Arduino.h>
@@ -28,12 +28,12 @@
 #include <esp_heap_caps.h>
 #include <string.h>
 
-#include "fleet_link.h"
-#include "ble_gate.h"
-#include "beacon_parse.h"
-#include "fleet_instance.h"
-#include "fleet_model.h"
-#include "log.h"
+#include "canary/net/fleet_link.h"
+#include "canary/net/ble_gate.h"
+#include "canary/net/beacon_parse.h"
+#include "canary/fleet/fleet_instance.h"
+#include "canary/fleet/fleet_model.h"
+#include "canary/log.h"
 
 namespace canary::net {
 

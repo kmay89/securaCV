@@ -2,7 +2,7 @@
 // persistence of the lantern preferences. The model itself (timeout, the
 // attention veto, the auto schedule) is pure and host-tested — see
 // include/canary/care/lantern.h.
-#include "flavor_config.h"
+#include <config.h>
 
 // LDF lesson: bundled-library includes stay ABOVE feature gates.
 #include <Arduino.h>
@@ -10,11 +10,11 @@
 
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 
-#include "lantern.h"
+#include "canary/care/lantern.h"
 // The chosen hue lives with the other look controls, and is persisted here
 // beside the lamp's scene and timer because it is the same kind of setting:
 // something the owner picked and expects to still be true after a power cut.
-#include "look_state.h"
+#include "canary/ui/look_state.h"
 
 namespace canary::care {
 

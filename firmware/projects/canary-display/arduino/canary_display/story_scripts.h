@@ -29,7 +29,7 @@
 //  5. PLAIN ASCII. The built-in Montserrat tables carry no emoji, and the
 //     glance contract wants words that read across a room, not glyphs.
 #pragma once
-#include "story.h"
+#include "story/story.h"
 
 namespace canary::story {
 

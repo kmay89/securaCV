@@ -8,7 +8,7 @@
 // transport and the receive-drain plumbing (the same shape chirp_scan.cpp uses:
 // a minimal ISR-context callback that parses + enqueues, drained by the loop).
 
-#include "flavor_config.h"
+#include <config.h>
 
 #if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
 
@@ -18,11 +18,11 @@
 #include <esp_wifi.h>
 #include <string.h>
 
-#include "espnow_peer.h"
-#include "espnow_peer_logic.h"  // pure decode (shared with host test)
-#include "fleet_instance.h"
-#include "pair_demo_ui.h"  // First Light demo tap (inert unless FEATURE_PAIR_DEMO)
-#include "log.h"
+#include "canary/net/espnow_peer.h"
+#include "canary/net/espnow_peer_logic.h"  // pure decode (shared with host test)
+#include "canary/fleet/fleet_instance.h"
+#include "canary/ui/pair_demo_ui.h"  // First Light demo tap (inert unless FEATURE_PAIR_DEMO)
+#include "canary/log.h"
 
 namespace canary {
 namespace net {

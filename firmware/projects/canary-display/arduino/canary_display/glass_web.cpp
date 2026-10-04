@@ -1,5 +1,5 @@
 // src/net/glass_web.cpp — the display's own web page. See glass_web.h.
-#include "flavor_config.h"
+#include <config.h>
 #include <Arduino.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
@@ -8,39 +8,39 @@
 
 #include <WiFi.h>
 
-#include "glass_web.h"
-#include "settings_policy.h"  // the on-glass-only write class
-#include "host_guard.h"          // Host must name THIS device (firmware/common; the canary tree shares it)
-#include "wifi_mgr.h"
-#include "tz_auto.h"
-#include "mqtt_mgr.h"   // hub state for the /api/fleet self-report
-#include "ota_web.h"    // the /api/ota routes' facade (ota_mgr)
-#include "mirror_html.h"
-#include "tv_html.h"
-#include "character.h"
-#include "clock_styles.h"
+#include "canary/net/glass_web.h"
+#include "canary/net/settings_policy.h"  // the on-glass-only write class
+#include "network/host_guard.h"          // Host must name THIS device (firmware/common; the canary tree shares it)
+#include "canary/net/wifi_mgr.h"
+#include "canary/net/tz_auto.h"
+#include "canary/net/mqtt_mgr.h"   // hub state for the /api/fleet self-report
+#include "canary/net/ota_web.h"    // the /api/ota routes' facade (ota_mgr)
+#include "canary/net/mirror_html.h"
+#include "canary/net/tv_html.h"
+#include "canary/ui/character.h"
+#include "canary/ui/clock_styles.h"
 #if defined(CD_FLAVOR_DASH) && defined(FEATURE_STANDALONE_WEATHER) && \
     FEATURE_STANDALONE_WEATHER && defined(FEATURE_HUB_WEATHER) && \
     FEATURE_HUB_WEATHER
 #define GW_WX 1
-#include "wx_direct.h"
+#include "canary/net/wx_direct.h"
 #endif
-#include "glass_settings.h"
-#include "runtime_config.h"
-#include "version.h"
-#include "log.h"
-#include "fleet_selfreport.h"  // shared /api/fleet body builder
+#include "canary/glass_settings.h"
+#include "canary/runtime_config.h"
+#include "canary/version.h"
+#include "canary/log.h"
+#include "fleet_selfreport/fleet_selfreport.h"  // shared /api/fleet body builder
 #include "pins.h"  // CANARY_FIGURE_HARDWARE — which board this is (board -I path)
 #ifdef CD_NIGHTLIGHT
 // The nightlight's /api/settings extras: the lamp (lantern prefs), the
 // nightlight glue prefs, and the scene catalog served by name.
-#include "lantern.h"
-#include "nightlight_glue.h"
-#include "fleet_instance.h"
+#include "canary/care/lantern.h"
+#include "canary/care/nightlight_glue.h"
+#include "canary/fleet/fleet_instance.h"
 #include "color/look_engine.h"
 // The shared look controls — the color wheel writes here, and /api/settings
 // reads the live value back so the app never has to remember what it sent.
-#include "look_state.h"
+#include "canary/ui/look_state.h"
 #endif
 
 namespace canary {

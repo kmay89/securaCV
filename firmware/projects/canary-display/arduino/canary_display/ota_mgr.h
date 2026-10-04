@@ -1,5 +1,5 @@
 #pragma once
-#include "topics.h"
+#include "canary/topics.h"
 
 // Signed pull-OTA glue — wires the shared engine (firmware/common/ota) to
 // this variant: boot self-test with rollback, daily jittered update check,

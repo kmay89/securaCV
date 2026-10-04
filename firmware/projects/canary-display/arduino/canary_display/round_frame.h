@@ -1,7 +1,7 @@
 #pragma once
 #include <lvgl.h>
 
-#include "round_frame_core.h"
+#include "canary/ui/round_frame_core.h"
 
 // Round Frame, LVGL layer — fit-to-the-circle helpers for labels.
 //

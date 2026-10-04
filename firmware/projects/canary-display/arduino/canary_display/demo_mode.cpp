@@ -1,31 +1,31 @@
 // Demo mode runtime (see include/canary/mode/demo_mode.h). The whole TU is
 // empty without FEATURE_DEMO_MODE, so default builds stay byte-identical.
 
-#include "config.h"
+#include "canary/config.h"
 
 #if defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE
 
 #include <Arduino.h>
 #include <lvgl.h>
 
-#include "demo_mode.h"
-#include "demo_script.h"
-#include "mode_glue.h"
-#include "fleet_instance.h"
-#include "glass_settings.h"
-#include "display.h"
-#include "lvgl_port.h"
-#include "character.h"
-#include "bird_glue.h"
+#include "canary/mode/demo_mode.h"
+#include "canary/mode/demo_script.h"
+#include "canary/mode/mode_glue.h"
+#include "canary/fleet/fleet_instance.h"
+#include "canary/glass_settings.h"
+#include "canary/hal/display.h"
+#include "canary/ui/lvgl_port.h"
+#include "canary/ui/character.h"
+#include "canary/care/bird_glue.h"
 #ifdef CD_FLAVOR_WATCH
-#include "glance_ui.h"
+#include "canary/ui/glance_ui.h"
 #endif
 #ifdef CD_FLAVOR_DASH
-#include "dash_ui.h"
+#include "canary/ui/dash_ui.h"
 #endif
 
-#include "boot_banner.h"
-#include "version.h"
+#include "boot/boot_banner.h"
+#include "canary/version.h"
 
 namespace canary {
 namespace mode {

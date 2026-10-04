@@ -4,7 +4,7 @@
 // Nightlight flavor only (CD_NIGHTLIGHT).
 #pragma once
 #include <stdint.h>
-#include "nightlight.h"
+#include "canary/care/nightlight.h"
 
 namespace canary::care {
 

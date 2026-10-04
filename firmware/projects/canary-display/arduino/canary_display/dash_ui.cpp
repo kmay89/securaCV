@@ -10,7 +10,7 @@
 // flavor's panel/HAL but its standing face is the bedside one
 // (nightstand7_ui.cpp), so the wall dashboard would be dead weight in a
 // 16 MB image and dead code in the review.
-#include "flavor_config.h"
+#include <config.h>
 #if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
 
 #include <Arduino.h>
@@ -21,37 +21,37 @@
 #include <ctype.h>
 #include <time.h>
 
-#include "dash_ui.h"
-#include "settings_ui.h"
-#include "commission_ui.h"
-#include "theme.h"
-#include "character.h"
-#include "canary_mark.h"
-#include "fleet_figure.h"
-#include "trust.h"
-#include "fleet_figures.h"
-#include "version.h"
-#include "runtime_config.h"   // ssid for the transparency sheet
+#include "canary/ui/dash_ui.h"
+#include "canary/ui/settings_ui.h"
+#include "canary/ui/commission_ui.h"
+#include "canary/ui/theme.h"
+#include "canary/ui/character.h"
+#include "canary/ui/canary_mark.h"
+#include "canary/ui/fleet_figure.h"
+#include "canary/trust.h"
+#include "core/fleet_figures.h"
+#include "canary/version.h"
+#include "canary/runtime_config.h"   // ssid for the transparency sheet
 #include <WiFi.h>                    // localIP — the fallback address
-#include "wifi_mgr.h"     // live link state (emu implements too)
-#include "hostname.h"     // the glass's .local name (one recipe)
+#include "canary/net/wifi_mgr.h"     // live link state (emu implements too)
+#include "canary/net/hostname.h"     // the glass's .local name (one recipe)
 #if !defined(EMU_BUILD_FLAVOR) && defined(FEATURE_MDNS_DISCOVERY) && \
     FEATURE_MDNS_DISCOVERY
-#include "discovery.h"    // discovery_up — is the .local name real
+#include "canary/net/discovery.h"    // discovery_up — is the .local name real
 #endif
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
-#include "fleet_cards.h"
-#include "journal_instance.h"
+#include "canary/fleet/fleet_cards.h"
+#include "canary/fleet/journal_instance.h"
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
-#include "care_glue.h"
+#include "canary/care/care_glue.h"
 #if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
-#include "bedside.h"
+#include "canary/care/bedside.h"
 #endif
 #endif
 #if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
     defined(HAS_MICROPHONE) && HAS_MICROPHONE
-#include "mic_alarm.h"  // 4.3C: live mic state on the honesty sheet
+#include "canary/io/mic_alarm.h"  // 4.3C: live mic state on the honesty sheet
 #endif
 
 namespace canary::ui {

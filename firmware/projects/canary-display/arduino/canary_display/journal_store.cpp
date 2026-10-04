@@ -11,9 +11,9 @@
 // even with the flag on it falls to the no-op stubs — flipping the flag never
 // perturbs the wasm dist. LittleFS ships with the arduino-esp32 framework;
 // ArduinoJson is already a dash lib_dep (see the bench runbook §F7).
-#include "journal_store.h"
+#include "canary/fleet/journal_store.h"
 
-#include "config.h"
+#include "canary/config.h"
 
 #if defined(FEATURE_TIME_MACHINE_PERSIST) && FEATURE_TIME_MACHINE_PERSIST && \
     !defined(__EMSCRIPTEN__)
@@ -22,8 +22,8 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
-#include "journal_instance.h"
-#include "log.h"
+#include "canary/fleet/journal_instance.h"
+#include "canary/log.h"
 
 namespace canary::fleet {
 

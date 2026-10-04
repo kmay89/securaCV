@@ -32,7 +32,7 @@
 #include <esp_system.h>
 #include <time.h>
 
-#include "power_events.h"  // the pure core (-I firmware/common)
+#include "power/power_events.h"  // the pure core (-I firmware/common)
 
 namespace cd_pe {
 

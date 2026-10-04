@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.2-dev)
+//  Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.3-dev)
 //  One housing, two stacks: the Vision build (OV5647 + Grove Vision AI V2 +
 //  stacked XIAO) beside the Sense build (MR60BHA2 + stacked XIAO C6).
 //  Radar-confirmed camera events kill false positives — the classic
@@ -62,6 +62,21 @@
 //              keeps port_hood's profile but is posed for the face-down
 //              print (its 45° flank toward the bed). Fit gate: check="combo"
 //              in canary_case_fitcheck.scad.
+//  2026-10-04: the camera hole moves to the lens (v0.3-dev; the Vision's
+//              v0.6 fix, ported). The posts sat on the camera carrier's
+//              center and the aperture 2.5 above it; the vendor CAD puts the
+//              21 x 12.5 hole grid 4.05 ABOVE the carrier's center and the
+//              lens 1.7 BELOW it, so the real lens sat ~8 mm off the Ø10
+//              hole. The posts take the grid's offset (cam_grid_dy), the lens
+//              its own (lens_dy -1.7), and the hole is cut to the OV5647-62:
+//              a bore the Ø7 barrel stands cam_barrel_in into, then a cone at
+//              the 62° diagonal FOV + cam_fov_margin (asserted). The posts
+//              shorten to stand the barrel there (cam_post_h is derived now).
+//              The clear-disc seat is a counterbore on the bed of the
+//              face-down print, so it carries bridge steps (core_bridge_steps;
+//              bridge_layer = your layer height, the seat depth asserted to
+//              land on whole layers). Every camera number cites
+//              canary_board_lib's OV5647 facts.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft-edge front, the piston plate (pl_*) — the shared idiom
@@ -87,10 +102,22 @@ vm_l = 40.0;                 // Grove Vision AI V2 length — the measured 1x2 f
 vm_w = 20.0;                 // Grove Vision AI V2 width — the measured 1x2 form, brd_w("grove_v2")
                              // (was 25x25 — same fix as the Vision/doorbell cases; the registry
                              // pins the wrong square dead in board_selfcheck)
-cam_w = 25.0;  cam_h = 24.0;
-cam_hole_x = 21.0;  cam_hole_y = 12.5;  cam_post_d = 3.6;  cam_post_h = 4.0;  cam_screw_d = 1.6;
-lens_dx = 0.0;  lens_dy = 2.5;
-cam_ap_d = 10.0;  cam_disc_d = 14.0;  cam_disc_t = 1.0;
+cam_w = 25.0;        // OV5647 carrier width (X) — brd_w("ov5647"), canary_board_lib
+cam_h = 24.0;        // OV5647 carrier height (Y) — brd_l("ov5647")
+cam_hole_x = 21.0;   // hole grid (X) — brd_ov5647_hole_x(), the vendor CAD
+cam_hole_y = 12.5;   // hole grid (Y) — brd_ov5647_hole_y(), the vendor CAD
+cam_grid_dy = 4.05;  // hole-grid center ABOVE the carrier's center (toward its top edge) — brd_ov5647_grid_dy(), the vendor CAD
+cam_post_d = 3.6;  cam_screw_d = 1.6;
+cam_lens_h = 5.0;    // lens barrel top above the PCB face — brd_ov5647_lens_h(), the vendor CAD
+cam_holder_h = 3.65; // the square holder's top above the PCB face — brd_ov5647_holder_h(), the vendor CAD
+cam_lens_sq = 8.8;   // the holder's square — brd_ov5647_holder_sq(), the vendor CAD
+cam_barrel_d = 7.0;  // the round lens barrel — brd_ov5647_barrel_d(), the vendor CAD
+cam_barrel_in = 0.4; // how far the barrel stands into its bore; the 2.0 face leaves 0.8 under the disc seat, so 0.4 of focus travel
+lens_dx = 0.0;       // lens center X offset from the carrier's center — brd_ov5647_lens_dx(), the vendor CAD
+lens_dy = -1.7;      // lens center Y offset from the carrier's center: BELOW it, toward the ribbon edge — brd_ov5647_lens_dy(), the vendor CAD
+cam_fov = 62;        // lens diagonal field of view (OV5647-62)  // [40:1:160]
+cam_fov_margin = 4;  // degrees added to each side of the FOV cone the hole must clear
+cam_disc_d = 14.0;  cam_disc_t = 1.0;
 v_stack_sock = 6.5;    // brd_stack_sock_measured(), canary_board_lib — the XIAO ports are DERIVED
                        // from this, so the unmeasured 11.5 put them in the floor
 v_front_h = 5.0;
@@ -137,6 +164,7 @@ lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is th
 hood_len = 9.0;  hood_t = 1.8;
 hood_seat = 0.6;  // groove in the front's show face the hood's spigot presses into (tol_press); bond with neutral-cure silicone  // [0.4:0.1:1.0]
 usb_hood_reach = 3.0;  // how far the USB awning's drip edge stands off the bottom wall  // [2:0.5:6]
+bridge_layer = 0.2;    // your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 
 /* [Stud/keyhole interface] — blind keyholes in the plate */
 kh_extra   = 3.0;   // plate thickening that hosts the keyhole pockets
@@ -224,6 +252,15 @@ vm_cy  = -inner_y/2 + board_clear + vm_l/2;
 cam_cy = vm_cy + vm_l/2 + 2 + cam_h/2;
 sm_cy  = -inner_y/2 + board_clear + sm_l/2;
 lens_x = v_cx + lens_dx;  lens_y = cam_cy + lens_dy;
+cam_grid_cy = cam_cy + cam_grid_dy;                 // the hole grid's center (the posts)
+function cam_post_xy() = [for (sx = [1, -1], sy = [1, -1]) [v_cx + sx*cam_hole_x/2, cam_grid_cy + sy*cam_hole_y/2]];
+// the camera hangs from its posts with the lens barrel cam_barrel_in into the
+// bore; the bore is the barrel plus a slide fit, the cone above it the FOV
+cam_post_h   = cam_lens_h - cam_barrel_in;
+cam_ap_d     = cam_barrel_d + 2*tol_slide;
+cam_half     = cam_fov/2 + cam_fov_margin;            // the cone the hole must clear, per side
+cam_bore_top = lid_t - (cam_disc_t + 0.2);            // bore floor -> disc seat
+function cam_cone_d(z) = cam_ap_d + 2*max(0, z - cam_barrel_in)*tan(cam_half);   // the lens cone's Ø at face height z
 rad_cx = s_cx + rad_dx;   rad_cy = sm_cy + rad_dy;
 // USB openings center on the connector AXIS (shell/2 above the board): the
 // module's port on top of the module, the two XIAO ports hanging off the XIAO
@@ -311,9 +348,38 @@ assert(!usb_hood || usb_hood_top() <= base_d - 0.4,
 assert(!opt_hood || hood_seat + 0.8 <= lid_t, "hood_seat leaves under 0.8 mm of front beneath the hood groove");
 assert(!opt_hood || cam_disc_d/2 + 2.5 >= cam_disc_d/2 + tol_slide + 0.5 + 1.0,
        "the hood groove runs into the clear-disc seat's lead-in");
+// the hood must not crop the lens's field: its inner wall is measured from the
+// barrel top, which stands lid_t - cam_barrel_in behind the face
+cam_throw = lid_t - cam_barrel_in;
+assert(!opt_hood || atan((cam_disc_d/2 + 2.5)/(hood_len + cam_throw)) > cam_fov/2 + 3,
+       str("the rain hood clips a ", cam_fov, "° lens — shorten hood_len or widen cam_disc_d"));
+// the camera: the holder clears the face's underside, the barrel has its bore
+// and its focus travel, the disc sits on a ledge round the cone actually cut,
+// the field passes the seat's opening, and the lens and grid stay on the carrier
+assert(cam_holder_h + 0.5 <= cam_post_h - 1e-9,
+       str("the lens holder stands ", cam_post_h - cam_holder_h, " mm under the face (< 0.5) — lower cam_barrel_in"));
+assert(cam_disc_t + 0.2 < lid_t, "cam_disc_t too thick for lid_t");
+assert(cam_barrel_in >= 0.3 && cam_bore_top - cam_barrel_in >= 0.3 - 1e-9,
+       "the lens barrel needs >= 0.3 in its bore and >= 0.3 of focus travel under the disc — adjust cam_barrel_in");
+_cone_at_seat = cam_cone_d(cam_bore_top);
+assert(_cone_at_seat + 2*1.0 <= cam_disc_d + 2*tol_slide - 1e-9,
+       str("the lens cone is ", _cone_at_seat, " mm across where the disc seats — under 1.0 of ledge a side on a Ø",
+           cam_disc_d, " disc; widen cam_disc_d"));
+_fov_at_face = cam_barrel_d + 2*(lid_t - cam_barrel_in)*tan(cam_half);
+assert(_fov_at_face <= cam_disc_d + 2*tol_slide - 1e-9,
+       str("the lens field is ", _fov_at_face, " mm across at the face — past the disc seat's Ø",
+           cam_disc_d + 2*tol_slide, " opening; widen cam_disc_d"));
+assert(abs(lens_dy) + cam_lens_sq/2 < cam_h/2 && abs(lens_dx) + cam_lens_sq/2 < cam_w/2
+       && abs(cam_grid_dy) + cam_hole_y/2 < cam_h/2 && cam_hole_x/2 < cam_w/2,
+       "the lens holder or the hole grid runs off the camera carrier — check lens_dx / lens_dy / cam_grid_dy / cam_hole_x");
+// the face prints face-down: the disc seat's floor must sit on a whole layer,
+// or the bridge steps over it land between layers and the slicer merges them away
+assert(abs((lid_t - cam_bore_top)/bridge_layer - round((lid_t - cam_bore_top)/bridge_layer)) < 1e-6,
+       str("the disc seat depth (", lid_t - cam_bore_top, ") must be whole ", bridge_layer,
+           " mm layers — set bridge_layer to your slicer's layer height"));
 // the camera screws: the longest standard length the board + the drawn
-// pilot (cam_post_h - 0.9 deep) takes — an M2 x 6 through a 1.0 board runs
-// 5.0 into a 3.1 pilot and bottoms before it clamps
+// pilot (cam_post_h - 0.9 deep) takes — a screw longer than the board plus
+// the pilot bottoms before it clamps
 cam_pilot = cam_post_h - 0.9;
 cam_scr_l = max([for (l = hw_std_lens()) if (l <= pcb_t + cam_pilot + 1e-9) l]);
 assert(radome_t >= 0.6 && radome_t < lid_t, "radome_t out of range");
@@ -350,7 +416,7 @@ hw_echo("Combo witness", [
     opt_led ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
     opt_mount ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
 ]);
-echo(str("Canary COMBO witness v0.2-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t + mount_extra,
+echo(str("Canary COMBO witness v0.3-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t + mount_extra,
          " mm, radar gap ", rad_gap, " mm  (IN DEVELOPMENT; plate ", plate_t, ", seal=", e_seal, ")"));
 if (mid_posts) echo(str("gasket clamp spans (mm, +Y/-Y/+X/-X walls): ", clamp_spans));
 
@@ -493,10 +559,19 @@ module shell_solid() {
                 // collar's footprint (the hood is its own part)
                 if (opt_hood)
                     translate([lens_x, lens_y, lid_t - hood_seat]) linear_extrude(hood_seat + 1) hood_ring2d();
-                // lens + disc seat + lead-in
-                translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
-                translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
+                // the lens: a bore the barrel stands cam_barrel_in into, then the
+                // FOV cone out through the face, the recessed clear-disc seat over it
+                translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = cam_barrel_in + 1.01);
+                translate([lens_x, lens_y, cam_barrel_in])
+                    cylinder(d1 = cam_ap_d, d2 = cam_ap_d + 2*(lid_t - cam_barrel_in + 0.01)*tan(cam_half),
+                             h = lid_t - cam_barrel_in + 0.01);
+                translate([lens_x, lens_y, cam_bore_top])
                     cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
+                // the seat is a counterbore on the bed of the face-down print, and
+                // the layer over its floor would bridge a ring round the cone
+                core_bridge_steps(lens_x, lens_y, cam_bore_top, cam_cone_d(cam_bore_top),
+                                  cam_disc_d + 2*tol_slide, up = -1, layer = bridge_layer);
+                // and the seat's lead-in at the face
                 translate([lens_x, lens_y, lid_t - 0.4])
                     cylinder(d1 = cam_disc_d + 2*tol_slide, d2 = cam_disc_d + 2*tol_slide + 1, h = 0.41);
                 // radome window (blind thinning from inside)
@@ -555,9 +630,11 @@ module shell_solid() {
         }
         // the plate key (canary_core_lib): a rib on the +Y bore wall
         if (lid_key) lid_key_rib(key_x, bore_y/2, 270, floor_t, plate_t + 0.5);
-        // camera posts, hanging from the face's underside
-        for (sx = [1, -1], sy = [1, -1])
-            translate([v_cx + sx*cam_hole_x/2, cam_cy + sy*cam_hole_y/2, base_d - cam_post_h])
+        // camera posts on the carrier's hole grid (cam_grid_dy above its center),
+        // hanging from the face's underside the length that stands the lens
+        // barrel cam_barrel_in into the bore
+        for (c = cam_post_xy())
+            translate([c[0], c[1], base_d - cam_post_h])
                 difference() {
                     cylinder(d = cam_post_d, h = cam_post_h + 0.1);
                     translate([0, 0, -0.1]) cylinder(d = cam_screw_d, h = cam_post_h - 0.8);

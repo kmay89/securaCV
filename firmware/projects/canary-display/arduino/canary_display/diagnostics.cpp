@@ -1,10 +1,10 @@
-#include "diagnostics.h"
+#include "canary/diagnostics.h"
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
 
-#include "config.h"
-#include "log.h"
+#include "canary/config.h"
+#include "canary/log.h"
 
 namespace canary::diag {
 

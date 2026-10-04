@@ -332,7 +332,7 @@
   {
    "id": "combo",
    "scad": "canary_combo.scad",
-   "title": "Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -436,7 +436,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 88,
+   "engineering_param_count": 111,
    "alternatives": [],
    "remix_of": null,
    "counts": {

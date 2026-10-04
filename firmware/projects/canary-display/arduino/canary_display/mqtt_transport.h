@@ -17,7 +17,7 @@
 //   Refused        → prepare() returns false with the reason; nothing connects
 //
 // Header-only on purpose: it is included path-prefixed
-// (`#include "mqtt_transport.h"`) through -I firmware/common, so
+// (`#include "network/mqtt_transport.h"`) through -I firmware/common, so
 // there is no .cpp for a build_src_filter to forget (see
 // scripts/lint_common_lib_manifests.py for why that matters), and the display
 // stages it flat into its Arduino sketch the same way as wifi_join_policy.h.

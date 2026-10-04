@@ -16,7 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "beacon_frame.h"
+#include "canary/net/beacon_frame.h"
 
 namespace canary {
 namespace net {

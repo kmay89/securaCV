@@ -128,11 +128,11 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [56, 26, 56], r: 10.08, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-combo": FleetMassing(
-    id: "device.canary-combo", rev: "e113e567", ghost: false,
+    id: "device.canary-combo", rev: "2052302c", ghost: false,
     envelope: [88.4, 26.38, 75.6],
     solids: [
       FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [88.4, 26.38, 75.6], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [22.6, 26.33, 60.1], size: [], r: 5, h: 1.4, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [22.6, 26.33, 55.9], size: [], r: 3.7, h: 1.4, fullDetailOnly: false),
       FleetSolid(kind: .box, material: "radome", axis: "y", at: [46.8, 26.33, 19.6], size: [24, 0.9, 24], r: 1.5, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-curbwatch": FleetMassing(

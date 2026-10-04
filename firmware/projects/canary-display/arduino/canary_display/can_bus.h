@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-#include "can_frame.h"
+#include "canary/io/can_frame.h"
 
 namespace canary {
 namespace io {

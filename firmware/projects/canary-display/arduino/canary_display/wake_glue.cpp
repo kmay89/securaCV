@@ -1,6 +1,6 @@
 // src/care/wake_glue.cpp — wake alarm wiring: NVS persistence, MQTT config,
 // two-phase chime, gamma backlight sunrise. See wake_glue.h / wake_alarm.h.
-#include "flavor_config.h"
+#include <config.h>
 
 // LDF lesson: bundled-library includes stay ABOVE feature gates.
 #include <Arduino.h>
@@ -11,10 +11,10 @@
 
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
 
-#include "wake_glue.h"
-#include "wake_alarm.h"
-#include "chime.h"
-#include "log.h"
+#include "canary/care/wake_glue.h"
+#include "canary/care/wake_alarm.h"
+#include "canary/hal/chime.h"
+#include "canary/log.h"
 
 namespace canary::care {
 

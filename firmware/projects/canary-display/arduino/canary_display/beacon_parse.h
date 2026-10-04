@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
-#include "fleet_model.h"  // BeaconStatus
+#include "canary/fleet/fleet_model.h"  // BeaconStatus
 
 // Fleet-link presence beacon parser (pure — only <stdint.h>/<stddef.h> and the
 // dependency-free BeaconStatus). The WAP emits this as a CONTINUOUS BLE

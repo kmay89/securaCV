@@ -17,7 +17,7 @@
 // no-op everywhere else, and on the wasm emulator (no RMT peripheral).
 #pragma once
 #include <stdint.h>
-#include "fleet_model.h"
+#include "canary/fleet/fleet_model.h"
 
 namespace canary::hal {
 

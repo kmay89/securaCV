@@ -2,7 +2,7 @@
 // instance + NVS persistence of the two nightlight prefs (12-hour clock,
 // lamp strength). The visits model itself is pure and host-tested — see
 // include/canary/care/nightlight.h.
-#include "flavor_config.h"
+#include <config.h>
 
 // LDF lesson: bundled-library includes stay ABOVE feature gates.
 #include <Arduino.h>
@@ -10,7 +10,7 @@
 
 #ifdef CD_NIGHTLIGHT
 
-#include "nightlight_glue.h"
+#include "canary/care/nightlight_glue.h"
 
 namespace canary::care {
 

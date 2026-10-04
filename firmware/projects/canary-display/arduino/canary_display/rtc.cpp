@@ -6,7 +6,7 @@
 // in the host-tested pure core (canary/io/rtc_pcf.h); this file is only the I2C
 // transport and the seed/mirror policy.
 
-#include "flavor_config.h"
+#include <config.h>
 
 #if defined(FEATURE_RTC) && FEATURE_RTC
 
@@ -15,9 +15,9 @@
 #include <sys/time.h>
 #include <time.h>
 
-#include "rtc.h"
-#include "rtc_pcf.h"
-#include "log.h"
+#include "canary/io/rtc.h"
+#include "canary/io/rtc_pcf.h"
+#include "canary/log.h"
 
 namespace canary {
 namespace io {
