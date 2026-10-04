@@ -26,7 +26,7 @@
 
 #include <stdint.h>
 
-#include "canary/fleet/fleet_model.h"
+#include "fleet_model.h"
 
 namespace canary {
 namespace mode {

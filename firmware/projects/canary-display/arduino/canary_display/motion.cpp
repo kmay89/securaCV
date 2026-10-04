@@ -2,12 +2,12 @@
 // contract and motion_core.h for the math; this file is deliberately thin
 // glue: derive the capability profile from the board facts, keep the live
 // gate and the governor, and wrap the pure curves in lv_anim clothing.
-#include <config.h>
+#include "flavor_config.h"
 #include <Arduino.h>
 #include <lvgl.h>
 
-#include "canary/ui/motion.h"
-#include "canary/hal/display.h"
+#include "motion.h"
+#include "display.h"
 
 #include "pins.h"
 

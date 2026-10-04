@@ -15,7 +15,7 @@
 
 #include <stdint.h>
 
-#include "canary/fleet/journal.h"
+#include "journal.h"
 
 namespace canary::fleet {
 

@@ -7,7 +7,7 @@
 // an honest glance line. Night red-shifts and strips it to the clock + the
 // state channel — dark-when-safe still holds; the backlight-off itself is
 // main.cpp's job (this board's backlight is binary).
-#include <config.h>
+#include "flavor_config.h"
 #ifdef CD_FLAVOR_DASH
 
 #include <lvgl.h>
@@ -15,22 +15,22 @@
 #include <string.h>
 #include <time.h>
 
-#include "canary/ui/portrait7_ui.h"
-#include "canary/ui/motion.h"
-#include "canary/ui/theme.h"
-#include "canary/ui/canary_mark.h"
-#include "canary/ui/character.h"
-#include "canary/ui/clock_styles.h"
-#include "canary/ui/clock_face.h"
-#include "canary/ui/fleet_figure.h"
-#include "canary/ui/settings_ui.h"
-#include "canary/glass_settings.h"
-#include "core/fleet_figures.h"
+#include "portrait7_ui.h"
+#include "motion.h"
+#include "theme.h"
+#include "canary_mark.h"
+#include "character.h"
+#include "clock_styles.h"
+#include "clock_face.h"
+#include "fleet_figure.h"
+#include "settings_ui.h"
+#include "glass_settings.h"
+#include "fleet_figures.h"
 #ifdef CD_NIGHTSTAND7
 // The bedside column borrows the same hub weather + comfort source the
 // landscape bedside face uses (nightstand7_ui.cpp). Only the Nightstand 7
 // build links it; the wall Dash 7 column stays fleet-first with no weather.
-#include "canary/care/bedside.h"
+#include "bedside.h"
 #endif
 #include "pins.h"
 

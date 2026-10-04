@@ -13,8 +13,8 @@
 // fleet_instance.h, not fleet_model.h: the model header is the TEMPLATE, and
 // `Fleet` is the per-flavor instantiation the instance header names (same
 // include the dash and portrait faces take).
-#include "canary/fleet/fleet_instance.h"
-#include "canary/ui/canary_mark.h"
+#include "fleet_instance.h"
+#include "canary_mark.h"
 
 namespace canary::ui {
 

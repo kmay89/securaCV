@@ -1,11 +1,11 @@
 // src/glass_settings.cpp — runtime screen settings persistence. See header.
-#include <config.h>
+#include "flavor_config.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
 
-#include "canary/glass_settings.h"
-#include "canary/log.h"
+#include "glass_settings.h"
+#include "log.h"
 
 namespace canary::glass {
 

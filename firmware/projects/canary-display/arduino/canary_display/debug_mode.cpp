@@ -1,7 +1,7 @@
 // Debug mode runtime (see include/canary/mode/debug_mode.h). The whole TU is
 // empty without FEATURE_DEBUG_MODE, so default builds stay byte-identical.
 
-#include "canary/config.h"
+#include "config.h"
 
 #if defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE
 
@@ -13,23 +13,23 @@
 #include <esp_system.h>
 
 #include "pins.h"
-#include "canary/mode/debug_mode.h"
+#include "debug_mode.h"
 #if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
     defined(HAS_MICROPHONE) && HAS_MICROPHONE
-#include "canary/io/mic_alarm.h"
+#include "mic_alarm.h"
 #endif
-#include "canary/mode/mode_glue.h"
-#include "canary/diagnostics.h"
-#include "canary/fleet/fleet_instance.h"
-#include "canary/hal/display.h"
-#include "canary/net/mqtt_mgr.h"
-#include "canary/runtime_config.h"
-#include "canary/topics.h"
-#include "canary/ui/lvgl_port.h"
-#include "canary/ui/theme.h"
-#include "canary/version.h"
+#include "mode_glue.h"
+#include "diagnostics.h"
+#include "fleet_instance.h"
+#include "display.h"
+#include "mqtt_mgr.h"
+#include "runtime_config.h"
+#include "topics.h"
+#include "lvgl_port.h"
+#include "theme.h"
+#include "version.h"
 
-#include "boot/boot_banner.h"
+#include "boot_banner.h"
 
 namespace canary {
 namespace mode {

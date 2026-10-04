@@ -4,7 +4,7 @@
 // to nothing unless the flavor carries FEATURE_STANDALONE_WEATHER — today
 // the 7" bedside/wall glass, whose faces already render the hub blob this
 // fetcher impersonates.
-#include <config.h>
+#include "flavor_config.h"
 #if defined(FEATURE_STANDALONE_WEATHER) && FEATURE_STANDALONE_WEATHER && \
     defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER &&               \
     !defined(EMU_BUILD_FLAVOR)
@@ -16,13 +16,13 @@
 #include <math.h>
 #include <time.h>
 
-#include "canary/net/wx_direct.h"
-#include "canary/net/wx_core.h"
-#include "canary/net/wifi_mgr.h"
-#include "canary/net/mqtt_mgr.h"
-#include "canary/care/bedside.h"
-#include "canary/glass_settings.h"
-#include "canary/log.h"
+#include "wx_direct.h"
+#include "wx_core.h"
+#include "wifi_mgr.h"
+#include "mqtt_mgr.h"
+#include "bedside.h"
+#include "glass_settings.h"
+#include "log.h"
 
 namespace canary::net {
 

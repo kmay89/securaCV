@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 
-#include "network/wifi_join_policy.h"  // JoinFailure, shared fleet-wide
+#include "wifi_join_policy.h"  // JoinFailure, shared fleet-wide
 
 namespace canary::net {
 

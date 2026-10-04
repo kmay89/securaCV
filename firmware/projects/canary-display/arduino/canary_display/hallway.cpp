@@ -11,7 +11,7 @@
 // path that turns lantern hours on and exactly one that turns them off — which
 // is what stops the two from drifting into disagreeing about what "hallway
 // mode" left behind.
-#include <config.h>
+#include "flavor_config.h"
 
 // LDF lesson: bundled-library includes stay ABOVE feature gates.
 #include <Arduino.h>
@@ -19,8 +19,8 @@
 
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 
-#include "canary/care/hallway.h"
-#include "canary/care/lantern.h"
+#include "hallway.h"
+#include "lantern.h"
 
 namespace canary::care {
 

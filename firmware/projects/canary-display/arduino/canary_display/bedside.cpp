@@ -1,6 +1,6 @@
 // src/care/bedside.cpp — nightstand data lines: hub weather cache, bedroom
 // comfort words, on-device sun times. See bedside.h for the contract.
-#include <config.h>
+#include "flavor_config.h"
 
 // LDF lesson: bundled-library includes stay ABOVE feature gates.
 #include <Arduino.h>
@@ -9,10 +9,10 @@
 #include <ctype.h>
 #include <string.h>
 
-#include "canary/care/bedside.h"
-#include "canary/care/comfort.h"
-#include "canary/care/suncalc.h"
-#include "canary/log.h"
+#include "bedside.h"
+#include "comfort.h"
+#include "suncalc.h"
+#include "log.h"
 
 namespace canary::care {
 

@@ -4,7 +4,7 @@
 // builds compile it to nothing (byte-neutral wasm). No stubs are needed: every
 // caller is under the same gate.
 
-#include <config.h>
+#include "flavor_config.h"
 
 #if defined(FEATURE_CAN) && FEATURE_CAN
 
@@ -12,9 +12,9 @@
 #include <driver/twai.h>
 
 #include "pins.h"  // CAN_PIN_TX/RX, CAN_BITRATE_DEFAULT (board -I path)
-#include "canary/io/can_bus.h"
-#include "canary/io/can_frame.h"
-#include "canary/log.h"
+#include "can_bus.h"
+#include "can_frame.h"
+#include "log.h"
 
 namespace canary {
 namespace io {

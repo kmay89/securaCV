@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 
-#include "canary/hal/voice_score.h"
+#include "voice_score.h"
 
 // Canary Voice — the display's sound engine (trailblazer spec §5).
 //

@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
-#include "canary/fleet/fleet_instance.h"
-#include "canary/ui/canary_mark.h"
+#include "fleet_instance.h"
+#include "canary_mark.h"
 
 // Dash face (800x480, LVGL "Quiet Glass"): header sentence + witness card
 // gallery + event timeline. Single screen — a wall panel is a poster, not

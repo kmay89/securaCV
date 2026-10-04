@@ -9,19 +9,19 @@
 #if __has_include("secrets.h")
   #include "secrets.h"
 #elif __has_include("secrets/secrets.h")
-  #include "secrets/secrets.h"
+  #include "secrets.h"
 #endif
-#include <config.h>
+#include "flavor_config.h"
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <string.h>
 #include <time.h>
 
-#include "canary/net/tz_auto.h"
-#include "canary/net/wifi_mgr.h"
-#include "canary/log.h"
-#include "time/tz_rule.h"  // the shared IANA -> POSIX table (common/)
+#include "tz_auto.h"
+#include "wifi_mgr.h"
+#include "log.h"
+#include "tz_rule.h"  // the shared IANA -> POSIX table (common/)
 
 namespace canary::net {
 

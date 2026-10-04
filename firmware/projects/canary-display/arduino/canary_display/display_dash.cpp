@@ -7,7 +7,7 @@
 // backlight-enable line — and backlight through the expander is ON/OFF
 // only, which is why FEATURE_BACKLIGHT_DIM is 0 on this flavor and night
 // mode is dark-theme + scheduled backlight-off (see the UX doc).
-#include <config.h>
+#include "flavor_config.h"
 #ifdef CD_FLAVOR_DASH
 
 #include <Arduino.h>
@@ -15,9 +15,9 @@
 #include <Arduino_GFX_Library.h>
 
 #include "pins.h"
-#include "canary/hal/display.h"
-#include "canary/glass_settings.h"   // rotation_map_touch
-#include "canary/log.h"
+#include "display.h"
+#include "glass_settings.h"   // rotation_map_touch
+#include "log.h"
 
 namespace canary::hal {
 

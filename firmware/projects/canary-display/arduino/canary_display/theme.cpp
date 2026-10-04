@@ -1,5 +1,5 @@
-#include "canary/ui/theme.h"
-#include "canary/ui/character.h"
+#include "theme.h"
+#include "character.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>

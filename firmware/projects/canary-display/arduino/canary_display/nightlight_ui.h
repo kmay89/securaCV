@@ -21,9 +21,9 @@
 // never repaint its expression.
 #pragma once
 #include <stdint.h>
-#include "canary/care/nightlight.h"
-#include "canary/fleet/fleet_instance.h"
-#include "canary/ui/canary_mark.h"
+#include "nightlight.h"
+#include "fleet_instance.h"
+#include "canary_mark.h"
 
 namespace canary::ui {
 

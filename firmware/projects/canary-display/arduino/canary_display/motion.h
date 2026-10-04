@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <lvgl.h>
 
-#include "canary/ui/motion_core.h"
+#include "motion_core.h"
 
 namespace canary::ui::motion {
 

@@ -42,31 +42,31 @@
 #include "pins.h"
 
 // Project composition header: flavor config (CD_*) + net/OTA/diag constants.
-#include "canary/config.h"
+#include "config.h"
 // FEATURE_* vs HAS_* compile-time cross-check (needs pins.h + config above).
-#include "core/feature_sanity.h"
-#include "canary/version.h"
-#include "canary/log.h"
+#include "feature_sanity.h"
+#include "version.h"
+#include "log.h"
 // Power-event resilience: boot-lineage classification + the durable outage
 // log, feeding the shared host-tested core (firmware/common/power/
 // power_events.h). Unconditional, like the canary base tree — "when did the
 // power go out" isn't gated on a feature. See docs/design/power_events.md.
-#include "canary/power_events_glue.h"
-#include "canary/topics.h"
-#include "canary/runtime_config.h"
-#include "canary/diagnostics.h"
-#include "canary/trust.h"
-#include "canary/fleet/fleet_instance.h"
+#include "power_events_glue.h"
+#include "topics.h"
+#include "runtime_config.h"
+#include "diagnostics.h"
+#include "trust.h"
+#include "fleet_instance.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
-#include "canary/fleet/journal_instance.h"
+#include "journal_instance.h"
 #endif
-#include "canary/net/wifi_mgr.h"
-#include "canary/net/tz_auto.h"
-#include "canary/net/glass_web.h"
+#include "wifi_mgr.h"
+#include "tz_auto.h"
+#include "glass_web.h"
 #if defined(FEATURE_STANDALONE_WEATHER) && FEATURE_STANDALONE_WEATHER && \
     defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER &&               \
     !defined(EMU_BUILD_FLAVOR)
-#include "canary/net/wx_direct.h"
+#include "wx_direct.h"
 #endif
 #if defined(FEATURE_SNTP) && FEATURE_SNTP && !defined(EMU_BUILD_FLAVOR)
 // The clock-trust tracker: SNTP tells us when it actually stepped/slewed
@@ -78,48 +78,48 @@
 static volatile uint32_t g_last_sntp_sync_ms = 0;
 static void on_sntp_sync(struct timeval*) { g_last_sntp_sync_ms = millis(); }
 #endif
-#include "canary/net/mqtt_mgr.h"
-#include "canary/net/ota_mgr.h"
+#include "mqtt_mgr.h"
+#include "ota_mgr.h"
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
-#include "canary/net/discovery.h"
+#include "discovery.h"
 #endif
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
-#include "canary/net/chirp_scan.h"
+#include "chirp_scan.h"
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
-#include "canary/io/field_io.h"   // 4.3B isolated DI/DO -> events + siren
+#include "field_io.h"   // 4.3B isolated DI/DO -> events + siren
 #endif
 #if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
     defined(HAS_MICROPHONE) && HAS_MICROPHONE
-#include "canary/io/mic_alarm.h"  // 4.3C: acoustic alarm patterns -> events
+#include "mic_alarm.h"  // 4.3C: acoustic alarm patterns -> events
 #endif
 #if defined(FEATURE_RTC) && FEATURE_RTC
-#include "canary/io/rtc.h"        // PCF8563 trusted time (probe -> seed/mirror)
+#include "rtc.h"        // PCF8563 trusted time (probe -> seed/mirror)
 #endif
 #if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
-#include "canary/net/espnow_peer.h"  // router-independent peer presence (rx-only)
+#include "espnow_peer.h"  // router-independent peer presence (rx-only)
 #endif
 #if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
-#include "canary/net/fleet_udp.h"  // presence beacons across the LAN (rx-only)
+#include "fleet_udp.h"  // presence beacons across the LAN (rx-only)
 #endif
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
-#include "canary/net/fleet_link.h"
+#include "fleet_link.h"
 #endif
 #if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
-#include "canary/net/provision.h"
+#include "provision.h"
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
-#include "canary/care/care_glue.h"
-#include "canary/fleet/mute_store.h"
+#include "care_glue.h"
+#include "mute_store.h"
 #endif
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
-#include "canary/care/wake_glue.h"
+#include "wake_glue.h"
 #endif
-#include "canary/care/bird_glue.h"
-#include "canary/hal/display.h"
-#include "canary/hal/chime.h"
-#include "canary/hal/core_compat.h"
-#include "canary/glass_settings.h"
+#include "bird_glue.h"
+#include "display.h"
+#include "chime.h"
+#include "core_compat.h"
+#include "glass_settings.h"
 #if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) ||   \
      (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE) ||         \
      (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||     \
@@ -131,30 +131,30 @@ static void on_sntp_sync(struct timeval*) { g_last_sntp_sync_ms = millis(); }
 // devmode migration, fail-safe to Fleet); the resolved gear is cached here
 // so loop() never re-reads NVS.
 #define CD_MODES_COMPILED 1
-#include "canary/mode/mode_glue.h"
+#include "mode_glue.h"
 static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #endif
 
 #include <lvgl.h>
-#include "canary/ui/lvgl_port.h"
-#include "canary/ui/motion.h"     // the adaptive motion engine (tier + gates)
-#include "canary/ui/theme.h"      // col_bg for the veil's target ground
-#include "canary/ui/character.h"
-#include "canary/ui/splash.h"
-#include "canary/ui/settings_ui.h"
-#include "canary/ui/commission_ui.h"
-#include "canary/ui/pair_demo_ui.h"  // First Light pair demo (inert unless FEATURE_PAIR_DEMO)
+#include "lvgl_port.h"
+#include "motion.h"     // the adaptive motion engine (tier + gates)
+#include "theme.h"      // col_bg for the veil's target ground
+#include "character.h"
+#include "splash.h"
+#include "settings_ui.h"
+#include "commission_ui.h"
+#include "pair_demo_ui.h"  // First Light pair demo (inert unless FEATURE_PAIR_DEMO)
 #if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO
-#include "canary/pair/pair_demo.h"   // HoldGate — the open gesture's pure core
+#include "pair_demo.h"   // HoldGate — the open gesture's pure core
 #endif
 #ifdef CD_FLAVOR_WATCH
-#include "canary/ui/glance_ui.h"
+#include "glance_ui.h"
 #endif
 #if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
-#include "canary/ui/dash_ui.h"
+#include "dash_ui.h"
 #endif
 #ifdef CD_NIGHTSTAND7
-#include "canary/ui/nightstand7_ui.h"
+#include "nightstand7_ui.h"
 #endif
 #if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
 // song_seed() below is called under exactly this pair of flavor guards, and
@@ -162,22 +162,22 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 // the only ones that failed, and only in the emulator/wasm job that compiles
 // them. Guard the include with the same condition as the call so the two can
 // never drift apart again.
-#include "canary/ui/look_state.h"
+#include "look_state.h"
 #endif
 #ifdef CD_FLAVOR_DASH
-#include "canary/ui/portrait7_ui.h"   // the 7"/dash portrait column (rotated)
-#include "canary/ui/lvgl_port.h"      // set_rotation / set_dim
-#include "canary/ui/dash_face.h"      // which face: the turn the port wore
+#include "portrait7_ui.h"   // the 7"/dash portrait column (rotated)
+#include "lvgl_port.h"      // set_rotation / set_dim
+#include "dash_face.h"      // which face: the turn the port wore
 #endif
 #if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
-#include "canary/ui/portrait_ui.h"
+#include "portrait_ui.h"
 #endif
 #ifdef CD_NIGHTLIGHT
 // The Canary Nightlight (C3 pocket board) rides the nightstand flavor and
 // swaps the face — the same arrangement the Nightstand 7 has with the dash.
-#include "canary/ui/nightlight_ui.h"
-#include "canary/care/nightlight_glue.h"
-#include "canary/io/orientation.h"   // gravity-settled auto-orient
+#include "nightlight_ui.h"
+#include "nightlight_glue.h"
+#include "orientation.h"   // gravity-settled auto-orient
 #endif
 // song_seed() is called under exactly this pair of flavors further down. The
 // Arduino build gets the declaration for free — the sketch preprocessor
@@ -187,19 +187,19 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 // named 'song_seed' in namespace 'canary::ui'" while all four Arduino CLI
 // builds stay green, which is why it survived review.
 #if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
-#include "canary/ui/look_state.h"
+#include "look_state.h"
 #endif
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
-#include "canary/care/lantern.h"   // the honest, user-summoned night light
-#include "canary/care/hallway.h"   // Hallway mode: the nightlight, made easy
+#include "lantern.h"   // the honest, user-summoned night light
+#include "hallway.h"   // Hallway mode: the nightlight, made easy
 #include "color/look_engine.h"     // kSceneCount — the lamp's scene ring
 #endif
-#include "canary/care/ambient_life.h"  // rationed organic check-ins
+#include "ambient_life.h"  // rationed organic check-ins
 #if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
-#include "canary/io/boot_button.h"     // short / double / long classifier
+#include "boot_button.h"     // short / double / long classifier
 #endif
 #if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
-#include "canary/hal/ambient_led.h"  // WS2812 across-room state beacon
+#include "ambient_led.h"  // WS2812 across-room state beacon
 #endif
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
@@ -207,8 +207,8 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #endif
 
 // Shared, board-agnostic modules (reached via -I .../common).
-#include "boot/boot_banner.h"
-#include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
+#include "boot_banner.h"
+#include "device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 
 // LVGL renders from loop(), and Arduino's default 8 KiB loopTask stack is
 // not enough for LVGL 9's renderer (its layout/draw recursion overflowed

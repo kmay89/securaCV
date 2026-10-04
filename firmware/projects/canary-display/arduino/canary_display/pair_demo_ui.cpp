@@ -17,7 +17,7 @@
 //     that shows the edge. The panel flush after it costs at most one
 //     frame. No cross-device clock is claimed anywhere; the camera logs its
 //     own numbers on its own serial.
-#include <config.h>
+#include "flavor_config.h"
 
 #if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO
 
@@ -27,17 +27,17 @@
 #include <esp_wifi.h>
 #include <stdio.h>
 
-#include "canary/ui/pair_demo_ui.h"
-#include "canary/ui/theme.h"
-#include "canary/pair/pair_demo.h"
-#include "canary/fleet/fleet_instance.h"
-#include "canary/net/wifi_mgr.h"
+#include "pair_demo_ui.h"
+#include "theme.h"
+#include "pair_demo.h"
+#include "fleet_instance.h"
+#include "wifi_mgr.h"
 #if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
-#include "canary/net/provision.h"  // join-in-flight — that association owns the radio
+#include "provision.h"  // join-in-flight — that association owns the radio
 #endif
-#include "canary/runtime_config.h"
-#include "canary/log.h"
-#include "fleet_link/fleet_beacon_espnow.h"  // fallback-channel contract
+#include "runtime_config.h"
+#include "log.h"
+#include "fleet_beacon_espnow.h"  // fallback-channel contract
 
 namespace canary::ui {
 

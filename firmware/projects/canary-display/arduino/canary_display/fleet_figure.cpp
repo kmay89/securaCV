@@ -6,11 +6,11 @@
 // behind LVGL_VERSION_MAJOR — the same pattern lvgl_port.cpp and mk_qrcode
 // keep, and for the same reason (the SPI/emulator line pins 8.4, the RGB
 // dash family rides 9.x).
-#include <config.h>
+#include "flavor_config.h"
 #include <lvgl.h>
 
-#include "canary/ui/fleet_figure.h"
-#include "core/fleet_figures_art.h"
+#include "fleet_figure.h"
+#include "fleet_figures_art.h"
 
 namespace canary::ui {
 

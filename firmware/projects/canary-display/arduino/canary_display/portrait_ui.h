@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
-#include "canary/fleet/fleet_instance.h"
-#include "canary/ui/canary_mark.h"
+#include "fleet_instance.h"
+#include "canary_mark.h"
 
 // Nightstand face (172x320 portrait ST7789, LVGL "Quiet Glass"). Color is
 // the language: a full-height living canary over a severity color wash, a

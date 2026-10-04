@@ -10,7 +10,7 @@
 // accessors. All decisions live in the pure headers — this file only
 // wires them to time, NVS, the chime pin, and the broker.
 
-#include "canary/care/attention.h"
+#include "attention.h"
 
 namespace canary::care {
 

@@ -2,7 +2,7 @@
 // The whole TU is empty unless FEATURE_MIC_ALARM on a mic-bearing board,
 // so every other display build (and the emulator) stays byte-identical.
 
-#include "canary/config.h"
+#include "config.h"
 #include "pins.h"
 
 #if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
@@ -17,9 +17,9 @@
 #include <stdarg.h>
 #include <string.h>
 
-#include "canary/io/mic_alarm.h"
-#include "canary/io/mic_logic.h"
-#include "canary/fleet/fleet_instance.h"
+#include "mic_alarm.h"
+#include "mic_logic.h"
+#include "fleet_instance.h"
 
 namespace canary {
 namespace io {

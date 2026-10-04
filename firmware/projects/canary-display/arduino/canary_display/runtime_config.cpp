@@ -1,13 +1,13 @@
-#include "canary/runtime_config.h"
+#include "runtime_config.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
 #include <cstdio>   // snprintf — personalized_device_id
 #include <cstring>
 
-#include "canary/config.h"
-#include "canary/log.h"
-#include "identity/device_pseudonym.h"  // the per-unit suffix (MAC-free, Invariant III)
+#include "config.h"
+#include "log.h"
+#include "device_pseudonym.h"  // the per-unit suffix (MAC-free, Invariant III)
 
 // Prefer local dev secrets if present; otherwise use the CI stub. Two
 // spellings because the secrets dir may reach the compiler either as an
@@ -16,7 +16,7 @@
 #if __has_include("secrets.h")
   #include "secrets.h"
 #elif __has_include("secrets/secrets.h")
-  #include "secrets/secrets.h"
+  #include "secrets.h"
 #else
   #include "secrets.ci.h"
 #endif

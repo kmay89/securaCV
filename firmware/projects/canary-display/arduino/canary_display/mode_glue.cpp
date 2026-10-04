@@ -2,7 +2,7 @@
 // empty unless at least one non-fleet gear is compiled in, so the default
 // watch/dash/emulator builds stay byte-identical.
 
-#include "canary/config.h"
+#include "config.h"
 
 #if (defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) ||   \
     (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE) ||         \
@@ -13,20 +13,20 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
-#include "canary/mode/mode_glue.h"
+#include "mode_glue.h"
 
 #if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || \
      (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE)) && defined(CD_FLAVOR_DASH)
-#include "canary/playground/playground.h"
+#include "playground.h"
 #endif
 #if defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE
-#include "canary/mode/demo_mode.h"
+#include "demo_mode.h"
 #endif
 #if defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE
-#include "canary/mode/debug_mode.h"
+#include "debug_mode.h"
 #endif
 #if defined(FEATURE_ARCADE) && FEATURE_ARCADE && defined(CD_FLAVOR_DASH)
-#include "canary/mode/arcade_mode.h"
+#include "arcade_mode.h"
 #endif
 
 namespace canary {

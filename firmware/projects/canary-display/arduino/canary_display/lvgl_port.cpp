@@ -17,7 +17,7 @@
 // which is what makes the panel flicker-free by construction. On LVGL 9 the
 // dash takes a second buffer that size for turning a flushed area (see
 // flush_cb); LVGL 8 turns areas itself (sw_rotate).
-#include <config.h>
+#include "flavor_config.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <Arduino_GFX_Library.h>
@@ -26,10 +26,10 @@
 #endif
 
 #include "pins.h"
-#include "canary/ui/lvgl_port.h"
-#include "canary/hal/display.h"
-#include "canary/glass_settings.h"  // Rotation, rotation_is_portrait
-#include "canary/log.h"
+#include "lvgl_port.h"
+#include "display.h"
+#include "glass_settings.h"  // Rotation, rotation_is_portrait
+#include "log.h"
 
 namespace canary::ui {
 

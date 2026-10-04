@@ -7,7 +7,7 @@
 // unless the flavor turns the feature on AND the board carries the LED, so it
 // costs nothing on the watch/dash. On the wasm emulator the hardware write is
 // skipped (no RMT peripheral in the browser).
-#include <config.h>
+#include "flavor_config.h"
 #include "pins.h"  // MUST precede the gate: HAS_RGBLED lives here, not in
                    // config.h. With the include below the gate (as first
                    // shipped) HAS_RGBLED was undefined at gate time and this
@@ -19,8 +19,8 @@
     defined(HAS_RGBLED) && HAS_RGBLED
 
 #include <Arduino.h>
-#include "canary/hal/ambient_led.h"
-#include "canary/ui/look_state.h"
+#include "ambient_led.h"
+#include "look_state.h"
 #include "color/look_engine.h"
 #include "color/plumage.h"
 
@@ -106,7 +106,7 @@ void ambient_led_tick(uint32_t now_ms, Sev worst, bool night, bool safe_dark) {
 
 #else  // feature/board absent — keep the symbols so callers link everywhere
 
-#include "canary/hal/ambient_led.h"
+#include "ambient_led.h"
 namespace canary::hal {
 void ambient_led_init() {}
 void ambient_led_off() {}

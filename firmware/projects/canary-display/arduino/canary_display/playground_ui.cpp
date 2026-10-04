@@ -8,7 +8,7 @@
 // Montserrat) so bench mode never depends on the Character/settings
 // engines it bypasses. Dual-major LVGL: sticks to the v8/v9-stable API
 // subset (objects, labels, styles) — no widgets, no indev.
-#include <config.h>
+#include "flavor_config.h"
 #if (((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))) && defined(CD_FLAVOR_DASH)
 
 #include <Arduino.h>
@@ -16,8 +16,8 @@
 #include <stdio.h>
 
 #include "pins.h"
-#include "canary/playground/playground.h"
-#include "canary/playground/playground_ui.h"
+#include "playground.h"
+#include "playground_ui.h"
 
 namespace canary::playground {
 

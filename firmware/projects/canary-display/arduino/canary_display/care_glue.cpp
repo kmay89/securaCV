@@ -9,20 +9,20 @@
 #include <Preferences.h>
 #include <time.h>
 
-#include <config.h>
+#include "flavor_config.h"
 #if defined(FEATURE_CARE) && FEATURE_CARE
 
-#include "canary/care/care_glue.h"
+#include "care_glue.h"
 #if defined(FEATURE_RHYTHM) && FEATURE_RHYTHM
-#include "canary/care/rhythm.h"
+#include "rhythm.h"
 #endif
-#include "canary/config.h"
-#include "canary/glass_settings.h"
-#include "canary/log.h"
-#include "canary/fleet/fleet_instance.h"
-#include "canary/fleet/mute_store.h"
-#include "canary/hal/chime.h"
-#include "canary/net/mqtt_mgr.h"
+#include "config.h"
+#include "glass_settings.h"
+#include "log.h"
+#include "fleet_instance.h"
+#include "mute_store.h"
+#include "chime.h"
+#include "mqtt_mgr.h"
 
 namespace canary::care {
 

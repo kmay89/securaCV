@@ -5,18 +5,18 @@
 // parses + enqueues into a lock-guarded ring; the main loop drains into
 // the fleet model. WiFi/BLE share the 2.4 GHz radio — bursts are short
 // and only run while the broker is already unreachable.
-#include <config.h>
+#include "flavor_config.h"
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <esp_heap_caps.h>
 
-#include "canary/net/chirp_scan.h"
-#include "canary/net/ble_gate.h"       // shared BLE heap gate (chirp + fleet-link)
-#include "canary/net/beacon_parse.h"   // fleet-link presence beacon wire format
-#include "canary/fleet/fleet_instance.h"
-#include "canary/log.h"
+#include "chirp_scan.h"
+#include "ble_gate.h"       // shared BLE heap gate (chirp + fleet-link)
+#include "beacon_parse.h"   // fleet-link presence beacon wire format
+#include "fleet_instance.h"
+#include "log.h"
 
 namespace canary::net {
 

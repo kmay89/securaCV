@@ -10,14 +10,14 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
-#include <config.h>
+#include "flavor_config.h"
 #include <string.h>
 
-#include "canary/io/field_io.h"
-#include "canary/io/field_io_logic.h"
-#include "canary/hal/display.h"
-#include "canary/fleet/fleet_instance.h"
-#include "canary/log.h"
+#include "field_io.h"
+#include "field_io_logic.h"
+#include "display.h"
+#include "fleet_instance.h"
+#include "log.h"
 
 namespace canary {
 namespace io {

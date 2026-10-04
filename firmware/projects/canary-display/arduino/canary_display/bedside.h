@@ -11,8 +11,8 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#include "canary/fleet/fleet_model.h"
-#include "canary/fleet/fleet_instance.h"
+#include "fleet_model.h"
+#include "fleet_instance.h"
 
 namespace canary::care {
 

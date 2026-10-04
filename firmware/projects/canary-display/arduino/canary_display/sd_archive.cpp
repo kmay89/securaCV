@@ -15,9 +15,9 @@
 // images stay byte-identical until the bench flip. The !__EMSCRIPTEN__ clause
 // keeps the wasm emulator inert the same way (it compiles src/fleet/*.cpp but
 // has no SDMMC peripheral).
-#include <config.h>
+#include "flavor_config.h"
 
-#include "canary/fleet/sd_archive.h"
+#include "sd_archive.h"
 
 #if defined(FEATURE_SD_STORAGE) && FEATURE_SD_STORAGE && !defined(__EMSCRIPTEN__)
 
@@ -31,8 +31,8 @@
 #include <SD_MMC.h>
 
 #include "pins.h"
-#include "canary/hal/display.h"
-#include "canary/log.h"
+#include "display.h"
+#include "log.h"
 
 #if !defined(SD_PIN_SCK) || !defined(SD_PIN_MOSI) || !defined(SD_PIN_MISO)
 #error "FEATURE_SD_STORAGE=1 but this board's pin map declares no SD data pins (SD_PIN_SCK/MOSI/MISO). Add them to firmware/boards/<board>/pins/pins.h once verified against the vendor schematic (the 7\" panel's slot is still unverified — see its pins.h)."

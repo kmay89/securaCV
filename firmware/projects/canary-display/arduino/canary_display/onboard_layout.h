@@ -3,8 +3,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "canary/ui/onboard_ui.h"
-#include "canary/ui/round_frame_core.h"
+#include "onboard_ui.h"
+#include "round_frame_core.h"
 
 // Onboard Layout — where the first-boot Join scene puts its QR and captions.
 //

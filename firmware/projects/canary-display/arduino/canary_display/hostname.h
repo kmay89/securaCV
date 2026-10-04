@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#include "identity/device_pseudonym.h"
+#include "device_pseudonym.h"
 
 // The glass's LAN name, composed in exactly one place. mDNS registration
 // (discovery.cpp) and every surface that PRINTS the name — the settings

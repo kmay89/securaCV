@@ -20,7 +20,7 @@
 // live here.
 //
 // Motion budget: the wash breath plus the bird's own engine, nothing else.
-#include <config.h>
+#include "flavor_config.h"
 #ifdef CD_NIGHTSTAND7
 
 #include <lvgl.h>
@@ -28,25 +28,25 @@
 #include <string.h>
 #include <time.h>
 
-#include "canary/ui/nightstand7_ui.h"
-#include "canary/ui/motion.h"
-#include "canary/ui/theme.h"
-#include "canary/ui/canary_mark.h"
-#include "canary/ui/character.h"
-#include "canary/ui/clock_styles.h"
-#include "canary/ui/clock_face.h"
-#include "canary/ui/calendar_math.h"
-#include "canary/ui/fleet_figure.h"
-#include "canary/ui/settings_ui.h"
-#include "canary/ui/look_state.h"
-#include "canary/glass_settings.h"
-#include "core/fleet_figures.h"
-#include "canary/care/bedside.h"
+#include "nightstand7_ui.h"
+#include "motion.h"
+#include "theme.h"
+#include "canary_mark.h"
+#include "character.h"
+#include "clock_styles.h"
+#include "clock_face.h"
+#include "calendar_math.h"
+#include "fleet_figure.h"
+#include "settings_ui.h"
+#include "look_state.h"
+#include "glass_settings.h"
+#include "fleet_figures.h"
+#include "bedside.h"
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
-#include "canary/care/lantern.h"
+#include "lantern.h"
 #endif
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
-#include "canary/care/wake_glue.h"
+#include "wake_glue.h"
 #endif
 #include "color/look_engine.h"
 

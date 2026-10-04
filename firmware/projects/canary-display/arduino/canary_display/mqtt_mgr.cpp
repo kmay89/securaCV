@@ -7,7 +7,7 @@
 // small — a retained status heartbeat with LWT, a retained health row, and
 // the shared OTA engine's update entity — because a display witnesses
 // nothing and should say nothing it can't stand behind.
-#include "canary/net/mqtt_mgr.h"
+#include "mqtt_mgr.h"
 
 #include <Arduino.h>
 #include <cstring>
@@ -36,7 +36,7 @@
 // this line is what pulls the WiFiClientSecure / NetworkClientSecure library
 // into the C6 env (the S3 envs already get it through wx_direct.cpp).
 #include <WiFiClientSecure.h>
-#include "network/mqtt_transport.h"
+#include "mqtt_transport.h"
 #define CANARY_MQTT_TLS 1
 #else
 #define CANARY_MQTT_TLS 0
@@ -47,23 +47,23 @@
 #define CANARY_MQTT_PLAIN_ONLY_GUARD 0
 #endif
 
-#include "canary/power_events_glue.h"
+#include "power_events_glue.h"
 
-#include "canary/config.h"
-#include "canary/log.h"
-#include "canary/version.h"
-#include "canary/runtime_config.h"  // NVS-backed identity + broker credentials
-#include "canary/diagnostics.h"     // heap health for the status heartbeat
-#include "canary/trust.h"           // TOFU pins + Ed25519 chain verify
-#include "canary/fleet/fleet_instance.h"
-#include "canary/net/wifi_mgr.h"    // RSSI + link state
+#include "config.h"
+#include "log.h"
+#include "version.h"
+#include "runtime_config.h"  // NVS-backed identity + broker credentials
+#include "diagnostics.h"     // heap health for the status heartbeat
+#include "trust.h"           // TOFU pins + Ed25519 chain verify
+#include "fleet_instance.h"
+#include "wifi_mgr.h"    // RSSI + link state
 #if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
-#include "canary/care/bedside.h"    // nightstand wave: hub weather feed
+#include "bedside.h"    // nightstand wave: hub weather feed
 #endif
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
-#include "canary/care/wake_glue.h"  // nightstand wave: alarm config
+#include "wake_glue.h"  // nightstand wave: alarm config
 #endif
-#include "identity/device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
+#include "device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
 
 namespace canary::net {
 

@@ -4,7 +4,7 @@
 // docs/hardware/display_living_canary.md.
 #pragma once
 #include <stdint.h>
-#include "canary/ui/canary_mark.h"
+#include "canary_mark.h"
 
 namespace canary::care {
 

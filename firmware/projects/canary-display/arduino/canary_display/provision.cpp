@@ -4,7 +4,7 @@
 // stateful lives inside provision_run()'s scope so a provisioned display
 // carries zero onboarding baggage at steady state — the WebServer, the DNS
 // socket, and the scan cache all free on return.
-#include <config.h>
+#include "flavor_config.h"
 // Nightstand borrows the watch's small-portrait rendering (see splash.cpp for
 // the rationale); the standing face is portrait_ui.cpp.
 #if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
@@ -33,13 +33,13 @@
 #include <esp_task_wdt.h>
 #endif
 
-#include "canary/net/provision.h"
-#include "network/provision_core.h"  // shared onboarding pure helpers (common/)
-#include "canary/net/tz_auto.h"  // the zone the portal collects, applied on join
-#include "canary/runtime_config.h"
-#include "network/wifi_join_policy.h"  // shared join-failure vocabulary (common/)
+#include "provision.h"
+#include "provision_core.h"  // shared onboarding pure helpers (common/)
+#include "tz_auto.h"  // the zone the portal collects, applied on join
+#include "runtime_config.h"
+#include "wifi_join_policy.h"  // shared join-failure vocabulary (common/)
 #if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
-#include "fleet_link/fleet_beacon_espnow.h"  // portal channel = fleet fallback
+#include "fleet_beacon_espnow.h"  // portal channel = fleet fallback
 #endif
 #if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO && \
     defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
@@ -51,19 +51,19 @@
 // above), drains it, and lets the demo card take the glass; the wizard
 // keeps serving the phone underneath and takes the glass back when the
 // card closes — or the moment provisioning completes.
-#include "canary/net/espnow_peer.h"
-#include "canary/ui/pair_demo_ui.h"
-#include "canary/io/boot_button.h"
+#include "espnow_peer.h"
+#include "pair_demo_ui.h"
+#include "boot_button.h"
 #include "pins.h"  // BOOT_BUTTON_PIN — the card's grammar needs the button
 #define CD_PORTAL_PAIR_DEMO 1
 #else
 #define CD_PORTAL_PAIR_DEMO 0
 #endif
-#include "canary/hal/chime.h"
-#include "canary/hal/display.h"
-#include "canary/ui/onboard_ui.h"
-#include "canary/log.h"
-#include "identity/device_pseudonym.h"
+#include "chime.h"
+#include "display.h"
+#include "onboard_ui.h"
+#include "log.h"
+#include "device_pseudonym.h"
 
 namespace canary::net {
 

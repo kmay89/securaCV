@@ -4,15 +4,15 @@
 // 15 chars): m<i>_id / m<i>_at, i in [0, CD_FLEET_MAX_DEVICES). A cleared
 // or expired mute frees its slot. Tiny, write-light (mutes are a human
 // gesture, not telemetry).
-#include "canary/fleet/mute_store.h"
+#include "mute_store.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
 
-#include "canary/config.h"
-#include "canary/log.h"
-#include "canary/fleet/fleet_instance.h"
+#include "config.h"
+#include "log.h"
+#include "fleet_instance.h"
 
 namespace canary::fleet {
 
