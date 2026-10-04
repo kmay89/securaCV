@@ -221,18 +221,18 @@ stack_h  = 9.0;    // tallest top-side component over a PCB (Grove socket / USB 
 // (62° FOV, EFL 3.2, F2.8, 25 x 24 x 7±0.2 module). The carrier hangs
 // ribbon-edge DOWN, toward the module below it. The same numbers as the
 // doorbell's camera, which found them (canary_vision_doorbell.scad v0.6).
-cam_hole_x = 21.0;  // hole grid (X)
-cam_hole_y = 12.5;  // hole grid (Y)
-cam_grid_dy = 4.05; // hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP
+cam_hole_x = 21.0;  // hole grid (X) — brd_ov5647_hole_x(), the vendor CAD
+cam_hole_y = 12.5;  // hole grid (Y) — brd_ov5647_hole_y(), the vendor CAD
+cam_grid_dy = 4.05; // hole-grid center ABOVE the carrier's center (toward its top edge) — brd_ov5647_grid_dy(), the vendor CAD
 cam_post_d = 3.6;   // camera post diameter
-cam_lens_h = 5.0;   // lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)
-cam_holder_h = 3.65; // the square holder's top above the PCB face — vendor STEP; it stays behind the front
-cam_lens_sq = 8.8;  // the holder's square — vendor STEP
-cam_barrel_d = 7.0; // the round lens barrel — vendor STEP; it nests in the front's bore (+ 2*tol_slide)
+cam_lens_h = 5.0;   // lens barrel top above the PCB face — brd_ov5647_lens_h(), the vendor CAD
+cam_holder_h = 3.65; // the square holder's top above the PCB face — brd_ov5647_holder_h(), the vendor CAD
+cam_lens_sq = 8.8;  // the holder's square — brd_ov5647_holder_sq(), the vendor CAD
+cam_barrel_d = 7.0; // the round lens barrel — brd_ov5647_barrel_d(), the vendor CAD
 cam_barrel_in = 0.4; // how far the barrel stands into that bore; the 2.0 front leaves 0.8 under the disc seat, so 0.4 of focus travel
 cam_screw_d = 1.6;  // M2 self-tap pilot in the posts
-lens_dx   = 0.0;    // lens center X offset from the camera-board center — vendor STEP
-lens_dy   = -1.7;   // lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP
+lens_dx   = 0.0;    // lens center X offset from the camera-board center — brd_ov5647_lens_dx(), the vendor CAD
+lens_dy   = -1.7;   // lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — brd_ov5647_lens_dy(), the vendor CAD
 cam_fov   = 62;     // lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)  // [40:1:160]
 cam_fov_margin = 4; // degrees added to each side of the FOV cone the hole must clear
 cam_disc_d = 14.0;  // clear-disc seat diameter (12-16 mm disc; 0 = bare aperture)
@@ -611,13 +611,21 @@ assert(cam_holder_h + 0.5 <= cam_post_eff - 1e-9,
        str("the lens holder stands ", cam_post_eff - cam_holder_h, " mm under the front (< 0.5) — lower cam_barrel_in"));
 assert(cam_barrel_in >= 0.3 && cam_bore_top - cam_barrel_in >= 0.3 - 1e-9,
        "the lens barrel needs >= 0.3 in its bore and >= 0.3 of focus travel under the disc — adjust cam_barrel_in");
-// the field leaves through the barrel's mouth (its OD bounds it from above);
-// spread at cam_half it must clear the disc seat's rim at the face
+// the disc must sit on a ledge round the cone actually cut (the cone starts at
+// cam_ap_d, the bore), at least 1.0 a side under the disc seat's own cut; and
+// the field leaving the barrel's mouth (its OD bounds it from above), spread
+// at cam_half, must pass the seat's opening at the face
+_cone_at_seat = cam_cone_d(cam_bore_top);
+assert(cam_disc_d == 0 || _cone_at_seat + 2*1.0 <= cam_disc_d + 2*tol_slide - 1e-9,
+       str("the lens cone is ", _cone_at_seat, " mm across where the disc seats — under 1.0 of ledge a side on a Ø",
+           cam_disc_d, " disc; widen cam_disc_d"));
 _fov_at_face = cam_barrel_d + 2*(lid_t - cam_barrel_in)*tan(cam_half);
-assert(cam_disc_d == 0 || _fov_at_face <= cam_disc_d + 2*tol_slide,
-       str("the lens field is ", _fov_at_face, " mm across at the face — past the Ø", cam_disc_d, " disc; widen cam_disc_d"));
-assert(abs(lens_y - cam_cy) < cam_h/2 - cam_lens_sq/2 && abs(cam_grid_dy) + cam_hole_y/2 < cam_h/2,
-       "the lens or the hole grid falls off the camera carrier — check lens_dy / cam_grid_dy");
+assert(cam_disc_d == 0 || _fov_at_face <= cam_disc_d + 2*tol_slide - 1e-9,
+       str("the lens field is ", _fov_at_face, " mm across at the face — past the disc seat's Ø",
+           cam_disc_d + 2*tol_slide, " opening; widen cam_disc_d"));
+assert(abs(lens_dy) + cam_lens_sq/2 < cam_h/2 && abs(lens_dx) + cam_lens_sq/2 < cam_w/2
+       && abs(cam_grid_dy) + cam_hole_y/2 < cam_h/2 && cam_hole_x/2 < cam_w/2,
+       "the lens holder or the hole grid runs off the camera carrier — check lens_dx / lens_dy / cam_grid_dy / cam_hole_x");
 // the front prints face-down: the disc seat's floor must sit on a whole layer,
 // or the bridge steps over it land between layers and the slicer merges them away
 assert(cam_disc_d == 0 || abs((lid_t - cam_bore_top)/bridge_layer - round((lid_t - cam_bore_top)/bridge_layer)) < 1e-6,

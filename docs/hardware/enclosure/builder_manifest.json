@@ -1129,7 +1129,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
+          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -1225,7 +1225,7 @@
         }
       },
       "units": {},
-      "sha256": "fad4d6b8e262de4e548b9e1896928ea968c758d0f161842adbea9da1b65a86c4",
+      "sha256": "a6df717f1bde099a9a4070cd63ff4cddd547294a778e643dc2c38ac02140f2c9",
       "groups": [
         {
           "name": "What to render",
@@ -1439,19 +1439,19 @@
               "name": "cam_hole_x",
               "type": "number",
               "default": 21.0,
-              "desc": "hole grid (X)"
+              "desc": "hole grid (X) — brd_ov5647_hole_x(), the vendor CAD"
             },
             {
               "name": "cam_hole_y",
               "type": "number",
               "default": 12.5,
-              "desc": "hole grid (Y)"
+              "desc": "hole grid (Y) — brd_ov5647_hole_y(), the vendor CAD"
             },
             {
               "name": "cam_grid_dy",
               "type": "number",
               "default": 4.05,
-              "desc": "hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP"
+              "desc": "hole-grid center ABOVE the carrier's center (toward its top edge) — brd_ov5647_grid_dy(), the vendor CAD"
             },
             {
               "name": "cam_post_d",
@@ -1463,25 +1463,25 @@
               "name": "cam_lens_h",
               "type": "number",
               "default": 5.0,
-              "desc": "lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)"
+              "desc": "lens barrel top above the PCB face — brd_ov5647_lens_h(), the vendor CAD"
             },
             {
               "name": "cam_holder_h",
               "type": "number",
               "default": 3.65,
-              "desc": "the square holder's top above the PCB face — vendor STEP; it stays behind the front"
+              "desc": "the square holder's top above the PCB face — brd_ov5647_holder_h(), the vendor CAD"
             },
             {
               "name": "cam_lens_sq",
               "type": "number",
               "default": 8.8,
-              "desc": "the holder's square — vendor STEP"
+              "desc": "the holder's square — brd_ov5647_holder_sq(), the vendor CAD"
             },
             {
               "name": "cam_barrel_d",
               "type": "number",
               "default": 7.0,
-              "desc": "the round lens barrel — vendor STEP; it nests in the front's bore (+ 2*tol_slide)"
+              "desc": "the round lens barrel — brd_ov5647_barrel_d(), the vendor CAD"
             },
             {
               "name": "cam_barrel_in",
@@ -1499,13 +1499,13 @@
               "name": "lens_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "lens center X offset from the camera-board center — vendor STEP"
+              "desc": "lens center X offset from the camera-board center — brd_ov5647_lens_dx(), the vendor CAD"
             },
             {
               "name": "lens_dy",
               "type": "number",
               "default": -1.7,
-              "desc": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP"
+              "desc": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — brd_ov5647_lens_dy(), the vendor CAD"
             },
             {
               "name": "cam_fov",
@@ -2242,7 +2242,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
+          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -2321,7 +2321,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "0aedf8f5ef6db476dcc951ba917aa0913ee85b9da6e4620b5f98f7172d37ca92",
+      "sha256": "2d7b9d622cf63b9be64262511d21958f1d773c8dbe9b98f0f67532be861fe0e5",
       "groups": [
         {
           "name": "What to render",
@@ -2484,19 +2484,19 @@
               "name": "cam_hole_x",
               "type": "number",
               "default": 21.0,
-              "desc": "camera post grid (X) — the Pi-cam hole pattern"
+              "desc": "camera post grid (X) — brd_ov5647_hole_x(), the vendor CAD"
             },
             {
               "name": "cam_hole_y",
               "type": "number",
               "default": 12.5,
-              "desc": "camera post grid (Y)"
+              "desc": "camera post grid (Y) — brd_ov5647_hole_y(), the vendor CAD"
             },
             {
               "name": "cam_grid_dy",
               "type": "number",
               "default": 4.05,
-              "desc": "hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP"
+              "desc": "hole-grid center ABOVE the carrier's center (toward its top edge) — brd_ov5647_grid_dy(), the vendor CAD"
             },
             {
               "name": "cam_post_d",
@@ -2508,25 +2508,25 @@
               "name": "cam_lens_h",
               "type": "number",
               "default": 5.0,
-              "desc": "lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)"
+              "desc": "lens barrel top above the PCB face — brd_ov5647_lens_h(), the vendor CAD"
             },
             {
               "name": "cam_holder_h",
               "type": "number",
               "default": 3.65,
-              "desc": "the square holder's top above the PCB face — vendor STEP; it stays behind the face"
+              "desc": "the square holder's top above the PCB face — brd_ov5647_holder_h(), the vendor CAD"
             },
             {
               "name": "cam_lens_sq",
               "type": "number",
               "default": 8.8,
-              "desc": "the holder's square — vendor STEP"
+              "desc": "the holder's square — brd_ov5647_holder_sq(), the vendor CAD"
             },
             {
               "name": "cam_barrel_d",
               "type": "number",
               "default": 7.0,
-              "desc": "the round lens barrel — vendor STEP; it nests in the face's bore (+ 2*tol_slide)"
+              "desc": "the round lens barrel — brd_ov5647_barrel_d(), the vendor CAD"
             },
             {
               "name": "cam_barrel_in",
@@ -2559,13 +2559,13 @@
               "name": "lens_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "lens center X offset from the camera-board center — vendor STEP"
+              "desc": "lens center X offset from the camera-board center — brd_ov5647_lens_dx(), the vendor CAD"
             },
             {
               "name": "lens_dy",
               "type": "number",
               "default": -1.7,
-              "desc": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP"
+              "desc": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — brd_ov5647_lens_dy(), the vendor CAD"
             },
             {
               "name": "cam_disc_d",
@@ -3218,7 +3218,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
+          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4178,7 +4178,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
+          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4637,7 +4637,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
+          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
         },
         {
           "file": "canary_color_lib.scad",

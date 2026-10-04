@@ -62,7 +62,34 @@
         "brd": "grove_v2",
         "dim": "t"
       },
-      "board_clear": 0.6
+      "board_clear": 0.6,
+      "cam_hole_x": {
+        "brd_fn": "brd_ov5647_hole_x"
+      },
+      "cam_hole_y": {
+        "brd_fn": "brd_ov5647_hole_y"
+      },
+      "cam_grid_dy": {
+        "brd_fn": "brd_ov5647_grid_dy"
+      },
+      "lens_dx": {
+        "brd_fn": "brd_ov5647_lens_dx"
+      },
+      "lens_dy": {
+        "brd_fn": "brd_ov5647_lens_dy"
+      },
+      "cam_lens_h": {
+        "brd_fn": "brd_ov5647_lens_h"
+      },
+      "cam_holder_h": {
+        "brd_fn": "brd_ov5647_holder_h"
+      },
+      "cam_lens_sq": {
+        "brd_fn": "brd_ov5647_holder_sq"
+      },
+      "cam_barrel_d": {
+        "brd_fn": "brd_ov5647_barrel_d"
+      }
     }
   },
   "flasher": {

@@ -2102,17 +2102,17 @@
       {
        "name": "cam_hole_x",
        "default": "21.0",
-       "comment": "hole grid (X)"
+       "comment": "hole grid (X) — brd_ov5647_hole_x(), the vendor CAD"
       },
       {
        "name": "cam_hole_y",
        "default": "12.5",
-       "comment": "hole grid (Y)"
+       "comment": "hole grid (Y) — brd_ov5647_hole_y(), the vendor CAD"
       },
       {
        "name": "cam_grid_dy",
        "default": "4.05",
-       "comment": "hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP"
+       "comment": "hole-grid center ABOVE the carrier's center (toward its top edge) — brd_ov5647_grid_dy(), the vendor CAD"
       },
       {
        "name": "cam_post_d",
@@ -2122,22 +2122,22 @@
       {
        "name": "cam_lens_h",
        "default": "5.0",
-       "comment": "lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)"
+       "comment": "lens barrel top above the PCB face — brd_ov5647_lens_h(), the vendor CAD"
       },
       {
        "name": "cam_holder_h",
        "default": "3.65",
-       "comment": "the square holder's top above the PCB face — vendor STEP; it stays behind the front"
+       "comment": "the square holder's top above the PCB face — brd_ov5647_holder_h(), the vendor CAD"
       },
       {
        "name": "cam_lens_sq",
        "default": "8.8",
-       "comment": "the holder's square — vendor STEP"
+       "comment": "the holder's square — brd_ov5647_holder_sq(), the vendor CAD"
       },
       {
        "name": "cam_barrel_d",
        "default": "7.0",
-       "comment": "the round lens barrel — vendor STEP; it nests in the front's bore (+ 2*tol_slide)"
+       "comment": "the round lens barrel — brd_ov5647_barrel_d(), the vendor CAD"
       },
       {
        "name": "cam_barrel_in",
@@ -2152,12 +2152,12 @@
       {
        "name": "lens_dx",
        "default": "0.0",
-       "comment": "lens center X offset from the camera-board center — vendor STEP"
+       "comment": "lens center X offset from the camera-board center — brd_ov5647_lens_dx(), the vendor CAD"
       },
       {
        "name": "lens_dy",
        "default": "-1.7",
-       "comment": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP"
+       "comment": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — brd_ov5647_lens_dy(), the vendor CAD"
       },
       {
        "name": "cam_fov",
@@ -3097,6 +3097,10 @@
        "default": "cav_extra + (cav_d - cav_d_min)"
       },
       {
+       "name": "_cone_at_seat",
+       "default": "cam_cone_d(cam_bore_top)"
+      },
+      {
        "name": "_fov_at_face",
        "default": "cam_barrel_d + 2*(lid_t - cam_barrel_in)*tan(cam_half)"
       },
@@ -3274,17 +3278,17 @@
       {
        "name": "cam_hole_x",
        "default": "21.0",
-       "comment": "camera post grid (X) — the Pi-cam hole pattern"
+       "comment": "camera post grid (X) — brd_ov5647_hole_x(), the vendor CAD"
       },
       {
        "name": "cam_hole_y",
        "default": "12.5",
-       "comment": "camera post grid (Y)"
+       "comment": "camera post grid (Y) — brd_ov5647_hole_y(), the vendor CAD"
       },
       {
        "name": "cam_grid_dy",
        "default": "4.05",
-       "comment": "hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP"
+       "comment": "hole-grid center ABOVE the carrier's center (toward its top edge) — brd_ov5647_grid_dy(), the vendor CAD"
       },
       {
        "name": "cam_post_d",
@@ -3294,22 +3298,22 @@
       {
        "name": "cam_lens_h",
        "default": "5.0",
-       "comment": "lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)"
+       "comment": "lens barrel top above the PCB face — brd_ov5647_lens_h(), the vendor CAD"
       },
       {
        "name": "cam_holder_h",
        "default": "3.65",
-       "comment": "the square holder's top above the PCB face — vendor STEP; it stays behind the face"
+       "comment": "the square holder's top above the PCB face — brd_ov5647_holder_h(), the vendor CAD"
       },
       {
        "name": "cam_lens_sq",
        "default": "8.8",
-       "comment": "the holder's square — vendor STEP"
+       "comment": "the holder's square — brd_ov5647_holder_sq(), the vendor CAD"
       },
       {
        "name": "cam_barrel_d",
        "default": "7.0",
-       "comment": "the round lens barrel — vendor STEP; it nests in the face's bore (+ 2*tol_slide)"
+       "comment": "the round lens barrel — brd_ov5647_barrel_d(), the vendor CAD"
       },
       {
        "name": "cam_barrel_in",
@@ -3339,12 +3343,12 @@
       {
        "name": "lens_dx",
        "default": "0.0",
-       "comment": "lens center X offset from the camera-board center — vendor STEP"
+       "comment": "lens center X offset from the camera-board center — brd_ov5647_lens_dx(), the vendor CAD"
       },
       {
        "name": "lens_dy",
        "default": "-1.7",
-       "comment": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP"
+       "comment": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — brd_ov5647_lens_dy(), the vendor CAD"
       },
       {
        "name": "cam_disc_d",
@@ -4086,6 +4090,10 @@
       {
        "name": "lid_headroom",
        "default": "cav_extra + (cav_d - (vm_standoff + pcb_t + vm_front_h + cav_extra))"
+      },
+      {
+       "name": "_cone_at_seat",
+       "default": "cam_cone_d(cam_bore_top)"
       },
       {
        "name": "_fov_at_face",
