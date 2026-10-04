@@ -669,7 +669,7 @@
     {
      "id": "universal-fit-coupon",
      "name": "Universal fit coupon",
-     "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes",
+     "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays) beside the doorbell's dovetail lug pocket (the mate carries both, so a snapped stud does not end the station), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -692,7 +692,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 47,
+   "engineering_param_count": 49,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2263,7 +2263,7 @@
   {
    "id": "vision_doorbell",
    "scad": "canary_vision_doorbell.scad",
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.5",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.6",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2408,7 +2408,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 153,
+   "engineering_param_count": 170,
    "alternatives": [],
    "remix_of": null,
    "counts": {

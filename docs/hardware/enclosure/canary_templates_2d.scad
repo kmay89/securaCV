@@ -28,9 +28,9 @@ stud_gap = 30.0;     // set per case (the fit coupon's POCKET pair prints at 30)
 br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.2;
 
 /* [Doorbell] — mirror canary_vision_doorbell plate defaults */
-db_out_x = 31.8;  db_out_y = 113.2;
-db_screw_inset_x = 8.0;  db_screw_inset_y = 14.0;  db_screw_d = 4.2;
-db_exit_dx = 5.0;  db_exit_cy = -20.8;  db_exit_w = 12.0;  db_exit_h = 7.0;
+db_out_x = 44.7;  db_out_y = 119.2;   // the v0.6 shell/slab outline (its echo prints both)
+db_screw_inset_x = 7.5;  db_screw_inset_y = 14.0;  db_screw_d = 4.2;
+db_exit_dx = 0.0;  db_exit_cy = -26.8;  db_exit_w = 12.0;  db_exit_h = 7.0;   // well_cy
 
 line = 0.5;          // drawn line weight
 

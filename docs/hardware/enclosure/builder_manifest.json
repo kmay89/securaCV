@@ -1113,15 +1113,15 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
-          "sha256": "84c01d7585a1c38965dcb3fef7857883d65f74f37dcc4121f6e7291ab893f588"
+          "sha256": "bbd5f937319818394c4e89c5f0d766b1a2ee11adb837b210b69ebf3eb3ca2489"
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
+          "sha256": "7c0c54d46f8c8c2457ca8c6b643d7413edb4e5e9733ab7fa31a8267876412260"
         },
         {
           "file": "canary_port_lib.scad",
@@ -2199,15 +2199,15 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
-          "sha256": "84c01d7585a1c38965dcb3fef7857883d65f74f37dcc4121f6e7291ab893f588"
+          "sha256": "bbd5f937319818394c4e89c5f0d766b1a2ee11adb837b210b69ebf3eb3ca2489"
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
+          "sha256": "7c0c54d46f8c8c2457ca8c6b643d7413edb4e5e9733ab7fa31a8267876412260"
         },
         {
           "file": "canary_port_lib.scad",
@@ -2294,7 +2294,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "35c1e18b5fe69161eceddfb74f2ce343c77535868fe62c541b78a9991a6d0f6c",
+      "sha256": "0aedf8f5ef6db476dcc951ba917aa0913ee85b9da6e4620b5f98f7172d37ca92",
       "groups": [
         {
           "name": "What to render",
@@ -2457,7 +2457,7 @@
               "name": "cam_hole_x",
               "type": "number",
               "default": 21.0,
-              "desc": "camera post grid (X) — the Pi-cam v1.3 hole pattern"
+              "desc": "camera post grid (X) — the Pi-cam hole pattern"
             },
             {
               "name": "cam_hole_y",
@@ -2466,28 +2466,61 @@
               "desc": "camera post grid (Y)"
             },
             {
+              "name": "cam_grid_dy",
+              "type": "number",
+              "default": 4.05,
+              "desc": "hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP"
+            },
+            {
               "name": "cam_post_d",
               "type": "number",
               "default": 3.6,
               "desc": "camera post diameter"
             },
             {
-              "name": "cam_post_h",
-              "type": "number",
-              "default": 4.0,
-              "desc": "auto-raised to hold the lens holder behind the face (cam_lens_h)"
-            },
-            {
               "name": "cam_lens_h",
               "type": "number",
-              "default": 5.5,
-              "desc": "Pi-cam v1.3 lens holder height above the PCB face — MEASURE yours"
+              "default": 5.0,
+              "desc": "lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)"
+            },
+            {
+              "name": "cam_holder_h",
+              "type": "number",
+              "default": 3.65,
+              "desc": "the square holder's top above the PCB face — vendor STEP; it stays behind the face"
             },
             {
               "name": "cam_lens_sq",
               "type": "number",
-              "default": 8.5,
-              "desc": "the holder's square: its 12.0 diagonal cannot enter a Ø10 aperture"
+              "default": 8.8,
+              "desc": "the holder's square — vendor STEP"
+            },
+            {
+              "name": "cam_barrel_d",
+              "type": "number",
+              "default": 7.0,
+              "desc": "the round lens barrel — vendor STEP; it nests in the face's bore (+ 2*tol_slide)"
+            },
+            {
+              "name": "cam_barrel_in",
+              "type": "number",
+              "default": 0.6,
+              "desc": "how far the barrel stands into that bore; the rest under the disc is focus travel"
+            },
+            {
+              "name": "cam_fov",
+              "type": "number",
+              "default": 62,
+              "min": 40,
+              "step": 1,
+              "max": 160,
+              "desc": "diagonal field of view — the OV5647-62 datasheet"
+            },
+            {
+              "name": "cam_fov_margin",
+              "type": "number",
+              "default": 4,
+              "desc": "degrees added to each side of the FOV cone the hole must clear"
             },
             {
               "name": "cam_screw_d",
@@ -2499,19 +2532,13 @@
               "name": "lens_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "lens center offset from the camera-board center — MEASURE"
+              "desc": "lens center X offset from the camera-board center — vendor STEP"
             },
             {
               "name": "lens_dy",
               "type": "number",
-              "default": 2.5,
-              "desc": "lens center Y offset from the camera-board center — MEASURE"
-            },
-            {
-              "name": "cam_ap_d",
-              "type": "number",
-              "default": 10.0,
-              "desc": "lens aperture Ø through the face"
+              "default": -1.7,
+              "desc": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP"
             },
             {
               "name": "cam_disc_d",
@@ -2850,53 +2877,59 @@
               "step": 0.1,
               "max": 3.2,
               "desc": "wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush"
+            },
+            {
+              "name": "collar_t",
+              "type": "number",
+              "default": 2.4,
+              "desc": "the collar's side-return thickness (it wraps the body's bottom end; 6 perimeters at 0.4)"
+            },
+            {
+              "name": "collar_tb",
+              "type": "number",
+              "default": 3.5,
+              "desc": "the collar's bottom wall — the security screw passes up through it and its head bears on it"
+            },
+            {
+              "name": "collar_arm",
+              "type": "number",
+              "default": 18.0,
+              "desc": "how far the side returns climb the body from its bottom edge (past the pill's corner radius)"
+            },
+            {
+              "name": "collar_clear",
+              "type": "number",
+              "default": 0.2,
+              "desc": "side clearance between the body and the collar's returns (the bottom is the body's rest — no gap)"
             }
           ]
         },
         {
-          "name": "Stud/keyhole interface",
+          "name": "Dovetail hanger",
           "params": [
             {
-              "name": "stud_y",
+              "name": "lug_y",
               "type": "number",
               "default": 40.0,
-              "desc": "T-stud/pocket centers at y = ±stud_y (clear of the cable exit and the well)"
+              "desc": "the outer lugs park at y = ±lug_y (clear of the cable exit and the well)"
             },
             {
-              "name": "kh_head_d",
+              "name": "lug_mid_y",
               "type": "number",
-              "default": 7.0,
-              "desc": "pocket head pass (stud head 6.6) — mount_kh_head_d()"
+              "default": 6.0,
+              "desc": "the middle lug parks here — a third lug, so losing any one still leaves two"
             },
             {
-              "name": "kh_shank_d",
+              "name": "dt_clear",
               "type": "number",
-              "default": 4.2,
-              "desc": "pocket slot (stud stem 4.0) — mount_kh_shank_d()"
+              "default": 0.2,
+              "desc": "pocket clearance per face — mount_dt_clear() (core_tol_slide)"
             },
             {
-              "name": "kh_slot_l",
-              "type": "number",
-              "default": 8.0,
-              "desc": "catalog standard — mount_kh_slot_l()"
-            },
-            {
-              "name": "kh_head_h",
-              "type": "number",
-              "default": 3.5,
-              "desc": "pocket depth (face web + head cavity) — mount_kh_head_h()"
-            },
-            {
-              "name": "kh_face",
-              "type": "number",
-              "default": 1.0,
-              "desc": "catalog standard — mount_kh_face()"
-            },
-            {
-              "name": "kh_extra",
+              "name": "lug_extra",
               "type": "number",
               "default": 3.0,
-              "desc": "plate thickening below the floor that hosts the pockets (the plate is at least floor_t + kh_extra)"
+              "desc": "plate thickening below the floor that hosts the pockets (the plate is at least floor_t + lug_extra)"
             }
           ]
         },
@@ -3003,7 +3036,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent seat Ø on the face's outer side — core_vent_pad_d()"
+              "desc": "GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
@@ -3099,12 +3132,27 @@
               "type": "number",
               "default": 0.25,
               "desc": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
+            },
+            {
+              "name": "clip_root_r",
+              "type": "number",
+              "default": 0.6,
+              "desc": "45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root"
             }
           ]
         },
         {
           "name": "Quality",
           "params": [
+            {
+              "name": "bridge_layer",
+              "type": "number",
+              "default": 0.2,
+              "min": 0.08,
+              "step": 0.04,
+              "max": 0.32,
+              "desc": "your slicer's layer height: the face's counterbores get bridge steps this thick (core_bridge_steps)"
+            },
             {
               "name": "vm_cx",
               "type": "number",
@@ -3127,15 +3175,15 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
-          "sha256": "84c01d7585a1c38965dcb3fef7857883d65f74f37dcc4121f6e7291ab893f588"
+          "sha256": "bbd5f937319818394c4e89c5f0d766b1a2ee11adb837b210b69ebf3eb3ca2489"
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
+          "sha256": "7c0c54d46f8c8c2457ca8c6b643d7413edb4e5e9733ab7fa31a8267876412260"
         },
         {
           "file": "canary_port_lib.scad",
@@ -4087,15 +4135,15 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
-          "sha256": "84c01d7585a1c38965dcb3fef7857883d65f74f37dcc4121f6e7291ab893f588"
+          "sha256": "bbd5f937319818394c4e89c5f0d766b1a2ee11adb837b210b69ebf3eb3ca2489"
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
+          "sha256": "7c0c54d46f8c8c2457ca8c6b643d7413edb4e5e9733ab7fa31a8267876412260"
         },
         {
           "file": "canary_port_lib.scad",
@@ -4177,7 +4225,7 @@
         "glyph_rib": "mm",
         "glyph_depth": "mm"
       },
-      "sha256": "1565bad55b41629896499796591e4040020579c7d5d5e4fd534d7a1df4f73942",
+      "sha256": "da249d18f25b493188c9c28559b31b814c71a4c1ee60421ea1bc7efe095e9c71",
       "groups": [
         {
           "name": "What to render",
@@ -4263,6 +4311,12 @@
               "type": "number",
               "default": 0.25,
               "desc": "detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib"
+            },
+            {
+              "name": "dt_clear",
+              "type": "number",
+              "default": 0.2,
+              "desc": "dovetail pocket clearance per face — mount_dt_clear(), canary_mount_lib (the doorbell's hanger)"
             }
           ]
         },
@@ -4298,6 +4352,12 @@
               "type": "number",
               "default": 0.25,
               "desc": "beam face to board edge — the WAP clip, snap_boardclip default"
+            },
+            {
+              "name": "clip_root_r",
+              "type": "number",
+              "default": 0,
+              "desc": "root fillet (snap_boardclip root_r): 0 — the WAP's 4.7 mm beam cannot afford one (the strain gate,"
             },
             {
               "name": "clip_bw",
@@ -4534,15 +4594,15 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
+          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
         },
         {
           "file": "canary_mount_lib.scad",
-          "sha256": "84c01d7585a1c38965dcb3fef7857883d65f74f37dcc4121f6e7291ab893f588"
+          "sha256": "bbd5f937319818394c4e89c5f0d766b1a2ee11adb837b210b69ebf3eb3ca2489"
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
+          "sha256": "7c0c54d46f8c8c2457ca8c6b643d7413edb4e5e9733ab7fa31a8267876412260"
         },
         {
           "file": "canary_port_lib.scad",

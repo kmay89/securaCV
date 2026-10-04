@@ -628,7 +628,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays) beside the doorbell's dovetail lug pocket (the mate carries both, so a snapped stud does not end the station), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -3069,7 +3069,7 @@
    ]
   },
   "canary_vision_doorbell.scad": {
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.5",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.6",
    "groups": [
     {
      "name": "What to render",
@@ -3225,12 +3225,12 @@
     },
     {
      "name": "Camera",
-     "note": "Pi-cam v1.3 posts on the face",
+     "note": "the OV5647-62 (the Grove Vision AI V2 kit's camera, Pi-cam v1.3 form) on posts under the face",
      "params": [
       {
        "name": "cam_hole_x",
        "default": "21.0",
-       "comment": "camera post grid (X) — the Pi-cam v1.3 hole pattern"
+       "comment": "camera post grid (X) — the Pi-cam hole pattern"
       },
       {
        "name": "cam_hole_y",
@@ -3238,24 +3238,54 @@
        "comment": "camera post grid (Y)"
       },
       {
+       "name": "cam_grid_dy",
+       "default": "4.05",
+       "comment": "hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP"
+      },
+      {
        "name": "cam_post_d",
        "default": "3.6",
        "comment": "camera post diameter"
       },
       {
-       "name": "cam_post_h",
-       "default": "4.0",
-       "comment": "auto-raised to hold the lens holder behind the face (cam_lens_h)"
+       "name": "cam_lens_h",
+       "default": "5.0",
+       "comment": "lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)"
       },
       {
-       "name": "cam_lens_h",
-       "default": "5.5",
-       "comment": "Pi-cam v1.3 lens holder height above the PCB face — MEASURE yours"
+       "name": "cam_holder_h",
+       "default": "3.65",
+       "comment": "the square holder's top above the PCB face — vendor STEP; it stays behind the face"
       },
       {
        "name": "cam_lens_sq",
-       "default": "8.5",
-       "comment": "the holder's square: its 12.0 diagonal cannot enter a Ø10 aperture"
+       "default": "8.8",
+       "comment": "the holder's square — vendor STEP"
+      },
+      {
+       "name": "cam_barrel_d",
+       "default": "7.0",
+       "comment": "the round lens barrel — vendor STEP; it nests in the face's bore (+ 2*tol_slide)"
+      },
+      {
+       "name": "cam_barrel_in",
+       "default": "0.6",
+       "comment": "how far the barrel stands into that bore; the rest under the disc is focus travel"
+      },
+      {
+       "name": "cam_fov",
+       "default": "62",
+       "range": [
+        40.0,
+        1.0,
+        160.0
+       ],
+       "comment": "diagonal field of view — the OV5647-62 datasheet"
+      },
+      {
+       "name": "cam_fov_margin",
+       "default": "4",
+       "comment": "degrees added to each side of the FOV cone the hole must clear"
       },
       {
        "name": "cam_screw_d",
@@ -3265,17 +3295,12 @@
       {
        "name": "lens_dx",
        "default": "0.0",
-       "comment": "lens center offset from the camera-board center — MEASURE"
+       "comment": "lens center X offset from the camera-board center — vendor STEP"
       },
       {
        "name": "lens_dy",
-       "default": "2.5",
-       "comment": "lens center Y offset from the camera-board center — MEASURE"
-      },
-      {
-       "name": "cam_ap_d",
-       "default": "10.0",
-       "comment": "lens aperture Ø through the face"
+       "default": "-1.7",
+       "comment": "lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP"
       },
       {
        "name": "cam_disc_d",
@@ -3576,47 +3601,52 @@
         3.2
        ],
        "comment": "wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush"
+      },
+      {
+       "name": "collar_t",
+       "default": "2.4",
+       "comment": "the collar's side-return thickness (it wraps the body's bottom end; 6 perimeters at 0.4)"
+      },
+      {
+       "name": "collar_tb",
+       "default": "3.5",
+       "comment": "the collar's bottom wall — the security screw passes up through it and its head bears on it"
+      },
+      {
+       "name": "collar_arm",
+       "default": "18.0",
+       "comment": "how far the side returns climb the body from its bottom edge (past the pill's corner radius)"
+      },
+      {
+       "name": "collar_clear",
+       "default": "0.2",
+       "comment": "side clearance between the body and the collar's returns (the bottom is the body's rest — no gap)"
       }
      ]
     },
     {
-     "name": "Stud/keyhole interface",
-     "note": "the wall plate's T-studs and the back plate's blind pockets",
+     "name": "Dovetail hanger",
+     "note": "the wall plate's lugs and the back plate's blind pockets",
      "params": [
       {
-       "name": "stud_y",
+       "name": "lug_y",
        "default": "40.0",
-       "comment": "T-stud/pocket centers at y = ±stud_y (clear of the cable exit and the well)"
+       "comment": "the outer lugs park at y = ±lug_y (clear of the cable exit and the well)"
       },
       {
-       "name": "kh_head_d",
-       "default": "7.0",
-       "comment": "pocket head pass (stud head 6.6) — mount_kh_head_d()"
+       "name": "lug_mid_y",
+       "default": "6.0",
+       "comment": "the middle lug parks here — a third lug, so losing any one still leaves two"
       },
       {
-       "name": "kh_shank_d",
-       "default": "4.2",
-       "comment": "pocket slot (stud stem 4.0) — mount_kh_shank_d()"
+       "name": "dt_clear",
+       "default": "0.2",
+       "comment": "pocket clearance per face — mount_dt_clear() (core_tol_slide)"
       },
       {
-       "name": "kh_slot_l",
-       "default": "8.0",
-       "comment": "catalog standard — mount_kh_slot_l()"
-      },
-      {
-       "name": "kh_head_h",
-       "default": "3.5",
-       "comment": "pocket depth (face web + head cavity) — mount_kh_head_h()"
-      },
-      {
-       "name": "kh_face",
-       "default": "1.0",
-       "comment": "catalog standard — mount_kh_face()"
-      },
-      {
-       "name": "kh_extra",
+       "name": "lug_extra",
        "default": "3.0",
-       "comment": "plate thickening below the floor that hosts the pockets (the plate is at least floor_t + kh_extra)"
+       "comment": "plate thickening below the floor that hosts the pockets (the plate is at least floor_t + lug_extra)"
       }
      ]
     },
@@ -3710,7 +3740,7 @@
       {
        "name": "vent_pad_d",
        "default": "12.0",
-       "comment": "GORE-vent seat Ø on the face's outer side — core_vent_pad_d()"
+       "comment": "GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
       },
       {
        "name": "vent_pad_depth",
@@ -3786,6 +3816,11 @@
        "name": "clip_clear",
        "default": "0.25",
        "comment": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
+      },
+      {
+       "name": "clip_root_r",
+       "default": "0.6",
+       "comment": "45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root"
       }
      ]
     },
@@ -3793,6 +3828,16 @@
      "name": "Quality",
      "note": "",
      "params": [
+      {
+       "name": "bridge_layer",
+       "default": "0.2",
+       "range": [
+        0.08,
+        0.04,
+        0.32
+       ],
+       "comment": "your slicer's layer height: the face's counterbores get bridge steps this thick (core_bridge_steps)"
+      },
       {
        "name": "ledge_w",
        "default": "pl_ledge(e_seal, gasket_w, tol_slide)",
@@ -3837,7 +3882,21 @@
       },
       {
        "name": "cam_post_eff",
-       "default": "(cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3)"
+       "default": "cam_lens_h - cam_barrel_in"
+      },
+      {
+       "name": "cam_ap_d",
+       "default": "cam_barrel_d + 2*tol_slide"
+      },
+      {
+       "name": "cam_half",
+       "default": "cam_fov/2 + cam_fov_margin",
+       "comment": "the cone the hole must clear, per side"
+      },
+      {
+       "name": "cam_bore_top",
+       "default": "lid_t - ((cam_disc_t > 0 && cam_disc_d > 0) ? cam_disc_t + 0.2 : 0)",
+       "comment": "bore floor -> disc seat"
       },
       {
        "name": "zone_top_eff",
@@ -3863,6 +3922,11 @@
       {
        "name": "cam_cy",
        "default": "vm_cy + vm_l/2 + zone_gap + cam_h/2"
+      },
+      {
+       "name": "cam_grid_cy",
+       "default": "cam_cy + cam_grid_dy",
+       "comment": "the hole grid's center (the posts)"
       },
       {
        "name": "post_y_top",
@@ -3908,7 +3972,7 @@
       },
       {
        "name": "plate_t",
-       "default": "pl_thick(floor_t, kh_extra, screw_size, screw_head, e_gland)"
+       "default": "pl_thick(floor_t, lug_extra, screw_size, screw_head, e_gland)"
       },
       {
        "name": "mount_extra",
@@ -3980,8 +4044,34 @@
        "default": "cav_extra + (cav_d - (vm_standoff + pcb_t + vm_front_h + cav_extra))"
       },
       {
+       "name": "_fov_at_face",
+       "default": "cam_barrel_d + 2*(lid_t - cam_barrel_in)*tan(cam_half)"
+      },
+      {
+       "name": "lug_ys",
+       "default": "[lug_y, lug_mid_y, -lug_y]"
+      },
+      {
        "name": "hw_thread",
        "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
+      },
+      {
+       "name": "guide_up",
+       "default": "lid_headroom + 0.8"
+      },
+      {
+       "name": "guide_top",
+       "default": "floor_t + vm_standoff + pcb_t + guide_up"
+      },
+      {
+       "name": "collar_h",
+       "default": "mount_extra + sec_z + max(sec_bore_max, sec_screw_d + 0.4)/2 + 2.4",
+       "comment": "2.4 of collar over the bore"
+      },
+      {
+       "name": "weep_x",
+       "default": "7.0",
+       "comment": "the shell's weep exits its bottom wall here (beside the security screw)"
       },
       {
        "name": "plate_seat_z",
@@ -14331,6 +14421,11 @@
        "name": "kh_click",
        "default": "0.25",
        "comment": "detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib"
+      },
+      {
+       "name": "dt_clear",
+       "default": "0.2",
+       "comment": "dovetail pocket clearance per face — mount_dt_clear(), canary_mount_lib (the doorbell's hanger)"
       }
      ]
     },
@@ -14362,6 +14457,11 @@
        "name": "clip_clear",
        "default": "0.25",
        "comment": "beam face to board edge — the WAP clip, snap_boardclip default"
+      },
+      {
+       "name": "clip_root_r",
+       "default": "0",
+       "comment": "root fillet (snap_boardclip root_r): 0 — the WAP's 4.7 mm beam cannot afford one (the strain gate,"
       },
       {
        "name": "clip_bw",

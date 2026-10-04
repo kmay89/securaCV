@@ -62,7 +62,7 @@ aperture and radome window, as `features_mm`), each manifest-owned device's
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
 - [Design rules](./DESIGN_RULES.md) — the plastics-engineering checklist every shell here is held to (walls, coves, ribs, bosses, snaps, seals, drains, keys, lead-ins, print pose), each rule with the library module or CI gate that enforces it and the file-by-file status
 - [Audit, 2026-09](./AUDIT_2026_09.md) — an eleven-dimension design audit of every `.scad` here (ribs, drop, weather, openings, clearances, printability, assembly, repairability, parametric UX, aesthetics): what was found, what was fixed, and what is still open — each finding proved by a rendered probe rather than by reading a comment
-- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v04) · [Doorbell](#canary-vision--doorbell-v04) · [Sense radome](#canary-sense--radome-enclosure-v02)
+- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v04) · [Doorbell](#canary-vision--doorbell-v06) · [Sense radome](#canary-sense--radome-enclosure-v02)
 
 ## The complete file map
 
@@ -179,7 +179,7 @@ measurements welcome.
 | **Vehicle mount kit** — VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors | set `stud_gap` per case (36 = field) | <img src="./preview_dev_veh.png" width="230"> | [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) |
 | **Body-worn clips** — belt leaf-spring clip (prints on its side: flex stays in-plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes | check local recording law; pair with the sign | <img src="./preview_dev_wear.png" width="230"> | [`canary_wear_clip.scad`](./canary_wear_clip.scad) |
 | **Vision Pro mount** — bridges a Seeed reCamera Pro onto the shared stud interface: keyhole pockets on the back (hangs on any existing stud surface in this catalog), 1/4"-20 tripod counterbore and/or magnet pocket on the front (reCamera's confirmed mount options, [Canary Vision Pro doc](../canary_vision_pro_recamera.md)). No confirmed body dimensions yet — mounting interface only | measure your screw/nut; no bench unit yet | <img src="./preview_dev_visionpro.png" width="230"> | [`canary_vision_pro_mount.scad`](./canary_vision_pro_mount.scad) |
-| **Universal fit coupon** — ONE small print that calibrates every fit in the catalog: the **Canary mark embossed in uniform domed strokes** (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud **with a click detent** (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
+| **Universal fit coupon** — ONE small print that calibrates every fit in the catalog: the **Canary mark embossed in uniform domed strokes** (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud **with a click detent** (slide the mate on, it clicks and stays) beside the doorbell's **dovetail lug** pocket (the mate carries both, so a snapped stud does not end the station), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
 | **Bench bring-up fixture** — labeled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md)) | wire channels per §5 pin map | <img src="./preview_dev_fixture.png" width="230"> | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) |
 | **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
 | **Shop tools** — heat-set insert press guide (keeps inserts square) + doorbell button accent ring | tiny prints | — | [`canary_shop_tools.scad`](./canary_shop_tools.scad) |
@@ -1211,7 +1211,7 @@ the fin round-overs self-supporting). Gasket in TPU 90–95A.
 
 ---
 
-# Canary Vision — Doorbell (v0.4)
+# Canary Vision — Doorbell (v0.6)
 
 The stacked-XIAO Vision build in a **video-doorbell form factor**
 ([`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad)): a slim
@@ -1235,15 +1235,66 @@ height it needs; the bottom posts clear a 14 AF button nut (asserted); and
 `seal_mid_posts` (on — four corner screws cannot hold a gasket over 97 mm of
 2.2 mm face), `head_seal` and `screw_size` are new. Every doorbell STL is re-cut.
 
+**v0.6 (2026-10) — drop-durable.** Every feature that could snap off and take
+the part's job with it is designed out rather than thickened, and every
+doorbell STL is re-cut:
+
+- **The hanger.** The wall plate's two printed Ø4 T-studs each held by one
+  12.6 mm² layer line at the stem root; they become **three dovetail lugs**
+  (`canary_mount_lib` `mount_dovelug` — no neck, a 6 × 7 mm root under a 45°
+  root chamfer, 3.3× the stem each, and a pocket lip that is a 1.2 mm land on
+  a 45° flank rooted along the pocket's length, never a knife edge). Lose any
+  one lug and two still hang the body. Same 8 mm drop as the keyhole.
+- **The security screw's tab.** The L-foot was a 12 × 4.5 mm tab standing
+  ~13 mm off the plate, its Ø2.6 bore leaving ~1 mm of wall either side —
+  a pry at the doorbell's bottom peeled it across its layers. It is now a
+  **collar**: a U wrapping the body's bottom end (3.5 mm bottom wall, 2.4 mm
+  side returns climbing 18 mm), rooted along its whole length into the slab.
+  A pry bends the returns in their own plane, the body rests on the collar's
+  bottom wall (the stop is the collar, never a lug), and the security screw
+  passes up through that wall into the same boss. A slot in the collar drains
+  the weep.
+- **The board seat.** The module's two Ø2 × 12 mm corner pins become
+  **corner shoes** (a seat, a side guide, and a stop under the module's
+  bottom edge — mounted, gravity pulls the module down the plate and nothing
+  used to catch it — on a buttress); **top guides** join the rails' ends;
+  and a second clip pair goes on the lower half, so four root-filleted clips
+  hold it (`clip_root_r`). The guides stand taller than the shell's headroom
+  over the stack: with the face on, the module stays seated even if every
+  clip is broken (asserted).
+- **The camera hole.** It was in the wrong place. Measured off the vendor CAD
+  (`RPi cam Rev 1.3` in `boards/vendor/seeed_grove_vision_ai_v2.step.gz`), the
+  Pi-cam's 21 × 12.5 hole grid sits 4.05 mm *above* the carrier's center and
+  the lens 1.7 mm *below* it, toward the ribbon edge; the case centered the
+  posts on the carrier and the hole 2.5 mm above it, so a mounted lens sat
+  ~8 mm off the Ø10 hole. Now the posts take the grid's offset and the hole is
+  cut to the OV5647-62's lens: a Ø7.4 bore the Ø7.0 barrel nests 0.6 mm into
+  (it registers the lens and keeps cavity light — the button's LED ring — off
+  the back of the disc), 0.4 mm of focus travel under the disc, then a cone at
+  the datasheet's 62° diagonal FOV + 4° a side, so nothing in the face crops
+  the image (asserted).
+- **Holes that print clean face-down** (from the first print: strings across
+  the lens, vent and button holes). The face prints on the bed, so every
+  seat cut into the outer face left a flat ring with nothing under it, and a
+  slicer bridges a circle as spaghetti. The lens-disc and button-bezel seats
+  now carry **bridge steps** (`core_bridge_steps`): one layer above the
+  seat floor is a slot the hole's width (two straight bridges anchored on the
+  seat's walls), the next a square (bridges across those), then the round
+  hole. Set `bridge_layer` to your slicer's layer height — the seat depths are
+  asserted to land on whole layers. The vent membrane's seat moves to the
+  **inner** face (where the assembly steps always put the patch), so the
+  outer face carries only the Ø1 holes and nothing has to bridge.
+
 ![doorbell — body, face, plate and gasket](./preview_doorbell.png)
 
 **Mounting is the doorbell pattern, not the hinge.** A thin **wall plate**
 screws to the door frame (4 × #8/M4, counterbored — or print the included
 **15° wedge** variant, `plate_wedge = 0/5/10/15`, to angle the camera toward
-the walk-up). The body drops onto the plate's two **printed T-studs** (the
-same blind, seal-safe pockets as the keyhole system) and locks with a hidden
-**security screw** driven up through the plate's bottom foot into a blind
-boss — Ring-style tool-only removal, and the pilot never breaches the seal
+the walk-up). The body drops onto the plate's three **dovetail lugs** (blind,
+seal-safe pockets on the body's back — offer it 8 mm high, windows over the
+lugs, and let it drop), lands in the plate's **collar**, and locks with a
+hidden **security screw** driven up through the collar into a blind boss —
+Ring-style tool-only removal, and the pilot never breaches the seal
 envelope. With `screw_insert = true` that boss takes a fifth M2 insert from
 the outer face (the BOM's INS1 counts it) and the security screw becomes the
 machine-thread variant of SCR8 — a self-tapper strips brass.
@@ -1263,21 +1314,26 @@ rating; a porch or doorway soffit is its natural habitat.
 GORE/ePTFE membrane patch over the vent cluster on the face's INNER side**
 (the default face has the vent holes — without the membrane they defeat the
 seal; the Ø2 weep through the bottom wall drains any condensate) → seat
-the XIAO in the module (**USB-Cs same direction!**) and click the stack into
-the rails → mount the button through the face, wire button/LED to the XIAO →
+the XIAO in the module (**USB-Cs same direction!**) and press the stack down
+between the guides until all four clips click (its bottom edge sits on the
+shoes' stops) → mount the button through the face, wire button/LED to the XIAO →
 gasket in the groove, face on, 6 × M2 pan heads (black-oxide looks best) → plate on
-the frame, cable through, hang the body on the studs, drive the security
-screw.
+the frame, cable through, offer the body 8 mm high over the lugs, drop it
+into the collar, drive the security screw up through the collar.
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
 | `preset` | `"custom"` | `doorbell_weather` = the released build in one click — sealed, vented, weep, no extra light pipe, no tamper magnet (overrides the option checkboxes, which already default to it) |
 | `plate_wedge` / `plate_wedge_x` | 0 / 0 | wedge the plate vertically and/or left-right (corner installs) |
 | `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity) |
-| `stack_sock_h`, `xiao_below`, `lens_dx/dy` | 6.5 / 5.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
+| `stack_sock_h`, `xiao_below` | 6.5 / 5.5 | **measure** your stack, as with the Vision case |
+| `lens_dx/dy`, `cam_grid_dy`, `cam_lens_h`, `cam_barrel_d` | 0, −1.7 / 4.05 / 5.0 / 7.0 | the OV5647-62 as the vendor CAD draws it — re-measure if your camera is a different carrier |
+| `cam_fov` / `cam_fov_margin` | 62 / 4 | the lens's diagonal FOV (datasheet) and the margin the hole's cone keeps around it |
+| `lug_y` / `lug_mid_y` / `dt_clear` | 40 / 6 / 0.2 | where the dovetail lugs park; the pocket fit (dial it on the coupon's POCKET station) |
+| `collar_t` / `collar_tb` / `collar_arm` | 2.4 / 3.5 / 18 | the collar's side returns, bottom wall and how far the returns climb the body |
 | `btn_nut_ac` | 16.2 | the button's panel nut across corners — asserted against the bottom posts |
 | `opt_weep`, `seal_mid_posts`, `head_seal` | on / on / off | drain, mid-wall clamp posts, O-ring under each face screw |
-| `usb_exit_*` | 12×7 oval | cable exit size/position (guarded against the stud pocket) |
+| `usb_exit_*` | 12×7 oval | cable exit size/position (guarded against the lug pockets) |
 | `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
 | `opt_vent` | **true** | vent/sound cluster on the face — **an adhesive GORE/ePTFE membrane over it (inner face) is REQUIRED**: unmembraned holes defeat the seal; a membraned vent is what stops day/night thermal cycling from pumping moist air past it |
 | engineering trio | on | `lid_ribs`, `foot_cham`, `screw_insert` as on the other cases |

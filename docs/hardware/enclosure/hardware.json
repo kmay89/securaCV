@@ -26,7 +26,7 @@
      "qty": 1,
      "kind": "security-screw",
      "spec": "M2 x 10 security screw",
-     "text": "M2 x 10 security screw, Torx pin/tri-wing, self-tap (wall plate foot into the shell's boss)"
+     "text": "M2 x 10 security screw, Torx pin/tri-wing, self-tap (wall plate collar into the shell's boss)"
     },
     {
      "qty": 8,
@@ -118,7 +118,7 @@
      "qty": 1,
      "kind": "security-screw",
      "spec": "M2 x 10 security screw",
-     "text": "M2 x 10 security screw, Torx pin/tri-wing, machine thread (into the boss insert) (wall plate foot into the shell's boss)"
+     "text": "M2 x 10 security screw, Torx pin/tri-wing, machine thread (into the boss insert) (wall plate collar into the shell's boss)"
     },
     {
      "qty": 9,

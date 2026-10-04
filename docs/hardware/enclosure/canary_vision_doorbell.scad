@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.5
+//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.6
 // @env cer=2 ip="~IP54 (button ~IP65)"
 //  A slim vertical unit in the Wyze/Ring video-doorbell form factor, holding
 //  the stacked-XIAO Vision build: OV5647 camera (top) + Grove Vision AI V2
@@ -12,16 +12,17 @@
 //  ledge the walls carry (the gasket lives in that ledge) and is pulled home
 //  by short screws driven from the back into blind pilots in the post ends.
 //  The plate is the chassis: module rails and clips, the cable exit, the
-//  T-stud pockets and the screw seats all live on it. The only seam is a
+//  lug pockets and the screw seats all live on it. The only seam is a
 //  hairline on the back face — which the wall plate covers when mounted, so
 //  the wall plate is also the tamper cover: the plate screws sit under it.
 //
 //  Mounting follows the doorbell pattern, not the hinge: a thin WALL PLATE
 //  screws to the door frame (flat, or a printable 5–15° WEDGE for angling
-//  toward the approach); the body drops onto the plate's two T-studs (the
-//  same blind seal-safe pockets as the keyhole system) and locks with a
-//  hidden SECURITY SCREW driven up through the plate's bottom foot — the
-//  body cannot be lifted off without a tool, Ring-style.
+//  toward the approach); the body drops onto the plate's three dovetail lugs
+//  (blind, seal-safe pockets — canary_mount_lib's drop-durable hanger), lands
+//  in a collar wrapping its bottom end, and locks with a hidden SECURITY
+//  SCREW driven up through the collar — the body cannot be lifted off without
+//  a tool, Ring-style.
 //
 //  Power: USB-C cable from the stack's ports loops through the internal
 //  cable well and exits through an oval in the BACK plate, through the
@@ -96,12 +97,45 @@
 //    * the T-stud pockets, the cable oval and the poka-yoke key slot move to
 //      the plate; the key rib is on the +Y bore wall; the wall plate's
 //      thickness knob is wplate_t (plate_t is the piston plate's, derived).
+//  v0.6 (2026-10-02): DROP-DURABLE — every feature that could break off and
+//  take the part's function with it is designed out, not thickened. Every
+//  mesh moves:
+//    * the wall plate's two Ø4 T-studs (each held by one 12.6 mm² layer line
+//      at its root) become THREE dovetail lugs (canary_mount_lib
+//      mount_dovelug: no neck, a 42 mm² root under a 45° root chamfer, 3.3x
+//      the stem each) in blind dovetail pockets on the body's back; lose any
+//      one and the other two plus the collar still hang the body;
+//    * the security screw's L-FOOT — a 12 x 4.5 tab standing ~13 mm off the
+//      plate with a Ø2.6 bore leaving ~1 mm of wall either side, loaded in
+//      peel across its layers — is gone. A COLLAR wraps the body's bottom
+//      end instead: a continuous U whose side returns are deep beams in the
+//      prying direction, fused along ~95 mm of root, and the body's resting
+//      stop as well. The security screw passes up through the collar's
+//      3.5 mm bottom wall into the same boss;
+//    * the module's two Ø2 x 12 corner pins become CORNER SHOES (seat +
+//      edge guide + a -Y stop the module never had — mounted, gravity pulls
+//      it down the plate — on a buttress), top guides join the rails, and a
+//      second clip pair goes on the lower half: four clips, root-filleted
+//      (snap_boardclip root_r). The guides stand taller than the headroom
+//      over the stack, so even with every clip broken the closed shell
+//      keeps the module seated (asserted);
+//    * THE CAMERA HOLE WAS IN THE WRONG PLACE. The posts sat on the carrier's
+//      center and the aperture 2.5 above it, but the vendor CAD (the "RPi cam
+//      Rev 1.3" in boards/vendor/seeed_grove_vision_ai_v2.step.gz) puts the
+//      21 x 12.5 hole grid 4.05 ABOVE the carrier's center and the lens 1.7
+//      BELOW it (toward the ribbon edge) — mounted on its posts, the real
+//      lens sat 8.3 mm off the Ø10 hole. The posts now take the grid's
+//      offset, the lens its own, and the hole is cut to the lens: a
+//      Ø7.0 + 2*tol_slide bore the OV5647-62's barrel nests 0.6 into (it
+//      registers the lens and blocks cavity light — the button's LED ring —
+//      from flaring the disc), then a cone at the datasheet's 62° diagonal
+//      FOV + cam_fov_margin, so nothing vignettes (asserted).
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
                              // piston plate (pl_*) — the catalog's shared helpers
-use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the plate's
-                             // T-studs and the body's blind pockets, one home
+use <canary_mount_lib.scad>  // the catalog's hangers — the wall plate's dovetail
+                             // lugs and the body's blind pockets, one home
 use <canary_snap_lib.scad>   // snap-fit doctrine — snap_boardclip carries the
                              // WAP clip and its strain gate
 use <canary_port_lib.scad>   // connector standards — the shell numbers the
@@ -126,7 +160,7 @@ opt_vent   = true;   // GORE vent cluster on the face — ON by default: a seale
 opt_led    = false;  // separate light-pipe port (the 12 mm button usually has its own LED ring)
 opt_tamper = false;  // reed/Hall magnet pocket on the face underside
 opt_weep   = true;   // Ø2 weep through the bottom wall just above the plate's face (mounted button-down):
-                     // condensate leaves beside the wall plate's foot
+                     // condensate leaves through a drain slot in the wall plate's collar
 weep_d     = 2.0;    // weep bore  // [1.5:0.5:3]
 seal_mid_posts = true; // (seal mode) mid posts along each long wall, as many as keep every gasket
                        // clamp span <= 40 mm (DESIGN_RULES §6) — four corner screws cannot hold
@@ -162,17 +196,25 @@ cam_h    = 24.0;     // carrier height (Y) — brd_l("ov5647")
 pcb_t    = 1.0;      // brd_t("grove_v2") — the camera carrier matches
 board_clear = 0.6;   // clearance around the camera carrier and the module (per side across the case; once below the module)
 
-/* [Camera] — Pi-cam v1.3 posts on the face */
-cam_hole_x = 21.0;   // camera post grid (X) — the Pi-cam v1.3 hole pattern
+/* [Camera] — the OV5647-62 (the Grove Vision AI V2 kit's camera, Pi-cam v1.3 form) on posts under the face */
+// Geometry measured off the vendor CAD ("RPi cam Rev 1.3" in boards/vendor/
+// seeed_grove_vision_ai_v2.step.gz); optics from Seeed's OV5647-62 datasheet
+// (62° FOV, EFL 3.2, F2.8, 25 x 24 x 7±0.2 module). The carrier hangs
+// ribbon-edge DOWN: its FPC runs to the module below.
+cam_hole_x = 21.0;   // camera post grid (X) — the Pi-cam hole pattern
 cam_hole_y = 12.5;   // camera post grid (Y)
+cam_grid_dy = 4.05;  // hole-grid center ABOVE the carrier's center (toward its top edge) — vendor STEP
 cam_post_d = 3.6;    // camera post diameter
-cam_post_h = 4.0;    // auto-raised to hold the lens holder behind the face (cam_lens_h)
-cam_lens_h = 5.5;    // Pi-cam v1.3 lens holder height above the PCB face — MEASURE yours
-cam_lens_sq = 8.5;   // the holder's square: its 12.0 diagonal cannot enter a Ø10 aperture
+cam_lens_h = 5.0;    // lens barrel top above the PCB face — vendor STEP 5.0 (Pi-cam: 6.0 over the back face)
+cam_holder_h = 3.65; // the square holder's top above the PCB face — vendor STEP; it stays behind the face
+cam_lens_sq = 8.8;   // the holder's square — vendor STEP
+cam_barrel_d = 7.0;  // the round lens barrel — vendor STEP; it nests in the face's bore (+ 2*tol_slide)
+cam_barrel_in = 0.6; // how far the barrel stands into that bore; the rest under the disc is focus travel
+cam_fov    = 62;     // diagonal field of view — the OV5647-62 datasheet  // [40:1:160]
+cam_fov_margin = 4;  // degrees added to each side of the FOV cone the hole must clear
 cam_screw_d = 1.6;   // pilot bored down each camera post for its screw
-lens_dx  = 0.0;      // lens center offset from the camera-board center — MEASURE
-lens_dy  = 2.5;      // lens center Y offset from the camera-board center — MEASURE
-cam_ap_d   = 10.0;   // lens aperture Ø through the face
+lens_dx  = 0.0;      // lens center X offset from the camera-board center — vendor STEP
+lens_dy  = -1.7;     // lens center Y offset from the camera-board center: BELOW it, toward the ribbon edge — vendor STEP
 cam_disc_d = 14.0;   // clear-disc seat (0 = bare aperture)
 cam_disc_t = 1.0;    // clear-disc thickness (the disc sits 0.2 recessed below the face)
 
@@ -246,17 +288,19 @@ plate_wedge_x = 0;    // horizontal wedge: aims left/right (corner installs)  //
 sec_screw_d = 2.2;    // security screw (M2 self-tap; use a Torx/security drive)
 plate_screw_d = 4.2;  // wall screws (#8 / M4 PAN head — the seats are flat counterbores)
 plate_head_h = 2.8;   // wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush  // [2.0:0.1:3.2]
+collar_t    = 2.4;    // the collar's side-return thickness (it wraps the body's bottom end; 6 perimeters at 0.4)
+collar_tb   = 3.5;    // the collar's bottom wall — the security screw passes up through it and its head bears on it
+collar_arm  = 18.0;   // how far the side returns climb the body from its bottom edge (past the pill's corner radius)
+collar_clear = 0.2;   // side clearance between the body and the collar's returns (the bottom is the body's rest — no gap)
 
-/* [Stud/keyhole interface] — the wall plate's T-studs and the back plate's blind pockets */
-// the stud/pocket pair is the catalog's one hanging interface: canary_mount_lib owns the
-// drawings and the numbers, these knobs stay for per-printer dialing
-stud_y      = 40.0;   // T-stud/pocket centers at y = ±stud_y (clear of the cable exit and the well)
-kh_head_d   = 7.0;    // pocket head pass (stud head 6.6) — mount_kh_head_d()
-kh_shank_d  = 4.2;    // pocket slot (stud stem 4.0) — mount_kh_shank_d()
-kh_slot_l   = 8.0;    // catalog standard — mount_kh_slot_l()
-kh_head_h   = 3.5;    // pocket depth (face web + head cavity) — mount_kh_head_h()
-kh_face     = 1.0;    // catalog standard — mount_kh_face()
-kh_extra    = 3.0;    // plate thickening below the floor that hosts the pockets (the plate is at least floor_t + kh_extra)
+/* [Dovetail hanger] — the wall plate's lugs and the back plate's blind pockets */
+// the lug/pocket pair is canary_mount_lib's drop-durable hanger (mount_dovelug):
+// the library owns the section and the 8.0 drop; these knobs place the lugs
+// and dial the fit per printer (tune dt_clear on the coupon's POCKET station)
+lug_y     = 40.0;   // the outer lugs park at y = ±lug_y (clear of the cable exit and the well)
+lug_mid_y = 6.0;    // the middle lug parks here — a third lug, so losing any one still leaves two
+dt_clear  = 0.2;    // pocket clearance per face — mount_dt_clear() (core_tol_slide)
+lug_extra = 3.0;    // plate thickening below the floor that hosts the pockets (the plate is at least floor_t + lug_extra)
 
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
@@ -279,7 +323,7 @@ label_font  = "Liberation Sans:style=Bold";  // the font label_text is set in (i
 lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press) — core_lightpipe_d()
 lp_dx  = 8.0;      // light-pipe port center X, from the module center
 lp_dy  = -8.0;     // light-pipe port center Y, from the module center
-vent_pad_d     = 12.0;  // GORE-vent seat Ø on the face's outer side — core_vent_pad_d()
+vent_pad_d     = 12.0;  // GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()
 vent_pad_depth = 0.8;   // that seat's recess depth — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
@@ -300,8 +344,10 @@ clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; the lib 
 clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
 clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
 clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
+clip_root_r = 0.6;   // 45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root
 
 /* [Quality] */
+bridge_layer = 0.2;  // your slicer's layer height: the face's counterbores get bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 // curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
 // exploding tiny holes into thousands of facets like a large $fn would
 $fa = 3; $fs = 0.4;
@@ -327,7 +373,14 @@ pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_s
 e_gland  = e_seal;
 clip_stack  = clip_clear + clip_t;
 vm_standoff = stack_sock_h + xiao_below;
-cam_post_eff = (cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3);
+// the camera hangs from its posts with the lens barrel cam_barrel_in into the
+// face's bore: the post length is the barrel's height less that entry, and the
+// bore is the barrel plus the catalog's slide fit (it registers the lens)
+cam_post_eff = cam_lens_h - cam_barrel_in;
+cam_ap_d     = cam_barrel_d + 2*tol_slide;
+cam_half     = cam_fov/2 + cam_fov_margin;            // the cone the hole must clear, per side
+cam_bore_top = lid_t - ((cam_disc_t > 0 && cam_disc_d > 0) ? cam_disc_t + 0.2 : 0);   // bore floor -> disc seat
+function cam_cone_d(z) = cam_ap_d + 2*max(0, z - cam_barrel_in)*tan(cam_half);         // the lens cone's Ø at face height z
 
 // the zones along Y are set by the boards alone, so they come first: the
 // post rows and the mid posts read them, and the cavity's width reads the posts
@@ -342,6 +395,8 @@ vm_cy   = -inner_y/2 + zone_btn + zone_well + board_clear + vm_l/2;
 cam_cy  = vm_cy + vm_l/2 + zone_gap + cam_h/2;
 vm_cx   = 0;  cam_cx = 0;
 lens_x  = lens_dx;  lens_y = cam_cy + lens_dy;
+cam_grid_cy = cam_cy + cam_grid_dy;                 // the hole grid's center (the posts)
+function cam_post_xy() = [for (sx = [1, -1], sy = [1, -1]) [cam_cx + sx*cam_hole_x/2, cam_grid_cy + sy*cam_hole_y/2]];
 
 // the post rows: corner posts in the top/bottom margins (the bottom pair 1.0
 // from the wall, not 2.5: at 2.5 a 14 AF button nut touched them), and as
@@ -385,10 +440,10 @@ rr     = min(db_r, out_x/2 - 0.1);          // pill radius, clamped to the width
 cav_r  = core_cav_r(rr, wall_eff);          // the cavity's corner radius
 
 // the plate (canary_core_lib pl_*): never thinner than a head and its floor,
-// and never thinner than the floor plus the stud-pocket slab (kh_extra); the
+// and never thinner than the floor plus the lug-pocket slab (lug_extra); the
 // head recesses as far as that floor allows; the screw is the shortest
 // standard length that engages hw_engage() in the post end past the relief
-plate_t  = pl_thick(floor_t, kh_extra, screw_size, screw_head, e_gland);
+plate_t  = pl_thick(floor_t, lug_extra, screw_size, screw_head, e_gland);
 mount_extra = plate_t - floor_t;                   // the plate below z = 0 (the pocket slab, or the head's floor)
 pl_r     = pl_recess(plate_t, screw_size, screw_head, e_gland);
 pl_L     = pl_len(plate_t, pl_r, screw_size, screw_head);
@@ -479,7 +534,26 @@ assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= cor
            " % of its groove - past ", round(100*core_gasket_fill_max()),
            " % the incompressible gasket props the plate off its ledge instead of sealing; narrow gasket_w or deepen gasket_groove"));
 assert(cam_disc_d == 0 || cam_disc_d > cam_ap_d, "cam_disc_d must exceed cam_ap_d");
-assert(kh_head_h + 1.5 <= plate_t, "stud pocket too deep — raise kh_extra");
+// the face prints face-down: each bed-side counterbore floor must sit on a whole layer,
+// or the bridge steps over it land between layers and the slicer merges them away
+function _on_layer(d) = abs(d/bridge_layer - round(d/bridge_layer)) < 1e-6;
+assert(_on_layer(lid_t - cam_bore_top) && (btn_bez_d == 0 || _on_layer(btn_bez_t)),
+       str("the disc seat (", lid_t - cam_bore_top, ") and bezel seat (", btn_bez_t, ") depths must be whole ",
+           bridge_layer, " mm layers — set bridge_layer to your slicer's layer height"));
+assert(mount_dt_depth() + 1.5 <= plate_t, "the lug pockets leave under 1.5 mm of plate over them — raise lug_extra");
+// the camera: the holder clears the face, the barrel keeps focus travel under
+// the disc, and nothing in the face crops the lens's field
+assert(cam_holder_h + 0.5 <= cam_post_eff - 1e-9,
+       str("the lens holder stands ", cam_post_eff - cam_holder_h, " mm under the face (< 0.5) — lower cam_barrel_in"));
+assert(cam_barrel_in >= 0.3 && cam_bore_top - cam_barrel_in >= 0.3 - 1e-9,
+       "the lens barrel needs >= 0.3 in its bore and >= 0.3 of focus travel under the disc — adjust cam_barrel_in");
+// the field leaves through the barrel's mouth (its OD bounds it from above);
+// spread at cam_half it must clear the disc seat's rim at the face
+_fov_at_face = cam_barrel_d + 2*(lid_t - cam_barrel_in)*tan(cam_half);
+assert(cam_disc_d == 0 || _fov_at_face <= cam_disc_d + 2*tol_slide,
+       str("the lens field is ", _fov_at_face, " mm across at the face — past the Ø", cam_disc_d, " disc; widen cam_disc_d"));
+assert(abs(lens_y - cam_cy) < cam_h/2 - cam_lens_sq/2 && abs(cam_grid_dy) + cam_hole_y/2 < cam_h/2,
+       "the lens or the hole grid falls off the camera carrier — check lens_dy / cam_grid_dy");
 // the security boss (and its 45° taper, sec_boss_d tall) stays under the rib ring and the button
 assert(sec_boss_top + sec_boss_d + 1.0 <= base_d - lid_rib_h,
        str("the security boss reaches ", sec_boss_top + sec_boss_d, " mm — into the face's rib ring"));
@@ -489,8 +563,18 @@ assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge out of
 assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
        "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
 assert(abs(plate_wedge_x) <= 15 && plate_wedge <= 15, "keep wedge angles <= 15 degrees");
-assert(well_cy + usb_exit_dy - usb_exit_h/2 >= -stud_y + kh_slot_l/2 + (kh_head_d + 0.6)/2 + 0.8,
-       "cable exit overlaps the lower T-stud pocket — raise usb_exit_dy or stud_y");
+// the lugs: three pockets on the plate's back, each clear of the cable oval,
+// the screw seats and the plate's edge
+lug_ys = [lug_y, lug_mid_y, -lug_y];
+assert(len([for (c = lug_ys) let (r = mount_dt_pocket_y(c, clear = dt_clear))
+            if (r[0] < well_cy + usb_exit_dy + usb_exit_h/2 + 0.8 && r[1] > well_cy + usb_exit_dy - usb_exit_h/2 - 0.8) 1]) == 0,
+       "a lug pocket overlaps the cable exit — move lug_y / lug_mid_y");
+assert(len([for (c = lug_ys) let (r = mount_dt_pocket_y(c, clear = dt_clear))
+            if (r[0] < -plate_y/2 + 2.0 || r[1] > plate_y/2 - 2.0) 1]) == 0,
+       "a lug pocket runs within 2 mm of the plate's edge — move lug_y");
+assert(len([for (c = lug_ys, p = post_xy()) let (r = mount_dt_pocket_y(c, clear = dt_clear))
+            if (abs(p[0]) - head_d/2 - 2.0 < mount_dt_window_w(dt_clear)/2 && p[1] > r[0] - head_d && p[1] < r[1] + head_d) 1]) == 0,
+       "a lug pocket runs into a plate-screw seat")
 assert(abs(usb_exit_dx) + usb_exit_w/2 <= inner_x/2 - 1, "cable exit too wide/offset for the cavity");
 assert(!(opt_mark && label_text != ""),
        "opt_mark and label_text share the label spot — set one, not both");
@@ -514,7 +598,7 @@ hw_echo("Vision doorbell", [
     // the security boss takes screw_size's insert when screw_insert is on (its bore is ins_od),
     // so the security screw is that size's machine thread; self-tap builds keep the M2 pilot
     hw_item(1, str(screw_insert ? hw_size_name(screw_size) : "M2", " x 10 security screw, Torx pin/tri-wing, ",
-                   screw_insert ? "machine thread (into the boss insert)" : "self-tap", " (wall plate foot into the shell's boss)")),
+                   screw_insert ? "machine thread (into the boss insert)" : "self-tap", " (wall plate collar into the shell's boss)")),
     screw_insert ? hw_item(len(post_xy()) + 1, str(str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h), " — the +1 seats in the security boss")) : "",
     e_gland      ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
     hw_item(1, str("Ø", btn_d, " illuminated momentary button + panel nut (", btn_nut_ac, " AC)")),
@@ -525,7 +609,7 @@ hw_echo("Vision doorbell", [
     e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
     hw_item(4, "#8 pan wall screw (plate)"),
 ]);
-echo(str("Canary Vision DOORBELL v0.5 — shell ", out_x, " x ", out_y, " x ", shell_d + lid_t,
+echo(str("Canary Vision DOORBELL v0.6 — shell ", out_x, " x ", out_y, " x ", shell_d + lid_t,
          " mm (plate ", plate_x, " x ", plate_y, " x ", plate_t, " in the bore; ", len(post_xy()),
          " screws) + wall plate ", wplate_t, " mm (wedge ", plate_wedge, " deg, seal=", e_seal, ")"));
 
@@ -551,7 +635,43 @@ module edgeclip(px, py, ang, soff) {
     translate([px, py, 0]) rotate([0, 0, ang - 90])
         snap_boardclip(0, 0, 1, floor_t, floor_t + soff + pcb_t,
                        w = clip_w, t = clip_t, hook = clip_hook,
-                       hook_h = clip_hook_h, clear = clip_clear);
+                       hook_h = clip_hook_h, clear = clip_clear, root_r = clip_root_r);
+}
+// the module's edge guides stand this far over its top face: past the shell's
+// headroom over the stack, so with the shell closed the module cannot lift
+// out of them even if every clip is gone
+guide_up  = lid_headroom + 0.8;
+guide_top = floor_t + vm_standoff + pcb_t + guide_up;
+assert(guide_top + 1.0 <= base_d, "the module's edge guides reach the face — lower guide_up");
+// a CORNER SHOE under each lower corner of the module, outboard of the XIAO
+// (which hangs under the lower half) and inside the clips' band (the mid posts
+// clear that band by 0.5, mid_need): a seat under the corner, a guide up its
+// side edge, a STOP under its bottom edge — mounted, the plate is vertical and
+// that edge is where the module's weight goes — and a buttress behind the stop.
+// It replaces a Ø2 x 12 pin: one 3 mm² layer line, no stop, nothing to brace it.
+module corner_shoe(s) {
+    x0 = xiao_w/2 + 0.1;  xg = vm_w/2 + clip_clear;  x1 = vm_w/2 + clip_stack;
+    ye = vm_cy - vm_l/2;  stop_t = 1.6;  ys = ye - clip_clear - stop_t;
+    translate([vm_cx, 0, 0]) mirror([s < 0 ? 1 : 0, 0, 0]) translate([0, 0, floor_t - 0.01]) {
+        translate([x0, ye, 0]) cube([xg - x0, 3.0, vm_standoff + 0.01]);                 // seat
+        translate([xg, ys, 0]) cube([x1 - xg, ye + 3.0 - ys, guide_top - floor_t + 0.01]); // side guide
+        translate([x0, ys, 0]) cube([x1 - x0, stop_t, guide_top - floor_t + 0.01]);       // bottom stop
+        hull() {                                                                            // buttress
+            translate([x0, ys, 0]) cube([x1 - x0, 0.01, guide_top - floor_t + 0.01]);
+            translate([x0, ys - 5.0, 0]) cube([x1 - x0, 0.01, 0.6]);
+        }
+    }
+}
+// a TOP GUIDE at each upper corner, on the rail's end: the rail still carries
+// the module, the guide stands up its side edge (open at the top end, so the
+// module drops in past the camera flex)
+module top_guide(s) {
+    xr = vm_w/2 - 3.0;  xg = vm_w/2 + clip_clear;  x1 = vm_w/2 + clip_stack;
+    y0 = vm_cy + vm_l/2 - 4.0;
+    translate([vm_cx, 0, 0]) mirror([s < 0 ? 1 : 0, 0, 0]) translate([0, y0, floor_t - 0.01]) {
+        translate([xr, 0, 0]) cube([x1 - xr, 3.0, vm_standoff + 0.01]);
+        translate([xg, 0, 0]) cube([x1 - xg, 3.0, guide_top - floor_t + 0.01]);
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -568,10 +688,12 @@ module body() {
     difference() {
         union() {
             translate([0, 0, floor_t]) pl_plate(plate_x, plate_y, plate_r, plate_t);
-            // module rails + clips, TOP HALF ONLY — the stacked XIAO (17.8 wide on
-            // the 20 mm module) hangs beneath the LOWER half, so full-length side
-            // rails would collide with it. Two bottom-corner pins catch the module's
-            // lower edge outboard of the XIAO and the down-facing USB ports.
+            // module rails, TOP HALF ONLY — the stacked XIAO (17.8 wide on the 20 mm
+            // module) hangs beneath the LOWER half, so full-length side rails would
+            // collide with it. Four clips (each edge, each half: the beams stand
+            // outboard of the module's edge, so they clear the XIAO too — one can
+            // break and three still hold), corner shoes under the lower corners,
+            // top guides on the rails' ends.
             for (s = [1, -1]) {
                 rail_l = vm_l/2 - 4;
                 difference() {
@@ -581,23 +703,19 @@ module body() {
                         cube([5, clip_w + 2, vm_standoff + 1], center = true);
                 }
                 edgeclip(vm_cx + s*vm_w/2, vm_cy + 2 + rail_l/2, s > 0 ? 0 : 180, vm_standoff);
-                translate([vm_cx + s*(xiao_w/2 + 1.0 + 0.1), vm_cy - vm_l/2 + 1.2, floor_t - 0.01])
-                    cylinder(d = 2.0, h = vm_standoff + 0.01);   // pin inner edge 0.1 outboard of the measured
-                                                                 // XIAO, still catches the 20 mm module
+                edgeclip(vm_cx + s*vm_w/2, vm_cy - vm_l/4, s > 0 ? 0 : 180, vm_standoff);
+                corner_shoe(s);
+                top_guide(s);
             }
         }
         // oval cable exit through the plate (aligns with the wall plate's hole)
         translate([usb_exit_dx, well_cy + usb_exit_dy, 0]) hull()
             for (s = [1, -1]) translate([s*(usb_exit_w - usb_exit_h)/2, 0, floor_t - plate_t - 1])
                 cylinder(d = usb_exit_h, h = plate_t + 2);
-        // blind T-stud pockets from the back face, slot toward +Y (the body
-        // drops onto the wall plate's studs) — canary_mount_lib draws the
-        // pocket natively per axis, no rotate
-        for (yc = [-stud_y, stud_y])
-            mount_keyhole_pocket(yc, -mount_extra, "y",
-                                 head_d = kh_head_d, shank_d = kh_shank_d,
-                                 slot_l = kh_slot_l, head_h = kh_head_h,
-                                 face = kh_face);
+        // the blind dovetail pockets from the back face, the drop-in window
+        // under each and the channel above it (canary_mount_lib): offer the body
+        // mount_dt_travel() high, windows over the lugs, and let it drop
+        for (c = lug_ys) mount_dovelug_pocket(c, -mount_extra, clear = dt_clear);
         // the screws: seats through the plate, pan heads over their glands in seal mode
         for (p = post_xy())
             pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
@@ -647,8 +765,8 @@ module shell_asm() {
         translate([0, -out_y/2 - 0.1, sec_z]) rotate([-90, 0, 0])
             cylinder(d = sec_bore_d, h = wall_eff + sec_boss_d - 0.9);
         // screw_insert: the security screw's heat-set insert seats from the OUTER
-        // face (the wall plate's L-foot sits under it and the screw passes up
-        // through the foot into the insert) — same bag as the posts' inserts
+        // face (the wall plate's collar sits under it and the screw passes up
+        // through the collar into the insert) — same bag as the posts' inserts
         if (screw_insert)
             translate([0, -out_y/2 - 0.1, sec_z]) rotate([-90, 0, 0])
                 cylinder(d = ins_od - 0.3, h = ins_h + 0.1);
@@ -673,13 +791,23 @@ module shell_solid() {
             if (e_seal)
                 translate([0, 0, floor_t - 0.01]) linear_extrude(gasket_groove + 0.01) rim_ring2d(gasket_w);
             translate([0, 0, base_d]) {
-                translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
+                // the lens hole, cut to the lens: the barrel's bore up to the
+                // barrel's top, then a cone at the FOV half-angle (+ margin)
+                // out through the face — the disc seat sits over it
+                translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = cam_barrel_in + 1.01);
+                translate([lens_x, lens_y, cam_barrel_in])
+                    cylinder(d1 = cam_ap_d, d2 = cam_ap_d + 2*(lid_t - cam_barrel_in + 0.01)*tan(cam_half),
+                             h = lid_t - cam_barrel_in + 0.01);
                 if (cam_disc_t > 0 && cam_disc_d > 0) {
                     translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
                         cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
                     // cosmetic 45° lead-in around the seat rim (cleaner edge, easier disc entry)
                     translate([lens_x, lens_y, lid_t - 0.4])
                         cylinder(d1 = cam_disc_d + 2*tol_slide, d2 = cam_disc_d + 2*tol_slide + 1.0, h = 0.41);
+                    // the face prints face-DOWN: this seat is a counterbore on the bed, and the
+                    // layer over its floor would bridge a ring round the cone — bridge steps
+                    core_bridge_steps(lens_x, lens_y, cam_bore_top, cam_cone_d(cam_bore_top),
+                                      cam_disc_d + 2*tol_slide, up = -1, layer = bridge_layer);
                 }
                 // button hole + bezel seat (+ matching lead-in rim)
                 translate([0, btn_cy, -1]) cylinder(d = btn_d + 2*tol_slide, h = lid_t + 2);
@@ -688,10 +816,13 @@ module shell_solid() {
                         cylinder(d = btn_bez_d + 2*tol_slide, h = btn_bez_t + 1);
                     translate([0, btn_cy, lid_t - 0.4])
                         cylinder(d1 = btn_bez_d + 2*tol_slide, d2 = btn_bez_d + 2*tol_slide + 1.0, h = 0.41);
+                    core_bridge_steps(0, btn_cy, lid_t - btn_bez_t, btn_d + 2*tol_slide,
+                                      btn_bez_d + 2*tol_slide, up = -1, layer = bridge_layer);
                 }
                 if (e_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
                 if (e_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
-                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
+                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes,
+                                              seat_inner = true);   // the membrane goes INSIDE: nothing to bridge on the bed
                 if (label_text != "")
                     translate([label_dx, label_dy, lid_t - label_depth])
                         linear_extrude(label_depth + 1) rotate(label_rot)
@@ -707,11 +838,12 @@ module shell_solid() {
             }
             if (foot_cham > 0) foot_chamfer_ring(out_x, out_y, rr, foot_cham, -mount_extra);
             // weep at the cavity's lowest point (mounted button-down): through the
-            // BOTTOM wall just above the plate's face, angled down, beside the wall
-            // plate's foot (x ±6) and inboard of the bottom posts' gussets. Too
+            // BOTTOM wall just above the plate's face, angled down, beside the
+            // security screw, in front of the collar's drain slot and inboard of the
+            // bottom posts' gussets. Too
             // small to matter for ingress; the pressure path is the vent membrane.
             if (e_weep)
-                weep_cut(7.0, -inner_y/2, floor_t + weep_d/2 + 0.2, "-y", wall_eff, weep_d);
+                weep_cut(weep_x, -inner_y/2, floor_t + weep_d/2 + 0.2, "-y", wall_eff, weep_d);
         }
         // screw posts from the face's underside to the relief over the ledge,
         // gusseted to their walls (a mid-span post only to its own) — the
@@ -768,8 +900,8 @@ module shell_solid() {
                         translate([p[0], p[1], -lid_rib_h - 0.1]) cylinder(d = pd + 1.6, h = lid_rib_h + 0.2);
                     translate([lens_x, lens_y, -lid_rib_h - 0.1])
                         cylinder(d = max(cam_ap_d, cam_disc_d) + 3, h = lid_rib_h + 0.2);
-                    for (sx = [1, -1], sy = [1, -1])
-                        translate([cam_cx + sx*cam_hole_x/2, cam_cy + sy*cam_hole_y/2, -lid_rib_h - 0.1])
+                    for (c = cam_post_xy())
+                        translate([c[0], c[1], -lid_rib_h - 0.1])
                             cylinder(d = cam_post_d + 2, h = lid_rib_h + 0.2);
                     translate([0, btn_cy, -lid_rib_h - 0.1])
                         cylinder(d = max(btn_bez_d, btn_d) + 4, h = lid_rib_h + 0.2);
@@ -781,9 +913,10 @@ module shell_solid() {
                         cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
                 }
             }
-            // camera posts (Pi-cam v1.3 grid), tall enough to hold the lens holder behind the face
-            for (sx = [1, -1], sy = [1, -1])
-                translate([cam_cx + sx*cam_hole_x/2, cam_cy + sy*cam_hole_y/2, -cam_post_eff])
+            // camera posts on the carrier's hole grid (cam_grid_dy above its center), the
+            // length that stands the lens barrel cam_barrel_in into the face's bore
+            for (c = cam_post_xy())
+                translate([c[0], c[1], -cam_post_eff])
                     difference() {
                         cylinder(d = cam_post_d, h = cam_post_eff + 0.1);
                         translate([0, 0, -0.1]) cylinder(d = cam_screw_d, h = cam_post_eff - 0.8);
@@ -803,26 +936,30 @@ module shell_solid() {
 module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.5); }
 
 // ----------------------------------------------------------------------------
-//  WALL PLATE — flat or wedge; T-studs the body drops onto; countersunk wall
-//  screws; cable pass; bottom L-foot with the security-screw hole. It spans
-//  the shell's whole footprint, so mounted it covers the back face — the
-//  plate screws under it are reachable only with the body off its studs.
+//  WALL PLATE — flat or wedge; three dovetail LUGS the body drops onto;
+//  counterbored wall screws; cable pass; and a COLLAR wrapping the body's
+//  bottom end that carries the security screw. The slab spans the shell's
+//  whole footprint, so mounted it covers the back face — the plate screws
+//  under it are reachable only with the body off its lugs.
 //  Modeled in print orientation (back on the bed).
 // ----------------------------------------------------------------------------
-// The catalog T-stud, kept as THIS FILE'S drawing rather than routed through
-// canary_mount_lib's mount_tstud(): the lib overlaps its stem 0.01 into the
-// cone (the catalog's CGAL hygiene rule), this drawing joins them on an exact
-// shared plane, and CGAL tessellates the two joints differently — same
-// envelope, different mesh, and the released plate STL must not move under a
-// dedup. The numbers ARE the standard (mount_stud_* in canary_mount_lib);
-// adopting the lib's overlap is a deliberate re-release, not a dedup.
-module tstud(yc, zbase) {
-    translate([0, yc, zbase]) {
-        cylinder(d = 4.0, h = kh_face + 0.4);                       // stem (rides the 4.2 slot)
-        translate([0, 0, kh_face + 0.4]) cylinder(d1 = 4.0, d2 = 6.6, h = 1.2);  // 45° under-head
-        translate([0, 0, kh_face + 1.6]) cylinder(d = 6.6, h = 0.8);             // head
-    }
-}
+// The collar replaces the v0.5 L-foot. A foot is a tab: standing off the plate
+// it is a cantilever whose root is one layer line, and a pry at the doorbell's
+// bottom (or a drop of the plate) peels it there. The collar is a U — a
+// bottom wall the body rests on and side returns climbing the body's flanks —
+// so a pry bends the returns IN THEIR OWN PLANE (deep beams), and the whole U
+// roots along its length into the slab through a bridge under the body's
+// edge. In the tilted frame (origin at the body's bottom edge, z = 0 the
+// body's back face) the body's outline is rrect2d(out_x, out_y) at y = out_y/2.
+module body_outline2d() translate([0, out_y/2]) rrect2d(out_x, out_y, rr);
+module collar_in2d()    translate([0, collar_clear]) offset(r = collar_clear) body_outline2d();
+module collar_out2d()   hull() { offset(r = collar_t) collar_in2d();
+                                 translate([0, -(collar_tb - collar_t)]) offset(r = collar_t) collar_in2d(); }
+module collar_clip2d()  translate([-out_x, -collar_tb - 1]) square([2*out_x, collar_arm + collar_tb + 1]);
+collar_h = mount_extra + sec_z + max(sec_bore_max, sec_screw_d + 0.4)/2 + 2.4;   // 2.4 of collar over the bore
+weep_x   = 7.0;   // the shell's weep exits its bottom wall here (beside the security screw)
+assert(collar_arm > rr, "the collar's returns must climb past the pill's corner radius, or they wrap nothing");
+assert(collar_tb >= 3.0, "the collar's bottom wall carries the security screw's head — keep it >= 3.0");
 // top-surface height of the (possibly wedged) plate at a given y —
 // thin at the bottom (-Y), thick at the top: the camera tilts DOWN toward
 // the walk-up, the usual doorbell wedge direction
@@ -838,9 +975,7 @@ assert(plate_seat_z >= 1.0 - 1e-9,
 
 module plate() {
     hmax = plate_z(out_y/2) + 2*plate_zx() + 0.1;   // covers the HIGH side of the x-wedge too
-    // security bore height above the wall = the shell's bore height: the body's
-    // back face sits on the plate top, mount_extra below the ledge plane
-    foot_z = wplate_t + mount_extra + sec_z;
+    z_bot = -(wplate_t + plate_zx() + (collar_arm + collar_tb)*sin(abs(plate_wedge)) + 1);   // down past the wall plane
     difference() {
         union() {
             // slab with a sloped top: straight prism cut by the wedge plane
@@ -849,18 +984,20 @@ module plate() {
                 translate([0, -out_y/2, wplate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0])
                     translate([-out_x - 1, -1, 0]) cube([2*out_x + 2, out_y + rr + 2, hmax + out_y + out_x]);
             }
-            // studs, L-foot and (below) the security bore all live in the TILTED
-            // frame so they stay aligned with the body resting on the wedge face
-            // the body rests on the foot 0.5 above the plate's bottom edge, so a stud
-            // drawn AT the pocket center parks 0.5 short of it — and 3.5 short of the
-            // slot's far end, half its head over the pass hole. Drawn (slot/2 - 0.5)
-            // higher, the head parks at the slot end, wholly behind the 1.0 mm web:
-            // offer the pass holes over the studs, drop the body 7.5, it stops on the foot
+            // lugs, collar and (below) the security bore all live in the TILTED
+            // frame so they stay aligned with the body resting on the wedge face.
+            // The body rests on the collar's bottom wall with its outline on the
+            // slab's, so each lug is drawn where its pocket parks it: offer the
+            // windows over the lugs, drop the body mount_dt_travel(), it lands in
+            // the collar
             translate([0, -out_y/2, wplate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0]) {
-                tstud(out_y/2 - stud_y + (kh_slot_l/2 - 0.5), -0.2);
-                tstud(out_y/2 + stud_y + (kh_slot_l/2 - 0.5), -0.2);
-                // bottom L-foot: sits under the body's bottom wall, carries the security screw
-                translate([-6, -4, -wplate_t - plate_zx()]) cube([12, 4.5, foot_z + plate_zx() + 4]);
+                for (c = lug_ys) mount_dovelug(out_y/2 + c);
+                // the collar: the U up to collar_h over the body's back face...
+                translate([0, 0, z_bot]) linear_extrude(collar_h - z_bot)
+                    intersection() { difference() { collar_out2d(); collar_in2d(); } collar_clip2d(); }
+                // ...and the bridge under the body's edge that roots it into the slab
+                translate([0, 0, z_bot]) linear_extrude(-z_bot)
+                    intersection() { difference() { collar_out2d(); offset(delta = -1) body_outline2d(); } collar_clip2d(); }
             }
         }
         // wall screws: through-holes + flat counterbores whose floor sits at a
@@ -868,9 +1005,9 @@ module plate() {
         // any wedge angle. The floor is DERIVED so a pan head lands flush with
         // the plate's thin end: the old constant 3.0 left a 1.0 seat on a 4.0
         // plate, and the heads (#8 pan 2.8 tall) stood 1.5-2 mm proud under a
-        // SOLID body back — the body could not reach its studs or security bore
-        // (7.5 from the side edge, not 8: the top stud's head now reaches y = stud_y + 6.8
-        // and the counterbores must stay 1 mm clear of it in x)
+        // SOLID body back — the body could not reach its lugs or security bore
+        // (7.5 from the side edge: the counterbores stay clear of the lugs and,
+        // at the bottom, of the collar's returns)
         for (sy = [1, -1], sx = [1, -1]) {
             translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), -0.1])
                 cylinder(d = plate_screw_d, h = hmax + 1);
@@ -881,10 +1018,16 @@ module plate() {
         translate([usb_exit_dx, well_cy + usb_exit_dy, -0.1]) hull()
             for (s = [1, -1]) translate([s*(usb_exit_w - usb_exit_h)/2, 0, 0])
                 cylinder(d = usb_exit_h + 4, h = hmax + 1);
-        // security-screw bore: up through the foot into the shell's bore (tilted frame)
-        translate([0, -out_y/2, wplate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0])
-            translate([0, -4.1, foot_z - wplate_t]) rotate([-90, 0, 0])
-                cylinder(d = sec_screw_d + 0.4, h = 5);
+        translate([0, -out_y/2, wplate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0]) {
+            // security-screw bore: up through the collar's bottom wall into the shell's bore
+            translate([0, -collar_tb - 0.1, mount_extra + sec_z]) rotate([-90, 0, 0])
+                cylinder(d = sec_screw_d + 0.4, h = collar_tb + 0.3);
+            // the weep's drain: a slot through the collar's bottom wall in front
+            // of the shell's weep, open down to the slab — the collar's band over
+            // it keeps the U closed
+            translate([weep_x, -collar_tb - 0.1, 0]) hull() for (z = [(weep_d + 1.6)/2, mount_extra + floor_t + weep_d + 0.2])
+                translate([0, 0, z]) rotate([-90, 0, 0]) cylinder(d = weep_d + 1.6, h = collar_tb + 0.3);
+        }
         // flatten anything the compound wedge tips below the wall plane (z < 0)
         translate([-out_x, -out_y/2 - 12, -10]) cube([2*out_x, out_y + 24, 10]);
     }
