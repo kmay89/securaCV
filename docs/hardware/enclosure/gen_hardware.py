@@ -9,7 +9,7 @@ WHY THIS FILE EXISTS. Every released case derives its hardware from the same
 variables that draw the holes (canary_core_lib.scad hw_len / hw_screw /
 hw_item / hw_echo) and echoes ONE line per render:
 
-    HARDWARE — Vision doorbell: 6x M2 pan x 10 self-tap · 4x M2 pan x 6 …
+    HARDWARE — Vision doorbell: 8x M2 pan x 10 self-tap · 4x M2 pan x 5 …
 
 Nothing read that line. The quantities a builder buys from are hand-typed in
 docs/hardware/bom_*.csv, carried into the Lab by gen_enclosures.py, and no
@@ -131,7 +131,7 @@ JOIN = {
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
     "canary-vision": ("bom_canary_vision.csv", [
-        ("screw", r"^M2 pan x (6|8) self-tap", "SCR5"),               # 6 mm camera posts + the 8 mm plate screws (pl_len)
+        ("screw", r"^M2 pan x (4|5|6|8|10) self-tap", "SCR5"),        # the mixed row: camera posts (6 Vision / 5 doorbell), the doorbell's board posts (4), the plate screws pl_len() picks (8 Vision / 10 doorbell)
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("security-screw", r"^M2 x 10 security screw", "SCR8"),
         ("bolt", r"^M5 x 25 bolt \+ nut", "SCR6"),

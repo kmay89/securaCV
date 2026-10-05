@@ -2209,7 +2209,7 @@
    ],
    "render_parts": [],
    "options": [],
-   "engineering_param_count": 2,
+   "engineering_param_count": 3,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2263,7 +2263,7 @@
   {
    "id": "vision_doorbell",
    "scad": "canary_vision_doorbell.scad",
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.6",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.7",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2291,7 +2291,7 @@
     {
      "id": "vision-doorbell",
      "name": "Vision · DOORBELL",
-     "for": "Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default",
+     "for": "Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
      "status": "released",
      "device": "canary-vision",
      "selects": {},
@@ -2316,6 +2316,10 @@
       {
        "name": "gasket",
        "file": "canary_vision_doorbell_gasket.stl"
+      },
+      {
+       "name": "retainer",
+       "file": "canary_vision_doorbell_retainer.stl"
       }
      ]
     }
@@ -2324,7 +2328,8 @@
     "body",
     "face",
     "plate",
-    "gasket"
+    "gasket",
+    "retainer"
    ],
    "options": [
     {
@@ -2384,6 +2389,30 @@
      "default": true
     },
     {
+     "id": "vm_screws",
+     "type": "bool",
+     "label": "Ø vm_post_d posts with M2 pilots under the module's two mounting holes",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_batt",
+     "type": "bool",
+     "label": "the bay (fence, end stops, the width it needs); off = the v0.6 cavity width on that side",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_ant",
+     "type": "bool",
+     "label": "the landing (ribs, the post stand-off); off = the mid posts fuse to the wall as before",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "screw_insert",
      "type": "bool",
      "label": "M2 brass heat-set inserts in the post ends AND the security boss (the one",
@@ -2408,14 +2437,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 171,
+   "engineering_param_count": 226,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 10,
-    "user_options": 8,
+    "options": 13,
+    "user_options": 11,
     "variant_axes": 1
    }
   },

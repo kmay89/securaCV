@@ -2288,14 +2288,16 @@
         "body": "Body — the back plate, the chassis",
         "face": "Face — the one-piece shell",
         "plate": "Wall plate",
-        "gasket": "Gasket ring — print in TPU"
+        "gasket": "Gasket ring — print in TPU",
+        "retainer": "Lens retainer ring"
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
-        "body": "The plate the module stack lives on. It nests inside the face's walls on the short screws from the back, hangs on the wall plate's T-studs and locks with the hidden screw.",
+        "body": "The plate the module stack lives on: rails, clips and two screw posts for the module, the battery bay's fence, the cable exit. It nests inside the face's walls on the screws from the back, drops onto the wall plate's dovetail lugs and locks with the hidden screw.",
         "face": "The one-piece show part — lens aperture, button hole, side walls and posts, the gasket ledge inside — printed face-down; the only seam is against the wall plate.",
-        "plate": "The wall plate with the T-studs. The wedge angles live here — the case aims wherever the plate points.",
-        "gasket": "The soft TPU ring that seals face to body against the weather."
+        "plate": "The wall plate with the three dovetail lugs, the collar and the cable slot. The wedge angles live here — the case aims wherever the plate points.",
+        "gasket": "The soft TPU ring that seals face to body against the weather.",
+        "retainer": "The small ring that presses into the face behind the lens disc and holds it against the lip. Print it flat, bore down."
       },
       "labels": {
         "part": "Part to print",
@@ -2321,7 +2323,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "2d7b9d622cf63b9be64262511d21958f1d773c8dbe9b98f0f67532be861fe0e5",
+      "sha256": "168affcc462270b219abd7be067e8b153762d0f768b82a9e401b05b60dc3effc",
       "groups": [
         {
           "name": "What to render",
@@ -2335,6 +2337,7 @@
                 "face",
                 "plate",
                 "gasket",
+                "retainer",
                 "all"
               ],
               "desc": ""
@@ -2532,7 +2535,7 @@
               "name": "cam_barrel_in",
               "type": "number",
               "default": 0.6,
-              "desc": "how far the barrel stands into that bore; the rest under the disc is focus travel"
+              "desc": "how far the barrel stands into the retainer's bore; the rest under the disc is focus travel"
             },
             {
               "name": "cam_fov",
@@ -2571,13 +2574,34 @@
               "name": "cam_disc_d",
               "type": "number",
               "default": 14.0,
-              "desc": "clear-disc seat (0 = bare aperture)"
+              "desc": "the clear disc's Ø — it seats from the INSIDE behind the face's lip"
             },
             {
               "name": "cam_disc_t",
               "type": "number",
               "default": 1.0,
-              "desc": "clear-disc thickness (the disc sits 0.2 recessed below the face)"
+              "desc": "the clear disc's thickness"
+            },
+            {
+              "name": "cam_lip_t",
+              "type": "number",
+              "default": 1.0,
+              "min": 0.6,
+              "step": 0.2,
+              "max": 1.4,
+              "desc": "the face's lip over the disc: skin left outside it, the lens cone cut through it"
+            },
+            {
+              "name": "cam_ret_t",
+              "type": "number",
+              "default": 1.0,
+              "desc": "the printed retainer ring behind the disc (part=\"retainer\"): a light press in the boss"
+            },
+            {
+              "name": "cam_boss_wall",
+              "type": "number",
+              "default": 1.5,
+              "desc": "the boss round the disc pocket, on the face's inner side, that the retainer presses into"
             }
           ]
         },
@@ -2613,6 +2637,12 @@
               "type": "number",
               "default": 16.2,
               "desc": "panel nut across corners (14 AF M12 nut = 16.2; 16 AF = 18.5) — asserted"
+            },
+            {
+              "name": "btn_wire_room",
+              "type": "number",
+              "default": 5.0,
+              "desc": "air behind the button's terminals for the solder joints and the wire bends toward the"
             }
           ]
         },
@@ -2673,44 +2703,56 @@
             {
               "name": "zone_gap",
               "type": "number",
-              "default": 2.0,
-              "desc": "camera <-> module gap"
+              "default": 6.0,
+              "desc": "camera <-> module gap: the ribbon's loop between the carrier's edge and the CSI connector"
             },
             {
               "name": "zone_well",
               "type": "number",
-              "default": 12.0,
-              "desc": "cable well between module and button (USB plugs live here)"
+              "default": 16.0,
+              "desc": "cable well between module and button: the USB plug's head (usb_plug_reach), the button's"
             },
             {
               "name": "zone_btn",
               "type": "number",
-              "default": 21.0,
-              "desc": "button zone height"
+              "default": 23.0,
+              "desc": "button zone height: the body, its nut, and air round its rear terminals before the bottom wall's security boss"
+            },
+            {
+              "name": "usb_plug_reach",
+              "type": "number",
+              "default": 13.0,
+              "desc": "how far a molded right-angle USB-C HEAD stands off the XIAO's port face along the"
+            },
+            {
+              "name": "usb_port_proud",
+              "type": "number",
+              "default": 1.3,
+              "desc": "the XIAO's USB-C shell past the module's bottom edge (the port face the plug reach counts from)"
             },
             {
               "name": "usb_exit_w",
               "type": "number",
-              "default": 12.0,
-              "desc": "oval cable exit through the back plate (into the wall-plate hole) — sized"
+              "default": 14.0,
+              "desc": "oval cable exit through the back plate (into the wall-plate slot) — sized for the"
             },
             {
               "name": "usb_exit_h",
               "type": "number",
-              "default": 7.0,
+              "default": 10.0,
               "desc": "the cable exit oval's height (Y); usb_exit_w is its length"
             },
             {
               "name": "usb_exit_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "exit offset from the centerline (0 keeps it centered in the well)"
+              "desc": "exit offset from the MODULE's centerline (the plug hangs off the XIAO's port, not the face's axis)"
             },
             {
               "name": "usb_exit_dy",
               "type": "number",
-              "default": 0.0,
-              "desc": "exit offset from the well center: the oval sits wholly in the well, under"
+              "default": -1.0,
+              "desc": "exit offset from the well center: the oval sits wholly in the well, under nothing, a hair"
             }
           ]
         },
@@ -2734,6 +2776,158 @@
               "type": "number",
               "default": 0.3,
               "desc": "core_tol_hole()"
+            }
+          ]
+        },
+        {
+          "name": "Module seat",
+          "params": [
+            {
+              "name": "vm_seat_lift",
+              "type": "number",
+              "default": 1.5,
+              "desc": "the whole seat (rails, shoes, guides, clip lips, posts) rises this much over the"
+            },
+            {
+              "name": "vm_screws",
+              "type": "bool",
+              "default": true,
+              "desc": "Ø vm_post_d posts with M2 pilots under the module's two mounting holes"
+            },
+            {
+              "name": "vm_hole_dx",
+              "type": "number",
+              "default": 7.5,
+              "desc": "the module's mounting holes, X from its centerline (one each side) — MEASURE: read off"
+            },
+            {
+              "name": "vm_hole_dy",
+              "type": "number",
+              "default": 2.5,
+              "desc": "...and Y from its center, toward the CSI (camera) end — MEASURE (±0.5)"
+            },
+            {
+              "name": "vm_post_d",
+              "type": "number",
+              "default": 5.0,
+              "desc": "the board post's Ø (the M2 pilot leaves 1.7 of wall)"
+            },
+            {
+              "name": "xiao_gap",
+              "type": "number",
+              "default": 0.3,
+              "desc": "air between a board post's relief flat and the XIAO's inner end, where it passes the post"
+            },
+            {
+              "name": "clip_flex",
+              "type": "number",
+              "default": 1.0,
+              "desc": "free air behind each -X clip beam for its flex (the battery fence stands past it)"
+            }
+          ]
+        },
+        {
+          "name": "Battery bay",
+          "params": [
+            {
+              "name": "opt_batt",
+              "type": "bool",
+              "default": true,
+              "desc": "the bay (fence, end stops, the width it needs); off = the v0.6 cavity width on that side"
+            },
+            {
+              "name": "batt_t",
+              "type": "number",
+              "default": 8.0,
+              "desc": "cell thickness (X, standing) — the 802030's 8.0 includes its PCM wrap"
+            },
+            {
+              "name": "batt_w",
+              "type": "number",
+              "default": 20.0,
+              "desc": "cell width (Z, the cavity's depth) — asserted under the face"
+            },
+            {
+              "name": "batt_l",
+              "type": "number",
+              "default": 30.0,
+              "desc": "cell length (Y, along the module)"
+            },
+            {
+              "name": "batt_pcm",
+              "type": "number",
+              "default": 1.0,
+              "desc": "the protection board's length past the cell, under the wrap (0 on an unprotected cell — don't)"
+            },
+            {
+              "name": "batt_clear",
+              "type": "number",
+              "default": 0.3,
+              "desc": "air round the cell in the bay, per side"
+            },
+            {
+              "name": "bay_wall_gap",
+              "type": "number",
+              "default": 0.8,
+              "desc": "the cell stands this far off the -X wall (its foam strip and the wall's cove)"
+            },
+            {
+              "name": "fence_t",
+              "type": "number",
+              "default": 0.8,
+              "desc": "the bay's fence, module side (two perimeters)"
+            },
+            {
+              "name": "fence_h",
+              "type": "number",
+              "default": 6.0,
+              "desc": "...and its height off the plate: the cell drops in from the front, the face holds it"
+            }
+          ]
+        },
+        {
+          "name": "Antenna landing",
+          "params": [
+            {
+              "name": "opt_ant",
+              "type": "bool",
+              "default": true,
+              "desc": "the landing (ribs, the post stand-off); off = the mid posts fuse to the wall as before"
+            },
+            {
+              "name": "ant_l",
+              "type": "number",
+              "default": 40.0,
+              "desc": "antenna FPC length (Y)"
+            },
+            {
+              "name": "ant_w",
+              "type": "number",
+              "default": 20.0,
+              "desc": "antenna FPC width (Z, across the cavity's depth) — the cavity deepens to center it"
+            },
+            {
+              "name": "ant_t",
+              "type": "number",
+              "default": 0.3,
+              "desc": "FPC + its adhesive"
+            },
+            {
+              "name": "ant_post_gap",
+              "type": "number",
+              "default": 1.0,
+              "desc": "a +X mid post's stand-off from the wall: ant_t plus air for the FPC's edge"
+            },
+            {
+              "name": "ant_rib_w",
+              "type": "number",
+              "default": 0.8,
+              "desc": "the two locating ribs along the landing's ends, proud of the wall by ant_rib_d"
+            },
+            {
+              "name": "ant_rib_d",
+              "type": "number",
+              "default": 0.4
             }
           ]
         },
@@ -2831,6 +3025,12 @@
               "type": "number",
               "default": 2.0,
               "desc": "(m2 pan) head height; the seat recesses it flush in the plate's back face"
+            },
+            {
+              "name": "head_floor",
+              "type": "number",
+              "default": 2.0,
+              "desc": "solid plastic under every recessed head — the plate screws' web past their gland and the"
             }
           ]
         },
@@ -2863,8 +3063,8 @@
             {
               "name": "wplate_t",
               "type": "number",
-              "default": 4.0,
-              "desc": "wall plate thickness at the THIN end"
+              "default": 5.0,
+              "desc": "wall plate thickness at the THIN end: a #8 pan head recessed flush over head_floor"
             },
             {
               "name": "plate_wedge",
@@ -2937,8 +3137,8 @@
             {
               "name": "lug_y",
               "type": "number",
-              "default": 40.0,
-              "desc": "the outer lugs park at y = ±lug_y (clear of the cable exit and the well)"
+              "default": 41.5,
+              "desc": "the outer lugs park at y = ±lug_y (clear of the cable exit, its slide slot and the well)"
             },
             {
               "name": "lug_mid_y",
@@ -3051,7 +3251,7 @@
               "name": "lp_dx",
               "type": "number",
               "default": 8.0,
-              "desc": "light-pipe port center X, from the module center"
+              "desc": "light-pipe port center X, from the face's center"
             },
             {
               "name": "lp_dy",
@@ -3093,7 +3293,7 @@
               "name": "vent_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "vent cluster center X, from the module center; 0 keeps it on the face's vertical axis"
+              "desc": "vent cluster center X, from the FACE's center; 0 keeps it on the face's vertical axis"
             },
             {
               "name": "vent_dy",
@@ -3117,7 +3317,7 @@
               "name": "mag_dx",
               "type": "number",
               "default": 8.0,
-              "desc": "magnet pocket center X, from the module center"
+              "desc": "magnet pocket center X, from the face's center"
             },
             {
               "name": "mag_dy",
@@ -3165,6 +3365,24 @@
               "type": "number",
               "default": 0.6,
               "desc": "45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root"
+            },
+            {
+              "name": "clip_dy_hi",
+              "type": "number",
+              "default": 8.5,
+              "desc": "the upper clip pair's center, from the module's center (+ toward the camera): below the CSI"
+            },
+            {
+              "name": "clip_dy_lo",
+              "type": "number",
+              "default": -10.0,
+              "desc": "the lower clip pair's center, from the module's center (over the XIAO's half)"
+            },
+            {
+              "name": "csi_len",
+              "type": "number",
+              "default": 7.6,
+              "desc": "the module's CSI (camera ribbon) connector reaches this far in from its top edge, the"
             }
           ]
         },
@@ -3178,17 +3396,13 @@
               "min": 0.08,
               "step": 0.04,
               "max": 0.32,
-              "desc": "your slicer's layer height: the face's counterbores get bridge steps this thick (core_bridge_steps)"
-            },
-            {
-              "name": "vm_cx",
-              "type": "number",
-              "default": 0
+              "desc": "your slicer's layer height: the button's bezel counterbore gets bridge steps this thick (core_bridge_steps)"
             },
             {
               "name": "cam_cx",
               "type": "number",
-              "default": 0
+              "default": 0,
+              "desc": "the lens stays on the face's centerline (vm_cx is derived below)"
             },
             {
               "name": "sec_boss_d",

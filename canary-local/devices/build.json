@@ -765,14 +765,14 @@
      },
      {
       "ref": "SCR5",
-      "qty": "12",
+      "qty": "14",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-8x 8mm (the back plate to the shell's post ends; 6 on the sealed Vision, 8 on the doorbell)",
+      "desc": "M2 self-tapping pan-head screws, mixed lengths: Vision case 4x 6mm (camera posts) + 6x 8mm (back plate to the shell's post ends); doorbell v0.7 4x 5mm (camera posts) + 2x 4mm (module board posts) + 8x 10mm (back plate, over a 2 mm head floor)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.6,
-      "notes": "4x 6mm for the OV5647 posts. 4x 8mm (6 on the sealed builds, with their mid-span posts) through the back plate's recessed seats into the one-piece shell's post ends — the plate nests inside the walls, so the only seam is on the back face. Max ~0.3 N-m or the printed posts strip",
+      "usd": 0.7,
+      "notes": "Black-oxide pan heads look best. The doorbell's plate screws grew 8 -> 10 mm in v0.7 (head_floor = 2.0 under every recessed head); the camera posts there take 5 mm (a 6 mm bottoms in the shorter post); the board posts take 4 mm (the pilot stops above the XIAO's end). gen_hardware.py --check joins this row to each case's echoed hardware",
       "orderable": false
      },
      {
@@ -820,7 +820,7 @@
       "mpn": "DISC-PMMA-14X1",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "Bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). For sealing also see WAP BOM items 23-26 (silicone, USB plug, TPU, GORE vent)",
+      "notes": "Vision case: bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). Doorbell v0.7: the disc goes in from the INSIDE behind the face's lip and the printed retainer ring (part=\"retainer\") presses in behind it - run a thin bead of neutral-cure silicone round the lip's ledge before the disc so the window seals; no bridges face the window. For sealing also see WAP BOM items 23-26 (silicone, USB plug, TPU, GORE vent)",
       "orderable": false
      },
      {
@@ -930,11 +930,11 @@
       "qty": "1",
       "required": false,
       "category": "Sealing",
-      "desc": "Cable grommet / bushing for 12x7mm oval (or seal with neutral-cure silicone)",
-      "mpn": "GROMMET-12X7",
+      "desc": "Cable grommet / bushing for a 14x10mm oval (or seal with neutral-cure silicone)",
+      "mpn": "GROMMET-14X10",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Doorbell rear cable exit; pair with a right-angle USB-C plug",
+      "notes": "Doorbell rear cable exit (14 x 10 in v0.7, was 12 x 7); pair with a right-angle USB-C plug - the wall plate's pass is a slot that runs the 8 mm drop, so the plug rides the slide",
       "orderable": false
      },
      {
@@ -948,12 +948,48 @@
       "usd": 0.4,
       "notes": "Outdoor Vision and doorbell: one under each back screw's pan head (6 with the mid-span gasket posts), in the glands the sealed back seats carry (e_gland). NBR or silicone 70A",
       "orderable": false
+     },
+     {
+      "ref": "BT2",
+      "qty": "1",
+      "required": false,
+      "category": "Power",
+      "desc": "LiPo cell 802030 class (8 x 20 x 30 mm, 400-450 mAh, 3.7 V) WITH protection circuit (PCM), JST-PH 2.0 leads",
+      "mpn": "LP802030-PCM-JST",
+      "mfr": "Generic",
+      "usd": 4.5,
+      "notes": "Doorbell v0.7 battery bay (opt_batt): ride-through for a USB supply that browns out. The XIAO's own charger charges it (ESP32-C3 ~370 mA = <1C on this cell, the one size in the 20 x 30 family that is; ESP32-S3 100 mA). Solder the leads to the XIAO's BAT+/BAT- pads BEFORE seating it in the module - the pads face the module. NEITHER XIAO CHARGER HAS A COLD CUTOFF: a LiPo must not charge below 0 C, so outdoors in a freezing climate LEAVE THE CELL OUT (cold_weather_envelope.md); the bay is for mild climates and sheltered porches. Protected cells only (IEC 62133 / UL)",
+      "orderable": false
+     },
+     {
+      "ref": "FT1",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "Foam tape strip, 0.5 x 6 x 30 mm, double-sided acrylic (battery bay floor)",
+      "mpn": "4926-STRIP",
+      "mfr": "3M",
+      "usd": 0.1,
+      "notes": "Under BT2 on the doorbell plate: takes up the bay's clearance and keeps the cell off the plate's layer lines. One strip, cut from a roll",
+      "orderable": false
+     },
+     {
+      "ref": "ANT1",
+      "qty": "1",
+      "required": false,
+      "category": "RF",
+      "desc": "FPC Wi-Fi antenna 2.4 GHz, 40 x 20 mm, u.FL pigtail (the XIAO ESP32-C3 kit antenna; S3: 37.4 x 17.5 A-02)",
+      "mpn": "318020748 / 318020968",
+      "mfr": "Seeed Studio",
+      "usd": 1.9,
+      "notes": "Doorbell v0.7 antenna landing (opt_ant): stuck to the +X wall's inner face between two ribs, its plane across the cavity, the +X mid posts standing 1 mm off the wall so it passes behind them; pigtail under the module to the XIAO's u.FL. Ships with the XIAO ESP32-C3 - no extra purchase on that host",
+      "orderable": false
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 81.03,
+    "full_usd": 87.63,
     "required_usd_live": 29.49,
-    "full_usd_live": 92.79,
+    "full_usd_live": 99.39,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {

@@ -150,7 +150,7 @@ that the plate slides into.
 
   | Set (`hardware.json`) | Rib h | Headroom | Bound | Slack | Note |
   |---|---|---|---|---|---|
-  | `doorbell` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned |
+  | `doorbell` | 1.00 | 2.50 | `lid_headroom` | 1.50 | v0.7: the antenna landing and the battery set `cav_d` above the stack's own (`cav_extra` 1.0 + 1.5) |
   | `sense` | 1.00 | 1.00 | `cav_extra` | 0.00 | pinned |
   | `vision.devkit_indoor` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned (`cav_d` = `cav_d_min`) |
   | `vision.xiao_indoor` | 1.00 | 1.38 | `lid_headroom` | 0.38 | the USB rule set `cav_d` above `cav_d_min` |

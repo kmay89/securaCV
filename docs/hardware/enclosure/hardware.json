@@ -13,14 +13,20 @@
     {
      "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 8 self-tap",
-     "text": "M2 pan x 8 self-tap (plate to the post ends)"
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap (plate to the post ends)"
     },
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 6 self-tap",
-     "text": "M2 pan x 6 self-tap (OV5647 to the face posts)"
+     "spec": "M2 pan x 5 self-tap",
+     "text": "M2 pan x 5 self-tap (OV5647 to the face posts)"
+    },
+    {
+     "qty": 2,
+     "kind": "screw",
+     "spec": "M2 pan x 4 self-tap",
+     "text": "M2 pan x 4 self-tap (module to its board posts)"
     },
     {
      "qty": 1,
@@ -55,8 +61,32 @@
     {
      "qty": 1,
      "kind": "window",
-     "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
-     "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+     "spec": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)",
+     "text": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)"
+    },
+    {
+     "qty": 1,
+     "kind": "printed-part",
+     "spec": "lens retainer ring (print part=\"retainer\"; presses into the boss behind the disc)",
+     "text": "lens retainer ring (print part=\"retainer\"; presses into the boss behind the disc)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "LiPo 802030-class, 8 x 20 x 30 (+1 PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C",
+     "text": "LiPo 802030-class, 8 x 20 x 30 (+1 PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)",
+     "text": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs",
+     "text": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs"
     },
     {
      "qty": 4,
@@ -69,9 +99,9 @@
     "ribs": true,
     "h": 1.0,
     "w": 2.5,
-    "headroom": 1.0,
+    "headroom": 2.5,
     "bound": "lid_headroom",
-    "slack": 0.0,
+    "slack": 1.5,
     "batt_hold": false
    },
    "bom": {
@@ -80,8 +110,8 @@
      "echo": 8
     },
     "SCR5": {
-     "bom": 12,
-     "echo": 12
+     "bom": 14,
+     "echo": 14
     },
     "SCR7": {
      "bom": 4,
@@ -105,14 +135,20 @@
     {
      "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 8 machine (into the inserts)",
-     "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
+     "spec": "M2 pan x 10 machine (into the inserts)",
+     "text": "M2 pan x 10 machine (into the inserts) (plate to the post ends)"
     },
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 6 self-tap",
-     "text": "M2 pan x 6 self-tap (OV5647 to the face posts)"
+     "spec": "M2 pan x 5 self-tap",
+     "text": "M2 pan x 5 self-tap (OV5647 to the face posts)"
+    },
+    {
+     "qty": 2,
+     "kind": "screw",
+     "spec": "M2 pan x 4 self-tap",
+     "text": "M2 pan x 4 self-tap (module to its board posts)"
     },
     {
      "qty": 1,
@@ -153,8 +189,32 @@
     {
      "qty": 1,
      "kind": "window",
-     "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
-     "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+     "spec": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)",
+     "text": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)"
+    },
+    {
+     "qty": 1,
+     "kind": "printed-part",
+     "spec": "lens retainer ring (print part=\"retainer\"; presses into the boss behind the disc)",
+     "text": "lens retainer ring (print part=\"retainer\"; presses into the boss behind the disc)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "LiPo 802030-class, 8 x 20 x 30 (+1 PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C",
+     "text": "LiPo 802030-class, 8 x 20 x 30 (+1 PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)",
+     "text": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs",
+     "text": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs"
     },
     {
      "qty": 4,
@@ -324,7 +384,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 12,
+     "bom": 14,
      "echo": 8
     },
     "SCR6": {
@@ -391,7 +451,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 12,
+     "bom": 14,
      "echo": 8
     },
     "SCR6": {
@@ -553,7 +613,7 @@
      "echo": 6
     },
     "SCR5": {
-     "bom": 12,
+     "bom": 14,
      "echo": 10
     },
     "SCR6": {

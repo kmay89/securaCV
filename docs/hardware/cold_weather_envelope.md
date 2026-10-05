@@ -117,6 +117,10 @@ to the cell.
 4. **Cameras are a warmer‑climate / warmer‑season proposition** (≈ −10/−20 °C floor); if you truly need
    sub‑freezing "vision," use a **thermal array** (−40 °C) and solve the energy separately.
 5. **Seal against condensation with a vent, not a sealed box** (a sealed box fogs; §5).
+6. **A LiPo on a charger with no cold gate is a mild‑climate part.** The Vision Doorbell case
+   (v0.7) carries a bay for a protected 802030 LiPo as ride‑through on the XIAO's own charger —
+   and neither XIAO's charger (ETA4054 / BQ25101) senses temperature. Where the porch freezes,
+   leave the bay empty; the doorbell runs from its USB supply alone.
 
 Pair this with the [solar & battery sizing guide](./solar_power_sizing.md) — cold decides the *chemistry
 and the recharge reality*; sizing decides *how much panel and battery* for your worst month.

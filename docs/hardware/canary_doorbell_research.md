@@ -2,7 +2,7 @@
 
 **Status:** research complete (market, silicon, sensors, power — September 2026, sources in §12);
 design. What exists today is a case: the **Vision Doorbell**
-([`enclosure/canary_vision_doorbell.scad`](./enclosure/canary_vision_doorbell.scad), v0.4) is a
+([`enclosure/canary_vision_doorbell.scad`](./enclosure/canary_vision_doorbell.scad), v0.7) is a
 released catalog variant wrapping the shipping Vision stack — a person witness in a doorbell
 shape. Its button and glow ring are in the Vision firmware since October 2026 (button on the
 XIAO's D1, ring on D2; [wiring, parts and behavior](./canary_vision_doorbell_wiring.md) —
@@ -443,24 +443,28 @@ peak**. The radar-wakes-camera fusion is the power story as much as the detectio
 night the sensor, ISP and IR idle until the radar sees an approach.
 
 **A battery flavor** is a later decision, with the honest answer already written: LiFePO4 with a
-temperature-gated charger and the cold-weather envelope's autonomy math, or none. The Lite tier's
-XIAO host can already run from the Vision BOM's protected pack for a doorbell that has no wire
-at all.
+temperature-gated charger and the cold-weather envelope's autonomy math, or none. The Lite case
+(v0.7) carries a **bay for a protected 802030 LiPo** beside the module as *ride-through* on the
+XIAO's own charger — not a supply, and not for a freezing climate, because neither XIAO charger
+has a cold cutoff (the case's BOM row and the wiring page both say so). The Lite tier's XIAO host
+can run from the Vision BOM's protected pack for a doorbell that has no wire at all, indoors.
 
 ---
 
-## 9 · Enclosure — evolving the v0.4 case, not replacing it
+## 9 · Enclosure — evolving the v0.7 case, not replacing it
 
 The released [Vision Doorbell case](./enclosure/canary_vision_doorbell.scad) already solves the
-doorbell's mounting problems the incumbents solved: a thin **wall plate** with two T-studs and a
-printable 5–15° **wedge**, a body that drops on and locks with a hidden **security screw** driven
-up through the plate's foot, the **rear cable oval** into the wall, a TPU gasket with a drip-edge
-face, a GORE vent and a weep, the 12 mm pill radius the [design language](../design/DESIGN_LANGUAGE.md)
-records as deliberate. The Pro body keeps every one of those and changes the face:
+doorbell's mounting problems the incumbents solved: a thin **wall plate** with three dovetail
+lugs and a printable 5–15° **wedge**, a body that drops on, lands in the plate's **collar** and
+locks with a hidden **security screw** driven up through it, the **rear cable oval** into the
+wall with a slot in the plate that runs the drop, a TPU gasket, a GORE vent and a weep, a lens
+disc seated from inside behind a lip, a LiPo bay and an FPC-antenna landing, the 12 mm pill
+radius the [design language](../design/DESIGN_LANGUAGE.md) records as deliberate. The Pro body
+keeps every one of those and changes the face:
 
 - a **lens boss** for an M12 holder with ICR (the OV5647's square Pi-cam holder goes), a 14 mm
-  optical-PMMA disc in the same recessed seat (PMMA does not yellow; PC does in a year or two
-  uncoated);
+  optical-PMMA disc behind the same lip and retainer (PMMA does not yellow; PC does in a year or
+  two uncoated);
 - an **IR window ring** of IR-pass PMMA around the lens for the two flanking emitters, and a
   second pair behind the bottom chamfer with the **ToF window**, both aimed at the mat;
 - a **radome** section beside the lens on the same face, flat and unpainted, by the Sense's
