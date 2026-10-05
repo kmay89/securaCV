@@ -97,6 +97,11 @@ If your board revision differs, the pins live in one place each,
 [`firmware/boards/xiao-esp32s3/pins/pins.h`](../../firmware/boards/xiao-esp32s3/pins/pins.h)
 and [`xiao-esp32c3/pins/pins.h`](../../firmware/boards/xiao-esp32c3/pins/pins.h).
 
+On the XIAO ESP32-S3, D2 is GPIO3, a strapping pin (the JTAG source select).
+It only counts when an eFuse no stock XIAO has burned is set, and R3 + R4
+hold it low at reset anyway, so the glow drive is safe there. The firmware
+leaves the pin high-impedance until the doorbell is on.
+
 On the XIAO ESP32-C3, D1 is also that board's `EXT_LED_PIN_DEFAULT`. Nothing
 in the Vision firmware uses it, but don't hang a status LED there on a
 doorbell.
