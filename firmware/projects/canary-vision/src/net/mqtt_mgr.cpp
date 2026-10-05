@@ -28,6 +28,7 @@
 #include "identity/device_signature.h"  // shared signer (health pubkey, chain sig)
 #include "canary/version.h"             // CANARY_FW_VERSION for the health publish
 #include "canary/witness.h"             // chain head/length for the chain publish
+#include "canary/doorbell.h"            // the doorbell state row (switch, glow, button health)
 
 namespace canary::net {
 
@@ -80,6 +81,11 @@ static volatile long s_pending_cfg_score = -1;
 static volatile long s_pending_cfg_lost = -1;
 static volatile long s_pending_cfg_dwell = -1;
 static volatile long s_pending_cfg_profile = -1;
+
+// Inbound doorbell switch + glow brightness (latch-and-drain, main.cpp
+// applies them through canary::doorbell_hw and republishes the state row).
+static volatile int s_pending_db_enable = -1;
+static volatile long s_pending_db_glow = -1;
 
 static bool token_at(const char* p, int n, const char* tok, int tok_len) {
   auto boundary = [](char c) {
@@ -156,6 +162,21 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
     s_pending_cfg_dwell = parse_cfg_number(payload, len, 600000);
     return;
   }
+  if (strcmp(topic, g_topics.doorbell_glow_cmd) == 0) {
+    s_pending_db_glow = parse_cfg_number(payload, len, 100);
+    return;
+  }
+  if (strcmp(topic, g_topics.doorbell_enable_cmd) == 0) {
+    const char* q = (const char*)payload;
+    int m = (int)len;
+    while (m > 0 && (*q == ' ' || *q == '\t' || *q == '"')) { q++; m--; }
+    if (token_at(q, m, "ON", 2) || token_at(q, m, "on", 2)) {
+      s_pending_db_enable = 1;
+    } else if (token_at(q, m, "OFF", 3) || token_at(q, m, "off", 3)) {
+      s_pending_db_enable = 0;
+    }
+    return;
+  }
 
   const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
   const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
@@ -230,6 +251,13 @@ long take_pending_cfg_score()   { return take_pending(s_pending_cfg_score); }
 long take_pending_cfg_lost()    { return take_pending(s_pending_cfg_lost); }
 long take_pending_cfg_dwell()   { return take_pending(s_pending_cfg_dwell); }
 long take_pending_cfg_profile() { return take_pending(s_pending_cfg_profile); }
+long take_pending_doorbell_glow()  { return take_pending(s_pending_db_glow); }
+
+int take_pending_doorbell_enable() {
+  const int v = s_pending_db_enable;
+  s_pending_db_enable = -1;
+  return v;
+}
 
 static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
   const bool ok = mqtt.publish(topic, payload, retain);
@@ -458,6 +486,15 @@ void ha_discovery_publish_once(const Topics& topics) {
   discovery_done = true;
 }
 
+void ha_discovery_republish(const Topics& topics) {
+  if (!mqtt.connected()) {
+    discovery_done = false;  // the next connect announces the new set
+    return;
+  }
+  canary::ha::publish_discovery(mqtt, topics);
+  discovery_done = true;
+}
+
 // ONE bounded connect attempt (TCP connect + MQTT CONNECT). On success it
 // republishes the retained surfaces and re-subscribes every command topic;
 // on failure it returns immediately so the caller's backoff owns the retry
@@ -559,7 +596,39 @@ bool mqtt_connect_attempt() {
   mqtt.subscribe(g_topics.cfg_dwell_cmd, 1);
   mqtt.subscribe(g_topics.cfg_profile_cmd, 1);
   publish_detect_cfg_retained(g_topics);
+
+  // Doorbell (boards with its pins only): the switch and glow commands and
+  // the retained state row, rebuilt from canary::doorbell_hw.
+  if (canary::doorbell_hw::available()) {
+    mqtt.subscribe(g_topics.doorbell_enable_cmd, 1);
+    mqtt.subscribe(g_topics.doorbell_glow_cmd, 1);
+    publish_doorbell_state_retained(g_topics);
+  }
   return true;
+}
+
+bool publish_doorbell_press(const Topics& topics) {
+  if (!mqtt.connected()) return false;
+  return publish_checked("BELL", topics.doorbell, "{\"event_type\":\"press\"}", false);
+}
+
+bool publish_doorbell_state_retained(const Topics& topics) {
+  if (!mqtt.connected() || !canary::doorbell_hw::available()) return false;
+  char msg[160];
+  snprintf(msg, sizeof(msg),
+           "{"
+           "\"enabled\":\"%s\","
+           "\"glow\":%u,"
+           "\"button\":\"%s\","
+           "\"rings\":%lu,"
+           "\"repeats\":%lu"
+           "}",
+           canary::doorbell_hw::enabled() ? "ON" : "OFF",
+           (unsigned)canary::doorbell_hw::glow_pct(),
+           canary::doorbell_hw::stuck() ? "stuck" : "ok",
+           (unsigned long)canary::doorbell_hw::rings(),
+           (unsigned long)canary::doorbell_hw::repeats());
+  return publish_checked("BELL", topics.doorbell_state, msg, true);
 }
 
 bool publish_detect_cfg_retained(const Topics& topics) {

@@ -36,6 +36,14 @@ struct Topics {
   // the device card in sync with the physical LED.
   char identify_cmd[96];
   char identify_echo[96];
+  // Vision Doorbell (canary/doorbell.h): doorbell carries one non-retained
+  // {"event_type":"press"} per sealed ring (HA's doorbell event entity);
+  // doorbell/state is the retained switch + glow + button-health row; the
+  // two /set topics are the switch and the glow brightness number.
+  char doorbell[96];
+  char doorbell_state[96];
+  char doorbell_enable_cmd[96];
+  char doorbell_glow_cmd[96];
 };
 
 // device_id comes from canary::cfg::get() — NVS-backed, so topics stay
@@ -62,5 +70,9 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.cfg_profile_cmd, sizeof(t.cfg_profile_cmd), "securacv/%s/cfg/profile/set", device_id);
   snprintf(t.identify_cmd,  sizeof(t.identify_cmd),  "securacv/%s/identify/set", device_id);
   snprintf(t.identify_echo, sizeof(t.identify_echo), "securacv/%s/identify",     device_id);
+  snprintf(t.doorbell,            sizeof(t.doorbell),            "securacv/%s/doorbell",            device_id);
+  snprintf(t.doorbell_state,      sizeof(t.doorbell_state),      "securacv/%s/doorbell/state",      device_id);
+  snprintf(t.doorbell_enable_cmd, sizeof(t.doorbell_enable_cmd), "securacv/%s/doorbell/enable/set", device_id);
+  snprintf(t.doorbell_glow_cmd,   sizeof(t.doorbell_glow_cmd),   "securacv/%s/doorbell/glow/set",   device_id);
   return t;
 }

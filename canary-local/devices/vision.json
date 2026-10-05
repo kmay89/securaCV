@@ -549,6 +549,26 @@
         "suffix": "identify",
         "retain": false,
         "desc": "identify echo \u2014 dashboards pulse the card in sync"
+      },
+      {
+        "suffix": "doorbell",
+        "retain": false,
+        "desc": "the Vision Doorbell: one {\"event_type\":\"press\"} per sealed ring (HA's doorbell event)"
+      },
+      {
+        "suffix": "doorbell/state",
+        "retain": true,
+        "desc": "doorbell switch, glow %, button ok/stuck, ring and repeat counts"
+      },
+      {
+        "suffix": "doorbell/enable/set",
+        "retain": false,
+        "desc": "HA's Doorbell enabled switch writes ON/OFF"
+      },
+      {
+        "suffix": "doorbell/glow/set",
+        "retain": false,
+        "desc": "set the doorbell ring's brightness (10\u2013100 %)"
       }
     ],
     "discovery": {
@@ -627,6 +647,26 @@
           "name": "Identify",
           "component": "button",
           "desc": "blink the LED to find this device"
+        },
+        {
+          "name": "Doorbell enabled",
+          "component": "switch",
+          "desc": "the Vision Doorbell's button + glow ring (XIAO hosts; the first press turns it on)"
+        },
+        {
+          "name": "Doorbell",
+          "component": "event",
+          "desc": "a doorbell press, once per sealed ring \u2014 only while the doorbell is on"
+        },
+        {
+          "name": "Doorbell glow",
+          "component": "number",
+          "desc": "the ring's brightness, 10\u2013100 % \u2014 on never means dark"
+        },
+        {
+          "name": "Doorbell button",
+          "component": "sensor",
+          "desc": "diagnostic \u2014 ok, or stuck (held past 15 s)"
         },
         {
           "name": "Auto Update",

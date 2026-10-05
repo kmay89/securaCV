@@ -67,4 +67,19 @@ namespace canary::net {
   long take_pending_cfg_dwell();   // -1 none; else ms
   long take_pending_cfg_profile(); // -1 none; else watch profile id
 
+  // ── Vision Doorbell (canary/doorbell.h) ────────────────────────────────
+  // publish_doorbell_press: one non-retained {"event_type":"press"} per
+  // sealed ring, for HA's doorbell event entity (the signed record is the
+  // `doorbell` event on the events topic). The retained state row is the
+  // switch, the glow and the button's health; it is rebuilt from
+  // canary::doorbell_hw on every reconnect. The switch and glow commands
+  // use the same latch-and-drain pattern as the settings above.
+  bool publish_doorbell_press(const Topics& topics);
+  bool publish_doorbell_state_retained(const Topics& topics);
+  int take_pending_doorbell_enable();  // -1 none; 0/1 = switch set off/on
+  long take_pending_doorbell_glow();   // -1 none; else 0..100 (clamped by the setter)
+  // Re-announce every entity (the doorbell's appear or disappear with its
+  // switch). Retained and idempotent, like the once-per-boot announcement.
+  void ha_discovery_republish(const Topics& topics);
+
 } // namespace

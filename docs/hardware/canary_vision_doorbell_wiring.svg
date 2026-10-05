@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640" width="960" height="640" font-family="Helvetica, Arial, sans-serif" font-size="14">
+  <title>Canary Vision Doorbell: button and glow ring wiring</title>
+  <desc>XIAO D1 reads the button through a 1k resistor with a 100nF filter; XIAO D2 drives a 2N3904 low-side switch for the button's LED ring, which is powered from the XIAO 5V pin. The button's common terminal goes to ground.</desc>
+  <rect x="0" y="0" width="960" height="640" fill="#ffffff"/>
+
+  <text x="30" y="40" font-size="20" font-weight="bold" fill="#1d1d1f">Canary Vision Doorbell — button + glow ring</text>
+  <text x="30" y="62" fill="#555">All inside the doorbell body. Only the XIAO's 5V, GND, D1 and D2 are used.</text>
+
+  <!-- XIAO -->
+  <rect x="40" y="110" width="250" height="440" rx="14" fill="#f4f4f6" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="165" y="140" text-anchor="middle" font-weight="bold" fill="#1d1d1f">XIAO ESP32-S3 / -C3</text>
+  <text x="165" y="160" text-anchor="middle" fill="#555" font-size="12">stacked on the Grove Vision AI V2</text>
+  <text x="165" y="176" text-anchor="middle" fill="#555" font-size="12">D3–D10 are the module's: leave free</text>
+
+  <g>
+    <circle cx="290" cy="220" r="6" fill="#d33a2c"/>
+    <text x="275" y="224" text-anchor="end" font-weight="bold" fill="#1d1d1f">5V</text>
+    <text x="275" y="240" text-anchor="end" fill="#777" font-size="11">USB VBUS</text>
+
+    <circle cx="290" cy="300" r="6" fill="#2b6cb0"/>
+    <text x="275" y="304" text-anchor="end" font-weight="bold" fill="#1d1d1f">D1</text>
+    <text x="275" y="320" text-anchor="end" fill="#777" font-size="11">button in</text>
+    <text x="275" y="334" text-anchor="end" fill="#777" font-size="11">S3 GPIO2 · C3 GPIO3</text>
+
+    <circle cx="290" cy="420" r="6" fill="#c98a00"/>
+    <text x="275" y="424" text-anchor="end" font-weight="bold" fill="#1d1d1f">D2</text>
+    <text x="275" y="440" text-anchor="end" fill="#777" font-size="11">glow PWM (20 kHz)</text>
+    <text x="275" y="454" text-anchor="end" fill="#777" font-size="11">S3 GPIO3 · C3 GPIO4</text>
+
+    <circle cx="290" cy="520" r="6" fill="#1d1d1f"/>
+    <text x="275" y="524" text-anchor="end" font-weight="bold" fill="#1d1d1f">GND</text>
+  </g>
+
+  <!-- GND rail -->
+  <line x1="290" y1="520" x2="910" y2="520" stroke="#1d1d1f" stroke-width="3"/>
+
+  <!-- 5V to LED+ -->
+  <polyline points="290,220 720,220 720,250 740,250" fill="none" stroke="#d33a2c" stroke-width="3"/>
+
+  <!-- D1: C2 to GND (with a hop over D2), R5, to NO -->
+  <line x1="290" y1="300" x2="420" y2="300" stroke="#2b6cb0" stroke-width="3"/>
+  <circle cx="340" cy="300" r="4" fill="#2b6cb0"/>
+  <path d="M340,300 L340,412 A8,8 0 0 1 340,428 L340,460" fill="none" stroke="#2b6cb0" stroke-width="3"/>
+  <line x1="322" y1="460" x2="358" y2="460" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="322" y1="470" x2="358" y2="470" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="340" y1="470" x2="340" y2="520" stroke="#1d1d1f" stroke-width="3"/>
+  <text x="366" y="470" fill="#1d1d1f" font-size="12">C2 100 nF</text>
+  <text x="366" y="485" fill="#777" font-size="11">close to the XIAO</text>
+  <rect x="420" y="290" width="70" height="20" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="455" y="282" text-anchor="middle" fill="#1d1d1f" font-size="12">R5 1 kΩ (ESD)</text>
+  <line x1="490" y1="300" x2="740" y2="300" stroke="#2b6cb0" stroke-width="3"/>
+
+  <!-- D2: R3 to Q1 base, R4 base pull-down -->
+  <line x1="290" y1="420" x2="470" y2="420" stroke="#c98a00" stroke-width="3"/>
+  <rect x="470" y="410" width="70" height="20" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="505" y="402" text-anchor="middle" fill="#1d1d1f" font-size="12">R3 1 kΩ</text>
+  <line x1="540" y1="420" x2="620" y2="420" stroke="#c98a00" stroke-width="3"/>
+  <circle cx="580" cy="420" r="4" fill="#c98a00"/>
+  <line x1="580" y1="420" x2="580" y2="445" stroke="#c98a00" stroke-width="3"/>
+  <rect x="570" y="445" width="20" height="45" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="562" y="473" text-anchor="end" fill="#1d1d1f" font-size="12">R4 10 kΩ</text>
+  <line x1="580" y1="490" x2="580" y2="520" stroke="#1d1d1f" stroke-width="3"/>
+
+  <!-- Q1 -->
+  <circle cx="652" cy="420" r="32" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <line x1="620" y1="420" x2="638" y2="420" stroke="#c98a00" stroke-width="3"/>
+  <line x1="638" y1="400" x2="638" y2="440" stroke="#1d1d1f" stroke-width="4"/>
+  <line x1="638" y1="410" x2="668" y2="394" stroke="#1d1d1f" stroke-width="2.5"/>
+  <line x1="638" y1="430" x2="668" y2="446" stroke="#1d1d1f" stroke-width="2.5"/>
+  <polygon points="668,446 656,436 652,445" fill="#1d1d1f"/>
+  <text x="626" y="412" fill="#777" font-size="11">B</text>
+  <text x="674" y="392" fill="#777" font-size="11">C</text>
+  <text x="674" y="460" fill="#777" font-size="11">E</text>
+  <text x="694" y="478" fill="#1d1d1f" font-size="12" font-weight="bold">Q1 2N3904</text>
+  <text x="694" y="493" fill="#777" font-size="11">flat face toward you: E · B · C</text>
+  <polyline points="668,394 668,360 740,360" fill="none" stroke="#7b3fb2" stroke-width="3"/>
+  <line x1="668" y1="446" x2="668" y2="520" stroke="#1d1d1f" stroke-width="3"/>
+
+  <!-- Button, rear view -->
+  <rect x="740" y="210" width="140" height="190" rx="18" fill="#fffbe6" stroke="#1d1d1f" stroke-width="2"/>
+  <circle cx="810" cy="305" r="58" fill="none" stroke="#e8b400" stroke-width="7" opacity="0.75"/>
+  <g font-size="12" fill="#1d1d1f">
+    <rect x="734" y="244" width="12" height="12" fill="#d33a2c"/>
+    <text x="754" y="254">LED +</text>
+    <rect x="734" y="294" width="12" height="12" fill="#2b6cb0"/>
+    <text x="754" y="304">NO</text>
+    <rect x="734" y="354" width="12" height="12" fill="#7b3fb2"/>
+    <text x="754" y="364">LED −</text>
+    <rect x="874" y="294" width="12" height="12" fill="#1d1d1f"/>
+    <text x="866" y="304" text-anchor="end">C</text>
+  </g>
+  <polyline points="886,300 910,300 910,520" fill="none" stroke="#1d1d1f" stroke-width="3"/>
+  <text x="810" y="424" text-anchor="middle" font-weight="bold" fill="#1d1d1f">BTN2 (rear view)</text>
+  <text x="810" y="441" text-anchor="middle" fill="#777" font-size="11">12 mm illuminated momentary</text>
+  <text x="810" y="455" text-anchor="middle" fill="#777" font-size="11">6 V LED version · IP65+</text>
+
+  <g font-size="12" fill="#1d1d1f">
+    <text x="30" y="586" font-weight="bold">Press:</text>
+    <text x="80" y="586">NO closes D1 to GND (internal pull-up · 30 ms debounce · edges timestamped by an interrupt).</text>
+    <text x="30" y="606" font-weight="bold">Glow:</text>
+    <text x="80" y="606">D2 switches Q1, and Q1 sinks the LED's cathode: the LED never hangs off a GPIO.</text>
+    <text x="30" y="626" font-weight="bold">Dark:</text>
+    <text x="80" y="626">R4 holds the ring off while D2 floats (at boot, and on any Vision whose doorbell is switched off).</text>
+  </g>
+</svg>
