@@ -10,6 +10,7 @@
 #include "canary/runtime_config.h"  // NVS-backed device id (OTA-safe)
 #include "canary/detect_config.h"   // bounds for the settings number entities
 #include "canary/detect_profiles.h" // watch profile options for the select
+#include "canary/doorbell.h"         // the Vision Doorbell: switch, event, glow, button health
 
 namespace canary::ha {
 
@@ -448,6 +449,89 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "}",
              DEVICE_ID, topics.identify_cmd, availObj, devObj);
     publish_cfg(mqtt, t, p);
+  }
+
+  // Vision Doorbell (boards with its pins: canary/doorbell.h). The switch
+  // is always announced there; the doorbell's own entities exist only while
+  // it is on — switched off, an empty retained config removes them, so a
+  // plain Vision never shows a doorbell. The event entity's device_class
+  // makes the press a real doorbell to Home Assistant (and to HomeKit
+  // through its bridge); the sealed record of the press is the `doorbell`
+  // event on the events topic, not this.
+  if (canary::doorbell_hw::available()) {
+    const bool on = canary::doorbell_hw::enabled();
+    {
+      char t[192], p[1024];
+      topic_for("switch", "doorbell", t, sizeof(t));
+      snprintf(p, sizeof(p),
+               "{"
+               "\"name\":\"Doorbell enabled\","
+               "\"unique_id\":\"%s_doorbell_switch\","
+               "\"state_topic\":\"%s\","
+               "\"value_template\":\"{{ value_json.enabled | default('OFF') }}\","
+               "\"command_topic\":\"%s\","
+               "\"icon\":\"mdi:doorbell\","
+               "\"entity_category\":\"config\","
+               "%s,%s"
+               "}",
+               DEVICE_ID, topics.doorbell_state, topics.doorbell_enable_cmd, availObj, devObj);
+      publish_cfg(mqtt, t, p);
+    }
+    {
+      char t[192], p[1024];
+      topic_for("event", "doorbell", t, sizeof(t));
+      snprintf(p, sizeof(p),
+               "{"
+               "\"name\":\"Doorbell\","
+               "\"unique_id\":\"%s_doorbell\","
+               "\"state_topic\":\"%s\","
+               "\"event_types\":[\"press\"],"
+               "\"device_class\":\"doorbell\","
+               "%s,%s"
+               "}",
+               DEVICE_ID, topics.doorbell, availObj, devObj);
+      publish_cfg(mqtt, t, on ? p : "");
+    }
+    {
+      // min/max are doorbell_logic.h's kGlowPctMin/Max (asserted below): a
+      // doorbell that is on never glows dark.
+      static_assert(::doorbell::kGlowPctMin == 10 && ::doorbell::kGlowPctMax == 100,
+                    "the Doorbell glow number's min/max literals follow doorbell_logic.h");
+      char t[192], p[1024];
+      topic_for("number", "doorbell_glow", t, sizeof(t));
+      snprintf(p, sizeof(p),
+               "{"
+               "\"name\":\"Doorbell glow\","
+               "\"unique_id\":\"%s_doorbell_glow\","
+               "\"state_topic\":\"%s\","
+               "\"value_template\":\"{{ value_json.glow }}\","
+               "\"command_topic\":\"%s\","
+               "\"min\":10,\"max\":100,\"step\":5,"
+               "\"mode\":\"slider\","
+               "\"unit_of_measurement\":\"%%\","
+               "\"icon\":\"mdi:brightness-6\","
+               "\"entity_category\":\"config\","
+               "%s,%s"
+               "}",
+               DEVICE_ID, topics.doorbell_state, topics.doorbell_glow_cmd, availObj, devObj);
+      publish_cfg(mqtt, t, on ? p : "");
+    }
+    {
+      char t[192], p[1024];
+      topic_for("sensor", "doorbell_button", t, sizeof(t));
+      snprintf(p, sizeof(p),
+               "{"
+               "\"name\":\"Doorbell button\","
+               "\"unique_id\":\"%s_doorbell_button\","
+               "\"state_topic\":\"%s\","
+               "\"value_template\":\"{{ value_json.button | default('ok') }}\","
+               "\"icon\":\"mdi:gesture-tap-button\","
+               "\"entity_category\":\"diagnostic\","
+               "%s,%s"
+               "}",
+               DEVICE_ID, topics.doorbell_state, availObj, devObj);
+      publish_cfg(mqtt, t, on ? p : "");
+    }
   }
 
   // Auto-update opt-in switch. Off by default — a witness device should

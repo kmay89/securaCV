@@ -51,6 +51,7 @@
 #include "canary/vision/vision_mgr.h"
 #include "canary/vision/optical_features.h"  // coarse posture/proximity/occupancy names
 #include "canary/state/presence_fsm.h"
+#include "canary/doorbell.h"  // the Vision Doorbell's button + glow ring (XIAO hosts)
 
 static Topics TOPICS;
 static canary::state::PresenceFSM fsm;
@@ -348,6 +349,79 @@ static void publish_event_json(
   canary::net::publish_chain_retained(TOPICS);
 }
 
+// ── Vision Doorbell ─────────────────────────────────────────────────────────
+// A press is sealed into the signed chain FIRST (broker or not — the record
+// exists regardless of connectivity, like every event here), then the glow
+// swells to tell the visitor the house heard them, then Home Assistant's
+// doorbell event fires. The swell is only for a sealed ring: with no witness
+// identity the press still goes out, but the ring does not claim it was
+// sealed. Inside the holdoff a press is a REPEAT (counted, never sealed), so
+// one impatient visitor cannot flood the record. State-row changes are
+// published from the connected tail of loop().
+static bool g_db_state_dirty = false;
+static bool g_db_discovery_dirty = false;
+
+static void on_doorbell_event(doorbell::ButtonEvent ev, uint32_t at_ms) {
+  const uint32_t now_ms = canary::ms_now();
+  switch (ev) {
+    case doorbell::ButtonEvent::RING: {
+      // Seal first: nothing (not even the NVS write below) may stand
+      // between a press and its record.
+      set_last_event("doorbell");
+      VisionSample vs{};
+      publish_event_json("doorbell", "button", now_ms, vs);
+      if (!canary::doorbell_hw::enabled()) {
+        // The first real press turns the doorbell on: a plain Vision never
+        // sees one, a doorbell's first visitor does.
+        canary::doorbell_hw::set_enabled(true);
+        g_db_discovery_dirty = true;
+      }
+      if (canary::witness::ready()) canary::doorbell_hw::swell(now_ms);
+      canary::net::publish_doorbell_press(TOPICS);
+      publish_state_now(now_ms);
+      canary::log_header("BELL");
+      canary::dbg_serial().printf("Ring (pressed at %lu ms, %s)\n", (unsigned long)at_ms,
+                                  canary::witness::ready() ? "sealed" : "unsigned");
+      break;
+    }
+    case doorbell::ButtonEvent::REPEAT:
+      canary::log_line("BELL", "Pressed again inside the holdoff - counted, not sealed.");
+      break;
+    case doorbell::ButtonEvent::STUCK:
+      canary::log_line("BELL", "Button held down for 15 s - reported stuck; it rings nothing until released.");
+      break;
+    case doorbell::ButtonEvent::STUCK_CLEARED:
+      canary::log_line("BELL", "Button released - no longer stuck.");
+      break;
+    case doorbell::ButtonEvent::NONE:
+      return;
+  }
+  g_db_state_dirty = true;
+}
+
+// HA's doorbell switch and glow number, drained on the connected tail.
+static void drain_doorbell_commands() {
+  if (!canary::doorbell_hw::available()) return;
+  const int en = canary::net::take_pending_doorbell_enable();
+  if (en >= 0) {
+    if (canary::doorbell_hw::set_enabled(en == 1)) g_db_discovery_dirty = true;
+    g_db_state_dirty = true;  // republish even an unchanged value (HA is optimistic)
+  }
+  const long glow = canary::net::take_pending_doorbell_glow();
+  if (glow >= 0) {
+    canary::doorbell_hw::set_glow_pct((uint8_t)glow);
+    g_db_state_dirty = true;
+  }
+  if (g_db_discovery_dirty) {
+    g_db_discovery_dirty = false;
+    canary::net::ha_discovery_republish(TOPICS);
+  }
+  if (g_db_state_dirty) {
+    g_db_state_dirty = false;
+    canary::net::publish_doorbell_state_retained(TOPICS);
+  }
+}
+
 static void vision_serial_write(const char* str) {
   canary::dbg_serial().print(str);
 }
@@ -572,6 +646,7 @@ void setup() {
 
   canary::net::mqtt_init(TOPICS);
   canary::vision::init();
+  canary::doorbell_hw::init();  // no-op on boards without the doorbell's pins
 
   // MQTT connection
   boot_line("              ,_,  ))");
@@ -822,6 +897,12 @@ void loop() {
   // display would show a person who had already left. (review catch)
   const bool sampled = vision_tick(canary::ms_now());
 
+  // The doorbell, also before the broker gate: a press must seal and swell
+  // with the house's network down. The glow breathes "unsure" while the
+  // broker is unreachable, so an empty log never reads as a quiet one.
+  canary::doorbell_hw::set_hub_ok(canary::net::mqtt_connected());
+  canary::doorbell_hw::poll(canary::ms_now(), on_doorbell_event);
+
   if (!canary::net::mqtt_connected()) {
     if (!canary::net::wifi_connected()) {
       // No link, no broker — let wifi_loop() drive recovery.
@@ -879,6 +960,7 @@ void loop() {
   // so slider changes land at MQTT speed and the next vision_tick — which
   // runs at the top of the following pass — samples under the new config.
   drain_detect_cfg_commands();
+  drain_doorbell_commands();
 
   // Aim-assist switch: drain the HA command and enforce the auto-off.
   {

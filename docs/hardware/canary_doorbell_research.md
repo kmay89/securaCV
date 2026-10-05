@@ -4,9 +4,10 @@
 design. What exists today is a case: the **Vision Doorbell**
 ([`enclosure/canary_vision_doorbell.scad`](./enclosure/canary_vision_doorbell.scad), v0.4) is a
 released catalog variant wrapping the shipping Vision stack — a person witness in a doorbell
-shape. Its button is wired to the host's multifunction input, but the shipping Vision firmware
-does not read that input, and the shipping model detects people, not packages; so even the Lite
-tier's *ring* is firmware work. Everything else here — the Pro carrier board, its firmware
+shape. Its button and glow ring are in the Vision firmware since October 2026 (button on the
+XIAO's D1, ring on D2; [wiring, parts and behavior](./canary_vision_doorbell_wiring.md) —
+host-tested, **not yet bench-tested**), but the shipping model detects people, not packages; so
+the Lite tier rings, and its package custody is still model work. Everything else here — the Pro carrier board, its firmware
 image, the sensor set, the case that holds them — is **a design: no schematic, no image, no
 bench unit, and no benchmark.** Every "beats" and every latency in this document is a **design
 target** (AGENTS.md rule 4: no performance claim without a benchmark); §11 is the bench plan that
@@ -226,8 +227,8 @@ so an empty log is visibly "unsure", not "quiet".
 
 The press is a `ContactStateChange` on the wire name `doorbell` (the Dash already renders that
 name at an honest severity — see the [competitor landscape](../research/competitor_app_landscape.md);
-today it is emitted by the WAP's acoustic module, and the Doorbell's button producing it is
-firmware work, §10). It rides local MQTT to the hub and the BLE fleet beacon to the phone in the
+the WAP's acoustic module emits it too, and the Doorbell's button now does —
+[wiring](./canary_vision_doorbell_wiring.md); the BLE beacon half below is not yet built, §10). It rides local MQTT to the hub and the BLE fleet beacon to the phone in the
 same room; the Dash, the nightstand and the Nightlight react; the mechanical chime strikes
 through the on-board relay. **Those paths cross no WAN**, so a WAN outage cannot take them down.
 The **away** poke is the exception, by nature: the [alert relay](../design/alert_relay.md)'s
@@ -398,7 +399,7 @@ cannot be applied to old data, because there is no old data.
 
 | Doorbell moment | Claim kind (existing) | Modality | Corroboration |
 |---|---|---|---|
-| button press | `ContactStateChange` (wire name `doorbell`; the Vision reading its input is firmware work) | contact | — |
+| button press | `ContactStateChange` (wire name `doorbell`; the Vision reads its button — [wiring](./canary_vision_doorbell_wiring.md)) | contact | — |
 | approach across the walk line | `LargeObjectBoundaryCrossing` | radar, camera | both, or radar alone at night before the camera wakes |
 | standing at the door, no press | `PresenceInRestrictedZone` (dwell ≥ N s) | radar + camera | required from both |
 | package placed | `SmallObjectBoundaryCrossing` (the class word waits on §11 item 13) | camera + ToF | both |
@@ -487,7 +488,7 @@ is where these become distributor-verified rows.
 
 | Tier | What it is | Parts (qty-1) | At 1 000 (est.) |
 |---|---|---|---|
-| **Lite — the released case, plus firmware work** | the released case + XIAO S3 + Grove Vision AI V2 + OV5647 (NoIR variant) + 2× 850 nm emitter + 12 mm lit button; **add** an LD2410 ($3) for approach, a VL53L8CX ($9) for the mat, and a chime-relay power module ($6); night is IR grayscale on the module's small NPU. **Firmware work, not yet done:** the Vision project reads no physical button today (the ring is a `ContactStateChange` on the multifunction input to be written), the shipping model is person-only (a package class is a model change), and the radar, ToF and relay each need a driver. Parts exist; the doorbell does not | **≈ $60** | ≈ $45 |
+| **Lite — the released case, plus firmware work** | the released case + XIAO S3 + Grove Vision AI V2 + OV5647 (NoIR variant) + 2× 850 nm emitter + 12 mm lit button; **add** an LD2410 ($3) for approach, a VL53L8CX ($9) for the mat, and a chime-relay power module ($6); night is IR grayscale on the module's small NPU. **Firmware:** the button and the glow ring are written ([wiring](./canary_vision_doorbell_wiring.md): D1/D2, host-tested, not yet bench-tested); still to do: the shipping model is person-only (a package class is a model change), and the radar, ToF and relay each need a driver. With the button and ring on D1/D2, the module's socket leaves the XIAO no free pin for the radar's UART or the relay: the ToF can share the module's I2C bus, the other two need an expander or the Pro carrier. Parts exist; the doorbell is part-built | **≈ $60** | ≈ $45 |
 | **Pro — this design** | Core1106 SoM $35 · IMX335 M12 module $25 · 1.5 mm f-theta lens + ICR $12 · LD2450 $12 · VL53L8CX $9 · 4× SFH 4725AS + 2× white LED $15 · SK6812 ring + 16 mm IP67 button $7 · MAX98357A + IP67 speaker $8 · LIS3DH $2 · power block (bridge, bulk, buck, relay, supercaps) $8 · 4-layer carrier + passives + connectors $12 · case, gasket, vent, PMMA, screws $6 | **≈ $150** | **≈ $70** |
 | **Pro 4K — the option** | the Pro with an RV1126B compute island and an IMX678 / SC850SL 4-lane module | ≈ $250 (SoM price unpublished; the reCamera Pro is $300 as a product) | ≈ $120 |
 | PoE daughter | 802.3af PD module | +$8 | +$5 |
@@ -544,8 +545,9 @@ Numbered, so the follow-ups can cite them.
     house, and to a mechanical chime strike, on the LAN with the WAN unplugged; the "under a
     second" in §4.5 is a target until this row has numbers.
 
-**Bench sequence:** (a) the Lite on the released case — first the Vision firmware reading its
-button, then radar, ToF and the chime relay on the XIAO's spare pins — proves §4.1, §4.5 and
+**Bench sequence:** (a) the Lite on the released case — first its button and glow ring
+(firmware written, [wiring](./canary_vision_doorbell_wiring.md)), then radar, ToF and the chime
+relay (an expander: the stacked module leaves the XIAO no spare pins for the radar or relay) — proves §4.1, §4.5 and
 §4.6 with zero new silicon; (b) a Core1106 on a Luckfox carrier with an IMX335 and the §6.2 image, boxes-only, on the
 bench; (c) the Pro carrier.
 

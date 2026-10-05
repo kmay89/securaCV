@@ -840,12 +840,78 @@
       "qty": "1",
       "required": false,
       "category": "Switch",
-      "desc": "12mm panel-mount illuminated momentary button, SHORT body, IP65, LED ring",
-      "mpn": "PBM12-LED-IP65",
+      "desc": "12mm panel-mount illuminated momentary button, SHORT body, IP65+, ring LED - 6 V LED version (yellow = canary; any color works), momentary SPST-NO with separate LED + / - terminals",
+      "mpn": "PBM12-LED-IP65-6V",
       "mfr": "Generic",
       "usd": 2.5,
-      "notes": "Doorbell enclosure face (canary_vision_doorbell.scad): switch to the multifunction input (GPIO9), LED ring to the status LED pin; body+terminals <= 18mm behind panel (btn_body_l is assert-checked)",
+      "notes": "Doorbell enclosure face (canary_vision_doorbell.scad). Switch: C to GND, NO to XIAO D1 through R5 (GPIO2 on the S3, GPIO3 on the C3; internal pull-up). LED: + to XIAO 5V, - to Q1 collector - never straight to a GPIO. Buy the 6 V version (its LED carries its own resistor); a 3 V version needs a 100 ohm resistor in series with LED+. Body+terminals <= 18mm behind panel (btn_body_l is assert-checked). Wiring: docs/hardware/canary_vision_doorbell_wiring.md",
       "orderable": false
+     },
+     {
+      "ref": "Q1",
+      "qty": "1",
+      "required": false,
+      "category": "Semiconductor",
+      "desc": "NPN transistor 2N3904, TO-92 (glow ring low-side switch)",
+      "mpn": "2N3904BU",
+      "mfr": "onsemi",
+      "usd": 0.1,
+      "notes": "Doorbell glow: collector to BTN2 LED -, emitter to GND, base from XIAO D2 through R3. Any small NPN (BC547, 2N2222, MMBT3904) works at the ring's ~10-20 mA",
+      "orderable": false
+     },
+     {
+      "ref": "R3",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Resistor 1k ohm 1/4W (Q1 base)",
+      "mpn": "CFR-25JB-52-1K",
+      "mfr": "Yageo",
+      "usd": 0.02,
+      "notes": "XIAO D2 (GPIO3 on the S3, GPIO4 on the C3) to Q1 base: ~2 mA of base drive, plenty to saturate Q1 at the ring's current",
+      "orderable": false
+     },
+     {
+      "ref": "R4",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Resistor 10k ohm 1/4W (Q1 base pull-down)",
+      "mpn": "CFR-25JB-52-10K",
+      "mfr": "Yageo",
+      "usd": 0.02,
+      "notes": "Q1 base to GND: holds the ring dark while D2 is high-impedance (boot, and every Vision that never turns its doorbell on)",
+      "orderable": false
+     },
+     {
+      "ref": "R5",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Resistor 1k ohm 1/4W (button series, ESD)",
+      "mpn": "CFR-25JB-52-1K",
+      "mfr": "Yageo",
+      "usd": 0.02,
+      "notes": "BTN2 NO terminal to XIAO D1: limits the current a static zap on the outdoor button can push into the pin. With C2 it also filters wiring noise",
+      "orderable": false
+     },
+     {
+      "ref": "C2",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Capacitor 100nF 50V ceramic (button filter)",
+      "mpn": "CL21B104KBCNNNC",
+      "mfr": "Samsung",
+      "usd": 0.02,
+      "notes": "XIAO D1 to GND, at the XIAO end: with R5, a ~0.1 ms filter - far below the firmware's 30 ms debounce, so it never eats a press",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 5531706,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
+      }
      },
      {
       "ref": "SCR8",
@@ -856,7 +922,7 @@
       "mpn": "M2X10-SEC-TX",
       "mfr": "Generic",
       "usd": 0.3,
-      "notes": "Doorbell anti-theft lock: drives up through the wall plate's foot into the body's blind boss - tool-only removal, Ring-style. With screw_insert=true the boss carries INS1's fifth insert, so use the M2 machine-thread variant (a self-tapper strips brass)",
+      "notes": "Doorbell anti-theft lock: drives up through the wall plate's collar into the body's blind boss - tool-only removal, Ring-style. With screw_insert=true the boss carries INS1's fifth insert, so use the M2 machine-thread variant (a self-tapper strips brass)",
       "orderable": false
      },
      {
@@ -885,9 +951,9 @@
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 80.85,
+    "full_usd": 81.03,
     "required_usd_live": 29.49,
-    "full_usd_live": 92.53,
+    "full_usd_live": 92.79,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {

@@ -125,6 +125,16 @@
 #define EXT_LED_PIN_DEFAULT     3     // D2
 #define EXT_LED_ACTIVE          HIGH
 
+// Vision Doorbell (canary_vision_doorbell.scad): the illuminated button's
+// switch and its LED. D1 and D2, because with the XIAO stacked on the Grove
+// Vision AI V2 the module's socket owns D4/D5 (I2C), D6/D7 (UART) and the
+// SPI group (D8-D10, chip select D3) — D1/D2 are the pair it leaves alone.
+// The switch closes D1 to GND (internal pull-up); D2 drives the gate of the
+// LED's low-side MOSFET (never the LED directly). Wiring and parts:
+// docs/hardware/canary_vision_doorbell_wiring.md.
+#define DOORBELL_BUTTON_PIN     2    // D1 — switch to GND, active LOW
+#define DOORBELL_GLOW_PIN       3    // D2 — MOSFET gate, PWM, active HIGH
+
 // ============================================================================
 // PIN VALIDATION
 // ============================================================================
