@@ -62,7 +62,7 @@ aperture and radome window, as `features_mm`), each manifest-owned device's
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
 - [Design rules](./DESIGN_RULES.md) — the plastics-engineering checklist every shell here is held to (walls, coves, ribs, bosses, snaps, seals, drains, keys, lead-ins, print pose), each rule with the library module or CI gate that enforces it and the file-by-file status
 - [Audit, 2026-09](./AUDIT_2026_09.md) — an eleven-dimension design audit of every `.scad` here (ribs, drop, weather, openings, clearances, printability, assembly, repairability, parametric UX, aesthetics): what was found, what was fixed, and what is still open — each finding proved by a rendered probe rather than by reading a comment
-- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v06) · [Doorbell](#canary-vision--doorbell-v06) · [Sense radome](#canary-sense--radome-enclosure-v02)
+- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v06) · [Doorbell](#canary-vision--doorbell-v07) · [Sense radome](#canary-sense--radome-enclosure-v02)
 
 ## The complete file map
 
@@ -144,7 +144,7 @@ minutes.
 | **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [hood](./canary_vision_enclosure_xiao_weather_hood.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
 | **Vision · devkit indoor** | Grove-cabled ESP32-C3-DevKitM-1 host | <img src="./preview_vision_devkit.png" width="260"> | [back](./canary_vision_enclosure_devkit_indoor_back.stl) · [front](./canary_vision_enclosure_devkit_indoor_front.stl) |
 | **Vision · mount kit** | wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob | <img src="./preview_vision_bracket.png" width="180"> <img src="./preview_vision_knob.png" width="120"> | [bracket](./canary_vision_enclosure_bracket.stl) · [knob](./canary_vision_enclosure_knob.stl) |
-| **Vision · DOORBELL** | Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) |
+| **Vision · DOORBELL** | Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) · [retainer](./canary_vision_doorbell_retainer.stl) |
 | **Sense · radome** | MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob) | <img src="./preview_sense.png" width="260"> | [back](./canary_sense_back.stl) · [front](./canary_sense_front.stl) |
 | **Thermal / outdoor kit** | solar radiation shield (weather WAP) + universal desiccant tray | — | [shield](./canary_wap_enclosure_weather_shield.stl) · [tray](./canary_wap_enclosure_tray.stl) |
 
@@ -1150,7 +1150,7 @@ up, presses into the groove (`tol_press`) and is bonded with neutral-cure
 silicone.
 
 **v0.6 (2026-10): the camera hole moves to the lens, and the front prints
-clean.** These are the [doorbell v0.6](#canary-vision--doorbell-v06) findings
+clean.** These are the [doorbell v0.6](#canary-vision--doorbell-v07) findings
 applied here, and every front STL is re-cut:
 
 - **The camera hole was in the wrong place.** The posts sat on the camera
@@ -1241,15 +1241,78 @@ the fin round-overs self-supporting). Gasket in TPU 90–95A.
 
 ---
 
-# Canary Vision — Doorbell (v0.6)
+# Canary Vision — Doorbell (v0.7)
 
 The stacked-XIAO Vision build in a **video-doorbell form factor**
-([`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad)): a slim
-vertical pill, **34 × 116 × 26 mm** — the Ring Wired is 98 × 46 × 22, the
-Wyze 93 × 41 × 22 — with the OV5647 behind a sealed disc at the top, the
-module + stacked XIAO in the middle, and a **12 mm illuminated momentary
-button** (short body, IP65, wired to the multifunction input; its LED ring
-replaces the light pipe) at the bottom. **v0.2** sizes the board bay to the
+([`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad)): a
+vertical pill, **51.5 × 129.2 × 29.2 mm** on a 5 mm wall plate — the Ring
+Wired is 98 × 46 × 22, the Wyze 93 × 41 × 22, the Aqara G410 141 × 65 × 30 —
+with the OV5647 behind a sealed disc at the top, the module + stacked XIAO
+in the middle beside a **LiPo bay** and an **antenna landing**, and a
+**12 mm illuminated momentary button** (short body, IP65, on the XIAO's D1
+with its LED ring on D2 —
+[wiring, parts and firmware](../canary_vision_doorbell_wiring.md)) at the
+bottom.
+
+**v0.7 (2026-10-05) — the first print's findings.** A built v0.6, loaded
+with the real stack, taught these; every doorbell STL is re-cut and there
+is a fifth printed part:
+
+- **The lens opening is a lip, not a counterbore.** v0.6 seated the disc in
+  a pocket cut from the *outer* face, so printed face-down the pocket's
+  floor was a bridge over the lens cone and its bridge steps showed through
+  the window as a slot and a square. The disc now goes in **from the
+  inside**: it sits behind a 1.0 mm skin **lip** whose aperture is the lens
+  cone itself (Ø9.4 at the back, Ø10.8 at the skin, a 45° lead), and a
+  printed **retainer ring** (`part = "retainer"`, Ø14.2 × 1.0) presses into
+  a boss behind it and holds it. Nothing in the hole is bridged; sliced
+  face-down the opening is round at every layer. The lens barrel nests
+  0.6 mm into the retainer's bore as it did into the face, 0.4 mm of focus
+  travel under the disc, the same FOV cone through everything (asserted).
+  Run a thin bead of neutral-cure silicone round the lip's ledge before the
+  disc goes in — that is the window's seal.
+- **Longer where the cable lives.** The cable well grows 12 → 16 mm so a
+  molded right-angle USB-C head (`usb_plug_reach` 13 mm off the XIAO's
+  port face, asserted ≥ 1.5 mm clear of the button nut), the button's wires
+  and the glow driver's sleeve stop fighting; the button zone grows 21 → 23
+  and the cavity keeps 5 mm behind the button's terminals (`btn_wire_room`)
+  for the solder joints and the bend toward the well; the camera gap grows
+  2 → 6 for the ribbon's loop. The oval exit is **14 × 10** (was 12 × 7) and
+  the wall plate's pass is a **slot** that runs the body's whole 8 mm drop,
+  so the plug rides the slide instead of fouling it.
+- **The module seat.** The clips came up ~1.5 mm short of the module's top
+  face on the print. The whole seat — rails, shoes, guides, clip lips —
+  rises `vm_seat_lift` (1.5) together; the upper clip pair moves from +10
+  to +8.5 off the module's center, below the CSI connector's ends (the
+  connector spans the module's full width at its top edge, and a lip sat on
+  it); and a **Ø5 post with an M2 pilot** stands under each of the
+  module's two mounting holes (`vm_hole_dx/dy` = ±7.5 / +2.5 — read off
+  the print's photo to ±0.5, **measure them**: the vendor CAD carries no
+  holes), relieved to a flat where the XIAO's inner end passes it, so the
+  module is screwed down as well as clipped (2 × M2 × 4; the pilot stops
+  above the relief).
+- **Two millimeters under every head.** The plate's recessed screw heads
+  bore on a 1.15 mm web past their O-ring gland and the wall plate's
+  counterbores left 1.0 under a #8 pan head — a driver would pull either
+  through. `head_floor = 2.0` now sets the plate's recess (the plate screws
+  grow to **M2 × 10**, 8 of them) and the wall plate is **5.0** thick; the
+  collar's 3.5 mm bottom wall under the security screw already met it.
+- **A battery bay and an antenna landing.** On the −X side an
+  **802030-class LiPo** (8 × 20 × 30, 400–450 mAh, protected) stands on
+  edge between the −X mid posts — now its end stops — behind a 6 mm fence,
+  on a foam strip, under the face: ride-through for a USB supply that
+  browns out, charged by the XIAO's own charger (the C3's ~370 mA is < 1C
+  on this cell, the one size in its family that is). **Neither XIAO charger
+  has a cold cutoff**, and a LiPo must not charge below 0 °C: in a freezing
+  climate leave the cell out (`opt_batt` off, or just an empty bay;
+  [cold-weather envelope](../cold_weather_envelope.md)). On the +X wall's
+  inner face the XIAO's **FPC Wi-Fi antenna** (40 × 20, the C3 kit's; the
+  S3's A-02 fits the same landing) sticks between two locating ribs, its
+  plane across the cavity — it radiates through the body toward the door
+  and the house alike — and the +X mid posts stand 1 mm off the wall as
+  free columns so the FPC passes behind them. The module's centerline sits
+  2.2 mm off the face's (`vm_cx`, derived from the bay's width); the lens,
+  vent and button stay on the face's axis. **v0.2** sizes the board bay to the
 measured Grove Vision AI V2 footprint (40 × 20 mm, mounted vertically — the
 v0.1 bay assumed a 25 × 25 square the module never was): the side rails now run
 the module's top half only so the 17.8 mm-wide XIAO clears as it hangs beneath,
@@ -1307,7 +1370,8 @@ doorbell STL is re-cut:
   the lens, vent and button holes). The face prints on the bed, so every
   seat cut into the outer face left a flat ring with nothing under it, and a
   slicer bridges a circle as spaghetti. The lens-disc and button-bezel seats
-  now carry **bridge steps** (`core_bridge_steps`): one layer above the
+  got **bridge steps** (`core_bridge_steps`; v0.7 keeps them on the bezel
+  only — the lens disc now seats from inside, see above): one layer above the
   seat floor is a slot the hole's width (two straight bridges anchored on the
   seat's walls), the next a square (bridges across those), then the round
   hole. Set `bridge_layer` to your slicer's layer height — the seat depths are
@@ -1315,7 +1379,7 @@ doorbell STL is re-cut:
   **inner** face (where the assembly steps always put the patch), so the
   outer face carries only the Ø1 holes and nothing has to bridge.
 
-![doorbell — body, face, plate and gasket](./preview_doorbell.png)
+![doorbell — body, face, plate, gasket and lens retainer](./preview_doorbell.png)
 
 **Mounting is the doorbell pattern, not the hinge.** A thin **wall plate**
 screws to the door frame (4 × #8/M4, counterbored — or print the included
@@ -1340,37 +1404,57 @@ face, no side openings at all — the only penetrations are the sealed lens
 disc, the IP65 button, and the rear exit against the wall. Same honest ~IP54
 rating; a porch or doorway soffit is its natural habitat.
 
-**Assembly:** camera to the face posts + bond the disc → **stick an adhesive
-GORE/ePTFE membrane patch over the vent cluster on the face's INNER side**
-(the default face has the vent holes — without the membrane they defeat the
-seal; the Ø2 weep through the bottom wall drains any condensate) → seat
-the XIAO in the module (**USB-Cs same direction!**) and press the stack down
-between the guides until all four clips click (its bottom edge sits on the
-shoes' stops) → mount the button through the face, wire button/LED to the XIAO →
-gasket in the groove, face on, 6 × M2 pan heads (black-oxide looks best) → plate on
-the frame, cable through, offer the body 8 mm high over the lugs, drop it
-into the collar, drive the security screw up through the collar.
+**Assembly (v0.7):** a bead of neutral-cure silicone round the lip's ledge
+inside the face, drop the **disc** in, press the **retainer ring** in behind
+it (bore toward the cavity) → camera to the four face posts (4 × M2 × 5),
+the lens barrel finds the retainer's bore → **stick an adhesive GORE/ePTFE
+membrane patch over the vent cluster on the face's INNER side** (the
+default face has the vent holes — without the membrane they defeat the
+seal; the Ø2 weep through the bottom wall drains any condensate) → mount
+the **button** through the face, nut on, and wire it per the
+[wiring page](../canary_vision_doorbell_wiring.md) (the wires turn toward
+the well, not the bottom wall) → on the plate: if you are fitting the
+battery, solder its leads to the XIAO's BAT pads *before* seating the XIAO
+(the pads face the module), seat the XIAO in the module (**USB-Cs same
+direction!**), press the stack down between the guides until all four
+clips click (its bottom edge sits on the shoes' stops), drive the two
+**board screws** (M2 × 4) through the module's holes into their posts →
+stick the **antenna** to the +X wall of the face between its ribs and run
+the pigtail under the module to the XIAO's u.FL → foam strip in the bay,
+cell in on edge (leads toward the well) → plug the right-angle USB-C into
+the XIAO, leg down through the oval → gasket in the groove, face on, 8 ×
+M2 × 10 pan heads with their O-rings (black-oxide looks best) → wall plate
+on the frame, cable through its slot, offer the body 8 mm high over the
+lugs, drop it into the collar, drive the security screw up through the
+collar.
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
 | `preset` | `"custom"` | `doorbell_weather` = the released build in one click — sealed, vented, weep, no extra light pipe, no tamper magnet (overrides the option checkboxes, which already default to it) |
 | `plate_wedge` / `plate_wedge_x` | 0 / 0 | wedge the plate vertically and/or left-right (corner installs) |
-| `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity) |
-| `stack_sock_h`, `xiao_below` | 6.5 / 5.5 | **measure** your stack, as with the Vision case |
+| `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity, with `btn_wire_room` behind its terminals) |
+| `stack_sock_h`, `xiao_below`, `vm_seat_lift` | 6.5 / 5.5 / 1.5 | **measure** your stack, as with the Vision case; the lift is what the first print found the module sitting above its rails — dial it to 0 if yours seats |
+| `vm_screws`, `vm_hole_dx` / `vm_hole_dy` | on, 7.5 / 2.5 | the module's two M2 holes (**measure**: ±0.5 off a photo) — the posts under them, relieved past the XIAO's end |
+| `cam_lip_t` / `cam_ret_t` / `cam_boss_wall` | 1.0 / 1.0 / 1.5 | the lens lip, the retainer ring and the boss it presses into |
+| `usb_plug_reach` / `usb_port_proud` | 13 / 1.3 | the right-angle plug head the well is sized for, asserted clear of the button nut |
+| `opt_batt`, `batt_t/w/l`, `batt_pcm`, `fence_h` | on, 8/20/30, 1, 6 | the LiPo bay — an 802030 class cell; off for a freezing climate |
+| `opt_ant`, `ant_l` / `ant_w`, `ant_post_gap` | on, 40 / 20, 1.0 | the FPC antenna landing on the +X wall and the posts' stand-off |
+| `head_floor` | 2.0 | solid plastic under every recessed head (sets the plate recess and screw length, gates `wplate_t`) |
 | `lens_dx/dy`, `cam_grid_dy`, `cam_lens_h`, `cam_barrel_d` | 0, −1.7 / 4.05 / 5.0 / 7.0 | the OV5647-62 as the vendor CAD draws it — re-measure if your camera is a different carrier |
 | `cam_fov` / `cam_fov_margin` | 62 / 4 | the lens's diagonal FOV (datasheet) and the margin the hole's cone keeps around it |
-| `lug_y` / `lug_mid_y` / `dt_clear` | 40 / 6 / 0.2 | where the dovetail lugs park; the pocket fit (dial it on the coupon's POCKET station) |
+| `lug_y` / `lug_mid_y` / `dt_clear` | 41.5 / 6 / 0.2 | where the dovetail lugs park (clear of the cable slot); the pocket fit (dial it on the coupon's POCKET station) |
 | `collar_t` / `collar_tb` / `collar_arm` | 2.4 / 3.5 / 18 | the collar's side returns, bottom wall and how far the returns climb the body |
 | `btn_nut_ac` | 16.2 | the button's panel nut across corners — asserted against the bottom posts |
 | `opt_weep`, `seal_mid_posts`, `head_seal` | on / on / off | drain, mid-wall clamp posts, O-ring under each face screw |
-| `usb_exit_*` | 12×7 oval | cable exit size/position (guarded against the lug pockets) |
+| `usb_exit_*` | 14×10 oval | cable exit size/position, from the MODULE's centerline (guarded against the lug pockets; the wall plate's pass is this plus 4, run 8 mm up the slide) |
 | `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
 | `opt_vent` | **true** | vent/sound cluster on the face — **an adhesive GORE/ePTFE membrane over it (inner face) is REQUIRED**: unmembraned holes defeat the seal; a membraned vent is what stops day/night thermal cycling from pumping moist air past it |
 | engineering trio | on | `lid_ribs`, `foot_cham`, `screw_insert` as on the other cases |
 
-> ⚠️ **v0.1 — verify before printing.** Same rules as the Vision case: measure
-> the seated stack and your button before printing; print the face first and
-> test-fit the button and disc.
+> ⚠️ **Verify before printing.** Same rules as the Vision case: measure the
+> seated stack, the module's hole positions and your button before printing;
+> print the face and the retainer first and test-fit the button, the disc and
+> the ring.
 
 ---
 

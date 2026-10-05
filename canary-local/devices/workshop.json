@@ -504,7 +504,7 @@
      "id": "vision-doorbell",
      "label": "Vision · DOORBELL",
      "set": "vision-doorbell",
-     "contents": "Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default",
+     "contents": "Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
      "status": "released",
      "parts": [
       {
@@ -526,6 +526,10 @@
       {
        "name": "gasket",
        "file": "canary_vision_doorbell_gasket.stl"
+      },
+      {
+       "name": "retainer",
+       "file": "canary_vision_doorbell_retainer.stl"
       }
      ],
      "preview": "preview_doorbell.png"

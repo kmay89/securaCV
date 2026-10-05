@@ -226,7 +226,7 @@
   {
    "id": "vision-doorbell",
    "name": "Vision · DOORBELL",
-   "for": "Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default",
+   "for": "Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
    "status": "released",
    "device": "canary-vision",
    "preview": "preview_doorbell.png",
@@ -260,6 +260,12 @@
      "file": "canary_vision_doorbell_gasket.stl",
      "print_note": "TPU 90–95A, 100% infill, slow — the seal is the print",
      "material": "TPU 90–95A"
+    },
+    {
+     "name": "retainer",
+     "file": "canary_vision_doorbell_retainer.stl",
+     "print_note": "prints flat as modeled — no supports by design",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_vision_doorbell.scad"
@@ -3117,7 +3123,7 @@
    ]
   },
   "canary_vision_doorbell.scad": {
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.6",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.7",
    "groups": [
     {
      "name": "What to render",
@@ -3131,6 +3137,7 @@
         "face",
         "plate",
         "gasket",
+        "retainer",
         "all"
        ]
       }
@@ -3318,7 +3325,7 @@
       {
        "name": "cam_barrel_in",
        "default": "0.6",
-       "comment": "how far the barrel stands into that bore; the rest under the disc is focus travel"
+       "comment": "how far the barrel stands into the retainer's bore; the rest under the disc is focus travel"
       },
       {
        "name": "cam_fov",
@@ -3353,12 +3360,32 @@
       {
        "name": "cam_disc_d",
        "default": "14.0",
-       "comment": "clear-disc seat (0 = bare aperture)"
+       "comment": "the clear disc's Ø — it seats from the INSIDE behind the face's lip"
       },
       {
        "name": "cam_disc_t",
        "default": "1.0",
-       "comment": "clear-disc thickness (the disc sits 0.2 recessed below the face)"
+       "comment": "the clear disc's thickness"
+      },
+      {
+       "name": "cam_lip_t",
+       "default": "1.0",
+       "range": [
+        0.6,
+        0.2,
+        1.4
+       ],
+       "comment": "the face's lip over the disc: skin left outside it, the lens cone cut through it"
+      },
+      {
+       "name": "cam_ret_t",
+       "default": "1.0",
+       "comment": "the printed retainer ring behind the disc (part=\"retainer\"): a light press in the boss"
+      },
+      {
+       "name": "cam_boss_wall",
+       "default": "1.5",
+       "comment": "the boss round the disc pocket, on the face's inner side, that the retainer presses into"
       }
      ]
     },
@@ -3390,6 +3417,11 @@
        "name": "btn_nut_ac",
        "default": "16.2",
        "comment": "panel nut across corners (14 AF M12 nut = 16.2; 16 AF = 18.5) — asserted"
+      },
+      {
+       "name": "btn_wire_room",
+       "default": "5.0",
+       "comment": "air behind the button's terminals for the solder joints and the wire bends toward the"
       }
      ]
     },
@@ -3444,38 +3476,48 @@
       },
       {
        "name": "zone_gap",
-       "default": "2.0",
-       "comment": "camera <-> module gap"
+       "default": "6.0",
+       "comment": "camera <-> module gap: the ribbon's loop between the carrier's edge and the CSI connector"
       },
       {
        "name": "zone_well",
-       "default": "12.0",
-       "comment": "cable well between module and button (USB plugs live here)"
+       "default": "16.0",
+       "comment": "cable well between module and button: the USB plug's head (usb_plug_reach), the button's"
       },
       {
        "name": "zone_btn",
-       "default": "21.0",
-       "comment": "button zone height"
+       "default": "23.0",
+       "comment": "button zone height: the body, its nut, and air round its rear terminals before the bottom wall's security boss"
+      },
+      {
+       "name": "usb_plug_reach",
+       "default": "13.0",
+       "comment": "how far a molded right-angle USB-C HEAD stands off the XIAO's port face along the"
+      },
+      {
+       "name": "usb_port_proud",
+       "default": "1.3",
+       "comment": "the XIAO's USB-C shell past the module's bottom edge (the port face the plug reach counts from)"
       },
       {
        "name": "usb_exit_w",
-       "default": "12.0",
-       "comment": "oval cable exit through the back plate (into the wall-plate hole) — sized"
+       "default": "14.0",
+       "comment": "oval cable exit through the back plate (into the wall-plate slot) — sized for the"
       },
       {
        "name": "usb_exit_h",
-       "default": "7.0",
+       "default": "10.0",
        "comment": "the cable exit oval's height (Y); usb_exit_w is its length"
       },
       {
        "name": "usb_exit_dx",
        "default": "0.0",
-       "comment": "exit offset from the centerline (0 keeps it centered in the well)"
+       "comment": "exit offset from the MODULE's centerline (the plug hangs off the XIAO's port, not the face's axis)"
       },
       {
        "name": "usb_exit_dy",
-       "default": "0.0",
-       "comment": "exit offset from the well center: the oval sits wholly in the well, under"
+       "default": "-1.0",
+       "comment": "exit offset from the well center: the oval sits wholly in the well, under nothing, a hair"
       },
       {
        "name": "tol_slide",
@@ -3491,6 +3533,126 @@
        "name": "tol_hole",
        "default": "0.30",
        "comment": "core_tol_hole()"
+      }
+     ]
+    },
+    {
+     "name": "Module seat",
+     "note": "what the first print taught about holding the module",
+     "params": [
+      {
+       "name": "vm_seat_lift",
+       "default": "1.5",
+       "comment": "the whole seat (rails, shoes, guides, clip lips, posts) rises this much over the"
+      },
+      {
+       "name": "vm_screws",
+       "default": "true",
+       "comment": "Ø vm_post_d posts with M2 pilots under the module's two mounting holes"
+      },
+      {
+       "name": "vm_hole_dx",
+       "default": "7.5",
+       "comment": "the module's mounting holes, X from its centerline (one each side) — MEASURE: read off"
+      },
+      {
+       "name": "vm_hole_dy",
+       "default": "2.5",
+       "comment": "...and Y from its center, toward the CSI (camera) end — MEASURE (±0.5)"
+      },
+      {
+       "name": "vm_post_d",
+       "default": "5.0",
+       "comment": "the board post's Ø (the M2 pilot leaves 1.7 of wall)"
+      },
+      {
+       "name": "xiao_gap",
+       "default": "0.3",
+       "comment": "air between a board post's relief flat and the XIAO's inner end, where it passes the post"
+      },
+      {
+       "name": "clip_flex",
+       "default": "1.0",
+       "comment": "free air behind each -X clip beam for its flex (the battery fence stands past it)"
+      },
+      {
+       "name": "opt_batt",
+       "default": "true",
+       "comment": "the bay (fence, end stops, the width it needs); off = the v0.6 cavity width on that side"
+      },
+      {
+       "name": "batt_t",
+       "default": "8.0",
+       "comment": "cell thickness (X, standing) — the 802030's 8.0 includes its PCM wrap"
+      },
+      {
+       "name": "batt_w",
+       "default": "20.0",
+       "comment": "cell width (Z, the cavity's depth) — asserted under the face"
+      },
+      {
+       "name": "batt_l",
+       "default": "30.0",
+       "comment": "cell length (Y, along the module)"
+      },
+      {
+       "name": "batt_pcm",
+       "default": "1.0",
+       "comment": "the protection board's length past the cell, under the wrap (0 on an unprotected cell — don't)"
+      },
+      {
+       "name": "batt_clear",
+       "default": "0.3",
+       "comment": "air round the cell in the bay, per side"
+      },
+      {
+       "name": "bay_wall_gap",
+       "default": "0.8",
+       "comment": "the cell stands this far off the -X wall (its foam strip and the wall's cove)"
+      },
+      {
+       "name": "fence_t",
+       "default": "0.8",
+       "comment": "the bay's fence, module side (two perimeters)"
+      },
+      {
+       "name": "fence_h",
+       "default": "6.0",
+       "comment": "...and its height off the plate: the cell drops in from the front, the face holds it"
+      },
+      {
+       "name": "opt_ant",
+       "default": "true",
+       "comment": "the landing (ribs, the post stand-off); off = the mid posts fuse to the wall as before"
+      },
+      {
+       "name": "ant_l",
+       "default": "40.0",
+       "comment": "antenna FPC length (Y)"
+      },
+      {
+       "name": "ant_w",
+       "default": "20.0",
+       "comment": "antenna FPC width (Z, across the cavity's depth) — the cavity deepens to center it"
+      },
+      {
+       "name": "ant_t",
+       "default": "0.3",
+       "comment": "FPC + its adhesive"
+      },
+      {
+       "name": "ant_post_gap",
+       "default": "1.0",
+       "comment": "a +X mid post's stand-off from the wall: ant_t plus air for the FPC's edge"
+      },
+      {
+       "name": "ant_rib_w",
+       "default": "0.8",
+       "comment": "the two locating ribs along the landing's ends, proud of the wall by ant_rib_d"
+      },
+      {
+       "name": "ant_rib_d",
+       "default": "0.4"
       }
      ]
     },
@@ -3577,6 +3739,11 @@
        "name": "screw_head_h",
        "default": "2.0",
        "comment": "(m2 pan) head height; the seat recesses it flush in the plate's back face"
+      },
+      {
+       "name": "head_floor",
+       "default": "2.0",
+       "comment": "solid plastic under every recessed head — the plate screws' web past their gland and the"
       }
      ]
     },
@@ -3607,8 +3774,8 @@
      "params": [
       {
        "name": "wplate_t",
-       "default": "4.0",
-       "comment": "wall plate thickness at the THIN end"
+       "default": "5.0",
+       "comment": "wall plate thickness at the THIN end: a #8 pan head recessed flush over head_floor"
       },
       {
        "name": "plate_wedge",
@@ -3678,8 +3845,8 @@
      "params": [
       {
        "name": "lug_y",
-       "default": "40.0",
-       "comment": "the outer lugs park at y = ±lug_y (clear of the cable exit and the well)"
+       "default": "41.5",
+       "comment": "the outer lugs park at y = ±lug_y (clear of the cable exit, its slide slot and the well)"
       },
       {
        "name": "lug_mid_y",
@@ -3768,7 +3935,7 @@
     },
     {
      "name": "Front-face features",
-     "note": "offsets from the MODULE center",
+     "note": "X from the FACE's center (the module sits off it, vm_cx), Y from the MODULE center",
      "params": [
       {
        "name": "lp_d",
@@ -3778,7 +3945,7 @@
       {
        "name": "lp_dx",
        "default": "8.0",
-       "comment": "light-pipe port center X, from the module center"
+       "comment": "light-pipe port center X, from the face's center"
       },
       {
        "name": "lp_dy",
@@ -3813,7 +3980,7 @@
       {
        "name": "vent_dx",
        "default": "0.0",
-       "comment": "vent cluster center X, from the module center; 0 keeps it on the face's vertical axis"
+       "comment": "vent cluster center X, from the FACE's center; 0 keeps it on the face's vertical axis"
       },
       {
        "name": "vent_dy",
@@ -3833,7 +4000,7 @@
       {
        "name": "mag_dx",
        "default": "8.0",
-       "comment": "magnet pocket center X, from the module center"
+       "comment": "magnet pocket center X, from the face's center"
       },
       {
        "name": "mag_dy",
@@ -3869,6 +4036,21 @@
        "name": "clip_root_r",
        "default": "0.6",
        "comment": "45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root"
+      },
+      {
+       "name": "clip_dy_hi",
+       "default": "8.5",
+       "comment": "the upper clip pair's center, from the module's center (+ toward the camera): below the CSI"
+      },
+      {
+       "name": "clip_dy_lo",
+       "default": "-10.0",
+       "comment": "the lower clip pair's center, from the module's center (over the XIAO's half)"
+      },
+      {
+       "name": "csi_len",
+       "default": "7.6",
+       "comment": "the module's CSI (camera ribbon) connector reaches this far in from its top edge, the"
       }
      ]
     },
@@ -3884,7 +4066,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the face's counterbores get bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the button's bezel counterbore gets bridge steps this thick (core_bridge_steps)"
       },
       {
        "name": "ledge_w",
@@ -3926,25 +4108,89 @@
       },
       {
        "name": "vm_standoff",
-       "default": "stack_sock_h + xiao_below"
+       "default": "stack_sock_h + xiao_below + vm_seat_lift"
       },
       {
-       "name": "cam_post_eff",
-       "default": "cam_lens_h - cam_barrel_in"
+       "name": "z_vm_top",
+       "default": "floor_t + vm_standoff + pcb_t",
+       "comment": "the module's top face (assembled frame)"
+      },
+      {
+       "name": "xiao_end_y",
+       "default": "-vm_l/2 + xiao_l",
+       "comment": "the XIAO's inner end, from the module's center (+Y)"
       },
       {
        "name": "cam_ap_d",
-       "default": "cam_barrel_d + 2*tol_slide"
+       "default": "cam_barrel_d + 2*tol_slide",
+       "comment": "the retainer's bore"
+      },
+      {
+       "name": "z_disc0",
+       "default": "lid_t - cam_lip_t - cam_disc_t",
+       "comment": "the disc's inner face"
+      },
+      {
+       "name": "z_ret0",
+       "default": "z_disc0 - cam_ret_t",
+       "comment": "the retainer's inner face"
+      },
+      {
+       "name": "z_barrel_top",
+       "default": "z_ret0 + cam_barrel_in",
+       "comment": "the barrel's mouth"
+      },
+      {
+       "name": "cam_focus",
+       "default": "z_disc0 - z_barrel_top",
+       "comment": "air between the barrel's mouth and the disc"
+      },
+      {
+       "name": "cam_post_eff",
+       "default": "cam_lens_h - z_barrel_top",
+       "comment": "face underside -> the carrier's PCB face"
+      },
+      {
+       "name": "cam_pock_d",
+       "default": "cam_disc_d + 2*tol_slide",
+       "comment": "the pocket: the disc slides, the retainer presses"
+      },
+      {
+       "name": "cam_ret_od",
+       "default": "cam_pock_d - 2*tol_press",
+       "comment": "the retainer's OD, a light press in that pocket"
+      },
+      {
+       "name": "cam_boss_od",
+       "default": "cam_pock_d + 2*cam_boss_wall"
+      },
+      {
+       "name": "cam_boss_h",
+       "default": "-z_ret0 + 0.1",
+       "comment": "the boss stands this far into the cavity (the retainer 0.1 inside it)"
       },
       {
        "name": "cam_half",
        "default": "cam_fov/2 + cam_fov_margin",
-       "comment": "the cone the hole must clear, per side"
+       "comment": "the cone the opening must clear, per side"
       },
       {
-       "name": "cam_bore_top",
-       "default": "lid_t - ((cam_disc_t > 0 && cam_disc_d > 0) ? cam_disc_t + 0.2 : 0)",
-       "comment": "bore floor -> disc seat"
+       "name": "cam_lip_in",
+       "default": "cam_cone_d(lid_t - cam_lip_t) + 2*0.2",
+       "comment": "the lip's aperture at its back (the disc's ledge starts here)"
+      },
+      {
+       "name": "cam_lip_out",
+       "default": "cam_cone_d(lid_t) + 2*0.2",
+       "comment": "...and at the skin, before its 45° lead"
+      },
+      {
+       "name": "cam_pil",
+       "default": "cam_post_eff - 0.8"
+      },
+      {
+       "name": "cam_scr_len",
+       "default": "max([for (l = hw_std_lens()) if (l - pcb_t <= cam_pil - 0.2) l])"
       },
       {
        "name": "zone_top_eff",
@@ -3972,6 +4218,11 @@
        "default": "vm_cy + vm_l/2 + zone_gap + cam_h/2"
       },
       {
+       "name": "cam_cx",
+       "default": "0",
+       "comment": "the lens stays on the face's centerline (vm_cx is derived below)"
+      },
+      {
        "name": "cam_grid_cy",
        "default": "cam_cy + cam_grid_dy",
        "comment": "the hole grid's center (the posts)"
@@ -3989,12 +4240,37 @@
        "default": "(e_seal && seal_mid_posts) ? max(0, ceil((post_y_top - post_y_bot)/40) - 1) : 0"
       },
       {
-       "name": "mid_ys",
-       "default": "n_mid > 0 ? [for (i = [1 : n_mid]) post_y_bot + i*(post_y_top - post_y_bot)/(n_mid + 1)] : []"
+       "name": "batt_cy",
+       "default": "vm_cy"
       },
       {
-       "name": "cav_d",
-       "default": "max(vm_standoff + pcb_t + vm_front_h + cav_extra, btn_body_l - lid_t + 1)"
+       "name": "batt_pitch_y",
+       "default": "batt_l + batt_pcm + 2*batt_clear + pd",
+       "comment": "post center to post center: the cell and its clearance"
+      },
+      {
+       "name": "hx_p",
+       "default": "vm_w/2 + clip_stack + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2)"
+      },
+      {
+       "name": "vm_cx",
+       "default": "-inner_x/2 + hx_m + (inner_x - hx_p - hx_m)/2",
+       "comment": "the module's centerline (any slack splits evenly)"
+      },
+      {
+       "name": "mid_px_p",
+       "default": "inner_x/2 - pd/2 - (opt_ant ? ant_post_gap : -0.2)",
+       "comment": "the +X mid posts' axis"
+      },
+      {
+       "name": "mid_px_m",
+       "default": "-(inner_x/2 - pd/2 + 0.2)",
+       "comment": "the -X mid posts' axis (0.2 into the wall)"
+      },
+      {
+       "name": "fence_x",
+       "default": "-inner_x/2 + bay_wall_gap + batt_t + batt_clear",
+       "comment": "the bay fence's -X face (the cell side)"
       },
       {
        "name": "out_x",
@@ -4029,7 +4305,7 @@
       },
       {
        "name": "pl_r",
-       "default": "pl_recess(plate_t, screw_size, screw_head, e_gland)"
+       "default": "max(0, plate_t - pl_hh(screw_size, screw_head) - pl_gland_raw(screw_size, e_gland) - head_floor)"
       },
       {
        "name": "pl_L",
@@ -4088,20 +4364,46 @@
        "default": "max([for (a = _ys) let (g = min([for (b = _ys) if (b > a) b - a, 1e9])) if (g < 1e8) g])"
       },
       {
+       "name": "plug_end_y",
+       "default": "vm_cy - vm_l/2 - usb_port_proud - usb_plug_reach"
+      },
+      {
        "name": "lid_headroom",
        "default": "cav_extra + (cav_d - (vm_standoff + pcb_t + vm_front_h + cav_extra))"
       },
       {
-       "name": "_cone_at_seat",
-       "default": "cam_cone_d(cam_bore_top)"
-      },
-      {
-       "name": "_fov_at_face",
-       "default": "cam_barrel_d + 2*(lid_t - cam_barrel_in)*tan(cam_half)"
-      },
-      {
        "name": "lug_ys",
        "default": "[lug_y, lug_mid_y, -lug_y]"
+      },
+      {
+       "name": "vm_post_xy",
+       "default": "vm_screws ? [for (sx = [1, -1]) [vm_cx + sx*vm_hole_dx, vm_cy + vm_hole_dy]] : []"
+      },
+      {
+       "name": "sock_end_y",
+       "default": "vm_cy + xiao_end_y - 1.6",
+       "comment": "the socket header's plastic, the XIAO's end less its 1.6 overhang"
+      },
+      {
+       "name": "xiao_lo_z",
+       "default": "z_vm_top - pcb_t - stack_sock_h - brd_t(\"xiao\") - 0.5"
+      },
+      {
+       "name": "xiao_hi_z",
+       "default": "z_vm_top - pcb_t - stack_sock_h + brd_t(\"xiao\") + 0.5"
+      },
+      {
+       "name": "post_flat_y",
+       "default": "vm_cy + xiao_end_y + xiao_gap",
+       "comment": "a post is relieved to this flat in that band"
+      },
+      {
+       "name": "vm_scr_len",
+       "default": "vm_screws ? max(concat([0], [for (l = hw_std_lens()) if (l - pcb_t + 1.0 <= z_vm_top - pcb_t - xiao_hi_z - 0.3) l])) : 0"
+      },
+      {
+       "name": "csi_y0",
+       "default": "vm_cy + vm_l/2 - csi_len"
       },
       {
        "name": "hw_thread",
@@ -15195,6 +15497,11 @@
      "name": "Doorbell",
      "note": "mirror canary_vision_doorbell plate defaults",
      "params": [
+      {
+       "name": "db_exit_slide",
+       "default": "8.0",
+       "comment": "the wall plate's pass runs this far up the slide (mount_dt_travel)"
+      },
       {
        "name": "line",
        "default": "0.5",

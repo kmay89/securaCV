@@ -87,7 +87,7 @@ FEATURES = {
 SEAMS = {
     "device.canary-display-dash": [6, 9],
     "device.canary-display-watch": [21],
-    "device.canary-vision-doorbell": [4],
+    "device.canary-vision-doorbell": [5],
 }
 
 
@@ -221,7 +221,7 @@ class LedgerShape(unittest.TestCase):
         self.assertEqual({fid: e["seams_mm"] for fid, e in self.dims["figures"].items()
                           if "seams_mm" in e}, SEAMS)
         # verbatim: the doorbell's wall-plate reveal as the assembled generator measured it
-        self.assertEqual(self.dims["figures"]["device.canary-vision-doorbell"]["seams_mm"], [4])
+        self.assertEqual(self.dims["figures"]["device.canary-vision-doorbell"]["seams_mm"], [5])
 
     def test_features_equal_the_assembled_record_verbatim(self):
         # exactly the rows that record features, verbatim and unrounded, and

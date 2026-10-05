@@ -63,6 +63,15 @@ All in [`bom_canary_vision.csv`](./bom_canary_vision.csv), items 19–19e:
 Plus about 20 cm of thin stranded wire, solder and heat-shrink.
 Everything fits in the body's button zone and cable well. Sleeve Q1, R3
 and R4 together in one piece of heat-shrink and park them in the well.
+Turn the button's wires toward the well (up, in the mounted case), not
+toward the bottom wall: the security screw's boss sits there.
+
+Two more parts live in the v0.7 case beside the module, both optional:
+
+| Ref | Part | Notes |
+|---|---|---|
+| BT2 | LiPo 802030 class, 8 × 20 × 30 mm, 400–450 mAh, **protected**, JST-PH leads | Stands on edge in the bay on the −X side, on the FT1 foam strip. Ride-through for a USB supply that browns out. The XIAO charges it: the C3's ~370 mA is under 1C on this cell (the one size in the 20 × 30 family that is); the S3 charges at 100 mA. **Neither XIAO charger stops below 0 °C**, so in a freezing climate leave it out ([cold-weather envelope](./cold_weather_envelope.md)). |
+| ANT1 | FPC Wi-Fi antenna, 40 × 20 mm, u.FL pigtail | The XIAO ESP32-C3 kit's own antenna (Seeed 318020748); the S3's 37.4 × 17.5 A-02 fits the same landing. Sticks to the +X wall inside the face, between two ribs; the pigtail runs under the module to the XIAO's u.FL. |
 
 ## Wiring
 
@@ -109,8 +118,21 @@ doorbell.
 ## Power
 
 As designed, the doorbell runs from **USB-C**: a right-angle plug out
-through the back plate's oval exit (BOM GRM1) to a 5 V supply. That's the
-tested path for the Vision stack.
+through the back plate's 14 × 10 oval exit (BOM GRM1) and the wall plate's
+slot to a 5 V supply. That's the tested path for the Vision stack. The
+well is sized for a molded right-angle head up to 13 mm long off the
+XIAO's port; a straight plug does not fit a doorbell.
+
+**The battery bay** (v0.7 case, BOM BT2) holds a protected 802030 LiPo as
+ride-through, not as the supply: the Vision stack draws too much to live
+on 400 mAh, and a LiPo outdoors in winter is the problem the
+[cold-weather envelope](./cold_weather_envelope.md) spells out. Solder the
+cell's leads to the XIAO's **BAT+ / BAT−** pads before you seat the XIAO
+in the module (the pads are on the side that faces the module), run the
+leads out under the XIAO into the bay, and set the cell in on edge with
+its leads toward the well. The firmware does nothing special for it: the
+XIAO's charger charges, the XIAO's regulator switches over. Leave the bay
+empty where it freezes.
 
 **Using the existing doorbell wires.** A doorbell button is usually fed by
 a 16–24 V AC transformer. To power the Canary from it, put a doorbell-to-USB
@@ -175,9 +197,11 @@ explains why.
   Lab and the Apple apps.
 - **Displays say "Doorbell heard"**: the same row the WAP's acoustic
   doorbell detector already uses.
-- **The scad comment** still calls the button's input "the multifunction
-  input". D1 is the doorbell's own input now; the case geometry is
-  unchanged.
+- **Measure the module's mounting holes.** The v0.7 case puts a screw post
+  under each of the Grove Vision AI V2's two M2 holes at ±7.5 / +2.5 mm from
+  the module's center, read off a photo of the first print; the vendor CAD
+  carries no holes. Calipers before the next print (`vm_hole_dx` /
+  `vm_hole_dy`), and the seat lift `vm_seat_lift` with them.
 
 ## Where the code is
 

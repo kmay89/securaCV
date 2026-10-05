@@ -68,7 +68,7 @@ vstl "canary_vision_enclosure_knob.stl"    -D 'part="knob"'
 DSRC="canary_vision_doorbell.scad"
 dstl() { local out=$1; shift; echo "Rendering $out ..."
   "$OPENSCAD" --export-format binstl -o "$out" "$@" "$DSRC"; }
-for part in body face plate gasket; do
+for part in body face plate gasket retainer; do
   dstl "canary_vision_doorbell_${part}.stl" -D "part=\"$part\""
 done
 dstl "canary_vision_doorbell_plate_wedge15.stl" -D 'plate_wedge=15' -D 'part="plate"'

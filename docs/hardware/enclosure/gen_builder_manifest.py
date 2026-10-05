@@ -290,21 +290,27 @@ CURATED = [
             "face": "Face — the one-piece shell",
             "plate": "Wall plate",
             "gasket": "Gasket ring — print in TPU",
+            "retainer": "Lens retainer ring",
         },
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "body": "The plate the module stack lives on. It nests inside "
-                    "the face's walls on the short screws from the back, "
-                    "hangs on the wall plate's T-studs and locks with the "
-                    "hidden screw.",
+            "body": "The plate the module stack lives on: rails, clips and "
+                    "two screw posts for the module, the battery bay's fence, "
+                    "the cable exit. It nests inside the face's walls on the "
+                    "screws from the back, drops onto the wall plate's "
+                    "dovetail lugs and locks with the hidden screw.",
             "face": "The one-piece show part — lens aperture, button hole, "
                     "side walls and posts, the gasket ledge inside — printed "
                     "face-down; the only seam is against the wall plate.",
-            "plate": "The wall plate with the T-studs. The wedge angles live "
+            "plate": "The wall plate with the three dovetail lugs, the "
+                     "collar and the cable slot. The wedge angles live "
                      "here — the case aims wherever the plate points.",
             "gasket": "The soft TPU ring that seals face to body against "
                       "the weather.",
+            "retainer": "The small ring that presses into the face behind "
+                        "the lens disc and holds it against the lip. Print "
+                        "it flat, bore down.",
         },
         "labels": {
             "part": "Part to print", "preset": "Quick preset",
