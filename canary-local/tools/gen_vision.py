@@ -565,7 +565,7 @@ TOPIC_DESCS = {
     "identify/set": {"retain": False, "desc": "HA's Identify button — 10 s LED blink"},
     "identify": {"retain": False, "desc": "identify echo — dashboards pulse the card in sync"},
     "doorbell": {"retain": False, "desc": "the Vision Doorbell: one {\"event_type\":\"press\"} per sealed ring (HA's doorbell event)"},
-    "doorbell/state": {"retain": True, "desc": "doorbell switch, glow %, button ok/stuck, ring and repeat counts"},
+    "doorbell/state": {"retain": True, "desc": "doorbell switch, glow %, button ok/stuck/ring_fault, ring and repeat counts"},
     "doorbell/enable/set": {"retain": False, "desc": "HA's Doorbell enabled switch writes ON/OFF"},
     "doorbell/glow/set": {"retain": False, "desc": "set the doorbell ring's brightness (10–100 %)"},
 }
@@ -609,7 +609,7 @@ ENTITY_META = {
     "Doorbell enabled": ("switch", "the Vision Doorbell's button + glow ring (XIAO hosts; the first press turns it on)"),
     "Doorbell": ("event", "a doorbell press, once per sealed ring — only while the doorbell is on"),
     "Doorbell glow": ("number", "the ring's brightness, 10–100 % — on never means dark"),
-    "Doorbell button": ("sensor", "diagnostic — ok, or stuck (held past 15 s)"),
+    "Doorbell button": ("sensor", "diagnostic — ok, stuck (held past 15 s), or ring_fault (the glow cannot breathe)"),
 }
 DISCOVERY = []
 seen = set()

@@ -558,7 +558,7 @@
       {
         "suffix": "doorbell/state",
         "retain": true,
-        "desc": "doorbell switch, glow %, button ok/stuck, ring and repeat counts"
+        "desc": "doorbell switch, glow %, button ok/stuck/ring_fault, ring and repeat counts"
       },
       {
         "suffix": "doorbell/enable/set",
@@ -666,7 +666,7 @@
         {
           "name": "Doorbell button",
           "component": "sensor",
-          "desc": "diagnostic \u2014 ok, or stuck (held past 15 s)"
+          "desc": "diagnostic \u2014 ok, stuck (held past 15 s), or ring_fault (the glow cannot breathe)"
         },
         {
           "name": "Auto Update",

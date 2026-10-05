@@ -625,7 +625,9 @@ bool publish_doorbell_state_retained(const Topics& topics) {
            "}",
            canary::doorbell_hw::enabled() ? "ON" : "OFF",
            (unsigned)canary::doorbell_hw::glow_pct(),
-           canary::doorbell_hw::stuck() ? "stuck" : "ok",
+           canary::doorbell_hw::stuck()        ? "stuck"
+           : canary::doorbell_hw::ring_fault() ? "ring_fault"
+                                               : "ok",
            (unsigned long)canary::doorbell_hw::rings(),
            (unsigned long)canary::doorbell_hw::repeats());
   return publish_checked("BELL", topics.doorbell_state, msg, true);

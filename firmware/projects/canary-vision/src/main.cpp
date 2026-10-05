@@ -365,15 +365,17 @@ static void on_doorbell_event(doorbell::ButtonEvent ev, uint32_t at_ms) {
   const uint32_t now_ms = canary::ms_now();
   switch (ev) {
     case doorbell::ButtonEvent::RING: {
+      // Seal first: nothing (not even the NVS write below) may stand
+      // between a press and its record.
+      set_last_event("doorbell");
+      VisionSample vs{};
+      publish_event_json("doorbell", "button", now_ms, vs);
       if (!canary::doorbell_hw::enabled()) {
         // The first real press turns the doorbell on: a plain Vision never
         // sees one, a doorbell's first visitor does.
         canary::doorbell_hw::set_enabled(true);
         g_db_discovery_dirty = true;
       }
-      set_last_event("doorbell");
-      VisionSample vs{};
-      publish_event_json("doorbell", "button", now_ms, vs);
       if (canary::witness::ready()) canary::doorbell_hw::swell(now_ms);
       canary::net::publish_doorbell_press(TOPICS);
       publish_state_now(now_ms);

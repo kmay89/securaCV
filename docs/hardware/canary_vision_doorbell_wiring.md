@@ -42,7 +42,7 @@ integration update is needed:
 | **Doorbell** | `event` (device class `doorbell`) | Fires `press` once per sealed ring. Use it as an automation trigger: ring a smart chime, send a phone notification, turn on the porch light. HA's HomeKit bridge can expose it as a doorbell. |
 | **Doorbell enabled** | `switch` (config) | Turns the doorbell (button + ring) on and off. |
 | **Doorbell glow** | `number` 10–100 % (config) | Brightness of the ring. |
-| **Doorbell button** | `sensor` (diagnostic) | `ok` or `stuck`. |
+| **Doorbell button** | `sensor` (diagnostic) | `ok`, `stuck`, or `ring_fault` (the glow timer could not start: the ring holds a steady glow instead of breathing, so it still never reads dark while on). |
 
 While the doorbell is off, only the switch exists. The other three are
 removed, so a Vision that isn't a doorbell doesn't show doorbell controls.

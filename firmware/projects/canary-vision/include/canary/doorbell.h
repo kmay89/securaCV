@@ -38,6 +38,7 @@ uint8_t glow_pct();
 bool set_glow_pct(uint8_t pct);  // clamps to 10..100, persists; true if changed
 
 bool stuck();                    // the button is jammed down
+bool ring_fault();               // the glow timer failed: the ring holds a steady glow
 uint32_t repeats();              // presses inside the holdoff since boot
 uint32_t rings();                // sealed rings since boot
 

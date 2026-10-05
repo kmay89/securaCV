@@ -56,6 +56,7 @@ volatile uint8_t s_edge_len = 0;
 bool s_inited = false;
 bool s_pwm_attached = false;
 esp_timer_handle_t s_timer = nullptr;
+bool s_timer_ok = false;  // the 50 Hz glow tick is running
 
 volatile bool s_enabled = false;
 volatile bool s_hub_ok = false;
@@ -114,6 +115,14 @@ void glow_tick(void*) {
   if (s_pwm_attached) pwm_write(duty);
 }
 
+// Without the glow tick (esp_timer refused us), the ring cannot breathe,
+// but it must still not lie: on is a steady glow at the breath's crest,
+// off is dark. Written on every switch or brightness change.
+void glow_fallback() {
+  if (s_timer_ok || !s_pwm_attached) return;
+  pwm_write(s_enabled ? ::doorbell::permille_to_duty(::doorbell::kAwakeBreath.hi_permille, s_pct) : 0);
+}
+
 bool persist_uchar(const char* key, uint8_t v) {
   Preferences prefs;
   if (!prefs.begin(NVS_NS, /*readOnly=*/false)) return false;
@@ -155,10 +164,14 @@ void init() {
   args.arg = nullptr;
   args.dispatch_method = ESP_TIMER_TASK;
   args.name = "cv_glow";
-  if (esp_timer_create(&args, &s_timer) == ESP_OK) {
-    esp_timer_start_periodic(s_timer, kGlowTickUs);
-  }
+  s_timer_ok = esp_timer_create(&args, &s_timer) == ESP_OK &&
+               esp_timer_start_periodic(s_timer, kGlowTickUs) == ESP_OK;
   s_inited = true;
+  if (!s_timer_ok) {
+    // Reported as the state row's ring_fault (HA's Doorbell button sensor).
+    canary::log_line("BELL", "Glow timer failed to start - the ring holds a steady glow instead of breathing.");
+    glow_fallback();
+  }
 
   canary::log_header("BELL");
   canary::dbg_serial().printf("Doorbell %s (button D1, glow D2, glow %u%%)%s\n",
@@ -208,6 +221,7 @@ bool set_enabled(bool on) {
   if (s_enabled == on) return false;
   if (on) pwm_attach();
   s_enabled = on;  // off: the timer eases the glow down to dark
+  glow_fallback();
   persist_uchar("db_on", on ? 1 : 0);
   canary::log_line("BELL", on ? "Doorbell on." : "Doorbell off (the ring goes dark).");
   return true;
@@ -219,11 +233,13 @@ bool set_glow_pct(uint8_t pct) {
   const uint8_t v = ::doorbell::clamp_glow_pct(pct);
   if (v == s_pct) return false;
   s_pct = v;
+  glow_fallback();
   persist_uchar("db_glow", v);
   return true;
 }
 
 bool stuck() { return s_btn.stuck; }
+bool ring_fault() { return s_inited && !s_timer_ok; }
 uint32_t repeats() { return s_btn.repeats; }
 uint32_t rings() { return s_rings; }
 
@@ -239,6 +255,7 @@ bool set_enabled(bool) { return false; }
 uint8_t glow_pct() { return ::doorbell::kGlowPctDefault; }
 bool set_glow_pct(uint8_t) { return false; }
 bool stuck() { return false; }
+bool ring_fault() { return false; }
 uint32_t repeats() { return 0; }
 uint32_t rings() { return 0; }
 
