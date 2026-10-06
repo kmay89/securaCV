@@ -2322,7 +2322,7 @@
        "file": "canary_vision_doorbell_retainer.stl"
       },
       {
-       "name": "plunger ×2",
+       "name": "plungers R+B",
        "file": "canary_vision_doorbell_plunger.stl"
       }
      ]
@@ -2348,7 +2348,7 @@
     {
      "id": "opt_vent",
      "type": "bool",
-     "label": "GORE vent cluster on the face — OFF since v0.9: the speaker grille's",
+     "label": "GORE vent cluster on the face — OFF since v0.9: the case breathes through",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2458,7 +2458,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 290,
+   "engineering_param_count": 291,
    "alternatives": [],
    "remix_of": null,
    "counts": {

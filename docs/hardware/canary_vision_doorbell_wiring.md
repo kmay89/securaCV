@@ -75,7 +75,7 @@ All in [`bom_canary_vision.csv`](./bom_canary_vision.csv), items 19–19e:
 | R8, R9 | 10 kΩ / 2.2 kΩ | A divider after C4: the XIAO's 3.3 V swing at the amp's 24 dB gain would clip; this leaves ~0.6 V peak, which is full output. |
 | FOAM2 | foam ring Ø36 / Ø30 × 1.5 (compresses to 1.0) | Between the driver's rim and the face, inside the boss: it is the acoustic seal and the thing that lets the plate press the driver without rattles. |
 | FOAM3 | foam pad Ø20 × 1.5 | Between the magnet and the plate's cradle. |
-| MESH1 | acoustic **vent** membrane Ø34, hydrophobic and air-permeable (GORE acoustic vent class, Saati Acoustex class), adhesive | On the face's **inner** side over the grille, in its 0.3 mm seat: rain stays out, sound goes through — and since the v0.9 case it is the sealed body's pressure path (the GORE vent cluster is off by default), so buy one sold as an acoustic *vent*, not grille cloth. |
+| MESH1 | acoustic mesh patch Ø34, hydrophobic (Saati Acoustex class, or a GORE acoustic vent), adhesive | On the face's **inner** side over the grille, in its 0.3 mm seat: rain stays out, sound goes through. It guards the driver's chamber only — the driver's back is sealed and its rim sits on a foam ring — so it is **not** the case's pressure path; since the v0.9 case the GORE cluster is off by default and the sealed body breathes through its Ø2 weep. |
 
 Plus about 20 cm of thin stranded wire, solder and heat-shrink.
 Everything fits in the body's button zone and cable well. Sleeve Q1, R3
@@ -184,7 +184,7 @@ converter behind the plate: an AC-input module rated for 8–24 V AC in, 5 V
 **Reset and boot from the back (v0.9 case).** The XIAO's two tactile
 switches, **R** (reset) and **B** (boot), sit on its component face, which
 in the module's socket is the side that faces the back plate. The v0.9
-plate carries two **TPU plungers** (`part = "plunger"`, print two) in
+plate carries two **TPU plungers** (`part = "plunger"`: one print, the R and B pair on a snap-off sprue) in
 counterbores over them: lift the body off its wall plate (the one security
 screw — no plate screw comes out), and press. **R** restarts the board.
 **B held while power comes up** (plug the USB-C in with B pressed, or

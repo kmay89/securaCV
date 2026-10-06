@@ -268,9 +268,9 @@
      "material": "PETG / ASA (PLA indoors)"
     },
     {
-     "name": "plunger ×2",
+     "name": "plungers R+B",
      "file": "canary_vision_doorbell_plunger.stl",
-     "print_note": "TPU 90–95A, 100% infill, slow; print TWO, head down — the service buttons through the doorbell's back plate (one dimple = R, two = B)",
+     "print_note": "TPU 90–95A, 100% infill, slow, head down — the doorbell's two service buttons (R and B) in ONE print on a snap-off sprue; one dimple = R, two = B",
      "material": "TPU 90–95A"
     }
    ],
@@ -3147,7 +3147,7 @@
         "plunger",
         "all"
        ],
-       "comment": "// (the speaker has no printed part of its own; the plunger is TPU, two off)"
+       "comment": "// (the speaker has no printed part of its own; \"plunger\" is the R + B pair on a sprue, TPU)"
       }
      ]
     },
@@ -3177,7 +3177,7 @@
       {
        "name": "opt_vent",
        "default": "false",
-       "comment": "GORE vent cluster on the face — OFF since v0.9: the speaker grille's"
+       "comment": "GORE vent cluster on the face — OFF since v0.9: the case breathes through"
       },
       {
        "name": "opt_led",
@@ -3212,6 +3212,11 @@
       {
        "name": "e_seal",
        "default": "_pre(opt_seal,   true)"
+      },
+      {
+       "name": "e_vent",
+       "default": "_pre(opt_vent,   false)",
+       "comment": "the released build breathes through its weep (field_ratings.md)"
       },
       {
        "name": "e_led",
@@ -3500,11 +3505,6 @@
         "rings"
        ],
        "comment": "sunflower = a Fermat spiral at the golden angle (v0.9); rings = the v0.8 grille"
-      },
-      {
-       "name": "e_vent",
-       "default": "_pre(opt_vent,   !opt_spk)",
-       "comment": "the preset vents a face without the speaker; with it, the grille's membrane is the vent"
       },
       {
        "name": "opt_svc",
@@ -4745,6 +4745,11 @@
       {
        "name": "grille_n",
        "default": "floor(pow(grille_r_max / grille_s, 2))"
+      },
+      {
+       "name": "svc_sprue_gap",
+       "default": "1.0",
+       "comment": "the heads' edges apart; the sprue bridges it"
       },
       {
        "name": "collar_h",

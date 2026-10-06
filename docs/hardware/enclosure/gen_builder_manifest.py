@@ -276,7 +276,7 @@ CURATED = [
                  "default — doorbells live outside.",
         "print_plan": "Print the Body, Face and Plate in ASA (a doorbell "
                       "lives in the sun; PETG only under a deep porch roof), "
-                      "the Gasket and the two Plungers in TPU. Aiming down a "
+                      "the Gasket and the Plunger pair in TPU. Aiming down a "
                       "porch or across a corner? Set the wedge angles before "
                       "you print the Plate.",
         "simple": ["part", "preset", "opt_seal", "opt_svc", "opt_vent",
@@ -291,7 +291,7 @@ CURATED = [
             "plate": "Wall plate",
             "gasket": "Gasket ring — print in TPU",
             "retainer": "Lens retainer ring",
-            "plunger": "Service plunger — print TWO in TPU",
+            "plunger": "Service plungers (R + B pair) — print in TPU",
         },
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
@@ -314,10 +314,11 @@ CURATED = [
             "retainer": "The small ring that presses into the face behind "
                         "the lens disc and holds it against the lip. Print "
                         "it flat, bore down.",
-            "plunger": "The soft button that pokes the XIAO's reset or boot "
-                       "switch through the back plate: head down on the bed, "
-                       "stem up, two off — one dimple is R, two are B. Lift "
-                       "the body off its wall plate and press.",
+            "plunger": "The two soft buttons that poke the XIAO's reset and "
+                       "boot switches through the back plate, as one print on "
+                       "a snap-off sprue: heads down on the bed, stems up. One "
+                       "dimple is R, two are B. Lift the body off its wall "
+                       "plate and press.",
         },
         "labels": {
             "part": "Part to print", "preset": "Quick preset",
@@ -335,7 +336,7 @@ CURATED = [
         "choices": {
             "preset": {
                 "custom": "Custom — pick the options yourself",
-                "doorbell_weather": "Outdoor — sealed and drained, breathing through the speaker grille's membrane (the released build)",
+                "doorbell_weather": "Outdoor — sealed, breathing and draining through its weep (the released build)",
             },
         },
         "units": {"plate_wedge": "°", "plate_wedge_x": "°"},

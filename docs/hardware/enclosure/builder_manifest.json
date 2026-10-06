@@ -2264,7 +2264,7 @@
       "name": "Canary Vision Doorbell",
       "tagline": "Wyze/Ring form factor for the Vision stack — sealed by default, wedge plates for aiming down the approach.",
       "about": "The Vision stack in a Ring/Wyze-sized doorbell: camera, lit button, hidden security screw. It ships sealed by default — doorbells live outside.",
-      "print_plan": "Print the Body, Face and Plate in ASA (a doorbell lives in the sun; PETG only under a deep porch roof), the Gasket and the two Plungers in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
+      "print_plan": "Print the Body, Face and Plate in ASA (a doorbell lives in the sun; PETG only under a deep porch roof), the Gasket and the Plunger pair in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
       "simple": [
         "part",
         "preset",
@@ -2291,7 +2291,7 @@
         "plate": "Wall plate",
         "gasket": "Gasket ring — print in TPU",
         "retainer": "Lens retainer ring",
-        "plunger": "Service plunger — print TWO in TPU"
+        "plunger": "Service plungers (R + B pair) — print in TPU"
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
@@ -2300,7 +2300,7 @@
         "plate": "The wall plate with the three dovetail lugs, the collar and the cable slot. The wedge angles live here — the case aims wherever the plate points.",
         "gasket": "The soft TPU ring that seals face to body against the weather.",
         "retainer": "The small ring that presses into the face behind the lens disc and holds it against the lip. Print it flat, bore down.",
-        "plunger": "The soft button that pokes the XIAO's reset or boot switch through the back plate: head down on the bed, stem up, two off — one dimple is R, two are B. Lift the body off its wall plate and press."
+        "plunger": "The two soft buttons that poke the XIAO's reset and boot switches through the back plate, as one print on a snap-off sprue: heads down on the bed, stems up. One dimple is R, two are B. Lift the body off its wall plate and press."
       },
       "labels": {
         "part": "Part to print",
@@ -2320,14 +2320,14 @@
       "choices": {
         "preset": {
           "custom": "Custom — pick the options yourself",
-          "doorbell_weather": "Outdoor — sealed and drained, breathing through the speaker grille's membrane (the released build)"
+          "doorbell_weather": "Outdoor — sealed, breathing and draining through its weep (the released build)"
         }
       },
       "units": {
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "2e6e181f1098c257602eb2530a771d41fc9d7e3b699470d2cc4a6bb15998ea61",
+      "sha256": "8b5fc8a822be9b5ac01806c81f0d49c141f0075deeb6e129746b340e4dc93495",
       "groups": [
         {
           "name": "What to render",
@@ -2345,7 +2345,7 @@
                 "plunger",
                 "all"
               ],
-              "desc": "// (the speaker has no printed part of its own; the plunger is TPU, two off)"
+              "desc": "// (the speaker has no printed part of its own; \"plunger\" is the R + B pair on a sprue, TPU)"
             }
           ]
         },
@@ -2377,7 +2377,7 @@
               "name": "opt_vent",
               "type": "bool",
               "default": false,
-              "desc": "GORE vent cluster on the face — OFF since v0.9: the speaker grille's"
+              "desc": "GORE vent cluster on the face — OFF since v0.9: the case breathes through"
             },
             {
               "name": "opt_led",

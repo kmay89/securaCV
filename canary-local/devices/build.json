@@ -1098,11 +1098,11 @@
       "qty": "1",
       "required": false,
       "category": "Sealing",
-      "desc": "Acoustic VENT membrane patch, 34 mm, hydrophobic ePTFE or woven acoustic mesh, adhesive (speaker grille; GORE acoustic vent class / Saati Acoustex class)",
-      "mpn": "ACOUSTIC-VENT-34",
-      "mfr": "GORE / Saati",
+      "desc": "Acoustic mesh patch, 34 mm, hydrophobic, adhesive (speaker grille; Saati Acoustex class or GORE acoustic vent class)",
+      "mpn": "ACOUSTEX-34",
+      "mfr": "Saati / GORE",
       "usd": 0.9,
-      "notes": "Doorbell v0.8: on the face's INNER side over the Ø1.0 grille holes, in its 0.3 mm seat; rain stays out, sound goes through. Since v0.9 it is ALSO the case's pressure path (the face has no GORE vent cluster by default, opt_vent off): buy one sold as an acoustic VENT (air-permeable), not a decorative grille cloth",
+      "notes": "Doorbell v0.8: on the face's INNER side over the Ø1.0 grille holes, in its 0.3 mm seat; rain stays out, sound goes through. It guards the DRIVER's chamber only (sealed-back driver on a foam ring) - it is NOT the case's pressure path. Since v0.9 the face has no GORE vent cluster by default (opt_vent off) and the sealed body breathes through its Ø2 weep; a membrane-only path is opt_vent on plus a GORE patch",
       "orderable": false
      }
     ],

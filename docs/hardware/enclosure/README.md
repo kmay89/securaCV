@@ -144,7 +144,7 @@ minutes.
 | **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [hood](./canary_vision_enclosure_xiao_weather_hood.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
 | **Vision · devkit indoor** | Grove-cabled ESP32-C3-DevKitM-1 host | <img src="./preview_vision_devkit.png" width="260"> | [back](./canary_vision_enclosure_devkit_indoor_back.stl) · [front](./canary_vision_enclosure_devkit_indoor_front.stl) |
 | **Vision · mount kit** | wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob | <img src="./preview_vision_bracket.png" width="180"> <img src="./preview_vision_knob.png" width="120"> | [bracket](./canary_vision_enclosure_bracket.stl) · [knob](./canary_vision_enclosure_knob.stl) |
-| **Vision · DOORBELL** | Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) · [retainer](./canary_vision_doorbell_retainer.stl) · [plunger ×2](./canary_vision_doorbell_plunger.stl) |
+| **Vision · DOORBELL** | Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) · [retainer](./canary_vision_doorbell_retainer.stl) · [plungers R+B](./canary_vision_doorbell_plunger.stl) |
 | **Sense · radome** | MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob) | <img src="./preview_sense.png" width="260"> | [back](./canary_sense_back.stl) · [front](./canary_sense_front.stl) |
 | **Thermal / outdoor kit** | solar radiation shield (weather WAP) + universal desiccant tray | — | [shield](./canary_wap_enclosure_weather_shield.stl) · [tray](./canary_wap_enclosure_tray.stl) |
 
@@ -1257,10 +1257,12 @@ bottom; through the back plate, two **TPU service plungers** reach the
 XIAO's reset and boot switches. Without the speaker (`opt_spk = false`) the
 body is the v0.7's 129.2 mm.
 
-**v0.9 (2026-10-06) — service buttons, a sunflower grille, one membrane.**
+**v0.9 (2026-10-06) — service buttons, a sunflower grille, no vent ring.**
 Three things a look at the v0.8 asked for; the envelope does not move:
 
-- **Service plungers** (`opt_svc`, `part = "plunger"`, TPU, two off). The
+- **Service plungers** (`opt_svc`, `part = "plunger"`, TPU — one print,
+  the R and B pair on a snap-off sprue between their heads, so an export
+  can never be two of one). The
   XIAO's two tactile switches, **R** and **B**, face the back plate — its
   component side is its outward side in the module's socket — 7 to 9 mm
   off the plate's inner face. Two TPU plungers go through the plate over
@@ -1287,12 +1289,17 @@ Three things a look at the v0.8 asked for; the envelope does not move:
   face, the rings' open area exactly — so no ring reads as a ring and
   every hole's neighbors sit at the same distance. Still Ø1.0 (the insect
   rule), still over the cone, still with the membrane seat behind.
-- **The GORE vent is off** (`opt_vent = false`; the preset follows
-  `opt_spk`). The grille's membrane (MESH1) is an acoustic **vent**: a
-  hydrophobic, air-permeable patch — 30 mm of pressure path where the
-  vent cluster had ten Ø1 holes. Two membranes on one face was one too
-  many; buy MESH1 as an acoustic *vent*, not a grille cloth. A face
-  without the speaker gets the cluster back.
+- **The GORE vent is off** (`opt_vent = false`). The ring of ten Ø1
+  holes above the grille is gone from the face; the sealed body breathes
+  through its **weep** — the open Ø2 drain through the bottom wall,
+  angled down under the collar's slot — which the seal-path assert has
+  always accepted as a pressure path. What that trades: the day/night air
+  exchange happens at the drain, not through a membrane. The grille's
+  membrane (MESH1) does **not** do that job: the driver's back is sealed
+  and its rim sits on a foam ring, so the membrane guards the driver's own
+  chamber, which the cavity never sees (the first cut of this claimed
+  otherwise; the review caught it). A membrane-only path with no open
+  hole is still `opt_vent = true` with a GORE patch over the cluster.
 
 **v0.8 (2026-10-06) — the speaker.** A doorbell that refuses a feed and a
 microphone still owes the visitor one thing the glow ring cannot give: a
@@ -1315,10 +1322,10 @@ A **speaker zone** goes in between the button and the cable well:
   plate screws down. Printed face-down, the boss and the grille's holes
   need no bridge.
 - **The grille.** **Ø1.0 holes** (the outdoor insect rule) over the cone
-  (rings in v0.8, a sunflower since v0.9), with an **acoustic vent
-  membrane** (MESH1, hydrophobic) seated on the face's inner side: rain
+  (rings in v0.8, a sunflower since v0.9), with an **acoustic mesh
+  patch** (MESH1, hydrophobic) seated on the face's inner side: rain
   stays out, sound goes through. The seat is cut on the inner side for
-  the same reason the old vent's was.
+  the same reason the vent's was.
 - **The posts.** The zone's walls carry a mid-post pair each side of the
   cone, placed where the circle leaves room at the wall (asserted clear of
   the driver), so every gasket clamp span stays under 40 mm: **12 plate
@@ -1485,21 +1492,22 @@ rating; a porch or doorway soffit is its natural habitat.
 **Assembly (v0.9):** a bead of neutral-cure silicone round the lip's ledge
 inside the face, drop the **disc** in, press the **retainer ring** in behind
 it (bore toward the cavity) → camera to the four face posts (4 × M2 × 5),
-the lens barrel finds the retainer's bore → stick the **acoustic vent
-membrane** (MESH1) into its seat over the speaker grille — it is the
-case's pressure path; without it the holes defeat the seal (the Ø2 weep
-through the bottom wall drains any condensate; a face printed with
-`opt_vent` on takes a GORE patch over its cluster the same way) → drop
+the lens barrel finds the retainer's bore → stick the **acoustic mesh
+patch** (MESH1) into its seat over the speaker grille (it keeps rain off
+the driver; the body itself breathes and drains through the Ø2 weep in
+the bottom wall — a face printed with `opt_vent` on takes a GORE patch
+over its cluster on the inner side the same way) → drop
 the **foam ring** into the speaker boss and the **driver** onto it, rim
 first, leads toward the button → mount the **button** through the face,
 nut on, and wire it and the **amplifier** per the
 [wiring page](../canary_vision_doorbell_wiring.md) (the wires turn toward
 the well, not the bottom wall; the amplifier stands on edge beside the
 button between the posts, taped to the wall) → on the plate: stick the **foam pad** on the
-cradle's top; push the two **TPU plungers** in from the back face, stem
-first, until the head seats in its counterbore (the bead pops past the
-guide boss — one dimple over R, two over B, as `xiao_rst_side` says once
-you have checked it against the board) → if you are fitting the
+cradle's top; snap the two **TPU plungers** off their sprue and push them
+in from the back face, stem first, until the head seats in its counterbore
+(the bead pops past the guide boss — one dimple over R, two over B, as
+`xiao_rst_side` says once you have checked it against the board) → if you
+are fitting the
 battery, solder its leads to the XIAO's BAT pads *before* seating the XIAO
 (the pads face the module), seat the XIAO in the module (**USB-Cs same
 direction!**), press the stack down between the guides until all four
@@ -1539,7 +1547,7 @@ collar.
 | `opt_weep`, `seal_mid_posts`, `head_seal` | on / on / off | drain, mid-wall clamp posts, O-ring under each face screw |
 | `usb_exit_*` | 14×10 oval | cable exit size/position, from the MODULE's centerline (guarded against the lug pockets; the wall plate's pass is this plus 4, run 8 mm up the slide) |
 | `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
-| `opt_vent` | **false** (since v0.9) | the GORE vent cluster on the face. Off with the speaker: its acoustic vent membrane is the pressure path. On (a face without the speaker, or by hand) **an adhesive GORE/ePTFE membrane over the cluster (inner face) is REQUIRED**: unmembraned holes defeat the seal; a membraned path is what stops day/night thermal cycling from pumping moist air past it |
+| `opt_vent` | **false** (since v0.9) | the GORE vent cluster on the face. Off, the sealed body breathes through its open Ø2 weep (the assert holds one path or the other). On — a membrane-only path with no open hole — **an adhesive GORE/ePTFE membrane over the cluster (inner face) is REQUIRED**: unmembraned holes defeat the seal. The speaker's mesh is not a path: it fronts a sealed-back driver on a foam ring |
 | engineering trio | on | `lid_ribs`, `foot_cham`, `screw_insert` as on the other cases |
 
 > ⚠️ **Verify before printing.** Same rules as the Vision case: measure the

@@ -200,19 +200,27 @@
 //      0.3 off the cap at the NEAREST the stack can sit (stack_sock_h is a
 //      bench number to one PCB face, so the band is a PCB thick) — an
 //      unpressed plunger can never hold R or B down; a sixth printed part,
-//      part="plunger", TPU, two off. Which switch is R is a MEASURE knob
-//      (xiao_rst_side): the vendor model carries no silkscreen; the pips
-//      on the heads follow it (one dimple = R, two = B).
+//      part="plunger", TPU — ONE print, both buttons on a snap-off sprue
+//      between their heads, so the pair cannot come out as two of one.
+//      Which switch is R is a MEASURE knob (xiao_rst_side): the vendor
+//      model carries no silkscreen; the dimples in the heads follow it
+//      (one dimple = R, two = B).
 //    * the GRILLE is a sunflower (grille_pattern): the holes sit on a
 //      Fermat spiral at the golden angle, one per grille_pitch² of face —
 //      the same open area as the rings, no ring reads as a ring, every
 //      neighbor the same distance. The insect rule still holds (Ø1.0).
-//    * the GORE VENT is OFF by default (opt_vent): the grille's acoustic
-//      membrane (MESH1, hydrophobic ePTFE — an acoustic VENT, the part
-//      is sold as one) is the pressure path now, 30 mm of it where the
-//      vent had 10 holes; two membranes on one face was one too many. The
-//      knob stays for a face without a speaker (the preset follows
-//      opt_spk).
+//    * the GORE VENT is OFF by default (opt_vent): the ring of ten holes
+//      above the grille is gone from the face, and the case breathes
+//      through the WEEP — the Ø2 drain through the bottom wall, open,
+//      angled down, under the collar's slot — which the seal-path assert
+//      has always accepted as a pressure path (field_ratings.md). What
+//      that trades: the air exchange on a day/night cycle happens at the
+//      drain, not through a membrane. The grille's membrane does NOT do
+//      that job — the driver's back is sealed and its rim sits on a foam
+//      ring, so the membrane protects the driver's own chamber, which the
+//      cavity never sees (the first cut of this claimed otherwise; the
+//      review caught it). A membrane-only path with no open hole is still
+//      opt_vent = true, and the knob stays for it.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
@@ -230,18 +238,19 @@ use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
-part = "all";        // ["body","face","plate","gasket","retainer","plunger","all"]   // (the speaker has no printed part of its own; the plunger is TPU, two off)
+part = "all";        // ["body","face","plate","gasket","retainer","plunger","all"]   // (the speaker has no printed part of its own; "plunger" is the R + B pair on a sprue, TPU)
 
 /* [Preset] — quick configs; choose "custom" to use the option checkboxes */
 preset = "custom";   // ["custom","doorbell_weather"]
 
 /* [Options (applied when preset = custom)] */
 opt_seal   = true;   // perimeter TPU gasket in the shell's ledge (doorbells live outside)
-opt_vent   = false;  // GORE vent cluster on the face — OFF since v0.9: the speaker grille's
-                     // acoustic membrane (MESH1, hydrophobic ePTFE) is the pressure path —
-                     // a sealed outdoor unit with none pumps moist air past the seals on
-                     // every day/night thermal cycle and the condensate never leaves. Turn
-                     // it on for a face without the speaker (opt_spk = false); the preset does
+opt_vent   = false;  // GORE vent cluster on the face — OFF since v0.9: the case breathes through
+                     // the weep (an open Ø2 drain, opt_weep) instead of a membrane. A sealed
+                     // outdoor unit with NO path at all pumps moist air past the seals on every
+                     // day/night thermal cycle and the condensate never leaves — the assert below
+                     // holds one path or the other. Turn this on for a membrane-only path (no
+                     // open hole): then an adhesive GORE patch over the cluster is REQUIRED
 opt_led    = false;  // separate light-pipe port (the 12 mm button usually has its own LED ring)
 opt_tamper = false;  // reed/Hall magnet pocket on the face underside
 opt_weep   = true;   // Ø2 weep through the bottom wall just above the plate's face (mounted button-down):
@@ -257,7 +266,7 @@ seal_mid_posts = true; // (seal mode) mid posts along each long wall, as many as
 // tamper magnet. A doorbell lives outside, so the one preset is the sealed one.
 function _pre(c, w) = (preset == "doorbell_weather") ? w : c;
 e_seal   = _pre(opt_seal,   true);
-// e_vent is set below the [Speaker] block: the released build breathes through the grille's membrane
+e_vent   = _pre(opt_vent,   false);  // the released build breathes through its weep (field_ratings.md)
 e_led    = _pre(opt_led,    false);
 e_tamper = _pre(opt_tamper, false);
 e_weep   = _pre(opt_weep,   true);
@@ -334,7 +343,6 @@ spk_mesh_t = 0.3;    // the acoustic mesh patch's seat depth on the inner face (
 grille_hole_d = 1.0; // grille holes — the outdoor insect rule (<= 1.0)
 grille_pitch  = 2.6; // hole spacing: one hole per grille_pitch² of face (sunflower), or ring-to-ring (rings)
 grille_pattern = "sunflower";   // ["sunflower","rings"]  sunflower = a Fermat spiral at the golden angle (v0.9); rings = the v0.8 grille
-e_vent   = _pre(opt_vent,   !opt_spk);   // the preset vents a face without the speaker; with it, the grille's membrane is the vent
 
 /* [Service buttons] — two TPU plungers through the back plate over the XIAO's R and B switches (v0.9):
    lift the body off its wall plate and press, no plate screw comes out. The switch positions are the
@@ -759,8 +767,11 @@ assert(!(e_seal && seal_mid_posts) || _seal_span <= 40 + 1e-9,
 
 assert(btn_bez_d == 0 || btn_bez_d > btn_d + 2, "btn_bez_d must exceed the button hole");
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the plate");
-assert(!e_seal || e_vent || e_weep || opt_spk,
-       "seal mode with no pressure path — enable opt_vent (GORE seat), opt_weep (field_ratings.md) or the speaker (its membrane breathes)");
+// the speaker is NOT a path: its membrane fronts a sealed-back driver on a foam
+// ring, a chamber the cavity never sees (the v0.9 review caught the first cut
+// of this counting it)
+assert(!e_seal || e_vent || e_weep,
+       "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
 // the button's panel nut must clear the bottom posts (their inner edge vs the nut's corner radius)
 assert(len([for (p = post_xy()) if (sqrt(pow(p[0], 2) + pow(p[1] - btn_cy, 2)) < btn_nut_ac/2 + pd/2 + 0.5) 1]) == 0,
        str("a ", btn_nut_ac, " mm across-corners button nut hits a screw post — smaller nut, or move the posts"));
@@ -1006,8 +1017,8 @@ hw_echo("Vision doorbell", [
     opt_spk      ? hw_item(1, "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)") : "",
     opt_spk      ? hw_item(1, str("foam gasket ring Ø", spk_d, " / Ø", spk_cone_d, " x 1.5 (driver rim to the face)")) : "",
     opt_spk      ? hw_item(1, str("foam pad Ø", spk_mag_d, " x 1.5 (magnet to the cradle)")) : "",
-    opt_spk      ? hw_item(1, str("acoustic vent membrane patch Ø", spk_mesh_d, " (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)")) : "",
-    opt_svc      ? hw_item(2, "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)") : "",
+    opt_spk      ? hw_item(1, str("acoustic mesh patch Ø", spk_mesh_d, " (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)")) : "",
+    opt_svc      ? hw_item(2, "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)") : "",
     opt_ant      ? hw_item(1, str("FPC Wi-Fi antenna ", ant_l, " x ", ant_w, ", u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs")) : "",
     hw_item(4, "#8 pan wall screw (plate)"),
 ]);
@@ -1162,10 +1173,22 @@ module svc_cut(q) {
         translate([0, 0, floor_t - plate_t - 0.1]) cylinder(d = svc_cb_d, h = svc_cb_depth + 0.1);
     }
 }
-// the PLUNGER itself (part="plunger", TPU, two off) — drawn head-down as it
-// prints: the flat head on the bed (its dimples are holes in the first
-// layers), the stem up, the bead a 45° lead that squeezes through the bore
-// and a 0.4 step that stays behind the boss, the tip on the end
+// the PLUNGER itself (part="plunger", TPU) — drawn head-down as it prints:
+// the flat head on the bed (its dimples are holes in the first layers), the
+// stem up, the bead a 45° lead that squeezes through the bore and a 0.4 step
+// that stays behind the boss, the tip on the end. The part is the PAIR: R
+// and B side by side with a sprue between their heads (one bar, the web's
+// thickness, snapped off after the print), so one export is both buttons
+// and never two of one — the v0.9 review caught the single export
+svc_sprue_gap = 1.0;   // the heads' edges apart; the sprue bridges it
+module plunger_pair() {
+    dx = svc_head_d + svc_sprue_gap;
+    union() {
+        plunger(xiao_rst_side);
+        translate([dx, 0, 0]) plunger(-xiao_rst_side);
+        translate([svc_head_d/2 - 0.2, -0.8, 0]) cube([svc_sprue_gap + 0.4, 1.6, svc_web_t]);   // the sprue
+    }
+}
 module plunger(side = xiao_rst_side) {
     pips = (side == xiao_rst_side) ? [[0, 0]] : [[-1.5, 0], [1.5, 0]];
     difference() {
@@ -1599,7 +1622,7 @@ else if (part == "face")   translate([0, 0, lid_t]) rotate([180, 0, 0]) face();
 else if (part == "gasket") { assert(e_seal, "gasket needs opt_seal=true"); gasket(); }
 else if (part == "plate")  plate();
 else if (part == "retainer") retainer();
-else if (part == "plunger") { assert(opt_svc, "the plunger needs opt_svc=true"); plunger(); }
+else if (part == "plunger") { assert(opt_svc, "the plunger needs opt_svc=true"); plunger_pair(); }
 else if (part == "none") ;        // a probe that includes this file and draws its own checks
 else {
     // assembled preview wears the chosen colorway (canary_color_lib);
@@ -1609,6 +1632,5 @@ else {
     color(cw_body(colorway)) translate([-(out_x + 14), 0, 0]) plate();
     if (e_seal) color(cw_light(colorway)) translate([0, out_y + 12, 0]) gasket();
     color(cw_body(colorway)) translate([out_x + 10, out_y/2 + 16, 0]) retainer();
-    if (opt_svc) for (i = [0, 1]) color(cw_light(colorway))
-        translate([out_x + 10 + 14*i, out_y/2 + 30, 0]) plunger(i == 0 ? xiao_rst_side : -xiao_rst_side);
+    if (opt_svc) color(cw_light(colorway)) translate([out_x + 10, out_y/2 + 30, 0]) plunger_pair();
 }

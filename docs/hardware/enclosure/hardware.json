@@ -103,14 +103,14 @@
     {
      "qty": 1,
      "kind": "other",
-     "spec": "acoustic vent membrane patch Ø34 (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)",
-     "text": "acoustic vent membrane patch Ø34 (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)"
+     "spec": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)",
+     "text": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)"
     },
     {
      "qty": 2,
-     "kind": "printed-part",
-     "spec": "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)",
-     "text": "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)"
+     "kind": "other",
+     "spec": "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)",
+     "text": "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)"
     },
     {
      "qty": 1,
@@ -261,14 +261,14 @@
     {
      "qty": 1,
      "kind": "other",
-     "spec": "acoustic vent membrane patch Ø34 (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)",
-     "text": "acoustic vent membrane patch Ø34 (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)"
+     "spec": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)",
+     "text": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)"
     },
     {
      "qty": 2,
-     "kind": "printed-part",
-     "spec": "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)",
-     "text": "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)"
+     "kind": "other",
+     "spec": "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)",
+     "text": "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)"
     },
     {
      "qty": 1,
