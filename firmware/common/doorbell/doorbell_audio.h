@@ -269,15 +269,15 @@ inline uint16_t duty10(int16_t q15) {
 // The name a Home Assistant select sends, to a phrase (and back). constexpr,
 // so the discovery payload's option literals can be held to these at
 // compile time (same_name below).
+// One return statement: the PlatformIO build is C++11, where a constexpr
+// function body may hold nothing else (the Arduino CLI build is C++17).
 constexpr const char* phrase_name(Phrase p) {
-  switch (p) {
-    case Phrase::CHIME: return "chime";
-    case Phrase::TICK:  return "tick";
-    case Phrase::WAIT:  return "we're coming";
-    case Phrase::LEAVE: return "leave it";
-    case Phrase::NO:    return "no thanks";
-    default:            return "—";
-  }
+  return p == Phrase::CHIME ? "chime"
+       : p == Phrase::TICK  ? "tick"
+       : p == Phrase::WAIT  ? "we're coming"
+       : p == Phrase::LEAVE ? "leave it"
+       : p == Phrase::NO    ? "no thanks"
+       :                      "—";
 }
 
 // compile-time string equality, for the static_asserts that hold a payload's
