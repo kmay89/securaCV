@@ -1129,7 +1129,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
+          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -2242,7 +2242,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
+          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -2264,11 +2264,12 @@
       "name": "Canary Vision Doorbell",
       "tagline": "Wyze/Ring form factor for the Vision stack — sealed by default, wedge plates for aiming down the approach.",
       "about": "The Vision stack in a Ring/Wyze-sized doorbell: camera, lit button, hidden security screw. It ships sealed by default — doorbells live outside.",
-      "print_plan": "Print the Body, Face and Plate in ASA (a doorbell lives in the sun; PETG only under a deep porch roof) and the Gasket in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
+      "print_plan": "Print the Body, Face and Plate in ASA (a doorbell lives in the sun; PETG only under a deep porch roof), the Gasket and the two Plungers in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
       "simple": [
         "part",
         "preset",
         "opt_seal",
+        "opt_svc",
         "opt_vent",
         "opt_led",
         "opt_tamper",
@@ -2289,20 +2290,23 @@
         "face": "Face — the one-piece shell",
         "plate": "Wall plate",
         "gasket": "Gasket ring — print in TPU",
-        "retainer": "Lens retainer ring"
+        "retainer": "Lens retainer ring",
+        "plunger": "Service plunger — print TWO in TPU"
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
-        "body": "The plate the module stack lives on: rails, clips and two screw posts for the module, the battery bay's fence, the cable exit. It nests inside the face's walls on the screws from the back, drops onto the wall plate's dovetail lugs and locks with the hidden screw.",
+        "body": "The plate the module stack lives on: rails, clips and two screw posts for the module, the battery bay's fence, the cable exit, the speaker cradle and the two service plunger seats over the XIAO's R and B switches. It nests inside the face's walls on the screws from the back, drops onto the wall plate's dovetail lugs and locks with the hidden screw.",
         "face": "The one-piece show part — lens aperture, button hole, side walls and posts, the gasket ledge inside — printed face-down; the only seam is against the wall plate.",
         "plate": "The wall plate with the three dovetail lugs, the collar and the cable slot. The wedge angles live here — the case aims wherever the plate points.",
         "gasket": "The soft TPU ring that seals face to body against the weather.",
-        "retainer": "The small ring that presses into the face behind the lens disc and holds it against the lip. Print it flat, bore down."
+        "retainer": "The small ring that presses into the face behind the lens disc and holds it against the lip. Print it flat, bore down.",
+        "plunger": "The soft button that pokes the XIAO's reset or boot switch through the back plate: head down on the bed, stem up, two off — one dimple is R, two are B. Lift the body off its wall plate and press."
       },
       "labels": {
         "part": "Part to print",
         "preset": "Quick preset",
         "opt_seal": "Weather seal",
+        "opt_svc": "Service buttons (R / B)",
         "opt_vent": "GORE vent",
         "opt_led": "Extra light pipe",
         "opt_tamper": "Tamper magnet",
@@ -2316,14 +2320,14 @@
       "choices": {
         "preset": {
           "custom": "Custom — pick the options yourself",
-          "doorbell_weather": "Outdoor — sealed, vented and drained (the released build)"
+          "doorbell_weather": "Outdoor — sealed and drained, breathing through the speaker grille's membrane (the released build)"
         }
       },
       "units": {
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "1a5d92cd858aac012c488b5c00f848c084e1343121a4bb38b3801f1b9e06d25a",
+      "sha256": "2e6e181f1098c257602eb2530a771d41fc9d7e3b699470d2cc4a6bb15998ea61",
       "groups": [
         {
           "name": "What to render",
@@ -2338,9 +2342,10 @@
                 "plate",
                 "gasket",
                 "retainer",
+                "plunger",
                 "all"
               ],
-              "desc": "// (the speaker has no printed part of its own)"
+              "desc": "// (the speaker has no printed part of its own; the plunger is TPU, two off)"
             }
           ]
         },
@@ -2371,8 +2376,8 @@
             {
               "name": "opt_vent",
               "type": "bool",
-              "default": true,
-              "desc": "GORE vent cluster on the face — ON by default: a sealed outdoor"
+              "default": false,
+              "desc": "GORE vent cluster on the face — OFF since v0.9: the speaker grille's"
             },
             {
               "name": "opt_led",
@@ -2725,7 +2730,129 @@
               "name": "grille_pitch",
               "type": "number",
               "default": 2.6,
-              "desc": "ring-to-ring spacing of the grille holes"
+              "desc": "hole spacing: one hole per grille_pitch² of face (sunflower), or ring-to-ring (rings)"
+            },
+            {
+              "name": "grille_pattern",
+              "type": "string",
+              "default": "sunflower",
+              "options": [
+                "sunflower",
+                "rings"
+              ],
+              "desc": "sunflower = a Fermat spiral at the golden angle (v0.9); rings = the v0.8 grille"
+            }
+          ]
+        },
+        {
+          "name": "Service buttons",
+          "params": [
+            {
+              "name": "opt_svc",
+              "type": "bool",
+              "default": true,
+              "desc": "the plungers, their counterbores, bores and guide bosses; off = a plain plate there"
+            },
+            {
+              "name": "svc_head_d",
+              "type": "number",
+              "default": 8.0,
+              "desc": "the plunger's head Ø — flat, flush in a counterbore on the back face"
+            },
+            {
+              "name": "svc_web_t",
+              "type": "number",
+              "default": 0.8,
+              "desc": "the head's thickness: the web that flexes when you press (TPU 90-95A)"
+            },
+            {
+              "name": "svc_stem_d",
+              "type": "number",
+              "default": 3.2,
+              "desc": "the stem, a sliding fit in its bore (+0.3)"
+            },
+            {
+              "name": "svc_tip_d",
+              "type": "number",
+              "default": 1.8,
+              "desc": "the tip that lands on the switch cap (1.6 across; the USB-C shell stands 0.7 beside it)"
+            },
+            {
+              "name": "svc_tip_h",
+              "type": "number",
+              "default": 0.8,
+              "desc": "the tip's height off the stem's end"
+            },
+            {
+              "name": "svc_rest",
+              "type": "number",
+              "default": 0.3,
+              "desc": "the tip's rest gap over the cap at the NEAREST the stack can sit — never pressed by the case"
+            },
+            {
+              "name": "svc_dy",
+              "type": "number",
+              "default": 0.4,
+              "desc": "the tip sits this far up the cap from its center (the guide boss then clears the plug's head)"
+            },
+            {
+              "name": "svc_bead",
+              "type": "number",
+              "default": 0.4,
+              "desc": "the retaining bead's stand past the stem, just past the guide boss's top"
+            },
+            {
+              "name": "svc_boss_wall",
+              "type": "number",
+              "default": 1.0,
+              "desc": "the guide boss's wall on the plate's inner face"
+            },
+            {
+              "name": "svc_pip_d",
+              "type": "number",
+              "default": 1.6,
+              "desc": "the dimples in the head that say which is which: one = R, two = B"
+            },
+            {
+              "name": "svc_pip_depth",
+              "type": "number",
+              "default": 0.4
+            },
+            {
+              "name": "xiao_rst_side",
+              "type": "number",
+              "default": -1,
+              "desc": "MEASURE: the side (±X, this file's frame) whose switch is R — the vendor model has no silkscreen;"
+            },
+            {
+              "name": "xiao_btn_dx",
+              "type": "number",
+              "default": 5.93,
+              "desc": "the switches ± across the XIAO from its centerline — brd_xiao_btn_dx(), the vendor GLB"
+            },
+            {
+              "name": "xiao_btn_dy",
+              "type": "number",
+              "default": 1.61,
+              "desc": "... inboard of the USB end along its length — brd_xiao_btn_dy()"
+            },
+            {
+              "name": "xiao_btn_h",
+              "type": "number",
+              "default": 0.75,
+              "desc": "the cap's top over the PCB face — brd_xiao_btn_h()"
+            },
+            {
+              "name": "xiao_btn_travel",
+              "type": "number",
+              "default": 0.25,
+              "desc": "a 2.6 x 1.6 SMD tactile switch's travel to actuation"
+            },
+            {
+              "name": "xiao_usb_overhang",
+              "type": "number",
+              "default": 1.5,
+              "desc": "the USB-C shell past the XIAO's end — brd_xiao_usb_overhang()"
             }
           ]
         },
@@ -3520,7 +3647,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
+          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4480,7 +4607,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
+          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4939,7 +5066,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "82506e45b0eb5d7bca041056b119a29cd915400385b2bcdba2e3b15637a3c050"
+          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
         },
         {
           "file": "canary_color_lib.scad",

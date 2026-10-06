@@ -54,12 +54,6 @@
     },
     {
      "qty": 1,
-     "kind": "vent",
-     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
-     "text": "Ø12 adhesive ePTFE/GORE vent patch"
-    },
-    {
-     "qty": 1,
      "kind": "window",
      "spec": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)",
      "text": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)"
@@ -109,8 +103,14 @@
     {
      "qty": 1,
      "kind": "other",
-     "spec": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille)",
-     "text": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille)"
+     "spec": "acoustic vent membrane patch Ø34 (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)",
+     "text": "acoustic vent membrane patch Ø34 (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)"
+    },
+    {
+     "qty": 2,
+     "kind": "printed-part",
+     "spec": "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)",
+     "text": "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)"
     },
     {
      "qty": 1,
@@ -212,12 +212,6 @@
     },
     {
      "qty": 1,
-     "kind": "vent",
-     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
-     "text": "Ø12 adhesive ePTFE/GORE vent patch"
-    },
-    {
-     "qty": 1,
      "kind": "window",
      "spec": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)",
      "text": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)"
@@ -267,8 +261,14 @@
     {
      "qty": 1,
      "kind": "other",
-     "spec": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille)",
-     "text": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille)"
+     "spec": "acoustic vent membrane patch Ø34 (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)",
+     "text": "acoustic vent membrane patch Ø34 (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)"
+    },
+    {
+     "qty": 2,
+     "kind": "printed-part",
+     "spec": "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)",
+     "text": "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)"
     },
     {
      "qty": 1,

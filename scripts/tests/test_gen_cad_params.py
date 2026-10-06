@@ -18,7 +18,7 @@ What is pinned and why:
     output, so a same-named local of a column-0 module can never be hit
     (parse_scad stops at the first `^module`);
   • the board registry (canary_board_lib.scad) parses completely — nine rows,
-    twenty facts — and a row that drifts from the literal shape is a failure,
+    twenty-four facts — and a row that drifts from the literal shape is a failure,
     never a shorter registry; each reference form resolves; an unknown row,
     dim or fact fails naming the manifest and the library;
   • a reference is declared only where the knob's help comment already cites
@@ -29,7 +29,9 @@ What is pinned and why:
     moves exactly the lines that reference it — every case that names the
     row moves (the three ws147 cases, since the C6 joined) and no other —
     the OV5647's nine camera facts joined later, named by both Vision-build
-    cases (the case and its doorbell), so REFS lists them for each;
+    cases (the case and its doorbell), so REFS lists them for each; the
+    XIAO's four switch facts (v0.9 doorbell) are cited by comment only, so
+    they are unreferenced, like the Sense camera's footprint;
   • the one display case no manifest can own yet is refused by construction,
     not by omission: the 7" frame's panel-library reads. The C6's `model`
     ternaries became the 1.47 literals they always evaluated to and the
@@ -427,7 +429,7 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
 
 
 class BoardRegistry(unittest.TestCase):
-    def test_committed_lib_parses_nine_rows_and_twenty_facts(self):
+    def test_committed_lib_parses_nine_rows_and_twenty_four_facts(self):
         reg = gcp.parse_board_registry()
         self.assertEqual(reg.path, LIB)
         self.assertEqual(list(reg.rows), ["xiao", "grove_v2", "ov5647", "mr60", "dk_c3",
@@ -450,6 +452,9 @@ class BoardRegistry(unittest.TestCase):
                                            # the XIAO ESP32-S3 Sense camera, off Seeed's model
                                            "brd_xiao_sense_cam_h", "brd_xiao_sense_cam_dx",
                                            "brd_xiao_sense_cam_dy", "brd_xiao_sense_cam_fp",
+                                           # the XIAO ESP32-S3's R and B switches, off the vendor GLB (v0.9 doorbell)
+                                           "brd_xiao_btn_dx", "brd_xiao_btn_dy", "brd_xiao_btn_h",
+                                           "brd_xiao_usb_overhang",
                                            # the OV5647-62 camera, off the vendor CAD
                                            "brd_ov5647_hole_x", "brd_ov5647_hole_y",
                                            "brd_ov5647_grid_dy", "brd_ov5647_lens_dx",
@@ -692,7 +697,10 @@ class ManifestsCarryTheJoin(unittest.TestCase):
         # (its window assert), not owned as a knob
         self.assertEqual(rows, ["heltec_v3"])
         self.assertEqual(facts, ["brd_stack_sock_unmeasured", "brd_ws147_brass_c3",
-                                 "brd_ws147_brass_c6", "brd_xiao_sense_cam_fp"])
+                                 "brd_ws147_brass_c6", "brd_xiao_sense_cam_fp",
+                                 # the doorbell cites the XIAO's switch facts by comment (v0.9)
+                                 "brd_xiao_btn_dx", "brd_xiao_btn_dy", "brd_xiao_btn_h",
+                                 "brd_xiao_usb_overhang"])
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
         text = out.getvalue()

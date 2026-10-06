@@ -510,7 +510,7 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
         self.assertEqual(rc.part_enum(rc.ENC / "canary_wap_enclosure.scad"),
                          ["base", "lid", "all", "coupon", "gasket", "shield", "tray"])
         self.assertEqual(rc.part_enum(rc.ENC / "canary_vision_doorbell.scad"),
-                         ["body", "face", "plate", "gasket", "retainer", "all"])
+                         ["body", "face", "plate", "gasket", "retainer", "plunger", "all"])
         self.assertIsNone(rc.part_enum(rc.ENC / "canary_board_lib.scad"))
         self.assertEqual(rc.preview_plan("canary_board_lib.scad"), [])
 
@@ -543,7 +543,7 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
         self.assertEqual(len(sense), 12)
         self.assertTrue(all(j.defines == {} for j in sense))
         doorbell = rc.preview_plan("canary_vision_doorbell.scad")
-        self.assertEqual(len(doorbell), 14)   # body, face, plate, plate wedge15, gasket, retainer (v0.7) x two views, + the wedge's
+        self.assertEqual(len(doorbell), 16)   # body, face, plate, plate wedge15, gasket, retainer (v0.7), plunger (v0.9) x two views, + the wedge's
         self.assertEqual({(j.label, j.defines.get("plate_wedge")) for j in doorbell if j.part == "plate"},
                          {("", None), ("wedge15", 15)})
 

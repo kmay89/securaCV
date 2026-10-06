@@ -185,6 +185,34 @@
 //  at <= 40 mm) placed where the circle leaves room at the wall. The
 //  amplifier board parks on edge beside the button. The body grows by the
 //  zone (zone_spk = spk_d + 2*spk_gap); nothing else moves.
+//  v0.9 (2026-10-06): the service plungers, the sunflower grille, the vent
+//  gone. Three things the v0.8 review of the case asked for:
+//    * SERVICE PLUNGERS (opt_svc): the XIAO's two tactile switches, R and
+//      B, face the plate (its component side is its outward side in the
+//      socket), 7-9 mm off the plate's inner face. Two TPU plungers go
+//      through the plate over them — a flat head flush in a counterbore on
+//      the back face, a stem in a bore through the plate and a short guide
+//      boss on the inner face (stopped under the USB-C shell), a bead past
+//      the boss's top that keeps it, a small tip that lands on the cap and
+//      nothing else (the shell stands 0.7 beside the cap, four times
+//      taller). Lift the body off its wall plate and press: a reset or a
+//      boot-mode flash without a plate screw coming out. The tip rests
+//      0.3 off the cap at the NEAREST the stack can sit (stack_sock_h is a
+//      bench number to one PCB face, so the band is a PCB thick) — an
+//      unpressed plunger can never hold R or B down; a sixth printed part,
+//      part="plunger", TPU, two off. Which switch is R is a MEASURE knob
+//      (xiao_rst_side): the vendor model carries no silkscreen; the pips
+//      on the heads follow it (one dimple = R, two = B).
+//    * the GRILLE is a sunflower (grille_pattern): the holes sit on a
+//      Fermat spiral at the golden angle, one per grille_pitch² of face —
+//      the same open area as the rings, no ring reads as a ring, every
+//      neighbor the same distance. The insect rule still holds (Ø1.0).
+//    * the GORE VENT is OFF by default (opt_vent): the grille's acoustic
+//      membrane (MESH1, hydrophobic ePTFE — an acoustic VENT, the part
+//      is sold as one) is the pressure path now, 30 mm of it where the
+//      vent had 10 holes; two membranes on one face was one too many. The
+//      knob stays for a face without a speaker (the preset follows
+//      opt_spk).
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
@@ -202,16 +230,18 @@ use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
-part = "all";        // ["body","face","plate","gasket","retainer","all"]   // (the speaker has no printed part of its own)
+part = "all";        // ["body","face","plate","gasket","retainer","plunger","all"]   // (the speaker has no printed part of its own; the plunger is TPU, two off)
 
 /* [Preset] — quick configs; choose "custom" to use the option checkboxes */
 preset = "custom";   // ["custom","doorbell_weather"]
 
 /* [Options (applied when preset = custom)] */
 opt_seal   = true;   // perimeter TPU gasket in the shell's ledge (doorbells live outside)
-opt_vent   = true;   // GORE vent cluster on the face — ON by default: a sealed outdoor
-                     // unit with no pressure path pumps moist air past the seals on
-                     // every day/night thermal cycle and the condensate never leaves
+opt_vent   = false;  // GORE vent cluster on the face — OFF since v0.9: the speaker grille's
+                     // acoustic membrane (MESH1, hydrophobic ePTFE) is the pressure path —
+                     // a sealed outdoor unit with none pumps moist air past the seals on
+                     // every day/night thermal cycle and the condensate never leaves. Turn
+                     // it on for a face without the speaker (opt_spk = false); the preset does
 opt_led    = false;  // separate light-pipe port (the 12 mm button usually has its own LED ring)
 opt_tamper = false;  // reed/Hall magnet pocket on the face underside
 opt_weep   = true;   // Ø2 weep through the bottom wall just above the plate's face (mounted button-down):
@@ -227,7 +257,7 @@ seal_mid_posts = true; // (seal mode) mid posts along each long wall, as many as
 // tamper magnet. A doorbell lives outside, so the one preset is the sealed one.
 function _pre(c, w) = (preset == "doorbell_weather") ? w : c;
 e_seal   = _pre(opt_seal,   true);
-e_vent   = _pre(opt_vent,   true);
+// e_vent is set below the [Speaker] block: the released build breathes through the grille's membrane
 e_led    = _pre(opt_led,    false);
 e_tamper = _pre(opt_tamper, false);
 e_weep   = _pre(opt_weep,   true);
@@ -287,8 +317,8 @@ btn_wire_room = 5.0; // air behind the button's terminals for the solder joints 
                      // well (the v0.6 cavity left 3.2 — the first print's wires had nowhere to turn)
 
 /* [Speaker] — a sealed full-range driver behind the face, between the button and the cable well (v0.8).
-   Sized for the 36 mm / 4 Ω / 3 W class the BOM names (SPK1): with the 2.5 W class-D amplifier that is
-   ~90 dB at 1 m, over a busy street. The driver's rim seats in a boss on the face's inner side over a foam
+   Sized for the 36 mm / 4 Ω / 3 W class the BOM names (SPK1): with the 2.5 W class-D amplifier the
+   target is a chime that carries over a busy street (unmetered — the wiring page owns that number). The driver's rim seats in a boss on the face's inner side over a foam
    gasket; a cradle on the plate presses its magnet when the plate screws down. */
 opt_spk    = true;   // the speaker zone (grille, boss, cradle, its mid posts); off = the v0.7 body
 spk_d      = 36.0;   // the driver's outside Ø (its frame or rim)
@@ -302,7 +332,32 @@ spk_pad_t  = 1.0;    // the foam pad between the magnet and the cradle
 spk_boss_wall = 1.5; // the boss ring's wall on the face's inner side
 spk_mesh_t = 0.3;    // the acoustic mesh patch's seat depth on the inner face (the patch is 0.2–0.3)
 grille_hole_d = 1.0; // grille holes — the outdoor insect rule (<= 1.0)
-grille_pitch  = 2.6; // ring-to-ring spacing of the grille holes
+grille_pitch  = 2.6; // hole spacing: one hole per grille_pitch² of face (sunflower), or ring-to-ring (rings)
+grille_pattern = "sunflower";   // ["sunflower","rings"]  sunflower = a Fermat spiral at the golden angle (v0.9); rings = the v0.8 grille
+e_vent   = _pre(opt_vent,   !opt_spk);   // the preset vents a face without the speaker; with it, the grille's membrane is the vent
+
+/* [Service buttons] — two TPU plungers through the back plate over the XIAO's R and B switches (v0.9):
+   lift the body off its wall plate and press, no plate screw comes out. The switch positions are the
+   board registry's (brd_xiao_btn_*, the vendor GLB); which one is R is NOT in the model. */
+opt_svc     = true;   // the plungers, their counterbores, bores and guide bosses; off = a plain plate there
+svc_head_d  = 8.0;    // the plunger's head Ø — flat, flush in a counterbore on the back face
+svc_web_t   = 0.8;    // the head's thickness: the web that flexes when you press (TPU 90-95A)
+svc_stem_d  = 3.2;    // the stem, a sliding fit in its bore (+0.3)
+svc_tip_d   = 1.8;    // the tip that lands on the switch cap (1.6 across; the USB-C shell stands 0.7 beside it)
+svc_tip_h   = 0.8;    // the tip's height off the stem's end
+svc_rest    = 0.3;    // the tip's rest gap over the cap at the NEAREST the stack can sit — never pressed by the case
+svc_dy      = 0.4;    // the tip sits this far up the cap from its center (the guide boss then clears the plug's head)
+svc_bead    = 0.4;    // the retaining bead's stand past the stem, just past the guide boss's top
+svc_boss_wall = 1.0;  // the guide boss's wall on the plate's inner face
+svc_pip_d   = 1.6;    // the dimples in the head that say which is which: one = R, two = B
+svc_pip_depth = 0.4;
+xiao_rst_side = -1;   // MEASURE: the side (±X, this file's frame) whose switch is R — the vendor model has no silkscreen;
+                      // confirm against the board before trusting the dimples  // [-1, 1]
+xiao_btn_dx = 5.93;   // the switches ± across the XIAO from its centerline — brd_xiao_btn_dx(), the vendor GLB
+xiao_btn_dy = 1.61;   // ... inboard of the USB end along its length — brd_xiao_btn_dy()
+xiao_btn_h  = 0.75;   // the cap's top over the PCB face — brd_xiao_btn_h()
+xiao_btn_travel = 0.25;   // a 2.6 x 1.6 SMD tactile switch's travel to actuation
+xiao_usb_overhang = 1.5;  // the USB-C shell past the XIAO's end — brd_xiao_usb_overhang()
 
 /* [Doorbell shell] */
 db_r     = 12.0;     // outside corner radius (pill look; <= half the width)
@@ -704,8 +759,8 @@ assert(!(e_seal && seal_mid_posts) || _seal_span <= 40 + 1e-9,
 
 assert(btn_bez_d == 0 || btn_bez_d > btn_d + 2, "btn_bez_d must exceed the button hole");
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the plate");
-assert(!e_seal || e_vent || e_weep,
-       "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
+assert(!e_seal || e_vent || e_weep || opt_spk,
+       "seal mode with no pressure path — enable opt_vent (GORE seat), opt_weep (field_ratings.md) or the speaker (its membrane breathes)");
 // the button's panel nut must clear the bottom posts (their inner edge vs the nut's corner radius)
 assert(len([for (p = post_xy()) if (sqrt(pow(p[0], 2) + pow(p[1] - btn_cy, 2)) < btn_nut_ac/2 + pd/2 + 0.5) 1]) == 0,
        str("a ", btn_nut_ac, " mm across-corners button nut hits a screw post — smaller nut, or move the posts"));
@@ -806,6 +861,63 @@ sock_end_y = vm_cy + xiao_end_y - 1.6;                          // the socket he
 xiao_lo_z  = z_vm_top - pcb_t - stack_sock_h - brd_t("xiao") - 0.5;
 xiao_hi_z  = z_vm_top - pcb_t - stack_sock_h + brd_t("xiao") + 0.5;
 post_flat_y = vm_cy + xiao_end_y + xiao_gap;                    // a post is relieved to this flat in that band
+
+// SERVICE PLUNGERS (v0.9) — everything in the plate's frame (z = floor_t its
+// inner face, floor_t - plate_t its back face). The XIAO's component face is
+// its outward face in the socket: stack_sock_h is a bench number to ONE of
+// its PCB faces, so the face sits somewhere in a PCB-thick band, and the
+// plunger is drawn against BOTH ends of it — the tip rests svc_rest off the
+// cap at the near end (it can never hold a switch), and the stroke is
+// stated for the far end.
+xiao_face_hi_z = z_vm_top - pcb_t - stack_sock_h;               // the component face, the measurement to that face
+xiao_face_lo_z = xiao_face_hi_z - brd_t("xiao");                // ...or to the socket face: the component face a PCB nearer the plate
+svc_cap_lo_z   = xiao_face_lo_z - xiao_btn_h;                   // the cap's top at the nearest the stack can sit
+svc_cap_hi_z   = xiao_face_hi_z - xiao_btn_h;
+xiao_usb_end_y = vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang;   // the XIAO's board end (the USB-C shell stands past it)
+svc_cy         = xiao_usb_end_y + xiao_btn_dy + svc_dy;         // the plunger axis along Y
+function svc_xy() = opt_svc ? [for (sx = [1, -1]) [vm_cx + sx*xiao_btn_dx, svc_cy]] : [];
+svc_bore_d     = svc_stem_d + 0.3;                              // the stem slides
+svc_cb_d       = svc_head_d + 0.4;                              // the head's counterbore on the back face
+svc_cb_depth   = svc_web_t + 0.3;                               // the head sits 0.3 under the back face: nothing proud against the wall plate's slab
+svc_boss_od    = svc_bore_d + 2*svc_boss_wall;
+svc_boss_top   = xiao_face_lo_z - port_usbc_shell_h() - 0.5;    // the guide boss stops under the USB-C shell's lowest edge, stack at the near end of its band
+svc_boss_h     = svc_boss_top - floor_t;
+svc_tip_z      = svc_cap_lo_z - svc_rest;                       // the tip's end at rest
+svc_head_z     = floor_t - plate_t + (svc_cb_depth - svc_web_t);   // the head's OUTER face: 0.3 under the back face; its inner face is the counterbore's floor
+svc_stem_len   = svc_tip_z - svc_tip_h - (svc_head_z + svc_web_t);   // the stem, head to tip
+svc_bead_z     = svc_boss_top + 0.2 - svc_head_z;               // the bead's start, in the plunger's own frame (head's floor = 0)
+svc_stroke_lo  = svc_rest + xiao_btn_travel;                    // the press that clicks, stack at the near end
+svc_stroke_hi  = (svc_cap_hi_z - svc_tip_z) + xiao_btn_travel;  // ...and at the far end
+// the tip lands on the cap and nothing else: the USB-C shell beside it, the cap's own extent
+assert(!opt_svc || xiao_btn_dx - svc_tip_d/2 >= port_usbc_shell_w()/2 + 0.5 - 1e-9,
+       "the service plunger's tip reaches the USB-C shell beside the switch — a smaller svc_tip_d");
+assert(!opt_svc || svc_dy + svc_tip_d/2 <= brd_xiao_btn_cap()[0]/2 + 0.1 + 1e-9 && svc_tip_d <= brd_xiao_btn_cap()[1] + 0.2 + 1e-9,
+       "the service plunger's tip runs off the switch cap — svc_dy / svc_tip_d");
+// THE ONE THAT MATTERS: an unpressed plunger must never hold R or B down — it
+// rests svc_rest off the cap even with the stack at the nearest the band allows
+assert(!opt_svc || svc_rest >= 0.3 - 1e-9, "svc_rest under 0.3 — a plunger that can hold RESET down is a dead board with no symptom");
+assert(!opt_svc || svc_stem_len >= 3.0, "the service plunger's stem is too short to reach — the stack sits too near the plate");
+// the guide boss: under the USB-C shell, inside canary_rib_lib's boss rule, clear
+// of the plug's head below the port face and of the corner shoes beside the XIAO
+assert(!opt_svc || svc_boss_h >= 1.5 && svc_boss_h <= boss_h_max(svc_boss_wall) + 1e-9,
+       str("the service plunger's guide boss stands ", svc_boss_h, " mm on a ", svc_boss_wall, " mm wall"));
+assert(!opt_svc || svc_cy - svc_boss_od/2 >= vm_cy - vm_l/2 - usb_port_proud + 0.3 - 1e-9,
+       "the service plunger's guide boss reaches past the port face into the USB plug's head — raise svc_dy");
+assert(!opt_svc || xiao_btn_dx + svc_boss_od/2 <= xiao_w/2 + 0.1 - 1e-9,
+       "the service plunger's guide boss runs into the module's corner shoe — a thinner svc_boss_wall");
+// the plate's other features: the cable oval below, the lug pockets, the screw seats
+assert(!opt_svc || svc_cy - svc_cb_d/2 >= exit_cy + usb_exit_h/2 + 1.0 - 1e-9,
+       "a service plunger's counterbore meets the cable exit's oval");
+assert(!opt_svc || len([for (q = svc_xy(), c = lug_ys) let (r = mount_dt_pocket_y(c, clear = dt_clear))
+                        if (q[1] + svc_cb_d/2 > r[0] - 1.0 && q[1] - svc_cb_d/2 < r[1] + 1.0
+                            && abs(q[0]) - svc_cb_d/2 < mount_dt_window_w(dt_clear)/2 + 1.0) 1]) == 0,
+       "a service plunger's counterbore meets a dovetail lug pocket");
+assert(!opt_svc || len([for (q = svc_xy(), p = post_xy()) if (norm([q[0] - p[0], q[1] - p[1]]) < svc_boss_od/2 + pd/2 + 1.0) 1]) == 0,
+       "a service plunger's guide boss meets a screw post's seat");
+if (opt_svc)
+    echo(str("service plungers: tip rests ", svc_rest, " off the cap at the near end of the stack band; the press that clicks is ",
+             svc_stroke_lo, " to ", svc_stroke_hi, " mm (stack_sock_h to one PCB face or the other); stem ", svc_stem_len,
+             " mm; guide boss ", svc_boss_h, " mm, stopped 0.5 under the USB-C shell at the near end of the band"));
 assert(!vm_screws || vm_hole_dy - vm_post_d/2 >= xiao_end_y - 1.6 + 0.3 - 1e-9,
        str("a board post (Ø", vm_post_d, " on vm_hole_dy ", vm_hole_dy, ") lands on the XIAO socket's end — measure vm_hole_dy"));
 assert(!vm_screws || abs(vm_hole_dx) + vm_post_d/2 <= vm_w/2 + clip_clear - 1e-9,
@@ -894,14 +1006,15 @@ hw_echo("Vision doorbell", [
     opt_spk      ? hw_item(1, "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)") : "",
     opt_spk      ? hw_item(1, str("foam gasket ring Ø", spk_d, " / Ø", spk_cone_d, " x 1.5 (driver rim to the face)")) : "",
     opt_spk      ? hw_item(1, str("foam pad Ø", spk_mag_d, " x 1.5 (magnet to the cradle)")) : "",
-    opt_spk      ? hw_item(1, str("acoustic mesh patch Ø", spk_mesh_d, " (hydrophobic, on the face's inner side over the grille)")) : "",
+    opt_spk      ? hw_item(1, str("acoustic vent membrane patch Ø", spk_mesh_d, " (hydrophobic ePTFE, on the face's inner side over the grille — the pressure path)")) : "",
+    opt_svc      ? hw_item(2, "TPU service plunger (print part=\"plunger\" twice: one dimple = R, two = B — from the back face over the XIAO's switches)") : "",
     opt_ant      ? hw_item(1, str("FPC Wi-Fi antenna ", ant_l, " x ", ant_w, ", u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs")) : "",
     hw_item(4, "#8 pan wall screw (plate)"),
 ]);
-echo(str("Canary Vision DOORBELL v0.8 — shell ", out_x, " x ", out_y, " x ", shell_d + lid_t,
+echo(str("Canary Vision DOORBELL v0.9 — shell ", out_x, " x ", out_y, " x ", shell_d + lid_t,
          " mm (plate ", plate_x, " x ", plate_y, " x ", plate_t, " in the bore; ", len(post_xy()),
          " screws M2 x ", pl_L, "; module at x ", vm_cx, ") + wall plate ", wplate_t, " mm (wedge ", plate_wedge,
-         " deg, seal=", e_seal, ", battery=", opt_batt, ", antenna=", opt_ant, ", speaker=", opt_spk, ")"));
+         " deg, seal=", e_seal, ", battery=", opt_batt, ", antenna=", opt_ant, ", speaker=", opt_spk, ", vent=", e_vent, ", service=", opt_svc, ")"));
 
 // ----------------------------------------------------------------------------
 //  Helpers — the idiom once shared by copy with the other Canary enclosures
@@ -1007,17 +1120,63 @@ module spk_cradle() {
         translate([0, 0, 1.0]) cylinder(d = cradle_id, h = cradle_h + 1);
     }
 }
-// the GRILLE: rings of Ø grille_hole_d holes over the cone, inside
-// spk_cone_d, each ring's count from its circumference at ~2.6 pitch; and
-// the mesh patch's seat on the INNER face (face frame, subtract)
+// the GRILLE: Ø grille_hole_d holes over the cone, inside spk_cone_d, and
+// the mesh patch's seat on the INNER face (face frame, subtract).
+//   sunflower (v0.9): a Fermat spiral — hole i at r = s*sqrt(i), turned i
+//   golden angles (137.508°) — the pattern a sunflower's seeds take, because
+//   it is the one that packs a disc evenly with no ring and no row: every
+//   hole's neighbors sit at the same distance whatever its radius. The scale
+//   s = pitch/sqrt(pi) gives one hole per pitch² of face, the rings' open
+//   area exactly; the count is what fits inside the cone.
+//   rings (v0.8): rings at the pitch, each ring's count from its circumference.
+grille_r_max = spk_cone_d/2 - grille_hole_d/2 - 0.2;
+grille_s     = grille_pitch / sqrt(PI);
+grille_n     = floor(pow(grille_r_max / grille_s, 2));
+module _grille_hole(x, y) { translate([x, y, -1]) cylinder(d = grille_hole_d, h = lid_t + 2, $fn = 12); }
 module spk_grille_cut() {
     translate([0, spk_cy, 0]) {
-        for (r = [grille_pitch : grille_pitch : spk_cone_d/2 - grille_hole_d/2 - 0.2])
-            let (n = max(6, floor(2*3.14159*r / grille_pitch)))
-            for (i = [0 : n - 1]) rotate([0, 0, i*360/n + (r/grille_pitch)*17])
-                translate([r, 0, -1]) cylinder(d = grille_hole_d, h = lid_t + 2, $fn = 12);
-        translate([0, 0, -1]) cylinder(d = grille_hole_d, h = lid_t + 2, $fn = 12);          // the center
+        if (grille_pattern == "sunflower")
+            for (i = [1 : grille_n]) let (r = grille_s*sqrt(i), a = i*137.50776)
+                _grille_hole(r*cos(a), r*sin(a));
+        else
+            for (r = [grille_pitch : grille_pitch : grille_r_max])
+                let (n = max(6, floor(2*3.14159*r / grille_pitch)))
+                for (i = [0 : n - 1]) rotate([0, 0, i*360/n + (r/grille_pitch)*17])
+                    _grille_hole(r, 0);
+        _grille_hole(0, 0);                                                                  // the center
         translate([0, 0, -1]) cylinder(d = spk_mesh_d, h = spk_mesh_t + 1);                  // the mesh seat, inner side
+    }
+}
+// a SERVICE PLUNGER's guide boss on the plate's inner face (plate frame), and
+// the cut it needs: the stem's bore through plate and boss, the head's
+// counterbore on the back face
+module svc_boss(q) {
+    translate([q[0], q[1], floor_t - 0.01]) union() {
+        cylinder(d = svc_boss_od, h = svc_boss_h + 0.01);
+        cylinder(d1 = svc_boss_od + 1.2, d2 = svc_boss_od, h = 0.6 + 0.01);    // root fillet
+    }
+}
+module svc_cut(q) {
+    translate([q[0], q[1], 0]) {
+        translate([0, 0, floor_t - plate_t - 1]) cylinder(d = svc_bore_d, h = plate_t + svc_boss_h + 2);
+        translate([0, 0, floor_t - plate_t - 0.1]) cylinder(d = svc_cb_d, h = svc_cb_depth + 0.1);
+    }
+}
+// the PLUNGER itself (part="plunger", TPU, two off) — drawn head-down as it
+// prints: the flat head on the bed (its dimples are holes in the first
+// layers), the stem up, the bead a 45° lead that squeezes through the bore
+// and a 0.4 step that stays behind the boss, the tip on the end
+module plunger(side = xiao_rst_side) {
+    pips = (side == xiao_rst_side) ? [[0, 0]] : [[-1.5, 0], [1.5, 0]];
+    difference() {
+        union() {
+            cylinder(d = svc_head_d, h = svc_web_t);
+            translate([0, 0, svc_web_t - 0.01]) cylinder(d = svc_stem_d, h = svc_stem_len + 0.02);
+            translate([0, 0, svc_bead_z]) cylinder(d1 = svc_stem_d, d2 = svc_stem_d + 2*svc_bead, h = svc_bead);
+            translate([0, 0, svc_bead_z + svc_bead - 0.01]) cylinder(d = svc_stem_d + 2*svc_bead, h = 0.4);
+            translate([0, 0, svc_web_t + svc_stem_len - 0.01]) cylinder(d = svc_tip_d, h = svc_tip_h + 0.01);
+        }
+        for (q = pips) translate([q[0], q[1], -0.1]) cylinder(d = svc_pip_d, h = svc_pip_depth + 0.1, $fn = 16);
     }
 }
 // the LENS POCKET (face frame: z = 0 the inner side) — cut from the boss's end
@@ -1077,7 +1236,10 @@ module body() {
             for (p = vm_post_xy) board_post(p);
             if (opt_batt) batt_bay();
             if (opt_spk) spk_cradle();
+            for (q = svc_xy()) svc_boss(q);
         }
+        // the service plungers' bores and counterbores
+        for (q = svc_xy()) svc_cut(q);
         // oval cable exit through the plate (aligns with the wall plate's slot)
         translate([exit_cx, exit_cy, 0]) hull()
             for (s = [1, -1]) translate([s*(usb_exit_w - usb_exit_h)/2, 0, floor_t - plate_t - 1])
@@ -1437,6 +1599,7 @@ else if (part == "face")   translate([0, 0, lid_t]) rotate([180, 0, 0]) face();
 else if (part == "gasket") { assert(e_seal, "gasket needs opt_seal=true"); gasket(); }
 else if (part == "plate")  plate();
 else if (part == "retainer") retainer();
+else if (part == "plunger") { assert(opt_svc, "the plunger needs opt_svc=true"); plunger(); }
 else if (part == "none") ;        // a probe that includes this file and draws its own checks
 else {
     // assembled preview wears the chosen colorway (canary_color_lib);
@@ -1446,4 +1609,6 @@ else {
     color(cw_body(colorway)) translate([-(out_x + 14), 0, 0]) plate();
     if (e_seal) color(cw_light(colorway)) translate([0, out_y + 12, 0]) gasket();
     color(cw_body(colorway)) translate([out_x + 10, out_y/2 + 16, 0]) retainer();
+    if (opt_svc) for (i = [0, 1]) color(cw_light(colorway))
+        translate([out_x + 10 + 14*i, out_y/2 + 30, 0]) plunger(i == 0 ? xiao_rst_side : -xiao_rst_side);
 }

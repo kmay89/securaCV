@@ -1966,7 +1966,7 @@
     },
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 9100,
+     "triangles": 11192,
      "mm": [
       48.7,
       166.4,
@@ -1975,7 +1975,7 @@
     },
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 19684,
+     "triangles": 19100,
      "mm": [
       51.5,
       169.2,
@@ -2223,7 +2223,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 9100,
+     "triangles": 11192,
      "mm": [
       48.7,
       166.4,
@@ -2309,7 +2309,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 19684,
+     "triangles": 19100,
      "mm": [
       51.5,
       169.2,

@@ -75,7 +75,7 @@ All in [`bom_canary_vision.csv`](./bom_canary_vision.csv), items 19–19e:
 | R8, R9 | 10 kΩ / 2.2 kΩ | A divider after C4: the XIAO's 3.3 V swing at the amp's 24 dB gain would clip; this leaves ~0.6 V peak, which is full output. |
 | FOAM2 | foam ring Ø36 / Ø30 × 1.5 (compresses to 1.0) | Between the driver's rim and the face, inside the boss: it is the acoustic seal and the thing that lets the plate press the driver without rattles. |
 | FOAM3 | foam pad Ø20 × 1.5 | Between the magnet and the plate's cradle. |
-| MESH1 | acoustic mesh patch Ø34, hydrophobic (Saati Acoustex or the "waterproof speaker mesh" kind), adhesive | On the face's **inner** side over the grille, in its 0.3 mm seat: rain stays out, sound goes through. |
+| MESH1 | acoustic **vent** membrane Ø34, hydrophobic and air-permeable (GORE acoustic vent class, Saati Acoustex class), adhesive | On the face's **inner** side over the grille, in its 0.3 mm seat: rain stays out, sound goes through — and since the v0.9 case it is the sealed body's pressure path (the GORE vent cluster is off by default), so buy one sold as an acoustic *vent*, not grille cloth. |
 
 Plus about 20 cm of thin stranded wire, solder and heat-shrink.
 Everything fits in the body's button zone and cable well. Sleeve Q1, R3
@@ -179,6 +179,32 @@ converter behind the plate: an AC-input module rated for 8–24 V AC in, 5 V
 - Keep the converter outside the sealed body or in its own sealed box. The
   body's cavity is sized for the Vision stack and the button.
 
+## Service access
+
+**Reset and boot from the back (v0.9 case).** The XIAO's two tactile
+switches, **R** (reset) and **B** (boot), sit on its component face, which
+in the module's socket is the side that faces the back plate. The v0.9
+plate carries two **TPU plungers** (`part = "plunger"`, print two) in
+counterbores over them: lift the body off its wall plate (the one security
+screw — no plate screw comes out), and press. **R** restarts the board.
+**B held while power comes up** (plug the USB-C in with B pressed, or
+press R while holding B) puts the ESP32 into its download mode for a flash
+over USB — the same gesture as on the bare board. The plungers rest 0.3 mm
+off the caps at the nearest the stack can sit, so an unpressed plunger
+can never hold a switch; that gap is asserted in the CAD, not assumed. One
+dimple in a head means R, two mean B — **the side is a `MEASURE` knob**
+(`xiao_rst_side`): the vendor model has no silkscreen, so look at the board
+before you trust the dimples, and flip the knob if they are swapped.
+
+**There is no SD card to reach.** The doorbell stacks a plain XIAO ESP32-S3
+(or C3) in the Grove Vision AI V2's socket; the camera is the module's
+OV5647. The microSD slot in the XIAO family lives on the **Sense expansion
+board**, which attaches to the XIAO's underside — the side the Grove socket
+takes — so it cannot be in this stack, and the Grove Vision AI V2 has no
+slot of its own. The witness chain and the doorbell's state live in the
+XIAO's flash (NVS); there is nothing on a card to get at. If a card ever
+matters here it is a different host board, not a hole in the case.
+
 ## Bring-up
 
 1. Flash the Vision firmware (XIAO S3 or C3 build) as usual.
@@ -250,6 +276,10 @@ explains why.
   Lab and the Apple apps.
 - **Displays say "Doorbell heard"**: the same row the WAP's acoustic
   doorbell detector already uses.
+- **Which switch is R.** The v0.9 plungers' dimples follow `xiao_rst_side`,
+  a `MEASURE` knob: the vendor model carries no silkscreen. A photo of the
+  board with the USB toward you settles it; until then, check before you
+  trust a dimple. The switch *positions* are measured (the vendor GLB).
 - **Measure the module's mounting holes.** The v0.7 case puts a screw post
   under each of the Grove Vision AI V2's two M2 holes at ±7.5 / +2.5 mm from
   the module's center, read off a photo of the first print; the vendor CAD

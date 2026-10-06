@@ -330,7 +330,7 @@ class LedgerShape(unittest.TestCase):
         for rid, row in reg.items():
             self.assertIn(row["evidence"], {"measured", "drawing", "spec", "unmeasured"}, rid)
         facts = self.dims["board_facts"]
-        self.assertEqual(len(facts), 20)   # + the OV5647-62's nine camera facts (v0.6)
+        self.assertEqual(len(facts), 24)   # + the OV5647-62's nine camera facts (v0.6) + the XIAO's four switch facts (v0.9 doorbell)
         self.assertEqual(facts["brd_ov5647_lens_dy"], -1.7)
         self.assertEqual(facts["brd_xiao_w_measured"], 17.8)
         self.assertEqual(facts["brd_xiao_sense_cam_h"], 12.7)

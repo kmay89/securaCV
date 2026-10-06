@@ -68,7 +68,7 @@ vstl "canary_vision_enclosure_knob.stl"    -D 'part="knob"'
 DSRC="canary_vision_doorbell.scad"
 dstl() { local out=$1; shift; echo "Rendering $out ..."
   "$OPENSCAD" --export-format binstl -o "$out" "$@" "$DSRC"; }
-for part in body face plate gasket retainer; do
+for part in body face plate gasket retainer plunger; do
   dstl "canary_vision_doorbell_${part}.stl" -D "part=\"$part\""
 done
 dstl "canary_vision_doorbell_plate_wedge15.stl" -D 'plate_wedge=15' -D 'part="plate"'
@@ -261,4 +261,4 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 59 dev renders + 3 SVG templates + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 6 / Sense 2) + 59 dev renders + 3 SVG templates + previews."

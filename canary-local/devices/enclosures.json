@@ -226,7 +226,7 @@
   {
    "id": "vision-doorbell",
    "name": "Vision · DOORBELL",
-   "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
+   "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default",
    "status": "released",
    "device": "canary-vision",
    "preview": "preview_doorbell.png",
@@ -266,6 +266,12 @@
      "file": "canary_vision_doorbell_retainer.stl",
      "print_note": "prints flat as modeled — no supports by design",
      "material": "PETG / ASA (PLA indoors)"
+    },
+    {
+     "name": "plunger ×2",
+     "file": "canary_vision_doorbell_plunger.stl",
+     "print_note": "TPU 90–95A, 100% infill, slow; print TWO, head down — the service buttons through the doorbell's back plate (one dimple = R, two = B)",
+     "material": "TPU 90–95A"
     }
    ],
    "scad": "canary_vision_doorbell.scad"
@@ -3138,9 +3144,10 @@
         "plate",
         "gasket",
         "retainer",
+        "plunger",
         "all"
        ],
-       "comment": "// (the speaker has no printed part of its own)"
+       "comment": "// (the speaker has no printed part of its own; the plunger is TPU, two off)"
       }
      ]
     },
@@ -3169,8 +3176,8 @@
       },
       {
        "name": "opt_vent",
-       "default": "true",
-       "comment": "GORE vent cluster on the face — ON by default: a sealed outdoor"
+       "default": "false",
+       "comment": "GORE vent cluster on the face — OFF since v0.9: the speaker grille's"
       },
       {
        "name": "opt_led",
@@ -3205,10 +3212,6 @@
       {
        "name": "e_seal",
        "default": "_pre(opt_seal,   true)"
-      },
-      {
-       "name": "e_vent",
-       "default": "_pre(opt_vent,   true)"
       },
       {
        "name": "e_led",
@@ -3487,7 +3490,110 @@
       {
        "name": "grille_pitch",
        "default": "2.6",
-       "comment": "ring-to-ring spacing of the grille holes"
+       "comment": "hole spacing: one hole per grille_pitch² of face (sunflower), or ring-to-ring (rings)"
+      },
+      {
+       "name": "grille_pattern",
+       "default": "sunflower",
+       "enum": [
+        "sunflower",
+        "rings"
+       ],
+       "comment": "sunflower = a Fermat spiral at the golden angle (v0.9); rings = the v0.8 grille"
+      },
+      {
+       "name": "e_vent",
+       "default": "_pre(opt_vent,   !opt_spk)",
+       "comment": "the preset vents a face without the speaker; with it, the grille's membrane is the vent"
+      },
+      {
+       "name": "opt_svc",
+       "default": "true",
+       "comment": "the plungers, their counterbores, bores and guide bosses; off = a plain plate there"
+      },
+      {
+       "name": "svc_head_d",
+       "default": "8.0",
+       "comment": "the plunger's head Ø — flat, flush in a counterbore on the back face"
+      },
+      {
+       "name": "svc_web_t",
+       "default": "0.8",
+       "comment": "the head's thickness: the web that flexes when you press (TPU 90-95A)"
+      },
+      {
+       "name": "svc_stem_d",
+       "default": "3.2",
+       "comment": "the stem, a sliding fit in its bore (+0.3)"
+      },
+      {
+       "name": "svc_tip_d",
+       "default": "1.8",
+       "comment": "the tip that lands on the switch cap (1.6 across; the USB-C shell stands 0.7 beside it)"
+      },
+      {
+       "name": "svc_tip_h",
+       "default": "0.8",
+       "comment": "the tip's height off the stem's end"
+      },
+      {
+       "name": "svc_rest",
+       "default": "0.3",
+       "comment": "the tip's rest gap over the cap at the NEAREST the stack can sit — never pressed by the case"
+      },
+      {
+       "name": "svc_dy",
+       "default": "0.4",
+       "comment": "the tip sits this far up the cap from its center (the guide boss then clears the plug's head)"
+      },
+      {
+       "name": "svc_bead",
+       "default": "0.4",
+       "comment": "the retaining bead's stand past the stem, just past the guide boss's top"
+      },
+      {
+       "name": "svc_boss_wall",
+       "default": "1.0",
+       "comment": "the guide boss's wall on the plate's inner face"
+      },
+      {
+       "name": "svc_pip_d",
+       "default": "1.6",
+       "comment": "the dimples in the head that say which is which: one = R, two = B"
+      },
+      {
+       "name": "svc_pip_depth",
+       "default": "0.4"
+      },
+      {
+       "name": "xiao_rst_side",
+       "default": "-1",
+       "comment": "MEASURE: the side (±X, this file's frame) whose switch is R — the vendor model has no silkscreen;"
+      },
+      {
+       "name": "xiao_btn_dx",
+       "default": "5.93",
+       "comment": "the switches ± across the XIAO from its centerline — brd_xiao_btn_dx(), the vendor GLB"
+      },
+      {
+       "name": "xiao_btn_dy",
+       "default": "1.61",
+       "comment": "... inboard of the USB end along its length — brd_xiao_btn_dy()"
+      },
+      {
+       "name": "xiao_btn_h",
+       "default": "0.75",
+       "comment": "the cap's top over the PCB face — brd_xiao_btn_h()"
+      },
+      {
+       "name": "xiao_btn_travel",
+       "default": "0.25",
+       "comment": "a 2.6 x 1.6 SMD tactile switch's travel to actuation"
+      },
+      {
+       "name": "xiao_usb_overhang",
+       "default": "1.5",
+       "comment": "the USB-C shell past the XIAO's end — brd_xiao_usb_overhang()"
       }
      ]
     },
@@ -4522,6 +4628,93 @@
        "comment": "a post is relieved to this flat in that band"
       },
       {
+       "name": "xiao_face_hi_z",
+       "default": "z_vm_top - pcb_t - stack_sock_h",
+       "comment": "the component face, the measurement to that face"
+      },
+      {
+       "name": "xiao_face_lo_z",
+       "default": "xiao_face_hi_z - brd_t(\"xiao\")",
+       "comment": "...or to the socket face: the component face a PCB nearer the plate"
+      },
+      {
+       "name": "svc_cap_lo_z",
+       "default": "xiao_face_lo_z - xiao_btn_h",
+       "comment": "the cap's top at the nearest the stack can sit"
+      },
+      {
+       "name": "svc_cap_hi_z",
+       "default": "xiao_face_hi_z - xiao_btn_h"
+      },
+      {
+       "name": "xiao_usb_end_y",
+       "default": "vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang",
+       "comment": "the XIAO's board end (the USB-C shell stands past it)"
+      },
+      {
+       "name": "svc_cy",
+       "default": "xiao_usb_end_y + xiao_btn_dy + svc_dy",
+       "comment": "the plunger axis along Y"
+      },
+      {
+       "name": "svc_bore_d",
+       "default": "svc_stem_d + 0.3",
+       "comment": "the stem slides"
+      },
+      {
+       "name": "svc_cb_d",
+       "default": "svc_head_d + 0.4",
+       "comment": "the head's counterbore on the back face"
+      },
+      {
+       "name": "svc_cb_depth",
+       "default": "svc_web_t + 0.3",
+       "comment": "the head sits 0.3 under the back face: nothing proud against the wall plate's slab"
+      },
+      {
+       "name": "svc_boss_od",
+       "default": "svc_bore_d + 2*svc_boss_wall"
+      },
+      {
+       "name": "svc_boss_top",
+       "default": "xiao_face_lo_z - port_usbc_shell_h() - 0.5",
+       "comment": "the guide boss stops under the USB-C shell's lowest edge, stack at the near end of its band"
+      },
+      {
+       "name": "svc_boss_h",
+       "default": "svc_boss_top - floor_t"
+      },
+      {
+       "name": "svc_tip_z",
+       "default": "svc_cap_lo_z - svc_rest",
+       "comment": "the tip's end at rest"
+      },
+      {
+       "name": "svc_head_z",
+       "default": "floor_t - plate_t + (svc_cb_depth - svc_web_t)",
+       "comment": "the head's OUTER face: 0.3 under the back face; its inner face is the counterbore's floor"
+      },
+      {
+       "name": "svc_stem_len",
+       "default": "svc_tip_z - svc_tip_h - (svc_head_z + svc_web_t)",
+       "comment": "the stem, head to tip"
+      },
+      {
+       "name": "svc_bead_z",
+       "default": "svc_boss_top + 0.2 - svc_head_z",
+       "comment": "the bead's start, in the plunger's own frame (head's floor = 0)"
+      },
+      {
+       "name": "svc_stroke_lo",
+       "default": "svc_rest + xiao_btn_travel",
+       "comment": "the press that clicks, stack at the near end"
+      },
+      {
+       "name": "svc_stroke_hi",
+       "default": "(svc_cap_hi_z - svc_tip_z) + xiao_btn_travel",
+       "comment": "...and at the far end"
+      },
+      {
        "name": "vm_scr_len",
        "default": "vm_screws ? max(concat([0], [for (l = hw_std_lens()) if (l - pcb_t + 1.0 <= z_vm_top - pcb_t - xiao_hi_z - 0.3) l])) : 0"
       },
@@ -4540,6 +4733,18 @@
       {
        "name": "guide_top",
        "default": "floor_t + vm_standoff + pcb_t + guide_up"
+      },
+      {
+       "name": "grille_r_max",
+       "default": "spk_cone_d/2 - grille_hole_d/2 - 0.2"
+      },
+      {
+       "name": "grille_s",
+       "default": "grille_pitch / sqrt(PI)"
+      },
+      {
+       "name": "grille_n",
+       "default": "floor(pow(grille_r_max / grille_s, 2))"
       },
       {
        "name": "collar_h",
