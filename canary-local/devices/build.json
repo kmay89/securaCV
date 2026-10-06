@@ -994,7 +994,7 @@
       "mpn": "SPK-36-4R-3W",
       "mfr": "Generic",
       "usd": 3.5,
-      "notes": "Doorbell v0.8 (opt_spk): the chime on a sealed ring, the tick on a repeat, the three reply TONES. Seated rim-first in the face's boss over FOAM2, its magnet pressed by the plate's cradle through FOAM3 - no screws. With AMP1 (2.5 W) about 90 dB at 1 m: a busy street is 70-75 dB. VERIFY the part in hand against spk_d / spk_h / spk_mag_d before printing; candidates: PUI AS03604MR-N50-R class, Visaton K 36 WP class",
+      "notes": "Doorbell v0.8 (opt_spk): the chime on a sealed ring, the tick on a repeat, the three reply TONES. Seated rim-first in the face's boss over FOAM2, its magnet pressed by the plate's cradle through FOAM3 - no screws. Target: carries over a 70-75 dB street; the arithmetic with AMP1 (2.5 W) says ~90 dB at 1 m before case losses, UNMETERED until a bench unit exists. VERIFY the part in hand against spk_d / spk_h / spk_mag_d before printing; candidates: PUI AS03604MR-N50-R class, Visaton K 36 WP class",
       "orderable": false
      },
      {
@@ -1006,7 +1006,7 @@
       "mpn": "PAM8302A / 2130",
       "mfr": "Diodes Inc / Adafruit",
       "usd": 1.5,
-      "notes": "Doorbell v0.8: XIAO 5V -> VIN (SD tied to VIN), XIAO D3 (PWM audio) -> R6/C3/R7/C5 filter -> C4 -> R8/R9 divider -> A+; A- through 1 uF to GND; + / - to SPK1. Parks on edge beside the button, taped to the -X wall. Fixed 24 dB gain: the divider keeps the XIAO's swing at ~0.6 V peak",
+      "notes": "Doorbell v0.8: XIAO 5V -> VIN (SD tied to VIN; the 5V pin is USB only, so the speaker is silent on the LiPo ride-through), XIAO D3 (PWM audio) -> R6/C3/R7/C5 filter -> C4 -> R8/R9 divider -> A+; A- through 1 uF to GND; + / - to SPK1. Parks on edge beside the button, taped to the -X wall. Fixed 24 dB gain: the divider keeps the XIAO's swing at ~0.6 V peak",
       "orderable": false
      },
      {

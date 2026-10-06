@@ -1263,9 +1263,12 @@ A **speaker zone** goes in between the button and the cable well:
 
 - **The driver.** A 36 mm sealed full-range driver (4 Ω, 3 W class, ≥ 88
   dB/W/m, ≤ 6 mm deep — BOM SPK1) on a 2.5 W class-D amplifier (PAM8302A
-  class, AMP1) fed by one PWM pin: about **90 dB at 1 m**, over a 70–75 dB
-  street. The firmware plays a two-note **chime** on every sealed ring, a
-  soft **tick** on a repeat, and three **reply tones** the household sends
+  class, AMP1) fed by one PWM pin. The **target** is a chime that carries
+  over a 70–75 dB street; the arithmetic says about 90 dB at 1 m before the
+  grille and the filter's losses, and **no unit has been metered yet** (the
+  wiring page's "What's not done" owns that number). The firmware plays a
+  two-note **chime** on every sealed ring, a soft **tick** on a repeat or an
+  unsigned ring, and three **reply tones** the household sends
   from Home Assistant; it is host-tested to start and end in silence and
   never clip (`firmware/common/doorbell/doorbell_audio.h`).
 - **The seat.** No screw touches the driver. Its rim drops into a **boss
@@ -1336,7 +1339,8 @@ is a fifth printed part:
   **802030-class LiPo** (8 × 20 × 30, 400–450 mAh, protected) stands on
   edge between the −X mid posts — now its end stops — behind a 6 mm fence,
   on a foam strip, under the face: ride-through for a USB supply that
-  browns out, charged by the XIAO's own charger (the C3's ~370 mA is < 1C
+  browns out (the record and the glow; the v0.8 speaker's amplifier hangs
+  off the USB-only 5V pin and stays silent), charged by the XIAO's own charger (the C3's ~370 mA is < 1C
   on this cell, the one size in its family that is). **Neither XIAO charger
   has a cold cutoff**, and a LiPo must not charge below 0 °C: in a freezing
   climate leave the cell out (`opt_batt` off, or just an empty bay;

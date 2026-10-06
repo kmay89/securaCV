@@ -14,7 +14,7 @@ measurement. This page is the wiring for the released
 
 | You do | The doorbell does |
 |---|---|
-| Press the button | Seals a `doorbell` event into the witness's signed chain (with the network down too), then the ring **swells** up and eases back and the speaker plays the **chime** (two bell notes, high then low): "the house heard you". Home Assistant gets a real doorbell event; every Canary display on the broker shows *Doorbell heard*. |
+| Press the button | Seals a `doorbell` event into the witness's signed chain (with the network down too), then the ring **swells** up and eases back and the speaker plays the **chime** (two bell notes, high then low): "the house heard you". A ring the witness could not seal (no identity yet) still goes out, unsigned, and gets the soft **tick** instead of the chime: heard, not claimed sealed. Home Assistant gets a real doorbell event; every Canary display on the broker shows *Doorbell heard*. |
 | Press again within 3 s | Counted, not sealed and not re-announced: one impatient visitor is one ring, and nobody can flood the record by jabbing. The speaker gives one soft **tick** ("still heard, still one ring"). A press after 3 s rings again. |
 | The household answers | From Home Assistant, the **Doorbell reply** select plays one of three short **tones** to the visitor: rising *we're coming*, falling *leave it*, a low double *no thanks*. Tones, never speech: a Canary has no microphone and renders no voice (the dossier's refusals, §3). |
 | Hold it down | Still one ring. Held past 15 s (ice, tape, a jammed plunger), it's reported **stuck** once; the ring goes steady and low, and nothing rings until it's released. |
@@ -44,7 +44,7 @@ integration update is needed:
 | **Doorbell enabled** | `switch` (config) | Turns the doorbell (button + ring) on and off. |
 | **Doorbell glow** | `number` 10–100 % (config) | Brightness of the ring. |
 | **Doorbell button** | `sensor` (diagnostic) | `ok`, `stuck`, or `ring_fault` (the glow timer could not start: the ring holds a steady glow instead of breathing, so it still never reads dark while on). |
-| **Doorbell volume** | `number` 0–100 % (config) | The speaker: the chime on a ring, the tick on a repeat, the reply tones. 0 is silent; the ring still swells. |
+| **Doorbell volume** | `number` 0–100 % (config) | The speaker: the chime on a sealed ring, the tick on a repeat or an unsigned ring, the reply tones. 0 is silent; the ring still swells. |
 | **Doorbell reply** | `select` | `we're coming` / `leave it` / `no thanks` — a tone to the visitor, played once when selected. The state row's `speaker` field says `ok` or `fault` (the sample timer could not start: silent). |
 
 While the doorbell is off, only the switch exists. The other three are
@@ -67,7 +67,7 @@ All in [`bom_canary_vision.csv`](./bom_canary_vision.csv), items 19–19e:
 
 | Ref | Part | Notes |
 |---|---|---|
-| SPK1 | 36 mm sealed full-range driver, 4 Ω, 3 W class, ≥ 88 dB/W/m, 6 mm deep | A mylar-cone driver with a plastic frame and a sealed back is what survives outdoors; the case seats its rim in a boss on the face over a foam ring and presses its magnet with a cradle on the plate, no screws. With AMP1's 2.5 W that is about **90 dB at 1 m**: a busy street is 70–75 dB, so the chime clears it at the door with margin. Candidates to verify in hand (depth ≤ 6, rim ≤ 36): PUI AS03604MR-N50-R, CUI CMS-36T-28? — buy by the numbers, not the name. |
+| SPK1 | 36 mm sealed full-range driver, 4 Ω, 3 W class, ≥ 88 dB/W/m, 6 mm deep | A mylar-cone driver with a plastic frame and a sealed back is what survives outdoors; the case seats its rim in a boss on the face over a foam ring and presses its magnet with a cradle on the plate, no screws. The **target** is a chime that carries over a busy street (70–75 dB at the curb); the arithmetic on this sensitivity and AMP1's 2.5 W says about 90 dB at 1 m before the grille, the mesh, the filter and the tone's own losses, **none of which has been metered yet** (see "What's not done"). Buy the sensitivity; the meter decides. Candidates to verify in hand (depth ≤ 6, rim ≤ 36): PUI AS03604MR-N50-R, CUI CMS-36T-28? — buy by the numbers, not the name. |
 | AMP1 | PAM8302A class-D amplifier, 2.5 W into 4 Ω at 5 V (Adafruit 2130 breakout or bare) | Mono, single-ended input, fixed 24 dB gain, shutdown pin. Parks on edge against the −X wall beside the button, long side vertical, in the 18 mm between the bottom corner post and the speaker zone's first post (the case was probed with a 20 × 18 × 3 board there: it fits, snug). Its VIN is the XIAO's **5V** pin; SD ties to VIN (always on; idle draw is a few mA). |
 | R6, R7 | 1 kΩ ×2 | The two-pole input filter with C3/C5: knocks the 78 kHz PWM carrier down ~40 dB before the amplifier. |
 | C3, C5 | 22 nF ceramic ×2 | With R6/R7: ~7 kHz corner, twice. |
@@ -88,7 +88,7 @@ Two more parts live in the v0.7 case beside the module, both optional:
 
 | Ref | Part | Notes |
 |---|---|---|
-| BT2 | LiPo 802030 class, 8 × 20 × 30 mm, 400–450 mAh, **protected**, JST-PH leads | Stands on edge in the bay on the −X side, on the FT1 foam strip. Ride-through for a USB supply that browns out. The XIAO charges it: the C3's ~370 mA is under 1C on this cell (the one size in the 20 × 30 family that is); the S3 charges at 100 mA. **Neither XIAO charger stops below 0 °C**, so in a freezing climate leave it out ([cold-weather envelope](./cold_weather_envelope.md)). |
+| BT2 | LiPo 802030 class, 8 × 20 × 30 mm, 400–450 mAh, **protected**, JST-PH leads | Stands on edge in the bay on the −X side, on the FT1 foam strip. Ride-through for a USB supply that browns out — for the record and the glow, **not the speaker** (AMP1 hangs off the USB-only 5V pin; see its wiring row). The XIAO charges it: the C3's ~370 mA is under 1C on this cell (the one size in the 20 × 30 family that is); the S3 charges at 100 mA. **Neither XIAO charger stops below 0 °C**, so in a freezing climate leave it out ([cold-weather envelope](./cold_weather_envelope.md)). |
 | ANT1 | FPC Wi-Fi antenna, 40 × 20 mm, u.FL pigtail | The XIAO ESP32-C3 kit's own antenna (Seeed 318020748); the S3's 37.4 × 17.5 A-02 fits the same landing. Sticks to the +X wall inside the face, between two ribs; the pigtail runs under the module to the XIAO's u.FL. |
 
 ## Wiring
@@ -105,7 +105,7 @@ Two more parts live in the v0.7 case beside the module, both optional:
 | BTN2 **C** | **GND** | |
 | XIAO **D3** | R6 → C3 to GND → R7 → C5 to GND → C4 → R8/R9 divider → AMP1 **A+** | 10-bit PWM at 78 kHz carrying 8 kHz audio; the filter leaves the audio, the cap drops the DC, the divider matches the amp's gain. |
 | AMP1 **A−** | 1 µF to **GND** | The amp's input is differential; A− rides at its own bias through the cap. |
-| XIAO **5V** | AMP1 **VIN** (and **SD**) | 2.5 W peak on the chime; the USB supply covers it, the LiPo bay rides it through. |
+| XIAO **5V** | AMP1 **VIN** (and **SD**) | 2.5 W peak on the chime; the USB supply covers it. **The 5V pin is USB only on both XIAOs**: on the LiPo (USB out) it reads 0 V, so the speaker is silent during a ride-through while the ring still seals and the glow still swells (the 3V3 rail stays up). Feeding AMP1 from 3V3 instead is not the fix: the XIAO's 3.3 V regulator cannot carry the module *and* a watt of chime, and the amp would make ~1 W. A battery-backed 5 V rail for the amp is a v0.9 question, if the chime must ring through an outage. |
 | AMP1 **GND** | **GND** | |
 | AMP1 **+ / −** | SPK1 **+ / −** | The sealed driver behind the grille. |
 
@@ -194,8 +194,11 @@ converter behind the plate: an AC-input module rated for 8–24 V AC in, 5 V
    steady and low. Release it: `[BELL] Button released - no longer stuck.`
 6. The speaker: boot prints `[BELL] Speaker on D3 (PWM 78125 Hz, 10-bit,
    8000 samples/s), volume 60%`. A press plays the chime with the swell; a
-   second press inside 3 s plays the tick. Set **Doorbell volume** to 100 and
-   stand at the curb: the chime should carry over traffic. Send a
+   second press inside 3 s plays the tick, and so does a press before the
+   witness has an identity (the serial line says `unsigned`). Set **Doorbell
+   volume** to 100 and stand at the curb with a sound-level meter: the chime
+   should carry over traffic, and the reading is the number this page is
+   missing. Send a
    **Doorbell reply** and the matching tone plays once. No sound at all with
    `speaker: fault` in the state row means the sample timer did not start;
    no sound with `speaker: ok` is the wiring (check the 5 V at AMP1 VIN and
@@ -229,10 +232,14 @@ explains why.
 
 - **Bench validation**: nobody has pressed a real one yet. The host test proves the logic
   (and the voice: every phrase starts and ends in silence, never clips, reaches full scale);
-  CI compiles the firmware; a bench unit is the next step. The **loudness** figure (about
-  90 dB at 1 m) is arithmetic on the driver's sensitivity and the amplifier's power — a
-  sound-level meter at the curb is the test, and the number lands in this page when it has
-  been read.
+  CI compiles the firmware; a bench unit is the next step. **No loudness has been measured.**
+  The ~90 dB at 1 m this page mentions is arithmetic on the driver's rated sensitivity and
+  the amplifier's power, before the grille, the mesh, the input filter and the tone's own
+  losses; it is a target, not a claim. A sound-level meter at the curb is the test, and the
+  measured number replaces the arithmetic on this page when it has been read.
+- **The chime is silent on battery.** AMP1 runs from the XIAO's 5V pin, which is USB only on
+  both hosts; during a LiPo ride-through the ring still seals and the glow still swells, but
+  nothing plays. A battery-backed 5 V rail for the amplifier is a v0.9 question.
 - **Quick replies in a voice** (the dossier's §4.3: the hub's Piper voice rendering "leave
   it by the bench") are the Pro's; the Lite's replies are the three tones. The firmware's
   phrase table is the one place to add a fourth.

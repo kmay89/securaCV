@@ -377,10 +377,17 @@ static void on_doorbell_event(doorbell::ButtonEvent ev, uint32_t at_ms) {
         canary::doorbell_hw::set_enabled(true);
         g_db_discovery_dirty = true;
       }
-      if (canary::witness::ready()) canary::doorbell_hw::swell(now_ms);
       // ...and the visitor hears it: the chime plays with the swell, the
-      // one sound a witness owes the person at the door (dossier §4.3)
-      canary::doorbell_audio::play(doorbell::Phrase::CHIME);
+      // one sound a witness owes the person at the door (dossier §4.3).
+      // Both are the answer to a SEALED ring. With no witness identity the
+      // press still went out, unsigned, and the visitor gets the tick -
+      // "heard" - not the chime that says "sealed".
+      if (canary::witness::ready()) {
+        canary::doorbell_hw::swell(now_ms);
+        canary::doorbell_audio::play(doorbell::Phrase::CHIME);
+      } else {
+        canary::doorbell_audio::play(doorbell::Phrase::TICK);
+      }
       canary::net::publish_doorbell_press(TOPICS);
       publish_state_now(now_ms);
       canary::log_header("BELL");

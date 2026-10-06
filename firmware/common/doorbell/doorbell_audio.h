@@ -15,7 +15,9 @@
 //          (the house rings through Home Assistant); it plays with the
 //          glow's swell.
 //   TICK   one short soft note on a press inside the holdoff: "still
-//          heard, still one ring" — a jab never re-rings.
+//          heard, still one ring" — a jab never re-rings. Also the whole
+//          answer to a ring the witness could not seal (no identity yet):
+//          heard, but not the chime that claims a sealed record.
 //   WAIT / LEAVE / NO   three short melodies the household can send from
 //          Home Assistant (the Doorbell reply select): rising "we're
 //          coming", falling "leave it", a low double "no thanks". They are
@@ -50,7 +52,7 @@ constexpr uint8_t  kVolumeDefault = 60;
 enum class Phrase : uint8_t {
   NONE = 0,
   CHIME,   // a sealed ring: ding-dong
-  TICK,    // a repeat inside the holdoff: one soft tick
+  TICK,    // a repeat inside the holdoff, or an unsigned ring: one soft tick
   WAIT,    // reply: "we're coming" — rising three
   LEAVE,   // reply: "leave it" — falling three
   NO,      // reply: "no thanks" — a low double
