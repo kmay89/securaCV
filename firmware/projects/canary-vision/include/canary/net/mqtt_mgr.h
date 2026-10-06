@@ -78,6 +78,8 @@ namespace canary::net {
   bool publish_doorbell_state_retained(const Topics& topics);
   int take_pending_doorbell_enable();  // -1 none; 0/1 = switch set off/on
   long take_pending_doorbell_glow();   // -1 none; else 0..100 (clamped by the setter)
+  long take_pending_doorbell_volume(); // -1 none; else 0..100 (the speaker, clamped by the setter)
+  int  take_pending_doorbell_reply();  // 0 none; else a doorbell::Phrase index (WAIT / LEAVE / NO)
   // Re-announce every entity (the doorbell's appear or disappear with its
   // switch). Retained and idempotent, like the once-per-boot announcement.
   void ha_discovery_republish(const Topics& topics);

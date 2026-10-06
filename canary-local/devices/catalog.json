@@ -2263,7 +2263,7 @@
   {
    "id": "vision_doorbell",
    "scad": "canary_vision_doorbell.scad",
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.7",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.8",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2291,7 +2291,7 @@
     {
      "id": "vision-doorbell",
      "name": "Vision · DOORBELL",
-     "for": "Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
+     "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
      "status": "released",
      "device": "canary-vision",
      "selects": {},
@@ -2381,6 +2381,14 @@
      "default": true
     },
     {
+     "id": "opt_spk",
+     "type": "bool",
+     "label": "the speaker zone (grille, boss, cradle, its mid posts); off = the v0.7 body",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "lid_key",
      "type": "bool",
      "label": "poka-yoke: a rib on the +Y (camera-end) bore wall and a slot in the plate's edge — the",
@@ -2437,14 +2445,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 226,
+   "engineering_param_count": 251,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 13,
-    "user_options": 11,
+    "options": 14,
+    "user_options": 12,
     "variant_axes": 1
    }
   },

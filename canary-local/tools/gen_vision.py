@@ -568,6 +568,8 @@ TOPIC_DESCS = {
     "doorbell/state": {"retain": True, "desc": "doorbell switch, glow %, button ok/stuck/ring_fault, ring and repeat counts"},
     "doorbell/enable/set": {"retain": False, "desc": "HA's Doorbell enabled switch writes ON/OFF"},
     "doorbell/glow/set": {"retain": False, "desc": "set the doorbell ring's brightness (10–100 %)"},
+    "doorbell/volume/set": {"retain": False, "desc": "set the doorbell speaker's volume (0–100 %; 0 is silent, the ring still swells)"},
+    "doorbell/reply/set": {"retain": False, "desc": "play a reply TONE to the visitor — \"we're coming\", \"leave it\" or \"no thanks\" (never speech)"},
 }
 TOPICS = []
 for s in suffixes:
@@ -610,6 +612,8 @@ ENTITY_META = {
     "Doorbell": ("event", "a doorbell press, once per sealed ring — only while the doorbell is on"),
     "Doorbell glow": ("number", "the ring's brightness, 10–100 % — on never means dark"),
     "Doorbell button": ("sensor", "diagnostic — ok, stuck (held past 15 s), or ring_fault (the glow cannot breathe)"),
+    "Doorbell volume": ("number", "the speaker's volume, 0–100 % — the chime on a sealed ring, the tick on a repeat; 0 is silent"),
+    "Doorbell reply": ("select", "a reply tone to the visitor: we're coming / leave it / no thanks — tones, never speech"),
 }
 DISCOVERY = []
 seen = set()
