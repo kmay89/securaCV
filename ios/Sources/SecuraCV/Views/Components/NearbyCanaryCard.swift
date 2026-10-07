@@ -64,10 +64,12 @@ struct NearbyCanaryCard: View {
     }
 
     private func signalWord(_ rssi: Int) -> String {
+        // Bands, strongest first. (A `-55...` pattern parses as `-(55...)`,
+        // which the compiler rejects; the guards say the same thing plainly.)
         switch rssi {
-        case -55...: return "right here"
-        case -70 ..< -55: return "close by"
-        case -85 ..< -70: return "in the room"
+        case let r where r >= -55: return "right here"
+        case let r where r >= -70: return "close by"
+        case let r where r >= -85: return "in the room"
         default: return "faint"
         }
     }
