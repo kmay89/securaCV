@@ -84,8 +84,11 @@ BOARDS = {
 # committed GLB with glb.js, and the socket rows' pad islands below, so a
 # regenerated board model cannot leave these behind silently.)
 # the round display's XIAO socket: the two header rows span raw GLB x
-# 0.55..18.9 (pad islands, same mesh), so the XIAO rides centered at 9.725
-DISPLAY_SOCKET_X = 9.725
+# 0.55..18.9 (pad islands, same mesh), so the XIAO rides centered 9.725 off
+# the disc center. The pose reads that number from the board registry
+# (brd_round_disp_socket_x(), canary_board_lib.scad — the case's own source
+# for its USB slot and end-stop), not from a constant here: one value, so a
+# corrected offset moves the case and the Lab's pose together.
 
 
 DEVICES = {
@@ -202,10 +205,11 @@ DEVICES = {
             "stand": "world",
             "drum": [],
             # the XIAO pins into the display's back socket, whose header rows
-            # sit DISPLAY_SOCKET_X off the disc center (raw GLB x 0.55..18.9):
-            # face down on its USB shell, PCB top at z_xiao0 + xiao_t, its USB
-            # end toward the rim at usb_ang (the builder draws USB at -X, 180°)
-            "xiao": [("T", f"[{DISPLAY_SOCKET_X}*cos(usb_ang), {DISPLAY_SOCKET_X}*sin(usb_ang), z_xiao0 + xiao_t]"),
+            # sit brd_round_disp_socket_x() off the disc center (raw GLB x
+            # 0.55..18.9): face down on its USB shell, PCB top at z_xiao0 +
+            # xiao_t, its USB end toward the rim at usb_ang (the builder draws
+            # USB at -X, 180°)
+            "xiao": [("T", "[brd_round_disp_socket_x()*cos(usb_ang), brd_round_disp_socket_x()*sin(usb_ang), z_xiao0 + xiao_t]"),
                      ("R", [0, 0, "usb_ang - 180"]), ("R", [180, 0, 0])],
             # the display PCB's back face at z_pcb, glass out along the drum
             # axis, its socket rows (raw +X) spun onto the USB azimuth
