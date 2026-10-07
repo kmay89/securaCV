@@ -911,9 +911,12 @@ fails on byte drift.
   the dash's portrait, portrait flipped and landscape flipped, 1 and 3 for
   the nightlight's R90 and R270). Beside it,
   `backlight_cap_test.cpp` holds the same HAL's backlight to the board's
-  (sweep A61): built in the nightlight's config, every day level and night
-  duty is clipped where the C3-LCD-1.47's expander path clips it, and in the
-  dash's every one passes through as asked. With no argument
+  (sweep A61): built in the nightlight's config, every day level is clipped
+  at the byte the C3-LCD-1.47's expander path clips it to, every night
+  duty past that byte is held at 4095, the largest duty it allows (the
+  twin's own duty is checked, not only the byte the board would make of
+  it), and every dimmer one passes through; in the dash's config every one
+  passes through as asked. With no argument
   it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
   absent, so CI runs it before any step that reads the committed dist (a
   stale dist turns those red and skips every later step).

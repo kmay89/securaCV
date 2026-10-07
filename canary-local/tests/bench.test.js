@@ -155,6 +155,12 @@ test("A61: the twin clips the Nightlight's backlight where the board's HAL does,
                       "if (duty13 > 8191) duty13 = 8191;", "unsigned d8 = duty13 >> 5;", "if (d8 == 0 && duty13 > 0) d8 = 1;"]) {
     assert.ok(native.includes(line), `backlight_cap_test.cpp no longer restates ${JSON.stringify(line)}`);
   }
+  // ...and it holds the twin's own night duty at the ceiling, not only the
+  // byte the board would make of it (a byte compare passes a twin that never
+  // clips: the board's clip, applied to the twin's duty, hides it)
+  assert.ok(native.includes("constexpr unsigned kNightCeiling13 = ((kCap + 1u) << 5) - 1u;") &&
+    native.includes("CHECK(got == (int)twin_night(duty),") && native.includes("CHECK(((unsigned)got >> 5) <= kCap,"),
+  "backlight_cap_test.cpp holds the night duty the twin applies to the ceiling");
   // the twin's HAL: the board's gate, the board's byte, both sinks through it,
   // and the binding the page asks
   assert.ok(hal.includes("#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n#ifndef CD_BL_MAX_PCT\n#define CD_BL_MAX_PCT 100"));

@@ -18,7 +18,13 @@
 //   * night: the duty the twin applies writes the board's byte when the
 //     board compresses it the same way, and is exactly the duty asked
 //     whenever the board's byte is not clipped (a ceiling, not a scale: the
-//     calibrated night floor passes through);
+//     calibrated night floor passes through). Above that the twin's OWN
+//     duty is held, not only the byte the board would make of it: it is
+//     the ceiling ((cap + 1) << 5) - 1, the largest duty the board's >> 5
+//     leaves at the cap's byte, so a twin that clamps only to the 13-bit
+//     scale, or stops a duty past the ceiling, fails here (comparing bytes
+//     alone let both through: the board's own clip, applied to the twin's
+//     duty, hid a twin that never clipped);
 //   * emu_backlight_cap_pct() names the ceiling: CD_BL_MAX_PCT on the
 //     expander board, 100 on a board with none.
 // In the dash config (no expander, no ceiling) every level and duty passes
@@ -109,6 +115,15 @@ unsigned board_unclipped_night(unsigned duty13) {
   if (d8 == 0 && duty13 > 0) d8 = 1;
   return d8;
 }
+// The largest 13-bit duty whose byte (>> 5) the board does not clip past
+// the cap: every duty from here up writes the cap's byte. 8191 with no cap.
+constexpr unsigned kNightCeiling13 = ((kCap + 1u) << 5) - 1u;
+// The duty the twin is to hold for a night duty asked: on the 13-bit scale
+// (the board clamps to NIGHT_DUTY_MAX first), and at most the ceiling.
+unsigned twin_night(unsigned duty13) {
+  if (duty13 > 8191) duty13 = 8191;
+  return duty13 > kNightCeiling13 ? kNightCeiling13 : duty13;
+}
 }  // namespace
 
 int main() {
@@ -155,6 +170,13 @@ int main() {
     } else {
       night_clipped++;
     }
+    // The twin's own duty, not only the board's byte of it: the ceiling.
+    CHECK(got == (int)twin_night(duty),
+          "night: backlight_night_set(%u) applies %d, not %u (the 13-bit duty held at the ceiling %u, the largest "
+          "the board's >> 5 leaves at the cap's byte %u)",
+          duty, got, twin_night(duty), kNightCeiling13, kCap);
+    CHECK(((unsigned)got >> 5) <= kCap, "night: backlight_night_set(%u) applies %d, whose byte %u is past the cap's %u",
+          duty, got, (unsigned)got >> 5, kCap);
   }
 
   if (kExpander && kCapPct < 100) {
@@ -165,6 +187,8 @@ int main() {
     canary::hal::backlight_night_set(8191);
     CHECK(board_byte_night((unsigned)emu_backlight_night_duty()) == kCap,
           "a full night duty glows past the cap (%d)", emu_backlight_night_duty());
+    CHECK(emu_backlight_night_duty() == (int)kNightCeiling13 && kNightCeiling13 < 8191,
+          "a full night duty applies %d, not the ceiling %u", emu_backlight_night_duty(), kNightCeiling13);
     CHECK(day_clipped == (int)(255 - kCap) && night_clipped > 0,
           "the cap clipped %d day levels (want %u) and %d night duties", day_clipped, 255 - kCap, night_clipped);
   } else {
