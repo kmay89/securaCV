@@ -134,6 +134,13 @@
 // docs/hardware/canary_vision_doorbell_wiring.md.
 #define DOORBELL_BUTTON_PIN     2    // D1 — switch to GND, active LOW
 #define DOORBELL_GLOW_PIN       3    // D2 — MOSFET gate, PWM, active HIGH
+// The doorbell's speaker: one PWM pin (10-bit at 78 kHz) through an RC
+// filter into a class-D amplifier (PAM8302A class) and a sealed driver.
+// D3 is the module socket's SPI chip-select line, which this firmware never
+// drives as SPI: the Vision talks to the Grove Vision AI V2 over I2C, and a
+// chip select that wiggles with SCK and MOSI idle clocks no byte into the
+// module's SPI slave. Wiring and parts: canary_vision_doorbell_wiring.md.
+#define DOORBELL_AUDIO_PIN      4    // D3 — PWM audio to the amplifier
 
 // ============================================================================
 // PIN VALIDATION

@@ -59,8 +59,8 @@ test("vision.json has every section the page requires", () => {
 });
 
 test("counts are not thin (a broken parse would fail here)", () => {
-  // 20 + the Vision Doorbell's four (switch, event, glow, button health)
-  assert.strictEqual(data.mqtt.discovery.entities.length, 24);
+  // 20 + the Vision Doorbell's six (switch, event, glow, button health, volume, reply)
+  assert.strictEqual(data.mqtt.discovery.entities.length, 26);
   assert.ok(data.mqtt.topics.length >= 15, "too few MQTT topics");
   assert.ok(data.serial.boot.length >= 20, "boot log too short");
   assert.ok(data.sandbox.length >= 5, "too few sandbox scenes");

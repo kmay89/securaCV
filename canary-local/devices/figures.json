@@ -1946,7 +1946,7 @@
    "envelope_mm": {
     "w": 56.7,
     "d": 34.2,
-    "h": 132.7
+    "h": 172.7
    },
    "assembled": {
     "placement": "doorbell_fitcheck: face (the shell) at z = base_d; body (the plate) inside its walls at floor_t, back flush on the wall plate front (wplate_t), then the slide down into the collar",
@@ -1960,25 +1960,25 @@
      "triangles": 4276,
      "mm": [
       56.7,
-      132.7,
+      172.7,
       17.6
      ]
     },
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 6264,
+     "triangles": 9100,
      "mm": [
       48.7,
-      126.4,
+      166.4,
       22.8
      ]
     },
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 12064,
+     "triangles": 19684,
      "mm": [
       51.5,
-      129.2,
+      169.2,
       29.2
      ]
     }
@@ -1989,7 +1989,7 @@
     "height_tol_mm": 2.5
    },
    "solids": 4,
-   "rev": "db38f878",
+   "rev": "04ebab4c",
    "svg": "canary-local/figures/device.canary-vision-doorbell.svg",
    "glyph": "canary-local/figures/device.canary-vision-doorbell.glyph.svg"
   },
@@ -2218,15 +2218,15 @@
    "envelope_mm": {
     "w": 48.7,
     "d": 22.8,
-    "h": 126.4
+    "h": 166.4
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 6264,
+     "triangles": 9100,
      "mm": [
       48.7,
-      126.4,
+      166.4,
       22.8
      ]
     }
@@ -2236,7 +2236,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "57a1581e",
+   "rev": "cce9bd71",
    "svg": "canary-local/figures/part.doorbell.body.svg",
    "glyph": "canary-local/figures/part.doorbell.body.glyph.svg"
   },
@@ -2304,15 +2304,15 @@
    "envelope_mm": {
     "w": 51.5,
     "d": 30.65,
-    "h": 129.2
+    "h": 169.2
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 12064,
+     "triangles": 19684,
      "mm": [
       51.5,
-      129.2,
+      169.2,
       29.2
      ]
     }
@@ -2322,7 +2322,7 @@
     "depth_tol_mm": 4
    },
    "solids": 3,
-   "rev": "250fa6c2",
+   "rev": "2683a963",
    "svg": "canary-local/figures/part.doorbell.face.svg",
    "glyph": "canary-local/figures/part.doorbell.face.glyph.svg"
   },
@@ -2390,7 +2390,7 @@
    "envelope_mm": {
     "w": 45.6,
     "d": 1.5,
-    "h": 123.3
+    "h": 163.3
    },
    "traced_to": [
     {
@@ -2398,7 +2398,7 @@
      "triangles": 1488,
      "mm": [
       45.6,
-      123.3,
+      163.3,
       1.5
      ]
     }
@@ -2408,7 +2408,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "10455017",
+   "rev": "6af0d804",
    "svg": "canary-local/figures/part.doorbell.gasket.svg",
    "glyph": "canary-local/figures/part.doorbell.gasket.glyph.svg"
   },
@@ -2476,7 +2476,7 @@
    "envelope_mm": {
     "w": 56.7,
     "d": 17.6,
-    "h": 132.7
+    "h": 172.7
    },
    "traced_to": [
     {
@@ -2484,7 +2484,7 @@
      "triangles": 4276,
      "mm": [
       56.7,
-      132.7,
+      172.7,
       17.6
      ]
     }
@@ -2494,7 +2494,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "c34df68b",
+   "rev": "fc76fb23",
    "svg": "canary-local/figures/part.doorbell.plate.svg",
    "glyph": "canary-local/figures/part.doorbell.plate.glyph.svg"
   },

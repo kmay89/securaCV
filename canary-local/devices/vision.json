@@ -569,6 +569,16 @@
         "suffix": "doorbell/glow/set",
         "retain": false,
         "desc": "set the doorbell ring's brightness (10\u2013100 %)"
+      },
+      {
+        "suffix": "doorbell/volume/set",
+        "retain": false,
+        "desc": "set the doorbell speaker's volume (0\u2013100 %; 0 is silent, the ring still swells)"
+      },
+      {
+        "suffix": "doorbell/reply/set",
+        "retain": false,
+        "desc": "play a reply TONE to the visitor \u2014 \"we're coming\", \"leave it\" or \"no thanks\" (never speech)"
       }
     ],
     "discovery": {
@@ -667,6 +677,16 @@
           "name": "Doorbell button",
           "component": "sensor",
           "desc": "diagnostic \u2014 ok, stuck (held past 15 s), or ring_fault (the glow cannot breathe)"
+        },
+        {
+          "name": "Doorbell volume",
+          "component": "number",
+          "desc": "the speaker's volume, 0\u2013100 % \u2014 the chime on a sealed ring, the tick on a repeat; 0 is silent"
+        },
+        {
+          "name": "Doorbell reply",
+          "component": "select",
+          "desc": "a reply tone to the visitor: we're coming / leave it / no thanks \u2014 tones, never speech"
         },
         {
           "name": "Auto Update",

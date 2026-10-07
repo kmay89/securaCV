@@ -136,7 +136,7 @@ class TheCommittedLedgerAgreesWithItself(unittest.TestCase):
         # the drift the gate was built to surface: 9 inserts (eight plate posts and the
         # security boss) against INS1 = 5
         self.assertIn("doorbell+inserts|short INS1", keys)
-        self.assertEqual(self.led["sets"]["doorbell+inserts"]["bom"]["INS1"], {"bom": 5, "echo": 9})
+        self.assertEqual(self.led["sets"]["doorbell+inserts"]["bom"]["INS1"], {"bom": 5, "echo": 13})   # 12 plate posts (v0.8) + the security boss
 
     def test_the_join_reproduces_from_the_committed_items_and_csvs(self):
         sets = {sid: {"device": r["device"], "items": r["items"]} for sid, r in self.led["sets"].items()}

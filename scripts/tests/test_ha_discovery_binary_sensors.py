@@ -760,7 +760,7 @@ class EveryBinarySensorTurnsOnAndOff(unittest.TestCase):
         cases = [
             ("canary-vision", "number/", r"(for \(const auto& n : numbers\) \{\s*char t\[\d+\], p\[)(\d+)(\])"),
             ("canary-vision", "#unitField", r"(unitField\[)(\d+)(\] = \"\";)"),
-            ("canary-vision", "select/watch_profile", r"(char t\[\d+\], p\[)(\d+)(\];\s*topic_for\(\"select\")"),
+            ("canary-vision", "select/watch_profile", r"(char t\[\d+\], p\[)(\d+)(\];\s*topic_for\(\"select\", \"watch_profile\")"),
             ("canary-vision", "#options", r"(char options\[)(\d+)(\] = \"\";)"),
             ("canary-sense", "number/", r"(for \(const auto& n : numbers\) \{\s*char t\[\d+\], p\[)(\d+)(\])"),
         ]

@@ -52,6 +52,7 @@
 #include "canary/vision/optical_features.h"  // coarse posture/proximity/occupancy names
 #include "canary/state/presence_fsm.h"
 #include "canary/doorbell.h"  // the Vision Doorbell's button + glow ring (XIAO hosts)
+#include "canary/doorbell_audio.h"  // ...and its speaker: the chime, the tick, the reply tones
 
 static Topics TOPICS;
 static canary::state::PresenceFSM fsm;
@@ -376,7 +377,17 @@ static void on_doorbell_event(doorbell::ButtonEvent ev, uint32_t at_ms) {
         canary::doorbell_hw::set_enabled(true);
         g_db_discovery_dirty = true;
       }
-      if (canary::witness::ready()) canary::doorbell_hw::swell(now_ms);
+      // ...and the visitor hears it: the chime plays with the swell, the
+      // one sound a witness owes the person at the door (dossier §4.3).
+      // Both are the answer to a SEALED ring. With no witness identity the
+      // press still went out, unsigned, and the visitor gets the tick -
+      // "heard" - not the chime that says "sealed".
+      if (canary::witness::ready()) {
+        canary::doorbell_hw::swell(now_ms);
+        canary::doorbell_audio::play(doorbell::Phrase::CHIME);
+      } else {
+        canary::doorbell_audio::play(doorbell::Phrase::TICK);
+      }
       canary::net::publish_doorbell_press(TOPICS);
       publish_state_now(now_ms);
       canary::log_header("BELL");
@@ -385,6 +396,8 @@ static void on_doorbell_event(doorbell::ButtonEvent ev, uint32_t at_ms) {
       break;
     }
     case doorbell::ButtonEvent::REPEAT:
+      // still heard, still one ring: a soft tick, never the chime again
+      canary::doorbell_audio::play(doorbell::Phrase::TICK);
       canary::log_line("BELL", "Pressed again inside the holdoff - counted, not sealed.");
       break;
     case doorbell::ButtonEvent::STUCK:
@@ -410,6 +423,18 @@ static void drain_doorbell_commands() {
   const long glow = canary::net::take_pending_doorbell_glow();
   if (glow >= 0) {
     canary::doorbell_hw::set_glow_pct((uint8_t)glow);
+    g_db_state_dirty = true;
+  }
+  // the speaker: the volume number and the reply select (a tone to the
+  // visitor; the state row echoes which one was last sent)
+  const long vol = canary::net::take_pending_doorbell_volume();
+  if (vol >= 0) {
+    canary::doorbell_audio::set_volume((uint8_t)vol);
+    g_db_state_dirty = true;
+  }
+  const int reply = canary::net::take_pending_doorbell_reply();
+  if (reply > 0) {
+    canary::doorbell_audio::play((doorbell::Phrase)reply);
     g_db_state_dirty = true;
   }
   if (g_db_discovery_dirty) {
@@ -646,7 +671,8 @@ void setup() {
 
   canary::net::mqtt_init(TOPICS);
   canary::vision::init();
-  canary::doorbell_hw::init();  // no-op on boards without the doorbell's pins
+  canary::doorbell_hw::init();     // no-op on boards without the doorbell's pins
+  canary::doorbell_audio::init();  // ...and its speaker (no-op without DOORBELL_AUDIO_PIN)
 
   // MQTT connection
   boot_line("              ,_,  ))");

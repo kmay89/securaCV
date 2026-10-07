@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.7
+//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.8
 // @env cer=2 ip="~IP54 (button ~IP65)"
 //  A slim vertical unit in the Wyze/Ring video-doorbell form factor, holding
 //  the stacked-XIAO Vision build: OV5647 camera (top) + Grove Vision AI V2
@@ -170,6 +170,21 @@
 //      ribs, the +X mid posts standing off the wall so the FPC passes
 //      behind them. The module sits off the face's centerline by what the
 //      bay needs (vm_cx derived); the lens, vent and button stay centered.
+//  v0.8 (2026-10-06): THE SPEAKER. A doorbell that refuses a feed and a
+//  microphone still owes the visitor one thing the glow cannot give: a
+//  sound that says the house heard the press, loud enough for a street
+//  (docs/hardware/canary_doorbell_research.md §4.3; the voice itself is
+//  firmware/common/doorbell/doorbell_audio.h). A SPEAKER ZONE goes in
+//  between the button and the cable well: a Ø spk_d sealed full-range driver
+//  behind a GRILLE of Ø1.0 holes (the outdoor insect rule) on the face, an
+//  acoustic mesh patch seated on the face's INNER side (nothing bridges on
+//  the bed), the driver's rim in a BOSS ring on the inner side over a foam
+//  gasket, and a CRADLE on the plate under the magnet so the plate screws
+//  capture the driver — no screw touches the driver. The zone's walls carry
+//  a mid-post pair each side of the cone (the gasket clamp rule still holds
+//  at <= 40 mm) placed where the circle leaves room at the wall. The
+//  amplifier board parks on edge beside the button. The body grows by the
+//  zone (zone_spk = spk_d + 2*spk_gap); nothing else moves.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
@@ -187,7 +202,7 @@ use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
-part = "all";        // ["body","face","plate","gasket","retainer","all"]
+part = "all";        // ["body","face","plate","gasket","retainer","all"]   // (the speaker has no printed part of its own)
 
 /* [Preset] — quick configs; choose "custom" to use the option checkboxes */
 preset = "custom";   // ["custom","doorbell_weather"]
@@ -271,6 +286,24 @@ btn_nut_ac = 16.2;   // panel nut across corners (14 AF M12 nut = 16.2; 16 AF = 
 btn_wire_room = 5.0; // air behind the button's terminals for the solder joints and the wire bends toward the
                      // well (the v0.6 cavity left 3.2 — the first print's wires had nowhere to turn)
 
+/* [Speaker] — a sealed full-range driver behind the face, between the button and the cable well (v0.8).
+   Sized for the 36 mm / 4 Ω / 3 W class the BOM names (SPK1): with the 2.5 W class-D amplifier that is
+   ~90 dB at 1 m, over a busy street. The driver's rim seats in a boss on the face's inner side over a foam
+   gasket; a cradle on the plate presses its magnet when the plate screws down. */
+opt_spk    = true;   // the speaker zone (grille, boss, cradle, its mid posts); off = the v0.7 body
+spk_d      = 36.0;   // the driver's outside Ø (its frame or rim)
+spk_h      = 6.0;    // the driver's depth, rim to magnet back
+spk_rim_t  = 1.2;    // the frame's rim thickness the boss holds (a mylar driver's plastic frame)
+spk_mag_d  = 20.0;   // the magnet's Ø — the cradle bears here, through a foam pad
+spk_cone_d = 30.0;   // the grille's Ø over the cone (the holes stay inside the surround)
+spk_gap    = 2.0;    // air round the driver to its zone's ends
+spk_gasket_t = 1.0;  // the foam ring between the driver's rim and the face (compressed from ~1.5)
+spk_pad_t  = 1.0;    // the foam pad between the magnet and the cradle
+spk_boss_wall = 1.5; // the boss ring's wall on the face's inner side
+spk_mesh_t = 0.3;    // the acoustic mesh patch's seat depth on the inner face (the patch is 0.2–0.3)
+grille_hole_d = 1.0; // grille holes — the outdoor insect rule (<= 1.0)
+grille_pitch  = 2.6; // ring-to-ring spacing of the grille holes
+
 /* [Doorbell shell] */
 db_r     = 12.0;     // outside corner radius (pill look; <= half the width)
 wall_t   = 2.0;      // auto-thickened in seal mode — catalog default, core_wall()
@@ -288,6 +321,7 @@ zone_gap = 6.0;      // camera <-> module gap: the ribbon's loop between the car
 zone_well = 16.0;    // cable well between module and button: the USB plug's head (usb_plug_reach), the button's
                      // wires and the glow driver's sleeve live here — asserted against the button nut
 zone_btn = 23.0;     // button zone height: the body, its nut, and air round its rear terminals before the bottom wall's security boss
+                     // (the speaker zone, zone_spk, is derived: spk_d + 2*spk_gap, between the button and the well)
 usb_plug_reach = 13.0; // how far a molded right-angle USB-C HEAD stands off the XIAO's port face along the
                        // module's axis (molded heads run 9-13; a straight plug does not fit a doorbell)
 usb_port_proud = 1.3;  // the XIAO's USB-C shell past the module's bottom edge (the port face the plug reach counts from)
@@ -504,10 +538,12 @@ cam_scr_len  = max([for (l = hw_std_lens()) if (l - pcb_t <= cam_pil - 0.2) l]);
 // + the post + 1.0 of wall clearance — an insert build fattens the post, and
 // zone_top's 8.0 was 0.1 short of it (the +inserts hardware set found it)
 zone_top_eff = max(zone_top, board_clear + pd + 1.0);
-inner_y = zone_btn + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top_eff;
+zone_spk = opt_spk ? spk_d + 2*spk_gap : 0;        // the speaker zone, between the button and the well
+inner_y = zone_btn + zone_spk + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top_eff;
 btn_cy  = -inner_y/2 + zone_btn/2;
-well_cy = -inner_y/2 + zone_btn + zone_well/2;      // cable well / USB plug space
-vm_cy   = -inner_y/2 + zone_btn + zone_well + board_clear + vm_l/2;
+spk_cy  = -inner_y/2 + zone_btn + zone_spk/2;       // the driver's axis (on the face's centerline)
+well_cy = -inner_y/2 + zone_btn + zone_spk + zone_well/2;      // cable well / USB plug space
+vm_cy   = -inner_y/2 + zone_btn + zone_spk + zone_well + board_clear + vm_l/2;
 cam_cy  = vm_cy + vm_l/2 + zone_gap + cam_h/2;
 cam_cx  = 0;                                        // the lens stays on the face's centerline (vm_cx is derived below)
 lens_x  = cam_cx + lens_dx;  lens_y = cam_cy + lens_dy;
@@ -532,7 +568,14 @@ n_mid  = (e_seal && seal_mid_posts) ? max(0, ceil((post_y_top - post_y_bot)/40) 
 // (the clamp-span rule below still holds them — it is asserted, not assumed)
 batt_cy      = vm_cy;
 batt_pitch_y = batt_l + batt_pcm + 2*batt_clear + pd;    // post center to post center: the cell and its clearance
-mid_ys = opt_batt ? [batt_cy - batt_pitch_y/2, batt_cy + batt_pitch_y/2]
+// the speaker zone carries a pair of mid posts each side of the cone, where
+// the circle leaves room at the wall (spk_post_dy from the axis, asserted
+// clear of the driver); with the bay off the zone still needs them
+spk_post_dy = 16.0;
+spk_mid_ys  = opt_spk ? [spk_cy - spk_post_dy, spk_cy + spk_post_dy] : [];
+bay_ys = opt_batt ? [batt_cy - batt_pitch_y/2, batt_cy + batt_pitch_y/2] : [];   // the bay's end-stop posts
+mid_ys = opt_batt ? concat(spk_mid_ys, bay_ys)
+       : opt_spk  ? concat(spk_mid_ys, n_mid > 1 ? [for (i = [1 : n_mid - 1]) spk_cy + spk_post_dy + i*(post_y_top - spk_cy - spk_post_dy)/n_mid] : [])
        : n_mid > 0 ? [for (i = [1 : n_mid]) post_y_bot + i*(post_y_top - post_y_bot)/(n_mid + 1)] : [];
 
 // THE CAVITY'S WIDTH is the sum of what stands across it, read outward from
@@ -562,7 +605,17 @@ fence_x   = -inner_x/2 + bay_wall_gap + batt_t + batt_clear;      // the bay fen
 cav_d   = max(vm_standoff + pcb_t + vm_front_h + cav_extra,
               btn_body_l - lid_t + btn_wire_room,
               opt_batt ? batt_w + 2*batt_clear + 0.5 : 0,
-              opt_ant  ? ant_w + 2*floor_cove + 0.4 : 0);
+              opt_ant  ? ant_w + 2*floor_cove + 0.4 : 0,
+              opt_spk  ? spk_gasket_t + spk_h + spk_pad_t + 3.0 : 0);
+// the speaker stack from the face inward: gasket, driver, pad, then the cradle
+// down to the plate's face
+spk_boss_h  = spk_gasket_t + spk_rim_t + 0.5;         // the boss ring stands this far into the cavity
+spk_boss_id = spk_d + 2*tol_slide;
+spk_boss_od = spk_boss_id + 2*spk_boss_wall;
+spk_mesh_d  = spk_cone_d + 4.0;                       // the mesh patch, inside the boss
+cradle_h    = cav_d - (spk_gasket_t + spk_h + spk_pad_t);   // plate face -> the pad under the magnet
+cradle_od   = spk_mag_d + 2.0;
+cradle_id   = max(4.0, spk_mag_d - 6.0);
 
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
@@ -721,7 +774,12 @@ assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge
 assert(abs(plate_wedge_x) <= 15 && plate_wedge <= 15, "keep wedge angles <= 15 degrees");
 // the lugs: three pockets on the plate's back, each clear of the cable oval,
 // the screw seats and the plate's edge
-lug_ys = [lug_y, lug_mid_y, -lug_y];
+// with the speaker zone the cable exit sits near the body's middle, so the
+// middle lug parks BELOW it (16 off the exit's axis: its pocket clears the
+// oval, the wall plate's slot and the lower outer lug's pocket); without
+// the zone it parks where lug_mid_y says, above the exit as in v0.6
+lug_mid_eff = opt_spk ? exit_cy - 16.0 : lug_mid_y;
+lug_ys = [lug_y, lug_mid_eff, -lug_y];
 assert(len([for (c = lug_ys) let (r = mount_dt_pocket_y(c, clear = dt_clear))
             if (r[0] < well_cy + usb_exit_dy + usb_exit_h/2 + 0.8 && r[1] > well_cy + usb_exit_dy - usb_exit_h/2 - 0.8) 1]) == 0,
        "a lug pocket overlaps the cable exit — move lug_y / lug_mid_y");
@@ -769,14 +827,30 @@ assert(clip_y_lo + clip_w/2 <= (vm_screws ? vm_cy + vm_hole_dy - vm_post_d/2 - 0
        "the lower clip pair must sit between the corner shoes' seats and the board posts — move clip_dy_lo");
 // THE BATTERY BAY: the cell stands between the -X mid posts (its end stops),
 // the fence stands clip_flex behind the -X clip beams, and the face holds it
-assert(!opt_batt || len(mid_ys) == 2, "the battery bay needs its two end-stop posts");
-assert(!opt_batt || (mid_ys[1] - pd/2) - (mid_ys[0] + pd/2) >= batt_l + batt_pcm + 2*batt_clear - 1e-9,
+assert(!opt_batt || len(bay_ys) == 2, "the battery bay needs its two end-stop posts");
+assert(!opt_batt || (bay_ys[1] - pd/2) - (bay_ys[0] + pd/2) >= batt_l + batt_pcm + 2*batt_clear - 1e-9,
        "the battery bay's end stops are too close for the cell");
-assert(!opt_batt || mid_ys[0] - pd/2 >= post_y_bot + pd/2 + 2.0 && mid_ys[1] + pd/2 <= post_y_top - pd/2 - 2.0,
+assert(!opt_batt || bay_ys[0] - pd/2 >= post_y_bot + pd/2 + 2.0 && bay_ys[1] + pd/2 <= post_y_top - pd/2 - 2.0,
        "the battery bay's end stops run into the corner posts — a shorter cell, or lengthen the body");
 // the -X corner shoe's buttress and the fence must not meet: the shoe hugs
 // the module's lower corner, the fence stands further out
 assert(!opt_batt || fence_x + fence_t <= vm_cx - vm_w/2 - clip_stack - clip_flex + 1e-9, "the bay fence stands inside the clips' flex room");
+// THE SPEAKER: the driver clears its zone's posts and the walls, the grille
+// stays inside the cone, the mesh patch inside the boss, the boss inside the
+// cavity, and the cradle is a boss a tube can be
+assert(!opt_spk || spk_d + 2*0.5 <= inner_x + 1e-9, "the speaker driver is wider than the cavity (0.5 a side) — a smaller spk_d, or widen it");
+assert(!opt_spk || spk_boss_od <= inner_x + 2*0.5 + 1e-9, "the speaker boss ring runs past the walls");
+assert(!opt_spk || len([for (p = post_xy()) if (norm([p[0], p[1] - spk_cy]) - pd/2 < spk_d/2 + 0.5) 1]) == 0,
+       str("a screw post lands on the Ø", spk_d, " speaker driver — move spk_post_dy or shrink spk_d"));
+assert(!opt_spk || spk_cone_d + 2.0 <= spk_d, "the grille runs out past the driver's surround (spk_cone_d vs spk_d)");
+assert(!opt_spk || spk_mesh_d + 1.0 <= spk_boss_id, "the mesh patch does not fit inside the boss ring");
+assert(!opt_spk || grille_hole_d <= 1.0 + 1e-9, "grille holes over 1.0 mm let insects in (the outdoor rule)");
+assert(!opt_spk || cradle_h >= 3.0 && cradle_h <= boss_h_max((cradle_od - cradle_id)/2) + 1e-9,
+       str("the speaker cradle stands ", cradle_h, " mm on a ", (cradle_od - cradle_id)/2, " mm wall — outside canary_rib_lib's boss rule"));
+assert(!opt_spk || spk_mag_d + 2.0 < spk_d, "spk_mag_d must sit inside the driver");
+// the driver's cone clears the button's nut and the cable well's plug: zones
+assert(!opt_spk || spk_cy - spk_d/2 >= btn_cy + btn_nut_ac/2 + 1.0 - 1e-9, "the speaker reaches into the button zone");
+assert(!opt_spk || spk_cy + spk_d/2 <= well_cy - zone_well/2 + 0.5 + 1e-9, "the speaker reaches into the cable well");
 // THE ANTENNA: the landing's ribs, the posts' stand-off, the room behind them
 assert(!opt_ant || ant_post_gap >= ant_t + 0.5, "ant_post_gap must leave 0.5 of air over the FPC behind the mid posts");
 assert(!opt_ant || ant_l + 2*ant_rib_w + 0.6 <= post_y_top - post_y_bot - pd, "the antenna landing runs into the corner posts");
@@ -816,13 +890,18 @@ hw_echo("Vision doorbell", [
     e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
     opt_batt     ? hw_item(1, str("LiPo 802030-class, ", batt_t, " x ", batt_w, " x ", batt_l, " (+", batt_pcm, " PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C")) : "",
     opt_batt     ? hw_item(1, "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)") : "",
+    opt_spk      ? hw_item(1, str("Ø", spk_d, " x ", spk_h, " sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)")) : "",
+    opt_spk      ? hw_item(1, "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)") : "",
+    opt_spk      ? hw_item(1, str("foam gasket ring Ø", spk_d, " / Ø", spk_cone_d, " x 1.5 (driver rim to the face)")) : "",
+    opt_spk      ? hw_item(1, str("foam pad Ø", spk_mag_d, " x 1.5 (magnet to the cradle)")) : "",
+    opt_spk      ? hw_item(1, str("acoustic mesh patch Ø", spk_mesh_d, " (hydrophobic, on the face's inner side over the grille)")) : "",
     opt_ant      ? hw_item(1, str("FPC Wi-Fi antenna ", ant_l, " x ", ant_w, ", u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs")) : "",
     hw_item(4, "#8 pan wall screw (plate)"),
 ]);
-echo(str("Canary Vision DOORBELL v0.7 — shell ", out_x, " x ", out_y, " x ", shell_d + lid_t,
+echo(str("Canary Vision DOORBELL v0.8 — shell ", out_x, " x ", out_y, " x ", shell_d + lid_t,
          " mm (plate ", plate_x, " x ", plate_y, " x ", plate_t, " in the bore; ", len(post_xy()),
          " screws M2 x ", pl_L, "; module at x ", vm_cx, ") + wall plate ", wplate_t, " mm (wedge ", plate_wedge,
-         " deg, seal=", e_seal, ", battery=", opt_batt, ", antenna=", opt_ant, ")"));
+         " deg, seal=", e_seal, ", battery=", opt_batt, ", antenna=", opt_ant, ", speaker=", opt_spk, ")"));
 
 // ----------------------------------------------------------------------------
 //  Helpers — the idiom once shared by copy with the other Canary enclosures
@@ -910,10 +989,35 @@ module board_post(p) {
 // 0.8 blade meets the plate on a 1.6 foot, and the cell side stays a plain
 // face so the foot never eats the cell's clearance.
 module batt_bay() {
-    y0 = mid_ys[0] + pd/2 + 0.2;  y1 = mid_ys[1] - pd/2 - 0.2;   // 0.2 short of each post's face
+    y0 = bay_ys[0] + pd/2 + 0.2;  y1 = bay_ys[1] - pd/2 - 0.2;   // 0.2 short of each post's face
     translate([fence_x, y0, floor_t - 0.01]) hull() {
         cube([fence_t, y1 - y0, fence_h + 0.01]);
         cube([fence_t + 0.8, y1 - y0, 0.01]);
+    }
+}
+// the SPEAKER CRADLE on the plate: a tube under the driver's magnet, footed,
+// that presses the magnet (through its foam pad) into the boss on the face
+// when the plate screws down — the driver is captured, never screwed
+module spk_cradle() {
+    translate([0, spk_cy, floor_t - 0.01]) difference() {
+        union() {
+            cylinder(d = cradle_od, h = cradle_h + 0.01);
+            cylinder(d1 = cradle_od + 2.0, d2 = cradle_od, h = 1.0 + 0.01);   // root flare
+        }
+        translate([0, 0, 1.0]) cylinder(d = cradle_id, h = cradle_h + 1);
+    }
+}
+// the GRILLE: rings of Ø grille_hole_d holes over the cone, inside
+// spk_cone_d, each ring's count from its circumference at ~2.6 pitch; and
+// the mesh patch's seat on the INNER face (face frame, subtract)
+module spk_grille_cut() {
+    translate([0, spk_cy, 0]) {
+        for (r = [grille_pitch : grille_pitch : spk_cone_d/2 - grille_hole_d/2 - 0.2])
+            let (n = max(6, floor(2*3.14159*r / grille_pitch)))
+            for (i = [0 : n - 1]) rotate([0, 0, i*360/n + (r/grille_pitch)*17])
+                translate([r, 0, -1]) cylinder(d = grille_hole_d, h = lid_t + 2, $fn = 12);
+        translate([0, 0, -1]) cylinder(d = grille_hole_d, h = lid_t + 2, $fn = 12);          // the center
+        translate([0, 0, -1]) cylinder(d = spk_mesh_d, h = spk_mesh_t + 1);                  // the mesh seat, inner side
     }
 }
 // the LENS POCKET (face frame: z = 0 the inner side) — cut from the boss's end
@@ -972,6 +1076,7 @@ module body() {
             // the rails' clip notch, so the notch never nicks a post)
             for (p = vm_post_xy) board_post(p);
             if (opt_batt) batt_bay();
+            if (opt_spk) spk_cradle();
         }
         // oval cable exit through the plate (aligns with the wall plate's slot)
         translate([exit_cx, exit_cy, 0]) hull()
@@ -1060,6 +1165,16 @@ module shell_solid() {
                 }
                 // the retainer boss on the face's inner side, round the disc pocket
                 translate([0, 0, base_d]) translate([lens_x, lens_y, -cam_boss_h]) cylinder(d = cam_boss_od, h = cam_boss_h + 0.1);
+                // the speaker boss on the face's inner side: the driver's rim drops
+                // into it over its foam gasket (clipped to the cavity's outline:
+                // at this width the ring meets the walls)
+                if (opt_spk) intersection() {
+                    translate([0, 0, base_d]) translate([0, spk_cy, -spk_boss_h]) difference() {
+                        cylinder(d = spk_boss_od, h = spk_boss_h + 0.1);
+                        translate([0, 0, -0.1]) cylinder(d = spk_boss_id, h = spk_boss_h + 0.3);
+                    }
+                    translate([0, 0, floor_t]) rrect(inner_x + 1.0, inner_y + 1.0, cav_r + 0.5, cav_d + 1);
+                }
                 // the antenna landing's two locating ribs on the +X wall, proud
                 // of it by ant_rib_d, bracketing the FPC's ends; they stand
                 // between the coves, so neither the ledge nor the face is touched
@@ -1078,6 +1193,7 @@ module shell_solid() {
                 translate([lens_x, lens_y, lid_t - 0.4])
                     cylinder(d1 = cam_lip_out, d2 = cam_lip_out + 0.8 + 0.02, h = 0.41);
                 cam_pocket_cut();
+                if (opt_spk) spk_grille_cut();
                 // button hole + bezel seat (+ matching lead-in rim)
                 translate([0, btn_cy, -1]) cylinder(d = btn_d + 2*tol_slide, h = lid_t + 2);
                 if (btn_bez_d > 0) {
@@ -1184,8 +1300,9 @@ module shell_solid() {
                         cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
                     // the ring steps off the -X wall over the battery (the cell stands
                     // batt_clear under the face there) and off the +X wall over the antenna
-                    if (opt_batt) translate([-inner_x/2 - 1, mid_ys[0] + pd/2, -lid_rib_h - 0.1])
-                        cube([1 + bay_wall_gap + batt_t + 2*batt_clear, mid_ys[1] - mid_ys[0] - pd, lid_rib_h + 0.2]);
+                    if (opt_batt) translate([-inner_x/2 - 1, bay_ys[0] + pd/2, -lid_rib_h - 0.1])
+                        cube([1 + bay_wall_gap + batt_t + 2*batt_clear, bay_ys[1] - bay_ys[0] - pd, lid_rib_h + 0.2]);
+                    if (opt_spk) translate([0, spk_cy, -lid_rib_h - 0.1]) cylinder(d = spk_boss_od + 1.6, h = lid_rib_h + 0.2);
                     if (opt_ant) translate([inner_x/2 - ant_post_gap - 0.5, vm_cy - ant_l/2 - ant_rib_w - 0.3, -lid_rib_h - 0.1])
                         cube([ant_post_gap + 1.5, ant_l + 2*ant_rib_w + 0.6, lid_rib_h + 0.2]);
                 }
