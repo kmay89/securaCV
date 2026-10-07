@@ -905,12 +905,19 @@ fails on byte drift.
   absent, so CI runs it before any step that reads the committed dist (a
   stale dist turns those red and skips every later step).
 - `emulator/test/runtime_turn.sh` — the nightlight turned while it runs,
-  natively (F222): `build.sh`'s nightlight TU list (the real `main.cpp`, the
-  emulator's sources) built with g++ and booted on a virtual clock; a boot
-  turned at 7 s from each rotation to each other through
+  natively (F222, F242, F244): `build.sh`'s nightlight TU list (the real
+  `main.cpp`, the emulator's sources) built with g++ and booted on a
+  virtual clock. A boot turned at 9 s (past the mark's 8 s Tilt/Startle
+  ration) from each rotation to each other through
   `nightlight_request_rotation()` must seat the companion where a boot at
-  that rotation seats it. Fetches LVGL, Crypto and ArduinoJson at
-  `build.sh`'s pins when absent, and CI runs it right after `glass_turn.sh`.
+  that rotation seats it, hop with the tumble's Startle (F242), and keep one
+  writer of the bird's y through that hop: in every frame its y offset is
+  the seat less the hop's current value, with no breath beside it (F244).
+  Each unturned reference boot ends with a Joyful hop over its running
+  breath, held the same way. It reads the bird's box, its style y, LVGL
+  8.4's animation list and the glass's shape. Fetches LVGL, Crypto and
+  ArduinoJson at `build.sh`'s pins when absent, and CI runs it right after
+  `glass_turn.sh`.
   `tests/onboard.test.js` holds its TU lists, defines and language flags to
   what `build.sh` hands em++ for the nightlight.
 

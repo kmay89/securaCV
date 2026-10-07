@@ -245,10 +245,13 @@ builds the same port's LVGL 9 branch against the LVGL 9.5 the dash builds
 ship and holds its turned flushes the same way; neither boots firmware.
 `emulator/test/runtime_turn.sh` boots the nightlight's whole firmware with
 g++, the TU list `build.sh` hands em++, its driver playing the page on a
-virtual clock, and holds one thing: a unit turned while it runs seats its
-companion where a boot at that rotation does (F222). It reads the bird's
-box and the glass's shape, no canvas, audio or portal, and stands in for no
-bundle.) Each of
+virtual clock, and holds three things: a unit turned while it runs seats
+its companion where a boot at that rotation does (F222); each turn wears
+the tumble's Startle hop (F242); and one animation writes the bird's y
+through that hop and through a Joyful hop over each reference boot's
+breath (F244). It reads the bird's box, its style y, LVGL 8.4's animation
+list and the glass's shape, no canvas, audio or portal, and stands in for
+no bundle.) Each of
 those bundles links the display firmware, LVGL and the browser shims into
 one page under Asyncify, and the probes drive that page: its canvas, Web
 Audio, serial panel and the phone's captive portal. A native process behind
