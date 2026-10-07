@@ -124,6 +124,8 @@ struct Seen {
   int not_hops;       // frames the y offset is not the seat less the hop's value
   int first_not_hop;  // the first of those: ms after the ask, offset, hop value
   int not_hop_y, not_hop_v;
+  int hop_apex_ms;    // when the bird rose highest (ms into the hop window)
+  int hop_on_glass;   // hop frames whose drawn box lies wholly on the glass
 };
 
 bool g_verbose = false;
@@ -169,13 +171,25 @@ Bird read_bird() {
 int g_seat_y = 0;
 bool g_joyful = false;  // a reference boot's Joyful hop has been asked for
 
+bool read_box(int* x, int* y, int* w, int* h, int* shown);
+
 // One frame of a hop window, `t` ms into it, on a bird whose y offset at
-// rest is `seat`.
+// rest is `seat`. Where the hop falls against the tumble's slide (its apex,
+// and how many of its frames the whole bird is on the glass) is measured
+// for the bench row, not held: the Startle starts with the face's first
+// update, while the slide is still bringing the bird in.
 void read_hop(double t, int seat) {
   const Bird b = read_bird();
   if (!b.ok || !b.hop) return;
-  if (g_seen.hop_frames == 0 || b.y < g_seen.hop_lo) g_seen.hop_lo = b.y;
+  if (g_seen.hop_frames == 0 || b.y < g_seen.hop_lo) {
+    g_seen.hop_lo = b.y;
+    g_seen.hop_apex_ms = (int)t;
+  }
   g_seen.hop_frames++;
+  int x = 0, y = 0, w = 0, h = 0, shown = 0;
+  if (read_box(&x, &y, &w, &h, &shown) && x >= 0 && y >= 0 &&
+      x + w <= canary::ui::lvgl_port_width() && y + h <= canary::ui::lvgl_port_height())
+    g_seen.hop_on_glass++;
   if (b.breath) g_seen.beside++;
   if (b.y != seat - (int)b.hop_value) {
     if (g_seen.not_hops == 0) {
@@ -458,9 +472,10 @@ int main(int argc, char** argv) {
       shape_of(to, &w, &h);
       const int delta = (to - from) & 3;
       printf("turned %d -> %d: glass %dx%d, first frames x %d y %d, then x %d..%d y %d..%d; "
-             "Startle hop %d frames to y offset %d (seat %d), %d beside a breath, %d not the hop's\n",
+             "Startle hop %d frames to y offset %d (seat %d), %d beside a breath, %d not the hop's; "
+             "apex at %d ms, the bird wholly on the glass in %d of them\n",
              from, to, s.fb_w, s.fb_h, s.first_x, s.first_y, s.x_lo, s.x_hi, s.y_lo, s.y_hi,
-             s.hop_frames, s.hop_lo, seat, s.beside, s.not_hops);
+             s.hop_frames, s.hop_lo, seat, s.beside, s.not_hops, s.hop_apex_ms, s.hop_on_glass);
       CHECK(s.shape_w == w && s.shape_h == h && s.fb_w == w && s.fb_h == h && s.port_w == w &&
                 s.port_h == h,
             "turned %d -> %d: announced %dx%d, glass %dx%d, LVGL %dx%d, want %dx%d", from, to,

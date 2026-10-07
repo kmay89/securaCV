@@ -56,8 +56,12 @@ void nightlight_ui_update(const canary::fleet::Fleet& fleet, uint32_t now,
 // from it so the motion always reads as the real turn the device felt.
 // Call right after nightlight_ui_create() on an orientation commit. The
 // companion's Startle comes with the face's next nightlight_ui_update(),
-// once the bird has a mood to react from, if that update comes while the
-// tumble still plays (F242).
+// once the bird has a mood to react from, if that update comes within the
+// tumble's 1.4 s, while the caption shows its word (F242). On the glass
+// that update is the next render, while the 700 ms slide is still bringing
+// the bird in: it comes in with its eye wide and a little high, and settles
+// onto its perch as it lands (where it enters past the glass's edge, the
+// slide hides much of the rise).
 void nightlight_ui_tumble(uint8_t delta_cw, uint32_t now);
 
 // Symmetry with the other faces (main.cpp calls ui_ack_hold uniformly);

@@ -225,8 +225,15 @@ int main() {
           third.hi);
   }
   {
-    // Owed only while the tumble plays: a first update after the tumble's
-    // 1.4 s pays nothing.
+    // Owed within the tumble's 1.4 s (while the caption shows its word): a
+    // first update 1.2 s after the turn still pays it, one after the 1.4 s
+    // pays nothing. (A busy loop can render the first update late; a window
+    // cut shorter than the caption's would drop the Startle unnoticed.)
+    fake_lvgl::run(9000);
+    const YSpan slow = turn(320, 180, 1, CanaryMood::Idle, 1200);
+    report("first update 1.2 s after the turn", slow);
+    CHECK(startled(slow), "a first update inside the tumble's 1.4 s still hops (y %d..%d)",
+          slow.lo, slow.hi);
     fake_lvgl::run(9000);
     const YSpan late = turn(320, 180, 1, CanaryMood::Idle, 1500);
     report("first update 1.5 s after the turn", late);

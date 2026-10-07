@@ -362,8 +362,8 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
 
   // ...and then the tumble's Startle (F242), once, now that the bird is on
   // stage: the mark still refuses it asleep or hidden and rations it. Owed
-  // only while the tumble plays; a first update that comes after it pays
-  // nothing.
+  // only within the tumble's 1.4 s (while the caption shows its word); a
+  // first update that comes after that pays nothing.
   if (s_tumble_startle) {
     s_tumble_startle = false;
     if ((int32_t)(now - s_tumble_until) < 0)

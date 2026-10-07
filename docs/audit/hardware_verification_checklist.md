@@ -2192,13 +2192,25 @@ turn is not. Compile is CI's. Owner: U1.
 - [ ] **The companion startles with each turn, and its hop is smooth**
   - Setup: as above, more than 8 s after power-on (the mark refuses Tilt and
     Startle for the first 8 s of uptime).
-  - Repro: turn it a quarter, wait 10 s, turn it back; then once more during
-    quiet hours.
-  - Expected: the companion tumbles in from the edge that was up and hops
-    once as it lands (a Startle: the eye widens and the bird rises about
-    12 px), then breathes on its perch; the hop rises and falls without
-    dropping back to the perch for a frame mid-air. In quiet hours it
-    tumbles in without the hop (asleep).
+  - Repro: turn it a quarter clockwise, wait 10 s, turn it back; the same a
+    quarter counter-clockwise and a half turn; then once more during quiet
+    hours.
+  - Expected: the companion tumbles in from the edge that was up with its
+    eye wide, a little high, and settles onto its perch as it lands, then
+    breathes there. The Startle's hop (about 12 px, 240 ms up and 320 ms
+    down) starts with the face's first render after the turn, so it peaks
+    about 200 ms in while the 700 ms slide is still bringing the bird in.
+    Where it enters past the glass's edge the slide hides much of the rise
+    and the bird is mostly seen coming down onto its perch; where it enters
+    already on the glass the whole hop shows. Natively on LVGL 8.4
+    (`runtime_turn.sh` prints it per turn) the apex comes at 195 ms, and
+    the whole bird is on the glass in 8 of the hop's 115 frames when it
+    enters over the landscape glass's right edge (its perch is at that
+    edge), 56 when it falls from above onto the landscape glass, 62 when it
+    enters either side of the portrait glass, and all 115 when it enters
+    from the landscape glass's left or falls from above onto the portrait
+    glass. Either way the bird never drops back to its perch for a frame
+    mid-hop. In quiet hours it tumbles in without the hop (asleep).
   - Artifact: `docs/audit/repro/F242/tumble-video/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
