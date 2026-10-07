@@ -503,6 +503,10 @@ struct PasskeyAnswer {
 inline std::mutex passkey_mu;
 inline std::vector<PasskeyAnswer> passkey_answers;
 inline bool nimble_up = false;
+// When set, NimBLEDevice::init() fails as NimBLE-Arduino 2.x's does when the
+// controller or host cannot come up (it answers false and the stack stays
+// down): a boot bring-up that failed (sweep F235). The test clears it.
+inline bool nimble_init_fails = false;
 inline std::unique_ptr<NimBLEServer> server;
 inline NimBLEAdvertising advertising;
 inline NimBLEScan scan;
@@ -566,6 +570,7 @@ class NimBLEDevice {
   static bool isInitialized() { return host_sim::nimble_up; }
   static bool init(const std::string&) {
     host_sim::note("nimble_init");
+    if (host_sim::nimble_init_fails) return false;
     host_sim::nimble_up = true;
     return true;
   }
