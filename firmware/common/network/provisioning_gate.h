@@ -159,6 +159,8 @@ inline PageToken page_token_decide(bool foreign_host, bool setup_active,
 enum class ReceiptVerdict : uint8_t {
   REFUSE_HOST,    // 403 {"error":"host"}: the bearer unread, the gate untouched
   SERVE_BEARER,   // a valid bearer: serve the receipt; the gate is left alone
+  SERVE_CLAIM,    // no bearer, but a claim ticket from the Bluetooth setup
+                  // door was presented and spent: serve; the tap left alone
   SERVE_TAP,      // no bearer, and this request took an unspent BOOT tap: serve
   REFUSE_NO_TAP,  // no bearer and no tap to take: 403 physical_confirmation_required
 };
@@ -177,6 +179,25 @@ inline ReceiptVerdict receipt_decide(bool foreign_host, BearerOk bearer_ok,
                                      TakeGate take_gate) {
   if (foreign_host) return ReceiptVerdict::REFUSE_HOST;
   if (bearer_ok()) return ReceiptVerdict::SERVE_BEARER;
+  return take_gate() ? ReceiptVerdict::SERVE_TAP : ReceiptVerdict::REFUSE_NO_TAP;
+}
+
+// The same decision with a third grant between the bearer and the tap: a
+// claim ticket (network/claim_ticket.h) the phone read over the Bluetooth
+// setup door once the join it asked for succeeded, presented as
+// ?claim=<hex>. `take_claim` is the firmware's claim_ticket::take hook —
+// called at most once, only when the Host passed and no bearer did, and
+// spending the claim whatever it answers (a wrong guess burns it). A claim
+// that serves leaves the BOOT tap unspent, so the owner's own page load
+// still finds it; a spent or absent claim falls through to the tap exactly
+// as before, so every caller the three-grant overload admitted is admitted
+// here too, in the same order.
+template <typename BearerOk, typename TakeClaim, typename TakeGate>
+inline ReceiptVerdict receipt_decide(bool foreign_host, BearerOk bearer_ok,
+                                     TakeClaim take_claim, TakeGate take_gate) {
+  if (foreign_host) return ReceiptVerdict::REFUSE_HOST;
+  if (bearer_ok()) return ReceiptVerdict::SERVE_BEARER;
+  if (take_claim()) return ReceiptVerdict::SERVE_CLAIM;
   return take_gate() ? ReceiptVerdict::SERVE_TAP : ReceiptVerdict::REFUSE_NO_TAP;
 }
 

@@ -30,40 +30,39 @@ enum HubDiscoveryRows {
     /// with no usable address still gets a row so the person can type one.
     static func rows(from adverts: [(service: String, txt: [String: String])]) -> [DiscoveredHub] {
         var byID: [String: DiscoveredHub] = [:]
-        // The ids whose row carries the owner's location name, not the
-        // service-name fallback.
-        var named: Set<String> = []
         for (service, txt) in adverts {
             let id = (txt["uuid"]?.isEmpty == false ? txt["uuid"] : nil) ?? service
-            let locationName = txt["location_name"].flatMap { $0.isEmpty ? nil : $0 }
             let candidates = [txt["internal_url"], txt["base_url"]].compactMap { $0 }
             let url = candidates.lazy
                 .compactMap { URL(string: $0) }
                 .first { DeviceAPI.isPrivate($0) }
             let row = DiscoveredHub(
                 id: id,
-                name: locationName ?? service,
+                name: txt["location_name"].flatMap { $0.isEmpty ? nil : $0 } ?? service,
                 baseURL: url,
                 version: txt["version"] ?? "",
                 installationType: txt["installation_type"] ?? "")
-            // Interface copies of one instance collapse. The first address
-            // that passed the gate wins, and a field one copy left out is
-            // taken from a copy that carried it, so the row does not depend
-            // on which copy the browse happened to see last.
-            guard var kept = byID[id] else {
-                byID[id] = row
-                if locationName != nil { named.insert(id) }
-                continue
-            }
-            if kept.baseURL == nil { kept.baseURL = row.baseURL }
-            if !named.contains(id), let locationName {
-                kept.name = locationName
-                named.insert(id)
-            }
-            if kept.version.isEmpty { kept.version = row.version }
-            if kept.installationType.isEmpty { kept.installationType = row.installationType }
-            byID[id] = kept
+            // Interface copies of one instance collapse into one row: the
+            // first address that passed the gate wins, and a field one copy
+            // left blank is filled from the other, whichever order the
+            // copies arrive in. Overwriting would lose a field the first
+            // copy carried and the second did not.
+            byID[id] = byID[id].map { $0.merged(with: row, service: service) } ?? row
         }
         return byID.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+}
+
+private extension DiscoveredHub {
+    /// This row with every blank filled from `other`. The address already
+    /// held is kept; a name that is only the service name yields to one the
+    /// owner gave the instance.
+    func merged(with other: DiscoveredHub, service: String) -> DiscoveredHub {
+        DiscoveredHub(
+            id: id,
+            name: (name == service && other.name != service) ? other.name : name,
+            baseURL: baseURL ?? other.baseURL,
+            version: version.isEmpty ? other.version : version,
+            installationType: installationType.isEmpty ? other.installationType : installationType)
     }
 }

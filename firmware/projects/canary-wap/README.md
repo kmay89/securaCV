@@ -137,9 +137,100 @@ auto-discovery via its CSI bridge) — see
 | **WiFi AP** | Local web dashboard and API access |
 | **Mesh Network** | Opera protocol for device-to-device communication |
 | **Bluetooth** | BLE pairing and configuration |
+| **Bluetooth setup door** | Improv Wi-Fi on the pairing server for a fresh unit (FULL profile, `ble_improv`): a phone's one tap hands over the home Wi-Fi over an encrypted Just Works link, then reads a one-time **claim ticket** it spends on the home LAN for the pairing receipt — the bearer token never rides Bluetooth. See [the setup door](#the-bluetooth-setup-door-improv-wi-fi) below |
 | **RF Presence** | Privacy-preserving device detection |
 | **Camera Peek** | Live MJPEG preview streaming |
 | **Microphone** | PDM mic detects smoke (T3) / CO (T4) alarm cadences plus knock, doorbell, and glass-break; privacy-bounded (no audio stored), hard mute with witness-chain audit trail |
+
+## The Bluetooth setup door (Improv Wi-Fi)
+
+In the **FULL** profile (`FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE`
+in `build_config.h`; 0 in DEV and MINIMAL) a fresh WAP opens the open
+**Improv Wi-Fi** door on the pairing channel's NimBLE server (`ble_improv.h`;
+the bytes and the rules are `improv_core.h`, a staged byte-identical copy of
+`firmware/common/network/improv_core.h` held by
+`firmware/scripts/check_improv_sync.sh`). Opera's beacon stays the primary
+advert; while the door is open it carries `FLEET_BEACON_FLAG_SETUP_OPEN` and
+the name `WAP-AB12` (the last four hex of its key fingerprint — the same
+four as its `SCV-XXXX` name, not its setup network's suffix, which is
+spelled in the device id's no-confusion alphabet) and the scan response
+carries the Improv service; when it shuts, Opera's own scan response
+(the `SCV-XXXX` name and the SecuraCV service UUID) returns. A fresh unit
+with nobody on its SoftAP brings the channel up **5 s** after boot instead
+of the five-minute hold (`provisioning_logic::ble_fresh_unit_start_due`,
+host-tested) so the door is on air quickly, and holds the BLE scanners
+(Nearby, Scout) on that path — a scanning radio would fight the one link the
+door needs — until the SoftAP drops after a join or the five-minute max hold
+(`provisioning_logic::ap_only_for_discovery`, host-tested: a fresh unit's
+AP-only boot state is not the standalone AP-only choice, so the 45 s settle
+never releases them under a wizard phone's handshake); the heap guard keeps
+the last word. The phone's picker is real here: `GET_WIFI_NETWORKS` streams
+the sketch's scan cache — the same list the wizard's `GET /api/wifi/scan`
+serves, behind one mutex, so the single radio is swept once for both.
+
+**When the door is open.** Only while the unit has **no credentials stored**
+(first boot, factory reset), for **30 minutes after power-on**
+(`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it). A **software
+restart does not** re-arm it — the first-boot wizard restarts a
+never-provisioned unit every 15 idle minutes, which would otherwise have
+re-opened the door forever: the spent time rides in RTC-noinit memory
+(`provisioning_logic::door_window_record_valid`, host-tested; cleared after
+a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
+and by **Forget Wi-Fi** on a unit that had credentials, which is the
+owner's way to re-arm the window), and a phone at the door is a sign of life
+for that wizard timer, so the restart cannot land mid-provisioning. A WAP on its own
+Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
+dashboard, the bonded rescue service and the BOOT-tap receipt are the
+owner's paths). **There is no tap door on the WAP in this version:** the
+BOOT button keeps the sketch's own gestures (a short press opens the 30 s
+receipt gate; a 2 s hold prints the identity on serial), and no button
+gesture factory-resets a WAP today. A join over the door
+is held in RAM until WiFi proves it (`ble_improv_submit_join` /
+`ble_improv_join_verdict`): a proven join is persisted then, exactly as the
+wizard persists, and a failed or timed-out one is forgotten so the door
+stays open for a retry — the wizard, the QR scan and the bonded rescue keep
+their persist-first order, which the door cannot afford (one wrong
+password would otherwise mark the unit configured and shut the door on the
+next pass); a path that persisted credentials while a door join was in
+flight owns them, and the door's later verdict changes nothing — its link
+gets no claim and is told NotAuthorized. Bounds while open:
+3 s between accepted credential writes, 10 attempts per open door, a
+3-minute idle disconnect, ~20 s linger after the join.
+
+**Security.** LE Secure Connections **Just Works**, no bond kept — the only
+pairing a phone with no prior bond can open in one tap. The channel swaps
+its security profile to that only while the door is open
+(`bluetooth_channel::set_setup_door`; never while a Numeric Comparison is
+pending or an authenticated / bonded link is up; restored when the door
+shuts). The Improv command and result characteristics require an encrypted
+link and the write handler checks it again; the key such a pairing yields is
+*unauthenticated*, so the console, OTA, witness-export and bonded
+provisioning characteristics (`READ_AUTHEN` / `WRITE_AUTHEN`) refuse it.
+
+**The claim ticket — how the phone ends up paired.** The bearer token never
+rides Bluetooth. Once the join the phone asked for succeeds, the WAP mints
+16 random bytes (32 hex), readable **once** by the link that provisioned,
+within **180 s**, from the SecuraCV companion service
+(`8fc1cf00-b162-4401-9607-c8ac21383e90`, CLAIM `8fc1cf01-…`, READ encrypted)
+as `{"device_id","claim","claim_url","tls_cert_fp","sta_ip","mdns_host","expires_in_s"}`.
+The phone spends it on the home LAN — `GET /api/provisioning-receipt?claim=<hex>`
+— and gets the same receipt the BOOT-tap route serves, `base_url` at the
+`.local` name. The route decides bearer → claim → BOOT tap — the four-grant
+`provisioning_gate::receipt_decide` order minus its first question (a
+foreign `Host`), which the WAP does not ask on this route today (the
+flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
+is burned too, and a claim that serves leaves the tap unspent.
+Two factors: the encrypted link that provisioned, and presence on the Wi-Fi
+the WAP just joined. The post-join reboot into steady state is held while a
+claim is outstanding (the claim promised 180 s; the reboot came at 120 s)
+and follows ~10 s after the claim is spent or expires.
+
+Design, threat model and bench checklist: `docs/design/magic_pairing.md`.
+**CI-compiled (also locally) and host-tested (`test_improv_core.cpp`,
+`test_claim_ticket.cpp`, `test_provisioning_gate.cpp`), not bench-tested**
+— the profile swap, the once-only claim read, the 5 s bring-up path, the
+picker, the window across the wizard's restart and the reboot hold are the
+open items.
 
 ## Build Configurations
 

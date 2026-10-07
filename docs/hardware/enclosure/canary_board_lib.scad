@@ -119,6 +119,21 @@ function brd_xiao_sense_cam_dx() = -6.95;  // module center along the length, fr
 function brd_xiao_sense_cam_dy() = -0.64;  // module center across the width, from the board center, + = the long edge on the LEFT with the USB toward you and the parts up (see above)
 function brd_xiao_sense_cam_fp() = 8.0;    // module footprint, square side (the lens barrel's envelope)
 
+// XIAO ESP32-S3 — the two tactile switches (B and R) that flank the USB-C
+// on the component face, read off the vendor GLB (canary-local/boards/
+// seeed_xiao_esp32s3.glb: the board 21.14 x 17.78 x 1.2, the switch bodies
+// 2.6 x 1.6 x 0.63 on 0.1 of pad, the USB-C shell 7.3 long standing 1.5
+// past the board's end). The switch centers sit ±5.93 across the width from
+// the board's centerline and 1.61 along the length inboard of the USB end;
+// the caps stand 0.75 over the PCB face. WHICH of the two is R is not in
+// the model (no silkscreen) — a case that pokes them carries that side as
+// its own MEASURE knob. The C3 shares the family outline; unmeasured there.
+function brd_xiao_btn_dx()   = 5.93;   // switch center across the width, ± from the board's centerline
+function brd_xiao_btn_dy()   = 1.61;   // switch center along the length, inboard of the USB end
+function brd_xiao_btn_h()    = 0.75;   // the cap's top over the PCB face
+function brd_xiao_btn_cap()  = [2.6, 1.6];   // the cap, [along the length, across the width]
+function brd_xiao_usb_overhang() = 1.5;      // the USB-C shell past the board's end
+
 // OV5647-62 CAMERA — the Grove Vision AI V2 kit's camera (Pi-cam v1.3 form,
 // the "ov5647" row above), read off the vendor CAD: the "RPi cam Rev 1.3"
 // posed inside boards/vendor/seeed_grove_vision_ai_v2.step.gz, "drawing"
@@ -141,6 +156,23 @@ function brd_ov5647_lens_h()   = 5.0;    // lens barrel top above the PCB face
 function brd_ov5647_holder_h() = 3.65;   // the square holder's top above the PCB face
 function brd_ov5647_holder_sq() = 8.8;   // the holder's square side
 function brd_ov5647_barrel_d() = 7.0;    // the round lens barrel's diameter
+
+// SEEED ROUND DISPLAY for XIAO — the Watch Station's disc (the "round_disp"
+// row: Ø43.0 measured, and the first print's calipers read the GLASS at
+// 43.01 — the cover glass is the disc's full diameter, not the 37.7 the
+// v0.2 bezel assumed from the 1.28" marketing figure). Read off the
+// committed vendor GLB (canary-local/boards/seeed_round_display_xiao.glb,
+// "drawing" rung) and the GC9A01 datasheet:
+//   · the XIAO's two 7-pin socket rows span raw GLB x 0.55..18.9 (the pad
+//     islands), so the XIAO rides centered 9.725 off the disc center toward
+//     its USB edge — the drum's USB slot and end-stop boss read this
+//     (gen_assembly_poses.py's DISPLAY_SOCKET_X is the same number; its
+//     assembly test re-measures it off the GLB);
+//   · the 1.28" GC9A01 active area is Ø32.4 (240 px at 0.135 mm), the floor
+//     under any bezel aperture: the first print's Ø39.4 aperture cleared it
+//     and still could not reach the glass.
+function brd_round_disp_socket_x() = 9.725;  // XIAO socket center off the disc center, toward the USB edge
+function brd_round_disp_active_d() = 32.4;   // GC9A01 active-area diameter (spec)
 
 // ---------------------------------------------------------------------------
 //  Self-check — registry integrity + the pinned lessons. Call once from an
@@ -176,5 +208,9 @@ module board_selfcheck() {
            "board: the OV5647's lens holder or hole grid runs off its carrier");
     assert(brd_ov5647_lens_dy() < 0 && brd_ov5647_grid_dy() > 0,
            "board: the OV5647's lens is BELOW the carrier's center and its hole grid ABOVE — the case bug v0.6 fixed");
+    // the round display's socket and active area both sit inside its disc
+    assert(brd_round_disp_socket_x() + brd_l("xiao")/2 < brd_l("round_disp")/2
+           && brd_round_disp_active_d() < brd_l("round_disp"),
+           "board: the round display's XIAO socket or active area runs off the disc");
     echo("canary_board_lib: self-check OK");
 }

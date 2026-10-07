@@ -625,19 +625,21 @@ BOARD_ACCESS = {
         "other_port": "—",
         "other_effect": "",
         "steps": [
-            "Flash the bare display+XIAO stack, or lift the drum out of the "
-            "desk stand first — the thumb scallops on the cradle rim are for "
-            "exactly this.",
+            "Flash the bare display+XIAO stack, or undock the drum first — "
+            "grip it through the saddle's open top and pull it forward; the "
+            "detent clicks and it slides off the rails.",
             "Plug a USB-C DATA cable into the XIAO's port through the drum's "
             "side slot and flash.",
-            "Re-seat the drum with the cable already plugged — it runs out "
-            "the side slot and down the chin channel under the cradle.",
+            "Dock the drum again with the cable already plugged — slide it "
+            "back USB-down until it clicks; the lead runs down the chin "
+            "pocket and through the channel under the cradle.",
         ],
-        "enclosure_note": "Printed the SecuraCV desk stand? Its cradle "
-                          "deliberately buries the side slot (the pocket is "
-                          "what keeps the puck from rocking), and the chin "
-                          "channel passes the cable through, not a plug. The "
-                          "bare drum keeps the slot reachable.",
+        "enclosure_note": "Printed the SecuraCV desk stand? Its saddle "
+                          "deliberately buries the side slot (13 mm of barrel "
+                          "in the saddle is what keeps the puck from rocking), "
+                          "and the chin pocket is cut for a 90-degree lead's "
+                          "elbow, not a straight plug. The bare drum keeps the "
+                          "slot reachable.",
         "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/"
                "enclosure/README.md",
     },

@@ -12,6 +12,11 @@
 //   * one tap is ONE consumer across the page and receipt paths: five LAN
 //     page loads after a tap inject once, and whichever of page load /
 //     receipt fetch comes first leaves nothing for the other;
+//   * the four-grant overload (receipt_decide with a claim hook) keeps that
+//     order with the Bluetooth setup door's claim between the bearer and the
+//     tap: a claim that serves leaves the tap unspent, a spent one falls
+//     through to it, and with no claim presented every verdict matches the
+//     three-grant overload;
 //   * the Host comes first on both paths: a request whose Host cannot name
 //     the device gets no credential, is refused on the receipt route before
 //     the bearer is read, and never spends the tap — foreign-Host requests
@@ -529,6 +534,69 @@ static void refusal_body_carries_the_ttl_and_refuses_truncation() {
   CHECK(!build_gate_refusal_json(body, 0, kTtl), "zero cap refused");
 }
 
+
+// ── the four-grant receipt decision: the claim ticket between the bearer
+//    and the tap ────────────────────────────────────────────────────────────
+//
+// GET /api/provisioning-receipt?claim=<hex> on a WAP (and the flagship, in
+// a follow-up): the claim a phone read over the Bluetooth setup door is the
+// third grant. Same shape as receipt_decide above: the Host first, then the
+// bearer, then the claim, then the tap — each hook called only when the one
+// before it did not decide.
+
+struct Hook {
+  bool answer;
+  int calls = 0;
+  bool operator()() { ++calls; return answer; }
+};
+
+static void four_grant_foreign_host_calls_nothing() {
+  Hook bearer{true}, claim{true}, tap{true};
+  CHECK(receipt_decide(true, std::ref(bearer), std::ref(claim), std::ref(tap)) == ReceiptVerdict::REFUSE_HOST,
+        "foreign Host refuses");
+  CHECK(bearer.calls == 0 && claim.calls == 0 && tap.calls == 0, "nothing else consulted");
+}
+
+static void four_grant_bearer_before_claim_before_tap() {
+  Hook bearer{true}, claim{true}, tap{true};
+  CHECK(receipt_decide(false, std::ref(bearer), std::ref(claim), std::ref(tap)) == ReceiptVerdict::SERVE_BEARER,
+        "a bearer serves first");
+  CHECK(claim.calls == 0 && tap.calls == 0, "the claim is not spent and the tap is left for the owner");
+
+  Hook bearer2{false}, claim2{true}, tap2{true};
+  CHECK(receipt_decide(false, std::ref(bearer2), std::ref(claim2), std::ref(tap2)) == ReceiptVerdict::SERVE_CLAIM,
+        "no bearer: a good claim serves");
+  CHECK(claim2.calls == 1, "the claim was spent exactly once");
+  CHECK(tap2.calls == 0, "and the BOOT tap is left unspent");
+}
+
+static void four_grant_spent_claim_falls_through_to_the_tap() {
+  Hook bearer{false}, claim{false}, tap{true};
+  CHECK(receipt_decide(false, std::ref(bearer), std::ref(claim), std::ref(tap)) == ReceiptVerdict::SERVE_TAP,
+        "a wrong or spent claim: the tap still admits");
+  CHECK(claim.calls == 1 && tap.calls == 1, "each asked once");
+
+  Hook bearer2{false}, claim2{false}, tap2{false};
+  CHECK(receipt_decide(false, std::ref(bearer2), std::ref(claim2), std::ref(tap2)) == ReceiptVerdict::REFUSE_NO_TAP,
+        "nothing: refused, physical confirmation required");
+}
+
+static void four_grant_agrees_with_three_grant_when_no_claim_is_presented() {
+  // A request with no ?claim= is wired as a claim hook that answers false
+  // without spending anything; every verdict then matches the old overload.
+  const bool fh[] = {false, true};
+  const bool br[] = {false, true};
+  const bool tp[] = {false, true};
+  for (bool f : fh) for (bool b : br) for (bool t : tp) {
+    Hook bearer{b}, tap{t};
+    Hook bearer4{b}, none{false}, tap4{t};
+    const ReceiptVerdict three = receipt_decide(f, std::ref(bearer), std::ref(tap));
+    const ReceiptVerdict four = receipt_decide(f, std::ref(bearer4), std::ref(none), std::ref(tap4));
+    CHECK(three == four, "f=%d b=%d t=%d: the overloads agree", f, b, t);
+    CHECK(bearer.calls == bearer4.calls && tap.calls == tap4.calls, "and consult the same hooks");
+  }
+}
+
 int main() {
   closed_by_default();
   open_then_peek_does_not_consume();
@@ -557,6 +625,10 @@ int main() {
   dual_stack_request_reaches_the_ap_test_intact();
   subnet_overlap_math();
   refusal_body_carries_the_ttl_and_refuses_truncation();
+  four_grant_foreign_host_calls_nothing();
+  four_grant_bearer_before_claim_before_tap();
+  four_grant_spent_claim_falls_through_to_the_tap();
+  four_grant_agrees_with_three_grant_when_no_claim_is_presented();
 
   if (g_failures) {
     std::printf("test_provisioning_gate: %d failure(s)\n", g_failures);

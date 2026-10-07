@@ -37,8 +37,10 @@ generator READS (its docstring, its imports), not from memory:
                             the emulator dist is upstream of the catalogs and only Actions can build it
   11  gen_flash             dist meta + manifests -> flash.json
   12  gen_builder_manifest  curated .scad -> builder_manifest.json  [+ --site DIR: the website carries]
-  13  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
-  14  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
+  13  gen_print_files       --site DIR only: the in-development cases' print-ready STLs + their
+                            provenance manifest into the website's print/ (needs OpenSCAD)
+  14  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
+  15  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
 
 GEN_ENCLOSURES COMES BEFORE GEN_FIGURES because gen_figures.mjs reads
 canary-local/devices/catalog.json — each figure's catalog evidence (the
@@ -232,6 +234,16 @@ STEPS: tuple[Step, ...] = (
          ("python3", f"{ENC_REL}/gen_builder_manifest.py", "--check"), "argv", False,
          "the curated .scad + deps + colorways -> builder_manifest.json (sha256 pins) "
          "[--site DIR: the website's scad/ carries, cad-dims.json, builder-data.js]"),
+    # The website's print-ready STLs for the in-development cases, with the
+    # manifest that says which commit and which .scad bytes they came from.
+    # Writes into the website checkout only, so it runs only under --site;
+    # its --check names a case that moved since its files were rendered.
+    Step("gen_print_files",
+         ("python3", f"{ENC_REL}/gen_print_files.py"), ".",
+         None, "argv", True,
+         "the in-development cases' parts (OpenSCAD, full quality) -> the website's print/*.stl "
+         "+ print/print-files.json (version, commit, scad sha256, per-file sha256) [--site DIR only]",
+         note="writes into the website checkout only; pass --site DIR to render or check it"),
     Step("gen_stamp",
          ("python3", f"{ENC_REL}/gen_stamp.py", "--check"), ".",
          ("python3", f"{ENC_REL}/gen_stamp.py", "--check"), "argv", False,
@@ -245,6 +257,8 @@ STEPS: tuple[Step, ...] = (
          report_only=True),
 )
 STEP_NAMES = tuple(s.name for s in STEPS)
+SITE_STEPS = ("gen_builder_manifest", "gen_print_files")   # take --site DIR
+SITE_ONLY_STEPS = ("gen_print_files",)                      # and do nothing without it
 STEP_BY_NAME = {s.name: s for s in STEPS}
 RESUME_AFTER_DIST = "gen_flash"
 
@@ -394,6 +408,10 @@ def run_check(step: Step, i: int, repo: Path, site: Path | None = None) -> tuple
     """(ok, detail) for one step's check form. `site` reaches gen_builder_manifest only, as
     `gen_builder_manifest.py --site DIR --check` — the carries are regenerated
     in memory and a stale one is named; nothing is written in either tree."""
+    if step.name in SITE_ONLY_STEPS and site is None:
+        print(_hdr(i, step, ("(--site DIR only)",), "check"))
+        print(f"      skipped — {step.note}")
+        return True, ""
     if step.check_kind == "none":
         print(_hdr(i, step, ("(no check form)",), "check"))
         print(f"      skipped — {step.note}")
@@ -405,7 +423,7 @@ def run_check(step: Step, i: int, repo: Path, site: Path | None = None) -> tuple
         print(_hdr(i, step, step.check or (), "check"))
         return _check_by_diff(step, repo)
     argv = tuple(step.check or ())
-    if step.name == "gen_builder_manifest" and site is not None:
+    if step.name in SITE_STEPS and site is not None:
         argv = tuple(step.cmd) + ("--site", str(site), "--check")
     print(_hdr(i, step, argv, "check", step.check_cwd or step.cwd))
     r = _run(argv, cwd=repo / (step.check_cwd or step.cwd))
@@ -499,7 +517,11 @@ def run_setup_regen(step: Step, i: int, repo: Path) -> tuple[str, str]:
 
 def run_write(step: Step, i: int, repo: Path, site: Path | None) -> tuple[bool, str]:
     argv = tuple(step.cmd)
-    if step.name == "gen_builder_manifest" and site is not None:
+    if step.name in SITE_ONLY_STEPS and site is None:
+        print(_hdr(i, step, ("(--site DIR only)",), "run"))
+        print(f"      skipped — {step.note}")
+        return True, ""
+    if step.name in SITE_STEPS and site is not None:
         argv = argv + ("--site", str(site))
     print(_hdr(i, step, argv, "check" if step.report_only else "run"))
     r = _run(argv, cwd=repo / step.cwd)
@@ -671,7 +693,8 @@ def main(argv: list[str] | None = None) -> int:
     # Refuse up front, before anything runs: an OpenSCAD step in range, or --previews.
     if not openscad_available():
         needing = [f"step {i} ({s.name})" for i, s in todo
-                   if s.needs_openscad and not (args.check and s.check_kind == "none")]
+                   if s.needs_openscad and not (args.check and s.check_kind == "none")
+                   and not (s.name in SITE_ONLY_STEPS and args.site is None)]
         if args.previews is not None:
             needing.append("--previews")
         if needing:

@@ -2291,7 +2291,7 @@
     {
      "id": "vision-doorbell",
      "name": "Vision · DOORBELL",
-     "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
+     "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default",
      "status": "released",
      "device": "canary-vision",
      "selects": {},
@@ -2320,6 +2320,10 @@
       {
        "name": "retainer",
        "file": "canary_vision_doorbell_retainer.stl"
+      },
+      {
+       "name": "plungers R+B",
+       "file": "canary_vision_doorbell_plunger.stl"
       }
      ]
     }
@@ -2329,7 +2333,8 @@
     "face",
     "plate",
     "gasket",
-    "retainer"
+    "retainer",
+    "plunger"
    ],
    "options": [
     {
@@ -2343,10 +2348,10 @@
     {
      "id": "opt_vent",
      "type": "bool",
-     "label": "GORE vent cluster on the face — ON by default: a sealed outdoor",
+     "label": "GORE vent cluster on the face — OFF since v0.9: the case breathes through",
      "consequence": "",
      "audience": "user",
-     "default": true
+     "default": false
     },
     {
      "id": "opt_led",
@@ -2384,6 +2389,14 @@
      "id": "opt_spk",
      "type": "bool",
      "label": "the speaker zone (grille, boss, cradle, its mid posts); off = the v0.7 body",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_svc",
+     "type": "bool",
+     "label": "the plungers, their seats, flex recesses, bores and guide bosses; off = a plain plate there",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -2445,14 +2458,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 251,
+   "engineering_param_count": 320,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 14,
-    "user_options": 12,
+    "options": 15,
+    "user_options": 13,
     "variant_axes": 1
    }
   },
@@ -3215,7 +3228,7 @@
   {
    "id": "watch_station",
    "scad": "canary_watch_station.scad",
-   "title": "SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "family": "canary-display-watch",
    "device_compat": [
     "canary-display-watch"
@@ -3228,7 +3241,7 @@
     {
      "id": "watch-station",
      "name": "Watch station",
-     "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.2 bore sized to the measured Ø43.0 disc, snap bezel (no fasteners), and a true cradle divot",
+     "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB, an end-stop under the XIAO's USB shell and a bay for the flex antenna, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block",
      "status": "in-development",
      "device": "canary-display-watch",
      "selects": {},
@@ -3278,7 +3291,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 69,
+   "engineering_param_count": 120,
    "alternatives": [
     "s3_touch169",
     "c6_display"

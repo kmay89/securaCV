@@ -272,6 +272,10 @@ inline void probe_bluetooth(ProbeResult* r, JsonObject metric) {
   any_active = any_active || bluetooth_channel::is_advertising();
   metric["channel_up"]         = bluetooth_channel::is_initialized();
   metric["channel_advertising"] = bluetooth_channel::is_advertising();
+  // The fresh-unit path brings the channel up with its scanners held until
+  // the join window clears (canary_wap.ino, ble_scanners_release_if_due):
+  // "up" then means the server and the setup door, not the presence scan.
+  metric["scanners_held"]      = bluetooth_channel::scanners_held();
   if (bluetooth_channel::init_fail_reason()[0]) {
     metric["init_fail_reason"] = bluetooth_channel::init_fail_reason();
   }

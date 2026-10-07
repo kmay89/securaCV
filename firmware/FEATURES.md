@@ -105,6 +105,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Battery power monitor (ADC + software inference, SoC, charge state) | ✅ | ✅ | ❌ | ➖ | ❌ | ➖ | ❌ |
 | Power policy engine (6-mode battery-driven feature gating) | ✅ | ✅ | ❌ | ➖ | ❌ | ➖ | ❌ |
 | First-time setup wizard (captive portal, device naming, NVS flag) | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ➖ | ❌ |
+| Bluetooth setup door — Improv Wi-Fi over BLE (`FEATURE_IMPROV`; open 30 min after power-on with no stored credentials, 60 s after a BOOT tap on Sense/Vision, never for a failing saved network; the WAP's claim ticket pairs the phone without the token riding BLE; host-tested, no bench pass; the flagship is a follow-up) | ❌ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ |
 | Heap monitoring + automatic feature degradation (3-level with hysteresis) | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ❌ |
 | SD card health tracking (write/error counters, space warnings) | ✅ | ✅ | ❌ | ➖ | ➖ | ➖ | ❌ |
 | SD endurance wear estimate (NVS lifetime counters, TBW wear %, replace-recommended latch on MQTT health) | ✅ | ❌ | ❌ | ➖ | ➖ | ➖ | ❌ |

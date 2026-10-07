@@ -70,7 +70,7 @@ int main() {
   {
     uint8_t p[FLEET_BEACON_PAYLOAD_LEN];
     const uint8_t flags = FLEET_BEACON_FLAG_MIC_MUTED | FLEET_BEACON_FLAG_DEGRADED |
-                          FLEET_BEACON_FLAG_ALERT;
+                          FLEET_BEACON_FLAG_ALERT | FLEET_BEACON_FLAG_SETUP_OPEN;
     fleet_beacon_build(p, flags, 42, 7, 0xBEEF, 0x12, 0x34);
 
     // Assemble the full 11-byte on-air blob (company id + payload).
@@ -82,6 +82,7 @@ int main() {
     FleetBeaconFields f{};
     CHECK(fleet_beacon_parse(mfg, sizeof(mfg), &f), "parse accepts a well-formed blob");
     CHECK(f.flags == flags,        "parsed flags match");
+    CHECK((f.flags & FLEET_BEACON_FLAG_SETUP_OPEN) == 0x20, "setup_open is bit5 (0x20), the Bluetooth setup door");
     CHECK(f.battery_pct == 42,     "parsed battery matches");
     CHECK(f.health_pct == 7,       "parsed health matches");
     CHECK(f.chain_lo16 == 0xBEEF,  "parsed chain_lo16 matches (LE)");

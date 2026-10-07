@@ -66,8 +66,21 @@ That's the entire hardware setup.
 
 ## 2 · Connect with your phone
 
-On your phone, open Wi-Fi settings. You'll see a new network named
-something like:
+**The one-tap way (an iPhone, firmware with the Bluetooth setup door).**
+For its first half hour after power-on a Canary with no Wi-Fi saved opens a
+small Bluetooth setup door — the open Improv Wi-Fi standard — and says so on
+the air. Open the SecuraCV iPhone app near it: a card appears within
+seconds, *A new Canary is nearby*. Tap it, pick your home Wi-Fi from the
+networks the Canary itself can see, type the password once, tap **Pair**
+when iOS asks, and the Canary answers with its own verdict. For a WAP that
+one tap also pairs the phone with the device (it reads a one-time claim over
+Bluetooth and trades it for the receipt on your Wi-Fi — the key itself never
+crosses the air). If the card never comes, or you have no iPhone, the setup
+network below is the same door with a key. *(New in 2026-10: host-tested,
+not yet tried on a bench device; the FULL build profile on a WAP.)*
+
+**The setup network (every phone, every firmware).** On your phone, open
+Wi-Fi settings. You'll see a new network named something like:
 
 > **SecuraCV-4dC2**
 
@@ -600,7 +613,10 @@ talk to your MQTT broker, and live inside Home Assistant — no everyday
 dashboard of their own. (A unit with no Wi-Fi saved — or one that keeps
 failing to join for a reason you can fix, like a changed password — raises
 its own `SecuraCV-XXXX` setup network so a phone can point it at your
-router; it keeps sensing the whole time.)
+router; it keeps sensing the whole time. A unit with no Wi-Fi saved *also*
+opens a Bluetooth setup door for its first half hour, which is the one-tap
+path below — a unit whose saved Wi-Fi is merely failing does not: that is
+the setup network's job, with its printed key.)
 
 ### Canary Vision
 
@@ -622,9 +638,14 @@ pio run -e canary-vision-xiao-c3 -t upload   # pick the env for your board
 
 Wi-Fi and the broker address come from `secrets/secrets.h` at build time,
 or from the flasher's fields (seeded into the chip's settings at flash
-time). If neither gave the board a network, it raises its own
-`SecuraCV-XXXX` setup network — join it from a phone and pick your Wi-Fi
-there. Flash once over USB; after that, updates arrive over the air.
+time). If neither gave the board a network, **lead with the card**: power
+it on near the SecuraCV iPhone app and tap *A new Canary is nearby* — pick
+your Wi-Fi from the list the Vision sees, type the password once, tap Pair
+when iOS asks (the door is open for 30 minutes after power-on; a short tap
+on BOOT opens it again for a minute later). No card, or no iPhone? It also
+raises its own `SecuraCV-XXXX` setup network — join it from a phone and
+pick your Wi-Fi there, with the key the Flasher printed. Flash once over
+USB; after that, updates arrive over the air.
 
 ### Canary Sense
 
@@ -645,9 +666,11 @@ make secrets          # copies secrets.example.h → secrets/secrets.h
 make upload           # default env; `make upload-wellbeing` for vitals
 ```
 
-Same deal as Vision: credentials from `secrets.h` or the flasher, the
-same `SecuraCV-XXXX` setup network if it has none (or can't join for a
-fixable reason), OTA after the first USB flash.
+Same deal as Vision: credentials from `secrets.h` or the flasher; with
+none, the *new Canary is nearby* card in the iPhone app for its first half
+hour (and for a minute after a short BOOT tap), the same `SecuraCV-XXXX`
+setup network as the fallback — and as the only door when a saved network
+can't be joined for a fixable reason — OTA after the first USB flash.
 
 ### How they show up
 
@@ -675,7 +698,7 @@ identical white boxes apart while you're labeling rooms.
 
 | | Canary (WAP) | Vision / Sense |
 |---|---|---|
-| First contact | Join its `SecuraCV-XXXX` network, open `canary.local` | Flash with your credentials over USB (or join its `SecuraCV-XXXX` setup network) |
+| First contact | The iPhone app's *new Canary is nearby* card (FULL profile; pairs the phone too), else join its `SecuraCV-XXXX` network and open `canary.local` | Flash with your credentials over USB, or the *new Canary is nearby* card, or join its `SecuraCV-XXXX` setup network |
 | Own dashboard | Yes (full web UI) | No — Home Assistant is the UI (setup wizard only, while unprovisioned) |
 | Wi-Fi setup | Captive portal / Settings → Wi-Fi | Flasher fields or `secrets/secrets.h`; setup network as the fallback |
 | Broker address | Set on the dashboard | Flasher fields or `secrets/secrets.h` |
@@ -794,6 +817,7 @@ for evidence, **export the chain before you factory-reset** —
 | Symptom | Likely cause |
 |---|---|
 | Phone can't see `SecuraCV-XXXX` | Power LED off → check USB cable. (Safe mode does *not* hide the network — the Wi-Fi AP keeps running.) |
+| The iPhone app shows no *new Canary is nearby* card | The Bluetooth setup door is open only for 30 minutes after power-on on a unit with no Wi-Fi saved — unplug and replug it. A unit whose saved Wi-Fi has stopped working keeps the door shut on purpose and raises `SecuraCV-XXXX` instead. A WAP needs the FULL build profile for the door. Nothing here is bench-tested yet; the setup network always works. |
 | Dashboard shows a yellow **Safe mode active** bar | The Canary *crashed* (firmware panic / watchdog / brownout) several times in a row and disabled optional peripherals (camera, SD, mesh, BLE, presence, GPS) to protect the core witness functions. Ordinary power cycling, unplugging, or pressing reset does **not** trigger this — only genuine crashes do. It auto-reboots once it has run stably for ~60 s. If a persistent fault keeps crashing it back into safe mode it stops retrying and stays put — fix the underlying issue (reseat the SD card, check power), then click **Retry full boot** on the bar. |
 | `canary.local` doesn't load | Some Android browsers don't resolve `.local` names. Use **http://192.168.4.1** instead — it works on every phone. |
 | Phone drops the Wi-Fi or warns "no internet" | This shouldn't happen on current firmware (the Canary answers the connectivity check to stay connected). If it does, update the firmware, then reconnect. |

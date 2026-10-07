@@ -249,6 +249,24 @@ namespace ble_provision {
 bool init(NimBLEServer*) { return true; }
 void tick() {}
 }  // namespace ble_provision
+// The Bluetooth setup door (ble_improv.h): the channel registers it in
+// init() and ticks it in update(); Opera reads its door for the advert set.
+// Shut here, like a WAP with credentials stored.
+#include "ble_improv.h"
+namespace ble_improv {
+bool init(NimBLEServer*) { return true; }
+void tick() {}
+bool setup_open() { return false; }
+const char* adv_name() { return ""; }
+void compose_scan_response(NimBLEAdvertisementData&) {}
+bool get_stats(Stats* out) {
+  if (!out) return false;
+  out->credentials_accepted = 0;
+  out->credentials_refused = 0;
+  out->claims_served = 0;
+  return true;
+}
+}  // namespace ble_improv
 namespace ble_log_export {
 bool init(NimBLEServer*) { return true; }
 void tick() {}
@@ -312,6 +330,8 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_bringup_ready = false;
   bc::g_saved_loaded = false;              // the F167 review: the loop task loads them at its first pass
   bc::g_bringup_worker_running = false;    // no sketch worker unless a test plays one
+  bc::g_scanners_held = false;             // the long path's init(), scanners started
+  bc::g_meta_hold_scanners = false;        // no hold pushed to the next init()
   bc::g_advertise_after_bringup = false;
   bc::g_init_fail_reason = "";
   bc::g_server = nullptr;                  // the stack's objects went with the stack
@@ -3943,6 +3963,64 @@ void test_the_paired_list_follows_the_bond_store_at_boot() {
   std::printf("PASS the_paired_list_follows_the_bond_store_at_boot\n");
 }
 
+// The setup door's security profile swap (set_setup_door) asks the stack
+// about EVERY link, not the connection card alone. The owner's bonded phone
+// connects first (the card is bonded): the door is held. A second peer
+// connects, unauthenticated, and the card moves to it: the door is STILL
+// held — the old check read the card and would have applied Just Works
+// under the bond, which is exactly the session the strict profile exists
+// for. The bonded link ends: the door is applied on the next ask, and shut
+// again on request.
+void test_the_door_is_refused_under_any_bonded_link() {
+  boot();
+  const char* kApplied = "BLE security profile applied: Just Works (no bond, no MITM, SC) — setup door open";
+  // The owner's phone connects and the stack reports its bond.
+  NimBLEConnInfo owner = link(7, 0xA7);
+  host_sim::server->peers = {7};
+  host_sim::server->link_up(owner);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), owner); });
+  loop_pass();
+  owner.encrypted = owner.authenticated = owner.bonded = true;
+  host_sim::server->link_up(owner);                           // the stack's record: bonded now
+  host_sim::store_bond(owner.getIdAddress(), /*irk=*/false);  // stored first (F189)
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(owner); });
+  loop_pass();
+  CHECK(bc::g_connection_handle == 7 && bc::g_connection.security == bc::SEC_BONDED);
+  CHECK(!bc::set_setup_door(true));                           // held: the card is bonded
+  CHECK(!bc::g_setup_door_open && health_says(kApplied) == 0);
+  // A second, unauthenticated peer connects: the card moves to it...
+  NimBLEConnInfo stranger = link(8, 0xB8);
+  host_sim::server->peers = {7, 8};
+  host_sim::server->link_up(stranger);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), stranger); });
+  loop_pass();
+  CHECK(bc::g_connection_handle == 8 && bc::g_connection.security == bc::SEC_NONE);
+  // ...and the door is still refused: the stack still holds the bonded link.
+  CHECK(!bc::set_setup_door(true));
+  CHECK(!bc::g_setup_door_open && health_says(kApplied) == 0);
+  // Asked again next pass, held again (no profile swap under the bond).
+  CHECK(!bc::set_setup_door(true));
+  CHECK(health_says(kApplied) == 0);
+  // The bonded link ends (the card stays on the stranger): applied now.
+  host_sim::server->peers = {8};
+  host_sim::server->link_down(7);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), owner, 0x13); });
+  loop_pass();
+  CHECK(bc::g_connection_handle == 8 && bc::g_connection.security == bc::SEC_NONE);
+  CHECK(bc::set_setup_door(true));
+  CHECK(bc::g_setup_door_open && health_says(kApplied) == 1);
+  // Shutting the door is never refused, whoever is connected.
+  host_sim::server->peers = {7, 8};
+  host_sim::server->link_up(owner);                           // the owner is back, bonded
+  CHECK(bc::set_setup_door(false));
+  CHECK(!bc::g_setup_door_open);
+  // And a link the stack holds but the card never recorded (its connect
+  // event dropped) still holds the door: the stack is asked, not the card.
+  CHECK(!bc::set_setup_door(true));
+  CHECK(!bc::g_setup_door_open && health_says(kApplied) == 1);
+  std::printf("PASS the_door_is_refused_under_any_bonded_link\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -4027,6 +4105,7 @@ const Test kTests[] = {
     {"the_paired_list_follows_the_bond_store_at_boot", test_the_paired_list_follows_the_bond_store_at_boot},
     {"a_full_cccd_store_evicts_no_bond", test_a_full_cccd_store_evicts_no_bond},
     {"the_bring_up_leaves_the_state_of_what_runs", test_the_bring_up_leaves_the_state_of_what_runs},
+    {"the_door_is_refused_under_any_bonded_link", test_the_door_is_refused_under_any_bonded_link},
 };
 
 }  // namespace bt_commands

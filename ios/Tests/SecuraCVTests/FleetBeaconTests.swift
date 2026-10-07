@@ -71,6 +71,7 @@ final class FleetBeaconTests: XCTestCase {
     // ── Round-trip build -> full-blob parse ──
     func testRoundTrip() {
         let flags = FleetBeacon.flagDegraded | FleetBeacon.flagAlert | FleetBeacon.flagMicMuted
+            | FleetBeacon.flagSetupOpen
         let blob = FleetBeacon.encode(flags: flags, batteryPct: 42, healthPct: 99,
                                       chainHeight: 0xBEEF, fpB0: 0x1A, fpB1: 0x2B)
         let p = FleetBeacon.parse(manufacturerData: blob)
@@ -83,6 +84,8 @@ final class FleetBeaconTests: XCTestCase {
 
         XCTAssertEqual(p?.degraded, true)
         XCTAssertEqual(p?.alertActive, true)
+        XCTAssertEqual(p?.setupOpen, true, "bit5 is the Bluetooth setup door")
+        XCTAssertEqual(FleetBeacon.flagSetupOpen, 0x20)
         XCTAssertEqual(p?.micMuted, true)
         XCTAssertEqual(p?.tamper, false, "a flag that wasn't set must stay false")
         XCTAssertEqual(p?.onWiFiSTA, false)

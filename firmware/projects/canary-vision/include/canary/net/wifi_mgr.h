@@ -22,6 +22,14 @@ bool wifi_connected();
 // False when the generic release placeholders are still active.
 bool wifi_configured();
 
+// The Bluetooth door's tap on a witness that already has a network: raise
+// the setup portal (the door's join path) for the tap's minute, and lower
+// it again when the door shuts without a join. Idempotent; the first-boot
+// and recovery portals are left alone.
+void wifi_open_tap_portal();
+void wifi_close_tap_portal();
+bool wifi_tap_portal_open();
+
 // Current RSSI in dBm (0 when not connected) — surfaced as an HA
 // diagnostic sensor via the status heartbeat.
 int wifi_rssi();

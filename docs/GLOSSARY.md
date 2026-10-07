@@ -144,6 +144,52 @@ Watch**, which is the bedside clock product below. A watch changes what you
 are *told*, never what is *kept*, and cannot reach backward (Invariant VI).
 → [watches (design)](design/watches.md)
 
+**Bluetooth setup door** — The way a brand-new Sense, Vision or WAP takes
+its Wi-Fi from a phone with one tap: the open Improv Wi-Fi standard over
+BLE (`firmware/common/network/improv_core.h`, the pure half; `improv_ble`,
+the NimBLE glue; the WAP's `ble_improv`), on an encrypted Just Works link
+with no bond kept. **When it is open**, in the header's own words: for a
+device nobody owns yet, and for an owner's own tap — never for a device
+that has an owner and a bad day. So: with **no stored credentials**, for
+**30 minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle
+or a factory reset re-arms it — a software restart does not, the spent time
+rides across it in RTC memory); or for **60 s after a short BOOT tap** on a
+Sense or Vision (the WAP has no tap door yet). A saved network that is
+*failing* raises the SoftAP recovery portal and **never** opens this door.
+While open it is bounded (3 s between credential writes, 10 attempts per
+open door, a 3-minute idle disconnect). The fleet beacon carries a *setup
+open* bit and a "Sense-AB12" name while it is; the iPhone app's "new Canary
+nearby" card (`Shared/NearbyCanary.swift`) is the other half; on a WAP the
+**claim ticket** (next entry) finishes the pairing. The `SecuraCV-XXXX`
+setup network stays underneath as the break-glass path with a key. Built
+and host-tested, not bench-tested.
+→ [magic pairing (design)](design/magic_pairing.md)
+
+**Claim ticket** — How a phone that just handed a WAP its Wi-Fi through
+the Bluetooth setup door ends up *paired* without the bearer token ever
+riding Bluetooth (`firmware/common/network/claim_ticket.h`). Once the join
+succeeds the WAP mints 16 random bytes (32 hex), readable **once** by the
+link that provisioned, within **180 s**, from its own companion GATT
+service; the phone spends it on the home LAN with
+`GET /api/provisioning-receipt?claim=<hex>`, which answers the same receipt
+the BOOT-tap route serves. Two factors: the encrypted link that
+provisioned **and** presence on the Wi-Fi the device just joined. A wrong
+guess burns it; an expired one is burned too; a claim that serves leaves
+the BOOT tap unspent. Not a bearer token, not a bond, not a pairing key.
+→ [magic pairing (design)](design/magic_pairing.md)
+
+**Magic pairing** — The whole one-tap path, named from the person's side:
+the iPhone app's "A new Canary is nearby" card → tap → pick a network from
+the ones the Canary itself sees → type the password once → iOS's one-tap
+pairing sheet → the Canary's own verdict — and, for a WAP, the claim ticket
+and the receipt over Wi-Fi, so it is paired from that one tap. The
+**Bluetooth setup door** is the device half, the **claim ticket** the
+WAP's second factor. Sense, Vision and the WAP's FULL profile today; the
+flagship `firmware/canary` build is a follow-up; a display keeps its glass
+QR. Nothing of it is bench-tested yet.
+→ [magic pairing (design)](design/magic_pairing.md),
+[the FAQ](FAQ.md#how-do-i-give-a-new-canary-my-wi-fi-do-i-have-to-type-a-setup-key)
+
 **Fleet** — **The word for a group of Canaries.** Not "flock" — that word is
 off-limits in all copy, identifiers, and comments (a company called Flock
 soured it); the only exception is the Unix `flock(2)` syscall. Rule:

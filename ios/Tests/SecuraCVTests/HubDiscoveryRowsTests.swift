@@ -46,6 +46,29 @@ final class HubDiscoveryRowsTests: XCTestCase {
         }
     }
 
+    func testInterfaceCopiesMergeWhicheverOrderTheyArrive() {
+        // The copy with the gated address and the copy with the metadata
+        // arrive in either order; the row carries both either way, and the
+        // first address that passed the gate is the one kept.
+        let bare = (service: "Home", txt: ["uuid": "abc", "base_url": "https://my-ha.duckdns.org"])
+        let full = (service: "Home", txt: ["uuid": "abc", "location_name": "Home", "version": "2026.10.1",
+                                           "internal_url": "http://192.168.1.20:8123",
+                                           "installation_type": "Home Assistant OS"])
+        for adverts in [[bare, full], [full, bare]] {
+            let rows = HubDiscoveryRows.rows(from: adverts)
+            XCTAssertEqual(rows.count, 1)
+            XCTAssertEqual(rows.first?.id, "abc")
+            XCTAssertEqual(rows.first?.name, "Home")
+            XCTAssertEqual(rows.first?.baseURL?.absoluteString, "http://192.168.1.20:8123")
+            XCTAssertEqual(rows.first?.version, "2026.10.1")
+            XCTAssertEqual(rows.first?.installationType, "Home Assistant OS")
+        }
+        let first = (service: "Home", txt: ["uuid": "abc", "internal_url": "http://192.168.1.20:8123"])
+        let second = (service: "Home", txt: ["uuid": "abc", "internal_url": "http://10.0.0.5:8123"])
+        XCTAssertEqual(HubDiscoveryRows.rows(from: [first, second]).first?.baseURL?.absoluteString,
+                       "http://192.168.1.20:8123")
+    }
+
     func testAnAddressOffThisNetworkIsNeverDialed() {
         let rows = HubDiscoveryRows.rows(from: [
             (service: "Far", txt: ["base_url": "https://my-ha.duckdns.org", "internal_url": "https://my-ha.duckdns.org"]),

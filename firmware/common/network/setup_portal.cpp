@@ -304,16 +304,16 @@ void handle_scan() {
   send_scan_json();
 }
 
-void handle_join() {
-  const String ssid = g->server.arg("ssid");
-  const String pass = g->server.arg("pass");
-  if (ssid.length() == 0 || ssid.length() > 32 || pass.length() > 64) {
-    g->server.send(400, "application/json",
-                   "{\"ok\":false,\"reason\":\"bad request\"}");
-    return;
-  }
-  snprintf(g->join_ssid, sizeof(g->join_ssid), "%s", ssid.c_str());
-  snprintf(g->join_pass, sizeof(g->join_pass), "%s", pass.c_str());
+// The one join path, whichever door the credentials came through — the
+// wizard's POST /join or Improv over BLE (setup_portal_submit_join). Both
+// land here so the Testing pass, the persist-only-on-success rule, the
+// linger and the teardown are the same bench-proven choreography.
+bool begin_join(const char* ssid, const char* pass, uint32_t now_ms) {
+  const size_t sl = ssid ? strlen(ssid) : 0;
+  const size_t pl = pass ? strlen(pass) : 0;
+  if (sl == 0 || sl > 32 || pl > 64) return false;
+  snprintf(g->join_ssid, sizeof(g->join_ssid), "%s", ssid);
+  snprintf(g->join_pass, sizeof(g->join_pass), "%s", pass ? pass : "");
   g->fail_reason[0] = '\0';
 
   // WAP lessons, in order: clear ANY scan handle — running OR completed-but-
@@ -331,7 +331,18 @@ void handle_join() {
   Serial.printf("[SETUP] Join requested: \"%s\"\n", g->join_ssid);
 
   g->bg_join = false;
-  enter(St::Testing, millis());
+  enter(St::Testing, now_ms);
+  return true;
+}
+
+void handle_join() {
+  const String ssid = g->server.arg("ssid");
+  const String pass = g->server.arg("pass");
+  if (!begin_join(ssid.c_str(), pass.c_str(), millis())) {
+    g->server.send(400, "application/json",
+                   "{\"ok\":false,\"reason\":\"bad request\"}");
+    return;
+  }
   g->server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -565,11 +576,13 @@ void setup_portal_loop(uint32_t now_ms) {
 
   switch (g->st) {
     case St::Waiting:
-      if (WiFi.status() == WL_CONNECTED) {
+      if (WiFi.status() == WL_CONNECTED && !g->cfg.keep_sta_link) {
         // A join begun BEFORE the portal opened completed underneath us
         // (recovery raise racing an in-flight association). Route it through
         // the Testing success path as a quiet rejoin — same logging, same
-        // short linger, same teardown.
+        // short linger, same teardown. (Not under a tap-raised portal: there
+        // the live link is the device's own network, deliberately kept, and
+        // reporting it would tear the portal down 1.6 s after it rose.)
         g->bg_join = true;
         enter(St::Testing, now_ms);
         break;
@@ -662,6 +675,36 @@ void setup_portal_loop(uint32_t now_ms) {
 bool setup_portal_active() { return g != nullptr; }
 
 bool setup_portal_join_in_flight() { return g != nullptr && g->st == St::Testing; }
+
+bool setup_portal_submit_join(const char* ssid, const char* pass, uint32_t now_ms) {
+  if (g == nullptr) return false;
+  // A wizard join already testing keeps the radio; a second request mid-test
+  // would yank it. The caller answers its door with "busy" (Improv: a refused
+  // write), and the verdict of the join in flight still arrives.
+  if (g->st == St::Testing) return false;
+  return begin_join(ssid, pass, now_ms);
+}
+
+SetupPortalJoin setup_portal_join_state() {
+  if (g == nullptr) return SetupPortalJoin::Idle;
+  switch (g->st) {
+    case St::Testing: return g->bg_join ? SetupPortalJoin::Idle : SetupPortalJoin::Connecting;
+    case St::Success: return SetupPortalJoin::Success;
+    case St::Fail:    return SetupPortalJoin::Fail;
+    default:          return SetupPortalJoin::Idle;
+  }
+}
+
+const char* setup_portal_fail_reason() {
+  if (g == nullptr || g->st != St::Fail) return "";
+  return g->fail_reason;
+}
+
+void setup_portal_note_acked(uint32_t now_ms) {
+  if (g == nullptr || g->st != St::Success || g->phone_acked) return;
+  g->phone_acked = true;
+  g->acked_at = now_ms;
+}
 
 bool setup_portal_take_joined() {
   const bool j = s_joined_latch;

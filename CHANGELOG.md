@@ -2,6 +2,209 @@
 
 ## [Unreleased]
 
+### Magic pairing follow-up: the first-boot window survives a software restart, a BOOT tap on an installed witness raises the portal its join needs, and the WAP's door is bounded by what its sketch actually does
+
+Follow-up to the Bluetooth setup door (below) from the adversarial review
+that was still running when it merged. Design: `docs/design/magic_pairing.md`.
+
+- **"Re-armed by a power cycle" now means a power cycle.** The door's
+  30-minute window was measured from each boot, and a never-provisioned WAP
+  restarts itself every 15 idle minutes (the first-boot wizard's abandonment
+  timer) — so its door was open for its whole unprovisioned life.
+  `improv::session_begin` takes the time earlier boots already spent
+  (`window_used_ms`; `session_window_used_ms` reads it back;
+  `a_software_restart_does_not_rearm_the_window`), the shared glue keeps it
+  in RTC-noinit memory across `ESP.restart()` and watchdog resets (cleared
+  by a power-on, a brownout, a power glitch, a reset asserted from the USB
+  or JTAG port — the Flasher's — or an unknown reset, and once credentials
+  land),
+  and the WAP sketch keeps its own record the same way
+  (`provisioning_logic::door_window_record_valid`, host-tested; zeroed by
+  Forget Wi-Fi on a unit that had credentials). Every command, join and claim at a WAP's door is a sign of
+  life for that wizard timer, so its restart cannot land mid-provisioning.
+  `firmware/LESSONS_LEARNED.md` has the entry.
+- **A BOOT tap on an installed Sense or Vision now provisions.** The door
+  opened, but its join path is the shared setup portal's and the portal was
+  down. The tap now raises the portal underneath the door for its minute
+  (`wifi_open_tap_portal`; `SetupPortalConfig::keep_sta_link` keeps the
+  saved link up under it instead of reading it as a join to report), and
+  the loop lowers it when the door shuts without a join
+  (`wifi_close_tap_portal`). The Sentinel carries the Sense's Wi-Fi manager.
+- **The write mailbox crosses cores with release/acquire**, in the shared
+  glue and the WAP's; so does the WAP's claim hand-over.
+- **WAP:** the claim is minted and armed *before* the Provisioned state and
+  the `WIFI_SETTINGS` result go out, so a phone that reads it the instant it
+  hears the verdict finds it; the post-join reboot into steady state is held
+  while a claim is outstanding (the claim promised 180 s, the reboot came at
+  120 s) and follows ~10 s after it settles; a fresh unit's BLE scanners stay
+  held until the SoftAP drops after a join or the five-minute max hold
+  (`provisioning_logic::ap_only_for_discovery`: the 45 s settle used to
+  release them under a wizard phone's handshake); a failed door join no
+  longer discards credentials another path persisted meanwhile
+  (`wifi_save_credentials` supersedes the pending door join), and a join
+  another path owns mints no claim for the door's link — it is told
+  NotAuthorized; the join path drops a leftover sweep under the scan-cache
+  lock, so the door's harvest never reads a freed result set;
+  `bluetooth_channel::set_setup_door` refuses Just Works while **any**
+  stack-held link is bonded, not only the connection card's
+  (`the_door_is_refused_under_any_bonded_link`); and `GET_WIFI_NETWORKS` is
+  implemented — the phone's picker streams the sketch's scan cache, the
+  same list the wizard's `GET /api/wifi/scan` serves, behind one mutex
+  (`CAP_SCAN_WIFI` advertised).
+- **Docs:** the FAQ no longer tells a WAP owner to "hold BOOT 5 s at
+  power-up" (that branch of the button handler is empty; no button gesture
+  factory-resets a WAP today) and names Forget Wi-Fi as the way to re-arm
+  the door; the design doc, the family READMEs and the glossary state the
+  restart rule, the tap-raised portal, the claim's one-read grace and the
+  WAP's actual button gestures.
+
+### Magic pairing: the Bluetooth setup door — a new Sense, Vision or WAP takes its Wi-Fi from the iPhone app with one tap, and a WAP is paired from that same tap without its token ever riding Bluetooth
+
+- **Firmware: Improv Wi-Fi over BLE, the open standard, as a second door
+  beside the shared setup portal.** `firmware/common/network/improv_core.h`
+  is the pure half (the standard's RPC frames — the spec's worked example
+  byte for byte — the 0x4677 service data, and the provisioning session;
+  its header comment is the canonical statement of the wire and the door
+  rules); `tests_host/test_improv_core.cpp` pins it. `improv_ble.{h,cpp}`
+  is the NimBLE glue, one file for both majors (2.x on the Sense, 1.4.x on
+  the Vision): the RPC command and result characteristics require an
+  encrypted link (LE Secure Connections, Just Works, no bond kept), checked
+  by the properties **and again in the write handler**, so the credentials
+  never cross the air in the clear and iOS shows one pairing sheet; the
+  state, error and capability bytes stay plain so a standard client sees
+  "awaiting authorization". The fleet beacon stays the primary advert;
+  while the door is open it carries `FLEET_BEACON_FLAG_SETUP_OPEN` (bit 5)
+  and a "Sense-AB12" name (the setup network's own suffix), the device is
+  connectable, and the scan response carries the Improv UUID + service
+  data. Door shut: today's bytes, not connectable. Credentials go through
+  `setup_portal_submit_join()`, the wizard's own Testing pass (persist only
+  on success, linger, teardown); `setup_portal_join_state()` /
+  `note_acked()` report back. The Canary lists the networks it sees (one
+  result per row, the empty result closes the list) so the phone never
+  needs location permission for the SSID.
+- **The door rule — the one that matters, and the one the first commit got
+  wrong.** The door is open *for a device nobody owns yet, and for an
+  owner's own tap — never for a device that has an owner and a bad day*.
+  With **no stored credentials** it opens on its own for a first-boot
+  window of **30 minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`;
+  a power cycle or a factory reset re-arms it; compile-time 0 = tap-only)
+  — not for life, so a unit forgotten in a drawer is not claimable from the
+  street. With credentials stored it is **shut whatever the network is
+  doing**: a saved network that stopped working raises the SoftAP recovery
+  portal (a door with a key printed on the unit) and does **not** open this
+  one — the first committed version took the portal's "I am up" as the
+  door's fact, which re-pointed an owned Canary at any phone in radio range
+  because its router rebooted. A short **BOOT tap** (`common/io/short_tap.h`,
+  ≥40 ms and <700 ms, `test_short_tap.cpp`; `BOOT_BUTTON_PIN` from the
+  board's `pins.h`) opens it for **60 s** on a Sense or Vision, with or
+  without credentials. **Bounds while open:** accepted `WIFI_SETTINGS`
+  writes at least 3 s apart; 10 attempts per open door, accepted or
+  malformed, then the door shuts until a tap or a power cycle; a connected
+  client silent for 3 minutes is dropped (never mid-join); ~20 s linger
+  after a successful join, then back to the beacon. Every parse failure is
+  the standard's one word, `InvalidRpc`.
+- **Sense and Vision:** `FEATURE_IMPROV` (default 1, vetoable per board),
+  begin after the beacon, tick beside it, identify blinks the LED, the
+  BOOT tap through `short_tap` (XIAO C6: GPIO9; the Vision's C3 hosts:
+  GPIO9; XIAO S3: GPIO0). The Sense lands at 90% of its OTA slot (the C6
+  controller's connection code is the cost of being connectable). The
+  Vision's C3 envs move to `min_spiffs.csv` (0x1E0000 app slots): the door
+  did not fit beside 87% of the old 0x140000 slot, and the Vision uses no
+  filesystem. A partition-table change cannot ship over OTA — a unit
+  flashed on `default.csv` needs one USB reflash.
+- **WAP:** `ble_improv` on the pairing channel's server (FULL profile,
+  `FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE`), with a staged copy
+  of the core (`check_improv_sync.sh`). The door is open only while no
+  credentials are stored and only for the first-boot window (never on a
+  standalone AP-only unit, never for a failing saved network; **no tap door
+  on the WAP in this version** — the 2 s BOOT hold stays the reset / receipt
+  gesture). While it is, `bluetooth_channel::set_setup_door` swaps the
+  security profile to Just Works (refused while a Numeric Comparison is
+  pending or an authenticated / bonded link is up; restored when the door
+  shuts) — the key it yields is unauthenticated, so the console, OTA,
+  witness export and the bonded rescue service still refuse it. Opera's
+  advert carries the setup bit, the "WAP-XXXX" name and the Improv scan
+  response while the door is open, and its own scan response otherwise. A
+  fresh unit with nobody on its SoftAP brings BLE up after 5 s instead of
+  the five-minute hold (`provisioning_logic::ble_fresh_unit_start_due`,
+  host-tested), holding the scanners on that path; the heap guard keeps
+  the last word.
+- **The claim ticket — the bearer token never rides Bluetooth.** The
+  first WAP version put the whole pairing receipt, token included, on the
+  Just Works link (encrypted, *not* authenticated), with a `base_url` at the
+  SoftAP address that is dead once the AP drops. Replaced by
+  `common/network/claim_ticket.h` (`test_claim_ticket.cpp`): once the join
+  the phone asked for succeeds, the WAP mints 16 random bytes (32 hex),
+  readable **once** by the link that provisioned, within **180 s**, from a
+  separate SecuraCV companion service (`8fc1cf00-…`, CLAIM `8fc1cf01-…`,
+  READ encrypted) as `{device_id, claim, claim_url, tls_cert_fp, sta_ip,
+  mdns_host, expires_in_s}`; the phone spends it on the home LAN with
+  `GET /api/provisioning-receipt?claim=<hex>`, which answers the same
+  receipt the BOOT-tap route serves, `base_url` at the `.local` name.
+  `provisioning_gate::receipt_decide` gained the fourth grant in a fixed
+  order — foreign Host → bearer → claim → BOOT tap
+  (`test_provisioning_gate.cpp`): a wrong guess burns the claim, an expired
+  one is burned too, a claim that serves leaves the tap unspent. Two
+  factors: the encrypted link that provisioned **and** presence on the
+  Wi-Fi the device just joined.
+- **iPhone app: the "new Canary nearby" card.** `Shared/ImprovWire.swift`
+  is the pure Swift twin of the codec, pinned by `ImprovWireTests` to the
+  firmware test's vectors; `Shared/NearbyCanary.swift` decides which
+  sightings qualify (an open door via the service data, the Improv UUID or
+  the beacon bit; the strict name grammar; paired-and-unambiguous
+  exclusion; dismissals; a 15 s window), `NearbyCanaryTests` pins it.
+  `BLEConsole` collects what the card reads per peripheral and hands one
+  peripheral to one `ImprovClient` at a time; the client discovers,
+  subscribes, reads state, scans networks, provisions and waits for the
+  verdict, identifies. For a WAP, `MagicPairPlan` (`MagicPairPlanTests`)
+  reads the claim over the same link and fetches the receipt over Wi-Fi,
+  pinning `tls_cert_fp`, so the WAP lands in `DeviceStore` paired; a 403
+  on the claim falls back to BOOT tap + "Add from receipt". The card sits
+  on Today, Fleet (comb and list) and leads the walkthrough for the three
+  families (`SetupGuide.hasBluetoothDoor`, `SetupGuideTests`; the typed key
+  and the bonded service become the "If no card appears" fallback; "not
+  accepting" names the BOOT tap and the power cycle). The household Wi-Fi
+  can be remembered (`Security/HouseholdWiFi.swift`: this phone's
+  device-only Keychain, never iCloud, written only after a Canary itself
+  said it joined, "Forget" on Set up), so the second Canary is two taps.
+- **Home Assistant and other clients:** the companion app and the
+  improv-wifi web SDK can provision Wi-Fi through the same door (it is the
+  standard); they get Wi-Fi only, no SecuraCV pairing (the companion
+  service is ours). An ESPHome Bluetooth proxy cannot complete the Just
+  Works pairing — expected, untested.
+- **Not in this change:** the flagship `firmware/canary` build (a
+  follow-up; its portal migration first). The displays keep their glass QR.
+- Docs: the canonical design (`docs/design/magic_pairing.md`: threat model,
+  byte layouts, the session table, per-family lifecycle, the iOS flow,
+  residual risks, the bench checklist, a code map), the BLE protocol's UUID
+  registry and a setup-door section, the glossary ("Bluetooth setup door",
+  "Claim ticket", "Magic pairing"), the FAQ (the Wi-Fi question and four
+  new ones), the Home Assistant guide's Improv via BLE note, device trust
+  (what a Just Works link may touch on a WAP), getting started (the card
+  first, the setup network as the fallback), the three family READMEs,
+  `ios/README.md`, the shared onboarding module's design note,
+  `firmware/FEATURES.md` (one parity row), `firmware/common/README.md`, and
+  three `firmware/LESSONS_LEARNED.md` entries dated 2026-10-07 (a jammed
+  router is not a claim window; the receipt's dead `base_url` and the token
+  that must not ride an unauthenticated link; one link, bounded).
+  CI-compiled (Sense and WAP also locally), host-tested, **not
+  bench-tested**: the radio, the pairing sheet's timing on NimBLE 1.4.x,
+  the BOOT GPIO per board, the C3/C6 radio coexistence of one BLE link
+  beside the SoftAP and a candidate join, the WAP's profile swap and the
+  once-only claim read are the bench items.
+
+### release(ios): 0.6.0 — the Set up walkthroughs reach TestFlight
+
+- `MARKETING_VERSION` 0.5.6 → 0.6.0 (`ios/project.yml`, the one place it
+  lives). Everything the iPhone app gained since `ios-v0.5.6`: the Set up
+  door with the hub walkthrough (finds Home Assistant over Bonjour, waits
+  for *ready*, creates the owner account, finishes the wizard pages, runs
+  the provisioning plan through the Supervisor proxy), the Canary
+  walkthrough (one path per family: the glass QR and the phone joining the
+  setup network itself, the Flasher-printed key, Bluetooth for a WAP), and
+  the "new Canary nearby" card above. No synced CloudKit record changed
+  since 0.5.6, so no schema promotion is owed before this one.
+
 ### The hub finishes without a wizard: the Flasher's first-boot watch waits for Home Assistant itself, self-setup is on by default and retries "not ready yet", and the iPhone app gains a Set up walkthrough that finishes a hub from the phone and gives a new Canary its Wi-Fi
 
 - **Flasher: the first-boot watch no longer fires at HAOS's landing page.**

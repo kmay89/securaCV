@@ -56,7 +56,7 @@ spec.loader.exec_module(rc)  # type: ignore[union-attr]
 
 ORDER = ["gen_cad_params", "lint_design_lang", "render", "gen_assembled_dims", "gen_hardware",
          "gen_assembly_poses", "gen_enclosures", "gen_figures", "gen_device_glbs", "setup_regen", "gen_flash",
-         "gen_builder_manifest", "gen_stamp", "gen_mark_svg"]
+         "gen_builder_manifest", "gen_print_files", "gen_stamp", "gen_mark_svg"]
 ENC = "docs/hardware/enclosure"
 CHECKS = {
     "gen_cad_params": ("python3", f"{ENC}/gen_cad_params.py", "--check"),
@@ -70,6 +70,7 @@ CHECKS = {
     "setup_regen": ("./setup.sh", "regen"),
     "gen_flash": ("python3", "canary-local/tools/gen_flash.py", "--check"),
     "gen_builder_manifest": ("python3", f"{ENC}/gen_builder_manifest.py", "--check"),
+    "gen_print_files": None,   # --site DIR only: skipped without it, like render's missing check form
     "gen_enclosures": ("python3", "canary-local/tools/gen_enclosures.py"),
     "gen_stamp": ("python3", f"{ENC}/gen_stamp.py", "--check"),
     "gen_mark_svg": ("python3", f"{ENC}/gen_mark_svg.py", "--check"),
@@ -201,7 +202,8 @@ class TheOrderIsTheDerivedOrder(unittest.TestCase):
             self.assertEqual(s.cmd, s.check)
             self.assertIn("--check", s.cmd)
         self.assertEqual([s.name for s in rc.STEPS if s.needs_openscad],
-                         ["render", "gen_assembled_dims", "gen_hardware", "gen_assembly_poses"])
+                         ["render", "gen_assembled_dims", "gen_hardware", "gen_assembly_poses",
+                          "gen_print_files"])
         self.assertEqual([s.name for s in rc.STEPS if s.conditional], ["setup_regen"])
 
     def test_every_command_names_a_file_in_the_tree(self):
@@ -304,9 +306,10 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
         code, out, rec = run_main(["--check"])
         self.assertEqual(code, 0)
         self.assertEqual(rec.argvs(), [list(CHECKS[n]) for n in ORDER if CHECKS[n] is not None])
-        self.assertIn("[3/14] render  check: (no check form)", out)
+        self.assertIn("[3/15] render  check: (no check form)", out)
+        self.assertIn("[13/15] gen_print_files  check: (--site DIR only)", out)
         self.assertIn("4 generated file(s) reproduce byte-for-byte", out)
-        self.assertIn("check complete — 14 step(s)", out)
+        self.assertIn("check complete — 15 step(s)", out)
         # the check forms run where CI runs them
         cwds = {a[0] if a[0] != "python3" and a[0] != "node" else a[1]: c for a, c in rec.calls}
         self.assertEqual(cwds["./setup.sh"], str(rc.REPO / "firmware/projects/canary-display"))
@@ -389,10 +392,13 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
             self.assertNotIn("ignored", out)
             self.assertEqual(argvs[1], ["python3", f"{ENC}/gen_builder_manifest.py",
                                         "--site", td, "--check"])
-            self.assertEqual([a for a in argvs if "--site" in a], [argvs[1]])
+            # --site reaches the two carry steps and no other
+            self.assertEqual(argvs[2], ["python3", f"{ENC}/gen_print_files.py",
+                                        "--site", td, "--check"])
+            self.assertEqual([a for a in argvs if "--site" in a], [argvs[1], argvs[2]])
             self.assertIn(f"gen_builder_manifest.py --site {td} --check", out)
             self.assertEqual(argvs[0], list(CHECKS["gen_flash"]))
-            self.assertEqual(argvs[2], list(CHECKS["gen_stamp"]))
+            self.assertEqual(argvs[3], list(CHECKS["gen_stamp"]))
         # without --site the check form is the bare one CI runs
         code, out, rec = run_main(["--check", "--from", "gen_builder_manifest"])
         self.assertEqual(rec.argvs()[0], list(CHECKS["gen_builder_manifest"]))
@@ -447,7 +453,7 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
         self.assertEqual(cwd_of[("./setup.sh", "regen")], str(rc.REPO / "firmware/projects/canary-display"))
         self.assertIn("STOPPED at step 10 (setup_regen) — not a failure", out)
         self.assertIn('Actions -> "Rebuild emulator dist (pinned emsdk)"', out)
-        self.assertIn("--from gen_flash   # steps 11–14", out)
+        self.assertIn("--from gen_flash   # steps 11–15", out)
         self.assertIn("fleet_figures.h, firmware/common/core/fleet_figures_art.h moved", out)
         self.assertIn("ZERO check runs", out)
         self.assertIn("action_required", out)
@@ -466,7 +472,7 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
             ["python3", f"{ENC}/gen_mark_svg.py", "--check"],
         ])
         self.assertIn("did not move", out)
-        self.assertIn("run complete — 14 step(s)", out)
+        self.assertIn("run complete — 15 step(s)", out)
 
     def test_from_skips_exactly_the_earlier_steps_and_site_reaches_the_builder(self):
         with tempfile.TemporaryDirectory() as td:
@@ -475,10 +481,11 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
             self.assertEqual(rec.argvs(), [
                 ["python3", "canary-local/tools/gen_flash.py"],
                 ["python3", f"{ENC}/gen_builder_manifest.py", "--site", td],
+                ["python3", f"{ENC}/gen_print_files.py", "--site", td],
                 ["python3", f"{ENC}/gen_stamp.py", "--check"],
                 ["python3", f"{ENC}/gen_mark_svg.py", "--check"],
             ])
-        self.assertIn("steps 11..14 of 14 (from gen_flash)", out)
+        self.assertIn("steps 11..15 of 15 (from gen_flash)", out)
 
     def test_render_log_is_judged_by_the_ci_grep(self):
         for bad in ("WARNING: variable board_w was assigned on line 154 but was overwritten",
@@ -510,7 +517,7 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
         self.assertEqual(rc.part_enum(rc.ENC / "canary_wap_enclosure.scad"),
                          ["base", "lid", "all", "coupon", "gasket", "shield", "tray"])
         self.assertEqual(rc.part_enum(rc.ENC / "canary_vision_doorbell.scad"),
-                         ["body", "face", "plate", "gasket", "retainer", "all"])
+                         ["body", "face", "plate", "gasket", "retainer", "plunger", "all"])
         self.assertIsNone(rc.part_enum(rc.ENC / "canary_board_lib.scad"))
         self.assertEqual(rc.preview_plan("canary_board_lib.scad"), [])
 
@@ -543,7 +550,7 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
         self.assertEqual(len(sense), 12)
         self.assertTrue(all(j.defines == {} for j in sense))
         doorbell = rc.preview_plan("canary_vision_doorbell.scad")
-        self.assertEqual(len(doorbell), 14)   # body, face, plate, plate wedge15, gasket, retainer (v0.7) x two views, + the wedge's
+        self.assertEqual(len(doorbell), 16)   # body, face, plate, plate wedge15, gasket, retainer (v0.7), plunger (v0.9) x two views, + the wedge's
         self.assertEqual({(j.label, j.defines.get("plate_wedge")) for j in doorbell if j.part == "plate"},
                          {("", None), ("wedge15", 15)})
 
@@ -698,9 +705,9 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
             self.assertEqual(argvs.index(renders[0]), 0)            # before gen_flash.py
             self.assertEqual(argvs[12], ["python3", "canary-local/tools/gen_flash.py"])
             self.assertIn("renders after step 1 (gen_cad_params), which --from gen_flash skips", out)
-            self.assertIn("[11/14] previews", out)
+            self.assertIn("[11/15] previews", out)
             self.assertIn("12 PNG(s) in", out)
-            self.assertIn("run complete — 4 step(s)", out)
+            self.assertIn("run complete — 5 step(s)", out)
         # a clean tree at the resume point says so — the previews were the
         # earlier run's to render — instead of saying nothing
         with tempfile.TemporaryDirectory() as td:

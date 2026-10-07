@@ -693,6 +693,17 @@ jobs:
           chmod +x firmware/scripts/check_fleet_beacon_sync.sh
           firmware/scripts/check_fleet_beacon_sync.sh
 
+      - name: Verify the Improv Wi-Fi core header copies are in sync
+        # improv_core.h is the pure half of the Bluetooth setup door — a
+        # byte-exact BLE contract the phone's Swift twin is pinned to.
+        # Canonical at firmware/common/network/ (compiled by the sense and
+        # vision envs, host-tested in firmware/tests_host) and committed
+        # byte-identical next to the canary-wap Arduino sketch, which has no
+        # -I into common/. This guard catches drift in either direction.
+        run: |
+          chmod +x firmware/scripts/check_improv_sync.sh
+          firmware/scripts/check_improv_sync.sh
+
       - name: Verify canary-sentinel's network/witness stack matches canary-sense's
         # canary-sentinel (F22 Phase 1a) carries canary-sense's src/net,
         # runtime config, diagnostics and witness key/chain plumbing as a

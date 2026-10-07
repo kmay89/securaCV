@@ -504,7 +504,7 @@
      "id": "vision-doorbell",
      "label": "Vision · DOORBELL",
      "set": "vision-doorbell",
-     "contents": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
+     "contents": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default",
      "status": "released",
      "parts": [
       {
@@ -530,6 +530,10 @@
       {
        "name": "retainer",
        "file": "canary_vision_doorbell_retainer.stl"
+      },
+      {
+       "name": "plungers R+B",
+       "file": "canary_vision_doorbell_plunger.stl"
       }
      ],
      "preview": "preview_doorbell.png"
@@ -940,7 +944,7 @@
      "id": "watch-station",
      "label": "Watch station",
      "set": "watch-station",
-     "contents": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.2 bore sized to the measured Ø43.0 disc, snap bezel (no fasteners), and a true cradle divot",
+     "contents": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB, an end-stop under the XIAO's USB shell and a bay for the flex antenna, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block",
      "status": "in-development",
      "parts": [
       {

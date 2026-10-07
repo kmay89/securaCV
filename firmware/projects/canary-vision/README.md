@@ -224,6 +224,47 @@ Discovery (retained):
 - `homeassistant/sensor/<device_id>/last_event/config`
 - `homeassistant/sensor/<device_id>/uptime/config`
 
+## The Bluetooth setup door (Improv Wi-Fi)
+
+A Vision with **no Wi-Fi saved** raises the shared setup portal and, on the
+beacon's NimBLE stack (1.4.x on this core-2 line), opens the open **Improv
+Wi-Fi** door (`common/network/improv_ble`, rules in `improv_core.h`,
+host-tested): the beacon carries `FLEET_BEACON_FLAG_SETUP_OPEN` and the name
+`Vision-AB12`, the scan response carries the Improv service, and a phone's
+one tap hands over the home Wi-Fi over an encrypted Just Works link (no bond
+kept; the write handler checks the encryption again) into the portal's own
+join path. Door shut: today's beacon bytes, not connectable.
+
+**When the door is open** — the header's rule: for a device nobody owns
+yet, and for an owner's own tap — never for a device that has an owner and
+a bad day:
+
+- **No credentials stored:** for **30 minutes after power-on**
+  (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or a factory reset re-arms
+  it; 0 = tap-only).
+- **A short BOOT tap** (`BOOT_BUTTON_PIN` from the host board's `pins.h`:
+  GPIO9 on the XIAO ESP32-C3 hosts, GPIO0 on the XIAO ESP32-S3;
+  `common/io/short_tap.h`: ≥40 ms, <700 ms): **60 s**, with or without
+  credentials. On a witness that already has a network the tap also raises
+  the `SecuraCV-XXXX` setup portal underneath the door for that minute (the
+  door's join path is the portal's; no quiet retry of the saved network
+  runs under it) and lowers it again when the door shuts without a join.
+- **Never because a saved network is failing** — that raises the SoftAP
+  recovery portal with its printed key, and nothing else.
+- Bounds while open: 3 s between accepted credential writes, 10 attempts
+  per open door (then shut until a tap or a power cycle), a 3-minute idle
+  disconnect, ~20 s linger after a join. The result carries an empty URL —
+  a Vision serves no page.
+
+`FEATURE_IMPROV` (default 1; `-DFEATURE_IMPROV=0` compiles it out). The C3
+envs moved to `min_spiffs.csv` for it (0x1E0000 app slots; the connectable
+server did not fit beside 87% of the old 0x140000 slot) — a partition-table
+change cannot ship over OTA, so a unit flashed on `default.csv` needs one
+USB reflash. Design and bench checklist: `docs/design/magic_pairing.md`.
+**CI-compiled and host-tested, not bench-tested** — the iOS pairing sheet's
+timing on NimBLE 1.4.x and the BOOT tap on each host board (the S3's GPIO0
+is a strapping pin) are the open items.
+
 ## Broker link: TLS (optional, fail-closed)
 
 The broker socket is plain by default — exactly what every unit shipped with
