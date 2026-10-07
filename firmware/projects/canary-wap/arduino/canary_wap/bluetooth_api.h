@@ -17,9 +17,10 @@
  * bluetooth_busy or 503 bluetooth_timeout (send_not_run). The one call a
  * handler still makes itself is bluetooth_channel::init() (bring_up), when
  * a tap that needs the stack finds it down (sweep F235: whatever the saved
- * setting says): it can block past the loop task's watchdog, so it never
- * runs there. firmware/scripts/check_wap_loop_commands.py holds every
- * handler here to that.
+ * setting says, once the sketch's boot bring-up has had its go): it can
+ * block past the loop task's watchdog, so it never runs there.
+ * firmware/scripts/check_wap_loop_commands.py holds every handler here to
+ * that.
  *
  * Sweep F138: the GET routes read what the loop task last published
  * (bluetooth_channel::read_status, read_settings, read_scan, read_paired),
@@ -246,8 +247,10 @@ inline esp_err_t send_not_run(httpd_req_t* req, loop_command_ring::Wait w) {
 // Start Advertising and Pair called it only when the published setting said
 // off, so on a device saved on (the default) whose boot bring-up failed or
 // the heap guard refused, every tap answered a failed start and none ever
-// brought the stack up. init() admits one caller at a time (the bring-up
-// worker may be inside it) and checks the heap guard again on every call.
+// brought the stack up. Those two leave the stack to the sketch's boot
+// bring-up until it has had its go (waits_for_boot_bring_up(), F235's
+// review). init() admits one caller at a time (the bring-up worker may be
+// inside it) and checks the heap guard again on every call.
 inline bool bring_up() {
   return bluetooth_channel::is_initialized() || bluetooth_channel::init();
 }
@@ -265,6 +268,36 @@ inline esp_err_t send_bring_up_refused(httpd_req_t* req, const char* fallback) {
     return send_error(req, bluetooth_channel::bring_up_starting_error());
   }
   return send_bt_error(req, fallback);
+}
+
+// Whether a Start Advertising or Pair tap leaves the stack to the sketch's
+// boot bring-up (sweep F235's review): the stack is down, that bring-up
+// has not had its go yet, and Bluetooth is saved on, so it will bring the
+// stack up. canary_wap.ino defers the whole Bluetooth bring-up out of the
+// provisioning join window (BLE duty starves a phone's WPA2 handshake to
+// the SoftAP; the stack's internal RAM goes to Wi-Fi first) and never runs
+// it in safe mode; its worker, on FULL, also runs NimBLEDevice::init()
+// itself (ble_manager::init()) when the channel's init() did not bring the
+// stack up, and init()'s latch holds only the channel's callers. A tap that
+// brought the stack up there undid the deferral, and one still running when
+// the worker started ran NimBLE's init beside the worker's. Saved off, the
+// tap brings the stack up as it did before F235 (as Enable and a settings
+// POST turning Bluetooth on do: pre-existing, sweep F111 and F144).
+inline bool waits_for_boot_bring_up() {
+  return !bluetooth_channel::is_initialized() && !bluetooth_channel::boot_bring_up_tried() &&
+         bluetooth_channel::read_enabled();
+}
+
+// A tap that leaves the stack to the boot bring-up, before anything is
+// submitted: 503, "still starting" while a bring-up holds init()'s latch
+// (the worker's) or has just brought the stack up, otherwise that the
+// stack starts after Wi-Fi setup (and not in safe mode). Before, such a
+// tap submitted to a stack that was down and answered a failed start.
+inline esp_err_t send_boot_bring_up_pending(httpd_req_t* req) {
+  httpd_resp_set_status(req, http_status_line(503));
+  return send_error(req, bluetooth_channel::bring_up_starting()
+                             ? bluetooth_channel::bring_up_starting_error()
+                             : bluetooth_channel::boot_bring_up_pending_error());
 }
 
 // POST /api/bluetooth/enable - Enable Bluetooth
@@ -294,10 +327,14 @@ inline esp_err_t handle_bluetooth_disable(httpd_req_t* req) {
 // POST /api/bluetooth/advertise/start - Start advertising
 inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
   // Auto-enable: clicking "Start Advertising" is unambiguous user intent.
-  // The stack comes up here whenever it is down, whatever the saved setting
-  // (sweep F235; before, only when the published setting said off, so a
-  // device saved on whose boot bring-up failed never came up); the enable
-  // itself is the command's.
+  // The stack comes up here whenever it is down (sweep F235; before, only
+  // when the published setting said off, so a device saved on whose boot
+  // bring-up failed never came up), except on a device saved on whose boot
+  // bring-up has not had its go: that bring-up will (F235's review). The
+  // enable itself is the command's.
+  if (waits_for_boot_bring_up()) {
+    return send_boot_bring_up_pending(req);
+  }
   if (!bring_up()) {
     return send_bring_up_refused(req, "Bluetooth init failed");
   }
@@ -414,7 +451,11 @@ inline esp_err_t handle_bluetooth_scan_clear(httpd_req_t* req) {
 
 // POST /api/bluetooth/pair/start - Start pairing mode
 inline esp_err_t handle_bluetooth_pair_start(httpd_req_t* req) {
-  // Auto-enable: same rationale as advertise/start (sweep F235 too).
+  // Auto-enable: same rationale as advertise/start (sweep F235 and its
+  // review too).
+  if (waits_for_boot_bring_up()) {
+    return send_boot_bring_up_pending(req);
+  }
   if (!bring_up()) {
     return send_bring_up_refused(req, "Bluetooth init failed");
   }

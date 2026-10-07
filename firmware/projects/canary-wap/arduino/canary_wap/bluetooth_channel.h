@@ -267,6 +267,23 @@ bool scanners_held();
 void bringup_worker_started();
 void bringup_worker_finished();
 
+// Any task (sweep F235's review): whether the sketch's boot bring-up has
+// had its go, set once bringup_worker_finished() has run (the worker's
+// result taken, or no worker could be created), whatever the outcome. The
+// sketch defers that bring-up out of the provisioning join window (BLE duty
+// starves a phone's WPA2 handshake to the SoftAP; the stack's internal RAM
+// goes to Wi-Fi first) and never runs it in safe mode, so false through the
+// join window, while the worker runs, and for the whole of a safe-mode
+// boot. The Start Advertising and Pair handlers bring nothing up before it
+// on a device saved on (bluetooth_api.h's waits_for_boot_bring_up()): that
+// bring-up will, and on FULL the worker's ble_manager::init() runs
+// NimBLEDevice::init() itself when the channel's init() did not bring the
+// stack up, beside any init() a tap left running.
+bool boot_bring_up_tried();
+inline const char* boot_bring_up_pending_error() {
+  return "Bluetooth has not started yet; it starts after Wi-Fi setup (never in safe mode)";
+}
+
 // Why the last init() attempt left the radio off ("" when initialized or
 // never attempted). Any task. Each refusal is written whole before its
 // address is published (sweep F167), and a text a caller holds is not
@@ -490,8 +507,11 @@ BluetoothSettings read_settings();
 // from it whether to bring the stack up before they submit, which left a
 // device saved on whose boot bring-up failed or was refused with the stack
 // down for good; whether Bluetooth is saved on says nothing about whether
-// the stack is up, and since sweep F235 no handler decides a bring-up from
-// it (bring_up() asks is_initialized()).
+// the stack is up, and since sweep F235 bring_up() asks is_initialized().
+// They read it only to leave the stack to the sketch's boot bring-up before
+// it has had its go, on a device saved on (bluetooth_api.h's
+// waits_for_boot_bring_up(), F235's review); before the first pass it
+// answers the boot default, on.
 bool read_enabled();
 // Any task. The scan list and the paired devices the last pass published.
 void read_scan(ScanView* out);

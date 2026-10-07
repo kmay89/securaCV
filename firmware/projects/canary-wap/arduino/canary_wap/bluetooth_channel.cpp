@@ -225,6 +225,11 @@ static bool g_saved_loaded = false;
 // finishes.
 static bool g_bringup_worker_running = false;
 static bool g_advertise_after_bringup = false;
+// Any task's (sweep F235's review): the sketch's boot bring-up has had its
+// go. Set once, by bringup_worker_finished() on the loop task (release);
+// boot_bring_up_tried() reads it (acquire). Never cleared: the sketch runs
+// its bring-up once per boot.
+static bool g_boot_bring_up_tried = false;
 
 // Scan results
 static ScannedDevice g_scanned_devices[MAX_SCANNED_DEVICES];
@@ -1772,6 +1777,12 @@ void bringup_worker_finished() {
     g_advertise_after_bringup = false;
     start_advertising();
   }
+  __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);
+}
+
+// Any task (sweep F235's review): see g_boot_bring_up_tried.
+bool boot_bring_up_tried() {
+  return __atomic_load_n(&g_boot_bring_up_tried, __ATOMIC_ACQUIRE);
 }
 
 [[maybe_unused]] static void deinit() {
