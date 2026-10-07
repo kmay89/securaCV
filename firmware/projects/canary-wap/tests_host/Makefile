@@ -1112,7 +1112,9 @@ clean: clean-chirp-commands
 # and signed suppress votes. A chirp is suppressed once its distinct voters
 # are more than half of the nearby rows and at least three, counting votes
 # heard within 120 s of its arrival: at every table size from 3 to 32 rows
-# (from 18 on it never was), a repeated voter, votes across the window.
+# (from 18 on it never was), a repeated voter, votes across the window, a
+# second copy of one chirp, votes that do not verify, and one log line for
+# each suppressed chirp.
 CHIRP_SUP_BIN = test_chirp_suppress_wap
 CHIRP_SUP_SRC = test_chirp_suppress_wap.cpp
 
