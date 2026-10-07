@@ -48,7 +48,7 @@ final class SetupPortalTests: XCTestCase {
         XCTAssertEqual(SetupPortal.parseWiFiQR("WIFI:T:WPA;S:SecuraCV-A1B2;P:k3yk3yk3;;"),
                        SetupPortal.WiFiQR(ssid: "SecuraCV-A1B2", password: "k3yk3yk3", hidden: false))
         // Escapes, order, case and a hidden flag.
-        XCTAssertEqual(SetupPortal.parseWiFiQR("wifi:s:My\;Net\\:1;p:a\\\\b;h:true;t:WPA;;"),
+        XCTAssertEqual(SetupPortal.parseWiFiQR("wifi:s:My\\;Net\\:1;p:a\\\\b;h:true;t:WPA;;"),
                        SetupPortal.WiFiQR(ssid: "My;Net:1", password: "a\\b", hidden: true))
         XCTAssertNil(SetupPortal.parseWiFiQR("SCV1|s=x|p=y"))
         XCTAssertNil(SetupPortal.parseWiFiQR("WIFI:T:WPA;P:nossid;;"))
