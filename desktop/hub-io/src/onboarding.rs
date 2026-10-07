@@ -729,17 +729,29 @@ mod tests {
         // HAOS's landing page answers 200 with HTML for minutes before Core
         // exists — the exact answer that used to read as "up".
         assert_eq!(
-            classify_probe(Some((200, "<!DOCTYPE html><title>Preparing Home Assistant</title>"))),
+            classify_probe(Some((
+                200,
+                "<!DOCTYPE html><title>Preparing Home Assistant</title>"
+            ))),
             HubProbe::Preparing
         );
         // A port that is open with nothing behind it yet.
         assert_eq!(classify_probe(Some((404, ""))), HubProbe::Preparing);
-        assert_eq!(classify_probe(Some((502, "Bad Gateway"))), HubProbe::Preparing);
+        assert_eq!(
+            classify_probe(Some((502, "Bad Gateway"))),
+            HubProbe::Preparing
+        );
         // JSON, but not the step list.
-        assert_eq!(classify_probe(Some((200, r#"{"message":"API running."}"#))), HubProbe::Preparing);
+        assert_eq!(
+            classify_probe(Some((200, r#"{"message":"API running."}"#))),
+            HubProbe::Preparing
+        );
         // Core answering its own onboarding API — before setup…
         assert_eq!(
-            classify_probe(Some((200, r#"[{"step":"user","done":false},{"step":"core_config","done":false}]"#))),
+            classify_probe(Some((
+                200,
+                r#"[{"step":"user","done":false},{"step":"core_config","done":false}]"#
+            ))),
             HubProbe::Ready
         );
         // …and after it (the list is served either way; the companions
