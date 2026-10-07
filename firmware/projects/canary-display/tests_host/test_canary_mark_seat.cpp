@@ -462,6 +462,126 @@ static void test_hop_owns_y() {
   fake_esp::script().clear();
 }
 
+// 8. A temperament reaches the live breath, and waits out a hop (F244). The
+//    Character picker calls canary_mark_temperament() on a bird already on
+//    stage, and the mark re-applies the breath at once so the new pace shows
+//    without a mood change: the CURRENT mood's raw half-period, rescaled.
+//    F244's guard skips that re-apply while a hop flies (a breath started
+//    under the hop would fight it for y); hop_done's breath takes the new
+//    scalar instead. With no hop running the guard must let the re-apply
+//    through, or the picker's live rescale is switched off and nothing
+//    else notices. The breath is the bird's one anim that repeats forever.
+static const lv_anim_t* the_breath(lv_obj_t* bird) {
+  const lv_anim_t* a = lv_anim_get(bird, nullptr);
+  return a != nullptr && a->repeat_cnt == LV_ANIM_REPEAT_INFINITE ? a : nullptr;
+}
+
+static void check_breath(const char* what, lv_obj_t* bird, uint32_t want_ms) {
+  const lv_anim_t* b = the_breath(bird);
+  CHECK(anims_on(bird) == 1 && b != nullptr,
+        "%s: one breath on the bird (%d anims, %s)", what, anims_on(bird),
+        b != nullptr ? "a breath" : "no breath");
+  if (b == nullptr) return;
+  CHECK(b->time == want_ms && b->playback_time == want_ms,
+        "%s: the breath's half-period is %u/%u ms, want %u", what,
+        (unsigned)b->time, (unsigned)b->playback_time, (unsigned)want_ms);
+  std::printf("  %-42s one breath, %u ms each way\n", what, (unsigned)b->time);
+}
+
+static void test_temperament_reaches_breath() {
+  std::printf("a temperament reaches the live breath, and waits out a hop (F244):\n");
+  struct {
+    const char* what;
+    CanaryMood mood;
+    uint32_t raw_ms;
+  } const moods[] = {
+      {"Idle, no hop", CanaryMood::Idle, 1400},
+      {"Worried, no hop", CanaryMood::Worried, 1100},
+      {"Asleep, no hop", CanaryMood::Asleep, 2800},
+  };
+  for (const auto& m : moods) {
+    lv_obj_t* content = nullptr;
+    lv_obj_t* scr = glass(320, 180, &content);
+    lv_obj_t* bird = canary_mark_create(content, 93);
+    lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+    canary_mark_mood(m.mood);
+    watch(scr, bird, 1000);  // mid-breath
+    check_breath(m.what, bird, m.raw_ms);
+    canary_mark_temperament(1.2f, 1.0f, 1.0f);
+    char label[64];
+    std::snprintf(label, sizeof label, "%s, temperament 1.2", m.what);
+    check_breath(label, bird, m.raw_ms * 12 / 10);
+    canary_mark_temperament(1.0f, 1.0f, 1.0f);
+    std::snprintf(label, sizeof label, "%s, temperament back to 1.0", m.what);
+    check_breath(label, bird, m.raw_ms);
+    lv_obj_del(scr);
+  }
+  {
+    // Mid-hop: the hop keeps the bird's y, and the breath it hands back
+    // carries the new scalar.
+    lv_obj_t* content = nullptr;
+    lv_obj_t* scr = glass(320, 180, &content);
+    lv_obj_t* bird = canary_mark_create(content, 93);
+    lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+    canary_mark_mood(CanaryMood::Idle);
+    watch(scr, bird, 1000);
+    fake_lvgl::run(8000);  // past the Tilt/Startle ration
+    canary_mark_react(CanaryReact::Joyful);
+    canary_mark_temperament(1.2f, 1.0f, 1.0f);
+    CHECK(anims_on(bird) == 1 && the_breath(bird) == nullptr,
+          "a temperament mid-hop: %d anims on the bird, %s, want the hop alone",
+          anims_on(bird), the_breath(bird) != nullptr ? "a breath first" : "no breath");
+    watch(scr, bird, 600);  // the hop lands
+    check_breath("Joyful, temperament 1.2 mid-hop, landed", bird, 1680);
+    canary_mark_temperament(1.0f, 1.0f, 1.0f);
+    lv_obj_del(scr);
+  }
+}
+
+// 9. A hop leaves its host's animation running (F222, F244). start_hop()
+//    stops the breath by its exec callback; stopping every anim on the bird
+//    instead would end the nightlight's tumble slide at the frame the
+//    tumble's Startle hops (the native runtime_turn.sh catches that as an
+//    unseated companion; this catches it on the host).
+static void test_hop_leaves_host_slide() {
+  std::printf("a hop leaves its host's slide running:\n");
+  struct {
+    const char* what;
+    void (*start)(lv_timer_t*);
+  } const hops[] = {
+      {"Startle", react_startle},
+      {"Joyful", react_joyful},
+      {"idle flourish: the hop", roll_hop},
+  };
+  for (const auto& h : hops) {
+    lv_obj_t* content = nullptr;
+    lv_obj_t* scr = glass(320, 180, &content);
+    const size_t before = fake_lvgl::timers().size();
+    lv_obj_t* bird = canary_mark_create(content, 93);
+    lv_timer_t* flourish = flourish_timer(before);
+    lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+    canary_mark_mood(CanaryMood::Idle);
+    watch(scr, bird, 1000);
+    fake_lvgl::run(8000);  // past the Tilt/Startle ration
+    slide(bird, host_tx, 160);
+    CHECK(flourish != nullptr, "%s: the flourish timer", h.what);
+    if (flourish == nullptr) {
+      lv_obj_del(scr);
+      continue;
+    }
+    h.start(flourish);
+    CHECK(anims_on(bird, host_tx) == 1,
+          "%s: the hop stopped the host's slide (%d running)", h.what,
+          anims_on(bird, host_tx));
+    CHECK(anims_on(bird, nullptr, host_tx) == 1,
+          "%s: the mark runs one motion on the bird beside the slide (%d)", h.what,
+          anims_on(bird, nullptr, host_tx));
+    std::printf("  %-42s the slide runs on under the hop\n", h.what);
+    lv_obj_del(scr);
+  }
+  fake_esp::script().clear();
+}
+
 int main() {
   test_first_mood_before_layout();
   test_first_mood_after_layout();
@@ -470,6 +590,8 @@ int main() {
   test_new_bird_new_base();
   test_host_animation_survives_moods();
   test_hop_owns_y();
+  test_temperament_reaches_breath();
+  test_hop_leaves_host_slide();
   if (g_fail == 0) {
     std::printf("ALL CANARY MARK SEAT TESTS PASSED\n");
     return 0;
