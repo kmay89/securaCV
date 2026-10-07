@@ -226,7 +226,7 @@
   {
    "id": "vision-doorbell",
    "name": "Vision · DOORBELL",
-   "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
+   "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default",
    "status": "released",
    "device": "canary-vision",
    "preview": "preview_doorbell.png",
@@ -266,6 +266,12 @@
      "file": "canary_vision_doorbell_retainer.stl",
      "print_note": "prints flat as modeled — no supports by design",
      "material": "PETG / ASA (PLA indoors)"
+    },
+    {
+     "name": "plungers R+B",
+     "file": "canary_vision_doorbell_plunger.stl",
+     "print_note": "TPU 90–95A, 0.2 mm layers (the web is exactly three), 100% infill, slow, heads down, no supports — the doorbell's two service buttons (R and B) in ONE print on a sprue; cut it with scissors, never tear; one dimple = R, two = B",
+     "material": "TPU 90–95A"
     }
    ],
    "scad": "canary_vision_doorbell.scad"
@@ -3138,9 +3144,10 @@
         "plate",
         "gasket",
         "retainer",
+        "plunger",
         "all"
        ],
-       "comment": "// (the speaker has no printed part of its own)"
+       "comment": "// (the speaker has no printed part of its own; \"plunger\" is the R + B pair on a sprue, TPU)"
       }
      ]
     },
@@ -3169,8 +3176,8 @@
       },
       {
        "name": "opt_vent",
-       "default": "true",
-       "comment": "GORE vent cluster on the face — ON by default: a sealed outdoor"
+       "default": "false",
+       "comment": "GORE vent cluster on the face — OFF since v0.9: the case breathes through"
       },
       {
        "name": "opt_led",
@@ -3208,7 +3215,8 @@
       },
       {
        "name": "e_vent",
-       "default": "_pre(opt_vent,   true)"
+       "default": "_pre(opt_vent,   false)",
+       "comment": "the released build breathes through its weep (field_ratings.md)"
       },
       {
        "name": "e_led",
@@ -3487,7 +3495,145 @@
       {
        "name": "grille_pitch",
        "default": "2.6",
-       "comment": "ring-to-ring spacing of the grille holes"
+       "comment": "hole spacing: one hole per grille_pitch² of face (sunflower), or ring-to-ring (rings)"
+      },
+      {
+       "name": "grille_pattern",
+       "default": "sunflower",
+       "enum": [
+        "sunflower",
+        "rings"
+       ],
+       "comment": "sunflower = a Fermat spiral at the golden angle (v0.9); rings = the v0.8 grille"
+      },
+      {
+       "name": "opt_svc",
+       "default": "true",
+       "comment": "the plungers, their seats, flex recesses, bores and guide bosses; off = a plain plate there"
+      },
+      {
+       "name": "svc_head_d",
+       "default": "9.6",
+       "comment": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)"
+      },
+      {
+       "name": "svc_rim_t",
+       "default": "0.8",
+       "comment": "the head's RIM, the ring that sits on the seat's floor round the flex recess (four 0.2 layers)"
+      },
+      {
+       "name": "svc_web_t",
+       "default": "0.6",
+       "comment": "the head's WEB inside the rim, the membrane that flexes when you press (three 0.2 layers — never a 0.3 layer)"
+      },
+      {
+       "name": "svc_flex_d",
+       "default": "7.0",
+       "comment": "the flex recess under the web: the web spans it, and its floor is the overtravel stop"
+      },
+      {
+       "name": "svc_flex_depth",
+       "default": "2.2",
+       "comment": "how deep that recess goes past the seat's floor — the stroke the web can make before the stop"
+      },
+      {
+       "name": "svc_stem_d",
+       "default": "3.2",
+       "comment": "the stem, a sliding fit in its bore"
+      },
+      {
+       "name": "svc_root_r",
+       "default": "0.4",
+       "comment": "the fillet at the stem's root into the web (a sharp inside corner is where TPU tears)"
+      },
+      {
+       "name": "svc_tip_d",
+       "default": "1.8",
+       "comment": "the tip that lands on the switch cap (1.6 across; the USB-C shell stands 0.7 beside it)"
+      },
+      {
+       "name": "svc_tip_h",
+       "default": "0.8",
+       "comment": "the tip's height off the stem's end (its end is chamfered: no edge on the cap)"
+      },
+      {
+       "name": "svc_rest",
+       "default": "0.3",
+       "comment": "the tip's rest gap over the cap at the NEAREST the stack can sit — never pressed by the case"
+      },
+      {
+       "name": "svc_dy",
+       "default": "0.4",
+       "comment": "the tip sits this far up the cap from its center (the guide boss then clears the plug's head)"
+      },
+      {
+       "name": "svc_bead",
+       "default": "0.4",
+       "comment": "the retaining bead's stand past the stem: a flat-ish shoulder toward the head, a lead cone toward the tip"
+      },
+      {
+       "name": "svc_bead_clear",
+       "default": "0.6",
+       "comment": "the shoulder rests this far past the guide boss's top (TPU prints long or short by a layer or two)"
+      },
+      {
+       "name": "svc_boss_wall",
+       "default": "1.0",
+       "comment": "the guide boss's wall on the plate's inner face"
+      },
+      {
+       "name": "svc_tol",
+       "default": "0.25",
+       "comment": "TPU prints fat: the seat and the bore clear the part by this a side"
+      },
+      {
+       "name": "svc_proud",
+       "default": "0.2",
+       "comment": "the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its"
+      },
+      {
+       "name": "svc_pip_d",
+       "default": "2.0",
+       "comment": "the dimples in the head's face that say which is which: one = R, two = B"
+      },
+      {
+       "name": "svc_pip_depth",
+       "default": "0.4"
+      },
+      {
+       "name": "svc_sprue_t",
+       "default": "0.4",
+       "comment": "the sprue between the pair's rims: two layers, cut with scissors (TPU does not snap)"
+      },
+      {
+       "name": "xiao_rst_side",
+       "default": "-1",
+       "comment": "MEASURE: the side (±X, this file's frame) whose switch is R — the vendor model has no silkscreen;"
+      },
+      {
+       "name": "xiao_btn_dx",
+       "default": "5.93",
+       "comment": "the switches ± across the XIAO from its centerline — brd_xiao_btn_dx(), the vendor GLB"
+      },
+      {
+       "name": "xiao_btn_dy",
+       "default": "1.61",
+       "comment": "... inboard of the USB end along its length — brd_xiao_btn_dy()"
+      },
+      {
+       "name": "xiao_btn_h",
+       "default": "0.75",
+       "comment": "the cap's top over the PCB face — brd_xiao_btn_h()"
+      },
+      {
+       "name": "xiao_btn_travel",
+       "default": "0.25",
+       "comment": "a 2.6 x 1.6 SMD tactile switch's travel to actuation"
+      },
+      {
+       "name": "xiao_usb_overhang",
+       "default": "1.5",
+       "comment": "the USB-C shell past the XIAO's end — brd_xiao_usb_overhang()"
       }
      ]
     },
@@ -3637,9 +3783,9 @@
        "comment": "air between a board post's relief flat and the XIAO's inner end, where it passes the post"
       },
       {
-       "name": "clip_flex",
+       "name": "cradle_fence_gap",
        "default": "1.0",
-       "comment": "free air behind each -X clip beam for its flex (the battery fence stands past it)"
+       "comment": "air between the cradle's -X wall and the battery fence: the bay stays its own tray,"
       },
       {
        "name": "opt_batt",
@@ -4074,44 +4220,49 @@
        "comment": "magnet pocket center Y, from the module center"
       },
       {
-       "name": "clip_w",
-       "default": "6.0",
-       "comment": "board-clip tab width along the board edge — snap_boardclip default"
-      },
-      {
-       "name": "clip_t",
+       "name": "cradle_wall_t",
        "default": "1.0",
-       "comment": "clip beam thickness — snap_boardclip default; the lib asserts its insertion strain"
+       "comment": "each side wall's thickness (the band the cavity's width reads — the old clip beam's)"
       },
       {
-       "name": "clip_hook",
-       "default": "0.5",
-       "comment": "lip overhang over the board top — snap_boardclip default"
-      },
-      {
-       "name": "clip_hook_h",
-       "default": "1.2",
-       "comment": "lip + 45° lead-in height above the board top — snap_boardclip default"
-      },
-      {
-       "name": "clip_clear",
+       "name": "cradle_clear",
        "default": "0.25",
-       "comment": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
+       "comment": "wall face to the module's edge (a fit)"
       },
       {
-       "name": "clip_root_r",
-       "default": "0.6",
-       "comment": "45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root"
+       "name": "cradle_xiao_gap",
+       "default": "0.4",
+       "comment": "the ledge's inner face off the XIAO's edge, where the XIAO hangs under the module"
       },
       {
-       "name": "clip_dy_hi",
-       "default": "8.5",
-       "comment": "the upper clip pair's center, from the module's center (+ toward the camera): below the CSI"
+       "name": "cradle_ledge_in",
+       "default": "3.0",
+       "comment": "past the XIAO's end the ledge reaches this far in under the module (the old rails' width)"
       },
       {
-       "name": "clip_dy_lo",
-       "default": "-10.0",
-       "comment": "the lower clip pair's center, from the module's center (over the XIAO's half)"
+       "name": "cradle_foot",
+       "default": "1.6",
+       "comment": "the solid band along the plate under the vent windows"
+      },
+      {
+       "name": "cradle_lintel",
+       "default": "1.5",
+       "comment": "the solid band under the module's seat over the windows (the ledge's own thickness there)"
+      },
+      {
+       "name": "cradle_win_w",
+       "default": "6.0",
+       "comment": "a vent window's nominal width along the module; the count is what fits, the windows then share the band"
+      },
+      {
+       "name": "cradle_rib_w",
+       "default": "2.4",
+       "comment": "the least rib between two windows (the structure is the ribs)"
+      },
+      {
+       "name": "cradle_stop_t",
+       "default": "1.6",
+       "comment": "the stop under the module's bottom edge (mounted, its weight goes here) — on a buttress"
       },
       {
        "name": "csi_len",
@@ -4169,8 +4320,9 @@
        "default": "e_seal"
       },
       {
-       "name": "clip_stack",
-       "default": "clip_clear + clip_t"
+       "name": "cradle_band",
+       "default": "cradle_clear + cradle_wall_t",
+       "comment": "the module's edge to the wall's outer face"
       },
       {
        "name": "vm_standoff",
@@ -4339,7 +4491,7 @@
       },
       {
        "name": "hx_p",
-       "default": "vm_w/2 + clip_stack + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2)"
+       "default": "vm_w/2 + cradle_band + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2)"
       },
       {
        "name": "vm_cx",
@@ -4522,24 +4674,227 @@
        "comment": "a post is relieved to this flat in that band"
       },
       {
+       "name": "xiao_face_hi_z",
+       "default": "z_vm_top - pcb_t - stack_sock_h",
+       "comment": "the component face, the measurement to that face"
+      },
+      {
+       "name": "xiao_face_lo_z",
+       "default": "xiao_face_hi_z - brd_t(\"xiao\")",
+       "comment": "...or to the socket face: the component face a PCB nearer the plate"
+      },
+      {
+       "name": "svc_cap_lo_z",
+       "default": "xiao_face_lo_z - xiao_btn_h",
+       "comment": "the cap's top at the nearest the stack can sit"
+      },
+      {
+       "name": "svc_cap_hi_z",
+       "default": "xiao_face_hi_z - xiao_btn_h"
+      },
+      {
+       "name": "xiao_usb_end_y",
+       "default": "vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang",
+       "comment": "the XIAO's board end (the USB-C shell stands past it)"
+      },
+      {
+       "name": "svc_cy",
+       "default": "xiao_usb_end_y + xiao_btn_dy + svc_dy",
+       "comment": "the plunger axis along Y"
+      },
+      {
+       "name": "svc_bore_d",
+       "default": "svc_stem_d + 2*svc_tol",
+       "comment": "the stem slides"
+      },
+      {
+       "name": "svc_seat_d",
+       "default": "svc_head_d + 2*svc_tol",
+       "comment": "the head's seat on the back face"
+      },
+      {
+       "name": "svc_seat_depth",
+       "default": "svc_rim_t - svc_proud",
+       "comment": "the rim's floor: the head stands svc_proud of the back face, for the slab to squeeze"
+      },
+      {
+       "name": "svc_rim_id",
+       "default": "svc_flex_d + 1.0",
+       "comment": "the rim overlaps the recess's edge by 0.5 a side"
+      },
+      {
+       "name": "svc_web_span",
+       "default": "(svc_flex_d - svc_stem_d)/2 - svc_root_r",
+       "comment": "the web's free width, recess edge to the stem's fillet"
+      },
+      {
+       "name": "svc_boss_od",
+       "default": "svc_bore_d + 2*svc_boss_wall"
+      },
+      {
+       "name": "svc_boss_top",
+       "default": "xiao_face_lo_z - port_usbc_shell_h() - 0.5",
+       "comment": "the guide boss stops under the USB-C shell's lowest edge, stack at the near end of its band"
+      },
+      {
+       "name": "svc_boss_h",
+       "default": "svc_boss_top - floor_t"
+      },
+      {
+       "name": "svc_tip_z",
+       "default": "svc_cap_lo_z - svc_rest",
+       "comment": "the tip's end at rest"
+      },
+      {
+       "name": "svc_head_z",
+       "default": "floor_t - plate_t - svc_proud",
+       "comment": "the head's OUTER face, proud of the back face"
+      },
+      {
+       "name": "svc_floor_z",
+       "default": "svc_head_z + svc_rim_t",
+       "comment": "the seat's floor (the rim's inner face)"
+      },
+      {
+       "name": "svc_recess_z",
+       "default": "svc_floor_z + svc_flex_depth",
+       "comment": "the flex recess's floor: the overtravel stop, and where the bore starts"
+      },
+      {
+       "name": "svc_guide_len",
+       "default": "(floor_t - svc_recess_z) + svc_boss_h",
+       "comment": "the bore that guides the stem, recess floor to boss top"
+      },
+      {
+       "name": "svc_stem_len",
+       "default": "svc_tip_z - svc_tip_h - (svc_head_z + svc_web_t)",
+       "comment": "the stem, web to tip"
+      },
+      {
+       "name": "svc_bead_z",
+       "default": "svc_boss_top + svc_bead_clear - svc_head_z",
+       "comment": "the shoulder's foot, in the plunger's own frame (head's face = 0)"
+      },
+      {
+       "name": "svc_travel_max",
+       "default": "svc_flex_depth - (svc_rim_t - svc_web_t)",
+       "comment": "the web bottoms on the recess floor here"
+      },
+      {
+       "name": "svc_stroke_lo",
+       "default": "svc_rest + xiao_btn_travel",
+       "comment": "the press that clicks, stack at the near end"
+      },
+      {
+       "name": "svc_stroke_hi",
+       "default": "(svc_cap_hi_z - svc_tip_z) + xiao_btn_travel",
+       "comment": "...and at the far end"
+      },
+      {
        "name": "vm_scr_len",
        "default": "vm_screws ? max(concat([0], [for (l = hw_std_lens()) if (l - pcb_t + 1.0 <= z_vm_top - pcb_t - xiao_hi_z - 0.3) l])) : 0"
       },
       {
        "name": "csi_y0",
-       "default": "vm_cy + vm_l/2 - csi_len"
+       "default": "vm_cy + vm_l/2 - csi_len",
+       "comment": "the CSI connector's near end (full width; nothing of the cradle stands over the module's top face)"
       },
       {
        "name": "hw_thread",
        "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       },
       {
-       "name": "guide_up",
-       "default": "lid_headroom + 0.8"
+       "name": "cradle_up",
+       "default": "lid_headroom + 0.8",
+       "comment": "the walls stand this far over the module's top face"
       },
       {
-       "name": "guide_top",
-       "default": "floor_t + vm_standoff + pcb_t + guide_up"
+       "name": "cradle_top",
+       "default": "z_vm_top + cradle_up"
+      },
+      {
+       "name": "cradle_x_in",
+       "default": "xiao_w/2 + cradle_xiao_gap",
+       "comment": "the ledge's inner face, from the module's centerline (over the XIAO)"
+      },
+      {
+       "name": "cradle_x_wall",
+       "default": "vm_w/2 + cradle_clear",
+       "comment": "the wall's inner face"
+      },
+      {
+       "name": "cradle_x_out",
+       "default": "vm_w/2 + cradle_band",
+       "comment": "the wall's outer face"
+      },
+      {
+       "name": "cradle_x_up",
+       "default": "vm_w/2 - cradle_ledge_in",
+       "comment": "the ledge's inner face past the XIAO's end"
+      },
+      {
+       "name": "cradle_x_stop",
+       "default": "7.0",
+       "comment": "the stop's inboard face: clear of the plug's head (12 wide) by 1.0"
+      },
+      {
+       "name": "cradle_y_lo",
+       "default": "vm_cy - vm_l/2",
+       "comment": "the module's bottom edge"
+      },
+      {
+       "name": "cradle_y_hi",
+       "default": "vm_cy + vm_l/2",
+       "comment": "...and its top edge: the walls end there, open for the ribbon"
+      },
+      {
+       "name": "cradle_y_stop",
+       "default": "cradle_y_lo - cradle_clear",
+       "comment": "the stop's face"
+      },
+      {
+       "name": "cradle_y_up",
+       "default": "post_flat_y",
+       "comment": "the wide ledge starts where the XIAO's end has passed (the post's relief flat)"
+      },
+      {
+       "name": "cradle_z_seat",
+       "default": "floor_t + vm_standoff",
+       "comment": "the module's seat"
+      },
+      {
+       "name": "cradle_rib_post_lo",
+       "default": "vm_cy + vm_hole_dy - vm_post_d/2 - 0.3",
+       "comment": "the post rib: solid 0.3 either side of a board post"
+      },
+      {
+       "name": "cradle_rib_post_hi",
+       "default": "vm_cy + vm_hole_dy + vm_post_d/2 + 0.3"
+      },
+      {
+       "name": "cradle_win_bands",
+       "default": "[[cradle_y_stop, cradle_rib_post_lo], [cradle_rib_post_hi, cradle_y_hi - 1.2]]"
+      },
+      {
+       "name": "cradle_win_list",
+       "default": "[for (b = cradle_win_bands) each cradle_wins(b[0], b[1])]"
+      },
+      {
+       "name": "grille_r_max",
+       "default": "spk_cone_d/2 - grille_hole_d/2 - 0.2"
+      },
+      {
+       "name": "grille_s",
+       "default": "grille_pitch / sqrt(PI)"
+      },
+      {
+       "name": "grille_n",
+       "default": "floor(pow(grille_r_max / grille_s, 2))"
+      },
+      {
+       "name": "svc_sprue_gap",
+       "default": "1.0",
+       "comment": "the heads' edges apart; the sprue bridges it"
       },
       {
        "name": "collar_h",
