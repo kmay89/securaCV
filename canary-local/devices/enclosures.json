@@ -226,7 +226,7 @@
   {
    "id": "vision-doorbell",
    "name": "Vision · DOORBELL",
-   "for": "Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
+   "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
    "status": "released",
    "device": "canary-vision",
    "preview": "preview_doorbell.png",
@@ -3123,7 +3123,7 @@
    ]
   },
   "canary_vision_doorbell.scad": {
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.7",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.8",
    "groups": [
     {
      "name": "What to render",
@@ -3139,7 +3139,8 @@
         "gasket",
         "retainer",
         "all"
-       ]
+       ],
+       "comment": "// (the speaker has no printed part of its own)"
       }
      ]
     },
@@ -3422,6 +3423,71 @@
        "name": "btn_wire_room",
        "default": "5.0",
        "comment": "air behind the button's terminals for the solder joints and the wire bends toward the"
+      },
+      {
+       "name": "opt_spk",
+       "default": "true",
+       "comment": "the speaker zone (grille, boss, cradle, its mid posts); off = the v0.7 body"
+      },
+      {
+       "name": "spk_d",
+       "default": "36.0",
+       "comment": "the driver's outside Ø (its frame or rim)"
+      },
+      {
+       "name": "spk_h",
+       "default": "6.0",
+       "comment": "the driver's depth, rim to magnet back"
+      },
+      {
+       "name": "spk_rim_t",
+       "default": "1.2",
+       "comment": "the frame's rim thickness the boss holds (a mylar driver's plastic frame)"
+      },
+      {
+       "name": "spk_mag_d",
+       "default": "20.0",
+       "comment": "the magnet's Ø — the cradle bears here, through a foam pad"
+      },
+      {
+       "name": "spk_cone_d",
+       "default": "30.0",
+       "comment": "the grille's Ø over the cone (the holes stay inside the surround)"
+      },
+      {
+       "name": "spk_gap",
+       "default": "2.0",
+       "comment": "air round the driver to its zone's ends"
+      },
+      {
+       "name": "spk_gasket_t",
+       "default": "1.0",
+       "comment": "the foam ring between the driver's rim and the face (compressed from ~1.5)"
+      },
+      {
+       "name": "spk_pad_t",
+       "default": "1.0",
+       "comment": "the foam pad between the magnet and the cradle"
+      },
+      {
+       "name": "spk_boss_wall",
+       "default": "1.5",
+       "comment": "the boss ring's wall on the face's inner side"
+      },
+      {
+       "name": "spk_mesh_t",
+       "default": "0.3",
+       "comment": "the acoustic mesh patch's seat depth on the inner face (the patch is 0.2–0.3)"
+      },
+      {
+       "name": "grille_hole_d",
+       "default": "1.0",
+       "comment": "grille holes — the outdoor insect rule (<= 1.0)"
+      },
+      {
+       "name": "grille_pitch",
+       "default": "2.6",
+       "comment": "ring-to-ring spacing of the grille holes"
       }
      ]
     },
@@ -4197,21 +4263,31 @@
        "default": "max(zone_top, board_clear + pd + 1.0)"
       },
       {
+       "name": "zone_spk",
+       "default": "opt_spk ? spk_d + 2*spk_gap : 0",
+       "comment": "the speaker zone, between the button and the well"
+      },
+      {
        "name": "inner_y",
-       "default": "zone_btn + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top_eff"
+       "default": "zone_btn + zone_spk + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top_eff"
       },
       {
        "name": "btn_cy",
        "default": "-inner_y/2 + zone_btn/2"
       },
       {
+       "name": "spk_cy",
+       "default": "-inner_y/2 + zone_btn + zone_spk/2",
+       "comment": "the driver's axis (on the face's centerline)"
+      },
+      {
        "name": "well_cy",
-       "default": "-inner_y/2 + zone_btn + zone_well/2",
+       "default": "-inner_y/2 + zone_btn + zone_spk + zone_well/2",
        "comment": "cable well / USB plug space"
       },
       {
        "name": "vm_cy",
-       "default": "-inner_y/2 + zone_btn + zone_well + board_clear + vm_l/2"
+       "default": "-inner_y/2 + zone_btn + zone_spk + zone_well + board_clear + vm_l/2"
       },
       {
        "name": "cam_cy",
@@ -4249,6 +4325,19 @@
        "comment": "post center to post center: the cell and its clearance"
       },
       {
+       "name": "spk_post_dy",
+       "default": "16.0"
+      },
+      {
+       "name": "spk_mid_ys",
+       "default": "opt_spk ? [spk_cy - spk_post_dy, spk_cy + spk_post_dy] : []"
+      },
+      {
+       "name": "bay_ys",
+       "default": "opt_batt ? [batt_cy - batt_pitch_y/2, batt_cy + batt_pitch_y/2] : []",
+       "comment": "the bay's end-stop posts"
+      },
+      {
        "name": "hx_p",
        "default": "vm_w/2 + clip_stack + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2)"
       },
@@ -4271,6 +4360,37 @@
        "name": "fence_x",
        "default": "-inner_x/2 + bay_wall_gap + batt_t + batt_clear",
        "comment": "the bay fence's -X face (the cell side)"
+      },
+      {
+       "name": "spk_boss_h",
+       "default": "spk_gasket_t + spk_rim_t + 0.5",
+       "comment": "the boss ring stands this far into the cavity"
+      },
+      {
+       "name": "spk_boss_id",
+       "default": "spk_d + 2*tol_slide"
+      },
+      {
+       "name": "spk_boss_od",
+       "default": "spk_boss_id + 2*spk_boss_wall"
+      },
+      {
+       "name": "spk_mesh_d",
+       "default": "spk_cone_d + 4.0",
+       "comment": "the mesh patch, inside the boss"
+      },
+      {
+       "name": "cradle_h",
+       "default": "cav_d - (spk_gasket_t + spk_h + spk_pad_t)",
+       "comment": "plate face -> the pad under the magnet"
+      },
+      {
+       "name": "cradle_od",
+       "default": "spk_mag_d + 2.0"
+      },
+      {
+       "name": "cradle_id",
+       "default": "max(4.0, spk_mag_d - 6.0)"
       },
       {
        "name": "out_x",
@@ -4372,8 +4492,12 @@
        "default": "cav_extra + (cav_d - (vm_standoff + pcb_t + vm_front_h + cav_extra))"
       },
       {
+       "name": "lug_mid_eff",
+       "default": "opt_spk ? exit_cy - 16.0 : lug_mid_y"
+      },
+      {
        "name": "lug_ys",
-       "default": "[lug_y, lug_mid_y, -lug_y]"
+       "default": "[lug_y, lug_mid_eff, -lug_y]"
       },
       {
        "name": "vm_post_xy",

@@ -11,7 +11,7 @@
    "case": "Vision doorbell",
    "items": [
     {
-     "qty": 8,
+     "qty": 12,
      "kind": "screw",
      "spec": "M2 pan x 10 self-tap",
      "text": "M2 pan x 10 self-tap (plate to the post ends)"
@@ -35,7 +35,7 @@
      "text": "M2 x 10 security screw, Torx pin/tri-wing, self-tap (wall plate collar into the shell's boss)"
     },
     {
-     "qty": 8,
+     "qty": 12,
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
@@ -81,6 +81,36 @@
      "kind": "other",
      "spec": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)",
      "text": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "Ø36 x 6 sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)",
+     "text": "Ø36 x 6 sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)"
+    },
+    {
+     "qty": 1,
+     "kind": "button",
+     "spec": "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)",
+     "text": "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "foam gasket ring Ø36 / Ø30 x 1.5 (driver rim to the face)",
+     "text": "foam gasket ring Ø36 / Ø30 x 1.5 (driver rim to the face)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "foam pad Ø20 x 1.5 (magnet to the cradle)",
+     "text": "foam pad Ø20 x 1.5 (magnet to the cradle)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille)",
+     "text": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille)"
     },
     {
      "qty": 1,
@@ -106,12 +136,12 @@
    },
    "bom": {
     "ORG1": {
-     "bom": 8,
-     "echo": 8
+     "bom": 12,
+     "echo": 12
     },
     "SCR5": {
-     "bom": 14,
-     "echo": 14
+     "bom": 18,
+     "echo": 18
     },
     "SCR7": {
      "bom": 4,
@@ -133,7 +163,7 @@
    "case": "Vision doorbell",
    "items": [
     {
-     "qty": 8,
+     "qty": 12,
      "kind": "screw",
      "spec": "M2 pan x 10 machine (into the inserts)",
      "text": "M2 pan x 10 machine (into the inserts) (plate to the post ends)"
@@ -157,13 +187,13 @@
      "text": "M2 x 10 security screw, Torx pin/tri-wing, machine thread (into the boss insert) (wall plate collar into the shell's boss)"
     },
     {
-     "qty": 9,
+     "qty": 13,
      "kind": "insert",
      "spec": "M2 heat-set insert 3.5 OD x 4",
      "text": "M2 heat-set insert 3.5 OD x 4 — the +1 seats in the security boss"
     },
     {
-     "qty": 8,
+     "qty": 12,
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
@@ -213,6 +243,36 @@
     {
      "qty": 1,
      "kind": "other",
+     "spec": "Ø36 x 6 sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)",
+     "text": "Ø36 x 6 sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)"
+    },
+    {
+     "qty": 1,
+     "kind": "button",
+     "spec": "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)",
+     "text": "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "foam gasket ring Ø36 / Ø30 x 1.5 (driver rim to the face)",
+     "text": "foam gasket ring Ø36 / Ø30 x 1.5 (driver rim to the face)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "foam pad Ø20 x 1.5 (magnet to the cradle)",
+     "text": "foam pad Ø20 x 1.5 (magnet to the cradle)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
+     "spec": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille)",
+     "text": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille)"
+    },
+    {
+     "qty": 1,
+     "kind": "other",
      "spec": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs",
      "text": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs"
     },
@@ -226,7 +286,7 @@
    "bom": {
     "INS1": {
      "bom": 5,
-     "echo": 9
+     "echo": 13
     }
    }
   },
@@ -384,7 +444,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 14,
+     "bom": 18,
      "echo": 8
     },
     "SCR6": {
@@ -451,7 +511,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 14,
+     "bom": 18,
      "echo": 8
     },
     "SCR6": {
@@ -609,11 +669,11 @@
    },
    "bom": {
     "ORG1": {
-     "bom": 8,
+     "bom": 12,
      "echo": 6
     },
     "SCR5": {
-     "bom": 14,
+     "bom": 18,
      "echo": 10
     },
     "SCR6": {
@@ -912,7 +972,7 @@
    "set": "doorbell+inserts",
    "csv": "bom_canary_vision.csv",
    "what": "short INS1",
-   "detail": "bom_canary_vision.csv INS1 qty 5 < 9 the CAD echoes"
+   "detail": "bom_canary_vision.csv INS1 qty 5 < 13 the CAD echoes"
   },
   {
    "set": "sense",
