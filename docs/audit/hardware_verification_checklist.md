@@ -1730,7 +1730,8 @@ the chirp at `suppress_votes_needed(nearby_count)`, more than half of the
 nearby rows and at least three, `mesh_network.h`). Host-tested
 (`tests_host/test_chirp_suppress_wap.cpp`: real signed beacons, a signed
 witness and signed votes at every table size from 3 to 32 rows, a repeated
-voter, votes across the window). Compile is CI's. Owner: U1.
+voter, votes across the window, a second copy of one chirp, votes that do
+not verify, one log line per suppressed chirp). Compile is CI's. Owner: U1.
 
 - [ ] **Three of four nearby rows suppress a chirp; a late third vote does not**
   - Setup: five canary-wap boards, A to E, in ESP-NOW range of A, Chirp on
@@ -1743,6 +1744,7 @@ voter, votes across the window). Compile is CI's. Owner: U1.
     three minutes after it went out.
   - Expected: B's chirp reads `"suppressed":false` on A after the first two
     dismissals and `true` after the third, and leaves the list within 30 s;
+    A's `GET /api/logs` holds one `chirp: community-suppressed` line for it;
     C's chirp still reads `"suppressed":false` after all three (the third
     vote came after the window; before F233 it counted). Tables of 18 rows
     and more, where no chirp could be suppressed before F233, take nineteen
