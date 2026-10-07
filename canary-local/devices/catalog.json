@@ -3220,7 +3220,7 @@
     {
      "id": "watch-station",
      "name": "Watch station",
-     "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB and an end-stop under the XIAO's USB shell, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block",
+     "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB, an end-stop under the XIAO's USB shell and a bay for the flex antenna, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block",
      "status": "in-development",
      "device": "canary-display-watch",
      "selects": {},
@@ -3270,7 +3270,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 93,
+   "engineering_param_count": 101,
    "alternatives": [
     "s3_touch169",
     "c6_display"

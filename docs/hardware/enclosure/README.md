@@ -157,7 +157,7 @@ measurements welcome.
 
 | Design | Status | Preview | Source |
 |--------|--------|---------|--------|
-| **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB and an end-stop under the XIAO's USB shell, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block | drum + snap bezel + 25° open cradle | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
+| **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB, an end-stop under the XIAO's USB shell and a bay for the flex antenna, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block | drum + snap bezel + 25° open cradle | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
 | **Sense bedside stand** — weighted base + tilted stalk with the three-prong hinge head (wellbeing channel, ≤1.5 m) | ballast pockets, GoPro-compatible head | <img src="./preview_dev_stand.png" width="230"> | [`canary_sense_stand.scad`](./canary_sense_stand.scad) |
 | **Sense in-wall plate** — single-gang flush mount; the faceplate IS the radome (check local code; low-voltage box only) | one-piece plate, 6-32 slots | <img src="./preview_dev_gang.png" width="230"> | [`canary_sense_gang.scad`](./canary_sense_gang.scad) |
 | **Outlet cradle** — collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary | measure your adapter | <img src="./preview_dev_cradle.png" width="230"> | [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) |
@@ -209,7 +209,15 @@ real stack stood 4 mm proud.
 3. Pin the **XIAO ESP32-S3** into the Round Display's back socket. It rides
    the display's own two 7-pin headers — component side away from the
    display, USB-C at the disc edge. Zero wiring: the display's charger, RTC
-   and microSD come along.
+   and microSD come along. Click the kit's **flex antenna** pigtail onto the
+   XIAO's U.FL (on the component side, at the end away from the USB), then
+   stick the antenna tag into its **bay**: the shallow curved recess in the
+   bore wall, 135° round from the USB slot, a millimeter up from the floor.
+   Its adhesive lands on the recess, the tag curves with the wall, and the
+   pigtail runs across the floor and up the wall under it — nothing above
+   the bay reaches the tag (the display's back parts sweep past it with
+   0.2 mm to spare, which the file asserts). Measure your tag (`ant_l`,
+   `ant_w`) if it is not the kit's 2.4G A-02.
 4. Lower the stack into the **bore**, display face up, USB-C aligned to the
    side slot. The Ø43.0 disc passes the Ø45.9 rim counterbore, funnels into
    the Ø44.4 bore and lands on the **three seat pads** — the PCB's back face

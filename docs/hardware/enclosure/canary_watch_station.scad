@@ -35,6 +35,13 @@
 //      overmold + 0.4 a side, centered on the shell the measured stack puts
 //      it at (usb_cz) — and the bridge rule holds by construction (the flat
 //      between the round ends is w − h, under the 7.0 ceiling).
+//    · the ANTENNA had nowhere to go. The XIAO's flex antenna (Seeed's 2.4G
+//      A-02 tag on a U.FL pigtail) rode loose beside the disc. The drum's
+//      thick lower wall now carries an ANTENNA BAY: a shallow curved recess
+//      in the free sector between the seat pads, where the tag's adhesive
+//      lands and its face stays clear of the display's back parts; the
+//      pigtail runs across the floor from the U.FL (on the XIAO's floor-facing
+//      side, at the end away from the USB).
 //    · the STAND was a block. A 63 x 52 x 55 hull with a divot bored into
 //      it: half a spool for a desk puck. It is now an OPEN CRADLE: a 220°
 //      saddle around the drum's barrel on a reclined seat plate, a push-out
@@ -95,6 +102,14 @@ tilt     = 25;       // stand recline from vertical  // [15:5:35]
    sectors the vendor GLB leaves clear of the display's back parts */
 seat_w    = 4.0;     // pad chord width
 seat_bite = 2.3;     // pad reach under the PCB rim, inward from the disc edge (the back parts start 0.2 further in)
+
+/* [Antenna bay] — the XIAO's flex antenna stuck to the bore wall, in the
+   free sector between two seat pads, below the display's back parts */
+ant_l    = 23.0;     // MEASURE: the flex antenna tag's length (the 2.4G A-02 in the XIAO ESP32-S3 kit), along the wall
+ant_w    = 11.0;     // MEASURE: the tag's width, up the wall
+ant_t    = 1.0;      // tag + its adhesive, what stands off the recess floor
+ant_recess = 0.6;    // recess into the wall: the tag ends up 0.4 proud of the bore, still clear of the Ø43.2 sweep
+ant_lift = 1.0;      // bay floor above the drum floor: the pigtail turns up the wall under the tag's feed
 
 /* [Print tolerances] */
 tol_slide = 0.20;    // catalog default — core_tol_slide() (canary_core_lib)
@@ -185,6 +200,18 @@ seat_r_in   = disc_d/2 - seat_bite;
 // at the far edge) — these three fall between them with ≥ 10° to spare
 function seat_angs() = [for (o = [180, -55, 60]) usb_ang + o];
 
+// the antenna bay: centered usb_ang + 135, the widest sector the GLB leaves
+// clear of the display's back parts in the socket zone (usb_ang+95 to +174,
+// between the far-edge block at usb_ang+90 and the pad at usb_ang+180)
+ant_ang    = usb_ang + 135;
+ant_arc    = ant_l / (bore_d/2) * 180/PI;    // the tag's length as degrees of the bore
+ant_z0     = floor_z + ant_lift;
+assert(ant_arc <= 70, "the antenna tag spans more of the wall than the free sector (70 deg) — a shorter tag, or a bay of its own");
+assert(ant_z0 + ant_w <= z_pcb - 0.5, "the antenna bay reaches the display PCB — shorten ant_w or lower ant_lift");
+assert(bore_d/2 + ant_recess - ant_t >= disc_d/2 + 0.2, "the antenna's face stands into the display's back-parts sweep — deepen ant_recess or thin ant_t");
+assert((drum_d - bore_d)/2 - ant_recess >= 2.0, "the antenna recess thins the drum wall under 2.0 — shrink ant_recess");
+assert(min([for (sa = seat_angs()) abs(((ant_ang - sa + 540) % 360) - 180)]) >= ant_arc/2 + seat_w/(bore_d/2)*90/PI + 3,
+       "the antenna bay runs into a seat pad");
 assert(bez_ap_d <= disc_d - 2*1.0, "the bezel lip must cover at least 1.0 mm of glass edge — shrink bez_ap_d");
 assert(bez_ap_d >= brd_round_disp_active_d() + 2*1.0, "the aperture would cover pixels (GC9A01 active area, canary_board_lib) — grow bez_ap_d");
 assert(bez_ap_d < skirt_od - 2*finger_t - 2, "skirt wall too thin — shrink bez_ap_d");
@@ -200,7 +227,8 @@ assert(snap_depth + snap_h/2 < cb_dep, "a snap window reaches below the counterb
 assert(!opt_batt || sqrt(pow(batt_l/2,2) + pow(batt_w/2 + 2,2)) < bore_d/2, "battery too large for the bore");
 echo(str("Canary Watch station v0.3-dev — drum Ø", drum_d, " x ", puck_len,
          " mm (bore Ø", bore_d, ", counterbore Ø", cb_d, " x ", cb_dep, ", seat z ", z_pcb,
-         ", USB slot z ", usb_cz, " ", usb_slot_w, " x ", usb_slot_h, "), stand tilt ", tilt, " deg"));
+         ", USB slot z ", usb_cz, " ", usb_slot_w, " x ", usb_slot_h, ", antenna bay at ", ant_ang % 360,
+         " deg z ", ant_z0, "-", ant_z0 + ant_w, "), stand tilt ", tilt, " deg"));
 
 // ----------------------------------------------------------------------------
 //  DRUM — straight cup, prints open-face-up; keyhole pocket in the back;
@@ -270,6 +298,17 @@ module drum() {
             // pry notch: 8 wide, 0.6 into the rim's outer edge, 0.8 down
             if (pry_notch) rotate([0, 0, pry_ang])
                 translate([drum_d/2, 0, drum_h]) cube([2*0.6, 8, 2*0.8], center = true);
+            // ANTENNA BAY: a curved recess in the thick lower wall, ant_arc
+            // wide and ant_w tall, ant_recess deep — the flex tag's adhesive
+            // lands on it, curving with the wall (Seeed's own guidance for
+            // the tag is the inside of the case), its face clear of the
+            // display's back parts. Its ceiling is a 45° ramp so the
+            // open-face-up print overhangs nothing; the pigtail comes up the
+            // wall under the tag from the floor
+            rotate([0, 0, ant_ang - ant_arc/2]) translate([0, 0, ant_z0]) rotate_extrude(angle = ant_arc)
+                translate([bore_d/2 - 0.01, 0]) polygon([
+                    [0, 0], [ant_recess + 0.01, 0], [ant_recess + 0.01, ant_w - ant_recess],
+                    [0, ant_w]]);
         }
         // SEAT PADS — the disc's axial datum. The PCB's back face rests on
         // their tops at z_pcb; the bezel lip holds the glass front against

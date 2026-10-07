@@ -319,7 +319,7 @@
   {
    "id": "watch-station",
    "name": "Watch station",
-   "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB and an end-stop under the XIAO's USB shell, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block",
+   "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB, an end-stop under the XIAO's USB shell and a bay for the flex antenna, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block",
    "status": "in-development",
    "note": "drum + snap bezel + 25° open cradle",
    "device": "canary-display-watch",
@@ -5571,6 +5571,31 @@
        "name": "seat_bite",
        "default": "2.3",
        "comment": "pad reach under the PCB rim, inward from the disc edge (the back parts start 0.2 further in)"
+      },
+      {
+       "name": "ant_l",
+       "default": "23.0",
+       "comment": "MEASURE: the flex antenna tag's length (the 2.4G A-02 in the XIAO ESP32-S3 kit), along the wall"
+      },
+      {
+       "name": "ant_w",
+       "default": "11.0",
+       "comment": "MEASURE: the tag's width, up the wall"
+      },
+      {
+       "name": "ant_t",
+       "default": "1.0",
+       "comment": "tag + its adhesive, what stands off the recess floor"
+      },
+      {
+       "name": "ant_recess",
+       "default": "0.6",
+       "comment": "recess into the wall: the tag ends up 0.4 proud of the bore, still clear of the Ø43.2 sweep"
+      },
+      {
+       "name": "ant_lift",
+       "default": "1.0",
+       "comment": "bay floor above the drum floor: the pigtail turns up the wall under the tag's feed"
       }
      ]
     },
@@ -5891,6 +5916,19 @@
       {
        "name": "seat_r_in",
        "default": "disc_d/2 - seat_bite"
+      },
+      {
+       "name": "ant_ang",
+       "default": "usb_ang + 135"
+      },
+      {
+       "name": "ant_arc",
+       "default": "ant_l / (bore_d/2) * 180/PI",
+       "comment": "the tag's length as degrees of the bore"
+      },
+      {
+       "name": "ant_z0",
+       "default": "floor_z + ant_lift"
       },
       {
        "name": "snap_w",
