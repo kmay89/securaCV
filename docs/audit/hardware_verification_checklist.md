@@ -2173,21 +2173,40 @@ Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`
 (`canary-local/emulator/test/runtime_turn.sh`); what the panel draws for each
 turn is not. Compile is CI's. Owner: U1.
 
-- [ ] **Each side turn reads upright**
+- [ ] **Each pose commits its rotation, then reads upright**
   - Setup: a `canary-display-nightlight` build on the C3-LCD-1.47,
-    provisioned, "turn with the room" on, a serial monitor, daytime.
-  - Repro: stand it upright (USB down) for 3 s; turn it a quarter clockwise
-    onto its right edge (USB to the left) and hold it still for 3 s; stand
-    it upright again; turn it a quarter counter-clockwise onto its left edge
-    (USB to the right); then stand it upside down (USB up).
-  - Expected: each turn commits about 1.2 s after the device comes to rest,
-    and the clock reads upright every time. By `display_1in47.cpp`'s own
-    model of its bytes, both side turns most likely show the face upside
-    down: if they do, swap the r1/r3 bytes in `kMadctl`. If upright reads
-    upside down, or a side turn commits as the other landscape, fix the IMU
-    mapping in `pins.h` first and then recheck the bytes; a mirrored face is
-    an MX/MY fault, not this one.
-  - Artifact: `docs/audit/repro/F250/side-turns/` (a photo per orientation).
+    provisioned (its address on the LAN), "turn with the room" on,
+    daytime. An IMU commit writes nothing to serial; the committed
+    rotation is `"orientation"` in `GET http://<glass>/api/settings`
+    (`care::nightlight_rotation()`, saved by every commit).
+  - Repro: stand it upright (USB down) and hold it still for 3 s, then read
+    `"orientation"`; the same after a quarter turn clockwise onto its right
+    edge (USB to the left), after standing it upright again and turning it a
+    quarter counter-clockwise onto its left edge (USB to the right), and
+    upside down (USB up). Photograph the glass in each pose.
+  - Expected, in this order. First the IMU: each pose commits about 1.2 s
+    after the device comes to rest, and `"orientation"` reads 0 upright, 1
+    after the clockwise turn, 3 after the counter-clockwise turn and 2
+    upside down. If it does not, fix `pins.h` (`IMU_AXES_SWAP_XY`,
+    `IMU_X_SIGN`, `IMU_Y_SIGN`) until it does, and only then judge the
+    glass. `io/orientation.h`'s classifier wants the gravity vector, while
+    an accelerometer at rest reads +1 g along the axis that points up and
+    `imu_read_accel()` passes that on unnegated; so if the identity seed
+    has the chip's mounting right, both in-plane signs read reversed
+    (upright commits 2, the clockwise turn 3) and both signs need flipping.
+    With that seed, flipping `IMU_Y_SIGN` alone makes every pose read
+    upright on the glass while 1 then means the counter-clockwise turn,
+    the opposite of the emulator and the Lab's 3D case, and the tumble
+    enters a side turn from the edge that was down. Then the glass: with the values right,
+    the clock reads upright in every pose and the companion tumbles in
+    from the edge that was up. By `display_1in47.cpp`'s own model of its
+    MADCTL bytes, rotation 1 (0x28) draws the face for the
+    counter-clockwise turn and rotation 3 (0xE8) for the clockwise one,
+    the opposite of what the values ask for: if both side turns read
+    upside down, swap the r1/r3 bytes in `kMadctl`. A mirrored face is an
+    MX/MY fault, not this one.
+  - Artifact: `docs/audit/repro/F250/side-turns/` (a photo and the
+    `"orientation"` value per pose).
 
 - [ ] **The companion startles with each turn, and its hop is smooth**
   - Setup: as above, more than 8 s after power-on (the mark refuses Tilt and
