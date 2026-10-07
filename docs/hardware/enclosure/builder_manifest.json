@@ -1129,7 +1129,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
+          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -2242,7 +2242,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
+          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -3697,7 +3697,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
+          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4657,7 +4657,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
+          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -5116,7 +5116,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "042e37a6f66e53729a3170e9ad7832ce787bd1c2d6b20b9561889926e3cc052f"
+          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
         },
         {
           "file": "canary_color_lib.scad",

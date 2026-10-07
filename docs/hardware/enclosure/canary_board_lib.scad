@@ -157,6 +157,23 @@ function brd_ov5647_holder_h() = 3.65;   // the square holder's top above the PC
 function brd_ov5647_holder_sq() = 8.8;   // the holder's square side
 function brd_ov5647_barrel_d() = 7.0;    // the round lens barrel's diameter
 
+// SEEED ROUND DISPLAY for XIAO — the Watch Station's disc (the "round_disp"
+// row: Ø43.0 measured, and the first print's calipers read the GLASS at
+// 43.01 — the cover glass is the disc's full diameter, not the 37.7 the
+// v0.2 bezel assumed from the 1.28" marketing figure). Read off the
+// committed vendor GLB (canary-local/boards/seeed_round_display_xiao.glb,
+// "drawing" rung) and the GC9A01 datasheet:
+//   · the XIAO's two 7-pin socket rows span raw GLB x 0.55..18.9 (the pad
+//     islands), so the XIAO rides centered 9.725 off the disc center toward
+//     its USB edge — the drum's USB slot and end-stop boss read this
+//     (gen_assembly_poses.py's DISPLAY_SOCKET_X is the same number; its
+//     assembly test re-measures it off the GLB);
+//   · the 1.28" GC9A01 active area is Ø32.4 (240 px at 0.135 mm), the floor
+//     under any bezel aperture: the first print's Ø39.4 aperture cleared it
+//     and still could not reach the glass.
+function brd_round_disp_socket_x() = 9.725;  // XIAO socket center off the disc center, toward the USB edge
+function brd_round_disp_active_d() = 32.4;   // GC9A01 active-area diameter (spec)
+
 // ---------------------------------------------------------------------------
 //  Self-check — registry integrity + the pinned lessons. Call once from an
 //  adopter (the fit coupon does).
@@ -191,5 +208,9 @@ module board_selfcheck() {
            "board: the OV5647's lens holder or hole grid runs off its carrier");
     assert(brd_ov5647_lens_dy() < 0 && brd_ov5647_grid_dy() > 0,
            "board: the OV5647's lens is BELOW the carrier's center and its hole grid ABOVE — the case bug v0.6 fixed");
+    // the round display's socket and active area both sit inside its disc
+    assert(brd_round_disp_socket_x() + brd_l("xiao")/2 < brd_l("round_disp")/2
+           && brd_round_disp_active_d() < brd_l("round_disp"),
+           "board: the round display's XIAO socket or active area runs off the disc");
     echo("canary_board_lib: self-check OK");
 }

@@ -164,6 +164,10 @@ devices/<slug>/device.json cad.params
       (with --site it also carries the website's upstream-contract.json BACK as
        canary-local/devices/site_contract.json — the runtime paths the site fetches from
        this tree; scripts/tests/test_site_contract.py holds every one to the tree)
+  → gen_print_files.py --site <website-checkout>   (only with --site: the in-development
+       cases' print-ready STLs + print/print-files.json — version, commit, the .scad's
+       sha256, each file's sha256 — into the website; its --check and the website's
+       tests/print-files.test.mjs both fail on a case edited after its last render)
   → gen_stamp.py --check, gen_mark_svg.py --check (report-only; a STAMP_REV bump is a human's call)
   → in the website repo, after the carry: its make-*-glb.mjs (the AR models re-read cad-dims.json)
 ```
