@@ -11,6 +11,15 @@
 // sheet; CoreBluetooth pairs and retries the write on its own. Nothing is
 // bonded — the next setup pairs afresh, which is the point.
 //
+// A WAP also serves SecuraCV's companion service beside the Improv one
+// (ImprovWire.companionServiceUUID): one CLAIM characteristic, readable
+// once by this link after the join it asked for succeeded. A claim ticket,
+// not the receipt — the bearer token never rides Bluetooth; the sheet
+// spends the claim over the home Wi-Fi (Shared/MagicPairPlan.swift) and
+// the receipt comes back over that. Optional: a Sense or Vision serves no
+// companion service, its absence fails nothing, and readiness never waits
+// for it.
+//
 // Ownership: BLEConsole owns the central and the scan. It hands one
 // CBPeripheral to one ImprovClient at a time (beginSetup) and forwards the
 // central's connect / disconnect callbacks for it here.
@@ -26,10 +35,12 @@ final class ImprovClient: NSObject, ObservableObject {
     static let commandUUID      = CBUUID(string: ImprovWire.rpcCommandUUID)
     static let resultUUID       = CBUUID(string: ImprovWire.rpcResultUUID)
     static let capabilitiesUUID = CBUUID(string: ImprovWire.capabilitiesUUID)
-    /// SecuraCV's one addition inside the service, on a WAP: the pairing
-    /// receipt (device id, base URL, token, certificate fingerprint),
-    /// readable once by the link that provisioned, encrypted.
-    static let receiptUUID      = CBUUID(string: "8fc1cf01-b162-4401-9607-c8ac21383e90")
+    /// SecuraCV's companion service beside the Improv one, on a WAP: the
+    /// claim ticket (ImprovWire's header has the JSON), readable once by
+    /// the link that provisioned, encrypted. Optional — never required
+    /// for the door itself.
+    static let companionServiceUUID = CBUUID(string: ImprovWire.companionServiceUUID)
+    static let claimUUID            = CBUUID(string: ImprovWire.claimUUID)
 
     enum Phase: Equatable, Sendable {
         case connecting
@@ -63,8 +74,8 @@ final class ImprovClient: NSObject, ObservableObject {
     private var error: CBCharacteristic?
     private var command: CBCharacteristic?
     private var result: CBCharacteristic?
-    private var receipt: CBCharacteristic?
-    private var receiptWaiter: CheckedContinuation<Data?, Never>?
+    private var claim: CBCharacteristic?
+    private var claimWaiter: CheckedContinuation<Data?, Never>?
 
     /// One request in flight at a time; each resumes exactly once.
     private var readyWaiter: CheckedContinuation<Bool, Never>?
@@ -88,7 +99,7 @@ final class ImprovClient: NSObject, ObservableObject {
 
     func centralDidConnect() {
         phase = .discovering
-        peripheral.discoverServices([Self.serviceUUID])
+        peripheral.discoverServices([Self.serviceUUID, Self.companionServiceUUID])
     }
 
     func centralDidFailToConnect(_ err: Error?) {
@@ -177,23 +188,24 @@ final class ImprovClient: NSObject, ObservableObject {
         peripheral.writeValue(ImprovWire.identify, for: command, type: .withResponse)
     }
 
-    /// Whether this Canary offers a pairing receipt over the door (a WAP).
-    var offersReceipt: Bool { receipt != nil }
+    /// Whether this Canary offers a claim ticket beside the door (a WAP).
+    var offersClaim: Bool { claim != nil }
 
-    /// Read the pairing receipt the join earned — the link that provisioned
-    /// gets it once; anyone else reads "{}". Nil when the device offers none
-    /// or did not answer.
-    func readReceipt(timeout: Duration = .seconds(10)) async -> Data? {
-        guard let receipt else { return nil }
+    /// Read the claim the join earned — the link that provisioned gets it
+    /// once; anyone else, and any later read, gets "{}". Nil when the
+    /// device offers none, answered "{}", or did not answer in time. Bytes
+    /// only: ImprovWire.parseClaim reads them.
+    func readClaim(timeout: Duration = .seconds(10)) async -> Data? {
+        guard let claim else { return nil }
         generation += 1
         let gen = generation
         return await withCheckedContinuation { cont in
-            receiptWaiter = cont
-            peripheral.readValue(for: receipt)
+            claimWaiter = cont
+            peripheral.readValue(for: claim)
             Task { [weak self] in
                 try? await Task.sleep(for: timeout)
-                guard let self, self.generation == gen, let w = self.receiptWaiter else { return }
-                self.receiptWaiter = nil
+                guard let self, self.generation == gen, let w = self.claimWaiter else { return }
+                self.claimWaiter = nil
                 w.resume(returning: nil)
             }
         }
@@ -209,7 +221,7 @@ final class ImprovClient: NSObject, ObservableObject {
         if let w = readyWaiter { readyWaiter = nil; w.resume(returning: false) }
         if let w = scanWaiter { scanWaiter = nil; w.resume(returning: networks) }
         if let w = joinWaiter { joinWaiter = nil; w.resume(returning: .failed(why)) }
-        if let w = receiptWaiter { receiptWaiter = nil; w.resume(returning: nil) }
+        if let w = claimWaiter { claimWaiter = nil; w.resume(returning: nil) }
     }
 
     private func resolveJoin(_ outcome: Outcome) {
@@ -225,25 +237,33 @@ final class ImprovClient: NSObject, ObservableObject {
 
 extension ImprovClient: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let service = peripheral.services?.first(where: { $0.uuid == Self.serviceUUID }) else {
+        let services = peripheral.services ?? []
+        guard let service = services.first(where: { $0.uuid == Self.serviceUUID }) else {
             fail("This Canary's firmware has no Bluetooth setup door — use its setup network instead.")
             return
         }
         peripheral.discoverCharacteristics(
-            [Self.stateUUID, Self.errorUUID, Self.commandUUID, Self.resultUUID, Self.capabilitiesUUID,
-             Self.receiptUUID],
+            [Self.stateUUID, Self.errorUUID, Self.commandUUID, Self.resultUUID, Self.capabilitiesUUID],
             for: service)
+        // The companion service is a WAP's and optional: its absence fails
+        // nothing, and readiness (the state read below) never waits for it.
+        if let companion = services.first(where: { $0.uuid == Self.companionServiceUUID }) {
+            peripheral.discoverCharacteristics([Self.claimUUID], for: companion)
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        guard service.uuid == Self.serviceUUID else { return }
         let chars = service.characteristics ?? []
+        if service.uuid == Self.companionServiceUUID {
+            self.claim = chars.first { $0.uuid == Self.claimUUID }
+            return
+        }
+        guard service.uuid == Self.serviceUUID else { return }
         // `error` the parameter shadows `error` the characteristic here.
         self.state = chars.first { $0.uuid == Self.stateUUID }
         self.error = chars.first { $0.uuid == Self.errorUUID }
         self.command = chars.first { $0.uuid == Self.commandUUID }
         self.result = chars.first { $0.uuid == Self.resultUUID }
-        self.receipt = chars.first { $0.uuid == Self.receiptUUID }
         guard let state = self.state, let errorChar = self.error, let result = self.result, command != nil else {
             fail("This Canary's Bluetooth setup door is missing its controls.")
             return
@@ -281,8 +301,8 @@ extension ImprovClient: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        if characteristic.uuid == Self.receiptUUID, error != nil, let w = receiptWaiter {
-            receiptWaiter = nil
+        if characteristic.uuid == Self.claimUUID, error != nil, let w = claimWaiter {
+            claimWaiter = nil
             w.resume(returning: nil)
             return
         }
@@ -291,9 +311,9 @@ extension ImprovClient: CBPeripheralDelegate {
         case Self.capabilitiesUUID:
             capabilities = data.first ?? 0
 
-        case Self.receiptUUID:
-            if let w = receiptWaiter {
-                receiptWaiter = nil
+        case Self.claimUUID:
+            if let w = claimWaiter {
+                claimWaiter = nil
                 // "{}" is the door's "not yours" — nil to the caller.
                 w.resume(returning: data.count > 2 ? data : nil)
             }

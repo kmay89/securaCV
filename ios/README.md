@@ -315,21 +315,42 @@ read the words the screen shows — and the phone does the parts a phone can:
   the integration is present). What stays yours is listed, never hidden:
   Frigate's camera config and the integration's files. The token is revoked
   on the way out; the password is never stored.
-- **A Canary.** The card first: a Sense, Vision or WAP with no Wi-Fi of its
-  own opens its Bluetooth setup door (Improv Wi-Fi, `Shared/ImprovWire.swift`
-  is the pure twin of the firmware's `improv_core.h`), the transport hears
-  it (`BLEConsole.heard`: the beacon's setup bit, the "Sense-AB12" name,
-  the Improv service in the scan response), `Shared/NearbyCanary.swift`
-  decides which sightings qualify, and `NearbyCanaryCard` shows up on
-  Today, Fleet and in the walkthrough. One tap: `Transport/ImprovClient.swift`
-  connects, asks the Canary which networks it sees, hands over the chosen
-  one (iOS shows its pairing sheet — the link is encrypted, nothing is
-  bonded), and waits for the Canary's own verdict; a WAP's pairing receipt
-  rides the same link, so it lands in `DeviceStore` paired. The household
-  Wi-Fi can be remembered (`Security/HouseholdWiFi.swift`: this phone's
-  Keychain only, written only after a proven join, forgettable from Set
-  up), which makes the second Canary two taps. Then the older paths, one
-  per family, each the one its firmware serves
+- **A Canary — magic pairing.** The card first: a Sense, Vision or WAP
+  with no Wi-Fi saved opens its Bluetooth setup door for 30 minutes after
+  power-on (Improv Wi-Fi, the open standard; `Shared/ImprovWire.swift` is
+  the pure twin of the firmware's `improv_core.h`, pinned to the same byte
+  vectors by `ImprovWireTests`), the transport hears it (`BLEConsole.heard`:
+  the beacon's setup bit, the "Sense-AB12" name, the Improv service in the
+  scan response), `Shared/NearbyCanary.swift` decides which sightings
+  qualify (`NearbyCanaryTests`), and `NearbyCanaryCard` shows up on Today,
+  Fleet (comb and list) and as the first step of the walkthrough for those
+  three families (`SetupGuide.hasBluetoothDoor`, `SetupGuideTests`). Tap →
+  `Transport/ImprovClient.swift` connects, asks the Canary which networks
+  it sees, the person picks one and types the password once → **the iOS
+  pairing sheet**: the Canary refuses the credentials write on an
+  unencrypted link, so the first write makes iOS ask once (LE Secure
+  Connections, Just Works); CoreBluetooth pairs and retries the write on
+  its own; nothing is bonded, so the next Canary asks again — by design,
+  and the screen says so → the Canary's own verdict on its state and error
+  characteristics ("check the password"; or "already has Wi-Fi and isn't
+  accepting a new network — tap its button, or use its setup network").
+  For a WAP, `MagicPairPlan` (pure, `MagicPairPlanTests`) then reads the
+  one-time **claim ticket** over the same link and spends it on the home
+  Wi-Fi — `GET /api/provisioning-receipt?claim=<hex>` at the device's
+  `.local` name, pinning `tls_cert_fp` when present — so the receipt lands
+  in `DeviceStore` and the WAP is paired; the bearer token never rides
+  Bluetooth. A 403 on the claim (expired after 180 s, burned, or the phone
+  is not on that Wi-Fi yet) falls back to BOOT tap + "Add from receipt".
+  The household Wi-Fi can be remembered: `Security/HouseholdWiFi.swift`
+  keeps one Keychain item (`com.securacv.witness.household-wifi`,
+  `ThisDeviceOnly` — never iCloud Keychain, never CloudKit), written only
+  with the toggle on and only after a Canary itself said it joined, and
+  **Forget** on the Set up screen deletes it; the second Canary is two
+  taps. The door shuts for good once the Canary has Wi-Fi; a Sense or
+  Vision reopens it for a minute on a BOOT tap, and a Canary whose saved
+  Wi-Fi is merely failing never reopens it (that is the setup network's
+  job). Then the older paths, one per family, each the one its firmware
+  serves
   (`SetupGuide.canary`): a display's glass QR (scanned with VisionKit, or
   typed) and the phone joining `SecuraCV-XXXX` itself —
   `NEHotspotConfiguration`, the Hotspot Configuration entitlement — to post
@@ -340,8 +361,14 @@ read the words the screen shows — and the phone does the parts a phone can:
   (`BLEConsole.writeWiFiCredentials`, the rescue path, now also the first
   path); and the Fleet tab's discovery for the appearance.
 
-Honest status: the pure halves are host-tested; the end-to-end runs want a
-real first boot and a real Canary, which the gated macOS CI cannot give.
+Honest status: the pure halves are host-tested (`ImprovWireTests`,
+`MagicPairPlanTests`, `NearbyCanaryTests`, `SetupGuideTests`); the
+end-to-end runs want a real first boot and a real Canary, which the gated
+macOS CI cannot give. Magic pairing in particular has not been tried on a
+bench: the iOS pairing sheet's timing against NimBLE 1.4.x (a Vision), the
+once-only claim read on a WAP and the card's fifteen-second freshness
+against a real beacon are the open items
+([the design's checklist](../docs/design/magic_pairing.md#9-bench-checklist-what-to-verify-before-calling-it-shipped)).
 
 ## On your iPad
 

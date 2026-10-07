@@ -28,6 +28,35 @@
 //   a networks scan is one result per network (ssid, rssi, auth), closed by
 //   an empty result; device info is four strings (firmware name, version,
 //   hardware, device name).
+//
+// THE DOOR (the Canary's rules, not the standard's): a Canary opens the
+// door only while it has NO stored Wi-Fi — for half an hour after power-on
+// (a power cycle re-arms it) — or for one minute after a short tap on its
+// BOOT button (Sense, Vision; a WAP has no tap door yet). A saved network
+// that stopped working does NOT open it. A second credentials write within
+// 3 s is refused with InvalidRpc; the attempt past ten on one open door
+// shuts it (NotAuthorized); a link that sends nothing for three minutes is
+// dropped; after a join the Canary drops the link about 20 s later.
+//
+// SECURACV'S ADDITION, OUTSIDE THE IMPROV SERVICE (a WAP only): the claim
+// ticket, `firmware/common/network/claim_ticket.h`. The door's link is
+// encrypted but not authenticated (Just Works), so the bearer token never
+// rides it. Once the join this phone asked for succeeded, the link that
+// asked may read CLAIM exactly once, within 180 s:
+//
+//   Companion service  8fc1cf00-b162-4401-9607-c8ac21383e90
+//   CLAIM              8fc1cf01-…  READ (encrypted)   JSON, below
+//
+//   {"device_id":"…","claim":"<32 lowercase hex>",
+//    "claim_url":"https://canary-ab12.local/api/provisioning-receipt?claim=<hex>",
+//    "tls_cert_fp":"<64 hex, or empty>","sta_ip":"192.168.1.23",
+//    "mdns_host":"canary-ab12","expires_in_s":180}
+//
+//   Anyone else, and any later read, gets "{}". The phone then spends the
+//   claim ON THE HOME LAN — an unauthenticated GET of claim_url — and gets
+//   the same pairing receipt the BOOT-tap route serves. Single use: a wrong
+//   guess burns it; a 403 is spent, expired or refused. Sense and Vision
+//   serve no companion service (nothing to pair over HTTP).
 
 import Foundation
 
@@ -41,6 +70,15 @@ enum ImprovWire {
     static let capabilitiesUUID  = "00467768-6228-2272-4663-277478268005"
     /// The 16-bit UUID the advert's service data rides under.
     static let serviceDataUUID16: UInt16 = 0x4677
+
+    // ── SecuraCV's companion service (a WAP only; see the header) ──
+    /// A separate GATT service beside the Improv one — optional, never
+    /// required for the door itself.
+    static let companionServiceUUID = "8fc1cf00-b162-4401-9607-c8ac21383e90"
+    /// The claim ticket, readable once by the link that provisioned.
+    static let claimUUID            = "8fc1cf01-b162-4401-9607-c8ac21383e90"
+    /// The firmware spells a claim as 16 random bytes in hex.
+    static let claimHexLength = 32
 
     static let maxSSIDLength = 32
     static let maxPasswordLength = 64
@@ -75,10 +113,10 @@ enum ImprovWire {
         var message: String {
             switch self {
             case .none: return ""
-            case .invalidRPC: return "The Canary didn't understand that request — try again."
+            case .invalidRPC: return "The Canary didn't understand that request, or got it too soon after the last one — wait a moment and try again."
             case .unknownRPC: return "This Canary's firmware doesn't know that request."
             case .unableToConnect: return "The Canary couldn't join with those credentials — check the password."
-            case .notAuthorized: return "This Canary already has Wi-Fi and isn't accepting a new network. Tap its button to open it up, or use its setup network."
+            case .notAuthorized: return "This Canary isn't accepting a new network right now: it already has Wi-Fi, or its setup door closed. Tap its BOOT button once to open it for a minute, or power-cycle a brand-new one; a WAP uses its setup page instead."
             case .badHostname: return "The Canary refused that name."
             case .unknown: return "The Canary reported an error it couldn't name."
             }
@@ -180,7 +218,9 @@ enum ImprovWire {
         return Error(rawValue: first)
     }
 
-    struct ServiceData: Equatable, Sendable {
+    /// Hashable, not merely Equatable: NearbyCanaries.Heard (Hashable, it
+    /// is a dictionary value the watch widgets compile too) holds one.
+    struct ServiceData: Hashable, Sendable {
         var state: State
         var capabilities: UInt8
         var canIdentify: Bool { capabilities & ImprovWire.capIdentify != 0 }
@@ -193,5 +233,76 @@ enum ImprovWire {
         let b = [UInt8](data)
         guard b.count >= 2, let state = State(rawValue: b[0]) else { return nil }
         return ServiceData(state: state, capabilities: b[1])
+    }
+
+    // MARK: - the claim ticket (SecuraCV's companion service, a WAP only)
+
+    /// What CLAIM answered the link that provisioned: where to spend the
+    /// claim, and what the phone needs to dial it.
+    struct Claim: Hashable, Sendable {
+        var deviceID: String
+        /// 32 hex characters, folded to lower case (the firmware's spelling;
+        /// its compare folds case too).
+        var claim: String
+        /// `claim_url` as given — nil when absent, empty, or not an http(s)
+        /// URL with a host. Its host is the Canary's `.local` name.
+        var claimURL: URL?
+        /// `tls_cert_fp`: the SHA-256 of the Canary's certificate, or nil
+        /// when the field was empty (an http WAP). An https claim URL with
+        /// no pin is never dialed (MagicPairPlan).
+        var tlsCertFingerprint: String?
+        /// `sta_ip`: the address it got from your router — the fallback
+        /// host when its `.local` name does not resolve yet.
+        var staIP: String?
+        var mdnsHost: String?
+        var expiresIn: Int?
+    }
+
+    /// Decode one CLAIM read. Nil for "{}" (the door's "not yours"), for a
+    /// missing or malformed `claim` (exactly 32 hex characters, either
+    /// case), and for a missing `device_id`. Tolerant of extra keys.
+    static func parseClaim(_ data: Data) -> Claim? {
+        guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        func str(_ key: String) -> String? {
+            guard let s = obj[key] as? String else { return nil }
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        guard let deviceID = str("device_id"), let rawClaim = str("claim") else { return nil }
+        let claim = rawClaim.lowercased()
+        guard claim.count == claimHexLength,
+              claim.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
+        var claimURL: URL?
+        if let s = str("claim_url"), let url = URL(string: s),
+           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+           let host = url.host, !host.isEmpty {
+            claimURL = url
+        }
+        let expires: Int?
+        if let n = obj["expires_in_s"] as? Int { expires = n }
+        else if let d = obj["expires_in_s"] as? Double { expires = Int(d) }
+        else { expires = nil }
+        return Claim(deviceID: deviceID,
+                     claim: claim,
+                     claimURL: claimURL,
+                     tlsCertFingerprint: str("tls_cert_fp"),
+                     staIP: str("sta_ip"),
+                     mdnsHost: str("mdns_host"),
+                     expiresIn: expires)
+    }
+
+    /// The claim URL with its host swapped — the `sta_ip` fallback when the
+    /// `.local` name will not resolve — keeping scheme, port, path and
+    /// query. Nil when the claim carries no URL or the host cannot be set.
+    /// A nil or empty host gives the claim URL back as it is.
+    static func claimURL(_ claim: Claim, host newHost: String?) -> URL? {
+        guard let url = claim.claimURL else { return nil }
+        guard let newHost = newHost?.trimmingCharacters(in: .whitespacesAndNewlines), !newHost.isEmpty else {
+            return url
+        }
+        guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        comps.host = newHost
+        guard let out = comps.url, out.host?.isEmpty == false else { return nil }
+        return out
     }
 }

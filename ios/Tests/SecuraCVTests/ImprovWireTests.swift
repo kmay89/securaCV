@@ -132,4 +132,124 @@ final class ImprovWireTests: XCTestCase {
             XCTAssertEqual(u, "00467768-6228-2272-4663-27747826800\(i + 1)")
         }
     }
+
+    // ── the claim ticket (SecuraCV's companion service, a WAP only) ──
+    // The JSON canary-wap writes to CLAIM for the link that provisioned,
+    // and "{}" for everyone else (firmware/common/network/claim_ticket.h).
+
+    private let claimHex = "0123456789abcdef0123456789abcdef"
+    private let claimFP = String(repeating: "ab", count: 32)
+
+    /// The firmware's body, with fields replaced (a value) or removed (nil).
+    private func claimBody(_ overrides: [String: Any?] = [:]) -> Data {
+        var obj: [String: Any] = [
+            "device_id": "wap-ab12",
+            "claim": claimHex,
+            "claim_url": "https://canary-ab12.local/api/provisioning-receipt?claim=\(claimHex)",
+            "tls_cert_fp": claimFP,
+            "sta_ip": "192.168.1.23",
+            "mdns_host": "canary-ab12",
+            "expires_in_s": 180,
+        ]
+        for (key, value) in overrides {
+            if let value {
+                obj[key] = value
+            } else {
+                obj.removeValue(forKey: key)
+            }
+        }
+        return try! JSONSerialization.data(withJSONObject: obj)
+    }
+
+    func testAClaimReadDecodesEveryField() throws {
+        let c = try XCTUnwrap(ImprovWire.parseClaim(claimBody()))
+        XCTAssertEqual(c.deviceID, "wap-ab12")
+        XCTAssertEqual(c.claim, claimHex)
+        XCTAssertEqual(c.claimURL?.scheme, "https")
+        XCTAssertEqual(c.claimURL?.host, "canary-ab12.local")
+        XCTAssertEqual(c.claimURL?.path, "/api/provisioning-receipt")
+        XCTAssertEqual(c.claimURL?.query, "claim=\(claimHex)")
+        XCTAssertEqual(c.tlsCertFingerprint, claimFP)
+        XCTAssertEqual(c.staIP, "192.168.1.23")
+        XCTAssertEqual(c.mdnsHost, "canary-ab12")
+        XCTAssertEqual(c.expiresIn, 180)
+        XCTAssertEqual(c, ImprovWire.parseClaim(claimBody()), "Equatable, for the plan's tests")
+        XCTAssertEqual(c.hashValue, ImprovWire.parseClaim(claimBody())!.hashValue)
+    }
+
+    func testNotYoursIsNil() {
+        XCTAssertNil(ImprovWire.parseClaim(Data("{}".utf8)),
+                     "the door's answer to anyone but the link that provisioned, and to a second read")
+        XCTAssertNil(ImprovWire.parseClaim(Data()))
+        XCTAssertNil(ImprovWire.parseClaim(Data("[]".utf8)))
+        XCTAssertNil(ImprovWire.parseClaim(Data("not json".utf8)))
+        XCTAssertNil(ImprovWire.parseClaim(claimBody(["device_id": nil])), "no device id, no pairing")
+        XCTAssertNil(ImprovWire.parseClaim(claimBody(["device_id": ""])))
+        XCTAssertNil(ImprovWire.parseClaim(claimBody(["claim": nil])))
+    }
+
+    func testAClaimIsExactly32HexCharacters() {
+        XCTAssertNil(ImprovWire.parseClaim(claimBody(["claim": String(claimHex.dropLast())])), "31")
+        XCTAssertNil(ImprovWire.parseClaim(claimBody(["claim": claimHex + "0"])), "33")
+        XCTAssertNil(ImprovWire.parseClaim(claimBody(["claim": "g" + String(claimHex.dropFirst())])), "g is not hex")
+        XCTAssertNil(ImprovWire.parseClaim(claimBody(["claim": ""])))
+        XCTAssertNil(ImprovWire.parseClaim(claimBody(["claim": 12345])), "a number is not a claim")
+        // Either case is accepted (the firmware's compare folds it) and
+        // folded to the firmware's own lower-case spelling.
+        XCTAssertEqual(ImprovWire.parseClaim(claimBody(["claim": claimHex.uppercased()]))?.claim, claimHex)
+        XCTAssertEqual(ImprovWire.claimHexLength, 32)
+    }
+
+    func testAnEmptyFingerprintIsNoPin() throws {
+        let http = try XCTUnwrap(ImprovWire.parseClaim(claimBody(["tls_cert_fp": ""])),
+                                 "an http WAP writes the empty string, and the claim still decodes")
+        XCTAssertNil(http.tlsCertFingerprint)
+        XCTAssertNil(try XCTUnwrap(ImprovWire.parseClaim(claimBody(["tls_cert_fp": nil]))).tlsCertFingerprint)
+    }
+
+    func testTheClaimURLMustBeAnHTTPURLWithAHost() throws {
+        XCTAssertNil(try XCTUnwrap(ImprovWire.parseClaim(claimBody(["claim_url": nil]))).claimURL)
+        XCTAssertNil(try XCTUnwrap(ImprovWire.parseClaim(claimBody(["claim_url": ""]))).claimURL)
+        XCTAssertNil(try XCTUnwrap(ImprovWire.parseClaim(claimBody(["claim_url": "ftp://canary-ab12.local/x"]))).claimURL)
+        XCTAssertNil(try XCTUnwrap(ImprovWire.parseClaim(claimBody(["claim_url": "/api/provisioning-receipt?claim=x"]))).claimURL,
+                     "no host")
+        let byIP = try XCTUnwrap(ImprovWire.parseClaim(claimBody(
+            ["claim_url": "http://192.168.1.23/api/provisioning-receipt?claim=\(claimHex)"])))
+        XCTAssertEqual(byIP.claimURL?.host, "192.168.1.23")
+        XCTAssertEqual(byIP.claimURL?.scheme, "http")
+    }
+
+    func testTheClaimURLHostCanBeSwappedForTheAddress() throws {
+        let c = try XCTUnwrap(ImprovWire.parseClaim(claimBody()))
+        let viaIP = try XCTUnwrap(ImprovWire.claimURL(c, host: "192.168.1.23"))
+        XCTAssertEqual(viaIP.absoluteString, "https://192.168.1.23/api/provisioning-receipt?claim=\(claimHex)",
+                       "scheme, path and query stay; only the host moves")
+        XCTAssertEqual(ImprovWire.claimURL(c, host: nil), c.claimURL, "no host: the URL as given")
+        XCTAssertEqual(ImprovWire.claimURL(c, host: " "), c.claimURL)
+        // A port rides with the host.
+        let ported = try XCTUnwrap(ImprovWire.parseClaim(claimBody(
+            ["claim_url": "http://canary-ab12.local:8080/api/provisioning-receipt?claim=\(claimHex)"])))
+        XCTAssertEqual(ImprovWire.claimURL(ported, host: "10.0.0.9")?.absoluteString,
+                       "http://10.0.0.9:8080/api/provisioning-receipt?claim=\(claimHex)")
+        // No claim URL, nothing to rebuild.
+        let bare = try XCTUnwrap(ImprovWire.parseClaim(claimBody(["claim_url": nil])))
+        XCTAssertNil(ImprovWire.claimURL(bare, host: "192.168.1.23"))
+    }
+
+    func testTheCompanionServiceIsSecuraCVsOutsideTheImprovService() {
+        XCTAssertEqual(ImprovWire.companionServiceUUID, "8fc1cf00-b162-4401-9607-c8ac21383e90")
+        XCTAssertEqual(ImprovWire.claimUUID, "8fc1cf01-b162-4401-9607-c8ac21383e90")
+        XCTAssertFalse(ImprovWire.companionServiceUUID.hasPrefix("00467768"),
+                       "a separate service beside the Improv one, not a sixth characteristic in it")
+        XCTAssertEqual(String(ImprovWire.claimUUID.dropFirst(8)), String(ImprovWire.companionServiceUUID.dropFirst(8)),
+                       "one base UUID")
+    }
+
+    func testTheDoorRulesHaveWordsForThePerson() {
+        let shut = ImprovWire.Error.notAuthorized.message
+        XCTAssertTrue(shut.contains("BOOT button"), "the tap is the way back in on a Sense or Vision")
+        XCTAssertTrue(shut.contains("power-cycle"), "and the power cycle on a brand-new one")
+        XCTAssertTrue(shut.contains("WAP"), "a WAP has no tap door yet")
+        XCTAssertTrue(ImprovWire.Error.invalidRPC.message.contains("wait a moment"), "the 3 s cooldown between writes")
+    }
 }

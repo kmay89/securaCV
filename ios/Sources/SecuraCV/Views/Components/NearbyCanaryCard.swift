@@ -5,8 +5,11 @@
 // which), and the sheet one tap opens: the phone connects, asks the Canary
 // which networks it sees, the person picks theirs and types the password
 // once (or not at all, when this phone remembered it from the last Canary),
-// iOS asks to pair, and the Canary answers with its own verdict. Then the
-// Fleet tab shows it on its own.
+// iOS asks to pair, and the Canary answers with its own verdict. A WAP then
+// hands this phone a one-time claim over the link, and the phone spends it
+// over the home Wi-Fi for the pairing receipt — the key never rides
+// Bluetooth (Shared/MagicPairPlan.swift decides each step). Then the Fleet
+// tab shows it on its own.
 //
 // Honesty rules: every line of status is the Canary's word or the phone's
 // own action — "joining" when the Canary said provisioning, "on your
@@ -87,6 +90,9 @@ struct NearbySetupSheet: View {
     @State private var remembered: HouseholdWiFi? = HouseholdWiFiStore.load()
     @State private var verdict: ImprovClient.Outcome?
     @State private var paired = false
+    /// Joined but not paired, and how to pair it later — shown in the done
+    /// section in place of the "Paired" line (MagicPairPlan's words).
+    @State private var pairNote: String?
 
     enum Stage: Equatable {
         case connecting
@@ -94,6 +100,8 @@ struct NearbySetupSheet: View {
         case choose
         case sending
         case joining
+        /// Joined; spending a WAP's claim over the home Wi-Fi for its key.
+        case claiming
         case done
         case failed(String)
     }
@@ -136,6 +144,10 @@ struct NearbySetupSheet: View {
                 case .joining:
                     Section {
                         HStack { ProgressView(); Text("The Canary is joining \(effectiveSSID)…") }
+                    }
+                case .claiming:
+                    Section {
+                        HStack { ProgressView(); Text("Collecting its pairing key over your Wi-Fi…") }
                     }
                 case .done:
                     doneSection
@@ -225,8 +237,12 @@ struct NearbySetupSheet: View {
             Label("It's on \(effectiveSSID) — the Canary said so itself.", systemImage: "checkmark.circle")
                 .foregroundStyle(Theme.color(.calm))
             if paired {
-                Label("Paired with this phone — its key came over the same link.", systemImage: "key.horizontal")
+                Label("Paired with this phone — its key came over your Wi-Fi, never over Bluetooth.", systemImage: "key.horizontal")
                     .foregroundStyle(Theme.color(.calm))
+            } else if let pairNote {
+                Label(pairNote, systemImage: "exclamationmark.triangle")
+                    .font(.footnote).foregroundStyle(Theme.color(.warn))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if store.discoveryConsent != true {
                 Button("Enable discovery to watch it appear") { store.setDiscoveryConsent(true) }
@@ -297,30 +313,105 @@ struct NearbySetupSheet: View {
             if HouseholdWiFiStore.shouldRemember(toggleOn: remember, joined: true, ssid: ssid) {
                 try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: ssid, password: password, savedAt: Date()))
             }
-            // A WAP hands its pairing receipt over the same link: the phone
-            // ends up PAIRED, token in the Keychain, from the one tap.
-            if client.offersReceipt, let data = await client.readReceipt(),
-               let receipt = try? JSONDecoder().decode(ProvisioningReceipt.self, from: data),
-               DeviceAPI.isPrivate(receipt.baseURL),
-               !(DeviceAPI.isTLS(receipt.baseURL) && receipt.tlsCertFingerprint == nil) {
-                let ref = PairedDeviceRef(id: receipt.deviceID, name: canary.title, deviceType: .wap,
-                                          baseURL: receipt.baseURL, pairedAt: Date(),
-                                          tlsCertFingerprint: receipt.tlsCertFingerprint)
-                store.devices.add(ref, token: receipt.token)
-                paired = true
+            // A WAP hands the link that provisioned a one-time CLAIM — never
+            // its bearer token — and the phone spends it over the home Wi-Fi
+            // for the receipt. Read it now, while the link lingers (the
+            // Canary drops it ~20 s after the join), then let the link go:
+            // everything after this is Wi-Fi.
+            let hasClaimService = client.offersClaim
+            var claim: ImprovWire.Claim?
+            if hasClaimService, let data = await client.readClaim() {
+                claim = ImprovWire.parseClaim(data)
             }
-            stage = .done
             store.ble.endSetup()
+            await pair(hasClaimService: hasClaimService, claim: claim)
+            stage = .done
             Task { await store.refreshOnce() }
         case .failed(let why):
             stage = .failed(why)
         }
     }
 
+    /// Follow the plan: spend a WAP's claim over the home Wi-Fi, at most
+    /// twice (its `.local` name, then the address it reported), and end
+    /// PAIRED — token in the Keychain, from the one tap — or with an honest
+    /// note on how to pair it later. A Sense or Vision offers no claim and
+    /// keeps the watch-the-fleet ending.
+    private func pair(hasClaimService: Bool, claim: ImprovWire.Claim?) async {
+        var step = MagicPairPlan.afterJoin(hasClaimService: hasClaimService, claim: claim,
+                                           isPrivateHost: DeviceAPI.isPrivate)
+        var receipt: ProvisioningReceipt?
+        var triedIP = false
+        dial: while true {
+            let url: URL
+            let pin: String?
+            switch step {
+            case .spendClaim(let u, let p):
+                url = u
+                pin = p
+            case .retryViaIP(let u, let p):
+                url = u
+                pin = p
+                triedIP = true
+            case .watchFleet, .paired, .notPairedTapBoot, .refused:
+                break dial
+            }
+            guard let claim else { break }
+            stage = .claiming
+            let outcome: MagicPairPlan.FetchOutcome
+            do {
+                receipt = try await DeviceAPI.fetchReceipt(claimURL: url, tlsFingerprint: pin)
+                outcome = .receipt
+            } catch {
+                outcome = Self.fetchOutcome(for: error)
+            }
+            step = MagicPairPlan.afterFetch(outcome, claim: claim, triedIP: triedIP,
+                                            isPrivateHost: DeviceAPI.isPrivate)
+        }
+        if case .paired = step, let receipt {
+            // The same two gates PairView applies to a pasted receipt.
+            step = MagicPairPlan.afterReceipt(baseURL: receipt.baseURL,
+                                              tlsCertFingerprint: receipt.tlsCertFingerprint,
+                                              isPrivateHost: DeviceAPI.isPrivate)
+        }
+        switch step {
+        case .paired:
+            guard let receipt else { return }
+            let ref = PairedDeviceRef(id: receipt.deviceID, name: canary.title, deviceType: .wap,
+                                      baseURL: receipt.baseURL, pairedAt: Date(),
+                                      tlsCertFingerprint: receipt.tlsCertFingerprint)
+            store.devices.add(ref, token: receipt.token)
+            paired = true
+        case .notPairedTapBoot(let note), .refused(let note):
+            pairNote = note
+        case .watchFleet, .spendClaim, .retryViaIP:
+            break
+        }
+    }
+
+    /// How one dial ended, in the plan's terms: a 403 is the Canary's
+    /// refusal (final); DNS, connection and timeout failures never reached
+    /// it (the address fallback may); anything else is named and final.
+    private static func fetchOutcome(for error: Error) -> MagicPairPlan.FetchOutcome {
+        if let refusal = error as? DeviceError, case .claimRefused = refusal { return .refused }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .timedOut,
+                 .notConnectedToInternet, .networkConnectionLost:
+                return .unreachable
+            default:
+                break
+            }
+        }
+        return .other(error.localizedDescription)
+    }
+
     private func restart() {
         store.ble.endSetup()
         client = nil
         networks = []
+        paired = false
+        pairNote = nil
         Task { await begin() }
     }
 }

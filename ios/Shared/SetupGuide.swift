@@ -179,7 +179,7 @@ enum SetupGuide {
             steps.append(SetupStep(
                 id: "nearby",
                 title: "Let this phone find it",
-                body: "Power it on near this phone. With nothing to join yet, it opens a small Bluetooth setup door and says so on the air; this phone hears it within seconds and shows a card. Tap the card, pick your Wi-Fi from the networks the Canary itself can see, type the password once, and tap Pair when iOS asks — the credentials cross encrypted, and the Canary answers with its own verdict. This phone can remember your Wi-Fi for the next Canary, in its Keychain only." + (family == .wap ? " A WAP hands its pairing key over the same link, so it is paired with this phone from that one tap." : ""),
+                body: "Power it on near this phone. With nothing to join yet, it opens a small Bluetooth setup door and says so on the air; this phone hears it within seconds and shows a card. Tap the card, pick your Wi-Fi from the networks the Canary itself can see, type the password once, and tap Pair when iOS asks — the credentials cross encrypted, and the Canary answers with its own verdict. This phone can remember your Wi-Fi for the next Canary, in its Keychain only." + (family == .wap ? " A WAP then hands this phone a one-time claim over that link, and the phone collects its pairing key over your Wi-Fi — the key never rides Bluetooth — so it is paired from that one tap." : "") + " " + doorWindowLine(family),
                 action: .nearbyCanary))
         }
         switch family.path {
@@ -210,6 +210,24 @@ enum SetupGuide {
             body: "Once it is on your Wi-Fi, it announces itself and shows up on the Fleet tab by itself — nothing to pair for a display, a camera or a radar Canary. " + family.hubNote,
             action: .watchForCanary))
         return steps
+    }
+
+    /// The door's first rule, as the firmware keeps it (improv_core.h
+    /// Timing): open for the first-boot window while nothing is stored…
+    static let doorWindowSentence = "The door is open for half an hour after power-on"
+    /// …and, on a board that reads its BOOT button for it (Sense, Vision),
+    /// for a minute after a short tap. A WAP has no tap door yet.
+    static let tapSentence = "a short tap on its BOOT button opens it for a minute"
+
+    /// When the door is open, for one family. A saved network that stopped
+    /// working does not open it — the walkthrough never promises that.
+    static func doorWindowLine(_ family: CanaryFamily) -> String {
+        switch family {
+        case .sense, .vision:
+            return doorWindowSentence + "; after that, " + tapSentence + "."
+        case .wap, .display:
+            return doorWindowSentence + "; after that, power-cycle it to open it again."
+        }
     }
 
     private static func firstBootLine(_ family: CanaryFamily) -> String {

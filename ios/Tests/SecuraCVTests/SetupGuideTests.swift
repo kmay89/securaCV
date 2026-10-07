@@ -55,7 +55,23 @@ final class SetupGuideTests: XCTestCase {
             XCTAssertTrue(steps[2].title.hasPrefix("If no card appears"), "\(family.rawValue): the older path is the fallback")
         }
         XCTAssertTrue(SetupGuide.canary(.wap)[1].body.contains("pairing key"), "the WAP step says what the one tap earns")
+        XCTAssertTrue(SetupGuide.canary(.wap)[1].body.contains("never rides Bluetooth"),
+                      "and where the key crosses: a claim over the link, the key over Wi-Fi")
         XCTAssertFalse(SetupGuide.canary(.sense)[1].body.contains("pairing key"), "a Sense has no key to hand over")
+        // The door's rules, as the firmware keeps them: the first-boot
+        // window on every door family; the BOOT tap only where a board
+        // reads one (Sense, Vision) — a WAP has no tap door yet, so its
+        // step says to power-cycle it instead.
+        for family in CanaryFamily.allCases where family.hasBluetoothDoor {
+            let body = SetupGuide.canary(family)[1].body
+            XCTAssertTrue(body.contains(SetupGuide.doorWindowSentence),
+                          "\(family.rawValue): the window is the door's first rule")
+            XCTAssertEqual(body.contains(SetupGuide.tapSentence), family != .wap,
+                           "\(family.rawValue): only a Sense or Vision reads a BOOT tap for the door")
+        }
+        XCTAssertTrue(SetupGuide.canary(.wap)[1].body.contains("power-cycle"), "a WAP's door re-arms on a power cycle")
+        XCTAssertFalse(SetupGuide.canary(.display)[1].body.contains(SetupGuide.doorWindowSentence),
+                       "a display has no door to keep open")
     }
 
     func testNoStepIsAnEmptyPromise() {
