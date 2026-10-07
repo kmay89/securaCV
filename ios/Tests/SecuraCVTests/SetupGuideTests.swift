@@ -21,11 +21,12 @@ final class SetupGuideTests: XCTestCase {
         for family in CanaryFamily.allCases {
             let steps = SetupGuide.canary(family)
             let actions = steps.compactMap(\.action)
+            let door: [SetupAction] = family.hasBluetoothDoor ? [.nearbyCanary] : []
             switch family.path {
             case .setupNetwork:
-                XCTAssertEqual(actions, [.readSetupKey, .joinSetupNetwork, .watchForCanary], family.rawValue)
+                XCTAssertEqual(actions, door + [.readSetupKey, .joinSetupNetwork, .watchForCanary], family.rawValue)
             case .bluetooth:
-                XCTAssertEqual(actions, [.bluetoothProvision, .watchForCanary], family.rawValue)
+                XCTAssertEqual(actions, door + [.bluetoothProvision, .watchForCanary], family.rawValue)
             }
             XCTAssertEqual(steps.first?.title, family.title)
             XCTAssertFalse(family.tagline.isEmpty)
@@ -38,6 +39,21 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertEqual(CanaryFamily.display.path, .setupNetwork(keySource: .glassQR))
         XCTAssertEqual(CanaryFamily.vision.path, .setupNetwork(keySource: .flasher))
         XCTAssertEqual(CanaryFamily.sense.path, .setupNetwork(keySource: .flasher))
+    }
+
+    func testTheBluetoothDoorIsOnTheHeadlessWitnessesAndLeadsTheirWalkthrough() {
+        // The families whose firmware compiles common/network/improv_ble —
+        // nothing here promises a door a device does not open.
+        XCTAssertTrue(CanaryFamily.sense.hasBluetoothDoor)
+        XCTAssertTrue(CanaryFamily.vision.hasBluetoothDoor)
+        XCTAssertFalse(CanaryFamily.display.hasBluetoothDoor, "a display shows a QR on its glass instead")
+        XCTAssertFalse(CanaryFamily.wap.hasBluetoothDoor, "the WAP's bonded service is its own path")
+        for family in CanaryFamily.allCases where family.hasBluetoothDoor {
+            let steps = SetupGuide.canary(family)
+            XCTAssertEqual(steps[1].action, .nearbyCanary, family.rawValue)
+            XCTAssertEqual(steps[1].id, "nearby")
+            XCTAssertTrue(steps[2].title.hasPrefix("If no card appears"), "the typed key is the fallback")
+        }
     }
 
     func testNoStepIsAnEmptyPromise() {

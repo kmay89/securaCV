@@ -33,6 +33,9 @@ enum SetupAction: String, Equatable, Sendable {
     case joinSetupNetwork
     /// Send the home Wi-Fi over the bonded Bluetooth provisioning service.
     case bluetoothProvision
+    /// Hear a brand-new Canary's Bluetooth setup door (Improv Wi-Fi) and
+    /// hand it the home Wi-Fi with one tap — the card.
+    case nearbyCanary
     /// Watch for the device to appear on the home network.
     case watchForCanary
 }
@@ -77,6 +80,17 @@ enum CanaryFamily: String, CaseIterable, Identifiable, Sendable {
         case .vision: return "Detects people on the module; never stores or streams video."
         case .sense: return "Senses presence and breathing through the air — no camera, no microphone."
         case .wap: return "GPS, a signed event log and its own hotspot; pairs with this phone directly."
+        }
+    }
+
+    /// Whether this family opens a Bluetooth setup door out of the box
+    /// (firmware/common/network/improv_ble): the phone hears it, shows a
+    /// card, one tap. The path below is what stays underneath as the
+    /// break-glass route.
+    var hasBluetoothDoor: Bool {
+        switch self {
+        case .sense, .vision: return true
+        case .display, .wap: return false
         }
     }
 
@@ -161,14 +175,22 @@ enum SetupGuide {
                 body: family.tagline + " " + firstBootLine(family),
                 action: nil),
         ]
+        if family.hasBluetoothDoor {
+            steps.append(SetupStep(
+                id: "nearby",
+                title: "Let this phone find it",
+                body: "Power it on near this phone. With nothing to join yet, it opens a small Bluetooth setup door and says so on the air; this phone hears it within seconds and shows a card. Tap the card, pick your Wi-Fi from the networks the Canary itself can see, type the password once, and tap Pair when iOS asks — the credentials cross encrypted, and the Canary answers with its own verdict. This phone can remember your Wi-Fi for the next Canary, in its Keychain only.",
+                action: .nearbyCanary))
+        }
         switch family.path {
         case .setupNetwork(let keySource):
             steps.append(SetupStep(
                 id: "key",
-                title: keySource == .glassQR ? "Read the key off its glass" : "The key the Flasher printed",
+                title: keySource == .glassQR ? "Read the key off its glass"
+                    : (family.hasBluetoothDoor ? "If no card appears: the key the Flasher printed" : "The key the Flasher printed"),
                 body: keySource == .glassQR
                     ? "Power it on. Its screen shows a QR code for its own setup network, named SecuraCV-XXXX. Scan it with this phone, or type the four characters and the key printed under it."
-                    : "A camera or radar Canary has no screen, so its setup-network key is printed by the Flasher that hatched it (and if you typed Wi-Fi into the Flasher, the Canary is already on your network — skip to the last step). Type the network name and key here.",
+                    : "A camera or radar Canary has no screen, so its setup-network key is printed by the Flasher that hatched it (and if you typed Wi-Fi into the Flasher, the Canary is already on your network — skip to the last step). Type the network name and key here; its setup network is the same door with a key, for a phone with Bluetooth off.",
                 action: .readSetupKey))
             steps.append(SetupStep(
                 id: "join",
@@ -191,6 +213,9 @@ enum SetupGuide {
     }
 
     private static func firstBootLine(_ family: CanaryFamily) -> String {
+        if family.hasBluetoothDoor {
+            return "Out of the box it has no Wi-Fi, so it opens a Bluetooth setup door for a phone — and raises a small setup network of its own beside it."
+        }
         switch family.path {
         case .setupNetwork: return "Out of the box it has no Wi-Fi, so it raises a small setup network of its own and waits for a phone."
         case .bluetooth: return "Out of the box it has no Wi-Fi, and it is listening over Bluetooth for exactly this phone."

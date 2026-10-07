@@ -57,6 +57,12 @@ final class BLEConsole: NSObject, ObservableObject {
     /// Known so its adverts are recognized as ours; its characteristics are not
     /// read yet — the beacon already carries this family's state.
     static let statusServiceUUID  = CBUUID(string: "5e63a1b0-7c3d-4f2e-8a91-0d1b2c3e4f5a")
+    /// The Improv Wi-Fi setup door every Sense, Vision and WAP opens while
+    /// it has no Wi-Fi of its own (firmware/common/network/improv_ble): the
+    /// 128-bit service in the scan response, and its 0x4677 service data
+    /// carrying the state and capabilities (Shared/ImprovWire.swift).
+    static let improvServiceUUID     = CBUUID(string: ImprovWire.serviceUUID)
+    static let improvServiceDataUUID = CBUUID(string: "4677")
 
     /// A Canary we've stopped hearing is dark, not fine. Beacons repeat every
     /// few seconds; a minute of silence is unambiguous.
@@ -70,11 +76,21 @@ final class BLEConsole: NSObject, ObservableObject {
     /// for the same reason.
     @Published private(set) var chirpSightings: [UUID: ChirpSighting] = [:]
     @Published private(set) var snapshotsByDevice: [String: BLESnapshot] = [:]
+    /// Everything heard per peripheral that the "new Canary nearby" card
+    /// reads (Shared/NearbyCanary.swift): beacon, name, the Improv service
+    /// and its service data. Kept short; the policy applies its own window.
+    @Published private(set) var heard: [UUID: NearbyCanaries.Heard] = [:]
     @Published private(set) var poweredOn = false
     @Published private(set) var scanning = false
 
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
+    /// Every peripheral seen recently, held so one can be connected on
+    /// demand for setup (CoreBluetooth needs a strong reference to connect).
+    private var seenPeripherals: [UUID: CBPeripheral] = [:]
+    /// The one setup ceremony in flight, if any; the central's callbacks for
+    /// its peripheral are forwarded there instead of the console path.
+    private(set) var setupClient: ImprovClient?
     /// Whether a scan has been *requested*, independent of whether the radio is
     /// ready. CBCentralManager starts in `.unknown` and only reaches
     /// `.poweredOn` a moment later, so at launch `startScan()` always arrives
@@ -130,6 +146,39 @@ final class BLEConsole: NSObject, ObservableObject {
         let cutoff = now.addingTimeInterval(-Self.staleAfter)
         sightings = sightings.filter { $0.value.lastHeard >= cutoff }
         chirpSightings = chirpSightings.filter { $0.value.lastHeard >= cutoff }
+        heard = heard.filter { $0.value.lastHeard >= cutoff }
+        seenPeripherals = seenPeripherals.filter { heard[$0.key] != nil || sightings[$0.key] != nil
+            || chirpSightings[$0.key] != nil || peripherals[$0.key] != nil || setupClient?.peripheralID == $0.key }
+    }
+
+    // MARK: - the Bluetooth setup door (Improv Wi-Fi)
+
+    /// Begin a setup ceremony with one heard Canary: connect to it and hand
+    /// the link to an ImprovClient. One at a time; a ceremony already running
+    /// is returned as is. Nil when the peripheral is no longer around.
+    func beginSetup(_ peripheralID: UUID) -> ImprovClient? {
+        if let running = setupClient {
+            if running.peripheralID == peripheralID { return running }
+            endSetup()
+        }
+        guard let peripheral = seenPeripherals[peripheralID] else { return nil }
+        let client = ImprovClient(peripheral: peripheral)
+        setupClient = client
+        if peripheral.state == .connected {
+            client.centralDidConnect()
+        } else {
+            central.connect(peripheral)
+        }
+        return client
+    }
+
+    /// Drop the setup link (the ceremony is over, or the person backed out).
+    func endSetup() {
+        guard let client = setupClient else { return }
+        setupClient = nil
+        if let peripheral = seenPeripherals[client.peripheralID], peripheral.state != .disconnected {
+            central.cancelPeripheralConnection(peripheral)
+        }
     }
 
     // MARK: - Wi-Fi provisioning over BLE (the rescue path)
@@ -281,11 +330,30 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
             }
         }
 
+        // ── Layer 1b: what the "new Canary nearby" card reads. A beacon with
+        // its setup bit, a "Sense-AB12" name, the Improv service in the scan
+        // response and its service data can arrive across more than one
+        // callback, so each piece sticks until the sighting goes stale.
+        let advertised = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data]
+        let improvData = serviceData?[Self.improvServiceDataUUID].flatMap(ImprovWire.parseServiceData)
+        var h = heard[peripheral.identifier] ?? NearbyCanaries.Heard(
+            peripheralID: peripheral.identifier, beacon: nil, localName: nil, improvAdvertised: false,
+            improvServiceData: nil, rssiDBM: RSSI.intValue, lastHeard: Date())
+        if let beacon = sightings[peripheral.identifier]?.beacon { h.beacon = beacon }
+        if let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String, !name.isEmpty { h.localName = name }
+        if advertised.contains(Self.improvServiceUUID) { h.improvAdvertised = true }
+        if let improvData { h.improvServiceData = improvData }
+        h.rssiDBM = RSSI.intValue
+        h.lastHeard = Date()
+        heard[peripheral.identifier] = h
+        seenPeripherals[peripheral.identifier] = peripheral
+
         // ── Layer 2: connect ONLY to a WAP-class console ──
         // Everything else is heard, never dialed: connecting to arbitrary
         // peripherals would waste radio and, on a beacon-only board, achieve
-        // nothing.
-        let advertised = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        // nothing — except the one a person tapped the setup card for
+        // (beginSetup), which dials on demand.
         guard advertised.contains(Self.consoleServiceUUID) else { return }
         guard peripherals[peripheral.identifier] == nil else { return }   // already dialing/connected
         peripherals[peripheral.identifier] = peripheral
@@ -294,10 +362,18 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        if let client = setupClient, client.peripheralID == peripheral.identifier {
+            client.centralDidFailToConnect(error)
+            return
+        }
         peripherals[peripheral.identifier] = nil      // let a later advert retry
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        if let client = setupClient, client.peripheralID == peripheral.identifier {
+            client.centralDidDisconnect(error)
+            return
+        }
         peripherals[peripheral.identifier] = nil
         // A rescue mid-flight lost its device. Two honest readings: if the
         // credentials were already written, the device may simply have
@@ -309,6 +385,10 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        if let client = setupClient, client.peripheralID == peripheral.identifier {
+            client.centralDidConnect()
+            return
+        }
         peripheral.discoverServices([Self.consoleServiceUUID])
     }
 

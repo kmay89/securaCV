@@ -20,6 +20,9 @@ struct TodayView: View {
                     StatusHero(severity: store.worstSeverity,
                                headline: store.allQuiet ? "All quiet" : hotHeadline,
                                watchers: store.witnesses.count)
+                    // A brand-new Canary with its Bluetooth setup door open
+                    // is in range: the card, before anything else.
+                    NearbyCanaryCard()
                     // Nothing real yet: the first thing a newcomer needs is
                     // not a timeline, it is the way in. One card, one door.
                     if store.witnesses.allSatisfy({ $0.id.hasPrefix(DemoFleet.idPrefix) }) {

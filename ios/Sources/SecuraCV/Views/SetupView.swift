@@ -22,6 +22,7 @@ struct SetupView: View {
     var initial: SetupTarget?
 
     @State private var hubRecord = HubStore.load()
+    @State private var householdWiFi = HouseholdWiFiStore.load()
     @State private var path: [SetupTarget] = []
 
     var body: some View {
@@ -38,7 +39,7 @@ struct SetupView: View {
                     NavigationLink(value: SetupTarget.canary) {
                         choiceRow(icon: "bird",
                                   title: "Add a Canary",
-                                  body: "Give a new Canary your Wi-Fi the way it can take it — over Bluetooth, or through its own setup network — and watch it appear on the Fleet tab.")
+                                  body: "Give a new Canary your Wi-Fi the way it can take it — a card when it asks over Bluetooth, a QR off a display's glass, or its own setup network — and watch it appear on the Fleet tab.")
                     }
                 } header: {
                     Text("What are you setting up?")
@@ -50,6 +51,17 @@ struct SetupView: View {
                         Label("Broker login for your Canaries: \(login.username)", systemImage: "key.horizontal")
                     } footer: {
                         Text("Minted on this phone when the hub was finished, kept in its Keychain. A Canary that asks for an MQTT login gets this one — the Canary walkthrough shows it when it's needed.")
+                    }
+                }
+                if let wifi = householdWiFi {
+                    Section {
+                        Label("Wi-Fi remembered for the next Canary: \(wifi.ssid)", systemImage: "wifi")
+                        Button("Forget it", role: .destructive) {
+                            HouseholdWiFiStore.forget()
+                            householdWiFi = nil
+                        }
+                    } footer: {
+                        Text("Kept in this phone's Keychain only, never in iCloud, so a second Canary joins with two taps. Forget it here any time.")
                     }
                 }
             }
@@ -65,6 +77,7 @@ struct SetupView: View {
             }
             .onAppear {
                 hubRecord = HubStore.load()
+                householdWiFi = HouseholdWiFiStore.load()
                 if let initial, path.isEmpty { path = [initial] }
             }
         }

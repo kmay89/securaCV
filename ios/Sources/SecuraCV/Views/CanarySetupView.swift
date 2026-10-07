@@ -28,7 +28,7 @@ struct CanarySetupView: View {
             } header: {
                 Text("Which Canary is it?")
             } footer: {
-                Text("Each family joins its own way — a display shows a QR on its glass, a camera or radar Canary's key comes from the Flasher that hatched it, and a WAP listens over Bluetooth. Pick yours and the steps fit.")
+                Text("Each family joins its own way — a camera or radar Canary opens a Bluetooth setup door this phone hears (its Flasher-printed key is the fallback), a display shows a QR on its glass, and a WAP listens over Bluetooth. Pick yours and the steps fit.")
             }
         }
         .navigationTitle("A Canary")
@@ -58,6 +58,7 @@ struct CanaryFamilySetupView: View {
             ForEach(Array(SetupGuide.canary(family).enumerated()), id: \.element.id) { i, step in
                 SetupStepSection(index: i + 1, step: step) {
                     switch step.action {
+                    case .nearbyCanary: nearbyControl
                     case .readSetupKey: keyControl
                     case .joinSetupNetwork: joinControl
                     case .bluetoothProvision: bluetoothControl
@@ -84,6 +85,27 @@ struct CanaryFamilySetupView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - the Bluetooth door (the card, in place)
+
+    @ViewBuilder private var nearbyControl: some View {
+        if store.discoveryConsent != true {
+            Text("Hearing a Canary over Bluetooth needs discovery on — the same consent the Fleet tab asks for.")
+                .font(.footnote).foregroundStyle(.secondary)
+            Button("Enable discovery") { store.setDiscoveryConsent(true) }
+                .buttonStyle(.borderedProminent)
+        } else if store.nearbyCanaries.isEmpty {
+            HStack(spacing: Theme.s) {
+                ProgressView()
+                Text("Listening… power the \(family.deviceType.role.lowercased()) on within a few meters of this phone.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        } else {
+            NearbyCanaryCard()
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
         }
     }
 
