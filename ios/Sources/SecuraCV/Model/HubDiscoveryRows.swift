@@ -30,15 +30,19 @@ enum HubDiscoveryRows {
     /// with no usable address still gets a row so the person can type one.
     static func rows(from adverts: [(service: String, txt: [String: String])]) -> [DiscoveredHub] {
         var byID: [String: DiscoveredHub] = [:]
+        // The ids whose row carries the owner's location name, not the
+        // service-name fallback.
+        var named: Set<String> = []
         for (service, txt) in adverts {
             let id = (txt["uuid"]?.isEmpty == false ? txt["uuid"] : nil) ?? service
+            let locationName = txt["location_name"].flatMap { $0.isEmpty ? nil : $0 }
             let candidates = [txt["internal_url"], txt["base_url"]].compactMap { $0 }
             let url = candidates.lazy
                 .compactMap { URL(string: $0) }
                 .first { DeviceAPI.isPrivate($0) }
             let row = DiscoveredHub(
                 id: id,
-                name: txt["location_name"].flatMap { $0.isEmpty ? nil : $0 } ?? service,
+                name: locationName ?? service,
                 baseURL: url,
                 version: txt["version"] ?? "",
                 installationType: txt["installation_type"] ?? "")
@@ -48,9 +52,14 @@ enum HubDiscoveryRows {
             // on which copy the browse happened to see last.
             guard var kept = byID[id] else {
                 byID[id] = row
+                if locationName != nil { named.insert(id) }
                 continue
             }
             if kept.baseURL == nil { kept.baseURL = row.baseURL }
+            if !named.contains(id), let locationName {
+                kept.name = locationName
+                named.insert(id)
+            }
             if kept.version.isEmpty { kept.version = row.version }
             if kept.installationType.isEmpty { kept.installationType = row.installationType }
             byID[id] = kept
