@@ -335,9 +335,13 @@ availability pending. → [`ios/README.md`](../ios/README.md)
 **The Hub** — Home Assistant on a Raspberry Pi, running the kernel as an app
 ([`privacy_witness_kernel/`](../privacy_witness_kernel)) plus the integration
 ([`custom_components/securacv/`](../custom_components)). Headless by default —
-it never needs a screen.
+it never needs a screen: the desktop Flasher writes its card, and either the
+Flasher or the iPhone app's Set up walkthrough finishes it after first boot
+(the account, the broker, the kernel), since Home Assistant OS runs nothing
+from the card itself.
 → [the full stack, end to end](full_stack_setup.md),
-[Home Assistant setup](homeassistant_setup.md)
+[Home Assistant setup](homeassistant_setup.md),
+[a truly headless hub install](hub_headless_install.md)
 
 **The hub display** — The opt-in extra (`--with display` / the Flasher's "Also
 install the hub display" tick) for a hub with an HDMI touchscreen plugged in:

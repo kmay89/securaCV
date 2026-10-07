@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+### The hub finishes without a wizard: the Flasher's first-boot watch waits for Home Assistant itself, self-setup is on by default and retries "not ready yet", and the iPhone app gains a Set up walkthrough that finishes a hub from the phone and gives a new Canary its Wi-Fi
+
+- **Flasher: the first-boot watch no longer fires at HAOS's landing page.**
+  `hub_probe_hub` counted any HTTP answer on `:8123` as "the hub is up", but
+  Home Assistant OS serves "Preparing Home Assistant" on that port for the
+  minutes Core takes to download, so the account creation ran against a page
+  that could not create one, gave up after thirty seconds, and the self-setup
+  run stopped at "Core isn't running yet" — the person then met the setup
+  wizard. The probe now asks `GET /api/onboarding` and answers *offline /
+  preparing / ready* (`hub_io::onboarding::HubProbe`, pure and tested; only
+  the step list is *ready*); the watch and the resumed watch act on *ready*
+  alone, say "found it — still installing" on *preparing* and never
+  escalate to the go-find-it checklist for a hub that is answering; the
+  account run retries over two minutes instead of thirty seconds; and a
+  self-setup run whose only problem is time (`HeadlessReport.retry_later`:
+  console not open yet, Core not up yet) retries itself every 45 s for up to
+  ten rounds with the wait narrated. Self-setup and the account panel are
+  open and on by default (a remembered opt-out still clears the box, and a
+  machine without `ssh-keygen` keeps its flash and says why the bundle
+  stayed off). **Host-tested** (hub-io, 52); the first validated run on a
+  real first boot is still owed.
+- **iPhone app: Set up.** Fleet → Options → *Set up a hub or a Canary*, the
+  Start here card on an empty Today, the hub card's new button, the hive's
+  "+" sheet, and `securacv://setup[?what=hub|canary]`. The **hub**
+  walkthrough explains the card, the boot and the account, then does what a
+  phone can: finds Home Assistant over Bonjour (`_home-assistant._tcp`),
+  waits for *ready*, creates the owner over Home Assistant's own onboarding
+  API, finishes the wizard pages, verifies the login (`HubOnboarding`, the
+  Swift twin of the Flasher's `onboarding.rs`), then runs the bundle's plan
+  through Home Assistant's Supervisor proxy (`/api/hassio/…`): repositories,
+  Mosquitto, a `canary` broker login minted on the phone and kept in its
+  Keychain, the discovered-MQTT card accepted, Frigate installed, the kernel
+  add-on in Frigate mode and started, the SecuraCV config entry when the
+  integration is present — every step narrated, nothing done twice, what
+  stays yours said out loud (Frigate's camera config; the integration's
+  files, still the terminal one-liner). The **Canary** walkthrough has one
+  path per family and drives it: a display's glass QR scanned (VisionKit)
+  or typed, the phone joining `SecuraCV-XXXX` itself (NEHotspotConfiguration,
+  a new entitlement) and posting the home Wi-Fi to the portal's `/join` with
+  the device's `/status` verdict shown; a WAP's bonded Bluetooth provisioning
+  service for a brand-new unit; and the Fleet tab's discovery for the
+  appearance. Pure halves host-tested (`HubOnboardingTests`,
+  `HubProvisionPlanTests`, `SetupPortalTests`, `HubDiscoveryRowsTests`,
+  `SetupGuideTests`); the gated iOS CI is the compiler.
+- **Docs:** [`docs/hub_headless_install.md`](docs/hub_headless_install.md)
+  — what HAOS imports from the boot partition (no first-boot hook exists),
+  the three gaps behind the wizard, seven options with status, and the
+  recommendation (the add-on as the integration's installer next; the
+  overlay-partition unit as the hardware spike). FAQ, glossary and the
+  full-stack guide updated; the stale "no firmware serves a BOOT-tap receipt"
+  note in `PairView` corrected.
+
 ### canary-wap's fleet scan keeps the adverts that fit and its identity answers escape a typed name, Bluetooth reads its on-switch from the published view and a nearby device's emoji is its session's, the log Acknowledge works on both dashboards, Home Assistant is asked for the documented entity ids, a turned display keeps its face on the glass, CI is wired to render the dash glass through the real LVGL 9.5, a Vision box with a non-positive side reads no proximity, and the Lab's Nightlight card boots its own twin (#1762, wave 15)
 
 - **canary-wap: the fleet scan keeps the shortest adverts that fit, and the

@@ -553,21 +553,23 @@ fn local_hub_host(host: &str) -> Result<&str, String> {
     Ok(host)
 }
 
+/// Where the hub is in its first boot: `"offline"`, `"preparing"` or
+/// `"ready"` (`hub_io::onboarding::HubProbe`). Three states on purpose —
+/// HAOS answers HTTP with a "Preparing Home Assistant" page for the minutes
+/// Core takes to download on a first boot, and treating that answer as "up"
+/// (which this used to do: any response at all) fired the account creation
+/// and the self-setup run at a page that could answer neither, so they gave
+/// up and the person met the setup wizard. Only `"ready"` means Home
+/// Assistant's own onboarding API is answering, which is the one thing the
+/// companions need. Host rules: a bare `hostname[:port]`, never a URL.
 #[tauri::command]
-pub async fn hub_probe_hub(host: String) -> Result<bool, String> {
+pub async fn hub_probe_hub(host: String) -> Result<String, String> {
     let host = local_hub_host(&host)?;
-    let url = format!("http://{host}/");
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(3))
-        .timeout(std::time::Duration::from_secs(5))
-        // Same local-first transport policy as fleet.rs's device calls: the
-        // URL is gated, the connection needs .no_proxy() too.
-        .no_proxy()
-        .build()
-        .map_err(|e| e.to_string())?;
-    // Any HTTP response at all — 200, a redirect, even a 401 — means HA is up
-    // and serving. Only a transport failure (refused/timeout) means "not yet".
-    Ok(client.get(&url).send().await.is_ok())
+    tauri::async_runtime::spawn_blocking(move || {
+        hub_io::onboarding::probe_hub(&host).map(|p| p.name().to_string())
+    })
+    .await
+    .map_err(|e| format!("hub probe worker failed: {e}"))?
 }
 
 /// What the onboarding companion reports back to the UI.
@@ -731,11 +733,17 @@ fn hub_flash_blocking(
     // run the bundle once the hub is online. The key is minted (or reused)
     // now, before any bytes move — a machine without ssh-keygen fails in
     // milliseconds, not after a multi-GB write.
-    let (provision_files, authorized_keys) = if provision {
-        let keys = ensure_maintenance_key(app)?;
-        (hub_io::provision::provision_seed_files(), Some(keys))
+    // Self-setup is on by default now, so a machine that cannot mint the
+    // key (no ssh-keygen on PATH) must not lose its flash over it: the card
+    // is written without the bundle and the receipt says why, the same
+    // "a note, never a failed flash" rule the seed itself follows below.
+    let (provision_files, authorized_keys, provision_key_note) = if provision {
+        match ensure_maintenance_key(app) {
+            Ok(keys) => (hub_io::provision::provision_seed_files(), Some(keys), None),
+            Err(e) => (Vec::new(), None, Some(e)),
+        }
     } else {
-        (Vec::new(), None)
+        (Vec::new(), None, None)
     };
 
     // 3) Get the image — reuse a locally cached, RE-VERIFIED copy when we have
@@ -1081,11 +1089,19 @@ fn hub_flash_blocking(
         ));
     } else if want_provision {
         provision_note = Some(
-            "Experimental: the self-setup bundle and this app's maintenance key are on the card. \
-             Once the hub is online, this app will offer to finish setup itself — broker, MQTT, \
-             Frigate, and securaCV, narrated step by step."
+            "The self-setup bundle and this app's maintenance key are on the card. Once the hub \
+             has finished installing Home Assistant, this app finishes setup itself — broker, \
+             MQTT, Frigate, and securaCV, narrated step by step — or the SecuraCV iPhone app \
+             can, from anywhere in the house. (Still to be proven on a real first boot: an \
+             un-run bundle is harmless, and the guide covers every step by hand.)"
                 .to_string(),
         );
+    } else if let Some(why) = provision_key_note {
+        provision_note = Some(format!(
+            "The card is perfect and (if set) your Wi-Fi is on it — only the self-setup bundle \
+             stayed off, because this computer couldn't make the maintenance key it needs \
+             ({why}). Finish setup from the SecuraCV iPhone app, or from the guide."
+        ));
     }
 
     Ok(HubReceipt {
@@ -1164,6 +1180,11 @@ pub struct HeadlessReport {
     exit_code: Option<i32>,
     /// Calm advice when not ok — reachability vs. a partway stop.
     note: Option<String>,
+    /// True when the only thing wrong is TIME: the console isn't open yet,
+    /// or Core hasn't finished its first-boot download. The UI retries these
+    /// on its own instead of handing the person a button to press every
+    /// minute; anything else waits for a human.
+    retry_later: bool,
 }
 
 /// Guard: one self-setup run at a time.
@@ -1266,6 +1287,7 @@ fn hub_headless_blocking(
         return Ok(HeadlessReport {
             ok: false,
             exit_code: Some(code),
+            retry_later: false,
             note: Some(format!(
                 "This hub's identity is not the one we saw last time. After re-flashing the \
                  same hub that is expected — but the same thing happens if another device on \
@@ -1326,6 +1348,12 @@ fn hub_headless_blocking(
                 .to_string(),
         )
     };
+    // The two "too early" answers — Core still downloading, console not open
+    // yet — are the first boot's own timing, not a fault. Both clear
+    // themselves; the UI keeps trying.
+    let retry_later = code != 0
+        && (transcript.contains("isn't running yet")
+            || (code == 255 && !hub_core::hub_headless::host_key_changed(&transcript)));
     Ok(HeadlessReport {
         // Fully-finished only: a run that skipped an optional step is reported
         // as not-ok WITH a note, so the UI offers the retry/guidance path
@@ -1333,6 +1361,7 @@ fn hub_headless_blocking(
         ok: code == 0 && !transcript.contains("INCOMPLETE_OPTIONAL:"),
         exit_code: Some(code),
         note,
+        retry_later,
     })
 }
 

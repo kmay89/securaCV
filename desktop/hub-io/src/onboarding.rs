@@ -186,6 +186,81 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
+/// What a first-boot probe found at the hub's web port.
+///
+/// Three states, not two, because HAOS answers HTTP long before Home
+/// Assistant exists: on a first boot the OS serves a "Preparing Home
+/// Assistant" landing page on :8123 for the minutes Core takes to download.
+/// A probe that treats ANY answer as "up" fires the account creation and the
+/// self-setup run into that page, they give up, and the person lands on the
+/// setup wizard this whole flow exists to prevent. `Ready` is the one state
+/// the companions may act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HubProbe {
+    /// Nothing answered — still booting, or not on this network.
+    Offline,
+    /// Something answered on the port, but not Home Assistant's own API:
+    /// the landing page, or Core mid-restart. Keep watching; say so.
+    Preparing,
+    /// Home Assistant Core answers its onboarding API: setup can begin.
+    Ready,
+}
+
+impl HubProbe {
+    /// Stable machine name for the UI (the frontend maps these to copy).
+    pub fn name(&self) -> &'static str {
+        match self {
+            HubProbe::Offline => "offline",
+            HubProbe::Preparing => "preparing",
+            HubProbe::Ready => "ready",
+        }
+    }
+}
+
+/// Classify one answer from `GET /api/onboarding`: `None` for a transport
+/// failure, else the status and body. Pure, so the rule the first-boot watch
+/// lives by is tested on every PR rather than discovered on a Pi. Only a 200
+/// whose body is the onboarding step list (which Home Assistant serves
+/// without auth, before and after setup) counts as ready — the landing page
+/// is HTML, Supervisor's own answers are not that list, and a bare 404 is
+/// the port being open with nothing behind it yet.
+pub fn classify_probe(answer: Option<(u16, &str)>) -> HubProbe {
+    let Some((status, body)) = answer else {
+        return HubProbe::Offline;
+    };
+    if status == 200 {
+        if let Ok(v) = serde_json::from_str::<Value>(body) {
+            if parse_steps(&v).is_ok() {
+                return HubProbe::Ready;
+            }
+        }
+    }
+    HubProbe::Preparing
+}
+
+/// Ask the hub where it is in its first boot. `host` follows the same rules
+/// as every other call here: a bare `hostname[:port]` on this network, never
+/// a URL. Short timeouts — this runs every few seconds from a watch loop.
+pub fn probe_hub(host: &str) -> Result<HubProbe, String> {
+    let base = base_url_for_host(host)?;
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .user_agent("SecuraCV-Flasher")
+        .timeout_connect(Some(std::time::Duration::from_secs(3)))
+        .timeout_recv_response(Some(std::time::Duration::from_secs(5)))
+        .timeout_recv_body(Some(std::time::Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .into();
+    match agent.get(&format!("{base}/api/onboarding")).call() {
+        Ok(mut resp) => {
+            let status = resp.status().as_u16();
+            let body = resp.body_mut().read_to_string().unwrap_or_default();
+            Ok(classify_probe(Some((status, &body))))
+        }
+        Err(_) => Ok(HubProbe::Offline),
+    }
+}
+
 /// GET the onboarding step list. `Err` here means "not reachable / not ready
 /// yet" — the caller's retry loop owns that, not this module.
 fn fetch_steps(agent: &ureq::Agent, base: &str) -> Result<Vec<(String, bool)>, String> {
@@ -645,6 +720,37 @@ mod tests {
         let base = "http://hub.local:8123";
         assert_eq!(client_id(base), "http://hub.local:8123/");
         assert_eq!(redirect_uri(base), "http://hub.local:8123/?auth_callback=1");
+    }
+
+    #[test]
+    fn probe_is_ready_only_for_the_onboarding_step_list() {
+        // No answer at all: still booting.
+        assert_eq!(classify_probe(None), HubProbe::Offline);
+        // HAOS's landing page answers 200 with HTML for minutes before Core
+        // exists — the exact answer that used to read as "up".
+        assert_eq!(
+            classify_probe(Some((200, "<!DOCTYPE html><title>Preparing Home Assistant</title>"))),
+            HubProbe::Preparing
+        );
+        // A port that is open with nothing behind it yet.
+        assert_eq!(classify_probe(Some((404, ""))), HubProbe::Preparing);
+        assert_eq!(classify_probe(Some((502, "Bad Gateway"))), HubProbe::Preparing);
+        // JSON, but not the step list.
+        assert_eq!(classify_probe(Some((200, r#"{"message":"API running."}"#))), HubProbe::Preparing);
+        // Core answering its own onboarding API — before setup…
+        assert_eq!(
+            classify_probe(Some((200, r#"[{"step":"user","done":false},{"step":"core_config","done":false}]"#))),
+            HubProbe::Ready
+        );
+        // …and after it (the list is served either way; the companions
+        // decide what is left from the flags, not from reachability).
+        assert_eq!(
+            classify_probe(Some((200, r#"[{"step":"user","done":true}]"#))),
+            HubProbe::Ready
+        );
+        assert_eq!(HubProbe::Ready.name(), "ready");
+        assert_eq!(HubProbe::Preparing.name(), "preparing");
+        assert_eq!(HubProbe::Offline.name(), "offline");
     }
 
     #[test]

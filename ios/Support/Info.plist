@@ -116,7 +116,15 @@
   <key>NSBonjourServices</key>
   <array>
     <string>_securacv._tcp</string>
+    <!-- Home Assistant's own advert: how the Set up walkthrough finds a hub
+         that just finished first boot, with no hostname typed. -->
+    <string>_home-assistant._tcp</string>
   </array>
+
+  <!-- Camera: only to read the Wi-Fi QR a display draws on its glass for its
+       own setup network (Set up → A Canary). No frame is kept or sent. -->
+  <key>NSCameraUsageDescription</key>
+  <string>SecuraCV reads the setup QR code shown on a Canary's screen so it can join the Canary's setup network for you. Nothing is recorded.</string>
 
   <!-- Bluetooth: hear a Canary directly even when Wi-Fi is down. -->
   <key>NSBluetoothAlwaysUsageDescription</key>

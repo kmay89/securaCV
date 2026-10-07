@@ -10,6 +10,7 @@ import SwiftUI
 
 struct TodayView: View {
     @EnvironmentObject var store: FleetStore
+    @State private var showingSetup = false
 
     var body: some View {
         NavigationStack {
@@ -19,6 +20,11 @@ struct TodayView: View {
                     StatusHero(severity: store.worstSeverity,
                                headline: store.allQuiet ? "All quiet" : hotHeadline,
                                watchers: store.witnesses.count)
+                    // Nothing real yet: the first thing a newcomer needs is
+                    // not a timeline, it is the way in. One card, one door.
+                    if store.witnesses.allSatisfy({ $0.id.hasPrefix(DemoFleet.idPrefix) }) {
+                        SetupInviteCard { showingSetup = true }
+                    }
                     HeartbeatCard()
                     if store.timeline.isEmpty {
                         EmptyTimeline()
@@ -36,6 +42,7 @@ struct TodayView: View {
             .refreshable { await store.refreshOnce() }
             .navigationTitle(store.fleetName)
             .background(backdrop.ignoresSafeArea())
+            .sheet(isPresented: $showingSetup) { SetupView() }
         }
     }
 
@@ -133,6 +140,27 @@ struct EmptyTimeline: View {
                     Text("Nothing to report").font(.headline)
                     Text("Events show up here as your Canaries witness them — a claim of what happened, never a recording.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+/// The way in, for a phone with no real fleet yet: both walkthroughs behind
+/// one calm card. It names what the phone itself does, and only that.
+struct SetupInviteCard: View {
+    var open: () -> Void
+    var body: some View {
+        Card {
+            HStack(alignment: .top, spacing: Theme.m) {
+                CanaryPerchView(height: 48)
+                VStack(alignment: .leading, spacing: Theme.xs) {
+                    Text("Start here").font(.headline)
+                    Text("Set up a hub on a Raspberry Pi — this phone finishes Home Assistant for you, no wizard — and give your first Canary its Wi-Fi.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Set up", action: open)
+                        .buttonStyle(.borderedProminent)
                 }
             }
         }
