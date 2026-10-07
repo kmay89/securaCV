@@ -667,7 +667,8 @@ function callMethod(fn, args) {
 // and the method, when the literal sits in the first argument of an api(),
 // secureFetch(), fetch() or cvFetch() call (a ternary's arms included) that
 // names it or none (GET). Elsewhere (a constant, a URL held for later, an
-// href) the method is null.
+// href) the method is null. Only URLs written in the page are read: a URL
+// the page takes from a response (the Export answer's download_url) is not.
 function pageRequests(page) {
   const text = pageText(page);
   const calls = [];

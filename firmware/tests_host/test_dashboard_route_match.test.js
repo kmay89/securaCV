@@ -20,13 +20,18 @@
 // tree's primary route table in registration order (every #if branch, the
 // way both route budget checks count; a registration it cannot place fails
 // it), each registration with the #if conditions it sits under, and every
-// request each page the tree serves from a raw string makes: the PlatformIO
-// canary's dashboard and setup page; canary-wap's admin dashboard (web_ui.h,
-// /admin), Sensing dashboard (/, which /sense redirects to), companion PWA,
-// Tuning Lab and MQTT page, and its captive page. What this pins:
+// /api/ URL written in each page the tree serves from a raw string: the
+// PlatformIO canary's dashboard and setup page; canary-wap's admin dashboard
+// (web_ui.h, /admin), Sensing dashboard (/, which /sense redirects to),
+// companion PWA, Tuning Lab and MQTT page, and its captive page. A URL a page
+// takes from a response is not read, so nothing here holds it to a route
+// (both dashboards' Export sends the browser to the answer's download_url).
+// What this pins:
 //   - the copy is the IDF function, byte for byte (a hash of its text), and
 //     the oracle answers as IDF's matcher does on the cases that decided F214;
-//   - the #if reader reads what it must (a synthetic source);
+//   - the #if reader and the page reader read what they must (a synthetic
+//     source each), and each page's count of URLs read with no method is
+//     pinned;
 //   - kProbePaths' comment holds (F239);
 //   - no registration in either table is refused as a duplicate;
 //   - every raw string in a tree is a page read here or one named as not a
