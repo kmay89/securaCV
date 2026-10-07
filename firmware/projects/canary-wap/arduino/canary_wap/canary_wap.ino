@@ -6790,15 +6790,80 @@ bool ble_request_wifi_provisioning(const char* ssid, const char* password) {
 // Non-static, like ble_request_wifi_provisioning above: the module's extern
 // declarations link against these.
 
-// The door's one fact, every pass: open while no credentials are stored,
-// for the first-boot window (IMPROV_FIRST_BOOT_WINDOW_MS after boot,
-// re-armed by a power cycle — improv_core.h keeps the window; this is the
-// stored-credentials fact alone, never the portal's state), and never for a
-// standalone unit the owner keeps AP-only on purpose (that one must never
-// take a stranger's network). A saved network that stopped working raises
-// the SoftAP recovery portal, not this door.
+// A join the setup door asked for and nobody has proven yet. The sketch's
+// other provisioning paths (the wizard, the QR scan, the bonded rescue)
+// persist credentials FIRST and connect second — their callers can see the
+// verdict and resubmit. The door cannot afford that order: one wrong
+// password would mark the unit "configured", the door would shut on the
+// next pass, and the phone's retry would be refused. So the door's join
+// lives in RAM until WiFi reports it worked (ble_improv_join_verdict), and
+// while it is pending the door still counts the unit as having no
+// credentials.
+static bool g_improv_join_pending = false;
+
+// The door's one fact, every pass: open while no PROVEN credentials are
+// stored, for the first-boot window (IMPROV_FIRST_BOOT_WINDOW_MS after
+// boot, re-armed by a power cycle — improv_core.h keeps the window; this is
+// the stored-credentials fact alone, never the portal's state), and never
+// for a standalone unit the owner keeps AP-only on purpose (that one must
+// never take a stranger's network). A saved network that stopped working
+// raises the SoftAP recovery portal, not this door.
 bool ble_improv_door_should_open() {
-  return !g_wifi_creds.configured && !g_wifi_ap_only;
+  return (!g_wifi_creds.configured || g_improv_join_pending) && !g_wifi_ap_only;
+}
+
+// Credentials from the setup door: applied in RAM for one join attempt
+// (sta_join_allowed reads `configured`), persisted only once the join is
+// proven. Same bounds as ble_request_wifi_provisioning above.
+bool ble_improv_submit_join(const char* ssid, const char* password) {
+  if (!ssid || !password) return false;
+  const size_t ssid_len = strlen(ssid);
+  const size_t pw_len   = strlen(password);
+  if (ssid_len == 0 || ssid_len > 32) return false;   // WPA2 SSID bound
+  if (pw_len > 64)                    return false;   // WPA2 PSK bound
+  // Empty password = open network. Allowed (matches handle_wifi_connect).
+
+  strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
+  g_wifi_creds.ssid[sizeof(g_wifi_creds.ssid) - 1] = '\0';
+  strncpy(g_wifi_creds.password, password, sizeof(g_wifi_creds.password) - 1);
+  g_wifi_creds.password[sizeof(g_wifi_creds.password) - 1] = '\0';
+  g_wifi_creds.enabled    = true;
+  g_wifi_creds.configured = true;   // RAM only until the verdict
+  g_improv_join_pending   = true;
+
+  g_wifi_status.last_fail_reason[0] = '\0';
+  wifi_connect_to_home();
+
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "Setup door: WiFi credentials applied for one join (saved once it works)",
+             g_wifi_creds.ssid);
+  return true;
+}
+
+// The verdict on that join. Proven: persist, as the other paths do, and the
+// door shuts on its own (credentials stored). Not proven (wrong password,
+// no such network, the timeout): forget the attempt entirely — nothing
+// retries a wrong network forever, the unit still has no credentials, and
+// the door stays open for the person to try again.
+void ble_improv_join_verdict(bool joined) {
+  if (!g_improv_join_pending) return;
+  g_improv_join_pending = false;
+  if (joined) {
+    if (!wifi_save_credentials()) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                 "Setup door: joined, but the credentials were NOT saved (NVS) — kept until reboot",
+                 g_wifi_creds.ssid);
+    }
+    return;
+  }
+  WiFi.disconnect(false);
+  secure_zero(g_wifi_creds.password, sizeof(g_wifi_creds.password));
+  g_wifi_creds.ssid[0]    = '\0';
+  g_wifi_creds.enabled    = false;
+  g_wifi_creds.configured = false;
+  g_wifi_status.state = WIFI_PROV_AP_ONLY;
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "Setup door: join not proven — credentials discarded, the door stays open", nullptr);
 }
 
 // Where the phone can reach this unit once it has joined: the .local name

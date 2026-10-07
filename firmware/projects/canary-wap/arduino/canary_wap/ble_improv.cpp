@@ -29,7 +29,8 @@
 #include "improv_core.h"
 
 // External-linkage bridges defined in canary_wap.ino.
-extern bool   ble_request_wifi_provisioning(const char* ssid, const char* password);
+extern bool   ble_improv_submit_join(const char* ssid, const char* password);   // RAM-only until the verdict
+extern void   ble_improv_join_verdict(bool joined);                              // persist on success, forget on failure
 extern bool   ble_improv_door_should_open();                          // no credentials stored
 extern size_t ble_improv_reach_url(char* out, size_t cap);            // http(s)://<mdns>.local/
 extern size_t ble_improv_mint_claim(char* out, size_t cap, uint32_t now_ms);  // the claim JSON
@@ -284,7 +285,7 @@ void handle_command(uint32_t now_ms) {
     case Command::WifiSettings: {
       const Error e = improv::session_on_wifi_settings(s_session, now_ms, s_timing);
       if (e == Error::None) {
-        if (ble_request_wifi_provisioning(cmd.wifi.ssid, cmd.wifi.password)) {
+        if (ble_improv_submit_join(cmd.wifi.ssid, cmd.wifi.password)) {
           s_provisioning_conn = conn;
           s_provisioning_addr = addr;
           s_accepted++;
@@ -327,6 +328,9 @@ void follow_join(uint32_t now_ms) {
   const wl_status_t ws = WiFi.status();
   if (ws == WL_CONNECTED) {
     improv::session_on_join_result(s_session, true, now_ms);
+    // Proven: the sketch persists the credentials now (the door shuts on
+    // its own once they are stored), before the claim names the .local URL.
+    ble_improv_join_verdict(true);
     publish_error();
     publish_state();
     char url[96] = {0};
@@ -354,6 +358,8 @@ void follow_join(uint32_t now_ms) {
                "Setup door: joined; claim armed for the provisioning link", nullptr);
   } else if (ws == WL_CONNECT_FAILED || ws == WL_NO_SSID_AVAIL) {
     improv::session_on_join_result(s_session, false, now_ms);
+    // Not proven: the sketch forgets the attempt; the door stays open.
+    ble_improv_join_verdict(false);
     publish_error();
     publish_state();
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Setup door: join failed", nullptr);
@@ -516,9 +522,16 @@ void tick() {
   if (s_rx_pending) handle_command(now_ms);
   follow_join(now_ms);
   follow_claim(now_ms);
+  const bool was_provisioning = s_session.state == State::Provisioning;
   if (improv::session_tick(s_session, now_ms, s_timing)) {
     publish_error();
     publish_state();
+    if (was_provisioning && s_session.state != State::Provisioning) {
+      // The core timed the join out (WiFi never reported either way): the
+      // same verdict as a failed join — forget the attempt, keep the door.
+      ble_improv_join_verdict(false);
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Setup door: join timed out", nullptr);
+    }
   }
   follow_door();
 }

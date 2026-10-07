@@ -380,8 +380,16 @@ the "never" sentinel.
 Credentials from the door go into the **same join path** the SoftAP wizard's
 `POST /join` uses — on Sense and Vision `setup_portal_submit_join()` (one
 Testing pass, persist only on success, the same linger, the same teardown);
-on the WAP the sketch's own connect path. The door reimplements no join
-logic; it only reports the verdict back over the result characteristic
+on the WAP the sketch's own connect path, through `ble_improv_submit_join`
+and `ble_improv_join_verdict`. The WAP's other provisioning paths (its
+wizard, the QR scan, the bonded rescue) persist credentials first and
+connect second; the door cannot, because one wrong password would mark the
+unit "configured", shut the door on the next pass and refuse the retry. So
+a door join on the WAP lives in RAM until WiFi reports it worked, the door
+counts the unit as credential-less while it is pending, a proven join is
+persisted then, and a failed or timed-out one is forgotten — the door stays
+open for the person to try again. The door reimplements no join logic; it
+only reports the verdict back over the result characteristic
 (`setup_portal_join_state()` / `setup_portal_note_acked()` on the shared
 portal).
 

@@ -168,7 +168,14 @@ door needs; the heap guard keeps the last word.
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
 dashboard, the bonded rescue service and the BOOT-tap receipt are the
 owner's paths). **There is no tap door on the WAP in this version:** the 2 s
-BOOT hold stays the existing reset / receipt gesture. Bounds while open:
+BOOT hold stays the existing reset / receipt gesture. A join over the door
+is held in RAM until WiFi proves it (`ble_improv_submit_join` /
+`ble_improv_join_verdict`): a proven join is persisted then, exactly as the
+wizard persists, and a failed or timed-out one is forgotten so the door
+stays open for a retry — the wizard, the QR scan and the bonded rescue keep
+their persist-first order, which the door cannot afford (one wrong
+password would otherwise mark the unit configured and shut the door on the
+next pass). Bounds while open:
 3 s between accepted credential writes, 10 attempts per open door, a
 3-minute idle disconnect, ~20 s linger after the join.
 
