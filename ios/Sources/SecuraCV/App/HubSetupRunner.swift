@@ -35,6 +35,11 @@ final class HubSetupRunner: ObservableObject {
     /// The hub being finished — discovered, or typed.
     @Published private(set) var hubURL: URL?
     @Published private(set) var hubName: String = ""
+    /// Which discovered instance the person chose, when Bonjour hears more
+    /// than one. With several hubs on the LAN nothing is dialed until one
+    /// is chosen: the owner's typed password and the add-on installs must
+    /// never land on the wrong Home Assistant by sort order.
+    @Published var selectedHubID: String?
     @Published private(set) var log: [String] = []
     @Published private(set) var onboardOutcome: HubOnboardOutcome?
     @Published private(set) var steps: [HubProvisionStep] = []
@@ -98,17 +103,31 @@ final class HubSetupRunner: ObservableObject {
         discovery.stop()
     }
 
-    /// Discovered first, typed second, the default name third — and every
-    /// candidate has already passed the "only on this network" gate.
+    /// Typed first, then the one discovered hub, then the default name —
+    /// and every candidate has already passed the "only on this network"
+    /// gate. Several discovered hubs yield NO candidate until the person
+    /// picks one (`selectedHubID`); the screen asks.
     private func candidateURL(typedHost: String?) -> URL? {
         if let typed = typedHost, !typed.trimmingCharacters(in: .whitespaces).isEmpty {
             return HubOnboarding.baseURL(forHost: typed)
         }
-        if let found = discovery.found.first(where: { $0.baseURL != nil }) {
-            hubName = found.name
-            return found.baseURL
+        let dialable = discovery.found.filter { $0.baseURL != nil }
+        if dialable.count > 1 {
+            guard let chosen = dialable.first(where: { $0.id == selectedHubID }) else { return nil }
+            hubName = chosen.name
+            return chosen.baseURL
+        }
+        if let only = dialable.first {
+            hubName = only.name
+            return only.baseURL
         }
         return HubOnboarding.baseURL(forHost: HubOnboarding.defaultHost)
+    }
+
+    /// More than one Home Assistant answers on this network and none has
+    /// been chosen — the screen shows the choice instead of a probe line.
+    var needsHubChoice: Bool {
+        discovery.found.filter { $0.baseURL != nil }.count > 1 && selectedHubID == nil
     }
 
     static func line(for probe: HubProbe) -> String {
@@ -157,11 +176,19 @@ final class HubSetupRunner: ObservableObject {
                                 ownerUsername: login.normalized.username, finishedAt: nil))
 
         phase = .provisioning
-        await provision(api: api, session: token)
+        let finished = await provision(api: api, session: token)
         await api.revoke(token)
+        // "Done" is a claim: it is made only when every planned action ran.
+        // A plan that stopped keeps the record unfinished and the phase
+        // failed, so the screen offers the retry instead of a finish line.
         HubStore.save(HubRecord(baseURL: url, name: hubName.isEmpty ? "Your hub" : hubName,
-                                ownerUsername: login.normalized.username, finishedAt: Date()))
-        phase = .done
+                                ownerUsername: login.normalized.username,
+                                finishedAt: finished ? Date() : nil))
+        if finished {
+            phase = .done
+        } else {
+            phase = .failed("The hub's setup stopped partway — the step list says where. Nothing is half-done in a way a retry can't finish: every step is skipped once it is there.")
+        }
     }
 
     private func note(_ line: String) {
@@ -171,7 +198,9 @@ final class HubSetupRunner: ObservableObject {
 
     // MARK: - the plan
 
-    private func provision(api: HubAPI, session: HubSession) async {
+    /// Run the plan. True when every planned action ran (or was already
+    /// there); false the moment one fails, with the rest left untouched.
+    private func provision(api: HubAPI, session: HubSession) async -> Bool {
         note("Reading what the hub already has…")
         let observed = HubProvisionPlan.observe(
             repositories: await api.supervisorGET("store/repositories", session: session),
@@ -195,12 +224,13 @@ final class HubSetupRunner: ObservableObject {
                 if case .failed(let why) = state {
                     note("Stopped at \"\(HubProvisionPlan.label(for: planned.action))\": \(why)")
                     leftovers.append("\(step.title) didn't finish: \(why) Running this again is safe — nothing is done twice.")
-                    return
+                    return false
                 }
                 if case .yours(let what) = state { leftovers.append(what) }
             }
             if let yours = step.yours { leftovers.append(yours) }
         }
+        return true
     }
 
     private func perform(_ action: HubProvisionAction, api: HubAPI, session: HubSession) async -> StepState {

@@ -75,7 +75,22 @@ struct HubSetupView: View {
                 Text("Nothing has answered in 25 minutes. Check the Pi's light is blinking, that it is on the same Wi-Fi as this phone (or on ethernet), and look for \"homeassistant\" in your router's client list — then type its address here.")
                     .font(.footnote).foregroundStyle(Theme.color(.warn))
             }
-            if !runner.discovery.found.isEmpty && probe != .ready {
+            if runner.needsHubChoice {
+                // Several Home Assistants answer on this network. Nothing
+                // is dialed — not the account, not an install — until the
+                // person says which one is theirs.
+                Text("More than one Home Assistant is on this network. Which one is the hub you just flashed?")
+                    .font(.footnote).foregroundStyle(Theme.color(.warn))
+                Picker("Hub", selection: $runner.selectedHubID) {
+                    Text("Choose…").tag(String?.none)
+                    ForEach(runner.discovery.found.filter { $0.baseURL != nil }) { hub in
+                        Text("\(hub.name) · \(hub.baseURL?.host ?? "") · \(hub.installationType.isEmpty ? "Home Assistant" : hub.installationType) \(hub.version)")
+                            .tag(String?.some(hub.id))
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } else if !runner.discovery.found.isEmpty && probe != .ready {
                 ForEach(runner.discovery.found) { hub in
                     Label("\(hub.name) · \(hub.installationType.isEmpty ? "Home Assistant" : hub.installationType) \(hub.version)",
                           systemImage: "house")

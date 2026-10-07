@@ -182,6 +182,9 @@ fn agent() -> ureq::Agent {
         // can read, not as a bodyless `Error::StatusCode`. The status checks
         // this obliges live in `fetch_steps` / `post_json` / `exchange_code`.
         .http_status_as_error(false)
+        // Same local-only transport rule as the probe: a configured proxy
+        // must never sit between the owner's credentials and their hub.
+        .proxy(None)
         .build()
         .into()
 }
@@ -249,6 +252,11 @@ pub fn probe_hub(host: &str) -> Result<HubProbe, String> {
         .timeout_recv_response(Some(std::time::Duration::from_secs(5)))
         .timeout_recv_body(Some(std::time::Duration::from_secs(5)))
         .http_status_as_error(false)
+        // Never through a proxy: ureq reads HTTP_PROXY/ALL_PROXY from the
+        // environment by default, and a LAN hub reached through one reads
+        // as permanently offline (the reqwest probe this replaced said
+        // `.no_proxy()` for the same reason).
+        .proxy(None)
         .build()
         .into();
     match agent.get(&format!("{base}/api/onboarding")).call() {
