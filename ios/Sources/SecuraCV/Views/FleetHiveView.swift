@@ -142,6 +142,7 @@ struct AddCanarySheet: View {
     @EnvironmentObject var store: FleetStore
     @Binding var pairing: DiscoveredCanary?
     @Environment(\.dismiss) private var dismiss
+    @State private var showingSetup = false
 
     var body: some View {
         NavigationStack {
@@ -170,6 +171,11 @@ struct AddCanarySheet: View {
                             Text("Plug a Canary into power on this Wi-Fi and it appears here by itself — no accounts, no setup codes.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
+                            Text("A brand-new Canary has no Wi-Fi yet — the walkthrough gives it yours.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Button("Set up a new Canary") { showingSetup = true }
+                                .buttonStyle(.bordered)
                         }
                         .padding(.vertical, Theme.xs)
                     }
@@ -196,6 +202,7 @@ struct AddCanarySheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showingSetup) { SetupView(initial: .canary) }
         }
         .presentationDetents([.medium, .large])
     }

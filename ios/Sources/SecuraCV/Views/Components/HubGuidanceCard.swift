@@ -36,11 +36,13 @@ struct HubGuidanceCard: View {
     /// invented to fill this link; a settings screen that sends someone to a
     /// 404 is worse than one that says nothing.
     ///
-    /// A link rather than a flow the app drives, and that is deliberate:
-    /// setting up a broker means running Home Assistant on a Raspberry Pi or
-    /// pointing at one you already have. An iPhone cannot do either, and a
-    /// button implying otherwise would lead to a dead end.
+    /// The page explains the choice. The WALKTHROUGH is in the app now:
+    /// an iPhone still cannot write a Raspberry Pi's card, but it can find
+    /// the hub on the Wi-Fi after the card boots and finish Home Assistant
+    /// without a wizard (SetupView → HubSetupView), so the card offers that
+    /// door beside the link instead of sending every owner to a web page.
     private static let setupURL = URL(string: "https://securacv.com/linux")!
+    @State private var showingSetup = false
 
     var body: some View {
         switch hub {
@@ -75,10 +77,17 @@ struct HubGuidanceCard: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Link(link, destination: Self.setupURL)
-                .font(.footnote.weight(.semibold))
+            HStack(spacing: Theme.m) {
+                if case .absent = hub {
+                    Button("Set up a hub") { showingSetup = true }
+                        .font(.footnote.weight(.semibold))
+                }
+                Link(link, destination: Self.setupURL)
+                    .font(.footnote.weight(.semibold))
+            }
         }
         .padding(.vertical, Theme.xs)
+        .sheet(isPresented: $showingSetup) { SetupView(initial: .hub) }
     }
 }
 

@@ -169,7 +169,7 @@ struct RootView: View {
                 store.pendingRoute = nil   // no anchor to consume — done here
             case .alerts:
                 section = .alerts          // AlertsView consumes and clears
-            case .find:
+            case .find, .setup:
                 section = .fleet           // FleetView consumes and clears
             }
         }

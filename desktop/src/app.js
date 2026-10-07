@@ -1286,7 +1286,9 @@ const fleetBook = {
       await this.probeIdentity();
       // The hub row, if the book has one, gets its own reachability probe.
       if (book["id:hub"]) {
-        try { this.hubUp = await invoke("hub_probe_hub", { host: HUB_HOST }); }
+        // The probe answers "offline" / "preparing" / "ready"; for the book's
+        // row, anything answering on the port is reachable.
+        try { this.hubUp = (await invoke("hub_probe_hub", { host: HUB_HOST })) !== "offline"; }
         catch (_) { this.hubUp = false; }
         if (this.hubUp) { book["id:hub"].lastSeenAt = Date.now(); savePrefs(); }
       }
@@ -6205,8 +6207,11 @@ async function hubMaybeResume() {
   if (!rec || !rec.at || Date.now() - rec.at > HUB_RESUME_WINDOW_MS) { hubClearFlashRecord(); return; }
   // If it's already up, there's nothing to resume — unless this app still owes
   // that hub its self-setup run (quit mid-first-boot with the bundle seeded).
+  // "Up" means Home Assistant's own API answers — not the "Preparing Home
+  // Assistant" page HAOS serves while Core downloads. A hub still preparing
+  // falls through to the watch below, which knows how to wait for it.
   let up = false;
-  try { up = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
+  try { up = (await invoke("hub_probe_hub", { host: rec.host || HUB_HOST })) === "ready"; } catch (_) {}
   // With "Remember these" on, the login typed at flash time survived in the
   // OS secret drawer — restore it, and this relaunched app can still finish
   // Home Assistant onboarding itself, keeping the original promise across a
@@ -6295,13 +6300,21 @@ async function hubMaybeResume() {
     if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
   });
   let escalated = false;
+  let saidPreparing = false;
   const tick = async () => {
-    let alive = false;
-    try { alive = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
+    let probe = "offline";
+    try { probe = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
+    const alive = probe === "ready";
     // The resumed watch escalates exactly like the live one — measured from
     // the persisted flash time (rec.at), so a relaunch mid-first-boot never
     // loses the 25-minute troubleshooting transition along with the timer.
-    if (!alive && !escalated && Date.now() - rec.at > HUB_FB_ESCALATE_MS) {
+    // A hub that is answering but still installing Home Assistant is NOT
+    // lost, so it never escalates — it gets the "preparing" line instead.
+    if (probe === "preparing" && !saidPreparing) {
+      saidPreparing = true;
+      $("hub-resume-text").textContent = hubPreparingLine();
+    }
+    if (probe === "offline" && !saidPreparing && !escalated && Date.now() - rec.at > HUB_FB_ESCALATE_MS) {
       escalated = true;
       $("hub-resume-text").textContent = hubFindItChecklist();
     }
@@ -6563,7 +6576,10 @@ function hubRestoreSettings() {
     if (s.hidden) $("hub-hidden-net").checked = true;
     if (s.acctName) $("hub-acct-name").value = s.acctName;
     if (s.acctUser) $("hub-acct-user").value = s.acctUser;
-    if (s.provision) $("hub-provision").checked = true;
+    // The checkbox's HTML default is now CHECKED, so a remembered opt-out
+    // must be able to clear it — the same both-directions rule Pi-hole and
+    // the display already follow.
+    if ("provision" in s) $("hub-provision").checked = !!s.provision;
     if ("pihole" in s) $("hub-provision-pihole").checked = !!s.pihole;
     if ("display" in s) $("hub-provision-display").checked = !!s.display;
     if (s.boardId) hub.boardId = s.boardId; // applied when the board list renders
@@ -6649,14 +6665,28 @@ function hubStartFirstBoot() {
   const t0 = Date.now();
   hub.fbCountStop = hubCountdownStart($("hub-fb-count"), t0);
   let escalated = false;
+  let saidPreparing = false;
   const tick = async () => {
-    let up = false;
+    // Three answers, and only one of them means "go": "offline" (still
+    // booting), "preparing" (on the network, but HAOS is still installing
+    // Home Assistant — the long part), "ready" (Home Assistant's own API
+    // answers). Acting on anything but "ready" is how this watch used to
+    // create the account against a landing page and give up.
+    let probe = "offline";
     try {
-      up = await invoke("hub_probe_hub", { host: HUB_HOST });
+      probe = await invoke("hub_probe_hub", { host: HUB_HOST });
     } catch (_) {}
-    // Past the honest first-boot window with nothing heard: swap "be patient"
-    // for the go-find-it checklist (see hubFindItChecklist).
-    if (!up && !escalated && Date.now() - t0 > HUB_FB_ESCALATE_MS) {
+    const up = probe === "ready";
+    if (probe === "preparing" && !saidPreparing) {
+      saidPreparing = true;
+      $("hub-fb-dot").className = "dot reading";
+      $("hub-fb-text").textContent = hubPreparingLine();
+      hubNotify("Your hub is on the network", "It's installing Home Assistant now — the long part. Nothing to do; this app finishes setup when it's ready.");
+    }
+    // Past the honest first-boot window with nothing heard AT ALL: swap "be
+    // patient" for the go-find-it checklist (see hubFindItChecklist). A hub
+    // that is answering never escalates — it is found, just not finished.
+    if (probe === "offline" && !saidPreparing && !escalated && Date.now() - t0 > HUB_FB_ESCALATE_MS) {
       escalated = true;
       $("hub-fb-text").textContent = hubFindItChecklist();
     }
@@ -6717,13 +6747,29 @@ function hubStartFirstBoot() {
 // on first boot: the seed applied (verify and stop), it didn't (do it all), a
 // previous run died partway, or someone clicked ahead in a browser. Nobody is
 // ever left at a sign-in page holding credentials the hub has never heard of.
+// What the watch says while the hub is answering but Home Assistant is still
+// installing itself — the state that used to read as "up". Said once, from
+// both the live watch and a resumed one.
+function hubPreparingLine() {
+  return (
+    "Found it — your hub is on the network and installing Home Assistant, which is the long " +
+    "part of first boot (a few minutes; longer on a slow card). Nothing to do: this app keeps " +
+    "watching and finishes setup the moment Home Assistant answers. The SecuraCV iPhone app " +
+    "can finish it too, from anywhere in the house."
+  );
+}
+
 async function hubRunOnboarding(statusEl, hostOverride) {
   const acct = hub.pendingAccount;
   if (!acct || !acct.password) return null;
   // Unlike the ssh path, onboarding wants the web port — the backend adds
   // :8123 itself when a cleaned host doesn't carry one.
   const host = hubCleanHost(hostOverride) || HUB_HOST;
-  const attempts = 5;
+  // The watch only hands over once /api/onboarding answers, so these retries
+  // cover Core's own hiccups right after it comes up (a restart while it
+  // finishes installing itself), not the landing page — hence a longer,
+  // calmer window than the thirty seconds this used to allow.
+  const attempts = 12;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const report = await invoke("hub_onboard", {
@@ -6756,7 +6802,7 @@ async function hubRunOnboarding(statusEl, hostOverride) {
         statusEl.textContent = hub.onboardNote;
         return null;
       }
-      await new Promise((r) => setTimeout(r, 6000));
+      await new Promise((r) => setTimeout(r, 10000));
     }
   }
   return null;
@@ -6793,7 +6839,24 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverr
       piholeOverride === undefined ? !!$("hub-provision-pihole").checked : !!piholeOverride;
     const withDisplay =
       displayOverride === undefined ? !!$("hub-provision-display").checked : !!displayOverride;
-    const report = await invoke("hub_headless_setup", { host, dryRun: false, withPihole, withDisplay });
+    // "Too early" is the first boot's own timing, not a fault: the console
+    // opens a minute or two into boot, and Core finishes its download after
+    // that. Those answers retry here on their own, with the wait narrated,
+    // for as long as a slow first boot can reasonably take; anything else
+    // stops and hands the person the button.
+    let report = null;
+    const retries = 10;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      report = await invoke("hub_headless_setup", { host, dryRun: false, withPihole, withDisplay });
+      if (report.ok || !report.retry_later || attempt === retries) break;
+      const waitS = 45;
+      statusEl.textContent =
+        (report.note || "The hub isn't ready for setup yet.") +
+        ` Trying again in ${waitS} seconds (${attempt} of ${retries}) — nothing to do.`;
+      el.textContent += `\n— not ready yet; trying again in ${waitS} s —\n`;
+      el.scrollTop = el.scrollHeight;
+      await new Promise((r) => setTimeout(r, waitS * 1000));
+    }
     if (report.ok) {
       statusEl.textContent =
         "Setup finished — Mosquitto, MQTT, Frigate, and securaCV are installed" +
@@ -7221,12 +7284,14 @@ function hubShowHatch(receipt) {
       "re-flashing this card.",
     ...(selfSetup
       ? [
-          "Keep this app open. The moment the hub answers, this app connects to its service " +
-            "console and installs everything itself — Mosquitto broker, the MQTT connection, " +
-            "Frigate, and securaCV" +
+          "Keep this app open. The moment Home Assistant answers, this app connects to the " +
+            "hub's service console and installs everything itself — Mosquitto broker, the MQTT " +
+            "connection, Frigate, and securaCV" +
             ($("hub-provision-pihole").checked ? ", plus Pi-hole" : "") +
             ($("hub-provision-display").checked ? ", plus the hub-display app" : "") +
-            " — narrated in the console below. Nothing to click on the hub.",
+            " — narrated in the console below. Nothing to click on the hub. Closed this app? " +
+            "Open the SecuraCV iPhone app instead: its Set up guide finds the hub on your Wi-Fi " +
+            "and does the same steps from your pocket.",
         ]
       : []),
     ...(selfSetup && $("hub-provision-pihole").checked
@@ -7249,10 +7314,11 @@ function hubShowHatch(receipt) {
         ]
       : []),
     accountTyped
-      ? "Keep this app open through first boot: the moment the hub answers, this app creates " +
-        "your Home Assistant account on it and checks the login actually works — no setup " +
+      ? "Keep this app open through first boot: the moment Home Assistant answers, this app " +
+        "creates your account on the hub and checks the login actually works — no setup " +
         `wizard for you. Then open http://${HUB_HOST} and sign in with the details you typed.`
-      : `Open http://${HUB_HOST} on any device in your home and create your account.`,
+      : `Open http://${HUB_HOST} on any device in your home and create your account — or let ` +
+        "the SecuraCV iPhone app do it: its Set up guide creates the account for you.",
     ...(selfSetup
       ? []
       : [

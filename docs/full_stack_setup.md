@@ -78,9 +78,17 @@ Put the card in the Pi, connect power (and ethernet if you're not using Wi-Fi).
   is normal; walk away. The Flasher watches for it and tells you when it's up.
 - Then open **`http://homeassistant.local:8123`**.
 - Create your owner account — unless you typed one in the Flasher: keep the
-  Flasher open and it creates that account on the hub the moment it comes
-  online (over Home Assistant's own setup API), checks the login works, and
-  tells you. Your first visit is then a **sign-in**, not a setup wizard.
+  Flasher open and it creates that account on the hub the moment Home
+  Assistant answers (over Home Assistant's own setup API — not the
+  "Preparing Home Assistant" page the OS shows first; the Flasher tells
+  the two apart and says "found it, still installing" meanwhile), checks the
+  login works, and tells you. Your first visit is then a **sign-in**, not a
+  setup wizard. Closed the Flasher? The **SecuraCV iPhone app** does the
+  same from your pocket: Fleet → Options → *Set up a hub or a Canary* finds
+  the hub on your Wi-Fi, creates the account, and finishes step 3 below
+  through Home Assistant itself. Why a second device is needed at all, and
+  what would make the card alone enough:
+  [a truly headless hub install](hub_headless_install.md).
 
 **Working looks like:** the Home Assistant dashboard in your browser.
 
@@ -284,16 +292,23 @@ Three asides from step 3, moved here so the golden path reads straight
 through. Nothing below is required — each is a detour worth taking once the
 hub is up.
 
-**The no-hands path (experimental):** if you ticked **"Let this app finish hub
-setup by itself"** when flashing, skip all of step 3 — keep the Flasher open
-and it does it for you. The card carries the self-setup bundle and a
-maintenance key; the moment the hub answers, the Flasher connects to the hub's
-service console over your network and installs the broker, the MQTT
-connection, Frigate, and securaCV, narrating every step in its console. The
-Pi never needs a monitor — the Flasher's screen is the screen. If a run stops
-partway it's safe to press "Run self-setup again": it never repeats a
-finished step. (Manual fallback from that same console:
-`sh /mnt/boot/CONFIG/securacv/host_provision.sh`.)
+**The no-hands path (on by default now):** with **"Finish hub setup by
+itself"** ticked when flashing — it is checked unless you untick it — skip
+most of step 3: keep the Flasher open and it does it for you. The card
+carries the self-setup bundle and a maintenance key; the moment Home
+Assistant answers (the Flasher waits out the OS's "Preparing" page, and
+retries a hub that says "not ready yet" on its own), it connects to the
+hub's service console over your network and installs the broker, the
+Canaries' broker login, the MQTT connection, Frigate, and the securaCV
+kernel app, narrating every step in its console. The Pi never needs a
+monitor — the Flasher's screen is the screen, and so is the iPhone app's
+Set up walkthrough when the Flasher is closed. If a run stops partway it's
+safe to press "Run self-setup again": it never repeats a finished step.
+(Manual fallback from that same console:
+`sh /mnt/boot/CONFIG/securacv/host_provision.sh`.) What it does **not** do
+yet is install the SecuraCV *integration* (the `custom_components` half):
+that is still the one-command installer above, or HACS — see
+[the investigation](hub_headless_install.md) for the add-on-side fix.
 
 The self-setup can also install **Pi-hole** (recommended, one untick to
 skip; manual: append `--with pihole`). Why it's paired with securaCV: our

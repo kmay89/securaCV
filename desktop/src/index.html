@@ -769,14 +769,15 @@
               <span id="hub-remember-note" class="muted"></span>
             </div>
 
-            <details id="hub-account-panel" class="hint">
-              <summary>Skip Home Assistant's setup wizard — pre-make your account</summary>
+            <details id="hub-account-panel" class="hint" open>
+              <summary>Your Home Assistant account — so there's no setup wizard</summary>
               <p class="muted">Type your login now and this app finishes it for you: keep the app
-                open through first boot, and the moment the hub answers, it creates your account on
-                the hub over Home Assistant's own setup API and <strong>checks the login works</strong> —
-                so your first visit is a sign-in, not a wizard. Your password stays on this computer
-                (a scrambled copy also rides the card as a head start) and goes only to your own hub,
-                on your own network.</p>
+                open through first boot, and the moment Home Assistant answers, it creates your
+                account on the hub over Home Assistant's own setup API and <strong>checks the login
+                works</strong> — so your first visit is a sign-in, not a wizard. Your password stays
+                on this computer (a scrambled copy also rides the card as a head start) and goes only
+                to your own hub, on your own network. Leave it empty and the hub asks you to create
+                the account on first visit — or the SecuraCV iPhone app creates it for you.</p>
               <div class="form-grid">
                 <label>Your name<input id="hub-acct-name" maxlength="128" autocomplete="off"></label>
                 <label>Username<input id="hub-acct-user" maxlength="64" autocomplete="off"></label>
@@ -786,18 +787,21 @@
               <p id="hub-acct-hint" class="muted"></p>
             </details>
 
-            <details id="hub-provision-panel" class="hint">
-              <summary>Let this app finish hub setup by itself — broker, MQTT, securaCV
-                <span class="chip-badge">experimental</span></summary>
+            <details id="hub-provision-panel" class="hint" open>
+              <summary>Finish hub setup by itself — broker, MQTT, securaCV
+                <span class="chip-badge">on by default</span></summary>
               <p class="muted">The card also carries the securaCV <strong>self-setup bundle</strong> and a
-                <strong>maintenance key</strong> made on this computer. Once the hub is online, this app
-                connects to it over your network and installs everything — the Mosquitto broker, the MQTT
-                connection, Frigate, and the securaCV witness kernel — narrating why at every step. The Pi
-                never needs a monitor or keyboard; this screen is the screen.</p>
+                <strong>maintenance key</strong> made on this computer. Once Home Assistant is up, this app
+                connects to the hub over your network and installs everything — the Mosquitto broker, the
+                MQTT connection, Frigate, and the securaCV witness kernel — narrating why at every step. The
+                Pi never needs a monitor or keyboard; this screen is the screen, and so is your phone: the
+                SecuraCV iPhone app's Set up guide does the same steps if this app is closed. Honest
+                status: the bundle is proven at the desk, not yet on a real first boot — a bundle that
+                never runs is harmless (the hub ignores it), and the guide covers every step by hand.</p>
               <p class="muted">The key's private half stays in this app's data folder and never leaves this
                 computer. To revoke it later, delete <span class="mono">authorized_keys</span> from the
                 card's boot partition (or re-flash without this option).</p>
-              <label class="check"><input type="checkbox" id="hub-provision"> Put the self-setup bundle and maintenance key on the card</label>
+              <label class="check"><input type="checkbox" id="hub-provision" checked> Put the self-setup bundle and maintenance key on the card</label>
               <p class="muted" style="margin-top:12px"><strong>Recommended companion — Pi-hole.</strong>
                 A small open-source DNS service millions of people run. Your devices ask it
                 “where is this website?”, it answers, and it refuses known ad and tracker domains

@@ -319,6 +319,35 @@ that opens it. Honest status: same bar as self-setup itself — host-tested,
 awaiting its first validated run on real hardware.
 → [the full stack](full_stack_setup.md)
 
+### Why did I still meet Home Assistant's setup wizard after the Flasher? And can my phone finish the hub?
+
+Two reasons, both fixed in the Flasher now, and yes. The Flasher's first-boot
+watch used to count *any* answer on the hub's port as "up" — but Home
+Assistant OS serves a "Preparing Home Assistant" page for the minutes Core
+takes to download on a first boot, so the account creation fired at a page
+that couldn't create one, gave up after thirty seconds, and you met the
+wizard. The watch now asks Home Assistant's own setup API and acts only when
+it answers (*preparing* and *ready* are different words on screen), and the
+self-setup run retries "not ready yet" on its own. The second reason is that
+the account is created by a companion on your network after boot, and the
+Flasher was the only companion — if it was closed, nobody created the account.
+
+The **SecuraCV iPhone app** is now that companion too: Fleet → Options →
+*Set up a hub or a Canary* (or the Start here card on Today). It finds the
+hub on your Wi-Fi by itself, waits for Home Assistant to actually exist,
+creates your account over Home Assistant's own setup API, finishes the wizard
+pages, checks the login works, and then asks Home Assistant for the same
+things its Settings page would — the Mosquitto broker, a login for your
+Canaries (minted on the phone, kept in its Keychain), the broker connection,
+Frigate and the witness kernel — narrating each step and naming what stays
+yours. The one thing no second device can do today is install the SecuraCV
+*integration's* files; that is the one-line installer from the hub's
+terminal, and [the investigation](hub_headless_install.md) says what would
+close it. Honest status: host-tested; the first validated run on a real
+first boot is still owed, and the by-hand path in the guide always works.
+→ [a truly headless hub install](hub_headless_install.md),
+[the full stack](full_stack_setup.md)
+
 ### I already run Home Assistant. Where do I start?
 
 [Home Assistant setup](homeassistant_setup.md) → [Frigate

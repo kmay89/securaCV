@@ -70,6 +70,7 @@ ios/
     SecuraCV/Native/       LiveActivity, WatchLink (WCSession → wrist), HomeKitBridge,
                            MediaRoute, FleetIntents (Siri / Shortcuts / Action button)
     SecuraCV/Views/        Today / Fleet / Alerts / Keys (+ Unseal) + Pair + DeviceDetail
+                           + Setup (SetupView → HubSetupView / CanarySetupView: the two walkthroughs)
     SecuraCVWidgets/       Dynamic Island / Live Activity UI
     SecuraCVNotificationService/  NSE: shape the content-free wake into a shown alert
     SecuraCVWatch/         SecuraCV on your wrist: WristStore + 3 screens (glance/heartbeat/about)
@@ -289,6 +290,44 @@ Four rules keep "beautiful" from decaying into "busy":
   always-there glance for people who want one is the Lock Screen / Home
   Screen widget — ground the user chose to give it, not ground the app
   squats on.
+
+## Setting up from the phone
+
+The one thing every SecuraCV surface forgot to say was how a fleet comes to
+exist. **Set up** (Fleet → Options, the Start here card on an empty Today,
+the hub card, the hive's "+", or `securacv://setup?what=hub|canary`) is the
+door to two walkthroughs — data in `Shared/SetupGuide.swift`, so the tests
+read the words the screen shows — and the phone does the parts a phone can:
+
+- **A hub.** The desktop Flasher writes the Raspberry Pi's card; the phone
+  finishes it, because Home Assistant OS runs nothing from the card itself
+  ([the investigation](../docs/hub_headless_install.md)). `HubSetupRunner`
+  finds Home Assistant over Bonjour (`_home-assistant._tcp`), tells
+  *preparing* (the OS's landing page) from *ready* (the onboarding API
+  answers — the same three-state probe the Flasher now uses), creates the
+  owner account over Home Assistant's own onboarding API, finishes the
+  wizard pages and verifies the login (`Model/HubOnboarding.swift`, the
+  Swift twin of `desktop/hub-io/src/onboarding.rs`, converge-don't-assume),
+  then runs the bundle's plan through Home Assistant's Supervisor proxy
+  (`Model/HubProvisionPlan.swift`: repositories, Mosquitto, a broker login
+  minted here and kept in the Keychain for the Canaries, the discovered-MQTT
+  card, Frigate, the kernel add-on in Frigate mode, the SecuraCV entry when
+  the integration is present). What stays yours is listed, never hidden:
+  Frigate's camera config and the integration's files. The token is revoked
+  on the way out; the password is never stored.
+- **A Canary.** One path per family, each the one its firmware serves
+  (`SetupGuide.canary`): a display's glass QR (scanned with VisionKit, or
+  typed) and the phone joining `SecuraCV-XXXX` itself —
+  `NEHotspotConfiguration`, the Hotspot Configuration entitlement — to post
+  the home Wi-Fi to the portal's `/join` and show the device's `/status`
+  verdict (`Model/SetupPortal.swift`, `Transport/SetupPortalClient.swift`);
+  the same portal path with the Flasher-printed key for a camera or radar
+  Canary; the bonded Bluetooth provisioning service for a brand-new WAP
+  (`BLEConsole.writeWiFiCredentials`, the rescue path, now also the first
+  path); and the Fleet tab's discovery for the appearance.
+
+Honest status: the pure halves are host-tested; the end-to-end runs want a
+real first boot and a real Canary, which the gated macOS CI cannot give.
 
 ## On your iPad
 
