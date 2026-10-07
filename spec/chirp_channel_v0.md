@@ -141,7 +141,11 @@ display = emoji_set[session_id[0] % 16] + emoji_set[session_id[1] % 16]
   high nibbles and bytes 5 to 7 pick nothing. v0.2 lifted the display from
   three emoji (12 bits, 4,096 displays) to five (20 bits, about a million;
   audit C11). It is a memory aid, not an identity: a device that wants a
-  neighbor's display finds a session key with it in about a million tries.
+  neighbor's display on a signed frame (a witness, a confirmation, a vote,
+  whose session id must derive from the signing key) finds a session key
+  with it in about a million tries. A presence beacon is unsigned, so the
+  nearby list shows whatever display the session id it claims gives, at no
+  cost (§3.2; sweep F232).
 - In UTF-8 a display is 15 to 30 bytes: ⭐ is 3 bytes, ☀️ is 6 (U+2600 and
   the variation selector U+FE0F), the other fourteen are 4. The canary-wap
   keeps and sends it in a 31-byte field with its NUL (`EMOJI_DISPLAY_SIZE`),
@@ -374,7 +378,14 @@ On the canary-wap (sweep F233):
   threshold at every table size.
 - A vote heard more than `SUPPRESS_WINDOW_MS` after the chirp arrived here
   is dropped and takes no slot; so is one heard before the chirp it names
-  (nothing keeps it for later).
+  (nothing keeps it for later). When the same chirp is held twice (a copy
+  heard again after the nonce filter's reset, below), a vote counts at the
+  first copy whose window is still open.
+- A vote counts only when its signature verifies over the chirp's nonce and
+  the voter's key, and the frame's session id derives from that key.
+  `test_chirp_suppress_wap.cpp` sends a flipped signature, a foreign session
+  id, a vote signed for another chirp and a key its sender does not hold,
+  and none takes a slot.
 - Before F233 the set held 8 keys while the threshold was `nearby_count /
   2` (at least 3): from 18 rows on no chirp could be suppressed, 7 rows
   suppressed at 3 votes (43%), and no window was read.
@@ -384,14 +395,23 @@ On the canary-wap (sweep F233):
   session id that derives from its key, not a presence row.
 
 **Behavior when suppressed**:
-- The chirp is hidden from the receiver's UI.
+- The chirp is hidden from the receiver's UI. (On the canary-wap it is not,
+  until the next prune: `GET /api/chirp/recent` lists it with `suppressed:
+  true` and `status: "suppressed"`, the dashboard's chirp list reads neither
+  and still offers Confirm on it, and a local confirm of it broadcasts a
+  signed ACK.)
 - The receiver no longer relays the chirp. (The canary-wap drops a
   suppressed chirp from its recent table at the next prune, at most 30 s
   later; until then a confirmation that validates it still relays it, as
-  `handle_ack()` does not read `suppressed`.)
+  `handle_ack()` does not read `suppressed`. The nonce filter is cleared
+  whole every `CHIRP_TTL_MS` (5 min), as long as the freshness window, so
+  the same signed frame heard again after a reset is stored anew,
+  unsuppressed and with no votes, while it is still fresh.)
 - The receiver does not echo further suppress votes (they're not needed).
-- The suppression itself is logged to the health log but does not generate
-  further wire traffic.
+- The suppression itself is logged to the health log, once per chirp at the
+  vote that suppresses it (the canary-wap logged the line again at every
+  later vote until F233's review), but does not generate further wire
+  traffic.
 
 **Why This Works**:
 - Community self-moderates without central authority.
