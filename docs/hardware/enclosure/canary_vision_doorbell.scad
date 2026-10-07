@@ -190,13 +190,17 @@
 //    * SERVICE PLUNGERS (opt_svc): the XIAO's two tactile switches, R and
 //      B, face the plate (its component side is its outward side in the
 //      socket), 7-9 mm off the plate's inner face. Two TPU plungers go
-//      through the plate over them — a flat head flush in a counterbore on
+//      through the plate over them — a flat head 0.2 proud in a seat on
 //      the back face, a stem in a bore through the plate and a short guide
 //      boss on the inner face (stopped under the USB-C shell), a bead past
 //      the boss's top that keeps it, a small tip that lands on the cap and
 //      nothing else (the shell stands 0.7 beside the cap, four times
 //      taller). Lift the body off its wall plate and press: a reset or a
-//      boot-mode flash without a plate screw coming out. The tip rests
+//      boot-mode flash without a plate screw coming out. The head is a
+//      rim on a seat and a three-layer web over a flex recess — a keypad
+//      membrane, a few newtons to click, the recess floor its overtravel
+//      stop; the stem's root is filleted, the bead's shoulder faces the
+//      head and its lead the tip, the tip is chamfered. The tip rests
 //      0.3 off the cap at the NEAREST the stack can sit (stack_sock_h is a
 //      bench number to one PCB face, so the band is a PCB thick) — an
 //      unpressed plunger can never hold R or B down; a sixth printed part,
@@ -347,18 +351,27 @@ grille_pattern = "sunflower";   // ["sunflower","rings"]  sunflower = a Fermat s
 /* [Service buttons] — two TPU plungers through the back plate over the XIAO's R and B switches (v0.9):
    lift the body off its wall plate and press, no plate screw comes out. The switch positions are the
    board registry's (brd_xiao_btn_*, the vendor GLB); which one is R is NOT in the model. */
-opt_svc     = true;   // the plungers, their counterbores, bores and guide bosses; off = a plain plate there
-svc_head_d  = 8.0;    // the plunger's head Ø — flat, flush in a counterbore on the back face
-svc_web_t   = 0.8;    // the head's thickness: the web that flexes when you press (TPU 90-95A)
-svc_stem_d  = 3.2;    // the stem, a sliding fit in its bore (+0.3)
+opt_svc     = true;   // the plungers, their seats, flex recesses, bores and guide bosses; off = a plain plate there
+svc_head_d  = 9.6;    // the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)
+svc_rim_t   = 0.8;    // the head's RIM, the ring that sits on the seat's floor round the flex recess (four 0.2 layers)
+svc_web_t   = 0.6;    // the head's WEB inside the rim, the membrane that flexes when you press (three 0.2 layers — never a 0.3 layer)
+svc_flex_d  = 7.0;    // the flex recess under the web: the web spans it, and its floor is the overtravel stop
+svc_flex_depth = 2.2; // how deep that recess goes past the seat's floor — the stroke the web can make before the stop
+svc_stem_d  = 3.2;    // the stem, a sliding fit in its bore
+svc_root_r  = 0.4;    // the fillet at the stem's root into the web (a sharp inside corner is where TPU tears)
 svc_tip_d   = 1.8;    // the tip that lands on the switch cap (1.6 across; the USB-C shell stands 0.7 beside it)
-svc_tip_h   = 0.8;    // the tip's height off the stem's end
+svc_tip_h   = 0.8;    // the tip's height off the stem's end (its end is chamfered: no edge on the cap)
 svc_rest    = 0.3;    // the tip's rest gap over the cap at the NEAREST the stack can sit — never pressed by the case
 svc_dy      = 0.4;    // the tip sits this far up the cap from its center (the guide boss then clears the plug's head)
-svc_bead    = 0.4;    // the retaining bead's stand past the stem, just past the guide boss's top
+svc_bead    = 0.4;    // the retaining bead's stand past the stem: a flat-ish shoulder toward the head, a lead cone toward the tip
+svc_bead_clear = 0.6; // the shoulder rests this far past the guide boss's top (TPU prints long or short by a layer or two)
 svc_boss_wall = 1.0;  // the guide boss's wall on the plate's inner face
-svc_pip_d   = 1.6;    // the dimples in the head that say which is which: one = R, two = B
+svc_tol     = 0.25;   // TPU prints fat: the seat and the bore clear the part by this a side
+svc_proud   = 0.2;    // the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its
+                      // floor, and that squeeze is the seal of the bore behind it (the plate screws have O-rings for the same reason)
+svc_pip_d   = 2.0;    // the dimples in the head's face that say which is which: one = R, two = B
 svc_pip_depth = 0.4;
+svc_sprue_t = 0.4;    // the sprue between the pair's rims: two layers, cut with scissors (TPU does not snap)
 xiao_rst_side = -1;   // MEASURE: the side (±X, this file's frame) whose switch is R — the vendor model has no silkscreen;
                       // confirm against the board before trusting the dimples  // [-1, 1]
 xiao_btn_dx = 5.93;   // the switches ± across the XIAO from its centerline — brd_xiao_btn_dx(), the vendor GLB
@@ -880,6 +893,18 @@ post_flat_y = vm_cy + xiao_end_y + xiao_gap;                    // a post is rel
 // plunger is drawn against BOTH ends of it — the tip rests svc_rest off the
 // cap at the near end (it can never hold a switch), and the stroke is
 // stated for the far end.
+//
+// HOW IT MOVES (the second cut; the first had the head flat on its floor,
+// so a press could only shear the web round the stem — stiff, and a tear
+// waiting to happen). The head is a RIM and a WEB: the rim sits on the
+// seat's floor, the web spans a FLEX RECESS cut under it, and the stem
+// hangs from the web's center through a bore in the recess floor. A press
+// bends the web into the recess like a keypad membrane (the force is the
+// web's, a few newtons), the stem slides in its bore, the tip clicks the
+// switch, and the web springs the plunger back. The recess floor is the
+// OVERTRAVEL STOP: the web bottoms on it before a finger can drive the
+// switch past its body. The bead past the guide boss keeps the plunger in
+// during handling; in use the wall plate's slab covers the heads anyway.
 xiao_face_hi_z = z_vm_top - pcb_t - stack_sock_h;               // the component face, the measurement to that face
 xiao_face_lo_z = xiao_face_hi_z - brd_t("xiao");                // ...or to the socket face: the component face a PCB nearer the plate
 svc_cap_lo_z   = xiao_face_lo_z - xiao_btn_h;                   // the cap's top at the nearest the stack can sit
@@ -887,16 +912,22 @@ svc_cap_hi_z   = xiao_face_hi_z - xiao_btn_h;
 xiao_usb_end_y = vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang;   // the XIAO's board end (the USB-C shell stands past it)
 svc_cy         = xiao_usb_end_y + xiao_btn_dy + svc_dy;         // the plunger axis along Y
 function svc_xy() = opt_svc ? [for (sx = [1, -1]) [vm_cx + sx*xiao_btn_dx, svc_cy]] : [];
-svc_bore_d     = svc_stem_d + 0.3;                              // the stem slides
-svc_cb_d       = svc_head_d + 0.4;                              // the head's counterbore on the back face
-svc_cb_depth   = svc_web_t + 0.3;                               // the head sits 0.3 under the back face: nothing proud against the wall plate's slab
+svc_bore_d     = svc_stem_d + 2*svc_tol;                        // the stem slides
+svc_seat_d     = svc_head_d + 2*svc_tol;                        // the head's seat on the back face
+svc_seat_depth = svc_rim_t - svc_proud;                         // the rim's floor: the head stands svc_proud of the back face, for the slab to squeeze
+svc_rim_id     = svc_flex_d + 1.0;                              // the rim overlaps the recess's edge by 0.5 a side
+svc_web_span   = (svc_flex_d - svc_stem_d)/2 - svc_root_r;      // the web's free width, recess edge to the stem's fillet
 svc_boss_od    = svc_bore_d + 2*svc_boss_wall;
 svc_boss_top   = xiao_face_lo_z - port_usbc_shell_h() - 0.5;    // the guide boss stops under the USB-C shell's lowest edge, stack at the near end of its band
 svc_boss_h     = svc_boss_top - floor_t;
 svc_tip_z      = svc_cap_lo_z - svc_rest;                       // the tip's end at rest
-svc_head_z     = floor_t - plate_t + (svc_cb_depth - svc_web_t);   // the head's OUTER face: 0.3 under the back face; its inner face is the counterbore's floor
-svc_stem_len   = svc_tip_z - svc_tip_h - (svc_head_z + svc_web_t);   // the stem, head to tip
-svc_bead_z     = svc_boss_top + 0.2 - svc_head_z;               // the bead's start, in the plunger's own frame (head's floor = 0)
+svc_head_z     = floor_t - plate_t - svc_proud;                 // the head's OUTER face, proud of the back face
+svc_floor_z    = svc_head_z + svc_rim_t;                        // the seat's floor (the rim's inner face)
+svc_recess_z   = svc_floor_z + svc_flex_depth;                  // the flex recess's floor: the overtravel stop, and where the bore starts
+svc_guide_len  = (floor_t - svc_recess_z) + svc_boss_h;         // the bore that guides the stem, recess floor to boss top
+svc_stem_len   = svc_tip_z - svc_tip_h - (svc_head_z + svc_web_t);   // the stem, web to tip
+svc_bead_z     = svc_boss_top + svc_bead_clear - svc_head_z;    // the shoulder's foot, in the plunger's own frame (head's face = 0)
+svc_travel_max = svc_flex_depth - (svc_rim_t - svc_web_t);      // the web bottoms on the recess floor here
 svc_stroke_lo  = svc_rest + xiao_btn_travel;                    // the press that clicks, stack at the near end
 svc_stroke_hi  = (svc_cap_hi_z - svc_tip_z) + xiao_btn_travel;  // ...and at the far end
 // the tip lands on the cap and nothing else: the USB-C shell beside it, the cap's own extent
@@ -908,6 +939,18 @@ assert(!opt_svc || svc_dy + svc_tip_d/2 <= brd_xiao_btn_cap()[0]/2 + 0.1 + 1e-9 
 // rests svc_rest off the cap even with the stack at the nearest the band allows
 assert(!opt_svc || svc_rest >= 0.3 - 1e-9, "svc_rest under 0.3 — a plunger that can hold RESET down is a dead board with no symptom");
 assert(!opt_svc || svc_stem_len >= 3.0, "the service plunger's stem is too short to reach — the stack sits too near the plate");
+// the membrane: a web that can flex (wide enough, thin enough, whole layers),
+// a rim that has a floor to sit on, a stroke that clicks before the stop
+assert(!opt_svc || svc_web_span >= 1.5 - 1e-9, "the service plunger's web is too narrow to flex — widen svc_flex_d or slim svc_stem_d");
+assert(!opt_svc || svc_web_t <= 0.8 + 1e-9 && svc_rim_t >= svc_web_t + 0.2 - 1e-9, "the plunger's web must be thinner than its rim, and a membrane (<= 0.8)");
+assert(!opt_svc || (svc_head_d - svc_rim_id)/2 >= 0.8 - 1e-9, "the plunger's rim is too narrow to seat — a wider svc_head_d or a smaller svc_flex_d");
+assert(!opt_svc || svc_travel_max >= svc_stroke_hi + 0.2 - 1e-9,
+       str("the overtravel stop (", svc_travel_max, " mm) comes before the click at the far end of the stack band (", svc_stroke_hi, " mm) — deepen svc_flex_depth"));
+assert(!opt_svc || floor_t - svc_recess_z >= 1.2 - 1e-9, "the flex recess leaves under 1.2 mm of plate before the inner face");
+assert(!opt_svc || svc_proud >= 0.1 && svc_proud <= 0.3 + 1e-9, "svc_proud: 0.1-0.3 — enough squeeze to seal, not enough to hold the body off its slab");
+assert(!opt_svc || svc_guide_len >= 3.0 - 1e-9, "the stem's guide (recess floor to boss top) is too short to keep it straight");
+assert(!opt_svc || svc_stem_d + 2*svc_root_r + 0.4 <= svc_flex_d - 1e-9, "the stem's root fillet lands on the recess's wall");
+assert(!opt_svc || svc_bead_z + svc_bead + 0.6 <= svc_web_t + svc_stem_len - 1e-9, "the bead runs into the tip");
 // the guide boss: under the USB-C shell, inside canary_rib_lib's boss rule, clear
 // of the plug's head below the port face and of the corner shoes beside the XIAO
 assert(!opt_svc || svc_boss_h >= 1.5 && svc_boss_h <= boss_h_max(svc_boss_wall) + 1e-9,
@@ -917,18 +960,22 @@ assert(!opt_svc || svc_cy - svc_boss_od/2 >= vm_cy - vm_l/2 - usb_port_proud + 0
 assert(!opt_svc || xiao_btn_dx + svc_boss_od/2 <= xiao_w/2 + 0.1 - 1e-9,
        "the service plunger's guide boss runs into the module's corner shoe — a thinner svc_boss_wall");
 // the plate's other features: the cable oval below, the lug pockets, the screw seats
-assert(!opt_svc || svc_cy - svc_cb_d/2 >= exit_cy + usb_exit_h/2 + 1.0 - 1e-9,
-       "a service plunger's counterbore meets the cable exit's oval");
+assert(!opt_svc || svc_cy - svc_seat_d/2 >= exit_cy + usb_exit_h/2 + 1.0 - 1e-9,
+       "a service plunger's seat meets the cable exit's oval");
 assert(!opt_svc || len([for (q = svc_xy(), c = lug_ys) let (r = mount_dt_pocket_y(c, clear = dt_clear))
-                        if (q[1] + svc_cb_d/2 > r[0] - 1.0 && q[1] - svc_cb_d/2 < r[1] + 1.0
-                            && abs(q[0]) - svc_cb_d/2 < mount_dt_window_w(dt_clear)/2 + 1.0) 1]) == 0,
-       "a service plunger's counterbore meets a dovetail lug pocket");
-assert(!opt_svc || len([for (q = svc_xy(), p = post_xy()) if (norm([q[0] - p[0], q[1] - p[1]]) < svc_boss_od/2 + pd/2 + 1.0) 1]) == 0,
-       "a service plunger's guide boss meets a screw post's seat");
+                        if (q[1] + svc_seat_d/2 > r[0] - 1.0 && q[1] - svc_seat_d/2 < r[1] + 1.0
+                            && abs(q[0]) - svc_seat_d/2 < mount_dt_window_w(dt_clear)/2 + 1.0) 1]) == 0,
+       "a service plunger's seat meets a dovetail lug pocket");
+svc_scr_seat_d = max(pl_hd(screw_size, screw_head) + 2*tol_hole,                        // a plate screw's seat on the back face: its head's bore...
+                     e_gland ? oring_gland_d(scr_oring_id(screw_size), scr_oring_cs(screw_size)) : 0);   // ...or its O-ring gland, whichever is wider
+assert(!opt_svc || len([for (q = svc_xy(), p = post_xy()) if (norm([q[0] - p[0], q[1] - p[1]]) < svc_seat_d/2 + svc_scr_seat_d/2 + 0.8) 1]) == 0,
+       "a service plunger's seat runs within 0.8 mm of a screw seat on the back face");
 if (opt_svc)
     echo(str("service plungers: tip rests ", svc_rest, " off the cap at the near end of the stack band; the press that clicks is ",
-             svc_stroke_lo, " to ", svc_stroke_hi, " mm (stack_sock_h to one PCB face or the other); stem ", svc_stem_len,
-             " mm; guide boss ", svc_boss_h, " mm, stopped 0.5 under the USB-C shell at the near end of the band"));
+             svc_stroke_lo, " to ", svc_stroke_hi, " mm (stack_sock_h to one PCB face or the other), the web stops at ", svc_travel_max,
+             "; web ", svc_web_span, " wide x ", svc_web_t, "; stem ", svc_stem_len, " mm in a ", svc_guide_len,
+             " mm guide; boss ", svc_boss_h, " mm, stopped 0.5 under the USB-C shell at the near end of the band; seat Ø", svc_seat_d,
+             ", the nearest screw seat Ø", svc_scr_seat_d, " at ", min([for (q = svc_xy(), p = post_xy()) norm([q[0] - p[0], q[1] - p[1]])]), " between axes"));
 assert(!vm_screws || vm_hole_dy - vm_post_d/2 >= xiao_end_y - 1.6 + 0.3 - 1e-9,
        str("a board post (Ø", vm_post_d, " on vm_hole_dy ", vm_hole_dy, ") lands on the XIAO socket's end — measure vm_hole_dy"));
 assert(!vm_screws || abs(vm_hole_dx) + vm_post_d/2 <= vm_w/2 + clip_clear - 1e-9,
@@ -1169,35 +1216,47 @@ module svc_boss(q) {
 }
 module svc_cut(q) {
     translate([q[0], q[1], 0]) {
-        translate([0, 0, floor_t - plate_t - 1]) cylinder(d = svc_bore_d, h = plate_t + svc_boss_h + 2);
-        translate([0, 0, floor_t - plate_t - 0.1]) cylinder(d = svc_cb_d, h = svc_cb_depth + 0.1);
+        translate([0, 0, svc_recess_z - 0.01]) cylinder(d = svc_bore_d, h = plate_t + svc_boss_h + 2);   // the stem's bore: recess floor up through the boss
+        translate([0, 0, floor_t - plate_t - 0.1]) cylinder(d = svc_seat_d, h = svc_seat_depth + 0.1);    // the head's seat
+        translate([0, 0, svc_floor_z - 0.01]) cylinder(d = svc_flex_d, h = svc_flex_depth + 0.01);        // the flex recess under the web
     }
 }
 // the PLUNGER itself (part="plunger", TPU) — drawn head-down as it prints:
-// the flat head on the bed (its dimples are holes in the first layers), the
-// stem up, the bead a 45° lead that squeezes through the bore and a 0.4 step
-// that stays behind the boss, the tip on the end. The part is the PAIR: R
-// and B side by side with a sprue between their heads (one bar, the web's
-// thickness, snapped off after the print), so one export is both buttons
-// and never two of one — the v0.9 review caught the single export
+// the head's flat face on the bed (its dimples are holes in the first two
+// layers), the web three layers, the rim four, the stem standing up with
+// its root fillet, the bead (a shoulder toward the head that the boss
+// catches, a lead cone toward the tip that squeezes through the bore), the
+// chamfered tip on the end. No overhang steeper than the shoulder's 53°, no
+// support. The part is the PAIR: R and B side by side with a two-layer
+// sprue between their rims — cut it with scissors, TPU does not snap — so
+// one export is both buttons and never two of one.
 svc_sprue_gap = 1.0;   // the heads' edges apart; the sprue bridges it
 module plunger_pair() {
     dx = svc_head_d + svc_sprue_gap;
     union() {
         plunger(xiao_rst_side);
         translate([dx, 0, 0]) plunger(-xiao_rst_side);
-        translate([svc_head_d/2 - 0.2, -0.8, 0]) cube([svc_sprue_gap + 0.4, 1.6, svc_web_t]);   // the sprue
+        translate([svc_head_d/2 - 0.3, -0.6, 0]) cube([svc_sprue_gap + 0.6, 1.2, svc_sprue_t]);   // the sprue
     }
 }
 module plunger(side = xiao_rst_side) {
-    pips = (side == xiao_rst_side) ? [[0, 0]] : [[-1.5, 0], [1.5, 0]];
+    pips = (side == xiao_rst_side) ? [[0, 0]] : [[-1.6, 0], [1.6, 0]];
+    z_stem = svc_web_t;                                   // the stem's root, on the web's inner face
     difference() {
         union() {
-            cylinder(d = svc_head_d, h = svc_web_t);
-            translate([0, 0, svc_web_t - 0.01]) cylinder(d = svc_stem_d, h = svc_stem_len + 0.02);
-            translate([0, 0, svc_bead_z]) cylinder(d1 = svc_stem_d, d2 = svc_stem_d + 2*svc_bead, h = svc_bead);
-            translate([0, 0, svc_bead_z + svc_bead - 0.01]) cylinder(d = svc_stem_d + 2*svc_bead, h = 0.4);
-            translate([0, 0, svc_web_t + svc_stem_len - 0.01]) cylinder(d = svc_tip_d, h = svc_tip_h + 0.01);
+            cylinder(d = svc_head_d, h = svc_web_t);                                                   // the web
+            difference() {                                                                             // the rim
+                cylinder(d = svc_head_d, h = svc_rim_t);
+                translate([0, 0, svc_web_t - 0.01]) cylinder(d = svc_rim_id, h = svc_rim_t);
+            }
+            translate([0, 0, z_stem - 0.01]) cylinder(d1 = svc_stem_d + 2*svc_root_r, d2 = svc_stem_d, h = svc_root_r + 0.01);   // root fillet
+            translate([0, 0, z_stem - 0.01]) cylinder(d = svc_stem_d, h = svc_stem_len + 0.02);       // the stem
+            translate([0, 0, svc_bead_z]) cylinder(d1 = svc_stem_d, d2 = svc_stem_d + 2*svc_bead, h = 0.3);          // the shoulder (53°, prints without support)
+            translate([0, 0, svc_bead_z + 0.3 - 0.01]) cylinder(d = svc_stem_d + 2*svc_bead, h = 0.3 + 0.01);         // the band
+            translate([0, 0, svc_bead_z + 0.6 - 0.01]) cylinder(d1 = svc_stem_d + 2*svc_bead, d2 = svc_stem_d, h = svc_bead + 0.01);   // the lead cone
+            translate([0, 0, z_stem + svc_stem_len - 0.01]) cylinder(d = svc_tip_d, h = svc_tip_h - 0.3 + 0.01);      // the tip
+            translate([0, 0, z_stem + svc_stem_len + svc_tip_h - 0.3 - 0.01])
+                cylinder(d1 = svc_tip_d, d2 = svc_tip_d - 0.6, h = 0.3 + 0.01);                       // ...chamfered: no edge on the cap
         }
         for (q = pips) translate([q[0], q[1], -0.1]) cylinder(d = svc_pip_d, h = svc_pip_depth + 0.1, $fn = 16);
     }

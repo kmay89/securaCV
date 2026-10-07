@@ -189,9 +189,19 @@ counterbores over them: lift the body off its wall plate (the one security
 screw — no plate screw comes out), and press. **R** restarts the board.
 **B held while power comes up** (plug the USB-C in with B pressed, or
 press R while holding B) puts the ESP32 into its download mode for a flash
-over USB — the same gesture as on the bare board. The plungers rest 0.3 mm
-off the caps at the nearest the stack can sit, so an unpressed plunger
-can never hold a switch; that gap is asserted in the CAD, not assumed. One
+over USB — the same gesture as on the bare board. Each plunger is a keypad
+membrane: a rim on a seat, a three-layer web over a flex recess, a stem
+through a guided bore; a press bends the web, the tip clicks, the web
+springs it back, and the recess floor stops a finger before it can drive
+the switch past its body. They rest 0.3 mm off the caps at the nearest the
+stack can sit, so an unpressed plunger can never hold a switch; that gap
+is asserted in the CAD, not assumed. **Printing them**: TPU 90–95A, 0.2 mm
+layers (the web is exactly three of them — a 0.3 layer makes it one layer
+too thick or too thin), 100 % infill, slow, both buttons in the one print
+so each stem's layers get time to set, no supports; cut them off the
+sprue with scissors, never tear. The heads stand 0.2 mm proud of the back
+face on purpose: the wall plate's slab squeezes the rims onto their seats,
+which seals the bores behind them. One
 dimple in a head means R, two mean B — **the side is a `MEASURE` knob**
 (`xiao_rst_side`): the vendor model has no silkscreen, so look at the board
 before you trust the dimples, and flip the knob if they are swapped.

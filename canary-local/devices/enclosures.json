@@ -270,7 +270,7 @@
     {
      "name": "plungers R+B",
      "file": "canary_vision_doorbell_plunger.stl",
-     "print_note": "TPU 90–95A, 100% infill, slow, head down — the doorbell's two service buttons (R and B) in ONE print on a snap-off sprue; one dimple = R, two = B",
+     "print_note": "TPU 90–95A, 0.2 mm layers (the web is exactly three), 100% infill, slow, heads down, no supports — the doorbell's two service buttons (R and B) in ONE print on a sprue; cut it with scissors, never tear; one dimple = R, two = B",
      "material": "TPU 90–95A"
     }
    ],
@@ -3509,22 +3509,42 @@
       {
        "name": "opt_svc",
        "default": "true",
-       "comment": "the plungers, their counterbores, bores and guide bosses; off = a plain plate there"
+       "comment": "the plungers, their seats, flex recesses, bores and guide bosses; off = a plain plate there"
       },
       {
        "name": "svc_head_d",
-       "default": "8.0",
-       "comment": "the plunger's head Ø — flat, flush in a counterbore on the back face"
+       "default": "9.6",
+       "comment": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)"
+      },
+      {
+       "name": "svc_rim_t",
+       "default": "0.8",
+       "comment": "the head's RIM, the ring that sits on the seat's floor round the flex recess (four 0.2 layers)"
       },
       {
        "name": "svc_web_t",
-       "default": "0.8",
-       "comment": "the head's thickness: the web that flexes when you press (TPU 90-95A)"
+       "default": "0.6",
+       "comment": "the head's WEB inside the rim, the membrane that flexes when you press (three 0.2 layers — never a 0.3 layer)"
+      },
+      {
+       "name": "svc_flex_d",
+       "default": "7.0",
+       "comment": "the flex recess under the web: the web spans it, and its floor is the overtravel stop"
+      },
+      {
+       "name": "svc_flex_depth",
+       "default": "2.2",
+       "comment": "how deep that recess goes past the seat's floor — the stroke the web can make before the stop"
       },
       {
        "name": "svc_stem_d",
        "default": "3.2",
-       "comment": "the stem, a sliding fit in its bore (+0.3)"
+       "comment": "the stem, a sliding fit in its bore"
+      },
+      {
+       "name": "svc_root_r",
+       "default": "0.4",
+       "comment": "the fillet at the stem's root into the web (a sharp inside corner is where TPU tears)"
       },
       {
        "name": "svc_tip_d",
@@ -3534,7 +3554,7 @@
       {
        "name": "svc_tip_h",
        "default": "0.8",
-       "comment": "the tip's height off the stem's end"
+       "comment": "the tip's height off the stem's end (its end is chamfered: no edge on the cap)"
       },
       {
        "name": "svc_rest",
@@ -3549,7 +3569,12 @@
       {
        "name": "svc_bead",
        "default": "0.4",
-       "comment": "the retaining bead's stand past the stem, just past the guide boss's top"
+       "comment": "the retaining bead's stand past the stem: a flat-ish shoulder toward the head, a lead cone toward the tip"
+      },
+      {
+       "name": "svc_bead_clear",
+       "default": "0.6",
+       "comment": "the shoulder rests this far past the guide boss's top (TPU prints long or short by a layer or two)"
       },
       {
        "name": "svc_boss_wall",
@@ -3557,13 +3582,28 @@
        "comment": "the guide boss's wall on the plate's inner face"
       },
       {
+       "name": "svc_tol",
+       "default": "0.25",
+       "comment": "TPU prints fat: the seat and the bore clear the part by this a side"
+      },
+      {
+       "name": "svc_proud",
+       "default": "0.2",
+       "comment": "the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its"
+      },
+      {
        "name": "svc_pip_d",
-       "default": "1.6",
-       "comment": "the dimples in the head that say which is which: one = R, two = B"
+       "default": "2.0",
+       "comment": "the dimples in the head's face that say which is which: one = R, two = B"
       },
       {
        "name": "svc_pip_depth",
        "default": "0.4"
+      },
+      {
+       "name": "svc_sprue_t",
+       "default": "0.4",
+       "comment": "the sprue between the pair's rims: two layers, cut with scissors (TPU does not snap)"
       },
       {
        "name": "xiao_rst_side",
@@ -4658,18 +4698,28 @@
       },
       {
        "name": "svc_bore_d",
-       "default": "svc_stem_d + 0.3",
+       "default": "svc_stem_d + 2*svc_tol",
        "comment": "the stem slides"
       },
       {
-       "name": "svc_cb_d",
-       "default": "svc_head_d + 0.4",
-       "comment": "the head's counterbore on the back face"
+       "name": "svc_seat_d",
+       "default": "svc_head_d + 2*svc_tol",
+       "comment": "the head's seat on the back face"
       },
       {
-       "name": "svc_cb_depth",
-       "default": "svc_web_t + 0.3",
-       "comment": "the head sits 0.3 under the back face: nothing proud against the wall plate's slab"
+       "name": "svc_seat_depth",
+       "default": "svc_rim_t - svc_proud",
+       "comment": "the rim's floor: the head stands svc_proud of the back face, for the slab to squeeze"
+      },
+      {
+       "name": "svc_rim_id",
+       "default": "svc_flex_d + 1.0",
+       "comment": "the rim overlaps the recess's edge by 0.5 a side"
+      },
+      {
+       "name": "svc_web_span",
+       "default": "(svc_flex_d - svc_stem_d)/2 - svc_root_r",
+       "comment": "the web's free width, recess edge to the stem's fillet"
       },
       {
        "name": "svc_boss_od",
@@ -4691,18 +4741,38 @@
       },
       {
        "name": "svc_head_z",
-       "default": "floor_t - plate_t + (svc_cb_depth - svc_web_t)",
-       "comment": "the head's OUTER face: 0.3 under the back face; its inner face is the counterbore's floor"
+       "default": "floor_t - plate_t - svc_proud",
+       "comment": "the head's OUTER face, proud of the back face"
+      },
+      {
+       "name": "svc_floor_z",
+       "default": "svc_head_z + svc_rim_t",
+       "comment": "the seat's floor (the rim's inner face)"
+      },
+      {
+       "name": "svc_recess_z",
+       "default": "svc_floor_z + svc_flex_depth",
+       "comment": "the flex recess's floor: the overtravel stop, and where the bore starts"
+      },
+      {
+       "name": "svc_guide_len",
+       "default": "(floor_t - svc_recess_z) + svc_boss_h",
+       "comment": "the bore that guides the stem, recess floor to boss top"
       },
       {
        "name": "svc_stem_len",
        "default": "svc_tip_z - svc_tip_h - (svc_head_z + svc_web_t)",
-       "comment": "the stem, head to tip"
+       "comment": "the stem, web to tip"
       },
       {
        "name": "svc_bead_z",
-       "default": "svc_boss_top + 0.2 - svc_head_z",
-       "comment": "the bead's start, in the plunger's own frame (head's floor = 0)"
+       "default": "svc_boss_top + svc_bead_clear - svc_head_z",
+       "comment": "the shoulder's foot, in the plunger's own frame (head's face = 0)"
+      },
+      {
+       "name": "svc_travel_max",
+       "default": "svc_flex_depth - (svc_rim_t - svc_web_t)",
+       "comment": "the web bottoms on the recess floor here"
       },
       {
        "name": "svc_stroke_lo",

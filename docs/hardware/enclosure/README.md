@@ -1266,14 +1266,24 @@ Three things a look at the v0.8 asked for; the envelope does not move:
   XIAO's two tactile switches, **R** and **B**, face the back plate — its
   component side is its outward side in the module's socket — 7 to 9 mm
   off the plate's inner face. Two TPU plungers go through the plate over
-  them: a flat Ø8 head 0.3 under the back face in a counterbore (nothing
-  proud against the wall plate's slab), a Ø3.2 stem in a sliding bore
-  through the plate and a short **guide boss** on the inner face (stopped
-  0.5 under the USB-C shell), a bead past the boss's top that keeps it in,
-  and a Ø1.8 tip that lands on the switch cap and nothing else (the shell
-  stands 0.7 beside the cap, four times taller). **Lift the body off its
-  wall plate and press**: a reset, or B held through a power-up for a
-  boot-mode flash, without a plate screw coming out. The tip rests 0.3
+  them, built the way a keypad membrane is: the head is a **rim** (0.8,
+  four layers) sitting on a seat's floor and a **web** (0.6, three
+  layers) spanning a **flex recess** cut under it; a Ø3.2 stem hangs from
+  the web's center, with a 0.4 root fillet (a sharp inside corner is
+  where TPU tears), through a sliding bore in the recess floor and a short
+  **guide boss** on the inner face (stopped 0.5 under the USB-C shell);
+  past the boss a **bead** keeps the plunger in during handling — its
+  shoulder faces the head, its lead cone faces the tip, so it pushes in
+  and does not pull out; a chamfered Ø1.8 tip lands on the switch cap and
+  nothing else (the shell stands 0.7 beside the cap, four times taller).
+  A press bends the web into the recess — a few newtons — the tip clicks
+  the switch, and the web springs it back; the recess floor is the
+  **overtravel stop**, so no finger can drive the switch past its body.
+  The head stands **0.2 proud** of the back face: the wall plate's slab
+  squeezes the rim onto its floor, and that squeeze seals the bore behind
+  it (the plate screws carry O-rings for the same reason). **Lift the body
+  off its wall plate and press**: a reset, or B held through a power-up
+  for a boot-mode flash, without a plate screw coming out. The tip rests 0.3
   off the cap at the *nearest* the stack can sit — `stack_sock_h` is a
   bench number to one PCB face, so the switch sits somewhere in a
   PCB-thick band, and the file draws the plunger against both ends of it:
@@ -1503,8 +1513,9 @@ nut on, and wire it and the **amplifier** per the
 [wiring page](../canary_vision_doorbell_wiring.md) (the wires turn toward
 the well, not the bottom wall; the amplifier stands on edge beside the
 button between the posts, taped to the wall) → on the plate: stick the **foam pad** on the
-cradle's top; snap the two **TPU plungers** off their sprue and push them
-in from the back face, stem first, until the head seats in its counterbore
+cradle's top; cut the two **TPU plungers** off their sprue (scissors —
+TPU does not snap; trim the nub flush) and push them in from the back face,
+stem first, until the rim seats on its floor and the head stands 0.2 proud
 (the bead pops past the guide boss — one dimple over R, two over B, as
 `xiao_rst_side` says once you have checked it against the board) → if you
 are fitting the
@@ -1538,7 +1549,8 @@ collar.
 | `opt_spk`, `spk_d` / `spk_h` / `spk_mag_d`, `spk_cone_d` | on, 36 / 6 / 20, 30 | the speaker zone: the driver's rim, depth and magnet (**measure the part in hand**), the grille's Ø over the cone |
 | `spk_post_dy`, `grille_hole_d` / `grille_pitch`, `grille_pattern` | 16, 1.0 / 2.6, sunflower | where the zone's mid posts sit off the driver's axis (asserted clear of it); the grille's holes (≤ 1.0, the insect rule), one per pitch² of face on a Fermat spiral (`"rings"` = the v0.8 grille) |
 | `opt_svc`, `svc_rest`, `xiao_rst_side` | on, 0.3, −1 (**MEASURE**) | the service plungers over the XIAO's R and B; the tip's rest gap at the nearest the stack can sit (≥ 0.3, asserted — never a held switch); which side is R (the dimples follow it; the model has no silkscreen) |
-| `svc_head_d` / `svc_web_t` / `svc_stem_d` / `svc_tip_d` | 8 / 0.8 / 3.2 / 1.8 | the plunger: its flush head and the web that flexes, the sliding stem, the tip that lands on the 1.6 mm cap and clears the USB-C shell beside it |
+| `svc_head_d` / `svc_rim_t` / `svc_web_t` / `svc_flex_d` / `svc_flex_depth` | 9.6 / 0.8 / 0.6 / 7.0 / 2.2 | the plunger's head: the rim on its seat, the three-layer web, the recess it flexes into and the depth that is also its overtravel stop (asserted past the far-end click) |
+| `svc_stem_d` / `svc_root_r` / `svc_tip_d` / `svc_bead` / `svc_proud` / `svc_tol` | 3.2 / 0.4 / 1.8 / 0.4 / 0.2 / 0.25 | the sliding stem and its root fillet, the chamfered tip that lands on the 1.6 mm cap and clears the USB-C shell, the retaining bead, how proud the head stands for the slab to squeeze (the seal), the TPU clearance a side |
 | `lens_dx/dy`, `cam_grid_dy`, `cam_lens_h`, `cam_barrel_d` | 0, −1.7 / 4.05 / 5.0 / 7.0 | the OV5647-62 as the vendor CAD draws it — re-measure if your camera is a different carrier |
 | `cam_fov` / `cam_fov_margin` | 62 / 4 | the lens's diagonal FOV (datasheet) and the margin the hole's cone keeps around it |
 | `lug_y` / `lug_mid_y` / `dt_clear` | 41.5 / 6 / 0.2 | where the dovetail lugs park (clear of the cable slot); the pocket fit (dial it on the coupon's POCKET station) |

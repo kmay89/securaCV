@@ -182,7 +182,7 @@ PRINT_SETTINGS = {
 # filename-substring → note (first match wins). Sources: scad comments.
 PART_NOTES = [
     ("gasket", "TPU 90–95A, 100% infill, slow — the seal is the print"),
-    ("plunger", "TPU 90–95A, 100% infill, slow, head down — the doorbell's two service buttons (R and B) in ONE print on a snap-off sprue; one dimple = R, two = B"),
+    ("plunger", "TPU 90–95A, 0.2 mm layers (the web is exactly three), 100% infill, slow, heads down, no supports — the doorbell's two service buttons (R and B) in ONE print on a sprue; cut it with scissors, never tear; one dimple = R, two = B"),
     ("_hood", "prints drip-edge-down, spigot up — press into the front's groove and bond (neutral-cure silicone)"),
     ("lid", "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)"),
     ("base", "prints flat, open side up — no supports"),

@@ -2300,7 +2300,7 @@
         "plate": "The wall plate with the three dovetail lugs, the collar and the cable slot. The wedge angles live here — the case aims wherever the plate points.",
         "gasket": "The soft TPU ring that seals face to body against the weather.",
         "retainer": "The small ring that presses into the face behind the lens disc and holds it against the lip. Print it flat, bore down.",
-        "plunger": "The two soft buttons that poke the XIAO's reset and boot switches through the back plate, as one print on a snap-off sprue: heads down on the bed, stems up. One dimple is R, two are B. Lift the body off its wall plate and press."
+        "plunger": "The two soft buttons that poke the XIAO's reset and boot switches through the back plate, as one print on a sprue: heads down on the bed, stems up, 0.2 mm layers, 100% infill, slow, no supports; cut them apart with scissors. One dimple is R, two are B. Lift the body off its wall plate and press."
       },
       "labels": {
         "part": "Part to print",
@@ -2327,7 +2327,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "8b5fc8a822be9b5ac01806c81f0d49c141f0075deeb6e129746b340e4dc93495",
+      "sha256": "f43844c15440576c0de1f45299178e58dd60c43b303c211eb8473ede6ee21e5c",
       "groups": [
         {
           "name": "What to render",
@@ -2751,25 +2751,49 @@
               "name": "opt_svc",
               "type": "bool",
               "default": true,
-              "desc": "the plungers, their counterbores, bores and guide bosses; off = a plain plate there"
+              "desc": "the plungers, their seats, flex recesses, bores and guide bosses; off = a plain plate there"
             },
             {
               "name": "svc_head_d",
               "type": "number",
-              "default": 8.0,
-              "desc": "the plunger's head Ø — flat, flush in a counterbore on the back face"
+              "default": 9.6,
+              "desc": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)"
+            },
+            {
+              "name": "svc_rim_t",
+              "type": "number",
+              "default": 0.8,
+              "desc": "the head's RIM, the ring that sits on the seat's floor round the flex recess (four 0.2 layers)"
             },
             {
               "name": "svc_web_t",
               "type": "number",
-              "default": 0.8,
-              "desc": "the head's thickness: the web that flexes when you press (TPU 90-95A)"
+              "default": 0.6,
+              "desc": "the head's WEB inside the rim, the membrane that flexes when you press (three 0.2 layers — never a 0.3 layer)"
+            },
+            {
+              "name": "svc_flex_d",
+              "type": "number",
+              "default": 7.0,
+              "desc": "the flex recess under the web: the web spans it, and its floor is the overtravel stop"
+            },
+            {
+              "name": "svc_flex_depth",
+              "type": "number",
+              "default": 2.2,
+              "desc": "how deep that recess goes past the seat's floor — the stroke the web can make before the stop"
             },
             {
               "name": "svc_stem_d",
               "type": "number",
               "default": 3.2,
-              "desc": "the stem, a sliding fit in its bore (+0.3)"
+              "desc": "the stem, a sliding fit in its bore"
+            },
+            {
+              "name": "svc_root_r",
+              "type": "number",
+              "default": 0.4,
+              "desc": "the fillet at the stem's root into the web (a sharp inside corner is where TPU tears)"
             },
             {
               "name": "svc_tip_d",
@@ -2781,7 +2805,7 @@
               "name": "svc_tip_h",
               "type": "number",
               "default": 0.8,
-              "desc": "the tip's height off the stem's end"
+              "desc": "the tip's height off the stem's end (its end is chamfered: no edge on the cap)"
             },
             {
               "name": "svc_rest",
@@ -2799,7 +2823,13 @@
               "name": "svc_bead",
               "type": "number",
               "default": 0.4,
-              "desc": "the retaining bead's stand past the stem, just past the guide boss's top"
+              "desc": "the retaining bead's stand past the stem: a flat-ish shoulder toward the head, a lead cone toward the tip"
+            },
+            {
+              "name": "svc_bead_clear",
+              "type": "number",
+              "default": 0.6,
+              "desc": "the shoulder rests this far past the guide boss's top (TPU prints long or short by a layer or two)"
             },
             {
               "name": "svc_boss_wall",
@@ -2808,15 +2838,33 @@
               "desc": "the guide boss's wall on the plate's inner face"
             },
             {
+              "name": "svc_tol",
+              "type": "number",
+              "default": 0.25,
+              "desc": "TPU prints fat: the seat and the bore clear the part by this a side"
+            },
+            {
+              "name": "svc_proud",
+              "type": "number",
+              "default": 0.2,
+              "desc": "the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its"
+            },
+            {
               "name": "svc_pip_d",
               "type": "number",
-              "default": 1.6,
-              "desc": "the dimples in the head that say which is which: one = R, two = B"
+              "default": 2.0,
+              "desc": "the dimples in the head's face that say which is which: one = R, two = B"
             },
             {
               "name": "svc_pip_depth",
               "type": "number",
               "default": 0.4
+            },
+            {
+              "name": "svc_sprue_t",
+              "type": "number",
+              "default": 0.4,
+              "desc": "the sprue between the pair's rims: two layers, cut with scissors (TPU does not snap)"
             },
             {
               "name": "xiao_rst_side",

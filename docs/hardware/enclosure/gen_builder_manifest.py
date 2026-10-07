@@ -316,9 +316,10 @@ CURATED = [
                         "it flat, bore down.",
             "plunger": "The two soft buttons that poke the XIAO's reset and "
                        "boot switches through the back plate, as one print on "
-                       "a snap-off sprue: heads down on the bed, stems up. One "
-                       "dimple is R, two are B. Lift the body off its wall "
-                       "plate and press.",
+                       "a sprue: heads down on the bed, stems up, 0.2 mm "
+                       "layers, 100% infill, slow, no supports; cut them apart "
+                       "with scissors. One dimple is R, two are B. Lift the "
+                       "body off its wall plate and press.",
         },
         "labels": {
             "part": "Part to print", "preset": "Quick preset",
