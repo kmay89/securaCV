@@ -86,6 +86,7 @@ struct NearbySetupSheet: View {
     @State private var remember = true
     @State private var remembered: HouseholdWiFi? = HouseholdWiFiStore.load()
     @State private var verdict: ImprovClient.Outcome?
+    @State private var paired = false
 
     enum Stage: Equatable {
         case connecting
@@ -223,6 +224,10 @@ struct NearbySetupSheet: View {
         Section {
             Label("It's on \(effectiveSSID) — the Canary said so itself.", systemImage: "checkmark.circle")
                 .foregroundStyle(Theme.color(.calm))
+            if paired {
+                Label("Paired with this phone — its key came over the same link.", systemImage: "key.horizontal")
+                    .foregroundStyle(Theme.color(.calm))
+            }
             if store.discoveryConsent != true {
                 Button("Enable discovery to watch it appear") { store.setDiscoveryConsent(true) }
             } else if seenOnNetwork.isEmpty {
@@ -291,6 +296,18 @@ struct NearbySetupSheet: View {
         case .joined:
             if HouseholdWiFiStore.shouldRemember(toggleOn: remember, joined: true, ssid: ssid) {
                 try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: ssid, password: password, savedAt: Date()))
+            }
+            // A WAP hands its pairing receipt over the same link: the phone
+            // ends up PAIRED, token in the Keychain, from the one tap.
+            if client.offersReceipt, let data = await client.readReceipt(),
+               let receipt = try? JSONDecoder().decode(ProvisioningReceipt.self, from: data),
+               DeviceAPI.isPrivate(receipt.baseURL),
+               !(DeviceAPI.isTLS(receipt.baseURL) && receipt.tlsCertFingerprint == nil) {
+                let ref = PairedDeviceRef(id: receipt.deviceID, name: canary.title, deviceType: .wap,
+                                          baseURL: receipt.baseURL, pairedAt: Date(),
+                                          tlsCertFingerprint: receipt.tlsCertFingerprint)
+                store.devices.add(ref, token: receipt.token)
+                paired = true
             }
             stage = .done
             store.ble.endSetup()

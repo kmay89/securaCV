@@ -144,6 +144,16 @@ Watch**, which is the bedside clock product below. A watch changes what you
 are *told*, never what is *kept*, and cannot reach backward (Invariant VI).
 → [watches (design)](design/watches.md)
 
+**Bluetooth setup door** — The way a brand-new Sense, Vision or WAP takes
+its Wi-Fi from a phone with one tap: the open Improv Wi-Fi standard over
+BLE (`firmware/common/network/improv_core.h`, the pure half; `improv_ble`,
+the NimBLE glue; the WAP's `ble_improv`), on an encrypted Just Works link,
+open exactly while the device has no working Wi-Fi of its own. The fleet
+beacon carries a *setup open* bit and a "Sense-AB12" name while it is; the
+iPhone app's "new Canary nearby" card (`Shared/NearbyCanary.swift`) is the
+other half. The `SecuraCV-XXXX` setup network stays underneath as the
+break-glass path with a key.
+
 **Fleet** — **The word for a group of Canaries.** Not "flock" — that word is
 off-limits in all copy, identifiers, and comments (a company called Flock
 soured it); the only exception is the Unix `flock(2)` syscall. Rule:

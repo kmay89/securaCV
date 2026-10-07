@@ -137,6 +137,7 @@ auto-discovery via its CSI bridge) — see
 | **WiFi AP** | Local web dashboard and API access |
 | **Mesh Network** | Opera protocol for device-to-device communication |
 | **Bluetooth** | BLE pairing and configuration |
+| **Bluetooth setup door** | Improv Wi-Fi on the pairing server for a fresh unit: a phone's one tap hands over the home Wi-Fi over an encrypted Just Works link, and the pairing receipt rides the same link (`ble_improv`; FULL profile) |
 | **RF Presence** | Privacy-preserving device detection |
 | **Camera Peek** | Live MJPEG preview streaming |
 | **Microphone** | PDM mic detects smoke (T3) / CO (T4) alarm cadences plus knock, doorbell, and glass-break; privacy-bounded (no audio stored), hard mute with witness-chain audit trail |

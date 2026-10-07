@@ -2,17 +2,85 @@
 
 ## [Unreleased]
 
+### Magic pairing: the Bluetooth setup door — a new Sense, Vision or WAP takes its Wi-Fi from the iPhone app with one tap, and a WAP is paired from that same tap
+
+- **Firmware: Improv Wi-Fi over BLE, the open standard, as a second door
+  to the shared setup portal.** `firmware/common/network/improv_core.h` is
+  the pure half (the standard's RPC frames — the spec's worked example byte
+  for byte — the 0x4677 service data, and the provisioning session: the
+  door is open exactly while the device has no working Wi-Fi of its own, a
+  tap opens it for a minute where a board reads one, a join nobody reports
+  on times out, the advert follows the state); `tests_host/test_improv_core.cpp`
+  pins it. `improv_ble.{h,cpp}` is the NimBLE glue, one file for both
+  majors (2.x on the Sense, 1.4.x on the Vision): the RPC write needs an
+  encrypted link (LE Secure Connections, Just Works, no bond kept), so the
+  credentials never cross the air in the clear and iOS shows one pairing
+  sheet. The fleet beacon stays the primary advert; while the door is open
+  it carries `FLEET_BEACON_FLAG_SETUP_OPEN` (bit5) and a "Sense-AB12" name
+  (the setup network's own suffix), the device is connectable, and the scan
+  response carries the Improv UUID + service data. Door shut: today's bytes,
+  not connectable. Credentials go through `setup_portal_submit_join()`, the
+  wizard's own Testing pass (persist only on success, linger, teardown);
+  `setup_portal_join_state()` / `note_acked()` report back. The Canary
+  lists the networks it sees (one result per row, the empty result closes
+  the list) so the phone never needs location permission for the SSID.
+- **Sense and Vision:** `FEATURE_IMPROV` (default 1, vetoable per board),
+  begin after the beacon, tick beside it, identify blinks the LED. The Sense
+  lands at 90% of its OTA slot (the C6 controller's connection code is the
+  cost of being connectable). The Vision's C3 envs move to `min_spiffs.csv`
+  (0x1E0000 app slots): the door did not fit beside 87% of the old 0x140000
+  slot, and the Vision uses no filesystem. A partition-table change cannot
+  ship over OTA — a unit flashed on `default.csv` needs one USB reflash.
+- **WAP:** `ble_improv` on the pairing channel's server (FULL profile),
+  with a staged copy of the core (`check_improv_sync.sh`). The door is open
+  only while no credentials are stored (never on a standalone AP-only
+  unit). While it is, `bluetooth_channel::set_setup_door` swaps the
+  security profile to Just Works (refused while a Numeric Comparison is
+  pending; restored when the door shuts) — the key it yields is
+  unauthenticated, so the console, OTA, witness export and the bonded
+  rescue service still refuse it. The pairing receipt rides the same link
+  (`8fc1cf01`, READ_ENC): once the join the phone asked for succeeded, the
+  connection that asked may read it exactly once, with `base_url` at the
+  device's `.local` name rather than the SoftAP address the HTTP receipt
+  carries (dead once the AP drops). Opera's advert carries the setup bit,
+  the "WAP-XXXX" name and the Improv scan response while the door is open.
+  A fresh unit with nobody on its SoftAP brings BLE up after 5 s instead
+  of the five-minute hold (`provisioning_logic::ble_fresh_unit_start_due`,
+  host-tested); the heap guard keeps the last word.
+- **iPhone app: the "new Canary nearby" card.** `Shared/ImprovWire.swift`
+  is the pure Swift twin of the codec, pinned by `ImprovWireTests` to the
+  firmware test's vectors; `Shared/NearbyCanary.swift` decides which
+  sightings qualify (an open door via the service data, the Improv UUID or
+  the beacon bit; the strict name grammar; paired-and-unambiguous
+  exclusion; dismissals; a 15 s window), `NearbyCanaryTests` pins it.
+  `BLEConsole` collects what the card reads per peripheral and hands one
+  peripheral to one `ImprovClient` at a time; the client discovers,
+  subscribes, reads state, scans networks, provisions and waits for the
+  verdict, identifies, and reads a WAP's receipt. The card sits on Today,
+  Fleet (comb and list) and leads the walkthrough for the three families
+  (`SetupGuide.hasBluetoothDoor`; the typed key and the bonded service
+  become the "If no card appears" fallback). The household Wi-Fi can be
+  remembered (`Security/HouseholdWiFi.swift`: this phone's Keychain only,
+  written only after a Canary itself said it joined, forgettable from Set
+  up), so the second Canary is two taps.
+- Docs: FAQ ("How do I give a new Canary my Wi-Fi?"), glossary ("Bluetooth
+  setup door"), the three family READMEs, `ios/README.md`, and the shared
+  onboarding module's design note. CI-compiled (Sense and WAP also locally),
+  host-tested, not bench-tested: the pairing sheet, the C3/C6 radio
+  coexistence of one BLE link beside the SoftAP and a candidate join, and
+  the WAP's profile swap are the bench items.
+
 ### release(ios): 0.6.0 — the Set up walkthroughs reach TestFlight
 
 - `MARKETING_VERSION` 0.5.6 → 0.6.0 (`ios/project.yml`, the one place it
   lives). Everything the iPhone app gained since `ios-v0.5.6`: the Set up
   door with the hub walkthrough (finds Home Assistant over Bonjour, waits
   for *ready*, creates the owner account, finishes the wizard pages, runs
-  the provisioning plan through the Supervisor proxy) and the Canary
+  the provisioning plan through the Supervisor proxy), the Canary
   walkthrough (one path per family: the glass QR and the phone joining the
-  setup network itself, the Flasher-printed key, Bluetooth for a WAP). No
-  synced CloudKit record changed since 0.5.6, so no schema promotion is
-  owed before this one.
+  setup network itself, the Flasher-printed key, Bluetooth for a WAP), and
+  the "new Canary nearby" card above. No synced CloudKit record changed
+  since 0.5.6, so no schema promotion is owed before this one.
 
 ### The hub finishes without a wizard: the Flasher's first-boot watch waits for Home Assistant itself, self-setup is on by default and retries "not ready yet", and the iPhone app gains a Set up walkthrough that finishes a hub from the phone and gives a new Canary its Wi-Fi
 

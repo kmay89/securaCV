@@ -159,6 +159,23 @@ static void test_ble_discovery_start() {
   CHECK(ble_discovery_start_due(false, true, near_wrap + MAXHOLD, near_wrap, SETTLE, MAXHOLD));
 }
 
+static void test_ble_fresh_unit_start() {
+  const uint32_t FRESH = 5000;
+  // A fresh unit with nobody on its SoftAP: due after the short settle,
+  // measured from the boot reference, wrap-safe.
+  CHECK(!ble_fresh_unit_start_due(true, 0, FRESH - 1, 0, FRESH));
+  CHECK(ble_fresh_unit_start_due(true, 0, FRESH, 0, FRESH));         // boundary >=
+  CHECK(ble_fresh_unit_start_due(true, 0, 100000 + FRESH, 100000, FRESH));
+  CHECK(!ble_fresh_unit_start_due(true, 0, 100000 + FRESH - 1, 100000, FRESH));
+  const uint32_t near_wrap = 0xFFFFF000u;
+  CHECK(ble_fresh_unit_start_due(true, 0, near_wrap + FRESH, near_wrap, FRESH));
+  // A phone on the SoftAP means a WPA2 handshake may be in flight: never the
+  // short path (the caller falls back to ble_discovery_start_due).
+  CHECK(!ble_fresh_unit_start_due(true, 1, FRESH + 60000, 0, FRESH));
+  // Not fresh (credentials stored): never the short path either.
+  CHECK(!ble_fresh_unit_start_due(false, 0, FRESH + 60000, 0, FRESH));
+}
+
 int main() {
   test_setup_timeout();
   test_scan_cache();
@@ -167,6 +184,7 @@ int main() {
   test_deferred_reboot();
   test_reboot_deadline_extend();
   test_ble_discovery_start();
+  test_ble_fresh_unit_start();
   if (g_failures) {
     std::printf("%d check(s) FAILED\n", g_failures);
     return 1;

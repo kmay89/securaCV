@@ -189,6 +189,7 @@ extern "C" {
 #include "mesh_channel_policy.h"  // Channel decision (STA-follow) for MQTT telemetry
 #include "airtime_governor.h"     // Rolling airtime stats for MQTT telemetry
 #include "bluetooth_channel.h"
+#include "ble_improv.h"          // the Bluetooth setup door (Improv Wi-Fi), FULL profile
 #include "bluetooth_api.h"
 #include "ble_console.h"
 #include "ble_log_export.h"
@@ -946,6 +947,13 @@ static const uint32_t BLE_DISCOVERY_AP_ONLY_SETTLE_MS = 45000;
 // features — disabled forever. After this hold, start regardless and accept
 // steady-state coexistence.
 static const uint32_t BLE_DISCOVERY_MAX_HOLD_MS = 300000;  // 5 min
+// A FRESH unit (no credentials stored, nobody on its SoftAP) brings BLE up
+// after this short settle instead: its Bluetooth setup door (ble_improv) is
+// how a phone hands it Wi-Fi with one tap, and the five-minute hold would
+// shut that door for exactly the minutes the person is standing there. The
+// heap guard still has the last word on RAM. provisioning_logic::
+// ble_fresh_unit_start_due, host-tested.
+static const uint32_t BLE_DISCOVERY_FRESH_SETTLE_MS = 5000;
 #endif
 
 // QR scan-in-progress flag. Lives up here (not in the QR section) because
@@ -6755,6 +6763,80 @@ bool ble_request_wifi_provisioning(const char* ssid, const char* password) {
   return true;
 }
 
+// ── The Bluetooth setup door's bridges (ble_improv.cpp) ─────────────────────
+// Non-static, like ble_request_wifi_provisioning above: the module's extern
+// declarations link against these.
+
+// Open exactly while this unit has no Wi-Fi of its own to lose: no stored
+// credentials, and not a standalone unit the owner keeps AP-only on purpose
+// (that one must never take a stranger's network).
+bool ble_improv_door_should_open() {
+  return !g_wifi_creds.configured && !g_wifi_ap_only;
+}
+
+// Where the phone can reach this unit once it has joined: the .local name
+// when the STA holds one, else the SoftAP address (the AP is still up for
+// the grace window).
+size_t ble_improv_reach_url(char* out, size_t cap) {
+  if (!out || cap == 0) return 0;
+  int n;
+  if (WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+    n = snprintf(out, cap, "%s://%s.local/", g_tls_enabled ? "https" : "http", g_device.mdns_hostname);
+  } else {
+    n = snprintf(out, cap, "%s://%s/", g_tls_enabled ? "https" : "http",
+                 WiFi.softAPIP().toString().c_str());
+  }
+  if (n < 0) { out[0] = '\0'; return 0; }
+  return (size_t)n < cap ? (size_t)n : cap - 1;
+}
+
+// The pairing receipt the BOOT-tap route serves, for the link that provisioned
+// over the setup door — with base_url at the .local name the STA now holds
+// (the SoftAP address the HTTP receipt carries is gone once the AP drops).
+size_t ble_improv_receipt_json(char* out, size_t cap) {
+  if (!out || cap == 0) return 0;
+  char hw_token[device_pseudonym::HEX_LEN + 1];
+  if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
+  char authority[64];
+  if (WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+    snprintf(authority, sizeof(authority), "%s.local", g_device.mdns_hostname);
+  } else {
+    snprintf(authority, sizeof(authority), "%s", WiFi.softAPIP().toString().c_str());
+  }
+  identity_json::Receipt in = {};
+  in.device_id   = g_device.device_id;
+  in.tls_enabled = g_tls_enabled;
+  in.ap_ip       = authority;
+  in.token       = g_device.api_token_str;
+  in.pubkey_fp   = g_device.fingerprint_hex;
+  in.firmware    = FIRMWARE_VERSION;
+  in.hw_token    = hw_token;
+  in.ap_ssid     = g_device.ap_ssid;
+  in.ap_password = g_device.ap_password;
+  in.tls_cert_fp = g_tls_cert_fp_hex;
+  in.boot_count  = (unsigned long)g_device.boot_count;
+  const size_t n = identity_json::provisioning_receipt(in, out, cap);
+  if (n + 1 > cap) { out[0] = '\0'; return 0; }
+  log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served over the Bluetooth setup door", nullptr);
+  return n;
+}
+
+// The four hex characters the setup door's "WAP-XXXX" name ends in: the
+// same suffix Opera's "SCV-XXXX" carries, so the phone sees one device.
+size_t ble_improv_name_suffix(char* out, size_t cap) {
+  if (!out || cap < 5) return 0;
+  const size_t len = strlen(g_device.fingerprint_hex);
+  const char* src = len >= 4 ? g_device.fingerprint_hex + len - 4 : "0000";
+  for (int k = 0; k < 4; k++) out[k] = (char)toupper((unsigned char)src[k]);
+  out[4] = '\0';
+  return 4;
+}
+
+static void start_identify(uint32_t duration_ms);
+void ble_improv_identify() { start_identify(10000); }
+
+const char* ble_improv_firmware_version() { return FIRMWARE_VERSION; }
+
 static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
   g_health.http_requests++;
 
@@ -11761,7 +11843,14 @@ static void ble_discovery_start_if_due() {
   const bool ap_active = g_wifi_status.ap_active;
   const bool ap_only_mode =
       g_wifi_ap_only || (g_wifi_status.state == WIFI_PROV_AP_ONLY);
-  if (!provisioning_logic::ble_discovery_start_due(
+  // A fresh unit with nobody on its SoftAP takes the short path (its setup
+  // door is waiting for a phone); everything else holds as before.
+  const bool fresh_unit = !g_wifi_creds.configured && !g_wifi_ap_only;
+  const bool fresh_due = provisioning_logic::ble_fresh_unit_start_due(
+      fresh_unit, WiFi.softAPgetStationNum(), millis(), g_ble_discovery_ready_ms,
+      BLE_DISCOVERY_FRESH_SETTLE_MS);
+  if (!fresh_due &&
+      !provisioning_logic::ble_discovery_start_due(
           ap_only_mode, ap_active, millis(), g_ble_discovery_ready_ms,
           BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
     return;
@@ -12166,6 +12255,7 @@ void loop() {
       beacon_flags |= FLEET_BEACON_FLAG_DEGRADED;
     #endif
     if (WiFi.isConnected()) beacon_flags |= FLEET_BEACON_FLAG_ON_WIFI_STA;
+    if (ble_improv::setup_open()) beacon_flags |= FLEET_BEACON_FLAG_SETUP_OPEN;
     ble_opera::setBeaconStatus(beacon_flags, beacon_battery, beacon_health);
   }
   #endif

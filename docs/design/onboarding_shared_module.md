@@ -104,6 +104,21 @@ needs a "current AP channel" query exposed by the shared module), the usbdrive
 build env, QR provisioning (optional camera add-on behind the same
 `/api/wifi/*` surface), pair-token/session machinery, witness/vault/chirp.
 
+## The second door: Improv Wi-Fi over BLE (landed)
+
+The shared portal gained a second front door. `common/network/improv_core.h`
+is the pure half of the open Improv Wi-Fi standard (RPC frames, service
+data, the provisioning session: the door is open exactly while the device
+has no working Wi-Fi of its own, a tap opens it for a minute where a board
+reads one, a join nobody reports on times out) and `improv_ble.{h,cpp}` is
+the NimBLE glue, one file for both majors. It feeds the SAME join path as
+the wizard's `POST /join` — `setup_portal_submit_join()` — so persist-only-on-
+success, the linger and the teardown are not reimplemented, and
+`setup_portal_join_state()` / `setup_portal_note_acked()` report back. The
+WAP, which keeps its own portal, carries `ble_improv` on its pairing server
+with a staged copy of the core (`check_improv_sync.sh`). The display keeps
+its glass QR: a screen beats a radio.
+
 ## Invariants the shared module must carry (each one was paid for)
 
 - Captive DNS answers **A queries only**, NODATA for AAAA/HTTPS — and runs

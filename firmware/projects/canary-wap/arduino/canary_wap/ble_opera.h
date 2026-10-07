@@ -27,6 +27,7 @@
 #include <NimBLEDevice.h>
 #include "log_level.h"
 #include "fleet_beacon.h"
+#include "ble_improv.h"      // the setup door: name, beacon bit, scan response
 #include "ble_server_dispatch.h"   // F171: the server's callbacks, shared with the pairing channel
 
 // Forward declarations for witness chain integration
@@ -207,8 +208,20 @@ static bool applyBeaconAdvertising() {
     advData.setManufacturerData(std::string((char*)mfg, sizeof(mfg)));
 
     NimBLEAdvertisementData scanData;
-    scanData.setName(g_deviceName);
-    scanData.addServiceUUID(SCV_SERVICE_UUID);
+    if (ble_improv::setup_open()) {
+        // The setup door is open (a fresh unit, no Wi-Fi of its own): the
+        // beacon stays primary with the "WAP-XXXX" name beside it (flags 3 +
+        // beacon 13 + name 10 = 26), and the scan response carries the Improv
+        // service UUID + service data (28) — what a phone's service filter
+        // matches. The SCV UUID steps aside for that window; the beacon's
+        // fp2 still says who this is to every active scanner.
+        advData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+        advData.setName(ble_improv::adv_name());
+        ble_improv::compose_scan_response(scanData);
+    } else {
+        scanData.setName(g_deviceName);
+        scanData.addServiceUUID(SCV_SERVICE_UUID);
+    }
 
     bool ok = g_pAdvertising->setAdvertisementData(advData);
     ok = g_pAdvertising->setScanResponseData(scanData) && ok;

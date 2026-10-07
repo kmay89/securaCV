@@ -46,14 +46,16 @@ final class SetupGuideTests: XCTestCase {
         // nothing here promises a door a device does not open.
         XCTAssertTrue(CanaryFamily.sense.hasBluetoothDoor)
         XCTAssertTrue(CanaryFamily.vision.hasBluetoothDoor)
+        XCTAssertTrue(CanaryFamily.wap.hasBluetoothDoor, "the WAP's door hands over its pairing key too")
         XCTAssertFalse(CanaryFamily.display.hasBluetoothDoor, "a display shows a QR on its glass instead")
-        XCTAssertFalse(CanaryFamily.wap.hasBluetoothDoor, "the WAP's bonded service is its own path")
         for family in CanaryFamily.allCases where family.hasBluetoothDoor {
             let steps = SetupGuide.canary(family)
             XCTAssertEqual(steps[1].action, .nearbyCanary, family.rawValue)
             XCTAssertEqual(steps[1].id, "nearby")
-            XCTAssertTrue(steps[2].title.hasPrefix("If no card appears"), "the typed key is the fallback")
+            XCTAssertTrue(steps[2].title.hasPrefix("If no card appears"), "\(family.rawValue): the older path is the fallback")
         }
+        XCTAssertTrue(SetupGuide.canary(.wap)[1].body.contains("pairing key"), "the WAP step says what the one tap earns")
+        XCTAssertFalse(SetupGuide.canary(.sense)[1].body.contains("pairing key"), "a Sense has no key to hand over")
     }
 
     func testNoStepIsAnEmptyPromise() {

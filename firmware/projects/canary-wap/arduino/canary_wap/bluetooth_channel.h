@@ -265,6 +265,12 @@ void set_device_metadata(const char* fw_revision, const char* serial);
 // loop task's, which its commands and its first pass's load write).
 bool is_advertising();
 
+// The setup door's security profile (ble_improv.h): true when applied.
+// Refused while a pairing is pending or in flight — ask again next pass.
+// Loop task only.
+bool set_setup_door(bool open);
+bool setup_door_open();
+
 // ──────────────────────────────────────────────────────────────────────────
 // The owner's commands (sweep F111)
 // ──────────────────────────────────────────────────────────────────────────

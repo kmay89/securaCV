@@ -26,6 +26,10 @@ final class ImprovClient: NSObject, ObservableObject {
     static let commandUUID      = CBUUID(string: ImprovWire.rpcCommandUUID)
     static let resultUUID       = CBUUID(string: ImprovWire.rpcResultUUID)
     static let capabilitiesUUID = CBUUID(string: ImprovWire.capabilitiesUUID)
+    /// SecuraCV's one addition inside the service, on a WAP: the pairing
+    /// receipt (device id, base URL, token, certificate fingerprint),
+    /// readable once by the link that provisioned, encrypted.
+    static let receiptUUID      = CBUUID(string: "8fc1cf01-b162-4401-9607-c8ac21383e90")
 
     enum Phase: Equatable, Sendable {
         case connecting
@@ -59,6 +63,8 @@ final class ImprovClient: NSObject, ObservableObject {
     private var error: CBCharacteristic?
     private var command: CBCharacteristic?
     private var result: CBCharacteristic?
+    private var receipt: CBCharacteristic?
+    private var receiptWaiter: CheckedContinuation<Data?, Never>?
 
     /// One request in flight at a time; each resumes exactly once.
     private var readyWaiter: CheckedContinuation<Bool, Never>?
@@ -171,6 +177,28 @@ final class ImprovClient: NSObject, ObservableObject {
         peripheral.writeValue(ImprovWire.identify, for: command, type: .withResponse)
     }
 
+    /// Whether this Canary offers a pairing receipt over the door (a WAP).
+    var offersReceipt: Bool { receipt != nil }
+
+    /// Read the pairing receipt the join earned — the link that provisioned
+    /// gets it once; anyone else reads "{}". Nil when the device offers none
+    /// or did not answer.
+    func readReceipt(timeout: Duration = .seconds(10)) async -> Data? {
+        guard let receipt else { return nil }
+        generation += 1
+        let gen = generation
+        return await withCheckedContinuation { cont in
+            receiptWaiter = cont
+            peripheral.readValue(for: receipt)
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard let self, self.generation == gen, let w = self.receiptWaiter else { return }
+                self.receiptWaiter = nil
+                w.resume(returning: nil)
+            }
+        }
+    }
+
     var canIdentify: Bool { capabilities & ImprovWire.capIdentify != 0 }
     var canScanWiFi: Bool { capabilities & ImprovWire.capScanWiFi != 0 }
 
@@ -181,6 +209,7 @@ final class ImprovClient: NSObject, ObservableObject {
         if let w = readyWaiter { readyWaiter = nil; w.resume(returning: false) }
         if let w = scanWaiter { scanWaiter = nil; w.resume(returning: networks) }
         if let w = joinWaiter { joinWaiter = nil; w.resume(returning: .failed(why)) }
+        if let w = receiptWaiter { receiptWaiter = nil; w.resume(returning: nil) }
     }
 
     private func resolveJoin(_ outcome: Outcome) {
@@ -201,7 +230,8 @@ extension ImprovClient: CBPeripheralDelegate {
             return
         }
         peripheral.discoverCharacteristics(
-            [Self.stateUUID, Self.errorUUID, Self.commandUUID, Self.resultUUID, Self.capabilitiesUUID],
+            [Self.stateUUID, Self.errorUUID, Self.commandUUID, Self.resultUUID, Self.capabilitiesUUID,
+             Self.receiptUUID],
             for: service)
     }
 
@@ -213,6 +243,7 @@ extension ImprovClient: CBPeripheralDelegate {
         self.error = chars.first { $0.uuid == Self.errorUUID }
         self.command = chars.first { $0.uuid == Self.commandUUID }
         self.result = chars.first { $0.uuid == Self.resultUUID }
+        self.receipt = chars.first { $0.uuid == Self.receiptUUID }
         guard let state = self.state, let errorChar = self.error, let result = self.result, command != nil else {
             fail("This Canary's Bluetooth setup door is missing its controls.")
             return
@@ -250,10 +281,22 @@ extension ImprovClient: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if characteristic.uuid == Self.receiptUUID, error != nil, let w = receiptWaiter {
+            receiptWaiter = nil
+            w.resume(returning: nil)
+            return
+        }
         guard let data = characteristic.value, error == nil else { return }
         switch characteristic.uuid {
         case Self.capabilitiesUUID:
             capabilities = data.first ?? 0
+
+        case Self.receiptUUID:
+            if let w = receiptWaiter {
+                receiptWaiter = nil
+                // "{}" is the door's "not yours" — nil to the caller.
+                w.resume(returning: data.count > 2 ? data : nil)
+            }
 
         case Self.stateUUID:
             guard let s = ImprovWire.parseState(data) else { return }

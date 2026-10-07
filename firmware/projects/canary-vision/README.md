@@ -224,6 +224,20 @@ Discovery (retained):
 - `homeassistant/sensor/<device_id>/last_event/config`
 - `homeassistant/sensor/<device_id>/uptime/config`
 
+## The Bluetooth setup door (Improv Wi-Fi)
+
+A Vision with no Wi-Fi of its own raises the shared setup portal and, on the
+beacon's NimBLE stack (1.4.x on this core-2 line), opens the open **Improv
+Wi-Fi** door (`common/network/improv_ble`, rules in `improv_core.h`,
+host-tested): the beacon carries `FLEET_BEACON_FLAG_SETUP_OPEN` and the name
+`Vision-AB12`, the scan response carries the Improv service, and a phone's
+one tap hands over the home Wi-Fi over an encrypted Just Works link into the
+portal's own join path. `FEATURE_IMPROV` (default 1; `-DFEATURE_IMPROV=0`
+compiles it out). The C3 envs moved to `min_spiffs.csv` for it (0x1E0000 app
+slots; the connectable server did not fit beside 87% of the old 0x140000
+slot) — a partition-table change cannot ship over OTA, so a unit flashed on
+`default.csv` needs one USB reflash. CI-compiled, not bench-tested.
+
 ## Broker link: TLS (optional, fail-closed)
 
 The broker socket is plain by default — exactly what every unit shipped with

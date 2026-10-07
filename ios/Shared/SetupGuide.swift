@@ -79,7 +79,7 @@ enum CanaryFamily: String, CaseIterable, Identifiable, Sendable {
         case .display: return "A screen for the fleet — it shows, it never senses."
         case .vision: return "Detects people on the module; never stores or streams video."
         case .sense: return "Senses presence and breathing through the air — no camera, no microphone."
-        case .wap: return "GPS, a signed event log and its own hotspot; pairs with this phone directly."
+        case .wap: return "GPS, a signed event log and its own hotspot; pairs with this phone directly, key and all."
         }
     }
 
@@ -89,8 +89,8 @@ enum CanaryFamily: String, CaseIterable, Identifiable, Sendable {
     /// break-glass route.
     var hasBluetoothDoor: Bool {
         switch self {
-        case .sense, .vision: return true
-        case .display, .wap: return false
+        case .sense, .vision, .wap: return true
+        case .display: return false
         }
     }
 
@@ -179,7 +179,7 @@ enum SetupGuide {
             steps.append(SetupStep(
                 id: "nearby",
                 title: "Let this phone find it",
-                body: "Power it on near this phone. With nothing to join yet, it opens a small Bluetooth setup door and says so on the air; this phone hears it within seconds and shows a card. Tap the card, pick your Wi-Fi from the networks the Canary itself can see, type the password once, and tap Pair when iOS asks — the credentials cross encrypted, and the Canary answers with its own verdict. This phone can remember your Wi-Fi for the next Canary, in its Keychain only.",
+                body: "Power it on near this phone. With nothing to join yet, it opens a small Bluetooth setup door and says so on the air; this phone hears it within seconds and shows a card. Tap the card, pick your Wi-Fi from the networks the Canary itself can see, type the password once, and tap Pair when iOS asks — the credentials cross encrypted, and the Canary answers with its own verdict. This phone can remember your Wi-Fi for the next Canary, in its Keychain only." + (family == .wap ? " A WAP hands its pairing key over the same link, so it is paired with this phone from that one tap." : ""),
                 action: .nearbyCanary))
         }
         switch family.path {
@@ -200,7 +200,7 @@ enum SetupGuide {
         case .bluetooth:
             steps.append(SetupStep(
                 id: "bluetooth",
-                title: "Send your Wi-Fi over Bluetooth",
+                title: family.hasBluetoothDoor ? "If no card appears: its bonded Bluetooth service" : "Send your Wi-Fi over Bluetooth",
                 body: "Power it on. A WAP broadcasts over Bluetooth from the moment it boots, so this phone hears it within seconds — no setup network to join. Choose it below, type your Wi-Fi, and the credentials go across the bonded Bluetooth provisioning link (iOS shows the pairing sheet once). The Canary answers with its own verdict: connected, or why not.",
                 action: .bluetoothProvision))
         }

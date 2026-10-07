@@ -54,6 +54,7 @@
 #include "ble_presence.h"
 #include "ble_console.h"
 #include "ble_provision.h"
+#include "ble_improv.h"
 #include "ble_log_export.h"
 #include "ble_witness_export.h"
 #include "ble_standard_profiles.h"
@@ -1520,6 +1521,13 @@ bool init() {
   // others require READ_ENC + READ_AUTHEN.
   ble_provision::init(server);
 
+  // The Bluetooth setup door (Improv Wi-Fi): for a fresh unit with no Wi-Fi
+  // of its own, a phone hands over the home Wi-Fi with one tap over an
+  // encrypted (Just Works) link, and the pairing receipt rides the same
+  // link. Registered here on the same server; Opera advertises it while
+  // the door is open; set_setup_door() below swaps the security profile.
+  ble_improv::init(server);
+
   // Read-only health-log export. Bonded peers can paginate through the
   // ring buffer over BLE for forensic recovery / on-site triage when
   // canary.local is unreachable.
@@ -1846,6 +1854,39 @@ static void stop_advertising() {
     log_health(SCV_LOG_DEBUG, SCV_CAT_BLUETOOTH, "BLE advertising stopped", nullptr);
   }
 }
+
+// The setup door's security profile (ble_improv). Open: LE Secure
+// Connections, Just Works, no bond — the one pairing a phone can complete
+// with no dashboard open, yielding an UNAUTHENTICATED key that every
+// *_AUTHEN characteristic on this server (console, OTA, witness export,
+// ble_provision) still refuses; only the Improv service's *_ENC
+// characteristics accept it. Shut: today's bonded Numeric Comparison,
+// DISPLAY_YESNO, restored. These are ble_hs_cfg fields the host reads at
+// the START of a pairing, so the swap is applied between procedures only:
+// refused (false) while a Numeric Comparison is pending or the owner's
+// pairing mode is in flight, and the caller tries again next pass. Loop
+// task only (the profile is the channel's, like everything else here).
+static bool g_setup_door_open = false;
+bool set_setup_door(bool open) {
+  if (!g_initialized) return false;
+  if (open == g_setup_door_open) return true;
+  if (open) {
+    if (g_pending_pair_active || g_pending_pair_info != nullptr) return false;
+    if (g_pairing.state == PAIR_INITIATED || g_pairing.state == PAIR_PIN_DISPLAYED ||
+        g_pairing.state == PAIR_CONFIRMING) {
+      return false;
+    }
+    NimBLEDevice::setSecurityAuth(/*bonding=*/false, /*mitm=*/false, /*sc=*/true);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
+  } else {
+    NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, MITM, SC — as init()
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO);
+  }
+  g_setup_door_open = open;
+  return true;
+}
+
+bool setup_door_open() { return g_setup_door_open; }
 
 bool is_advertising() {
   // Any task (the self-test): NimBLE's own state, through its own object
@@ -2639,6 +2680,10 @@ void update() {
   // Drain async WiFi-scan completion + mirror connect outcome into the
   // provisioning STATE characteristic.
   ble_provision::tick();
+
+  // Follow the setup door: the join it asked for, the receipt it arms, and
+  // the security profile swap with the door.
+  ble_improv::tick();
 
   // Refresh the log-export HEAD so subscribers see new entries land
   // without having to poll. Internally throttled, no-op when the ring

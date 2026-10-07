@@ -452,6 +452,28 @@ Force quitting is never dangerous to a device. A flash interrupted at any stage
 is re-flashable: the ESP32's first-stage bootloader is mask ROM, and a
 half-written hub card is simply written again.
 
+### How do I give a new Canary my Wi-Fi? Do I have to type a setup key?
+
+Not any more, for a Sense, a Vision or a WAP. Out of the box those three
+open a small **Bluetooth setup door** — the open [Improv Wi-Fi](https://www.improv-wifi.com/)
+standard, the same one Home Assistant's own app speaks — and say so on the
+air. Open the SecuraCV iPhone app near the Canary with discovery on: a card
+appears within seconds ("A new Canary is nearby"). Tap it, pick your Wi-Fi
+from the networks the Canary itself can see, type the password once, tap
+Pair when iOS asks, and the Canary answers with its own verdict. The
+credentials cross an encrypted Bluetooth link (LE Secure Connections — a
+passive listener learns nothing); the phone can remember your Wi-Fi in its
+Keychain, on that phone only, so the second Canary is two taps. A WAP hands
+its pairing key over the same link, so it is *paired* with the phone from
+that one tap — no receipt to paste. The door is open only while the Canary
+has no Wi-Fi of its own (first boot, factory reset); a Canary on your
+network offers nothing to a stranger's phone.
+
+The older paths stay as the fallback: the `SecuraCV-XXXX` setup network with
+its printed key, a display's glass QR (a display shows a QR instead of
+opening a door — a screen beats a radio), and the WAP's bonded Bluetooth
+service once it is paired.
+
 ### My phone says "Unable to join the network SecuraCV-XXXX"
 
 Forget the network on your phone, then scan the QR again.

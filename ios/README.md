@@ -315,7 +315,21 @@ read the words the screen shows — and the phone does the parts a phone can:
   the integration is present). What stays yours is listed, never hidden:
   Frigate's camera config and the integration's files. The token is revoked
   on the way out; the password is never stored.
-- **A Canary.** One path per family, each the one its firmware serves
+- **A Canary.** The card first: a Sense, Vision or WAP with no Wi-Fi of its
+  own opens its Bluetooth setup door (Improv Wi-Fi, `Shared/ImprovWire.swift`
+  is the pure twin of the firmware's `improv_core.h`), the transport hears
+  it (`BLEConsole.heard`: the beacon's setup bit, the "Sense-AB12" name,
+  the Improv service in the scan response), `Shared/NearbyCanary.swift`
+  decides which sightings qualify, and `NearbyCanaryCard` shows up on
+  Today, Fleet and in the walkthrough. One tap: `Transport/ImprovClient.swift`
+  connects, asks the Canary which networks it sees, hands over the chosen
+  one (iOS shows its pairing sheet — the link is encrypted, nothing is
+  bonded), and waits for the Canary's own verdict; a WAP's pairing receipt
+  rides the same link, so it lands in `DeviceStore` paired. The household
+  Wi-Fi can be remembered (`Security/HouseholdWiFi.swift`: this phone's
+  Keychain only, written only after a proven join, forgettable from Set
+  up), which makes the second Canary two taps. Then the older paths, one
+  per family, each the one its firmware serves
   (`SetupGuide.canary`): a display's glass QR (scanned with VisionKit, or
   typed) and the phone joining `SecuraCV-XXXX` itself —
   `NEHotspotConfiguration`, the Hotspot Configuration entitlement — to post

@@ -97,6 +97,23 @@ inline bool ble_discovery_start_due(bool ap_only, bool ap_active,
   return held >= max_hold_ms;
 }
 
+// A FRESH unit — no Wi-Fi credentials stored yet, and no phone on its SoftAP
+// — is the one case the deferral above costs the most: its Bluetooth setup
+// door (ble_improv) is the way a phone hands it Wi-Fi with one tap, and the
+// five-minute max-hold would keep that door shut for exactly the minutes the
+// person is standing there. The two reasons for the deferral do not apply to
+// it: nobody's WPA2 handshake is in flight (zero stations), and the heap
+// guard still refuses a bring-up the RAM cannot afford. So a fresh unit
+// brings BLE up after a short settle instead. The moment a phone joins the
+// SoftAP (the wizard path), the caller falls back to the rule above.
+// Wrap-safe unsigned time math.
+inline bool ble_fresh_unit_start_due(bool fresh_unit, int ap_stations,
+                                     uint32_t now_ms, uint32_t boot_ref_ms,
+                                     uint32_t fresh_settle_ms) {
+  if (!fresh_unit || ap_stations > 0) return false;
+  return (uint32_t)(now_ms - boot_ref_ms) >= fresh_settle_ms;
+}
+
 // Keep an armed post-provisioning reboot from firing while the user is
 // still actively working the wizard's final step (running the self-test,
 // reading the recovery-kit card). Given an armed deadline, returns a

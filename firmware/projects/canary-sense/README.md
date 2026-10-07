@@ -190,7 +190,8 @@ projects/canary-sense/
   include/canary/         # composition headers (config/topics/net/ha/diag)
   include/secrets.ci.h    # CI stub; real secrets in secrets/secrets.h
   src/main.cpp            # sensing core + privacy chokepoint + net stack
-  src/net/                # wifi_mgr (backoff supervisor), mqtt_mgr, ota_mgr
+  src/net/                # wifi_mgr (backoff supervisor), mqtt_mgr, ota_mgr,
+                          # fleet_beacon_adv (its bytes go through the setup door)
   src/ha/ha_discovery.cpp # HA MQTT discovery entity set
 boards/xiao-esp32c6-mr60/ # pin map (radar UART, BH1750 I2C, WS2812, BOOT)
 configs/canary-sense/
@@ -216,6 +217,21 @@ serving it the other manifest — the engine's product check refuses.
 The vitals switch reaches `common/sensors/mmwave_mr60` only as the
 `-DCANARY_SENSE_VITALS` build flag (never a `config.h` include in `common/`),
 per the firmware layering rules (`firmware/ARCHITECTURE.md`).
+
+## The Bluetooth setup door (Improv Wi-Fi)
+
+A Sense with no Wi-Fi of its own raises the shared setup portal — and, on
+the same NimBLE stack the presence beacon uses, opens the open **Improv
+Wi-Fi** door (`common/network/improv_ble`, rules in `improv_core.h`,
+host-tested): the beacon carries `FLEET_BEACON_FLAG_SETUP_OPEN` and the name
+`Sense-AB12` (the setup network's own suffix), the scan response carries the
+Improv service, and the device is connectable. The SecuraCV iPhone app (or
+Home Assistant's) shows a card; one tap hands over the home Wi-Fi over an
+encrypted Just Works link (no bond kept) into the portal's own join path
+(`setup_portal_submit_join`: persist only on success, same linger, same
+teardown). Door shut: today's beacon bytes, not connectable. `FEATURE_IMPROV`
+(default 1; `-DFEATURE_IMPROV=0` compiles it out) — CI-compiled, not
+bench-tested.
 
 ## Bench checklist (remaining hardware validation)
 
