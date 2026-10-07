@@ -147,15 +147,18 @@ const char* auth_name(wifi_auth_mode_t a) {
 // ── NimBLE callbacks (host task) ───────────────────────────────────────────
 
 class CommandCb : public NimBLECharacteristicCallbacks {
+  // The mailbox crosses tasks (and cores): the frame is written first and
+  // the pending flag published with release; the loop task takes the flag
+  // with acquire before it reads the frame.
   void take(NimBLECharacteristic* c, bool encrypted) {
-    if (s_rx_pending) return;   // one at a time; the loop task is on it
+    if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) return;   // one at a time
     if (!encrypted) {
       // The second check (the first is the characteristic's WRITE_ENC):
       // nothing from a link that is not encrypted is parsed, let alone
       // believed. The loop task answers NotAuthorized.
       s_rx_unencrypted = true;
       s_rx_len = 0;
-      s_rx_pending = true;
+      __atomic_store_n(&s_rx_pending, true, __ATOMIC_RELEASE);
       return;
     }
     const auto v = c->getValue();
@@ -163,12 +166,13 @@ class CommandCb : public NimBLECharacteristicCallbacks {
     if (n == 0 || n > sizeof(s_rx)) {
       // Not a frame we could ever accept: queue a one-byte marker so the
       // loop task answers InvalidRpc rather than silence.
-      s_rx[0] = 0; s_rx_len = 1; s_rx_pending = true;
+      s_rx[0] = 0; s_rx_len = 1;
+      __atomic_store_n(&s_rx_pending, true, __ATOMIC_RELEASE);
       return;
     }
     memcpy(s_rx, v.data(), n);
     s_rx_len = n;
-    s_rx_pending = true;
+    __atomic_store_n(&s_rx_pending, true, __ATOMIC_RELEASE);
   }
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
@@ -332,7 +336,7 @@ void handle_command(uint32_t now_ms) {
   improv::session_touch(s_session, now_ms);   // it asked for something
   if (s_rx_unencrypted) {
     s_rx_unencrypted = false;
-    s_rx_pending = false;
+    __atomic_store_n(&s_rx_pending, false, __ATOMIC_RELEASE);
     s_session.error = Error::NotAuthorized;
     publish_error();
     Serial.println("[IMPROV] write on an unencrypted link refused");
@@ -342,7 +346,7 @@ void handle_command(uint32_t now_ms) {
   const size_t n = s_rx_len;
   memcpy(frame, s_rx, n);
   improv::wipe(s_rx, sizeof(s_rx));
-  s_rx_pending = false;
+  __atomic_store_n(&s_rx_pending, false, __ATOMIC_RELEASE);
 
   improv::ParsedCommand cmd = improv::parse_command(frame, n);
   improv::wipe(frame, sizeof(frame));
@@ -553,7 +557,7 @@ void tick(uint32_t now_ms, bool no_credentials) {
 
   improv::session_set_no_credentials(s_session, no_credentials, now_ms, s_timing);
   follow_link(now_ms);
-  if (s_rx_pending) handle_command(now_ms);
+  if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) handle_command(now_ms);
   follow_join(now_ms);
   follow_scan(now_ms);
   if (improv::session_tick(s_session, now_ms, s_timing)) {

@@ -429,15 +429,37 @@ inline void shut_door(Session& s) {
 /// Begin: with no stored credentials the first-boot window opens the door
 /// (unless the window is 0: tap-only); with credentials the device awaits
 /// a tap.
+///
+/// `window_used_ms` is how much of the window earlier boots already spent:
+/// a board whose firmware restarts itself (a wizard's idle restart, a
+/// watchdog) must not re-arm the window on every restart — "re-armed by a
+/// power cycle" means a power cycle, so the glue carries the spent time
+/// across software resets (RTC memory, cleared on power-on) and hands it
+/// in here. A window already spent begins shut and spent. The stamp is
+/// back-dated so session_tick's one rule still decides the expiry.
 inline void session_begin(Session& s, bool no_credentials, uint32_t now_ms,
-                          const Timing& t = Timing{}) {
+                          const Timing& t = Timing{}, uint32_t window_used_ms = 0) {
   s = Session{};
   s.no_credentials = no_credentials;
   s.state = State::AwaitingAuthorization;
   if (no_credentials && t.first_boot_window_ms != 0) {
-    s.window_at_ms = stamp(now_ms);
+    if (window_used_ms >= t.first_boot_window_ms) {
+      s.window_spent = true;
+      return;
+    }
+    s.window_at_ms = stamp(now_ms - window_used_ms);
     detail::open_no_credentials_door(s);
   }
+}
+
+/// How much of the first-boot window this session has spent so far — what
+/// the glue stores across a software reset. 0 when the window is not
+/// running; the whole window once it is spent.
+inline uint32_t session_window_used_ms(const Session& s, uint32_t now_ms, const Timing& t) {
+  if (s.window_spent) return t.first_boot_window_ms;
+  if (s.door != Door::NoCredentials || s.window_at_ms == 0) return 0;
+  const uint32_t used = (uint32_t)(now_ms - s.window_at_ms);
+  return used > t.first_boot_window_ms ? t.first_boot_window_ms : used;
 }
 
 /// The glue's word on credentials, every pass. Credentials appearing (the
