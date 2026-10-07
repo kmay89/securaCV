@@ -1856,7 +1856,12 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
         err.textContent = 'This needs the recovery-kit step first — go back, press BOOT, and save the kit.';
         return;
       }
-      if (!cfg.ok) throw new Error('HTTP ' + cfg.status);
+      if (!cfg.ok) {
+        // The device's reason when it gives one (a field past what it keeps
+        // is refused with the field and its limit in bytes, sweep F241).
+        const j = await cfg.json().catch(() => ({}));
+        throw new Error((j && typeof j.reason === 'string' && j.reason) || ('HTTP ' + cfg.status));
+      }
       const t = await fetch('/api/mqtt/test', { method: 'POST' });
       const tj = t.ok ? await t.json() : { ok: false };
       if (tj.ok) {

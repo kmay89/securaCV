@@ -2024,12 +2024,43 @@ esp_err_t handle_config_get(httpd_req_t* req) {
   return ESP_OK;
 }
 
+/* One character of a JSON string value at p, its escape decoded; p moves
+ * past it. Standard JSON string escapes — covers everything a broker host /
+ * username / password / prefix could legally carry. \uXXXX is
+ * intentionally NOT decoded: those fields are ASCII in practice
+ * and adding UTF-16 surrogate handling for one corner case isn't
+ * worth the parser surface (PR #394 review r3213674569). An
+ * unrecognized escape passes the next char through literally —
+ * matches how the existing /api/settings POST parser handles
+ * nonsense, and avoids a silent reject for marginally-malformed
+ * input. */
+static char json_next_char(const char*& p) {
+  if (*p == '\\' && p[1]) {
+    const char esc = p[1];
+    p += 2;
+    switch (esc) {
+      case 'b': return '\b';
+      case 'f': return '\f';
+      case 'n': return '\n';
+      case 'r': return '\r';
+      case 't': return '\t';
+      default:  return esc;   /* \" \\ \/ and anything else: itself */
+    }
+  }
+  return *p++;
+}
+
 /* Find a JSON string field's value into out (NUL-terminated, truncated to
  * out_cap-1). Returns true if the key was present (even if empty).
  * Hand-rolled to keep ArduinoJson out of this TU — same shape the
- * existing /api/settings POST parser uses. */
+ * existing /api/settings POST parser uses. With `cut`, says whether the
+ * value did not fit and what was dropped holds more than whitespace (space,
+ * tab, CR, LF): the TLS CA's refusal (sweep F241) reads it, so a PEM that
+ * fits but for the newline after its END line is taken, and one that does
+ * not fit is refused instead of stored cut. */
 static bool json_extract_string(const char* body, const char* key,
-                                char* out, size_t out_cap) {
+                                char* out, size_t out_cap, bool* cut = nullptr) {
+  if (cut) *cut = false;
   if (!body || !key || !out || out_cap == 0) return false;
   const char* k = strstr(body, key);
   if (!k) return false;
@@ -2040,34 +2071,14 @@ static bool json_extract_string(const char* body, const char* key,
   if (*p != '"') return false;
   p++;  /* past opening quote */
   size_t i = 0;
-  while (*p && *p != '"' && i < out_cap - 1) {
-    /* Standard JSON string escapes — covers everything a broker host /
-     * username / password / prefix could legally carry. \uXXXX is
-     * intentionally NOT decoded: those fields are ASCII in practice
-     * and adding UTF-16 surrogate handling for one corner case isn't
-     * worth the parser surface (PR #394 review r3213674569). An
-     * unrecognized escape passes the next char through literally —
-     * matches how the existing /api/settings POST parser handles
-     * nonsense, and avoids a silent reject for marginally-malformed
-     * input. */
-    if (*p == '\\' && p[1]) {
-      char esc = p[1];
-      switch (esc) {
-        case '"':  out[i++] = '"';  p += 2; break;
-        case '\\': out[i++] = '\\'; p += 2; break;
-        case '/':  out[i++] = '/';  p += 2; break;
-        case 'b':  out[i++] = '\b'; p += 2; break;
-        case 'f':  out[i++] = '\f'; p += 2; break;
-        case 'n':  out[i++] = '\n'; p += 2; break;
-        case 'r':  out[i++] = '\r'; p += 2; break;
-        case 't':  out[i++] = '\t'; p += 2; break;
-        default:   out[i++] = esc;  p += 2; break;
-      }
-    } else {
-      out[i++] = *p++;
+  while (*p && *p != '"' && i < out_cap - 1) out[i++] = json_next_char(p);
+  out[i] = '\0';
+  if (cut) {
+    while (*p && *p != '"' && !*cut) {
+      const char ch = json_next_char(p);
+      *cut = ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n';
     }
   }
-  out[i] = '\0';
   return true;
 }
 
@@ -2097,17 +2108,24 @@ static bool json_extract_int(const char* body, const char* key, long* out) {
   return true;
 }
 
-/* Refuse a string setting its Config member cannot hold (sweep F241), with
- * the limit in the reason, so the page can say which field and how long;
- * the handler used to cut a long user or prefix to the member and save it. */
-static bool refuse_too_long(httpd_req_t* req, const char* field, const char* value, size_t max) {
-  if (strlen(value) <= max) return false;
+/* Answer a setting longer than the device keeps (sweep F241), with the
+ * limit in the reason, so the page can say which field and how long. The
+ * limit is bytes: strlen() of what the extract decoded, so a letter outside
+ * ASCII spends two to four of them (an HTML maxlength counts UTF-16 units). */
+static void answer_too_long(httpd_req_t* req, const char* field, size_t max) {
   char answer[96];
   snprintf(answer, sizeof(answer),
-           "{\"ok\":false,\"reason\":\"%s must be at most %u characters\"}",
+           "{\"ok\":false,\"reason\":\"%s must be at most %u bytes\"}",
            field, (unsigned)max);
   httpd_resp_set_status(req, "400 Bad Request");
   httpd_resp_send(req, answer, HTTPD_RESP_USE_STRLEN);
+}
+
+/* Refuse a string setting its Config member cannot hold; the handler used to
+ * cut a long user or prefix to the member and save it. */
+static bool refuse_too_long(httpd_req_t* req, const char* field, const char* value, size_t max) {
+  if (strlen(value) <= max) return false;
+  answer_too_long(req, field, max);
   return true;
 }
 
@@ -2199,7 +2217,18 @@ esp_err_t handle_config_post(httpd_req_t* req) {
    * absent leaves it. Shape-checked before it can reach NVS so a pasted
    * fingerprint or a half-copied PEM is a 400 here, not a -0x2180 later. */
   bool ca_changed = false;
-  if (json_extract_string(body, "\"ca\"", cabuf.p, MAX_CA_LEN + 1)) {
+  bool ca_cut = false;
+  if (json_extract_string(body, "\"ca\"", cabuf.p, MAX_CA_LEN + 1, &ca_cut)) {
+    /* A CA longer than MAX_CA_LEN bytes is refused, never stored cut (sweep
+     * F241): a cut chain still has a BEGIN and an END line, so it passed the
+     * shape check and reached NVS ending mid-certificate. Whitespace past
+     * the limit is not the certificate: the /mqtt page sends the PEM it
+     * trimmed and a newline, so a PEM of exactly MAX_CA_LEN bytes arrives
+     * one over and is stored without that newline. */
+    if (ca_cut) {
+      answer_too_long(req, "ca", MAX_CA_LEN);
+      return ESP_OK;
+    }
     if (cabuf.p[0] != '\0' && !canary::net::mqtt_tls::ca_pem_looks_valid(cabuf.p)) {
       httpd_resp_set_status(req, "400 Bad Request");
       httpd_resp_send(req,
@@ -2214,13 +2243,15 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   }
   /* Empty string in any field clears it; missing field leaves it as-is.
    * A value longer than its Config member holds is refused, never cut
-   * (sweep F241): buf holds one character more than the longest member, so
-   * json_extract_string()'s cut cannot hide a value past any member's limit
-   * (a JSON escape is one character of the value). Each member holds what
+   * (sweep F241): buf holds one byte more than the longest member, so
+   * json_extract_string()'s cut cannot hide a value past any member's limit.
+   * The limits are bytes of the decoded value: an escape the extract decodes
+   * (\" \\ \/ \b \f \n \r \t) is one, \uXXXX is kept as its five
+   * characters, a letter outside ASCII is two to four. Each member holds what
    * config_load() reads back, so what is saved is what the bridge uses. */
   constexpr size_t kLongestSetting = MAX_HOST_LEN > MAX_PASS_LEN ? MAX_HOST_LEN : MAX_PASS_LEN;
   static_assert(MAX_USER_LEN <= kLongestSetting && MAX_PREFIX_LEN <= kLongestSetting,
-                "buf must hold one character past every string setting");
+                "buf must hold one byte past every string setting");
   char buf[kLongestSetting + 2] = {};
   if (json_extract_string(body, "\"host\"",   buf, sizeof(buf))) {
     if (refuse_too_long(req, "host", buf, MAX_HOST_LEN)) return ESP_OK;
@@ -2231,7 +2262,6 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     strncpy(c.user,   buf, MAX_USER_LEN);   c.user  [MAX_USER_LEN]   = '\0';
   }
   if (json_extract_string(body, "\"prefix\"", buf, sizeof(buf))) {
-    if (refuse_too_long(req, "prefix", buf, MAX_PREFIX_LEN)) return ESP_OK;
     /* Restrict prefix to a safe character set so we can splat it into
      * the discovery JSON's stat_t / avty_t fields via %s without an
      * escaper. JSON-unsafe (", \, control chars) would corrupt the
@@ -2253,6 +2283,9 @@ esp_err_t handle_config_post(httpd_req_t* req) {
         "{\"ok\":false,\"reason\":\"prefix must be [a-zA-Z0-9_/-]+\"}", -1);
       return ESP_OK;
     }
+    /* Its length after its characters: a prefix in a letter outside that set
+     * is refused for the letter, not for the bytes it spends. */
+    if (refuse_too_long(req, "prefix", buf, MAX_PREFIX_LEN)) return ESP_OK;
     strncpy(c.prefix, buf, MAX_PREFIX_LEN); c.prefix[MAX_PREFIX_LEN] = '\0';
   }
   if (json_extract_string(body, "\"password\"", buf, sizeof(buf))) {
