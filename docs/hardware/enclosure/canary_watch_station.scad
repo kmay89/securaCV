@@ -42,6 +42,13 @@
 //      lands and its face stays clear of the display's back parts; the
 //      pigtail runs across the floor from the U.FL (on the XIAO's floor-facing
 //      side, at the end away from the USB).
+//    · nothing ORIENTED the puck in its stand, and nothing held it: a round
+//      drum in a round saddle turns under a cable tug and lifts out at a
+//      touch. The drum now carries two KEYWAYS on its barrel (usb_ang ± 45)
+//      that ride RAILS in the saddle, so the USB can only face the chin, and
+//      two DIMPLES (usb_ang ± 80) that a pair of spring TABS in the saddle
+//      wall snap into — the puck docks along its axis with a click, and
+//      leaves with one. The tab's strain is budgeted through the snap lib.
 //    · the STAND was a block. A 63 x 52 x 55 hull with a divot bored into
 //      it: half a spool for a desk puck. It is now an OPEN CRADLE: a 220°
 //      saddle around the drum's barrel on a reclined seat plate, a push-out
@@ -157,6 +164,24 @@ base_t      = 5.0;   // base plate; the cable channel bridges inside it
 foot_margin = 8.0;   // base plate in front of the saddle's lowest point
 chin_w      = 14.0;  // chin pocket width: a 90° USB-C lead's elbow, 12.35 spec-max + play
 
+/* [Dock key + detent] — the drum's keyways ride rails in the saddle; its
+   dimples take the saddle's spring-tab nubs. Angles are from the USB. */
+key_off     = 45;    // keyway azimuth either side of the USB slot, degrees  // [30:5:60]
+key_w       = 3.0;   // keyway width on the barrel; the rail is key_w less key_play a side
+key_d       = 0.8;   // keyway depth into the barrel
+key_len     = 15.0;  // keyway reach from the back cap: past the saddle's rails, under the snap windows
+key_play    = 0.2;   // rail side clearance in the keyway, per side
+det_off     = 80;    // dimple / tab azimuth either side of the USB slot, degrees  // [60:5:100]
+det_r       = 1.5;   // detent ball radius — the dimple and the nub are the same sphere, so they nest
+det_depth   = 0.6;   // dimple depth into the barrel
+det_z       = 3.5;   // dimple center from the drum's back cap, in the solid back zone
+det_proud   = 0.9;   // nub tip proud of the saddle bore: its reach over the barrel is det_proud − pocket_clear
+tab_t       = 1.2;   // spring tab thickness — the saddle wall relieved to this behind the tab
+tab_w       = 6.0;   // spring tab width, chord
+tab_len     = 11.0;  // spring tab length, free end at the seat plate to its root toward the rim
+tab_z0      = 1.0;   // free end above the seat plane
+slit        = 0.8;   // the slits that free the tab from the wall
+
 /* [Aesthetics] */
 lid_edge  = 1.0;     // deviates: scaled to the round bezel — the drum face carries a wider single stage
 label_text = "";
@@ -229,6 +254,25 @@ echo(str("Canary Watch station v0.3-dev — drum Ø", drum_d, " x ", puck_len,
          " mm (bore Ø", bore_d, ", counterbore Ø", cb_d, " x ", cb_dep, ", seat z ", z_pcb,
          ", USB slot z ", usb_cz, " ", usb_slot_w, " x ", usb_slot_h, ", antenna bay at ", ant_ang % 360,
          " deg z ", ant_z0, "-", ant_z0 + ant_w, "), stand tilt ", tilt, " deg"));
+
+// the dock: keyways and dimples on the drum, rails and tabs in the saddle
+function key_angs() = [usb_ang - key_off, usb_ang + key_off];
+function det_angs() = [usb_ang - det_off, usb_ang + det_off];
+rail_w   = key_w - 2*key_play;                 // what rides in the keyway
+rail_h   = key_d + pocket_clear - 0.2;         // rail stand-in from the saddle bore: 0.2 off the keyway floor
+det_reach = det_proud - pocket_clear;          // what the nub stands into the barrel
+tab_lever = tab_len - (det_z - tab_z0);        // the nub's lever to the tab's root
+assert(rail_h - pocket_clear >= 0.4, "the rail barely enters the keyway — deepen key_d");
+assert(key_len >= pocket_dep + 1, "the keyways end before the saddle's rails do — lengthen key_len");
+assert(det_reach >= 0.3, "the nub never reaches the barrel — raise det_proud");
+assert(det_depth >= det_reach, "the dimple is shallower than the nub's reach — it would never seat");
+assert(det_z - det_r > 0.5, "the dimple breaks the back cap's edge — raise det_z");
+assert(tab_z0 + tab_len <= pocket_dep - 1, "the spring tab's root lands past the saddle rim — shorten tab_len");
+assert(snap_strain(tab_t, det_reach, tab_lever) <= snap_budget_cycle(),
+       str("dock tab strain ", round(snap_strain(tab_t, det_reach, tab_lever)*1000)/10,
+           " % — over the ", round(snap_budget_cycle()*1000)/10, " % cycle budget: thin tab_t, lengthen tab_len or shrink det_proud"));
+assert(det_off - key_off >= 20 && key_off >= 25, "keyways, dimples and the chin pocket need 20 degrees between them");
+assert(abs(det_off) < 110 - 10, "a dimple / tab lands past the saddle's open edge (110 degrees from the chin)");
 
 // ----------------------------------------------------------------------------
 //  DRUM — straight cup, prints open-face-up; keyhole pocket in the back;
@@ -309,6 +353,13 @@ module drum() {
                 translate([bore_d/2 - 0.01, 0]) polygon([
                     [0, 0], [ant_recess + 0.01, 0], [ant_recess + 0.01, ant_w - ant_recess],
                     [0, ant_w]]);
+            // KEYWAYS: two shallow grooves on the barrel, open at the back cap,
+            // that the saddle's rails ride — the puck can only dock USB-down
+            for (a = key_angs()) rotate([0, 0, a])
+                translate([drum_d/2 - key_d, -key_w/2, -1]) cube([key_d + 1, key_w, key_len + 1]);
+            // DIMPLES: the detent balls' seats, in the solid back zone
+            for (a = det_angs()) rotate([0, 0, a])
+                translate([drum_d/2 + det_r - det_depth, 0, det_z]) sphere(r = det_r);
         }
         // SEAT PADS — the disc's axial datum. The PCB's back face rests on
         // their tops at z_pcb; the bezel lip holds the glass front against
@@ -385,10 +436,14 @@ module bezel_print() { translate([0, 0, bez_t]) rotate([180, 0, 0]) bezel(); }
 
 // ----------------------------------------------------------------------------
 //  STAND — the open cradle. A 220° saddle around the drum's barrel stands
-//  on a seat plate reclined `tilt` from vertical: the drum's back cap sits
-//  on the plate, its barrel in the saddle, pocket_dep deep, and the open
-//  top lifts it straight out. A teardrop window through the plate lets a
-//  finger push the puck out from behind. The chin pocket takes a 90°
+//  on a seat plate reclined `tilt` from vertical: the puck DOCKS along its
+//  axis — slides back into the saddle until its back cap meets the plate,
+//  pocket_dep deep — with two rails riding the drum's keyways (USB can only
+//  face the chin) and two spring tabs whose nubs click into the drum's
+//  dimples at the end of travel; it leaves forward with the same click. The
+//  open top (narrower than the drum, by design) is where you grip it. A
+//  teardrop window through the plate lets a finger push the puck out from
+//  behind. The chin pocket takes a 90°
 //  (up/down-angle) USB-C lead, elbow pointing back, into the open channel
 //  under the base and out the rear; a straight plug cannot mate in the
 //  cradle — its body would meet the desk. The saddle's bottom is fused into
@@ -456,7 +511,52 @@ module stand_body() {
     // the base plate, soft-edged
     translate([0, (sd_b - sd_f)/2, 0]) soft_edge_plate(sw, sd_f + sd_b, 8, base_t, 0.8);
 }
+// the saddle's rails and spring tabs, in the pocket frame
+module dock_rails() {
+    for (a = [270 - key_off, 270 + key_off]) rotate([0, 0, a]) {
+        translate([pkt_d/2 - rail_h, -rail_w/2, 0]) cube([rail_h + 0.5, rail_w, pocket_dep - rail_h]);
+        // 45° lead-in at the rim end: the keyway finds the rail as the puck slides in
+        hull() {
+            translate([pkt_d/2 - rail_h, -rail_w/2, pocket_dep - rail_h]) cube([rail_h + 0.5, rail_w, 0.01]);
+            translate([pkt_d/2, -rail_w/2, pocket_dep - 0.01]) cube([0.5, rail_w, 0.01]);
+        }
+    }
+}
+module dock_nubs() {
+    for (a = [270 - det_off, 270 + det_off]) rotate([0, 0, a])
+        translate([pkt_d/2 + det_r - det_proud, 0, det_z]) sphere(r = det_r);
+}
+// what frees each tab: the outer relief to tab_t, the two axial slits and
+// the slit across its free end at the seat plane
+module dock_tab_cuts() {
+    tab_deg  = tab_w / (pkt_d/2) * 180/PI;
+    slit_deg = slit / (pkt_d/2) * 180/PI;
+    for (a = [270 - det_off, 270 + det_off]) rotate([0, 0, a - tab_deg/2 - slit_deg]) {
+        // outer relief, covering the slits' width, from the seat plane to the
+        // root; its ceiling is a 45° ramp (the step back to the full wall
+        // would otherwise be a cup_t − tab_t overhang in the base-down print)
+        translate([0, 0, -0.01]) rotate_extrude(angle = tab_deg + 2*slit_deg)
+            translate([pkt_d/2 + tab_t, 0]) polygon([
+                [0, 0], [cup_t - tab_t + 1, 0], [cup_t - tab_t + 1, tab_z0 + tab_len + cup_t - tab_t + 1.01],
+                [0, tab_z0 + tab_len + 0.01]]);
+        // the two axial slits
+        for (b = [0, tab_deg + slit_deg]) rotate([0, 0, b]) translate([0, 0, -0.01]) rotate_extrude(angle = slit_deg)
+            translate([pkt_d/2 - 0.5, 0]) square([cup_od, tab_z0 + tab_len + 0.01]);
+        // the end slit: the tab's free end stands off the seat plate
+        translate([0, 0, -0.01]) rotate_extrude(angle = tab_deg + 2*slit_deg)
+            translate([pkt_d/2 - 0.5, 0]) square([cup_od, tab_z0 + 0.01]);
+    }
+}
 module stand() {
+    difference() {
+        union() {
+            stand_cut();
+            in_pocket() { dock_rails(); dock_nubs(); }
+        }
+        in_pocket() dock_tab_cuts();
+    }
+}
+module stand_cut() {
     difference() {
         stand_body();
         in_pocket() {

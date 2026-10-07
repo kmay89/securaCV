@@ -3270,7 +3270,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 101,
+   "engineering_param_count": 120,
    "alternatives": [
     "s3_touch169",
     "c6_display"

@@ -5800,6 +5800,91 @@
        "name": "chin_w",
        "default": "14.0",
        "comment": "chin pocket width: a 90° USB-C lead's elbow, 12.35 spec-max + play"
+      },
+      {
+       "name": "key_off",
+       "default": "45",
+       "range": [
+        30.0,
+        5.0,
+        60.0
+       ],
+       "comment": "keyway azimuth either side of the USB slot, degrees"
+      },
+      {
+       "name": "key_w",
+       "default": "3.0",
+       "comment": "keyway width on the barrel; the rail is key_w less key_play a side"
+      },
+      {
+       "name": "key_d",
+       "default": "0.8",
+       "comment": "keyway depth into the barrel"
+      },
+      {
+       "name": "key_len",
+       "default": "15.0",
+       "comment": "keyway reach from the back cap: past the saddle's rails, under the snap windows"
+      },
+      {
+       "name": "key_play",
+       "default": "0.2",
+       "comment": "rail side clearance in the keyway, per side"
+      },
+      {
+       "name": "det_off",
+       "default": "80",
+       "range": [
+        60.0,
+        5.0,
+        100.0
+       ],
+       "comment": "dimple / tab azimuth either side of the USB slot, degrees"
+      },
+      {
+       "name": "det_r",
+       "default": "1.5",
+       "comment": "detent ball radius — the dimple and the nub are the same sphere, so they nest"
+      },
+      {
+       "name": "det_depth",
+       "default": "0.6",
+       "comment": "dimple depth into the barrel"
+      },
+      {
+       "name": "det_z",
+       "default": "3.5",
+       "comment": "dimple center from the drum's back cap, in the solid back zone"
+      },
+      {
+       "name": "det_proud",
+       "default": "0.9",
+       "comment": "nub tip proud of the saddle bore: its reach over the barrel is det_proud − pocket_clear"
+      },
+      {
+       "name": "tab_t",
+       "default": "1.2",
+       "comment": "spring tab thickness — the saddle wall relieved to this behind the tab"
+      },
+      {
+       "name": "tab_w",
+       "default": "6.0",
+       "comment": "spring tab width, chord"
+      },
+      {
+       "name": "tab_len",
+       "default": "11.0",
+       "comment": "spring tab length, free end at the seat plate to its root toward the rim"
+      },
+      {
+       "name": "tab_z0",
+       "default": "1.0",
+       "comment": "free end above the seat plane"
+      },
+      {
+       "name": "slit",
+       "default": "0.8",
+       "comment": "the slits that free the tab from the wall"
       }
      ]
     },
@@ -5929,6 +6014,26 @@
       {
        "name": "ant_z0",
        "default": "floor_z + ant_lift"
+      },
+      {
+       "name": "rail_w",
+       "default": "key_w - 2*key_play",
+       "comment": "what rides in the keyway"
+      },
+      {
+       "name": "rail_h",
+       "default": "key_d + pocket_clear - 0.2",
+       "comment": "rail stand-in from the saddle bore: 0.2 off the keyway floor"
+      },
+      {
+       "name": "det_reach",
+       "default": "det_proud - pocket_clear",
+       "comment": "what the nub stands into the barrel"
+      },
+      {
+       "name": "tab_lever",
+       "default": "tab_len - (det_z - tab_z0)",
+       "comment": "the nub's lever to the tab's root"
       },
       {
        "name": "snap_w",

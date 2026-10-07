@@ -925,12 +925,12 @@
     {
      "title": "Start with the stand",
      "readmeStep": 0,
-     "note": "The open cradle prints base-down, no supports: a 220° saddle on a 25° reclined seat plate, a teardrop window through the plate to push the puck out from behind, a sculpted spine, and a chin pocket cut for a 90° (up/down-angle) USB-C lead whose elbow turns back into the channel under the base. A straight plug cannot mate in the cradle."
+     "note": "The open cradle prints base-down, no supports: a 220° saddle on a 25° reclined seat plate with two rails and two spring tabs (the dock), a teardrop window through the plate to push the puck out from behind, a sculpted spine, and a chin pocket cut for a 90° (up/down-angle) USB-C lead whose elbow turns back into the channel under the base. A straight plug cannot mate in the cradle."
     },
     {
-     "title": "Rest the drum in the saddle",
+     "title": "Dock the drum in the saddle",
      "readmeStep": 1,
-     "note": "The drum sits 13 mm deep in the saddle, USB slot down, its back cap on the seat plate — it cannot rock, and it lifts straight out of the open top. The blind keyhole in its back wall-mounts the puck without the stand."
+     "note": "USB slot down, slide the drum back into the saddle: its two keyways ride the rails (it only docks USB-down), and at 13 mm deep, back cap on the seat plate, the tabs' nubs click into its dimples. Pull forward to undock. The blind keyhole in its back wall-mounts the puck without the stand."
     },
     {
      "title": "Pin the XIAO into the display's back socket",

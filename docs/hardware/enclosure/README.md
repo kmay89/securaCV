@@ -197,15 +197,19 @@ you print — the v0.2 drum was built on the vendor CAD's 5 mm socket and the
 real stack stood 4 mm proud.
 
 1. Set the **stand** on the desk. It prints base-down with no supports: an
-   open 220° saddle on a 25° reclined seat plate, a teardrop window through
+   open 220° saddle on a 25° reclined seat plate, two rails in the saddle
+   and two spring tabs in its wall (the dock), a teardrop window through
    the plate to push the puck out from behind, a sculpted spine to the base,
    and the chin pocket that passes a **90° (up/down-angle) USB-C lead**,
    elbow pointing back, into the open channel under the base and out the
    rear. A straight plug cannot mate in the cradle — its body would meet the
    desk. (Wall-mounting instead? Skip the stand — the drum's blind keyhole
    hangs the puck on a single screw.)
-2. Rest the **drum** in the saddle, USB slot down. It sits 13 mm deep, its
-   back cap on the seat plate, and lifts straight out of the open top.
+2. Dock the **drum**: USB slot down, slide it back into the saddle. The two
+   keyways on its barrel find the rails (it only goes in USB-down), and at
+   13 mm deep, back cap on the seat plate, the tabs' nubs drop into the
+   drum's dimples with a click. Pull it forward to undock — the same click;
+   the open top is where you grip it.
 3. Pin the **XIAO ESP32-S3** into the Round Display's back socket. It rides
    the display's own two 7-pin headers — component side away from the
    display, USB-C at the disc edge. Zero wiring: the display's charger, RTC
