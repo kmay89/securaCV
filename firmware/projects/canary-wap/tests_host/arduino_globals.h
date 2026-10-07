@@ -20,11 +20,15 @@
 // itself adds, which a hosted header is likeliest to spell by accident.
 //
 // Every suite has it first since sweep F229: the Makefile passes
-// `-include arduino_globals.h` to every compile (the sketch's own .cpp files
-// a suite builds included), and check_arduino_globals.py fails a translation
-// unit that reads a line of the sketch folder before this file. A suite that
-// includes it first itself (the fleet-scan and identity suites) counts the
-// same; the include guard keeps the second include empty.
+// `-include arduino_globals.h` to every compile, and
+// check_arduino_globals.py fails a translation unit that reads a line of the
+// sketch folder before this file. The .ino opens with Arduino.h in both
+// ESP32 builds; a sketch .cpp gets Arduino.h's names there only through its
+// own includes, so putting them first in the sketch's .cpp files a suite
+// builds is stricter than either build (it finds a clash sooner; it would
+// not notice a .cpp that forgets an include the ESP32 compile needs). A
+// suite that includes it first itself (the fleet-scan and identity suites)
+// counts the same; the include guard keeps the second include empty.
 
 #ifndef CANARY_WAP_TESTS_HOST_ARDUINO_GLOBALS_H
 #define CANARY_WAP_TESTS_HOST_ARDUINO_GLOBALS_H

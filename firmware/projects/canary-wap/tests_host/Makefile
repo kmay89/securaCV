@@ -19,10 +19,15 @@ SRC_DIR   = ../arduino/canary_wap
 # and F212's first identity_json.h passed every suite and could not compile
 # in the sketch. arduino_globals.h carries arduino-esp32 3.3.8's names;
 # `-include` puts it first in each translation unit, the sketch's own .cpp
-# files a suite compiles included. `override`, so a CXXFLAGS given to make
-# keeps it; a recipe that does not pass CXXFLAGS (the tsan builds) passes
+# files a suite compiles included (stricter than the ESP32 builds, where a
+# sketch .cpp has Arduino.h's names only through its own includes).
+# `override`, so a CXXFLAGS given to make keeps it; and so any global
+# CXXFLAGS assignment written below this line must be `override` too, or
+# make ignores it without a word (a target-specific one still works). A
+# recipe that does not pass CXXFLAGS (the tsan builds) passes
 # $(ARDUINO_GLOBALS) itself. check_arduino_globals.py (run by `run`) holds
-# every compile to it by what the preprocessor reads. A change to
+# every compile to it by what the preprocessor reads, planned as this file
+# stands and with CXXFLAGS given on make's command line. A change to
 # arduino_globals.h rebuilds nothing by itself: `make -B`.
 ARDUINO_GLOBALS = -include arduino_globals.h
 override CXXFLAGS += $(ARDUINO_GLOBALS)
@@ -1620,11 +1625,13 @@ clean: clean-mqtt-identity
 
 # Every suite compiles the sketch's code after Arduino.h's names (sweep
 # F229): check_arduino_globals.py asks make for every compile of `run` and
-# of the tsan builds, runs each one's preprocessor and fails a translation
-# unit that reads a line of the sketch folder (a header, a sketch .cpp, a
-# function cut out of the .ino) before arduino_globals.h; its self-test
-# mutates a copy of this Makefile and must see each mutation fail. The cut
-# .inc files are its prerequisites, since the preprocessor reads them.
+# of the tsan builds (each command of each recipe line, a compile behind
+# `cd ... &&` or `env` included), runs each one's preprocessor and fails a
+# translation unit that reads a line of the sketch folder (a header, a
+# sketch .cpp, a function cut out of the .ino) before arduino_globals.h; its
+# self-test mutates a copy of this Makefile and must see each mutation fail.
+# The cut .inc files are its prerequisites, since the preprocessor reads
+# them: run it standalone through `make run-arduino-globals`.
 .PHONY: run-arduino-globals
 run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS)
 	python3 check_arduino_globals.py
