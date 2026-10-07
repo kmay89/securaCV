@@ -61,6 +61,10 @@ constexpr uint32_t PROVISIONING_TIMEOUT_MS = 40000;
 // The claim stays readable over the link that provisioned for the ticket's
 // own TTL; a phone that never reads it needs the BOOT-tap route later.
 constexpr uint32_t CLAIM_TTL_MS = claim_ticket::TTL_MS;
+// After the provisioning link's first read of the claim, the value stays
+// readable this long — enough for the Read Blob continuations of a value
+// longer than the MTU, at any connection interval a phone negotiates.
+constexpr uint32_t CLAIM_READ_GRACE_MS = 3000;
 // The claim JSON (ble_improv_mint_claim): seven short keys, a 31-char
 // device id, 32 hex, a URL under 120 bytes, a 64-hex fingerprint, a dotted
 // address and a 39-char host — under 420 bytes at their longest.
@@ -115,6 +119,12 @@ ble_addr_t s_provisioning_addr = {};
 // door reopening, or the door shutting for any reason but that join.
 volatile bool     s_claim_armed = false;
 volatile uint16_t s_claim_conn = NO_CONN;
+// The first read's clock: a ~300-byte value is read as one Read Response
+// plus Read Blob continuations, each its own onRead, so the arm must
+// outlive the whole read. The loop task withdraws the claim a grace after
+// the first read, or when the link that read it is gone.
+volatile bool     s_claim_read_seen = false;
+volatile uint32_t s_claim_read_ms = 0;
 ble_addr_t        s_claim_addr = {};
 uint32_t          s_claim_armed_ms = 0;
 char              s_claim_json[CLAIM_JSON_MAX];
@@ -163,6 +173,8 @@ void send_result(Command cmd, const char* const* strings, size_t count) {
 // spend it either.
 void disarm_claim(bool wipe_ticket) {
   s_claim_armed = false;
+  s_claim_read_seen = false;
+  s_claim_read_ms = 0;
   s_claim_conn = NO_CONN;
   memset(&s_claim_addr, 0, sizeof(s_claim_addr));
   improv::wipe(s_claim_json, sizeof(s_claim_json));
@@ -213,13 +225,19 @@ class ClaimCb : public NimBLECharacteristicCallbacks {
     const size_t n = s_claim_json_len;
     if (n == 0 || n >= sizeof(s_claim_json)) {
       c->setValue((const uint8_t*)"{}", 2);
-    } else {
-      c->setValue((const uint8_t*)s_claim_json, n);
+      s_claim_armed = false;
+      return;
+    }
+    c->setValue((const uint8_t*)s_claim_json, n);
+    // One read — but a long one: the phone's Read Blob continuations land
+    // here again for the same value, so the arm stays until the loop task
+    // withdraws it (CLAIM_READ_GRACE_MS after this first read, or when
+    // this link is gone). Only that link ever gets past the check above.
+    if (!s_claim_read_seen) {
+      s_claim_read_ms = millis();
+      s_claim_read_seen = true;
       s_claims++;
     }
-    // One read: the next one, from anyone, gets "{}" (the loop task wipes
-    // its buffer and the characteristic's own copy on its next pass).
-    s_claim_armed = false;
   }
 };
 
@@ -367,6 +385,14 @@ void follow_join(uint32_t now_ms) {
 }
 
 void follow_claim(uint32_t now_ms) {
+  // Read once, and the whole read is over: withdraw it from the air (the
+  // ticket itself lives on — the phone is spending it on the LAN).
+  if (s_claim_armed && s_claim_read_seen &&
+      ((uint32_t)(now_ms - s_claim_read_ms) >= CLAIM_READ_GRACE_MS || !s_session.link_up)) {
+    disarm_claim(false);
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+               "Setup door: claim read by the provisioning link — withdrawn from the air", nullptr);
+  }
   if (s_claim_armed && (uint32_t)(now_ms - s_claim_armed_ms) >= CLAIM_TTL_MS) {
     disarm_claim(true);
     log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,

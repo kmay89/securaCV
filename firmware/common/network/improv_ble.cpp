@@ -78,8 +78,7 @@ volatile bool s_readvertise = false;   // a disconnect handed the radio back
 // The one link, as the host task reports it: connect/disconnect edges the
 // loop task folds into the session (link_up/link_down), and the handle an
 // idle disconnect needs.
-volatile bool     s_link_edge_up = false;
-volatile bool     s_link_edge_down = false;
+volatile uint8_t  s_conn_gen = 0;        // bumped by every connect
 volatile uint16_t s_conn_handle = 0;
 // A write that arrived on an unencrypted link: refused NotAuthorized on the
 // loop task (the characteristic's WRITE_ENC should already have stopped it;
@@ -188,11 +187,10 @@ class ServerCb : public NimBLEServerCallbacks {
   void up(uint16_t handle) {
     s_conn_handle = handle;
     s_connected = true;
-    s_link_edge_up = true;
+    s_conn_gen = (uint8_t)(s_conn_gen + 1);
   }
   void down() {
     s_connected = false;
-    s_link_edge_down = true;
     s_readvertise = true;
   }
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -444,9 +442,11 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
     if (!NimBLEDevice::isInitialized()) return false;
   }
 #else
-  if (!NimBLEDevice::getAdvertising()) {
+  // 1.4.x: getAdvertising() allocates lazily and is never null, so the
+  // initialization query is the one honest answer.
+  if (!NimBLEDevice::getInitialized()) {
     NimBLEDevice::init(identity.device_name ? identity.device_name : "SecuraCV");
-    if (!NimBLEDevice::getAdvertising()) return false;
+    if (!NimBLEDevice::getInitialized()) return false;
   }
 #endif
 
@@ -460,6 +460,13 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
     NimBLEDevice::setSecurityAuth(/*bonding=*/false, /*mitm=*/false, /*sc=*/true);
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
   }
+
+  // The beacon is already on air by now, and NimBLE's host refuses every
+  // GATT-table change while advertising (ble_gatts_mutable: EBUSY): on 2.x
+  // the server's start() would fail and the door would never register; on
+  // 1.4.x createServer() asserts and the board reboots. Take the beacon off
+  // air for the registration; s_readvertise puts it back on the first tick.
+  if (NimBLEAdvertising* adv = NimBLEDevice::getAdvertising()) adv->stop();
 
   s_server = NimBLEDevice::createServer();
   if (!s_server) return false;
@@ -487,9 +494,19 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
   s_caps->setValue(&caps, 1);
 
 #if ESP_ARDUINO_VERSION_MAJOR < 3
-  s_service->start();   // 1.4.x starts services one by one; 2.x starts them with the server
-#endif
+  if (!s_service->start()) {   // 1.4.x starts services one by one; 2.x starts them with the server
+    Serial.println("[IMPROV] service registration refused — door stays shut this boot");
+    s_readvertise = true;      // the beacon goes back on air regardless
+    return false;
+  }
   s_server->start();
+#else
+  if (!s_server->start()) {
+    Serial.println("[IMPROV] GATT start refused — door stays shut this boot");
+    s_readvertise = true;
+    return false;
+  }
+#endif
 
   s_timing = improv::Timing{};
   s_timing.provisioning_timeout_ms = PROVISIONING_TIMEOUT_MS;
@@ -507,13 +524,17 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
 }
 
 void follow_link(uint32_t now_ms) {
-  if (s_link_edge_up) {
-    s_link_edge_up = false;
-    improv::session_link_up(s_session, now_ms);
-  }
-  if (s_link_edge_down) {
-    s_link_edge_down = false;
-    improv::session_link_down(s_session);
+  // The link as a LEVEL plus a connect generation, not two edge flags: a
+  // drop and a reconnect inside one loop pass (a long inference, a TLS
+  // connect right after the join) would otherwise apply up-then-down and
+  // leave the session believing a live link is gone.
+  static uint8_t seen_gen = 0;
+  const bool connected = s_connected;
+  const uint8_t gen = s_conn_gen;
+  if (connected != s_session.link_up || gen != seen_gen) {
+    seen_gen = gen;
+    if (connected) improv::session_link_up(s_session, now_ms);
+    else improv::session_link_down(s_session);
   }
   if (s_connected && improv::idle_disconnect_due(s_session, now_ms, s_timing) && s_server) {
     // A client that asked for nothing, or one whose join is done and
