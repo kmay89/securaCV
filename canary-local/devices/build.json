@@ -1244,7 +1244,7 @@
       "mpn": "canary_watch_station.scad",
       "mfr": "SecuraCV",
       "usd": 1.0,
-      "notes": "docs/hardware/enclosure/canary_watch_station.scad (v0.2-dev, not print-validated). Bore/bezel sized to the measured vendor CAD (Ø43.0 disc); bezel snaps into wall slots, no fasteners. Prints flat, no supports; wall-mounts via blind keyhole without the stand",
+      "notes": "docs/hardware/enclosure/canary_watch_station.scad (v0.3-dev, not print-validated; one v0.2 print measured). Glass pocket + lip in the snap bezel around the Ø43.0 glass, rim counterbore, seat pads, USB end-stop and antenna bay in the drum, an open 220deg cradle; bezel snaps into wall slots, no fasteners. Prints flat, no supports; wall-mounts via blind keyhole without the stand",
       "orderable": false
      },
      {

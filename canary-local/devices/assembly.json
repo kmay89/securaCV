@@ -743,14 +743,14 @@
    ]
   },
   "canary-display-watch": {
-   "title": "Canary Watch Station — drum, stack, snap bezel, cradle",
+   "title": "Canary Watch Station — drum, stack, snap bezel, open cradle",
    "board": "seeed_round_display_xiao",
    "frame": {
     "rx": -0.36,
     "ry": 0.58,
     "pad": 2.0
    },
-   "assembly_source": "docs/hardware/enclosure/README.md §Assembly (via devices/build.json) — canary_watch_station.scad v0.2-dev, in development and not print-validated: the steps follow the CAD, not a built unit; seats derived from the scad's own cradle echo and the measured board GLB",
+   "assembly_source": "docs/hardware/enclosure/README.md §Assembly (via devices/build.json) — canary_watch_station.scad v0.3-dev, redrawn from the first print's calipers and not print-validated: the steps follow the CAD, not a built unit; seats derived from the scad's own DRUM SEAT echo and the measured board GLB",
    "parts": [
     {
      "id": "stand",
@@ -925,27 +925,27 @@
     {
      "title": "Start with the stand",
      "readmeStep": 0,
-     "note": "The cradle prints upright, no supports: a full-depth divot bored normal to the 25° reclined face, thumb scallops to lift the puck out, and a chin slot that passes the USB-C cable into the open channel under the base."
+     "note": "The open cradle prints base-down, no supports: a 220° saddle on a 25° reclined seat plate, a teardrop window through the plate to push the puck out from behind, a sculpted spine, and a chin pocket cut for a 90° (up/down-angle) USB-C lead whose elbow turns back into the channel under the base. A straight plug cannot mate in the cradle."
     },
     {
-     "title": "Rest the drum in the cradle",
+     "title": "Rest the drum in the saddle",
      "readmeStep": 1,
-     "note": "The drum sinks 11 mm into the divot — it cannot rock or roll, and its USB slot lands in the chin channel. The blind keyhole in its back wall-mounts the puck without the stand."
+     "note": "The drum sits 13 mm deep in the saddle, USB slot down, its back cap on the seat plate — it cannot rock, and it lifts straight out of the open top. The blind keyhole in its back wall-mounts the puck without the stand."
     },
     {
      "title": "Pin the XIAO into the display's back socket",
      "readmeStep": 2,
-     "note": "The XIAO rides the Round Display's own two 7-pin headers — component side away from the display, USB-C at the disc edge. Zero wiring; the display's charger, RTC and SD come along for free."
+     "note": "The XIAO rides the Round Display's own two 7-pin headers — component side away from the display, USB-C at the disc edge. Zero wiring; the display's charger, RTC and SD come along. Click the kit's flex antenna onto the XIAO's U.FL and stick its tag into the bay in the bore wall, 135° round from the USB slot."
     },
     {
      "title": "Lower the stack into the bore",
      "readmeStep": 3,
-     "note": "The Ø43.0 disc slides down the Ø44.4 bore (measured from the vendor CAD — the disc is 43 mm, not the marketing 39), USB-C aligned to the side slot. The trim ring stops 0.4 mm below the rim."
+     "note": "The Ø43.0 disc passes the Ø45.9 rim counterbore, funnels into the Ø44.4 bore and lands on three seat pads — the PCB's back face rests on them, so nothing floats; the XIAO's USB shell hovers 0.4 mm over its end-stop boss. The receptacle looks out through the stadium slot."
     },
     {
      "title": "Snap the bezel home",
      "readmeStep": 4,
-     "note": "The bezel's skirt drops into the bore over the disc edge and its four nubs click into the wall slots — no fasteners. The aperture shows the full glass and lands on the display's own trim ring."
+     "note": "The bezel's skirt drops into the counterbore around the glass (its bore is the glass pocket, 0.5 mm clear a side) and its four nubs click into the wall slots — no fasteners. The Ø40 aperture leaves 1.5 mm of lip on the glass edge, 0.1 mm over the glass front with the disc on its pads."
     }
    ]
   },
