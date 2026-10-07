@@ -8,11 +8,25 @@
  * improv_core.h and host-tested there; this file only moves them on and off
  * the radio and hands the credentials to the board's own join path.
  *
- * The door is the shared setup portal's: this module is told each loop pass
- * whether the portal is up (tick's `no_wifi`), and that is exactly when the
- * Improv door is open. The join itself goes through
- * setup_portal_submit_join(), so the SoftAP wizard and the Bluetooth door
- * share one Testing pass, one persist-on-success rule and one teardown.
+ * The door is improv_core.h's: this module is told each loop pass whether
+ * the device has NO stored credentials (tick's `no_credentials`), and the
+ * session opens the door for the first-boot window on that, or for a minute
+ * on a BOOT tap (tap()). A recovery portal — the saved network failing — is
+ * not "no credentials" and never opens it; the caller passes the
+ * stored-credentials fact (wifi_configured()), never the portal's state.
+ * The join itself goes through setup_portal_submit_join() while the portal
+ * is up (it is, whenever this door is open: no credentials raises it), so
+ * the SoftAP wizard and the Bluetooth door share one Testing pass, one
+ * persist-on-success rule and one teardown.
+ *
+ * The link: LE Secure Connections Just Works, required by the command and
+ * result characteristics' properties AND checked again in the write handler
+ * (an unencrypted write is refused NotAuthorized, whatever the stack let
+ * through). One client at a time; a client that parks on the link without
+ * asking anything is dropped after Timing::idle_disconnect_ms, and the link
+ * is dropped a few seconds after a successful join so the beacon returns to
+ * air. Credential writes are rate-limited and capped per open door by the
+ * session (improv_core.h).
  *
  * Advertising: the fleet presence beacon stays the PRIMARY advert at all
  * times (a display's passive roster scan keeps hearing it; the bytes a
@@ -80,20 +94,27 @@ struct Identity {
  *
  * Brings NimBLE up under `identity.device_name` if nothing has yet
  * (the beacon usually has), creates the server when the board has none,
- * registers the five characteristics and starts the server. `no_wifi` is
- * the door's first state (the portal is up). Idempotent; false when the
- * stack is not available this boot (the module then stays a no-op).
+ * registers the five characteristics and starts the server.
+ * `no_credentials` is the door's first fact: true when NO Wi-Fi credentials
+ * are stored (first boot, factory reset) — pass
+ * `setup_portal_active() && !wifi_configured()`, never the portal alone.
+ * The first-boot window (IMPROV_FIRST_BOOT_WINDOW_MS, canary/config.h)
+ * starts now. Idempotent; false when the stack is not available this boot
+ * (the module then stays a no-op).
  */
-bool begin(const Identity& identity, bool no_wifi, uint32_t now_ms);
+bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms);
 
 /**
  * @brief One pass: process a received command, follow the join, time out,
- * republish. `no_wifi` is the door — pass setup_portal_active(). Cheap when
- * idle; call every loop() pass after begin().
+ * drop an idle link, republish. `no_credentials` is the same fact as
+ * begin()'s, every pass. Cheap when idle; call every loop() pass after
+ * begin().
  */
-void tick(uint32_t now_ms, bool no_wifi);
+void tick(uint32_t now_ms, bool no_credentials);
 
-/// A physical tap on a board that reads one: opens the door for a minute.
+/// A physical tap on a board that reads one (BOOT_BUTTON_PIN through
+/// io/short_tap.h): opens the door for a minute, on a device with or
+/// without credentials.
 void tap(uint32_t now_ms);
 
 /// True once begin() succeeded this boot.

@@ -59,6 +59,7 @@
 #if defined(FEATURE_IMPROV) && FEATURE_IMPROV
 #include "canary/version.h"
 #include "network/improv_ble.h"           // the Bluetooth setup door (common/)
+#include "io/short_tap.h"                 // the BOOT tap that opens it for a minute
 #endif
 #include <esp_random.h>  // esp_random() for reconnect jitter
 
@@ -817,11 +818,14 @@ void setup() {
 
 #if defined(FEATURE_IMPROV) && FEATURE_IMPROV
   // The Bluetooth setup door: the Improv Wi-Fi service on the beacon's
-  // NimBLE stack. Open exactly while the shared setup portal is up (no
-  // credentials, or a saved network that stopped working), so a phone
-  // hands this witness its Wi-Fi with one tap and the portal stays the
-  // break-glass path underneath. Fail-safe like the beacon: a stack that
-  // cannot serve degrades to a no-op.
+  // NimBLE stack. Open while this witness has NO stored credentials (first
+  // boot, factory reset) for the first-boot window, and for a minute after
+  // a BOOT tap — never for a saved network that merely stopped working:
+  // that raises the recovery portal (a door with a printed key), not this
+  // one. So a phone hands a brand-new witness its Wi-Fi with one tap, the
+  // portal stays the break-glass path underneath, and an installed witness
+  // cannot be re-pointed from the street. Fail-safe like the beacon: a
+  // stack that cannot serve degrades to a no-op.
   {
     // "Sense-AB12": the same four characters as the SecuraCV-AB12 setup
     // network, so a phone can tell the two doors are one device.
@@ -841,7 +845,15 @@ void setup() {
     id.reach_url        = nullptr;   // no page to send the phone to; it watches mDNS
     id.identify         = [] { identify_start(canary::ms_now()); };
     id.require_encryption = true;
-    canary::net::improv_ble::begin(id, canary::net::setup_portal_active(), canary::ms_now());
+    canary::net::improv_ble::begin(id,
+        canary::net::setup_portal_active() && !canary::net::wifi_configured(),
+        canary::ms_now());
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+    // The owner's tap: the board's BOOT button (pins.h), read each loop
+    // pass through the short-tap stepper below. A strapping pin, so only
+    // ever read, never driven.
+    pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+#endif
   }
 #endif
 
@@ -985,10 +997,21 @@ void loop() {
 #endif
 
 #if defined(FEATURE_IMPROV) && FEATURE_IMPROV
-  // The Bluetooth door follows the portal: open while it is up, shut once
-  // the witness is on its own Wi-Fi. Also before the broker early-return —
-  // a device with no Wi-Fi has no broker, and this is how it gets one.
-  canary::net::improv_ble::tick(now, canary::net::setup_portal_active());
+  // The Bluetooth door follows the stored-credentials fact, not the
+  // portal: open (for its window) only while nothing is stored, shut once
+  // the join persisted a network — and shut through a recovery portal.
+  // Also before the broker early-return: a device with no Wi-Fi has no
+  // broker, and this is how it gets one.
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+  {
+    static canary::io::ShortTap boot_tap;
+    if (boot_tap.step(digitalRead(BOOT_BUTTON_PIN) == BOOT_BUTTON_ACTIVE, now)) {
+      canary::net::improv_ble::tap(now);
+      identify_start(now);   // and say so: the same blink IDENTIFY uses
+    }
+  }
+#endif
+  canary::net::improv_ble::tick(now, canary::net::setup_portal_active() && !canary::net::wifi_configured());
 #endif
 
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER

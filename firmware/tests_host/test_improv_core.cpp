@@ -13,11 +13,17 @@
 //     over 32 or a password over 64 bytes (refused, never truncated);
 //   * results frame their strings with the trailing checksum, and the client
 //     walk reads them back; an over-budget result is refused whole;
-//   * the door: no Wi-Fi of its own → Authorized with no timeout; Wi-Fi of
-//     its own → AwaitingAuthorization, and credentials are NotAuthorized; a
-//     tap opens it for the TTL and the TTL closes it; a join reported good
-//     is Provisioned, a bad one returns to Authorized with UnableToConnect
-//     and leaves the door open to retry; a join nobody reports on times out;
+//   * the door: no stored credentials → Authorized for the first-boot window
+//     (half an hour; a power cycle or a factory reset re-arms it; a window
+//     of 0 is tap-only); stored credentials → AwaitingAuthorization, and
+//     credentials over the air are NotAuthorized — and a RECOVERY portal
+//     (saved network failing) never opens it; a tap opens it for the TTL and
+//     the TTL closes it; a join reported good is Provisioned, a bad one
+//     returns to Authorized with UnableToConnect and leaves the door open to
+//     retry; a join nobody reports on times out;
+//   * the bounds on an open door: a cooldown between accepted writes, a cap
+//     per open door that shuts it (malformed attempts count too), and an
+//     idle disconnect for a client that parks on the link;
 //   * what goes on air follows the state: Improv while the door is open or
 //     a join is in flight, the beacon otherwise.
 
@@ -275,35 +281,74 @@ static void service_data_is_state_caps_and_four_zeros() {
 
 // ── the session ─────────────────────────────────────────────────────────────
 
-static void no_wifi_opens_the_door_with_no_timeout() {
+static void no_credentials_opens_the_door_for_the_first_boot_window() {
   Session s;
-  session_begin(s, /*no_wifi=*/true);
-  CHECK(s.state == State::Authorized, "first boot is Authorized");
-  CHECK(s.door == Door::NoWifi, "door reason is NoWifi");
-  CHECK(advert_for(s) == Advert::Improv, "Improv is on air");
   Timing t;
-  CHECK(!session_tick(s, 10 * 60 * 1000, t), "ten minutes later: unchanged");
-  CHECK(s.state == State::Authorized, "still Authorized — no timeout on the NoWifi door");
-  CHECK(session_on_wifi_settings(s, 1000) == Error::None, "credentials are accepted");
+  session_begin(s, /*no_credentials=*/true, 1000, t);
+  CHECK(s.state == State::Authorized, "first boot is Authorized");
+  CHECK(s.door == Door::NoCredentials, "door reason is NoCredentials");
+  CHECK(s.window_at_ms == 1000, "the window began at begin()");
+  CHECK(advert_for(s) == Advert::Improv, "Improv is on air");
+  CHECK(!session_tick(s, 1000 + 10 * 60 * 1000, t), "ten minutes later: unchanged");
+  CHECK(s.state == State::Authorized, "still Authorized inside the window");
+  CHECK(session_on_wifi_settings(s, 1000 + 11 * 60 * 1000, t) == Error::None, "credentials are accepted");
   CHECK(s.state == State::Provisioning, "join in flight");
   CHECK(advert_for(s) == Advert::Improv, "Improv stays on air through the join");
-  session_on_join_result(s, true);
+  session_on_join_result(s, true, 1000 + 11 * 60 * 1000 + 5000);
   CHECK(s.state == State::Provisioned && s.error == Error::None, "joined → Provisioned");
   CHECK(s.provisioned, "provisioned flag set");
   CHECK(advert_for(s) == Advert::Beacon, "a provisioned device goes back to the beacon");
 }
 
-static void a_device_on_its_own_wifi_waits_for_a_tap() {
+static void the_first_boot_window_expires_and_a_power_cycle_rearms_it() {
   Session s;
-  session_begin(s, /*no_wifi=*/false);
+  Timing t;
+  session_begin(s, true, 5000, t);
+  CHECK(!session_tick(s, 5000 + t.first_boot_window_ms - 1, t), "just inside the window: open");
+  CHECK(s.door == Door::NoCredentials, "still open");
+  CHECK(session_tick(s, 5000 + t.first_boot_window_ms, t), "at the window: changed");
+  CHECK(s.door == Door::Shut && s.state == State::AwaitingAuthorization, "the window shuts the door");
+  CHECK(s.window_spent, "the window is spent");
+  CHECK(advert_for(s) == Advert::Beacon, "beacon on air — nothing to provision from the street");
+  CHECK(session_on_wifi_settings(s, 5000 + t.first_boot_window_ms + 1, t) == Error::NotAuthorized,
+        "credentials refused after the window");
+  // Still no credentials, every pass: the spent window does not reopen.
+  session_set_no_credentials(s, true, 5000 + t.first_boot_window_ms + 2, t);
+  CHECK(s.door == Door::Shut, "the glue repeating 'no credentials' does not reopen a spent window");
+  // A tap does.
+  session_tap(s, 5000 + t.first_boot_window_ms + 3);
+  CHECK(s.door == Door::Tap && s.state == State::Authorized, "a tap opens the door again");
+  // A power cycle (a fresh begin) re-arms the window.
+  Session fresh;
+  session_begin(fresh, true, 0, t);
+  CHECK(fresh.door == Door::NoCredentials && fresh.window_at_ms == 1, "begin re-arms; millis()==0 stored as 1");
+}
+
+static void a_window_of_zero_is_tap_only() {
+  Session s;
+  Timing t;
+  t.first_boot_window_ms = 0;
+  session_begin(s, true, 1000, t);
+  CHECK(s.door == Door::Shut && s.state == State::AwaitingAuthorization, "no window: door shut");
+  CHECK(advert_for(s) == Advert::Beacon, "beacon only");
+  session_set_no_credentials(s, true, 2000, t);
+  CHECK(s.door == Door::Shut, "repeating 'no credentials' opens nothing");
+  session_tap(s, 3000);
+  CHECK(s.door == Door::Tap && s.state == State::Authorized, "the tap is the only door");
+}
+
+static void a_device_with_credentials_waits_for_a_tap() {
+  Session s;
+  Timing t;
+  session_begin(s, /*no_credentials=*/false, 1000, t);
   CHECK(s.state == State::AwaitingAuthorization, "installed device awaits authorization");
   CHECK(s.door == Door::Shut, "door shut");
+  CHECK(s.window_at_ms == 0, "no first-boot window on a device with credentials");
   CHECK(advert_for(s) == Advert::Beacon, "nothing to provision on air");
-  CHECK(session_on_wifi_settings(s, 1000) == Error::NotAuthorized, "credentials refused");
+  CHECK(session_on_wifi_settings(s, 1000, t) == Error::NotAuthorized, "credentials refused");
   CHECK(s.state == State::AwaitingAuthorization, "state unchanged by the refusal");
   CHECK(s.error == Error::NotAuthorized, "error published");
 
-  Timing t;
   session_tap(s, 5000);
   CHECK(s.state == State::Authorized && s.door == Door::Tap, "a tap opens the door");
   CHECK(s.error == Error::None, "a tap clears the last error");
@@ -314,59 +359,97 @@ static void a_device_on_its_own_wifi_waits_for_a_tap() {
   CHECK(advert_for(s) == Advert::Beacon, "beacon again");
 }
 
+static void a_recovery_portal_never_opens_the_door() {
+  // The one rule the first version got wrong. The glue passes the
+  // stored-credentials fact; a device whose saved network stopped working
+  // still HAS credentials, so every pass says "credentials stored".
+  Session s;
+  Timing t;
+  session_begin(s, false, 1000, t);
+  for (uint32_t now = 2000; now < 20 * 60 * 1000; now += 5000) {
+    session_set_no_credentials(s, false, now, t);   // recovery portal up; credentials stored
+    session_tick(s, now, t);
+  }
+  CHECK(s.door == Door::Shut && s.state == State::AwaitingAuthorization, "twenty minutes of recovery: shut");
+  CHECK(advert_for(s) == Advert::Beacon, "nothing on air to provision");
+  CHECK(session_on_wifi_settings(s, 20 * 60 * 1000, t) == Error::NotAuthorized, "a stranger's write is refused");
+}
+
+static void a_factory_reset_at_runtime_rearms_the_window() {
+  Session s;
+  Timing t;
+  session_begin(s, false, 1000, t);
+  // The owner wiped the credentials (a factory reset that did not reboot).
+  session_set_no_credentials(s, true, 60000, t);
+  CHECK(s.door == Door::NoCredentials && s.state == State::Authorized, "no credentials now: open");
+  CHECK(s.window_at_ms == 60000, "the window began at the wipe");
+  CHECK(session_tick(s, 60000 + t.first_boot_window_ms, t), "and runs its course");
+  CHECK(s.door == Door::Shut, "shut at the window");
+}
+
 static void a_tap_at_millis_zero_still_counts() {
   Session s;
-  session_begin(s, false);
+  Timing t;
+  session_begin(s, false, 0, t);
   session_tap(s, 0);
   CHECK(s.tap_at_ms == 1, "millis()==0 is stored as 1");
-  Timing t;
   CHECK(!session_tick(s, 100, t) && s.state == State::Authorized, "open at 100 ms");
 }
 
 static void the_tap_ttl_survives_millis_wrap() {
   Session s;
-  session_begin(s, false);
+  Timing t;
+  session_begin(s, false, 0, t);
   const uint32_t near_wrap = 0xFFFFFFFFu - 10000;
   session_tap(s, near_wrap);
-  Timing t;
   CHECK(!session_tick(s, near_wrap + 30000, t), "30 s across the wrap: still open");
   CHECK(s.state == State::Authorized, "open");
   CHECK(session_tick(s, near_wrap + t.tap_ttl_ms + 1, t), "TTL across the wrap: shut");
 }
 
+static void the_first_boot_window_survives_millis_wrap() {
+  Session s;
+  Timing t;
+  const uint32_t near_wrap = 0xFFFFFFFFu - 10000;
+  session_begin(s, true, near_wrap, t);
+  CHECK(!session_tick(s, near_wrap + 60000, t), "a minute across the wrap: still open");
+  CHECK(session_tick(s, near_wrap + t.first_boot_window_ms, t), "the window across the wrap: shut");
+}
+
 static void a_failed_join_leaves_the_door_open_to_retry() {
   Session s;
-  session_begin(s, true);
-  CHECK(session_on_wifi_settings(s, 1000) == Error::None, "first try");
-  session_on_join_result(s, false);
+  Timing t;
+  session_begin(s, true, 1000, t);
+  CHECK(session_on_wifi_settings(s, 1000, t) == Error::None, "first try");
+  session_on_join_result(s, false, 4000);
   CHECK(s.state == State::Authorized, "back to Authorized");
   CHECK(s.error == Error::UnableToConnect, "UnableToConnect published");
   CHECK(!s.provisioned, "not provisioned");
-  CHECK(session_on_wifi_settings(s, 2000) == Error::None, "second try accepted");
+  CHECK(session_on_wifi_settings(s, 1000 + t.wifi_settings_cooldown_ms, t) == Error::None, "second try accepted");
   CHECK(s.error == Error::None, "a new attempt clears the error");
 }
 
 static void a_failed_join_under_a_tap_returns_to_awaiting_when_the_ttl_passed() {
   Session s;
-  session_begin(s, false);
-  session_tap(s, 1000);
   Timing t;
+  session_begin(s, false, 1000, t);
+  session_tap(s, 1000);
   // Credentials land 45 s into the minute the tap bought, so the TTL runs
   // out while the join (30 s budget) is still in flight.
-  CHECK(session_on_wifi_settings(s, 1000 + 45000) == Error::None, "accepted under the tap");
+  CHECK(session_on_wifi_settings(s, 1000 + 45000, t) == Error::None, "accepted under the tap");
   // The TTL passes mid-join: the door shuts but the join is not disturbed.
   CHECK(!session_tick(s, 1000 + t.tap_ttl_ms + 1, t), "no state change mid-join");
   CHECK(s.state == State::Provisioning && s.door == Door::Shut, "join continues, door shut");
-  session_on_join_result(s, false);
+  session_on_join_result(s, false, 1000 + t.tap_ttl_ms + 2);
   CHECK(s.state == State::AwaitingAuthorization, "failed with the door shut → awaiting");
   CHECK(s.error == Error::UnableToConnect, "error says why");
 }
 
 static void a_join_nobody_reports_on_times_out() {
   Session s;
-  session_begin(s, true);
   Timing t;
-  CHECK(session_on_wifi_settings(s, 1000) == Error::None, "accepted");
+  session_begin(s, true, 1000, t);
+  CHECK(session_on_wifi_settings(s, 1000, t) == Error::None, "accepted");
   CHECK(!session_tick(s, 1000 + t.provisioning_timeout_ms - 1, t), "inside the timeout");
   CHECK(session_tick(s, 1000 + t.provisioning_timeout_ms, t), "at the timeout: changed");
   CHECK(s.state == State::Authorized && s.error == Error::UnableToConnect, "timed out → UnableToConnect");
@@ -374,54 +457,141 @@ static void a_join_nobody_reports_on_times_out() {
 
 static void a_second_write_mid_join_is_refused_without_disturbing_it() {
   Session s;
-  session_begin(s, true);
-  CHECK(session_on_wifi_settings(s, 1000) == Error::None, "first");
-  CHECK(session_on_wifi_settings(s, 1500) == Error::InvalidRpc, "second refused");
+  Timing t;
+  session_begin(s, true, 1000, t);
+  CHECK(session_on_wifi_settings(s, 1000, t) == Error::None, "first");
+  CHECK(session_on_wifi_settings(s, 1500, t) == Error::InvalidRpc, "second refused");
   CHECK(s.state == State::Provisioning && s.provisioning_at_ms == 1000, "first join untouched");
-  session_on_join_result(s, true);
+  CHECK(s.wifi_settings_count == 1, "the refused write was not counted");
+  session_on_join_result(s, true, 6000);
   CHECK(s.state == State::Provisioned, "and it completes");
 }
 
-static void a_provisioned_device_refuses_until_the_door_reopens() {
+static void a_write_inside_the_cooldown_is_refused_and_not_counted() {
   Session s;
-  session_begin(s, true);
-  session_on_wifi_settings(s, 1000);
-  session_on_join_result(s, true);
-  // The portal tore down: the device has Wi-Fi now.
-  session_set_no_wifi(s, false, 2000);
-  CHECK(s.door == Door::Shut, "door shuts when Wi-Fi arrives");
-  CHECK(s.state == State::Provisioned, "state stays Provisioned for the phone to read");
-  CHECK(session_on_wifi_settings(s, 3000) == Error::NotAuthorized, "a stranger's write is refused");
-  CHECK(advert_for(s) == Advert::Beacon, "beacon on air");
-  // Later the saved network stops working and the recovery portal rises.
-  session_set_no_wifi(s, true, 4000);
-  CHECK(s.state == State::Authorized && s.door == Door::NoWifi, "recovery reopens the door");
-  CHECK(!s.provisioned && s.error == Error::None, "provisioned flag and error cleared");
-  CHECK(session_on_wifi_settings(s, 5000) == Error::None, "credentials accepted again");
+  Timing t;
+  session_begin(s, true, 1000, t);
+  CHECK(session_on_wifi_settings(s, 1000, t) == Error::None, "first accepted");
+  session_on_join_result(s, false, 1500);              // a quick failure
+  CHECK(session_on_wifi_settings(s, 1000 + t.wifi_settings_cooldown_ms - 1, t) == Error::InvalidRpc,
+        "inside the cooldown: refused");
+  CHECK(s.state == State::Authorized && s.wifi_settings_count == 1, "nothing started, nothing counted");
+  CHECK(session_on_wifi_settings(s, 1000 + t.wifi_settings_cooldown_ms, t) == Error::None,
+        "at the cooldown: accepted");
+  CHECK(s.wifi_settings_count == 2, "counted");
 }
 
-static void wifi_arriving_mid_join_does_not_disturb_the_join() {
+static void the_cap_shuts_the_door_and_malformed_attempts_count() {
   Session s;
-  session_begin(s, true);
-  session_on_wifi_settings(s, 1000);
-  session_set_no_wifi(s, false, 1500);   // the join itself brought Wi-Fi up
+  Timing t;
+  session_begin(s, true, 1000, t);
+  uint32_t now = 1000;
+  // Half the budget as garbage frames, half as honest failures.
+  for (int i = 0; i < t.wifi_settings_cap / 2; ++i) {
+    now += t.wifi_settings_cooldown_ms;
+    CHECK(session_on_malformed_wifi_settings(s, now, t) == Error::InvalidRpc, "garbage is InvalidRpc");
+  }
+  for (int i = 0; i < t.wifi_settings_cap - t.wifi_settings_cap / 2; ++i) {
+    now += t.wifi_settings_cooldown_ms;
+    CHECK(session_on_wifi_settings(s, now, t) == Error::None, "attempt %d accepted", i);
+    session_on_join_result(s, false, now + 1);
+  }
+  CHECK(s.wifi_settings_count == t.wifi_settings_cap, "the budget is spent");
+  CHECK(s.door == Door::NoCredentials, "still open at the cap");
+  now += t.wifi_settings_cooldown_ms;
+  CHECK(session_on_wifi_settings(s, now, t) == Error::NotAuthorized, "the attempt past the cap is refused");
+  CHECK(s.door == Door::Shut && s.state == State::AwaitingAuthorization, "and shuts the door");
+  CHECK(s.window_spent, "the window is spent — 'no credentials' will not reopen it");
+  session_set_no_credentials(s, true, now + 1, t);
+  CHECK(s.door == Door::Shut, "stays shut");
+  CHECK(advert_for(s) == Advert::Beacon, "beacon only");
+  // A tap buys a fresh budget.
+  session_tap(s, now + 2);
+  CHECK(s.door == Door::Tap && s.wifi_settings_count == 0, "a tap resets the count");
+  CHECK(session_on_wifi_settings(s, now + 3, t) == Error::None, "accepted under the tap");
+}
+
+static void a_provisioned_device_shuts_when_credentials_land_and_stays_shut_in_recovery() {
+  Session s;
+  Timing t;
+  session_begin(s, true, 1000, t);
+  session_on_wifi_settings(s, 1000, t);
+  session_on_join_result(s, true, 4000);
+  // The join persisted the credentials: the glue now says "stored".
+  session_set_no_credentials(s, false, 4001, t);
+  CHECK(s.door == Door::Shut, "door shuts when credentials land");
+  CHECK(s.state == State::Provisioned, "state stays Provisioned for the phone to read");
+  CHECK(session_on_wifi_settings(s, 5000, t) == Error::NotAuthorized, "a stranger's write is refused");
+  CHECK(advert_for(s) == Advert::Beacon, "beacon on air");
+  // Later the saved network stops working and the recovery portal rises.
+  // Credentials are still stored, so the glue keeps saying so — and the
+  // door keeps its word.
+  session_set_no_credentials(s, false, 10 * 60 * 1000, t);
+  CHECK(s.door == Door::Shut && s.state == State::Provisioned, "recovery keeps the door shut");
+  CHECK(session_on_wifi_settings(s, 10 * 60 * 1000 + 1, t) == Error::NotAuthorized, "still refused");
+  // Only the owner's tap reopens it.
+  session_tap(s, 10 * 60 * 1000 + 2);
+  CHECK(s.door == Door::Tap && s.state == State::Authorized && !s.provisioned, "a tap reopens it");
+  CHECK(session_on_wifi_settings(s, 10 * 60 * 1000 + 3, t) == Error::None, "credentials accepted under the tap");
+}
+
+static void credentials_arriving_mid_join_do_not_disturb_the_join() {
+  Session s;
+  Timing t;
+  session_begin(s, true, 1000, t);
+  session_on_wifi_settings(s, 1000, t);
+  session_set_no_credentials(s, false, 1500, t);   // the join itself persisted them
   CHECK(s.state == State::Provisioning, "join still in flight");
-  session_on_join_result(s, true);
+  session_on_join_result(s, true, 4000);
   CHECK(s.state == State::Provisioned, "then Provisioned");
 }
 
-static void a_tap_while_the_nowifi_door_is_open_changes_nothing() {
+static void a_tap_while_the_no_credentials_door_is_open_changes_nothing() {
   Session s;
-  session_begin(s, true);
-  session_tap(s, 1000);
-  CHECK(s.door == Door::NoWifi, "the NoWifi door keeps its reason");
   Timing t;
-  CHECK(!session_tick(s, 1000 + t.tap_ttl_ms + 1, t), "and never times out");
+  session_begin(s, true, 1000, t);
+  session_tap(s, 1000);
+  CHECK(s.door == Door::NoCredentials, "the NoCredentials door keeps its reason");
+  CHECK(!session_tick(s, 1000 + t.tap_ttl_ms + 1, t), "and the tap TTL is not its clock");
+  CHECK(s.door == Door::NoCredentials, "still open past a tap's minute");
+}
+
+static void an_idle_link_is_dropped_but_never_mid_join() {
+  Session s;
+  Timing t;
+  session_begin(s, true, 1000, t);
+  CHECK(!idle_disconnect_due(s, 1000 + t.idle_disconnect_ms, t), "no link: nothing to drop");
+  session_link_up(s, 2000);
+  CHECK(!idle_disconnect_due(s, 2000 + t.idle_disconnect_ms - 1, t), "inside the idle bound");
+  CHECK(idle_disconnect_due(s, 2000 + t.idle_disconnect_ms, t), "at the idle bound: drop");
+  session_touch(s, 2000 + t.idle_disconnect_ms - 10);   // it asked for something
+  CHECK(!idle_disconnect_due(s, 2000 + t.idle_disconnect_ms, t), "activity resets the clock");
+  // A join in flight is never dropped, however long it takes.
+  CHECK(session_on_wifi_settings(s, 3000, t) == Error::None, "accepted");
+  CHECK(!idle_disconnect_due(s, 3000 + t.idle_disconnect_ms * 2, t), "never mid-join");
+  session_on_join_result(s, true, 8000);
+  CHECK(!idle_disconnect_due(s, 8000 + t.provisioned_linger_ms - 1, t), "the phone reads its verdict");
+  CHECK(idle_disconnect_due(s, 8000 + t.provisioned_linger_ms, t), "then the link goes, beacon back on air");
+  session_link_down(s);
+  CHECK(!idle_disconnect_due(s, 9 * 60 * 1000, t), "no link: nothing to drop");
+}
+
+static void link_bookkeeping_survives_millis_zero_and_wrap() {
+  Session s;
+  Timing t;
+  session_begin(s, true, 0, t);
+  session_link_up(s, 0);
+  CHECK(s.last_activity_ms == 1, "millis()==0 activity is stored as 1");
+  const uint32_t near_wrap = 0xFFFFFFFFu - 1000;
+  session_touch(s, near_wrap);
+  CHECK(!idle_disconnect_due(s, near_wrap + 5000, t), "five seconds across the wrap: not idle");
+  CHECK(idle_disconnect_due(s, near_wrap + t.idle_disconnect_ms, t), "the bound across the wrap: idle");
 }
 
 static void bad_packets_and_unknown_commands_publish_their_word() {
   Session s;
-  session_begin(s, true);
+  Timing t;
+  session_begin(s, true, 1000, t);
   CHECK(session_on_bad_packet(s, Parse::BadChecksum) == Error::InvalidRpc, "bad packet → InvalidRpc");
   CHECK(s.state == State::Authorized, "state untouched");
   CHECK(session_on_unknown_command(s) == Error::UnknownRpc, "unknown → UnknownRpc");
@@ -430,9 +600,10 @@ static void bad_packets_and_unknown_commands_publish_their_word() {
 
 static void a_stopped_session_offers_nothing() {
   Session s;
+  Timing t;
   CHECK(s.state == State::Stopped, "default is Stopped");
   CHECK(advert_for(s) == Advert::Beacon, "beacon");
-  CHECK(session_on_wifi_settings(s, 1) == Error::NotAuthorized, "refused");
+  CHECK(session_on_wifi_settings(s, 1, t) == Error::NotAuthorized, "refused");
 }
 
 int main() {
@@ -450,17 +621,26 @@ int main() {
   an_over_budget_result_is_refused_whole();
   a_corrupt_result_is_not_walked();
   service_data_is_state_caps_and_four_zeros();
-  no_wifi_opens_the_door_with_no_timeout();
-  a_device_on_its_own_wifi_waits_for_a_tap();
+  no_credentials_opens_the_door_for_the_first_boot_window();
+  the_first_boot_window_expires_and_a_power_cycle_rearms_it();
+  a_window_of_zero_is_tap_only();
+  a_device_with_credentials_waits_for_a_tap();
+  a_recovery_portal_never_opens_the_door();
+  a_factory_reset_at_runtime_rearms_the_window();
   a_tap_at_millis_zero_still_counts();
   the_tap_ttl_survives_millis_wrap();
+  the_first_boot_window_survives_millis_wrap();
   a_failed_join_leaves_the_door_open_to_retry();
   a_failed_join_under_a_tap_returns_to_awaiting_when_the_ttl_passed();
   a_join_nobody_reports_on_times_out();
   a_second_write_mid_join_is_refused_without_disturbing_it();
-  a_provisioned_device_refuses_until_the_door_reopens();
-  wifi_arriving_mid_join_does_not_disturb_the_join();
-  a_tap_while_the_nowifi_door_is_open_changes_nothing();
+  a_write_inside_the_cooldown_is_refused_and_not_counted();
+  the_cap_shuts_the_door_and_malformed_attempts_count();
+  a_provisioned_device_shuts_when_credentials_land_and_stays_shut_in_recovery();
+  credentials_arriving_mid_join_do_not_disturb_the_join();
+  a_tap_while_the_no_credentials_door_is_open_changes_nothing();
+  an_idle_link_is_dropped_but_never_mid_join();
+  link_bookkeeping_survives_millis_zero_and_wrap();
   bad_packets_and_unknown_commands_publish_their_word();
   a_stopped_session_offers_nothing();
 

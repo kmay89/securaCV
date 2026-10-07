@@ -11,8 +11,9 @@
 // the same task the portal's own join state machine runs on.
 
 // The feature flag is the project's: include/canary/config.h carries the
-// FEATURE_IMPROV default on every family that compiles this file, and CI's
-// per-board -DFEATURE_IMPROV=0 veto reaches it the same way the beacon's does.
+// FEATURE_IMPROV default (and IMPROV_FIRST_BOOT_WINDOW_MS) on every family
+// that compiles this file, and CI's per-board -DFEATURE_IMPROV=0 veto
+// reaches it the same way the beacon's does.
 #if __has_include("canary/config.h")
 #include "canary/config.h"
 #endif
@@ -44,6 +45,11 @@ using improv::State;
 // A join the portal never reports on fails at its own 30 s; give it a beat
 // more so the portal's verdict (with its reason) wins over our timeout.
 constexpr uint32_t PROVISIONING_TIMEOUT_MS = 40000;
+// The first-boot window: the project's config.h may override; the core's
+// default (half an hour) otherwise. 0 = tap-only.
+#ifndef IMPROV_FIRST_BOOT_WINDOW_MS
+#define IMPROV_FIRST_BOOT_WINDOW_MS (improv::Timing{}.first_boot_window_ms)
+#endif
 constexpr uint32_t SCAN_TIMEOUT_MS = 30000;
 constexpr int SCAN_MAX = 20;
 constexpr size_t ADV_NAME_MAX = 12;
@@ -69,6 +75,16 @@ volatile bool s_rx_pending = false;
 
 volatile bool s_connected = false;
 volatile bool s_readvertise = false;   // a disconnect handed the radio back
+// The one link, as the host task reports it: connect/disconnect edges the
+// loop task folds into the session (link_up/link_down), and the handle an
+// idle disconnect needs.
+volatile bool     s_link_edge_up = false;
+volatile bool     s_link_edge_down = false;
+volatile uint16_t s_conn_handle = 0;
+// A write that arrived on an unencrypted link: refused NotAuthorized on the
+// loop task (the characteristic's WRITE_ENC should already have stopped it;
+// this is the second check).
+volatile bool s_rx_unencrypted = false;
 
 // The last beacon the carrier handed over, so a state change can be re-put
 // on air with the same bytes.
@@ -132,10 +148,19 @@ const char* auth_name(wifi_auth_mode_t a) {
 // ── NimBLE callbacks (host task) ───────────────────────────────────────────
 
 class CommandCb : public NimBLECharacteristicCallbacks {
-  void take(NimBLECharacteristic* c) {
+  void take(NimBLECharacteristic* c, bool encrypted) {
+    if (s_rx_pending) return;   // one at a time; the loop task is on it
+    if (!encrypted) {
+      // The second check (the first is the characteristic's WRITE_ENC):
+      // nothing from a link that is not encrypted is parsed, let alone
+      // believed. The loop task answers NotAuthorized.
+      s_rx_unencrypted = true;
+      s_rx_len = 0;
+      s_rx_pending = true;
+      return;
+    }
     const auto v = c->getValue();
     const size_t n = v.length();
-    if (s_rx_pending) return;   // one at a time; the loop task is on it
     if (n == 0 || n > sizeof(s_rx)) {
       // Not a frame we could ever accept: queue a one-byte marker so the
       // loop task answers InvalidRpc rather than silence.
@@ -147,25 +172,39 @@ class CommandCb : public NimBLECharacteristicCallbacks {
     s_rx_pending = true;
   }
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
-  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& /*info*/) override { take(c); }
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
+    take(c, !s_id.require_encryption || info.isEncrypted());
+  }
 #else
-  void onWrite(NimBLECharacteristic* c) override { take(c); }
+  // 1.4.x calls both onWrite overloads; only the one with the descriptor is
+  // overridden here, so a write is taken once.
+  void onWrite(NimBLECharacteristic* c, ble_gap_conn_desc* desc) override {
+    take(c, !s_id.require_encryption || (desc && desc->sec_state.encrypted));
+  }
 #endif
 };
 
 class ServerCb : public NimBLEServerCallbacks {
+  void up(uint16_t handle) {
+    s_conn_handle = handle;
+    s_connected = true;
+    s_link_edge_up = true;
+  }
+  void down() {
+    s_connected = false;
+    s_link_edge_down = true;
+    s_readvertise = true;
+  }
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
-  void onConnect(NimBLEServer* /*s*/, NimBLEConnInfo& /*info*/) override { s_connected = true; }
-  void onDisconnect(NimBLEServer* /*s*/, NimBLEConnInfo& /*info*/, int /*reason*/) override {
-    s_connected = false;
-    s_readvertise = true;
-  }
+  void onConnect(NimBLEServer* /*s*/, NimBLEConnInfo& info) override { up(info.getConnHandle()); }
+  void onDisconnect(NimBLEServer* /*s*/, NimBLEConnInfo& /*info*/, int /*reason*/) override { down(); }
 #else
-  void onConnect(NimBLEServer* /*s*/) override { s_connected = true; }
-  void onDisconnect(NimBLEServer* /*s*/) override {
-    s_connected = false;
-    s_readvertise = true;
+  // 1.4.x calls both onConnect overloads; only the one with the descriptor
+  // is overridden here, so an edge is taken once.
+  void onConnect(NimBLEServer* /*s*/, ble_gap_conn_desc* desc) override {
+    up(desc ? desc->conn_handle : 0);
   }
+  void onDisconnect(NimBLEServer* /*s*/) override { down(); }
 #endif
 };
 
@@ -194,7 +233,12 @@ void put_on_air() {
     if (name_len && 3 + 2 + s_last_beacon_len + 2 + name_len <= 31) {
       primary.setName(std::string(s_adv_name, name_len));
     }
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
     scan.addServiceUUID(NimBLEUUID(improv::SERVICE_UUID));
+#else
+    // 1.4.x spells the complete 128-bit service list differently.
+    scan.setCompleteServices(NimBLEUUID(improv::SERVICE_UUID));
+#endif
     uint8_t sd[improv::SERVICE_DATA_LEN];
     improv::build_service_data(sd, s_session.state, capabilities());
     scan.setServiceData(NimBLEUUID((uint16_t)improv::SERVICE_DATA_UUID16),
@@ -287,6 +331,15 @@ void follow_scan(uint32_t now_ms) {
 }
 
 void handle_command(uint32_t now_ms) {
+  improv::session_touch(s_session, now_ms);   // it asked for something
+  if (s_rx_unencrypted) {
+    s_rx_unencrypted = false;
+    s_rx_pending = false;
+    s_session.error = Error::NotAuthorized;
+    publish_error();
+    Serial.println("[IMPROV] write on an unencrypted link refused");
+    return;
+  }
   uint8_t frame[improv::MAX_COMMAND_LEN];
   const size_t n = s_rx_len;
   memcpy(frame, s_rx, n);
@@ -296,19 +349,25 @@ void handle_command(uint32_t now_ms) {
   improv::ParsedCommand cmd = improv::parse_command(frame, n);
   improv::wipe(frame, sizeof(frame));
   if (cmd.verdict != Parse::Ok) {
-    improv::session_on_bad_packet(s_session, cmd.verdict);
+    if (cmd.command == Command::WifiSettings) {
+      // A credentials frame that did not parse still counts against the
+      // open door's cap: garbage is an attempt too.
+      improv::session_on_malformed_wifi_settings(s_session, now_ms, s_timing);
+    } else {
+      improv::session_on_bad_packet(s_session, cmd.verdict);
+    }
     publish_error();
     return;
   }
 
   switch (cmd.command) {
     case Command::WifiSettings: {
-      const Error e = improv::session_on_wifi_settings(s_session, now_ms);
+      const Error e = improv::session_on_wifi_settings(s_session, now_ms, s_timing);
       if (e == Error::None) {
         if (!setup_portal_submit_join(cmd.wifi.ssid, cmd.wifi.password, now_ms)) {
           // The portal refused (a wizard join is testing, or it is not up
           // after all): the join never started.
-          improv::session_on_join_result(s_session, false);
+          improv::session_on_join_result(s_session, false, now_ms);
         }
       }
       improv::wipe(&cmd.wifi, sizeof(cmd.wifi));
@@ -344,7 +403,7 @@ void follow_join(uint32_t now_ms) {
   if (s_session.state != State::Provisioning) return;
   switch (setup_portal_join_state()) {
     case SetupPortalJoin::Success: {
-      improv::session_on_join_result(s_session, true);
+      improv::session_on_join_result(s_session, true, now_ms);
       publish_error();
       publish_state();
       char url[96] = {0};
@@ -358,7 +417,7 @@ void follow_join(uint32_t now_ms) {
       break;
     }
     case SetupPortalJoin::Fail:
-      improv::session_on_join_result(s_session, false);
+      improv::session_on_join_result(s_session, false, now_ms);
       publish_error();
       publish_state();
       Serial.printf("[IMPROV] Join failed: %s\n", setup_portal_fail_reason());
@@ -372,8 +431,7 @@ void follow_join(uint32_t now_ms) {
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-bool begin(const Identity& identity, bool no_wifi, uint32_t now_ms) {
-  (void)now_ms;
+bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
   if (s_active) return true;
   s_id = identity;
   snprintf(s_adv_name, sizeof(s_adv_name), "%s", identity.adv_name ? identity.adv_name : "");
@@ -433,23 +491,47 @@ bool begin(const Identity& identity, bool no_wifi, uint32_t now_ms) {
 #endif
   s_server->start();
 
-  improv::session_begin(s_session, no_wifi);
   s_timing = improv::Timing{};
   s_timing.provisioning_timeout_ms = PROVISIONING_TIMEOUT_MS;
+  s_timing.first_boot_window_ms = (uint32_t)(IMPROV_FIRST_BOOT_WINDOW_MS);
+  improv::session_begin(s_session, no_credentials, now_ms, s_timing);
   s_active = true;
   publish_state();
   publish_error();
   s_readvertise = true;
   Serial.printf("[IMPROV] Improv Wi-Fi service up (%s).\n",
-                no_wifi ? "door open: no Wi-Fi of its own yet" : "door shut: on its own Wi-Fi");
+                improv::door_open(s_session)
+                    ? "door open: no credentials stored, first-boot window running"
+                    : (no_credentials ? "door shut: tap-only build" : "door shut: credentials stored"));
   return true;
 }
 
-void tick(uint32_t now_ms, bool no_wifi) {
+void follow_link(uint32_t now_ms) {
+  if (s_link_edge_up) {
+    s_link_edge_up = false;
+    improv::session_link_up(s_session, now_ms);
+  }
+  if (s_link_edge_down) {
+    s_link_edge_down = false;
+    improv::session_link_down(s_session);
+  }
+  if (s_connected && improv::idle_disconnect_due(s_session, now_ms, s_timing) && s_server) {
+    // A client that asked for nothing, or one whose join is done and
+    // answered: hand the radio back so the beacon returns and nobody can
+    // park on the single link.
+    s_server->disconnect(s_conn_handle);
+    improv::session_link_down(s_session);
+    Serial.printf("[IMPROV] link dropped (%s)\n",
+                  s_session.state == State::Provisioned ? "joined, verdict delivered" : "idle");
+  }
+}
+
+void tick(uint32_t now_ms, bool no_credentials) {
   if (!s_active) return;
   const State before = s_session.state;
 
-  improv::session_set_no_wifi(s_session, no_wifi, now_ms);
+  improv::session_set_no_credentials(s_session, no_credentials, now_ms, s_timing);
+  follow_link(now_ms);
   if (s_rx_pending) handle_command(now_ms);
   follow_join(now_ms);
   follow_scan(now_ms);
@@ -461,7 +543,10 @@ void tick(uint32_t now_ms, bool no_wifi) {
   if (s_session.state != before) {
     publish_state();
     if (s_session.state == State::Authorized || s_session.state == State::AwaitingAuthorization) {
-      Serial.printf("[IMPROV] door %s\n", improv::door_open(s_session) ? "open" : "shut");
+      Serial.printf("[IMPROV] door %s%s\n", improv::door_open(s_session) ? "open" : "shut",
+                    s_session.door == improv::Door::Tap ? " (tap)"
+                    : s_session.door == improv::Door::NoCredentials ? " (no credentials)"
+                    : s_session.window_spent ? " (window over)" : "");
     }
   }
   // Re-put on air when a disconnect handed the radio back or the door
@@ -502,8 +587,19 @@ void advertise(const uint8_t* beacon_mfg, size_t beacon_len) {
 
 #else  // FEATURE_IMPROV off — no-op stubs so call sites compile unchanged.
 
+// This file sits in common/network beside setup_portal.cpp, so PlatformIO's
+// dependency finder compiles it into every env that touches that folder —
+// the display family included, some of whose boards carry no NimBLE at all
+// (the 4 MB C3 nightlight). The stub must therefore compile with or without
+// the stack: with it, advertise() is the carrier's own beacon-only put-on-air;
+// without it, nothing calls advertise() and it is empty.
+#if __has_include(<NimBLEDevice.h>)
 #include <NimBLEDevice.h>
 #include <string>
+#define IMPROV_BLE_HAVE_NIMBLE 1
+#else
+#define IMPROV_BLE_HAVE_NIMBLE 0
+#endif
 
 namespace canary {
 namespace net {
@@ -515,6 +611,7 @@ bool active() { return false; }
 improv::State state() { return improv::State::Stopped; }
 bool setup_open() { return false; }
 void advertise(const uint8_t* beacon_mfg, size_t beacon_len) {
+#if IMPROV_BLE_HAVE_NIMBLE
   // The carrier's own stop -> set -> start, beacon primary, nothing else.
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   if (!adv) return;
@@ -525,6 +622,10 @@ void advertise(const uint8_t* beacon_mfg, size_t beacon_len) {
   adv->stop();
   adv->setAdvertisementData(advData);
   adv->start();
+#else
+  (void)beacon_mfg;
+  (void)beacon_len;
+#endif
 }
 }  // namespace improv_ble
 }  // namespace net
