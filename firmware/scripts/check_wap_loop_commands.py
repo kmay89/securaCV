@@ -177,10 +177,27 @@ C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
     `BT_SETTINGS_FIELDS`), and nowhere else. After the command ran, a handler
     calls nothing on the channel but pure lookups (`AFTER_SUBMIT_CALLS`): it
     answers from the Result. The Bluetooth enable, advertise and pair
-    handlers bring the stack up first (`if (... !bring_up()) { return`): no
-    command runs `init()`, so without it a device whose boot bring-up failed
-    could never turn Bluetooth on. The advertise and pair handlers decide it
-    from `bluetooth_channel::read_enabled()` (BV8).
+    handlers (`BT_BRING_UP_HANDLERS`) bring the stack up first, whenever it
+    is down, whatever the saved setting says (F235): their first statement is
+    `if (!bring_up()) { return send_bring_up_refused(req, ...`, and none of
+    them reads the published setting or status (`read_enabled(`,
+    `read_settings(`, `read_status(`). No command runs `init()`, so without
+    it a tap could never bring up a stack whose boot bring-up failed or the
+    heap guard refused. That was the advertise and pair handlers' case on a
+    device saved on (the default) until F235: they brought the stack up only
+    when the published setting said off, so every tap answered a failed
+    start. `bring_up()` is exactly `return bluetooth_channel::is_initialized()
+    || bluetooth_channel::init();`. It is called only as `!bring_up()` in a
+    guard, and every such guard (the settings POST's too, BV1) answers through
+    `send_bring_up_refused(req, `, which is exactly a 503 with
+    `bring_up_starting_error()` while `bluetooth_channel::bring_up_starting()`
+    says another task's bring-up holds the latch or has just brought the
+    stack up, else `send_bt_error(req, fallback)` (the refusal by name). In
+    `bluetooth_channel.cpp`, `bring_up_starting()` is exactly `return
+    init_running() || is_initialized();`, the latch read first (init()
+    publishes the stack before it clears the latch, so read the other way a
+    bring-up that came up between the two reads would answer its
+    predecessor's refusal).
 C4. Across the sketch (comments and strings blanked), no file but the
     channel's .cpp names `chirp_channel::<mutator>(` or
     `bluetooth_channel::<mutator>(`, and none says `using namespace` for
@@ -328,7 +345,8 @@ BV1. A settings POST that turns Bluetooth on does it the way
      brings the stack up on its own task before it submits, when the POST
      names `enabled: true`
      (`if ((cmd.set_mask & bluetooth_channel::BT_SET_ENABLED) && settings.enabled
-     && !bring_up()) { return ...`), and answers a command refused for a stack
+     && !bring_up()) { return send_bring_up_refused(req, ...`, C3's answer to
+     a bring-up that left the stack down), and answers a command refused for a stack
      that is not up with the init error, right after the not-run guard
      (`if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_ENABLED) { return
      send_bt_error(req, ...`). In `bluetooth_channel.cpp`, `set_settings()`
@@ -517,13 +535,15 @@ BV7. No advertising start while the sketch's bring-up worker registers GATT
      services, is `test_bluetooth_commands_wap.cpp`'s.
 
 BV8. Whether Bluetooth is on, as another task reads it (F210). The Start
-     Advertising and Pair handlers decide whether to bring the stack up
+     Advertising and Pair handlers decided whether to bring the stack up
      before they submit from it, and they read `is_enabled()`, the loop
      task's `g_settings.enabled`, in place on the httpd task while the loop
      task's commands and its first pass's `load_saved()` wrote it: a data
      race, which TSAN reports in the threaded test when the read is put
-     back. They read `bluetooth_channel::read_enabled()` (C3's
-     `BT_BRING_UP_HANDLERS`). In `bluetooth_channel.cpp`, `read_enabled()`
+     back. They read `bluetooth_channel::read_enabled()` until F235, when C3
+     stopped them deciding a bring-up from the setting at all (the stack
+     being down decides it); `read_enabled()` stays any task's race-free
+     read of the setting. In `bluetooth_channel.cpp`, `read_enabled()`
      is exactly `return read_settings().enabled;` (the settings the last pass
      published; BV3 adds it to the readers, which name none of the live
      state); `is_enabled()` is defined once, `static`, and called only from
@@ -1272,14 +1292,24 @@ BT_HANDLER_COMMANDS = {
     "handle_bluetooth_power_set": ("BT_CMD_POWER", ("cmd.power=power;",)),
 }
 # The handlers that bring the Bluetooth stack up on their own task before
-# they submit (bring_up(): the init() enable() ran there before F111). A
-# command never runs init(), so without this a device whose boot bring-up
-# failed could never turn Bluetooth on again.
-BT_BRING_UP_HANDLERS = {
-    "handle_bluetooth_enable": "if(!bring_up()){return",
-    "handle_bluetooth_advertise_start": "if(!bluetooth_channel::read_enabled()&&!bring_up()){return",
-    "handle_bluetooth_pair_start": "if(!bluetooth_channel::read_enabled()&&!bring_up()){return",
-}
+# they submit (bring_up(): the init() enable() ran there before F111),
+# whenever it is down, whatever the saved setting says (F235): each one's
+# first statement is the guard. A command never runs init(), so without it a
+# tap could never bring up a stack whose boot bring-up failed or was refused.
+BT_BRING_UP_HANDLERS = ("handle_bluetooth_enable", "handle_bluetooth_advertise_start",
+                        "handle_bluetooth_pair_start")
+BT_BRING_UP_GUARD = "if(!bring_up()){returnsend_bring_up_refused(req,"
+# What a bring-up handler never reads (F235): the published setting or status.
+# Whether Bluetooth is saved on says nothing about whether the stack is up.
+BT_SETTING_READERS = ("read_enabled", "read_settings", "read_status")
+SIG_SEND_BRING_UP_REFUSED = r"\binline\s+esp_err_t\s+send_bring_up_refused\s*\([^)]*\)"
+SIG_BT_BRING_UP_STARTING = r"\bbool\s+bring_up_starting\s*\(\s*\)"
+BT_BRING_UP_BODY = "returnbluetooth_channel::is_initialized()||bluetooth_channel::init();"
+BT_BRING_UP_REFUSED_BODY = ("if(bluetooth_channel::bring_up_starting()){"
+                            "httpd_resp_set_status(req,http_status_line(503));"
+                            "returnsend_error(req,bluetooth_channel::bring_up_starting_error());}"
+                            "returnsend_bt_error(req,fallback);")
+BT_BRING_UP_STARTING_BODY = "returninit_running()||is_initialized();"
 # The settings POSTs: each `if (input["<key>"]...) { ... }` block fills one
 # field and names that field (and only it) for the loop task.
 CHIRP_SETTINGS_FIELDS = {          # key: (the field it fills, the flag that names it)
@@ -1532,10 +1562,17 @@ def check_channel_handlers(ns: str, api: str, api_src: str, errors: list[str]) -
                 errors.append(f"{api}: {h}() calls {ns}::{m.group(1)}() after its command ran — "
                               "answer from the Result the loop task read (`r.`), not from state "
                               "the loop task may be changing (F111)")
-        if h in BT_BRING_UP_HANDLERS and BT_BRING_UP_HANDLERS[h] not in before:
-            errors.append(f"{api}: {h}() must bring the stack up on its own task before it submits "
-                          f"(`{BT_BRING_UP_HANDLERS[h]} ...`): no command runs init(), so without it a "
-                          "device whose boot bring-up failed never turns Bluetooth on (F111)")
+        if h in BT_BRING_UP_HANDLERS:
+            if not s.startswith(BT_BRING_UP_GUARD):
+                errors.append(f"{api}: {h}() must bring the stack up on its own task first, before "
+                              f"anything else, whenever it is down (`{BT_BRING_UP_GUARD} ...`): no "
+                              "command runs init(), so without it a tap never brings up a stack whose "
+                              "boot bring-up failed or was refused (F111, F235)")
+            for reader in BT_SETTING_READERS:
+                if re.search(r"(?<![\w:.>])" + ns + r"::" + reader + r"\s*\(", body):
+                    errors.append(f"{api}: {h}() reads {ns}::{reader}() — whether Bluetooth is saved "
+                                  "on says nothing about whether the stack is up: the stack being "
+                                  "down decides its bring-up, whatever the setting (F235)")
     for h, fields in (("handle_chirp_settings", CHIRP_SETTINGS_FIELDS),
                       ("handle_bluetooth_settings_set", BT_SETTINGS_FIELDS)):
         if h not in spec:
@@ -1543,6 +1580,40 @@ def check_channel_handlers(ns: str, api: str, api_src: str, errors: list[str]) -
         span = the_body(code, r"\besp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)", "", [])
         if span is not None:
             check_settings_blocks(api, h, code[span[0]:span[1]], kept[span[0]:span[1]], fields, errors)
+
+
+def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str]) -> None:
+    """Rule C3's bring-up part (F235): what a tap's bring-up runs, and how a
+    bring-up that left the stack down is answered."""
+    code = blank_comments_and_strings(api_src)
+    body = body_of(code, SIG_BRING_UP, f"{BT_API}: bring_up()", errors)
+    if body is not None and squash(body) != BT_BRING_UP_BODY:
+        errors.append(f"{BT_API}: bring_up() must be exactly `return bluetooth_channel::is_initialized() || "
+                      "bluetooth_channel::init();` — the stack being down decides it, and init() "
+                      "re-checks the heap guard on every tap (F235)")
+    body = body_of(code, SIG_SEND_BRING_UP_REFUSED, f"{BT_API}: send_bring_up_refused()", errors)
+    if body is not None and squash(body) != BT_BRING_UP_REFUSED_BODY:
+        errors.append(f"{BT_API}: send_bring_up_refused() must answer 503 with "
+                      "bluetooth_channel::bring_up_starting_error() while "
+                      "bluetooth_channel::bring_up_starting() says another task's bring-up runs, and "
+                      "send_bt_error(req, fallback) (the refusal by name) otherwise, exactly (F235)")
+    for m in re.finditer(r"(?<![\w:.>])bring_up\s*\(", code):
+        before = code[:m.start()].rstrip()
+        if re.search(r"\bbool$", before):
+            continue                                  # the definition
+        if not before.endswith("!") or not squash(code[m.start():m.start() + 160]).startswith(
+                "bring_up()){returnsend_bring_up_refused(req,"):
+            errors.append(f"{BT_API}: bring_up() is called other than as a guard answering "
+                          "`if (... !bring_up()) { return send_bring_up_refused(req, ...` — a bring-up "
+                          "that left the stack down is answered by name, or as still starting (F235)")
+            break
+    cpp = blank_comments_and_strings(cpp_src)
+    body = body_of(cpp, SIG_BT_BRING_UP_STARTING, f"{BT_CPP}: bring_up_starting()", errors)
+    if body is not None and squash(body) != BT_BRING_UP_STARTING_BODY:
+        errors.append(f"{BT_CPP}: bring_up_starting() must be exactly `return init_running() || "
+                      "is_initialized();` — the latch first: init() publishes the stack before it "
+                      "clears the latch, so read the other way a bring-up that came up between the "
+                      "two reads answers its predecessor's refusal (F235)")
 
 
 def check_loop_calls_updates(ino_code: str, errors: list[str]) -> None:
@@ -1616,6 +1687,8 @@ def check_channels(ino: str, others: dict[str, str], errors: list[str]) -> None:
                           f"httpd_resp_set_status(req, http_status_line({ns}::not_run_status(w))) — "
                           "409 busy and 503 timeout, not 200 (F111)")
         check_channel_handlers(ns, api, files[api], errors)
+        if ns == "bluetooth_channel":
+            check_bluetooth_bring_up(files[api], files[cpp], errors)
         total = sum(c.count(ns + "::update(") for c in code.values())
         if loop is None or loop.count(ns + "::update(") != 1 or total != 1:
             errors.append(f"{SKETCH}: {ns}::update( must be called once, from the sketch's loop() "
@@ -2218,7 +2291,8 @@ SIG_BT_SETTINGS_SET = r"\besp_err_t\s+handle_bluetooth_settings_set\s*\(\s*httpd
 SIG_BT_SET_SETTINGS = r"\bstatic\s+bool\s+set_settings\s*\([^)]*\)"
 # BV1: what the settings POST does before and after its submit when it turns
 # Bluetooth on (squashed text).
-BV1_BRING_UP = "if((cmd.set_mask&bluetooth_channel::BT_SET_ENABLED)&&settings.enabled&&!bring_up()){return"
+BV1_BRING_UP = ("if((cmd.set_mask&bluetooth_channel::BT_SET_ENABLED)&&settings.enabled&&!bring_up())"
+                "{returnsend_bring_up_refused(req,")
 BV1_REFUSED = "if(r.refusal==bluetooth_channel::BT_REFUSED_NOT_ENABLED){returnsend_bt_error(req,"
 
 
@@ -3152,8 +3226,9 @@ def check_bluetooth_enabled_read(files: dict[str, str], errors: list[str]) -> No
     """Rule BV8 (F210): the Start Advertising and Pair handlers decided from
     is_enabled(), the loop task's g_settings.enabled read in place on the
     httpd task, whether to bring the stack up; the loop task's commands and
-    its first pass's load_saved() write it. They read read_enabled() (C3's
-    BT_BRING_UP_HANDLERS), which is the published settings' flag;
+    its first pass's load_saved() write it. They read read_enabled() until
+    F235 (C3 now forbids a bring-up handler any setting read), which is the
+    published settings' flag;
     is_enabled() is the loop task's alone: static, named by no other file,
     called only by run_command() (BV3's BT_LIVE_READERS keeps it out of the
     header and out of every handler)."""
@@ -3599,10 +3674,75 @@ MUTATIONS: list[tuple[str, Mutation]] = [
               r"if\s*\(!bring_up\(\)\)\s*\{[^}]*\}", "")),
     ("the Bluetooth advertise handler no longer brings the stack up",
      on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
-              r"if\s*\(!bluetooth_channel::read_enabled\(\)\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
+              r"if\s*\(!bring_up\(\)\)\s*\{[^}]*\}", "")),
     ("the Bluetooth pair handler no longer brings the stack up",
      on_other(BT_API, api_handler("handle_bluetooth_pair_start"),
-              r"if\s*\(!bluetooth_channel::read_enabled\(\)\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
+              r"if\s*\(!bring_up\(\)\)\s*\{[^}]*\}", "")),
+    # Rule C3, the bring-up whenever the stack is down (F235).
+    ("the advertise handler brings the stack up only while the setting says off (F235's premise)",
+     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"), r"if\s*\(!bring_up\(\)\)",
+              "if (!bluetooth_channel::read_enabled() && !bring_up())")),
+    ("the pair handler brings the stack up only while the setting says off (F235's premise)",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_start"), r"if\s*\(!bring_up\(\)\)",
+              "if (!bluetooth_channel::read_enabled() && !bring_up())")),
+    ("the enable handler brings the stack up only while the published status says it is down",
+     on_other(BT_API, api_handler("handle_bluetooth_enable"), r"if\s*\(!bring_up\(\)\)",
+              "bluetooth_channel::BluetoothStatus st; bluetooth_channel::read_status(&st);\n"
+              "  if (st.state == bluetooth_channel::BT_DISABLED && !bring_up())")),
+    ("the pair handler decides its bring-up from the published settings",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_start"), r"if\s*\(!bring_up\(\)\)",
+              "if (!bluetooth_channel::read_settings().enabled && !bring_up())")),
+    ("the advertise handler reads the published status before its bring-up",
+     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"), r"(if\s*\(!bring_up\(\)\))",
+              r"bluetooth_channel::BluetoothStatus st;\n  bluetooth_channel::read_status(&st);\n  \1")),
+    ("the advertise handler submits before its bring-up",
+     lambda s: on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
+                        r"(if\s*\(w\s*!=\s*loop_command_ring::Wait::kDone\)[^;]*;)",
+                        r"\1\n  if (!bring_up()) { return send_bring_up_refused(req, \"x\"); }")(
+         on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
+                  r"if\s*\(!bring_up\(\)\)\s*\{[^}]*\}", "")(s))),
+    ("the enable handler answers a refused bring-up without the refusal's kind (send_bt_error)",
+     on_other(BT_API, api_handler("handle_bluetooth_enable"), r"return\s+send_bring_up_refused\(req,",
+              "return send_bt_error(req,")),
+    ("the advertise handler answers a refused bring-up without the refusal's kind (send_bt_error)",
+     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
+              r"return\s+send_bring_up_refused\(req,", "return send_bt_error(req,")),
+    ("the pair handler answers a bring-up in flight as a failure",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_start"),
+              r"return\s+send_bring_up_refused\(req,\s*(\"[^\"]*\")\)", r"return send_error(req, \1)")),
+    ("the settings POST answers a refused bring-up without the refusal's kind (send_bt_error)",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+              r"(!bring_up\(\)\)\s*\{\s*)return\s+send_bring_up_refused\(req,", r"\1return send_bt_error(req,")),
+    ("bring_up() decides from the setting",
+     on_other(BT_API, SIG_BRING_UP, r"bluetooth_channel::is_initialized\(\)", "bluetooth_channel::read_enabled()")),
+    ("bring_up() never retries a bring-up that failed",
+     on_other(BT_API, SIG_BRING_UP, r"\s*\|\|\s*bluetooth_channel::init\(\)", "")),
+    ("a handler calls bring_up() outside a guard",
+     on_other(BT_API, api_handler("handle_bluetooth_disable"), r"(bluetooth_channel::Result r;)",
+              r"(void)bring_up();\n  \1")),
+    ("a handler returns bring_up() unguarded",
+     on_other(BT_API, api_handler("handle_bluetooth_scan_clear"), r"(bluetooth_channel::Result r;)",
+              r"if (false) return bring_up() ? ESP_OK : ESP_FAIL;\n  \1")),
+    ("send_bring_up_refused() never answers still starting",
+     on_other(BT_API, SIG_SEND_BRING_UP_REFUSED,
+              r"if\s*\(bluetooth_channel::bring_up_starting\(\)\)\s*\{[^}]*\}", "")),
+    ("send_bring_up_refused() answers still starting with 200",
+     on_other(BT_API, SIG_SEND_BRING_UP_REFUSED, r"httpd_resp_set_status\(req,\s*http_status_line\(503\)\);",
+              "")),
+    ("send_bring_up_refused() answers still starting as busy (409)",
+     on_other(BT_API, SIG_SEND_BRING_UP_REFUSED, r"http_status_line\(503\)", "http_status_line(409)")),
+    ("send_bring_up_refused() answers a refusal without its name",
+     on_other(BT_API, SIG_SEND_BRING_UP_REFUSED, r"return\s+send_bt_error\(req,\s*fallback\);",
+              "return send_error(req, fallback);")),
+    ("bring_up_starting() reads only the latch",
+     on_other(BT_CPP, SIG_BT_BRING_UP_STARTING, r"return\s+init_running\(\)\s*\|\|\s*is_initialized\(\);",
+              "return init_running();")),
+    ("bring_up_starting() reads only the stack",
+     on_other(BT_CPP, SIG_BT_BRING_UP_STARTING, r"return\s+init_running\(\)\s*\|\|\s*is_initialized\(\);",
+              "return is_initialized();")),
+    ("bring_up_starting() reads the stack before the latch",
+     on_other(BT_CPP, SIG_BT_BRING_UP_STARTING, r"return\s+init_running\(\)\s*\|\|\s*is_initialized\(\);",
+              "return is_initialized() || init_running();")),
     # Rule C3, what the command carries (the review's C-k, C-l, C-m, B-n, B-g).
     ("the Chirp ack handler dismisses a confirmation",
      on_other(CHIRP_API, api_handler("handle_chirp_ack"),
@@ -4295,11 +4435,11 @@ BV_MUTATIONS += [
 # Rule BV8 (F210): whether Bluetooth is on, as another task reads it.
 BV_MUTATIONS += [
     ("the advertise handler reads the loop task's enabled flag in place again",
-     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"), r"bluetooth_channel::read_enabled\(\)",
-              "bluetooth_channel::is_enabled()")),
+     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"), r"if\s*\(!bring_up\(\)\)",
+              "if (!bluetooth_channel::is_enabled() && !bring_up())")),
     ("the pair handler reads the loop task's enabled flag in place again",
-     on_other(BT_API, api_handler("handle_bluetooth_pair_start"), r"bluetooth_channel::read_enabled\(\)",
-              "bluetooth_channel::is_enabled()")),
+     on_other(BT_API, api_handler("handle_bluetooth_pair_start"), r"if\s*\(!bring_up\(\)\)",
+              "if (!bluetooth_channel::is_enabled() && !bring_up())")),
     ("bluetooth_channel.h declares is_enabled again",
      raw_other(BT_H, "bool is_advertising();", "bool is_enabled();\nbool is_advertising();")),
     ("read_enabled() reads the flag in place",

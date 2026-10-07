@@ -24,8 +24,9 @@
 // "loop" for update()'s passes (given on the handler's sleeps, in the stub
 // vTaskDelay), "nimble" for the NimBLE host's callbacks, "bringup" for the
 // boot worker's init(). The handlers' own source is held by
-// firmware/scripts/check_wap_loop_commands.py (ArduinoJson, which they build
-// their answers with, is not on the host).
+// firmware/scripts/check_wap_loop_commands.py; since sweep F235 the real
+// handlers are also compiled here, over stand-ins for ArduinoJson and
+// esp_http_server (stubs/bt), and the bring-up tests tap them.
 //
 // And POST /api/bluetooth/settings's "enabled" (sweep F144): set_settings()
 // decided the change after assigning the new settings, so both of its
@@ -69,6 +70,13 @@
 // No health-log line names a peer's address; only the recorded link's
 // events label the connection card; the inactivity timeout drops only the
 // recorded link.
+//
+// And sweep F235: Start Advertising and Pair brought the stack up only when
+// the published setting said Bluetooth was off, so on a device saved on
+// whose boot bring-up failed or the heap guard refused, every tap answered
+// a failed start and the stack stayed down. A tap that needs the stack now
+// brings it up whenever it is down, names a refusal, and answers 503 "still
+// starting" while another task's bring-up runs.
 //
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
@@ -2356,7 +2364,9 @@ void test_a_refused_bring_up_publishes_its_reason_whole() {
 // after its write of the flag and before its publish: the loop task's write
 // in flight, which a handler on another task could meet), and the command's
 // value as soon as its answer is posted. The threaded test below reads it
-// under TSAN.
+// under TSAN. (Since sweep F235 no handler decides a bring-up from it: the
+// stack being down, not the setting, does. It stays any task's race-free
+// read of the setting.)
 void test_the_handlers_read_enabled_from_the_view() {
   boot(/*bring_up=*/false);
   CHECK(bc::read_enabled() == bt_defaults::ENABLED);      // before the first pass: the boot state
@@ -2471,9 +2481,10 @@ void test_threads_bring_up_loop_and_reads() {
     std::thread httpd([&] {
       host_sim::task = "httpd";
       while (!done.load()) {
-        // What the Start Advertising and Pair handlers decide bring_up() from
-        // (F210), first: no lock of the views' taken yet this round. Used, so
-        // the read is not optimized away.
+        // Whether Bluetooth is saved on, as another task reads it (F210; the
+        // Start Advertising and Pair handlers decided bring_up() from it
+        // until F235), first: no lock of the views' taken yet this round.
+        // Used, so the read is not optimized away.
         if (bc::read_enabled()) reads_on.fetch_add(1);
         const char* reason = bc::init_fail_reason();
         if (memchr(reason, '\0', 96) == nullptr) reasons_whole.store(false);
