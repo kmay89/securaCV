@@ -1140,14 +1140,24 @@ clean: clean-bt-commands
 # pass never waits behind the CONNECTED burst esp_mqtt sends under its lock.
 # Also the health publish's event-id space warning (sweep F82), against a
 # stubbed allocator, and the egress counters' retained topic (sweep F149),
-# against a stubbed csi_event_egress::stats().
+# against a stubbed csi_event_egress::stats(). And GET /api/mqtt/config's
+# answer (sweep F227): escaped, the old format's bytes for an ordinary
+# config, and its heap buffer given back whether it is sent or refused. The
+# refusal is reached through wap_json_writer.h's test hook, which
+# mqtt_test_hooks.h (forced in with -include) gives a body in this build
+# only; the buffer is counted by wrapping malloc() and free() with GNU ld's
+# --wrap, on Linux (elsewhere that one test says it did not run).
 MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
+ifeq ($(shell uname -s),Linux)
+MQTT_REINIT_HEAP = -DMQTT_TEST_HEAP_WRAP -Wl,--wrap=malloc -Wl,--wrap=free
+endif
 
 $(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
-                  $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h json_strict.h \
+                  $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h json_strict.h mqtt_test_hooks.h \
                   $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	  -include mqtt_test_hooks.h $(MQTT_REINIT_HEAP) \
 	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp
 
 .PHONY: run-mqtt-reinit clean-mqtt-reinit

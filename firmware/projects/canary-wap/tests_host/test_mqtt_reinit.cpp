@@ -373,6 +373,56 @@ Stats stats() {
 }
 }  // namespace csi_event_egress
 
+// ── GET /api/mqtt/config's hook and heap count (sweep F227 review) ──────
+
+// wap_json_writer.h's hook in csi_mqtt.cpp's build (mqtt_test_hooks.h, the
+// Makefile's -include): each string the writing pass has measured.
+namespace mqtt_test {
+void (*after_measure)(const char* s) = nullptr;
+}  // namespace mqtt_test
+
+// The blocks csi_mqtt.cpp takes with malloc() and gives back with free(),
+// counted while `counting` is set. On Linux the Makefile links this suite
+// with GNU ld's --wrap=malloc and --wrap=free, so every malloc() and free()
+// this binary's own objects call (csi_mqtt.cpp's among them; libstdc++'s
+// are its own and are not counted) comes through here. Elsewhere nothing is
+// counted, and the test that reads the count says it did not run.
+namespace heap {
+bool counting = false;
+size_t taken = 0;              // blocks malloc'd while counting
+void* held[64] = {};           // ... and not yet freed
+size_t n_held = 0;
+bool overflowed = false;       // more than `held` holds were outstanding
+}  // namespace heap
+
+#ifdef MQTT_TEST_HEAP_WRAP
+extern "C" void* __real_malloc(size_t n);
+extern "C" void __real_free(void* p);
+extern "C" void* __wrap_malloc(size_t n) {
+  void* p = __real_malloc(n);
+  if (heap::counting && p != nullptr) {
+    ++heap::taken;
+    if (heap::n_held < sizeof heap::held / sizeof heap::held[0]) heap::held[heap::n_held++] = p;
+    else heap::overflowed = true;
+  }
+  return p;
+}
+extern "C" void __wrap_free(void* p) {
+  if (heap::counting && p != nullptr) {
+    for (size_t i = 0; i < heap::n_held; ++i) {
+      if (heap::held[i] == p) {
+        heap::held[i] = heap::held[--heap::n_held];
+        break;
+      }
+    }
+  }
+  __real_free(p);
+}
+constexpr bool kHeapCounted = true;
+#else
+constexpr bool kHeapCounted = false;
+#endif
+
 // ── The test ────────────────────────────────────────────────────────────
 
 namespace reinit {
@@ -1144,52 +1194,108 @@ void test_the_settings_read_on_a_fresh_nvs_logs_nothing() {
 
 // ── GET /api/mqtt/config (sweep F227) ──────────────────────────────────
 
+// The old format of GET /api/mqtt/config's answer (an unescaped %s per
+// string), filled from the config as stored and the bridge as it stands: an
+// ordinary config's answer must still be these bytes.
+std::string old_config_answer() {
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  char old[800];
+  snprintf(old, sizeof(old),
+    "{"
+      "\"enabled\":%s,"
+      "\"host\":\"%s\","
+      "\"port\":%u,"
+      "\"user\":\"%s\","
+      "\"prefix\":\"%s\","
+      "\"tls\":%s,"
+      "\"tls_mode\":%u,"
+      "\"ca_set\":%s,"
+      "\"transport\":\"%s\","
+      "\"last_error\":\"%s\","
+      "\"discovery\":%s,"
+      "\"password_set\":%s,"
+      "\"connected\":%s"
+    "}",
+    c.enabled ? "true" : "false", c.host, (unsigned)c.port, c.user, c.prefix,
+    c.tls ? "true" : "false", (unsigned)c.tls_mode, c.ca_set ? "true" : "false",
+    csi_mqtt::transport_name(), csi_mqtt::last_error(), c.discovery ? "true" : "false",
+    c.pass[0] ? "true" : "false", csi_mqtt::connected() ? "true" : "false");
+  return old;
+}
+
+// One GET /api/mqtt/config, with the blocks it took from the heap and did
+// not give back counted (Linux: the Makefile's --wrap; see `heap` above).
+struct ConfigGet {
+  Http h;
+  size_t taken = 0;
+  size_t kept = 0;
+};
+ConfigGet get_config() {
+  ConfigGet g;
+  heap::taken = 0;
+  heap::n_held = 0;
+  heap::overflowed = false;
+  heap::counting = true;
+  g.h = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  heap::counting = false;
+  CHECK(!heap::overflowed);
+  g.taken = heap::taken;
+  g.kept = heap::n_held;
+  return g;
+}
+
 // The settings page's strings come back as JSON whatever they hold. The
 // POST's json_extract_string() decodes \" \\ and the control escapes and
 // passes raw bytes, so a host or user holding a quote, a backslash or a
 // control byte was stored as such, and the GET wrote it with an unescaped
 // %s: the answer stopped parsing and the settings page could not show the
-// broker it had saved. Now the answer is written by wap_json_writer.h and
-// gives every string back as stored; an ordinary config answers the bytes
-// the old format did.
+// broker it had saved. (The prefix cannot hold one: the POST keeps it to
+// [a-zA-Z0-9_/-].) Now the answer is written by wap_json_writer.h and gives
+// every string back as stored; an ordinary config answers the bytes the old
+// format did, field for field.
 void test_the_config_answer_escapes_what_the_page_sent() {
   boot_with_broker("10.0.0.1");
-  // An ordinary config: the old format's bytes, verbatim.
+  // An ordinary config with no field at its default: a TLS port, the CA
+  // mode (no CA saved, so the bridge refuses to open and says why in
+  // last_error), a prefix and a user of its own. The old format's bytes,
+  // verbatim, and each field read back.
   {
-    const Http g = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
-    csi_mqtt::Config c;
-    csi_mqtt::config_load(&c);
-    char old[800];
-    snprintf(old, sizeof(old),
-      "{"
-        "\"enabled\":%s,"
-        "\"host\":\"%s\","
-        "\"port\":%u,"
-        "\"user\":\"%s\","
-        "\"prefix\":\"%s\","
-        "\"tls\":%s,"
-        "\"tls_mode\":%u,"
-        "\"ca_set\":%s,"
-        "\"transport\":\"%s\","
-        "\"last_error\":\"%s\","
-        "\"discovery\":%s,"
-        "\"password_set\":%s,"
-        "\"connected\":%s"
-      "}",
-      c.enabled ? "true" : "false", c.host, (unsigned)c.port, c.user, c.prefix,
-      c.tls ? "true" : "false", (unsigned)c.tls_mode, c.ca_set ? "true" : "false",
-      csi_mqtt::transport_name(), "", c.discovery ? "true" : "false",
-      c.pass[0] ? "true" : "false", csi_mqtt::connected() ? "true" : "false");
-    CHECK(g.req.status == "200 OK");
-    CHECK(g.req.resp == old);
+    const Http p = http(csi_mqtt::handle_config_post,
+                        "{\"port\":8883,\"tls_mode\":1,\"prefix\":\"home/wap-2\",\"user\":\"ops\","
+                        "\"discovery\":false}",
+                        /*turn_at=*/1);
+    CHECK(p.req.status == "200 OK");
+    CHECK(csi_mqtt::last_error()[0] != '\0');          // the refusal, in words
+    CHECK(std::strcmp(csi_mqtt::transport_name(), "refused") == 0);
+    const ConfigGet g = get_config();
+    CHECK(g.h.req.status == "200 OK");
+    CHECK(g.h.req.resp == old_config_answer());
+    json_strict::Value v;
+    CHECK(json_strict::parse(g.h.req.resp, &v));
+    const json_strict::Value* f;
+    CHECK((f = v.get("enabled")) != nullptr && f->kind == json_strict::Value::Bool && f->b);
+    CHECK((f = v.get("host")) != nullptr && f->text == "10.0.0.1");
+    CHECK((f = v.get("port")) != nullptr && f->kind == json_strict::Value::Number && f->text == "8883");
+    CHECK((f = v.get("user")) != nullptr && f->text == "ops");
+    CHECK((f = v.get("prefix")) != nullptr && f->text == "home/wap-2");
+    CHECK((f = v.get("tls")) != nullptr && f->kind == json_strict::Value::Bool && f->b);
+    CHECK((f = v.get("tls_mode")) != nullptr && f->kind == json_strict::Value::Number && f->text == "1");
+    CHECK((f = v.get("ca_set")) != nullptr && f->kind == json_strict::Value::Bool && !f->b);
+    CHECK((f = v.get("transport")) != nullptr && f->text == "refused");
+    CHECK((f = v.get("last_error")) != nullptr && f->text == csi_mqtt::last_error());
+    CHECK((f = v.get("discovery")) != nullptr && f->kind == json_strict::Value::Bool && !f->b);
+    CHECK((f = v.get("password_set")) != nullptr && f->kind == json_strict::Value::Bool && !f->b);
+    CHECK((f = v.get("connected")) != nullptr && f->kind == json_strict::Value::Bool && !f->b);
+    CHECK(v.keys.size() == 13);                         // nothing else, the password least of all
   }
   // A host and a user holding a quote, a backslash, decoded control escapes
   // and a raw control byte, saved through the real POST.
-  std::string body = "{\"host\":\"br\\\"ok\\\\er";
+  std::string body = "{\"tls_mode\":0,\"port\":1883,\"host\":\"br\\\"ok\\\\er";
   body.push_back('\x01');
   body += ".lan\",\"user\":\"u\\nse\\tr";
   body.push_back('\x1f');
-  body += "\"}";
+  body += "\",\"password\":\"pw\"}";
   const Http h = http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
   CHECK(h.req.status == "200 OK");
   csi_mqtt::Config c;
@@ -1198,32 +1304,77 @@ void test_the_config_answer_escapes_what_the_page_sent() {
   const std::string user = std::string("u\nse\tr") + '\x1f';
   CHECK(host == c.host);                         // stored as decoded
   CHECK(user == c.user);
-  const Http g = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
-  CHECK(g.req.status == "200 OK");
+  const ConfigGet g = get_config();
+  CHECK(g.h.req.status == "200 OK");
   json_strict::Value v;
-  CHECK(json_strict::parse(g.req.resp, &v));
+  CHECK(json_strict::parse(g.h.req.resp, &v));
   const json_strict::Value* vh = v.get("host");
   const json_strict::Value* vu = v.get("user");
   const json_strict::Value* vp = v.get("password_set");
   CHECK(vh != nullptr && vh->text == host);
   CHECK(vu != nullptr && vu->text == user);
-  CHECK(vp != nullptr && vp->kind == json_strict::Value::Bool);
-  CHECK(!has_key(g.req.resp, "pass"));           // the password stays write-only
-  // A long host and user, every byte escaping to six: past the old 800-byte
-  // buffer (which cut the answer), answered whole. (Kept under the fields'
-  // limits: what config_load() reads back at the limit is F241's.)
+  CHECK(vp != nullptr && vp->kind == json_strict::Value::Bool && vp->b);
+  CHECK(!has_key(g.h.req.resp, "pass"));         // the password stays write-only
+  // A long host and user, every byte escaping to six: an answer past 800
+  // bytes, answered whole. The old format could not reach 800 (its longest,
+  // every field at its limit, is 622 bytes), so its fixed 800-byte buffer
+  // never cut one; an escaped answer can pass it, so the answer's buffer is
+  // its measured length. (Kept under the fields' limits: what config_load()
+  // reads back at the limit is F241's.)
   const std::string long_host(120, '\x02'), long_user(60, '\x03');
   (void)http(csi_mqtt::handle_config_post, "{\"host\":\"" + long_host + "\",\"user\":\"" + long_user + "\"}",
              /*turn_at=*/1);
-  const Http gl = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
-  CHECK(gl.req.resp.size() > 800);
+  const ConfigGet gl = get_config();
+  CHECK(gl.h.req.resp.size() > 800);
   json_strict::Value lv;
-  CHECK(json_strict::parse(gl.req.resp, &lv));
+  CHECK(json_strict::parse(gl.h.req.resp, &lv));
   const json_strict::Value* lh = lv.get("host");
   const json_strict::Value* lu = lv.get("user");
   CHECK(lh != nullptr && lh->text == long_host);
   CHECK(lu != nullptr && lu->text == long_user);
   std::printf("PASS the_config_answer_escapes_what_the_page_sent\n");
+}
+
+// The answer's heap buffer is given back on every path (the F227 review):
+// the answer sent, and the answer refused because a string grew between the
+// measuring pass and the writing pass. Nothing in csi_mqtt.cpp grows one
+// (both passes read the handler's own copies), so the refusal is reached
+// through wap_json_writer.h's test hook, which grows the copy of the host
+// inside the writing pass: the handler answers 500 "answer changed", sends
+// none of the half-written text, and frees the buffer.
+void test_the_config_answer_gives_its_buffer_back() {
+  if (!kHeapCounted) {
+    std::printf("SKIP the_config_answer_gives_its_buffer_back (the heap count needs GNU ld's --wrap: Linux)\n");
+    return;
+  }
+  boot_with_broker("broker.lan");
+  // Sent: one block taken (the answer), none kept.
+  const ConfigGet sent = get_config();
+  CHECK(sent.h.req.status == "200 OK");
+  CHECK(sent.taken >= 1);                        // the count is live: the answer's buffer
+  CHECK(sent.kept == 0);
+  // Refused: the host grows by a byte after the writing pass measured it.
+  static int grown = 0;
+  grown = 0;
+  mqtt_test::after_measure = [](const char* s) {
+    if (grown == 0 && s != nullptr && std::strcmp(s, "broker.lan") == 0) {
+      char* w = const_cast<char*>(s);            // the handler's own Config copy, 129 bytes
+      std::strcpy(w, "broker.lanx");
+      ++grown;
+    }
+  };
+  const ConfigGet refused = get_config();
+  mqtt_test::after_measure = nullptr;
+  CHECK(grown == 1);
+  CHECK(refused.h.req.status == "500 Internal Server Error");
+  CHECK(refused.h.req.resp == "{\"ok\":false,\"reason\":\"answer changed\"}");
+  CHECK(refused.taken >= 1);
+  CHECK(refused.kept == 0);
+  // And the stored host is what it was: the copy grew, not the config.
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  CHECK(std::strcmp(c.host, "broker.lan") == 0);
+  std::printf("PASS the_config_answer_gives_its_buffer_back\n");
 }
 
 struct Test {
@@ -1255,6 +1406,7 @@ const Test kTests[] = {
     {"the_health_publish_warns_before_the_id_space_runs_out", test_the_health_publish_warns_before_the_id_space_runs_out},
     {"the_egress_counters_ride_a_retained_topic_of_their_own", test_the_egress_counters_ride_a_retained_topic_of_their_own},
     {"the_config_answer_escapes_what_the_page_sent", test_the_config_answer_escapes_what_the_page_sent},
+    {"the_config_answer_gives_its_buffer_back", test_the_config_answer_gives_its_buffer_back},
 };
 
 }  // namespace reinit

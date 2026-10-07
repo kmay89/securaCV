@@ -1923,11 +1923,14 @@ static bool authorized(httpd_req_t* req, const char* api_token) {
 const char* (*s_api_token_provider)() = nullptr;
 
 /* GET /api/mqtt/config's answer, from copies taken before it is measured
- * (sweep F227): the host, the user and the prefix are what the settings page
- * sent, and json_extract_string() hands them over with `"`, `\` and control
- * bytes decoded (and raw bytes as they came), so a %s answer broke on a
- * quote; every string goes through wap_json_writer.h's escaper here, and the
- * answer is measured and written into a heap buffer of exactly its length.
+ * (sweep F227): the host and the user are what the settings page sent, and
+ * json_extract_string() hands them over with `"`, `\` and control bytes
+ * decoded (and raw bytes as they came), so a %s answer broke on a quote. (The
+ * prefix cannot hold one: handle_config_post() keeps it to [a-zA-Z0-9_/-].)
+ * Every string goes through wap_json_writer.h's escaper here all the same,
+ * and the answer is measured and written into a heap buffer of exactly its
+ * length: an escaped answer can pass the old 800 bytes (a byte can spend
+ * six), which the old unescaped format never reached (622 at most).
  * last_error is the loop task's: it is copied once, so both passes read the
  * same bytes. */
 struct ConfigAnswer {
