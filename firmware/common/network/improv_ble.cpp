@@ -25,6 +25,8 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <WiFi.h>
+#include <esp_attr.h>     // RTC_NOINIT_ATTR: the window across a software reset
+#include <esp_system.h>   // esp_reset_reason(): a power-on clears it
 #include <string.h>
 #include <string>
 
@@ -59,6 +61,38 @@ char s_adv_name[ADV_NAME_MAX + 1] = {0};
 bool s_active = false;
 Session s_session;
 improv::Timing s_timing;
+
+// The first-boot window across a SOFTWARE reset. "Re-armed by a power cycle"
+// must mean a power cycle: a board whose firmware restarts itself (an
+// outage reboot, a watchdog, a route that restarts) must not open a fresh
+// window every time. The spent time lives in RTC slow memory, which every
+// reset but a power-on keeps; a power-on (or a brownout, which is a power
+// event) finds the magic gone and starts from zero. Written every few
+// seconds while the window runs, read once at begin().
+struct WindowRecord {
+  uint32_t magic;
+  uint32_t used_ms;
+};
+constexpr uint32_t WINDOW_MAGIC = 0x1D00u * 0x10000u + 0x5E7Fu;   // "door" + "self"
+RTC_NOINIT_ATTR WindowRecord s_window_rtc;
+constexpr uint32_t WINDOW_SAVE_PERIOD_MS = 2000;
+uint32_t s_window_saved_ms = 0;
+
+uint32_t window_used_from_rtc() {
+  const esp_reset_reason_t why = esp_reset_reason();
+  if (why == ESP_RST_POWERON || why == ESP_RST_BROWNOUT || why == ESP_RST_UNKNOWN) {
+    s_window_rtc.magic = 0;
+    s_window_rtc.used_ms = 0;
+    return 0;
+  }
+  if (s_window_rtc.magic != WINDOW_MAGIC) return 0;
+  return s_window_rtc.used_ms;
+}
+
+void window_save(uint32_t used_ms) {
+  s_window_rtc.used_ms = used_ms;
+  s_window_rtc.magic = WINDOW_MAGIC;
+}
 
 NimBLEServer*         s_server = nullptr;
 NimBLEService*        s_service = nullptr;
@@ -515,7 +549,12 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
   s_timing = improv::Timing{};
   s_timing.provisioning_timeout_ms = PROVISIONING_TIMEOUT_MS;
   s_timing.first_boot_window_ms = (uint32_t)(IMPROV_FIRST_BOOT_WINDOW_MS);
-  improv::session_begin(s_session, no_credentials, now_ms, s_timing);
+  const uint32_t window_used = no_credentials ? window_used_from_rtc() : 0;
+  improv::session_begin(s_session, no_credentials, now_ms, s_timing, window_used);
+  if (window_used) {
+    Serial.printf("[IMPROV] first-boot window: %lu s already spent before this restart\n",
+                  (unsigned long)(window_used / 1000));
+  }
   s_active = true;
   publish_state();
   publish_error();
@@ -556,6 +595,17 @@ void tick(uint32_t now_ms, bool no_credentials) {
   const State before = s_session.state;
 
   improv::session_set_no_credentials(s_session, no_credentials, now_ms, s_timing);
+  // Keep the window's spent time where a software reset cannot lose it.
+  if (s_session.door == improv::Door::NoCredentials || s_session.window_spent) {
+    if ((uint32_t)(now_ms - s_window_saved_ms) >= WINDOW_SAVE_PERIOD_MS) {
+      s_window_saved_ms = now_ms;
+      window_save(improv::session_window_used_ms(s_session, now_ms, s_timing));
+    }
+  } else if (!no_credentials && s_window_rtc.magic == WINDOW_MAGIC && s_session.window_at_ms == 0) {
+    // Credentials landed: the window is moot; a later factory reset starts fresh.
+    s_window_rtc.magic = 0;
+    s_window_rtc.used_ms = 0;
+  }
   follow_link(now_ms);
   if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) handle_command(now_ms);
   follow_join(now_ms);

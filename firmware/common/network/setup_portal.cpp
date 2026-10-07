@@ -576,11 +576,13 @@ void setup_portal_loop(uint32_t now_ms) {
 
   switch (g->st) {
     case St::Waiting:
-      if (WiFi.status() == WL_CONNECTED) {
+      if (WiFi.status() == WL_CONNECTED && !g->cfg.keep_sta_link) {
         // A join begun BEFORE the portal opened completed underneath us
         // (recovery raise racing an in-flight association). Route it through
         // the Testing success path as a quiet rejoin — same logging, same
-        // short linger, same teardown.
+        // short linger, same teardown. (Not under a tap-raised portal: there
+        // the live link is the device's own network, deliberately kept, and
+        // reporting it would tear the portal down 1.6 s after it rose.)
         g->bg_join = true;
         enter(St::Testing, now_ms);
         break;

@@ -128,6 +128,7 @@ void open_setup_portal(bool for_tap = false) {
   pc.have_saved_credentials = s_configured;
   pc.save_credentials = portal_save;
   pc.begin_saved = for_tap ? nullptr : portal_begin_saved;
+  pc.keep_sta_link = for_tap;   // the live link is ours; a join through the portal replaces it
   s_portal_retry_ms = canary::ms_now();
   if (setup_portal_begin(pc) && for_tap) s_tap_portal = true;
 }
