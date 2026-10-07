@@ -1310,6 +1310,35 @@ Three things a look at the v0.8 asked for; the envelope does not move:
   chamber, which the cavity never sees (the first cut of this claimed
   otherwise; the review caught it). A membrane-only path with no open
   hole is still `opt_vent = true` with a GORE patch over the cluster.
+- **The module cradle** (2026-10-07). The stack's seat was five kinds of
+  feature standing separately off the plate — four cantilever snap clips,
+  two corner shoes, two top guides, two half-length rails — and four of
+  them were beams made to flex, each with a root to crack. They are now
+  **one connected, vented structure, and nothing on it flexes.** Each
+  side is a full-length **L**: a ledge under the module's long edge (0.4
+  off the XIAO where it hangs beneath, the old rails' 3 mm past the
+  XIAO's end) and a wall up its side edge, taller than the shell's
+  headroom; a **stop** under the bottom edge joins the two walls across
+  the module's foot on a 45° buttress (mounted, the plate is vertical and
+  that edge carries the module's weight); the board posts stand *in* the
+  walls' upper ribs and the service bosses root into the stop's band.
+  The walls are cut into **gabled vent windows** (`cradle_win_w`,
+  `cradle_rib_w`: three a side, 45° roofs so nothing bridges) between a
+  foot band along the plate and the lintel under the seat, so the XIAO's
+  heat and the antenna pigtail pass through them and the ribs between
+  the windows are the structure. The module's hold-down is the two **M2
+  board screws** — the clips predate them (v0.5; the posts are v0.7's) —
+  and the file now asserts `vm_screws` on; the stack drops in vertically
+  exactly as before (the posts' XIAO relief allows no other entry), the
+  walls locate it, the stop carries it, and with the face on the headroom
+  caps it even unscrewed (asserted, as the guides were). The cavity's
+  width reads the wall's band (`cradle_wall_t` + `cradle_clear`) exactly
+  as it read the clip's, so **the envelope does not move**; the -X wall
+  keeps a 1 mm drain gap to the battery fence (`cradle_fence_gap`, the
+  old clips' flex room). One thing to **measure on the print**: the lower
+  ledge runs the whole lower half 0.7–0.95 mm under the module's edge,
+  where the old shoe sat 3 mm — a bottom-side part within 1 mm of the
+  module's long edge would land on it; `cradle_xiao_gap` is the knob.
 
 **v0.8 (2026-10-06) — the speaker.** A doorbell that refuses a feed and a
 microphone still owes the visitor one thing the glow ring cannot give: a
@@ -1521,9 +1550,11 @@ stem first, until the rim seats on its floor and the head stands 0.2 proud
 are fitting the
 battery, solder its leads to the XIAO's BAT pads *before* seating the XIAO
 (the pads face the module), seat the XIAO in the module (**USB-Cs same
-direction!**), press the stack down between the guides until all four
-clips click (its bottom edge sits on the shoes' stops), drive the two
-**board screws** (M2 × 4) through the module's holes into their posts →
+direction!**), drop the stack straight down between the cradle's walls
+onto the ledges and posts (its bottom edge comes to rest against the
+stop; nothing clicks — there is no clip), drive the two
+**board screws** (M2 × 4) through the module's holes into their posts
+(**they are the hold-down**) →
 stick the **antenna** to the +X wall of the face between its ribs and run
 the pigtail under the module to the XIAO's u.FL → foam strip in the bay,
 cell in on edge (leads toward the well) → plug the right-angle USB-C into
@@ -1540,7 +1571,9 @@ collar.
 | `plate_wedge` / `plate_wedge_x` | 0 / 0 | wedge the plate vertically and/or left-right (corner installs) |
 | `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity, with `btn_wire_room` behind its terminals) |
 | `stack_sock_h`, `xiao_below`, `vm_seat_lift` | 6.5 / 5.5 / 1.5 | **measure** your stack, as with the Vision case; the lift is what the first print found the module sitting above its rails — dial it to 0 if yours seats |
-| `vm_screws`, `vm_hole_dx` / `vm_hole_dy` | on, 7.5 / 2.5 | the module's two M2 holes (**measure**: ±0.5 off a photo) — the posts under them, relieved past the XIAO's end |
+| `vm_screws`, `vm_hole_dx` / `vm_hole_dy` | on, 7.5 / 2.5 | the module's two M2 holes (**measure**: ±0.5 off a photo) — the posts under them, relieved past the XIAO's end; the screws are the module's hold-down, so `vm_screws` is asserted on |
+| `cradle_xiao_gap`, `cradle_clear` | 0.4 / 0.25 | the cradle's ledge off the XIAO's edge, and its walls off the module's — the ledge carries what is between them (asserted ≥ 0.4 at the worst shift) |
+| `cradle_win_w` / `cradle_rib_w`, `cradle_foot` / `cradle_lintel` | 6 / 2.4, 1.6 / 1.5 | the vent windows through the cradle's walls: nominal width and the least rib between (the count is what fits), the solid bands under and over them |
 | `cam_lip_t` / `cam_ret_t` / `cam_boss_wall` | 1.0 / 1.0 / 1.5 | the lens lip, the retainer ring and the boss it presses into |
 | `usb_plug_reach` / `usb_port_proud` | 13 / 1.3 | the right-angle plug head the well is sized for, asserted clear of the button nut |
 | `opt_batt`, `batt_t/w/l`, `batt_pcm`, `fence_h` | on, 8/20/30, 1, 6 | the LiPo bay — an 802030 class cell; off for a freezing climate |

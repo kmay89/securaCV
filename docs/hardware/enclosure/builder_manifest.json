@@ -2295,7 +2295,7 @@
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
-        "body": "The plate the module stack lives on: rails, clips and two screw posts for the module, the battery bay's fence, the cable exit, the speaker cradle and the two service plunger seats over the XIAO's R and B switches. It nests inside the face's walls on the screws from the back, drops onto the wall plate's dovetail lugs and locks with the hidden screw.",
+        "body": "The plate the module stack lives on: one connected, vented cradle (two L-walls, a stop, no clip) with the two screw posts for the module, the battery bay's fence, the cable exit, the speaker cradle and the two service plunger seats over the XIAO's R and B switches. It nests inside the face's walls on the screws from the back, drops onto the wall plate's dovetail lugs and locks with the hidden screw.",
         "face": "The one-piece show part — lens aperture, button hole, side walls and posts, the gasket ledge inside — printed face-down; the only seam is against the wall plate.",
         "plate": "The wall plate with the three dovetail lugs, the collar and the cable slot. The wedge angles live here — the case aims wherever the plate points.",
         "gasket": "The soft TPU ring that seals face to body against the weather.",
@@ -2327,7 +2327,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "f43844c15440576c0de1f45299178e58dd60c43b303c211eb8473ede6ee21e5c",
+      "sha256": "1f74ecd69450791248ab85808a60d00883ac3caf317be2897aa8b8d33a808572",
       "groups": [
         {
           "name": "What to render",
@@ -3077,10 +3077,10 @@
               "desc": "air between a board post's relief flat and the XIAO's inner end, where it passes the post"
             },
             {
-              "name": "clip_flex",
+              "name": "cradle_fence_gap",
               "type": "number",
               "default": 1.0,
-              "desc": "free air behind each -X clip beam for its flex (the battery fence stands past it)"
+              "desc": "air between the cradle's -X wall and the battery fence: the bay stays its own tray,"
             }
           ]
         },
@@ -3586,55 +3586,61 @@
           ]
         },
         {
-          "name": "Board snap clips",
+          "name": "Module cradle",
           "params": [
             {
-              "name": "clip_w",
-              "type": "number",
-              "default": 6.0,
-              "desc": "board-clip tab width along the board edge — snap_boardclip default"
-            },
-            {
-              "name": "clip_t",
+              "name": "cradle_wall_t",
               "type": "number",
               "default": 1.0,
-              "desc": "clip beam thickness — snap_boardclip default; the lib asserts its insertion strain"
+              "desc": "each side wall's thickness (the band the cavity's width reads — the old clip beam's)"
             },
             {
-              "name": "clip_hook",
-              "type": "number",
-              "default": 0.5,
-              "desc": "lip overhang over the board top — snap_boardclip default"
-            },
-            {
-              "name": "clip_hook_h",
-              "type": "number",
-              "default": 1.2,
-              "desc": "lip + 45° lead-in height above the board top — snap_boardclip default"
-            },
-            {
-              "name": "clip_clear",
+              "name": "cradle_clear",
               "type": "number",
               "default": 0.25,
-              "desc": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
+              "desc": "wall face to the module's edge (a fit)"
             },
             {
-              "name": "clip_root_r",
+              "name": "cradle_xiao_gap",
               "type": "number",
-              "default": 0.6,
-              "desc": "45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root"
+              "default": 0.4,
+              "desc": "the ledge's inner face off the XIAO's edge, where the XIAO hangs under the module"
             },
             {
-              "name": "clip_dy_hi",
+              "name": "cradle_ledge_in",
               "type": "number",
-              "default": 8.5,
-              "desc": "the upper clip pair's center, from the module's center (+ toward the camera): below the CSI"
+              "default": 3.0,
+              "desc": "past the XIAO's end the ledge reaches this far in under the module (the old rails' width)"
             },
             {
-              "name": "clip_dy_lo",
+              "name": "cradle_foot",
               "type": "number",
-              "default": -10.0,
-              "desc": "the lower clip pair's center, from the module's center (over the XIAO's half)"
+              "default": 1.6,
+              "desc": "the solid band along the plate under the vent windows"
+            },
+            {
+              "name": "cradle_lintel",
+              "type": "number",
+              "default": 1.5,
+              "desc": "the solid band under the module's seat over the windows (the ledge's own thickness there)"
+            },
+            {
+              "name": "cradle_win_w",
+              "type": "number",
+              "default": 6.0,
+              "desc": "a vent window's nominal width along the module; the count is what fits, the windows then share the band"
+            },
+            {
+              "name": "cradle_rib_w",
+              "type": "number",
+              "default": 2.4,
+              "desc": "the least rib between two windows (the structure is the ribs)"
+            },
+            {
+              "name": "cradle_stop_t",
+              "type": "number",
+              "default": 1.6,
+              "desc": "the stop under the module's bottom edge (mounted, its weight goes here) — on a buttress"
             },
             {
               "name": "csi_len",
@@ -3684,10 +3690,6 @@
         {
           "file": "canary_mount_lib.scad",
           "sha256": "bbd5f937319818394c4e89c5f0d766b1a2ee11adb837b210b69ebf3eb3ca2489"
-        },
-        {
-          "file": "canary_snap_lib.scad",
-          "sha256": "7c0c54d46f8c8c2457ca8c6b643d7413edb4e5e9733ab7fa31a8267876412260"
         },
         {
           "file": "canary_port_lib.scad",

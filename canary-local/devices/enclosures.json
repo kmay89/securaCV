@@ -3783,9 +3783,9 @@
        "comment": "air between a board post's relief flat and the XIAO's inner end, where it passes the post"
       },
       {
-       "name": "clip_flex",
+       "name": "cradle_fence_gap",
        "default": "1.0",
-       "comment": "free air behind each -X clip beam for its flex (the battery fence stands past it)"
+       "comment": "air between the cradle's -X wall and the battery fence: the bay stays its own tray,"
       },
       {
        "name": "opt_batt",
@@ -4220,44 +4220,49 @@
        "comment": "magnet pocket center Y, from the module center"
       },
       {
-       "name": "clip_w",
-       "default": "6.0",
-       "comment": "board-clip tab width along the board edge — snap_boardclip default"
-      },
-      {
-       "name": "clip_t",
+       "name": "cradle_wall_t",
        "default": "1.0",
-       "comment": "clip beam thickness — snap_boardclip default; the lib asserts its insertion strain"
+       "comment": "each side wall's thickness (the band the cavity's width reads — the old clip beam's)"
       },
       {
-       "name": "clip_hook",
-       "default": "0.5",
-       "comment": "lip overhang over the board top — snap_boardclip default"
-      },
-      {
-       "name": "clip_hook_h",
-       "default": "1.2",
-       "comment": "lip + 45° lead-in height above the board top — snap_boardclip default"
-      },
-      {
-       "name": "clip_clear",
+       "name": "cradle_clear",
        "default": "0.25",
-       "comment": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
+       "comment": "wall face to the module's edge (a fit)"
       },
       {
-       "name": "clip_root_r",
-       "default": "0.6",
-       "comment": "45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root"
+       "name": "cradle_xiao_gap",
+       "default": "0.4",
+       "comment": "the ledge's inner face off the XIAO's edge, where the XIAO hangs under the module"
       },
       {
-       "name": "clip_dy_hi",
-       "default": "8.5",
-       "comment": "the upper clip pair's center, from the module's center (+ toward the camera): below the CSI"
+       "name": "cradle_ledge_in",
+       "default": "3.0",
+       "comment": "past the XIAO's end the ledge reaches this far in under the module (the old rails' width)"
       },
       {
-       "name": "clip_dy_lo",
-       "default": "-10.0",
-       "comment": "the lower clip pair's center, from the module's center (over the XIAO's half)"
+       "name": "cradle_foot",
+       "default": "1.6",
+       "comment": "the solid band along the plate under the vent windows"
+      },
+      {
+       "name": "cradle_lintel",
+       "default": "1.5",
+       "comment": "the solid band under the module's seat over the windows (the ledge's own thickness there)"
+      },
+      {
+       "name": "cradle_win_w",
+       "default": "6.0",
+       "comment": "a vent window's nominal width along the module; the count is what fits, the windows then share the band"
+      },
+      {
+       "name": "cradle_rib_w",
+       "default": "2.4",
+       "comment": "the least rib between two windows (the structure is the ribs)"
+      },
+      {
+       "name": "cradle_stop_t",
+       "default": "1.6",
+       "comment": "the stop under the module's bottom edge (mounted, its weight goes here) — on a buttress"
       },
       {
        "name": "csi_len",
@@ -4315,8 +4320,9 @@
        "default": "e_seal"
       },
       {
-       "name": "clip_stack",
-       "default": "clip_clear + clip_t"
+       "name": "cradle_band",
+       "default": "cradle_clear + cradle_wall_t",
+       "comment": "the module's edge to the wall's outer face"
       },
       {
        "name": "vm_standoff",
@@ -4485,7 +4491,7 @@
       },
       {
        "name": "hx_p",
-       "default": "vm_w/2 + clip_stack + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2)"
+       "default": "vm_w/2 + cradle_band + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2)"
       },
       {
        "name": "vm_cx",
@@ -4790,19 +4796,88 @@
       },
       {
        "name": "csi_y0",
-       "default": "vm_cy + vm_l/2 - csi_len"
+       "default": "vm_cy + vm_l/2 - csi_len",
+       "comment": "the CSI connector's near end (full width; nothing of the cradle stands over the module's top face)"
       },
       {
        "name": "hw_thread",
        "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       },
       {
-       "name": "guide_up",
-       "default": "lid_headroom + 0.8"
+       "name": "cradle_up",
+       "default": "lid_headroom + 0.8",
+       "comment": "the walls stand this far over the module's top face"
       },
       {
-       "name": "guide_top",
-       "default": "floor_t + vm_standoff + pcb_t + guide_up"
+       "name": "cradle_top",
+       "default": "z_vm_top + cradle_up"
+      },
+      {
+       "name": "cradle_x_in",
+       "default": "xiao_w/2 + cradle_xiao_gap",
+       "comment": "the ledge's inner face, from the module's centerline (over the XIAO)"
+      },
+      {
+       "name": "cradle_x_wall",
+       "default": "vm_w/2 + cradle_clear",
+       "comment": "the wall's inner face"
+      },
+      {
+       "name": "cradle_x_out",
+       "default": "vm_w/2 + cradle_band",
+       "comment": "the wall's outer face"
+      },
+      {
+       "name": "cradle_x_up",
+       "default": "vm_w/2 - cradle_ledge_in",
+       "comment": "the ledge's inner face past the XIAO's end"
+      },
+      {
+       "name": "cradle_x_stop",
+       "default": "7.0",
+       "comment": "the stop's inboard face: clear of the plug's head (12 wide) by 1.0"
+      },
+      {
+       "name": "cradle_y_lo",
+       "default": "vm_cy - vm_l/2",
+       "comment": "the module's bottom edge"
+      },
+      {
+       "name": "cradle_y_hi",
+       "default": "vm_cy + vm_l/2",
+       "comment": "...and its top edge: the walls end there, open for the ribbon"
+      },
+      {
+       "name": "cradle_y_stop",
+       "default": "cradle_y_lo - cradle_clear",
+       "comment": "the stop's face"
+      },
+      {
+       "name": "cradle_y_up",
+       "default": "post_flat_y",
+       "comment": "the wide ledge starts where the XIAO's end has passed (the post's relief flat)"
+      },
+      {
+       "name": "cradle_z_seat",
+       "default": "floor_t + vm_standoff",
+       "comment": "the module's seat"
+      },
+      {
+       "name": "cradle_rib_post_lo",
+       "default": "vm_cy + vm_hole_dy - vm_post_d/2 - 0.3",
+       "comment": "the post rib: solid 0.3 either side of a board post"
+      },
+      {
+       "name": "cradle_rib_post_hi",
+       "default": "vm_cy + vm_hole_dy + vm_post_d/2 + 0.3"
+      },
+      {
+       "name": "cradle_win_bands",
+       "default": "[[cradle_y_stop, cradle_rib_post_lo], [cradle_rib_post_hi, cradle_y_hi - 1.2]]"
+      },
+      {
+       "name": "cradle_win_list",
+       "default": "[for (b = cradle_win_bands) each cradle_wins(b[0], b[1])]"
       },
       {
        "name": "grille_r_max",

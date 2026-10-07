@@ -296,7 +296,8 @@ CURATED = [
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "body": "The plate the module stack lives on: rails, clips and "
+            "body": "The plate the module stack lives on: one connected, "
+                    "vented cradle (two L-walls, a stop, no clip) with the "
                     "two screw posts for the module, the battery bay's fence, "
                     "the cable exit, the speaker cradle and the two service "
                     "plunger seats over the XIAO's R and B switches. It nests "

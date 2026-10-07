@@ -225,14 +225,31 @@
 //      cavity never sees (the first cut of this claimed otherwise; the
 //      review caught it). A membrane-only path with no open hole is still
 //      opt_vent = true, and the knob stays for it.
+//    * THE MODULE CRADLE (2026-10-07): the four cantilever snap clips, the
+//      corner shoes, the top guides and the half-length rails — five kinds
+//      of feature standing separately off the plate, four of them beams
+//      made to flex, each with a root to crack — become ONE connected,
+//      vented structure, and nothing on it flexes. Two full-length L-walls
+//      (a ledge under each long edge of the module, a wall up its side
+//      taller than the shell's headroom), joined by a stop under the
+//      bottom edge on its buttress, carrying the board posts in their
+//      upper ribs; the service bosses root into the stop's band. The
+//      walls are cut into gabled VENT WINDOWS between a foot band and the
+//      lintel under the seat (45° roofs, no bridge), so the XIAO's heat
+//      and the antenna pigtail pass through them and the ribs between the
+//      windows are the structure. The two M2 board screws are the module's
+//      hold-down (the clips predate them — v0.5 to v0.7's posts); the
+//      stack drops in vertically as before (the posts' XIAO relief allows
+//      nothing else), the walls locate it, the stop carries it mounted,
+//      and with the face on the headroom caps it even unscrewed. The
+//      cavity's width reads the wall's band exactly as it read the clip's,
+//      so the envelope does not move.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
                              // piston plate (pl_*) — the catalog's shared helpers
 use <canary_mount_lib.scad>  // the catalog's hangers — the wall plate's dovetail
                              // lugs and the body's blind pockets, one home
-use <canary_snap_lib.scad>   // snap-fit doctrine — snap_boardclip carries the
-                             // WAP clip and its strain gate
 use <canary_port_lib.scad>   // connector standards — the shell numbers the
                              // cable exit is sized against
 use <canary_board_lib.scad>  // board registry — this file is the measured
@@ -425,7 +442,8 @@ vm_hole_dx = 7.5;    // the module's mounting holes, X from its centerline (one 
 vm_hole_dy = 2.5;    // ...and Y from its center, toward the CSI (camera) end — MEASURE (±0.5)
 vm_post_d  = 5.0;    // the board post's Ø (the M2 pilot leaves 1.7 of wall)
 xiao_gap   = 0.3;    // air between a board post's relief flat and the XIAO's inner end, where it passes the post
-clip_flex  = 1.0;    // free air behind each -X clip beam for its flex (the battery fence stands past it)
+cradle_fence_gap = 1.0;  // air between the cradle's -X wall and the battery fence: the bay stays its own tray,
+                         // and the gap is the drain slot between them mounted (it was the -X clips' flex room)
 
 /* [Battery bay] — an 802030-class LiPo (8 x 20 x 30, 400-450 mAh) standing on edge beside the module,
    between the -X mid posts, behind a fence. Ride-through for a USB supply that browns out; the XIAO's own
@@ -536,17 +554,18 @@ mag_h  = 3.2;      // magnet thickness, and the pocket ring's height off the fac
 mag_dx = 8.0;      // magnet pocket center X, from the face's center
 mag_dy = 8.0;      // magnet pocket center Y, from the module center
 
-/* [Board snap clips] — the WAP's print-proven numbers (the canary_snap_lib
-   snap_boardclip defaults); the lib's strain gate holds them honest */
-clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default
-clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; the lib asserts its insertion strain
-clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
-clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
-clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
-clip_root_r = 0.6;   // 45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root
-clip_dy_hi  = 8.5;   // the upper clip pair's center, from the module's center (+ toward the camera): below the CSI
-                     // connector's ends (v0.6's +10 put a lip on them) and above the board posts
-clip_dy_lo  = -10.0; // the lower clip pair's center, from the module's center (over the XIAO's half)
+/* [Module cradle] — the one connected, vented structure the stack lives in (v0.9; it replaced four
+   snap clips, two corner shoes, two top guides and two half rails). Nothing on it flexes: the two M2
+   board screws hold the module down, the cradle locates and carries it */
+cradle_wall_t = 1.0;   // each side wall's thickness (the band the cavity's width reads — the old clip beam's)
+cradle_clear  = 0.25;  // wall face to the module's edge (a fit)
+cradle_xiao_gap = 0.4; // the ledge's inner face off the XIAO's edge, where the XIAO hangs under the module
+cradle_ledge_in = 3.0; // past the XIAO's end the ledge reaches this far in under the module (the old rails' width)
+cradle_foot   = 1.6;   // the solid band along the plate under the vent windows
+cradle_lintel = 1.5;   // the solid band under the module's seat over the windows (the ledge's own thickness there)
+cradle_win_w  = 6.0;   // a vent window's nominal width along the module; the count is what fits, the windows then share the band
+cradle_rib_w  = 2.4;   // the least rib between two windows (the structure is the ribs)
+cradle_stop_t = 1.6;   // the stop under the module's bottom edge (mounted, its weight goes here) — on a buttress
 csi_len     = 7.6;   // the module's CSI (camera ribbon) connector reaches this far in from its top edge, the
                      // full width — read off the print's photo (the vendor CAD puts its body at 1-7)
 
@@ -575,7 +594,7 @@ pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_s
 // a sealed build seats an O-ring under every plate screw head: the seat is a
 // hole through the seal line from outside (canary_core_lib pl_seat_cut)
 e_gland  = e_seal;
-clip_stack  = clip_clear + clip_t;
+cradle_band = cradle_clear + cradle_wall_t;   // the module's edge to the wall's outer face
 // the module's seat: the measured stack plus the v0.7 lift (the built v0.6
 // held the module ~1.5 above its rails — whatever bottomed first, the seat
 // now carries it there and the clips' lips meet its top face)
@@ -656,13 +675,13 @@ mid_ys = opt_batt ? concat(spk_mid_ys, bay_ys)
 
 // THE CAVITY'S WIDTH is the sum of what stands across it, read outward from
 // the module's two edges — the v0.5 doctrine (a mid post clears the module's
-// clip by 0.5, never lands on it) with the bay and the landing added:
-//   +X: clip | 0.5 | mid post | the antenna's air behind it (or 0.2 into the wall)
-//   -X: clip | its flex | fence | the cell and its clearance | the wall gap
+// cradle wall by 0.5, never lands on it) with the bay and the landing added:
+//   +X: cradle wall | 0.5 | mid post | the antenna's air behind it (or 0.2 into the wall)
+//   -X: cradle wall | the fence gap | fence | the cell and its clearance | the wall gap
 //       (or the +X stack mirrored)
-hx_p = vm_w/2 + clip_stack + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2);
-hx_m = vm_w/2 + clip_stack + (opt_batt ? clip_flex + fence_t + batt_clear + batt_t + bay_wall_gap
-                                       : 0.5 + pd - 0.2);
+hx_p = vm_w/2 + cradle_band + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2);
+hx_m = vm_w/2 + cradle_band + (opt_batt ? cradle_fence_gap + fence_t + batt_clear + batt_t + bay_wall_gap
+                                        : 0.5 + pd - 0.2);
 // screw_insert grows the posts (pd) by 1.5, which walked the bottom pair into
 // the button nut's arc — the option asserted itself dead. The cavity widens
 // by what the nut arc needs instead (the posts stay 1.0 off the walls; they
@@ -674,7 +693,6 @@ inner_x = max(hx_p + hx_m, cam_w + 2*board_clear,
 vm_cx   = -inner_x/2 + hx_m + (inner_x - hx_p - hx_m)/2;   // the module's centerline (any slack splits evenly)
 mid_px_p =  inner_x/2 - pd/2 - (opt_ant ? ant_post_gap : -0.2);   // the +X mid posts' axis
 mid_px_m = -(inner_x/2 - pd/2 + 0.2);                             // the -X mid posts' axis (0.2 into the wall)
-clip_y_hi = vm_cy + clip_dy_hi;  clip_y_lo = vm_cy + clip_dy_lo;   // the clip pairs
 fence_x   = -inner_x/2 + bay_wall_gap + batt_t + batt_clear;      // the bay fence's -X face (the cell side)
 // the cavity's depth: the stack and its headroom, the button's body with its
 // wire room, the cell standing on edge, the antenna centered between the coves
@@ -978,33 +996,28 @@ if (opt_svc)
              ", the nearest screw seat Ø", svc_scr_seat_d, " at ", min([for (q = svc_xy(), p = post_xy()) norm([q[0] - p[0], q[1] - p[1]])]), " between axes"));
 assert(!vm_screws || vm_hole_dy - vm_post_d/2 >= xiao_end_y - 1.6 + 0.3 - 1e-9,
        str("a board post (Ø", vm_post_d, " on vm_hole_dy ", vm_hole_dy, ") lands on the XIAO socket's end — measure vm_hole_dy"));
-assert(!vm_screws || abs(vm_hole_dx) + vm_post_d/2 <= vm_w/2 + clip_clear - 1e-9,
-       "a board post stands past the module's edge into the clips — check vm_hole_dx");
+assert(!vm_screws || abs(vm_hole_dx) + vm_post_d/2 <= vm_w/2 + cradle_clear - 1e-9,
+       "a board post stands past the module's edge into the cradle's wall — check vm_hole_dx");
 assert(!vm_screws || vm_hole_dy + vm_post_d/2 <= vm_l/2 - 1e-9, "a board post runs off the module's end");
 // the board screw: the longest standard length whose pilot ends 0.3 above the
 // relief band — the relieved side of the post never carries thread, so the
 // flat may sit as close to the pilot as the hole's position makes it
 vm_scr_len = vm_screws ? max(concat([0], [for (l = hw_std_lens()) if (l - pcb_t + 1.0 <= z_vm_top - pcb_t - xiao_hi_z - 0.3) l])) : 0;
 assert(!vm_screws || vm_scr_len >= 4, "no standard screw length fits the board posts above the XIAO relief — raise stack_sock_h's seat or drop vm_screws");
-// the upper clips sit below the CSI connector's ends (it spans the module's
-// full width at its top edge) and above the board posts
-csi_y0 = vm_cy + vm_l/2 - csi_len;
-assert(clip_y_hi + clip_w/2 <= csi_y0 - 0.3 && clip_y_hi - clip_w/2 >= (vm_screws ? vm_cy + vm_hole_dy + vm_post_d/2 + 0.3 : -1e9),
-       str("the upper clip pair (", clip_y_hi - vm_cy, " from the module's center) must clear the CSI connector (from ",
-           csi_y0 - vm_cy, ") and the board posts — move clip_dy_hi"));
-assert(clip_y_lo + clip_w/2 <= (vm_screws ? vm_cy + vm_hole_dy - vm_post_d/2 - 0.3 : 1e9)
-       && clip_y_lo - clip_w/2 >= vm_cy - vm_l/2 + 3.0 + 0.3,
-       "the lower clip pair must sit between the corner shoes' seats and the board posts — move clip_dy_lo");
+// THE CRADLE holds the module with its screws: there is no clip, so there
+// is nothing to hold it without them
+assert(vm_screws, "the cradle has no clips — the two board screws (vm_screws) are the module's hold-down");
+csi_y0 = vm_cy + vm_l/2 - csi_len;   // the CSI connector's near end (full width; nothing of the cradle stands over the module's top face)
 // THE BATTERY BAY: the cell stands between the -X mid posts (its end stops),
-// the fence stands clip_flex behind the -X clip beams, and the face holds it
+// the fence stands cradle_fence_gap behind the cradle's -X wall, and the face holds it
 assert(!opt_batt || len(bay_ys) == 2, "the battery bay needs its two end-stop posts");
 assert(!opt_batt || (bay_ys[1] - pd/2) - (bay_ys[0] + pd/2) >= batt_l + batt_pcm + 2*batt_clear - 1e-9,
        "the battery bay's end stops are too close for the cell");
 assert(!opt_batt || bay_ys[0] - pd/2 >= post_y_bot + pd/2 + 2.0 && bay_ys[1] + pd/2 <= post_y_top - pd/2 - 2.0,
        "the battery bay's end stops run into the corner posts — a shorter cell, or lengthen the body");
-// the -X corner shoe's buttress and the fence must not meet: the shoe hugs
-// the module's lower corner, the fence stands further out
-assert(!opt_batt || fence_x + fence_t <= vm_cx - vm_w/2 - clip_stack - clip_flex + 1e-9, "the bay fence stands inside the clips' flex room");
+// the cradle's -X wall and the fence must not meet: the fence stands the
+// drain gap outside it
+assert(!opt_batt || fence_x + fence_t <= vm_cx - vm_w/2 - cradle_band - cradle_fence_gap + 1e-9, "the bay fence stands inside the cradle's fence gap");
 // THE SPEAKER: the driver clears its zone's posts and the walls, the grille
 // stays inside the cone, the mesh patch inside the boss, the boss inside the
 // cavity, and the cradle is a boss a tube can be
@@ -1087,51 +1100,82 @@ module rim_ring2d(w) {
         offset(r = -w/2) rrect2d(inner_x + ledge_w, inner_y + ledge_w, cav_r + ledge_w/2);
     }
 }
-// The WAP cantilever clip, routed through canary_snap_lib so the strain gate
-// runs on every render (the beam here rises 12 mm off the plate — 0.6 %,
-// nothing near the budget). The lib places clips across a Y edge line; these
-// stand on ±X board edges, so the wrapper keeps this file's original
-// rotate-into-place transform — identity ops only, the released mesh stays put.
-module edgeclip(px, py, ang, soff) {
-    translate([px, py, 0]) rotate([0, 0, ang - 90])
-        snap_boardclip(0, 0, 1, floor_t, floor_t + soff + pcb_t,
-                       w = clip_w, t = clip_t, hook = clip_hook,
-                       hook_h = clip_hook_h, clear = clip_clear, root_r = clip_root_r);
+// THE MODULE CRADLE (v0.9) — one connected, vented structure, nothing on it
+// a beam made to flex. Per side (mirrored across the module's centerline):
+//   the WEB: a full-length L — below the module's seat it spans from the
+//     ledge's inner face (cradle_xiao_gap off the XIAO's edge; cradle_ledge_in
+//     under the module past the XIAO's end) to the wall's outer face; above
+//     the seat the wall alone (cradle_wall_t) stands up the module's side
+//     edge to cradle_top, past the shell's headroom over the stack;
+//   the VENT WINDOWS: cut through the web between a foot band along the
+//     plate and the lintel under the seat, with 45° gabled roofs (no bridge
+//     to print); the ribs between them, the post rib (around a board post —
+//     the posts stand IN the web) and the end rib are the structure;
+//   the STOP: a wall under the module's bottom edge, from inboard of the
+//     plug's room out to the side wall, cradle_top tall, on a 45° buttress
+//     reaching -Y — mounted, the plate is vertical and that edge is where
+//     the module's weight goes. The service bosses root into its band.
+// The module drops in vertically between the walls onto the ledges and
+// posts (the posts' XIAO relief allows no other entry), its bottom edge
+// cradle_clear off the stop, and the two board screws hold it down.
+cradle_up  = lid_headroom + 0.8;                        // the walls stand this far over the module's top face
+cradle_top = z_vm_top + cradle_up;
+assert(cradle_top + 1.0 <= base_d, "the cradle's walls reach the face — lower cradle_up");
+cradle_x_in   = xiao_w/2 + cradle_xiao_gap;             // the ledge's inner face, from the module's centerline (over the XIAO)
+cradle_x_wall = vm_w/2 + cradle_clear;                  // the wall's inner face
+cradle_x_out  = vm_w/2 + cradle_band;                   // the wall's outer face
+cradle_x_up   = vm_w/2 - cradle_ledge_in;               // the ledge's inner face past the XIAO's end
+cradle_x_stop = 7.0;                                    // the stop's inboard face: clear of the plug's head (12 wide) by 1.0
+cradle_y_lo   = vm_cy - vm_l/2;                         // the module's bottom edge
+cradle_y_hi   = vm_cy + vm_l/2;                         // ...and its top edge: the walls end there, open for the ribbon
+cradle_y_stop = cradle_y_lo - cradle_clear;             // the stop's face
+cradle_y_up   = post_flat_y;                            // the wide ledge starts where the XIAO's end has passed (the post's relief flat)
+cradle_z_seat = floor_t + vm_standoff;                  // the module's seat
+assert(cradle_x_in <= vm_w/2 - cradle_clear - 0.4, str("the ledge carries less than 0.4 of the module's edge at the worst shift (ledge in at ",
+       cradle_x_in, " of a ", vm_w/2, " half-width) — the XIAO leaves no room: shrink cradle_xiao_gap or cradle_clear"));
+assert(cradle_x_stop >= port_usbc_shell_w()/2 + 2.0, "the stop reaches in over the USB-C shell");
+assert(!opt_svc || svc_cy - svc_bore_d/2 >= cradle_y_stop + 0.3,
+       "a service bore runs into the stop's band — the stop would be its guide wall on one side");
+// the windows: the band between two ribs, as many nominal windows as fit
+// with the least rib between, the windows then sharing the band's length
+function cradle_wins(y0, y1) =
+    let (L = y1 - y0, n = max(1, floor((L + cradle_rib_w) / (cradle_win_w + cradle_rib_w))),
+         rib = (L - n*cradle_win_w) / (n + 1) >= cradle_rib_w ? (L - n*cradle_win_w)/(n + 1) : cradle_rib_w,
+         w = (L - (n + 1)*rib) / n)
+    w >= 2.0 ? [for (i = [0 : n - 1]) [y0 + rib + i*(w + rib), w]] : [];
+cradle_rib_post_lo = vm_cy + vm_hole_dy - vm_post_d/2 - 0.3;   // the post rib: solid 0.3 either side of a board post
+cradle_rib_post_hi = vm_cy + vm_hole_dy + vm_post_d/2 + 0.3;
+cradle_win_bands = [[cradle_y_stop, cradle_rib_post_lo], [cradle_rib_post_hi, cradle_y_hi - 1.2]];
+cradle_win_list  = [for (b = cradle_win_bands) each cradle_wins(b[0], b[1])];
+assert(len(cradle_win_list) >= 3, "the cradle has fewer than three vent windows a side — widen the bands");
+module cradle_window(y0, w) {   // one gabled window, cut across the whole web (local frame: the module's centerline)
+    z0 = floor_t + cradle_foot;  z1 = cradle_z_seat - cradle_lintel;   // the band it may use
+    zr = max(z1 - w/2, z0 + 1.0);                                      // the rectangle's top: the gable takes w/2
+    translate([cradle_x_in - 1, y0, 0]) rotate([90, 0, 90])
+        linear_extrude(cradle_x_out - cradle_x_in + 2)
+            polygon([[0, z0], [w, z0], [w, zr], [w/2, zr + w/2], [0, zr]]);
 }
-// the module's edge guides stand this far over its top face: past the shell's
-// headroom over the stack, so with the shell closed the module cannot lift
-// out of them even if every clip is gone
-guide_up  = lid_headroom + 0.8;
-guide_top = floor_t + vm_standoff + pcb_t + guide_up;
-assert(guide_top + 1.0 <= base_d, "the module's edge guides reach the face — lower guide_up");
-// a CORNER SHOE under each lower corner of the module, outboard of the XIAO
-// (which hangs under the lower half) and inside the clips' band (the mid posts
-// clear that band by 0.5, mid_need): a seat under the corner, a guide up its
-// side edge, a STOP under its bottom edge — mounted, the plate is vertical and
-// that edge is where the module's weight goes — and a buttress behind the stop.
-// It replaces a Ø2 x 12 pin: one 3 mm² layer line, no stop, nothing to brace it.
-module corner_shoe(s) {
-    x0 = xiao_w/2 + 0.1;  xg = vm_w/2 + clip_clear;  x1 = vm_w/2 + clip_stack;
-    ye = vm_cy - vm_l/2;  stop_t = 1.6;  ys = ye - clip_clear - stop_t;
-    translate([vm_cx, 0, 0]) mirror([s < 0 ? 1 : 0, 0, 0]) translate([0, 0, floor_t - 0.01]) {
-        translate([x0, ye, 0]) cube([xg - x0, 3.0, vm_standoff + 0.01]);                 // seat
-        translate([xg, ys, 0]) cube([x1 - xg, ye + 3.0 - ys, guide_top - floor_t + 0.01]); // side guide
-        translate([x0, ys, 0]) cube([x1 - x0, stop_t, guide_top - floor_t + 0.01]);       // bottom stop
-        hull() {                                                                            // buttress
-            translate([x0, ys, 0]) cube([x1 - x0, 0.01, guide_top - floor_t + 0.01]);
-            translate([x0, ys - 5.0, 0]) cube([x1 - x0, 0.01, 0.6]);
+module cradle(s) {
+    translate([vm_cx, 0, 0]) mirror([s < 0 ? 1 : 0, 0, 0]) difference() {
+        union() {
+            // the L web: ledge + wall below the seat, the wall alone above it
+            translate([cradle_x_in, cradle_y_stop, floor_t - 0.01])
+                cube([cradle_x_out - cradle_x_in, cradle_y_hi - cradle_y_stop, vm_standoff + 0.01]);
+            translate([cradle_x_up, cradle_y_up, floor_t - 0.01])
+                cube([cradle_x_out - cradle_x_up, cradle_y_hi - cradle_y_up, vm_standoff + 0.01]);
+            translate([cradle_x_wall, cradle_y_stop, floor_t - 0.01])
+                cube([cradle_x_out - cradle_x_wall, cradle_y_hi - cradle_y_stop, cradle_top - floor_t + 0.01]);
+            // the stop and its buttress
+            translate([cradle_x_stop, cradle_y_stop - cradle_stop_t, floor_t - 0.01])
+                cube([cradle_x_out - cradle_x_stop, cradle_stop_t, cradle_top - floor_t + 0.01]);
+            hull() {
+                translate([cradle_x_stop, cradle_y_stop - cradle_stop_t, floor_t - 0.01])
+                    cube([cradle_x_out - cradle_x_stop, 0.01, cradle_top - floor_t + 0.01]);
+                translate([cradle_x_stop, cradle_y_stop - cradle_stop_t - 5.0, floor_t - 0.01])
+                    cube([cradle_x_out - cradle_x_stop, 0.01, 0.6 + 0.01]);
+            }
         }
-    }
-}
-// a TOP GUIDE at each upper corner, on the rail's end: the rail still carries
-// the module, the guide stands up its side edge (open at the top end, so the
-// module drops in past the camera flex)
-module top_guide(s) {
-    xr = vm_w/2 - 3.0;  xg = vm_w/2 + clip_clear;  x1 = vm_w/2 + clip_stack;
-    y0 = vm_cy + vm_l/2 - 4.0;
-    translate([vm_cx, 0, 0]) mirror([s < 0 ? 1 : 0, 0, 0]) translate([0, y0, floor_t - 0.01]) {
-        translate([xr, 0, 0]) cube([x1 - xr, 3.0, vm_standoff + 0.01]);
-        translate([xg, 0, 0]) cube([x1 - xg, 3.0, guide_top - floor_t + 0.01]);
+        for (wn = cradle_win_list) cradle_window(wn[0], wn[1]);
     }
 }
 // a BOARD POST under one of the module's mounting holes: Ø vm_post_d from the
@@ -1293,33 +1337,18 @@ module body() {
     difference() {
         union() {
             translate([0, 0, floor_t]) pl_plate(plate_x, plate_y, plate_r, plate_t);
-            // module rails, TOP HALF ONLY — the stacked XIAO (17.8 wide on the 20 mm
-            // module) hangs beneath the LOWER half, so full-length side rails would
-            // collide with it. Four clips (each edge, each half: the beams stand
-            // outboard of the module's edge, so they clear the XIAO too — one can
-            // break and three still hold), corner shoes under the lower corners,
-            // top guides on the rails' ends.
-            for (s = [1, -1]) {
-                rail_l = vm_l/2 - 4;
-                difference() {
-                    translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy + 2, floor_t - 0.01])
-                        cube([3, rail_l, vm_standoff + 0.01]);
-                    // the rail steps aside for the upper clip's root
-                    translate([vm_cx + s*(vm_w/2 - 1.5), clip_y_hi, floor_t + vm_standoff/2])
-                        cube([5, clip_w + 2, vm_standoff + 1], center = true);
-                }
-                edgeclip(vm_cx + s*vm_w/2, clip_y_hi, s > 0 ? 0 : 180, vm_standoff);
-                edgeclip(vm_cx + s*vm_w/2, clip_y_lo, s > 0 ? 0 : 180, vm_standoff);
-                corner_shoe(s);
-                top_guide(s);
-            }
-            // the board posts under the module's mounting holes (unioned after
-            // the rails' clip notch, so the notch never nicks a post)
+            // the module cradle: two vented L-walls and the stop (v0.9 —
+            // it replaced the rails, four clips, two shoes and two guides)
+            for (s = [1, -1]) cradle(s);
+            // the board posts under the module's mounting holes (they stand in
+            // the cradle's post ribs; the pilots are re-cut below, after the union)
             for (p = vm_post_xy) board_post(p);
             if (opt_batt) batt_bay();
             if (opt_spk) spk_cradle();
             for (q = svc_xy()) svc_boss(q);
         }
+        // the board posts' pilots, cut again through the cradle's ribs around them
+        for (p = vm_post_xy) translate([p[0], p[1], floor_t + vm_standoff - (vm_scr_len - pcb_t + 1.0)]) cylinder(d = scr_d, h = vm_scr_len + 1);
         // the service plungers' bores and counterbores
         for (q = svc_xy()) svc_cut(q);
         // oval cable exit through the plate (aligns with the wall plate's slot)
