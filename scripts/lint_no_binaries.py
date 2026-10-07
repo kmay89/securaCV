@@ -26,8 +26,9 @@ says it is native machine code:
   Mach-O    fe ed fa ce / cf, and     macOS executable, .o, .dylib
             the byte-swapped forms
   fat       ca fe ba be + small arch  macOS universal binary (a Java class
-            count                     file shares the magic; its next word
-                                      is a version >= 45, so it is told apart)
+            count; ca fe ba bf, and   file shares the first magic; its next
+            both byte-swapped forms   word is a version >= 45, so it is
+                                      told apart)
   PE        "MZ" + "PE\\0\\0" at the    Windows .exe / .dll
             offset in the DOS header
   ar        "!<arch>\\n"                static library (.a, .lib)
@@ -83,6 +84,11 @@ def kind(head: bytes, read_at=None) -> str | None:
         if 0 < word < 45:
             return "Mach-O universal"
         return None
+    if m4 in (b"\xca\xfe\xba\xbf",                       # FAT_MAGIC_64
+              b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):  # the byte-swapped forms
+        # The other three universal headers. No class file starts with
+        # these, so there is nothing to tell them apart from.
+        return "Mach-O universal"
     if head[:8] == b"!<arch>\n":
         return "ar archive"
     if head[:2] == b"MZ" and len(head) >= 0x40:
@@ -108,6 +114,9 @@ MUST_FLAG = {
     b"\xcf\xfa\xed\xfe\x07\x00\x00\x01" + b"\x00" * 56: "Mach-O",
     b"\xfe\xed\xfa\xce" + b"\x00" * 60: "Mach-O",
     b"\xca\xfe\xba\xbe\x00\x00\x00\x02" + b"\x00" * 56: "Mach-O universal",
+    b"\xca\xfe\xba\xbf\x00\x00\x00\x02" + b"\x00" * 56: "Mach-O universal",
+    b"\xbe\xba\xfe\xca\x02\x00\x00\x00" + b"\x00" * 56: "Mach-O universal",
+    b"\xbf\xba\xfe\xca\x02\x00\x00\x00" + b"\x00" * 56: "Mach-O universal",
     b"!<arch>\n/               0" + b" " * 32: "ar archive",
     _pe(): "PE",
 }

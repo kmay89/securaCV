@@ -82,12 +82,17 @@ class TrackedTree(unittest.TestCase):
     def test_every_native_format_is_named(self):
         self.put("a/prog", ELF)
         self.put("b/uni", FAT)
+        self.put("b/uni64", b"\xca\xfe\xba\xbf" + FAT[4:])
+        self.put("b/uni_swapped", b"\xbe\xba\xfe\xca\x02\x00\x00\x00" + FAT[8:])
+        self.put("b/uni64_swapped", b"\xbf\xba\xfe\xca\x02\x00\x00\x00" + FAT[8:])
         self.put("c/libx.a", AR)
         self.put("d/tool.exe", pe(0x80))
         self.put("e/far.dll", pe(0x400))  # signature past the first read
-        self.assertEqual(sorted(self.found()), [
-            "a/prog: ELF", "b/uni: Mach-O universal", "c/libx.a: ar archive",
-            "d/tool.exe: PE", "e/far.dll: PE"])
+        self.assertEqual(sorted(self.found()), sorted([
+            "a/prog: ELF", "b/uni: Mach-O universal", "b/uni64: Mach-O universal",
+            "b/uni64_swapped: Mach-O universal", "b/uni_swapped: Mach-O universal",
+            "c/libx.a: ar archive",
+            "d/tool.exe: PE", "e/far.dll: PE"]))
 
     def test_untracked_ignored_and_linked_binaries_are_not_its_business(self):
         self.put(".gitignore", b"build/\n")
