@@ -513,16 +513,18 @@ fn free_space_bytes(_path: &std::path::Path) -> Option<u64> {
     None
 }
 
-/// Poll whether a just-flashed hub is answering yet, so the UI can close the
-/// loop across the long silent first boot instead of abandoning the user.
-/// Returns true once the host responds with any HTTP status (HA serving a
-/// login page, a redirect, anything) — reachability is the signal, not 200.
 /// The hub address the UI hands these commands: a bare `hostname[:port]`,
 /// never a URL — and one that can only be on this network. The syntax half
 /// alone let `attacker.example` through, and `hub_onboard` posts the owner's
 /// typed credentials to whatever passes here, so the locality half is the
 /// same rule every device-facing command in fleet.rs already applies.
-fn local_hub_host(host: &str) -> Result<&str, String> {
+///
+/// It answers with the address it checked (trimmed, owned), and every caller
+/// uses that answer rather than what the UI sent: the commands hand the
+/// host to a `'static` worker thread, which cannot borrow the argument, and
+/// a caller that checked the trimmed form but connected with the untrimmed
+/// one would let the check and the connection disagree.
+fn local_hub_host(host: &str) -> Result<String, String> {
     let host = host.trim();
     if host.is_empty()
         || host.contains('/')
@@ -550,7 +552,7 @@ fn local_hub_host(host: &str) -> Result<&str, String> {
                 .to_string(),
         );
     }
-    Ok(host)
+    Ok(host.to_string())
 }
 
 /// Where the hub is in its first boot: `"offline"`, `"preparing"` or
@@ -602,7 +604,7 @@ pub async fn hub_onboard(
     username: String,
     password: String,
 ) -> Result<OnboardReport, String> {
-    local_hub_host(&host)?;
+    let host = local_hub_host(&host)?;
     tauri::async_runtime::spawn_blocking(move || {
         let log = |line: String| {
             let _ = app.emit("hub:headless-log", line);
@@ -1217,7 +1219,7 @@ pub async fn hub_headless_setup(
     with_pihole: Option<bool>,
     with_display: Option<bool>,
 ) -> Result<HeadlessReport, String> {
-    local_hub_host(&host)?;
+    let host = local_hub_host(&host)?;
     {
         let mut busy = state.0.lock().map_err(|_| "headless state poisoned")?;
         if *busy {
@@ -1446,6 +1448,37 @@ impl Drop for CleanupPath {
     fn drop(&mut self) {
         if self.active {
             let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_hub_host;
+
+    #[test]
+    fn hub_host_answers_the_trimmed_address_it_checked() {
+        assert_eq!(
+            local_hub_host("  homeassistant.local:8123 \n").unwrap(),
+            "homeassistant.local:8123"
+        );
+        assert_eq!(local_hub_host("192.168.1.40").unwrap(), "192.168.1.40");
+        assert_eq!(local_hub_host("fe80::1").unwrap(), "fe80::1");
+    }
+
+    #[test]
+    fn hub_host_refuses_urls_and_internet_hosts() {
+        for h in [
+            "",
+            "   ",
+            "http://homeassistant.local",
+            "homeassistant.local/onboarding",
+            "a b.local",
+            "attacker.example",
+            "attacker.example:8123",
+            "8.8.8.8",
+        ] {
+            assert!(local_hub_host(h).is_err(), "{h:?} should be refused");
         }
     }
 }
