@@ -132,6 +132,41 @@ inline bool ble_scanners_release_due(bool ap_only, bool ap_active,
                                  ap_only_settle_ms, max_hold_ms);
 }
 
+// Whether the BLE discovery gates above should treat the unit as AP-only.
+// The sketch's Wi-Fi state machine reads WIFI_PROV_AP_ONLY for two very
+// different units: one whose owner disconnected from home Wi-Fi at runtime
+// (/api/wifi/disconnect — its credentials are kept, the AP is permanent for
+// now, nobody's WPA2 handshake is coming, so the 45 s settle is right) and
+// a FRESH unit that has nothing configured at all (its boot state is AP-only
+// because there is no STA to try). Reading the fresh unit as AP-only ended
+// the fresh path's scanner hold at that same 45 s settle — exactly while a
+// phone could be joining the SoftAP for the wizard. So: AP-only for the
+// discovery gates is the persisted standalone choice, or a runtime AP-only
+// state WITH credentials behind it; a credential-less unit is not. A fresh
+// unit then follows the long path's rule: its scanners are released when
+// the AP drops after a join (the STA held past its grace) or at the
+// max-hold, never at the settle.
+inline bool ap_only_for_discovery(bool ap_only_persisted, bool state_ap_only,
+                                  bool credentials_configured) {
+  return ap_only_persisted || (state_ap_only && credentials_configured);
+}
+
+// The Bluetooth setup door's first-boot window is re-armed by a POWER CYCLE,
+// not by a reboot: a never-provisioned unit restarts itself every 15 minutes
+// (the wizard's abandonment timer), and if each restart re-armed the window
+// the door would be open for the rest of the unit's life. So the spent time
+// is carried across software resets in RTC-noinit memory (the pattern of
+// hardware_state.h's crash breadcrumb): a magic word says the record was
+// written by this firmware, and the record is honored only when the chip
+// did NOT just power up. After a true power-on (or a brownout, which is a
+// power event, or a reset the chip cannot name) RTC memory is whatever it
+// was, so the record is cleared — a stale or random word never shortens or
+// extends the window. True = keep the record; false = zero it.
+inline bool door_window_record_valid(uint32_t magic, uint32_t expected_magic,
+                                     bool power_cycle) {
+  return magic == expected_magic && !power_cycle;
+}
+
 // Which pairing security profile the pairing channel should hold, given the
 // setup door's wish (bluetooth_channel::set_setup_door). The profiles are
 // ble_hs_cfg fields NimBLE reads at the START of a pairing, so a swap is

@@ -1437,6 +1437,43 @@
   Bench: not yet.
 - **Date learned:** 2026-10-07
 
+### "Re-armed by a power cycle" was re-armed by every boot: the first-boot window and a firmware that restarts itself
+- **What happened:** The Bluetooth setup door's first-boot window
+  (`improv::Timing::first_boot_window_ms`, 30 minutes) was documented as
+  "re-armed by a power cycle or a factory reset" — and the session took
+  its start from `session_begin(now)`, i.e. from the boot the firmware
+  happened to be on. On the Sense and Vision that is the same thing, most
+  of the time: nothing restarts them on its own. On the WAP it is not: the
+  first-boot wizard restarts the unit every 15 idle minutes
+  (`setup_wizard.h`'s `SETUP_TIMEOUT_MS`, restarted by any wizard activity), so a fresh WAP left plugged in got a new
+  half-hour door on every restart — the door was open for its whole
+  unprovisioned life, which is the opposite of the sentence in the docs.
+  Nothing failed; the host test for the window expiring was green, because
+  it ran one boot.
+- **Root cause:** "a power cycle" and "a boot" are the same event from
+  inside a function that only ever sees one of them. The window's
+  invariant is about the *unit's* time since power-on; the code measured
+  the *firmware's* time since its own start, and nothing carried the
+  difference across the restart.
+- **Fix:** `session_begin` takes the time earlier boots already spent
+  (`window_used_ms`; `session_window_used_ms` reads it back), so the door
+  opens for the remainder, and a fully spent window begins shut. The glue
+  keeps the spent time in RTC memory (`RTC_NOINIT_ATTR`, with a magic so a
+  cold boot's garbage never reads as a spent window), saves it every two
+  seconds while the door is open, and reads it back only when the reset
+  reason is a software reset — a power-on, a brownout or an unknown reason
+  clears it, which is exactly the "power cycle re-arms" rule. Credentials
+  landing (or being forgotten) clear the record too, so a factory reset or
+  Forget Wi-Fi re-arms the full window.
+- **Regression check:** `tests_host/test_improv_core.cpp`
+  (`a_software_restart_does_not_rearm_the_window`): a session begun with
+  the full window already spent begins shut; one begun part-way opens for
+  the remainder only. The WAP's host suite holds its own record round-trip.
+  Bench: a fresh WAP left plugged in shuts its door 30 minutes after
+  power-on and keeps it shut through the wizard's restarts; pulling the
+  plug reopens it.
+- **Date learned:** 2026-10-07
+
 ### One link, bounded: a door with no bounds is a door a stranger can stand in
 - **What happened:** The first version of the door had one bound — the
   tap's one-minute TTL — and none while the no-credentials door was open.

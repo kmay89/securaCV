@@ -1928,11 +1928,34 @@ static void stop_advertising() {
 // the START of a pairing, so the swap is applied between procedures only. The
 // decision is provisioning_logic::security_profile_for's (host-tested):
 // refused (false) while a Numeric Comparison is pending or the owner's
-// pairing mode is in flight, and while the connected link is
-// AUTHENTICATED or BONDED — the Just Works profile is never applied under
-// a bonded session — and the caller tries again next pass. Loop task only
-// (the profile is the channel's, like everything else here).
+// pairing mode is in flight, and while ANY connected link is AUTHENTICATED
+// or BONDED — the Just Works profile is never applied under a bonded
+// session — and the caller tries again next pass. Loop task only (the
+// profile is the channel's, like everything else here).
+//
+// "Any": the server allows several links (CONFIG_BT_NIMBLE_MAX_CONNECTIONS),
+// and the connection card (g_connection) records the most recent one. A
+// bonded dashboard phone connected first, then a second peer connecting,
+// left the card on the unauthenticated newcomer and the old check blind to
+// the bond under which Just Works was about to be applied. So the stack is
+// asked about every link it holds — getPeerDevices() and
+// getPeerInfoByHandle(), as reconcile_link() does; not getPeerInfo(index),
+// which in NimBLE-Arduino 2.x indexes its slot array by the count of live
+// slots and so misses a live peer behind a freed slot — beside the card.
 static bool g_setup_door_open = false;
+static bool any_link_authenticated_or_bonded() {
+  if (g_connection.connected &&
+      (g_connection.security == SEC_AUTHENTICATED || g_connection.security == SEC_BONDED)) {
+    return true;
+  }
+  if (g_server == nullptr) return false;
+  for (const uint16_t handle : g_server->getPeerDevices()) {
+    const NimBLEConnInfo live = g_server->getPeerInfoByHandle(handle);
+    if (live.getConnHandle() != handle) continue;   // gone between the two asks
+    if (live.isAuthenticated() || live.isBonded()) return true;
+  }
+  return false;
+}
 bool set_setup_door(bool open) {
   if (!g_initialized) return false;
   if (open == g_setup_door_open) return true;
@@ -1940,9 +1963,7 @@ bool set_setup_door(bool open) {
       g_pending_pair_active || g_pending_pair_info != nullptr ||
       g_pairing.state == PAIR_INITIATED || g_pairing.state == PAIR_PIN_DISPLAYED ||
       g_pairing.state == PAIR_CONFIRMING;
-  const bool authenticated_link_up =
-      g_connection.connected &&
-      (g_connection.security == SEC_AUTHENTICATED || g_connection.security == SEC_BONDED);
+  const bool authenticated_link_up = any_link_authenticated_or_bonded();
   switch (provisioning_logic::security_profile_for(open, pairing_pending, authenticated_link_up)) {
     case provisioning_logic::HOLD:
       return false;

@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+### Magic pairing follow-up: the first-boot window survives a software restart, a BOOT tap on an installed witness raises the portal its join needs, and the WAP's door is bounded by what its sketch actually does
+
+Follow-up to the Bluetooth setup door (below) from the adversarial review
+that was still running when it merged. Design: `docs/design/magic_pairing.md`.
+
+- **"Re-armed by a power cycle" now means a power cycle.** The door's
+  30-minute window was measured from each boot, and a never-provisioned WAP
+  restarts itself every 15 idle minutes (the first-boot wizard's abandonment
+  timer) — so its door was open for its whole unprovisioned life.
+  `improv::session_begin` takes the time earlier boots already spent
+  (`window_used_ms`; `session_window_used_ms` reads it back;
+  `a_software_restart_does_not_rearm_the_window`), the shared glue keeps it
+  in RTC-noinit memory across `ESP.restart()` and watchdog resets (cleared
+  by a power-on, a brownout or an unknown reset, and once credentials land),
+  and the WAP sketch keeps its own record the same way
+  (`provisioning_logic::door_window_record_valid`, host-tested; zeroed by
+  Forget Wi-Fi). Every command, join and claim at a WAP's door is a sign of
+  life for that wizard timer, so its restart cannot land mid-provisioning.
+  `firmware/LESSONS_LEARNED.md` has the entry.
+- **A BOOT tap on an installed Sense or Vision now provisions.** The door
+  opened, but its join path is the shared setup portal's and the portal was
+  down. The tap now raises the portal underneath the door for its minute
+  (`wifi_open_tap_portal`; `SetupPortalConfig::keep_sta_link` keeps the
+  saved link up under it instead of reading it as a join to report), and
+  the loop lowers it when the door shuts without a join
+  (`wifi_close_tap_portal`). The Sentinel carries the Sense's Wi-Fi manager.
+- **The write mailbox crosses cores with release/acquire**, in the shared
+  glue and the WAP's; so does the WAP's claim hand-over.
+- **WAP:** the claim is minted and armed *before* the Provisioned state and
+  the `WIFI_SETTINGS` result go out, so a phone that reads it the instant it
+  hears the verdict finds it; the post-join reboot into steady state is held
+  while a claim is outstanding (the claim promised 180 s, the reboot came at
+  120 s) and follows ~10 s after it settles; a fresh unit's BLE scanners stay
+  held until the SoftAP drops after a join or the five-minute max hold
+  (`provisioning_logic::ap_only_for_discovery`: the 45 s settle used to
+  release them under a wizard phone's handshake); a failed door join no
+  longer discards credentials another path persisted meanwhile
+  (`wifi_save_credentials` supersedes the pending door join);
+  `bluetooth_channel::set_setup_door` refuses Just Works while **any**
+  stack-held link is bonded, not only the connection card's
+  (`the_door_is_refused_under_any_bonded_link`); and `GET_WIFI_NETWORKS` is
+  implemented — the phone's picker streams the sketch's scan cache, the
+  same list the wizard's `GET /api/wifi/scan` serves, behind one mutex
+  (`CAP_SCAN_WIFI` advertised).
+- **Docs:** the FAQ no longer tells a WAP owner to "hold BOOT 5 s at
+  power-up" (that branch of the button handler is empty; no button gesture
+  factory-resets a WAP today) and names Forget Wi-Fi as the way to re-arm
+  the door; the design doc, the family READMEs and the glossary state the
+  restart rule, the tap-raised portal, the claim's one-read grace and the
+  WAP's actual button gestures.
+
 ### Magic pairing: the Bluetooth setup door — a new Sense, Vision or WAP takes its Wi-Fi from the iPhone app with one tap, and a WAP is paired from that same tap without its token ever riding Bluetooth
 
 - **Firmware: Improv Wi-Fi over BLE, the open standard, as a second door

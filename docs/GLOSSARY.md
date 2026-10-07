@@ -152,7 +152,8 @@ with no bond kept. **When it is open**, in the header's own words: for a
 device nobody owns yet, and for an owner's own tap — never for a device
 that has an owner and a bad day. So: with **no stored credentials**, for
 **30 minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle
-or a factory reset re-arms it); or for **60 s after a short BOOT tap** on a
+or a factory reset re-arms it — a software restart does not, the spent time
+rides across it in RTC memory); or for **60 s after a short BOOT tap** on a
 Sense or Vision (the WAP has no tap door yet). A saved network that is
 *failing* raises the SoftAP recovery portal and **never** opens this door.
 While open it is bounded (3 s between credential writes, 10 attempts per

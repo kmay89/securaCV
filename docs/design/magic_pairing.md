@@ -64,9 +64,12 @@ sentence from `improv_core.h`:
 | A short **BOOT tap** on a board whose firmware reads one (Sense, Vision), with or without credentials | **Open for 60 s** (`Door::Tap`, `Timing::tap_ttl_ms`) | The owner's own act, the same trust the BOOT-tap receipt already expresses. No effect while the no-credentials door is already open (that one has its own window). On a witness that already has a network the tap also raises the SoftAP setup portal underneath the door for that minute — the door's join path is the portal's — with no quiet retry of the saved network under it, and lowers it again when the door shuts without a join (`wifi_open_tap_portal` / `wifi_close_tap_portal`). |
 | The 11th `WIFI_SETTINGS` attempt on one open door | Shut, until a tap or a power cycle | `Timing::wifi_settings_cap` = 10. A no-credentials door shut this way marks its window spent. |
 
-The WAP has **no tap door in this version**: its 2 s BOOT hold is the
-existing reset / receipt gesture, and a short tap is not read by the sketch.
-A WAP's door is the first-boot window alone.
+The WAP has **no tap door in this version**: its BOOT button keeps the
+sketch's own gestures (a short press opens the 30 s receipt gate; a 2 s hold
+prints the identity on serial), and **no button gesture factory-resets a WAP
+today**. A WAP's door is the first-boot window alone; the owner's way to
+re-arm it is **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`),
+which clears the credentials and the carried window record together.
 
 ### 2.2 What a stranger in radio range can and cannot do
 
@@ -410,9 +413,11 @@ portal).
 | Stack | NimBLE-Arduino 2.x (core 3.x) | NimBLE-Arduino 1.4.x (core 2.x) | the pairing channel's NimBLE server | — | — |
 | Flag | `FEATURE_IMPROV` in `include/canary/config.h` (default 1; `-DFEATURE_IMPROV=0` compiles it out) | same | `FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE` in `build_config.h` (FULL; 0 in DEV and MINIMAL) | — | — |
 | First-boot window | 30 min (`IMPROV_FIRST_BOOT_WINDOW_MS`) | 30 min | 30 min | — | — |
-| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (the 2 s BOOT hold stays the reset / receipt gesture) | — | — |
+| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi re-arms the window) | — | — |
+| Window across a software restart | the glue's RTC record (`improv_ble.cpp`) | same | the sketch's RTC record (`provisioning_logic::door_window_record_valid`); door activity restarts the first-boot wizard's 15-minute idle timer | — | — |
+| Network list (`GET_WIFI_NETWORKS`) | ✅ the glue's own scan | ✅ same | ✅ the sketch's scan cache — the wizard's picker's list, under one lock | — | — |
 | Connectable with the door shut | no | no | yes (the channel's bonded services) | — | — |
-| After the join | `""` in the result (no page to open); the device appears on the LAN by mDNS and MQTT | same | the claim ticket → the receipt over Wi-Fi → **paired** | — | — |
+| After the join | `""` in the result (no page to open); the device appears on the LAN by mDNS and MQTT | same | the claim ticket → the receipt over Wi-Fi → **paired**; the post-join reboot into steady state waits while the claim is outstanding | — | — |
 | Identify | blinks the LED | blinks the LED | the sketch's identify | — | — |
 
 **Sense.** `improv_ble::begin` after the beacon, `tick` beside it every loop
@@ -433,9 +438,31 @@ door is open, its own scan response otherwise. A fresh unit with nobody on
 its SoftAP brings the pairing channel up **5 s** after boot instead of the
 five-minute hold (`provisioning_logic::ble_fresh_unit_start_due`,
 host-tested), and holds the BLE scanners (Nearby, Scout) on that path — a
-scanning radio would fight the one link the door needs; the heap guard keeps
-the last word. The profile swap and the `*_AUTHEN` refusals are §3.4; the
-claim is §3.5.
+scanning radio would fight the one link the door needs — until the SoftAP
+drops after a join or the five-minute max hold
+(`provisioning_logic::ap_only_for_discovery`: a fresh unit's AP-only *boot
+state* is not the standalone AP-only *choice*, so the 45 s settle that
+releases a disconnected unit's scanners never fires under a wizard phone's
+handshake); the heap guard keeps the last word. The first-boot window rides
+across the wizard's 15-minute idle restart in RTC-noinit memory
+(`g_improv_window_*`, honored only when `esp_reset_reason()` is not a
+power-on, brownout or unknown reset — `door_window_record_valid`,
+host-tested; zeroed by Forget Wi-Fi), and every command, join and claim at
+the door is a sign of life for that wizard timer (`setup_wizard::touch`), so
+the restart cannot land mid-provisioning. `GET_WIFI_NETWORKS` streams the
+sketch's scan cache — the same list the wizard's `GET /api/wifi/scan` serves,
+behind one mutex, so the single radio is swept once for both and a sweep
+already running is shared; a request during a join answers the empty list at
+once (a sweep under `WiFi.begin()` can fail it). A door join persists only
+once proven (§4), and a path that persisted credentials meanwhile (the
+wizard, a QR scan, the bonded rescue) owns them: the door's later verdict
+changes nothing. The post-join reboot into steady state is held while a
+claim is outstanding (the claim promised 180 s; the reboot came at 120 s)
+and gets a 10 s runway once it is spent or expires. `set_setup_door` asks
+the stack about **every** link it holds before applying Just Works, not the
+connection card alone (a bonded phone connected first and a second peer
+after it left the card on the newcomer). The profile swap and the
+`*_AUTHEN` refusals are §3.4; the claim is §3.5.
 
 **The flagship `firmware/canary` build.** Not in this change. Its
 `securacv_network` keeps the SoftAP wizard and the BOOT-tap receipt; the door
@@ -609,7 +636,16 @@ cannot speak to.
 **WAP (FULL profile)**
 
 - [ ] The pairing channel is up 5 s after a fresh boot with nobody on the
-      SoftAP; the scanners are held on that path; the heap guard's verdict.
+      SoftAP; the scanners are held on that path — still held at 60 s with
+      the SoftAP up, released once the AP drops after a join; the heap
+      guard's verdict.
+- [ ] A fresh WAP left plugged in: the door shuts 30 minutes after power-on
+      and stays shut through the wizard's 15-minute restarts (the serial
+      banner says how much of the window the reset carried); a phone at the
+      door during minute 14 does not get restarted under; pulling the plug
+      reopens the door; Forget Wi-Fi reopens it.
+- [ ] The picker: `GET_WIFI_NETWORKS` lists the networks the wizard's own
+      picker lists; asked during a join it answers the empty list at once.
 - [ ] The security profile swaps to Just Works only with the door open; it
       is refused while a Numeric Comparison is pending or a bonded link is
       up; it is restored when the door shuts.
@@ -624,7 +660,9 @@ cannot speak to.
       one; a claim after 180 s is `403`; the BOOT tap is still unspent after
       a claim served.
 - [ ] The iPhone ends up paired from one tap; the `tls_cert_fp` pin holds
-      on a TLS-enabled unit.
+      on a TLS-enabled unit; a phone that takes three minutes to spend the
+      claim still finds the WAP up (the reboot is held while the claim is
+      outstanding) and the reboot follows ~10 s after the receipt.
 - [ ] Opera's scan response is back after the door shuts.
 
 **iOS**
