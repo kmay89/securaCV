@@ -1017,8 +1017,11 @@ static void handle_suppress_vote(const uint8_t* data, size_t len) {
     if (memcmp(c.nonce, payload->original_nonce, 8) != 0) continue;
     // Spec §2.5.6: a vote counts within SUPPRESS_WINDOW_MS of the chirp's
     // arrival here, and is dropped after it. No window was read, so a vote
-    // counted at any age until the chirp left the table (sweep F233).
-    if (millis() - c.received_ms > SUPPRESS_WINDOW_MS) return;
+    // counted at any age until the chirp left the table (sweep F233). A row
+    // whose window has closed is passed over, not the end of the search: the
+    // same chirp can be held twice once the nonce filter resets (every
+    // CHIRP_TTL_MS), and the later copy's window may still be open.
+    if (millis() - c.received_ms > SUPPRESS_WINDOW_MS) continue;
     if (pubkey_set_contains(c.suppressed_by, c.suppress_count,
                             payload->voter_session_pubkey)) return;
     // The set holds the most votes any table size asks for, so this cap
@@ -1030,8 +1033,9 @@ static void handle_suppress_vote(const uint8_t* data, size_t len) {
       c.suppress_count++;
     }
     // More than half of the nearby rows, and at least three (spec §2.5.6);
-    // it was at least half, rounded down (F233).
-    if (c.suppress_count >= suppress_votes_needed(g_nearby_count)) {
+    // it was at least half, rounded down (F233). Suppressed once, and logged
+    // once: a later vote does not log the line again (F233).
+    if (!c.suppressed && c.suppress_count >= suppress_votes_needed(g_nearby_count)) {
       c.suppressed = true;
       health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: community-suppressed");
     }

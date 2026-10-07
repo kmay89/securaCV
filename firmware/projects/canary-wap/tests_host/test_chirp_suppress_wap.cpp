@@ -348,12 +348,30 @@ void suppressed_at_more_than_half(size_t rows, bool whole) {
     CHECK_AT(rows, c->suppressed);
     CHECK_AT(rows, c->suppress_count == std::min(v + 1, capacity));
   }
+  // The suppression is logged once, at the vote that did it: the votes after
+  // it log nothing (every one of them logged the line again, 16 lines for
+  // one chirp at 32 rows).
+  CHECK_AT(rows, suppressed_lines() == lines_before + 1);
+
+  // Then votes from devices that hold no row, enough to fill the set and
+  // more: still suppressed, the set never past its size, and no second line,
+  // even from a vote that takes no slot. (Whether such a vote counts at all
+  // is F234's; these checks hold either way.)
+  for (size_t k = 0; k < capacity + 3; ++k) {
+    const Neighbor stranger = neighbor_of((uint8_t)(0x80 + k));
+    host_sim::now_ms += 100;
+    deliver(stranger, vote_of(stranger, nonce));
+    CHECK_AT(rows, c->suppressed);
+    CHECK_AT(rows, c->suppress_count <= capacity);
+  }
+  CHECK_AT(rows, suppressed_lines() == lines_before + 1);
 
   // The prune drops a suppressed chirp from the table, and the route with it.
   host_sim::now_ms += 31000;
   cc::update();
   CHECK_AT(rows, recent_route_shows(nonce) == -1);
   CHECK_AT(rows, cc::g_recent_chirp_count == 0);
+  CHECK_AT(rows, suppressed_lines() == lines_before + 1);
 }
 
 // The table sizes the item names: 3 (the floor), 7 and 8 (where at least
@@ -503,6 +521,110 @@ void test_votes_across_the_window() {
   }
 }
 
+// The same chirp held twice: the nonce filter is cleared whole every
+// CHIRP_TTL_MS (300 s), and the freshness window is as long, so a witness
+// heard just before a reset and again just after it is stored a second time
+// (a NEW item asks that the second copy be refused). A vote is counted at the
+// first copy whose window is still open: here 380 s into the scene, 130 s
+// after the first copy (closed) and 70 s after the second (open). The first
+// copy's closed window ended the search, so the votes landed on neither
+// copy (review of F233). With the second copy refused, the votes would fall
+// outside the one window there is, and this case changes with that fix.
+void test_a_second_copy_takes_its_own_votes() {
+  boot_enabled();   // the filter was cleared at this boot
+  const auto advance = [](uint32_t ms) {
+    host_sim::now_ms += ms;
+    host_sim::wall_now += ms / 1000;
+  };
+  std::vector<Neighbor> nearby = fill_nearby(3);
+  advance(250000);
+  for (const Neighbor& n : nearby) deliver(n, presence_of(n));
+  const std::vector<uint8_t> w = witness_of(kOriginator, 0x48);
+  uint8_t nonce[8];
+  memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
+  deliver(kOriginator, w);
+  advance(60000);   // 310 s: past the filter's reset; the frame is 60 s old
+  deliver(kOriginator, w);
+  const auto copies = [&]() {
+    std::vector<cc::ReceivedChirp*> out;
+    for (size_t i = 0; i < cc::g_recent_chirp_count; ++i) {
+      if (memcmp(cc::g_recent_chirps[i].nonce, nonce, 8) == 0) out.push_back(&cc::g_recent_chirps[i]);
+    }
+    return out;
+  };
+  const std::vector<cc::ReceivedChirp*> held = copies();
+  CHECK(held.size() == 2);   // the scene this case is about
+  CHECK(held[1]->received_ms - held[0]->received_ms == 60000);
+
+  advance(70000);   // 380 s
+  for (const Neighbor& n : nearby) deliver(n, presence_of(n));
+  for (size_t v = 0; v < 3; ++v) deliver(nearby[v], vote_of(nearby[v], nonce));
+  CHECK(held[0]->suppress_count == 0);   // its window closed at 370 s
+  CHECK(!held[0]->suppressed);
+  CHECK(held[1]->suppress_count == 3);
+  CHECK(held[1]->suppressed);
+}
+
+// A vote counts only when it verifies: its signature over the chirp's nonce
+// and the voter's key, by that key, from the session that key derives. At
+// 3 rows (3 votes needed) four votes that fail one of those take no slot and
+// log nothing; then the rows' own votes suppress the chirp at the third. With
+// the signature check gone, anyone in range could vote from made-up keys;
+// with the session-id check gone, a frame could speak for a session it is not.
+void test_a_vote_must_verify() {
+  boot_enabled();
+  const std::vector<Neighbor> nearby = fill_nearby(3);
+  uint8_t nonce[8];
+  cc::ReceivedChirp* c = witness_arrives(0x49, nonce);
+  const size_t lines_before = suppressed_lines();
+  const size_t sig_at = sizeof(cc::ChirpHeader) + offsetof(cc::ChirpSuppressVotePayload, signature);
+  const size_t target_at =
+      sizeof(cc::ChirpHeader) + offsetof(cc::ChirpSuppressVotePayload, original_nonce);
+  const size_t key_at =
+      sizeof(cc::ChirpHeader) + offsetof(cc::ChirpSuppressVotePayload, voter_session_pubkey);
+
+  // 1. A flipped bit in the signature.
+  std::vector<uint8_t> flipped = vote_of(nearby[0], nonce, 0x60);
+  flipped[sig_at + 17] ^= 0x04;
+  // 2. A good signature under a header that names another row's session.
+  std::vector<uint8_t> foreign_sid = vote_of(nearby[0], nonce, 0x61);
+  memcpy(&foreign_sid[offsetof(cc::ChirpHeader, session_id)], nearby[1].sid, cc::SESSION_ID_SIZE);
+  // 3. A vote signed for another chirp, its target rewritten to this one.
+  uint8_t other[8];
+  memcpy(other, nonce, 8);
+  other[7] ^= 0xFF;
+  std::vector<uint8_t> retargeted = vote_of(nearby[2], other, 0x62);
+  memcpy(&retargeted[target_at], nonce, 8);
+  // 4. A vote that names a key its sender does not hold: the first row signs
+  // for the second's key, under the second's session id.
+  std::vector<uint8_t> borrowed = vote_of(nearby[0], nonce, 0x63);
+  {
+    memcpy(&borrowed[key_at], nearby[1].pub, sizeof nearby[1].pub);
+    memcpy(&borrowed[offsetof(cc::ChirpHeader, session_id)], nearby[1].sid, cc::SESSION_ID_SIZE);
+    uint8_t canonical[128];
+    const size_t cl = cc::build_suppress_canonical(nonce, nearby[1].pub, canonical, sizeof canonical);
+    CHECK(cl > 0);
+    Ed25519::sign(&borrowed[sig_at], nearby[0].priv, nearby[0].pub, canonical, cl);
+  }
+  const std::vector<uint8_t>* bad[] = {&flipped, &foreign_sid, &retargeted, &borrowed};
+  for (const std::vector<uint8_t>* f : bad) {
+    host_sim::now_ms += 1000;
+    deliver(nearby[0], *f);
+    CHECK(c->suppress_count == 0);
+    CHECK(!c->suppressed);
+  }
+  CHECK(suppressed_lines() == lines_before);
+
+  // The rows' own votes, each signed as the firmware signs one, still count.
+  for (size_t v = 0; v < 3; ++v) {
+    host_sim::now_ms += 1000;
+    deliver(nearby[v], vote_of(nearby[v], nonce));
+    CHECK(c->suppress_count == v + 1);
+  }
+  CHECK(c->suppressed);
+  CHECK(suppressed_lines() == lines_before + 1);
+}
+
 // A vote heard before the chirp it names is not kept for it: the chirp
 // arrives with no votes, and the voter must vote again.
 void test_a_vote_before_its_chirp_is_not_kept() {
@@ -531,6 +653,8 @@ const Test kTests[] = {
     {"every_table_size_can_suppress", test_every_table_size_can_suppress},
     {"a_repeated_voter_counts_once", test_a_repeated_voter_counts_once},
     {"votes_across_the_window", test_votes_across_the_window},
+    {"a_second_copy_takes_its_own_votes", test_a_second_copy_takes_its_own_votes},
+    {"a_vote_must_verify", test_a_vote_must_verify},
     {"a_vote_before_its_chirp_is_not_kept", test_a_vote_before_its_chirp_is_not_kept},
 };
 
