@@ -42,10 +42,18 @@ enum HubDiscoveryRows {
                 baseURL: url,
                 version: txt["version"] ?? "",
                 installationType: txt["installation_type"] ?? "")
-            // Interface copies of one instance collapse; the first address
-            // that passed the gate wins.
-            if let existing = byID[id], existing.baseURL != nil, row.baseURL == nil { continue }
-            byID[id] = row
+            // Interface copies of one instance collapse. The first address
+            // that passed the gate wins, and a field one copy left out is
+            // taken from a copy that carried it, so the row does not depend
+            // on which copy the browse happened to see last.
+            guard var kept = byID[id] else {
+                byID[id] = row
+                continue
+            }
+            if kept.baseURL == nil { kept.baseURL = row.baseURL }
+            if kept.version.isEmpty { kept.version = row.version }
+            if kept.installationType.isEmpty { kept.installationType = row.installationType }
+            byID[id] = kept
         }
         return byID.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
