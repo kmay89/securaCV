@@ -114,8 +114,8 @@ test("every card with real geometry upgrades, and no card's fetch comes back 4xx
 // The Watch counterpart of scene_figures.test.js's Dash pin. Along the pocket
 // axis a (from the drum's back cap): the drum is centered at drum_h / 2 (the
 // ledger's seam), the bezel at fig.d − its own print height / 2 (its face caps
-// the puck), and the glass — the disc's front ring, `flush` below the drum
-// rim — at drum_h − flush, drawn at the bezel aperture (face_fig_mm). The
+// the puck), and the glass — the disc's front, under the bezel lip by
+// `flush` (finger_root + glass_float, derived in the case) — at drum_h − flush, drawn at the bezel aperture (face_fig_mm). The
 // seat itself is the ledger's seat_scad: pos in the stand's frame (typed here
 // stand-centered, as `X − cS[1]`), and the recline rot[0] as the axis angle.
 test("the Watch card seats its drum where the CAD ledger measures it", async () => {
@@ -154,7 +154,7 @@ test("the Watch card seats its drum where the CAD ledger measures it", async () 
   close(row.seat_scad.pos[0], 0, "seat x (on the stand's centerline, which the card assumes)");
   close(drumAt, drumH / 2, "drum center");
   close(bezelAt, row.fig.d - bezel.bbox.size[2] / 2, "bezel center");
-  close(glassAt, drumH - knob("flush"), "glass plane");
+  close(glassAt, drumH - (knob("finger_root") + knob("glass_float")), "glass plane");   // flush, as the case derives it
   close(glassW, row.face_fig_mm.w, "glass width");
   close(glassH, row.face_fig_mm.h, "glass height");
 });

@@ -319,9 +319,9 @@
   {
    "id": "watch-station",
    "name": "Watch station",
-   "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.2 bore sized to the measured Ø43.0 disc, snap bezel (no fasteners), and a true cradle divot",
+   "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB and an end-stop under the XIAO's USB shell, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block",
    "status": "in-development",
-   "note": "drum + snap bezel + 25° cradle",
+   "note": "drum + snap bezel + 25° open cradle",
    "device": "canary-display-watch",
    "preview": "preview_dev_station.png",
    "parts": [
@@ -5420,7 +5420,7 @@
    ]
   },
   "canary_watch_station.scad": {
-   "title": "SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -5439,17 +5439,17 @@
       {
        "name": "disc_d",
        "default": "43.0",
-       "comment": "display PCB disc diameter — brd_l(\"round_disp\"), measured (canary_board_lib)"
+       "comment": "display disc diameter, PCB and cover glass — brd_l(\"round_disp\"), measured (canary_board_lib)"
       },
       {
        "name": "disc_t",
        "default": "5.0",
-       "comment": "disc pack: PCB back face → front trim ring (measured)"
+       "comment": "disc pack: PCB back face → glass front (measured; the vendor GLB agrees)"
       },
       {
-       "name": "disp_back",
-       "default": "5.0",
-       "comment": "back-side stack: sockets / SD / RTC below the PCB (measured)"
+       "name": "stack_t",
+       "default": "18.44",
+       "comment": "MEASURED: glass front → XIAO USB-shell face, the whole pinned stack (calipers, 2026-10)"
       },
       {
        "name": "xiao_t",
@@ -5459,12 +5459,27 @@
       {
        "name": "xiao_gap",
        "default": "1.2",
-       "comment": "clearance under the XIAO's USB shell (boot-button room)"
+       "comment": "clearance under the XIAO's USB shell (boot-button room); the end-stop boss stands in it"
+      },
+      {
+       "name": "stop_gap",
+       "default": "0.4",
+       "comment": "end-stop boss → USB-shell face: how far the XIAO may travel in a drop before the shell lands"
       },
       {
        "name": "bore_clear",
        "default": "0.7",
-       "comment": "bore radial clearance over disc_d (back parts sweep Ø43.9)"
+       "comment": "bore radial clearance over disc_d (the back parts sweep Ø43.2; v0.2's print passed the disc at this)"
+      },
+      {
+       "name": "glass_clear",
+       "default": "0.5",
+       "comment": "bezel glass pocket, radial clearance over the Ø43.0 glass (the skirt's fingers flex inward snap_proud)"
+      },
+      {
+       "name": "glass_float",
+       "default": "0.1",
+       "comment": "axial float between the bezel lip and the glass front, the disc seated on its pads"
       },
       {
        "name": "usb_ang",
@@ -5472,14 +5487,19 @@
        "comment": "XIAO USB direction, degrees (0 = +X; 270 = -Y = chin/front in the stand)"
       },
       {
-       "name": "usb_slot_w",
-       "default": "13.0",
-       "comment": "side-slot width: the Type-C spec-max overmold (12.35) + 0.3 a side — the"
+       "name": "usb_proud",
+       "default": "1.2",
+       "comment": "MEASURE: the XIAO's USB-C receptacle stands this far past the board edge"
       },
       {
-       "name": "usb_slot_h",
-       "default": "8.6",
-       "comment": "side-slot height: the overmold's 6.5, grown so its round ends clear the"
+       "name": "stop_len",
+       "default": "6.0",
+       "comment": "end-stop boss reach, inward from the receptacle face: under the shell, short of the XIAO's buttons"
+      },
+      {
+       "name": "stop_w",
+       "default": "10.0",
+       "comment": "end-stop boss width: the 8.94 shell plus a millimeter of XIAO misalignment"
       }
      ]
     },
@@ -5529,13 +5549,8 @@
       },
       {
        "name": "bez_ap_d",
-       "default": "39.4",
-       "comment": "face aperture — shows the full Ø37.7 glass, covers the PCB rim"
-      },
-      {
-       "name": "flush",
-       "default": "0.4",
-       "comment": "disc front ring sits this far below the drum rim"
+       "default": "40.0",
+       "comment": "face aperture: the lip covers 1.5 mm of the Ø43.0 glass edge, 3.8 a side clear of the Ø32.4 active area"
       },
       {
        "name": "tilt",
@@ -5546,6 +5561,16 @@
         35.0
        ],
        "comment": "stand recline from vertical"
+      },
+      {
+       "name": "seat_w",
+       "default": "4.0",
+       "comment": "pad chord width"
+      },
+      {
+       "name": "seat_bite",
+       "default": "2.3",
+       "comment": "pad reach under the PCB rim, inward from the disc edge (the back parts start 0.2 further in)"
       }
      ]
     },
@@ -5612,12 +5637,12 @@
       {
        "name": "snap_proud",
        "default": "0.25",
-       "comment": "nub stand-proud of the skirt: 0.1 of working interference over the bore"
+       "comment": "nub stand-proud of the skirt: 0.1 of working interference over the counterbore"
       },
       {
        "name": "skirt_dep",
        "default": "4.0",
-       "comment": "bezel skirt reach into the bore (capped: the skirt must float over the PCB rim)"
+       "comment": "bezel skirt reach into the counterbore (the counterbore is cut 0.3 deeper so the tip floats)"
       },
       {
        "name": "finger_t",
@@ -5627,12 +5652,7 @@
       {
        "name": "finger_root",
        "default": "0.7",
-       "comment": "full-thickness band under the face plate the fingers hang from — their lever runs root → nub"
-      },
-      {
-       "name": "pcb_t",
-       "default": "1.2",
-       "comment": "display PCB thickness — the skirt floats 0.2 over its rim"
+       "comment": "full-thickness band under the face plate the fingers hang from — their lever runs root → nub;"
       }
      ]
     },
@@ -5653,12 +5673,12 @@
       {
        "name": "kh_slot_l",
        "default": "8.0",
-       "comment": "catalog standard — mount_kh_slot_l() (a drifted 7.0 lived here: the head never finished its slide)"
+       "comment": "catalog standard — mount_kh_slot_l()"
       },
       {
        "name": "kh_head_h",
        "default": "3.5",
-       "comment": "catalog standard — mount_kh_head_h() (a drifted 3.0 lived here: the stud bottomed out 0.4 early)"
+       "comment": "catalog standard — mount_kh_head_h()"
       },
       {
        "name": "kh_face",
@@ -5674,12 +5694,12 @@
     },
     {
      "name": "Stand cradle",
-     "note": "",
+     "note": "an open saddle on a reclined seat plate",
      "params": [
       {
        "name": "pocket_dep",
-       "default": "11.0",
-       "comment": "how deep the drum sinks into the divot (buries the USB slot)"
+       "default": "13.0",
+       "comment": "how deep the drum sits in the saddle (the USB slot inside the saddle's reach)"
       },
       {
        "name": "pocket_clear",
@@ -5687,19 +5707,74 @@
        "comment": "radial clearance around the drum barrel"
       },
       {
-       "name": "rim_margin",
+       "name": "cup_t",
+       "default": "2.4",
+       "comment": "saddle wall, radial"
+      },
+      {
+       "name": "cup_open",
+       "default": "140",
+       "range": [
+        100.0,
+        10.0,
+        180.0
+       ],
+       "comment": "the saddle's open top, degrees of arc centered straight up the face"
+      },
+      {
+       "name": "seat_t",
+       "default": "2.4",
+       "comment": "seat plate behind the drum's back cap"
+      },
+      {
+       "name": "window_r",
+       "default": "12.0",
+       "comment": "push-out window through the seat plate (a teardrop, point up the face, so it prints)"
+      },
+      {
+       "name": "spine_t",
+       "default": "6.0",
+       "comment": "the back spine's thickness"
+      },
+      {
+       "name": "spine_w_top",
+       "default": "14.0",
+       "comment": "spine width where it meets the seat plate"
+      },
+      {
+       "name": "spine_w_base",
+       "default": "24.0",
+       "comment": "spine width where it meets the base"
+      },
+      {
+       "name": "spine_rake",
+       "default": "30",
+       "range": [
+        20.0,
+        5.0,
+        45.0
+       ],
+       "comment": "spine lean from vertical: its underside is this overhang, printed base-down"
+      },
+      {
+       "name": "spine_rise",
+       "default": "6.0",
+       "comment": "where the spine meets the seat plate, up the face from the drum axis"
+      },
+      {
+       "name": "base_t",
        "default": "5.0",
-       "comment": "face margin around the pocket circle"
+       "comment": "base plate; the cable channel bridges inside it"
+      },
+      {
+       "name": "foot_margin",
+       "default": "8.0",
+       "comment": "base plate in front of the saddle's lowest point"
       },
       {
        "name": "chin_w",
        "default": "14.0",
-       "comment": "USB/cable chin-slot width"
-      },
-      {
-       "name": "scallop_d",
-       "default": "18.0",
-       "comment": "thumb scallops for lifting the drum out"
+       "comment": "chin pocket width: a 90° USB-C lead's elbow, 12.35 spec-max + play"
       }
      ]
     },
@@ -5723,14 +5798,14 @@
      "note": "",
      "params": [
       {
-       "name": "bore_d",
-       "default": "disc_d + 2*bore_clear",
-       "comment": "Ø44.4 — passes the Ø43.9 envelope"
+       "name": "disp_back",
+       "default": "stack_t - disc_t - xiao_t",
+       "comment": "the socket zone: what the measured stack leaves (9.04; the GLB draws 5.0)"
       },
       {
-       "name": "drum_d",
-       "default": "bore_d + 2*wall_t",
-       "comment": "Ø49.0"
+       "name": "bore_d",
+       "default": "disc_d + 2*bore_clear",
+       "comment": "Ø44.4 — passes the Ø43.2 envelope; locates the disc radially"
       },
       {
        "name": "floor_z",
@@ -5754,12 +5829,17 @@
       {
        "name": "z_pcb",
        "default": "z_sock + disp_back",
-       "comment": "display PCB back face"
+       "comment": "display PCB back face — the seat pads' top"
+      },
+      {
+       "name": "flush",
+       "default": "finger_root + glass_float",
+       "comment": "glass front below the drum rim: under the lip, with its float"
       },
       {
        "name": "drum_h",
        "default": "z_pcb + disc_t + flush",
-       "comment": "rim — disc front ring 0.4 below it"
+       "comment": "rim"
       },
       {
        "name": "usb_cz",
@@ -5767,9 +5847,33 @@
        "comment": "USB shell center (PCB 1.2, shell/2 1.6)"
       },
       {
+       "name": "usb_slot_w",
+       "default": "port_usbc_overmold_w() + 2*0.4",
+       "comment": "the stadium: spec-max overmold + 0.4 a side"
+      },
+      {
+       "name": "usb_slot_h",
+       "default": "port_usbc_overmold_h() + 2*0.4"
+      },
+      {
        "name": "skirt_od",
-       "default": "bore_d - 2*tol_press - 0.1",
-       "comment": "bezel skirt slides into the bore"
+       "default": "disc_d + 2*(glass_clear + finger_t)",
+       "comment": "the skirt around the glass pocket"
+      },
+      {
+       "name": "cb_d",
+       "default": "skirt_od + 2*tol_press + 0.1",
+       "comment": "rim counterbore the skirt slides into"
+      },
+      {
+       "name": "cb_dep",
+       "default": "skirt_dep + 0.3",
+       "comment": "...cut 0.3 deeper than the skirt reaches"
+      },
+      {
+       "name": "drum_d",
+       "default": "cb_d + 2*wall_t",
+       "comment": "Ø50.5"
       },
       {
        "name": "puck_len",
@@ -5777,12 +5881,24 @@
        "comment": "full seated length, back cap → face"
       },
       {
+       "name": "xiao_edge_r",
+       "default": "brd_round_disp_socket_x() + brd_l(\"xiao\")/2"
+      },
+      {
+       "name": "usb_face_r",
+       "default": "xiao_edge_r + usb_proud"
+      },
+      {
+       "name": "seat_r_in",
+       "default": "disc_d/2 - seat_bite"
+      },
+      {
        "name": "snap_w",
        "default": "snap_window(nub_w, snap_play)"
       },
       {
        "name": "snap_defl",
-       "default": "skirt_od/2 + snap_proud - bore_d/2"
+       "default": "skirt_od/2 + snap_proud - cb_d/2"
       },
       {
        "name": "snap_lever",
@@ -5791,7 +5907,12 @@
       {
        "name": "pkt_d",
        "default": "drum_d + 2*pocket_clear",
-       "comment": "divot bore"
+       "comment": "saddle bore"
+      },
+      {
+       "name": "cup_od",
+       "default": "pkt_d + 2*cup_t",
+       "comment": "saddle outside"
       },
       {
        "name": "slope",
@@ -5799,47 +5920,51 @@
        "comment": "face angle from horizontal"
       },
       {
-       "name": "chin",
-       "default": "[0, -20, 4]",
-       "comment": "lowest face point"
-      },
-      {
-       "name": "s_ctr",
-       "default": "rim_margin + 1 + pkt_d/2",
-       "comment": "chin → pocket center, along the face"
-      },
-      {
-       "name": "C_rim",
-       "default": "[for (i = [0:2]) chin[i] + vec_u()[i] * s_ctr]"
+       "name": "bury",
+       "default": "1.0",
+       "comment": "the saddle's lowest point sinks this far into the base"
       },
       {
        "name": "P0",
-       "default": "[for (i = [0:2]) C_rim[i] - vec_a()[i] * pocket_dep]"
+       "default": "at([0, 0, base_t - bury], cup_od/2, seat_t)"
       },
       {
-       "name": "s_top",
-       "default": "s_ctr + pkt_d/2 + rim_margin",
-       "comment": "chin → face top edge"
+       "name": "C_rim",
+       "default": "at(P0, 0, pocket_dep)",
+       "comment": "the drum rim's center"
       },
       {
-       "name": "sw",
-       "default": "drum_d + 14",
-       "comment": "stand width"
-      },
-      {
-       "name": "sh",
-       "default": "chin[2] + vec_u()[2] * s_top + 2",
-       "comment": "height to cover the face"
+       "name": "front_low",
+       "default": "at(P0, -cup_od/2, pocket_dep)",
+       "comment": "the saddle's front-bottom outer point"
       },
       {
        "name": "sd_f",
-       "default": "-chin[1] + 2",
+       "default": "-front_low[1] + foot_margin",
        "comment": "front reach of the base"
       },
       {
+       "name": "sp_top",
+       "default": "at(P0, spine_rise, -seat_t - spine_t/2 + 0.3)"
+      },
+      {
+       "name": "sp_bot",
+       "default": "[0, sp_top[1] + (sp_top[2] - spine_t/2) * tan(spine_rake), spine_t/2]"
+      },
+      {
        "name": "sd_b",
-       "default": "30",
-       "comment": "rear reach"
+       "default": "sp_bot[1] + spine_t/2 + 2",
+       "comment": "rear reach of the base"
+      },
+      {
+       "name": "sw",
+       "default": "cup_od + 4",
+       "comment": "stand width"
+      },
+      {
+       "name": "stand_h",
+       "default": "at(P0, cup_od/2, 0)[2]",
+       "comment": "the seat plate's top"
       }
      ]
     }

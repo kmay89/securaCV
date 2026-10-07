@@ -73,7 +73,8 @@ ND = 3  # decimals written (the page is a viewer; 1 µm is below every tolerance
 # XIAO S3 Sense: the PCB solid spans x -8.67..12.28 (20.95 ≈ brd_l 21),
 # z -15.00..2.78 (17.78, brd_xiao_w_measured), y -0.25..1.00; USB-C at -X,
 # components +Y (boards.json `pads`). Round display: PCB y -1.8..-0.2, the
-# back-side stack to -6.8 (disp_back 5.0), the trim ring to +3.2.
+# back-side stack to -6.8 (a 5.0 socket zone — the bench unit's reads 9.04:
+# the case derives disp_back from its measured stack_t), the glass to +3.2.
 BOARDS = {
     "seeed_xiao_esp32s3_sense": {"center": [3.208, 6.730, -6.111], "datum": [1.805, -0.250, -6.111]},
     "seeed_round_display_xiao": {"center": [0.000, -1.800, 0.000], "datum": [0.000, -1.800, 0.000]},

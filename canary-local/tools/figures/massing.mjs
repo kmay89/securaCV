@@ -443,8 +443,8 @@ export const FIGURES = [
     id: 'device.canary-display-watch',
     title: 'Canary Watch Station',
     role: 'device', of: 'canary-display-watch',
-    // v0.2 CAD (canary_watch_station.scad), measured: drum + snap bezel as
-    // seated (assembled_dims.json — Ø49.0 x 23.19 today: drum 21.0 + bezel
+    // v0.3 CAD (canary_watch_station.scad), measured: drum + snap bezel as
+    // seated (assembled_dims.json — Ø50.5 x 27.63 today: drum 25.44 + bezel
     // face 2.2, less the 0.01 its edge chamfer overlaps), and the glass in
     // the measured face aperture (bez_ap_d, A.face). The v0.1 "screwed drum"
     // sketch said Ø52 x 21.8, dimensions the measured board could never

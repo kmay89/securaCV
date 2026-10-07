@@ -157,7 +157,7 @@ measurements welcome.
 
 | Design | Status | Preview | Source |
 |--------|--------|---------|--------|
-| **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.2 bore sized to the measured Ø43.0 disc, snap bezel (no fasteners), and a true cradle divot | drum + snap bezel + 25° cradle | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
+| **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB and an end-stop under the XIAO's USB shell, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block | drum + snap bezel + 25° open cradle | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
 | **Sense bedside stand** — weighted base + tilted stalk with the three-prong hinge head (wellbeing channel, ≤1.5 m) | ballast pockets, GoPro-compatible head | <img src="./preview_dev_stand.png" width="230"> | [`canary_sense_stand.scad`](./canary_sense_stand.scad) |
 | **Sense in-wall plate** — single-gang flush mount; the faceplate IS the radome (check local code; low-voltage box only) | one-piece plate, 6-32 slots | <img src="./preview_dev_gang.png" width="230"> | [`canary_sense_gang.scad`](./canary_sense_gang.scad) |
 | **Outlet cradle** — collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary | measure your adapter | <img src="./preview_dev_cradle.png" width="230"> | [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) |
@@ -188,33 +188,42 @@ measurements welcome.
 ## Assembly
 <a id="assembly-watch-station"></a>
 
-**Watch station — v0.2-dev, in development.** Render- and mesh-checked,
+**Watch station — v0.3-dev, in development.** One v0.2 print measured
+(the glass, the stack, the slot); v0.3 is render- and mesh-checked and
 **not print-validated**: these steps follow the CAD
-([`canary_watch_station.scad`](./canary_watch_station.scad)), not a built
-unit. Measure your display disc (`disc_d`) and the XIAO's USB position before
-you print.
+([`canary_watch_station.scad`](./canary_watch_station.scad)). Measure your
+pinned stack (`stack_t`, glass front to the XIAO's USB-shell face) before
+you print — the v0.2 drum was built on the vendor CAD's 5 mm socket and the
+real stack stood 4 mm proud.
 
-1. Set the **stand** on the desk. It prints upright with no supports: a
-   full-depth divot bored normal to the 25° reclined face, two thumb scallops
-   to lift the puck back out, and a chin slot that passes the USB-C cable into
-   the open channel under the base. (Wall-mounting instead? Skip the stand —
-   the drum's blind keyhole hangs the puck on a single screw.)
-2. Rest the **drum** in the cradle. It sinks 11 mm into the divot, so it
-   cannot rock or roll, and its USB slot lands in the chin channel.
+1. Set the **stand** on the desk. It prints base-down with no supports: an
+   open 220° saddle on a 25° reclined seat plate, a teardrop window through
+   the plate to push the puck out from behind, a sculpted spine to the base,
+   and the chin pocket that passes a **90° (up/down-angle) USB-C lead**,
+   elbow pointing back, into the open channel under the base and out the
+   rear. A straight plug cannot mate in the cradle — its body would meet the
+   desk. (Wall-mounting instead? Skip the stand — the drum's blind keyhole
+   hangs the puck on a single screw.)
+2. Rest the **drum** in the saddle, USB slot down. It sits 13 mm deep, its
+   back cap on the seat plate, and lifts straight out of the open top.
 3. Pin the **XIAO ESP32-S3** into the Round Display's back socket. It rides
    the display's own two 7-pin headers — component side away from the
    display, USB-C at the disc edge. Zero wiring: the display's charger, RTC
    and microSD come along.
 4. Lower the stack into the **bore**, display face up, USB-C aligned to the
-   side slot. The Ø43.0 disc slides down the Ø44.4 bore (measured from the
-   vendor CAD — the disc is 43 mm, not the marketing 39) and its trim ring
-   stops 0.4 mm below the rim. *(battery build, opt_batt)* Before you lower
-   it, tape the protected LiPo between the fence rails on the drum floor and
-   plug it into the display's JST 1.25 — check the polarity first; vendor
-   pigtails vary.
-5. Snap the **bezel** home. Its skirt drops into the bore over the disc edge
-   and the four nubs click into the wall slots — no fasteners. The aperture
-   shows the full glass and lands on the display's trim ring; to open it
+   side slot. The Ø43.0 disc passes the Ø45.9 rim counterbore, funnels into
+   the Ø44.4 bore and lands on the **three seat pads** — the PCB's back face
+   rests on them, so nothing floats; the XIAO's USB shell hovers 0.4 mm over
+   its end-stop boss, which is what keeps its pins in the socket in a drop.
+   The USB-C receptacle looks out through the stadium slot. *(battery
+   build, opt_batt)* Before you lower it, tape the protected LiPo between
+   the fence rails on the drum floor and plug it into the display's JST 1.25
+   — check the polarity first; vendor pigtails vary.
+5. Snap the **bezel** home. Its skirt drops into the counterbore AROUND the
+   glass (the skirt's bore is the glass pocket, 0.5 mm clear a side) and the
+   four nubs click into the wall slots — no fasteners. The Ø40.0 aperture
+   leaves 1.5 mm of lip on the glass edge, 0.1 mm over the glass front with
+   the disc on its pads: captured both ways, pixels untouched. To open it
    again, lift the bezel at the fingernail notch in the drum rim.
 
 ## Assembly
