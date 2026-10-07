@@ -75,13 +75,19 @@ J4. The fleet scan's cache is not an answer but the handler answers from it
 
 J5. An answer spelled with `snprintf()` (F212): a call whose format is a JSON
     object or array (its first byte `{` or `[`), into a buffer the same
-    function sends, and every call that continues it at `buf + pos`. A send
-    is `httpd_resp_sendstr()`, `httpd_resp_send()` or any helper of the
-    sketch shaped `(httpd_req_t* req, const char* text)` that hands `text` to
-    a send (`http_send_json()`, `send_json()`, `send_json_response()`, found
-    to a fixpoint, so an answer sent through a helper is an answer: F227).
-    No answer file calls an unsized `sprintf()` or `vsprintf()` (F227). Each
-    answer is measured, one of:
+    function sends, and every call that continues it at `buf + pos`; and
+    every call into a buffer the function sends piece by piece with
+    `httpd_resp_send_chunk()` or `httpd_resp_sendstr_chunk()` whose format
+    spells JSON (JSONISH: a key, a `"%s"`, or an opening `{` or `[`), so a
+    chunked list's `,"%s"` row is a piece of the answer (F227 review). A send
+    is `httpd_resp_sendstr()`, `httpd_resp_send()`, their chunked forms, or
+    any helper of the sketch shaped `(httpd_req_t* req, const char* text)`
+    (`const char* const` too) that hands `text` to a send (`http_send_json()`,
+    `send_json()`, `send_json_response()`, found to a fixpoint, so an answer
+    sent through a helper is an answer: F227), with or without a
+    `(const char*)` cast at the send. A format may be one of the sketch's
+    named string constants. No answer file calls an unsized `sprintf()` or
+    `vsprintf()` (F227). Each answer is measured, one of:
     - guarded: the statement after it tests the length it returned against
       the size it was given (`n >= (int)sizeof(buf)` beside `n <= 0` or
       `n < 0`, or `(size_t)n >= sizeof(buf)`) and its body returns;
@@ -113,15 +119,27 @@ J6. The two answers that carry strings the check cannot read (F212), GET
     `secure_zero()` first) and returns (F230: a refused build answers 503),
     sent, then freed (the receipt wiped first); and neither spells JSON with
     `snprintf()`.
-J7. Every other JSON text the sketch spells with `snprintf()`/`sprintf()`
-    (F227: the non-answer texts in `canary_wap.ino`, the builders outside the
-    answer files) is held or recorded: each `%s` value the check can read is
-    held as J5 holds one, and the values it cannot read are recorded in
-    `RECORDED` by file and function, spelled as the call spells them, with
-    why each is safe. A `%s` the record does not name, a record the code no
-    longer matches and a recorded function with nothing left to record all
-    fail. Their lengths are not computed: where a cut matters, the record
-    says what the builder does with one.
+J7. Every other JSON text the sketch spells with printf (F227: the
+    non-answer texts in `canary_wap.ino`, the builders outside the answer
+    files) is held or recorded. A printf is the family (`snprintf()`,
+    `sprintf()`, their `v` forms) and every function or function-like macro
+    of the sketch that hands its own format to one unchanged, found to a
+    fixpoint (`health_logging::logf()`, `set_detail()`, `boot_linef()`,
+    `CSI_LOG_WARNF()`), each judged at the format it is given. A format is a
+    literal, a ternary of them, or one of the sketch's named string
+    constants; any other format fails, unless it is a forwarding function's
+    own parameter, whose calls are judged instead (F227 review). A format is
+    JSON when it spells a key (`"name":`, `"%s":`), a string by a conversion
+    (`"%s"`, as a value or a list's `,"%s"` element) or opens with `{` or
+    `[` (F227 review: a text with a `%s` key, or a chunked row, was
+    skipped). Each `%s` value the check can read is held as J5 holds one,
+    and the values it cannot read are recorded in `RECORDED` by file and
+    function, spelled as the call spells them, with why each is safe, or
+    that it is not (a known gap with its open item), or that the text is
+    not JSON after all (a strstr() needle, a header). A `%s` the record does
+    not name, a record the code no longer matches and a recorded function
+    with nothing left to record all fail. Their lengths are not computed:
+    where a cut matters, the record says what the builder does with one.
 J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
     one raw into POST /api/device-name's answer and GET /api/fleet/scan's
     self row, and JSON.parse refuses it. `setup_wizard::set_device_name()`
@@ -361,6 +379,7 @@ class Index:
     enums: dict[str, list[tuple[tuple[str, ...], str]]] = field(default_factory=dict)
     consts: dict[str, list[tuple[tuple[str, ...], str]]] = field(default_factory=dict)
     table_fields: dict[tuple[str, str], int] = field(default_factory=dict)   # bound_table_field's
+    strings: dict[str, list[bytes | None]] = field(default_factory=dict)      # `const char NAME[] = "...";`
 
 
 def namespace_spans(code: str) -> list[tuple[int, int, str]]:
@@ -382,6 +401,11 @@ FN_DEF = re.compile(
     r"(?P<ret>(?:(?:const|unsigned|signed|struct|enum)\s+)*[A-Za-z_][\w:]*(?:\s*<[^<>;(){}]*>)?"
     r"(?:\s+(?:long|int|short|char))*)(?:\s*(?P<ptr>[*&]+)\s*|\s+)(?P<name>[A-Za-z_]\w*)\s*\(",
     re.M)
+
+
+# A named string constant, which a printf may be handed as its format (F227 review).
+STR_CONST = re.compile(r'\b(?:static\s+)?(?:constexpr|const)\s+char\s+(\w+)\s*\[\s*\w*\s*\]\s*(?:PROGMEM\s*)?=\s*'
+                       r'((?:"(?:[^"\\\n]|\\.)*"\s*)+);')
 
 
 @functools.lru_cache(maxsize=256)
@@ -436,6 +460,8 @@ def index_file(name: str, src: str) -> Index:
         idx.consts.setdefault(m.group(1), []).append((ns_at(spans, m.start()), m.group(2).strip()))
     for m in re.finditer(r"^[ \t]*#\s*define\s+(\w+)[ \t]+([^\n]+)$", code, re.M):
         idx.consts.setdefault(m.group(1), []).append(((), m.group(2).strip()))
+    for m in STR_CONST.finditer(blank_comments_only(src)):
+        idx.strings.setdefault(m.group(1), []).append(c_literal_bytes(m.group(2)))
     return idx
 
 
@@ -444,7 +470,7 @@ def build_index(files: dict[str, str]) -> Index:
     for name, src in files.items():
         part = index_file(name, src)
         for mine, theirs in ((idx.fns, part.fns), (idx.structs, part.structs), (idx.enums, part.enums),
-                             (idx.consts, part.consts)):
+                             (idx.consts, part.consts), (idx.strings, part.strings)):
             for key, vals in theirs.items():
                 mine.setdefault(key, []).extend(vals)
     return idx
@@ -1342,15 +1368,181 @@ def check_fleet_cache(files: dict[str, str], idx: Index) -> list[str]:
 
 # ── J5: snprintf() answers ───────────────────────────────────────────────
 
-BASE_SINKS = ("http_send_json", "httpd_resp_sendstr")     # (req, text); httpd_resp_send(_chunk) take a length too
+BASE_SINKS = ("http_send_json", "httpd_resp_sendstr", "httpd_resp_sendstr_chunk")   # (req, text)
+CAST = r"(?:\(\s*const\s+char\s*\*\s*\)\s*)?"     # a send of `(const char*)buf` sends buf
+TEXT_PARAM = re.compile(r"const\s+char\s*\*\s*(?:const\s+)?(\w+)")
 
 
 def send_re(sinks: frozenset[str]) -> re.Pattern:
+    """(req, text) sends, and httpd_resp_send(_chunk), which take a length too."""
     names = "|".join(sorted(re.escape(n) for n in sinks))
-    return re.compile(r"\b(?:" + names + r")\s*\(\s*\w+\s*,\s*(\w+)\s*\)"
-                      r"|\bhttpd_resp_send(?:_chunk)?\s*\(\s*\w+\s*,\s*(\w+)\s*,")
+    return re.compile(r"\b(?:" + names + r")\s*\(\s*\w+\s*,\s*" + CAST + r"(\w+)\s*\)"
+                      r"|\bhttpd_resp_send(?:_chunk)?\s*\(\s*\w+\s*,\s*" + CAST + r"(\w+)\s*,")
 
 
+# The sends that hand the client one piece of a streamed answer: whatever a piece's first byte, a
+# piece that spells JSON is a piece of the answer (F227 review).
+CHUNK_SEND = re.compile(r"\bhttpd_resp_send(?:str)?_chunk\s*\(\s*\w+\s*,\s*" + CAST + r"(\w+)\s*[,)]")
+# A JSON text, or a piece of one: a key (`"name":`, `"%s":`), a string spelled by a conversion
+# (`"%s"`, the value or array element `,"%s"` a chunked list sends), or an object or an array opened
+# at the start. A format with none of these (a log line, an HTML page, an SVG) is not judged as JSON.
+STR_CONV = rb"%[-+ #0]*\d*s"
+JSONISH = re.compile(rb'"[^"\n]*"\s*:|"' + STR_CONV + rb'"|^\s*[\[{]')
+NO_TEXT = {"nullptr", "NULL"}
+
+
+def formats_of(idx: Index, arg: str) -> list[bytes] | None:
+    """Every format a printf's format argument can be: a literal, a ternary of them, one of the
+    sketch's named string constants (`const char NAME[] = "...";`), or none (nullptr). None when the
+    check cannot read it (F227 review: a named format was skipped as if it were no JSON)."""
+    e = strip_parens(arg)
+    data = c_literal_bytes(e)
+    if data is not None:
+        return [data]
+    if e in NO_TEXT:
+        return []
+    tern = top_ternary(e)
+    if tern is not None:
+        a, b = formats_of(idx, tern[0]), formats_of(idx, tern[1])
+        return None if a is None or b is None else a + b
+    if re.fullmatch(r"[A-Za-z_]\w*", e):
+        vals = idx.strings.get(e) or []
+        if len(set(vals)) == 1 and vals[0] is not None:
+            return [vals[0]]
+    return None
+
+
+def one_format(idx: Index, arg: str) -> bytes | None:
+    fmts = formats_of(idx, arg)
+    return fmts[0] if fmts is not None and len(fmts) == 1 else None
+
+
+# The printf family, by the index of its format argument.
+PRINTF_FORMAT_AT = {"snprintf": 2, "vsnprintf": 2, "sprintf": 1, "vsprintf": 1}
+DEFINE_FN = re.compile(r"^[ \t]*#\s*define\s+(\w+)\(([^)]*)\)((?:[^\n]*\\\n)*[^\n]*)$", re.M)
+FORMAT_DECL = re.compile(r"(?:const\s+)?char\s*\*\s*(?:const\s+)?\w*")    # a declaration's `const char* fmt`
+
+
+@dataclass
+class Callees:
+    at: dict[str, int]                       # every printf-like name -> its format argument's index
+    wrappers: set[tuple[str, str]]           # (function, file): hands its own format parameter on
+    macros: set[str]                         # function-like macros that hand theirs on
+
+
+def callee_re(at: dict[str, int]) -> re.Pattern:
+    names = "|".join(sorted(map(re.escape, at)))
+    return re.compile(r"(?<![\w.>:])((?:[A-Za-z_]\w*\s*::\s*)*)(" + names + r")\s*\(")
+
+
+def own_format_param(fn: Fn, arg: str) -> bool:
+    return any((t := TEXT_PARAM.fullmatch(p.strip())) is not None and t.group(1) == arg.strip()
+               for p in split_top(fn.params))
+
+
+def printf_callees(idx: Index) -> Callees:
+    """The printf family, and every function and function-like macro of the sketch that hands its own
+    format, unchanged, to one of them as the format, to a fixpoint: a function taking `...` or a
+    va_list whose `const char*` parameter is that format (health_logging::logf(), set_detail(),
+    boot_linef()), and a macro whose parameter or __VA_ARGS__ is (CSI_LOG_WARNF()). Their calls are
+    printf calls, judged at the format they are given (F227 review)."""
+    cs = Callees(dict(PRINTF_FORMAT_AT), set(), set())
+    changed = True
+    while changed:
+        changed = False
+        at_items = tuple(sorted(cs.at.items()))
+        for name, src in idx.files.items():
+            fns, macros = forwarders_in(name, src, at_items)
+            for fname, i in fns:
+                if (fname, name) not in cs.wrappers:
+                    cs.wrappers.add((fname, name))
+                    cs.at.setdefault(fname, i)
+                    changed = True
+            for mname, i in macros:
+                if mname not in cs.macros:
+                    cs.macros.add(mname)
+                    cs.at.setdefault(mname, i)
+                    changed = True
+    return cs
+
+
+@functools.lru_cache(maxsize=1024)
+def forwarders_in(name: str, src: str, at_items: tuple[tuple[str, int], ...]) -> tuple[tuple, tuple]:
+    """One file's functions and macros that hand their own format to a callee in `at_items` (cached:
+    a mutation re-reads only the file it changed)."""
+    at = dict(at_items)
+    rx = callee_re(at)
+    code = blank_comments_and_strings(src)
+    kept = blank_comments_only(src)
+    fns: list[tuple[str, int]] = []
+    for fname, defs in index_file(name, src).fns.items():
+        for f in defs:
+            if not f.body:
+                continue
+            params = [p.strip() for p in split_top(f.params)]
+            if not params or not (params[-1] == "..." or re.fullmatch(r"va_list\s+\w+", params[-1])):
+                continue
+            for m in rx.finditer(code, f.body[0], f.body[1]):
+                open_at = m.end() - 1
+                args = split_top(kept[open_at + 1:matching_paren(code, open_at)])
+                fi = at[m.group(2)]
+                hit = [i for i, p in enumerate(params) if fi < len(args)
+                       and (t := TEXT_PARAM.fullmatch(p)) is not None and t.group(1) == args[fi].strip()]
+                if hit:
+                    fns.append((fname, hit[0]))
+                    break
+    macros: list[tuple[str, int]] = []
+    for d in DEFINE_FN.finditer(code):
+        mparams = [p.strip() for p in d.group(2).split(",")]
+        body = d.group(3)
+        for m in rx.finditer(body):
+            open_at = m.end() - 1
+            args = split_top(body[open_at + 1:matching_paren(body, open_at)])
+            fi = at[m.group(2)]
+            a = args[fi].strip() if fi < len(args) else ""
+            if a == "__VA_ARGS__" and mparams[-1] == "...":
+                macros.append((d.group(1), len(mparams) - 1))
+            elif a in mparams:
+                macros.append((d.group(1), mparams.index(a)))
+            else:
+                continue
+            break
+    return tuple(fns), tuple(macros)
+
+
+def printf_calls(files: dict[str, str], cs: Callees):
+    """Each call of a printf-like name: (file, offset, name, args, format index). The family is
+    matched unqualified, as before; a forwarding function may be qualified (health_logging::logf).
+    A declaration, and a call inside a macro that hands on the macro's own format, are not calls."""
+    at_items = tuple(sorted(cs.at.items()))
+    for name, src in files.items():
+        for at, callee, args, fi in calls_in(name, src, at_items):
+            yield name, at, callee, list(args), fi
+
+
+@functools.lru_cache(maxsize=1024)
+def calls_in(name: str, src: str, at_items: tuple[tuple[str, int], ...]) -> tuple:
+    at = dict(at_items)
+    rx = callee_re(at)
+    code = blank_comments_and_strings(src)
+    kept = blank_comments_only(src)
+    defines = [(d.start(), d.end(), [p.strip() for p in d.group(2).split(",")])
+               for d in DEFINE_FN.finditer(code)]
+    out = []
+    for m in rx.finditer(code):
+        callee = m.group(2)
+        if callee in PRINTF_FORMAT_AT and m.group(1):
+            continue
+        open_at = m.end() - 1
+        args = split_top(kept[open_at + 1:matching_paren(code, open_at)])
+        fi = at[callee]
+        if fi >= len(args) or FORMAT_DECL.fullmatch(args[fi].strip()):
+            continue                        # another function of the name (logf(x)), or a declaration
+        inside = next((d for d in defines if d[0] <= m.start() < d[1]), None)
+        if inside is not None and args[fi].strip() in set(inside[2]) | {"__VA_ARGS__"}:
+            continue                        # the macro's own calls are judged
+        out.append((m.start(), callee, tuple(args), fi))
+    return tuple(out)
 def sinks_of(idx: Index) -> frozenset[str]:
     """Every function that sends its text: the httpd sends, and each helper of the sketch shaped
     `(httpd_req_t* req, const char* text)` that hands `text` to one of them (send_json() and friends),
@@ -1367,7 +1559,7 @@ def sinks_of(idx: Index) -> frozenset[str]:
                 params = split_top(f.params) if f.body else []
                 if len(params) != 2 or not re.fullmatch(r"(?:const\s+)?httpd_req_t\s*\*\s*\w+", params[0].strip()):
                     continue
-                text = re.fullmatch(r"const\s+char\s*\*\s*(\w+)", params[1].strip())
+                text = TEXT_PARAM.fullmatch(params[1].strip())
                 if text is None:
                     continue
                 body = blank_comments_and_strings(idx.files[f.file])[f.body[0]:f.body[1]]
@@ -1630,18 +1822,24 @@ def printf_args(ctx: Ctx, call_at: int) -> list[str]:
     return split_top(ctx.kept[open_at + 1:matching_paren(ctx.code, open_at)])
 
 
-def json_answer_starts(ctx: Ctx, calls: list[int], sent: set[str]) -> set[str]:
-    """The sent buffers a snprintf() starts with a JSON object."""
-    out = set()
+def json_answer_starts(ctx: Ctx, calls: list[int], sent: set[str], chunked: set[str]) -> dict[str, bool]:
+    """The sent buffers a snprintf() starts with a JSON object or array (False), and the buffers sent
+    piece by piece with a chunk send that a snprintf() spells JSON into (True: each JSON piece is
+    judged, whatever its first byte: a chunked list's `,"%s"` row is a piece of the answer)."""
+    out: dict[str, bool] = {}
     for at in calls:
         args = printf_args(ctx, at)
-        fmt = c_literal_bytes(args[2]) if len(args) >= 3 else None
-        if len(args) >= 3 and args[0] in sent and (fmt is None or fmt.lstrip()[:1] in (b"{", b"[")):
-            out.add(args[0])
+        if len(args) < 3:
+            continue
+        fmt = one_format(ctx.idx, args[2])
+        if args[0] in sent and (fmt is None or fmt.lstrip()[:1] in (b"{", b"[")):
+            out.setdefault(args[0], False)
+        if args[0] in chunked and (fmt is None or JSONISH.search(fmt)):
+            out[args[0]] = True
     return out
 
 
-def judge_printf(ctx: Ctx, call_at: int, answers: set[str]) -> Printf | None:
+def judge_printf(ctx: Ctx, call_at: int, answers: dict[str, bool]) -> Printf | None:
     kept, code = ctx.kept, ctx.code
     args = printf_args(ctx, call_at)
     if len(args) < 3:
@@ -1650,9 +1848,12 @@ def judge_printf(ctx: Ctx, call_at: int, answers: set[str]) -> Printf | None:
     if tgt is None or tgt.group(1) not in answers:
         return None
     target, offset = tgt.group(1), tgt.group(2)
-    fmt = c_literal_bytes(args[2])
-    if fmt is not None and offset is None and fmt.lstrip()[:1] not in (b"{", b"["):
-        return None                     # a text into the same buffer that is not the JSON answer
+    fmt = one_format(ctx.idx, args[2])
+    if fmt is not None and offset is None:
+        if answers[target] and not JSONISH.search(fmt):
+            return None                 # a chunked piece that spells no JSON (an SVG, a part header)
+        if not answers[target] and fmt.lstrip()[:1] not in (b"{", b"["):
+            return None                 # a text into the same buffer that is not the JSON answer
     line = kept.count("\n", 0, call_at) + 1
     pf = Printf(ctx.file, ctx.fn.name, line, args[0], "")
     if fmt is None:
@@ -1709,12 +1910,13 @@ def check_printf_answers(files: dict[str, str], idx: Index) -> tuple[list[str], 
                     continue
                 body = code[fn.body[0]:fn.body[1]]
                 sent = {m.group(1) or m.group(2) for m in SEND.finditer(body)}
+                chunked = {m.group(1) for m in CHUNK_SEND.finditer(body)}
                 if not sent or "snprintf" not in body:
                     continue
                 ctx = Ctx(idx, name, fn, kept, code)
                 calls = [fn.body[0] + m.start() for m in re.finditer(r"(?<![\w:.>])snprintf\s*\(", body)
                          if fn_containing(idx, name, fn.body[0] + m.start()) is fn]
-                answers = json_answer_starts(ctx, calls, sent)
+                answers = json_answer_starts(ctx, calls, sent, chunked)
                 for at in calls:
                     pf = judge_printf(ctx, at, answers)
                     if pf is None:
@@ -1823,16 +2025,18 @@ def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
 
 # ── J7: the JSON texts outside J5's answers ─────────────────────────────
 
-# Every JSON text the sketch spells with snprintf()/sprintf() that J5 does
-# not judge as an answer piece (F227): non-answer texts (a QR payload, BLE
-# characteristic values, card lines, MQTT bodies) and answers built outside
-# the answer files. Each %s value the check can read is held as J5 holds one
-# (inside a JSON string no byte JSON escapes; outside one a token). The
-# values it cannot read are recorded here by file and function, spelled as
-# the call spells them, with why each one is safe; a %s the record does not
-# name, a record the code no longer matches, and a function with none to
-# record fail. The lengths are not computed here: where a cut matters the
-# reason says what the builder does with one.
+# Every JSON text the sketch spells with printf (the family, and each function
+# or macro that forwards its format to it) that J5 does not judge as an
+# answer piece (F227): non-answer texts (a QR payload, BLE characteristic
+# values, card lines, MQTT bodies) and answers built outside the answer
+# files. Each %s value the check can read is held as J5 holds one (inside a
+# JSON string no byte JSON escapes; outside one a token). The values it
+# cannot read are recorded here by file and function, spelled as the call
+# spells them, with why each one is safe, or, where it is not, the gap and
+# its open item, or why the text is not JSON (a needle, a header); a %s the
+# record does not name, a record the code no longer matches, and a function
+# with none to record fail. The lengths are not computed here: where a cut
+# matters the reason says what the builder does with one.
 RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     ("api_auth.h", "api_auth_check"): (
         ("retry_str",),
@@ -1859,6 +2063,11 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         "the pairing QR payload: the device id (prefix and the unambiguous base-32 suffix), the API token "
         "(\"cv_\" and base62), the certificate pin (hex), base_host the sanitized mDNS label ([a-z0-9-]) "
         "with \".local\" or the AP's dotted address; a cut payload is refused by the length test after it"),
+    ("canary_wap.ino", "handle_vault_download"): (
+        ("name",),
+        "not JSON: the Content-Disposition header's filename, which the route takes only after "
+        "vault_snapshot::validate_name() reads it as a vault file name (vault_logic::filename_parse(): "
+        "seal_, eight digits, _, a trigger tag from its table, .svlt)"),
     ("canary_wap.ino", "loop"): (
         ('event_fresh ? g_audio_mqtt_event : "none"',),
         "the MQTT sensing body: g_audio_mqtt_event holds audio_event_name()'s literal names or \"none\""),
@@ -1867,17 +2076,20 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
          'rec->values.confidence[0] ? rec->values.confidence : ""',
          'rec->values.dominant_signal[0] ? rec->values.dominant_signal : ""',
          'rec->values.state_name[0] ? rec->values.state_name : ""'),
-        "an events-log line on the card, not an answer: the names are the CSI modules' own labels; a "
-        "record read back from the card comes through field_str(), which stops at a quote but keeps a "
-        "backslash or a control byte, so a hand-edited card can carry one into a rewritten line; marshal() "
-        "returns 0 on a cut line"),
+        "an events-log line on the card, not an answer: a live record's names are the CSI modules' own "
+        "labels. NOT safe for a record read back from the card: csi_event_log_line::json_str() stops at a "
+        "quote but keeps a backslash or a control byte, so a hand-edited line carries one into the line "
+        "rewritten from it (an open item, F227 review); marshal() returns 0 on a cut line"),
     ("csi_event_wire.h", "build_event_body"): (
         ('module_id ? module_id : ""', "sig_b64", "sig_kv", 'signer.alg ? signer.alg : ""',
          "signer.fingerprint_hex", "state_s", 'type_name ? type_name : ""',
          'values->confidence[0] ? values->confidence : "tentative"'),
-        "the MQTT events body (host-tested in firmware/tests_host): module and state names are the "
-        "modules' labels, the signature base64url, the fingerprint hex, the algorithm a constant; sig_kv "
-        "is the piece this function spells itself; a cut body returns 0"),
+        "the MQTT events body (host-tested in firmware/tests_host): a live record's module and state names "
+        "are the modules' labels, the signature base64url, the fingerprint hex, the algorithm a constant; "
+        "sig_kv is the piece this function spells itself; a cut body returns 0. NOT safe for a record the "
+        "backfill reads back from the card (csi_event_backfill.h, through csi_mqtt::publish_event_row()): "
+        "csi_event_log_line::json_str() keeps a backslash or a control byte, so a hand-edited card line "
+        "reaches Home Assistant as a body that is not JSON (an open item, F227 review)"),
     ("csi_event_wire.h", "build_tamper_bridge_body"): (
         ("values->state_name",),
         "the tamper bridge body: only for system.integrity's tamper events, whose state names are "
@@ -1897,6 +2109,11 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         ("s->module_id", "s->type_name", "s->values.confidence", "s->values.state_name", "supply"),
         "the stream answer: the modules' labels, and supply, the JSON piece this function spells itself "
         "from numbers and true/false"),
+    ("csi_integration.cpp", "handle_tune_get_preset"): (
+        ("c.full_key",),
+        "GET /api/tune/preset, chunked: each row's key is the coefficient table's literal full key "
+        "(TUNE_COEFFS, as handle_tune_get_coefficients' record says), the value a number; the longest "
+        "row (a 36-byte key, an 11-digit long) is far under buf[160]"),
     ("csi_integration.cpp", "handle_tune_get_coefficients"): (
         ("c.full_key", "c.group", "c.label"),
         "the Tuning Lab list: the coefficient table's literal keys, groups and labels"),
@@ -1944,6 +2161,10 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         ("prefix", "s_device_id", "s_firmware_version", "slug"),
         "an MQTT discovery body: the topic prefix (its safe character set), the device id and its slug, "
         "the firmware version"),
+    ("csi_tune_lab.cpp", "tune_post"): (
+        ("c.full_key",),
+        "not a text: the strstr() needle a Tuning Lab POST body is searched for, the coefficient table's "
+        "literal full key between quotes; a needle that does not fit is skipped"),
     ("device_signature.cpp", "handle_enroll_json"): (
         ("nonce", "sig_hex"),
         "the enrollment answer: the nonce is accepted only as hex, the signature written as hex"),
@@ -1977,30 +2198,37 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         ("ch", "ph", "prev", "sig"),
         "a witness line on the card (host-tested): hashes and signature in hex"),
 }
-JSONISH = re.compile(rb'"\w*"\s*:|^\s*[\[{]')
 
 
 def check_recorded_json_texts(files: dict[str, str], idx: Index, judged: set[tuple[str, int]]) -> list[str]:
-    """J7: every printf-spelled JSON text outside J5's answers is held or recorded."""
+    """J7: every printf-spelled JSON text outside J5's answers is held or recorded: every call of the
+    family and of each function or macro that forwards its format to it, at every format the call can
+    be given; a format the check cannot read fails."""
     global J7_STATS
     errors: list[str] = []
     seen: dict[tuple[str, str], set[str]] = {}
     sites = 0
-    for name, src in files.items():
-        code = blank_comments_and_strings(src)
-        kept = blank_comments_only(src)
-        for m in re.finditer(r"(?<![\w:.>])(v?s(n?)printf)\s*\(", code):
-            open_at = code.find("(", m.start())
-            args = split_top(kept[open_at + 1:matching_paren(code, open_at)])
-            fi = 2 if m.group(2) else 1
-            fmt = c_literal_bytes(args[fi]) if len(args) > fi else None
-            if fmt is None or not JSONISH.search(fmt):
+    cs = printf_callees(idx)
+    for name, at, callee, args, fi in printf_calls(files, cs):
+        code = blank_comments_and_strings(files[name])
+        kept = blank_comments_only(files[name])
+        line = code.count("\n", 0, at) + 1
+        where = f"{name}:{line}"
+        fmts = formats_of(idx, args[fi])
+        if not fmts or not any(JSONISH.search(f) for f in fmts):
+            if fmts is not None:
+                continue                    # no JSON: a log line, a page, a path
+        fn = fn_containing(idx, name, at)
+        if fmts is None:
+            if fn is not None and (fn.name, name) in cs.wrappers and own_format_param(fn, args[fi]):
+                continue                    # a forwarding function's own format: its calls are judged
+            errors.append(f"{where}: {callee}() is handed a format the check cannot read "
+                          f"({' '.join(args[fi].split())}): spell it as a literal or a named string constant, "
+                          "so the check can tell whether it spells JSON (J7)")
+            continue
+        for fmt in fmts:
+            if not JSONISH.search(fmt) or (name, line) in judged:
                 continue
-            line = code.count("\n", 0, m.start()) + 1
-            if (name, line) in judged:
-                continue
-            fn = fn_containing(idx, name, m.start())
-            where = f"{name}:{line}"
             if fn is None:
                 errors.append(f"{where}: a JSON text spelled outside a function (J7)")
                 continue
@@ -2021,7 +2249,7 @@ def check_recorded_json_texts(files: dict[str, str], idx: Index, judged: set[tup
                 if conv != "s":
                     continue
                 try:
-                    strings = literal_values(ctx, val, m.start())
+                    strings = literal_values(ctx, val, at)
                 except Unbounded:
                     unread.add(" ".join(val.split()))
                     continue
@@ -2508,6 +2736,56 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      add_file(f"{SKETCH}/zz_card_line.h",
               "inline int zz_line(char* out, size_t cap, const char label[24]) {\n"
               "  return snprintf(out, cap, \"{\\\"label\\\":\\\"%s\\\"}\\n\", label);\n}\n")),
+    # J5 and J7 (F227 review): what spells JSON without a literal key or an opening brace.
+    ("a new route sends a JSON list of raw names, one chunked row per name",
+     add_file(f"{SKETCH}/zz_chunk_api.h",
+              "namespace zz_api {\nextern char g_names[4][33];\n"
+              "inline esp_err_t handle_zz(httpd_req_t* req) {\n  httpd_resp_send_chunk(req, \"[\", 1);\n"
+              "  for (int i = 0; i < 4; ++i) {\n    char row[48];\n"
+              "    int n = snprintf(row, sizeof(row), \"%s\\\"%s\\\"\", i ? \",\" : \"\", g_names[i]);\n"
+              "    if (n > 0 && (size_t)n < sizeof(row)) httpd_resp_send_chunk(req, row, n);\n  }\n"
+              "  httpd_resp_send_chunk(req, \"]\", 1);\n  return httpd_resp_send_chunk(req, nullptr, 0);\n}\n}\n")),
+    ("a JSON piece takes a typed label for its key",
+     add_file(f"{SKETCH}/zz_keys.cpp",
+              "extern char g_label[33];\nint zz_piece(char* out, size_t cap, bool first, long v) {\n"
+              "  return snprintf(out, cap, \"%s\\\"%s\\\":%ld\", first ? \"\" : \",\", g_label, v);\n}\n")),
+    ("the tuning preset's rows take a typed label for their key",
+     raw_in(f"{SKETCH}/csi_integration.cpp", 'first ? "" : ",", c.full_key, (long)v);',
+            'first ? "" : ",", g_typed_label, (long)v);')),
+    ("a JSON list continues with a typed string",
+     add_file(f"{SKETCH}/zz_arr.cpp",
+              "extern char g_label[33];\nint zz_el(char* out, size_t cap) {\n"
+              "  return snprintf(out, cap, \",\\\"%s\\\"\", g_label);\n}\n")),
+    ("a JSON text's format is a named constant",
+     add_file(f"{SKETCH}/zz_named.cpp",
+              "static const char kZzFmt[] = \"{\\\"name\\\":\\\"%s\\\"}\";\nextern char g_label[33];\n"
+              "int zz_named(char* out, size_t cap) {\n  return snprintf(out, cap, kZzFmt, g_label);\n}\n")),
+    ("a printf is handed a format the check cannot read",
+     add_file(f"{SKETCH}/zz_unread.cpp",
+              "const char* zz_pick_format(int k);\n"
+              "int zz_unread(char* out, size_t cap, int k, int v) {\n"
+              "  return snprintf(out, cap, zz_pick_format(k), v);\n}\n")),
+    ("a JSON text goes through the health log's printf wrapper",
+     add_file(f"{SKETCH}/zz_log.cpp",
+              "extern char g_label[33];\nvoid zz_log() {\n"
+              "  health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF, "
+              "\"{\\\"name\\\":\\\"%s\\\"}\", g_label);\n}\n")),
+    ("a JSON text goes through a macro that forwards its format",
+     add_file(f"{SKETCH}/zz_macro.cpp",
+              "extern char g_label[33];\nvoid zz_warn() {\n"
+              "  CSI_LOG_WARNF(\"{\\\"name\\\":\\\"%s\\\"}\", g_label);\n}\n")),
+    ("a route answers through a send_json() whose text is a `const char* const`, and its answer is cut",
+     add_file(f"{SKETCH}/zz_cc_api.h",
+              "namespace zz_api {\nstatic inline esp_err_t send_json2(httpd_req_t* req, const char* const json) {\n"
+              "  return httpd_resp_sendstr(req, json);\n}\n"
+              "inline esp_err_t handle_zz(httpd_req_t* req) {\n  char buf[8];\n"
+              "  snprintf(buf, sizeof(buf), \"{\\\"state\\\":\\\"%s\\\"}\", \"connected\");\n"
+              "  return send_json2(req, buf);\n}\n}\n")),
+    ("a route sends its answer through a cast, and the answer is cut",
+     add_file(f"{SKETCH}/zz_cast_api.h",
+              "namespace zz_api {\ninline esp_err_t handle_zz(httpd_req_t* req) {\n  char buf[8];\n"
+              "  snprintf(buf, sizeof(buf), \"{\\\"state\\\":\\\"%s\\\"}\", \"connected\");\n"
+              "  return httpd_resp_sendstr(req, (const char*)buf);\n}\n}\n")),
     # J8: the device name holds no control byte (F226).
     ("the name's setter goes back to bounding only its length",
      raw_in(WIZARD, "  if (!device_name_rule::storable(name)) return false;\n",
