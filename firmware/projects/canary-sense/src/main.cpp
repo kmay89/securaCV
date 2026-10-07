@@ -1012,6 +1012,14 @@ void loop() {
   }
 #endif
   canary::net::improv_ble::tick(now, canary::net::setup_portal_active() && !canary::net::wifi_configured());
+  // A tap on an installed witness: the door is open but its join path is
+  // the portal's, so raise the setup network underneath it for the tap's
+  // minute and lower it when the door shuts without a join.
+  if (canary::net::improv_ble::setup_open()) {
+    if (!canary::net::setup_portal_active() && canary::net::wifi_configured()) canary::net::wifi_open_tap_portal();
+  } else {
+    canary::net::wifi_close_tap_portal();
+  }
 #endif
 
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER

@@ -324,6 +324,37 @@ static void the_first_boot_window_expires_and_a_power_cycle_rearms_it() {
   CHECK(fresh.door == Door::NoCredentials && fresh.window_at_ms == 1, "begin re-arms; millis()==0 stored as 1");
 }
 
+static void a_software_restart_does_not_rearm_the_window() {
+  // The glue carries the spent time across a restart that was not a power
+  // cycle (RTC memory): the window continues where it left off.
+  Session s;
+  Timing t;
+  session_begin(s, true, 1000, t);
+  const uint32_t ten_min = 10u * 60u * 1000u;
+  CHECK(session_window_used_ms(s, 1000 + ten_min, t) == ten_min, "ten minutes used");
+  // Reboot at ten minutes; the clock starts over at a small number.
+  Session r;
+  session_begin(r, true, 500, t, ten_min);
+  CHECK(r.door == Door::NoCredentials && r.state == State::Authorized, "still open after the restart");
+  CHECK(!session_tick(r, 500 + t.first_boot_window_ms - ten_min - 1, t), "the remaining twenty minutes: open");
+  CHECK(session_tick(r, 500 + t.first_boot_window_ms - ten_min, t), "and shut when the whole window is spent");
+  CHECK(r.window_spent, "spent");
+  CHECK(session_window_used_ms(r, 0, t) == t.first_boot_window_ms, "a spent window reads as the whole window");
+  // A restart after the window was spent begins shut.
+  Session after;
+  session_begin(after, true, 42, t, t.first_boot_window_ms);
+  CHECK(after.door == Door::Shut && after.window_spent, "begins shut and spent");
+  CHECK(advert_for(after) == Advert::Beacon, "nothing on air");
+  session_set_no_credentials(after, true, 43, t);
+  CHECK(after.door == Door::Shut, "'no credentials' repeated does not reopen it");
+  session_tap(after, 44);
+  CHECK(after.door == Door::Tap, "a tap still does");
+  // A device with credentials has no window to spend.
+  Session owned;
+  session_begin(owned, false, 1, t, ten_min);
+  CHECK(owned.door == Door::Shut && session_window_used_ms(owned, 5, t) == 0, "no window on an owned device");
+}
+
 static void a_window_of_zero_is_tap_only() {
   Session s;
   Timing t;
@@ -623,6 +654,7 @@ int main() {
   service_data_is_state_caps_and_four_zeros();
   no_credentials_opens_the_door_for_the_first_boot_window();
   the_first_boot_window_expires_and_a_power_cycle_rearms_it();
+  a_software_restart_does_not_rearm_the_window();
   a_window_of_zero_is_tap_only();
   a_device_with_credentials_waits_for_a_tap();
   a_recovery_portal_never_opens_the_door();

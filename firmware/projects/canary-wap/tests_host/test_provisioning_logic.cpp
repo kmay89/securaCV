@@ -222,6 +222,59 @@ static void test_ble_scanners_held_then_released() {
   CHECK(ble_scanners_release_due(false, true, near_wrap + MAXHOLD, near_wrap, SETTLE, MAXHOLD));
 }
 
+// Which units the BLE discovery gates read as AP-only. A fresh unit (nothing
+// configured) boots in the AP-only state too, and reading it as AP-only ended
+// the fresh path's scanner hold at the 45 s settle — under a phone's WPA2
+// handshake. Only the persisted standalone choice, or a runtime AP-only
+// state with credentials behind it, counts.
+static void test_ap_only_for_discovery() {
+  // Args: (ap_only_persisted, state_ap_only, credentials_configured).
+  // Persisted standalone: AP-only whatever the state says.
+  CHECK(ap_only_for_discovery(true, true, true));
+  CHECK(ap_only_for_discovery(true, false, true));
+  CHECK(ap_only_for_discovery(true, true, false));
+  CHECK(ap_only_for_discovery(true, false, false));
+  // A runtime AP-only after /api/wifi/disconnect keeps its credentials: counts.
+  CHECK(ap_only_for_discovery(false, true, true));
+  // A FRESH unit: AP-only state, no credentials — NOT AP-only for discovery.
+  CHECK(!ap_only_for_discovery(false, true, false));
+  // Not in the AP-only state at all: never.
+  CHECK(!ap_only_for_discovery(false, false, true));
+  CHECK(!ap_only_for_discovery(false, false, false));
+  // The consequence, through the gates: a fresh unit's scanners stay held
+  // past the settle; they are released when the AP drops after a join or
+  // at the max-hold — the long path's rule, never the settle.
+  const uint32_t SETTLE = 45000u, MAXHOLD = 300000u, boot = 1000u;
+  const bool fresh = ap_only_for_discovery(false, true, false);
+  CHECK(!ble_scanners_release_due(fresh, true, boot + SETTLE, boot, SETTLE, MAXHOLD));
+  CHECK(!ble_scanners_release_due(fresh, true, boot + SETTLE + 60000u, boot, SETTLE, MAXHOLD));
+  CHECK(ble_scanners_release_due(fresh, false, boot + SETTLE + 60000u, boot, SETTLE, MAXHOLD));
+  CHECK(ble_scanners_release_due(fresh, true, boot + MAXHOLD, boot, SETTLE, MAXHOLD));
+  // And a runtime AP-only unit with credentials still settles at 45 s.
+  const bool runtime_ap_only = ap_only_for_discovery(false, true, true);
+  CHECK(ble_scanners_release_due(runtime_ap_only, true, boot + SETTLE, boot, SETTLE, MAXHOLD));
+  CHECK(!ble_scanners_release_due(runtime_ap_only, true, boot + SETTLE - 1, boot, SETTLE, MAXHOLD));
+}
+
+// The setup door's spent first-boot window, carried across software resets
+// in RTC-noinit memory: kept when the magic matches and the chip did not
+// power up; cleared on a power cycle (RTC memory is garbage then) and on a
+// record no firmware of ours wrote.
+static void test_door_window_record() {
+  const uint32_t MAGIC = 0x444F4F52u;
+  // A software reset (the wizard's idle restart, a watchdog, a panic) keeps
+  // a record our firmware wrote.
+  CHECK(door_window_record_valid(MAGIC, MAGIC, false));
+  // A power cycle re-arms the window: the record is cleared even when the
+  // word happens to match (RTC memory kept it across a short power dip).
+  CHECK(!door_window_record_valid(MAGIC, MAGIC, true));
+  // No magic (a zeroed record, or RTC garbage): cleared, whatever the reset.
+  CHECK(!door_window_record_valid(0, MAGIC, false));
+  CHECK(!door_window_record_valid(0, MAGIC, true));
+  CHECK(!door_window_record_valid(MAGIC ^ 1u, MAGIC, false));
+  CHECK(!door_window_record_valid(0xFFFFFFFFu, MAGIC, false));
+}
+
 // The pairing channel's security profile for the setup door: the full
 // (door_open, pairing_pending, authenticated_link_up) matrix, then the
 // transitions the channel's set_setup_door() walks.
@@ -297,6 +350,8 @@ int main() {
   test_ble_discovery_start();
   test_ble_fresh_unit_start();
   test_ble_scanners_held_then_released();
+  test_ap_only_for_discovery();
+  test_door_window_record();
   test_security_profile_matrix();
   test_security_profile_transitions();
   if (g_failures) {

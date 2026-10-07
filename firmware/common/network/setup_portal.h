@@ -68,6 +68,13 @@ struct SetupPortalConfig {
   /// have_saved_credentials is false). Implemented by the board's wifi_mgr
   /// as a plain WiFi.begin(saved_ssid, saved_pass).
   void (*begin_saved)();
+  /// The portal was raised UNDER a live STA link (a BOOT tap on a device
+  /// that already has a network, for the Bluetooth door's minute): a
+  /// WL_CONNECTED seen while Waiting is that link, not a join to report —
+  /// the portal stays up until a join through it succeeds or the raiser
+  /// stops it. Leave false for the first-boot and recovery raises, where a
+  /// link that appears underneath IS the saved network coming back.
+  bool keep_sta_link;
 };
 
 /**

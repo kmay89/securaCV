@@ -245,7 +245,10 @@ a bad day:
 - **A short BOOT tap** (`BOOT_BUTTON_PIN` from the host board's `pins.h`:
   GPIO9 on the XIAO ESP32-C3 hosts, GPIO0 on the XIAO ESP32-S3;
   `common/io/short_tap.h`: ≥40 ms, <700 ms): **60 s**, with or without
-  credentials.
+  credentials. On a witness that already has a network the tap also raises
+  the `SecuraCV-XXXX` setup portal underneath the door for that minute (the
+  door's join path is the portal's; no quiet retry of the saved network
+  runs under it) and lowers it again when the door shuts without a join.
 - **Never because a saved network is failing** — that raises the SoftAP
   recovery portal with its printed key, and nothing else.
 - Bounds while open: 3 s between accepted credential writes, 10 attempts

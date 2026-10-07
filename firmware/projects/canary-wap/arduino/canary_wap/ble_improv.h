@@ -3,13 +3,29 @@
  *
  * The open Improv Wi-Fi standard, on the pairing channel's NimBLE server,
  * for a WAP nobody owns yet: while no credentials are stored, for the
- * first-boot window (IMPROV_FIRST_BOOT_WINDOW_MS after boot, re-armed by a
- * power cycle), a phone hears it (Opera's beacon carries
- * FLEET_BEACON_FLAG_SETUP_OPEN and the name "WAP-XXXX"; the scan response
- * carries the Improv service), shows a card, and one tap hands over the
+ * first-boot window (IMPROV_FIRST_BOOT_WINDOW_MS after the last POWER
+ * CYCLE — a software reset carries the spent time over, see below), a
+ * phone hears it (Opera's beacon carries FLEET_BEACON_FLAG_SETUP_OPEN and
+ * the name "WAP-XXXX"; the scan response carries the Improv service),
+ * shows a card, lists the networks the WAP can see (GET_WIFI_NETWORKS, the
+ * same scan cache the wizard's picker reads), and one tap hands over the
  * home Wi-Fi. The bytes and the rules are in improv_core.h (a staged copy
  * of firmware/common/network/improv_core.h, held byte-identical by
  * firmware/scripts/check_improv_sync.sh); this module is the sketch's glue.
+ *
+ * THE WINDOW SURVIVES A REBOOT, NOT A POWER CYCLE. A never-provisioned WAP
+ * restarts itself every 15 minutes (setup_wizard's abandonment timer), and
+ * a window measured from each boot re-opened the door forever. The sketch
+ * keeps the spent time in an RTC-noinit record (ble_improv_window_used_ms /
+ * ble_improv_note_window_used, written every ~2 s while the door's window
+ * runs; zeroed after a power-on, a brownout, a power glitch or a reset a
+ * host asserted from the USB / JTAG port — the Flasher's — and by a
+ * credential wipe on a unit that had credentials),
+ * and init() hands it to improv::session_begin, which back-dates the
+ * window: a window the last boots spent whole begins shut. And a phone at
+ * the door is a sign of life for that wizard timer (ble_improv_note_
+ * activity on every command, the join and the claim), so the restart
+ * cannot land mid-provisioning.
  *
  * WHAT IS DIFFERENT FROM ble_provision (the bonded rescue service):
  *   - ble_provision needs an authenticated bond (the dashboard's Numeric
@@ -37,16 +53,22 @@
  *   - THE BEARER TOKEN NEVER RIDES BLUETOOTH. The link is encrypted but not
  *     authenticated, so nothing that lasts belongs on it. Once the join the
  *     phone asked for succeeded, the connection that asked may read CLAIM
- *     (the SecuraCV companion service below, READ_ENC) exactly once: a
- *     16-byte random claim ticket (claim_ticket.h, a staged copy of
+ *     (the SecuraCV companion service below, READ_ENC): a 16-byte random
+ *     claim ticket (claim_ticket.h, a staged copy of
  *     firmware/common/network/claim_ticket.h), the URL to spend it at, the
- *     device's .local name, its STA address and TLS fingerprint. The phone
- *     then spends the claim on the home LAN —
+ *     device's .local name, its STA address and TLS fingerprint. The claim
+ *     is armed BEFORE the WIFI_SETTINGS result and the Provisioned state
+ *     go out, so a phone that reads it the moment it hears the verdict
+ *     finds it. It is readable by the provisioning link alone, during one
+ *     read — the value is longer than an MTU, so that read is a Read
+ *     Response plus its Read Blob continuations — within a 3 s grace from
+ *     the first; empty ("{}") afterwards, and for anyone else at any time.
+ *     The phone then spends the claim on the home LAN —
  *     GET /api/provisioning-receipt?claim=<hex> — and gets the same receipt
  *     the BOOT-tap route serves. Two factors: the encrypted link that
  *     provisioned AND presence on the Wi-Fi the device just joined. The
- *     claim is good for three minutes, once; every other link, and every
- *     later read, gets "{}".
+ *     claim is good for three minutes, once (the sketch holds its
+ *     post-provisioning reboot while it is outstanding).
  *
  * Compiled under FEATURE_IMPROV (build_config.h: the FULL profile), with
  * no-op stubs otherwise.
@@ -64,8 +86,9 @@ class NimBLEAdvertisementData;
 namespace ble_improv {
 
 /// SecuraCV's companion service beside the Improv one: the claim ticket,
-/// readable once by the link that provisioned, encrypted. Registered in
-/// init() on the same server as the Improv service.
+/// readable by the link that provisioned during one read (its blob
+/// continuations, within a 3 s grace), encrypted; "{}" otherwise.
+/// Registered in init() on the same server as the Improv service.
 static constexpr const char* CLAIM_SERVICE_UUID = "8fc1cf00-b162-4401-9607-c8ac21383e90";
 static constexpr const char* CLAIM_UUID         = "8fc1cf01-b162-4401-9607-c8ac21383e90";
 
@@ -74,8 +97,9 @@ static constexpr const char* CLAIM_UUID         = "8fc1cf01-b162-4401-9607-c8ac2
 bool init(NimBLEServer* server);
 
 /// Loop-task pass: follow the door, the one link (idle disconnect), the
-/// join, the claim arming; swap the channel's security profile with the
-/// door. Called from bluetooth_channel::update() beside ble_provision::tick().
+/// join, the claim arming, the network list, the window tally; swap the
+/// channel's security profile with the door. Called from
+/// bluetooth_channel::update() beside ble_provision::tick().
 void tick();
 
 /// True while the door is open — Opera sets the beacon's setup bit and the

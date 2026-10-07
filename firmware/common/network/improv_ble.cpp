@@ -25,6 +25,9 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <WiFi.h>
+#include <esp_attr.h>     // RTC_NOINIT_ATTR: the window across a software reset
+#include <esp_system.h>   // esp_reset_reason(): a power-on clears it
+#include <esp_idf_version.h>   // the USB / JTAG / glitch reset reasons exist from IDF 5.1
 #include <string.h>
 #include <string>
 
@@ -59,6 +62,64 @@ char s_adv_name[ADV_NAME_MAX + 1] = {0};
 bool s_active = false;
 Session s_session;
 improv::Timing s_timing;
+
+// The first-boot window across a SOFTWARE reset. "Re-armed by a power cycle"
+// must mean a power cycle: a board whose firmware restarts itself (an
+// outage reboot, a watchdog, a route that restarts) must not open a fresh
+// window every time. The spent time lives in RTC slow memory, which every
+// reset but a power-on keeps; a power-on (or a brownout, which is a power
+// event, or a reset a host asserted from the USB / JTAG port) finds the
+// magic gone and starts from zero. Written every few seconds while the
+// window runs, read once at begin().
+struct WindowRecord {
+  uint32_t magic;
+  uint32_t used_ms;
+};
+constexpr uint32_t WINDOW_MAGIC = 0x1D00u * 0x10000u + 0x5E7Fu;   // "door" + "self"
+RTC_NOINIT_ATTR WindowRecord s_window_rtc;
+constexpr uint32_t WINDOW_SAVE_PERIOD_MS = 2000;
+uint32_t s_window_saved_ms = 0;
+
+// A reset that re-arms the window: the chip powered up (or its power
+// glitched), or a host at the USB / JTAG port asserted a reset — the
+// operator's own act (the Flasher ends every write with one, and a unit
+// just erased and re-flashed must not inherit the previous image's spent
+// window: RTC memory survives a flash) — or a reset the chip cannot name
+// (the record is garbage as far as anyone can tell; clearing it is the safe
+// side). A software reset, a watchdog, a panic and a deep-sleep wake keep
+// the record. The USB / JTAG / glitch reasons exist from IDF 5.1 (core 3.x);
+// the 1.4.x stack's core 2.x (IDF 4.4) has no such resets to name.
+bool reset_is_power_cycle(esp_reset_reason_t why) {
+  switch (why) {
+    case ESP_RST_POWERON:
+    case ESP_RST_BROWNOUT:
+    case ESP_RST_UNKNOWN:
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
+    case ESP_RST_USB:
+    case ESP_RST_JTAG:
+    case ESP_RST_PWR_GLITCH:
+#endif
+      return true;
+    default:
+      return false;
+  }
+}
+
+uint32_t window_used_from_rtc() {
+  const esp_reset_reason_t why = esp_reset_reason();
+  if (reset_is_power_cycle(why)) {
+    s_window_rtc.magic = 0;
+    s_window_rtc.used_ms = 0;
+    return 0;
+  }
+  if (s_window_rtc.magic != WINDOW_MAGIC) return 0;
+  return s_window_rtc.used_ms;
+}
+
+void window_save(uint32_t used_ms) {
+  s_window_rtc.used_ms = used_ms;
+  s_window_rtc.magic = WINDOW_MAGIC;
+}
 
 NimBLEServer*         s_server = nullptr;
 NimBLEService*        s_service = nullptr;
@@ -147,15 +208,18 @@ const char* auth_name(wifi_auth_mode_t a) {
 // ── NimBLE callbacks (host task) ───────────────────────────────────────────
 
 class CommandCb : public NimBLECharacteristicCallbacks {
+  // The mailbox crosses tasks (and cores): the frame is written first and
+  // the pending flag published with release; the loop task takes the flag
+  // with acquire before it reads the frame.
   void take(NimBLECharacteristic* c, bool encrypted) {
-    if (s_rx_pending) return;   // one at a time; the loop task is on it
+    if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) return;   // one at a time
     if (!encrypted) {
       // The second check (the first is the characteristic's WRITE_ENC):
       // nothing from a link that is not encrypted is parsed, let alone
       // believed. The loop task answers NotAuthorized.
       s_rx_unencrypted = true;
       s_rx_len = 0;
-      s_rx_pending = true;
+      __atomic_store_n(&s_rx_pending, true, __ATOMIC_RELEASE);
       return;
     }
     const auto v = c->getValue();
@@ -163,12 +227,13 @@ class CommandCb : public NimBLECharacteristicCallbacks {
     if (n == 0 || n > sizeof(s_rx)) {
       // Not a frame we could ever accept: queue a one-byte marker so the
       // loop task answers InvalidRpc rather than silence.
-      s_rx[0] = 0; s_rx_len = 1; s_rx_pending = true;
+      s_rx[0] = 0; s_rx_len = 1;
+      __atomic_store_n(&s_rx_pending, true, __ATOMIC_RELEASE);
       return;
     }
     memcpy(s_rx, v.data(), n);
     s_rx_len = n;
-    s_rx_pending = true;
+    __atomic_store_n(&s_rx_pending, true, __ATOMIC_RELEASE);
   }
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
@@ -332,7 +397,7 @@ void handle_command(uint32_t now_ms) {
   improv::session_touch(s_session, now_ms);   // it asked for something
   if (s_rx_unencrypted) {
     s_rx_unencrypted = false;
-    s_rx_pending = false;
+    __atomic_store_n(&s_rx_pending, false, __ATOMIC_RELEASE);
     s_session.error = Error::NotAuthorized;
     publish_error();
     Serial.println("[IMPROV] write on an unencrypted link refused");
@@ -342,7 +407,7 @@ void handle_command(uint32_t now_ms) {
   const size_t n = s_rx_len;
   memcpy(frame, s_rx, n);
   improv::wipe(s_rx, sizeof(s_rx));
-  s_rx_pending = false;
+  __atomic_store_n(&s_rx_pending, false, __ATOMIC_RELEASE);
 
   improv::ParsedCommand cmd = improv::parse_command(frame, n);
   improv::wipe(frame, sizeof(frame));
@@ -511,7 +576,12 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
   s_timing = improv::Timing{};
   s_timing.provisioning_timeout_ms = PROVISIONING_TIMEOUT_MS;
   s_timing.first_boot_window_ms = (uint32_t)(IMPROV_FIRST_BOOT_WINDOW_MS);
-  improv::session_begin(s_session, no_credentials, now_ms, s_timing);
+  const uint32_t window_used = no_credentials ? window_used_from_rtc() : 0;
+  improv::session_begin(s_session, no_credentials, now_ms, s_timing, window_used);
+  if (window_used) {
+    Serial.printf("[IMPROV] first-boot window: %lu s already spent before this restart\n",
+                  (unsigned long)(window_used / 1000));
+  }
   s_active = true;
   publish_state();
   publish_error();
@@ -552,8 +622,19 @@ void tick(uint32_t now_ms, bool no_credentials) {
   const State before = s_session.state;
 
   improv::session_set_no_credentials(s_session, no_credentials, now_ms, s_timing);
+  // Keep the window's spent time where a software reset cannot lose it.
+  if (s_session.door == improv::Door::NoCredentials || s_session.window_spent) {
+    if ((uint32_t)(now_ms - s_window_saved_ms) >= WINDOW_SAVE_PERIOD_MS) {
+      s_window_saved_ms = now_ms;
+      window_save(improv::session_window_used_ms(s_session, now_ms, s_timing));
+    }
+  } else if (!no_credentials && s_window_rtc.magic == WINDOW_MAGIC && s_session.window_at_ms == 0) {
+    // Credentials landed: the window is moot; a later factory reset starts fresh.
+    s_window_rtc.magic = 0;
+    s_window_rtc.used_ms = 0;
+  }
   follow_link(now_ms);
-  if (s_rx_pending) handle_command(now_ms);
+  if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) handle_command(now_ms);
   follow_join(now_ms);
   follow_scan(now_ms);
   if (improv::session_tick(s_session, now_ms, s_timing)) {

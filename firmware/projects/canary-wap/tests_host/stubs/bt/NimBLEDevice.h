@@ -318,6 +318,28 @@ class NimBLEServer {
     ++peer_devices_calls;
     return peers;
   }
+  // NimBLE-Arduino 2.x's count of live links and its by-index view of them
+  // (NimBLEServer::getConnectedCount / getPeerInfo(uint8_t)), over the links
+  // the test played up. The library's own getPeerInfo(index) walks its slot
+  // array and looks the index up by the count of live slots, so a live peer
+  // behind a freed slot is missed there; the stand-in answers the index-th
+  // live link, which is what a caller means. An index past the end answers
+  // an empty NimBLEConnInfo (handle 0), as the library does.
+  uint8_t getConnectedCount() const {
+    std::lock_guard<std::mutex> g(links_mu_);
+    return (uint8_t)links_.size();
+  }
+  NimBLEConnInfo getPeerInfo(uint8_t index) const {
+    ++peer_info_calls;
+    std::lock_guard<std::mutex> g(links_mu_);
+    uint8_t i = 0;
+    for (const auto& kv : links_) {
+      if (i++ == index) return kv.second;
+    }
+    NimBLEConnInfo none;
+    none.handle = 0;
+    return none;
+  }
   // The stack's own record of a link (ble_gap_conn_find): what is up on
   // `handle` now. NimBLE answers a handle with no link with an empty
   // NimBLEConnInfo (handle 0, address 00:00:00:00:00:00).

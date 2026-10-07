@@ -105,7 +105,16 @@ bool portal_save(const char* ssid, const char* pass) {
 
 void portal_begin_saved() { begin_sta(); }
 
-void open_setup_portal() {
+// `for_tap`: a BOOT tap on a witness that already has a network raises the
+// portal underneath the Bluetooth door for the tap's minute, because the
+// door's join path IS the portal's (setup_portal_submit_join). No quiet
+// retry of the saved network under it: that retry would succeed at once and
+// tear the portal down before the phone could use the door; the saved link
+// stays up underneath (the AP rides the STA's channel), and
+// wifi_close_tap_portal() lowers the portal when the door shuts.
+static bool s_tap_portal = false;
+
+void open_setup_portal(bool for_tap = false) {
   char token[device_pseudonym::HEX_LEN + 1] = {0};
   device_pseudonym::device_id_hex(token, sizeof(token));
   canary::net::SetupPortalConfig pc{};
@@ -118,9 +127,10 @@ void open_setup_portal() {
   pc.ap_channel = FLEET_BEACON_ESPNOW_FALLBACK_CHANNEL;
   pc.have_saved_credentials = s_configured;
   pc.save_credentials = portal_save;
-  pc.begin_saved = portal_begin_saved;
+  pc.begin_saved = for_tap ? nullptr : portal_begin_saved;
+  pc.keep_sta_link = for_tap;   // the live link is ours; a join through the portal replaces it
   s_portal_retry_ms = canary::ms_now();
-  setup_portal_begin(pc);
+  if (setup_portal_begin(pc) && for_tap) s_tap_portal = true;
 }
 
 }  // namespace
@@ -273,6 +283,36 @@ void wifi_loop(uint32_t now_ms) {
   }
 }
 
+
+void wifi_open_tap_portal() {
+  if (setup_portal_active()) return;   // the first-boot or recovery portal is already the door's path
+  log_line("WIFI", "BOOT tap — raising the setup network under the Bluetooth door for a minute.");
+  open_setup_portal(/*for_tap=*/true);
+}
+
+void wifi_close_tap_portal() {
+  if (!s_tap_portal) return;
+  if (!setup_portal_active()) { s_tap_portal = false; return; }   // it tore itself down (a join)
+  // A join in flight is owed its verdict, and a succeeded one its linger
+  // and its own teardown (which hands the new link to wifi_loop).
+  if (setup_portal_join_in_flight() ||
+      setup_portal_join_state() == SetupPortalJoin::Success) return;
+  setup_portal_stop();
+  s_tap_portal = false;
+  log_line("WIFI", "Tap window over — setup network lowered.");
+  if (WiFi.status() != WL_CONNECTED) {
+    // The saved link did not survive the mode flips: retry it now, and let
+    // wifi_loop's policy take over from there.
+    const uint32_t now = canary::ms_now();
+    s_online = false;
+    s_lost_since_ms = now;
+    s_last_attempt_ms = now;
+    s_attempts = 1;
+    begin_sta();
+  }
+}
+
+bool wifi_tap_portal_open() { return s_tap_portal && setup_portal_active(); }
 
 bool wifi_connected() { return WiFi.status() == WL_CONNECTED; }
 

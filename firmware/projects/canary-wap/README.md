@@ -160,22 +160,40 @@ with nobody on its SoftAP brings the channel up **5 s** after boot instead
 of the five-minute hold (`provisioning_logic::ble_fresh_unit_start_due`,
 host-tested) so the door is on air quickly, and holds the BLE scanners
 (Nearby, Scout) on that path — a scanning radio would fight the one link the
-door needs; the heap guard keeps the last word.
+door needs — until the SoftAP drops after a join or the five-minute max hold
+(`provisioning_logic::ap_only_for_discovery`, host-tested: a fresh unit's
+AP-only boot state is not the standalone AP-only choice, so the 45 s settle
+never releases them under a wizard phone's handshake); the heap guard keeps
+the last word. The phone's picker is real here: `GET_WIFI_NETWORKS` streams
+the sketch's scan cache — the same list the wizard's `GET /api/wifi/scan`
+serves, behind one mutex, so the single radio is swept once for both.
 
 **When the door is open.** Only while the unit has **no credentials stored**
 (first boot, factory reset), for **30 minutes after power-on**
-(`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it). A WAP on its own
+(`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it). A **software
+restart does not** re-arm it — the first-boot wizard restarts a
+never-provisioned unit every 15 idle minutes, which would otherwise have
+re-opened the door forever: the spent time rides in RTC-noinit memory
+(`provisioning_logic::door_window_record_valid`, host-tested; cleared after
+a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
+and by **Forget Wi-Fi** on a unit that had credentials, which is the
+owner's way to re-arm the window), and a phone at the door is a sign of life
+for that wizard timer, so the restart cannot land mid-provisioning. A WAP on its own
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
 dashboard, the bonded rescue service and the BOOT-tap receipt are the
-owner's paths). **There is no tap door on the WAP in this version:** the 2 s
-BOOT hold stays the existing reset / receipt gesture. A join over the door
+owner's paths). **There is no tap door on the WAP in this version:** the
+BOOT button keeps the sketch's own gestures (a short press opens the 30 s
+receipt gate; a 2 s hold prints the identity on serial), and no button
+gesture factory-resets a WAP today. A join over the door
 is held in RAM until WiFi proves it (`ble_improv_submit_join` /
 `ble_improv_join_verdict`): a proven join is persisted then, exactly as the
 wizard persists, and a failed or timed-out one is forgotten so the door
 stays open for a retry — the wizard, the QR scan and the bonded rescue keep
 their persist-first order, which the door cannot afford (one wrong
 password would otherwise mark the unit configured and shut the door on the
-next pass). Bounds while open:
+next pass); a path that persisted credentials while a door join was in
+flight owns them, and the door's later verdict changes nothing — its link
+gets no claim and is told NotAuthorized. Bounds while open:
 3 s between accepted credential writes, 10 attempts per open door, a
 3-minute idle disconnect, ~20 s linger after the join.
 
@@ -203,13 +221,16 @@ foreign `Host`), which the WAP does not ask on this route today (the
 flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
 is burned too, and a claim that serves leaves the tap unspent.
 Two factors: the encrypted link that provisioned, and presence on the Wi-Fi
-the WAP just joined.
+the WAP just joined. The post-join reboot into steady state is held while a
+claim is outstanding (the claim promised 180 s; the reboot came at 120 s)
+and follows ~10 s after the claim is spent or expires.
 
 Design, threat model and bench checklist: `docs/design/magic_pairing.md`.
 **CI-compiled (also locally) and host-tested (`test_improv_core.cpp`,
 `test_claim_ticket.cpp`, `test_provisioning_gate.cpp`), not bench-tested**
-— the profile swap, the once-only claim read and the 5 s bring-up path are
-the open items.
+— the profile swap, the once-only claim read, the 5 s bring-up path, the
+picker, the window across the wizard's restart and the reboot hold are the
+open items.
 
 ## Build Configurations
 

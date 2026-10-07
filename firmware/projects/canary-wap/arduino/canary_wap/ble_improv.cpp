@@ -30,7 +30,7 @@
 
 // External-linkage bridges defined in canary_wap.ino.
 extern bool   ble_improv_submit_join(const char* ssid, const char* password);   // RAM-only until the verdict
-extern void   ble_improv_join_verdict(bool joined);                              // persist on success, forget on failure
+extern bool   ble_improv_join_verdict(bool joined);                   // persist on success, forget on failure; false = not the door's join
 extern bool   ble_improv_door_should_open();                          // no credentials stored
 extern size_t ble_improv_reach_url(char* out, size_t cap);            // http(s)://<mdns>.local/
 extern size_t ble_improv_mint_claim(char* out, size_t cap, uint32_t now_ms);  // the claim JSON
@@ -38,6 +38,13 @@ extern void   ble_improv_wipe_claim();                                // forget 
 extern void   ble_improv_identify();                                  // blink / chirp
 extern size_t ble_improv_name_suffix(char* out, size_t cap);          // "AB12"
 extern const char* ble_improv_firmware_version();                    // FIRMWARE_VERSION
+extern uint32_t ble_improv_window_used_ms();                          // the window earlier boots spent (RTC record)
+extern void   ble_improv_note_window_used(uint32_t used_ms);          // the running tally, for the next software reset
+extern void   ble_improv_note_activity();                             // a sign of life for the first-boot wizard's timer
+extern int    ble_improv_scan_request();                              // 1 asked / sharing / fresh, 0 lock busy (ask again), -1 refused
+extern int    ble_improv_scan_poll();                                 // 1 list ready, 0 sweeping, -1 none
+extern int    ble_improv_scan_row(int i, char* ssid, size_t ssid_cap, int* rssi,
+                                  char* auth, size_t auth_cap);       // 1 row, 0 end, -1 busy
 
 namespace ble_improv {
 
@@ -74,6 +81,16 @@ constexpr size_t CLAIM_JSON_MAX = 512;
 // of a link when it writes, and of its end here).
 constexpr uint32_t LINK_POLL_MS = 250;
 constexpr uint16_t NO_CONN = 0xFFFF;
+// How often the spent first-boot window is written to the sketch's RTC
+// record while the no-credentials door is open: a software reset loses at
+// most this much of the tally (the window gains it back — never the other
+// way).
+constexpr uint32_t WINDOW_NOTE_MS = 2000;
+// GET_WIFI_NETWORKS: a sweep the sketch's scan never reports on reads as
+// "no networks" after this long (the common glue's bound); at most this
+// many rows, one per pass (the sketch's cache holds no more).
+constexpr uint32_t SCAN_TIMEOUT_MS = 30000;
+constexpr int      SCAN_MAX = 20;
 
 bool s_active = false;
 improv::Session s_session;
@@ -132,11 +149,27 @@ volatile size_t   s_claim_json_len = 0;
 
 bool s_door_applied = false;   // the security profile the channel holds now
 
+// The window tally's last note, and whether a spent window was noted.
+uint32_t s_window_noted_ms = 0;
+bool     s_window_spent_noted = false;
+
+// GET_WIFI_NETWORKS in flight: asking the sketch (its cache lock may be
+// busy for a pass), then waiting on its sweep, then streaming the cache one
+// row per pass (s_scan_emit = the next row; -1 = not streaming).
+bool     s_scan_asking = false;
+bool     s_scan_waiting = false;
+uint32_t s_scan_started_ms = 0;
+int      s_scan_emit = -1;
+
 uint32_t s_accepted = 0;
 uint32_t s_refused = 0;
 uint32_t s_claims = 0;
 
-uint8_t capabilities() { return improv::CAP_IDENTIFY | improv::CAP_DEVICE_INFO; }
+uint8_t capabilities() {
+  return improv::CAP_IDENTIFY | improv::CAP_DEVICE_INFO | improv::CAP_SCAN_WIFI;
+}
+
+void start_scan(uint32_t now_ms);   // the network list, below the claim
 
 bool door_open_now() { return s_active && improv::advert_for(s_session) == improv::Advert::Improv; }
 
@@ -172,7 +205,7 @@ void send_result(Command cmd, const char* const* strings, size_t count) {
 // the ticket itself (claim_ticket::wipe in the sketch), so no HTTP take can
 // spend it either.
 void disarm_claim(bool wipe_ticket) {
-  s_claim_armed = false;
+  __atomic_store_n(&s_claim_armed, false, __ATOMIC_RELEASE);
   s_claim_read_seen = false;
   s_claim_read_ms = 0;
   s_claim_conn = NO_CONN;
@@ -187,7 +220,11 @@ void disarm_claim(bool wipe_ticket) {
 
 class CommandCb : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
-    if (s_rx_pending) return;   // one at a time; the loop task is on it
+    // The mailbox crosses cores (the NimBLE host task fills it, the loop
+    // task drains it): the flag is published with release after every
+    // field is written and read with acquire, so the reader sees the
+    // packet the flag announces, never a stale one.
+    if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) return;   // one at a time; the loop task is on it
     s_rx_conn = info.getConnHandle();
     s_rx_addr = *info.getAddress().getBase();
     if (!info.isEncrypted()) {
@@ -196,7 +233,7 @@ class CommandCb : public NimBLECharacteristicCallbacks {
       // believed. The loop task answers NotAuthorized and counts it.
       s_rx_unencrypted = true;
       s_rx_len = 0;
-      s_rx_pending = true;
+      __atomic_store_n(&s_rx_pending, true, __ATOMIC_RELEASE);
       return;
     }
     const auto v = c->getValue();
@@ -207,7 +244,7 @@ class CommandCb : public NimBLECharacteristicCallbacks {
       memcpy(s_rx, v.data(), n);
       s_rx_len = n;
     }
-    s_rx_pending = true;
+    __atomic_store_n(&s_rx_pending, true, __ATOMIC_RELEASE);
   }
 };
 
@@ -216,8 +253,12 @@ class ClaimCb : public NimBLECharacteristicCallbacks {
     // Served to the link that provisioned (its handle AND its address: a
     // handle the stack reuses for a later peer is not that link), once;
     // everyone else reads "{}". The value is set here, right before NimBLE
-    // answers the read, and wiped by the loop task right after.
-    if (!s_claim_armed || info.getConnHandle() != s_claim_conn ||
+    // answers the read, and wiped by the loop task right after. The arm is
+    // read with acquire: the loop task filled the JSON, the connection and
+    // the address on the other core and published the arm with release
+    // after them, so an arm seen here is a buffer seen whole.
+    if (!__atomic_load_n(&s_claim_armed, __ATOMIC_ACQUIRE) ||
+        info.getConnHandle() != s_claim_conn ||
         !same_addr(*info.getAddress().getBase(), s_claim_addr)) {
       c->setValue((const uint8_t*)"{}", 2);
       return;
@@ -225,7 +266,7 @@ class ClaimCb : public NimBLECharacteristicCallbacks {
     const size_t n = s_claim_json_len;
     if (n == 0 || n >= sizeof(s_claim_json)) {
       c->setValue((const uint8_t*)"{}", 2);
-      s_claim_armed = false;
+      __atomic_store_n(&s_claim_armed, false, __ATOMIC_RELEASE);
       return;
     }
     c->setValue((const uint8_t*)s_claim_json, n);
@@ -266,10 +307,13 @@ void handle_command(uint32_t now_ms) {
   const uint16_t conn = s_rx_conn;
   const ble_addr_t addr = s_rx_addr;
   note_link_wrote(conn, addr, now_ms);
+  // Every command the door receives is a phone at work: the first-boot
+  // wizard's abandonment restart must not land under it.
+  ble_improv_note_activity();
 
   if (s_rx_unencrypted) {
     s_rx_unencrypted = false;
-    s_rx_pending = false;
+    __atomic_store_n(&s_rx_pending, false, __ATOMIC_RELEASE);
     s_session.error = Error::NotAuthorized;
     s_refused++;
     publish_error();
@@ -282,7 +326,7 @@ void handle_command(uint32_t now_ms) {
   const size_t n = s_rx_len;
   memcpy(frame, s_rx, n);
   improv::wipe(s_rx, sizeof(s_rx));
-  s_rx_pending = false;
+  __atomic_store_n(&s_rx_pending, false, __ATOMIC_RELEASE);
 
   improv::ParsedCommand cmd = improv::parse_command(frame, n);
   improv::wipe(frame, sizeof(frame));
@@ -307,6 +351,7 @@ void handle_command(uint32_t now_ms) {
           s_provisioning_conn = conn;
           s_provisioning_addr = addr;
           s_accepted++;
+          ble_improv_note_activity();   // a join in flight: the wizard waits for it
         } else {
           improv::session_on_join_result(s_session, false, now_ms);
           s_refused++;
@@ -334,6 +379,11 @@ void handle_command(uint32_t now_ms) {
       publish_error();
       answer_device_info();
       break;
+    case Command::GetWifiNetworks:
+      s_session.error = Error::None;
+      publish_error();
+      start_scan(now_ms);
+      break;
     default:
       improv::session_on_unknown_command(s_session);
       publish_error();
@@ -345,35 +395,57 @@ void follow_join(uint32_t now_ms) {
   if (s_session.state != State::Provisioning) return;
   const wl_status_t ws = WiFi.status();
   if (ws == WL_CONNECTED) {
-    improv::session_on_join_result(s_session, true, now_ms);
     // Proven: the sketch persists the credentials now (the door shuts on
     // its own once they are stored), before the claim names the .local URL.
-    ble_improv_join_verdict(true);
-    publish_error();
-    publish_state();
-    char url[96] = {0};
-    ble_improv_reach_url(url, sizeof(url));
-    const char* strings[1] = { url };
-    send_result(Command::WifiSettings, strings, 1);
-    // The claim for the link that asked: minted now, on this task, readable
-    // by that link alone for the ticket's TTL. The token stays home.
+    // Unless the join that came up is not this door's: another path (the
+    // SoftAP wizard, a QR scan, the bonded rescue) persisted its own
+    // credentials while this one was in flight and owns the link. Then no
+    // claim, no URL — the phone at the door is told NotAuthorized (the unit
+    // has an owner now), and the shut door disarms the rest on this pass.
+    if (!ble_improv_join_verdict(true)) {
+      improv::session_on_join_result(s_session, false, now_ms);
+      s_session.error = Error::NotAuthorized;
+      publish_error();
+      publish_state();
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                 "Setup door: a join another path owns came up — no claim for the door's link", nullptr);
+      return;
+    }
+    improv::session_on_join_result(s_session, true, now_ms);
+    // The claim for the link that asked: minted and armed FIRST, on this
+    // task, readable by that link alone for the ticket's TTL — then the
+    // verdict goes out. A phone that reads CLAIM the moment it hears
+    // Provisioned finds the claim, never "{}". The token stays home.
     disarm_claim(false);
     const size_t n = ble_improv_mint_claim(s_claim_json, sizeof(s_claim_json), now_ms);
+    bool armed = false;
     if (n == 0 || n >= sizeof(s_claim_json) || s_provisioning_conn == NO_CONN) {
       improv::wipe(s_claim_json, sizeof(s_claim_json));
       ble_improv_wipe_claim();
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                  "Setup door: joined, but no claim could be armed (the BOOT tap still serves the receipt)",
                  nullptr);
-      return;
+    } else {
+      s_claim_json_len = n;
+      s_claim_addr = s_provisioning_addr;
+      s_claim_conn = s_provisioning_conn;
+      s_claim_armed_ms = now_ms;
+      // Published with release after every field above: the NimBLE host
+      // task's read callback acquires the arm and then reads the buffer.
+      __atomic_store_n(&s_claim_armed, true, __ATOMIC_RELEASE);
+      armed = true;
+      ble_improv_note_activity();   // the phone is about to spend it
     }
-    s_claim_json_len = n;
-    s_claim_addr = s_provisioning_addr;
-    s_claim_conn = s_provisioning_conn;
-    s_claim_armed_ms = now_ms;
-    s_claim_armed = true;
-    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
-               "Setup door: joined; claim armed for the provisioning link", nullptr);
+    publish_error();
+    publish_state();
+    char url[96] = {0};
+    ble_improv_reach_url(url, sizeof(url));
+    const char* strings[1] = { url };
+    send_result(Command::WifiSettings, strings, 1);
+    if (armed) {
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+                 "Setup door: joined; claim armed for the provisioning link", nullptr);
+    }
   } else if (ws == WL_CONNECT_FAILED || ws == WL_NO_SSID_AVAIL) {
     improv::session_on_join_result(s_session, false, now_ms);
     // Not proven: the sketch forgets the attempt; the door stays open.
@@ -387,13 +459,14 @@ void follow_join(uint32_t now_ms) {
 void follow_claim(uint32_t now_ms) {
   // Read once, and the whole read is over: withdraw it from the air (the
   // ticket itself lives on — the phone is spending it on the LAN).
-  if (s_claim_armed && s_claim_read_seen &&
+  if (__atomic_load_n(&s_claim_armed, __ATOMIC_ACQUIRE) && s_claim_read_seen &&
       ((uint32_t)(now_ms - s_claim_read_ms) >= CLAIM_READ_GRACE_MS || !s_session.link_up)) {
     disarm_claim(false);
     log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
                "Setup door: claim read by the provisioning link — withdrawn from the air", nullptr);
   }
-  if (s_claim_armed && (uint32_t)(now_ms - s_claim_armed_ms) >= CLAIM_TTL_MS) {
+  if (__atomic_load_n(&s_claim_armed, __ATOMIC_ACQUIRE) &&
+      (uint32_t)(now_ms - s_claim_armed_ms) >= CLAIM_TTL_MS) {
     disarm_claim(true);
     log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
                "Setup door: claim unread for three minutes — withdrawn (the BOOT tap still serves the receipt)",
@@ -402,13 +475,91 @@ void follow_claim(uint32_t now_ms) {
   // After a read the host task cleared the arm; wipe the loop task's copy
   // and the characteristic's own here, on the loop task, where setValue is
   // calm. The ticket itself stays: the phone is spending it on the LAN.
-  if (!s_claim_armed && s_claim_json_len != 0) {
+  const bool armed = __atomic_load_n(&s_claim_armed, __ATOMIC_ACQUIRE);
+  if (!armed && s_claim_json_len != 0) {
     improv::wipe(s_claim_json, sizeof(s_claim_json));
     s_claim_json_len = 0;
   }
-  if (!s_claim_armed && s_claim && s_claim->getValue().length() > 2) {
+  if (!armed && s_claim && s_claim->getValue().length() > 2) {
     s_claim->setValue((const uint8_t*)"{}", 2);
   }
+}
+
+// ── The network list (loop task) ────────────────────────────────────────
+// GET_WIFI_NETWORKS, the common glue's shape (firmware/common/network/
+// improv_ble.cpp): one result per network — ssid, rssi as decimal text, the
+// auth name — streamed one row per pass so twenty notifications never queue
+// on the host at once, closed by one empty result; at most SCAN_MAX rows;
+// an SSID the standard cannot carry (empty, or over SSID_MAX) is skipped.
+// The rows are the sketch's scan cache, the same list the wizard's
+// GET /api/wifi/scan serves, through the sketch's own async scan
+// (ble_improv_scan_request / _poll / _row, every one on this task): a
+// sweep already running is shared, a fresh cache costs the radio nothing.
+
+void end_scan_list() {
+  s_scan_asking = false;
+  s_scan_waiting = false;
+  s_scan_emit = -1;
+  send_result(Command::GetWifiNetworks, nullptr, 0);
+}
+
+// Ask the sketch for the list; a busy cache lock is "ask again next pass",
+// never an early end to the list (the phone would show an empty picker for
+// a lock the wizard's handler held for a millisecond).
+void ask_scan(uint32_t now_ms) {
+  const int asked = ble_improv_scan_request();
+  if (asked == 0) return;                      // busy: next pass
+  s_scan_asking = false;
+  if (asked < 0) {
+    // Refused: a join is in flight (a sweep under WiFi.begin() can fail
+    // it), or the radio refused. "No networks" at once — the phone shows
+    // its typed-name field.
+    end_scan_list();
+    return;
+  }
+  s_scan_waiting = true;
+  s_scan_started_ms = now_ms;
+}
+
+void start_scan(uint32_t now_ms) {
+  if (s_scan_asking || s_scan_waiting || s_scan_emit >= 0) return;   // one list at a time; the first asks for it
+  s_scan_asking = true;
+  s_scan_started_ms = now_ms;
+  ask_scan(now_ms);
+}
+
+void follow_scan(uint32_t now_ms) {
+  if (s_scan_asking) {
+    if ((uint32_t)(now_ms - s_scan_started_ms) > SCAN_TIMEOUT_MS) { end_scan_list(); return; }
+    ask_scan(now_ms);
+    return;
+  }
+  if (s_scan_waiting) {
+    const int verdict = ble_improv_scan_poll();
+    if (verdict == 0) {
+      if ((uint32_t)(now_ms - s_scan_started_ms) > SCAN_TIMEOUT_MS) end_scan_list();
+      return;
+    }
+    s_scan_waiting = false;
+    if (verdict < 0) { end_scan_list(); return; }
+    s_scan_emit = 0;
+    // Fall through to stream the first row this pass.
+  }
+  if (s_scan_emit < 0) return;
+  if (s_scan_emit >= SCAN_MAX) { end_scan_list(); return; }
+  char ssid[improv::SSID_MAX + 1] = {0};
+  char auth[12] = {0};
+  int rssi = 0;
+  const int got = ble_improv_scan_row(s_scan_emit, ssid, sizeof(ssid), &rssi, auth, sizeof(auth));
+  if (got < 0) return;                       // the cache is busy this pass: next pass
+  if (got == 0) { end_scan_list(); return; }   // every row sent: the empty result closes the list
+  ++s_scan_emit;
+  const size_t len = strlen(ssid);
+  if (len == 0 || len > improv::SSID_MAX) return;   // not a row the standard carries: next pass
+  char rssi_text[8];
+  snprintf(rssi_text, sizeof(rssi_text), "%d", rssi);
+  const char* row[3] = { ssid, rssi_text, auth };
+  send_result(Command::GetWifiNetworks, row, 3);
 }
 
 // The one link: still held by the stack? Silent past the idle bound, or
@@ -430,6 +581,11 @@ void follow_link(uint32_t now_ms) {
   if (!held) {
     improv::session_link_down(s_session);
     s_door_conn = NO_CONN;
+    // A network list in flight was that link's: nothing to stream to, and
+    // the next link asks for its own.
+    s_scan_asking = false;
+    s_scan_waiting = false;
+    s_scan_emit = -1;
     return;
   }
   if (improv::idle_disconnect_due(s_session, now_ms, s_timing)) {
@@ -523,21 +679,55 @@ bool init(NimBLEServer* server) {
   // The first-boot window is measured from here — the channel comes up a
   // few seconds after boot on a fresh unit (BLE_DISCOVERY_FRESH_SETTLE_MS),
   // so "after boot" is "after boot, give or take the settle".
+  // "After boot" is after the last POWER CYCLE: the window a never-
+  // provisioned unit spent before a software reset (the first-boot
+  // wizard's 15-minute abandonment restart, a watchdog) is carried in by
+  // the sketch's RTC record and back-dated into the stamp, so the restarts
+  // never re-arm it; a window those boots spent whole begins shut.
   s_timing = improv::Timing{};
   s_timing.provisioning_timeout_ms = PROVISIONING_TIMEOUT_MS;
   s_timing.first_boot_window_ms = (uint32_t)(IMPROV_FIRST_BOOT_WINDOW_MS);
   const bool no_credentials = ble_improv_door_should_open();
-  improv::session_begin(s_session, no_credentials, millis(), s_timing);
+  const uint32_t now_ms = millis();
+  const uint32_t carried_ms = ble_improv_window_used_ms();
+  improv::session_begin(s_session, no_credentials, now_ms, s_timing, carried_ms);
+  s_window_noted_ms = now_ms;
+  s_window_spent_noted = s_session.window_spent;
+  if (s_session.window_spent) ble_improv_note_window_used(s_timing.first_boot_window_ms);
   s_active = true;
   publish_state();
   publish_error();
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
              improv::door_open(s_session)
-                 ? "Setup door service ready (door open: no credentials stored, first-boot window running)"
-                 : (no_credentials ? "Setup door service ready (door shut: tap-only build, no tap on this board)"
-                                   : "Setup door service ready (door shut: credentials stored)"),
+                 ? (carried_ms != 0
+                        ? "Setup door service ready (door open: no credentials stored, first-boot window carried across the reset)"
+                        : "Setup door service ready (door open: no credentials stored, first-boot window running)")
+                 : (no_credentials
+                        ? (s_session.window_spent
+                               ? "Setup door service ready (door shut: first-boot window spent before the reset; a power cycle re-arms it)"
+                               : "Setup door service ready (door shut: tap-only build, no tap on this board)")
+                        : "Setup door service ready (door shut: credentials stored)"),
              nullptr);
   return true;
+}
+
+// The window tally for the sketch's RTC record: every WINDOW_NOTE_MS while
+// the no-credentials window runs, and the moment it is spent (by time or by
+// the attempt cap) — session_window_used_ms answers the whole window then.
+// A window re-armed at runtime (a credential wipe: the sketch zeroed its
+// record too) starts a fresh tally.
+void follow_window(uint32_t now_ms) {
+  if (!s_session.window_spent) s_window_spent_noted = false;
+  if (s_session.window_spent && !s_window_spent_noted) {
+    s_window_spent_noted = true;
+    s_window_noted_ms = now_ms;
+    ble_improv_note_window_used(improv::session_window_used_ms(s_session, now_ms, s_timing));
+    return;
+  }
+  if (s_session.door != improv::Door::NoCredentials) return;
+  if ((uint32_t)(now_ms - s_window_noted_ms) < WINDOW_NOTE_MS) return;
+  s_window_noted_ms = now_ms;
+  ble_improv_note_window_used(improv::session_window_used_ms(s_session, now_ms, s_timing));
 }
 
 void tick() {
@@ -545,9 +735,10 @@ void tick() {
   const uint32_t now_ms = millis();
   improv::session_set_no_credentials(s_session, ble_improv_door_should_open(), now_ms, s_timing);
   follow_link(now_ms);
-  if (s_rx_pending) handle_command(now_ms);
+  if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) handle_command(now_ms);
   follow_join(now_ms);
   follow_claim(now_ms);
+  follow_scan(now_ms);
   const bool was_provisioning = s_session.state == State::Provisioning;
   if (improv::session_tick(s_session, now_ms, s_timing)) {
     publish_error();
@@ -559,6 +750,7 @@ void tick() {
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Setup door: join timed out", nullptr);
     }
   }
+  follow_window(now_ms);
   follow_door();
 }
 
