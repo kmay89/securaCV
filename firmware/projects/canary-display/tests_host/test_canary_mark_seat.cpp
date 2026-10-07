@@ -472,8 +472,9 @@ static void test_hop_owns_y() {
 //    through, or the picker's live rescale is switched off and nothing
 //    else notices. The breath is the bird's one anim that repeats forever.
 static const lv_anim_t* the_breath(lv_obj_t* bird) {
-  const lv_anim_t* a = lv_anim_get(bird, nullptr);
-  return a != nullptr && a->repeat_cnt == LV_ANIM_REPEAT_INFINITE ? a : nullptr;
+  for (const lv_anim_t* a : fake_lvgl::anims())
+    if (a->var == bird && a->repeat_cnt == LV_ANIM_REPEAT_INFINITE) return a;
+  return nullptr;
 }
 
 static void check_breath(const char* what, lv_obj_t* bird, uint32_t want_ms) {
@@ -530,7 +531,7 @@ static void test_temperament_reaches_breath() {
     canary_mark_temperament(1.2f, 1.0f, 1.0f);
     CHECK(anims_on(bird) == 1 && the_breath(bird) == nullptr,
           "a temperament mid-hop: %d anims on the bird, %s, want the hop alone",
-          anims_on(bird), the_breath(bird) != nullptr ? "a breath first" : "no breath");
+          anims_on(bird), the_breath(bird) != nullptr ? "a breath among them" : "no breath");
     watch(scr, bird, 600);  // the hop lands
     check_breath("Joyful, temperament 1.2 mid-hop, landed", bird, 1680);
     canary_mark_temperament(1.0f, 1.0f, 1.0f);
