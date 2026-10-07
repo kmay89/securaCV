@@ -30,7 +30,7 @@
 
 // External-linkage bridges defined in canary_wap.ino.
 extern bool   ble_improv_submit_join(const char* ssid, const char* password);   // RAM-only until the verdict
-extern void   ble_improv_join_verdict(bool joined);                              // persist on success, forget on failure
+extern bool   ble_improv_join_verdict(bool joined);                   // persist on success, forget on failure; false = not the door's join
 extern bool   ble_improv_door_should_open();                          // no credentials stored
 extern size_t ble_improv_reach_url(char* out, size_t cap);            // http(s)://<mdns>.local/
 extern size_t ble_improv_mint_claim(char* out, size_t cap, uint32_t now_ms);  // the claim JSON
@@ -395,10 +395,23 @@ void follow_join(uint32_t now_ms) {
   if (s_session.state != State::Provisioning) return;
   const wl_status_t ws = WiFi.status();
   if (ws == WL_CONNECTED) {
-    improv::session_on_join_result(s_session, true, now_ms);
     // Proven: the sketch persists the credentials now (the door shuts on
     // its own once they are stored), before the claim names the .local URL.
-    ble_improv_join_verdict(true);
+    // Unless the join that came up is not this door's: another path (the
+    // SoftAP wizard, a QR scan, the bonded rescue) persisted its own
+    // credentials while this one was in flight and owns the link. Then no
+    // claim, no URL — the phone at the door is told NotAuthorized (the unit
+    // has an owner now), and the shut door disarms the rest on this pass.
+    if (!ble_improv_join_verdict(true)) {
+      improv::session_on_join_result(s_session, false, now_ms);
+      s_session.error = Error::NotAuthorized;
+      publish_error();
+      publish_state();
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                 "Setup door: a join another path owns came up — no claim for the door's link", nullptr);
+      return;
+    }
+    improv::session_on_join_result(s_session, true, now_ms);
     // The claim for the link that asked: minted and armed FIRST, on this
     // task, readable by that link alone for the ticket's TTL — then the
     // verdict goes out. A phone that reads CLAIM the moment it hears

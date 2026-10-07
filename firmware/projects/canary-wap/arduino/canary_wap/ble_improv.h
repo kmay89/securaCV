@@ -18,7 +18,9 @@
  * a window measured from each boot re-opened the door forever. The sketch
  * keeps the spent time in an RTC-noinit record (ble_improv_window_used_ms /
  * ble_improv_note_window_used, written every ~2 s while the door's window
- * runs; zeroed after a power-on or brownout, and by a credential wipe),
+ * runs; zeroed after a power-on, a brownout, a power glitch or a reset a
+ * host asserted from the USB / JTAG port — the Flasher's — and by a
+ * credential wipe on a unit that had credentials),
  * and init() hands it to improv::session_begin, which back-dates the
  * window: a window the last boots spent whole begins shut. And a phone at
  * the door is a sign of life for that wizard timer (ble_improv_note_

@@ -57,7 +57,7 @@ sentence from `improv_core.h`:
 
 | Situation | Door | Why |
 |---|---|---|
-| No credentials stored (first boot, after a factory reset), within **30 minutes** of power-on | **Open** (`Door::NoCredentials`) | A device nobody owns yet. The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, a factory reset re-arms it from the moment the credentials vanish; compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
+| No credentials stored (first boot, after a factory reset), within **30 minutes** of power-on | **Open** (`Door::NoCredentials`) | A device nobody owns yet. The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, a factory reset re-arms it from the moment the credentials vanish; compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
 | No credentials stored, the window has run out | Shut | "A unit forgotten in a drawer is not claimable from the street for the rest of its life." A power cycle or a tap reopens it; a software restart does not. |
 | Credentials stored, the network is fine | Shut | A device that has an owner offers nothing. |
 | Credentials stored, the saved network is **failing** (the SoftAP recovery portal is up) | **Shut** | The recovery portal has a key printed on the unit; this door does not. See §2.3. |
@@ -446,8 +446,9 @@ releases a disconnected unit's scanners never fires under a wizard phone's
 handshake); the heap guard keeps the last word. The first-boot window rides
 across the wizard's 15-minute idle restart in RTC-noinit memory
 (`g_improv_window_*`, honored only when `esp_reset_reason()` is not a
-power-on, brownout or unknown reset — `door_window_record_valid`,
-host-tested; zeroed by Forget Wi-Fi), and every command, join and claim at
+power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset —
+`door_window_record_valid`, host-tested; zeroed by Forget Wi-Fi on a unit
+that had credentials), and every command, join and claim at
 the door is a sign of life for that wizard timer (`setup_wizard::touch`), so
 the restart cannot land mid-provisioning. `GET_WIFI_NETWORKS` streams the
 sketch's scan cache — the same list the wizard's `GET /api/wifi/scan` serves,
@@ -456,7 +457,10 @@ already running is shared; a request during a join answers the empty list at
 once (a sweep under `WiFi.begin()` can fail it). A door join persists only
 once proven (§4), and a path that persisted credentials meanwhile (the
 wizard, a QR scan, the bonded rescue) owns them: the door's later verdict
-changes nothing. The post-join reboot into steady state is held while a
+changes nothing, and the door's link gets no claim and no URL for a join it
+did not make — it is told NotAuthorized (the unit has an owner now). The
+join path drops a leftover sweep under the scan-cache lock, so the door's
+harvest never reads a freed result set. The post-join reboot into steady state is held while a
 claim is outstanding (the claim promised 180 s; the reboot came at 120 s)
 and gets a 10 s runway once it is spent or expires. `set_setup_door` asks
 the stack about **every** link it holds before applying Just Works, not the

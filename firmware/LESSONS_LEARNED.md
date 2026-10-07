@@ -1461,10 +1461,15 @@
   keeps the spent time in RTC memory (`RTC_NOINIT_ATTR`, with a magic so a
   cold boot's garbage never reads as a spent window), saves it every two
   seconds while the door is open, and reads it back only when the reset
-  reason is a software reset — a power-on, a brownout or an unknown reason
-  clears it, which is exactly the "power cycle re-arms" rule. Credentials
-  landing (or being forgotten) clear the record too, so a factory reset or
-  Forget Wi-Fi re-arms the full window.
+  reason is a software reset — a power-on, a brownout, a power glitch, a
+  reset a host asserted from the USB / JTAG port (the Flasher's: a unit
+  just erased and re-flashed must not inherit the previous image's spent
+  window, and RTC memory survives a flash) or an unknown reason clears it,
+  which is exactly the "power cycle re-arms" rule. Credentials landing
+  (or being forgotten, on a unit that had them) clear the record too, so a
+  factory reset or Forget Wi-Fi re-arms the full window; a Forget on a
+  unit that never had credentials wipes nothing, and the session's window
+  is untouched, so the record stays too — the two never disagree.
 - **Regression check:** `tests_host/test_improv_core.cpp`
   (`a_software_restart_does_not_rearm_the_window`): a session begun with
   the full window already spent begins shut; one begun part-way opens for

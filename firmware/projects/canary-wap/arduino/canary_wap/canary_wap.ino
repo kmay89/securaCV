@@ -907,6 +907,32 @@ static canary::net::claim_ticket::Ticket g_improv_claim = {};
 RTC_NOINIT_ATTR uint32_t g_improv_window_magic;
 RTC_NOINIT_ATTR uint32_t g_improv_window_used_ms;
 static constexpr uint32_t IMPROV_WINDOW_MAGIC = 0x444F4F52;  // "DOOR"
+// A reset that re-arms the window (the record is cleared): the chip powered
+// up, or its power glitched or browned out; a host at the USB or JTAG port
+// asserted a reset — the operator's own act (the Flasher ends every write
+// with one, and a unit just erased and re-flashed must not inherit the
+// previous image's spent window: RTC memory survives a flash); or a reset
+// the chip cannot name (the record is RTC garbage as far as anyone can
+// tell, and clearing re-arms the window, which is the safe side — a half
+// hour of door on a unit nobody owns, not a door that never opens or never
+// shuts). A software reset, a watchdog, a panic and a deep-sleep wake keep
+// the record. The USB / JTAG / glitch reasons exist from IDF 5.1 (core 3.x).
+// Mirrors firmware/common/network/improv_ble.cpp's reset_is_power_cycle.
+static bool improv_window_reset_is_power_cycle(esp_reset_reason_t why) {
+  switch (why) {
+    case ESP_RST_POWERON:
+    case ESP_RST_BROWNOUT:
+    case ESP_RST_UNKNOWN:
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
+    case ESP_RST_USB:
+    case ESP_RST_JTAG:
+    case ESP_RST_PWR_GLITCH:
+#endif
+      return true;
+    default:
+      return false;
+  }
+}
 
 #if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
 // BLE OTA break-glass = the same physical-presence gate. A legacy (v1) BLE
@@ -6252,12 +6278,15 @@ static uint32_t g_scan_cache_at_ms = 0;
 // cache so a phone's picker and the wizard's agree and the single radio is
 // swept once for both. A mutex (the cam_lock() pattern), not a critical
 // section: a harvest reads WiFi.SSID(i) into Strings. Every access to the
-// three words above and every harvest of a finished sweep (the one
-// WiFi.scanDelete() that follows it) goes through it, so two harvesters
-// never read one result set twice or fill the cache under each other. The
-// httpd task waits up to a second (a harvest is milliseconds) and answers
-// "scanning" if it cannot have it; the loop task waits a few milliseconds
-// and asks again next pass.
+// three words above, every harvest of a finished sweep (the one
+// WiFi.scanDelete() that follows it) AND every drop of a sweep nobody will
+// harvest (the join path's, in wifi_connect_to_home — reached from the loop
+// task, the httpd task's /api/wifi/connect and the QR task's decode) goes
+// through it, so two harvesters never read one result set twice, nobody
+// frees the core's result array under a harvest's WiFi.SSID(i), and the
+// cache is never filled under itself. The httpd task waits up to a second
+// (a harvest is milliseconds) and answers "scanning" if it cannot have it;
+// the loop task waits a few milliseconds and asks again next pass.
 static SemaphoreHandle_t scan_cache_lock() {
   static SemaphoreHandle_t m = xSemaphoreCreateMutex();
   return m;
@@ -6268,6 +6297,7 @@ static bool scan_cache_take(uint32_t wait_ms) {
 static void scan_cache_give() { xSemaphoreGive(scan_cache_lock()); }
 static const uint32_t SCAN_CACHE_WAIT_HTTPD_MS = 1000;
 static const uint32_t SCAN_CACHE_WAIT_LOOP_MS  = 5;
+static const uint32_t SCAN_CACHE_WAIT_DROP_MS  = 100;
 
 
 // Non-zero = first-boot setup finished with a live WiFi join; reboot into
@@ -6935,8 +6965,8 @@ bool ble_improv_submit_join(const char* ssid, const char* password) {
 // the flag is cleared BEFORE the save (the save clears it too), and only a
 // non-empty SSID is saved: an attempt some other path forgot meanwhile
 // (wifi_clear_credentials) has nothing to persist.
-void ble_improv_join_verdict(bool joined) {
-  if (!g_improv_join_pending) return;
+bool ble_improv_join_verdict(bool joined) {
+  if (!g_improv_join_pending) return false;   // not the door's join: another path owns the credentials
   g_improv_join_pending = false;
   if (joined) {
     if (g_wifi_creds.ssid[0] == '\0') {
@@ -6948,7 +6978,7 @@ void ble_improv_join_verdict(bool joined) {
                  "Setup door: joined, but the credentials were NOT saved (NVS) — kept until reboot",
                  g_wifi_creds.ssid);
     }
-    return;
+    return true;
   }
   WiFi.disconnect(false);
   secure_zero(g_wifi_creds.password, sizeof(g_wifi_creds.password));
@@ -6958,6 +6988,7 @@ void ble_improv_join_verdict(bool joined) {
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
              "Setup door: join not proven — credentials discarded, the door stays open", nullptr);
+  return true;
 }
 
 // Where the phone can reach this unit once it has joined: the .local name
@@ -7079,8 +7110,9 @@ void ble_improv_note_activity() {
 // scan: a sweep already running (the boot pre-scan, the wizard's) is
 // shared, a fresh cache is served without touching the radio, and a stale
 // one starts the sketch's scan exactly as the wizard's handler would. All
-// three bridges run on the loop task (ble_improv::tick), where the only
-// other scan callers of this task live (wifi_connect_to_home).
+// three bridges run on the loop task (ble_improv::tick); the join path
+// (wifi_connect_to_home — the loop task's own retries and submit, the httpd
+// task's connect, the QR task's decode) drops a sweep under the same lock.
 
 // Ask for the list. -1 = refused: a join is in flight (a sweep under a
 // WiFi.begin() can fail it — the door answers an empty list at once, and
@@ -7090,8 +7122,13 @@ void ble_improv_note_activity() {
 // this pass (the wizard's handler is harvesting): ask again next pass —
 // never an early "no networks".
 int ble_improv_scan_request() {
-  if (g_improv_join_pending || g_wifi_status.state == WIFI_PROV_CONNECTING) return -1;
   if (!scan_cache_take(SCAN_CACHE_WAIT_LOOP_MS)) return 0;
+  // Decided under the lock: the join path publishes CONNECTING under the
+  // same hold, so a request cannot slip into the gap before its WiFi.begin().
+  if (g_improv_join_pending || g_wifi_status.state == WIFI_PROV_CONNECTING) {
+    scan_cache_give();
+    return -1;
+  }
   int ok = 1;
   const uint32_t now = millis();
   const bool fresh = provisioning_logic::scan_cache_fresh(now, g_scan_cache_at_ms,
@@ -9860,17 +9897,27 @@ static bool wifi_clear_credentials() {
     nvs->remove(NVS_KEY_WIFI_EN);
   }
 
+  // What the setup door counted as stored credentials, before the wipe: a
+  // unit with credentials (and no door join still pending over them).
+  const bool door_had_credentials = g_wifi_creds.configured && !g_improv_join_pending;
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
   g_improv_join_pending = false;   // a door join in flight has nothing left to prove
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   g_wifi_status.last_fail_reason[0] = '\0';
   // The owner's own act re-arms the Bluetooth setup door's first-boot
   // window: improv_core.h's session does so in RAM the moment the door reads
-  // "no credentials" (its wiped transition), and the carried record must
-  // agree, or a software restart right after a Forget would start the door
-  // on the spent time instead of a fresh half hour.
-  g_improv_window_magic = 0;
-  g_improv_window_used_ms = 0;
+  // "no credentials" where it read credentials before (its wiped
+  // transition), and the carried record must agree, or a software restart
+  // right after a Forget would start the door on the spent time instead of
+  // a fresh half hour. Only then: on a unit that never had credentials the
+  // session's window is untouched by a Forget (nothing was wiped), and a
+  // record zeroed anyway would hand the next software reset a fresh half
+  // hour the session never granted — a spent window stays spent until a
+  // power cycle, as the design says.
+  if (door_had_credentials) {
+    g_improv_window_magic = 0;
+    g_improv_window_used_ms = 0;
+  }
   // Forgetting creds drops back to AP-only provisioning; ensure the management
   // AP is up (it may have been torn down once the STA link was healthy) so the
   // device remains reachable after the home network is forgotten.
@@ -9915,10 +9962,25 @@ static void wifi_connect_to_home() {
 
   // Drop any leftover async scan results before attempting STA association.
   // A pending scan handle keeps the radio busy and causes WiFi.begin() to
-  // silently fail to associate on some core versions.
-  if (g_wifi_scan_in_progress || WiFi.scanComplete() >= 0) {
-    WiFi.scanDelete();
-    g_wifi_scan_in_progress = false;
+  // silently fail to associate on some core versions. UNDER the scan-cache
+  // lock: the setup door's harvest (ble_improv_scan_poll, the loop task)
+  // reads the core's result array through WiFi.SSID(i) / RSSI(i), and this
+  // function runs on the httpd task (/api/wifi/connect, /api/wifi/reconnect)
+  // and the QR task too — a scanDelete() here would free that array under
+  // the read. The CONNECTING state is published under the same hold, so the
+  // door's list request (which refuses under CONNECTING inside the lock)
+  // cannot start a sweep in the gap before WiFi.begin(). A take that times
+  // out (the harvester is mid-row) skips the drop — the harvester releases
+  // the set itself — and still marks CONNECTING.
+  if (scan_cache_take(SCAN_CACHE_WAIT_DROP_MS)) {
+    if (g_wifi_scan_in_progress || WiFi.scanComplete() >= 0) {
+      WiFi.scanDelete();
+      g_wifi_scan_in_progress = false;
+    }
+    g_wifi_status.state = WIFI_PROV_CONNECTING;
+    scan_cache_give();
+  } else {
+    g_wifi_status.state = WIFI_PROV_CONNECTING;
   }
 
   // Ensure AP+STA mode is active (required to keep the captive-portal AP up
@@ -9941,7 +10003,6 @@ static void wifi_connect_to_home() {
   // WiFi.begin() below installs a fresh config anyway.
   WiFi.disconnect(false, false);
 
-  g_wifi_status.state = WIFI_PROV_CONNECTING;
   g_wifi_status.connect_attempts++;
   g_wifi_status.last_connect_ms = millis();
 
@@ -11277,15 +11338,9 @@ void setup() {
   // also surfaced in sys_monitor's status JSON. See docs/esp32s3_power_resilience.md.
   {
     // The setup door's carried window (g_improv_window_*): honored across a
-    // software reset, cleared after a power cycle. A brownout is a power
-    // event, and a reset the chip cannot name is treated as one too — the
-    // record is then RTC garbage as far as anyone can tell, and clearing
-    // re-arms the window, which is the safe side (a half hour of door on a
-    // unit nobody owns, not a door that never opens or never shuts).
-    const esp_reset_reason_t reset_reason = esp_reset_reason();
-    const bool power_cycle = reset_reason == ESP_RST_POWERON ||
-                             reset_reason == ESP_RST_BROWNOUT ||
-                             reset_reason == ESP_RST_UNKNOWN;
+    // software reset, cleared after a power cycle — which resets count as
+    // one is improv_window_reset_is_power_cycle's, beside the record.
+    const bool power_cycle = improv_window_reset_is_power_cycle(esp_reset_reason());
     if (!provisioning_logic::door_window_record_valid(g_improv_window_magic,
                                                       IMPROV_WINDOW_MAGIC, power_cycle)) {
       g_improv_window_magic = 0;

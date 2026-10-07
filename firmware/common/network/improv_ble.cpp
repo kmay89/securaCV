@@ -27,6 +27,7 @@
 #include <WiFi.h>
 #include <esp_attr.h>     // RTC_NOINIT_ATTR: the window across a software reset
 #include <esp_system.h>   // esp_reset_reason(): a power-on clears it
+#include <esp_idf_version.h>   // the USB / JTAG / glitch reset reasons exist from IDF 5.1
 #include <string.h>
 #include <string>
 
@@ -67,8 +68,9 @@ improv::Timing s_timing;
 // outage reboot, a watchdog, a route that restarts) must not open a fresh
 // window every time. The spent time lives in RTC slow memory, which every
 // reset but a power-on keeps; a power-on (or a brownout, which is a power
-// event) finds the magic gone and starts from zero. Written every few
-// seconds while the window runs, read once at begin().
+// event, or a reset a host asserted from the USB / JTAG port) finds the
+// magic gone and starts from zero. Written every few seconds while the
+// window runs, read once at begin().
 struct WindowRecord {
   uint32_t magic;
   uint32_t used_ms;
@@ -78,9 +80,34 @@ RTC_NOINIT_ATTR WindowRecord s_window_rtc;
 constexpr uint32_t WINDOW_SAVE_PERIOD_MS = 2000;
 uint32_t s_window_saved_ms = 0;
 
+// A reset that re-arms the window: the chip powered up (or its power
+// glitched), or a host at the USB / JTAG port asserted a reset — the
+// operator's own act (the Flasher ends every write with one, and a unit
+// just erased and re-flashed must not inherit the previous image's spent
+// window: RTC memory survives a flash) — or a reset the chip cannot name
+// (the record is garbage as far as anyone can tell; clearing it is the safe
+// side). A software reset, a watchdog, a panic and a deep-sleep wake keep
+// the record. The USB / JTAG / glitch reasons exist from IDF 5.1 (core 3.x);
+// the 1.4.x stack's core 2.x (IDF 4.4) has no such resets to name.
+bool reset_is_power_cycle(esp_reset_reason_t why) {
+  switch (why) {
+    case ESP_RST_POWERON:
+    case ESP_RST_BROWNOUT:
+    case ESP_RST_UNKNOWN:
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
+    case ESP_RST_USB:
+    case ESP_RST_JTAG:
+    case ESP_RST_PWR_GLITCH:
+#endif
+      return true;
+    default:
+      return false;
+  }
+}
+
 uint32_t window_used_from_rtc() {
   const esp_reset_reason_t why = esp_reset_reason();
-  if (why == ESP_RST_POWERON || why == ESP_RST_BROWNOUT || why == ESP_RST_UNKNOWN) {
+  if (reset_is_power_cycle(why)) {
     s_window_rtc.magic = 0;
     s_window_rtc.used_ms = 0;
     return 0;

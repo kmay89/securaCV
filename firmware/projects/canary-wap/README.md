@@ -175,7 +175,8 @@ restart does not** re-arm it — the first-boot wizard restarts a
 never-provisioned unit every 15 idle minutes, which would otherwise have
 re-opened the door forever: the spent time rides in RTC-noinit memory
 (`provisioning_logic::door_window_record_valid`, host-tested; cleared after
-a power-on, brownout or unknown reset, and by **Forget Wi-Fi**, which is the
+a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
+and by **Forget Wi-Fi** on a unit that had credentials, which is the
 owner's way to re-arm the window), and a phone at the door is a sign of life
 for that wizard timer, so the restart cannot land mid-provisioning. A WAP on its own
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
@@ -191,7 +192,8 @@ stays open for a retry — the wizard, the QR scan and the bonded rescue keep
 their persist-first order, which the door cannot afford (one wrong
 password would otherwise mark the unit configured and shut the door on the
 next pass); a path that persisted credentials while a door join was in
-flight owns them, and the door's later verdict changes nothing. Bounds while open:
+flight owns them, and the door's later verdict changes nothing — its link
+gets no claim and is told NotAuthorized. Bounds while open:
 3 s between accepted credential writes, 10 attempts per open door, a
 3-minute idle disconnect, ~20 s linger after the join.
 

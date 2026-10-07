@@ -15,10 +15,12 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
   (`window_used_ms`; `session_window_used_ms` reads it back;
   `a_software_restart_does_not_rearm_the_window`), the shared glue keeps it
   in RTC-noinit memory across `ESP.restart()` and watchdog resets (cleared
-  by a power-on, a brownout or an unknown reset, and once credentials land),
+  by a power-on, a brownout, a power glitch, a reset asserted from the USB
+  or JTAG port — the Flasher's — or an unknown reset, and once credentials
+  land),
   and the WAP sketch keeps its own record the same way
   (`provisioning_logic::door_window_record_valid`, host-tested; zeroed by
-  Forget Wi-Fi). Every command, join and claim at a WAP's door is a sign of
+  Forget Wi-Fi on a unit that had credentials). Every command, join and claim at a WAP's door is a sign of
   life for that wizard timer, so its restart cannot land mid-provisioning.
   `firmware/LESSONS_LEARNED.md` has the entry.
 - **A BOOT tap on an installed Sense or Vision now provisions.** The door
@@ -39,7 +41,10 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
   (`provisioning_logic::ap_only_for_discovery`: the 45 s settle used to
   release them under a wizard phone's handshake); a failed door join no
   longer discards credentials another path persisted meanwhile
-  (`wifi_save_credentials` supersedes the pending door join);
+  (`wifi_save_credentials` supersedes the pending door join), and a join
+  another path owns mints no claim for the door's link — it is told
+  NotAuthorized; the join path drops a leftover sweep under the scan-cache
+  lock, so the door's harvest never reads a freed result set;
   `bluetooth_channel::set_setup_door` refuses Just Works while **any**
   stack-held link is bonded, not only the connection card's
   (`the_door_is_refused_under_any_bonded_link`); and `GET_WIFI_NETWORKS` is
