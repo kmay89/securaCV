@@ -40,6 +40,11 @@
 #include <fleet_beacon.h>                     // FLEET_BEACON_DETECT_* class tokens
 #if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
 #include "canary/net/fleet_beacon_adv.h"      // carrier: BLE advert
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+#include "network/improv_ble.h"               // the Bluetooth setup door (common/)
+#include "network/setup_portal.h"             // the door follows the portal
+#include "identity/device_pseudonym.h"        // the on-air name's suffix
+#endif
 #endif
 #if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
 #include "canary/net/fleet_udp.h"             // carrier: LAN multicast
@@ -705,6 +710,36 @@ void setup() {
   canary::net::fleet_beacon_begin(canary::ms_now());
 #endif
 
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  // The Bluetooth setup door: the Improv Wi-Fi service on the beacon's
+  // NimBLE stack. Open exactly while the shared setup portal is up (no
+  // credentials, or a saved network that stopped working), so a phone
+  // hands this witness its Wi-Fi with one tap and the portal stays the
+  // break-glass path underneath. Fail-safe like the beacon: a stack that
+  // cannot serve degrades to a no-op.
+  {
+    // "Vision-AB12": the same four characters as the SecuraCV-AB12 setup
+    // network, so a phone can tell the two doors are one device.
+    static char adv_name[16] = {0};
+    {
+      char token[device_pseudonym::HEX_LEN + 1] = {0};
+      device_pseudonym::device_id_hex(token, sizeof(token));
+      snprintf(adv_name, sizeof(adv_name), "Vision-%.4s", token);
+      for (char* c = adv_name + 7; *c; ++c) *c = (char)toupper((unsigned char)*c);
+    }
+    canary::net::improv_ble::Identity id{};
+    id.adv_name         = adv_name;
+    id.firmware_name    = "canary-vision";
+    id.firmware_version = CANARY_FW_VERSION;
+    id.hardware         = MODEL;
+    id.device_name      = canary::cfg::get().device_id;
+    id.reach_url        = nullptr;   // no page to send the phone to; it watches mDNS
+    id.identify         = [] { identify_start(canary::ms_now()); };
+    id.require_encryption = true;
+    canary::net::improv_ble::begin(id, canary::net::setup_portal_active(), canary::ms_now());
+  }
+#endif
+
 #if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
   // The LAN band for the same beacon. Nothing here needs WiFi to be up yet —
   // the socket is opened by the first tick that finds an address, and reopened
@@ -885,6 +920,13 @@ void loop() {
   // ~5 s). Placed before the broker/WiFi early-returns below so it keeps
   // advertising through an MQTT outage — that broker-free reach is the point.
   canary::net::fleet_beacon_tick(canary::ms_now());
+#endif
+
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  // The Bluetooth door follows the portal: open while it is up, shut once
+  // the witness is on its own Wi-Fi. Also before the broker early-returns —
+  // a device with no Wi-Fi has no broker, and this is how it gets one.
+  canary::net::improv_ble::tick(canary::ms_now(), canary::net::setup_portal_active());
 #endif
 
 #if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP

@@ -56,6 +56,10 @@
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
 #include "canary/net/fleet_roster_scan.h" // RX twin: track the other Canaries
 #endif
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+#include "canary/version.h"
+#include "network/improv_ble.h"           // the Bluetooth setup door (common/)
+#endif
 #include <esp_random.h>  // esp_random() for reconnect jitter
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
@@ -811,6 +815,36 @@ void setup() {
   canary::net::fleet_beacon_begin(canary::ms_now());
 #endif
 
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  // The Bluetooth setup door: the Improv Wi-Fi service on the beacon's
+  // NimBLE stack. Open exactly while the shared setup portal is up (no
+  // credentials, or a saved network that stopped working), so a phone
+  // hands this witness its Wi-Fi with one tap and the portal stays the
+  // break-glass path underneath. Fail-safe like the beacon: a stack that
+  // cannot serve degrades to a no-op.
+  {
+    // "Sense-AB12": the same four characters as the SecuraCV-AB12 setup
+    // network, so a phone can tell the two doors are one device.
+    static char adv_name[16] = {0};
+    {
+      char token[device_pseudonym::HEX_LEN + 1] = {0};
+      device_pseudonym::device_id_hex(token, sizeof(token));
+      snprintf(adv_name, sizeof(adv_name), "Sense-%.4s", token);
+      for (char* c = adv_name + 6; *c; ++c) *c = (char)toupper((unsigned char)*c);
+    }
+    canary::net::improv_ble::Identity id{};
+    id.adv_name         = adv_name;
+    id.firmware_name    = "canary-sense";
+    id.firmware_version = CANARY_FW_VERSION;
+    id.hardware         = MODEL;
+    id.device_name      = canary::cfg::get().device_id;
+    id.reach_url        = nullptr;   // no page to send the phone to; it watches mDNS
+    id.identify         = [] { identify_start(canary::ms_now()); };
+    id.require_encryption = true;
+    canary::net::improv_ble::begin(id, canary::net::setup_portal_active(), canary::ms_now());
+  }
+#endif
+
   // Seed the heap-health snapshot so the first status publish carries real
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
@@ -948,6 +982,13 @@ void loop() {
   // ~5 s). Placed before the broker early-return below so it keeps advertising
   // through an MQTT outage — that broker-free reach is the point.
   canary::net::fleet_beacon_tick(now);
+#endif
+
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  // The Bluetooth door follows the portal: open while it is up, shut once
+  // the witness is on its own Wi-Fi. Also before the broker early-return —
+  // a device with no Wi-Fi has no broker, and this is how it gets one.
+  canary::net::improv_ble::tick(now, canary::net::setup_portal_active());
 #endif
 
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER

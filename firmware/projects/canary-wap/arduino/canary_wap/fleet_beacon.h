@@ -15,7 +15,8 @@
  *   [2]    0x10          BEACON_PRESENCE type (distinct from chirp 0x01..0x05)
  *   [3]    0x01          schema version
  *   [4]    flags         bit0=tamper, bit1=mic_muted, bit2=degraded,
- *                        bit3=on_wifi_sta, bit4=alert_active
+ *                        bit3=on_wifi_sta, bit4=alert_active,
+ *                        bit5=setup_open (Improv Wi-Fi on offer)
  *   [5]    battery_pct   0..100, 0xFF = unknown/none
  *   [6]    health_pct    0..100, 0xFF = unknown
  *   [7-8]  chain_height  low 16 bits, uint16 little-endian
@@ -78,6 +79,12 @@
 #define FLEET_BEACON_FLAG_DEGRADED    0x04  // bit2
 #define FLEET_BEACON_FLAG_ON_WIFI_STA 0x08  // bit3
 #define FLEET_BEACON_FLAG_ALERT       0x10  // bit4
+// bit5: the setup door is open — the Improv Wi-Fi service is on offer in this
+// device's scan response (common/network/improv_ble). A display or a phone
+// that hears it may offer to set the device up; a parser that predates the
+// bit ignores it like any other flag. Never set on a device that is on its
+// own Wi-Fi unless its owner tapped its button.
+#define FLEET_BEACON_FLAG_SETUP_OPEN  0x20  // bit5
 
 // Sentinel for an unknown/absent battery or health percentage.
 #define FLEET_BEACON_UNKNOWN_PCT      0xFF

@@ -17,6 +17,7 @@
 #include "canary/witness.h"             // chain_length(), ready()
 #include "canary/diagnostics.h"         // diag::get().level -> degraded flag
 #include "canary/net/wifi_mgr.h"        // wifi_connected() -> on_wifi_sta flag
+#include "network/improv_ble.h"         // setup_open() -> setup_open flag (common/)
 #include "identity/device_signature.h"  // fingerprint_hex() -> fp2
 
 namespace canary::net {
@@ -72,6 +73,9 @@ size_t fleet_beacon_payload_build(uint8_t out[FLEET_BEACON_MFG_V2_LEN]) {
   }
   if (canary::net::wifi_connected()) {
     flags |= FLEET_BEACON_FLAG_ON_WIFI_STA;
+  }
+  if (canary::net::improv_ble::setup_open()) {
+    flags |= FLEET_BEACON_FLAG_SETUP_OPEN;   // the Bluetooth setup door is open
   }
   if (s_det_active) {
     flags |= FLEET_BEACON_FLAG_ALERT;
