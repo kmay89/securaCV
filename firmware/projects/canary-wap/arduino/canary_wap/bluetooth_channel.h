@@ -231,8 +231,30 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 // and paired list are the loop task's from its first update() pass, before
 // any command runs (the F167 review). is_initialized(): any task; true once
 // the stack is up and the hand-over published.
+//
+// `scanners_held` (the sketch's fresh-unit path, provisioning_logic::
+// ble_fresh_unit_start_due): bring up the server, every service and
+// advertising exactly as always, but neither the active-scan settings nor
+// the continuous presence sensor (ble_presence::init/start) — the radio
+// duty the deferral of this whole bring-up exists to keep away from a
+// phone's WPA2 handshake. They are started later by release_scanners(),
+// on the loop task, when the sketch's rule says the join window is clear
+// (provisioning_logic::ble_scanners_release_due). scanners_held(): any
+// task; true once the loop task took such an init()'s result, until the
+// release took. init() alone is init(false): the scanners started, as
+// always. The hold reaches init() the way the DIS strings do
+// (set_device_metadata() below): pushed before it runs, on the caller's
+// task (hold_scanners_on_init()), taken once by the init() that runs
+// next; init(bool) is that push and the bring-up in one call.
 bool init();
+void hold_scanners_on_init(bool held);
+inline bool init(bool scanners_held) {
+  hold_scanners_on_init(scanners_held);
+  return init();
+}
 bool is_initialized();
+void release_scanners();   // loop task; idempotent; refused (held stays true) until the stack is adopted and no owner scan runs
+bool scanners_held();
 
 // The sketch's BLE bring-up worker (canary_wap.ino), on the loop task (the
 // F167 review): started before the sketch creates it, finished when its
@@ -266,8 +288,12 @@ void set_device_metadata(const char* fw_revision, const char* serial);
 bool is_advertising();
 
 // The setup door's security profile (ble_improv.h): true when applied.
-// Refused while a pairing is pending or in flight — ask again next pass.
-// Loop task only.
+// The decision is provisioning_logic::security_profile_for's (host-tested):
+// shut restores Numeric Comparison always; open applies Just Works unless a
+// pairing is pending or in flight, or a connected link is authenticated or
+// bonded — then refused (false), and the caller asks again next pass. The
+// Just Works profile is never applied under a bonded session. Loop task
+// only.
 bool set_setup_door(bool open);
 bool setup_door_open();
 

@@ -176,6 +176,117 @@ static void test_ble_fresh_unit_start() {
   CHECK(!ble_fresh_unit_start_due(false, 0, FRESH + 60000, 0, FRESH));
 }
 
+// The fresh-unit path brings the channel up with its scanners HELD; they are
+// released exactly when the long path would have started the whole channel.
+// Pinned as a sequence: held at the fresh settle, still held through the
+// SoftAP join window, released when that window clears (the AP torn down)
+// or, if home Wi-Fi never comes, at the max-hold — and the alias is the
+// long path's rule by name, so every verdict matches it.
+static void test_ble_scanners_held_then_released() {
+  const uint32_t FRESH = 5000;
+  const uint32_t SETTLE = 45000u;
+  const uint32_t MAXHOLD = 300000u;
+  const uint32_t boot = 100000u;
+  // t = fresh settle: the fresh path brings the channel up (scanners held)...
+  CHECK(ble_fresh_unit_start_due(true, 0, boot + FRESH, boot, FRESH));
+  // ...and the release is NOT yet due: the AP is up, nobody has joined.
+  CHECK(!ble_scanners_release_due(false, true, boot + FRESH, boot, SETTLE, MAXHOLD));
+  // A phone joins the SoftAP and provisions over the wizard instead: the
+  // scanners stay held through the whole AP grace window.
+  CHECK(!ble_scanners_release_due(false, true, boot + 60000u, boot, SETTLE, MAXHOLD));
+  CHECK(!ble_scanners_release_due(false, true, boot + MAXHOLD - 1, boot, SETTLE, MAXHOLD));
+  // The AP is torn down (the STA held past its grace): released now.
+  CHECK(ble_scanners_release_due(false, false, boot + 130000u, boot, SETTLE, MAXHOLD));
+  // Or home Wi-Fi never came and the AP stays up: released at the max-hold,
+  // never held forever (the Nearby sensor is not a fresh unit's hostage).
+  CHECK(ble_scanners_release_due(false, true, boot + MAXHOLD, boot, SETTLE, MAXHOLD));
+  // A runtime AP-only state releases on the shorter settle, as the long path
+  // would start.
+  CHECK(!ble_scanners_release_due(true, true, boot + SETTLE - 1, boot, SETTLE, MAXHOLD));
+  CHECK(ble_scanners_release_due(true, true, boot + SETTLE, boot, SETTLE, MAXHOLD));
+  // The alias IS the long path's rule: every verdict agrees, across the grid.
+  const bool bools[2] = { false, true };
+  const uint32_t times[6] = { boot, boot + FRESH, boot + SETTLE - 1, boot + SETTLE,
+                              boot + MAXHOLD - 1, boot + MAXHOLD + 7 };
+  for (bool ap_only : bools) {
+    for (bool ap_active : bools) {
+      for (uint32_t now : times) {
+        CHECK(ble_scanners_release_due(ap_only, ap_active, now, boot, SETTLE, MAXHOLD) ==
+              ble_discovery_start_due(ap_only, ap_active, now, boot, SETTLE, MAXHOLD));
+      }
+    }
+  }
+  // Wrap-safe, like the rule it aliases.
+  const uint32_t near_wrap = 0xFFFFF000u;
+  CHECK(!ble_scanners_release_due(false, true, near_wrap + 1000u, near_wrap, SETTLE, MAXHOLD));
+  CHECK(ble_scanners_release_due(false, true, near_wrap + MAXHOLD, near_wrap, SETTLE, MAXHOLD));
+}
+
+// The pairing channel's security profile for the setup door: the full
+// (door_open, pairing_pending, authenticated_link_up) matrix, then the
+// transitions the channel's set_setup_door() walks.
+static void test_security_profile_matrix() {
+  // Door shut: the owner's Numeric Comparison, whatever else is going on —
+  // the strict profile is never withheld.
+  CHECK(security_profile_for(false, false, false) == NUMERIC_COMPARISON);
+  CHECK(security_profile_for(false, false, true)  == NUMERIC_COMPARISON);
+  CHECK(security_profile_for(false, true,  false) == NUMERIC_COMPARISON);
+  CHECK(security_profile_for(false, true,  true)  == NUMERIC_COMPARISON);
+  // Door open, nothing in the way: Just Works.
+  CHECK(security_profile_for(true, false, false) == JUST_WORKS);
+  // Door open, a pairing pending: hold (the host reads the profile at the
+  // start of a procedure; swapping under one is a half-applied pairing).
+  CHECK(security_profile_for(true, true, false) == HOLD);
+  // Door open, an authenticated or bonded link up: hold — Just Works is
+  // never applied under a bonded session.
+  CHECK(security_profile_for(true, false, true) == HOLD);
+  // Both in the way: hold.
+  CHECK(security_profile_for(true, true, true) == HOLD);
+}
+
+static void test_security_profile_transitions() {
+  // The applied profile, as set_setup_door() keeps it: HOLD leaves it alone.
+  SecurityProfile applied = NUMERIC_COMPARISON;
+  auto step = [&](bool door_open, bool pairing_pending, bool auth_link) {
+    const SecurityProfile p = security_profile_for(door_open, pairing_pending, auth_link);
+    if (p != HOLD) applied = p;
+    return p;
+  };
+  // Boot, credentials stored, door shut: Numeric Comparison applied.
+  CHECK(step(false, false, false) == NUMERIC_COMPARISON);
+  CHECK(applied == NUMERIC_COMPARISON);
+  // Factory reset at runtime: the door opens, but the owner's bonded phone
+  // is still connected (the dashboard that issued the reset). Held: the
+  // bonded session keeps the strict profile.
+  CHECK(step(true, false, true) == HOLD);
+  CHECK(applied == NUMERIC_COMPARISON);
+  // Still held while that link is up, pass after pass.
+  CHECK(step(true, false, true) == HOLD);
+  CHECK(applied == NUMERIC_COMPARISON);
+  // The bonded link drops: Just Works applied on the next pass.
+  CHECK(step(true, false, false) == JUST_WORKS);
+  CHECK(applied == JUST_WORKS);
+  // A Just Works client is connected (unauthenticated: not an authenticated
+  // link): the door stays applied — re-asking is idempotent.
+  CHECK(step(true, false, false) == JUST_WORKS);
+  CHECK(applied == JUST_WORKS);
+  // The join persisted credentials: the door shuts; Numeric Comparison is
+  // restored even though that client is still connected (no pairing pends).
+  CHECK(step(false, false, false) == NUMERIC_COMPARISON);
+  CHECK(applied == NUMERIC_COMPARISON);
+  // Later, the owner starts pairing mode and the door asks to open (a
+  // second factory reset): held while the Numeric Comparison is pending...
+  CHECK(step(true, true, false) == HOLD);
+  CHECK(applied == NUMERIC_COMPARISON);
+  // ...and the moment it completes as a bond, still held (the link is now
+  // authenticated), so Just Works never lands under that session.
+  CHECK(step(true, false, true) == HOLD);
+  CHECK(applied == NUMERIC_COMPARISON);
+  // Shutting the door while a pairing pends is never refused.
+  CHECK(step(false, true, true) == NUMERIC_COMPARISON);
+  CHECK(applied == NUMERIC_COMPARISON);
+}
+
 int main() {
   test_setup_timeout();
   test_scan_cache();
@@ -185,6 +296,9 @@ int main() {
   test_reboot_deadline_extend();
   test_ble_discovery_start();
   test_ble_fresh_unit_start();
+  test_ble_scanners_held_then_released();
+  test_security_profile_matrix();
+  test_security_profile_transitions();
   if (g_failures) {
     std::printf("%d check(s) FAILED\n", g_failures);
     return 1;

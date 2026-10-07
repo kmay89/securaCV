@@ -151,7 +151,9 @@ the bytes and the rules are `improv_core.h`, a staged byte-identical copy of
 `firmware/common/network/improv_core.h` held by
 `firmware/scripts/check_improv_sync.sh`). Opera's beacon stays the primary
 advert; while the door is open it carries `FLEET_BEACON_FLAG_SETUP_OPEN` and
-the name `WAP-AB12` (the setup network's own suffix) and the scan response
+the name `WAP-AB12` (the last four hex of its key fingerprint — the same
+four as its `SCV-XXXX` name, not its setup network's suffix, which is
+spelled in the device id's no-confusion alphabet) and the scan response
 carries the Improv service; when it shuts, Opera's own scan response
 (the `SCV-XXXX` name and the SecuraCV service UUID) returns. A fresh unit
 with nobody on its SoftAP brings the channel up **5 s** after boot instead

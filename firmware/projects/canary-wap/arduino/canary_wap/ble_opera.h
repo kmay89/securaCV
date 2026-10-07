@@ -209,7 +209,8 @@ static bool applyBeaconAdvertising() {
 
     NimBLEAdvertisementData scanData;
     if (ble_improv::setup_open()) {
-        // The setup door is open (a fresh unit, no Wi-Fi of its own): the
+        // The setup door is open (no credentials stored, inside the
+        // first-boot window): the
         // beacon stays primary with the "WAP-XXXX" name beside it (flags 3 +
         // beacon 13 + name 10 = 26), and the scan response carries the Improv
         // service UUID + service data (28) — what a phone's service filter

@@ -26,11 +26,17 @@
  *
  *   Service data in the advert, under the 16-bit UUID 0x4677 (6 bytes):
  *     [0] current state   [1] capabilities   [2..5] reserved, zero
- *   The standard requires the 128-bit service UUID and this service data in
- *   the SAME advertisement (never the scan response) so a phone can filter
- *   on them without an active scan; that is 3 + 18 + 10 = 31 bytes, exactly
- *   the primary advert, so while Improv is on air the fleet presence beacon
- *   moves to the scan response (improv_ble.cpp owns that alternation).
+ *   What SecuraCV puts on air (improv_ble.cpp and the WAP's Opera own the
+ *   bytes; this is the shape): the fleet presence beacon stays the PRIMARY
+ *   advert at all times, so a display's passive roster scan keeps hearing
+ *   a device whether or not its door is open. While the door is open the
+ *   primary gains the flags AD, FLEET_BEACON_FLAG_SETUP_OPEN in the beacon
+ *   and a short "<Family>-XXXX" name, the device is connectable, and the
+ *   SCAN RESPONSE carries the 128-bit service UUID plus this service data —
+ *   iOS, Android and Chrome each merge the scan response into the
+ *   advertisement a service filter matches, so a filtered scan still finds
+ *   it. Door shut: the beacon alone, no scan response, and on a board with
+ *   no other service, not connectable.
  *
  *   RPC command   [cmd][data_len][data ...][checksum]
  *   WIFI_SETTINGS data: [ssid_len][ssid bytes][pass_len][pass bytes]
@@ -47,20 +53,41 @@
  * THE SESSION (what "authorized" means here):
  *
  *   The standard leaves "authorization" to the device: a button press, or
- *   nothing at all. SecuraCV's rule is the one the shared setup portal
- *   already enforces for the SoftAP path, so the two doors open and close
- *   together: the Improv door is OPEN exactly while the device has no
- *   working Wi-Fi of its own (first boot, or a saved network that stopped
- *   working and raised the recovery portal). A device that is on its own
- *   Wi-Fi has an owner, and only that owner's physical tap (where the board
- *   has a button the firmware reads) opens the door again, for one minute.
- *   So a stranger in radio range cannot re-point an installed Canary at
- *   their network, and a boxed one is claimable by whoever can touch it,
- *   which is the trust the SoftAP portal and the BOOT-tap receipt already
- *   express.
+ *   nothing at all. SecuraCV's rule, in one sentence: the door is open for
+ *   a device NOBODY OWNS YET, and for an owner's own tap — never for a
+ *   device that has an owner and a bad day.
  *
- * All time math is wrap-safe signed-delta, per the firmware idiom for
- * millis() arithmetic.
+ *   - NO CREDENTIALS STORED (first boot, or after a factory reset): the
+ *     door opens on its own for a bounded first-boot window
+ *     (Timing::first_boot_window_ms, half an hour by default; a power cycle
+ *     re-arms it; a compile-time 0 makes the device tap-only). Long enough
+ *     to plug in three Canaries and open the app later; short enough that
+ *     a unit forgotten in a drawer is not claimable from the street for
+ *     the rest of its life.
+ *   - CREDENTIALS STORED: the door is shut, whatever the network is doing.
+ *     A saved network that stopped working raises the recovery portal on
+ *     the SoftAP side (that door has a key printed on the unit) — it does
+ *     NOT open this one. A device that has an owner is not re-pointable
+ *     at a stranger's network because the router rebooted; the first
+ *     version of this file got that wrong, and the one place it was wrong
+ *     was the one place it mattered.
+ *   - A PHYSICAL TAP (where the board has a button the firmware reads)
+ *     opens the door for Timing::tap_ttl_ms, on a device with or without
+ *     credentials — the owner's own act, the same trust the BOOT-tap
+ *     receipt already expresses.
+ *
+ *   While the door is open, three bounds keep a stranger in radio range
+ *   from doing much with it: accepted WIFI_SETTINGS writes are rate-limited
+ *   (Timing::wifi_settings_cooldown_ms) and capped per open door
+ *   (Timing::wifi_settings_cap — reaching it shuts the door until a tap or
+ *   a power cycle), and a connected client that sends nothing for
+ *   Timing::idle_disconnect_ms is dropped so it cannot park on the single
+ *   link. Encryption is the glue's job (improv_ble.cpp: LE Secure
+ *   Connections Just Works, checked both by the characteristic's
+ *   properties and again in the write handler).
+ *
+ * All time math is wrap-safe unsigned-delta (now - then), per the firmware
+ * idiom for millis() arithmetic.
  */
 
 #pragma once
@@ -325,21 +352,57 @@ struct Timing {
   /// A join the device never reports on reads as failed after this long —
   /// the setup portal's own wizard timeout, so both doors agree.
   uint32_t provisioning_timeout_ms = 30000;
+  /// A device with no stored credentials opens the door for this long after
+  /// power-on (and again after a factory reset wipes them at runtime).
+  /// 0 = never on its own: tap-only.
+  uint32_t first_boot_window_ms = 30u * 60u * 1000u;
+  /// Two accepted WIFI_SETTINGS writes are at least this far apart; a
+  /// client that writes faster is told InvalidRpc and nothing is started.
+  uint32_t wifi_settings_cooldown_ms = 3000;
+  /// WIFI_SETTINGS attempts admitted per open door (accepted or malformed);
+  /// the attempt past the cap shuts the door until a tap or a power cycle.
+  uint8_t  wifi_settings_cap = 10;
+  /// A connected client that has sent nothing for this long is dropped —
+  /// long enough to find a password, short enough that a stranger cannot
+  /// hold the single link against the owner.
+  uint32_t idle_disconnect_ms = 180000;
+  /// After the join succeeded the link is dropped after this long, so the
+  /// device goes back to its beacon (the phone has read its verdict and,
+  /// on a WAP, the claim by then).
+  uint32_t provisioned_linger_ms = 20000;
 };
 
 /// Why the door is open — the session reports it so a log line can say.
 enum class Door : uint8_t {
-  Shut,    // the device has a working network of its own
-  NoWifi,  // no working Wi-Fi (first boot or recovery): open until it has one
-  Tap,     // a physical tap: open for Timing::tap_ttl_ms
+  Shut,           // credentials stored (or the window ran out): a tap opens it
+  NoCredentials,  // nothing stored: open for the first-boot window
+  Tap,            // a physical tap: open for Timing::tap_ttl_ms
 };
+
+/// 0 is the "never" sentinel in every timestamp below, so a clock reading
+/// of exactly 0 is stored as 1 — one millisecond lost, never an event.
+inline uint32_t stamp(uint32_t now_ms) { return now_ms == 0 ? 1u : now_ms; }
 
 struct Session {
   State state = State::Stopped;
   Error error = Error::None;
   Door  door  = Door::Shut;
+  /// The last word the glue gave on credentials (begin / set_no_credentials).
+  bool no_credentials = false;
   uint32_t tap_at_ms = 0;
+  /// When the first-boot window began; 0 = none.
+  uint32_t window_at_ms = 0;
+  /// The window ran out or the cap shut it: no reopening without a tap or
+  /// a power cycle (a factory reset re-arms, since it wipes credentials).
+  bool window_spent = false;
   uint32_t provisioning_at_ms = 0;
+  uint32_t provisioned_at_ms = 0;
+  /// Rate limit bookkeeping for the current open door.
+  uint32_t last_wifi_settings_ms = 0;   // 0 = none yet this door
+  uint8_t  wifi_settings_count = 0;
+  /// The one link: up, and when it last asked for anything.
+  bool     link_up = false;
+  uint32_t last_activity_ms = 0;
   /// Set by a join result; cleared when the door reopens. Lets the glue
   /// keep the service in Provisioned long enough for the phone to read the
   /// result, then fall back to the beacon on its own terms.
@@ -348,50 +411,96 @@ struct Session {
 
 inline bool door_open(const Session& s) { return s.door != Door::Shut; }
 
-/// Begin: the device either has no working Wi-Fi (door open, no timeout)
-/// or it does (awaiting a tap).
-inline void session_begin(Session& s, bool no_wifi) {
+namespace detail {
+inline void open_no_credentials_door(Session& s) {
+  s.door = Door::NoCredentials;
+  s.provisioned = false;
+  s.error = Error::None;
+  s.last_wifi_settings_ms = 0;
+  s.wifi_settings_count = 0;
+  if (s.state != State::Provisioning) s.state = State::Authorized;
+}
+inline void shut_door(Session& s) {
+  s.door = Door::Shut;
+  if (s.state == State::Authorized) s.state = State::AwaitingAuthorization;
+}
+}  // namespace detail
+
+/// Begin: with no stored credentials the first-boot window opens the door
+/// (unless the window is 0: tap-only); with credentials the device awaits
+/// a tap.
+inline void session_begin(Session& s, bool no_credentials, uint32_t now_ms,
+                          const Timing& t = Timing{}) {
   s = Session{};
-  s.door = no_wifi ? Door::NoWifi : Door::Shut;
-  s.state = no_wifi ? State::Authorized : State::AwaitingAuthorization;
+  s.no_credentials = no_credentials;
+  s.state = State::AwaitingAuthorization;
+  if (no_credentials && t.first_boot_window_ms != 0) {
+    s.window_at_ms = stamp(now_ms);
+    detail::open_no_credentials_door(s);
+  }
 }
 
-/// The device's own Wi-Fi came or went (the portal was raised or torn
-/// down). Opening the NoWifi door from any state returns to Authorized —
-/// including from Provisioned, because a join that later stopped working
-/// is exactly when a phone should be able to help again.
-inline void session_set_no_wifi(Session& s, bool no_wifi, uint32_t now_ms) {
-  (void)now_ms;
-  if (no_wifi) {
-    if (s.door != Door::NoWifi) {
-      s.door = Door::NoWifi;
-      s.provisioned = false;
-      s.error = Error::None;
-      if (s.state != State::Provisioning) s.state = State::Authorized;
+/// The glue's word on credentials, every pass. Credentials appearing (the
+/// join persisted them) shuts the NoCredentials door; the state stays
+/// Provisioned or Provisioning for the phone to read. Credentials vanishing
+/// at runtime (a factory reset) re-arms the window from now — that is the
+/// owner's own act. A recovery portal is NOT "no credentials": the caller
+/// must pass the stored-credentials fact, never the portal's.
+inline void session_set_no_credentials(Session& s, bool no_credentials, uint32_t now_ms,
+                                       const Timing& t = Timing{}) {
+  const bool wiped = no_credentials && !s.no_credentials;
+  s.no_credentials = no_credentials;
+  if (no_credentials) {
+    if (wiped && t.first_boot_window_ms != 0) {
+      s.window_at_ms = stamp(now_ms);
+      s.window_spent = false;
+    }
+    if (s.door != Door::NoCredentials && s.door != Door::Tap &&
+        !s.window_spent && s.window_at_ms != 0) {
+      detail::open_no_credentials_door(s);
     }
     return;
   }
-  if (s.door == Door::NoWifi) {
+  if (s.door == Door::NoCredentials) {
     // A tap in flight keeps its own TTL; otherwise the door shuts unless a
     // join is being reported on.
-    s.door = Door::Shut;
-    if (s.state == State::Authorized) s.state = State::AwaitingAuthorization;
+    detail::shut_door(s);
   }
 }
 
-/// A physical tap: the door opens for the TTL (no effect while the NoWifi
-/// door is already open — that one has no timeout to shorten).
+/// A physical tap: the door opens for the TTL (no effect while the
+/// NoCredentials door is already open — that one has its own window).
 inline void session_tap(Session& s, uint32_t now_ms) {
-  if (s.door == Door::NoWifi) return;
+  if (s.door == Door::NoCredentials) return;
   s.door = Door::Tap;
-  s.tap_at_ms = now_ms == 0 ? 1 : now_ms;
+  s.tap_at_ms = stamp(now_ms);
   s.error = Error::None;
+  s.provisioned = false;
+  s.last_wifi_settings_ms = 0;
+  s.wifi_settings_count = 0;
   if (s.state != State::Provisioning) s.state = State::Authorized;
 }
 
+namespace detail {
+/// Count one WIFI_SETTINGS attempt against the open door. Returns false
+/// when the attempt is past the cap — the door is shut then.
+inline bool count_attempt(Session& s, uint32_t now_ms, const Timing& t) {
+  if (s.wifi_settings_count >= t.wifi_settings_cap) {
+    if (s.door == Door::NoCredentials) s.window_spent = true;
+    s.door = Door::Shut;
+    if (s.state != State::Provisioning) s.state = State::AwaitingAuthorization;
+    return false;
+  }
+  ++s.wifi_settings_count;
+  s.last_wifi_settings_ms = stamp(now_ms);
+  return true;
+}
+}  // namespace detail
+
 /// Credentials arrived. Returns the error to publish (None means the join
 /// is now in flight and the glue should start it).
-inline Error session_on_wifi_settings(Session& s, uint32_t now_ms) {
+inline Error session_on_wifi_settings(Session& s, uint32_t now_ms,
+                                      const Timing& t = Timing{}) {
   if (!door_open(s) || s.state == State::AwaitingAuthorization) {
     s.error = Error::NotAuthorized;
     return s.error;
@@ -403,20 +512,42 @@ inline Error session_on_wifi_settings(Session& s, uint32_t now_ms) {
     s.error = Error::InvalidRpc;
     return s.error;
   }
+  if (s.last_wifi_settings_ms != 0 &&
+      (uint32_t)(now_ms - s.last_wifi_settings_ms) < t.wifi_settings_cooldown_ms) {
+    // Too soon after the last attempt: refused, not counted, nothing started.
+    s.error = Error::InvalidRpc;
+    return s.error;
+  }
+  if (!detail::count_attempt(s, now_ms, t)) {
+    s.error = Error::NotAuthorized;
+    return s.error;
+  }
   s.state = State::Provisioning;
   s.provisioning_at_ms = now_ms;
   s.error = Error::None;
+  s.last_activity_ms = stamp(now_ms);
   return Error::None;
+}
+
+/// A WIFI_SETTINGS frame that did not parse (Malformed / TooLong) still
+/// counts against the open door's cap — a flood of garbage is an attempt
+/// too — and is answered InvalidRpc like any bad packet.
+inline Error session_on_malformed_wifi_settings(Session& s, uint32_t now_ms,
+                                                const Timing& t = Timing{}) {
+  if (door_open(s) && s.state != State::Provisioning) detail::count_attempt(s, now_ms, t);
+  s.error = Error::InvalidRpc;
+  return s.error;
 }
 
 /// The join's verdict. Success → Provisioned; failure → back to Authorized
 /// (the door is still open — the person can retry with the right password)
 /// with UnableToConnect on the error characteristic.
-inline void session_on_join_result(Session& s, bool joined) {
+inline void session_on_join_result(Session& s, bool joined, uint32_t now_ms) {
   if (s.state != State::Provisioning) return;
   if (joined) {
     s.state = State::Provisioned;
     s.provisioned = true;
+    s.provisioned_at_ms = stamp(now_ms);
     s.error = Error::None;
   } else {
     s.state = door_open(s) ? State::Authorized : State::AwaitingAuthorization;
@@ -436,21 +567,52 @@ inline Error session_on_unknown_command(Session& s) {
   return s.error;
 }
 
-/// Time passes: the tap TTL expires, and a join nobody reported on fails.
-/// Returns true when the state changed (the glue republishes).
+// ── The one link ───────────────────────────────────────────────────────────
+
+/// A client connected / disconnected (the glue's server callbacks).
+inline void session_link_up(Session& s, uint32_t now_ms) {
+  s.link_up = true;
+  s.last_activity_ms = stamp(now_ms);
+}
+inline void session_link_down(Session& s) { s.link_up = false; }
+
+/// Any command the link sent (accepted or not) is activity.
+inline void session_touch(Session& s, uint32_t now_ms) { s.last_activity_ms = stamp(now_ms); }
+
+/// True when the glue should drop the connected client: it has been silent
+/// for the idle bound, or the join is done and the linger has passed. Never
+/// mid-join (the verdict is owed to it).
+inline bool idle_disconnect_due(const Session& s, uint32_t now_ms, const Timing& t) {
+  if (!s.link_up) return false;
+  if (s.state == State::Provisioning) return false;
+  if (s.state == State::Provisioned && s.provisioned_at_ms != 0) {
+    return (uint32_t)(now_ms - s.provisioned_at_ms) >= t.provisioned_linger_ms;
+  }
+  return s.last_activity_ms != 0 &&
+         (uint32_t)(now_ms - s.last_activity_ms) >= t.idle_disconnect_ms;
+}
+
+/// Time passes: the first-boot window and the tap TTL expire, and a join
+/// nobody reported on fails. Returns true when the state changed (the glue
+/// republishes).
 inline bool session_tick(Session& s, uint32_t now_ms, const Timing& t) {
   bool changed = false;
+  if (s.door == Door::NoCredentials && t.first_boot_window_ms != 0 && s.window_at_ms != 0 &&
+      (uint32_t)(now_ms - s.window_at_ms) >= t.first_boot_window_ms) {
+    s.window_spent = true;
+    const State before = s.state;
+    detail::shut_door(s);
+    changed = s.state != before;
+  }
   if (s.door == Door::Tap &&
-      (int32_t)(now_ms - s.tap_at_ms) >= (int32_t)t.tap_ttl_ms) {
-    s.door = Door::Shut;
-    if (s.state == State::Authorized) {
-      s.state = State::AwaitingAuthorization;
-      changed = true;
-    }
+      (uint32_t)(now_ms - s.tap_at_ms) >= t.tap_ttl_ms) {
+    const State before = s.state;
+    detail::shut_door(s);
+    changed = changed || s.state != before;
   }
   if (s.state == State::Provisioning &&
-      (int32_t)(now_ms - s.provisioning_at_ms) >= (int32_t)t.provisioning_timeout_ms) {
-    session_on_join_result(s, false);
+      (uint32_t)(now_ms - s.provisioning_at_ms) >= t.provisioning_timeout_ms) {
+    session_on_join_result(s, false, now_ms);
     changed = true;
   }
   return changed;
