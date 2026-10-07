@@ -143,6 +143,23 @@ if you ran it. By hand:
 
 ### Step 3: Configure the Canary Device
 
+> **Or over Bluetooth, from a phone (Improv via BLE).** A brand-new Canary
+> Sense, Vision or WAP (FULL profile) opens a Bluetooth setup door for 30
+> minutes after power-on — the open [Improv Wi-Fi](https://www.improv-wifi.com/)
+> standard. The SecuraCV iPhone app shows a "new Canary is nearby" card;
+> so does the **Home Assistant companion app**, and Home Assistant's own
+> *Improv via BLE* integration can discover it when the Home Assistant
+> machine has a Bluetooth radio of its own. Any of them can hand the Canary
+> your Wi-Fi; it then appears here over MQTT like any other. Two honest
+> limits: a standard Improv client gets **Wi-Fi only** — the SecuraCV
+> pairing (a WAP's receipt) lives in our own companion service, so pair a
+> WAP with the SecuraCV app afterwards from its receipt — and an **ESPHome
+> Bluetooth proxy cannot complete** the one-tap (Just Works) pairing the
+> door requires, so a Canary seen only through a proxy will show and then
+> fail at the first write. Both expected; neither bench-tested yet. The
+> door never opens on a Canary whose saved Wi-Fi is merely failing — that
+> raises the setup network below. → [magic pairing (design)](design/magic_pairing.md)
+
 Connect to your Canary's WiFi AP (SSID shown on device, password is device-unique):
 
 1. On first boot, joining the AP from a phone pops the Canary's **setup
