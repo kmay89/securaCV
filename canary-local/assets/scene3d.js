@@ -378,34 +378,45 @@ export function turnTexture(turn, w, h) {
   }
 }
 
-// ── the canvas fits the plane it is given (sweep A55) ────────────────────
+// ── a canvas the other way round from its plane is fitted (sweep A55) ──
 // A screen plane is the glass's lit face as the device's model draws it, and
-// its proportions are the model's: the Touch 1.69's figure draws its lit face
-// 36.1 x 28.1 because its case file holds the glass landscape, while the
-// firmware draws the 240x280 portrait panel. Textured edge to edge, the canvas
-// stretched across the plane. So the texture a plane samples is the canvas
-// (turned with the body when the glass has turned it, turnTexture) set whole
-// into the plane's proportions: centered, at its own proportions, the margin
-// left dark — the panel's pixels never stretch, whatever shape the plane is.
-// Where the plane already has the canvas's proportions (to the pixel) the
-// texture is the canvas itself.
+// its proportions are the model's. Where the plane is the panel's active
+// area (the 7" boards' 154.88 x 86.72, the AMOLED's 36.7 x 49.0) the glass
+// spreads its frame across the whole of it, pixels not quite square; where
+// it is a drawing choice the same way round as the panel (the Dash's lit
+// face, 3 mm inside its window) a margin would only hide the frame's edge.
+// So those canvases are sampled edge to edge, as the glass lights them.
+// The one plane the other way round is the Touch 1.69's: its figure, a
+// sketch until the case is
+// released, draws a lit face 36.1 x 28.1, wider than tall, inset in the
+// panel record's landscape glass (canary_s3_touch169.scad holds the glass
+// that way), while the firmware draws the 240x280 panel portrait. Edge to
+// edge, that canvas stretched half again across. So a canvas the other way
+// round from its plane (the canvas taller than wide on a plane wider than
+// tall, or the reverse), after the turn the glass gave the body
+// (turnTexture), is set whole into the plane's proportions: centered, at its
+// own proportions, the margin left dark. Any other canvas, a square one or a
+// square plane included, samples as before.
 
 /** The texture a screen plane samples, from a `w` x `h` canvas: `turn`
- * quarter turns as turnTexture() draws them, then fitted whole into `plane`
- * ({w, h}, any unit: only its proportions count), centered. Returns {w, h,
- * m, fit}: the texture's size in pixels (the turned canvas at 1:1 along the
- * side it fills, the other side widened to the plane's proportions), the
- * setTransform that draws the canvas into it, and whether a margin was added
- * (false with no plane, or one already of the canvas's proportions). */
+ * quarter turns as turnTexture() draws them, then, only when that turned
+ * canvas is the other way round from `plane` ({w, h}, any unit: only its
+ * proportions count), fitted whole into the plane's proportions, centered.
+ * Returns {w, h, m, fit}: the texture's size in pixels (the turned canvas
+ * at 1:1 along the side it fills, the other side widened to the plane's
+ * proportions), the setTransform that draws the canvas into it, and whether
+ * a margin was added (false with no plane, or with a canvas and plane the
+ * same way round, which are sampled edge to edge). */
 export function fitTexture(turn, w, h, plane) {
   const t = turnTexture(turn, w, h);
   if (!plane || !(plane.w > 0 && plane.h > 0) || !(t.w > 0 && t.h > 0)) return { ...t, fit: false };
+  const crossed = (t.w > t.h && plane.w < plane.h) || (t.w < t.h && plane.w > plane.h);
+  if (!crossed) return { ...t, fit: false };
   const aspect = plane.w / plane.h;
   let W = t.w;
   let H = t.h;
   if (t.w / t.h < aspect) W = Math.round(t.h * aspect);
   else H = Math.round(t.w / aspect);
-  if (W === t.w && H === t.h) return { ...t, fit: false };
   const [a, b, c, d, e, f] = t.m;
   return { w: W, h: H, m: [a, b, c, d, e + (W - t.w) / 2, f + (H - t.h) / 2], fit: true };
 }
@@ -1188,7 +1199,8 @@ export class DeviceScene {
     const tex = this._tex.tex;
     this.turn = this.turnPose ? glassTurn(this.src, this.glass, this.firmwareTurn) : 0;
     if (this.src) {
-      // ...and fitted whole to the plane it lands on (A55): never stretched
+      // ...and, the other way round from the plane it lands on, fitted whole
+      // into it rather than stretched across it (A55); otherwise edge to edge
       const fit = fitTexture(this.turn, this.src.width, this.src.height, this.glassPlane());
       gl.bindTexture(gl.TEXTURE_2D, tex);
       try {
@@ -1306,8 +1318,9 @@ export class DeviceScene {
 
   // The live canvas drawn into a canvas of its own as the plane samples it:
   // turned as many quarter turns back as the body turns (turnTexture, A47)
-  // and set whole into the plane's proportions on a dark ground
-  // (fitTexture, A55). `t` is fitTexture()'s answer.
+  // and, when it is the other way round from its plane, set whole into the
+  // plane's proportions on a dark ground (fitTexture, A55). `t` is
+  // fitTexture()'s answer.
   _screenSource(t) {
     if (!this._turned) this._turned = document.createElement("canvas");
     const c = this._turned;

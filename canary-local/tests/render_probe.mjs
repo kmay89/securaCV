@@ -25,12 +25,14 @@
 //      left for turn 1 (glass_settings.h's ROT_PORTRAIT, clockwise), on the
 //      right for turn 3 (ROT_PORTRAIT_INV) and on top for turn 2
 //      (ROT_LANDSCAPE_INV, an 800x480 canvas), the marks upright each way.
-//   6. a canvas keeps its proportions on the plane its model gives it (sweep
-//      A55): the Touch 1.69's figure draws its lit face wider than tall (its
-//      case file holds the glass landscape) and its twin's canvas is the
-//      240x280 portrait panel; three marks on that canvas, face-on, read at
-//      the canvas's proportions, where sampled edge to edge they spread half
-//      again across.
+//   6. a canvas the other way round from its plane keeps its own proportions
+//      (sweep A55): the Touch 1.69's figure draws its lit face wider than
+//      tall (a sketch inset in the panel record's landscape glass) and its
+//      twin's canvas is the 240x280 portrait panel; three marks on that
+//      canvas, face-on, read at the canvas's proportions, where sampled edge
+//      to edge they spread half again across. (A canvas the same way round
+//      as its plane is still sampled edge to edge; scene_figures.test.js
+//      holds which figures are which.)
 //
 //   node canary-local/tests/render_probe.mjs [--shots DIR]
 //

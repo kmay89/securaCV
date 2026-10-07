@@ -186,12 +186,17 @@ Adding a future Canary = adding one registry entry + one procedural body
 in `scene3d.js` (dimensions from its enclosure `.scad` — the same
 millimeters, so the card is the printed thing). If it has a screen, add a
 `build.sh` flavor wiring its config/pins dirs; the shim layer is shared.
-The live glass is drawn whole on whatever lit face the body gives it, at
-the canvas's own proportions, centered on a dark ground (`fitTexture`,
-sweep A55): a case that holds its glass the other way round from the
-firmware's face shows that face unstretched, with dark bands beside it
-(`tests/scene_figures.test.js` holds every figure, `tests/render_probe.mjs`
-the touch169's 240x280 glass on its landscape case). A concept
+The live glass is sampled edge to edge across the lit face the body gives
+it, as the panel lights its whole active area, unless the canvas is the
+other way round from that face (taller than wide on a face wider than tall,
+or the reverse, after any turn the body takes with the glass): then it is
+drawn whole at its own proportions, centered on a dark ground
+(`fitTexture`, sweep A55), rather than stretched across. Today that is the
+Touch 1.69 alone, whose sketch figure draws its lit face landscape while
+the firmware draws the 240x280 panel portrait, so its card shows dark
+bands beside the glass (`tests/scene_figures.test.js` holds which figures
+are fitted and that every other one is edge to edge,
+`tests/render_probe.mjs` the touch169's glass face-on). A concept
 (`kind: "concept"`) gets no body at all: its card draws its fleet
 figure's dashed ghost, as every surface draws an idea
 (`tests/scene_figures.test.js` refuses a builder for one).
