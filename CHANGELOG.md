@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### release(ios): 0.6.0 — the Set up walkthroughs reach TestFlight
+
+- `MARKETING_VERSION` 0.5.6 → 0.6.0 (`ios/project.yml`, the one place it
+  lives). Everything the iPhone app gained since `ios-v0.5.6`: the Set up
+  door with the hub walkthrough (finds Home Assistant over Bonjour, waits
+  for *ready*, creates the owner account, finishes the wizard pages, runs
+  the provisioning plan through the Supervisor proxy) and the Canary
+  walkthrough (one path per family: the glass QR and the phone joining the
+  setup network itself, the Flasher-printed key, Bluetooth for a WAP). No
+  synced CloudKit record changed since 0.5.6, so no schema promotion is
+  owed before this one.
+
 ### The hub finishes without a wizard: the Flasher's first-boot watch waits for Home Assistant itself, self-setup is on by default and retries "not ready yet", and the iPhone app gains a Set up walkthrough that finishes a hub from the phone and gives a new Canary its Wi-Fi
 
 - **Flasher: the first-boot watch no longer fires at HAOS's landing page.**
