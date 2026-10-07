@@ -942,10 +942,13 @@ fails on byte drift.
   both configs it also builds `emulator/test/glass_splash_lvgl9_test.cpp`
   (F246): the real `ui/splash.cpp` and `canary_mark.cpp` play the first
   meeting on the dash's 800x480 and 480x800 and nightstand-c6's 172x320,
-  and the speech bubble's tail, read off the frame at each new line, sits on
-  the bubble and draws where its box and transform styles put it (where
-  F185's options would land is printed, not held). Every suite runs and the
-  script fails at the end if any did. It first holds
+  the bubble types every line of `story::kHello` whole and in order, and
+  the speech bubble's tail, read off the frame at each new line, sits on
+  the bubble, draws, and lands (read with the bubble hidden too) where its
+  box and transform styles put it. Each of F185's options, drawn on the
+  same frame, would keep those checks green; where each would land is
+  printed, the choice is not taken. Every suite runs and the script fails
+  at the end if any did. It first holds
   `tests_host/fake_lvgl9/lvgl.h`'s quotes of LVGL 9.5 to the fetched source
   (`emulator/test/check_lvgl9_quotes.py`). It reads no dist; CI runs it as
   the wasm job's last step, whether the steps before it passed or failed

@@ -164,10 +164,18 @@ test("the splash's tail (F246): the script links the REAL splash.cpp and canary_
   const real = read(join(REPO, "firmware/common/identity/device_pseudonym.h"));
   assert.match(real, /^constexpr size_t TOKEN_BYTES = 8;/m);
   assert.match(read(join(ROOT, "emulator/test/native9/identity/device_pseudonym.h")), /constexpr size_t TOKEN_BYTES = 8;/);
-  // The test reads the tail off the frame and holds it to the box and styles.
+  // The test reads the tail off the frame and holds it to the box and styles:
+  // its own ink read with the bubble hidden too, so an F185 option filled with
+  // the bubble's color is read whole, and every option held to the same checks.
   const t = read(join(ROOT, "emulator/test/glass_splash_lvgl9_test.cpp"));
-  assert.ok(t.includes("canary::ui::splash_play(1700);") && t.includes("Ink tail_ink(lv_obj_t* tail)") &&
-    t.includes("Box styled_extent(lv_obj_t* tail)"), "the splash played, its tail read off the glass and held to its styles");
+  assert.ok(t.includes("canary::ui::splash_play(1700);") && t.includes("Ink tail_ink(lv_obj_t* tail, lv_obj_t* under") &&
+    t.includes("Box styled_extent(const lv_obj_t* tail)"), "the splash played, its tail read off the glass and held to its styles");
+  assert.ok(t.includes("r.own = tail_ink(tail, bub);") && t.includes("HOLD(alt.drawn() && alt.lands(), W.option_fails,"),
+    "check 4 reads the tail's own ink with the bubble hidden; each of F185's options is held to checks 3 and 4");
+  // The whole first meeting: the lines typed are the script's, derived from it.
+  assert.ok(t.includes('#include "story/story_scripts.h"') && t.includes("const canary::story::Scene& sc = canary::story::kHello;") &&
+    t.includes("CHECK(same == want.size() && W.typed.size() == want.size(),"),
+  "every line of story::kHello typed whole, in order, counted from the script");
 });
 
 test("check_lvgl9_quotes.py (F225): fails on each drift from the library and on a missing function", () => {

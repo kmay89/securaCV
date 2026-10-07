@@ -19,29 +19,41 @@
 // the splash's own pump drives (delay() advances millis()), a Preferences
 // stand-in whose "met" flag the test clears before each splash, and a fixed
 // pseudonym. It plays the first meeting, the whole story::kHello script, on
-// each canvas, and at every tick where the bubble shows a new line, or the
+// each canvas, and at every tick where the bubble's text starts over, or the
 // bubble or the tail moved, it reads the tail OFF THE FRAME: the canvas
 // rendered whole with the tail and without it, read back through the port's
 // turn from the native panel, the pixels that differ being the tail's. It
-// holds, on every canvas and at every such tick:
+// holds, on every canvas:
 //
-//  1. the tail is up exactly when the bubble is (a wordless beat hides both);
-//  2. the tail's box (the one lv_obj_get_coords reports, the one
-//     test_splash_scenes holds against fake LVGL) is on the bubble's top
+//  1. at every tick, the tail is up exactly when the bubble is (a wordless
+//     beat hides both);
+//  2. at every read, the tail's box (the one lv_obj_get_coords reports, the
+//     one test_splash_scenes holds against fake LVGL) is on the bubble's top
 //     edge, centered, kTailInset px into it, through LVGL 9.5's own layout;
-//  3. the tail is drawn: at least kMinInk pixels of ink;
-//  4. the ink lands where the tail's styles put it: its bounding box is the
+//  3. at every read, the tail is drawn on the glass: at least kMinInk pixels
+//     of ink where the bubble stands under it;
+//  4. at every read, the tail's own ink lands where its styles put it: read
+//     with the bubble hidden as well (so the part of a tail that has the
+//     bubble's color over the bubble is read too), its bounding box is the
 //     box's 12 px square turned by its transform_rotation (450, 45 degrees)
 //     about its transform_pivot (unset, so the box's top-left corner), to
-//     within 2 px a side (the radius-2 corners round the diamond's tips).
+//     within 2 px a side (the radius-2 corners round the diamond's tips);
+//  5. at every read, each of F185's options, rendered on the same frame (the
+//     tail's styles changed for that render alone and put back), keeps 3 and
+//     4: radius 0, a centered pivot, both, and a triangle drawn in the
+//     tail's own box with no transform (apex at the box's top center, base
+//     on its bottom edge, filled with the tail's own bg color, the bubble's).
+//     F185 is a decision this test does not take: whichever of those it
+//     takes, drawn that way on the same 12 px object, keeps the test green
+//     (a tail made of another widget would also have to change find_parts);
+//  6. the bubble typed every line story::kHello has, whole and in the
+//     script's order (each line counted at its first letter, the pseudonym
+//     in place of its %s), and the meeting was remembered.
 //
-// Printed, not held (F185 is a decision this test does not take): where the
-// diamond stands against the bubble (its center against the bubble's center
-// line, how far it pokes above the top edge and reaches into the bubble),
-// and where each of F185's options would land on the same frame, the tail's
-// styles changed for that render alone and put back: radius 0, a centered
-// pivot, both, and a triangle drawn in the tail's box with no transform
-// (apex at the box's top center, base on its bottom edge).
+// Printed, not held: where the diamond stands against the bubble (its center
+// against the bubble's center line, how far it pokes above the top edge and
+// reaches into the bubble), and where each of F185's options would land on
+// the same frame.
 //
 // Prints "ALL LVGL 9 SPLASH TAIL TESTS PASSED" on success.
 #include <Arduino.h>
@@ -57,6 +69,9 @@
 
 #include <string>
 #include <vector>
+
+#include "identity/device_pseudonym.h"
+#include "story/story_scripts.h"
 
 #include "canary/glass_settings.h"
 #include "canary/hal/display.h"
@@ -186,19 +201,24 @@ std::vector<uint16_t> read_window(const lv_area_t& c, Box* w) {
   return out;
 }
 
-// The tail's ink on the glass as it stands: the canvas rendered whole with
-// the tail and without it; the pixels that differ are the tail's. The glass
-// is left showing the tail again, as the splash drew it.
-Ink tail_ink(lv_obj_t* tail) {
+// The tail's ink: the canvas rendered whole with the tail and without it;
+// the pixels that differ are the tail's. With `under` null that is the
+// glass as it stands; with the bubble as `under`, the bubble is hidden for
+// both renders, so the tail is read against what lies behind the bubble and
+// a part of it in the bubble's own color counts too. The glass is left as
+// the splash drew it.
+Ink tail_ink(lv_obj_t* tail, lv_obj_t* under = nullptr) {
   lv_area_t c;
   lv_obj_get_coords(tail, &c);
   Box w;
+  if (under != nullptr) lv_obj_add_flag(under, LV_OBJ_FLAG_HIDDEN);
   render_whole();
   const std::vector<uint16_t> with = read_window(c, &w);
   lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
   render_whole();
   const std::vector<uint16_t> without = read_window(c, &w);
   lv_obj_remove_flag(tail, LV_OBJ_FLAG_HIDDEN);
+  if (under != nullptr) lv_obj_remove_flag(under, LV_OBJ_FLAG_HIDDEN);
   render_whole();
   Ink ink;
   size_t i = 0;
@@ -218,7 +238,7 @@ Ink tail_ink(lv_obj_t* tail) {
 // Where the tail's styles put its ink: the box's square turned by its
 // transform_rotation about its transform_pivot (lv_refr.c resolves a pivot
 // from the box's top-left corner, a percentage of the box's side).
-Box styled_extent(lv_obj_t* tail) {
+Box styled_extent(const lv_obj_t* tail) {
   lv_area_t c;
   lv_obj_get_coords(tail, &c);
   const int32_t w = lv_area_get_width(&c), h = lv_area_get_height(&c);
@@ -247,10 +267,30 @@ Box styled_extent(lv_obj_t* tail) {
   return b;
 }
 
-// ── F185's options, rendered on the same frame for the report ──────────
+// One read of the tail under its styles as they stand: its ink on the glass
+// (checks 3 and the report), its own ink with the bubble hidden and the
+// extent its styles give it (check 4).
+struct Read {
+  Ink glass, own;
+  Box want;
+  bool drawn() const { return glass.n >= kMinInk; }
+  bool lands() const {
+    return own.n > 0 && abs(own.b.x0 - want.x0) <= 2 && abs(own.b.x1 - want.x1) <= 2 &&
+           abs(own.b.y0 - want.y0) <= 2 && abs(own.b.y1 - want.y1) <= 2;
+  }
+};
+Read read_tail(lv_obj_t* tail, lv_obj_t* bub) {
+  Read r;
+  r.glass = tail_ink(tail);
+  r.own = tail_ink(tail, bub);
+  r.want = styled_extent(tail);
+  return r;
+}
+
+// ── F185's options, rendered on the same frame ──────────────────────────
 lv_color_t g_tri_color;
 void draw_triangle_cb(lv_event_t* e) {
-  lv_obj_t* obj = lv_event_get_target_obj(e);
+  const lv_obj_t* obj = lv_event_get_target_obj(e);
   lv_area_t c;
   lv_obj_get_coords(obj, &c);
   lv_draw_triangle_dsc_t d;
@@ -277,7 +317,8 @@ const char* option_name(Option o) {
   return "?";
 }
 
-Ink option_ink(lv_obj_t* tail, Option o) {
+// The tail read with option `o`'s styles, then put back as the splash set it.
+Read option_read(lv_obj_t* tail, lv_obj_t* bub, Option o) {
   const int32_t radius = lv_obj_get_style_radius(tail, LV_PART_MAIN);
   const int32_t rot = lv_obj_get_style_transform_rotation(tail, LV_PART_MAIN);
   const int32_t pvx = lv_obj_get_style_transform_pivot_x(tail, LV_PART_MAIN);
@@ -296,7 +337,7 @@ Ink option_ink(lv_obj_t* tail, Option o) {
     lv_obj_set_style_border_width(tail, 0, 0);
     lv_obj_add_event_cb(tail, draw_triangle_cb, LV_EVENT_DRAW_MAIN_END, nullptr);
   }
-  const Ink ink = tail_ink(tail);
+  const Read r = read_tail(tail, bub);
   if (o == Option::Triangle) lv_obj_remove_event_cb(tail, draw_triangle_cb);
   lv_obj_set_style_radius(tail, radius, 0);
   lv_obj_set_style_transform_rotation(tail, rot, 0);
@@ -305,7 +346,7 @@ Ink option_ink(lv_obj_t* tail, Option o) {
   lv_obj_set_style_bg_opa(tail, bg_opa, 0);
   lv_obj_set_style_border_width(tail, border, 0);
   render_whole();
-  return ink;
+  return r;
 }
 
 // The ink against the bubble, in words.
@@ -327,11 +368,15 @@ struct Watch {
   int bubble_ticks = 0;   // ...with the bubble up
   int mismatched = 0;     // ...where the tail and the bubble disagreed
   int captures = 0;
-  int lines = 0;          // lines the bubble started
-  int seat_fails = 0, ink_fails = 0, land_fails = 0;
+  int seat_fails = 0, ink_fails = 0, land_fails = 0, option_fails = 0;
   long ink_lo = 1 << 30, ink_hi = 0;
   bool reported = false;
-  std::string last_text;
+  std::string last_text;   // the bubble's text at the last tick it was up
+  // The lines the bubble typed, each as far as it got: a line starts at its
+  // first letter, after the bubble emptied or with a text that does not
+  // carry on the one before it.
+  std::vector<std::string> typed;
+  bool emptied = false;
   lv_area_t last_tail{0, 0, -1, -1}, last_bub{0, 0, -1, -1};
 };
 Watch g_w;
@@ -343,7 +388,7 @@ bool same_area(const lv_area_t& a, const lv_area_t& b) {
 // The splash's tail (the plain kTailSide square with no children, however
 // it is styled, as test_splash_scenes finds it) and bubble (the one child
 // holding a single label). The screen is laid out first.
-void find_parts(lv_obj_t* scr, lv_obj_t** tail, lv_obj_t** bub) {
+void find_parts(const lv_obj_t* scr, lv_obj_t** tail, lv_obj_t** bub) {
   *tail = *bub = nullptr;
   const uint32_t n = lv_obj_get_child_count(scr);
   for (uint32_t i = 0; i < n; i++) {
@@ -374,34 +419,41 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
        "\"%s\") it sits at (%d,%d)",
        W.tag, (int)lv_area_get_width(&t), (int)lv_area_get_height(&t), (int)t.x1, (int)t.y1,
        (int)b.x1, (int)b.x2, (int)b.y1, text, want_x, want_y);
-  // 3 + 4: drawn, where its styles put it.
-  const Ink ink = tail_ink(tail);
-  const Box want = styled_extent(tail);
+  // 3 + 4: drawn on the glass, its own ink where its styles put it.
+  const Read r = read_tail(tail, bub);
+  const Ink& ink = r.glass;
   if (ink.n < W.ink_lo) W.ink_lo = ink.n;
   if (ink.n > W.ink_hi) W.ink_hi = ink.n;
-  HOLD(ink.n >= kMinInk, W.ink_fails,
+  HOLD(r.drawn(), W.ink_fails,
        "%s: the tail draws %ld px of ink (box at %d,%d, \"%s\"); a drawn tail has at "
        "least %ld",
        W.tag, ink.n, (int)t.x1, (int)t.y1, text, kMinInk);
-  const bool lands = ink.n > 0 && abs(ink.b.x0 - want.x0) <= 2 && abs(ink.b.x1 - want.x1) <= 2 &&
-                     abs(ink.b.y0 - want.y0) <= 2 && abs(ink.b.y1 - want.y1) <= 2;
-  HOLD(lands, W.land_fails,
-       "%s: the tail's ink spans x %d..%d, y %d..%d; its box (%d,%d) turned %d about "
+  HOLD(r.lands(), W.land_fails,
+       "%s: the tail's own ink spans x %d..%d, y %d..%d; its box (%d,%d) turned %d about "
        "its pivot spans x %d..%d, y %d..%d (\"%s\")",
-       W.tag, ink.b.x0, ink.b.x1, ink.b.y0, ink.b.y1, (int)t.x1, (int)t.y1,
-       (int)lv_obj_get_style_transform_rotation(tail, LV_PART_MAIN), want.x0, want.x1,
-       want.y0, want.y1, text);
-  if (!W.reported && text[0] != '\0') {
+       W.tag, r.own.b.x0, r.own.b.x1, r.own.b.y0, r.own.b.y1, (int)t.x1, (int)t.y1,
+       (int)lv_obj_get_style_transform_rotation(tail, LV_PART_MAIN), r.want.x0, r.want.x1,
+       r.want.y0, r.want.y1, text);
+  // 5: each of F185's options, on this frame, keeps 3 and 4.
+  const bool report = !W.reported && text[0] != '\0';
+  if (report) {
     // The report, once a canvas, on the frame of its first typed line.
     W.reported = true;
     printf("    the tail's box %dx%d at (%d,%d) on a %dx%d bubble at (%d,%d), \"%.32s\":\n",
            (int)lv_area_get_width(&t), (int)lv_area_get_height(&t), (int)t.x1, (int)t.y1,
            (int)lv_area_get_width(&b), (int)lv_area_get_height(&b), (int)b.x1, (int)b.y1, text);
     say_landing("today (radius 2, turned 45 about (0,0))", ink, b);
-    for (Option o : {Option::Radius0, Option::CenteredPivot, Option::Both, Option::Triangle}) {
-      const Ink alt = option_ink(tail, o);
-      say_landing(option_name(o), alt, b);
-    }
+  }
+  for (Option o : {Option::Radius0, Option::CenteredPivot, Option::Both, Option::Triangle}) {
+    const Read alt = option_read(tail, bub, o);
+    if (report) say_landing(option_name(o), alt.glass, b);
+    HOLD(alt.drawn() && alt.lands(), W.option_fails,
+         "%s: F185's option \"%s\" would fail the test: %ld px of ink on the glass (at "
+         "least %ld), its own ink x %d..%d, y %d..%d against its styles' x %d..%d, "
+         "y %d..%d (\"%s\")",
+         W.tag, option_name(o), alt.glass.n, kMinInk, alt.own.b.x0, alt.own.b.x1,
+         alt.own.b.y0, alt.own.b.y1, alt.want.x0, alt.want.x1, alt.want.y0, alt.want.y1,
+         text);
   }
 }
 
@@ -428,10 +480,22 @@ void observe() {
   lv_obj_get_coords(tail, &t);
   lv_obj_get_coords(bub, &b);
   const std::string text = lv_label_get_text(lv_obj_get_child(bub, 0));
-  const bool new_line = text.compare(0, W.last_text.size(), W.last_text) != 0 ||
-                        (W.last_text.empty() && !text.empty());
-  if (new_line) W.lines++;
-  if (new_line || !same_area(t, W.last_tail) || !same_area(b, W.last_bub)) {
+  // 6: the lines typed, each counted at its first letter.
+  if (text.empty()) {
+    W.emptied = true;
+  } else {
+    if (W.typed.empty() || W.emptied ||
+        text.compare(0, W.typed.back().size(), W.typed.back()) != 0)
+      W.typed.push_back(text);
+    else
+      W.typed.back() = text;
+    W.emptied = false;
+  }
+  // A read wherever the text starts over (emptied, or not carrying on the
+  // last tick's text) or the tail or the bubble moved.
+  const bool restart = text.compare(0, W.last_text.size(), W.last_text) != 0 ||
+                       (W.last_text.empty() && !text.empty());
+  if (restart || !same_area(t, W.last_tail) || !same_area(b, W.last_bub)) {
     W.capturing = true;
     capture(tail, bub);
     W.capturing = false;
@@ -442,6 +506,23 @@ void observe() {
 }
 
 // ── One first meeting on one canvas ─────────────────────────────────────
+// The lines story::kHello types, as the script writes them, the pseudonym
+// (the stand-in splash.cpp reads) in place of each %s.
+std::vector<std::string> hello_lines() {
+  char pseudo[device_pseudonym::HEX_LEN + 1] = {0};
+  device_pseudonym::device_id_hex(pseudo, sizeof(pseudo));
+  std::vector<std::string> out;
+  const canary::story::Scene& sc = canary::story::kHello;
+  for (uint8_t i = 0; i < sc.n; i++) {
+    if (sc.beats[i].line == nullptr) continue;
+    std::string l = sc.beats[i].line;
+    for (size_t at = l.find("%s"); at != std::string::npos; at = l.find("%s", at + strlen(pseudo)))
+      l.replace(at, 2, pseudo);
+    out.push_back(l);
+  }
+  return out;
+}
+
 void play(const char* tag) {
   Watch& W = g_w;
   W = Watch();
@@ -461,13 +542,23 @@ void play(const char* tag) {
   canary::ui::splash_play(1700);
   canary::ui::splash_reveal();
   CHECK(native9::prefs()["scv-hello/met"] == 1, "%s: the meeting was not remembered", tag);
-  CHECK(W.captures > 0 && W.lines >= 3,
-        "%s: the bubble showed %d lines and the tail was read %d times over %d ticks", tag,
-        W.lines, W.captures, W.ticks);
-  printf("    %d ticks (%.1f s), %d with the bubble up, %d lines, the tail read off the frame "
-         "%d times, %ld..%ld px of ink, %d checks failed\n",
-         W.ticks, (g_now - t0) / 1000.0, W.bubble_ticks, W.lines, W.captures, W.ink_lo,
-         W.ink_hi, W.seat_fails + W.ink_fails + W.land_fails + W.mismatched);
+  CHECK(W.captures > 0, "%s: the tail was never read over %d ticks", tag, W.ticks);
+  // 6: every line of the script, whole, in its order.
+  const std::vector<std::string> want = hello_lines();
+  size_t same = 0;
+  while (same < want.size() && same < W.typed.size() && W.typed[same] == want[same]) same++;
+  CHECK(same == want.size() && W.typed.size() == want.size(),
+        "%s: the bubble typed %zu lines where story::kHello has %zu; line %zu differs (typed "
+        "\"%s\", the script's \"%s\")",
+        tag, W.typed.size(), want.size(), same + 1,
+        same < W.typed.size() ? W.typed[same].c_str() : "(nothing)",
+        same < want.size() ? want[same].c_str() : "(nothing)");
+  printf("    %d ticks (%.1f s), %d with the bubble up, %zu of the script's %zu lines typed "
+         "whole, the tail read off the frame %d times, %ld..%ld px of ink, %d checks "
+         "failed\n",
+         W.ticks, (g_now - t0) / 1000.0, W.bubble_ticks, same, want.size(), W.captures,
+         W.ink_lo, W.ink_hi,
+         W.seat_fails + W.ink_fails + W.land_fails + W.option_fails + W.mismatched);
 }
 
 }  // namespace
