@@ -8,8 +8,9 @@
 //
 // What a Canary says while its door is open (firmware/common/network/
 // improv_ble): its fleet beacon carries FLEET_BEACON_FLAG_SETUP_OPEN and a
-// local name of the form "<Family>-<4 hex>" — the same four characters as
-// its SecuraCV-XXXX setup network — and its scan response carries the
+// local name of the form "<Family>-<4 hex>" — on a Sense or Vision the same
+// four characters as its SecuraCV-XXXX setup network; on a WAP the last four
+// hex of its key fingerprint, as its SCV-XXXX name — and its scan response carries the
 // Improv Wi-Fi service UUID with the standard's service data (state and
 // capabilities). A phone needs the UUID to be sure the device will take
 // credentials; the beacon bit alone is a hint.

@@ -188,9 +188,14 @@ always did.
 | Connectable | **No** on Sense and Vision (nothing to dial); the WAP's pairing channel as before | Yes |
 | Scan response | none on Sense and Vision; the WAP keeps its Opera scan response (name + its own service UUID) | the 128-bit Improv service UUID + 6 bytes of service data under `0x4677` |
 
-The four hex characters of the name are the same four as the device's
-`SecuraCV-AB12` setup network, so a phone can tell the two doors are one
-device. The service data is `[state][capabilities][0 0 0 0]`
+On a Sense or Vision the four hex characters of the name are the same
+four as the device's `SecuraCV-XXXX` setup network (both come from the
+device pseudonym), so a phone can tell the two doors are one device. A
+WAP's name ends in the last four hex characters of its key fingerprint —
+the same four as its Opera `SCV-XXXX` name and the fingerprint its
+dashboard shows — while its setup network's suffix is spelled in the
+no-confusion alphabet of its device id, so the two differ there; the
+card's "Blink it" button is the sure way to tell two WAPs apart. The service data is `[state][capabilities][0 0 0 0]`
 (`build_service_data`). iOS, Android and Chrome each merge the scan response
 into the advertisement a service filter matches, so a scan filtered on the
 Improv UUID still finds it; the beacon bit alone is a hint, the UUID is the

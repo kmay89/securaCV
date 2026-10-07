@@ -235,7 +235,7 @@ The fleet presence beacon (section 5's manufacturer-data format, type `0x10`) st
 
 | | Door shut | Door open |
 |---|---|---|
-| Primary | the fleet beacon | the fleet beacon with **`FLEET_BEACON_FLAG_SETUP_OPEN`** (bit 5, `0x20`), the flags AD and a short name `WAP-AB12` (Sense: `Sense-AB12`, Vision: `Vision-AB12`) — the same four hex characters as the device's `SecuraCV-AB12` setup network |
+| Primary | the fleet beacon | the fleet beacon with **`FLEET_BEACON_FLAG_SETUP_OPEN`** (bit 5, `0x20`), the flags AD and a short name `WAP-AB12` (Sense: `Sense-AB12`, Vision: `Vision-AB12`) — on a Sense or Vision the same four hex characters as the device's `SecuraCV-XXXX` setup network; on a WAP the last four hex of its key fingerprint, as its `SCV-XXXX` name |
 | Connectable | WAP: yes, the pairing channel as before. Sense / Vision: **no** | yes |
 | Scan response | WAP: Opera's own (the `SCV-XXXX` name + the SecuraCV service UUID). Sense / Vision: none | the Improv service UUID + the 6-byte `0x4677` service data |
 

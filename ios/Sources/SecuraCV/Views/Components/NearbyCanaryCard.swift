@@ -123,7 +123,7 @@ struct NearbySetupSheet: View {
                         }
                     }
                 } footer: {
-                    Text("Two on the table? Blink it to be sure which one this is. Its name ends in the same four characters as its setup network.")
+                    Text("Two on the table? Blink it to be sure which one this is. A Sense or Vision's name ends in the same four characters as its setup network; a WAP's in the last four of its key fingerprint.")
                 }
 
                 switch stage {
