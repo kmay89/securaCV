@@ -190,7 +190,8 @@ projects/canary-sense/
   include/canary/         # composition headers (config/topics/net/ha/diag)
   include/secrets.ci.h    # CI stub; real secrets in secrets/secrets.h
   src/main.cpp            # sensing core + privacy chokepoint + net stack
-  src/net/                # wifi_mgr (backoff supervisor), mqtt_mgr, ota_mgr
+  src/net/                # wifi_mgr (backoff supervisor), mqtt_mgr, ota_mgr,
+                          # fleet_beacon_adv (its bytes go through the setup door)
   src/ha/ha_discovery.cpp # HA MQTT discovery entity set
 boards/xiao-esp32c6-mr60/ # pin map (radar UART, BH1750 I2C, WS2812, BOOT)
 configs/canary-sense/
@@ -217,6 +218,44 @@ The vitals switch reaches `common/sensors/mmwave_mr60` only as the
 `-DCANARY_SENSE_VITALS` build flag (never a `config.h` include in `common/`),
 per the firmware layering rules (`firmware/ARCHITECTURE.md`).
 
+## The Bluetooth setup door (Improv Wi-Fi)
+
+A Sense with **no Wi-Fi saved** raises the shared setup portal — and, on the
+same NimBLE stack the presence beacon uses, opens the open **Improv Wi-Fi**
+door (`common/network/improv_ble`, rules in `improv_core.h`, host-tested):
+the beacon carries `FLEET_BEACON_FLAG_SETUP_OPEN` and the name `Sense-AB12`
+(the setup network's own suffix), the scan response carries the Improv
+service, and the device is connectable. The SecuraCV iPhone app (or Home
+Assistant's) shows a card; one tap hands over the home Wi-Fi over an
+encrypted Just Works link (no bond kept; the write handler checks the
+encryption again) into the portal's own join path
+(`setup_portal_submit_join`: persist only on success, same linger, same
+teardown). Door shut: today's beacon bytes, not connectable.
+
+**When the door is open** (the header's rule: for a device nobody owns yet,
+and for an owner's own tap — never for a device that has an owner and a bad
+day):
+
+- **No credentials stored:** for **30 minutes after power-on**
+  (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or a factory reset re-arms
+  it; 0 = tap-only). Not for life — a unit forgotten in a drawer is not
+  claimable from the street.
+- **A short BOOT tap** (`BOOT_BUTTON_PIN` from `pins.h`, GPIO9 on the XIAO
+  ESP32-C6; `common/io/short_tap.h`: ≥40 ms, <700 ms): **60 s**, with or
+  without credentials — the owner's own act.
+- **Never because a saved network is failing.** That raises the SoftAP
+  recovery portal (a door with the key the Flasher printed); the Bluetooth
+  door takes the stored-credentials fact, not the portal's.
+- Bounds while open: 3 s between accepted credential writes, 10 attempts
+  per open door (then shut until a tap or a power cycle), a 3-minute idle
+  disconnect, ~20 s linger after a join. The `WIFI_SETTINGS` result carries
+  an empty URL — a Sense serves no page; it simply appears on the LAN.
+
+`FEATURE_IMPROV` (default 1; `-DFEATURE_IMPROV=0` compiles it out). Design,
+threat model and the bench checklist: `docs/design/magic_pairing.md`.
+**CI-compiled and host-tested, not bench-tested** — the radio, the iOS
+pairing sheet and the GPIO9 tap are the open items below.
+
 ## Bench checklist (remaining hardware validation)
 
 - [ ] **UART frames parse on bench** — confirm the `[BENCH]`-marked
@@ -224,7 +263,14 @@ per the firmware layering rules (`firmware/ARCHITECTURE.md`).
 - [ ] **OTA A/B on C6** — install + rollback cycle through the HA update
       entity (the engine is bench-proven on S3/C3; the C6 partition flow is
       not yet).
-- [ ] **BOOT button pin** confirmed (assumed GPIO9 in `pins.h` — verify).
+- [ ] **BOOT button pin** confirmed (assumed GPIO9 in `pins.h` — verify),
+      and a short tap on it opens the Bluetooth setup door for 60 s on a
+      unit that already has Wi-Fi (a 2 s hold must not).
+- [ ] **Bluetooth setup door** — the card within seconds of power-on, the
+      iOS pairing sheet on the first write, the join, the 30-minute window
+      closing, a failing saved network raising the portal and NOT the door,
+      one BLE link + the SoftAP + a candidate join coexisting on the C6
+      radio (`docs/design/magic_pairing.md` §9).
 - [ ] **BH1750 lux** readings sane on the kit's I2C bus.
 - [ ] **WS2812** presence colors visible (green present / blue clear /
       amber no-radar).

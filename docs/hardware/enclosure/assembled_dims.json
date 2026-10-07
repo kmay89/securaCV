@@ -162,13 +162,13 @@
    "placement": "doorbell_fitcheck: face (the shell) at z = base_d; body (the plate) inside its walls at floor_t, back flush on the wall plate front (wplate_t), then the slide down into the collar",
    "mm_scad": [
     56.7,
-    132.7,
+    172.7,
     34.2
    ],
    "fig": {
     "w": 56.7,
     "d": 34.2,
-    "h": 132.7
+    "h": 172.7
    },
    "seams_fig_d": [
     5.0

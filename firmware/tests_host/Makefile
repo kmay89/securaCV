@@ -155,6 +155,34 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 PROVGATE_HDR = ../common/network/provisioning_gate.h
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 
+# Improv Wi-Fi over BLE, the pure half (common/network/improv_core.h): the
+# standard's RPC frames (the spec's worked example byte for byte, every
+# malformed shape refused as InvalidRpc and never partially believed, an
+# over-spec credential refused rather than truncated), the result frames and
+# their client walk, the advert's 0x4677 service data, and the provisioning
+# session — the door that is open exactly while the device has no working
+# Wi-Fi of its own, a tap that opens it for a minute, the join timeout, and
+# which advert is on air in each state. The NimBLE glue (improv_ble.cpp) is
+# compiled by the family envs; the iOS twin is pinned to the same vectors in
+# ImprovWireTests.swift.
+IMPROV_HDR = ../common/network/improv_core.h
+IMPROV_BIN = $(BUILD_DIR)/test_improv_core
+
+# The claim ticket (common/network/claim_ticket.h): how a phone that handed
+# a WAP its Wi-Fi over the Bluetooth setup door is paired without the bearer
+# token ever riding Bluetooth — 16 random bytes minted on join success, read
+# once over the link that asked, spent by one GET on the home LAN. Mint
+# spelling, single use on match AND mismatch (one guess per join), the TTL,
+# millis()==0 and the wrap, constant-time compare over the whole string.
+CLAIM_HDR = ../common/network/claim_ticket.h
+CLAIM_BIN = $(BUILD_DIR)/test_claim_ticket
+
+# The BOOT short tap (common/io/short_tap.h) that opens the setup door for a
+# minute on a device that already has an owner: debounce, one report per
+# release, a hold past the bound is somebody else's gesture, wrap-safe.
+SHORTTAP_HDR = ../common/io/short_tap.h
+SHORTTAP_BIN = $(BUILD_DIR)/test_short_tap
+
 # Self-signed HTTPS surface decisions (common/network/tls_policy.h, F15):
 # HTTPS-with-port-80-redirect vs HTTP-only and the reason /api/status
 # reports, the redirect Location builder (refuses truncation, foreign hosts
@@ -228,6 +256,14 @@ CONTACT_BIN = $(BUILD_DIR)/test_contact_tamper
 # swells, never goes dark while on and never flashes. Pure header.
 DOORBELL_HDR = ../common/doorbell/doorbell_logic.h
 DOORBELL_BIN = $(BUILD_DIR)/test_doorbell_logic
+
+# The Vision Doorbell's voice (common/doorbell/doorbell_audio.h): the chime,
+# the tick and the three reply tones start and end in silence, never clip,
+# end when their score says, are silent at volume 0 and reach full scale at
+# 100 (a speaker that must carry over a street), and differ from each
+# other. Integer-only, no FPU — the C3 has none.
+DBAUDIO_HDR = ../common/doorbell/doorbell_audio.h
+DBAUDIO_BIN = $(BUILD_DIR)/test_doorbell_audio
 
 # The MQTT `events` body both the canary-wap sketch and the canary PIO tree
 # publish (common/csi/src/csi_event_wire.h): byte-exact goldens (signed,
@@ -788,6 +824,15 @@ $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DI
 $(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_provisioning_gate.cpp
 
+$(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_improv_core.cpp
+
+$(CLAIM_BIN): test_claim_ticket.cpp $(CLAIM_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_claim_ticket.cpp
+
+$(SHORTTAP_BIN): test_short_tap.cpp $(SHORTTAP_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_short_tap.cpp
+
 $(TLSPOL_BIN): test_tls_policy.cpp $(TLSPOL_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_tls_policy.cpp
 
@@ -810,6 +855,9 @@ $(CONTACT_BIN): test_contact_tamper.cpp $(CONTACT_HDR) Makefile | $(BUILD_DIR)
 
 $(DOORBELL_BIN): test_doorbell_logic.cpp $(DOORBELL_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) test_doorbell_logic.cpp -o $@
+
+$(DBAUDIO_BIN): test_doorbell_audio.cpp $(DBAUDIO_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) test_doorbell_audio.cpp -o $@
 
 $(EVWIRE_BIN): test_csi_event_wire.cpp $(EVWIRE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_wire.cpp -o $@
@@ -1013,7 +1061,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1030,6 +1078,9 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(SDMOUNT_BIN)
 	./$(WIFIJOIN_BIN)
 	./$(PROVGATE_BIN)
+	./$(IMPROV_BIN)
+	./$(CLAIM_BIN)
+	./$(SHORTTAP_BIN)
 	./$(TLSPOL_BIN)
 	./$(APSEC_BIN)
 	./$(MQTTTLS_BIN)
@@ -1038,6 +1089,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(MQTTQUEUE_BIN)
 	./$(CONTACT_BIN)
 	./$(DOORBELL_BIN)
+	./$(DBAUDIO_BIN)
 	./$(EVWIRE_BIN)
 	./$(IDFLOOR_BIN)
 	./$(IDSPACE_BIN)

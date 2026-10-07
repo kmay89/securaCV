@@ -319,6 +319,35 @@ that opens it. Honest status: same bar as self-setup itself — host-tested,
 awaiting its first validated run on real hardware.
 → [the full stack](full_stack_setup.md)
 
+### Why did I still meet Home Assistant's setup wizard after the Flasher? And can my phone finish the hub?
+
+Two reasons, both fixed in the Flasher now, and yes. The Flasher's first-boot
+watch used to count *any* answer on the hub's port as "up" — but Home
+Assistant OS serves a "Preparing Home Assistant" page for the minutes Core
+takes to download on a first boot, so the account creation fired at a page
+that couldn't create one, gave up after thirty seconds, and you met the
+wizard. The watch now asks Home Assistant's own setup API and acts only when
+it answers (*preparing* and *ready* are different words on screen), and the
+self-setup run retries "not ready yet" on its own. The second reason is that
+the account is created by a companion on your network after boot, and the
+Flasher was the only companion — if it was closed, nobody created the account.
+
+The **SecuraCV iPhone app** is now that companion too: Fleet → Options →
+*Set up a hub or a Canary* (or the Start here card on Today). It finds the
+hub on your Wi-Fi by itself, waits for Home Assistant to actually exist,
+creates your account over Home Assistant's own setup API, finishes the wizard
+pages, checks the login works, and then asks Home Assistant for the same
+things its Settings page would — the Mosquitto broker, a login for your
+Canaries (minted on the phone, kept in its Keychain), the broker connection,
+Frigate and the witness kernel — narrating each step and naming what stays
+yours. The one thing no second device can do today is install the SecuraCV
+*integration's* files; that is the one-line installer from the hub's
+terminal, and [the investigation](hub_headless_install.md) says what would
+close it. Honest status: host-tested; the first validated run on a real
+first boot is still owed, and the by-hand path in the guide always works.
+→ [a truly headless hub install](hub_headless_install.md),
+[the full stack](full_stack_setup.md)
+
 ### I already run Home Assistant. Where do I start?
 
 [Home Assistant setup](homeassistant_setup.md) → [Frigate
@@ -422,6 +451,98 @@ on macOS, `~/.local/share/com.securacv.flasher/` on Linux):
 Force quitting is never dangerous to a device. A flash interrupted at any stage
 is re-flashable: the ESP32's first-stage bootloader is mask ROM, and a
 half-written hub card is simply written again.
+
+### How do I give a new Canary my Wi-Fi? Do I have to type a setup key?
+
+Not any more, for a Sense, a Vision or a WAP. Out of the box those three
+open a small **Bluetooth setup door** — the open [Improv Wi-Fi](https://www.improv-wifi.com/)
+standard, the same one Home Assistant's own app speaks — and say so on the
+air. Open the SecuraCV iPhone app near the Canary within half an hour of
+plugging it in: a card appears within seconds ("A new Canary is nearby").
+Tap it, pick your Wi-Fi from the networks the Canary itself can see, type
+the password once, tap Pair when iOS asks, and the Canary answers with its
+own verdict. The credentials cross an encrypted Bluetooth link (LE Secure
+Connections — a passive listener learns nothing); the phone can remember
+your Wi-Fi in its Keychain, on that phone only, so the second Canary is two
+taps. For a WAP the same tap ends with the phone *paired*: the WAP hands it
+a one-time **claim ticket** over that link, and the phone trades it, on your
+Wi-Fi, for the receipt — the device's key itself never crosses Bluetooth.
+
+**When the door is open** — the rule, in the firmware's own words: *for a
+device nobody owns yet, and for an owner's own tap — never for a device that
+has an owner and a bad day.* A Canary with no Wi-Fi saved opens it for 30
+minutes after power-on (unplug and replug to get another 30). A Sense or
+Vision that already has Wi-Fi opens it for 60 seconds when you tap its BOOT
+button. A Canary whose saved Wi-Fi has merely *stopped working* (the router
+rebooted, you changed the password) does **not** open it — it raises its
+`SecuraCV-XXXX` recovery network instead, which needs the key printed for
+it. So a Canary on your network offers nothing to a stranger's phone, on a
+good day or a bad one.
+
+The older paths stay as the fallback: the `SecuraCV-XXXX` setup network with
+its printed key, a display's glass QR (a display shows a QR instead of
+opening a door — a screen beats a radio), and the WAP's bonded Bluetooth
+service once it is paired.
+
+Honest status: the bytes and the rules are host-tested on both ends; the
+radio, the iOS pairing sheet and the BOOT button on each board have not yet
+been tried on a bench. → [magic pairing (design)](design/magic_pairing.md)
+
+### Why did the "new Canary is nearby" card disappear?
+
+Most likely the window closed. A Canary with no Wi-Fi saved opens its
+Bluetooth setup door for **30 minutes after it is powered on**, then shuts
+it so a unit forgotten in a drawer is not claimable from the street for the
+rest of its life. Unplug it and plug it back in: the window starts again.
+(On a Sense or Vision a tap on the BOOT button opens it for a minute too.)
+The card also goes away for fifteen seconds of silence — the phone has to
+keep hearing the Canary, so walk closer — and once the Canary has joined
+your Wi-Fi it shuts the door for good, which is the card doing its job. If
+you need it before the app does, the `SecuraCV-XXXX` setup network with its
+printed key is always there.
+
+### It says "this Canary already has Wi-Fi and isn't accepting a new network"
+
+That is the door being shut on purpose: a Canary that has an owner is not
+re-pointable at a new network from across the room. To change its Wi-Fi
+yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
+— under a second) and the door opens for 60 seconds; or power-cycle a unit
+that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
+version, use its own setup page (Settings → Wi-Fi on the dashboard, or the
+`SecuraCV-XXXX` network when it is off your home network) — or
+factory-reset it (hold BOOT for 5 seconds at power-up), after which the
+door opens again for half an hour. A Canary whose saved network is just
+down right now keeps the door shut and raises its recovery network
+instead; fix the router, or use that network's printed key.
+
+### Can Home Assistant's app set a new Canary up?
+
+**For Wi-Fi, yes.** The door is the open Improv Wi-Fi standard, so the Home
+Assistant companion app (and the improv-wifi web SDK in a browser that
+speaks Web Bluetooth) can hand a new Sense, Vision or WAP your Wi-Fi exactly
+as the SecuraCV app does; the Canary then shows up over MQTT like any other.
+What those clients do **not** get is the SecuraCV pairing: the claim ticket
+lives in our own companion service, which a standard client never looks
+for, so a WAP set up from Home Assistant's app has Wi-Fi and is then paired
+with the SecuraCV app from its receipt (BOOT tap → "Add from receipt"), as
+before. Home Assistant's own "Improv via BLE" integration needs a Bluetooth
+radio on the Home Assistant machine itself; through an ESPHome Bluetooth
+proxy the one-tap pairing cannot complete — expected, and untested.
+→ [Home Assistant setup](homeassistant_setup.md#step-3-configure-the-canary-device)
+
+### Is my Wi-Fi password sent over Bluetooth? Where does the phone keep it?
+
+It crosses Bluetooth once, **encrypted**: the Canary refuses the credentials
+write on an unencrypted link (that is why iOS shows its pairing sheet the
+first time), so a passive listener learns nothing. The Canary stores the
+password only once it has actually joined with it, in the same place the
+setup network's wizard would. The phone keeps it only if you let it —
+"remember this Wi-Fi for the next Canary" — and then only in **this
+phone's Keychain** (device-only, never iCloud Keychain, never our cloud,
+which does not exist), and only after a Canary itself said it joined: an
+unproven password is not one worth remembering. "Forget" on the Set up
+screen clears it. The WAP's pairing key is a different thing, and it never
+rides Bluetooth at all (the claim ticket above).
 
 ### My phone says "Unable to join the network SecuraCV-XXXX"
 

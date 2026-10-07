@@ -22,6 +22,12 @@
   <key>com.apple.developer.homekit</key>
   <true/>
 
+  <!-- Hotspot Configuration: the Set up walkthrough joins a Canary's own
+       setup network (SecuraCV-XXXX) from inside the app to hand it the home
+       Wi-Fi, instead of sending the owner to Settings. iOS asks each time. -->
+  <key>com.apple.developer.networking.HotspotConfiguration</key>
+  <true/>
+
   <!-- CloudKit private database — the user's own iCloud is the sync backend;
        SecuraCV runs no server and cannot read it. -->
   <key>com.apple.developer.icloud-services</key>

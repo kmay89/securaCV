@@ -249,6 +249,24 @@ namespace ble_provision {
 bool init(NimBLEServer*) { return true; }
 void tick() {}
 }  // namespace ble_provision
+// The Bluetooth setup door (ble_improv.h): the channel registers it in
+// init() and ticks it in update(); Opera reads its door for the advert set.
+// Shut here, like a WAP with credentials stored.
+#include "ble_improv.h"
+namespace ble_improv {
+bool init(NimBLEServer*) { return true; }
+void tick() {}
+bool setup_open() { return false; }
+const char* adv_name() { return ""; }
+void compose_scan_response(NimBLEAdvertisementData&) {}
+bool get_stats(Stats* out) {
+  if (!out) return false;
+  out->credentials_accepted = 0;
+  out->credentials_refused = 0;
+  out->claims_served = 0;
+  return true;
+}
+}  // namespace ble_improv
 namespace ble_log_export {
 bool init(NimBLEServer*) { return true; }
 void tick() {}
@@ -312,6 +330,8 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_bringup_ready = false;
   bc::g_saved_loaded = false;              // the F167 review: the loop task loads them at its first pass
   bc::g_bringup_worker_running = false;    // no sketch worker unless a test plays one
+  bc::g_scanners_held = false;             // the long path's init(), scanners started
+  bc::g_meta_hold_scanners = false;        // no hold pushed to the next init()
   bc::g_advertise_after_bringup = false;
   bc::g_init_fail_reason = "";
   bc::g_server = nullptr;                  // the stack's objects went with the stack

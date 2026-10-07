@@ -1,7 +1,7 @@
 # SecuraCV Canary — BLE Protocol Specification
 
-Status: Draft v0.1
-Last Updated: 2026-02-18
+Status: Draft v0.2
+Last Updated: 2026-10-07
 
 ## 1. Overview
 
@@ -10,6 +10,8 @@ The SecuraCV Canary uses Bluetooth Low Energy (BLE) for three distinct subsystem
 - **Opera** — BLE server/advertising for device presence and GATT service
 - **Chirp** — Connectionless broadcast alerts between Canary devices
 - **Nearby** — BLE scanner for discovering other Canaries and measuring proximity
+
+and, since 2026-10, one door: the **Bluetooth setup door** (section 13) — the open Improv Wi-Fi standard, through which a phone hands a brand-new Canary its Wi-Fi. Built, host-tested, not yet bench-tested.
 
 All BLE functionality is gated behind the `FEATURE_BLE` compile flag. When disabled, the firmware compiles identically to the BLE-free version with zero dead code.
 
@@ -28,6 +30,15 @@ All BLE functionality is gated behind the `FEATURE_BLE` compile flag. When disab
 | `a1b2c3d4-e5f6-7890-abcd-ef0123456002` | Characteristic | Device Info (READ) |
 | `a1b2c3d4-e5f6-7890-abcd-ef0123456003` | Characteristic | Witness Status (READ) |
 | `a1b2c3d4-e5f6-7890-abcd-ef0123456004` | Characteristic | Command (WRITE) |
+| `00467768-6228-2272-4663-277478268000` | Service | Improv Wi-Fi (the open standard's UUID, not ours) — the setup door, section 13 |
+| `00467768-6228-2272-4663-277478268001` | Characteristic | Improv current state (READ, NOTIFY; plain) |
+| `00467768-6228-2272-4663-277478268002` | Characteristic | Improv error state (READ, NOTIFY; plain) |
+| `00467768-6228-2272-4663-277478268003` | Characteristic | Improv RPC command (WRITE; **encrypted link required**) |
+| `00467768-6228-2272-4663-277478268004` | Characteristic | Improv RPC result (READ, NOTIFY; **encrypted link required**) |
+| `00467768-6228-2272-4663-277478268005` | Characteristic | Improv capabilities (READ; plain) |
+| `0x4677` | 16-bit service data | Improv's advert service data: `[state][capabilities][0 0 0 0]`, 6 bytes, in the scan response while the door is open |
+| `8fc1cf00-b162-4401-9607-c8ac21383e90` | Service | SecuraCV companion service (WAP only; outside the Improv service on purpose) |
+| `8fc1cf01-b162-4401-9607-c8ac21383e90` | Characteristic | CLAIM (READ; encrypted link required): the claim ticket, readable once by the link that provisioned, within 180 s of the join |
 
 ## 4. Opera — BLE Advertising & GATT Service
 
@@ -199,3 +210,59 @@ If NimBLE initialization fails (no antenna, hardware fault):
 - Firmware continues operating with WiFi AP, GPS, camera, and witness chain
 - Dashboard shows "BLE Unavailable" status
 - No watchdog resets from BLE failures
+- The setup door (section 13) stays a no-op too; the `SecuraCV-XXXX` setup network is the way in
+
+## 13. The setup door (Improv Wi-Fi over BLE)
+
+The canonical design is [`design/magic_pairing.md`](design/magic_pairing.md); the wire and the door rules are the header of `firmware/common/network/improv_core.h`. This section is the radio-level summary: what the WAP puts on air and how its pairing channel's security changes while the door is open. Nothing here has been bench-tested.
+
+### 13.1 What it is
+
+The open [Improv Wi-Fi](https://www.improv-wifi.com/) standard — the one Home Assistant, ESPHome and the improv-wifi web SDK speak — on the pairing channel's NimBLE server (Sense and Vision run it on the beacon's stack through `common/network/improv_ble`). A phone connects, asks `GET_WIFI_NETWORKS`, writes `WIFI_SETTINGS` (`[ssid_len][ssid][pass_len][pass]`, checksummed), and reads the device's own verdict on the state and error characteristics. Capability bits: identify `0x01`, device info `0x02`, scan Wi-Fi `0x04`, hostname `0x08`.
+
+### 13.2 When the door is open — the rule
+
+From `improv_core.h`: the door is open for a device NOBODY OWNS YET, and for an owner's own tap — never for a device that has an owner and a bad day.
+
+- **No credentials stored** (first boot, factory reset): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or a factory reset re-arms it; compile-time 0 = tap-only).
+- **Credentials stored:** shut, whatever the network is doing. A saved network that stopped working raises the SoftAP recovery portal (a door with a key printed on the unit) — it does **not** open this one.
+- **A short BOOT tap** (Sense and Vision; the WAP has no tap door in this version) opens it for **60 s**.
+- Bounds while open: accepted `WIFI_SETTINGS` writes at least **3 s** apart; **10 attempts** per open door, then it shuts until a tap or a power cycle; a connected client silent for **3 minutes** is dropped; ~**20 s** linger after a successful join, then back to the beacon.
+
+### 13.3 The advert set swap
+
+The fleet presence beacon (section 5's manufacturer-data format, type `0x10`) stays the **primary** advert at all times, so a display's passive roster scan keeps hearing the device either way.
+
+| | Door shut | Door open |
+|---|---|---|
+| Primary | the fleet beacon | the fleet beacon with **`FLEET_BEACON_FLAG_SETUP_OPEN`** (bit 5, `0x20`), the flags AD and a short name `WAP-AB12` (Sense: `Sense-AB12`, Vision: `Vision-AB12`) — on a Sense or Vision the same four hex characters as the device's `SecuraCV-XXXX` setup network; on a WAP the last four hex of its key fingerprint, as its `SCV-XXXX` name |
+| Connectable | WAP: yes, the pairing channel as before. Sense / Vision: **no** | yes |
+| Scan response | WAP: Opera's own (the `SCV-XXXX` name + the SecuraCV service UUID). Sense / Vision: none | the Improv service UUID + the 6-byte `0x4677` service data |
+
+On the WAP, Opera composes both sets (`ble_improv::compose_scan_response` fills the open-door scan response); the swap is a stop → set → start of advertising, and Opera's own scan response returns when the door shuts. iOS, Android and Chrome each merge the scan response into the advertisement a service filter matches, so a scan filtered on the Improv UUID still finds the device.
+
+### 13.4 The security-profile swap (WAP)
+
+The pairing channel's steady profile is the authenticated one: Numeric Comparison, bonds kept, and every console / OTA / witness-export / bonded-provisioning characteristic marked `READ_AUTHEN` / `WRITE_AUTHEN`. The setup door needs the only pairing a phone with no prior bond can open in one tap — **LE Secure Connections Just Works, no bond kept** — so:
+
+- `bluetooth_channel::set_setup_door` swaps the channel's security profile to Just Works **only while the door is open**, and **never while a Numeric Comparison is pending or an authenticated / bonded link is up**; it is restored when the door shuts.
+- The Improv command and result characteristics require an encrypted link by their properties, **and the write handler checks the link's encryption again** before parsing a byte. The state, error and capability bytes stay plain, so a standard client reads "awaiting authorization" without pairing.
+- The key a Just Works pairing yields is **unauthenticated**, and every `*_AUTHEN` characteristic refuses it: the console, OTA, the witness export and the bonded provisioning service are out of reach of a link that only came through the door.
+
+### 13.5 The claim ticket (WAP) — the token never rides Bluetooth
+
+The bearer token lasts; a Just Works link is encrypted but not authenticated; nothing that lasts belongs on it. So once the join the phone asked for succeeds, the WAP mints **16 random bytes (32 hex)** and lets **the link that provisioned read them once**, within **180 s**, from the companion service's CLAIM characteristic (`8fc1cf01`, READ, encrypted) as JSON:
+
+```json
+{"device_id":"…","claim":"<32 hex>","claim_url":"…","tls_cert_fp":"…","sta_ip":"…","mdns_host":"…","expires_in_s":180}
+```
+
+The phone spends it **on the home LAN** — `GET /api/provisioning-receipt?claim=<hex>` at the device's `.local` name — and gets the same receipt the BOOT-tap route serves (`device_id`, `base_url` at the `.local` name, `token`, `tls_cert_fp` where TLS is on). The route decides in this order and no other: a valid bearer → the claim → the BOOT tap (`provisioning_gate::receipt_decide`'s four grants; its first question, a foreign `Host`, is the flagship's `auth_gate`'s — the WAP does not ask it on this route today). A wrong guess **burns** the claim; an expired claim is burned too; a claim that serves leaves the BOOT tap unspent. Two factors: the encrypted link that provisioned, **and** presence on the Wi-Fi the device just joined — a phone that was only near the device holds a string that opens nothing from the street.
+
+### 13.6 Discovering it with third-party tools
+
+While a door is open, nRF Connect / LightBlue see the `<Family>-XXXX` name and, in the scan response, the Improv service with its `0x4677` data (`[0x02][caps]…` = Authorized). Reading `…8001` answers `0x02`; after the door shuts, `0x01` (awaiting authorization). A write to `…8003` without pairing is refused; with the Just Works pairing it is accepted only while the door is open. The Home Assistant companion app and the improv-wifi web SDK can provision Wi-Fi through it; they get Wi-Fi only, no SecuraCV pairing (the companion service is ours). An ESPHome Bluetooth proxy cannot complete the Just Works pairing — expected, untested.
+
+### 13.7 Where
+
+`firmware/common/network/improv_core.h` (pure; `tests_host/test_improv_core.cpp`), `improv_ble.{h,cpp}` (NimBLE glue, both majors), `common/network/claim_ticket.h` (`test_claim_ticket.cpp`), `common/io/short_tap.h` (`test_short_tap.cpp`), `common/network/provisioning_gate.h` (`test_provisioning_gate.cpp`), the WAP's `ble_improv.h` and `build_config.h` (`FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE`, the FULL profile), the Sense's and Vision's `include/canary/config.h` (`FEATURE_IMPROV`). The flagship `firmware/canary` build is a follow-up; the displays keep their glass QR.

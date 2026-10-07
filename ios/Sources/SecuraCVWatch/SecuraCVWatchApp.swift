@@ -67,6 +67,11 @@ struct WristRootView: View {
             case .find(let witnessID):
                 store.pendingFindID = witnessID
                 tab = .glance
+            case .setup:
+                // The walkthroughs live on the phone (a wrist can't type a
+                // password or join a setup network); the glance is the
+                // honest landing, never a page that pretends to.
+                tab = .glance
             }
         }
     }

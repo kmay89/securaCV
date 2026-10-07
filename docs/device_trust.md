@@ -285,6 +285,46 @@ What this does NOT defend against:
   A canary-sense on 2.4.15 or older shows only its fingerprint: check
   the TOFU pin against it instead.
 
+## The Bluetooth setup door: what a Just Works link may touch
+
+This page is mostly about the MQTT side. The Canary WAP also has two kinds
+of Bluetooth link, and since the Bluetooth setup door landed (2026-10,
+host-tested, not bench-tested) the difference is a trust boundary worth
+stating once. The design is
+[magic pairing](design/magic_pairing.md); the rules are the header of
+`firmware/common/network/improv_core.h`.
+
+| Link | How it is made | What it may touch on a WAP |
+|---|---|---|
+| **A bond** (the steady state) | LE Secure Connections with **Numeric Comparison** from the dashboard, the bond kept; the key is *authenticated* | everything the pairing channel serves: the console, BLE OTA, the witness export, the bonded provisioning (rescue) service — all `READ_AUTHEN` / `WRITE_AUTHEN` |
+| **A Just Works link** (the setup door) | LE Secure Connections **Just Works**, no bond kept — the only pairing a phone with no prior bond can open in one tap; the key is *unauthenticated* (it resists a passive listener, not an active one who paired first) | the Improv Wi-Fi command and result characteristics (credentials in, verdict out) and, once the join the phone asked for succeeded, **one read of the claim ticket**. Nothing else: every `*_AUTHEN` characteristic refuses the unauthenticated key |
+
+The channel's security profile is swapped to Just Works only while the door
+is open — never while a Numeric Comparison is pending or an authenticated
+or bonded link is up — and restored when it shuts. The door itself is open
+only for a device with **no stored credentials**, for 30 minutes after
+power-on; a WAP on its own Wi-Fi (even one whose Wi-Fi is failing) offers
+nothing here.
+
+**The claim's two factors.** The bearer token — the thing this page's
+iPhone-app paragraph says the app pins a key from — never rides the Just
+Works link. What rides it is a *claim*: 16 random bytes, readable once by
+the link that provisioned, good for 180 s. The phone spends the claim on
+the home LAN with `GET /api/provisioning-receipt?claim=<hex>`, and only
+that request answers the receipt (device id, `base_url` at the `.local`
+name, token, `tls_cert_fp` where TLS is on). So pairing a phone through
+the door takes **both** the encrypted link that handed over the Wi-Fi
+**and** presence on the Wi-Fi the device just joined; a phone that was
+only near the device holds a string that opens nothing from the street. The
+receipt route decides in a fixed order — on the flagship a foreign `Host`
+is refused first (the WAP asks no Host question on this route today), then
+a valid bearer serves, then the claim, then an unspent BOOT tap
+(`provisioning_gate::receipt_decide`) — a wrong claim is burned, an expired
+one too, and a claim that serves leaves the BOOT tap unspent for the
+owner's own page load. What the phone pins afterwards (the key from
+`/api/status`, the `tls_cert_fp` from the receipt) is the same as from any
+other pairing path.
+
 ## How to verify
 
 Host-side tests (no ESP32 + no HA needed):

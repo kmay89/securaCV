@@ -14,8 +14,9 @@ measurement. This page is the wiring for the released
 
 | You do | The doorbell does |
 |---|---|
-| Press the button | Seals a `doorbell` event into the witness's signed chain (with the network down too), then the ring **swells** up and eases back: "the house heard you". Home Assistant gets a real doorbell event; every Canary display on the broker shows *Doorbell heard*. |
-| Press again within 3 s | Counted, not sealed and not re-announced: one impatient visitor is one ring, and nobody can flood the record by jabbing. A press after 3 s rings again. |
+| Press the button | Seals a `doorbell` event into the witness's signed chain (with the network down too), then the ring **swells** up and eases back and the speaker plays the **chime** (two bell notes, high then low): "the house heard you". A ring the witness could not seal (no identity yet) still goes out, unsigned, and gets the soft **tick** instead of the chime: heard, not claimed sealed. Home Assistant gets a real doorbell event; every Canary display on the broker shows *Doorbell heard*. |
+| Press again within 3 s | Counted, not sealed and not re-announced: one impatient visitor is one ring, and nobody can flood the record by jabbing. The speaker gives one soft **tick** ("still heard, still one ring"). A press after 3 s rings again. |
+| The household answers | From Home Assistant, the **Doorbell reply** select plays one of three short **tones** to the visitor: rising *we're coming*, falling *leave it*, a low double *no thanks*. Tones, never speech: a Canary has no microphone and renders no voice (the dossier's refusals, §3). |
 | Hold it down | Still one ring. Held past 15 s (ice, tape, a jammed plunger), it's reported **stuck** once; the ring goes steady and low, and nothing rings until it's released. |
 | Nothing | The ring **breathes**: the witness is on, nothing is being recorded. |
 | The house's broker is unreachable | The ring breathes **slower and dimmer**. An empty log reads as "unsure", never as "quiet". Presses are still sealed on the device. |
@@ -43,6 +44,8 @@ integration update is needed:
 | **Doorbell enabled** | `switch` (config) | Turns the doorbell (button + ring) on and off. |
 | **Doorbell glow** | `number` 10–100 % (config) | Brightness of the ring. |
 | **Doorbell button** | `sensor` (diagnostic) | `ok`, `stuck`, or `ring_fault` (the glow timer could not start: the ring holds a steady glow instead of breathing, so it still never reads dark while on). |
+| **Doorbell volume** | `number` 0–100 % (config) | The speaker: the chime on a sealed ring, the tick on a repeat or an unsigned ring, the reply tones. 0 is silent; the ring still swells. |
+| **Doorbell reply** | `select` | `we're coming` / `leave it` / `no thanks` — a tone to the visitor, played once when selected. The state row's `speaker` field says `ok` or `fault` (the sample timer could not start: silent). |
 
 While the doorbell is off, only the switch exists. The other three are
 removed, so a Vision that isn't a doorbell doesn't show doorbell controls.
@@ -60,9 +63,24 @@ All in [`bom_canary_vision.csv`](./bom_canary_vision.csv), items 19–19e:
 | R5 | 1 kΩ | Button NO → XIAO D1: ESD protection for an outdoor metal button. |
 | C2 | 100 nF ceramic | XIAO D1 → GND, at the XIAO end: noise filter (~0.1 ms, far below the 30 ms debounce). |
 
+**The speaker** (v0.8 case, the zone between the button and the cable well):
+
+| Ref | Part | Notes |
+|---|---|---|
+| SPK1 | 36 mm sealed full-range driver, 4 Ω, 3 W class, ≥ 88 dB/W/m, 6 mm deep | A mylar-cone driver with a plastic frame and a sealed back is what survives outdoors; the case seats its rim in a boss on the face over a foam ring and presses its magnet with a cradle on the plate, no screws. The **target** is a chime that carries over a busy street (70–75 dB at the curb); the arithmetic on this sensitivity and AMP1's 2.5 W says about 90 dB at 1 m before the grille, the mesh, the filter and the tone's own losses, **none of which has been metered yet** (see "What's not done"). Buy the sensitivity; the meter decides. Candidates to verify in hand (depth ≤ 6, rim ≤ 36): PUI AS03604MR-N50-R, CUI CMS-36T-28? — buy by the numbers, not the name. |
+| AMP1 | PAM8302A class-D amplifier, 2.5 W into 4 Ω at 5 V (Adafruit 2130 breakout or bare) | Mono, single-ended input, fixed 24 dB gain, shutdown pin. Parks on edge against the −X wall beside the button, long side vertical, in the 18 mm between the bottom corner post and the speaker zone's first post (the case was probed with a 20 × 18 × 3 board there: it fits, snug). Its VIN is the XIAO's **5V** pin; SD ties to VIN (always on; idle draw is a few mA). |
+| R6, R7 | 1 kΩ ×2 | The two-pole input filter with C3/C5: knocks the 78 kHz PWM carrier down ~40 dB before the amplifier. |
+| C3, C5 | 22 nF ceramic ×2 | With R6/R7: ~7 kHz corner, twice. |
+| C4 | 1 µF film or ceramic | Couples the audio to A+ and blocks the PWM's mid-scale DC (the speaker never sees it). |
+| R8, R9 | 10 kΩ / 2.2 kΩ | A divider after C4: the XIAO's 3.3 V swing at the amp's 24 dB gain would clip; this leaves ~0.6 V peak, which is full output. |
+| FOAM2 | foam ring Ø36 / Ø30 × 1.5 (compresses to 1.0) | Between the driver's rim and the face, inside the boss: it is the acoustic seal and the thing that lets the plate press the driver without rattles. |
+| FOAM3 | foam pad Ø20 × 1.5 | Between the magnet and the plate's cradle. |
+| MESH1 | acoustic mesh patch Ø34, hydrophobic (Saati Acoustex class, or a GORE acoustic vent), adhesive | On the face's **inner** side over the grille, in its 0.3 mm seat: rain stays out, sound goes through. It guards the driver's chamber only — the driver's back is sealed and its rim sits on a foam ring — so it is **not** the case's pressure path; since the v0.9 case the GORE cluster is off by default and the sealed body breathes through its Ø2 weep. |
+
 Plus about 20 cm of thin stranded wire, solder and heat-shrink.
 Everything fits in the body's button zone and cable well. Sleeve Q1, R3
-and R4 together in one piece of heat-shrink and park them in the well.
+and R4 together in one piece of heat-shrink and park them in the well;
+the amplifier and its filter parts go on edge beside the button, long side vertical, between the posts.
 Turn the button's wires toward the well (up, in the mounted case), not
 toward the bottom wall: the security screw's boss sits there.
 
@@ -70,7 +88,7 @@ Two more parts live in the v0.7 case beside the module, both optional:
 
 | Ref | Part | Notes |
 |---|---|---|
-| BT2 | LiPo 802030 class, 8 × 20 × 30 mm, 400–450 mAh, **protected**, JST-PH leads | Stands on edge in the bay on the −X side, on the FT1 foam strip. Ride-through for a USB supply that browns out. The XIAO charges it: the C3's ~370 mA is under 1C on this cell (the one size in the 20 × 30 family that is); the S3 charges at 100 mA. **Neither XIAO charger stops below 0 °C**, so in a freezing climate leave it out ([cold-weather envelope](./cold_weather_envelope.md)). |
+| BT2 | LiPo 802030 class, 8 × 20 × 30 mm, 400–450 mAh, **protected**, JST-PH leads | Stands on edge in the bay on the −X side, on the FT1 foam strip. Ride-through for a USB supply that browns out — for the record and the glow, **not the speaker** (AMP1 hangs off the USB-only 5V pin; see its wiring row). The XIAO charges it: the C3's ~370 mA is under 1C on this cell (the one size in the 20 × 30 family that is); the S3 charges at 100 mA. **Neither XIAO charger stops below 0 °C**, so in a freezing climate leave it out ([cold-weather envelope](./cold_weather_envelope.md)). |
 | ANT1 | FPC Wi-Fi antenna, 40 × 20 mm, u.FL pigtail | The XIAO ESP32-C3 kit's own antenna (Seeed 318020748); the S3's 37.4 × 17.5 A-02 fits the same landing. Sticks to the +X wall inside the face, between two ribs; the pigtail runs under the module to the XIAO's u.FL. |
 
 ## Wiring
@@ -85,6 +103,11 @@ Two more parts live in the v0.7 case beside the module, both optional:
 | XIAO **D1** | R5 → BTN2 **NO** | The press pulls D1 low (internal pull-up). |
 | XIAO **D1** | C2 → **GND** | Next to the XIAO. |
 | BTN2 **C** | **GND** | |
+| XIAO **D3** | R6 → C3 to GND → R7 → C5 to GND → C4 → R8/R9 divider → AMP1 **A+** | 10-bit PWM at 78 kHz carrying 8 kHz audio; the filter leaves the audio, the cap drops the DC, the divider matches the amp's gain. |
+| AMP1 **A−** | 1 µF to **GND** | The amp's input is differential; A− rides at its own bias through the cap. |
+| XIAO **5V** | AMP1 **VIN** (and **SD**) | 2.5 W peak on the chime; the USB supply covers it. **The 5V pin is USB only on both XIAOs**: on the LiPo (USB out) it reads 0 V, so the speaker is silent during a ride-through while the ring still seals and the glow still swells (the 3V3 rail stays up). Feeding AMP1 from 3V3 instead is not the fix: the XIAO's 3.3 V regulator cannot carry the module *and* a watt of chime, and the amp would make ~1 W. A battery-backed 5 V rail for the amp is a v0.9 question, if the chime must ring through an outage. |
+| AMP1 **GND** | **GND** | |
+| AMP1 **+ / −** | SPK1 **+ / −** | The sealed driver behind the grille. |
 
 2N3904 pins, flat face toward you, legs down: **E · B · C**.
 
@@ -94,6 +117,14 @@ Pin numbers by board:
 |---|---|---|---|
 | D1 | GPIO2 | GPIO3 | button in |
 | D2 | GPIO3 | GPIO4 | glow PWM |
+| D3 | GPIO4 | GPIO5 | speaker PWM (v0.8) |
+
+D3 is the module socket's SPI chip-select line. The Vision firmware never
+runs SPI to the module (it talks I²C), and a chip select that wiggles while
+SCK and MOSI stay idle clocks no byte into the module's SPI slave, so the
+pin is free to carry the audio. That was the last spare header pin on the
+stacked build; `firmware/boards/PIN_BUDGET.md` now shows both XIAO hosts
+with D1, D2 and D3 committed to the doorbell.
 
 D1 and D2 are used because the Grove Vision AI V2's socket owns the rest of the
 header: D4/D5 (I2C, which this firmware uses), D6/D7 (UART) and the SPI
@@ -148,6 +179,42 @@ converter behind the plate: an AC-input module rated for 8–24 V AC in, 5 V
 - Keep the converter outside the sealed body or in its own sealed box. The
   body's cavity is sized for the Vision stack and the button.
 
+## Service access
+
+**Reset and boot from the back (v0.9 case).** The XIAO's two tactile
+switches, **R** (reset) and **B** (boot), sit on its component face, which
+in the module's socket is the side that faces the back plate. The v0.9
+plate carries two **TPU plungers** (`part = "plunger"`: one print, the R and B pair on a snap-off sprue) in
+counterbores over them: lift the body off its wall plate (the one security
+screw — no plate screw comes out), and press. **R** restarts the board.
+**B held while power comes up** (plug the USB-C in with B pressed, or
+press R while holding B) puts the ESP32 into its download mode for a flash
+over USB — the same gesture as on the bare board. Each plunger is a keypad
+membrane: a rim on a seat, a three-layer web over a flex recess, a stem
+through a guided bore; a press bends the web, the tip clicks, the web
+springs it back, and the recess floor stops a finger before it can drive
+the switch past its body. They rest 0.3 mm off the caps at the nearest the
+stack can sit, so an unpressed plunger can never hold a switch; that gap
+is asserted in the CAD, not assumed. **Printing them**: TPU 90–95A, 0.2 mm
+layers (the web is exactly three of them — a 0.3 layer makes it one layer
+too thick or too thin), 100 % infill, slow, both buttons in the one print
+so each stem's layers get time to set, no supports; cut them off the
+sprue with scissors, never tear. The heads stand 0.2 mm proud of the back
+face on purpose: the wall plate's slab squeezes the rims onto their seats,
+which seals the bores behind them. One
+dimple in a head means R, two mean B — **the side is a `MEASURE` knob**
+(`xiao_rst_side`): the vendor model has no silkscreen, so look at the board
+before you trust the dimples, and flip the knob if they are swapped.
+
+**There is no SD card to reach.** The doorbell stacks a plain XIAO ESP32-S3
+(or C3) in the Grove Vision AI V2's socket; the camera is the module's
+OV5647. The microSD slot in the XIAO family lives on the **Sense expansion
+board**, which attaches to the XIAO's underside — the side the Grove socket
+takes — so it cannot be in this stack, and the Grove Vision AI V2 has no
+slot of its own. The witness chain and the doorbell's state live in the
+XIAO's flash (NVS); there is nothing on a card to get at. If a card ever
+matters here it is a different host board, not a hole in the case.
+
 ## Bring-up
 
 1. Flash the Vision firmware (XIAO S3 or C3 build) as usual.
@@ -161,6 +228,17 @@ converter behind the plate: an AC-input module rated for 8–24 V AC in, 5 V
    (the press is sealed on the device).
 5. Hold the button for 15 s: `[BELL] … reported stuck`, and the ring goes
    steady and low. Release it: `[BELL] Button released - no longer stuck.`
+6. The speaker: boot prints `[BELL] Speaker on D3 (PWM 78125 Hz, 10-bit,
+   8000 samples/s), volume 60%`. A press plays the chime with the swell; a
+   second press inside 3 s plays the tick, and so does a press before the
+   witness has an identity (the serial line says `unsigned`). Set **Doorbell
+   volume** to 100 and stand at the curb with a sound-level meter: the chime
+   should carry over traffic, and the reading is the number this page is
+   missing. Send a
+   **Doorbell reply** and the matching tone plays once. No sound at all with
+   `speaker: fault` in the state row means the sample timer did not start;
+   no sound with `speaker: ok` is the wiring (check the 5 V at AMP1 VIN and
+   the ~0.6 V peak at A+ on a scope while a reply plays).
 
 If step 3 does nothing, check the button with a meter: NO and C should
 close when pressed. D1 should read ~3.3 V released and ~0 V pressed.
@@ -188,8 +266,19 @@ explains why.
 
 ## What's not done
 
-- **Bench validation**: nobody has pressed a real one yet. The host test proves the logic;
-  CI compiles the firmware; a bench unit is the next step.
+- **Bench validation**: nobody has pressed a real one yet. The host test proves the logic
+  (and the voice: every phrase starts and ends in silence, never clips, reaches full scale);
+  CI compiles the firmware; a bench unit is the next step. **No loudness has been measured.**
+  The ~90 dB at 1 m this page mentions is arithmetic on the driver's rated sensitivity and
+  the amplifier's power, before the grille, the mesh, the input filter and the tone's own
+  losses; it is a target, not a claim. A sound-level meter at the curb is the test, and the
+  measured number replaces the arithmetic on this page when it has been read.
+- **The chime is silent on battery.** AMP1 runs from the XIAO's 5V pin, which is USB only on
+  both hosts; during a LiPo ride-through the ring still seals and the glow still swells, but
+  nothing plays. A battery-backed 5 V rail for the amplifier is a v0.9 question.
+- **Quick replies in a voice** (the dossier's §4.3: the hub's Piper voice rendering "leave
+  it by the bench") are the Pro's; the Lite's replies are the three tones. The firmware's
+  phrase table is the one place to add a fourth.
 - **The fleet beacon** (the broker-free BLE / ESP-NOW channel the displays
   also listen on) carries object classes, not a doorbell press. A press
   reaches the displays through the broker, not broker-free. Adding a press
@@ -197,6 +286,10 @@ explains why.
   Lab and the Apple apps.
 - **Displays say "Doorbell heard"**: the same row the WAP's acoustic
   doorbell detector already uses.
+- **Which switch is R.** The v0.9 plungers' dimples follow `xiao_rst_side`,
+  a `MEASURE` knob: the vendor model carries no silkscreen. A photo of the
+  board with the USB toward you settles it; until then, check before you
+  trust a dimple. The switch *positions* are measured (the vendor GLB).
 - **Measure the module's mounting holes.** The v0.7 case puts a screw post
   under each of the Grove Vision AI V2's two M2 holes at ±7.5 / +2.5 mm from
   the module's center, read off a photo of the first print; the vendor CAD

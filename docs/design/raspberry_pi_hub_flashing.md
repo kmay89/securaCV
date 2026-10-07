@@ -416,7 +416,9 @@ Raspberry Pi Imager.
     script, so the companion-over-SSH path above is the honest interim; it and
     the seeds still need their first validated run on a real Pi (does this HAOS
     build import the root-partition `authorized_keys`, does the console open,
-    does `host_provision.sh` complete?). HAOS ignores files it doesn't
+    does `host_provision.sh` complete?). The options for a card that finishes
+    alone — and why the second companion is now the iPhone app — are weighed
+    in [the headless-install investigation](../hub_headless_install.md). HAOS ignores files it doesn't
     recognize, so an un-run bundle is harmless and the guide still carries the
     user from `homeassistant.local:8123`.
   - *Account — the onboarding-API companion (IMPLEMENTED 2026-08-05; this is

@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.7
+//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.8
 // @env cer=2 ip="~IP54 (button ~IP65)"
 //  A slim vertical unit in the Wyze/Ring video-doorbell form factor, holding
 //  the stacked-XIAO Vision build: OV5647 camera (top) + Grove Vision AI V2
@@ -170,14 +170,86 @@
 //      ribs, the +X mid posts standing off the wall so the FPC passes
 //      behind them. The module sits off the face's centerline by what the
 //      bay needs (vm_cx derived); the lens, vent and button stay centered.
+//  v0.8 (2026-10-06): THE SPEAKER. A doorbell that refuses a feed and a
+//  microphone still owes the visitor one thing the glow cannot give: a
+//  sound that says the house heard the press, loud enough for a street
+//  (docs/hardware/canary_doorbell_research.md §4.3; the voice itself is
+//  firmware/common/doorbell/doorbell_audio.h). A SPEAKER ZONE goes in
+//  between the button and the cable well: a Ø spk_d sealed full-range driver
+//  behind a GRILLE of Ø1.0 holes (the outdoor insect rule) on the face, an
+//  acoustic mesh patch seated on the face's INNER side (nothing bridges on
+//  the bed), the driver's rim in a BOSS ring on the inner side over a foam
+//  gasket, and a CRADLE on the plate under the magnet so the plate screws
+//  capture the driver — no screw touches the driver. The zone's walls carry
+//  a mid-post pair each side of the cone (the gasket clamp rule still holds
+//  at <= 40 mm) placed where the circle leaves room at the wall. The
+//  amplifier board parks on edge beside the button. The body grows by the
+//  zone (zone_spk = spk_d + 2*spk_gap); nothing else moves.
+//  v0.9 (2026-10-06): the service plungers, the sunflower grille, the vent
+//  gone. Three things the v0.8 review of the case asked for:
+//    * SERVICE PLUNGERS (opt_svc): the XIAO's two tactile switches, R and
+//      B, face the plate (its component side is its outward side in the
+//      socket), 7-9 mm off the plate's inner face. Two TPU plungers go
+//      through the plate over them — a flat head 0.2 proud in a seat on
+//      the back face, a stem in a bore through the plate and a short guide
+//      boss on the inner face (stopped under the USB-C shell), a bead past
+//      the boss's top that keeps it, a small tip that lands on the cap and
+//      nothing else (the shell stands 0.7 beside the cap, four times
+//      taller). Lift the body off its wall plate and press: a reset or a
+//      boot-mode flash without a plate screw coming out. The head is a
+//      rim on a seat and a three-layer web over a flex recess — a keypad
+//      membrane, a few newtons to click, the recess floor its overtravel
+//      stop; the stem's root is filleted, the bead's shoulder faces the
+//      head and its lead the tip, the tip is chamfered. The tip rests
+//      0.3 off the cap at the NEAREST the stack can sit (stack_sock_h is a
+//      bench number to one PCB face, so the band is a PCB thick) — an
+//      unpressed plunger can never hold R or B down; a sixth printed part,
+//      part="plunger", TPU — ONE print, both buttons on a snap-off sprue
+//      between their heads, so the pair cannot come out as two of one.
+//      Which switch is R is a MEASURE knob (xiao_rst_side): the vendor
+//      model carries no silkscreen; the dimples in the heads follow it
+//      (one dimple = R, two = B).
+//    * the GRILLE is a sunflower (grille_pattern): the holes sit on a
+//      Fermat spiral at the golden angle, one per grille_pitch² of face —
+//      the same open area as the rings, no ring reads as a ring, every
+//      neighbor the same distance. The insect rule still holds (Ø1.0).
+//    * the GORE VENT is OFF by default (opt_vent): the ring of ten holes
+//      above the grille is gone from the face, and the case breathes
+//      through the WEEP — the Ø2 drain through the bottom wall, open,
+//      angled down, under the collar's slot — which the seal-path assert
+//      has always accepted as a pressure path (field_ratings.md). What
+//      that trades: the air exchange on a day/night cycle happens at the
+//      drain, not through a membrane. The grille's membrane does NOT do
+//      that job — the driver's back is sealed and its rim sits on a foam
+//      ring, so the membrane protects the driver's own chamber, which the
+//      cavity never sees (the first cut of this claimed otherwise; the
+//      review caught it). A membrane-only path with no open hole is still
+//      opt_vent = true, and the knob stays for it.
+//    * THE MODULE CRADLE (2026-10-07): the four cantilever snap clips, the
+//      corner shoes, the top guides and the half-length rails — five kinds
+//      of feature standing separately off the plate, four of them beams
+//      made to flex, each with a root to crack — become ONE connected,
+//      vented structure, and nothing on it flexes. Two full-length L-walls
+//      (a ledge under each long edge of the module, a wall up its side
+//      taller than the shell's headroom), joined by a stop under the
+//      bottom edge on its buttress, carrying the board posts in their
+//      upper ribs; the service bosses root into the stop's band. The
+//      walls are cut into gabled VENT WINDOWS between a foot band and the
+//      lintel under the seat (45° roofs, no bridge), so the XIAO's heat
+//      and the antenna pigtail pass through them and the ribs between the
+//      windows are the structure. The two M2 board screws are the module's
+//      hold-down (the clips predate them — v0.5 to v0.7's posts); the
+//      stack drops in vertically as before (the posts' XIAO relief allows
+//      nothing else), the walls locate it, the stop carries it mounted,
+//      and with the face on the headroom caps it even unscrewed. The
+//      cavity's width reads the wall's band exactly as it read the clip's,
+//      so the envelope does not move.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
                              // piston plate (pl_*) — the catalog's shared helpers
 use <canary_mount_lib.scad>  // the catalog's hangers — the wall plate's dovetail
                              // lugs and the body's blind pockets, one home
-use <canary_snap_lib.scad>   // snap-fit doctrine — snap_boardclip carries the
-                             // WAP clip and its strain gate
 use <canary_port_lib.scad>   // connector standards — the shell numbers the
                              // cable exit is sized against
 use <canary_board_lib.scad>  // board registry — this file is the measured
@@ -187,16 +259,19 @@ use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
-part = "all";        // ["body","face","plate","gasket","retainer","all"]
+part = "all";        // ["body","face","plate","gasket","retainer","plunger","all"]   // (the speaker has no printed part of its own; "plunger" is the R + B pair on a sprue, TPU)
 
 /* [Preset] — quick configs; choose "custom" to use the option checkboxes */
 preset = "custom";   // ["custom","doorbell_weather"]
 
 /* [Options (applied when preset = custom)] */
 opt_seal   = true;   // perimeter TPU gasket in the shell's ledge (doorbells live outside)
-opt_vent   = true;   // GORE vent cluster on the face — ON by default: a sealed outdoor
-                     // unit with no pressure path pumps moist air past the seals on
-                     // every day/night thermal cycle and the condensate never leaves
+opt_vent   = false;  // GORE vent cluster on the face — OFF since v0.9: the case breathes through
+                     // the weep (an open Ø2 drain, opt_weep) instead of a membrane. A sealed
+                     // outdoor unit with NO path at all pumps moist air past the seals on every
+                     // day/night thermal cycle and the condensate never leaves — the assert below
+                     // holds one path or the other. Turn this on for a membrane-only path (no
+                     // open hole): then an adhesive GORE patch over the cluster is REQUIRED
 opt_led    = false;  // separate light-pipe port (the 12 mm button usually has its own LED ring)
 opt_tamper = false;  // reed/Hall magnet pocket on the face underside
 opt_weep   = true;   // Ø2 weep through the bottom wall just above the plate's face (mounted button-down):
@@ -212,7 +287,7 @@ seal_mid_posts = true; // (seal mode) mid posts along each long wall, as many as
 // tamper magnet. A doorbell lives outside, so the one preset is the sealed one.
 function _pre(c, w) = (preset == "doorbell_weather") ? w : c;
 e_seal   = _pre(opt_seal,   true);
-e_vent   = _pre(opt_vent,   true);
+e_vent   = _pre(opt_vent,   false);  // the released build breathes through its weep (field_ratings.md)
 e_led    = _pre(opt_led,    false);
 e_tamper = _pre(opt_tamper, false);
 e_weep   = _pre(opt_weep,   true);
@@ -271,6 +346,57 @@ btn_nut_ac = 16.2;   // panel nut across corners (14 AF M12 nut = 16.2; 16 AF = 
 btn_wire_room = 5.0; // air behind the button's terminals for the solder joints and the wire bends toward the
                      // well (the v0.6 cavity left 3.2 — the first print's wires had nowhere to turn)
 
+/* [Speaker] — a sealed full-range driver behind the face, between the button and the cable well (v0.8).
+   Sized for the 36 mm / 4 Ω / 3 W class the BOM names (SPK1): with the 2.5 W class-D amplifier the
+   target is a chime that carries over a busy street (unmetered — the wiring page owns that number). The driver's rim seats in a boss on the face's inner side over a foam
+   gasket; a cradle on the plate presses its magnet when the plate screws down. */
+opt_spk    = true;   // the speaker zone (grille, boss, cradle, its mid posts); off = the v0.7 body
+spk_d      = 36.0;   // the driver's outside Ø (its frame or rim)
+spk_h      = 6.0;    // the driver's depth, rim to magnet back
+spk_rim_t  = 1.2;    // the frame's rim thickness the boss holds (a mylar driver's plastic frame)
+spk_mag_d  = 20.0;   // the magnet's Ø — the cradle bears here, through a foam pad
+spk_cone_d = 30.0;   // the grille's Ø over the cone (the holes stay inside the surround)
+spk_gap    = 2.0;    // air round the driver to its zone's ends
+spk_gasket_t = 1.0;  // the foam ring between the driver's rim and the face (compressed from ~1.5)
+spk_pad_t  = 1.0;    // the foam pad between the magnet and the cradle
+spk_boss_wall = 1.5; // the boss ring's wall on the face's inner side
+spk_mesh_t = 0.3;    // the acoustic mesh patch's seat depth on the inner face (the patch is 0.2–0.3)
+grille_hole_d = 1.0; // grille holes — the outdoor insect rule (<= 1.0)
+grille_pitch  = 2.6; // hole spacing: one hole per grille_pitch² of face (sunflower), or ring-to-ring (rings)
+grille_pattern = "sunflower";   // ["sunflower","rings"]  sunflower = a Fermat spiral at the golden angle (v0.9); rings = the v0.8 grille
+
+/* [Service buttons] — two TPU plungers through the back plate over the XIAO's R and B switches (v0.9):
+   lift the body off its wall plate and press, no plate screw comes out. The switch positions are the
+   board registry's (brd_xiao_btn_*, the vendor GLB); which one is R is NOT in the model. */
+opt_svc     = true;   // the plungers, their seats, flex recesses, bores and guide bosses; off = a plain plate there
+svc_head_d  = 9.6;    // the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)
+svc_rim_t   = 0.8;    // the head's RIM, the ring that sits on the seat's floor round the flex recess (four 0.2 layers)
+svc_web_t   = 0.6;    // the head's WEB inside the rim, the membrane that flexes when you press (three 0.2 layers — never a 0.3 layer)
+svc_flex_d  = 7.0;    // the flex recess under the web: the web spans it, and its floor is the overtravel stop
+svc_flex_depth = 2.2; // how deep that recess goes past the seat's floor — the stroke the web can make before the stop
+svc_stem_d  = 3.2;    // the stem, a sliding fit in its bore
+svc_root_r  = 0.4;    // the fillet at the stem's root into the web (a sharp inside corner is where TPU tears)
+svc_tip_d   = 1.8;    // the tip that lands on the switch cap (1.6 across; the USB-C shell stands 0.7 beside it)
+svc_tip_h   = 0.8;    // the tip's height off the stem's end (its end is chamfered: no edge on the cap)
+svc_rest    = 0.3;    // the tip's rest gap over the cap at the NEAREST the stack can sit — never pressed by the case
+svc_dy      = 0.4;    // the tip sits this far up the cap from its center (the guide boss then clears the plug's head)
+svc_bead    = 0.4;    // the retaining bead's stand past the stem: a flat-ish shoulder toward the head, a lead cone toward the tip
+svc_bead_clear = 0.6; // the shoulder rests this far past the guide boss's top (TPU prints long or short by a layer or two)
+svc_boss_wall = 1.0;  // the guide boss's wall on the plate's inner face
+svc_tol     = 0.25;   // TPU prints fat: the seat and the bore clear the part by this a side
+svc_proud   = 0.2;    // the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its
+                      // floor, and that squeeze is the seal of the bore behind it (the plate screws have O-rings for the same reason)
+svc_pip_d   = 2.0;    // the dimples in the head's face that say which is which: one = R, two = B
+svc_pip_depth = 0.4;
+svc_sprue_t = 0.4;    // the sprue between the pair's rims: two layers, cut with scissors (TPU does not snap)
+xiao_rst_side = -1;   // MEASURE: the side (±X, this file's frame) whose switch is R — the vendor model has no silkscreen;
+                      // confirm against the board before trusting the dimples  // [-1, 1]
+xiao_btn_dx = 5.93;   // the switches ± across the XIAO from its centerline — brd_xiao_btn_dx(), the vendor GLB
+xiao_btn_dy = 1.61;   // ... inboard of the USB end along its length — brd_xiao_btn_dy()
+xiao_btn_h  = 0.75;   // the cap's top over the PCB face — brd_xiao_btn_h()
+xiao_btn_travel = 0.25;   // a 2.6 x 1.6 SMD tactile switch's travel to actuation
+xiao_usb_overhang = 1.5;  // the USB-C shell past the XIAO's end — brd_xiao_usb_overhang()
+
 /* [Doorbell shell] */
 db_r     = 12.0;     // outside corner radius (pill look; <= half the width)
 wall_t   = 2.0;      // auto-thickened in seal mode — catalog default, core_wall()
@@ -288,6 +414,7 @@ zone_gap = 6.0;      // camera <-> module gap: the ribbon's loop between the car
 zone_well = 16.0;    // cable well between module and button: the USB plug's head (usb_plug_reach), the button's
                      // wires and the glow driver's sleeve live here — asserted against the button nut
 zone_btn = 23.0;     // button zone height: the body, its nut, and air round its rear terminals before the bottom wall's security boss
+                     // (the speaker zone, zone_spk, is derived: spk_d + 2*spk_gap, between the button and the well)
 usb_plug_reach = 13.0; // how far a molded right-angle USB-C HEAD stands off the XIAO's port face along the
                        // module's axis (molded heads run 9-13; a straight plug does not fit a doorbell)
 usb_port_proud = 1.3;  // the XIAO's USB-C shell past the module's bottom edge (the port face the plug reach counts from)
@@ -315,7 +442,8 @@ vm_hole_dx = 7.5;    // the module's mounting holes, X from its centerline (one 
 vm_hole_dy = 2.5;    // ...and Y from its center, toward the CSI (camera) end — MEASURE (±0.5)
 vm_post_d  = 5.0;    // the board post's Ø (the M2 pilot leaves 1.7 of wall)
 xiao_gap   = 0.3;    // air between a board post's relief flat and the XIAO's inner end, where it passes the post
-clip_flex  = 1.0;    // free air behind each -X clip beam for its flex (the battery fence stands past it)
+cradle_fence_gap = 1.0;  // air between the cradle's -X wall and the battery fence: the bay stays its own tray,
+                         // and the gap is the drain slot between them mounted (it was the -X clips' flex room)
 
 /* [Battery bay] — an 802030-class LiPo (8 x 20 x 30, 400-450 mAh) standing on edge beside the module,
    between the -X mid posts, behind a fence. Ride-through for a USB supply that browns out; the XIAO's own
@@ -426,17 +554,18 @@ mag_h  = 3.2;      // magnet thickness, and the pocket ring's height off the fac
 mag_dx = 8.0;      // magnet pocket center X, from the face's center
 mag_dy = 8.0;      // magnet pocket center Y, from the module center
 
-/* [Board snap clips] — the WAP's print-proven numbers (the canary_snap_lib
-   snap_boardclip defaults); the lib's strain gate holds them honest */
-clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default
-clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; the lib asserts its insertion strain
-clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
-clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
-clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
-clip_root_r = 0.6;   // 45° root fillet on each clip beam (snap_boardclip root_r) — a cantilever breaks at its root
-clip_dy_hi  = 8.5;   // the upper clip pair's center, from the module's center (+ toward the camera): below the CSI
-                     // connector's ends (v0.6's +10 put a lip on them) and above the board posts
-clip_dy_lo  = -10.0; // the lower clip pair's center, from the module's center (over the XIAO's half)
+/* [Module cradle] — the one connected, vented structure the stack lives in (v0.9; it replaced four
+   snap clips, two corner shoes, two top guides and two half rails). Nothing on it flexes: the two M2
+   board screws hold the module down, the cradle locates and carries it */
+cradle_wall_t = 1.0;   // each side wall's thickness (the band the cavity's width reads — the old clip beam's)
+cradle_clear  = 0.25;  // wall face to the module's edge (a fit)
+cradle_xiao_gap = 0.4; // the ledge's inner face off the XIAO's edge, where the XIAO hangs under the module
+cradle_ledge_in = 3.0; // past the XIAO's end the ledge reaches this far in under the module (the old rails' width)
+cradle_foot   = 1.6;   // the solid band along the plate under the vent windows
+cradle_lintel = 1.5;   // the solid band under the module's seat over the windows (the ledge's own thickness there)
+cradle_win_w  = 6.0;   // a vent window's nominal width along the module; the count is what fits, the windows then share the band
+cradle_rib_w  = 2.4;   // the least rib between two windows (the structure is the ribs)
+cradle_stop_t = 1.6;   // the stop under the module's bottom edge (mounted, its weight goes here) — on a buttress
 csi_len     = 7.6;   // the module's CSI (camera ribbon) connector reaches this far in from its top edge, the
                      // full width — read off the print's photo (the vendor CAD puts its body at 1-7)
 
@@ -465,7 +594,7 @@ pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_s
 // a sealed build seats an O-ring under every plate screw head: the seat is a
 // hole through the seal line from outside (canary_core_lib pl_seat_cut)
 e_gland  = e_seal;
-clip_stack  = clip_clear + clip_t;
+cradle_band = cradle_clear + cradle_wall_t;   // the module's edge to the wall's outer face
 // the module's seat: the measured stack plus the v0.7 lift (the built v0.6
 // held the module ~1.5 above its rails — whatever bottomed first, the seat
 // now carries it there and the clips' lips meet its top face)
@@ -504,10 +633,12 @@ cam_scr_len  = max([for (l = hw_std_lens()) if (l - pcb_t <= cam_pil - 0.2) l]);
 // + the post + 1.0 of wall clearance — an insert build fattens the post, and
 // zone_top's 8.0 was 0.1 short of it (the +inserts hardware set found it)
 zone_top_eff = max(zone_top, board_clear + pd + 1.0);
-inner_y = zone_btn + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top_eff;
+zone_spk = opt_spk ? spk_d + 2*spk_gap : 0;        // the speaker zone, between the button and the well
+inner_y = zone_btn + zone_spk + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top_eff;
 btn_cy  = -inner_y/2 + zone_btn/2;
-well_cy = -inner_y/2 + zone_btn + zone_well/2;      // cable well / USB plug space
-vm_cy   = -inner_y/2 + zone_btn + zone_well + board_clear + vm_l/2;
+spk_cy  = -inner_y/2 + zone_btn + zone_spk/2;       // the driver's axis (on the face's centerline)
+well_cy = -inner_y/2 + zone_btn + zone_spk + zone_well/2;      // cable well / USB plug space
+vm_cy   = -inner_y/2 + zone_btn + zone_spk + zone_well + board_clear + vm_l/2;
 cam_cy  = vm_cy + vm_l/2 + zone_gap + cam_h/2;
 cam_cx  = 0;                                        // the lens stays on the face's centerline (vm_cx is derived below)
 lens_x  = cam_cx + lens_dx;  lens_y = cam_cy + lens_dy;
@@ -532,18 +663,25 @@ n_mid  = (e_seal && seal_mid_posts) ? max(0, ceil((post_y_top - post_y_bot)/40) 
 // (the clamp-span rule below still holds them — it is asserted, not assumed)
 batt_cy      = vm_cy;
 batt_pitch_y = batt_l + batt_pcm + 2*batt_clear + pd;    // post center to post center: the cell and its clearance
-mid_ys = opt_batt ? [batt_cy - batt_pitch_y/2, batt_cy + batt_pitch_y/2]
+// the speaker zone carries a pair of mid posts each side of the cone, where
+// the circle leaves room at the wall (spk_post_dy from the axis, asserted
+// clear of the driver); with the bay off the zone still needs them
+spk_post_dy = 16.0;
+spk_mid_ys  = opt_spk ? [spk_cy - spk_post_dy, spk_cy + spk_post_dy] : [];
+bay_ys = opt_batt ? [batt_cy - batt_pitch_y/2, batt_cy + batt_pitch_y/2] : [];   // the bay's end-stop posts
+mid_ys = opt_batt ? concat(spk_mid_ys, bay_ys)
+       : opt_spk  ? concat(spk_mid_ys, n_mid > 1 ? [for (i = [1 : n_mid - 1]) spk_cy + spk_post_dy + i*(post_y_top - spk_cy - spk_post_dy)/n_mid] : [])
        : n_mid > 0 ? [for (i = [1 : n_mid]) post_y_bot + i*(post_y_top - post_y_bot)/(n_mid + 1)] : [];
 
 // THE CAVITY'S WIDTH is the sum of what stands across it, read outward from
 // the module's two edges — the v0.5 doctrine (a mid post clears the module's
-// clip by 0.5, never lands on it) with the bay and the landing added:
-//   +X: clip | 0.5 | mid post | the antenna's air behind it (or 0.2 into the wall)
-//   -X: clip | its flex | fence | the cell and its clearance | the wall gap
+// cradle wall by 0.5, never lands on it) with the bay and the landing added:
+//   +X: cradle wall | 0.5 | mid post | the antenna's air behind it (or 0.2 into the wall)
+//   -X: cradle wall | the fence gap | fence | the cell and its clearance | the wall gap
 //       (or the +X stack mirrored)
-hx_p = vm_w/2 + clip_stack + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2);
-hx_m = vm_w/2 + clip_stack + (opt_batt ? clip_flex + fence_t + batt_clear + batt_t + bay_wall_gap
-                                       : 0.5 + pd - 0.2);
+hx_p = vm_w/2 + cradle_band + 0.5 + pd + (opt_ant ? ant_post_gap : -0.2);
+hx_m = vm_w/2 + cradle_band + (opt_batt ? cradle_fence_gap + fence_t + batt_clear + batt_t + bay_wall_gap
+                                        : 0.5 + pd - 0.2);
 // screw_insert grows the posts (pd) by 1.5, which walked the bottom pair into
 // the button nut's arc — the option asserted itself dead. The cavity widens
 // by what the nut arc needs instead (the posts stay 1.0 off the walls; they
@@ -555,14 +693,23 @@ inner_x = max(hx_p + hx_m, cam_w + 2*board_clear,
 vm_cx   = -inner_x/2 + hx_m + (inner_x - hx_p - hx_m)/2;   // the module's centerline (any slack splits evenly)
 mid_px_p =  inner_x/2 - pd/2 - (opt_ant ? ant_post_gap : -0.2);   // the +X mid posts' axis
 mid_px_m = -(inner_x/2 - pd/2 + 0.2);                             // the -X mid posts' axis (0.2 into the wall)
-clip_y_hi = vm_cy + clip_dy_hi;  clip_y_lo = vm_cy + clip_dy_lo;   // the clip pairs
 fence_x   = -inner_x/2 + bay_wall_gap + batt_t + batt_clear;      // the bay fence's -X face (the cell side)
 // the cavity's depth: the stack and its headroom, the button's body with its
 // wire room, the cell standing on edge, the antenna centered between the coves
 cav_d   = max(vm_standoff + pcb_t + vm_front_h + cav_extra,
               btn_body_l - lid_t + btn_wire_room,
               opt_batt ? batt_w + 2*batt_clear + 0.5 : 0,
-              opt_ant  ? ant_w + 2*floor_cove + 0.4 : 0);
+              opt_ant  ? ant_w + 2*floor_cove + 0.4 : 0,
+              opt_spk  ? spk_gasket_t + spk_h + spk_pad_t + 3.0 : 0);
+// the speaker stack from the face inward: gasket, driver, pad, then the cradle
+// down to the plate's face
+spk_boss_h  = spk_gasket_t + spk_rim_t + 0.5;         // the boss ring stands this far into the cavity
+spk_boss_id = spk_d + 2*tol_slide;
+spk_boss_od = spk_boss_id + 2*spk_boss_wall;
+spk_mesh_d  = spk_cone_d + 4.0;                       // the mesh patch, inside the boss
+cradle_h    = cav_d - (spk_gasket_t + spk_h + spk_pad_t);   // plate face -> the pad under the magnet
+cradle_od   = spk_mag_d + 2.0;
+cradle_id   = max(4.0, spk_mag_d - 6.0);
 
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
@@ -651,6 +798,9 @@ assert(!(e_seal && seal_mid_posts) || _seal_span <= 40 + 1e-9,
 
 assert(btn_bez_d == 0 || btn_bez_d > btn_d + 2, "btn_bez_d must exceed the button hole");
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the plate");
+// the speaker is NOT a path: its membrane fronts a sealed-back driver on a foam
+// ring, a chamber the cavity never sees (the v0.9 review caught the first cut
+// of this counting it)
 assert(!e_seal || e_vent || e_weep,
        "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
 // the button's panel nut must clear the bottom posts (their inner edge vs the nut's corner radius)
@@ -721,7 +871,12 @@ assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge
 assert(abs(plate_wedge_x) <= 15 && plate_wedge <= 15, "keep wedge angles <= 15 degrees");
 // the lugs: three pockets on the plate's back, each clear of the cable oval,
 // the screw seats and the plate's edge
-lug_ys = [lug_y, lug_mid_y, -lug_y];
+// with the speaker zone the cable exit sits near the body's middle, so the
+// middle lug parks BELOW it (16 off the exit's axis: its pocket clears the
+// oval, the wall plate's slot and the lower outer lug's pocket); without
+// the zone it parks where lug_mid_y says, above the exit as in v0.6
+lug_mid_eff = opt_spk ? exit_cy - 16.0 : lug_mid_y;
+lug_ys = [lug_y, lug_mid_eff, -lug_y];
 assert(len([for (c = lug_ys) let (r = mount_dt_pocket_y(c, clear = dt_clear))
             if (r[0] < well_cy + usb_exit_dy + usb_exit_h/2 + 0.8 && r[1] > well_cy + usb_exit_dy - usb_exit_h/2 - 0.8) 1]) == 0,
        "a lug pocket overlaps the cable exit — move lug_y / lug_mid_y");
@@ -748,35 +903,137 @@ sock_end_y = vm_cy + xiao_end_y - 1.6;                          // the socket he
 xiao_lo_z  = z_vm_top - pcb_t - stack_sock_h - brd_t("xiao") - 0.5;
 xiao_hi_z  = z_vm_top - pcb_t - stack_sock_h + brd_t("xiao") + 0.5;
 post_flat_y = vm_cy + xiao_end_y + xiao_gap;                    // a post is relieved to this flat in that band
+
+// SERVICE PLUNGERS (v0.9) — everything in the plate's frame (z = floor_t its
+// inner face, floor_t - plate_t its back face). The XIAO's component face is
+// its outward face in the socket: stack_sock_h is a bench number to ONE of
+// its PCB faces, so the face sits somewhere in a PCB-thick band, and the
+// plunger is drawn against BOTH ends of it — the tip rests svc_rest off the
+// cap at the near end (it can never hold a switch), and the stroke is
+// stated for the far end.
+//
+// HOW IT MOVES (the second cut; the first had the head flat on its floor,
+// so a press could only shear the web round the stem — stiff, and a tear
+// waiting to happen). The head is a RIM and a WEB: the rim sits on the
+// seat's floor, the web spans a FLEX RECESS cut under it, and the stem
+// hangs from the web's center through a bore in the recess floor. A press
+// bends the web into the recess like a keypad membrane (the force is the
+// web's, a few newtons), the stem slides in its bore, the tip clicks the
+// switch, and the web springs the plunger back. The recess floor is the
+// OVERTRAVEL STOP: the web bottoms on it before a finger can drive the
+// switch past its body. The bead past the guide boss keeps the plunger in
+// during handling; in use the wall plate's slab covers the heads anyway.
+xiao_face_hi_z = z_vm_top - pcb_t - stack_sock_h;               // the component face, the measurement to that face
+xiao_face_lo_z = xiao_face_hi_z - brd_t("xiao");                // ...or to the socket face: the component face a PCB nearer the plate
+svc_cap_lo_z   = xiao_face_lo_z - xiao_btn_h;                   // the cap's top at the nearest the stack can sit
+svc_cap_hi_z   = xiao_face_hi_z - xiao_btn_h;
+xiao_usb_end_y = vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang;   // the XIAO's board end (the USB-C shell stands past it)
+svc_cy         = xiao_usb_end_y + xiao_btn_dy + svc_dy;         // the plunger axis along Y
+function svc_xy() = opt_svc ? [for (sx = [1, -1]) [vm_cx + sx*xiao_btn_dx, svc_cy]] : [];
+svc_bore_d     = svc_stem_d + 2*svc_tol;                        // the stem slides
+svc_seat_d     = svc_head_d + 2*svc_tol;                        // the head's seat on the back face
+svc_seat_depth = svc_rim_t - svc_proud;                         // the rim's floor: the head stands svc_proud of the back face, for the slab to squeeze
+svc_rim_id     = svc_flex_d + 1.0;                              // the rim overlaps the recess's edge by 0.5 a side
+svc_web_span   = (svc_flex_d - svc_stem_d)/2 - svc_root_r;      // the web's free width, recess edge to the stem's fillet
+svc_boss_od    = svc_bore_d + 2*svc_boss_wall;
+svc_boss_top   = xiao_face_lo_z - port_usbc_shell_h() - 0.5;    // the guide boss stops under the USB-C shell's lowest edge, stack at the near end of its band
+svc_boss_h     = svc_boss_top - floor_t;
+svc_tip_z      = svc_cap_lo_z - svc_rest;                       // the tip's end at rest
+svc_head_z     = floor_t - plate_t - svc_proud;                 // the head's OUTER face, proud of the back face
+svc_floor_z    = svc_head_z + svc_rim_t;                        // the seat's floor (the rim's inner face)
+svc_recess_z   = svc_floor_z + svc_flex_depth;                  // the flex recess's floor: the overtravel stop, and where the bore starts
+svc_guide_len  = (floor_t - svc_recess_z) + svc_boss_h;         // the bore that guides the stem, recess floor to boss top
+svc_stem_len   = svc_tip_z - svc_tip_h - (svc_head_z + svc_web_t);   // the stem, web to tip
+svc_bead_z     = svc_boss_top + svc_bead_clear - svc_head_z;    // the shoulder's foot, in the plunger's own frame (head's face = 0)
+svc_travel_max = svc_flex_depth - (svc_rim_t - svc_web_t);      // the web bottoms on the recess floor here
+svc_stroke_lo  = svc_rest + xiao_btn_travel;                    // the press that clicks, stack at the near end
+svc_stroke_hi  = (svc_cap_hi_z - svc_tip_z) + xiao_btn_travel;  // ...and at the far end
+// the tip lands on the cap and nothing else: the USB-C shell beside it, the cap's own extent
+assert(!opt_svc || xiao_btn_dx - svc_tip_d/2 >= port_usbc_shell_w()/2 + 0.5 - 1e-9,
+       "the service plunger's tip reaches the USB-C shell beside the switch — a smaller svc_tip_d");
+assert(!opt_svc || svc_dy + svc_tip_d/2 <= brd_xiao_btn_cap()[0]/2 + 0.1 + 1e-9 && svc_tip_d <= brd_xiao_btn_cap()[1] + 0.2 + 1e-9,
+       "the service plunger's tip runs off the switch cap — svc_dy / svc_tip_d");
+// THE ONE THAT MATTERS: an unpressed plunger must never hold R or B down — it
+// rests svc_rest off the cap even with the stack at the nearest the band allows
+assert(!opt_svc || svc_rest >= 0.3 - 1e-9, "svc_rest under 0.3 — a plunger that can hold RESET down is a dead board with no symptom");
+assert(!opt_svc || svc_stem_len >= 3.0, "the service plunger's stem is too short to reach — the stack sits too near the plate");
+// the membrane: a web that can flex (wide enough, thin enough, whole layers),
+// a rim that has a floor to sit on, a stroke that clicks before the stop
+assert(!opt_svc || svc_web_span >= 1.5 - 1e-9, "the service plunger's web is too narrow to flex — widen svc_flex_d or slim svc_stem_d");
+assert(!opt_svc || svc_web_t <= 0.8 + 1e-9 && svc_rim_t >= svc_web_t + 0.2 - 1e-9, "the plunger's web must be thinner than its rim, and a membrane (<= 0.8)");
+assert(!opt_svc || (svc_head_d - svc_rim_id)/2 >= 0.8 - 1e-9, "the plunger's rim is too narrow to seat — a wider svc_head_d or a smaller svc_flex_d");
+assert(!opt_svc || svc_travel_max >= svc_stroke_hi + 0.2 - 1e-9,
+       str("the overtravel stop (", svc_travel_max, " mm) comes before the click at the far end of the stack band (", svc_stroke_hi, " mm) — deepen svc_flex_depth"));
+assert(!opt_svc || floor_t - svc_recess_z >= 1.2 - 1e-9, "the flex recess leaves under 1.2 mm of plate before the inner face");
+assert(!opt_svc || svc_proud >= 0.1 && svc_proud <= 0.3 + 1e-9, "svc_proud: 0.1-0.3 — enough squeeze to seal, not enough to hold the body off its slab");
+assert(!opt_svc || svc_guide_len >= 3.0 - 1e-9, "the stem's guide (recess floor to boss top) is too short to keep it straight");
+assert(!opt_svc || svc_stem_d + 2*svc_root_r + 0.4 <= svc_flex_d - 1e-9, "the stem's root fillet lands on the recess's wall");
+assert(!opt_svc || svc_bead_z + svc_bead + 0.6 <= svc_web_t + svc_stem_len - 1e-9, "the bead runs into the tip");
+// the guide boss: under the USB-C shell, inside canary_rib_lib's boss rule, clear
+// of the plug's head below the port face and of the corner shoes beside the XIAO
+assert(!opt_svc || svc_boss_h >= 1.5 && svc_boss_h <= boss_h_max(svc_boss_wall) + 1e-9,
+       str("the service plunger's guide boss stands ", svc_boss_h, " mm on a ", svc_boss_wall, " mm wall"));
+assert(!opt_svc || svc_cy - svc_boss_od/2 >= vm_cy - vm_l/2 - usb_port_proud + 0.3 - 1e-9,
+       "the service plunger's guide boss reaches past the port face into the USB plug's head — raise svc_dy");
+assert(!opt_svc || xiao_btn_dx + svc_boss_od/2 <= xiao_w/2 + 0.1 - 1e-9,
+       "the service plunger's guide boss runs into the module's corner shoe — a thinner svc_boss_wall");
+// the plate's other features: the cable oval below, the lug pockets, the screw seats
+assert(!opt_svc || svc_cy - svc_seat_d/2 >= exit_cy + usb_exit_h/2 + 1.0 - 1e-9,
+       "a service plunger's seat meets the cable exit's oval");
+assert(!opt_svc || len([for (q = svc_xy(), c = lug_ys) let (r = mount_dt_pocket_y(c, clear = dt_clear))
+                        if (q[1] + svc_seat_d/2 > r[0] - 1.0 && q[1] - svc_seat_d/2 < r[1] + 1.0
+                            && abs(q[0]) - svc_seat_d/2 < mount_dt_window_w(dt_clear)/2 + 1.0) 1]) == 0,
+       "a service plunger's seat meets a dovetail lug pocket");
+svc_scr_seat_d = max(pl_hd(screw_size, screw_head) + 2*tol_hole,                        // a plate screw's seat on the back face: its head's bore...
+                     e_gland ? oring_gland_d(scr_oring_id(screw_size), scr_oring_cs(screw_size)) : 0);   // ...or its O-ring gland, whichever is wider
+assert(!opt_svc || len([for (q = svc_xy(), p = post_xy()) if (norm([q[0] - p[0], q[1] - p[1]]) < svc_seat_d/2 + svc_scr_seat_d/2 + 0.8) 1]) == 0,
+       "a service plunger's seat runs within 0.8 mm of a screw seat on the back face");
+if (opt_svc)
+    echo(str("service plungers: tip rests ", svc_rest, " off the cap at the near end of the stack band; the press that clicks is ",
+             svc_stroke_lo, " to ", svc_stroke_hi, " mm (stack_sock_h to one PCB face or the other), the web stops at ", svc_travel_max,
+             "; web ", svc_web_span, " wide x ", svc_web_t, "; stem ", svc_stem_len, " mm in a ", svc_guide_len,
+             " mm guide; boss ", svc_boss_h, " mm, stopped 0.5 under the USB-C shell at the near end of the band; seat Ø", svc_seat_d,
+             ", the nearest screw seat Ø", svc_scr_seat_d, " at ", min([for (q = svc_xy(), p = post_xy()) norm([q[0] - p[0], q[1] - p[1]])]), " between axes"));
 assert(!vm_screws || vm_hole_dy - vm_post_d/2 >= xiao_end_y - 1.6 + 0.3 - 1e-9,
        str("a board post (Ø", vm_post_d, " on vm_hole_dy ", vm_hole_dy, ") lands on the XIAO socket's end — measure vm_hole_dy"));
-assert(!vm_screws || abs(vm_hole_dx) + vm_post_d/2 <= vm_w/2 + clip_clear - 1e-9,
-       "a board post stands past the module's edge into the clips — check vm_hole_dx");
+assert(!vm_screws || abs(vm_hole_dx) + vm_post_d/2 <= vm_w/2 + cradle_clear - 1e-9,
+       "a board post stands past the module's edge into the cradle's wall — check vm_hole_dx");
 assert(!vm_screws || vm_hole_dy + vm_post_d/2 <= vm_l/2 - 1e-9, "a board post runs off the module's end");
 // the board screw: the longest standard length whose pilot ends 0.3 above the
 // relief band — the relieved side of the post never carries thread, so the
 // flat may sit as close to the pilot as the hole's position makes it
 vm_scr_len = vm_screws ? max(concat([0], [for (l = hw_std_lens()) if (l - pcb_t + 1.0 <= z_vm_top - pcb_t - xiao_hi_z - 0.3) l])) : 0;
 assert(!vm_screws || vm_scr_len >= 4, "no standard screw length fits the board posts above the XIAO relief — raise stack_sock_h's seat or drop vm_screws");
-// the upper clips sit below the CSI connector's ends (it spans the module's
-// full width at its top edge) and above the board posts
-csi_y0 = vm_cy + vm_l/2 - csi_len;
-assert(clip_y_hi + clip_w/2 <= csi_y0 - 0.3 && clip_y_hi - clip_w/2 >= (vm_screws ? vm_cy + vm_hole_dy + vm_post_d/2 + 0.3 : -1e9),
-       str("the upper clip pair (", clip_y_hi - vm_cy, " from the module's center) must clear the CSI connector (from ",
-           csi_y0 - vm_cy, ") and the board posts — move clip_dy_hi"));
-assert(clip_y_lo + clip_w/2 <= (vm_screws ? vm_cy + vm_hole_dy - vm_post_d/2 - 0.3 : 1e9)
-       && clip_y_lo - clip_w/2 >= vm_cy - vm_l/2 + 3.0 + 0.3,
-       "the lower clip pair must sit between the corner shoes' seats and the board posts — move clip_dy_lo");
+// THE CRADLE holds the module with its screws: there is no clip, so there
+// is nothing to hold it without them
+assert(vm_screws, "the cradle has no clips — the two board screws (vm_screws) are the module's hold-down");
+csi_y0 = vm_cy + vm_l/2 - csi_len;   // the CSI connector's near end (full width; nothing of the cradle stands over the module's top face)
 // THE BATTERY BAY: the cell stands between the -X mid posts (its end stops),
-// the fence stands clip_flex behind the -X clip beams, and the face holds it
-assert(!opt_batt || len(mid_ys) == 2, "the battery bay needs its two end-stop posts");
-assert(!opt_batt || (mid_ys[1] - pd/2) - (mid_ys[0] + pd/2) >= batt_l + batt_pcm + 2*batt_clear - 1e-9,
+// the fence stands cradle_fence_gap behind the cradle's -X wall, and the face holds it
+assert(!opt_batt || len(bay_ys) == 2, "the battery bay needs its two end-stop posts");
+assert(!opt_batt || (bay_ys[1] - pd/2) - (bay_ys[0] + pd/2) >= batt_l + batt_pcm + 2*batt_clear - 1e-9,
        "the battery bay's end stops are too close for the cell");
-assert(!opt_batt || mid_ys[0] - pd/2 >= post_y_bot + pd/2 + 2.0 && mid_ys[1] + pd/2 <= post_y_top - pd/2 - 2.0,
+assert(!opt_batt || bay_ys[0] - pd/2 >= post_y_bot + pd/2 + 2.0 && bay_ys[1] + pd/2 <= post_y_top - pd/2 - 2.0,
        "the battery bay's end stops run into the corner posts — a shorter cell, or lengthen the body");
-// the -X corner shoe's buttress and the fence must not meet: the shoe hugs
-// the module's lower corner, the fence stands further out
-assert(!opt_batt || fence_x + fence_t <= vm_cx - vm_w/2 - clip_stack - clip_flex + 1e-9, "the bay fence stands inside the clips' flex room");
+// the cradle's -X wall and the fence must not meet: the fence stands the
+// drain gap outside it
+assert(!opt_batt || fence_x + fence_t <= vm_cx - vm_w/2 - cradle_band - cradle_fence_gap + 1e-9, "the bay fence stands inside the cradle's fence gap");
+// THE SPEAKER: the driver clears its zone's posts and the walls, the grille
+// stays inside the cone, the mesh patch inside the boss, the boss inside the
+// cavity, and the cradle is a boss a tube can be
+assert(!opt_spk || spk_d + 2*0.5 <= inner_x + 1e-9, "the speaker driver is wider than the cavity (0.5 a side) — a smaller spk_d, or widen it");
+assert(!opt_spk || spk_boss_od <= inner_x + 2*0.5 + 1e-9, "the speaker boss ring runs past the walls");
+assert(!opt_spk || len([for (p = post_xy()) if (norm([p[0], p[1] - spk_cy]) - pd/2 < spk_d/2 + 0.5) 1]) == 0,
+       str("a screw post lands on the Ø", spk_d, " speaker driver — move spk_post_dy or shrink spk_d"));
+assert(!opt_spk || spk_cone_d + 2.0 <= spk_d, "the grille runs out past the driver's surround (spk_cone_d vs spk_d)");
+assert(!opt_spk || spk_mesh_d + 1.0 <= spk_boss_id, "the mesh patch does not fit inside the boss ring");
+assert(!opt_spk || grille_hole_d <= 1.0 + 1e-9, "grille holes over 1.0 mm let insects in (the outdoor rule)");
+assert(!opt_spk || cradle_h >= 3.0 && cradle_h <= boss_h_max((cradle_od - cradle_id)/2) + 1e-9,
+       str("the speaker cradle stands ", cradle_h, " mm on a ", (cradle_od - cradle_id)/2, " mm wall — outside canary_rib_lib's boss rule"));
+assert(!opt_spk || spk_mag_d + 2.0 < spk_d, "spk_mag_d must sit inside the driver");
+// the driver's cone clears the button's nut and the cable well's plug: zones
+assert(!opt_spk || spk_cy - spk_d/2 >= btn_cy + btn_nut_ac/2 + 1.0 - 1e-9, "the speaker reaches into the button zone");
+assert(!opt_spk || spk_cy + spk_d/2 <= well_cy - zone_well/2 + 0.5 + 1e-9, "the speaker reaches into the cable well");
 // THE ANTENNA: the landing's ribs, the posts' stand-off, the room behind them
 assert(!opt_ant || ant_post_gap >= ant_t + 0.5, "ant_post_gap must leave 0.5 of air over the FPC behind the mid posts");
 assert(!opt_ant || ant_l + 2*ant_rib_w + 0.6 <= post_y_top - post_y_bot - pd, "the antenna landing runs into the corner posts");
@@ -816,13 +1073,19 @@ hw_echo("Vision doorbell", [
     e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
     opt_batt     ? hw_item(1, str("LiPo 802030-class, ", batt_t, " x ", batt_w, " x ", batt_l, " (+", batt_pcm, " PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C")) : "",
     opt_batt     ? hw_item(1, "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)") : "",
+    opt_spk      ? hw_item(1, str("Ø", spk_d, " x ", spk_h, " sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)")) : "",
+    opt_spk      ? hw_item(1, "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)") : "",
+    opt_spk      ? hw_item(1, str("foam gasket ring Ø", spk_d, " / Ø", spk_cone_d, " x 1.5 (driver rim to the face)")) : "",
+    opt_spk      ? hw_item(1, str("foam pad Ø", spk_mag_d, " x 1.5 (magnet to the cradle)")) : "",
+    opt_spk      ? hw_item(1, str("acoustic mesh patch Ø", spk_mesh_d, " (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)")) : "",
+    opt_svc      ? hw_item(2, "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)") : "",
     opt_ant      ? hw_item(1, str("FPC Wi-Fi antenna ", ant_l, " x ", ant_w, ", u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs")) : "",
     hw_item(4, "#8 pan wall screw (plate)"),
 ]);
-echo(str("Canary Vision DOORBELL v0.7 — shell ", out_x, " x ", out_y, " x ", shell_d + lid_t,
+echo(str("Canary Vision DOORBELL v0.9 — shell ", out_x, " x ", out_y, " x ", shell_d + lid_t,
          " mm (plate ", plate_x, " x ", plate_y, " x ", plate_t, " in the bore; ", len(post_xy()),
          " screws M2 x ", pl_L, "; module at x ", vm_cx, ") + wall plate ", wplate_t, " mm (wedge ", plate_wedge,
-         " deg, seal=", e_seal, ", battery=", opt_batt, ", antenna=", opt_ant, ")"));
+         " deg, seal=", e_seal, ", battery=", opt_batt, ", antenna=", opt_ant, ", speaker=", opt_spk, ", vent=", e_vent, ", service=", opt_svc, ")"));
 
 // ----------------------------------------------------------------------------
 //  Helpers — the idiom once shared by copy with the other Canary enclosures
@@ -837,51 +1100,82 @@ module rim_ring2d(w) {
         offset(r = -w/2) rrect2d(inner_x + ledge_w, inner_y + ledge_w, cav_r + ledge_w/2);
     }
 }
-// The WAP cantilever clip, routed through canary_snap_lib so the strain gate
-// runs on every render (the beam here rises 12 mm off the plate — 0.6 %,
-// nothing near the budget). The lib places clips across a Y edge line; these
-// stand on ±X board edges, so the wrapper keeps this file's original
-// rotate-into-place transform — identity ops only, the released mesh stays put.
-module edgeclip(px, py, ang, soff) {
-    translate([px, py, 0]) rotate([0, 0, ang - 90])
-        snap_boardclip(0, 0, 1, floor_t, floor_t + soff + pcb_t,
-                       w = clip_w, t = clip_t, hook = clip_hook,
-                       hook_h = clip_hook_h, clear = clip_clear, root_r = clip_root_r);
+// THE MODULE CRADLE (v0.9) — one connected, vented structure, nothing on it
+// a beam made to flex. Per side (mirrored across the module's centerline):
+//   the WEB: a full-length L — below the module's seat it spans from the
+//     ledge's inner face (cradle_xiao_gap off the XIAO's edge; cradle_ledge_in
+//     under the module past the XIAO's end) to the wall's outer face; above
+//     the seat the wall alone (cradle_wall_t) stands up the module's side
+//     edge to cradle_top, past the shell's headroom over the stack;
+//   the VENT WINDOWS: cut through the web between a foot band along the
+//     plate and the lintel under the seat, with 45° gabled roofs (no bridge
+//     to print); the ribs between them, the post rib (around a board post —
+//     the posts stand IN the web) and the end rib are the structure;
+//   the STOP: a wall under the module's bottom edge, from inboard of the
+//     plug's room out to the side wall, cradle_top tall, on a 45° buttress
+//     reaching -Y — mounted, the plate is vertical and that edge is where
+//     the module's weight goes. The service bosses root into its band.
+// The module drops in vertically between the walls onto the ledges and
+// posts (the posts' XIAO relief allows no other entry), its bottom edge
+// cradle_clear off the stop, and the two board screws hold it down.
+cradle_up  = lid_headroom + 0.8;                        // the walls stand this far over the module's top face
+cradle_top = z_vm_top + cradle_up;
+assert(cradle_top + 1.0 <= base_d, "the cradle's walls reach the face — lower cradle_up");
+cradle_x_in   = xiao_w/2 + cradle_xiao_gap;             // the ledge's inner face, from the module's centerline (over the XIAO)
+cradle_x_wall = vm_w/2 + cradle_clear;                  // the wall's inner face
+cradle_x_out  = vm_w/2 + cradle_band;                   // the wall's outer face
+cradle_x_up   = vm_w/2 - cradle_ledge_in;               // the ledge's inner face past the XIAO's end
+cradle_x_stop = 7.0;                                    // the stop's inboard face: clear of the plug's head (12 wide) by 1.0
+cradle_y_lo   = vm_cy - vm_l/2;                         // the module's bottom edge
+cradle_y_hi   = vm_cy + vm_l/2;                         // ...and its top edge: the walls end there, open for the ribbon
+cradle_y_stop = cradle_y_lo - cradle_clear;             // the stop's face
+cradle_y_up   = post_flat_y;                            // the wide ledge starts where the XIAO's end has passed (the post's relief flat)
+cradle_z_seat = floor_t + vm_standoff;                  // the module's seat
+assert(cradle_x_in <= vm_w/2 - cradle_clear - 0.4, str("the ledge carries less than 0.4 of the module's edge at the worst shift (ledge in at ",
+       cradle_x_in, " of a ", vm_w/2, " half-width) — the XIAO leaves no room: shrink cradle_xiao_gap or cradle_clear"));
+assert(cradle_x_stop >= port_usbc_shell_w()/2 + 2.0, "the stop reaches in over the USB-C shell");
+assert(!opt_svc || svc_cy - svc_bore_d/2 >= cradle_y_stop + 0.3,
+       "a service bore runs into the stop's band — the stop would be its guide wall on one side");
+// the windows: the band between two ribs, as many nominal windows as fit
+// with the least rib between, the windows then sharing the band's length
+function cradle_wins(y0, y1) =
+    let (L = y1 - y0, n = max(1, floor((L + cradle_rib_w) / (cradle_win_w + cradle_rib_w))),
+         rib = (L - n*cradle_win_w) / (n + 1) >= cradle_rib_w ? (L - n*cradle_win_w)/(n + 1) : cradle_rib_w,
+         w = (L - (n + 1)*rib) / n)
+    w >= 2.0 ? [for (i = [0 : n - 1]) [y0 + rib + i*(w + rib), w]] : [];
+cradle_rib_post_lo = vm_cy + vm_hole_dy - vm_post_d/2 - 0.3;   // the post rib: solid 0.3 either side of a board post
+cradle_rib_post_hi = vm_cy + vm_hole_dy + vm_post_d/2 + 0.3;
+cradle_win_bands = [[cradle_y_stop, cradle_rib_post_lo], [cradle_rib_post_hi, cradle_y_hi - 1.2]];
+cradle_win_list  = [for (b = cradle_win_bands) each cradle_wins(b[0], b[1])];
+assert(len(cradle_win_list) >= 3, "the cradle has fewer than three vent windows a side — widen the bands");
+module cradle_window(y0, w) {   // one gabled window, cut across the whole web (local frame: the module's centerline)
+    z0 = floor_t + cradle_foot;  z1 = cradle_z_seat - cradle_lintel;   // the band it may use
+    zr = max(z1 - w/2, z0 + 1.0);                                      // the rectangle's top: the gable takes w/2
+    translate([cradle_x_in - 1, y0, 0]) rotate([90, 0, 90])
+        linear_extrude(cradle_x_out - cradle_x_in + 2)
+            polygon([[0, z0], [w, z0], [w, zr], [w/2, zr + w/2], [0, zr]]);
 }
-// the module's edge guides stand this far over its top face: past the shell's
-// headroom over the stack, so with the shell closed the module cannot lift
-// out of them even if every clip is gone
-guide_up  = lid_headroom + 0.8;
-guide_top = floor_t + vm_standoff + pcb_t + guide_up;
-assert(guide_top + 1.0 <= base_d, "the module's edge guides reach the face — lower guide_up");
-// a CORNER SHOE under each lower corner of the module, outboard of the XIAO
-// (which hangs under the lower half) and inside the clips' band (the mid posts
-// clear that band by 0.5, mid_need): a seat under the corner, a guide up its
-// side edge, a STOP under its bottom edge — mounted, the plate is vertical and
-// that edge is where the module's weight goes — and a buttress behind the stop.
-// It replaces a Ø2 x 12 pin: one 3 mm² layer line, no stop, nothing to brace it.
-module corner_shoe(s) {
-    x0 = xiao_w/2 + 0.1;  xg = vm_w/2 + clip_clear;  x1 = vm_w/2 + clip_stack;
-    ye = vm_cy - vm_l/2;  stop_t = 1.6;  ys = ye - clip_clear - stop_t;
-    translate([vm_cx, 0, 0]) mirror([s < 0 ? 1 : 0, 0, 0]) translate([0, 0, floor_t - 0.01]) {
-        translate([x0, ye, 0]) cube([xg - x0, 3.0, vm_standoff + 0.01]);                 // seat
-        translate([xg, ys, 0]) cube([x1 - xg, ye + 3.0 - ys, guide_top - floor_t + 0.01]); // side guide
-        translate([x0, ys, 0]) cube([x1 - x0, stop_t, guide_top - floor_t + 0.01]);       // bottom stop
-        hull() {                                                                            // buttress
-            translate([x0, ys, 0]) cube([x1 - x0, 0.01, guide_top - floor_t + 0.01]);
-            translate([x0, ys - 5.0, 0]) cube([x1 - x0, 0.01, 0.6]);
+module cradle(s) {
+    translate([vm_cx, 0, 0]) mirror([s < 0 ? 1 : 0, 0, 0]) difference() {
+        union() {
+            // the L web: ledge + wall below the seat, the wall alone above it
+            translate([cradle_x_in, cradle_y_stop, floor_t - 0.01])
+                cube([cradle_x_out - cradle_x_in, cradle_y_hi - cradle_y_stop, vm_standoff + 0.01]);
+            translate([cradle_x_up, cradle_y_up, floor_t - 0.01])
+                cube([cradle_x_out - cradle_x_up, cradle_y_hi - cradle_y_up, vm_standoff + 0.01]);
+            translate([cradle_x_wall, cradle_y_stop, floor_t - 0.01])
+                cube([cradle_x_out - cradle_x_wall, cradle_y_hi - cradle_y_stop, cradle_top - floor_t + 0.01]);
+            // the stop and its buttress
+            translate([cradle_x_stop, cradle_y_stop - cradle_stop_t, floor_t - 0.01])
+                cube([cradle_x_out - cradle_x_stop, cradle_stop_t, cradle_top - floor_t + 0.01]);
+            hull() {
+                translate([cradle_x_stop, cradle_y_stop - cradle_stop_t, floor_t - 0.01])
+                    cube([cradle_x_out - cradle_x_stop, 0.01, cradle_top - floor_t + 0.01]);
+                translate([cradle_x_stop, cradle_y_stop - cradle_stop_t - 5.0, floor_t - 0.01])
+                    cube([cradle_x_out - cradle_x_stop, 0.01, 0.6 + 0.01]);
+            }
         }
-    }
-}
-// a TOP GUIDE at each upper corner, on the rail's end: the rail still carries
-// the module, the guide stands up its side edge (open at the top end, so the
-// module drops in past the camera flex)
-module top_guide(s) {
-    xr = vm_w/2 - 3.0;  xg = vm_w/2 + clip_clear;  x1 = vm_w/2 + clip_stack;
-    y0 = vm_cy + vm_l/2 - 4.0;
-    translate([vm_cx, 0, 0]) mirror([s < 0 ? 1 : 0, 0, 0]) translate([0, y0, floor_t - 0.01]) {
-        translate([xr, 0, 0]) cube([x1 - xr, 3.0, vm_standoff + 0.01]);
-        translate([xg, 0, 0]) cube([x1 - xg, 3.0, guide_top - floor_t + 0.01]);
+        for (wn = cradle_win_list) cradle_window(wn[0], wn[1]);
     }
 }
 // a BOARD POST under one of the module's mounting holes: Ø vm_post_d from the
@@ -910,10 +1204,105 @@ module board_post(p) {
 // 0.8 blade meets the plate on a 1.6 foot, and the cell side stays a plain
 // face so the foot never eats the cell's clearance.
 module batt_bay() {
-    y0 = mid_ys[0] + pd/2 + 0.2;  y1 = mid_ys[1] - pd/2 - 0.2;   // 0.2 short of each post's face
+    y0 = bay_ys[0] + pd/2 + 0.2;  y1 = bay_ys[1] - pd/2 - 0.2;   // 0.2 short of each post's face
     translate([fence_x, y0, floor_t - 0.01]) hull() {
         cube([fence_t, y1 - y0, fence_h + 0.01]);
         cube([fence_t + 0.8, y1 - y0, 0.01]);
+    }
+}
+// the SPEAKER CRADLE on the plate: a tube under the driver's magnet, footed,
+// that presses the magnet (through its foam pad) into the boss on the face
+// when the plate screws down — the driver is captured, never screwed
+module spk_cradle() {
+    translate([0, spk_cy, floor_t - 0.01]) difference() {
+        union() {
+            cylinder(d = cradle_od, h = cradle_h + 0.01);
+            cylinder(d1 = cradle_od + 2.0, d2 = cradle_od, h = 1.0 + 0.01);   // root flare
+        }
+        translate([0, 0, 1.0]) cylinder(d = cradle_id, h = cradle_h + 1);
+    }
+}
+// the GRILLE: Ø grille_hole_d holes over the cone, inside spk_cone_d, and
+// the mesh patch's seat on the INNER face (face frame, subtract).
+//   sunflower (v0.9): a Fermat spiral — hole i at r = s*sqrt(i), turned i
+//   golden angles (137.508°) — the pattern a sunflower's seeds take, because
+//   it is the one that packs a disc evenly with no ring and no row: every
+//   hole's neighbors sit at the same distance whatever its radius. The scale
+//   s = pitch/sqrt(pi) gives one hole per pitch² of face, the rings' open
+//   area exactly; the count is what fits inside the cone.
+//   rings (v0.8): rings at the pitch, each ring's count from its circumference.
+grille_r_max = spk_cone_d/2 - grille_hole_d/2 - 0.2;
+grille_s     = grille_pitch / sqrt(PI);
+grille_n     = floor(pow(grille_r_max / grille_s, 2));
+module _grille_hole(x, y) { translate([x, y, -1]) cylinder(d = grille_hole_d, h = lid_t + 2, $fn = 12); }
+module spk_grille_cut() {
+    translate([0, spk_cy, 0]) {
+        if (grille_pattern == "sunflower")
+            for (i = [1 : grille_n]) let (r = grille_s*sqrt(i), a = i*137.50776)
+                _grille_hole(r*cos(a), r*sin(a));
+        else
+            for (r = [grille_pitch : grille_pitch : grille_r_max])
+                let (n = max(6, floor(2*3.14159*r / grille_pitch)))
+                for (i = [0 : n - 1]) rotate([0, 0, i*360/n + (r/grille_pitch)*17])
+                    _grille_hole(r, 0);
+        _grille_hole(0, 0);                                                                  // the center
+        translate([0, 0, -1]) cylinder(d = spk_mesh_d, h = spk_mesh_t + 1);                  // the mesh seat, inner side
+    }
+}
+// a SERVICE PLUNGER's guide boss on the plate's inner face (plate frame), and
+// the cut it needs: the stem's bore through plate and boss, the head's
+// counterbore on the back face
+module svc_boss(q) {
+    translate([q[0], q[1], floor_t - 0.01]) union() {
+        cylinder(d = svc_boss_od, h = svc_boss_h + 0.01);
+        cylinder(d1 = svc_boss_od + 1.2, d2 = svc_boss_od, h = 0.6 + 0.01);    // root fillet
+    }
+}
+module svc_cut(q) {
+    translate([q[0], q[1], 0]) {
+        translate([0, 0, svc_recess_z - 0.01]) cylinder(d = svc_bore_d, h = plate_t + svc_boss_h + 2);   // the stem's bore: recess floor up through the boss
+        translate([0, 0, floor_t - plate_t - 0.1]) cylinder(d = svc_seat_d, h = svc_seat_depth + 0.1);    // the head's seat
+        translate([0, 0, svc_floor_z - 0.01]) cylinder(d = svc_flex_d, h = svc_flex_depth + 0.01);        // the flex recess under the web
+    }
+}
+// the PLUNGER itself (part="plunger", TPU) — drawn head-down as it prints:
+// the head's flat face on the bed (its dimples are holes in the first two
+// layers), the web three layers, the rim four, the stem standing up with
+// its root fillet, the bead (a shoulder toward the head that the boss
+// catches, a lead cone toward the tip that squeezes through the bore), the
+// chamfered tip on the end. No overhang steeper than the shoulder's 53°, no
+// support. The part is the PAIR: R and B side by side with a two-layer
+// sprue between their rims — cut it with scissors, TPU does not snap — so
+// one export is both buttons and never two of one.
+svc_sprue_gap = 1.0;   // the heads' edges apart; the sprue bridges it
+module plunger_pair() {
+    dx = svc_head_d + svc_sprue_gap;
+    union() {
+        plunger(xiao_rst_side);
+        translate([dx, 0, 0]) plunger(-xiao_rst_side);
+        translate([svc_head_d/2 - 0.3, -0.6, 0]) cube([svc_sprue_gap + 0.6, 1.2, svc_sprue_t]);   // the sprue
+    }
+}
+module plunger(side = xiao_rst_side) {
+    pips = (side == xiao_rst_side) ? [[0, 0]] : [[-1.6, 0], [1.6, 0]];
+    z_stem = svc_web_t;                                   // the stem's root, on the web's inner face
+    difference() {
+        union() {
+            cylinder(d = svc_head_d, h = svc_web_t);                                                   // the web
+            difference() {                                                                             // the rim
+                cylinder(d = svc_head_d, h = svc_rim_t);
+                translate([0, 0, svc_web_t - 0.01]) cylinder(d = svc_rim_id, h = svc_rim_t);
+            }
+            translate([0, 0, z_stem - 0.01]) cylinder(d1 = svc_stem_d + 2*svc_root_r, d2 = svc_stem_d, h = svc_root_r + 0.01);   // root fillet
+            translate([0, 0, z_stem - 0.01]) cylinder(d = svc_stem_d, h = svc_stem_len + 0.02);       // the stem
+            translate([0, 0, svc_bead_z]) cylinder(d1 = svc_stem_d, d2 = svc_stem_d + 2*svc_bead, h = 0.3);          // the shoulder (53°, prints without support)
+            translate([0, 0, svc_bead_z + 0.3 - 0.01]) cylinder(d = svc_stem_d + 2*svc_bead, h = 0.3 + 0.01);         // the band
+            translate([0, 0, svc_bead_z + 0.6 - 0.01]) cylinder(d1 = svc_stem_d + 2*svc_bead, d2 = svc_stem_d, h = svc_bead + 0.01);   // the lead cone
+            translate([0, 0, z_stem + svc_stem_len - 0.01]) cylinder(d = svc_tip_d, h = svc_tip_h - 0.3 + 0.01);      // the tip
+            translate([0, 0, z_stem + svc_stem_len + svc_tip_h - 0.3 - 0.01])
+                cylinder(d1 = svc_tip_d, d2 = svc_tip_d - 0.6, h = 0.3 + 0.01);                       // ...chamfered: no edge on the cap
+        }
+        for (q = pips) translate([q[0], q[1], -0.1]) cylinder(d = svc_pip_d, h = svc_pip_depth + 0.1, $fn = 16);
     }
 }
 // the LENS POCKET (face frame: z = 0 the inner side) — cut from the boss's end
@@ -948,31 +1337,20 @@ module body() {
     difference() {
         union() {
             translate([0, 0, floor_t]) pl_plate(plate_x, plate_y, plate_r, plate_t);
-            // module rails, TOP HALF ONLY — the stacked XIAO (17.8 wide on the 20 mm
-            // module) hangs beneath the LOWER half, so full-length side rails would
-            // collide with it. Four clips (each edge, each half: the beams stand
-            // outboard of the module's edge, so they clear the XIAO too — one can
-            // break and three still hold), corner shoes under the lower corners,
-            // top guides on the rails' ends.
-            for (s = [1, -1]) {
-                rail_l = vm_l/2 - 4;
-                difference() {
-                    translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy + 2, floor_t - 0.01])
-                        cube([3, rail_l, vm_standoff + 0.01]);
-                    // the rail steps aside for the upper clip's root
-                    translate([vm_cx + s*(vm_w/2 - 1.5), clip_y_hi, floor_t + vm_standoff/2])
-                        cube([5, clip_w + 2, vm_standoff + 1], center = true);
-                }
-                edgeclip(vm_cx + s*vm_w/2, clip_y_hi, s > 0 ? 0 : 180, vm_standoff);
-                edgeclip(vm_cx + s*vm_w/2, clip_y_lo, s > 0 ? 0 : 180, vm_standoff);
-                corner_shoe(s);
-                top_guide(s);
-            }
-            // the board posts under the module's mounting holes (unioned after
-            // the rails' clip notch, so the notch never nicks a post)
+            // the module cradle: two vented L-walls and the stop (v0.9 —
+            // it replaced the rails, four clips, two shoes and two guides)
+            for (s = [1, -1]) cradle(s);
+            // the board posts under the module's mounting holes (they stand in
+            // the cradle's post ribs; the pilots are re-cut below, after the union)
             for (p = vm_post_xy) board_post(p);
             if (opt_batt) batt_bay();
+            if (opt_spk) spk_cradle();
+            for (q = svc_xy()) svc_boss(q);
         }
+        // the board posts' pilots, cut again through the cradle's ribs around them
+        for (p = vm_post_xy) translate([p[0], p[1], floor_t + vm_standoff - (vm_scr_len - pcb_t + 1.0)]) cylinder(d = scr_d, h = vm_scr_len + 1);
+        // the service plungers' bores and counterbores
+        for (q = svc_xy()) svc_cut(q);
         // oval cable exit through the plate (aligns with the wall plate's slot)
         translate([exit_cx, exit_cy, 0]) hull()
             for (s = [1, -1]) translate([s*(usb_exit_w - usb_exit_h)/2, 0, floor_t - plate_t - 1])
@@ -1060,6 +1438,16 @@ module shell_solid() {
                 }
                 // the retainer boss on the face's inner side, round the disc pocket
                 translate([0, 0, base_d]) translate([lens_x, lens_y, -cam_boss_h]) cylinder(d = cam_boss_od, h = cam_boss_h + 0.1);
+                // the speaker boss on the face's inner side: the driver's rim drops
+                // into it over its foam gasket (clipped to the cavity's outline:
+                // at this width the ring meets the walls)
+                if (opt_spk) intersection() {
+                    translate([0, 0, base_d]) translate([0, spk_cy, -spk_boss_h]) difference() {
+                        cylinder(d = spk_boss_od, h = spk_boss_h + 0.1);
+                        translate([0, 0, -0.1]) cylinder(d = spk_boss_id, h = spk_boss_h + 0.3);
+                    }
+                    translate([0, 0, floor_t]) rrect(inner_x + 1.0, inner_y + 1.0, cav_r + 0.5, cav_d + 1);
+                }
                 // the antenna landing's two locating ribs on the +X wall, proud
                 // of it by ant_rib_d, bracketing the FPC's ends; they stand
                 // between the coves, so neither the ledge nor the face is touched
@@ -1078,6 +1466,7 @@ module shell_solid() {
                 translate([lens_x, lens_y, lid_t - 0.4])
                     cylinder(d1 = cam_lip_out, d2 = cam_lip_out + 0.8 + 0.02, h = 0.41);
                 cam_pocket_cut();
+                if (opt_spk) spk_grille_cut();
                 // button hole + bezel seat (+ matching lead-in rim)
                 translate([0, btn_cy, -1]) cylinder(d = btn_d + 2*tol_slide, h = lid_t + 2);
                 if (btn_bez_d > 0) {
@@ -1184,8 +1573,9 @@ module shell_solid() {
                         cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
                     // the ring steps off the -X wall over the battery (the cell stands
                     // batt_clear under the face there) and off the +X wall over the antenna
-                    if (opt_batt) translate([-inner_x/2 - 1, mid_ys[0] + pd/2, -lid_rib_h - 0.1])
-                        cube([1 + bay_wall_gap + batt_t + 2*batt_clear, mid_ys[1] - mid_ys[0] - pd, lid_rib_h + 0.2]);
+                    if (opt_batt) translate([-inner_x/2 - 1, bay_ys[0] + pd/2, -lid_rib_h - 0.1])
+                        cube([1 + bay_wall_gap + batt_t + 2*batt_clear, bay_ys[1] - bay_ys[0] - pd, lid_rib_h + 0.2]);
+                    if (opt_spk) translate([0, spk_cy, -lid_rib_h - 0.1]) cylinder(d = spk_boss_od + 1.6, h = lid_rib_h + 0.2);
                     if (opt_ant) translate([inner_x/2 - ant_post_gap - 0.5, vm_cy - ant_l/2 - ant_rib_w - 0.3, -lid_rib_h - 0.1])
                         cube([ant_post_gap + 1.5, ant_l + 2*ant_rib_w + 0.6, lid_rib_h + 0.2]);
                 }
@@ -1320,6 +1710,7 @@ else if (part == "face")   translate([0, 0, lid_t]) rotate([180, 0, 0]) face();
 else if (part == "gasket") { assert(e_seal, "gasket needs opt_seal=true"); gasket(); }
 else if (part == "plate")  plate();
 else if (part == "retainer") retainer();
+else if (part == "plunger") { assert(opt_svc, "the plunger needs opt_svc=true"); plunger_pair(); }
 else if (part == "none") ;        // a probe that includes this file and draws its own checks
 else {
     // assembled preview wears the chosen colorway (canary_color_lib);
@@ -1329,4 +1720,5 @@ else {
     color(cw_body(colorway)) translate([-(out_x + 14), 0, 0]) plate();
     if (e_seal) color(cw_light(colorway)) translate([0, out_y + 12, 0]) gasket();
     color(cw_body(colorway)) translate([out_x + 10, out_y/2 + 16, 0]) retainer();
+    if (opt_svc) color(cw_light(colorway)) translate([out_x + 10, out_y/2 + 30, 0]) plunger_pair();
 }

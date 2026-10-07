@@ -30,6 +30,11 @@ enum AppRoute: Equatable, Sendable {
     /// fleet the user already owns; a link can never make a radio scan for
     /// anything else (consent and the Bluetooth permission still gate).
     case find(witnessID: String)
+    /// The Set up walkthroughs — `securacv://setup`, optionally
+    /// `?what=hub` or `?what=canary` to open straight into one. Opens a
+    /// guide, never a radio or a credential: there is nothing a link can
+    /// make the phone send.
+    case setup(what: String?)
 
     /// The scheme widgets and links speak. Registered in Info.plist
     /// (CFBundleURLTypes) — change both together.
@@ -54,6 +59,15 @@ enum AppRoute: Equatable, Sendable {
                 .first(where: { $0.name == "witness" })?
                 .value, !witness.isEmpty else { return nil }
             self = .find(witnessID: witness)
+        case "setup":
+            let what = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first(where: { $0.name == "what" })?
+                .value?
+                .lowercased()
+            // Only the two walkthroughs are destinations; anything else
+            // degrades to the Set up door itself.
+            self = .setup(what: (what == "hub" || what == "canary") ? what : nil)
         default:
             return nil
         }
@@ -75,6 +89,9 @@ enum AppRoute: Equatable, Sendable {
         case .find(let witnessID):
             parts.host = "find"
             parts.queryItems = [URLQueryItem(name: "witness", value: witnessID)]
+        case .setup(let what):
+            parts.host = "setup"
+            if let what { parts.queryItems = [URLQueryItem(name: "what", value: what)] }
         }
         // A components set built only from the closed vocabulary above always
         // yields a URL; the fallback exists so a future case can't crash.

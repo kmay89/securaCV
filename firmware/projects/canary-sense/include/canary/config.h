@@ -36,6 +36,24 @@
 #define FEATURE_FLEET_ROSTER 1
 #endif
 
+// -------------------- Improv Wi-Fi over BLE (phone-driven setup) ----------
+// The open Improv Wi-Fi standard on the same NimBLE stack the beacon uses
+// (common/network/improv_ble): a brand-new or recovery-stuck Sense offers
+// its setup door over Bluetooth, the SecuraCV app (or Home Assistant's)
+// hears it, and one tap hands it the home Wi-Fi — the SoftAP portal stays
+// underneath as the break-glass path. The door is open only while NO
+// credentials are stored, for IMPROV_FIRST_BOOT_WINDOW_MS after power-on
+// (0 = tap-only), and for a minute after a BOOT tap (BOOT_BUTTON_PIN from
+// the board's pins.h); a recovery portal never opens it. Default ON;
+// -DFEATURE_IMPROV=0 compiles the module and its call sites out (the
+// OTA-slot size guard's per-board veto).
+#ifndef FEATURE_IMPROV
+#define FEATURE_IMPROV 1
+#endif
+#ifndef IMPROV_FIRST_BOOT_WINDOW_MS
+#define IMPROV_FIRST_BOOT_WINDOW_MS (30u * 60u * 1000u)
+#endif
+
 // -------------------- Identity --------------------
 static constexpr const char* DEVICE_TYPE   = CS_DEVICE_TYPE;
 static constexpr const char* DEVICE_ID     = CS_DEVICE_ID;  // first-boot seed only

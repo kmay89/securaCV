@@ -2263,7 +2263,7 @@
   {
    "id": "vision_doorbell",
    "scad": "canary_vision_doorbell.scad",
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.7",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.8",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2291,7 +2291,7 @@
     {
      "id": "vision-doorbell",
      "name": "Vision · DOORBELL",
-     "for": "Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
+     "for": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default",
      "status": "released",
      "device": "canary-vision",
      "selects": {},
@@ -2320,6 +2320,10 @@
       {
        "name": "retainer",
        "file": "canary_vision_doorbell_retainer.stl"
+      },
+      {
+       "name": "plungers R+B",
+       "file": "canary_vision_doorbell_plunger.stl"
       }
      ]
     }
@@ -2329,7 +2333,8 @@
     "face",
     "plate",
     "gasket",
-    "retainer"
+    "retainer",
+    "plunger"
    ],
    "options": [
     {
@@ -2343,10 +2348,10 @@
     {
      "id": "opt_vent",
      "type": "bool",
-     "label": "GORE vent cluster on the face — ON by default: a sealed outdoor",
+     "label": "GORE vent cluster on the face — OFF since v0.9: the case breathes through",
      "consequence": "",
      "audience": "user",
-     "default": true
+     "default": false
     },
     {
      "id": "opt_led",
@@ -2376,6 +2381,22 @@
      "id": "seal_mid_posts",
      "type": "bool",
      "label": "(seal mode) mid posts along each long wall, as many as keep every gasket",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_spk",
+     "type": "bool",
+     "label": "the speaker zone (grille, boss, cradle, its mid posts); off = the v0.7 body",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_svc",
+     "type": "bool",
+     "label": "the plungers, their seats, flex recesses, bores and guide bosses; off = a plain plate there",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -2437,14 +2458,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 226,
+   "engineering_param_count": 320,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 13,
-    "user_options": 11,
+    "options": 15,
+    "user_options": 13,
     "variant_axes": 1
    }
   },

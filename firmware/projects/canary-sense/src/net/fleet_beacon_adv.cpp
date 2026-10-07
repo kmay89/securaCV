@@ -30,6 +30,7 @@
 #include "canary/net/wifi_mgr.h"       // wifi_connected() -> on_wifi_sta flag
 #include "canary/log.h"
 #include "identity/device_signature.h" // fingerprint_hex() -> fp2
+#include "network/improv_ble.h"        // the advert set's owner (common/)
 
 namespace canary::net {
 
@@ -92,6 +93,9 @@ void publish_adv(uint32_t now) {
   if (canary::net::wifi_connected()) {
     flags |= FLEET_BEACON_FLAG_ON_WIFI_STA;
   }
+  if (canary::net::improv_ble::setup_open()) {
+    flags |= FLEET_BEACON_FLAG_SETUP_OPEN;   // the Bluetooth setup door is open
+  }
 
   const uint32_t chain_height = canary::witness::chain_length();
 
@@ -109,17 +113,12 @@ void publish_adv(uint32_t now) {
   mfg[1] = (uint8_t)((FLEET_BEACON_COMPANY_ID >> 8) & 0xFF);
   memcpy(&mfg[2], payload, FLEET_BEACON_PAYLOAD_LEN);
 
-  NimBLEAdvertisementData advData;
-  advData.setManufacturerData(std::string((const char*)mfg, sizeof(mfg)));
-
-  // stop -> set -> start refreshes the on-air payload deterministically on BOTH
-  // NimBLE majors: 1.4.x's setAdvertisementData only latches for the next
-  // start(), while 2.x updates live. setAdvertisementData is called as a bare
-  // statement so the return-type drift (void on 1.4.x, bool on 2.x) is
-  // irrelevant. Advertise-only, so nothing else to preserve across the restart.
-  adv->stop();
-  adv->setAdvertisementData(advData);
-  adv->start();
+  // The Bluetooth setup door owns the advert set: the beacon stays the
+  // primary advert either way (this module's old bytes when the door is
+  // shut); while it is open the device is connectable, named, and the scan
+  // response carries the Improv service. It does the stop -> set -> start
+  // both NimBLE majors need.
+  canary::net::improv_ble::advertise(mfg, sizeof(mfg));
 
   s_next_ms = now + REFRESH_MS;
 }

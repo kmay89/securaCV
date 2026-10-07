@@ -504,7 +504,7 @@
      "id": "vision-doorbell",
      "label": "Vision · DOORBELL",
      "set": "vision-doorbell",
-     "contents": "Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default",
+     "contents": "Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default",
      "status": "released",
      "parts": [
       {
@@ -530,6 +530,10 @@
       {
        "name": "retainer",
        "file": "canary_vision_doorbell_retainer.stl"
+      },
+      {
+       "name": "plungers R+B",
+       "file": "canary_vision_doorbell_plunger.stl"
       }
      ],
      "preview": "preview_doorbell.png"

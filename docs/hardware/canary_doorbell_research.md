@@ -203,6 +203,13 @@ rendered clips; the hub sends `say {clip}` over the same local MQTT command idio
 "Quick Replies" and sells it in a plan; ours is the only kind of talk a witness can do, and it
 costs nothing.
 
+The Lite does the honest subset today (v0.8 case, [wiring](./canary_vision_doorbell_wiring.md)):
+a sealed 36 mm driver behind the face on a 2.5 W class-D amplifier plays a **chime** on every
+sealed ring and a **tick** on a repeat, and the household's **Doorbell reply** select plays one
+of three **tones** — rising "we're coming", falling "leave it", a low double "no thanks". Tones,
+not Piper's voice: the Lite's host has one spare pin and no I²S, and a tone says the same thing
+to a visitor who does not speak the house's language. The voice clips are the Pro carrier's.
+
 ### 4.4 The glow ring — honest to the visitor
 
 Every doorbell lights its button. Ours makes the light *mean* something, and never lie:
@@ -341,7 +348,10 @@ security-screw continuity on the existing blind boss — `TamperDetected`, no ne
 
 **Out:** MAX98357A I²S amplifier ($3–6) into an IP67 driver — Same Sky CMS-15113-078SP-67
 (0.7 W, $5) for the quick replies and a chime tone, or a Visaton K64WP if the doorbell *is* the
-chime. **In: none, by default.** The Pro carrier has a footprint for the WAP's envelope-only
+chime. (The Lite's v0.8 case already carries a 36 mm 3 W-class sealed driver on a PAM8302A fed
+by one PWM pin — the chime, the tick and the reply tones, with a street-carrying loudness as the
+unmetered target; the Pro keeps the
+I²S path because its carrier has the pins and the voice clips need the fidelity.) **In: none, by default.** The Pro carrier has a footprint for the WAP's envelope-only
 PDM microphone, **do-not-populate**, for owners who want the `knock` and `glass_break` acoustic
 events; the firmware path behind it is the same loudness-envelope code the WAP and Vision run,
 structurally unable to carry speech. A doorbell with a button and a radar does not need a

@@ -126,6 +126,11 @@ enum : uint16_t {
 }  // namespace NIMBLE_PROPERTY
 
 #define BLE_HS_IO_DISPLAY_YESNO 1
+#define BLE_HS_IO_NO_INPUT_OUTPUT 3   // the setup door's Just Works profile (bluetooth_channel.cpp)
+
+// The flags AD Opera's open-door advert carries (ble_opera.h).
+#define BLE_HS_ADV_F_DISC_GEN    0x02
+#define BLE_HS_ADV_F_BREDR_UNSUP 0x04
 
 // NimBLE's store status codes (host/ble_store.h, host/ble_hs.h; the same in
 // NimBLE-Arduino 2.3.8 and 2.5.0), which NimBLEDevice.h brings in.
@@ -376,7 +381,10 @@ class NimBLEAdvertisementData {
   bool setManufacturerData(const std::string& d) { mfg = d; return true; }
   bool setName(const std::string& n, bool = true) { name = n; return true; }
   bool addServiceUUID(const NimBLEUUID&) { return true; }
-  std::string mfg, name;
+  bool setFlags(uint8_t f) { flags = f; return true; }
+  bool setServiceData(const NimBLEUUID&, const std::string& d) { service_data = d; return true; }
+  std::string mfg, name, service_data;
+  uint8_t flags = 0;
 };
 
 namespace host_sim {

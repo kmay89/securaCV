@@ -10,15 +10,19 @@
 //
 // THE SCREEN THIS REPLACED offered every discovered Canary a "Short-tap the
 // BOOT button — I'm ready, start" button. That button set a state variable and
-// did nothing else, because there is nothing for it to do: no firmware in this
-// repo serves a BOOT-tap receipt endpoint, on any board. A display serves
-// exactly four API routes and none of them is a pairing route. So the primary
-// action on the primary onboarding screen was a spinner that could never
-// finish, describing a mechanism that does not exist.
+// did nothing else. The firmware DOES gate a receipt behind a BOOT tap
+// (canary-wap and the flagship `firmware/canary` serve
+// GET /api/provisioning-receipt for 30 s after the tap, 403 before it) — but
+// the receipt a WAP writes points at its own setup-network address, and a
+// display serves exactly four API routes, none of them a pairing route. So
+// the primary action on the primary onboarding screen was a spinner that
+// could never finish for most of the fleet.
 //
 // It now says what is actually true of the device in front of you, and offers
 // an action only where one exists. The receipt paste stays: it is the one path
-// that has always worked, for anything that can produce a receipt.
+// that has always worked, for anything that can produce a receipt. Giving a
+// brand-new Canary its Wi-Fi in the first place is the Set up walkthrough's
+// job (SetupView → CanarySetupView), not this sheet's.
 
 import SwiftUI
 

@@ -116,11 +116,22 @@
   <key>NSBonjourServices</key>
   <array>
     <string>_securacv._tcp</string>
+    <!-- Home Assistant's own advert: how the Set up walkthrough finds a hub
+         that just finished first boot, with no hostname typed. -->
+    <string>_home-assistant._tcp</string>
   </array>
 
-  <!-- Bluetooth: hear a Canary directly even when Wi-Fi is down. -->
+  <!-- Camera: only to read the Wi-Fi QR a display draws on its glass for its
+       own setup network (Set up → A Canary). No frame is kept or sent. -->
+  <key>NSCameraUsageDescription</key>
+  <string>SecuraCV reads the setup QR code shown on a Canary's screen so it can join the Canary's setup network for you. Nothing is recorded.</string>
+
+  <!-- Bluetooth: hear a Canary directly even when Wi-Fi is down, and hand a
+       brand-new one its Wi-Fi through its setup door (ImprovClient). The
+       pairing key never rides Bluetooth: a WAP hands over a one-time claim
+       the phone spends over Wi-Fi (Shared/MagicPairPlan.swift). -->
   <key>NSBluetoothAlwaysUsageDescription</key>
-  <string>SecuraCV connects to your Canaries over Bluetooth so you still get status if the network drops.</string>
+  <string>SecuraCV connects to your Canaries over Bluetooth so you still get status if the network drops, and hands a brand-new Canary your Wi-Fi when you set it up.</string>
 
   <!-- HomeKit: publish coarse witness state (motion/occupancy/tamper), never video. -->
   <key>NSHomeKitUsageDescription</key>

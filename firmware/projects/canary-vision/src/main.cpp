@@ -40,6 +40,12 @@
 #include <fleet_beacon.h>                     // FLEET_BEACON_DETECT_* class tokens
 #if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
 #include "canary/net/fleet_beacon_adv.h"      // carrier: BLE advert
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+#include "network/improv_ble.h"               // the Bluetooth setup door (common/)
+#include "io/short_tap.h"                 // the BOOT tap that opens it for a minute
+#include "network/setup_portal.h"             // the door follows the portal
+#include "identity/device_pseudonym.h"        // the on-air name's suffix
+#endif
 #endif
 #if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
 #include "canary/net/fleet_udp.h"             // carrier: LAN multicast
@@ -52,6 +58,7 @@
 #include "canary/vision/optical_features.h"  // coarse posture/proximity/occupancy names
 #include "canary/state/presence_fsm.h"
 #include "canary/doorbell.h"  // the Vision Doorbell's button + glow ring (XIAO hosts)
+#include "canary/doorbell_audio.h"  // ...and its speaker: the chime, the tick, the reply tones
 
 static Topics TOPICS;
 static canary::state::PresenceFSM fsm;
@@ -376,7 +383,17 @@ static void on_doorbell_event(doorbell::ButtonEvent ev, uint32_t at_ms) {
         canary::doorbell_hw::set_enabled(true);
         g_db_discovery_dirty = true;
       }
-      if (canary::witness::ready()) canary::doorbell_hw::swell(now_ms);
+      // ...and the visitor hears it: the chime plays with the swell, the
+      // one sound a witness owes the person at the door (dossier §4.3).
+      // Both are the answer to a SEALED ring. With no witness identity the
+      // press still went out, unsigned, and the visitor gets the tick -
+      // "heard" - not the chime that says "sealed".
+      if (canary::witness::ready()) {
+        canary::doorbell_hw::swell(now_ms);
+        canary::doorbell_audio::play(doorbell::Phrase::CHIME);
+      } else {
+        canary::doorbell_audio::play(doorbell::Phrase::TICK);
+      }
       canary::net::publish_doorbell_press(TOPICS);
       publish_state_now(now_ms);
       canary::log_header("BELL");
@@ -385,6 +402,8 @@ static void on_doorbell_event(doorbell::ButtonEvent ev, uint32_t at_ms) {
       break;
     }
     case doorbell::ButtonEvent::REPEAT:
+      // still heard, still one ring: a soft tick, never the chime again
+      canary::doorbell_audio::play(doorbell::Phrase::TICK);
       canary::log_line("BELL", "Pressed again inside the holdoff - counted, not sealed.");
       break;
     case doorbell::ButtonEvent::STUCK:
@@ -410,6 +429,18 @@ static void drain_doorbell_commands() {
   const long glow = canary::net::take_pending_doorbell_glow();
   if (glow >= 0) {
     canary::doorbell_hw::set_glow_pct((uint8_t)glow);
+    g_db_state_dirty = true;
+  }
+  // the speaker: the volume number and the reply select (a tone to the
+  // visitor; the state row echoes which one was last sent)
+  const long vol = canary::net::take_pending_doorbell_volume();
+  if (vol >= 0) {
+    canary::doorbell_audio::set_volume((uint8_t)vol);
+    g_db_state_dirty = true;
+  }
+  const int reply = canary::net::take_pending_doorbell_reply();
+  if (reply > 0) {
+    canary::doorbell_audio::play((doorbell::Phrase)reply);
     g_db_state_dirty = true;
   }
   if (g_db_discovery_dirty) {
@@ -646,7 +677,8 @@ void setup() {
 
   canary::net::mqtt_init(TOPICS);
   canary::vision::init();
-  canary::doorbell_hw::init();  // no-op on boards without the doorbell's pins
+  canary::doorbell_hw::init();     // no-op on boards without the doorbell's pins
+  canary::doorbell_audio::init();  // ...and its speaker (no-op without DOORBELL_AUDIO_PIN)
 
   // MQTT connection
   boot_line("              ,_,  ))");
@@ -677,6 +709,47 @@ void setup() {
   // can find this witness directly over BLE — broker-free and WiFi-free.
   // Fail-safe: a stack that can't come up degrades to a no-op.
   canary::net::fleet_beacon_begin(canary::ms_now());
+#endif
+
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  // The Bluetooth setup door: the Improv Wi-Fi service on the beacon's
+  // NimBLE stack. Open while this witness has NO stored credentials (first
+  // boot, factory reset) for the first-boot window, and for a minute after
+  // a BOOT tap — never for a saved network that merely stopped working:
+  // that raises the recovery portal (a door with a printed key), not this
+  // one. So a phone hands a brand-new witness its Wi-Fi with one tap, the
+  // portal stays the break-glass path underneath, and an installed witness
+  // cannot be re-pointed from the street. Fail-safe like the beacon: a
+  // stack that cannot serve degrades to a no-op.
+  {
+    // "Vision-AB12": the same four characters as the SecuraCV-AB12 setup
+    // network, so a phone can tell the two doors are one device.
+    static char adv_name[16] = {0};
+    {
+      char token[device_pseudonym::HEX_LEN + 1] = {0};
+      device_pseudonym::device_id_hex(token, sizeof(token));
+      snprintf(adv_name, sizeof(adv_name), "Vision-%.4s", token);
+      for (char* c = adv_name + 7; *c; ++c) *c = (char)toupper((unsigned char)*c);
+    }
+    canary::net::improv_ble::Identity id{};
+    id.adv_name         = adv_name;
+    id.firmware_name    = "canary-vision";
+    id.firmware_version = CANARY_FW_VERSION;
+    id.hardware         = MODEL;
+    id.device_name      = canary::cfg::get().device_id;
+    id.reach_url        = nullptr;   // no page to send the phone to; it watches mDNS
+    id.identify         = [] { identify_start(canary::ms_now()); };
+    id.require_encryption = true;
+    canary::net::improv_ble::begin(id,
+        canary::net::setup_portal_active() && !canary::net::wifi_configured(),
+        canary::ms_now());
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+    // The owner's tap: the board's BOOT button (pins.h), read each loop
+    // pass through the short-tap stepper below. A strapping pin, so only
+    // ever read, never driven.
+    pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+#endif
+  }
 #endif
 
 #if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
@@ -859,6 +932,26 @@ void loop() {
   // ~5 s). Placed before the broker/WiFi early-returns below so it keeps
   // advertising through an MQTT outage — that broker-free reach is the point.
   canary::net::fleet_beacon_tick(canary::ms_now());
+#endif
+
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  // The Bluetooth door follows the stored-credentials fact, not the
+  // portal: open (for its window) only while nothing is stored, shut once
+  // the join persisted a network — and shut through a recovery portal.
+  // Also before the broker early-returns: a device with no Wi-Fi has no
+  // broker, and this is how it gets one.
+  {
+    const uint32_t improv_now = canary::ms_now();
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+    static canary::io::ShortTap boot_tap;
+    if (boot_tap.step(digitalRead(BOOT_BUTTON_PIN) == BOOT_BUTTON_ACTIVE, improv_now)) {
+      canary::net::improv_ble::tap(improv_now);
+      identify_start(improv_now);   // and say so: the same blink IDENTIFY uses
+    }
+#endif
+    canary::net::improv_ble::tick(improv_now,
+        canary::net::setup_portal_active() && !canary::net::wifi_configured());
+  }
 #endif
 
 #if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP

@@ -28,9 +28,9 @@ stud_gap = 30.0;     // set per case (the fit coupon's POCKET pair prints at 30)
 br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.2;
 
 /* [Doorbell] — mirror canary_vision_doorbell plate defaults */
-db_out_x = 51.5;  db_out_y = 129.2;   // the v0.7 shell/slab outline (its echo prints both)
+db_out_x = 51.5;  db_out_y = 169.2;   // the v0.8 shell/slab outline (its echo prints both)
 db_screw_inset_x = 7.5;  db_screw_inset_y = 14.0;  db_screw_d = 4.2;
-db_exit_dx = 2.2;  db_exit_cy = -26.8;  db_exit_w = 14.0;  db_exit_h = 10.0;   // exit_cx (the module's centerline, vm_cx), exit_cy
+db_exit_dx = 2.2;  db_exit_cy = -8.8;   db_exit_w = 14.0;  db_exit_h = 10.0;   // exit_cx (the module's centerline, vm_cx), exit_cy (v0.8: the well sits over the speaker zone)
 db_exit_slide = 8.0;                   // the wall plate's pass runs this far up the slide (mount_dt_travel)
 
 line = 0.5;          // drawn line weight

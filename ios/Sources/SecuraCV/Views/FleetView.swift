@@ -20,6 +20,10 @@ struct FleetView: View {
     @State private var pairing: DiscoveredCanary?
     @State private var query = ""
     @State private var showingFleetWiFi = false
+    /// The Set up door (both walkthroughs), opened from the toolbar, the
+    /// empty state, or a `securacv://setup` link.
+    @State private var setupTarget: SetupTarget?
+    @State private var showingSetup = false
     /// The deep-linked finding target (`securacv://find?witness=…` — the
     /// shell lands the route on this tab; this view consumes the anchor).
     @State private var findTarget: Witness?
@@ -88,6 +92,10 @@ struct FleetView: View {
                             DiscoveryConsentCard()
                                 .padding([.horizontal, .top])
                         }
+                        // A brand-new Canary asking for Wi-Fi over Bluetooth:
+                        // the card sits above the comb until it is answered.
+                        NearbyCanaryCard()
+                            .padding([.horizontal, .top])
                         FleetHiveView(witnesses: filtered, pairing: $pairing)
                     }
                 } else {
@@ -105,6 +113,12 @@ struct FleetView: View {
                                 .tag(FleetViewStyle.hive.rawValue)
                             Label("List", systemImage: "list.bullet")
                                 .tag(FleetViewStyle.list.rawValue)
+                        }
+                        Button {
+                            setupTarget = nil
+                            showingSetup = true
+                        } label: {
+                            Label("Set up a hub or a Canary…", systemImage: "wand.and.stars")
                         }
                         Toggle("Demo fleet", isOn: Binding(
                             get: { store.demoMode },
@@ -129,6 +143,7 @@ struct FleetView: View {
             .navigationDestination(for: Witness.self) { DeviceDetailView(witness: $0) }
             .sheet(item: $pairing) { PairView(canary: $0) }
             .sheet(isPresented: $showingFleetWiFi) { FleetWiFiSheet(store: store) }
+            .sheet(isPresented: $showingSetup) { SetupView(initial: setupTarget) }
             // The find deep link's landing (the complication's door): the
             // search itself, straight away — the row and detail screen are
             // stops the tap already skipped past on purpose. A route naming
@@ -136,8 +151,8 @@ struct FleetView: View {
             .sheet(item: $findTarget) { target in
                 NavigationStack { FindCanaryView(witness: target) }
             }
-            .onAppear { consumeFindRoute() }
-            .onChange(of: store.pendingRoute) { _, _ in consumeFindRoute() }
+            .onAppear { consumeFindRoute(); consumeSetupRoute() }
+            .onChange(of: store.pendingRoute) { _, _ in consumeFindRoute(); consumeSetupRoute() }
             // A cold-launch link can outrun the first refresh; the fold's
             // arrival retries the still-pending route.
             .onChange(of: store.witnesses) { _, _ in consumeFindRoute() }
@@ -161,6 +176,16 @@ struct FleetView: View {
         }
     }
 
+    /// A `securacv://setup` link opens the door, straight into one
+    /// walkthrough when it named one. Consumed on arrival — a guide has no
+    /// anchor to wait for.
+    private func consumeSetupRoute() {
+        guard case .setup(let what)? = store.pendingRoute else { return }
+        store.pendingRoute = nil
+        setupTarget = what.flatMap(SetupTarget.init(rawValue:))
+        showingSetup = true
+    }
+
     private var fleetList: some View {
         List {
             if store.discoveryConsent == nil {
@@ -173,6 +198,12 @@ struct FleetView: View {
                 } footer: {
                     Text("Discovery is off — SecuraCV isn't looking for Canaries on this network.")
                 }
+            }
+            if !store.nearbyCanaries.isEmpty {
+                // A brand-new Canary asking for Wi-Fi over Bluetooth.
+                Section { NearbyCanaryCard() }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
             }
             if !filtered.isEmpty {
                 if store.witnesses.count >= Self.roomGroupThreshold {
@@ -216,15 +247,19 @@ struct FleetView: View {
                          ? "Plug in a Canary on this network — it'll appear here to pair. Or look around with sample data first."
                          : "Enable discovery to find Canaries on this network — or look around with sample data first.")
                 } actions: {
+                    // The walkthroughs first: a fleet starts with a hub and
+                    // a Canary, and this phone explains and drives both.
+                    Button("Set up a hub or a Canary") {
+                        setupTarget = nil
+                        showingSetup = true
+                    }
+                    .buttonStyle(.borderedProminent)
                     if store.discoveryConsent != true {
                         Button("Enable discovery") { store.setDiscoveryConsent(true) }
-                            .buttonStyle(.borderedProminent)
-                        Button("Try the demo fleet") { store.setDemoMode(true) }
                             .buttonStyle(.bordered)
-                    } else {
-                        Button("Try the demo fleet") { store.setDemoMode(true) }
-                            .buttonStyle(.borderedProminent)
                     }
+                    Button("Try the demo fleet") { store.setDemoMode(true) }
+                        .buttonStyle(.bordered)
                     // Where a Canary comes from, said here instead of a dead
                     // end: meet one in the Lab (real firmware in the
                     // browser), hatch one with the free Flasher. Routing,
