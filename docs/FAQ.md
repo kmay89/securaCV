@@ -509,9 +509,11 @@ yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
 — under a second) and the door opens for 60 seconds; or power-cycle a unit
 that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
 version, use its own setup page (Settings → Wi-Fi on the dashboard, or the
-`SecuraCV-XXXX` network when it is off your home network) — or
-factory-reset it (hold BOOT for 5 seconds at power-up), after which the
-door opens again for half an hour. A Canary whose saved network is just
+`SecuraCV-XXXX` network when it is off your home network) — or tell it to
+forget its Wi-Fi from the dashboard (Settings → Wi-Fi → Forget, the
+`/api/wifi/forget` route), which clears the stored network and opens the
+door again for half an hour from that moment. There is no button gesture
+that factory-resets a WAP today. A Canary whose saved network is just
 down right now keeps the door shut and raises its recovery network
 instead; fix the router, or use that network's printed key.
 
