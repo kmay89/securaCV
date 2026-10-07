@@ -2297,7 +2297,7 @@
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
         "body": "The plate the module stack lives on: one connected, vented cradle (two L-walls, a stop, no clip) with the two screw posts for the module, the battery bay's fence, the cable exit, the speaker cradle and the two service plunger seats over the XIAO's R and B switches. It nests inside the face's walls on the screws from the back, drops onto the wall plate's dovetail lugs and locks with the hidden screw.",
         "face": "The one-piece show part — lens aperture, button hole, side walls and posts, the gasket ledge inside — printed face-down; the only seam is against the wall plate.",
-        "plate": "The wall plate with the three dovetail lugs, the collar and the cable slot. The wedge angles live here — the case aims wherever the plate points.",
+        "plate": "The wall plate with the three dovetail lugs, the collar (its bottom corners a V the body's corners seat into), the cable slot and the two sprung tongues that click into the body's back ribs. The wedge angles live here — the case aims wherever the plate points.",
         "gasket": "The soft TPU ring that seals face to body against the weather.",
         "retainer": "The small ring that presses into the face behind the lens disc and holds it against the lip. Print it flat, bore down.",
         "plunger": "The two soft buttons that poke the XIAO's reset and boot switches through the back plate, as one print on a sprue: heads down on the bed, stems up, 0.2 mm layers, 100% infill, slow, no supports; cut them apart with scissors. One dimple is R, two are B. Lift the body off its wall plate and press."
@@ -2327,7 +2327,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "1f74ecd69450791248ab85808a60d00883ac3caf317be2897aa8b8d33a808572",
+      "sha256": "18a667c941ac5e6f1494c5fe7563183aef65cbe2569ba9d28d0c30b1363e0fec",
       "groups": [
         {
           "name": "What to render",
@@ -3419,6 +3419,101 @@
           ]
         },
         {
+          "name": "Dock: V-seat + click",
+          "params": [
+            {
+              "name": "dock_v",
+              "type": "bool",
+              "default": true,
+              "desc": "45° gussets in the collar's bottom corners: the body's round corners seat on two tangent lines (a V-block) under gravity and the security screw"
+            },
+            {
+              "name": "dock_v_lift",
+              "type": "number",
+              "default": 0.15,
+              "desc": "how far the V holds the body's bottom edge off the collar's bottom wall at nominal — the print's slack lands here, not in a jam"
+            },
+            {
+              "name": "dock_click",
+              "type": "bool",
+              "default": true,
+              "desc": "a rib on the body's back rides a channel in the slab; a sprung tongue's barb snaps into the rib's notch at the seat"
+            },
+            {
+              "name": "dock_rib_x",
+              "type": "number",
+              "default": 10.0,
+              "desc": "the ribs' centerlines, ±X from the axis (between the lug pockets and the screw seats)"
+            },
+            {
+              "name": "dock_rib_y",
+              "type": "number",
+              "default": 48.0,
+              "desc": "the notch (and the barb, seated), Y from the body's center (+ up)"
+            },
+            {
+              "name": "dock_rib_w",
+              "type": "number",
+              "default": 2.0,
+              "desc": "rib width — the channel's bearing wall is dock_fit off its inner face"
+            },
+            {
+              "name": "dock_rib_h",
+              "type": "number",
+              "default": 0.8,
+              "desc": "rib height off the back face (four layers; the barb catches all of it)"
+            },
+            {
+              "name": "dock_rib_l",
+              "type": "number",
+              "default": 8.0,
+              "desc": "rib length along the slide (its lower end clears the barb at the offered height)"
+            },
+            {
+              "name": "dock_notch_in",
+              "type": "number",
+              "default": 2.5,
+              "desc": "the notch's center from the rib's lower end"
+            },
+            {
+              "name": "dock_eng",
+              "type": "number",
+              "default": 0.5,
+              "desc": "the barb's bite into the rib's outer face: the tongue's deflection on the drop, the click's depth"
+            },
+            {
+              "name": "dock_fit",
+              "type": "number",
+              "default": 0.2,
+              "desc": "rib to the channel's bearing wall — the spring closes it"
+            },
+            {
+              "name": "dock_air",
+              "type": "number",
+              "default": 0.3,
+              "desc": "rib to the tongue's face at rest (the barb stands dock_air + dock_eng proud of the face)"
+            },
+            {
+              "name": "dock_tongue_t",
+              "type": "number",
+              "default": 1.6,
+              "desc": "the tongue's thickness in its bending direction (X); a wedged plate thins it to keep the rate"
+            },
+            {
+              "name": "dock_tongue_l",
+              "type": "number",
+              "default": 14.0,
+              "desc": "the tongue, root to barb — the strain gate holds it (snap_strain <= 2 %)"
+            },
+            {
+              "name": "dock_flex",
+              "type": "number",
+              "default": 0.8,
+              "desc": "the slot behind the tongue: its room to bend (> dock_eng)"
+            }
+          ]
+        },
+        {
           "name": "Aesthetics",
           "params": [
             {
@@ -3690,6 +3785,10 @@
         {
           "file": "canary_mount_lib.scad",
           "sha256": "bbd5f937319818394c4e89c5f0d766b1a2ee11adb837b210b69ebf3eb3ca2489"
+        },
+        {
+          "file": "canary_snap_lib.scad",
+          "sha256": "7c0c54d46f8c8c2457ca8c6b643d7413edb4e5e9733ab7fa31a8267876412260"
         },
         {
           "file": "canary_port_lib.scad",

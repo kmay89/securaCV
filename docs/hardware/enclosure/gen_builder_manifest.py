@@ -308,8 +308,11 @@ CURATED = [
                     "side walls and posts, the gasket ledge inside — printed "
                     "face-down; the only seam is against the wall plate.",
             "plate": "The wall plate with the three dovetail lugs, the "
-                     "collar and the cable slot. The wedge angles live "
-                     "here — the case aims wherever the plate points.",
+                     "collar (its bottom corners a V the body's corners "
+                     "seat into), the cable slot and the two sprung tongues "
+                     "that click into the body's back ribs. The wedge "
+                     "angles live here — the case aims wherever the plate "
+                     "points.",
             "gasket": "The soft TPU ring that seals face to body against "
                       "the weather.",
             "retainer": "The small ring that presses into the face behind "

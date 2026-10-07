@@ -244,12 +244,32 @@
 //      and with the face on the headroom caps it even unscrewed. The
 //      cavity's width reads the wall's band exactly as it read the clip's,
 //      so the envelope does not move.
+//    * THE DOCK — A V-SEAT AND A CLICK (2026-10-07). What orients the body
+//      on its wall plate: three dovetail lugs on the centerline 83 mm apart
+//      (their flanks fix the long axis), the collar wrapping the bottom end,
+//      the security screw. Each of those holds to its slide clearance, so
+//      the seated body could still sit a quarter-degree off square. Now:
+//      (1) the collar's bottom corners are 45° GUSSETS (dock_v) the body's
+//      round corners seat into, a V-block: gravity and the security screw
+//      pull the body down onto two tangent lines and it centers itself,
+//      lifted dock_v_lift off the bottom wall so a print a tenth oversize
+//      still seats; (2) a CLICK (dock_click): a rib on the body's back face
+//      rides a channel in the slab, and the channel's outer wall is a TONGUE
+//      cut free by a slot behind it — lying in the slab's plane, bending
+//      sideways within it (the cradle lib's doctrine: no layer bond in
+//      tension), a barb at its tip that the rib cams aside on the drop and
+//      that snaps into a V-notch in the rib at the seat. Click in, click
+//      out, the same 45° both ways; the tongue's strain runs the snap lib's
+//      gate, the force is echoed. The spring also presses the rib to the
+//      channel's fixed wall, so the top end sits centered too. Nothing on
+//      the body flexes; the spring is on the 10 g part you reprint.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
                              // piston plate (pl_*) — the catalog's shared helpers
 use <canary_mount_lib.scad>  // the catalog's hangers — the wall plate's dovetail
                              // lugs and the body's blind pockets, one home
+use <canary_snap_lib.scad>   // the strain gate (snap_strain) the dock's tongue runs
 use <canary_port_lib.scad>   // connector standards — the shell numbers the
                              // cable exit is sized against
 use <canary_board_lib.scad>  // board registry — this file is the measured
@@ -518,6 +538,23 @@ lug_y     = 41.5;   // the outer lugs park at y = ±lug_y (clear of the cable ex
 lug_mid_y = 6.0;    // the middle lug parks here — a third lug, so losing any one still leaves two
 dt_clear  = 0.2;    // pocket clearance per face — mount_dt_clear() (core_tol_slide)
 lug_extra = 3.0;    // plate thickening below the floor that hosts the pockets (the plate is at least floor_t + lug_extra)
+
+/* [Dock: V-seat + click] — what centers the body on its plate and what you feel when it lands */
+dock_v       = true;   // 45° gussets in the collar's bottom corners: the body's round corners seat on two tangent lines (a V-block) under gravity and the security screw
+dock_v_lift  = 0.15;   // how far the V holds the body's bottom edge off the collar's bottom wall at nominal — the print's slack lands here, not in a jam
+dock_click   = true;   // a rib on the body's back rides a channel in the slab; a sprung tongue's barb snaps into the rib's notch at the seat
+dock_rib_x   = 10.0;   // the ribs' centerlines, ±X from the axis (between the lug pockets and the screw seats)
+dock_rib_y   = 48.0;   // the notch (and the barb, seated), Y from the body's center (+ up)
+dock_rib_w   = 2.0;    // rib width — the channel's bearing wall is dock_fit off its inner face
+dock_rib_h   = 0.8;    // rib height off the back face (four layers; the barb catches all of it)
+dock_rib_l   = 8.0;    // rib length along the slide (its lower end clears the barb at the offered height)
+dock_notch_in = 2.5;   // the notch's center from the rib's lower end
+dock_eng     = 0.5;    // the barb's bite into the rib's outer face: the tongue's deflection on the drop, the click's depth
+dock_fit     = 0.2;    // rib to the channel's bearing wall — the spring closes it
+dock_air     = 0.3;    // rib to the tongue's face at rest (the barb stands dock_air + dock_eng proud of the face)
+dock_tongue_t = 1.6;   // the tongue's thickness in its bending direction (X); a wedged plate thins it to keep the rate
+dock_tongue_l = 14.0;  // the tongue, root to barb — the strain gate holds it (snap_strain <= 2 %)
+dock_flex    = 0.8;    // the slot behind the tongue: its room to bend (> dock_eng)
 
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
@@ -1346,7 +1383,9 @@ module body() {
             if (opt_batt) batt_bay();
             if (opt_spk) spk_cradle();
             for (q = svc_xy()) svc_boss(q);
+            if (dock_click) dock_ribs();                 // the dock's ribs on the back face
         }
+        if (dock_click) dock_rib_cuts();                 // their notch and lead
         // the board posts' pilots, cut again through the cradle's ribs around them
         for (p = vm_post_xy) translate([p[0], p[1], floor_t + vm_standoff - (vm_scr_len - pcb_t + 1.0)]) cylinder(d = scr_d, h = vm_scr_len + 1);
         // the service plungers' bores and counterbores
@@ -1619,12 +1658,28 @@ module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket
 // edge. In the tilted frame (origin at the body's bottom edge, z = 0 the
 // body's back face) the body's outline is rrect2d(out_x, out_y) at y = out_y/2.
 module body_outline2d() translate([0, out_y/2]) rrect2d(out_x, out_y, rr);
-module collar_in2d()    translate([0, collar_clear]) offset(r = collar_clear) body_outline2d();
+module collar_in2d()    difference() {
+    translate([0, collar_clear]) offset(r = collar_clear) body_outline2d();
+    if (dock_v) dock_v_gusset2d();
+}
 module collar_out2d()   hull() { offset(r = collar_t) collar_in2d();
                                  translate([0, -(collar_tb - collar_t)]) offset(r = collar_t) collar_in2d(); }
 module collar_clip2d()  translate([-out_x, -collar_tb - 1]) square([2*out_x, collar_arm + collar_tb + 1]);
 collar_h = mount_extra + sec_z + max(sec_bore_max, sec_screw_d + 0.4)/2 + 2.4;   // 2.4 of collar over the bore
 weep_x   = 7.0;   // the shell's weep exits its bottom wall here (beside the security screw)
+// THE V-SEAT: a 45° gusset in each bottom corner of the collar, tangent to the
+// body's corner arc (radius rr) when the body stands dock_v_lift above the
+// bottom wall. Pulled down, the arcs meet the two lines first and the body
+// centers on them; the bottom wall is dock_v_lift below, so slack in the
+// print raises the seat a hair instead of jamming it.
+dock_seat_dy = dock_v ? dock_v_lift : 0;                  // the seated body, up the slide from the collar's bottom wall
+dock_v_px    = out_x/2 - rr + rr/sqrt(2);                  // the arc's 45° tangent point, +X corner (collar frame)
+dock_v_py    = rr - rr/sqrt(2) + dock_v_lift;
+dock_v_xe    = out_x/2 + collar_clear + 1.0;              // out past the return's inner face
+module dock_v_gusset2d() for (sx = [1, -1]) mirror([sx < 0 ? 1 : 0, 0])
+    polygon([[dock_v_px - dock_v_py - 1, -1], [dock_v_xe, -1], [dock_v_xe, dock_v_py + (dock_v_xe - dock_v_px)]]);   // the hypotenuse IS the 45° tangent (extended 1 below the wall)
+assert(!dock_v || dock_v_py + (dock_v_xe - dock_v_px) <= collar_arm - 2.0, "the V gussets climb past the collar's returns — raise collar_arm");
+assert(!dock_v || dock_v_px - dock_v_py > weep_x + (weep_d + 1.6)/2 + 1.0, "the V gusset lands on the weep's drain slot");
 assert(collar_arm > rr, "the collar's returns must climb past the pill's corner radius, or they wrap nothing");
 assert(collar_tb >= 3.0, "the collar's bottom wall carries the security screw's head — keep it >= 3.0");
 // top-surface height of the (possibly wedged) plate at a given y —
@@ -1633,6 +1688,83 @@ assert(collar_tb >= 3.0, "the collar's bottom wall carries the security screw's 
 function plate_z(y) = wplate_t + (plate_wedge > 0 ? (y + out_y/2) * tan(plate_wedge) : 0);
 // extra height the horizontal wedge adds at the plate edge
 function plate_zx() = out_x/2 * tan(abs(plate_wedge_x));
+
+// THE CLICK. Plate frame (the tilted frame plate() draws the lugs in: origin
+// at the body's bottom edge on the slab's top, +Y up the slide, z = 0 the
+// body's back face). The rib on the body's back hangs dock_rib_h into a
+// CHANNEL cut through the slab; the channel's inner wall is fixed (the rib
+// bears on it), its outer wall is the TONGUE: the strip between the channel
+// and a slot behind it, rooted at its +Y end, free at its −Y end where the
+// BARB stands into the channel. The rib comes down from the offered height,
+// its lower end cams the barb aside (45° lead), rides it, and the barb snaps
+// into the rib's V-notch as the body lands on the V-seat. Lifting cams it
+// out the same way. Both parts print as they are: the rib is four layers on
+// the body's bed face; the tongue bends in the slab's plane, so no layer
+// bond is ever in tension, and the barb's underside is 45°.
+dock_y_r     = out_y/2 + dock_rib_y + dock_seat_dy;        // the barb, plate frame (the notch, seated)
+dock_x_w     = dock_rib_x - dock_rib_w/2 - dock_fit;       // the channel's bearing wall
+dock_x_t     = dock_rib_x + dock_rib_w/2 + dock_air;       // the tongue's face at rest
+dock_barb_b  = dock_air + dock_eng;                        // the barb proud of the tongue's face
+dock_barb_y  = dock_rib_l - dock_notch_in - 0.5;           // the rib's upper end past the notch... (rib runs dock_notch_in below, dock_rib_l - dock_notch_in above the notch)
+dock_h_slab  = plate_z(dock_rib_y + dock_seat_dy) + plate_zx();   // the slab under the tongue (a wedge thickens it)
+dock_t_eff   = max(0.8, dock_tongue_t * pow(wplate_t / dock_h_slab, 1/3));   // same spring rate whatever the wedge (I ~ h t^3)
+dock_y_tip   = dock_y_r - 0.5 - dock_barb_b - 0.3;         // the tongue's free end, past the barb's lower lead
+dock_y_root  = dock_y_tip + dock_tongue_l + 0.5 + dock_barb_b + 0.3;   // root: dock_tongue_l above the barb's center
+dock_ch_y0   = out_y/2 + dock_rib_y + dock_seat_dy - dock_notch_in - 1.0;              // channel: the seated rib's lower end, 1.0 of room
+dock_ch_y1   = out_y/2 + dock_rib_y + dock_seat_dy + (dock_rib_l - dock_notch_in) + mount_dt_travel() + 1.0;   // ...to the offered rib's upper end
+dock_ch_y1e  = max(dock_ch_y1, dock_y_root + dock_flex);   // the channel runs past the root's rounded slot end
+dock_x_out   = dock_x_t + dock_t_eff + dock_flex;          // the slot's outer wall
+dock_strain  = snap_strain(dock_t_eff, dock_eng, dock_tongue_l);
+dock_I       = dock_h_slab * pow(dock_t_eff, 3) / 12;
+dock_force   = 3 * 2000 * dock_I * dock_eng / pow(dock_tongue_l, 3);   // N, one tongue, PETG E ~ 2 GPa
+assert(!dock_click || dock_strain <= 0.02, str("the dock tongue's strain is ", dock_strain * 100, " % — PETG wants <= 2 %: lengthen dock_tongue_l or thin dock_tongue_t"));
+assert(!dock_click || dock_flex >= dock_eng + 0.2, "dock_flex leaves the tongue no room to bend past the barb's bite");
+assert(!dock_click || dock_x_w >= mount_dt_top_w()/2 + 1.0, "the dock channel runs into the lugs — move dock_rib_x out");
+assert(!dock_click || len([for (sy = [1, -1], sx = [1, -1]) let (cx = sx*(out_x/2 - 7.5), cy = sy*(out_y/2 - 14) + out_y/2, r = (plate_screw_d + 4.4)/2 + 1.0)
+       if (cx + r > dock_x_w && cx - r < dock_x_out && cy + r > dock_ch_y0 && cy - r < dock_ch_y1e) 1]) == 0,
+       "the dock channel runs into a wall-screw seat — move dock_rib_y");
+assert(!dock_click || dock_ch_y0 > exit_cy + out_y/2 + usb_exit_h/2 + mount_dt_travel() + 2.0 + 1.0 || dock_x_w > exit_cx + (usb_exit_w + 4)/2 + 1.0,
+       "the dock channel runs into the cable slot");
+// the body's side: the rib and its notch keep clear of the pockets, the
+// screw seats, the plunger seats and the oval
+dock_rib_y0  = dock_rib_y - dock_notch_in;  dock_rib_y1 = dock_rib_y0 + dock_rib_l;      // body frame
+assert(!dock_click || dock_rib_x - dock_rib_w/2 >= mount_dt_window_w(dt_clear)/2 + 1.0, "the dock rib stands on a lug pocket");
+assert(!dock_click || len([for (p = post_xy()) if (abs(p[0]) - svc_scr_seat_d/2 - 1.0 < dock_rib_x + dock_rib_w/2 && abs(p[0]) + svc_scr_seat_d/2 + 1.0 > dock_rib_x - dock_rib_w/2
+       && p[1] + svc_scr_seat_d/2 + 1.0 > dock_rib_y0 && p[1] - svc_scr_seat_d/2 - 1.0 < dock_rib_y1) 1]) == 0, "the dock rib stands on a plate-screw seat");
+assert(!dock_click || len([for (q = svc_xy()) if (abs(q[0]) + svc_seat_d/2 + 1.0 > dock_rib_x - dock_rib_w/2 && q[1] + svc_seat_d/2 + 1.0 > dock_rib_y0 && q[1] - svc_seat_d/2 - 1.0 < dock_rib_y1) 1]) == 0,
+       "the dock rib stands on a service plunger's seat");
+assert(!dock_click || dock_rib_x + dock_rib_w/2 <= plate_x/2 - 1.0, "the dock rib runs off the back plate");
+if (dock_click)
+    echo(str("dock click: tongue ", dock_t_eff, " x ", dock_h_slab, " x ", dock_tongue_l, " mm, bite ", dock_eng, " — strain ", dock_strain * 100,
+             " % (gate 2), ~", dock_force, " N a side at the barb (PETG), two sides; the rib sits ", dock_fit, " off its wall, spring-pressed"));
+// the body's ribs (body frame: the back face at z = floor_t - plate_t)
+module dock_ribs() for (sx = [1, -1]) mirror([sx < 0 ? 1 : 0, 0, 0])
+    translate([dock_rib_x - dock_rib_w/2, dock_rib_y0, floor_t - plate_t - dock_rib_h]) cube([dock_rib_w, dock_rib_l, dock_rib_h + 0.01]);
+module dock_rib_cuts() for (sx = [1, -1]) mirror([sx < 0 ? 1 : 0, 0, 0]) {
+    xo = dock_rib_x + dock_rib_w/2;  dn = dock_eng + 0.1;  z0 = floor_t - plate_t - dock_rib_h - 1;
+    // the V-notch in the outer face, 45° flanks, a land the barb's length
+    translate([0, 0, z0]) linear_extrude(dock_rib_h + 1.5)
+        polygon([[xo + 0.1, dock_rib_y - 0.6 - dn], [xo - dn, dock_rib_y - 0.6], [xo - dn, dock_rib_y + 0.6], [xo + 0.1, dock_rib_y + 0.6 + dn]]);
+    // the lower end's outer corner, a 45° lead onto the barb
+    translate([0, 0, z0]) linear_extrude(dock_rib_h + 1.5)
+        polygon([[xo + 0.1, dock_rib_y0 - 0.1], [xo + 0.1, dock_rib_y0 + 0.8], [xo - 0.8, dock_rib_y0 - 0.1]]);
+}
+// the plate's side (plate frame): the channel + the slot behind the tongue (SUBTRACT), the barb (ADD)
+module dock_cuts() for (sx = [1, -1]) mirror([sx < 0 ? 1 : 0, 0, 0]) {
+    deep = plate_z(out_y/2) + 2*plate_zx() + 5;
+    translate([dock_x_w, dock_ch_y0, -deep]) cube([dock_x_t - dock_x_w, dock_ch_y1e - dock_ch_y0, deep + 1]);        // the channel
+    translate([dock_x_w, dock_ch_y0, -deep]) cube([dock_x_out - dock_x_w, dock_y_tip - dock_ch_y0, deep + 1]);       // ...open across the tongue's tip
+    hull() for (y = [dock_y_tip, dock_y_root - dock_flex/2])                                                           // the slot behind the tongue, round at the root
+        translate([dock_x_t + dock_t_eff + dock_flex/2, y, -deep]) cylinder(d = dock_flex, h = deep + 1, $fn = 24);
+}
+module dock_barbs() for (sx = [1, -1]) mirror([sx < 0 ? 1 : 0, 0, 0]) {
+    b = dock_barb_b;  zb = -(dock_rib_h + 0.2);   // the barb's band: the rib's height and a little under it
+    hull() {
+        translate([0, 0, zb]) linear_extrude(-zb)                                                                     // its top is the slab's top: the body's back face slides over it
+            polygon([[dock_x_t + 0.01, dock_y_r - 0.5 - b], [dock_x_t - b, dock_y_r - 0.5], [dock_x_t - b, dock_y_r + 0.5], [dock_x_t + 0.01, dock_y_r + 0.5 + b]]);
+        translate([dock_x_t, dock_y_r - 0.5 - b, zb - b]) cube([0.01, 1.0 + 2*b, 0.01]);                           // 45° underside, back to the face
+    }
+}
 
 // the wall-screw seat floor, from the wall side (see plate()): the head lands
 // flush with the thin end, over the >= 1.0 mm web DESIGN_RULES §4 requires
@@ -1697,9 +1829,13 @@ module plate() {
             translate([weep_x, -collar_tb - 0.1, 0]) hull() for (z = [(weep_d + 1.6)/2, mount_extra + floor_t + weep_d + 0.2])
                 translate([0, 0, z]) rotate([-90, 0, 0]) cylinder(d = weep_d + 1.6, h = collar_tb + 0.3);
         }
+        // the dock click's channel and tongue slot, in the tilted frame
+        if (dock_click) translate([0, -out_y/2, wplate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0]) dock_cuts();
         // flatten anything the compound wedge tips below the wall plane (z < 0)
         translate([-out_x, -out_y/2 - 12, -10]) cube([2*out_x, out_y + 24, 10]);
     }
+    // the barbs stand into the channels, on the tongues' tips
+    if (dock_click) translate([0, -out_y/2, wplate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0]) dock_barbs();
 }
 
 // ----------------------------------------------------------------------------

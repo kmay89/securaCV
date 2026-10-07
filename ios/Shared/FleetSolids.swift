@@ -335,10 +335,10 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .disc, material: "accent", axis: "y", at: [17.85, 15.2, 19.3], size: [], r: 2.2, h: 0.6, fullDetailOnly: true),
   ]),
   "part.doorbell.body": FleetMassing(
-    id: "part.doorbell.body", rev: "cce9bd71", ghost: false,
-    envelope: [48.7, 22.8, 166.4],
+    id: "part.doorbell.body", rev: "15ce7e2a", ghost: false,
+    envelope: [48.7, 23.6, 166.4],
     solids: [
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [48.699981689453125, 22.799999237060547, 166.39999389648438], r: 12, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [48.699981689453125, 23.599998474121094, 166.39999389648438], r: 12, h: 0, fullDetailOnly: false),
   ]),
   "part.doorbell.face": FleetMassing(
     id: "part.doorbell.face", rev: "2683a963", ghost: false,

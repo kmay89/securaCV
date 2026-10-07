@@ -1339,6 +1339,30 @@ Three things a look at the v0.8 asked for; the envelope does not move:
   ledge runs the whole lower half 0.7–0.95 mm under the module's edge,
   where the old shoe sat 3 mm — a bottom-side part within 1 mm of the
   module's long edge would land on it; `cradle_xiao_gap` is the knob.
+- **The dock: a V-seat and a click** (2026-10-07). What orients the body
+  on its wall plate is three dovetail lugs on the centerline 83 mm apart
+  (their flanks fix the long axis), the collar wrapping the bottom end and
+  the security screw; each holds to its 0.2 slide clearance, which let the
+  seated body sit up to a quarter-degree off square. Two things now:
+  **the collar's bottom corners are 45° gussets** (`dock_v`) the body's
+  round corners seat into — a V-block. Gravity and the security screw pull
+  the body down onto two tangent lines and it centers itself, held
+  `dock_v_lift` (0.15) off the bottom wall so a print a tenth oversize
+  seats a hair higher instead of jamming. And **a click** (`dock_click`):
+  a 2 × 0.8 rib on each side of the body's back face rides a channel
+  through the slab; the channel's outer wall is a **tongue** cut free by a
+  slot behind it — lying in the slab's plane and bending sideways within
+  it, the cradle library's rule, so no layer bond is ever in tension — with
+  a barb at its free end. The rib's lower end cams the barb aside on the
+  drop (45° lead), rides it, and the barb snaps into a V-notch in the rib
+  as the body lands on the V. Lifting cams it out the same way: click in,
+  click out. The tongue runs the snap library's strain gate (0.6 % against
+  the 2 % PETG budget) and the file echoes the force (about 2 N a side at
+  the barb; the feel is a light, definite click, nowhere near the body's
+  own weight). The spring also presses each rib onto its channel's fixed
+  wall, so the top end sits centered too; nothing on the body flexes, and
+  the spring is on the 10 g part you reprint. A wedged plate thins the
+  tongue by the cube root of its extra depth so the spring rate stays put.
 
 **v0.8 (2026-10-06) — the speaker.** A doorbell that refuses a feed and a
 microphone still owes the visitor one thing the glow ring cannot give: a
@@ -1562,7 +1586,9 @@ the XIAO, leg down through the oval → gasket in the groove, face on (the
 cradle finds the magnet's pad), 12 × M2 × 10 pan heads with their O-rings
 (black-oxide looks best) → wall plate
 on the frame, cable through its slot, offer the body 8 mm high over the
-lugs, drop it into the collar, drive the security screw up through the
+lugs, press it down the slide until it **clicks** (the barbs land in the
+ribs' notches as the body's corners seat in the collar's V), drive the
+security screw up through the
 collar.
 
 | Param | Default | Why you'd change it |
@@ -1574,6 +1600,9 @@ collar.
 | `vm_screws`, `vm_hole_dx` / `vm_hole_dy` | on, 7.5 / 2.5 | the module's two M2 holes (**measure**: ±0.5 off a photo) — the posts under them, relieved past the XIAO's end; the screws are the module's hold-down, so `vm_screws` is asserted on |
 | `cradle_xiao_gap`, `cradle_clear` | 0.4 / 0.25 | the cradle's ledge off the XIAO's edge, and its walls off the module's — the ledge carries what is between them (asserted ≥ 0.4 at the worst shift) |
 | `cradle_win_w` / `cradle_rib_w`, `cradle_foot` / `cradle_lintel` | 6 / 2.4, 1.6 / 1.5 | the vent windows through the cradle's walls: nominal width and the least rib between (the count is what fits), the solid bands under and over them |
+| `dock_v`, `dock_v_lift` | on, 0.15 | the collar's 45° corner gussets the body's round corners seat into, and how far they hold its bottom edge off the bottom wall |
+| `dock_click`, `dock_eng`, `dock_tongue_t` / `dock_tongue_l` | on, 0.5, 1.6 / 14 | the click: the barb's bite (the tongue's deflection and the notch's depth), the tongue's thickness and length — the strain gate and the echoed force follow them |
+| `dock_rib_x` / `dock_rib_y`, `dock_fit` | 10 / 48, 0.2 | where the ribs and their channels sit, and the rib's room to its bearing wall (the spring closes it) |
 | `cam_lip_t` / `cam_ret_t` / `cam_boss_wall` | 1.0 / 1.0 / 1.5 | the lens lip, the retainer ring and the boss it presses into |
 | `usb_plug_reach` / `usb_port_proud` | 13 / 1.3 | the right-angle plug head the well is sized for, asserted clear of the button nut |
 | `opt_batt`, `batt_t/w/l`, `batt_pcm`, `fence_h` | on, 8/20/30, 1, 6 | the LiPo bay — an 802030 class cell; off for a freezing climate |

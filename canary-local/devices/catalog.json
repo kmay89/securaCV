@@ -2450,6 +2450,22 @@
      "default": true
     },
     {
+     "id": "dock_v",
+     "type": "bool",
+     "label": "45° gussets in the collar's bottom corners: the body's round corners seat on two tangent lines (a V-block) under gravity and the security screw",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "dock_click",
+     "type": "bool",
+     "label": "a rib on the body's back rides a channel in the slab; a sprung tongue's barb snaps into the rib's notch at the seat",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_mark",
      "type": "bool",
      "label": "deboss the house wordmark instead of a custom label (exclusive with label_text)",
@@ -2458,14 +2474,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 320,
+   "engineering_param_count": 353,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 15,
-    "user_options": 13,
+    "options": 17,
+    "user_options": 15,
     "variant_axes": 1
    }
   },

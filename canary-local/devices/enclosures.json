@@ -4078,6 +4078,87 @@
      ]
     },
     {
+     "name": "Dock: V-seat + click",
+     "note": "what centers the body on its plate and what you feel when it lands",
+     "params": [
+      {
+       "name": "dock_v",
+       "default": "true",
+       "comment": "45° gussets in the collar's bottom corners: the body's round corners seat on two tangent lines (a V-block) under gravity and the security screw"
+      },
+      {
+       "name": "dock_v_lift",
+       "default": "0.15",
+       "comment": "how far the V holds the body's bottom edge off the collar's bottom wall at nominal — the print's slack lands here, not in a jam"
+      },
+      {
+       "name": "dock_click",
+       "default": "true",
+       "comment": "a rib on the body's back rides a channel in the slab; a sprung tongue's barb snaps into the rib's notch at the seat"
+      },
+      {
+       "name": "dock_rib_x",
+       "default": "10.0",
+       "comment": "the ribs' centerlines, ±X from the axis (between the lug pockets and the screw seats)"
+      },
+      {
+       "name": "dock_rib_y",
+       "default": "48.0",
+       "comment": "the notch (and the barb, seated), Y from the body's center (+ up)"
+      },
+      {
+       "name": "dock_rib_w",
+       "default": "2.0",
+       "comment": "rib width — the channel's bearing wall is dock_fit off its inner face"
+      },
+      {
+       "name": "dock_rib_h",
+       "default": "0.8",
+       "comment": "rib height off the back face (four layers; the barb catches all of it)"
+      },
+      {
+       "name": "dock_rib_l",
+       "default": "8.0",
+       "comment": "rib length along the slide (its lower end clears the barb at the offered height)"
+      },
+      {
+       "name": "dock_notch_in",
+       "default": "2.5",
+       "comment": "the notch's center from the rib's lower end"
+      },
+      {
+       "name": "dock_eng",
+       "default": "0.5",
+       "comment": "the barb's bite into the rib's outer face: the tongue's deflection on the drop, the click's depth"
+      },
+      {
+       "name": "dock_fit",
+       "default": "0.2",
+       "comment": "rib to the channel's bearing wall — the spring closes it"
+      },
+      {
+       "name": "dock_air",
+       "default": "0.3",
+       "comment": "rib to the tongue's face at rest (the barb stands dock_air + dock_eng proud of the face)"
+      },
+      {
+       "name": "dock_tongue_t",
+       "default": "1.6",
+       "comment": "the tongue's thickness in its bending direction (X); a wedged plate thins it to keep the rate"
+      },
+      {
+       "name": "dock_tongue_l",
+       "default": "14.0",
+       "comment": "the tongue, root to barb — the strain gate holds it (snap_strain <= 2 %)"
+      },
+      {
+       "name": "dock_flex",
+       "default": "0.8",
+       "comment": "the slot behind the tongue: its room to bend (> dock_eng)"
+      }
+     ]
+    },
+    {
      "name": "Aesthetics",
      "note": "",
      "params": [
@@ -4905,6 +4986,103 @@
        "name": "weep_x",
        "default": "7.0",
        "comment": "the shell's weep exits its bottom wall here (beside the security screw)"
+      },
+      {
+       "name": "dock_seat_dy",
+       "default": "dock_v ? dock_v_lift : 0",
+       "comment": "the seated body, up the slide from the collar's bottom wall"
+      },
+      {
+       "name": "dock_v_px",
+       "default": "out_x/2 - rr + rr/sqrt(2)",
+       "comment": "the arc's 45° tangent point, +X corner (collar frame)"
+      },
+      {
+       "name": "dock_v_py",
+       "default": "rr - rr/sqrt(2) + dock_v_lift"
+      },
+      {
+       "name": "dock_v_xe",
+       "default": "out_x/2 + collar_clear + 1.0",
+       "comment": "out past the return's inner face"
+      },
+      {
+       "name": "dock_y_r",
+       "default": "out_y/2 + dock_rib_y + dock_seat_dy",
+       "comment": "the barb, plate frame (the notch, seated)"
+      },
+      {
+       "name": "dock_x_w",
+       "default": "dock_rib_x - dock_rib_w/2 - dock_fit",
+       "comment": "the channel's bearing wall"
+      },
+      {
+       "name": "dock_x_t",
+       "default": "dock_rib_x + dock_rib_w/2 + dock_air",
+       "comment": "the tongue's face at rest"
+      },
+      {
+       "name": "dock_barb_b",
+       "default": "dock_air + dock_eng",
+       "comment": "the barb proud of the tongue's face"
+      },
+      {
+       "name": "dock_barb_y",
+       "default": "dock_rib_l - dock_notch_in - 0.5",
+       "comment": "the rib's upper end past the notch... (rib runs dock_notch_in below, dock_rib_l - dock_notch_in above the notch)"
+      },
+      {
+       "name": "dock_h_slab",
+       "default": "plate_z(dock_rib_y + dock_seat_dy) + plate_zx()",
+       "comment": "the slab under the tongue (a wedge thickens it)"
+      },
+      {
+       "name": "dock_t_eff",
+       "default": "max(0.8, dock_tongue_t * pow(wplate_t / dock_h_slab, 1/3))",
+       "comment": "same spring rate whatever the wedge (I ~ h t^3)"
+      },
+      {
+       "name": "dock_y_tip",
+       "default": "dock_y_r - 0.5 - dock_barb_b - 0.3",
+       "comment": "the tongue's free end, past the barb's lower lead"
+      },
+      {
+       "name": "dock_y_root",
+       "default": "dock_y_tip + dock_tongue_l + 0.5 + dock_barb_b + 0.3",
+       "comment": "root: dock_tongue_l above the barb's center"
+      },
+      {
+       "name": "dock_ch_y0",
+       "default": "out_y/2 + dock_rib_y + dock_seat_dy - dock_notch_in - 1.0",
+       "comment": "channel: the seated rib's lower end, 1.0 of room"
+      },
+      {
+       "name": "dock_ch_y1",
+       "default": "out_y/2 + dock_rib_y + dock_seat_dy + (dock_rib_l - dock_notch_in) + mount_dt_travel() + 1.0",
+       "comment": "...to the offered rib's upper end"
+      },
+      {
+       "name": "dock_ch_y1e",
+       "default": "max(dock_ch_y1, dock_y_root + dock_flex)",
+       "comment": "the channel runs past the root's rounded slot end"
+      },
+      {
+       "name": "dock_x_out",
+       "default": "dock_x_t + dock_t_eff + dock_flex",
+       "comment": "the slot's outer wall"
+      },
+      {
+       "name": "dock_strain",
+       "default": "snap_strain(dock_t_eff, dock_eng, dock_tongue_l)"
+      },
+      {
+       "name": "dock_I",
+       "default": "dock_h_slab * pow(dock_t_eff, 3) / 12"
+      },
+      {
+       "name": "dock_force",
+       "default": "3 * 2000 * dock_I * dock_eng / pow(dock_tongue_l, 3)",
+       "comment": "N, one tongue, PETG E ~ 2 GPa"
       },
       {
        "name": "plate_seat_z",
