@@ -61,7 +61,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { createHash } = require("node:crypto");
-const { readFileSync } = require("node:fs");
+const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const R = require("./dashboard_route_tables.js");
 
@@ -85,17 +86,22 @@ const TREES = [
 const catchAll = (g) => g.uri === "/*";
 
 // Per page (R.PAGES): the fewest requests its reader must find (a floor that
-// proves it found the page's script) and the route families nothing in the
-// tree serves, which the page gates on a first answer (F176, F198).
+// proves it found the page's script); how many of them it reads no method
+// for, exactly (a URL the page holds for later: an <img> src, a ternary
+// assigned to a constant, a URL built before its call; each such request is
+// held only to "some method reaches a route", so a reader that stops seeing
+// a call's method, or a new request whose method it cannot read, must show
+// here); and the route families nothing in the tree serves, which the page
+// gates on a first answer (F176, F198).
 const PAGE_EXPECT = {
-  "pio:dashboard": { min: 50, unserved: ["/api/chirp", "/api/bluetooth"] },
-  "pio:setup page": { min: 5, unserved: [] },
-  "wap:admin dashboard": { min: 50, unserved: [] },
-  "wap:Sensing dashboard": { min: 15, unserved: [] },
-  "wap:companion PWA": { min: 10, unserved: [] },
-  "wap:Tuning Lab": { min: 3, unserved: [] },
-  "wap:MQTT page": { min: 3, unserved: [] },
-  "wap:captive page": { min: 0, unserved: [] },
+  "pio:dashboard": { min: 50, noMethod: 14, unserved: ["/api/chirp", "/api/bluetooth"] },
+  "pio:setup page": { min: 5, noMethod: 0, unserved: [] },
+  "wap:admin dashboard": { min: 50, noMethod: 10, unserved: [] },
+  "wap:Sensing dashboard": { min: 15, noMethod: 0, unserved: [] },
+  "wap:companion PWA": { min: 10, noMethod: 0, unserved: [] },
+  "wap:Tuning Lab": { min: 3, noMethod: 0, unserved: [] },
+  "wap:MQTT page": { min: 3, noMethod: 0, unserved: [] },
+  "wap:captive page": { min: 0, noMethod: 0, unserved: [] },
 };
 
 // Raw strings in each tree that are not pages the walk reads, and why; none
@@ -293,6 +299,67 @@ test("the condition reader reads #if, #elif, #else and nesting, and skips guards
   assert.deepStrictEqual(R.condsAt(src, at(19, "int")), ["!defined(FEAT_E)"]);
   assert.deepStrictEqual(R.condsAt(src, at(21, "int")), []);
   assert.throws(() => R.condsAt({ path: "open.h", text: "#if A\nint x;\n" }, 7), /never closed/);
+});
+
+// The page reader the request tests stand on (sweep F238), on a raw-string
+// page with every shape it must read: each call form (api, secureFetch,
+// fetch, cvFetch), a method in single, double or back quotes, an options
+// object over several lines, a method the page computes, a ternary URL, a
+// template, a query and a fragment (neither is part of the path), a
+// double-quoted URL, and URLs held for later (no method).
+test("the page reader reads each call form, quote and URL shape", () => {
+  const page = [
+    "#pragma once",
+    "static const char SYN_HTML[] PROGMEM = R\"SYN(",
+    "<script>",
+    "  cvFetch('/api/a', {method:'POST'});",
+    "  fetch('/api/m', {",
+    "    headers: { 'Content-Type': 'application/json' },",
+    "    method: 'PUT',",
+    "    body: JSON.stringify({ x: 1 })",
+    "  });",
+    "  fetch(\"/api/b\", {method: \"DELETE\"});",
+    "  api('/api/c', 'POST');",
+    "  api(\"/api/c2\", \"PATCH\");",
+    "  secureFetch(on ? '/api/e/enable' : '/api/e/disable', { method: `POST` });",
+    "  fetch(`/api/logs/${seq}/ack`, { method: 'POST' });",
+    "  fetch('/api/d#x');",
+    "  cvFetch('/api/q?x=1&y=2');",
+    "  api('/api/g');",
+    "  fetch('/api/h', { headers: {} });",
+    "  fetch('/api/k', { method: m });",
+    "  fetch('/api/i', opts);",
+    "  const HELD = '/api/held';",
+    "  img.src = \"/api/img?t=\" + Date.now();",
+    "</script>",
+    ")SYN\";",
+  ].join("\n");
+  const dir = mkdtempSync(join(tmpdir(), "route-match-"));
+  try {
+    const path = join(dir, "syn_page.h");
+    writeFileSync(path, page);
+    const got = R.pageRequests({ path, symbol: "SYN_HTML" }).map((r) => [r.route, r.method]);
+    assert.deepStrictEqual(got, [
+      ["/api/a", "POST"],
+      ["/api/m", "PUT"],
+      ["/api/b", "DELETE"],
+      ["/api/c", "POST"],
+      ["/api/c2", "PATCH"],
+      ["/api/e/enable", "POST"],
+      ["/api/e/disable", "POST"],
+      ["/api/logs/1/ack", "POST"],
+      ["/api/d", "GET"],
+      ["/api/q", "GET"],
+      ["/api/g", "GET"],
+      ["/api/h", "GET"],
+      ["/api/k", null],
+      ["/api/i", null],
+      ["/api/held", null],
+      ["/api/img", null],
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // kProbePaths' comment in securacv_network.cpp (sweep F239): the matcher is
@@ -524,6 +591,9 @@ for (const tree of TREES) {
       const asks = pageAsks(table, page);
       const reqs = new Set(asks.map((a) => a.r));
       assert.ok(reqs.size >= PAGE_EXPECT[page.key].min, `the page's requests were read (${reqs.size})`);
+      const held = R.pageRequests(page).filter((r) => !r.method);
+      assert.strictEqual(held.length, PAGE_EXPECT[page.key].noMethod,
+        `requests read with no method (${held.map((r) => `${r.raw} at page line ${r.line}`).join(", ")})`);
       const wrong = [];
       const reached = new Map();
       for (const a of asks) {

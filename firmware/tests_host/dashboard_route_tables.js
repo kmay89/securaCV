@@ -643,20 +643,22 @@ function callArgs(text, open) {
 // The method a request call names: api(url[, 'METHOD']) and
 // secureFetch(url[, { method: 'METHOD' }]) / fetch(url[, {...}]) /
 // cvFetch(url[, {...}]) (the Sensing dashboard's, the Tuning Lab's and the
-// MQTT page's fetch() with the session cookie); none named is GET, and a
-// method the call computes is null (unknown).
+// MQTT page's fetch() with the session cookie); the method a string literal
+// in any quotes ('POST', "POST", `POST`); none named is GET, and a method
+// the call computes is null (unknown).
+const METHOD_LITERAL = /^(['"`])([A-Z]+)\1$/;
 function callMethod(fn, args) {
   if (args.length < 2) return "GET";
   const second = args[1].text;
   if (fn === "api") {
-    const named = second.match(/^'([A-Z]+)'$/);
-    return named ? named[1] : null;
+    const named = second.match(METHOD_LITERAL);
+    return named ? named[2] : null;
   }
   if (!second.startsWith("{")) return null;
   const named = second.match(/\bmethod\s*:\s*([^,}]+)/);
   if (!named) return "GET";
-  const literal = named[1].trim().match(/^'([A-Z]+)'$/);
-  return literal ? literal[1] : null;
+  const literal = named[1].trim().match(METHOD_LITERAL);
+  return literal ? literal[2] : null;
 }
 
 // Every /api/... string or template literal in a page (single, double or
