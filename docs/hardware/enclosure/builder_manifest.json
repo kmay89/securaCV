@@ -2323,7 +2323,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "168affcc462270b219abd7be067e8b153762d0f768b82a9e401b05b60dc3effc",
+      "sha256": "1a5d92cd858aac012c488b5c00f848c084e1343121a4bb38b3801f1b9e06d25a",
       "groups": [
         {
           "name": "What to render",
@@ -2340,7 +2340,7 @@
                 "retainer",
                 "all"
               ],
-              "desc": ""
+              "desc": "// (the speaker has no printed part of its own)"
             }
           ]
         },
@@ -2643,6 +2643,89 @@
               "type": "number",
               "default": 5.0,
               "desc": "air behind the button's terminals for the solder joints and the wire bends toward the"
+            }
+          ]
+        },
+        {
+          "name": "Speaker",
+          "params": [
+            {
+              "name": "opt_spk",
+              "type": "bool",
+              "default": true,
+              "desc": "the speaker zone (grille, boss, cradle, its mid posts); off = the v0.7 body"
+            },
+            {
+              "name": "spk_d",
+              "type": "number",
+              "default": 36.0,
+              "desc": "the driver's outside Ø (its frame or rim)"
+            },
+            {
+              "name": "spk_h",
+              "type": "number",
+              "default": 6.0,
+              "desc": "the driver's depth, rim to magnet back"
+            },
+            {
+              "name": "spk_rim_t",
+              "type": "number",
+              "default": 1.2,
+              "desc": "the frame's rim thickness the boss holds (a mylar driver's plastic frame)"
+            },
+            {
+              "name": "spk_mag_d",
+              "type": "number",
+              "default": 20.0,
+              "desc": "the magnet's Ø — the cradle bears here, through a foam pad"
+            },
+            {
+              "name": "spk_cone_d",
+              "type": "number",
+              "default": 30.0,
+              "desc": "the grille's Ø over the cone (the holes stay inside the surround)"
+            },
+            {
+              "name": "spk_gap",
+              "type": "number",
+              "default": 2.0,
+              "desc": "air round the driver to its zone's ends"
+            },
+            {
+              "name": "spk_gasket_t",
+              "type": "number",
+              "default": 1.0,
+              "desc": "the foam ring between the driver's rim and the face (compressed from ~1.5)"
+            },
+            {
+              "name": "spk_pad_t",
+              "type": "number",
+              "default": 1.0,
+              "desc": "the foam pad between the magnet and the cradle"
+            },
+            {
+              "name": "spk_boss_wall",
+              "type": "number",
+              "default": 1.5,
+              "desc": "the boss ring's wall on the face's inner side"
+            },
+            {
+              "name": "spk_mesh_t",
+              "type": "number",
+              "default": 0.3,
+              "desc": "the acoustic mesh patch's seat depth on the inner face (the patch is 0.2–0.3)"
+            },
+            {
+              "name": "grille_hole_d",
+              "type": "number",
+              "default": 1.0,
+              "desc": "grille holes — the outdoor insect rule (<= 1.0)"
+            },
+            {
+              "name": "grille_pitch",
+              "type": "number",
+              "default": 2.6,
+              "desc": "ring-to-ring spacing of the grille holes"
             }
           ]
         },
@@ -3403,6 +3486,11 @@
               "type": "number",
               "default": 0,
               "desc": "the lens stays on the face's centerline (vm_cx is derived below)"
+            },
+            {
+              "name": "spk_post_dy",
+              "type": "number",
+              "default": 16.0
             },
             {
               "name": "sec_boss_d",

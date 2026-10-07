@@ -62,7 +62,7 @@ aperture and radome window, as `features_mm`), each manifest-owned device's
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
 - [Design rules](./DESIGN_RULES.md) — the plastics-engineering checklist every shell here is held to (walls, coves, ribs, bosses, snaps, seals, drains, keys, lead-ins, print pose), each rule with the library module or CI gate that enforces it and the file-by-file status
 - [Audit, 2026-09](./AUDIT_2026_09.md) — an eleven-dimension design audit of every `.scad` here (ribs, drop, weather, openings, clearances, printability, assembly, repairability, parametric UX, aesthetics): what was found, what was fixed, and what is still open — each finding proved by a rendered probe rather than by reading a comment
-- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v06) · [Doorbell](#canary-vision--doorbell-v07) · [Sense radome](#canary-sense--radome-enclosure-v02)
+- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v06) · [Doorbell](#canary-vision--doorbell-v08) · [Sense radome](#canary-sense--radome-enclosure-v02)
 
 ## The complete file map
 
@@ -144,7 +144,7 @@ minutes.
 | **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [hood](./canary_vision_enclosure_xiao_weather_hood.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
 | **Vision · devkit indoor** | Grove-cabled ESP32-C3-DevKitM-1 host | <img src="./preview_vision_devkit.png" width="260"> | [back](./canary_vision_enclosure_devkit_indoor_back.stl) · [front](./canary_vision_enclosure_devkit_indoor_front.stl) |
 | **Vision · mount kit** | wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob | <img src="./preview_vision_bracket.png" width="180"> <img src="./preview_vision_knob.png" width="120"> | [bracket](./canary_vision_enclosure_bracket.stl) · [knob](./canary_vision_enclosure_knob.stl) |
-| **Vision · DOORBELL** | Wyze/Ring form factor: camera + button, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) · [retainer](./canary_vision_doorbell_retainer.stl) |
+| **Vision · DOORBELL** | Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) · [retainer](./canary_vision_doorbell_retainer.stl) |
 | **Sense · radome** | MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob) | <img src="./preview_sense.png" width="260"> | [back](./canary_sense_back.stl) · [front](./canary_sense_front.stl) |
 | **Thermal / outdoor kit** | solar radiation shield (weather WAP) + universal desiccant tray | — | [shield](./canary_wap_enclosure_weather_shield.stl) · [tray](./canary_wap_enclosure_tray.stl) |
 
@@ -1150,7 +1150,7 @@ up, presses into the groove (`tol_press`) and is bonded with neutral-cure
 silicone.
 
 **v0.6 (2026-10): the camera hole moves to the lens, and the front prints
-clean.** These are the [doorbell v0.6](#canary-vision--doorbell-v07) findings
+clean.** These are the [doorbell v0.6](#canary-vision--doorbell-v08) findings
 applied here, and every front STL is re-cut:
 
 - **The camera hole was in the wrong place.** The posts sat on the camera
@@ -1241,18 +1241,56 @@ the fin round-overs self-supporting). Gasket in TPU 90–95A.
 
 ---
 
-# Canary Vision — Doorbell (v0.7)
+# Canary Vision — Doorbell (v0.8)
 
 The stacked-XIAO Vision build in a **video-doorbell form factor**
 ([`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad)): a
-vertical pill, **51.5 × 129.2 × 29.2 mm** on a 5 mm wall plate — the Ring
+vertical pill, **51.5 × 169.2 × 29.2 mm** on a 5 mm wall plate — the Ring
 Wired is 98 × 46 × 22, the Wyze 93 × 41 × 22, the Aqara G410 141 × 65 × 30 —
 with the OV5647 behind a sealed disc at the top, the module + stacked XIAO
-in the middle beside a **LiPo bay** and an **antenna landing**, and a
-**12 mm illuminated momentary button** (short body, IP65, on the XIAO's D1
-with its LED ring on D2 —
+in the middle beside a **LiPo bay** and an **antenna landing**, a
+**36 mm speaker** behind a grille, and a **12 mm illuminated momentary
+button** (short body, IP65, on the XIAO's D1 with its LED ring on D2 and
+the speaker on D3 —
 [wiring, parts and firmware](../canary_vision_doorbell_wiring.md)) at the
-bottom.
+bottom. Without the speaker (`opt_spk = false`) the body is the v0.7's
+129.2 mm.
+
+**v0.8 (2026-10-06) — the speaker.** A doorbell that refuses a feed and a
+microphone still owes the visitor one thing the glow ring cannot give: a
+sound that says the house heard the press, loud enough for a busy street.
+A **speaker zone** goes in between the button and the cable well:
+
+- **The driver.** A 36 mm sealed full-range driver (4 Ω, 3 W class, ≥ 88
+  dB/W/m, ≤ 6 mm deep — BOM SPK1) on a 2.5 W class-D amplifier (PAM8302A
+  class, AMP1) fed by one PWM pin. The **target** is a chime that carries
+  over a 70–75 dB street; the arithmetic says about 90 dB at 1 m before the
+  grille and the filter's losses, and **no unit has been metered yet** (the
+  wiring page's "What's not done" owns that number). The firmware plays a
+  two-note **chime** on every sealed ring, a soft **tick** on a repeat or an
+  unsigned ring, and three **reply tones** the household sends
+  from Home Assistant; it is host-tested to start and end in silence and
+  never clip (`firmware/common/doorbell/doorbell_audio.h`).
+- **The seat.** No screw touches the driver. Its rim drops into a **boss
+  ring** on the face's inner side over a foam gasket (FOAM2); a **cradle**
+  tube on the plate presses its magnet through a foam pad (FOAM3) when the
+  plate screws down. Printed face-down, the boss and the grille's holes
+  need no bridge.
+- **The grille.** Rings of **Ø1.0 holes** (the outdoor insect rule) over
+  the cone, with an **acoustic mesh patch** (MESH1, hydrophobic) seated on
+  the face's inner side: rain stays out, sound goes through. The mesh seat
+  is cut on the inner side for the same reason the vent's is.
+- **The posts.** The zone's walls carry a mid-post pair each side of the
+  cone, placed where the circle leaves room at the wall (asserted clear of
+  the driver), so every gasket clamp span stays under 40 mm: **12 plate
+  screws** now (M2 × 10 with their O-rings). The middle dovetail lug moves
+  below the cable exit, which now sits near the body's middle.
+- **The amplifier** parks on edge against the −X wall beside the button,
+  long side vertical, in the 18 mm between the bottom corner post and the
+  speaker zone's first post (probed with a 20 × 18 × 3 board: it fits);
+  its filter parts ride on it. The XIAO's D3 — the module socket's unused
+  SPI chip select — is the audio pin; the stacked build has no header pin
+  left after it.
 
 **v0.7 (2026-10-05) — the first print's findings.** A built v0.6, loaded
 with the real stack, taught these; every doorbell STL is re-cut and there
@@ -1301,7 +1339,8 @@ is a fifth printed part:
   **802030-class LiPo** (8 × 20 × 30, 400–450 mAh, protected) stands on
   edge between the −X mid posts — now its end stops — behind a 6 mm fence,
   on a foam strip, under the face: ride-through for a USB supply that
-  browns out, charged by the XIAO's own charger (the C3's ~370 mA is < 1C
+  browns out (the record and the glow; the v0.8 speaker's amplifier hangs
+  off the USB-only 5V pin and stays silent), charged by the XIAO's own charger (the C3's ~370 mA is < 1C
   on this cell, the one size in its family that is). **Neither XIAO charger
   has a cold cutoff**, and a LiPo must not charge below 0 °C: in a freezing
   climate leave the cell out (`opt_batt` off, or just an empty bay;
@@ -1404,16 +1443,21 @@ face, no side openings at all — the only penetrations are the sealed lens
 disc, the IP65 button, and the rear exit against the wall. Same honest ~IP54
 rating; a porch or doorway soffit is its natural habitat.
 
-**Assembly (v0.7):** a bead of neutral-cure silicone round the lip's ledge
+**Assembly (v0.8):** a bead of neutral-cure silicone round the lip's ledge
 inside the face, drop the **disc** in, press the **retainer ring** in behind
 it (bore toward the cavity) → camera to the four face posts (4 × M2 × 5),
 the lens barrel finds the retainer's bore → **stick an adhesive GORE/ePTFE
 membrane patch over the vent cluster on the face's INNER side** (the
 default face has the vent holes — without the membrane they defeat the
-seal; the Ø2 weep through the bottom wall drains any condensate) → mount
-the **button** through the face, nut on, and wire it per the
+seal; the Ø2 weep through the bottom wall drains any condensate) → stick
+the **acoustic mesh patch** into its seat over the speaker grille, drop
+the **foam ring** into the speaker boss and the **driver** onto it, rim
+first, leads toward the button → mount the **button** through the face,
+nut on, and wire it and the **amplifier** per the
 [wiring page](../canary_vision_doorbell_wiring.md) (the wires turn toward
-the well, not the bottom wall) → on the plate: if you are fitting the
+the well, not the bottom wall; the amplifier stands on edge beside the
+button between the posts, taped to the wall) → on the plate: stick the **foam pad** on the
+cradle's top → if you are fitting the
 battery, solder its leads to the XIAO's BAT pads *before* seating the XIAO
 (the pads face the module), seat the XIAO in the module (**USB-Cs same
 direction!**), press the stack down between the guides until all four
@@ -1422,8 +1466,9 @@ clips click (its bottom edge sits on the shoes' stops), drive the two
 stick the **antenna** to the +X wall of the face between its ribs and run
 the pigtail under the module to the XIAO's u.FL → foam strip in the bay,
 cell in on edge (leads toward the well) → plug the right-angle USB-C into
-the XIAO, leg down through the oval → gasket in the groove, face on, 8 ×
-M2 × 10 pan heads with their O-rings (black-oxide looks best) → wall plate
+the XIAO, leg down through the oval → gasket in the groove, face on (the
+cradle finds the magnet's pad), 12 × M2 × 10 pan heads with their O-rings
+(black-oxide looks best) → wall plate
 on the frame, cable through its slot, offer the body 8 mm high over the
 lugs, drop it into the collar, drive the security screw up through the
 collar.
@@ -1440,6 +1485,8 @@ collar.
 | `opt_batt`, `batt_t/w/l`, `batt_pcm`, `fence_h` | on, 8/20/30, 1, 6 | the LiPo bay — an 802030 class cell; off for a freezing climate |
 | `opt_ant`, `ant_l` / `ant_w`, `ant_post_gap` | on, 40 / 20, 1.0 | the FPC antenna landing on the +X wall and the posts' stand-off |
 | `head_floor` | 2.0 | solid plastic under every recessed head (sets the plate recess and screw length, gates `wplate_t`) |
+| `opt_spk`, `spk_d` / `spk_h` / `spk_mag_d`, `spk_cone_d` | on, 36 / 6 / 20, 30 | the speaker zone: the driver's rim, depth and magnet (**measure the part in hand**), the grille's Ø over the cone |
+| `spk_post_dy`, `grille_hole_d` / `grille_pitch` | 16, 1.0 / 2.6 | where the zone's mid posts sit off the driver's axis (asserted clear of it); the grille's holes (≤ 1.0, the insect rule) |
 | `lens_dx/dy`, `cam_grid_dy`, `cam_lens_h`, `cam_barrel_d` | 0, −1.7 / 4.05 / 5.0 / 7.0 | the OV5647-62 as the vendor CAD draws it — re-measure if your camera is a different carrier |
 | `cam_fov` / `cam_fov_margin` | 62 / 4 | the lens's diagonal FOV (datasheet) and the margin the hole's cone keeps around it |
 | `lug_y` / `lug_mid_y` / `dt_clear` | 41.5 / 6 / 0.2 | where the dovetail lugs park (clear of the cable slot); the pocket fit (dial it on the coupon's POCKET station) |

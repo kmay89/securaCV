@@ -44,6 +44,10 @@ struct Topics {
   char doorbell_state[96];
   char doorbell_enable_cmd[96];
   char doorbell_glow_cmd[96];
+  // the speaker (canary/doorbell_audio.h): the volume number and the reply
+  // select — a tone the household sends the visitor, never speech
+  char doorbell_volume_cmd[96];
+  char doorbell_reply_cmd[96];
 };
 
 // device_id comes from canary::cfg::get() — NVS-backed, so topics stay
@@ -74,5 +78,7 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.doorbell_state,      sizeof(t.doorbell_state),      "securacv/%s/doorbell/state",      device_id);
   snprintf(t.doorbell_enable_cmd, sizeof(t.doorbell_enable_cmd), "securacv/%s/doorbell/enable/set", device_id);
   snprintf(t.doorbell_glow_cmd,   sizeof(t.doorbell_glow_cmd),   "securacv/%s/doorbell/glow/set",   device_id);
+  snprintf(t.doorbell_volume_cmd, sizeof(t.doorbell_volume_cmd), "securacv/%s/doorbell/volume/set", device_id);
+  snprintf(t.doorbell_reply_cmd,  sizeof(t.doorbell_reply_cmd),  "securacv/%s/doorbell/reply/set",  device_id);
   return t;
 }

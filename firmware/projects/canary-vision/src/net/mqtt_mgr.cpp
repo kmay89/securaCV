@@ -29,6 +29,7 @@
 #include "canary/version.h"             // CANARY_FW_VERSION for the health publish
 #include "canary/witness.h"             // chain head/length for the chain publish
 #include "canary/doorbell.h"            // the doorbell state row (switch, glow, button health)
+#include "canary/doorbell_audio.h"      // ...and its speaker (volume, the last reply tone)
 
 namespace canary::net {
 
@@ -86,6 +87,8 @@ static volatile long s_pending_cfg_profile = -1;
 // applies them through canary::doorbell_hw and republishes the state row).
 static volatile int s_pending_db_enable = -1;
 static volatile long s_pending_db_glow = -1;
+static volatile long s_pending_db_volume = -1;
+static volatile int s_pending_db_reply = 0;     // a doorbell::Phrase index, 0 = none
 
 static bool token_at(const char* p, int n, const char* tok, int tok_len) {
   auto boundary = [](char c) {
@@ -164,6 +167,22 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
   }
   if (strcmp(topic, g_topics.doorbell_glow_cmd) == 0) {
     s_pending_db_glow = parse_cfg_number(payload, len, 100);
+    return;
+  }
+  if (strcmp(topic, g_topics.doorbell_volume_cmd) == 0) {
+    s_pending_db_volume = parse_cfg_number(payload, len, 100);
+    return;
+  }
+  if (strcmp(topic, g_topics.doorbell_reply_cmd) == 0) {
+    // HA's select sends the option's text; the names are doorbell_audio.h's
+    const char* q = (const char*)payload;
+    int m = (int)len;
+    while (m > 0 && (*q == ' ' || *q == '\t' || *q == '"')) { q++; m--; }
+    const ::doorbell::Phrase replies[] = {::doorbell::Phrase::WAIT, ::doorbell::Phrase::LEAVE, ::doorbell::Phrase::NO};
+    for (::doorbell::Phrase p : replies) {
+      const char* name = ::doorbell::phrase_name(p);
+      if (token_at(q, m, name, (int)strlen(name))) { s_pending_db_reply = (int)p; return; }
+    }
     return;
   }
   if (strcmp(topic, g_topics.doorbell_enable_cmd) == 0) {
@@ -252,6 +271,13 @@ long take_pending_cfg_lost()    { return take_pending(s_pending_cfg_lost); }
 long take_pending_cfg_dwell()   { return take_pending(s_pending_cfg_dwell); }
 long take_pending_cfg_profile() { return take_pending(s_pending_cfg_profile); }
 long take_pending_doorbell_glow()  { return take_pending(s_pending_db_glow); }
+long take_pending_doorbell_volume() { return take_pending(s_pending_db_volume); }
+
+int take_pending_doorbell_reply() {
+  const int v = s_pending_db_reply;
+  s_pending_db_reply = 0;
+  return v;
+}
 
 int take_pending_doorbell_enable() {
   const int v = s_pending_db_enable;
@@ -602,6 +628,10 @@ bool mqtt_connect_attempt() {
   if (canary::doorbell_hw::available()) {
     mqtt.subscribe(g_topics.doorbell_enable_cmd, 1);
     mqtt.subscribe(g_topics.doorbell_glow_cmd, 1);
+    if (canary::doorbell_audio::available()) {
+      mqtt.subscribe(g_topics.doorbell_volume_cmd, 1);
+      mqtt.subscribe(g_topics.doorbell_reply_cmd, 1);
+    }
     publish_doorbell_state_retained(g_topics);
   }
   return true;
@@ -614,14 +644,17 @@ bool publish_doorbell_press(const Topics& topics) {
 
 bool publish_doorbell_state_retained(const Topics& topics) {
   if (!mqtt.connected() || !canary::doorbell_hw::available()) return false;
-  char msg[160];
+  char msg[256];
   snprintf(msg, sizeof(msg),
            "{"
            "\"enabled\":\"%s\","
            "\"glow\":%u,"
            "\"button\":\"%s\","
            "\"rings\":%lu,"
-           "\"repeats\":%lu"
+           "\"repeats\":%lu,"
+           "\"volume\":%u,"
+           "\"reply\":\"%s\","
+           "\"speaker\":\"%s\""
            "}",
            canary::doorbell_hw::enabled() ? "ON" : "OFF",
            (unsigned)canary::doorbell_hw::glow_pct(),
@@ -629,7 +662,12 @@ bool publish_doorbell_state_retained(const Topics& topics) {
            : canary::doorbell_hw::ring_fault() ? "ring_fault"
                                                : "ok",
            (unsigned long)canary::doorbell_hw::rings(),
-           (unsigned long)canary::doorbell_hw::repeats());
+           (unsigned long)canary::doorbell_hw::repeats(),
+           (unsigned)canary::doorbell_audio::volume(),
+           ::doorbell::phrase_name(canary::doorbell_audio::last_reply()),
+           !canary::doorbell_audio::available() ? "none"
+           : canary::doorbell_audio::fault()    ? "fault"
+                                                : "ok");
   return publish_checked("BELL", topics.doorbell_state, msg, true);
 }
 

@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640" width="960" height="640" font-family="Helvetica, Arial, sans-serif" font-size="14">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 900" width="960" height="900" font-family="Helvetica, Arial, sans-serif" font-size="14">
   <title>Canary Vision Doorbell: button and glow ring wiring</title>
-  <desc>XIAO D1 reads the button through a 1k resistor with a 100nF filter; XIAO D2 drives a 2N3904 low-side switch for the button's LED ring, which is powered from the XIAO 5V pin. The button's common terminal goes to ground.</desc>
-  <rect x="0" y="0" width="960" height="640" fill="#ffffff"/>
+  <desc>XIAO D1 reads the button through a 1k resistor with a 100nF filter; XIAO D2 drives a 2N3904 low-side switch for the button's LED ring, which is powered from the XIAO 5V pin. The button's common terminal goes to ground. Below: XIAO D3's PWM audio runs through a two-pole RC filter, a coupling capacitor and a divider into a PAM8302A class-D amplifier powered from 5V, which drives the 36 mm sealed speaker.</desc>
+  <rect x="0" y="0" width="960" height="900" fill="#ffffff"/>
 
   <text x="30" y="40" font-size="20" font-weight="bold" fill="#1d1d1f">Canary Vision Doorbell — button + glow ring</text>
-  <text x="30" y="62" fill="#555">All inside the doorbell body. Only the XIAO's 5V, GND, D1 and D2 are used.</text>
+  <text x="30" y="62" fill="#555">All inside the doorbell body. Only the XIAO's 5V, GND, D1, D2 and (v0.8) D3 are used.</text>
 
   <!-- XIAO -->
   <rect x="40" y="110" width="250" height="440" rx="14" fill="#f4f4f6" stroke="#1d1d1f" stroke-width="2"/>
@@ -102,4 +102,86 @@
     <text x="30" y="626" font-weight="bold">Dark:</text>
     <text x="80" y="626">R4 holds the ring off while D2 floats (at boot, and on any Vision whose doorbell is switched off).</text>
   </g>
+
+  <!-- ===== v0.8: the speaker ===== -->
+  <line x1="30" y1="648" x2="930" y2="648" stroke="#ddd" stroke-width="1"/>
+  <text x="30" y="676" font-size="16" font-weight="bold" fill="#1d1d1f">The speaker (v0.8) — XIAO D3 → filter → PAM8302A → 36 mm sealed driver</text>
+
+  <!-- D3 pad -->
+  <circle cx="60" cy="740" r="6" fill="#2a9d8f"/>
+  <text x="52" y="724" fill="#1d1d1f" font-weight="bold">D3</text>
+  <text x="30" y="770" fill="#777" font-size="11">PWM audio 78 kHz</text>
+  <text x="30" y="784" fill="#777" font-size="11">S3 GPIO4 · C3 GPIO5</text>
+
+  <!-- R6, C3, R7, C5 -->
+  <line x1="60" y1="740" x2="100" y2="740" stroke="#2a9d8f" stroke-width="3"/>
+  <rect x="100" y="730" width="50" height="20" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="125" y="722" text-anchor="middle" fill="#1d1d1f" font-size="12">R6 1 kΩ</text>
+  <line x1="150" y1="740" x2="210" y2="740" stroke="#2a9d8f" stroke-width="3"/>
+  <circle cx="180" cy="740" r="4" fill="#2a9d8f"/>
+  <line x1="180" y1="740" x2="180" y2="790" stroke="#2a9d8f" stroke-width="3"/>
+  <line x1="164" y1="790" x2="196" y2="790" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="164" y1="800" x2="196" y2="800" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="180" y1="800" x2="180" y2="850" stroke="#1d1d1f" stroke-width="3"/>
+  <text x="200" y="800" fill="#1d1d1f" font-size="12">C3 22 nF</text>
+  <rect x="210" y="730" width="50" height="20" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="235" y="722" text-anchor="middle" fill="#1d1d1f" font-size="12">R7 1 kΩ</text>
+  <line x1="260" y1="740" x2="320" y2="740" stroke="#2a9d8f" stroke-width="3"/>
+  <circle cx="290" cy="740" r="4" fill="#2a9d8f"/>
+  <line x1="290" y1="740" x2="290" y2="790" stroke="#2a9d8f" stroke-width="3"/>
+  <line x1="274" y1="790" x2="306" y2="790" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="274" y1="800" x2="306" y2="800" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="290" y1="800" x2="290" y2="850" stroke="#1d1d1f" stroke-width="3"/>
+  <text x="310" y="800" fill="#1d1d1f" font-size="12">C5 22 nF</text>
+
+  <!-- C4 coupling, R8/R9 divider -->
+  <line x1="326" y1="728" x2="326" y2="752" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="336" y1="728" x2="336" y2="752" stroke="#1d1d1f" stroke-width="3"/>
+  <text x="331" y="722" text-anchor="middle" fill="#1d1d1f" font-size="12">C4 1 µF</text>
+  <line x1="336" y1="740" x2="400" y2="740" stroke="#2a9d8f" stroke-width="3"/>
+  <circle cx="370" cy="740" r="4" fill="#2a9d8f"/>
+  <rect x="360" y="755" width="20" height="40" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="386" y="780" fill="#1d1d1f" font-size="12">R9 2.2 kΩ</text>
+  <line x1="370" y1="795" x2="370" y2="850" stroke="#1d1d1f" stroke-width="3"/>
+  <rect x="400" y="730" width="50" height="20" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="425" y="722" text-anchor="middle" fill="#1d1d1f" font-size="12">R8 10 kΩ</text>
+  <text x="425" y="765" text-anchor="middle" fill="#777" font-size="11">(R8 before R9: ~0.6 V peak)</text>
+  <line x1="450" y1="740" x2="520" y2="740" stroke="#2a9d8f" stroke-width="3"/>
+
+  <!-- amplifier -->
+  <rect x="520" y="690" width="170" height="130" rx="10" fill="#f4f4f6" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="605" y="712" text-anchor="middle" font-weight="bold" fill="#1d1d1f">AMP1 PAM8302A</text>
+  <text x="605" y="727" text-anchor="middle" fill="#777" font-size="11">class-D, 2.5 W into 4 Ω</text>
+  <text x="528" y="745" fill="#1d1d1f" font-size="12">A+</text>
+  <text x="528" y="775" fill="#1d1d1f" font-size="12">A−</text>
+  <text x="528" y="805" fill="#1d1d1f" font-size="12">GND</text>
+  <text x="640" y="745" fill="#1d1d1f" font-size="12">VIN · SD</text>
+  <text x="662" y="790" fill="#1d1d1f" font-size="12">+</text>
+  <text x="662" y="812" fill="#1d1d1f" font-size="12">−</text>
+  <!-- A- to GND via 1 uF -->
+  <line x1="520" y1="770" x2="480" y2="770" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="470" y1="758" x2="470" y2="782" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="460" y1="758" x2="460" y2="782" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="460" y1="770" x2="440" y2="770" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="440" y1="770" x2="440" y2="850" stroke="#1d1d1f" stroke-width="3"/>
+  <text x="446" y="800" fill="#1d1d1f" font-size="12">1 µF</text>
+  <!-- GND -->
+  <line x1="520" y1="800" x2="500" y2="800" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="500" y1="800" x2="500" y2="850" stroke="#1d1d1f" stroke-width="3"/>
+  <line x1="60" y1="850" x2="930" y2="850" stroke="#1d1d1f" stroke-width="3"/>
+  <text x="900" y="868" fill="#1d1d1f" font-weight="bold" font-size="12">GND</text>
+  <!-- 5V -->
+  <polyline points="690,740 720,740 720,700 740,700" fill="none" stroke="#d33a2c" stroke-width="3"/>
+  <circle cx="740" cy="700" r="6" fill="#d33a2c"/>
+  <text x="752" y="704" fill="#1d1d1f" font-weight="bold">XIAO 5V</text>
+  <!-- speaker -->
+  <line x1="690" y1="786" x2="740" y2="786" stroke="#2a9d8f" stroke-width="3"/>
+  <line x1="690" y1="808" x2="740" y2="808" stroke="#2a9d8f" stroke-width="3"/>
+  <rect x="740" y="770" width="24" height="54" fill="#ffffff" stroke="#1d1d1f" stroke-width="2"/>
+  <polygon points="764,770 820,745 820,849 764,824" fill="#fffbe6" stroke="#1d1d1f" stroke-width="2"/>
+  <text x="840" y="790" fill="#1d1d1f" font-weight="bold" font-size="12">SPK1</text>
+  <text x="840" y="805" fill="#777" font-size="11">36 mm sealed, 4 Ω, 3 W</text>
+  <text x="840" y="819" fill="#777" font-size="11">~90 dB at 1 m with AMP1</text>
+
+  <text x="30" y="890" fill="#1d1d1f" font-size="12"><tspan font-weight="bold">Sound:</tspan> a two-note chime on a sealed ring, a soft tick on a repeat, three reply tones from Home Assistant. Tones only — no microphone, no voice.</text>
 </svg>

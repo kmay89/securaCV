@@ -11,6 +11,7 @@
 #include "canary/detect_config.h"   // bounds for the settings number entities
 #include "canary/detect_profiles.h" // watch profile options for the select
 #include "canary/doorbell.h"         // the Vision Doorbell: switch, event, glow, button health
+#include "canary/doorbell_audio.h"   // ...and its speaker: the volume number, the reply select
 
 namespace canary::ha {
 
@@ -531,6 +532,60 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
                "}",
                DEVICE_ID, topics.doorbell_state, availObj, devObj);
       publish_cfg(mqtt, t, on ? p : "");
+    }
+    // The speaker (canary/doorbell_audio.h, boards with DOORBELL_AUDIO_PIN):
+    // the chime's volume, and the reply select — three TONES the household
+    // can send the visitor ("we're coming", "leave it", "no thanks"), the
+    // quick replies a witness can make without a voice (dossier §4.3). The
+    // option texts are doorbell_audio.h's phrase_name()s, which the device
+    // matches on the command topic.
+    if (canary::doorbell_audio::available()) {
+      static_assert(::doorbell::kVolumeMin == 0 && ::doorbell::kVolumeMax == 100,
+                    "the Doorbell volume number's min/max literals follow doorbell_audio.h");
+      // the select's option literals are doorbell_audio.h's phrase_name()s,
+      // which the device matches on the command topic — held here, not trusted
+      static_assert(::doorbell::same_name(::doorbell::phrase_name(::doorbell::Phrase::NONE), "—")
+                    && ::doorbell::same_name(::doorbell::phrase_name(::doorbell::Phrase::WAIT), "we're coming")
+                    && ::doorbell::same_name(::doorbell::phrase_name(::doorbell::Phrase::LEAVE), "leave it")
+                    && ::doorbell::same_name(::doorbell::phrase_name(::doorbell::Phrase::NO), "no thanks"),
+                    "the Doorbell reply select's option literals follow doorbell_audio.h's phrase_name()");
+      {
+        char t[192], p[1024];
+        topic_for("number", "doorbell_volume", t, sizeof(t));
+        snprintf(p, sizeof(p),
+                 "{"
+                 "\"name\":\"Doorbell volume\","
+                 "\"unique_id\":\"%s_doorbell_volume\","
+                 "\"state_topic\":\"%s\","
+                 "\"value_template\":\"{{ value_json.volume }}\","
+                 "\"command_topic\":\"%s\","
+                 "\"min\":0,\"max\":100,\"step\":10,"
+                 "\"mode\":\"slider\","
+                 "\"unit_of_measurement\":\"%%\","
+                 "\"icon\":\"mdi:volume-high\","
+                 "\"entity_category\":\"config\","
+                 "%s,%s"
+                 "}",
+                 DEVICE_ID, topics.doorbell_state, topics.doorbell_volume_cmd, availObj, devObj);
+        publish_cfg(mqtt, t, on ? p : "");
+      }
+      {
+        char t[192], p[1024];
+        topic_for("select", "doorbell_reply", t, sizeof(t));
+        snprintf(p, sizeof(p),
+                 "{"
+                 "\"name\":\"Doorbell reply\","
+                 "\"unique_id\":\"%s_doorbell_reply\","
+                 "\"state_topic\":\"%s\","
+                 "\"value_template\":\"{{ value_json.reply }}\","
+                 "\"command_topic\":\"%s\","
+                 "\"options\":[\"—\",\"we're coming\",\"leave it\",\"no thanks\"],"
+                 "\"icon\":\"mdi:bullhorn-outline\","
+                 "%s,%s"
+                 "}",
+                 DEVICE_ID, topics.doorbell_state, topics.doorbell_reply_cmd, availObj, devObj);
+        publish_cfg(mqtt, t, on ? p : "");
+      }
     }
   }
 
