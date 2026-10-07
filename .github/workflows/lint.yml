@@ -202,6 +202,15 @@ jobs:
         # research docs) and allowlists only the files that state the rule or
         # test for it.
         run: python3 scripts/lint_fleet_word.py
+      - name: No compiled binary committed
+        # The host-test Makefiles build into build/, but a hand build beside
+        # the source (`g++ test_x.cpp -o test_x`) leaves an extensionless
+        # executable there that `git add -A` takes: #1776 committed a 21 KB
+        # x86-64 ELF as firmware/tests_host/test_doorbell_audio and no gate
+        # looked. This reads the magic bytes of every tracked file (ELF,
+        # Mach-O, PE, ar) and refuses what it cannot read rather than pass it;
+        # scripts/tests/test_lint_no_binaries.py pins each verdict.
+        run: python3 scripts/lint_no_binaries.py
       - name: No benchmark number committed (AGENTS.md rule 4)
         # tests/bench_harness.rs prints Markdown tables, and docs/BENCHMARKS.md
         # says no number a run prints is ever committed. The check's input is
