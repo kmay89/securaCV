@@ -111,5 +111,39 @@ bool setup_portal_take_joined();
 /** @brief Tear down unconditionally (rare; teardown is normally automatic). */
 void setup_portal_stop();
 
+// ── The second door: a join handed in over Improv Wi-Fi (BLE) ─────────────
+// The portal is up exactly when a phone may hand this device its Wi-Fi, so
+// the Bluetooth door (common/network/improv_ble) feeds the SAME join path as
+// the wizard's POST /join: Testing, persist only on success, the linger, the
+// teardown, the joined latch the board's wifi_mgr adopts. Nothing is
+// duplicated and the two doors cannot disagree about what "joined" means.
+
+/// What the current join (if any) is doing — the /status vocabulary.
+enum class SetupPortalJoin : uint8_t { Idle, Connecting, Success, Fail };
+
+/**
+ * @brief Start a join with credentials from the Bluetooth door.
+ *
+ * False when the portal is not up, the credentials are out of WPA2's bounds
+ * (SSID 1..32, password 0..64 bytes), or a wizard join is already testing —
+ * the caller refuses its own request and the join in flight keeps the radio.
+ */
+bool setup_portal_submit_join(const char* ssid, const char* pass, uint32_t now_ms);
+
+/** @brief The verdict of the last submitted join (Idle while a quiet
+ *  background retry runs — that one is nobody's request). */
+SetupPortalJoin setup_portal_join_state();
+
+/** @brief Why the last join failed, in the shared join-failure words; ""
+ *  unless the state is Fail. */
+const char* setup_portal_fail_reason();
+
+/**
+ * @brief The phone has seen the success verdict over its own door: start the
+ * short linger beat now instead of waiting out the cap. (The wizard's
+ * /status poll does this for the SoftAP door.)
+ */
+void setup_portal_note_acked(uint32_t now_ms);
+
 }  // namespace net
 }  // namespace canary

@@ -38,6 +38,9 @@ final class FleetStore: ObservableObject {
     // radios may run. No mDNS browse, no BLE scan — and therefore no iOS
     // Local Network / Bluetooth permission dialog — before the user says so.
     @Published private(set) var discoveryConsent: Bool?
+    /// Setup-door suffixes ("AB12") the person waved away this session: the
+    /// card stays quiet for them until the app is relaunched.
+    @Published private(set) var dismissedNearby: Set<String> = []
 
     // Collaborators
     let devices: DeviceStore
@@ -278,6 +281,23 @@ final class FleetStore: ObservableObject {
             // "false" only ever errs toward not scanning.
             WatchLink.shared.pushCurrent()
         }
+    }
+
+    /// Brand-new Canaries heard with their Bluetooth setup door open — the
+    /// "new Canary nearby" card's rows (Shared/NearbyCanary.swift decides;
+    /// the transport only hears). Empty without discovery consent: the scan
+    /// behind it is the same one the Fleet tab asks consent for.
+    var nearbyCanaries: [NearbyCanary] {
+        guard discoveryConsent == true else { return [] }
+        let paired = witnesses.map(\.fingerprint).filter { !$0.isEmpty }
+        return NearbyCanaries.candidates(from: Array(ble.heard.values),
+                                         pairedFingerprints: paired,
+                                         dismissedSuffixes: dismissedNearby,
+                                         now: Date())
+    }
+
+    func dismissNearby(_ suffix: String) {
+        dismissedNearby.insert(suffix)
     }
 
     private func startRadiosIfConsented() {

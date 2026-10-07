@@ -42,11 +42,27 @@ enum HubDiscoveryRows {
                 baseURL: url,
                 version: txt["version"] ?? "",
                 installationType: txt["installation_type"] ?? "")
-            // Interface copies of one instance collapse; the first address
-            // that passed the gate wins.
-            if let existing = byID[id], existing.baseURL != nil, row.baseURL == nil { continue }
-            byID[id] = row
+            // Interface copies of one instance collapse into one row: the
+            // first address that passed the gate wins, and a field one copy
+            // left blank is filled from the other, whichever order the
+            // copies arrive in. Overwriting would lose a field the first
+            // copy carried and the second did not.
+            byID[id] = byID[id].map { $0.merged(with: row, service: service) } ?? row
         }
         return byID.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+}
+
+private extension DiscoveredHub {
+    /// This row with every blank filled from `other`. The address already
+    /// held is kept; a name that is only the service name yields to one the
+    /// owner gave the instance.
+    func merged(with other: DiscoveredHub, service: String) -> DiscoveredHub {
+        DiscoveredHub(
+            id: id,
+            name: (name == service && other.name != service) ? other.name : name,
+            baseURL: baseURL ?? other.baseURL,
+            version: version.isEmpty ? other.version : version,
+            installationType: installationType.isEmpty ? other.installationType : installationType)
     }
 }

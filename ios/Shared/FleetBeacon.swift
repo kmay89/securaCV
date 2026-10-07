@@ -20,7 +20,8 @@
 //   [2]    0x10          BEACON_PRESENCE type (distinct from chirp 0x01..0x05)
 //   [3]    0x01          schema version
 //   [4]    flags         bit0=tamper, bit1=mic_muted, bit2=degraded,
-//                        bit3=on_wifi_sta, bit4=alert_active
+//                        bit3=on_wifi_sta, bit4=alert_active,
+//                        bit5=setup_open (Improv Wi-Fi on offer)
 //   [5]    battery_pct   0..100, 0xFF = unknown/none
 //   [6]    health_pct    0..100, 0xFF = unknown
 //   [7-8]  chain_height  low 16 bits, uint16 little-endian
@@ -69,6 +70,9 @@ struct FleetBeacon: Hashable, Sendable {
     static let flagDegraded: UInt8   = 0x04
     static let flagOnWiFiSTA: UInt8  = 0x08
     static let flagAlert: UInt8      = 0x10
+    /// bit5: the device's Bluetooth setup door is open — Improv Wi-Fi is on
+    /// offer in its scan response (firmware/common/network/improv_ble).
+    static let flagSetupOpen: UInt8  = 0x20
 
     // Detection class tokens for v2 byte [11] — the ObjectClass vocabulary
     // and nothing beyond it (Invariant II: a face or plate class here is a
@@ -104,6 +108,7 @@ struct FleetBeacon: Hashable, Sendable {
     var degraded: Bool   { flags & Self.flagDegraded  != 0 }
     var onWiFiSTA: Bool  { flags & Self.flagOnWiFiSTA != 0 }
     var alertActive: Bool { flags & Self.flagAlert    != 0 }
+    var setupOpen: Bool   { flags & Self.flagSetupOpen != 0 }
 
     /// The 4 hex chars that end the device's pubkey fingerprint — the same two
     /// bytes the chirp carries and the "SCV-XXXX" display name derives from.

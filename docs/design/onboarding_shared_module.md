@@ -104,6 +104,58 @@ needs a "current AP channel" query exposed by the shared module), the usbdrive
 build env, QR provisioning (optional camera add-on behind the same
 `/api/wifi/*` surface), pair-token/session machinery, witness/vault/chirp.
 
+## The second door: Improv Wi-Fi over BLE (landed; not bench-tested)
+
+The shared portal gained a second front door. `common/network/improv_core.h`
+is the pure half of the open Improv Wi-Fi standard (RPC frames, the `0x4677`
+service data, the provisioning session) and `improv_ble.{h,cpp}` is the
+NimBLE glue, one file for both majors. It feeds the SAME join path as the
+wizard's `POST /join` — `setup_portal_submit_join()` — so persist-only-on-
+success, the linger and the teardown are not reimplemented, and
+`setup_portal_join_state()` / `setup_portal_note_acked()` report back. The
+WAP, which keeps its own portal, carries `ble_improv` on its pairing server
+with a staged copy of the core (`check_improv_sync.sh`). The display keeps
+its glass QR: a screen beats a radio. The canonical design, threat model,
+byte layouts and bench checklist are
+[magic pairing (design)](magic_pairing.md).
+
+**The door is NOT the portal's.** The first committed version opened the
+Bluetooth door whenever the SoftAP portal was up — and the portal is up not
+only on a first boot but also when a *saved* network keeps failing (the
+recovery case above). That re-pointed an owned Canary at any network a
+phone in radio range offered, because the router rebooted. The final rule,
+from `improv_core.h` (the glue passes the **stored-credentials fact**, never
+the portal's):
+
+- **No credentials stored** (first boot, factory reset): the door opens on
+  its own for a first-boot window — **30 minutes** after power-on
+  (`IMPROV_FIRST_BOOT_WINDOW_MS`, `Timing::first_boot_window_ms`; a power
+  cycle re-arms it, a factory reset re-arms it from the moment the
+  credentials vanish; compile-time 0 makes the device tap-only).
+- **Credentials stored:** shut, whatever the network is doing. The recovery
+  portal (a door with a key printed on the unit) raises as before and does
+  **not** open this one.
+- **A short BOOT tap** (`common/io/short_tap.h`: at least 40 ms down, up
+  before 700 ms — the WAP's 2 s hold and the 5 s factory-reset hold are
+  someone else's gesture) opens it for **60 s** on a Sense or Vision, with or
+  without credentials; `BOOT_BUTTON_PIN` comes from the board's `pins.h`.
+  The WAP has no tap door in this version.
+- **Bounds while open:** accepted `WIFI_SETTINGS` writes at least 3 s apart;
+  10 attempts per open door (accepted or malformed), then the door shuts
+  until a tap or a power cycle; a connected client silent for 3 minutes is
+  dropped (never mid-join); ~20 s linger after a successful join, then back
+  to the beacon. A join nobody reports on reads as failed after the
+  portal's own 30 s wizard timeout, so both doors agree.
+
+The fleet presence beacon stays the primary advert throughout; the door
+only adds the setup bit, the `<Family>-XXXX` name and the Improv scan
+response while it is open. On the WAP the phone is then *paired* through the
+claim ticket (`common/network/claim_ticket.h`) — readable once over the
+provisioning link, spent once on the home LAN — so the bearer token never
+rides Bluetooth; Sense and Vision answer an empty URL and simply appear on
+the LAN. The flagship `firmware/canary` build gets the door in a follow-up,
+with its portal migration (Phase 4, item 2).
+
 ## Invariants the shared module must carry (each one was paid for)
 
 - Captive DNS answers **A queries only**, NODATA for AAAA/HTTPS — and runs

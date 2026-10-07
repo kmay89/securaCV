@@ -189,6 +189,8 @@ extern "C" {
 #include "mesh_channel_policy.h"  // Channel decision (STA-follow) for MQTT telemetry
 #include "airtime_governor.h"     // Rolling airtime stats for MQTT telemetry
 #include "bluetooth_channel.h"
+#include "ble_improv.h"          // the Bluetooth setup door (Improv Wi-Fi), FULL profile
+#include "claim_ticket.h"        // the claim a phone reads over that door and spends on the LAN
 #include "bluetooth_api.h"
 #include "ble_console.h"
 #include "ble_log_export.h"
@@ -876,6 +878,16 @@ static inline bool provisioning_gate_take() {
   return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
 }
 
+// The claim ticket the Bluetooth setup door mints (claim_ticket.h, a staged
+// copy of firmware/common/network/claim_ticket.h): 16 random bytes, minted
+// on the loop task the moment the join a phone asked for over that door
+// succeeded, read once by the link that asked, and spent by one
+// GET /api/provisioning-receipt?claim=<hex> on the home LAN — the third
+// grant of that route, between the bearer and the BOOT tap. The bearer
+// token never rides Bluetooth. Minted (loop task) and taken (httpd task)
+// through the header's own atomics; never read in place.
+static canary::net::claim_ticket::Ticket g_improv_claim = {};
+
 #if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
 // BLE OTA break-glass = the same physical-presence gate. A legacy (v1) BLE
 // OTA header, or a v2 image below the anti-rollback floor, is admitted only
@@ -946,6 +958,25 @@ static const uint32_t BLE_DISCOVERY_AP_ONLY_SETTLE_MS = 45000;
 // features — disabled forever. After this hold, start regardless and accept
 // steady-state coexistence.
 static const uint32_t BLE_DISCOVERY_MAX_HOLD_MS = 300000;  // 5 min
+// A FRESH unit (no credentials stored, nobody on its SoftAP) brings BLE up
+// after this short settle instead: its Bluetooth setup door (ble_improv) is
+// how a phone hands it Wi-Fi with one tap, and the five-minute hold would
+// shut that door for exactly the minutes the person is standing there. The
+// heap guard still has the last word on RAM. provisioning_logic::
+// ble_fresh_unit_start_due, host-tested.
+static const uint32_t BLE_DISCOVERY_FRESH_SETTLE_MS = 5000;
+// On that short path the channel comes up with its SCANNERS HELD
+// (bluetooth_channel::init(scanners_held=true)): the server, every service
+// (the setup door among them) and advertising, but not the continuous
+// presence scan nor the active-scan settings; and Nearby's burst scan task
+// (ble_manager::nearbyStart, the ~99%-duty sweeps the deferral exists for)
+// waits with them. They are released on the loop task when the long path
+// would have started the whole channel (provisioning_logic::
+// ble_scanners_release_due — the same rule by name). _hold is written by
+// the loop task before the worker is created and read by the worker;
+// _nearby_held is the loop task's alone.
+static volatile bool g_ble_bringup_hold_scanners = false;
+static bool          g_ble_nearby_held = false;
 #endif
 
 // QR scan-in-progress flag. Lives up here (not in the QR section) because
@@ -6755,6 +6786,175 @@ bool ble_request_wifi_provisioning(const char* ssid, const char* password) {
   return true;
 }
 
+// ── The Bluetooth setup door's bridges (ble_improv.cpp) ─────────────────────
+// Non-static, like ble_request_wifi_provisioning above: the module's extern
+// declarations link against these.
+
+// A join the setup door asked for and nobody has proven yet. The sketch's
+// other provisioning paths (the wizard, the QR scan, the bonded rescue)
+// persist credentials FIRST and connect second — their callers can see the
+// verdict and resubmit. The door cannot afford that order: one wrong
+// password would mark the unit "configured", the door would shut on the
+// next pass, and the phone's retry would be refused. So the door's join
+// lives in RAM until WiFi reports it worked (ble_improv_join_verdict), and
+// while it is pending the door still counts the unit as having no
+// credentials.
+static bool g_improv_join_pending = false;
+
+// The door's one fact, every pass: open while no PROVEN credentials are
+// stored, for the first-boot window (IMPROV_FIRST_BOOT_WINDOW_MS after
+// boot, re-armed by a power cycle — improv_core.h keeps the window; this is
+// the stored-credentials fact alone, never the portal's state), and never
+// for a standalone unit the owner keeps AP-only on purpose (that one must
+// never take a stranger's network). A saved network that stopped working
+// raises the SoftAP recovery portal, not this door.
+bool ble_improv_door_should_open() {
+  return (!g_wifi_creds.configured || g_improv_join_pending) && !g_wifi_ap_only;
+}
+
+// Credentials from the setup door: applied in RAM for one join attempt
+// (sta_join_allowed reads `configured`), persisted only once the join is
+// proven. Same bounds as ble_request_wifi_provisioning above.
+bool ble_improv_submit_join(const char* ssid, const char* password) {
+  if (!ssid || !password) return false;
+  const size_t ssid_len = strlen(ssid);
+  const size_t pw_len   = strlen(password);
+  if (ssid_len == 0 || ssid_len > 32) return false;   // WPA2 SSID bound
+  if (pw_len > 64)                    return false;   // WPA2 PSK bound
+  // Empty password = open network. Allowed (matches handle_wifi_connect).
+
+  strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
+  g_wifi_creds.ssid[sizeof(g_wifi_creds.ssid) - 1] = '\0';
+  strncpy(g_wifi_creds.password, password, sizeof(g_wifi_creds.password) - 1);
+  g_wifi_creds.password[sizeof(g_wifi_creds.password) - 1] = '\0';
+  g_wifi_creds.enabled    = true;
+  g_wifi_creds.configured = true;   // RAM only until the verdict
+  g_improv_join_pending   = true;
+
+  g_wifi_status.last_fail_reason[0] = '\0';
+  wifi_connect_to_home();
+
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "Setup door: WiFi credentials applied for one join (saved once it works)",
+             g_wifi_creds.ssid);
+  return true;
+}
+
+// The verdict on that join. Proven: persist, as the other paths do, and the
+// door shuts on its own (credentials stored). Not proven (wrong password,
+// no such network, the timeout): forget the attempt entirely — nothing
+// retries a wrong network forever, the unit still has no credentials, and
+// the door stays open for the person to try again.
+void ble_improv_join_verdict(bool joined) {
+  if (!g_improv_join_pending) return;
+  g_improv_join_pending = false;
+  if (joined) {
+    if (!wifi_save_credentials()) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                 "Setup door: joined, but the credentials were NOT saved (NVS) — kept until reboot",
+                 g_wifi_creds.ssid);
+    }
+    return;
+  }
+  WiFi.disconnect(false);
+  secure_zero(g_wifi_creds.password, sizeof(g_wifi_creds.password));
+  g_wifi_creds.ssid[0]    = '\0';
+  g_wifi_creds.enabled    = false;
+  g_wifi_creds.configured = false;
+  g_wifi_status.state = WIFI_PROV_AP_ONLY;
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "Setup door: join not proven — credentials discarded, the door stays open", nullptr);
+}
+
+// Where the phone can reach this unit once it has joined: the .local name
+// when the STA holds one, else the SoftAP address (the AP is still up for
+// the grace window).
+size_t ble_improv_reach_url(char* out, size_t cap) {
+  if (!out || cap == 0) return 0;
+  int n;
+  if (WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+    n = snprintf(out, cap, "%s://%s.local/", g_tls_enabled ? "https" : "http", g_device.mdns_hostname);
+  } else {
+    n = snprintf(out, cap, "%s://%s/", g_tls_enabled ? "https" : "http",
+                 WiFi.softAPIP().toString().c_str());
+  }
+  if (n < 0) { out[0] = '\0'; return 0; }
+  return (size_t)n < cap ? (size_t)n : cap - 1;
+}
+
+// The claim ticket for the link that provisioned over the setup door: 16
+// random bytes minted into g_improv_claim (replacing any outstanding
+// claim), spelled as the JSON the phone reads once over the link —
+//   {"device_id","claim","claim_url","tls_cert_fp","sta_ip","mdns_host",
+//    "expires_in_s"}
+// in that order, nothing omitted, an empty string where a value is not
+// known yet. claim_url is where the phone spends it: the device's .local
+// name (the SoftAP address is gone once the AP drops), https when TLS is
+// up. The bearer token is NOT here; the receipt that carries it is what the
+// claim buys on the LAN. Every value is the sketch's own ASCII (device_id
+// and the mDNS label are sanitized at birth; the fingerprint and the claim
+// are hex; the address is dotted) — wap_json escaping kept all the same.
+// Returns the length written, 0 when `cap` cannot hold the whole document
+// (the caller then arms nothing).
+size_t ble_improv_mint_claim(char* out, size_t cap, uint32_t now_ms) {
+  if (!out || cap == 0) return 0;
+  uint8_t raw[canary::net::claim_ticket::RAW_LEN];
+  esp_fill_random(raw, sizeof(raw));
+  canary::net::claim_ticket::mint(g_improv_claim, raw, now_ms);
+  secure_zero(raw, sizeof(raw));
+
+  const char* scheme = g_tls_enabled ? "https" : "http";
+  const char* host   = g_device.mdns_hostname;
+  char claim_url[160];
+  snprintf(claim_url, sizeof(claim_url), "%s://%s.local/api/provisioning-receipt?claim=%s",
+           scheme, host, g_improv_claim.hex);
+  char sta_ip[16] = {0};
+  if (WiFi.isConnected()) {
+    snprintf(sta_ip, sizeof(sta_ip), "%s", WiFi.localIP().toString().c_str());
+  }
+
+  wap_json::Writer w;
+  wap_json::begin(w, out, cap);
+  wap_json::raw(w, "{\"device_id\":");    wap_json::str(w, g_device.device_id);
+  wap_json::raw(w, ",\"claim\":");        wap_json::str(w, g_improv_claim.hex);
+  wap_json::raw(w, ",\"claim_url\":");    wap_json::str(w, claim_url);
+  wap_json::raw(w, ",\"tls_cert_fp\":");  wap_json::str(w, g_tls_enabled ? g_tls_cert_fp_hex : "");
+  wap_json::raw(w, ",\"sta_ip\":");       wap_json::str(w, sta_ip);
+  wap_json::raw(w, ",\"mdns_host\":");    wap_json::str(w, host);
+  wap_json::raw(w, ",\"expires_in_s\":"); wap_json::number(w, canary::net::claim_ticket::TTL_MS / 1000u);
+  wap_json::raw(w, "}");
+  secure_zero(claim_url, sizeof(claim_url));
+  if (!wap_json::ok(w)) {
+    out[0] = '\0';
+    canary::net::claim_ticket::wipe(g_improv_claim);
+    return 0;
+  }
+  log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Setup door: claim minted for the provisioning link", nullptr);
+  return w.len;
+}
+
+// The door withdrew its claim (the door shut, the claim went unread for
+// its TTL, a new door opened): nothing left to spend.
+void ble_improv_wipe_claim() {
+  canary::net::claim_ticket::wipe(g_improv_claim);
+}
+
+// The four hex characters the setup door's "WAP-XXXX" name ends in: the
+// same suffix Opera's "SCV-XXXX" carries, so the phone sees one device.
+size_t ble_improv_name_suffix(char* out, size_t cap) {
+  if (!out || cap < 5) return 0;
+  const size_t len = strlen(g_device.fingerprint_hex);
+  const char* src = len >= 4 ? g_device.fingerprint_hex + len - 4 : "0000";
+  for (int k = 0; k < 4; k++) out[k] = (char)toupper((unsigned char)src[k]);
+  out[4] = '\0';
+  return 4;
+}
+
+static void start_identify(uint32_t duration_ms);
+void ble_improv_identify() { start_identify(10000); }
+
+const char* ble_improv_firmware_version() { return FIRMWARE_VERSION; }
+
 static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
   g_health.http_requests++;
 
@@ -7812,15 +8012,23 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 // API: PROVISIONING RECEIPT (physical gate or Bearer auth)
 // ════════════════════════════════════════════════════════════════════════════
 
-static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
+// `via_claim`: the caller spent a setup-door claim, so it is on the home LAN
+// by construction (claim_ticket.h) — its base_url is the device's .local
+// name while the STA holds one, since the SoftAP address the other two
+// grants answer with is gone once the AP drops. The bearer and BOOT-tap
+// answers are unchanged.
+static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = false) {
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
-  const String ap_ip = WiFi.softAPIP().toString();
+  String authority = WiFi.softAPIP().toString();
+  if (via_claim && WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+    authority = String(g_device.mdns_hostname) + ".local";
+  }
   identity_json::Receipt in = {};
   in.device_id   = g_device.device_id;
   in.tls_enabled = g_tls_enabled;
-  in.ap_ip       = ap_ip.c_str();
+  in.ap_ip       = authority.c_str();
   in.token       = g_device.api_token_str;
   in.pubkey_fp   = g_device.fingerprint_hex;
   in.firmware    = FIRMWARE_VERSION;
@@ -7848,14 +8056,52 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
 static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   g_health.http_requests++;
 
-  // If authenticated with valid Bearer token, always serve (for SAP re-sync)
+  // The grants, in order — the contract is provisioning_gate.h's four-grant
+  // receipt_decide(foreign_host, bearer_ok, take_claim, take_gate)
+  // (firmware/common/network; the sketch keeps the inline copy by
+  // convention). The WAP's actual order here: a valid bearer serves (the
+  // claim and the tap left alone); else a claim the request presented is
+  // SPENT, match or not (a guesser gets one guess per join), and serves on
+  // a match, the tap left unspent for the owner's own page load; else the
+  // BOOT tap, exactly as before. The contract's first question, a foreign
+  // Host, is the flagship's (securacv_network's host guard answers it in
+  // front of this route there); the WAP sketch has no Host guard on this
+  // route and does not ask it.
+
+  // 1. A valid Bearer token always serves (for SAP re-sync).
   if (api_auth_check_optional(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req);
   }
 
-  // No valid token — consume the physical gate (one atomic step; the BLE
-  // OTA break-glass hook competes for the same tap from another task)
-  if (!provisioning_gate_take()) {
+  // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one atomic
+  //    take against the ticket the loop task minted, on this task.
+  bool claim_served = false;
+  {
+    char qs[128];
+    char presented[40];
+    esp_err_t got = ESP_ERR_NOT_FOUND;
+    if (httpd_req_get_url_query_len(req) > 0 &&
+        httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
+      got = httpd_query_key_value(qs, "claim", presented, sizeof(presented));
+    }
+    // Presented at all — even one too long for the buffer (truncated: it can
+    // never match) — is presented: the take spends the claim either way.
+    if (got == ESP_OK || got == ESP_ERR_HTTPD_RESULT_TRUNC) {
+      presented[sizeof(presented) - 1] = '\0';
+      claim_served = canary::net::claim_ticket::take(g_improv_claim, presented, millis());
+      secure_zero(presented, sizeof(presented));
+      secure_zero(qs, sizeof(qs));
+      if (!claim_served) {
+        log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,
+                   "Provisioning receipt refused: setup-door claim did not match (claim spent)", nullptr);
+      }
+    }
+  }
+
+  // 3. No valid token, no good claim — consume the physical gate (one
+  //    atomic step; the BLE OTA break-glass hook competes for the same tap
+  //    from another task)
+  if (!claim_served && !provisioning_gate_take()) {
     // Derive the advertised TTL from the constant so the 403 contract
     // and the gate behavior can never drift apart.
     const unsigned long ttl_s = (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000);
@@ -7877,7 +8123,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     return httpd_resp_sendstr(req, body);
   }
 
-  // Gate is open — serve receipt and close gate
+  // The claim matched, or the gate was open (and is now closed) — serve the
+  // receipt with the same session cookie either way: the phone that
+  // provisioned over the door is as present as the hand on the BOOT button.
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
   if (csi_integration::session_issue(session_hex, sizeof(session_hex))) {
     char cookie_hdr[160];
@@ -7888,9 +8136,14 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
     }
   }
-  esp_err_t result = send_provisioning_receipt(req);
-  Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
-  log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served via HTTPS", nullptr);
+  esp_err_t result = send_provisioning_receipt(req, claim_served);
+  if (claim_served) {
+    Serial.println("[AUTH] Provisioning receipt served on a setup-door claim.");
+    log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served on a setup-door claim", nullptr);
+  } else {
+    Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
+    log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served via HTTPS", nullptr);
+  }
   return result;
 }
 
@@ -11630,9 +11883,13 @@ static void ble_bringup_task(void*) {
     // the service never registers unconfigured.
     ble_ota::configure(OTA_PRODUCT, FIRMWARE_VERSION, ble_ota_break_glass_take);
     #endif
-    if (bluetooth_channel::init()) {
-      Serial.println("[OK] Bluetooth initialized");
-      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+    if (bluetooth_channel::init(g_ble_bringup_hold_scanners)) {
+      Serial.println(g_ble_bringup_hold_scanners
+                         ? "[OK] Bluetooth initialized (scanners held until the join window clears)"
+                         : "[OK] Bluetooth initialized");
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+                 g_ble_bringup_hold_scanners ? "Bluetooth initialized (scanners held)"
+                                             : "Bluetooth initialized", nullptr);
       // Hand the offline-console module the device's short fingerprint
       // and firmware version so its snapshot JSON identifies us. Both
       // are owned by the .ino — the module copies into its own buffers.
@@ -11718,7 +11975,15 @@ static void ble_bringup_finalize_if_done() {
     // CSI chokepoint so the witness-chain row's allow-list is enforced.
     ble_events_emit_initialized();
     ble_manager::operaStart();
-    ble_manager::nearbyStart();
+    if (g_ble_bringup_hold_scanners) {
+      // The fresh-unit path: Nearby's burst scan waits with the channel's
+      // scanners (ble_scanners_release_if_due()); the beacon is on air.
+      g_ble_nearby_held = true;
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+                 "BLE Nearby scan held (fresh unit: scanners wait for the join window)", nullptr);
+    } else {
+      ble_manager::nearbyStart();
+    }
     // Boot chirp. Witness-chain side: chirp_sent through the chokepoint so
     // the wire format respects spec/event_contract.md §10's allow-list.
     ble_manager::sendChirp(CHIRP_BOOT);
@@ -11761,12 +12026,21 @@ static void ble_discovery_start_if_due() {
   const bool ap_active = g_wifi_status.ap_active;
   const bool ap_only_mode =
       g_wifi_ap_only || (g_wifi_status.state == WIFI_PROV_AP_ONLY);
-  if (!provisioning_logic::ble_discovery_start_due(
-          ap_only_mode, ap_active, millis(), g_ble_discovery_ready_ms,
-          BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
-    return;
-  }
+  // A fresh unit with nobody on its SoftAP takes the short path (its setup
+  // door is waiting for a phone); everything else holds as before.
+  const bool fresh_unit = !g_wifi_creds.configured && !g_wifi_ap_only;
+  const bool fresh_due = provisioning_logic::ble_fresh_unit_start_due(
+      fresh_unit, WiFi.softAPgetStationNum(), millis(), g_ble_discovery_ready_ms,
+      BLE_DISCOVERY_FRESH_SETTLE_MS);
+  const bool long_due = provisioning_logic::ble_discovery_start_due(
+      ap_only_mode, ap_active, millis(), g_ble_discovery_ready_ms,
+      BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS);
+  if (!fresh_due && !long_due) return;
   g_ble_discovery_started = true;  // one attempt, whatever the outcome
+  // The short path alone brings the channel up with its scanners held; the
+  // long path (or both at once) starts everything, as it always did. Set
+  // before the worker is created: it reads this.
+  g_ble_bringup_hold_scanners = fresh_due && !long_due;
 
   // Internal-RAM stack (no PSRAM task stacks with the prebuilt core). If the
   // task can't even be created, record the attempt so the self-test reports
@@ -11787,6 +12061,50 @@ static void ble_discovery_start_if_due() {
     g_ble_init_attempted = true;
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                "BLE bring-up task create failed (out of memory)", nullptr);
+  }
+#endif
+}
+
+// The scanners the fresh-unit path held (ble_discovery_start_if_due):
+// released on the loop task exactly when the long path would have started
+// the whole channel — the AP torn down after a join, a runtime AP-only
+// settle, or the max-hold — so a fresh unit's setup door is up in seconds
+// while its presence and Nearby scans still keep clear of a phone's WPA2
+// handshake. Idempotent; a release the channel refuses (its stack not yet
+// adopted, an owner's scan in flight) is asked again next pass.
+static void ble_scanners_release_if_due() {
+#if FEATURE_BLE || FEATURE_BLUETOOTH
+  if (!g_ble_bringup_finalized) return;   // the stack's objects are the loop task's after the adopt
+  bool channel_held = false;
+  #if FEATURE_BLUETOOTH
+  channel_held = bluetooth_channel::scanners_held();
+  #endif
+  if (!channel_held && !g_ble_nearby_held) return;
+  const bool ap_active = g_wifi_status.ap_active;
+  const bool ap_only_mode =
+      g_wifi_ap_only || (g_wifi_status.state == WIFI_PROV_AP_ONLY);
+  if (!provisioning_logic::ble_scanners_release_due(
+          ap_only_mode, ap_active, millis(), g_ble_discovery_ready_ms,
+          BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
+    return;
+  }
+  bool released = false;
+  #if FEATURE_BLUETOOTH
+  if (channel_held) {
+    bluetooth_channel::release_scanners();
+    released = !bluetooth_channel::scanners_held();
+  }
+  #endif
+  #if FEATURE_BLE
+  if (g_ble_nearby_held) {
+    g_ble_nearby_held = false;
+    ble_manager::nearbyStart();
+    released = true;
+  }
+  #endif
+  if (released) {
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+               "BLE scanners released (join window clear)", nullptr);
   }
 #endif
 }
@@ -11837,6 +12155,7 @@ void loop() {
   // so its active scan can't starve a provisioning phone's WPA2 handshake.
   boot_stage("loop:ble-finalize");   // prime wdt-starvation suspect (~17 s
   ble_discovery_start_if_due();      // post-boot); the breadcrumb convicts
+  ble_scanners_release_if_due();     // the fresh path's held scanners, once the join window clears
   boot_stage("loop:steady");         // or clears it on the next crash
 
   #if FEATURE_QR_PROVISION
@@ -12166,6 +12485,7 @@ void loop() {
       beacon_flags |= FLEET_BEACON_FLAG_DEGRADED;
     #endif
     if (WiFi.isConnected()) beacon_flags |= FLEET_BEACON_FLAG_ON_WIFI_STA;
+    if (ble_improv::setup_open()) beacon_flags |= FLEET_BEACON_FLAG_SETUP_OPEN;
     ble_opera::setBeaconStatus(beacon_flags, beacon_battery, beacon_health);
   }
   #endif

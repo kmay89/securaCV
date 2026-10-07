@@ -97,6 +97,73 @@ inline bool ble_discovery_start_due(bool ap_only, bool ap_active,
   return held >= max_hold_ms;
 }
 
+// A FRESH unit — no Wi-Fi credentials stored yet, and no phone on its SoftAP
+// — is the one case the deferral above costs the most: its Bluetooth setup
+// door (ble_improv) is the way a phone hands it Wi-Fi with one tap, and the
+// five-minute max-hold would keep that door shut for exactly the minutes the
+// person is standing there. The two reasons for the deferral do not apply to
+// it: nobody's WPA2 handshake is in flight (zero stations), and the heap
+// guard still refuses a bring-up the RAM cannot afford. So a fresh unit
+// brings BLE up after a short settle instead. The moment a phone joins the
+// SoftAP (the wizard path), the caller falls back to the rule above.
+// Wrap-safe unsigned time math.
+inline bool ble_fresh_unit_start_due(bool fresh_unit, int ap_stations,
+                                     uint32_t now_ms, uint32_t boot_ref_ms,
+                                     uint32_t fresh_settle_ms) {
+  if (!fresh_unit || ap_stations > 0) return false;
+  return (uint32_t)(now_ms - boot_ref_ms) >= fresh_settle_ms;
+}
+
+// The fresh-unit path above brings the pairing channel up with its scanners
+// HELD (bluetooth_channel::init(scanners_held=true)): the server, every
+// service (the setup door among them) and advertising come up after the
+// short settle, but the continuous presence scan and the active scan
+// settings — the ~99%-duty bursts the deferral exists to keep away from a
+// phone's WPA2 handshake — wait. They are released on the loop task exactly
+// when the long path would have started the whole channel: this predicate
+// is ble_discovery_start_due, by name, so the two cannot drift. Called with
+// the same arguments the long path uses. Start-only, like the rule it
+// aliases: once released they stay released.
+inline bool ble_scanners_release_due(bool ap_only, bool ap_active,
+                                     uint32_t now_ms, uint32_t boot_ref_ms,
+                                     uint32_t ap_only_settle_ms,
+                                     uint32_t max_hold_ms) {
+  return ble_discovery_start_due(ap_only, ap_active, now_ms, boot_ref_ms,
+                                 ap_only_settle_ms, max_hold_ms);
+}
+
+// Which pairing security profile the pairing channel should hold, given the
+// setup door's wish (bluetooth_channel::set_setup_door). The profiles are
+// ble_hs_cfg fields NimBLE reads at the START of a pairing, so a swap is
+// applied between procedures only:
+//   - door shut: Numeric Comparison (bonding, MITM, SC, DISPLAY_YESNO) —
+//     the owner's profile, restored whatever else is going on (it is the
+//     strict one; a pairing already under way keeps the profile it began
+//     with, since the host read the fields when it started);
+//   - door open, nothing in the way: Just Works (no bond, no MITM, SC,
+//     NO_INPUT_OUTPUT) — the one a phone with no prior bond can open in a
+//     tap, yielding an unauthenticated key only the Improv service's
+//     *_ENC characteristics accept;
+//   - door open while a Numeric Comparison is pending or the owner's
+//     pairing mode is in flight (pairing_pending), or while a connected
+//     link is AUTHENTICATED or BONDED (authenticated_link_up): HOLD — keep
+//     what is applied and ask again next pass. Just Works must never be
+//     applied under a bonded session: a re-pairing the phone starts on that
+//     link would be answered by the weaker profile, and the owner's bonded
+//     peer is exactly the party the strict profile exists for.
+enum SecurityProfile : uint8_t {
+  NUMERIC_COMPARISON = 0,  // apply the owner's profile (door shut)
+  JUST_WORKS,              // apply the setup door's profile (door open)
+  HOLD,                    // apply nothing; the caller retries next pass
+};
+
+inline SecurityProfile security_profile_for(bool door_open, bool pairing_pending,
+                                            bool authenticated_link_up) {
+  if (!door_open) return NUMERIC_COMPARISON;
+  if (pairing_pending || authenticated_link_up) return HOLD;
+  return JUST_WORKS;
+}
+
 // Keep an armed post-provisioning reboot from firing while the user is
 // still actively working the wizard's final step (running the self-test,
 // reading the recovery-kit card). Given an armed deadline, returns a

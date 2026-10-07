@@ -92,6 +92,10 @@ struct FleetView: View {
                             DiscoveryConsentCard()
                                 .padding([.horizontal, .top])
                         }
+                        // A brand-new Canary asking for Wi-Fi over Bluetooth:
+                        // the card sits above the comb until it is answered.
+                        NearbyCanaryCard()
+                            .padding([.horizontal, .top])
                         FleetHiveView(witnesses: filtered, pairing: $pairing)
                     }
                 } else {
@@ -194,6 +198,12 @@ struct FleetView: View {
                 } footer: {
                     Text("Discovery is off — SecuraCV isn't looking for Canaries on this network.")
                 }
+            }
+            if !store.nearbyCanaries.isEmpty {
+                // A brand-new Canary asking for Wi-Fi over Bluetooth.
+                Section { NearbyCanaryCard() }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
             }
             if !filtered.isEmpty {
                 if store.witnesses.count >= Self.roomGroupThreshold {

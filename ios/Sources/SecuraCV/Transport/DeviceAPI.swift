@@ -233,6 +233,11 @@ enum DeviceError: Error, LocalizedError {
     /// An https Canary with no certificate fingerprint on record — refused,
     /// because a TLS device the app cannot check is not a checked device.
     case tlsPinMissing
+    /// The Canary answered 403 to a claim ticket: already spent, expired
+    /// (it lives 180 s), or not the claim it minted — a wrong guess burns
+    /// it. Final: the one-tap pairing did not happen; the BOOT-tap pairing
+    /// on the Fleet tab is the next door.
+    case claimRefused
 
     var errorDescription: String? {
         switch self {
@@ -249,6 +254,9 @@ enum DeviceError: Error, LocalizedError {
             return "This Canary uses a secure (https) connection, but its pairing receipt "
                 + "carried no certificate fingerprint, so the connection can't be checked and "
                 + "was refused. Update the Canary's firmware and pair it again from its setup page."
+        case .claimRefused:
+            return "The Canary declined the pairing claim — it was already spent, or it expired. "
+                + "Pair it from the Fleet tab with a short tap on its BOOT button."
         case .badVaultFilename(let name):
             return "\"\(name)\" isn't a sealed-snapshot filename, so it wasn't requested."
         case .noSealedSnapshots:
@@ -594,6 +602,83 @@ actor DeviceAPI {
         var comps = URLComponents(url: plain, resolvingAgainstBaseURL: false)
         comps?.queryItems = query
         return comps?.url ?? plain
+    }
+
+    // MARK: - spending a claim ticket (the nearby-Canary sheet's one LAN request)
+
+    /// `GET /api/provisioning-receipt?claim=<hex>` on `base` — static and
+    /// pure, so the tests can pin that the claim rides as a query, never
+    /// baked into the path.
+    static func claimRequestURL(base: URL, claim: String) -> URL {
+        requestURL(base: base, path: "/api/provisioning-receipt",
+                   query: [URLQueryItem(name: "claim", value: claim)])
+    }
+
+    /// Spend a claim at `base` (the Canary's `.local` name, or the address
+    /// it reported). See `fetchReceipt(claimURL:tlsFingerprint:session:)`.
+    static func fetchReceipt(base: URL, claim: String, tlsFingerprint: String?,
+                             session: URLSession? = nil) async throws -> ProvisioningReceipt {
+        try await fetchReceipt(claimURL: claimRequestURL(base: base, claim: claim),
+                               tlsFingerprint: tlsFingerprint, session: session)
+    }
+
+    /// Spend a claim ticket at its URL (`ImprovWire.Claim.claimURL`, or the
+    /// `sta_ip` rebuild of it) and get the pairing receipt back — the same
+    /// JSON the BOOT-tap route serves. Unauthenticated by design: the claim
+    /// is the credential, single use, minted for the link that provisioned
+    /// and spendable only from the Wi-Fi the Canary just joined. The gates
+    /// are `init`'s: a public host is refused; an https host with no
+    /// normalizable pin is refused (`.tlsPinMissing`), never trusted; http
+    /// dials the shared session, https the one pinned to the fingerprint.
+    /// 403 is `.claimRefused` (spent, expired, or a wrong claim — the
+    /// firmware burns it either way). 8 s: the claim lives 180 s and the
+    /// sheet may dial twice.
+    /// - session: tests only — a caller-supplied session skips pinning.
+    static func fetchReceipt(claimURL url: URL, tlsFingerprint: String?,
+                             session: URLSession? = nil) async throws -> ProvisioningReceipt {
+        guard isPrivate(url) else { throw DeviceError.notPrivateAddress }
+        let dial: URLSession
+        let pinDelegate: PinnedTrustDelegate?
+        if let session {
+            dial = session
+            pinDelegate = nil
+        } else if isTLS(url) {
+            guard let pin = TLSPin.normalize(tlsFingerprint) else {
+                throw DeviceError.tlsPinMissing
+            }
+            let pinned = PinnedSessions.shared.session(pinnedTo: pin)
+            dial = pinned.session
+            pinDelegate = pinned.delegate
+        } else {
+            dial = .shared
+            pinDelegate = nil
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 8
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        let result: (Data, URLResponse)
+        do {
+            result = try await dial.data(for: req)
+        } catch let error as URLError {
+            // The pin cut the handshake: name that, not a bare "canceled"
+            // (the same reading `send` gives it).
+            if pinDelegate?.takeMismatch() == true
+                && (error.code == .cancelled
+                    || error.code == .userCancelledAuthentication
+                    || error.code == .serverCertificateUntrusted) {
+                throw DeviceError.certificateMismatch
+            }
+            throw error
+        }
+        let (data, resp) = result
+        if let http = resp as? HTTPURLResponse {
+            if http.statusCode == 403 { throw DeviceError.claimRefused }
+            guard (200..<300).contains(http.statusCode) else {
+                let msg = (try? Self.decoder.decode([String: String].self, from: data))?["message"] ?? ""
+                throw DeviceError.http(http.statusCode, msg)
+            }
+        }
+        return try Self.decoder.decode(ProvisioningReceipt.self, from: data)
     }
 
     private func postRaw(_ path: String, body: Data) async throws -> Data {

@@ -31,6 +31,7 @@
 #include "canary/config.h"
 #include "canary/runtime_config.h"     // canary::cfg::get().device_id (GAP name)
 #include "canary/net/fleet_beacon_payload.h"
+#include "network/improv_ble.h"        // the advert set's owner (common/)
 #include "canary/log.h"
 
 namespace canary::net {
@@ -52,17 +53,12 @@ void publish_adv(uint32_t now) {
   uint8_t mfg[FLEET_BEACON_MFG_V2_LEN];
   const size_t n = fleet_beacon_payload_build(mfg);
 
-  NimBLEAdvertisementData advData;
-  advData.setManufacturerData(std::string((const char*)mfg, n));
-
-  // stop -> set -> start refreshes the on-air payload deterministically on BOTH
-  // NimBLE majors: 1.4.x's setAdvertisementData only latches for the next
-  // start(), while 2.x updates live. setAdvertisementData is called as a bare
-  // statement so the return-type drift (void on 1.4.x, bool on 2.x) is
-  // irrelevant. Advertise-only, so nothing else to preserve across the restart.
-  adv->stop();
-  adv->setAdvertisementData(advData);
-  adv->start();
+  // The Bluetooth setup door owns the advert set: the beacon stays the
+  // primary advert either way (this module's old bytes when the door is
+  // shut); while it is open the device is connectable, named, and the scan
+  // response carries the Improv service. It does the stop -> set -> start
+  // both NimBLE majors need.
+  canary::net::improv_ble::advertise(mfg, n);
 
   s_last_gen = fleet_beacon_payload_generation();
   s_next_ms = now + REFRESH_MS;

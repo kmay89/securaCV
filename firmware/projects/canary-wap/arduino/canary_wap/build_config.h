@@ -164,6 +164,7 @@
   #define FEATURE_BLE           0   // BLE Discovery (Opera/Chirp/Nearby)
   #define FEATURE_BLE_SCAN      0   // BLE Scout — paired-beacon room attribution (PR 5)
   #define FEATURE_BLE_STATUS    0   // BLE GATT status service (battery/health/chain)
+  #define FEATURE_IMPROV        0   // Bluetooth setup door (Improv Wi-Fi)
   #define FEATURE_SYS_MONITOR   0
   #define FEATURE_WIFI_PRESENCE 0   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 0   // Local audible/visual alert tones
@@ -207,6 +208,7 @@
   #define FEATURE_BLE           0   // Skip Opera/Chirp/Nearby discovery (saves ~25s)
   #define FEATURE_BLE_SCAN      0   // BLE Scout disabled by default — opt-in via FULL build
   #define FEATURE_BLE_STATUS    FEATURE_BLUETOOTH   // BLE GATT status service (needs NimBLE server)
+  #define FEATURE_IMPROV        0   // Bluetooth setup door needs Opera's advert set (FEATURE_BLE)
   #define FEATURE_SYS_MONITOR   1
   #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection
   #define FEATURE_AUDIBLE_CHIRP 1   // Local audible/visual alert tones
@@ -247,6 +249,24 @@
   #define FEATURE_BLUETOOTH     HW_HAS_BLE
   #define FEATURE_BLE           1   // BLE Discovery (Opera/Chirp/Nearby) — works on both S3 and C3
   #define FEATURE_BLE_SCAN      HW_HAS_BLE   // BLE Scout — paired-beacon room attribution
+  // The Bluetooth setup door (ble_improv): the open Improv Wi-Fi standard on
+  // the pairing channel's server, advertised through Opera's beacon set while
+  // no credentials are stored, for the first-boot window
+  // (IMPROV_FIRST_BOOT_WINDOW_MS after boot, re-armed by a power cycle) — a
+  // phone hears it, one tap hands over the home Wi-Fi, and a CLAIM ticket
+  // rides the same encrypted link (claim_ticket.h: the bearer token never
+  // rides Bluetooth; the phone spends the claim on the home LAN for the
+  // receipt). Needs both the channel and Opera's advert composer.
+  #define FEATURE_IMPROV        (FEATURE_BLUETOOTH && FEATURE_BLE)
+  // How long after boot the door opens on its own for a unit with no stored
+  // credentials (improv_core.h Timing::first_boot_window_ms). Half an hour:
+  // long enough to plug in three Canaries and open the app later, short
+  // enough that a unit forgotten in a drawer is not claimable from the
+  // street for the rest of its life. 0 = tap-only (the WAP reads no tap
+  // today, so 0 shuts the door for good). -D overridable.
+  #ifndef IMPROV_FIRST_BOOT_WINDOW_MS
+  #define IMPROV_FIRST_BOOT_WINDOW_MS (30u * 60u * 1000u)
+  #endif
   #define FEATURE_BLE_STATUS    1   // BLE GATT status service (battery/health/chain)
   #define FEATURE_SYS_MONITOR   1
   #define FEATURE_WIFI_PRESENCE 1   // WiFi probe request presence detection

@@ -197,4 +197,90 @@ final class DeviceAPITests: XCTestCase {
         XCTAssertTrue(DeviceAPI.isTLS(URL(string: "HTTPS://canary.local")!))
         XCTAssertFalse(DeviceAPI.isTLS(URL(string: "http://192.168.1.20")!))
     }
+
+    // ── spending a claim ticket (the nearby-Canary sheet's one LAN request) ──
+    // A WAP hands the phone a claim over Bluetooth; the phone spends it with
+    // one unauthenticated GET on the home LAN and gets the receipt back.
+    private let claimHex = "0123456789abcdef0123456789abcdef"
+
+    func testTheClaimRidesAsAQueryNeverInThePath() {
+        let url = DeviceAPI.claimRequestURL(base: base, claim: claimHex)
+        XCTAssertEqual(url.absoluteString, "http://canary-a3f7.local/api/provisioning-receipt?claim=\(claimHex)")
+        XCTAssertEqual(url.path, "/api/provisioning-receipt")
+        XCTAssertEqual(url.query, "claim=\(claimHex)")
+    }
+
+    func testFetchReceiptRefusesAnHTTPSCanaryWithoutAPin() async {
+        // The same refusal as init's, before anything is dialed.
+        let pins: [String?] = [nil, "", "not-a-fingerprint"]
+        for pin in pins {
+            do {
+                _ = try await DeviceAPI.fetchReceipt(base: URL(string: "https://192.168.1.20")!,
+                                                     claim: claimHex, tlsFingerprint: pin)
+                XCTFail("an https claim URL with no pin must throw (pin: \(String(describing: pin)))")
+            } catch DeviceError.tlsPinMissing {
+                // refused, not trusted
+            } catch {
+                XCTFail("expected .tlsPinMissing, got \(error)")
+            }
+        }
+    }
+
+    func testFetchReceiptRefusesAPublicHostBeforeDialing() async {
+        do {
+            _ = try await DeviceAPI.fetchReceipt(base: URL(string: "https://securacv.com")!,
+                                                 claim: claimHex, tlsFingerprint: fixtureFP)
+            XCTFail("a public host must be refused")
+        } catch DeviceError.notPrivateAddress {
+            // the "nothing phones home" gate, pin or no pin
+        } catch {
+            XCTFail("expected .notPrivateAddress, got \(error)")
+        }
+    }
+
+    private func stubbed() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [VaultStubProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    func testFetchReceiptSpendsTheClaimUnauthenticatedAndReadsTheReceipt() async throws {
+        VaultStubProtocol.seen = []
+        VaultStubProtocol.respond = { _ in
+            (200, Data(#"{"device_id":"canary-a3f7","base_url":"http://canary-a3f7.local","token":"cv_x","tls_cert_fp":""}"#.utf8))
+        }
+        let receipt = try await DeviceAPI.fetchReceipt(base: base, claim: claimHex, tlsFingerprint: nil,
+                                                       session: stubbed())
+        XCTAssertEqual(receipt.deviceID, "canary-a3f7")
+        XCTAssertEqual(receipt.token, "cv_x")
+        XCTAssertEqual(receipt.baseURL.absoluteString, "http://canary-a3f7.local")
+        XCTAssertNil(receipt.tlsCertFingerprint)
+        let seen = try XCTUnwrap(VaultStubProtocol.seen.last)
+        XCTAssertEqual(seen.method, "GET")
+        XCTAssertEqual(seen.url.absoluteString, "http://canary-a3f7.local/api/provisioning-receipt?claim=\(claimHex)")
+        XCTAssertNil(seen.authorization, "the claim is the credential — no token to send, and none to leak")
+    }
+
+    func testA403OnTheClaimIsTheCanarysRefusal() async {
+        VaultStubProtocol.respond = { _ in (403, Data(#"{"ok":false,"error":"no claim"}"#.utf8)) }
+        do {
+            _ = try await DeviceAPI.fetchReceipt(claimURL: DeviceAPI.claimRequestURL(base: base, claim: claimHex),
+                                                 tlsFingerprint: nil, session: stubbed())
+            XCTFail("403 must throw")
+        } catch DeviceError.claimRefused {
+            XCTAssertFalse(DeviceError.claimRefused.localizedDescription.isEmpty, "the refusal names itself")
+        } catch {
+            XCTFail("expected .claimRefused, got \(error)")
+        }
+        // Any other status keeps its number: final for the sheet too, by name.
+        VaultStubProtocol.respond = { _ in (500, Data()) }
+        do {
+            _ = try await DeviceAPI.fetchReceipt(base: base, claim: claimHex, tlsFingerprint: nil, session: stubbed())
+            XCTFail("500 must throw")
+        } catch DeviceError.http(let code, _) {
+            XCTAssertEqual(code, 500)
+        } catch {
+            XCTFail("expected .http(500), got \(error)")
+        }
+    }
 }

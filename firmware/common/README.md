@@ -37,12 +37,18 @@ common/
 ├── storage/        # Unified storage
 │   ├── sd_mount_policy.h    # SD mount-recovery decisions: when to remount, tear down or declare the card lost (host-tested)
 │   └── nvs_session_depth.h  # NvsManager's per-task session count under its cross-task lock (host-tested)
+├── io/             # Buttons and other inputs the firmware reads
+│   └── short_tap.h    # a debounced short press (≥40 ms, <700 ms) told apart from the long holds other gestures own — the BOOT tap that opens the Bluetooth setup door (host-tested)
 ├── network/        # Network modules
 │   ├── provision_core.h
 │   ├── wifi_join_policy.h
 │   ├── mqtt_transport_logic.h   # broker socket decision: plain / TLS-CA / pinned / lab, fail-closed (host-tested)
 │   ├── mqtt_transport.h         # its WiFiClientSecure half for the PubSubClient products (header-only)
-│   └── setup_portal*.{h,cpp}
+│   ├── setup_portal*.{h,cpp}
+│   ├── improv_core.h            # the Bluetooth setup door, pure half: Improv Wi-Fi's packet codec, the 0x4677 service data, and the session — the door rule (no stored credentials → a 30-min first-boot window; a tap → 60 s; a failing saved network → never), the cooldown / cap / idle bounds (host-tested; the header comment is the canonical statement)
+│   ├── improv_ble.{h,cpp}       # its NimBLE glue for both majors (2.x Sense, 1.4.x Vision): the service, the beacon-primary advert set with the Improv scan response, the encrypted-link check in the write handler, the hand-off to setup_portal_submit_join (CI-compiled, no bench pass)
+│   ├── claim_ticket.h           # the WAP's claim ticket: 16 random bytes readable once over the link that provisioned, spent once on the home LAN for the receipt — so the bearer token never rides Bluetooth (host-tested; a staged copy sits by the WAP sketch)
+│   └── provisioning_gate.h      # the BOOT-tap gate, the page-token policy and the receipt's grant order: foreign Host → bearer → claim → tap (host-tested)
 ├── bluetooth/      # BLE management
 │   └── bluetooth_mgr.h
 ├── chirp/          # Community witness network

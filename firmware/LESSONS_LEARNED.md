@@ -1353,6 +1353,127 @@
   string fallback in both blob-scheme loaders.
 - **Date learned:** 2026-08
 
+### A jammed router is not a claim window: the Bluetooth setup door opened on the recovery portal
+- **What happened:** The first committed version of the Bluetooth setup
+  door (Improv Wi-Fi over BLE, `common/network/improv_core.h` +
+  `improv_ble.cpp`) took its "is the door open?" fact from the shared setup
+  portal: `tick(now, no_wifi)` with `no_wifi = setup_portal_active()`. The
+  portal is up on a first boot — and also whenever a *saved* network keeps
+  failing for a human-fixable reason (wrong password, SSID gone, the router
+  rebooted mid-outage), because that is the recovery case the portal exists
+  for. So an owned Sense or Vision whose router was down for a few minutes
+  advertised "setup open", was connectable, and accepted a `WIFI_SETTINGS`
+  write from any phone in radio range after a one-tap Just Works pairing:
+  a stranger could re-point it at their own network because the owner's
+  router rebooted. Nothing failed; the host tests were green; the one place
+  the rule was wrong was the one place it mattered.
+- **Root cause:** two different facts ("the device has no owner yet" and
+  "the device's network is not working right now") shared one boolean,
+  because from the portal's side they look the same — the portal is up in
+  both. The recovery portal is a door with a key printed on the unit; the
+  Bluetooth door has no key, so it may only open on the first fact.
+- **Fix:** the session takes the **stored-credentials fact**, never the
+  portal's (`session_begin(no_credentials)` / `session_set_no_credentials`,
+  whose comment now says "a recovery portal is NOT 'no credentials'"). With
+  no credentials the door opens for a bounded first-boot window
+  (`Timing::first_boot_window_ms`, 30 minutes; a power cycle or a factory
+  reset re-arms it; 0 = tap-only) rather than for life. With credentials it
+  is shut whatever the network is doing; a short BOOT tap
+  (`common/io/short_tap.h`) opens it for a minute as the owner's own act. The
+  rule is stated once, in the header, in one sentence: *the door is open for
+  a device nobody owns yet, and for an owner's own tap — never for a device
+  that has an owner and a bad day.*
+- **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
+  with credentials stays shut while the caller reports the portal up; a
+  window that ran out does not reopen without a tap or a power cycle;
+  credentials vanishing at runtime (factory reset) re-arm the window,
+  credentials appearing (the join persisted) shut the no-credentials door.
+  `test_short_tap.cpp` pins what counts as a tap (≥40 ms, <700 ms; a hold
+  is somebody else's gesture). Design: `docs/design/magic_pairing.md`.
+  Bench: not yet — a saved network failing with the router off must raise
+  the SoftAP portal and NOT the card.
+- **Date learned:** 2026-10-07
+
+### A receipt whose base_url is dead on arrival, and a token that must not ride an unauthenticated link (the claim ticket)
+- **What happened:** The first WAP version of the door put the whole
+  pairing receipt on the Bluetooth link — `{device_id, base_url, token,
+  tls_cert_fp}`, readable once by the connection that provisioned — so the
+  phone would be *paired* from the one tap. Two things were wrong with it.
+  The `base_url` the HTTP receipt carries while the device is in setup is
+  the SoftAP address (`192.168.4.1`), which is dead the moment the AP drops
+  after the join, so the first draft pointed the phone at nothing (the fix
+  there was the `.local` name — but it was a fix to a receipt that should
+  not have been on that link at all). And the link is LE Secure Connections
+  **Just Works** — the only pairing a phone with no prior bond can open in
+  one tap — which is encrypted but *unauthenticated*: it resists a passive
+  listener, not an active one who paired first. The bearer token lasts for
+  the life of the device. Nothing that lasts belongs on a link like that.
+- **Root cause:** "the link is encrypted" was read as "the link is
+  trusted". Encryption answers who can *read*; authentication answers who
+  is *there*; a Just Works link has the first and not the second, and the
+  receipt's token needed both.
+- **Fix:** the WAP sends a **claim**, not the token
+  (`common/network/claim_ticket.h`): 16 random bytes (32 hex), minted on the
+  loop task the moment the join the phone asked for succeeded, readable
+  once by the link that asked from a separate companion service
+  (`8fc1cf00` / CLAIM `8fc1cf01`, READ encrypted), good for 180 s, spent by
+  one HTTP request on the home LAN — `GET /api/provisioning-receipt?claim=`
+  — which answers the same receipt the BOOT-tap route serves, `base_url` at
+  the `.local` name. `take()` claims with one atomic exchange **before** it
+  compares (a second taker on any task reads 0), the compare is constant
+  time, a wrong guess burns the claim, an expired one is burned too. Two
+  factors, then: the encrypted link that provisioned AND presence on the
+  Wi-Fi the device just joined. The receipt route gained a fourth grant in
+  a fixed order — foreign Host → bearer → claim → BOOT tap
+  (`provisioning_gate::receipt_decide`) — and a claim that serves leaves
+  the tap unspent for the owner's own page load.
+- **Regression check:** `tests_host/test_claim_ticket.cpp` (mint / take
+  once / burn on mismatch / burn on expiry / the case-folded compare / the
+  exact-length rule) and `test_provisioning_gate.cpp` (the four-grant order:
+  the claim is never consulted for a foreign Host or past a valid bearer,
+  is spent whatever it answers, and never touches the tap). The iOS
+  `MagicPairPlanTests` pin the phone's half (read the claim, fetch the
+  receipt on Wi-Fi, fall back to BOOT tap + "Add from receipt" on a 403).
+  Bench: not yet.
+- **Date learned:** 2026-10-07
+
+### One link, bounded: a door with no bounds is a door a stranger can stand in
+- **What happened:** The first version of the door had one bound — the
+  tap's one-minute TTL — and none while the no-credentials door was open.
+  A peripheral has one connection; a client that connected and sent nothing
+  held that one link indefinitely, so the owner's own phone could not get
+  in. A client that wrote `WIFI_SETTINGS` as fast as the stack took them
+  drove join attempt after join attempt on the Wi-Fi radio (each one a
+  Testing pass on the shared portal's path), and a flood of malformed
+  frames cost the same. None of it needed a password; all of it was
+  reachable from the street while a new unit sat in its box with the
+  window open.
+- **Root cause:** the session modeled *authorization* (is the door open?)
+  and not *occupancy* (who is standing in it, for how long, doing what).
+  A door that is open to whoever has no owner yet must still be a door
+  nobody can wedge.
+- **Fix:** three bounds in `improv_core.h`'s `Timing`, all host-tested:
+  accepted `WIFI_SETTINGS` writes at least `wifi_settings_cooldown_ms`
+  (3 s) apart — a faster write is `InvalidRpc`, not counted, nothing
+  started; `wifi_settings_cap` (10) attempts per open door, accepted or
+  malformed, and the attempt past the cap shuts the door until a tap or a
+  power cycle (a no-credentials door marks its window spent); a connected
+  client that has sent nothing for `idle_disconnect_ms` (3 minutes) is
+  dropped — never mid-join, since the verdict is owed to it — and after a
+  successful join the link lingers `provisioned_linger_ms` (~20 s) for the
+  phone to read the result (and a WAP's claim) and is then dropped so the
+  device goes back to its beacon. One join at a time: a second write
+  mid-join is refused without disturbing the one in flight. Every parse
+  failure is the standard's one word, `InvalidRpc`, because a device that
+  names which byte was wrong is a device helping someone probe it.
+- **Regression check:** `tests_host/test_improv_core.cpp` — the cooldown
+  refuses and does not count; the eleventh attempt shuts the door and the
+  twelfth is `NotAuthorized`; malformed frames count; `idle_disconnect_due`
+  is false mid-join and true after the bound; the linger. Bench: not yet —
+  the dropped link and the Wi-Fi radio's behavior under ten joins in a row
+  are hardware facts.
+- **Date learned:** 2026-10-07
+
 ---
 
 ## Sensing & Signal Processing
