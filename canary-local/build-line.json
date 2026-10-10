@@ -136,7 +136,7 @@
           "desc": "Your fleet on the TV — home, business, and apartment views; the desktop Lab finds your real Canaries on the Wi-Fi." }
       ],
       "site": [
-        { "noun": "Why Canary", "slug": "why-canary", "href": "/watch-over.html", "wasNamed": "Watched over, never watched" },
+        { "noun": "Watch over a parent", "slug": "why-canary", "href": "/watch-over.html", "wasNamed": "Watched over, never watched" },
         { "noun": "Plug it in", "slug": "plug-it-in", "href": "/plugin.html" }
       ]
     },

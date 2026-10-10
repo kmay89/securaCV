@@ -333,7 +333,8 @@ the account is created by a companion on your network after boot, and the
 Flasher was the only companion — if it was closed, nobody created the account.
 
 The **SecuraCV iPhone app** is now that companion too: Fleet → Options →
-*Set up a hub or a Canary* (or the Start here card on Today). It finds the
+*Set up a hub or a Canary* (or *Set up a hub* on the *Add your first Canary*
+card on Today). It finds the
 hub on your Wi-Fi by itself, waits for Home Assistant to actually exist,
 creates your account over Home Assistant's own setup API, finishes the wizard
 pages, checks the login works, and then asks Home Assistant for the same
@@ -526,8 +527,9 @@ as the SecuraCV app does; the Canary then shows up over MQTT like any other.
 What those clients do **not** get is the SecuraCV pairing: the claim ticket
 lives in our own companion service, which a standard client never looks
 for, so a WAP set up from Home Assistant's app has Wi-Fi and is then paired
-with the SecuraCV app from its receipt (BOOT tap → "Add from receipt"), as
-before. Home Assistant's own "Improv via BLE" integration needs a Bluetooth
+in the SecuraCV app: tap it under *Ready to pair* on the Fleet tab and add it
+with its recovery kit (`canary-recovery-kit.json`, which its own setup page
+saves after a short BOOT tap). Home Assistant's own "Improv via BLE" integration needs a Bluetooth
 radio on the Home Assistant machine itself; through an ESPHome Bluetooth
 proxy the one-tap pairing cannot complete — expected, and untested.
 → [Home Assistant setup](homeassistant_setup.md#step-3-configure-the-canary-device)

@@ -78,7 +78,13 @@ Behavior worth knowing before you flip a mode on:
   (any run of `:` or spaces between pairs, either case) and folded to 64 hex
   before the builders' narrower check. The catalog's `broker_tls`
   (`gen_flash.py`, from the env's `-DCANARY_MQTT_PLAIN_ONLY`) disables the
-  TLS modes for the nightstand-c6 with the firmware's own reason. Host-tested
+  TLS modes for the nightstand-c6 with the firmware's own reason. It is also
+  gated on the pinned release train: until `registry.json`'s `fw_train`
+  reaches the train `CAPABILITY_TRAINS["broker_tls"]` names (the first whose
+  release images carry `mqtt_transport.h`), every product's `broker_tls` is
+  false and `broker_tls_from` names that train, so the flashers say which
+  release brings TLS instead of offering modes the installed image would
+  ignore. Host-tested
   (source-read parity plus the builder tests); the forms have not been
   exercised against a TLS broker on hardware.
 - **Display broker gossip / referrals** rebind host and port only; the

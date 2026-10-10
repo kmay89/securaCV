@@ -77,7 +77,8 @@ named `SecuraCV.Lab_…`.)
   ./SecuraCV.Lab_*_amd64.AppImage
   ```
 
-- **.deb** (Debian/Ubuntu):
+- **.deb** (Debian/Ubuntu — updates itself too, asking for your password
+  to install each update):
 
   ```sh
   sudo apt install ./SecuraCV.Lab_*_amd64.deb
@@ -118,6 +119,13 @@ This is the same rule the SecuraCV Flasher ships.
   |---|---|---|
   | `303a` | Espressif native USB | the boards that plug straight into the ESP32's own USB, the XIAO ESP32-S3 and C3 among them |
   | `1a86:55d3` | WCH CH343 | the Grove Vision AI V2 camera module |
+  | `10c4:ea60` | Silicon Labs CP210x | the ESP32-C3-DevKitM-1, and many ESP32-WROOM DevKits |
+  | `1a86:7523` | WCH CH340 | the ESP32-CAM's programmer board, and other WROOM DevKits |
+  | `1a86:55d4` | WCH CH9102 | newer ESP32-WROOM DevKits |
+
+  The three bridge lines grant the logged-in user only (`uaccess`), never
+  `MODE="0666"`: those chips are generic parts other gadgets use too.
+  `lsusb` names the chip on yours if you're not sure.
   | `10c4:ea60` | Silicon Labs CP210x | the ESP32-C3-DevKitM-1, and many ESP32-WROOM DevKits |
   | `1a86:7523` | WCH CH340 | the ESP32-CAM's programmer board, and other WROOM DevKits |
   | `1a86:55d4` | WCH CH9102 | newer ESP32-WROOM DevKits |
@@ -167,10 +175,13 @@ missed announcement is not an outage.
 
 You don't. The Lab checks the project's GitHub releases when it starts (and
 every six hours while it stays open) and offers a one-click
-**Update & relaunch** when a newer signed build is out. (Self-update covers
-the macOS `.app` and the Linux **AppImage**; `.deb` users update through
-`apt` or by grabbing the next `.deb` from the
-[releases page](https://github.com/kmay89/securaCV/releases).)
+**Update & relaunch** when a newer signed build is out. Self-update covers
+the macOS `.app`, the Linux **AppImage** and the Linux **`.deb`**: a `.deb`
+install fetches the next signed `.deb` and asks for your password (a system
+prompt) to hand it to `dpkg`, since installing a package needs root. There is
+no apt repository; if you'd rather update by hand, grab the next `.deb` from
+the [releases page](https://github.com/kmay89/securaCV/releases) and install
+it as above.
 
 ---
 

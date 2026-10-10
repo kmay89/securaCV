@@ -678,15 +678,17 @@ impl ApiServer {
         };
         let tls_active = tls_config.is_some();
 
-        // Firmware alignment: DEFAULT_TLS_REQUIRED = 1. When in-process TLS is
-        // not active, the honest remedies are: keep the default loopback bind
-        // and put a TLS reverse proxy or SSH tunnel in front of it, provide
-        // cert/key to an `api-tls` build, or accept plaintext exposure
-        // explicitly with WITNESS_API_ALLOW_INSECURE=1.
+        // The kernel's own policy, not a firmware one: a Canary release image
+        // still serves plain HTTP until FEATURE_HTTPS fits its slot, and no
+        // firmware macro requires TLS. When in-process TLS is not active, the
+        // honest remedies are: keep the default loopback bind and put a TLS
+        // reverse proxy or SSH tunnel in front of it, provide cert/key to an
+        // `api-tls` build, or accept plaintext exposure explicitly with
+        // WITNESS_API_ALLOW_INSECURE=1.
         if !tls_active && !self.cfg.allow_insecure {
             log::warn!(
                 "CONFORMANCE: event API serves plaintext HTTP (in-process TLS not \
-                 active; firmware policy DEFAULT_TLS_REQUIRED=1). Keep the bind \
+                 active). Keep the bind \
                  loopback behind a TLS reverse proxy or SSH tunnel, configure \
                  cert/key on an `api-tls` build, or set \
                  WITNESS_API_ALLOW_INSECURE=1 to accept plaintext exposure."

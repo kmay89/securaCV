@@ -162,7 +162,10 @@ bash scripts/lint_feature_flags.sh
 
 Verifies: no orphaned Cargo feature, no `FUTURE_*` transport advertised in
 `ALL_TRANSPORTS`, no `FUTURE_*` tamper type advertised in `ALL_TAMPER_TYPES`,
-and every Cargo feature is listed in this registry. The in-package half of
+every Cargo feature is listed in this registry, and every firmware `FEATURE_*`
+flag a config or the canary's build flags set is read by code (it runs
+[`firmware/scripts/check_config_feature_flags.py`](../firmware/scripts/check_config_feature_flags.py),
+where that rule and its list of deliberate descriptors live). The in-package half of
 the same rule runs with the HA test suite:
 
 ```sh

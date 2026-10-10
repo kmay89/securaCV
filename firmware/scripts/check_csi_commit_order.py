@@ -148,15 +148,11 @@ def check_event(src: str, errors: list[str]) -> None:
         errors.append(f"{EVENT_CPP}: allocate_event_id() must be called exactly once, in "
                       f"commit_row() (found {len(allocs)} call(s)) — an id taken anywhere else "
                       "can reach the hooks out of order")
-    lock_at = -1
     if commit is not None:
         body = code[commit[0]:commit[1]]
-        first = re.match(r"\s*(CommitLock\s+\w+\s*;)", body)
-        if not first:
+        if not re.match(r"\s*(CommitLock\s+\w+\s*;)", body):
             errors.append(f"{EVENT_CPP}: commit_row() must open with `CommitLock <name>;` — "
                           "the lock is held from the id to the last hook")
-        else:
-            lock_at = commit[0] + first.start(1)
 
     # Rule 3: the hooks, only in commit_row, after the allocation.
     for hook in HOOKS:

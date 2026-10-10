@@ -15,7 +15,11 @@
 
 ## Wave 1 — shipped in firmware
 
-## 1. Proof-on-Glass ("tap for proof") — `FEATURE_PROOF_QR`
+## 1. Proof-on-Glass ("tap for proof")
+
+(Compiled unconditionally into the watch-glance and dash UIs. The
+`FEATURE_PROOF_QR` flag this heading used to name gated no code and was
+removed on 2026-10-09.)
 
 **User story.** "The insurance adjuster asks how I know the garage door
 opened at 2 a.m. I tap the card on the kitchen display; a QR appears; she

@@ -77,9 +77,7 @@ buzzer onto a `MINIMAL` build that never calls it.
 
 `FEATURE_TAMPER_GPIO` defaults to `0` in every profile
 ([`build_config.h`](../../firmware/projects/canary-wap/arduino/canary_wap/build_config.h),
-mirrored in
-[`configs/canary-wap/default/config.h`](../../firmware/configs/canary-wap/default/config.h))
-until the contact's pin is bench-validated. When a tamper switch is fitted,
+where every WAP `FEATURE_*` flag is set) until the contact's pin is bench-validated. When a tamper switch is fitted,
 build with `-DFEATURE_TAMPER_GPIO=1`: the firmware then reads the switch and
 narrates an opening as the `system.integrity` `enclosure` kind (§6.3).
 
@@ -492,6 +490,6 @@ are not, so do not rely on them alone.
 ### References
 - Buzzer driver: [`audible_chirp.h`](../../firmware/projects/canary-wap/arduino/canary_wap/audible_chirp.h)
 - WAP pins: [`pins.h`](../../firmware/boards/xiao-esp32s3-sense/pins/pins.h) · Vision pins: [`esp32-c3/pins/pins.h`](../../firmware/boards/esp32-c3/pins/pins.h)
-- Build profiles: [`build_config.h`](../../firmware/projects/canary-wap/arduino/canary_wap/build_config.h) · Feature flags: [`config.h`](../../firmware/configs/canary-wap/default/config.h)
+- Build profiles and feature flags: [`build_config.h`](../../firmware/projects/canary-wap/arduino/canary_wap/build_config.h)
 - RF "Chirp Channel" (not this doc): [`spec/chirp_channel_v0.md`](../../spec/chirp_channel_v0.md)
 - Board overview: [`firmware/boards/README.md`](../../firmware/boards/README.md) · Setup: [`getting_started_canary.md`](../getting_started_canary.md)

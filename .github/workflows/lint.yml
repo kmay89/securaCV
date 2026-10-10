@@ -38,12 +38,12 @@ jobs:
         # scripts, the add-on, eval/ and integrations/ had never been linted,
         # and held 12 findings when they joined. The pin is read from
         # requirements_test.txt so this job and python.yml cannot disagree.
-        # Not yet in the list: firmware/scripts (open findings to fix first).
+        # firmware/scripts joined once its last two findings were fixed.
         run: |
           python3 -m pip install --quiet "$(grep -oE '^ruff==[0-9.]+' requirements_test.txt)"
           ruff check custom_components/securacv canary-local/tools scripts tools \
             docs/hardware/enclosure desktop/scripts .github/scripts \
-            privacy_witness_kernel eval integrations
+            privacy_witness_kernel eval integrations firmware/scripts
 
   scripts:
     name: scripts/lint_*.sh

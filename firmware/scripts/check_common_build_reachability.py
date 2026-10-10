@@ -135,10 +135,6 @@ HEADER_WAIVERS: dict[str, str] = {
     "core/types.h": (
         "chirp/chirp_channel.h's base types (result_t and friends); goes "
         "with it, or into it, when the port lands."),
-    "encoding/cbor.h": (
-        "compiled by nothing; kept only because "
-        "scripts/tests/test_wap_name_examples.py names it in its source "
-        "walk (sweep A35). Delete it once that test stops naming it."),
 }
 
 SOURCE_EXTS = {".c", ".cc", ".cpp", ".ino", ".mm"}

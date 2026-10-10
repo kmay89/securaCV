@@ -565,7 +565,7 @@ jobs:
             command — see `desktop/INSTALL.md`. Universal build: one download for Apple
             Silicon and Intel.
 
-            **Linux:** grab the `.AppImage` (self-updating) or the `.deb`.
+            **Linux:** grab the `.AppImage` or the `.deb` (both update themselves; the `.deb` asks for your password to install).
           releaseDraft: false
           prerelease: ${{ steps.plan.outputs.prerelease }}
           uploadUpdaterJson: true
@@ -732,7 +732,7 @@ jobs:
             **macOS:** signed & notarized — just open it. Universal build: one download
             for Apple Silicon and Intel.
 
-            **Linux:** grab the `.AppImage` (self-updating) or the `.deb`.
+            **Linux:** grab the `.AppImage` or the `.deb` (both update themselves; the `.deb` asks for your password to install).
           releaseDraft: false
           prerelease: ${{ steps.plan.outputs.prerelease }}
           uploadUpdaterJson: true
@@ -902,7 +902,7 @@ jobs:
               echo "build is unsigned, so first launch needs one command: see \`desktop/INSTALL.md\`."
             fi
             echo
-            echo "**Linux:** grab the \`.AppImage\` (self-updating) or the \`.deb\`."
+            echo "**Linux:** grab the \`.AppImage\` or the \`.deb\` (both update themselves; the \`.deb\` asks for your password to install)."
             echo
             echo "Installed Flashers pick this version up on their own — the app checks at"
             echo "launch and every few hours, shows these notes, and installs only when asked."

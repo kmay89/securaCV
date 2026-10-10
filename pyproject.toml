@@ -1,7 +1,9 @@
 # Python tooling config for the SecuraCV Home Assistant integration.
-# Scope is deliberately the integration (custom_components/securacv); the rest
-# of the repo's Python (scripts, eval samples, firmware tooling) is not gated
-# here yet. CI runs: ruff check, mypy, and the integration pytest suite.
+# mypy and pytest are scoped to the integration (custom_components/securacv;
+# python.yml). ruff reads the [tool.ruff] settings below for the whole repo:
+# lint.yml's `ruff` job lints the integration and every tooling tree
+# (scripts, tools, canary-local/tools, the enclosure generators, the CI and
+# desktop scripts, the add-on, eval/, integrations/, firmware/scripts).
 # See docs/review/03-feature-flags-and-hygiene.md (HY-04/05).
 
 # Not a distributable package — this table exists so CI can read ONE floor

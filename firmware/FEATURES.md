@@ -234,7 +234,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Ed25519 key generation (hardware RNG) | ✅ | ⚠️ Basic init only | ✅ securacv_crypto lib | ⚠️ Via common headers |
 | Ed25519 signing of every witness record | ✅ | ❌ No signing | ✅ | ⚠️ Skeleton |
 | SHA256 hash chain (domain-separated) | ✅ | ❌ | ✅ | ⚠️ Via common witness_chain.h |
-| CBOR-encoded payloads | ✅ | ❌ | ✅ CborWriter class | ⚠️ Via common encoding/cbor.h |
+| CBOR-encoded payloads | ✅ | ❌ | ✅ CborWriter class | ⚠️ Via common encoding/cbor.h (compiled by nothing; deleted 2026-10) |
 | Self-verification (boot + periodic) | ✅ | ❌ | ⚠️ boot self-test (`diag_run_selftest()`) + sign-then-verify on every record (`securacv_witness.cpp`); no periodic chain re-verify | ⚠️ |
 | Sequence number persistence (NVS) | ✅ | ⚠️ Basic only | ✅ | ⚠️ |
 | Boot attestation record | ✅ | ❌ | ✅ witness_chain_create_boot_attestation | ⚠️ |

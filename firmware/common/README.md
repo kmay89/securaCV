@@ -24,7 +24,6 @@ common/
 │   └── types.h               # base types (result_t ...) for chirp/chirp_channel.h
 ├── csi/            # the SecuraCV CSI library (HAL, features, modules, event chokepoint). See csi/README.md
 ├── doorbell/       # the Vision Doorbell's button, glow ring and chime, as pure logic (host-tested)
-├── encoding/       # cbor.h — a CBOR writer no build compiles (kept only for a test's source walk)
 ├── fleet_link/     # the fleet-link presence beacon wire format, ESP-NOW / UDP transports, roster
 ├── fleet_selfreport/ # the /api/fleet self-report body (tvos/discovery/DISCOVERY.md)
 ├── fusion/         # sentinel.fusion — the Sentinel's evidence-fusion engine. See fusion/README.md

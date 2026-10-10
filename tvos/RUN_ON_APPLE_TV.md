@@ -8,9 +8,11 @@ afternoon on. There are two tracks — pick by what you're trying to do.
 > tested** (`WitnessWall/` — see [`README.md`](README.md)): the wall with
 > home / business / apartment profiles and skins, zero-typing LAN discovery
 > (it probes `canary.local` by itself), and the Rust verification core wired
-> into the poll loop — it verifies a sealed log whenever a source serves one,
-> and phrases the fleet's status as the fleet's own report until then (no
-> kernel ships the sealed-log endpoint yet). What's left is Apple's side —
+> into the poll loop. The kernel serves its sealed log at
+> `GET /api/sealed-log` to a viewer token (`witness_api mint-viewer-token`);
+> paste that receipt into the Wall's settings once and it verifies the log
+> against the key it pinned. Unpaired, it phrases the fleet's status as the
+> fleet's own report, never as verified. What's left is Apple's side —
 > the account and keys — which is exactly what Tracks B and C below walk
 > through.
 

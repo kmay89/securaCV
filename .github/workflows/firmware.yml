@@ -843,14 +843,10 @@ jobs:
         # tv/gen_tv_html.py bakes tv/index.html into the PROGMEM header the
         # display serves at GET /tv (include/canary/net/tv_html.h). It was the
         # one committed gen_*.py no workflow ran, so an index.html edit without
-        # the regen shipped the old page with CI green. The generator has no
-        # --check yet; it is deterministic (no timestamp, no hash), so this
-        # regenerates and fails on any diff. The sketch copy is the next
-        # step's job.
-        run: |
-          python3 firmware/projects/canary-display/tv/gen_tv_html.py
-          git diff --exit-code -- firmware/projects/canary-display/include/canary/net/tv_html.h \
-            || { echo "::error::tv_html.h is stale against tv/index.html — run python3 firmware/projects/canary-display/tv/gen_tv_html.py, then ./setup.sh regen, and commit both"; exit 1; }
+        # the regen shipped the old page with CI green. --check rebuilds the
+        # header in memory and fails naming the regen on any difference. The
+        # sketch copy is the next step's job.
+        run: python3 firmware/projects/canary-display/tv/gen_tv_html.py --check
 
       - name: Verify the Canary Display Arduino sketch is in sync with the PlatformIO tree
         # The display Arduino sketch is GENERATED from the canonical PlatformIO
@@ -945,16 +941,6 @@ jobs:
         # one not even parsing as C++). Contract: the script's module
         # docstring.
         run: python3 firmware/scripts/check_common_build_reachability.py
-
-      - name: Check every config FEATURE_* flag gates code
-        # A FEATURE_* flag in firmware/configs/<project>/*/config.h, or set
-        # for the canary tree by canary_config.h / its platformio.ini files,
-        # must be read by that project's sources, or be a listed descriptor
-        # with its reason. FEATURE_PROOF_QR, FEATURE_CHAIN_VERIFY,
-        # FEATURE_NIGHT_BLACKOUT and six canary [env:full] flags gated
-        # nothing while docs, the Lab Workshop and a size-cut plan treated
-        # them as switches (audit, 2026-10-09).
-        run: python3 firmware/scripts/check_config_feature_flags.py
 
       - name: Check OTA channels (polled manifests are published ones)
         # Every SECURACV_OTA_MANIFEST_URL compiled into the firmware must be a

@@ -21,7 +21,7 @@ shape with nothing behind it, and everything downstream believes it:
 
 scripts/lint_feature_flags.sh polices Cargo features and the Home Assistant
 const.py lists; nothing looked at firmware macros. This does (audit,
-2026-10-09).
+2026-10-09), and that lint runs it, so one feature-flag gate covers every layer.
 
 THE RULE
 ========
@@ -50,7 +50,8 @@ A DESCRIPTORS entry that no longer applies (the flag is read now, or no config
 sets it) fails the check, so the list cannot outlive what it excuses.
 
 Run:  python3 firmware/scripts/check_config_feature_flags.py
-CI:   .github/workflows/firmware.yml (Regression Guards)
+CI:   scripts/lint_feature_flags.sh (check D), from .github/workflows/lint.yml
+      on every PR
 """
 from __future__ import annotations
 

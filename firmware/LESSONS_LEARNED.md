@@ -1452,7 +1452,9 @@
   the claim is never consulted for a foreign Host or past a valid bearer,
   is spent whatever it answers, and never touches the tap). The iOS
   `MagicPairPlanTests` pin the phone's half (read the claim, fetch the
-  receipt on Wi-Fi, fall back to BOOT tap + "Add from receipt" on a 403).
+  receipt on Wi-Fi, offer Try again while an unreached claim is still live;
+  a 403 is final and points at Ready to pair on the Fleet tab and the
+  recovery kit).
   Bench: not yet.
 - **Date learned:** 2026-10-07
 
@@ -1790,9 +1792,10 @@
   compiled code, an env or sample a doc offers is compiled by CI; otherwise
   it is deleted, or listed as a waiver/descriptor with its reason.
 - **Regression check:** `firmware/scripts/check_config_feature_flags.py`
-  (configs/ flags and the canary's `-D` / `canary_config.h` flags) and the
-  header pass of `check_common_build_reachability.py`, both in
-  `firmware.yml` Regression Guards; the canary's `dev_ha` / `minimal` /
+  (configs/ flags and the canary's `-D` / `canary_config.h` flags; run by
+  `scripts/lint_feature_flags.sh` in `lint.yml`, on every PR) and the
+  header pass of `check_common_build_reachability.py` (`firmware.yml`
+  Regression Guards); the canary's `dev_ha` / `minimal` /
   `usb-onboard` compile-only step and the `examples/csi_minimal` compile in
   `firmware.yml`, and `firmware/tests_host`'s `run-syntax-checks`.
 - **Date learned:** 2026-10
