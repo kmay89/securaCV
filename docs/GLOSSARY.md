@@ -514,8 +514,10 @@ broker pin (`mqtt_fp`, above), which protects the other direction.
 [`sbom/sbom-firmware.cdx.json`](../sbom/sbom-firmware.cdx.json), is derived
 from the build inputs by `scripts/gen_firmware_sbom.py`, committed,
 byte-gated and CycloneDX 1.5 schema-validated on every PR
-(`--check --validate`); the Rust and Node documents are produced in CI and
-attached to every release. → [`sbom/README.md`](../sbom/README.md)
+(`--check --validate`); the Rust and Node documents are produced in CI, and
+all three are attached to every release cut from October 2026 on (the firmware,
+Flasher, Lab and kernel release workflows call `sbom.yml` once published;
+earlier releases mostly carry none). → [`sbom/README.md`](../sbom/README.md)
 
 **Release buttons** — The operator's index of every release action, when to
 press it and when not to. The default is **Actions → "Update everything (only

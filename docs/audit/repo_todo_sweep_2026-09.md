@@ -6385,7 +6385,7 @@ so — see D2 below.)
   stays disabled through a failed start's own cancels is not pinned (from the
   review). Host-tested (node); not run against a Canary (U1: the F214/F217
   row).
-- [ ] **F237 [code] canary-wap's `wap_server.h` lists eight routes nothing
+- [x] **F237 [code] canary-wap's `wap_server.h` lists eight routes nothing
   registers.** Its endpoint comment names GET `/api/health`, `/api/identity`,
   `/api/witness/<seq>`, `/api/witness/stats`, `/api/logs/unacked`, `/api/gps`,
   `/api/time` and `/api/export/download`. None is in the route table
@@ -6393,6 +6393,9 @@ so — see D2 below.)
   404 or 405 for each), and neither dashboard calls them. Correct the list to
   the table, or hold it to the table in `test_dashboard_route_match.test.js`.
   Found by F214 (#1762).
+  *Done (2026-10 cleanup):* the eight phantom routes are gone from
+  `wap_server.h`'s endpoint comment, and `test_dashboard_route_match.test.js`
+  now holds every route that comment lists to the route table.
 - [ ] **F238 [code] The route-match test reads only the two main dashboards.**
   `test_dashboard_route_match.test.js` holds the requests of the PlatformIO
   dashboard (`securacv_webui.cpp`) and canary-wap's `web_ui.h`. canary-wap's
@@ -8120,7 +8123,7 @@ so — see D2 below.)
   both opt-in Vision parity scenarios must pass by hand. A firmware change:
   host-tested, compile-tested by CI, not bench-tested. Found here, by the
   review: F249 (an incremental host build misses a pipeline change).
-- [ ] **F249 [code] An incremental host build misses a `detection_pipeline.h`
+- [x] **F249 [code] An incremental host build misses a `detection_pipeline.h`
   change in the Vision core bindings test.** `firmware/tests_host/Makefile`'s
   `VISCORE_HDR` lists the FSM headers, `config.h`, the shim headers and the
   emscripten stub, but `vision_core_bindings.cpp` also includes
@@ -8129,6 +8132,7 @@ so — see D2 below.)
   `test_vision_core_bindings`. CI builds fresh, so it is unaffected. Add
   `$(VISION_PIPE_HDR)` to `VISCORE_HDR`. Pre-existing. Found by F221's review
   (#1762).
+  *Done (2026-10 cleanup):* `VISCORE_HDR` lists `$(VISION_PIPE_HDR)`.
 
 ---
 
@@ -9716,12 +9720,15 @@ so — see D2 below.)
   the twin's glow and its bench backlight row can read brighter than the
   glass. The bench says so for now. Applying the cap where the board does
   would make the twin match; it moves the dist. Found by A54 (#1762).
-- [ ] **A62 [code] `fleet.html` turns a malformed deep link into a page
+- [x] **A62 [code] `fleet.html` turns a malformed deep link into a page
   error.** `canary-local/assets/app.js` reads its card with a bare
   `decodeURIComponent(location.hash.slice(1))`, so `fleet.html#%E0` throws
   `URIError` once the cards have rendered, instead of quietly opening nothing.
   Decode inside a `try`, as `probe_server.mjs`'s `lookup()` does. Found by A52
   (#1762).
+  *Done (2026-10 cleanup):* `app.js`'s `deepLinkId()` decodes inside a `try`
+  (a malformed hash opens nothing) and `chooser.js` guards its prefill the
+  same way; `canary_local.test.js` pins both.
 - [x] **A63 [code] `onboard_probe.mjs`'s nightlight walk fails a read now and
   then.** In 31 local walks of `--flavor nightlight` (20 on the wave-15 Lab
   files, 11 with the base `harness.js`, `emu-shell.js` and
@@ -10509,7 +10516,7 @@ so — see D2 below.)
   `publish_mic_discovery`'s) would have to grow (`test_ha_discovery_ids.cpp`
   holds them). Decide between sending both and saying in the docs that the ids
   need 2025.10. Found in HA16 and its review (#1762).
-- [ ] **HA30 [code] `docs/homeassistant_setup.md`'s Template Sensor example
+- [x] **HA30 [code] `docs/homeassistant_setup.md`'s Template Sensor example
   reads an entity no publisher creates.** It reads
   `sensor.pwk_boundary_crossing_count`; the kernel bridge makes
   `sensor.pwk_<zone>_events`, `sensor.pwk_last_event` and
@@ -10517,6 +10524,9 @@ so — see D2 below.)
   Its slug example also names a zone the kernel refuses (`Front Door`;
   `validate_zone_id` takes only `zone:` and `[a-z0-9_-]`, so `zone:back-gate`
   becomes `back_gate`). Found in HA16 and its review (#1762).
+  *Done (2026-10 cleanup):* the example now asks the app's `/digest`
+  endpoint (MQTT Discovery is the only source of the per-zone counts), and
+  the slug example is `zone:back-gate` → `back_gate`.
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store

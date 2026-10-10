@@ -120,7 +120,9 @@ any platform.
   then the next press of the button, which dispatches nothing, firmware
   included. The closing edit is to name the files the test reads (each
   linked crate's `Cargo.toml` and `src/`) in `workflows-lint.yml`'s two
-  path lists.
+  path lists. *Closed (2026-10-10):* both lists now name them for the
+  Flasher, the Lab and the three crates they link (hub-core, hub-io,
+  flash-engine); a new path dependency needs its pair added there too.
 - **What the next press shows:** nothing this change caused. When this
   was written, the Flasher was already NEEDS_BUMP: `desktop/` had moved since
   `flasher-v0.11.9` (so had four of the five newly watched files), and
