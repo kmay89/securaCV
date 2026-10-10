@@ -392,7 +392,7 @@ Untapped / issues:
   ceiling is now set at init by the PHY block above, which calls `esp_wifi_set_max_tx_power()`
   directly. That leaves `network_set_tx_power()` itself with no caller (only its declaration,
   its definition and comments that cite it): route the PHY block through it or delete it
-  (item 30; tracked as sweep F258). **[P1]**
+  (item 30). **[P1]**
 - **(fixed, in three installments)** ~~MQTT is plaintext, QoS 0, blocking, with no offline queue~~ —
   each ask landed separately: `setSocketTimeout` + bounded connect stages came with the
   watchdog-budget work, TLS (CA-verified / SHA-256-pinned / lab modes, refused-not-downgraded)
@@ -661,7 +661,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 27 | I2C expandability: RTC (wall-clock) + IMU (tamper) | **P2** | Sensors/Pins | `pins.h` I2C D4/D5 | Trustworthy timestamps; robust tamper |
 | 28 | Implement co-signing (`PWK/Endorsement/v1`) | **P2** | Crypto/Mesh | `spec/co_signing.md` | Cross-device attestation |
 | 29 | ESP-NOW rate config / LR; FTM ranging | **P2** | Mesh | `mesh_transport.cpp` | Mesh range/reliability; fusion localization |
-| 30 | Dead-code cleanup + stale-comment fixes (still open, among others: `network_set_tx_power()` has no caller since item 15, sweep F258) | **P2** | All | §2 item 8 | Correct the record for the next reader |
+| 30 | Dead-code cleanup + stale-comment fixes (still open, among others: `network_set_tx_power()` has no caller since item 15) | **P2** | All | §2 item 8 | Correct the record for the next reader |
 
 ---
 

@@ -6,7 +6,8 @@ has been bench-tested on hardware yet.** The radio, the iOS pairing sheet's
 timing on NimBLE 1.4.x and the BOOT button on each board are the bench items
 ([the checklist](#9-bench-checklist-what-to-verify-before-calling-it-shipped)).
 The flagship `firmware/canary` build is a **follow-up**, not part of this
-change. The displays keep their glass QR and open no door.
+change (tracked as F251 in the
+[sweep backlog](../audit/repo_todo_sweep_2026-09.md)). The displays keep their glass QR and open no door.
 
 **Canonical statements this page restates, never overrides:** the wire and
 the door rules are the header comment of
@@ -470,7 +471,8 @@ after it left the card on the newcomer). The profile swap and the
 
 **The flagship `firmware/canary` build.** Not in this change. Its
 `securacv_network` keeps the SoftAP wizard and the BOOT-tap receipt; the door
-and the claim are a follow-up (`claim_ticket.h` says so in its header). The
+and the claim are a follow-up (`claim_ticket.h` says so in its header;
+tracked as F251 in the [sweep backlog](../audit/repo_todo_sweep_2026-09.md)). The
 iOS name grammar already accepts a `Canary-XXXX` name and treats it as a
 WAP-class device, so the app needs no change when it lands.
 
@@ -733,6 +735,9 @@ cannot speak to.
 - [ ] Bluetooth off / Bluetooth denied / Local Network denied: each setup
       screen names the cause (and offers Settings where the fix is there)
       instead of "Listening…".
+- [ ] On the Sense / Vision walkthrough, the hub login copied on the
+      iPhone pastes into the Flasher's MQTT fields on a Mac over Universal
+      Clipboard, and is gone from the clipboard after its two minutes.
 
 ---
 

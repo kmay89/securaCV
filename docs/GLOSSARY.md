@@ -185,7 +185,8 @@ pairing sheet → the Canary's own verdict — and, for a WAP, the claim ticket
 and the receipt over Wi-Fi, so it is paired from that one tap. The
 **Bluetooth setup door** is the device half, the **claim ticket** the
 WAP's second factor. Sense, Vision and the WAP's FULL profile today; the
-flagship `firmware/canary` build is a follow-up; a display keeps its glass
+flagship `firmware/canary` build is a follow-up (sweep
+[F251](audit/repo_todo_sweep_2026-09.md)); a display keeps its glass
 QR. Nothing of it is bench-tested yet.
 → [magic pairing (design)](design/magic_pairing.md),
 [the FAQ](FAQ.md#how-do-i-give-a-new-canary-my-wi-fi-do-i-have-to-type-a-setup-key)

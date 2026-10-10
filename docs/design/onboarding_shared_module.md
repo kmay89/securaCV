@@ -154,7 +154,8 @@ claim ticket (`common/network/claim_ticket.h`) — readable once over the
 provisioning link, spent once on the home LAN — so the bearer token never
 rides Bluetooth; Sense and Vision answer an empty URL and simply appear on
 the LAN. The flagship `firmware/canary` build gets the door in a follow-up,
-with its portal migration (Phase 4, item 2).
+with its portal migration (Phase 4, item 2; tracked as F251 in the
+[sweep backlog](../audit/repo_todo_sweep_2026-09.md)).
 
 ## Invariants the shared module must carry (each one was paid for)
 
