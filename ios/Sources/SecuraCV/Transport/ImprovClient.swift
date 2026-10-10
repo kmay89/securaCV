@@ -329,7 +329,7 @@ extension ImprovClient: CBPeripheralDelegate {
             }
 
         case Self.stateUUID:
-            guard ImprovWire.parseState(data) != nil else { return }
+            guard let s = ImprovWire.parseState(data) else { return }
             if phase == .discovering {
                 phase = .ready
                 if let w = readyWaiter { readyWaiter = nil; w.resume(returning: true) }
