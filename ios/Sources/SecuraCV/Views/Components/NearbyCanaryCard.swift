@@ -51,27 +51,45 @@ struct NearbyOfferOverlay: View {
     @EnvironmentObject var store: FleetStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var target: NearbyCanary?
+    /// The Canary the card is showing. Latched when the card first appears —
+    /// and counted as offered right then, not when it is answered — so a
+    /// card that is ignored, or whose signal wobbles across "close enough",
+    /// neither flickers nor slides up a second time this session. It stays
+    /// until it is answered or the Canary drops out of earshot entirely.
+    @State private var shown: NearbyCanary?
 
     var body: some View {
-        let offer = store.nearbyOffer
         ZStack(alignment: .bottom) {
-            if let c = offer {
-                NearbyOfferCard(canary: c,
+            if let c = shown {
+                // The live sighting, so "right here / close by" keeps up.
+                let live = store.nearbyCanaries.first { $0.suffix == c.suffix } ?? c
+                NearbyOfferCard(canary: live,
                                 onContinue: {
-                                    store.noteOffered(c.suffix)
-                                    target = c
+                                    shown = nil
+                                    target = live
                                 },
-                                onNotNow: { store.noteOffered(c.suffix) })
+                                onNotNow: { shown = nil })
                     .padding(.horizontal, Theme.s)
                     .padding(.bottom, Theme.s)
                     .frame(maxWidth: 520)
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(reduceMotion ? nil : Animation.spring(response: 0.45, dampingFraction: 0.85), value: offer?.id)
+        .animation(reduceMotion ? nil : Animation.spring(response: 0.45, dampingFraction: 0.85), value: shown?.id)
+        .onChange(of: store.nearbyOffer?.id, initial: true) { _, _ in latchOffer() }
+        .onChange(of: target?.id) { _, _ in latchOffer() }   // a sheet closed: the next one may show
+        .onChange(of: store.nearbyCanaries.map(\.suffix)) { _, heard in
+            if let c = shown, !heard.contains(c.suffix) { shown = nil }
+        }
         .sheet(item: $target) { c in
             NearbySetupSheet(canary: c)
         }
+    }
+
+    private func latchOffer() {
+        guard shown == nil, target == nil, let c = store.nearbyOffer else { return }
+        store.noteOffered(c.suffix)
+        shown = c
     }
 }
 
@@ -186,7 +204,11 @@ struct NearbySetupSheet: View {
     @State private var password = ""
     @State private var showPassword = false
     @State private var remember = true
-    @State private var remembered: HouseholdWiFi? = HouseholdWiFiStore.load()
+    /// The household Wi-Fi this phone kept from the last Canary. Read once,
+    /// in begin() — a @State initializer runs on every rebuild of this view
+    /// (each Bluetooth sighting rebuilds it), and a Keychain read there is
+    /// a main-thread stall per advert.
+    @State private var remembered: HouseholdWiFi?
     @State private var verdict: ImprovClient.Outcome?
     @State private var paired = false
     /// Joined but not paired, and how to pair it later — shown in the done
@@ -460,6 +482,7 @@ struct NearbySetupSheet: View {
 
     private func begin() async {
         stage = .connecting
+        remembered = HouseholdWiFiStore.load()
         guard let c = store.ble.beginSetup(canary.peripheralID) else {
             stage = .failed("That Canary isn't in range any more — power it on near this phone and try again.")
             return
