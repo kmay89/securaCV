@@ -7,8 +7,12 @@
 # Versioning follows the DESKTOP-app precedent (same as iOS): this app versions
 # independently, ships on its own `tvos-v*` tag, and stays OUT of
 # scripts/lint_version_sync.sh's four-file set. `scripts/release-tvos.sh` reads
-# MARKETING_VERSION from here and refuses to build if the tag disagrees, so the
-# tag and the binary can never claim different versions.
+# MARKETING_VERSION from here and, on a `tvos-v*` tag push, refuses to build if
+# the tag disagrees. A workflow_dispatch publish (the Update-everything path)
+# has no tag yet: it reads its version from this same line, so that comparison
+# cannot fail there. On a dispatch the guard is tvos-release.yml refusing to
+# publish a version that is already tagged; the tag is cut from this value
+# only after the upload.
 
 name: WitnessWall
 options:

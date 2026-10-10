@@ -326,7 +326,8 @@ jobs:
 
             ### macOS: first launch (one time)
 
-            These builds are **unsigned**, so macOS quarantines them. On recent
+            These builds are **unsigned**. macOS quarantines every browser download,
+            and Gatekeeper blocks an unsigned app that carries the mark. On recent
             macOS, right-click → Open no longer works — clear the quarantine flag
             instead. Drag the app to Applications, then in **Terminal** run:
 
@@ -617,13 +618,17 @@ jobs:
             echo "- **Linux**: \`.AppImage\` (runs anywhere) or \`.deb\` (Debian/Ubuntu)."
             echo
             if [ "${SIGNED:-}" = "true" ]; then
+              # Notarized is not prompt-free: macOS still asks once before it
+              # opens any app downloaded from the internet. Say so.
               echo "**Signed and notarized by Apple** — drag it to Applications and open it."
-              echo "No Terminal, no quarantine warning."
+              echo "macOS asks once to confirm an app downloaded from the internet; no"
+              echo "Terminal step is needed."
               echo
             else
               echo "### macOS: first launch (one time)"
               echo
-              echo "This build is unsigned, so macOS quarantines it. Drag the app to"
+              echo "This build is unsigned. macOS quarantines every browser download, and"
+              echo "Gatekeeper blocks an unsigned app that carries the mark. Drag the app to"
               echo "Applications, then in **Terminal** run:"
               echo
               echo '```sh'
