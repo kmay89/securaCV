@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-09-02T13:37:16Z",
+ "as_of": "2026-10-10T15:20:57Z",
  "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
@@ -15,7 +15,7 @@
    "seed_usd": 15.99,
    "unit_usd": 15.99,
    "provenance": "digikey",
-   "stock": 130,
+   "stock": 88,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-101021112-ND"
@@ -38,7 +38,7 @@
    "seed_usd": 13.99,
    "unit_usd": 15.9,
    "provenance": "digikey",
-   "stock": 1436,
+   "stock": 1087,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
@@ -62,7 +62,7 @@
    "seed_usd": 18.0,
    "unit_usd": 18.0,
    "provenance": "digikey",
-   "stock": 7,
+   "stock": 168,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-104030087-ND"
@@ -85,7 +85,7 @@
    "seed_usd": 1.2,
    "unit_usd": 2.0,
    "provenance": "digikey",
-   "stock": 715,
+   "stock": 562,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-110990210",
@@ -109,7 +109,7 @@
    "seed_usd": 7.49,
    "unit_usd": 7.49,
    "provenance": "digikey",
-   "stock": 10870,
+   "stock": 10185,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-113991114-ND"
@@ -148,7 +148,7 @@
    "seed_usd": 18.0,
    "unit_usd": 26.29,
    "provenance": "digikey",
-   "stock": 80,
+   "stock": 69,
    "lifecycle": "Active",
    "sku": {
     "mouser": "546-1554F2GYCL",
@@ -197,7 +197,7 @@
    "seed_usd": 0.05,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 764557,
+   "stock": 625479,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
@@ -247,6 +247,62 @@
     "bom_canary_wap.csv"
    ]
   },
+  "2N3904BU": {
+   "mfr": "onsemi",
+   "desc": "NPN transistor 2N3904, TO-92 (glow ring low-side switch)",
+   "sourcing": "orderable",
+   "seed_usd": 0.1,
+   "unit_usd": 0.29,
+   "provenance": "digikey",
+   "stock": 312627,
+   "lifecycle": "Active",
+   "sku": {
+    "mouser": "512-2N3904BU",
+    "digikey": "2N3904FS-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.29
+    },
+    {
+     "qty": 10,
+     "usd": 0.179
+    },
+    {
+     "qty": 100,
+     "usd": 0.1113
+    },
+    {
+     "qty": 500,
+     "usd": 0.0819
+    },
+    {
+     "qty": 1000,
+     "usd": 0.07237
+    },
+    {
+     "qty": 2000,
+     "usd": 0.06434
+    },
+    {
+     "qty": 5000,
+     "usd": 0.05562
+    },
+    {
+     "qty": 10000,
+     "usd": 0.05022
+    },
+    {
+     "qty": 50000,
+     "usd": 0.04075
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/onsemi/2N3904BU/1413",
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
   "2N7002": {
    "mfr": "onsemi",
    "desc": "N-channel MOSFET (only needed for MAGNETIC buzzers)",
@@ -288,6 +344,38 @@
     "bom_canary_wap.csv"
    ]
   },
+  "318020748 / 318020968": {
+   "mfr": "Seeed Studio",
+   "desc": "FPC Wi-Fi antenna 2.4 GHz, 40 x 20 mm, u.FL pigtail (the XIAO ESP32-C3 kit antenna; S3: 37.4 x 17.5 A-02)",
+   "sourcing": "generic",
+   "seed_usd": 1.9,
+   "unit_usd": 1.9,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "4926-STRIP": {
+   "mfr": "3M",
+   "desc": "Foam tape strip, 0.5 x 6 x 30 mm, double-sided acrylic (battery bay floor)",
+   "sourcing": "orderable",
+   "seed_usd": 0.1,
+   "unit_usd": 0.1,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
   "59140-1-S-02-A": {
    "mfr": "Littelfuse",
    "desc": "Reed switch, SPST normally-closed (tamper), hermetic glass",
@@ -295,7 +383,7 @@
    "seed_usd": 1.8,
    "unit_usd": 3.76,
    "provenance": "digikey",
-   "stock": 20747,
+   "stock": 18808,
    "lifecycle": "Active",
    "sku": {
     "digikey": "HE573-ND"
@@ -355,6 +443,22 @@
    "boms": [
     "bom_canary_display.csv",
     "bom_canary_sense.csv"
+   ]
+  },
+  "ACOUSTEX-34": {
+   "mfr": "Saati / GORE",
+   "desc": "Acoustic mesh patch, 34 mm, hydrophobic, adhesive (speaker grille; Saati Acoustex class or GORE acoustic vent class)",
+   "sourcing": "orderable",
+   "seed_usd": 0.9,
+   "unit_usd": 0.9,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
    ]
   },
   "ADA-1317-CLASS": {
@@ -447,7 +551,7 @@
    "seed_usd": 0.12,
    "unit_usd": 0.35,
    "provenance": "digikey",
-   "stock": 42100,
+   "stock": 19345,
    "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
@@ -498,6 +602,174 @@
     "bom_canary_wap.csv"
    ]
   },
+  "CFR-25JB-52-10K": {
+   "mfr": "Yageo",
+   "desc": "Resistor 10k ohm 1/4W (Q1 base pull-down)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 80928,
+   "lifecycle": "Active",
+   "sku": {
+    "mouser": "603-CFR-25JB-52-10K",
+    "digikey": "13-CFR-25JB-52-10K-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.036
+    },
+    {
+     "qty": 25,
+     "usd": 0.0304
+    },
+    {
+     "qty": 50,
+     "usd": 0.0266
+    },
+    {
+     "qty": 100,
+     "usd": 0.0233
+    },
+    {
+     "qty": 250,
+     "usd": 0.01976
+    },
+    {
+     "qty": 500,
+     "usd": 0.0175
+    },
+    {
+     "qty": 1000,
+     "usd": 0.0156
+    },
+    {
+     "qty": 5000,
+     "usd": 0.0122
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-10K/338",
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "CFR-25JB-52-1K": {
+   "mfr": "Yageo",
+   "desc": "Resistor 1k ohm 1/4W (Q1 base)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 186645,
+   "lifecycle": "Active",
+   "sku": {
+    "mouser": "603-CFR-25JB-52-1K",
+    "digikey": "1.0KQBK-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.036
+    },
+    {
+     "qty": 25,
+     "usd": 0.0304
+    },
+    {
+     "qty": 50,
+     "usd": 0.0266
+    },
+    {
+     "qty": 100,
+     "usd": 0.0233
+    },
+    {
+     "qty": 250,
+     "usd": 0.01976
+    },
+    {
+     "qty": 500,
+     "usd": 0.0175
+    },
+    {
+     "qty": 1000,
+     "usd": 0.0156
+    },
+    {
+     "qty": 5000,
+     "usd": 0.0122
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-1K/96",
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "CFR-25JB-52-2K2": {
+   "mfr": "Yageo",
+   "desc": "Resistor 2.2k ohm 1/4W (audio divider, bottom)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.11,
+   "provenance": "digikey",
+   "stock": 55023,
+   "lifecycle": "Active",
+   "sku": {
+    "mouser": "603-CFR-25JB-52-2K2",
+    "digikey": "2.2KQBK-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.11
+    },
+    {
+     "qty": 10,
+     "usd": 0.039
+    },
+    {
+     "qty": 25,
+     "usd": 0.032
+    },
+    {
+     "qty": 50,
+     "usd": 0.0282
+    },
+    {
+     "qty": 100,
+     "usd": 0.0247
+    },
+    {
+     "qty": 250,
+     "usd": 0.02092
+    },
+    {
+     "qty": 500,
+     "usd": 0.01856
+    },
+    {
+     "qty": 1000,
+     "usd": 0.01653
+    },
+    {
+     "qty": 5000,
+     "usd": 0.01293
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-2K2/666",
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
   "CHIME-12V": {
    "mfr": "Generic",
    "desc": "12V chime / buzzer / strobe candidates (≤450mA) — DO0/DO1 stations",
@@ -521,7 +793,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 5531706,
+   "stock": 4371851,
    "lifecycle": "Active",
    "sku": {
     "lcsc": "C49678",
@@ -555,14 +827,94 @@
     "bom_canary_wap.csv"
    ]
   },
+  "CL21B105KBFNNNE": {
+   "mfr": "Samsung",
+   "desc": "Capacitor 1uF 50V film or ceramic (audio coupling, A+ and A-)",
+   "sourcing": "orderable",
+   "seed_usd": 0.05,
+   "unit_usd": 0.14,
+   "provenance": "digikey",
+   "stock": null,
+   "lifecycle": "Active",
+   "sku": {
+    "lcsc": "C28323",
+    "digikey": "1276-1029-1-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.14
+    },
+    {
+     "qty": 10,
+     "usd": 0.076
+    },
+    {
+     "qty": 50,
+     "usd": 0.0532
+    },
+    {
+     "qty": 100,
+     "usd": 0.0462
+    },
+    {
+     "qty": 500,
+     "usd": 0.03436
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B105KBFNNNE/3886687",
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "CL21B223KBANNNC": {
+   "mfr": "Samsung",
+   "desc": "Capacitor 22nF 50V ceramic (speaker PWM filter, C3 + C5)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 205,
+   "lifecycle": "Active",
+   "sku": {
+    "lcsc": "C1804",
+    "digikey": "1276-1081-1-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.038
+    },
+    {
+     "qty": 50,
+     "usd": 0.0254
+    },
+    {
+     "qty": 100,
+     "usd": 0.0217
+    },
+    {
+     "qty": 500,
+     "usd": 0.01554
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B223KBANNNC/3886739",
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
   "CPT-9019S-SMT-TR": {
    "mfr": "CUI Devices",
    "desc": "Passive piezo (UNPOPULATED in v0.1 firmware — future severity-tiered chime)",
    "sourcing": "orderable",
    "seed_usd": 0.55,
-   "unit_usd": 2.2,
+   "unit_usd": 2.33,
    "provenance": "digikey",
-   "stock": 3032,
+   "stock": 12626,
    "lifecycle": "Active",
    "sku": {
     "mouser": "490-CPT-9019S-SMT-TR",
@@ -571,35 +923,31 @@
    "breaks": [
     {
      "qty": 1,
-     "usd": 2.2
+     "usd": 2.33
     },
     {
      "qty": 10,
-     "usd": 1.667
+     "usd": 1.767
     },
     {
      "qty": 25,
-     "usd": 1.5012
+     "usd": 1.5912
     },
     {
      "qty": 50,
-     "usd": 1.3892
+     "usd": 1.4726
     },
     {
      "qty": 100,
-     "usd": 1.2874
+     "usd": 1.3646
     },
     {
      "qty": 250,
-     "usd": 1.16648
+     "usd": 1.23648
     },
     {
      "qty": 500,
-     "usd": 1.08426
-    },
-    {
-     "qty": 1000,
-     "usd": 1.00912
+     "usd": 1.15634
     }
    ],
    "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432",
@@ -745,6 +1093,38 @@
     "bom_canary_display.csv"
    ]
   },
+  "FOAM-PAD-20": {
+   "mfr": "Generic",
+   "desc": "Foam pad 20 mm x 1.5 mm, closed-cell (speaker magnet to the plate's cradle)",
+   "sourcing": "generic",
+   "seed_usd": 0.1,
+   "unit_usd": 0.1,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "FOAM-RING-36-30": {
+   "mfr": "Generic",
+   "desc": "Foam gasket ring 36 mm OD / 30 mm ID x 1.5 mm, closed-cell (speaker rim to the face)",
+   "sourcing": "generic",
+   "seed_usd": 0.2,
+   "unit_usd": 0.2,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
   "GORE PMF (adhesive series)": {
    "mfr": "W. L. Gore",
    "desc": "GORE adhesive acoustic/protective vent (ePTFE)",
@@ -761,9 +1141,9 @@
     "bom_canary_wap.csv"
    ]
   },
-  "GROMMET-12X7": {
+  "GROMMET-14X10": {
    "mfr": "Generic",
-   "desc": "Cable grommet / bushing for 12x7mm oval (or seal with neutral-cure silicone)",
+   "desc": "Cable grommet / bushing for a 14x10mm oval (or seal with neutral-cure silicone)",
    "sourcing": "generic",
    "seed_usd": 0.4,
    "unit_usd": 0.4,
@@ -841,6 +1221,22 @@
     "bom_canary_wap.csv"
    ]
   },
+  "LP802030-PCM-JST": {
+   "mfr": "Generic",
+   "desc": "LiPo cell 802030 class (8 x 20 x 30 mm, 400-450 mAh, 3.7 V) WITH protection circuit (PCM), JST-PH 2.0 leads",
+   "sourcing": "generic",
+   "seed_usd": 4.5,
+   "unit_usd": 4.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
   "M2-HSI-3.5X4": {
    "mfr": "Generic",
    "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",
@@ -861,7 +1257,7 @@
   },
   "M2X10-SEC-TX": {
    "mfr": "Generic",
-   "desc": "M2 x 10 security screw (Torx pin / tri-wing), self-tapping",
+   "desc": "M2 x 10 security screw (Torx pin / tri-wing): self-tapping thread for the default body, MACHINE thread when screw_insert=true",
    "sourcing": "generic",
    "seed_usd": 0.3,
    "unit_usd": 0.3,
@@ -891,9 +1287,9 @@
     "bom_canary_display.csv"
    ]
   },
-  "M2X8-ST-CSK": {
+  "M2X8-ST-MIX": {
    "mfr": "Generic",
-   "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
+   "desc": "M2 self-tapping pan-head screws, mixed lengths: Vision case 4x 6mm (camera posts) + 6x 8mm (back plate to the shell's post ends); doorbell v0.8 4x 5mm (camera posts) + 2x 4mm (module board posts) + 12x 10mm (back plate, over a 2 mm head floor)",
    "sourcing": "generic",
    "seed_usd": 0.05,
    "unit_usd": 0.05,
@@ -904,13 +1300,13 @@
    "breaks": [],
    "url": null,
    "boms": [
-    "bom_canary_sense.csv",
+    "bom_canary_vision.csv",
     "bom_canary_wap.csv"
    ]
   },
-  "M2X8-ST-MIX": {
+  "M2X8-ST-PAN": {
    "mfr": "Generic",
-   "desc": "M2 self-tapping screws, 6-10mm: 4x pan head (camera posts) + 4x head per case (front corners)",
+   "desc": "M2 self-tapping screw, PAN head, 8mm (printed-enclosure plate)",
    "sourcing": "generic",
    "seed_usd": 0.05,
    "unit_usd": 0.05,
@@ -921,7 +1317,7 @@
    "breaks": [],
    "url": null,
    "boms": [
-    "bom_canary_vision.csv"
+    "bom_canary_sense.csv"
    ]
   },
   "M3.5-PAN-ANCHOR": {
@@ -1038,6 +1434,24 @@
     "bom_canary_vision.csv"
    ]
   },
+  "OR-2X1-NBR70": {
+   "mfr": "Generic",
+   "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
+   "sourcing": "generic",
+   "seed_usd": 0.05,
+   "unit_usd": 0.05,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv",
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
   "OV5647-62": {
    "mfr": "Seeed/Generic",
    "desc": "OV5647 camera module, Raspberry Pi cam v1.3 form (25 x 24 mm, 21 x 12.5 mm M2 holes), FPC to CSI",
@@ -1054,9 +1468,25 @@
     "bom_canary_vision.csv"
    ]
   },
-  "PBM12-LED-IP65": {
+  "PAM8302A / 2130": {
+   "mfr": "Diodes Inc / Adafruit",
+   "desc": "Class-D mono amplifier PAM8302A, 2.5 W into 4 ohm at 5 V (Adafruit 2130 breakout or bare IC)",
+   "sourcing": "generic",
+   "seed_usd": 1.5,
+   "unit_usd": 1.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "PBM12-LED-IP65-6V": {
    "mfr": "Generic",
-   "desc": "12mm panel-mount illuminated momentary button, SHORT body, IP65, LED ring",
+   "desc": "12mm panel-mount illuminated momentary button, SHORT body, IP65+, ring LED - 6 V LED version (yellow = canary; any color works), momentary SPST-NO with separate LED + / - terminals",
    "sourcing": "generic",
    "seed_usd": 2.5,
    "unit_usd": 2.5,
@@ -1091,9 +1521,9 @@
    "desc": "Light pipe, single, vertical (LED to face)",
    "sourcing": "orderable",
    "seed_usd": 0.45,
-   "unit_usd": 0.78,
+   "unit_usd": 0.76,
    "provenance": "digikey",
-   "stock": 4178,
+   "stock": 8930,
    "lifecycle": "Active",
    "sku": {
     "digikey": "492-1149-ND"
@@ -1101,39 +1531,39 @@
    "breaks": [
     {
      "qty": 1,
-     "usd": 0.78
+     "usd": 0.76
     },
     {
      "qty": 10,
-     "usd": 0.541
+     "usd": 0.527
     },
     {
      "qty": 100,
-     "usd": 0.3946
+     "usd": 0.3841
     },
     {
      "qty": 500,
-     "usd": 0.32922
+     "usd": 0.32018
     },
     {
      "qty": 1000,
-     "usd": 0.30778
+     "usd": 0.29921
     },
     {
      "qty": 2000,
-     "usd": 0.28956
+     "usd": 0.2814
     },
     {
      "qty": 5000,
-     "usd": 0.26966
+     "usd": 0.26193
     },
     {
      "qty": 10000,
-     "usd": 0.25724
+     "usd": 0.24979
     },
     {
      "qty": 25000,
-     "usd": 0.24371
+     "usd": 0.23655
     }
    ],
    "url": "https://www.digikey.com/en/products/detail/bivar-inc/PLP1-250/586454",
@@ -1164,7 +1594,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.11,
    "provenance": "digikey",
-   "stock": 1165954,
+   "stock": 619320,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
@@ -1217,7 +1647,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 923616,
+   "stock": 1138922,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
@@ -1270,7 +1700,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 915470,
+   "stock": 863719,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
@@ -1323,7 +1753,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 342458,
+   "stock": 365320,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",
@@ -1400,6 +1830,22 @@
    "url": null,
    "boms": [
     "bom_canary_wap.csv"
+   ]
+  },
+  "SPK-36-4R-3W": {
+   "mfr": "Generic",
+   "desc": "Speaker: 36 mm sealed full-range driver, 4 ohm, 3 W class, >= 88 dB/W/m, <= 6 mm deep, plastic frame (mylar cone, sealed back)",
+   "sourcing": "generic",
+   "seed_usd": 3.5,
+   "unit_usd": 3.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
    ]
   },
   "TL-5903": {

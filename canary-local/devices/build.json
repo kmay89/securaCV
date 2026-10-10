@@ -7,7 +7,7 @@
  },
  "pricing": {
   "source": "docs/hardware/pricing.json",
-  "as_of": "2026-09-02T13:37:16Z",
+  "as_of": "2026-10-10T15:20:57Z",
   "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
  },
  "devices": {
@@ -28,7 +28,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 15.9,
-       "stock": 1436,
+       "stock": 1087,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/102010469/16652896"
       }
@@ -69,8 +69,8 @@
       "notes": "CHIRP_GPIO=GPIO2 (D1); LEDC PWM 2kHz/8-bit. For outdoor use a sealed IP67 piezo OR mount behind GORE vent (VENT1). Piezo preferred over magnetic (moisture/coil wear)",
       "orderable": true,
       "live": {
-       "unit_usd": 2.2,
-       "stock": 3032,
+       "unit_usd": 2.33,
+       "stock": 12626,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
       }
@@ -100,7 +100,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 764557,
+       "stock": 625479,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/onsemi/1N4148/458603"
       }
@@ -118,7 +118,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 923616,
+       "stock": 1138922,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100RL/727543"
       }
@@ -148,7 +148,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 342458,
+       "stock": 365320,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
       }
@@ -166,7 +166,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 5531706,
+       "stock": 4371851,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
       }
@@ -184,7 +184,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 3.76,
-       "stock": 20747,
+       "stock": 18808,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/littelfuse-inc/59140-1-S-02-A/2650435"
       }
@@ -232,7 +232,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.35,
-       "stock": 42100,
+       "stock": 19345,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150"
       }
@@ -274,7 +274,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 915470,
+       "stock": 863719,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-071KL/727444"
       }
@@ -328,7 +328,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.11,
-       "stock": 1165954,
+       "stock": 619320,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100KL/727544"
       }
@@ -358,7 +358,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 26.29,
-       "stock": 80,
+       "stock": 69,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/hammond-manufacturing/1554F2GYCL/2359947"
       }
@@ -387,8 +387,8 @@
       "notes": "Carries DLED1 to enclosure face; gasketed press-fit keeps IP rating",
       "orderable": true,
       "live": {
-       "unit_usd": 0.78,
-       "stock": 4178,
+       "unit_usd": 0.76,
+       "stock": 8930,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/bivar-inc/PLP1-250/586454"
       }
@@ -505,8 +505,8 @@
     "required_usd": 25.99,
     "full_usd": 102.78,
     "required_usd_live": 27.9,
-    "full_usd_live": 117.25,
-    "pricing_as_of": "2026-09-02T13:37:16Z",
+    "full_usd_live": 117.36,
+    "pricing_as_of": "2026-10-10T15:20:57Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -590,7 +590,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 15.99,
-       "stock": 130,
+       "stock": 88,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/101021112/22469630"
       }
@@ -608,7 +608,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 2.0,
-       "stock": 715,
+       "stock": 562,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/110990210/5482570"
       }
@@ -650,7 +650,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 342458,
+       "stock": 365320,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
       }
@@ -668,7 +668,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 5531706,
+       "stock": 4371851,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
       }
@@ -686,7 +686,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.35,
-       "stock": 42100,
+       "stock": 19345,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150"
       }
@@ -703,8 +703,8 @@
       "notes": "BUZZER_PIN_DEFAULT=GPIO2; requires firmware fork (FEATURE_AUDIBLE_CHIRP off on Vision)",
       "orderable": true,
       "live": {
-       "unit_usd": 2.2,
-       "stock": 3032,
+       "unit_usd": 2.33,
+       "stock": 12626,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
       }
@@ -734,7 +734,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 26.29,
-       "stock": 80,
+       "stock": 69,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/hammond-manufacturing/1554F2GYCL/2359947"
       }
@@ -857,7 +857,13 @@
       "mfr": "onsemi",
       "usd": 0.1,
       "notes": "Doorbell glow: collector to BTN2 LED -, emitter to GND, base from XIAO D2 through R3. Any small NPN (BC547, 2N2222, MMBT3904) works at the ring's ~10-20 mA",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.29,
+       "stock": 312627,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/onsemi/2N3904BU/1413"
+      }
      },
      {
       "ref": "R3",
@@ -869,7 +875,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "XIAO D2 (GPIO3 on the S3, GPIO4 on the C3) to Q1 base: ~2 mA of base drive, plenty to saturate Q1 at the ring's current",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 186645,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-1K/96"
+      }
      },
      {
       "ref": "R4",
@@ -881,7 +893,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "Q1 base to GND: holds the ring dark while D2 is high-impedance (boot, and every Vision that never turns its doorbell on)",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 80928,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-10K/338"
+      }
      },
      {
       "ref": "R5",
@@ -893,7 +911,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "BTN2 NO terminal to XIAO D1: limits the current a static zap on the outdoor button can push into the pin. With C2 it also filters wiring noise",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 186645,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-1K/96"
+      }
      },
      {
       "ref": "C2",
@@ -908,7 +932,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 5531706,
+       "stock": 4371851,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
       }
@@ -971,7 +995,7 @@
       "mfr": "3M",
       "usd": 0.1,
       "notes": "Under BT2 on the doorbell plate: takes up the bay's clearance and keeps the cell off the plate's layer lines. One strip, cut from a roll",
-      "orderable": false
+      "orderable": true
      },
      {
       "ref": "ANT1",
@@ -1019,7 +1043,13 @@
       "mfr": "Yageo",
       "usd": 0.04,
       "notes": "Two RC poles (R6/C3, R7/C5) at ~7 kHz: the 78 kHz PWM carrier drops ~40 dB before AMP1",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 186645,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-1K/96"
+      }
      },
      {
       "ref": "C3",
@@ -1031,7 +1061,13 @@
       "mfr": "Samsung",
       "usd": 0.04,
       "notes": "With R6/R7: the audio filter's two poles",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 205,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B223KBANNNC/3886739"
+      }
      },
      {
       "ref": "C4",
@@ -1043,7 +1079,13 @@
       "mfr": "Samsung",
       "usd": 0.1,
       "notes": "Blocks the PWM's mid-scale DC so the amplifier and the driver never see it; the second couples A- to GND",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.14,
+       "stock": null,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B105KBFNNNE/3886687"
+      }
      },
      {
       "ref": "R8",
@@ -1055,7 +1097,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "R8/R9 after C4: ~0.6 V peak into AMP1's 24 dB",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 80928,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-10K/338"
+      }
      },
      {
       "ref": "R9",
@@ -1067,7 +1115,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "R8/R9 after C4",
-      "orderable": false
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.11,
+       "stock": 55023,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/CFR-25JB-52-2K2/666"
+      }
      },
      {
       "ref": "FOAM2",
@@ -1103,14 +1157,14 @@
       "mfr": "Saati / GORE",
       "usd": 0.9,
       "notes": "Doorbell v0.8: on the face's INNER side over the Ø1.0 grille holes, in its 0.3 mm seat; rain stays out, sound goes through. It guards the DRIVER's chamber only (sealed-back driver on a foam ring) - it is NOT the case's pressure path. Since v0.9 the face has no GORE vent cluster by default (opt_vent off) and the sealed body breathes through its Ø2 weep; a membrane-only path is opt_vent on plus a GORE patch",
-      "orderable": false
+      "orderable": true
      }
     ],
     "required_usd": 28.69,
     "full_usd": 94.45,
     "required_usd_live": 29.49,
-    "full_usd_live": 106.21,
-    "pricing_as_of": "2026-09-02T13:37:16Z",
+    "full_usd_live": 107.44,
+    "pricing_as_of": "2026-10-10T15:20:57Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1199,7 +1253,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 3.76,
-       "stock": 20747,
+       "stock": 18808,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/littelfuse-inc/59140-1-S-02-A/2650435"
       }
@@ -1281,7 +1335,7 @@
     "full_usd": 40.2,
     "required_usd_live": 36.4,
     "full_usd_live": 42.16,
-    "pricing_as_of": "2026-09-02T13:37:16Z",
+    "pricing_as_of": "2026-10-10T15:20:57Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1332,7 +1386,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 7.49,
-       "stock": 10870,
+       "stock": 10185,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/113991114/19285530"
       }
@@ -1350,7 +1404,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 18.0,
-       "stock": 7,
+       "stock": 168,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/104030087/18724505"
       }
@@ -1391,8 +1445,8 @@
       "notes": "Reserved: display_ux_design.md sound spec (IEC 60601-1-8-informed tiers, falling all-clear tone). No firmware support yet",
       "orderable": true,
       "live": {
-       "unit_usd": 2.2,
-       "stock": 3032,
+       "unit_usd": 2.33,
+       "stock": 12626,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
       }
@@ -1425,8 +1479,8 @@
     "required_usd": 34.99,
     "full_usd": 41.94,
     "required_usd_live": 34.99,
-    "full_usd_live": 44.14,
-    "pricing_as_of": "2026-09-02T13:37:16Z"
+    "full_usd_live": 44.27,
+    "pricing_as_of": "2026-10-10T15:20:57Z"
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
@@ -1533,7 +1587,7 @@
     "full_usd": 45.5,
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
-    "pricing_as_of": "2026-09-02T13:37:16Z"
+    "pricing_as_of": "2026-10-10T15:20:57Z"
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
