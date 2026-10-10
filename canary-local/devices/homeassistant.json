@@ -3,12 +3,12 @@
   "integration": {
     "domain": "securacv",
     "name": "SecuraCV",
-    "version": "0.7.0",
+    "version": "0.8.0",
     "iot_class": "local_push",
     "min_ha": "2024.4.1",
     "source": "custom_components/securacv/manifest.json + hacs.json"
   },
-  "fw_train": "2.4.15",
+  "fw_train": "2.4.16",
   "upstream": {
     "haos_version": "18.1",
     "ha_version": "2026.7.2",

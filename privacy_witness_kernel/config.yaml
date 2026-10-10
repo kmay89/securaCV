@@ -3,7 +3,7 @@
 
 name: "Privacy Witness Kernel"
 description: "Privacy-preserving video surveillance that produces claims, not recordings"
-version: "0.7.0"
+version: "0.8.0"
 slug: "privacy_witness_kernel"
 url: "https://github.com/kmay89/securaCV"
 # Pre-built multi-arch image published by .github/workflows/addon-image.yml.
