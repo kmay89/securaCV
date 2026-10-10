@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [2.4.16] - 2026-10-10
+
+### release: the 2.4.16 train and every app that moved (iOS 0.7.0, tvOS 0.3.0, Flasher 0.12.0, Lab 0.3.0, kernel / HA / add-on 0.8.0)
+
+- **Firmware 2.4.16** — the seven version strings and `fw_train`. Everything
+  under [Unreleased] since `fw-v2.4.15` ships in it: MQTT over TLS for Sense
+  and Vision, BLE OTA v2, the Bluetooth setup door ("magic pairing") on
+  Sense, Vision and the WAP, the Doorbell chime, and the cleanup below. The
+  emulator dist, `flash.json` and the firmware SBOM move with it.
+- **iOS 0.7.0** (`MARKETING_VERSION`, `ios/project.yml`; the Apple Watch app
+  inherits it): the add-a-Canary rework and the Watch parity below. No
+  synced CloudKit record changed since `ios-v0.6.0`, so no schema promotion
+  is owed before this one. One trade-off a human should know about: the away
+  subscription belongs to the iCloud account, so setting every rule on one
+  device to *On Wi-Fi only* deletes it for the account's other devices too
+  until one with an *Anywhere* rule next opens (the Alerts footer says so).
+- **tvOS 0.3.0** — the first tvOS entry here since `tvos-v0.2.4`: viewer-token
+  pairing with a pinned key, the sealed-log day timeline, and the hub's own
+  row named as the witness kernel.
+- **Flasher 0.12.0** and **Lab 0.3.0** — see `desktop/RELEASE_NOTES.md` and
+  `desktop-lab/RELEASE_NOTES.md`.
+- **Kernel, HA integration and add-on 0.8.0** — the first bump since 0.7.0
+  (2026-08-21), so add-on installs are offered the kernel and add-on work
+  since; `homeassistant.json`, `hub_image.json` and `start.json` regenerated.
+
 ### Cross-platform cleanup: the iPhone setup reads what it hears, the two flashers say the same things, the Lab keeps its links and sheds its dead weight, the kernel's legacy detector API is gone, flags that switched nothing are deleted, and the Watch and Wall catch up with the iPhone
 
 - **iOS.** A new Canary brought near the iPhone slides up a card showing

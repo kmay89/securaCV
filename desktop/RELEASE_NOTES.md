@@ -17,6 +17,56 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.0 — 2026-10-10
+
+**Your Pi hub finishes setting itself up, and every board says what it is
+before and after you flash it.**
+
+- **The 2.4.16 firmware catalog is baked in** — MQTT over TLS for Vision and
+  Sense, Bluetooth OTA v2, the Bluetooth setup door the iPhone app uses for
+  a new Sense, Vision or WAP, and the Doorbell chime.
+- **The hub waits for Home Assistant, not just for an answer.** Home
+  Assistant OS shows a "Preparing" page while it downloads; the Flasher used
+  to treat that as ready. It now asks Home Assistant whether it really is,
+  says so while it is still preparing, then creates your account and runs
+  the SecuraCV self-setup itself, retrying while Home Assistant finishes.
+- **Encrypted broker links for Vision and Sense:** plain MQTT (still the
+  default), TLS checked against your broker's CA, TLS pinned to a SHA-256
+  fingerprint, or a lab-only encrypted-but-unchecked mode. They are offered
+  only when the pinned firmware release carries TLS, and the install receipt
+  names the mode that was sealed.
+- **Prove it, two ways.** After a flash, each board's live proof (the
+  monitor, the glass, the radar console, the WAP field bench, or the camera
+  module's bench) sits next to a link to its emulated twin in the browser
+  Lab. The WAP's field bench shows presence verdicts, a device count (never
+  an identity) and the Wi-Fi stir meter.
+- **Ask a board before you flash it.** A recognized board shows its
+  self-check score, its temperature ("give it air" at 70 °C) and any tamper
+  flag — the same chips the browser flasher shows. The customs check reads
+  security eFuses natively.
+- **Check it over Bluetooth** on an AP Canary or a WAP says where the
+  read-only check runs (the iPhone app, or the browser Lab in Chrome or
+  Edge) and opens it.
+- **Words that mean what they say:** a confirmed write, a checksum match or
+  a card read-back says *confirmed*, *checked* or *read back*; *verified* is
+  kept for the Ed25519 release signature.
+- **Clearer answers when something goes wrong**, matching the browser
+  flasher: a connect failure is classified before download mode gets blamed,
+  an unreachable manifest no longer reads as "no release yet", and a failed
+  install offers the same next steps and a one-click diagnostic report.
+- **Linux:** the .deb's udev rule now covers the CP210x, CH340 and CH9102
+  USB-serial bridges (ESP32-CAM, WROOM DevKits, ESP32-C3-DevKitM-1) and keeps
+  ModemManager off the port; writing a Pi hub card says up front that a
+  normal account can't write a raw disk, with a one-line per-card fix.
+- **Fixed:** full-flash backups are named `canary-<mac>-…-backup.bin`, the
+  name both restore panels tell you to look for (older names still
+  restore); the birth certificate takes its name from the board's own key;
+  a hub address typed with stray spaces now connects.
+- Under the hood: the flash engine is a shared, separately tested crate (the
+  Lab runs the same one); rustls 0.23.45 (RUSTSEC-2026-0285), mdns-sd
+  0.21.4, Tauri CLI 2.12.0; releases carry the project's SBOMs and build on
+  Node 22.
+
 ## 0.11.9 — 2026-09-03
 
 **The 2.4.15 firmware catalog is baked in — and the app finally says its

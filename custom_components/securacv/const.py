@@ -284,8 +284,9 @@ DEVICE_TYPE_CANARY_SENTINEL = "canary-sentinel"
 
 # Canonical device_type literal for the design-stage pool water-chemistry node
 # (docs/research/pool_water_monitor.md). Reserved here so the name has ONE
-# spelling before anything uses it: no firmware config publishes it and no
-# code here reads it yet. Deliberately NOT added to DEVICE_TYPE_MODALITY: a
+# spelling: the Dash's card layer already recognizes it (fleet_cards.cpp),
+# no firmware config publishes it yet, and no code here reads it. Deliberately
+# NOT added to DEVICE_TYPE_MODALITY: a
 # pool node reports water chemistry, not a presence claim, so it has no
 # sensing modality on the timeline — modality_for() correctly resolves it to
 # MODALITY_UNKNOWN.
