@@ -28,6 +28,7 @@ dispatches only the ones that are ahead. Everything else it reports and skips.
 | never released | cuts the first release |
 | same version, but watched files changed | **"bump the version first"** — ships everything else |
 | same version, nothing changed | skips ✅ |
+| the Lab's newer version already built as a **draft** | 📝 reports it waiting — publish it with **Actions → "Publish the Lab (draft → live)"**; nothing is rebuilt (a draft is not re-checked against the tree, so if the Lab changed after it was built, `force: lab` rebuilds it first) |
 | site pages changed since the last deploy | redeploys the site |
 | Apple target with `ENABLE_*_BUILD` off | leaves it alone (the workflow would no-op) |
 | firmware, but no OTA signing key | reports it gated, with the ceremony |

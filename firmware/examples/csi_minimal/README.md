@@ -30,8 +30,9 @@ arduino-cli monitor --port /dev/ttyACM0 -c baudrate=115200
 ```
 
 If the `motion` column rises when you wave your hand within a few meters of
-the board, CSI is working. Sit still and the `breathing` column should
-gently lock onto a value in the 0.15–0.45 Hz band.
+the board, CSI is working. Sit still and the `breathing` column should rise
+and hold: a breath (0.15–0.45 Hz) lands in one of the eight breathing bins,
+and the column is that bin's magnitude, not a frequency.
 
 ## What's actually happening
 
@@ -43,9 +44,13 @@ gently lock onto a value in the 0.15–0.45 Hz band.
 - `csi_features` aggregates the ~20 frames per second into one 32-dim
   `int8` feature vector per 1-second window and invokes your callback.
 
-The 32-dim layout is documented in `csi_features.h`. The two numbers this
-sketch prints (`motion`, `breathing`) are simple averages of the
-phase-Doppler and breathing-FFT bands. Real applications layer the
+The 32-dim layout is documented in `csi_features.h`. Of the two numbers this
+sketch prints, `motion` is a simple average of the phase-Doppler band and
+`breathing` is the peak of the eight breathing bins, through the library's
+`csi_breathing_peak()` (`csi_types.h`), the reducer every consumer uses, so
+the number means the same thing here as on the dashboard. (An earlier
+version averaged the breathing band too, which reads about 8x smaller.)
+Real applications layer the
 `csi_module` / `csi_event` pipeline on top — see `csi_pc_listener` and
 `firmware/examples/modules/` for the next steps.
 

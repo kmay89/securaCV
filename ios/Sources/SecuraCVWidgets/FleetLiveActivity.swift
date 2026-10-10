@@ -35,7 +35,11 @@ struct FleetLiveActivity: Widget {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(context.state.headline).font(.footnote).bold()
                         if let ago = context.state.lastVerifiedAgo {
-                            Text("Delivery verified \(agoText(ago))")
+                            // The shared sentence, never a local literal —
+                            // this one used to say "verified" on its own.
+                            Text(HeartbeatCopy.summary(state: .alive,
+                                                       secondsSinceVerified: ago,
+                                                       source: .pathVerified))
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
@@ -60,11 +64,6 @@ struct FleetLiveActivity: Widget {
         case .alert, .tamper: return .red
         }
     }
-
-    /// One formatter for how long ago, shared with every other heartbeat
-    /// surface — a persisted verification can now be days old, and "4320m
-    /// ago" is not a thing anyone reads.
-    private func agoText(_ s: Int) -> String { HeartbeatCopy.ago(s) }
 }
 
 struct LockScreenFleetView: View {

@@ -1,6 +1,6 @@
 //! The OS's own serial-port list — no Web Serial permission prompt, no
-//! Chromium. One wire shape for both apps (the Flasher's `list_ports`, the
-//! Lab's `list_serial_ports` and its `list_ports` twin), so a port picker
+//! Chromium. One wire shape for both apps (the Flasher's `list_ports` and the
+//! Lab's `flash::list_ports`, one command name in both), so a port picker
 //! written against either app reads the other's answer unchanged.
 
 use serde::Serialize;

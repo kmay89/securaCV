@@ -403,4 +403,71 @@ final class FleetMergeTests: XCTestCase {
         XCTAssertEqual(fleet.count, 1)
         XCTAssertTrue(fleet[0].seenViaBLE)
     }
+
+    // ── Rule: the beacon's own alarm bits raise, and never clear ──
+
+    func testABeaconAlertRaisesTheRowAndSilenceNeverClearsIt() {
+        var w = Witness(id: "canary-a3f7")
+        FleetMerge.fold(sighting(flags: FleetBeacon.flagAlert), into: &w)
+        XCTAssertEqual(w.lastEventSeverity, .alert,
+                       "an alert broadcast over Bluetooth alone must not look calm")
+        FleetMerge.fold(sighting(flags: 0), into: &w)
+        XCTAssertEqual(w.lastEventSeverity, .alert, "a beacon that stops mentioning it is not an all-clear")
+    }
+
+    func testABeaconAlertNeverDowngradesALouderStory() {
+        var w = Witness(id: "canary-a3f7")
+        w.lastEvent = "Tamper"
+        w.lastEventSeverity = .tamper
+        FleetMerge.fold(sighting(flags: FleetBeacon.flagAlert), into: &w)
+        XCTAssertEqual(w.lastEventSeverity, .tamper)
+        XCTAssertEqual(w.lastEvent, "Tamper")
+    }
+
+    func testADegradedBeaconRaisesAWarnOnlyOverQuiet() {
+        var w = Witness(id: "canary-a3f7")
+        FleetMerge.fold(sighting(flags: FleetBeacon.flagDegraded), into: &w)
+        XCTAssertEqual(w.lastEventSeverity, .warn)
+        var loud = Witness(id: "canary-b")
+        loud.lastEventSeverity = .alert
+        FleetMerge.fold(sighting(flags: FleetBeacon.flagDegraded), into: &loud)
+        XCTAssertEqual(loud.lastEventSeverity, .alert)
+    }
+
+    // ── Rule: a discovered row is offered only what it can do ──
+
+    private func found(_ id: String, _ type: DeviceType, host: String?) -> DiscoveredCanary {
+        DiscoveredCanary(id: host ?? id, deviceID: id, name: id, deviceType: type, publishedType: "",
+                         hardware: "", host: host, firmware: "1.0", model: "")
+    }
+
+    func testOnlyAnUnpairedWAPIsReadyToPair() {
+        let wap = found("wap-ab12", .wap, host: "canary-ab12")
+        let sense = found("canary_sense_001", .sense, host: "canary-sense-001-k7mzq2")
+        let rows = FleetMerge.discoveredRows(found: [wap, sense], fleet: [], pairedIDs: [])
+        XCTAssertEqual(rows.pairable.map(\.deviceID), ["wap-ab12"])
+        XCTAssertEqual(rows.onNetwork.map(\.deviceID), ["canary_sense_001"],
+                       "a Sense is on the network, with nothing to tap")
+        let paired = FleetMerge.discoveredRows(found: [wap], fleet: [], pairedIDs: ["wap-ab12"])
+        XCTAssertTrue(paired.pairable.isEmpty, "a paired WAP is in the fleet, not ready to pair")
+    }
+
+    func testAFleetRowIsNeverAlsoADiscoveredRow() {
+        // By device id (paired, polled), by the host a self-report row was
+        // read from, and — for a Sense heard over Bluetooth too — by the
+        // pseudonym its advert name and its host share.
+        let display = found("canary_dash_001", .display, host: "canary-dash-001-ab3kzx")
+        let sense = found("canary_sense_001", .sense, host: "canary-sense-001-k7mzq2")
+        let byID = Witness(id: "canary_sense_001")
+        let byHost = Witness(id: "lan:canary-dash-001-ab3kzx#0")
+        XCTAssertTrue(FleetMerge.discoveredRows(found: [display, sense], fleet: [byID, byHost], pairedIDs: [])
+                        .onNetwork.isEmpty)
+        var heard = Witness(id: "ble:" + UUID().uuidString)
+        heard.name = "Sense-K7MZ"
+        XCTAssertTrue(FleetMerge.discoveredRows(found: [sense], fleet: [heard], pairedIDs: []).onNetwork.isEmpty,
+                      "one Canary, one row — right after it joins it is heard AND announced")
+        var stranger = Witness(id: "ble:" + UUID().uuidString)
+        stranger.name = "Sense-QQQQ"
+        XCTAssertEqual(FleetMerge.discoveredRows(found: [sense], fleet: [stranger], pairedIDs: []).onNetwork.count, 1)
+    }
 }

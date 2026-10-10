@@ -17,6 +17,10 @@ so importing it is side-effect free.
 import importlib.util
 import io
 import json
+import os
+import re
+import shutil
+import subprocess
 import time
 import urllib.error
 from pathlib import Path
@@ -1407,10 +1411,10 @@ def test_frigate_dest_placeholder_legacy_config_is_replaceable(frigate_paths):
 
 
 # ---------------------------------------------------------------------------
-# go2rtc discovery transform (mirrors discover_cameras.sh): producers are
-# objects carrying "url" (legacy plain strings also accepted), streams with
-# no usable URL are skipped, and zone IDs are lowercased BEFORE the
-# character sweep so "FrontDoor" -> zone:frontdoor.
+# go2rtc discovery transform (the reference discover_cameras.sh is held to,
+# below): producers are objects carrying "url" (legacy plain strings also
+# accepted), streams with no usable URL are skipped, and zone IDs are
+# lowercased BEFORE the character sweep so "FrontDoor" -> zone:frontdoor.
 # ---------------------------------------------------------------------------
 
 
@@ -1438,6 +1442,93 @@ def test_go2rtc_transform_object_producers_and_zone_case():
 def test_go2rtc_transform_rejects_non_dict_payload():
     assert serve_wizard._go2rtc_streams_to_cameras(["not", "a", "dict"]) == []
     assert serve_wizard._go2rtc_streams_to_cameras(None) == []
+
+
+def test_go2rtc_transform_skips_malformed_rows_not_the_payload():
+    streams = {
+        "good": {"producers": [{"url": "rtsp://10.0.0.1/a"}]},
+        "odd": "oops",
+        "null_producer": {"producers": [None]},
+        "numeric_url": {"producers": [{"url": 554}]},
+        "string_producers": {"producers": "rtsp://10.0.0.2/b"},
+    }
+    cameras = serve_wizard._go2rtc_streams_to_cameras(streams)
+    assert [c["name"] for c in cameras] == ["good"]
+
+
+# discover_cameras.sh is what the add-on actually runs at every start
+# (go2rtc_discovery defaults to true); the function above is what the wizard
+# runs. They were two implementations with one test, and they disagreed: one
+# malformed stream made the shell's jq exit 5 (run.sh then fell back to "[]",
+# losing every good camera with it) and a null producer became a camera at
+# URL "null". Each payload here goes through both; the shell's rows,
+# projected to the fields the wizard returns, must equal the reference.
+_DISCOVER_SH = _MODULE_PATH.parent / "discover_cameras.sh"
+_GO2RTC_PARITY_PAYLOADS = {
+    "object producers, legacy strings, rtsp preference": {
+        "FrontDoor": {"producers": [{"url": "rtsp://10.0.0.9/stream"}]},
+        "no_producers": {"producers": []},
+        "no_urls": {"producers": [{"other": "field"}]},
+        "legacy_strings": {"producers": ["rtsp://10.0.0.8/s"]},
+        "prefers_rtsp": {"producers": [
+            {"url": "webrtc://10.0.0.7/x"},
+            {"url": "rtsp://10.0.0.7/s"},
+        ]},
+    },
+    "one malformed stream beside a good one": {
+        "good": {"producers": [{"url": "rtsp://1/a"}]},
+        "odd": "oops",
+    },
+    "null, numeric, empty and nested producers": {
+        "cam": {"producers": [None]},
+        "num": {"producers": [7, {"url": 554}, {"url": None}, ""]},
+        "nested": {"producers": [["rtsp://x/y"], {"url": {"u": "rtsp://x/z"}}]},
+        "mixed": {"producers": [None, {"url": ""}, "http://10.0.0.3/m"]},
+    },
+    "producers that are not a list, streams that are not objects": {
+        "as_string": {"producers": "rtsp://10.0.0.2/b"},
+        "as_object": {"producers": {"url": "rtsp://10.0.0.2/c"}},
+        "as_null": {"producers": None},
+        "bare_list": ["rtsp://10.0.0.2/d"],
+        "bare_null": None,
+        "ok": {"producers": ["rtsp://10.0.0.2/e"]},
+    },
+    "zone slugs: case, punctuation, non-ASCII, the 64 cap, sort order": {
+        "Zeta Cam": {"producers": ["rtsp://z/1"]},
+        "alpha.cam!": {"producers": ["rtsp://a/1"]},
+        "İstanbul Gate": {"producers": ["rtsp://i/1"]},
+        "Ünïcode-über": {"producers": ["rtsp://u/1"]},
+        "L" * 80: {"producers": ["rtsp://l/1"]},
+    },
+    "a list payload": ["not", "a", "dict"],
+    "a string payload": "oops",
+    "an empty object": {},
+}
+
+
+def _shell_go2rtc_rows(payload):
+    if shutil.which("jq") is None:
+        if os.environ.get("CI"):
+            pytest.fail("jq is not installed: discover_cameras.sh cannot be held to the reference")
+        pytest.skip("jq is not installed")
+    env = {**os.environ, "GO2RTC_STREAMS_JSON": json.dumps(payload)}
+    out = subprocess.run(
+        ["sh", str(_DISCOVER_SH), "http://127.0.0.1:9"],
+        env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert out.returncode == 0, f"discover_cameras.sh exited {out.returncode}: {out.stderr}"
+    return json.loads(out.stdout)
+
+
+@pytest.mark.parametrize("label", sorted(_GO2RTC_PARITY_PAYLOADS))
+def test_go2rtc_shell_transform_matches_the_reference(label):
+    payload = _GO2RTC_PARITY_PAYLOADS[label]
+    rows = _shell_go2rtc_rows(payload)
+    projected = [{k: row[k] for k in ("name", "url", "zone_id")} for row in rows]
+    assert projected == serve_wizard._go2rtc_streams_to_cameras(payload)
+    for row in rows:
+        assert re.fullmatch(r"zone:[a-z0-9_-]{1,64}", row["zone_id"]), row
+        assert row["url"] not in ("", "null")
 
 
 if __name__ == "__main__":

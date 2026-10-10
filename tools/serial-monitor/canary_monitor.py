@@ -651,7 +651,7 @@ class Dashboard:
         lines: list[str] = []
 
         # ── Header bar ──
-        header = f" SecuraCV Canary Monitor "
+        header = " SecuraCV Canary Monitor "
         pad = max(0, cols - len(header) - 2)
         lines.append(
             f"{Color.BG_BLUE}{Color.BRIGHT_WHITE}{Color.BOLD}"

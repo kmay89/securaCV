@@ -131,7 +131,7 @@ export function buildSerial(data, bus) {
   wrap.append(bar, scroll, controls);
 
   const lines = bootLines(data.serial);
-  let booting = false, booted = false, plugged = null;
+  let booting = false, booted = false;
 
   const put = (cls, text) => {
     const l = el("div", "wap-line " + cls);
@@ -163,7 +163,6 @@ export function buildSerial(data, bus) {
   // choosing the power source is the lesson: a laptop gives you this console;
   // a wall adapter powers the same boot but nobody is on the other end
   bus.on("plug", ({ source }) => {
-    plugged = source;
     if (source === "laptop") {
       wrap.classList.remove("wap-term-ghost");
       if (booted || booting) {

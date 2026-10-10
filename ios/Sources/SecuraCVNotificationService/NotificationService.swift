@@ -1,11 +1,13 @@
 // NotificationService.swift  (Notification Service Extension)
 //
 // The relay sends a content-free wake: a severity class and nothing else — no
-// zone, no time, no footage (docs §5). This extension turns that opaque wake
-// into the notification the user sees, filling detail from the user's OWN data
-// (their iCloud digest / the LAN when home). The relay never learns what the
-// alert was; the phone composes it. The wake is NOT signature-verified here:
-// what makes it trustworthy today is the transport — it arrives through the
+// zone, no time, no footage (docs §5). What ships: this extension maps that
+// class to one fixed sentence (WakeClass.line, in Shared/WakePayload.swift),
+// ranks it, and upgrades a life-safety class to a critical alert when the user
+// has allowed those. It adds no per-Canary detail — which Canary and what it
+// saw are shown in the app after the tap, read from the user's own fleet. The
+// relay never learns what the alert was. The wake is NOT signature-verified
+// here: what makes it trustworthy today is the transport — it arrives through the
 // user's own CloudKit private database, which only their devices can write to
 // (see AwayPush). Payload-level Ed25519 verification against the pinned key is
 // the planned hardening for a self-hosted relay, not a property this code has.
@@ -44,9 +46,9 @@ final class NotificationService: UNNotificationServiceExtension {
         // wake and an on-Wi-Fi alert about the same trouble sort together.
         content.relevanceScore = wake.isLifeSafety ? 0.9 : 0.6
 
-        // (Full build: verify content.userInfo["sig"] against the pinned key and
-        // drop the notification if it doesn't check out; then hydrate detail from
-        // the local digest. Kept content-free here on purpose.)
+        // Not yet: checking a payload signature against the pinned key (and
+        // dropping a wake that fails), and composing per-Canary detail from
+        // the user's own data. Today the sentence is the class's fixed line.
         guard wake.isLifeSafety else { contentHandler(content); return }
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             if settings.criticalAlertSetting == .enabled {

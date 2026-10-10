@@ -39,6 +39,21 @@ GET /api/fleet        →  200 application/json
 - `hub` is where the device stands with its hub, as a word: `"none"` (nobody
   configured one), `"down"` (configured, unreachable), `"ok"`. Absent means
   the device did not say — which a client must never render as "fine".
+- **Optional identity-history keys**, written by
+  `firmware/common/fleet_selfreport/fleet_selfreport.h` and read by the
+  iPhone (`ios/Sources/SecuraCV/Wire/FleetSelfReport.swift`):
+  `chain_height` (the low bits of the device's own witness-chain length;
+  omitted when the device has none to report) and `born_day` (when the
+  device's KEY was born, in days since the Unix epoch) with `born_exact`
+  (`false` means the day is when the device was first *dated* — it met a
+  believable clock later than it was made — and a reader must not call that
+  a birthday). `born_day` and `born_exact` travel together and are omitted
+  until the device has met a clock, so absence means "cannot say", never any
+  particular day. A day carries no time of day, by construction
+  (`firmware/common/identity/birth_day.h`). The Wall ignores all three today
+  — they are not part of the witness core's normalized shape
+  (`fleet_contract_vectors.json`), and a reader that does take them must
+  treat absence as "cannot say".
 - **Optional wellbeing keys** (a row may carry them; most rows never will):
   `presence` (`"clear"`/`"present"`), `occupants` (`"0"`/`"1"`/`"2+"`),
   `breathing` (`true`/`false` — a breathing lock held or lapsed), and

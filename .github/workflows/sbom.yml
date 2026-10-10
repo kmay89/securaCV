@@ -7,11 +7,29 @@ name: SBOM Generation
 # that moves (a platform pin, a lib_deps line, a library manifest, an Arduino
 # core pin in a workflow or a sketch.yaml profile, the firmware version)
 # reaches main only together with a regenerated file, and that file is what
-# triggers this run. The
-# `release: published` trigger is separate: it regenerates the SBOMs against the
-# tagged tree and attaches them to the release as downloadable assets, so every
+# triggers this run. Attaching is separate: the SBOMs are regenerated against
+# the tagged tree and attached to the release as downloadable assets, so every
 # published version ships its bill of materials instead of it living only in a
 # 90-day CI artifact (#924, doc-12 A4 / FR-14).
+#
+# THREE WAYS IN, ONE ATTACH. `release: published` fires only for a release a
+# HUMAN publishes: GitHub sends no workflow event for one created with the
+# GITHUB_TOKEN (its recursion guard), and every release CI cuts is created that
+# way — so by 2026-10-09 only 3 of 64 published releases carried their SBOMs
+# (app-v0.1.0, flasher-v0.1.4, app-v0.2.2: publishes that sent the event),
+# while the README said every release did. The release workflows therefore
+# CALL this one (`workflow_call` with the tag, after their publish job — the
+# shape lab-publish.yml uses for the updater pointer): firmware-release.yml,
+# desktop-flasher-release.yml, lab-publish.yml and the kernel's release.yml
+# (test_release_plan.py holds each to it). `workflow_dispatch` with a tag
+# backfills a release that predates the call (blank tag: a snapshot, no
+# attach) — but only a tag whose OWN tree carries what generate-sbom runs
+# (.github/actions/setup-platformio and scripts/gen_firmware_sbom.py with
+# --validate, on main since 2026-09-20). The SBOM must describe the tagged
+# tree, so it is never built from a newer one: an older tag fails in
+# generate-sbom and nothing is attached. Every release that went out without
+# SBOMs predates that (the newest: fw-v2.4.15, flasher-v0.11.9, app-v0.2.4),
+# so the next release on each train is the first to carry them.
 on:
   push:
     branches: [ "main" ]
@@ -35,7 +53,19 @@ on:
       - '.github/workflows/sbom.yml'
   release:
     types: [ published ]
-  workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to build the SBOMs from and attach them to"
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build the SBOMs from and attach them to; its tree must carry gen_firmware_sbom.py --validate (2026-09-20 on). Blank = snapshot of this ref, no attach"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -43,7 +73,9 @@ permissions:
 concurrency:
   # PRs collapse per branch; each main commit gets its own group, so a burst
   # of merges can never evict the main run queued behind another (CI.md R3).
-  group: sbom-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  # A tagged run adds its tag: two releases cut from one commit (the firmware
+  # and a Flasher, say) attach in parallel instead of evicting each other.
+  group: sbom-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}${{ inputs.tag && format('-{0}', inputs.tag) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -55,6 +87,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+      with:
+        # A tagged run (called by a release workflow, or dispatched to
+        # backfill) builds the bill of materials from the TAGGED tree, not
+        # from whatever the calling branch has moved on to. Untagged, the
+        # empty ref is checkout's own default: the event's exact commit.
+        ref: ${{ inputs.tag || '' }}
 
     # Python + PlatformIO, right after checkout (CI.md R9): the firmware SBOM
     # generator runs on this interpreter, and `pio project config` is the
@@ -182,11 +220,12 @@ jobs:
   # job so the write scope (contents: write, needed to upload release assets) is
   # never granted to the generation job that installs and runs third-party
   # tooling (cargo-cyclonedx, cdxgen) — least privilege for the supply-chain
-  # workflow. Runs only for the release event; downloads the artifact the
-  # generate-sbom job just produced rather than regenerating.
+  # workflow. Runs for a release event or a tagged run (a release workflow's
+  # call, or a backfill dispatch); downloads the artifact the generate-sbom job
+  # just produced rather than regenerating.
   attach-to-release:
     needs: generate-sbom
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || inputs.tag
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -207,7 +246,7 @@ jobs:
         # into the script body where the shell would evaluate it. This is the
         # repo's own anti-injection rule (idea-intake.yml); every other run block
         # follows it.
-        TAG: ${{ github.event.release.tag_name }}
+        TAG: ${{ inputs.tag || github.event.release.tag_name }}
         REPO: ${{ github.repository }}
       # --clobber so a re-run (or a re-published release) overwrites the
       # existing assets instead of failing on the duplicate name.

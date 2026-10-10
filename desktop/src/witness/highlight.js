@@ -2,8 +2,12 @@
  * colorized code, not a wall of text. CSP-safe (no eval, no CDN). Returns HTML
  * with <span class="hl-*"> tokens; callers set innerHTML on a trusted element.
  *
- * Exposed: highlightJSON(value), highlightLog(lines), and highlightPre(root)
- * which upgrades any <pre data-hl="json|log"> under `root`.
+ * Exposed: highlightJSON(value) — the Witness Wall emulator's JSON preview
+ * (js/tv-emulator.js) is its one caller.
+ *
+ * This copy is the canonical one: securaCV's scripts/vendor_witness_emulator.sh
+ * copies it byte-for-byte into the Flasher and the Lab, so a change here is
+ * theirs after the next re-vendor.
  */
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -26,28 +30,4 @@ export function highlightJSON(value) {
   }
   out += esc(text.slice(last));
   return out;
-}
-
-const LOG_KW = /\b(Motion|Presence|Door|Glass|Line|Quiet|Incident|Knock|Delivery|Package|sealed|verified|online|offline|chain)\b/g;
-
-export function highlightLog(lines) {
-  const arr = Array.isArray(lines) ? lines : String(lines).split('\n');
-  return arr.map((raw) => {
-    let s = esc(raw);
-    s = s.replace(/(^|\s)(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AP]M)?)/g, (all, pre, t) => `${pre}<span class="hl-time">${t}</span>`);
-    s = s.replace(/\b([0-9a-f]{4,}(?:…[0-9a-f]{4,})?)\b/gi, '<span class="hl-hash">$1</span>');
-    s = s.replace(/(✓)/g, '<span class="hl-ok">$1</span>');
-    s = s.replace(LOG_KW, '<span class="hl-kw">$1</span>');
-    return `<span class="hl-line">${s}</span>`;
-  }).join('\n');
-}
-
-export function highlightPre(root) {
-  (root || document).querySelectorAll('pre[data-hl]').forEach((pre) => {
-    if (pre.dataset.hlDone) return;
-    const lang = pre.getAttribute('data-hl');
-    const raw = pre.textContent;
-    pre.innerHTML = lang === 'json' ? highlightJSON(raw) : highlightLog(raw);
-    pre.dataset.hlDone = '1';
-  });
 }

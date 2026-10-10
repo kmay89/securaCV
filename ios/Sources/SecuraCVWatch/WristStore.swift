@@ -32,6 +32,11 @@ final class WristStore: NSObject, ObservableObject {
     /// to nothing, never to a dead-end screen.
     @Published var pendingFindID: String?
     private var testTimeoutTask: Task<Void, Never>?
+    /// When the complications were last told to redraw (see
+    /// `reloadWidgetsIfTheyMoved`), and the longest a glance may go without
+    /// one while snapshots keep arriving.
+    fileprivate var lastWidgetReload: Date = .distantPast
+    fileprivate static let widgetRefreshFloor: TimeInterval = 15 * 60
 
     func activate() {
         if snapshot == nil { snapshot = WristCache.load() }
@@ -104,6 +109,22 @@ final class WristStore: NSObject, ObservableObject {
                             errorHandler: nil)
     }
 
+    /// Acknowledge one witness's alert from the wrist. The phone carries it
+    /// out through the same acknowledgment the Alerts tab and the
+    /// notification action use, so it clears everywhere; the reply snapshot
+    /// carries the row's new handling, so the screen answers the tap.
+    func acknowledge(witnessID: String) {
+        let session = WCSession.default
+        guard WCSession.isSupported(),
+              session.activationState == .activated, session.isReachable else { return }
+        session.sendMessage([WristSync.messageCommandKey: WristSync.commandAck,
+                             WristSync.ackIDKey: witnessID],
+                            replyHandler: { [weak self] reply in
+                                Task { @MainActor in self?.adopt(context: reply) }
+                            },
+                            errorHandler: nil)
+    }
+
     /// Ask the phone to make one Canary chirp and blink (~15 s identify).
     /// The PHONE carries it out over Wi-Fi by device id; the completion gets
     /// the honest outcome — accepted or not, visual-only or audible, and the
@@ -165,15 +186,43 @@ final class WristStore: NSObject, ObservableObject {
         }
 
         guard incoming.isNewer(than: snapshot) else { return }
-        let previousWorst = snapshot?.severity ?? .ok
+        let previous = snapshot
+        let previousWorst = previous?.severity ?? .ok
         snapshot = incoming
         WristCache.save(incoming)
-        WidgetCenter.shared.reloadAllTimelines()
+        reloadWidgetsIfTheyMoved(from: previous, to: incoming)
 
         // Same one policy as the phone: escalations and the all-clear, felt
         // once at the transition.
         WristFeedback.play(FeedbackPolicy.fleetTransition(from: previousWorst,
                                                           to: incoming.severity))
+    }
+}
+
+extension WristStore {
+    /// Reload the complications only when what they DRAW moved — the glance
+    /// (WristSnapshot.drawsSameGlance) or the rows the Find complication
+    /// names — or when the last reload is old enough that its "as of" would
+    /// mislead. WidgetKit reloads are budgeted; since the snapshot also
+    /// carries each room's presence words, reloading on every snapshot would
+    /// spend that budget on changes no complication shows and leave none for
+    /// the ones that do.
+    fileprivate func reloadWidgetsIfTheyMoved(from old: WristSnapshot?, to new: WristSnapshot) {
+        // Everything WristLastFind.findableTarget gates on, so a withdrawn
+        // discovery consent or a new twin drops the Find complication's deep
+        // link at once, not at the next refresh floor.
+        func findable(_ s: WristSnapshot?) -> [String] {
+            let consent = s?.discoveryConsented == true ? "c" : "-"
+            return [consent] + (s?.witnesses ?? []).map {
+                "\($0.id)|\($0.name)|\($0.fingerprint ?? "")|\($0.suffixAmbiguous == true)"
+            }
+        }
+        let glanceMoved = old.map { !new.drawsSameGlance(as: $0) } ?? true
+        let rowsMoved = findable(old) != findable(new)
+        let overdue = Date().timeIntervalSince(lastWidgetReload) > Self.widgetRefreshFloor
+        guard glanceMoved || rowsMoved || overdue else { return }
+        lastWidgetReload = Date()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }
 

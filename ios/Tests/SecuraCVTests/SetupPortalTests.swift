@@ -53,4 +53,62 @@ final class SetupPortalTests: XCTestCase {
         XCTAssertNil(SetupPortal.parseWiFiQR("SCV1|s=x|p=y"))
         XCTAssertNil(SetupPortal.parseWiFiQR("WIFI:T:WPA;P:nossid;;"))
     }
+
+    // MARK: - the Canary's own network list (GET /scan)
+
+    func testTheScanReadsTheFirmwaresTwoShapes() throws {
+        // setup_portal.cpp send_scan_json / canary-display provision.cpp.
+        let body = Data(#"{"networks":[{"ssid":"Attic","rssi":-81,"secure":true},{"ssid":"Home","rssi":-52,"secure":true},{"ssid":"Cafe","rssi":-60,"secure":false},{"ssid":"Home","rssi":-70,"secure":true},{"ssid":"","rssi":-40,"secure":true}],"tz":"UTC"}"#.utf8)
+        let parsed = try XCTUnwrap(SetupPortal.parseScan(body))
+        XCTAssertFalse(parsed.scanning)
+        XCTAssertEqual(parsed.networks.map(\.ssid), ["Home", "Cafe", "Attic"],
+                       "strongest first, one row per name (its strongest), no nameless rows")
+        XCTAssertEqual(parsed.networks.first?.rssi, -52)
+        XCTAssertEqual(parsed.networks.first { $0.ssid == "Cafe" }?.secure, false)
+        let sweeping = try XCTUnwrap(SetupPortal.parseScan(Data(#"{"scanning":true}"#.utf8)))
+        XCTAssertTrue(sweeping.scanning, "still sweeping: ask again")
+        XCTAssertNil(SetupPortal.parseScan(Data("not json".utf8)))
+        XCTAssertNil(SetupPortal.parseScan(Data(#"{"ok":true}"#.utf8)))
+    }
+
+    func testTheRememberedNetworkIsPreselectedOnlyWhenTheCanaryCanSeeIt() {
+        let nets = [SetupPortal.Network(ssid: "Home", rssi: -50, secure: true),
+                    SetupPortal.Network(ssid: "Attic", rssi: -80, secure: true)]
+        XCTAssertEqual(SetupPortal.preselect(nets, remembered: "Attic"), "Attic")
+        XCTAssertEqual(SetupPortal.preselect(nets, remembered: "Home5G"), "Home", "else the strongest it heard")
+        XCTAssertEqual(SetupPortal.preselect(nets, remembered: nil), "Home")
+        XCTAssertNil(SetupPortal.preselect([], remembered: "Home"), "no list: the person types a name")
+    }
+
+    // MARK: - saying what went wrong
+
+    func testEveryFirmwareVerdictGetsItsNextStep() {
+        // wifi_join_policy.h's labels, with the tips setup_portal.cpp's own
+        // page adds — the phone never shows a bare label.
+        XCTAssertEqual(SetupPortal.advice(for: "Wrong password"),
+                       "Wrong password — check for typos; it's case-sensitive.")
+        XCTAssertTrue(SetupPortal.advice(for: "Network not found").contains("2.4 GHz"),
+                      "a 5 GHz-only network is invisible to these boards")
+        XCTAssertTrue(SetupPortal.advice(for: "No address from the router").contains("closer to your router"))
+        XCTAssertTrue(SetupPortal.advice(for: "Couldn't connect").contains("closer to your router"))
+        XCTAssertEqual(SetupPortal.advice(for: "Something new."), "Something new.", "an unknown reason is relayed as said")
+        for reason in ["Wrong password", "Network not found", "No address from the router", "Couldn't connect", "x"] {
+            XCTAssertTrue(SetupPortal.advice(for: reason).hasSuffix("."), reason)
+        }
+    }
+
+    func testANetworkTheCanaryCannotSeeIsNamedBeforeSending() {
+        XCTAssertNotNil(SetupPortal.notListedHint(ssid: "Home5G", listed: ["Home", "Attic"]))
+        XCTAssertTrue(SetupPortal.notListedHint(ssid: "Home5G", listed: ["Home"])?.contains("2.4 GHz") ?? false)
+        XCTAssertNil(SetupPortal.notListedHint(ssid: "Home", listed: ["Home"]))
+        XCTAssertNil(SetupPortal.notListedHint(ssid: "Home5G", listed: []), "no list, nothing to judge by")
+        XCTAssertNil(SetupPortal.notListedHint(ssid: "  ", listed: ["Home"]))
+    }
+
+    func testAPasswordThatCanNeverWorkIsNamedBeforeSending() {
+        XCTAssertNotNil(SetupPortal.passwordHint("short", networkIsOpen: false))
+        XCTAssertNil(SetupPortal.passwordHint("long enough", networkIsOpen: false))
+        XCTAssertNil(SetupPortal.passwordHint("", networkIsOpen: false), "nothing typed yet is not an error")
+        XCTAssertNil(SetupPortal.passwordHint("short", networkIsOpen: true), "an open network takes none")
+    }
 }

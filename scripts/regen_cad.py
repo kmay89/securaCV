@@ -102,16 +102,21 @@ the same git status — and the run says so; nothing after step 1 moves a
 wrote it owed its previews to that run: git no longer sees it, and the
 "no case .scad changed" line means exactly that.
 
-OPENSCAD. Steps 3 and 4 and --previews are refused, before anything runs,
-when `openscad` is not on PATH. There is no Actions button that renders the
-STLs and pushes them back: the "Enclosure CAD" workflow (enclosure.yml)
-re-renders every part, re-measures the assembled envelopes and runs the fit
-gate on every push that touches docs/hardware/enclosure/** — it names the
-drift, it does not fix it. Install OpenSCAD 2021.01 (the version CI
-installs) and resume with --from render.
+OPENSCAD. Every step `--list` marks [openscad], and --previews, is refused
+before anything runs when OpenSCAD cannot be found: `$OPENSCAD` when it is
+set and not empty (the override render.sh and scad_probe.py honor too,
+documented in the enclosure README; on macOS the binary lives inside the
+.app), else `openscad` on PATH. The preview PNGs are drawn by that same
+binary, so they and the STLs never come from two different OpenSCADs.
+There is no Actions button that renders the STLs and pushes them back: the
+"Enclosure CAD" workflow (enclosure.yml) re-renders every part, re-measures
+the assembled envelopes and runs the fit gate on every push that touches
+docs/hardware/enclosure/** — it names the drift, it does not fix it.
+Install OpenSCAD 2021.01 (the version CI installs) and resume with --from
+render.
 
-Exit codes: 0 done · 1 a step failed or was refused · 3 stopped at step 9
-for the dist rebuild (resume with --from gen_flash).
+Exit codes: 0 done · 1 a step failed or was refused · 3 stopped at
+setup_regen for the dist rebuild (resume with --from gen_flash).
 
 Unit-tested by scripts/tests/test_regen_cad.py with subprocess mocked: the
 order, the check mapping, the refusals and --from run there without
@@ -333,8 +338,17 @@ def _git_modified(paths: tuple[str, ...] | list[str], repo: Path | None = None) 
     return sorted(set(files))
 
 
+def openscad_bin() -> str:
+    """The OpenSCAD every step runs: $OPENSCAD when set, else `openscad` on
+    PATH — render.sh (`${OPENSCAD:-openscad}`) and scad_probe.py read the
+    same variable, so a step and the scripts it drives agree. Read at call
+    time, not import time, so the override set after import still counts."""
+    return os.environ.get("OPENSCAD") or "openscad"
+
+
 def openscad_available() -> bool:
-    return shutil.which("openscad") is not None
+    # shutil.which takes an absolute path as well as a bare name.
+    return shutil.which(openscad_bin()) is not None
 
 
 def _define(k: str, v) -> str:
@@ -360,12 +374,13 @@ def openscad_missing_message(needing: list[str] | tuple[str, ...]) -> str:
     who = items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
     verb = "needs" if len(items) == 1 else "need"
     return (
-        f"regen_cad: {who} {verb} OpenSCAD and `openscad` is not on PATH — refused before anything ran.\n"
+        f"regen_cad: {who} {verb} OpenSCAD and `{openscad_bin()}` is not runnable — refused before anything ran.\n"
         f"  There is no Actions button that renders the STLs and pushes them back: {CAD_WORKFLOW}\n"
         f"  re-renders every part, re-measures the assembled envelopes (gen_assembled_dims.py --check)\n"
         f"  and runs the fit gate on every push touching {ENC_REL}/** — it names the drift, it does\n"
         f"  not fix it. Install OpenSCAD 2021.01 (the version CI installs: `sudo apt-get install\n"
-        f"  openscad`) and resume with: python3 scripts/regen_cad.py --from render"
+        f"  openscad`) or point OPENSCAD=/path/to/openscad at one off PATH, and resume with:\n"
+        f"  python3 scripts/regen_cad.py --from render"
     )
 
 
@@ -573,7 +588,7 @@ def preview_argv(job: PreviewJob, out_dir: Path, xvfb: bool | None = None) -> li
     if xvfb is None:
         xvfb = not os.environ.get("DISPLAY") and shutil.which("xvfb-run") is not None
     argv = ["xvfb-run", "-a"] if xvfb else []
-    argv += ["openscad", "-o", str(out_dir / job.out), "--imgsize", "1400,1000", "--autocenter",
+    argv += [openscad_bin(), "-o", str(out_dir / job.out), "--imgsize", "1400,1000", "--autocenter",
              "--viewall", f"--camera=0,0,0,{job.rotx},0,{PREVIEW_ROTZ},120",
              "--colorscheme", "Tomorrow Night", "-D", _define("part", job.part)]
     for k, v in job.defines.items():

@@ -156,6 +156,103 @@ class DecideVersioned(unittest.TestCase):
         self.assertFalse(d.actionable)
 
 
+class DraftReleases(unittest.TestCase):
+    """A draft release has no git tag (GitHub creates it on publish), so the
+    tag list never shows it. Before drafts were read from the API, a built
+    but unpublished Lab draft re-planned as RELEASE on every press and the
+    same build was dispatched again; four stale drafts piled up that way."""
+
+    LAB = dict(VERSIONED, name="lab", tag_prefix="app-v",
+               version={"file": "v.json", "json_path": "version"},
+               draft_publish='Actions → "Publish the Lab (draft → live)"')
+
+    def plan(self, tags, drafts, **kwargs):
+        kwargs.setdefault("changed_resolver", lambda target, latest: True)
+        (decision,) = rp.build_plan([self.LAB], tags, draft_tags=drafts, **kwargs)
+        return decision
+
+    def test_a_draft_at_the_source_version_waits_for_its_publish(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._version(root, "0.2.5")
+            d = self.plan(["app-v0.2.4"], ["app-v0.2.5"], publish=True, repo_root=root)
+        self.assertEqual(d.decision, rp.DRAFT_PENDING)
+        self.assertFalse(d.actionable)
+        self.assertEqual(d.inputs, {})
+        self.assertIn("Publish the Lab", d.reason)
+        self.assertIn("app-v0.2.5", d.reason)
+
+    def test_the_first_release_waiting_as_a_draft_is_not_cut_again(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._version(root, "0.1.0")
+            d = self.plan([], ["app-v0.1.0"], publish=True, repo_root=root)
+        self.assertEqual(d.decision, rp.DRAFT_PENDING)
+
+    def test_stale_drafts_below_the_published_version_change_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._version(root, "0.2.4")
+            d = self.plan(["app-v0.2.4"], ["app-v0.1.1", "app-v0.1.2", "app-v0.2.0", "app-v0.2.1"],
+                          publish=True, repo_root=root,
+                          changed_resolver=lambda target, latest: False)
+        self.assertEqual(d.decision, rp.UP_TO_DATE)
+
+    def test_a_draft_of_an_older_version_does_not_hold_back_a_newer_one(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._version(root, "0.2.6")
+            d = self.plan(["app-v0.2.4"], ["app-v0.2.5"], publish=True, repo_root=root)
+        self.assertEqual(d.decision, rp.RELEASE)
+        self.assertEqual(d.inputs, {"dry_run": "false"})
+
+    def test_force_rebuilds_the_draft_on_purpose(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._version(root, "0.2.5")
+            d = self.plan(["app-v0.2.4"], ["app-v0.2.5"], publish=True, force={"lab"}, repo_root=root)
+        self.assertEqual(d.decision, rp.RELEASE)
+
+    def test_a_build_only_run_still_builds(self):
+        # A smoke run cuts no tag and publishes nothing, so a pending draft is
+        # no reason to skip it.
+        with tempfile.TemporaryDirectory() as root:
+            self._version(root, "0.2.5")
+            d = self.plan(["app-v0.2.4"], ["app-v0.2.5"], publish=False, repo_root=root)
+        self.assertEqual(d.decision, rp.RELEASE)
+        self.assertEqual(d.inputs, {"dry_run": "true"})
+
+    def test_without_a_draft_publish_hint_the_reason_still_says_where(self):
+        d = rp.decide(VERSIONED, source_version="0.3.0", latest_version="0.2.0",
+                      changed=True, draft_pending=True)
+        self.assertEqual(d.decision, rp.DRAFT_PENDING)
+        self.assertIn("Releases page", d.reason)
+
+    def test_the_cli_reads_the_drafts_file(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        lab = next(t for t in rp.load_catalog() if t["name"] == "lab")
+        version = rp.read_source_version(lab)
+        with tempfile.TemporaryDirectory() as root:
+            drafts = os.path.join(root, "drafts.json")
+            with open(drafts, "w", encoding="utf-8") as handle:
+                json.dump([f"app-v{version}"], handle)
+            out = io.StringIO()
+            with mock.patch.object(rp.sys, "stdin", io.StringIO("[]")), redirect_stdout(out):
+                code = rp.main(["--publish", "--only=lab", f"--drafts-file={drafts}"])
+            self.assertEqual(code, 0)
+            row = next(d for d in json.loads(out.getvalue()) if d["name"] == "lab")
+            self.assertEqual(row["decision"], rp.DRAFT_PENDING)
+            with open(drafts, "w", encoding="utf-8") as handle:
+                json.dump({"not": "a list"}, handle)
+            with mock.patch.object(rp.sys, "stdin", io.StringIO("[]")), \
+                    redirect_stdout(io.StringIO()), \
+                    mock.patch.object(rp.sys, "stderr", io.StringIO()):
+                self.assertEqual(rp.main([f"--drafts-file={drafts}"]), 2)
+
+    @staticmethod
+    def _version(root: str, version: str) -> None:
+        with open(os.path.join(root, "v.json"), "w", encoding="utf-8") as handle:
+            json.dump({"version": version}, handle)
+
+
 class DecideInputs(unittest.TestCase):
     def test_publish_uses_the_real_inputs(self):
         d = rp.decide(VERSIONED, source_version="0.3.0", latest_version="0.2.0",
@@ -577,6 +674,58 @@ class TheRealCatalog(unittest.TestCase):
         self.assertGreater(copies["flasher"], 0)
         self.assertGreater(copies["lab"], 0)
 
+    def test_every_source_the_wall_compiles_is_in_the_tvos_watch(self):
+        # The desktop-embed lesson above, on Apple TV: the Witness Wall
+        # compiles Swift files from the iPhone tree (project.yml's
+        # `- path: ../../ios/...` sources), and the tvos watch said only
+        # `tvos`, so a change to those files alone (the device figures were
+        # regenerated for a new product) planned the Wall as "unchanged —
+        # nothing to do" while tvos.yml rebuilt it. Both directions are held:
+        # every source the Wall reaches outside tvos/ is watched, and every
+        # watch entry outside tvos/ is something the Wall still compiles, so
+        # an iPhone-only edit never asks for a TV release.
+        # workflows-lint.yml's path filter lists project.yml for this test.
+        project = os.path.join(rp.REPO_ROOT, "tvos", "WitnessWall", "project.yml")
+        with open(project, encoding="utf-8") as handle:
+            text = handle.read()
+        base = os.path.dirname(project)
+        compiled = set()
+        for raw in re.findall(r"^\s*-\s*path:\s*(\S+)\s*$", text, re.MULTILINE):
+            rel = os.path.relpath(os.path.normpath(os.path.join(base, raw)), rp.REPO_ROOT)
+            if not rel.startswith("tvos" + os.sep) and rel != "tvos":
+                compiled.add(rel.replace(os.sep, "/"))
+        tvos = next(t for t in self.targets if t["name"] == "tvos")
+        watch = tvos["watch"]
+
+        def covered(rel: str) -> bool:
+            return any(rel == w or rel.startswith(w.rstrip("/") + "/") for w in watch)
+
+        for rel in sorted(compiled):
+            with self.subTest(compiles=rel):
+                self.assertTrue(
+                    os.path.exists(os.path.join(rp.REPO_ROOT, rel)),
+                    f"tvos/WitnessWall/project.yml compiles {rel}, which does not exist",
+                )
+                self.assertTrue(
+                    covered(rel),
+                    f"the Wall compiles {rel} but the tvos watch does not name it — a change "
+                    f"to it alone would be reported as nothing to do. Add `- {rel}` under "
+                    f"the tvos row in .github/release-targets.yml",
+                )
+        for entry in watch:
+            if entry == "tvos" or entry.startswith("tvos/"):
+                continue
+            with self.subTest(watches=entry):
+                self.assertTrue(
+                    any(rel == entry or rel.startswith(entry.rstrip("/") + "/") for rel in compiled),
+                    f"the tvos watch names {entry}, which the Wall no longer compiles — an edit "
+                    f"to it would ask for a TV release that changes nothing on the TV",
+                )
+        # Not vacuous: the Wall compiles shared files from both iPhone trees.
+        self.assertIn("ios/Shared/FleetFigures.swift", compiled)
+        self.assertIn("ios/Sources/SecuraCV/Model/CanaryMoodKeeper.swift", compiled)
+        self.assertGreaterEqual(len(compiled), 15)
+
     def test_tag_prefixes_are_unique(self):
         prefixes = [t["tag_prefix"] for t in self.targets if t.get("tag_prefix")]
         self.assertEqual(len(prefixes), len(set(prefixes)))
@@ -601,6 +750,64 @@ class TheRealCatalog(unittest.TestCase):
 
         web = next(t for t in rp.load_catalog() if t["name"] == "web")
         self.assertEqual(set(web["watch"]), deployed)
+
+
+class SbomsRideEveryRelease(unittest.TestCase):
+    """sbom.yml attached the SBOMs on `release: published`, an event GitHub
+    never sends for a release created with the GITHUB_TOKEN — which is every
+    release CI cuts. By 2026-10-09 only 3 of 64 published releases carried
+    them, while the README said every release did. Each workflow that
+    publishes a release now CALLS sbom.yml with the tag; this holds every one
+    of them to it."""
+
+    PUBLISHERS = {
+        "firmware-release.yml",       # fw-v*  (the firmware row)
+        "desktop-flasher-release.yml",  # flasher-v*  (the flasher row)
+        "lab-publish.yml",            # app-v*: desktop-release.yml only drafts
+        "release.yml",                # v*: the kernel's binaries
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml as _yaml
+
+        cls.dir = os.path.join(rp.REPO_ROOT, ".github", "workflows")
+        cls.docs = {}
+        for name in cls.PUBLISHERS | {"sbom.yml"}:
+            with open(os.path.join(cls.dir, name), encoding="utf-8") as handle:
+                cls.docs[name] = _yaml.safe_load(handle)
+
+    def test_sbom_yml_takes_a_tag_and_attaches_for_it(self):
+        doc = self.docs["sbom.yml"]
+        triggers = doc.get("on", doc.get(True, {}))
+        self.assertEqual(triggers["workflow_call"]["inputs"]["tag"]["type"], "string")
+        self.assertTrue(triggers["workflow_call"]["inputs"]["tag"]["required"])
+        attach = doc["jobs"]["attach-to-release"]
+        self.assertIn("inputs.tag", attach["if"])
+        self.assertIn("github.event_name == 'release'", attach["if"])
+        checkout = doc["jobs"]["generate-sbom"]["steps"][0]
+        self.assertEqual(checkout["with"]["ref"], "${{ inputs.tag || '' }}")
+
+    def test_every_release_publisher_calls_sbom_with_its_tag(self):
+        for name in sorted(self.PUBLISHERS):
+            with self.subTest(workflow=name):
+                calls = [
+                    job for job in self.docs[name]["jobs"].values()
+                    if job.get("uses") == "./.github/workflows/sbom.yml"
+                ]
+                self.assertEqual(len(calls), 1, f"{name} publishes a release but never calls sbom.yml")
+                call = calls[0]
+                self.assertTrue(call.get("needs"), f"{name}: the sbom call must wait for the publish")
+                self.assertIn("${{", str(call.get("with", {}).get("tag", "")))
+                self.assertEqual(call.get("permissions", {}).get("contents"), "write")
+
+    def test_the_catalogs_release_workflows_are_covered(self):
+        # Not vacuous: the catalog's GitHub-release targets publish through
+        # these files (the Lab's own workflow only builds the draft).
+        by_name = {t["name"]: t for t in rp.load_catalog()}
+        self.assertIn(by_name["firmware"]["workflow"], self.PUBLISHERS)
+        self.assertIn(by_name["flasher"]["workflow"], self.PUBLISHERS)
+        self.assertEqual(by_name["lab"]["workflow"], "desktop-release.yml")
 
 
 if __name__ == "__main__":

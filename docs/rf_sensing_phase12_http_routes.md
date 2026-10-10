@@ -1,6 +1,7 @@
 # SecuraCV Canary — RF Sensing Phase 12: HTTP Route Surface
 
-Status: Draft v0.1
+Status: Draft v0.1 — not implemented (tracked as F252 in the
+[sweep backlog](audit/repo_todo_sweep_2026-09.md))
 Last Updated: 2026-04-25
 
 ## 1. Purpose

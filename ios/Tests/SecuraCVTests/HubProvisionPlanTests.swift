@@ -96,6 +96,23 @@ final class HubProvisionPlanTests: XCTestCase {
         }
         XCTAssertEqual(HubProvisionPlan.supervisorPath(for: .installAddon(slug: "x_y", friendly: "")), "store/addons/x_y/install")
         XCTAssertEqual(HubProvisionPlan.supervisorPath(for: .addBrokerLogin(username: "canary")), "addons/core_mosquitto/options")
+        XCTAssertEqual(HubProvisionPlan.infoPath(slug: "core_mosquitto"), "addons/core_mosquitto/info")
+        XCTAssertEqual(HubProvisionPlan.restartPath(slug: "core_mosquitto"), "addons/core_mosquitto/restart")
+    }
+
+    func testTheRunnerCallsThePathsThisTablePins() throws {
+        // The runner used to type every Supervisor path a second time, so
+        // the assertions above checked a table nothing called. Now it takes
+        // them from HubProvisionPlan; this keeps it that way.
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/SecuraCV/App/HubSetupRunner.swift")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path), "ios checkout not visible from the test host")
+        let runner = try String(contentsOf: url, encoding: .utf8)
+        for typed in ["\"store/addons/", "\"addons/\\(", "/install\"", "/start\"", "/options\"", "/restart\"", "/info\""] {
+            XCTAssertFalse(runner.contains(typed), "HubSetupRunner types a Supervisor path by hand: \(typed)")
+        }
+        XCTAssertTrue(runner.contains("HubProvisionPlan.supervisorPath(for: action)"))
     }
 
     func testTheDiscoveredMQTTCardIsFoundByItsSource() {

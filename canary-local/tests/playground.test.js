@@ -195,6 +195,35 @@ test("census attaches known sensors and reports the count", async () => {
   assert.ok(!i2cReserved(0x10), "VEML7700 0x10 is not reserved");
 });
 
+test("i2cName / i2cReserved port the firmware's i2c_device_name / i2c_addr_reserved", async () => {
+  const { i2cName, i2cReserved, SENSORS } = await importSim();
+  const cpp = readFileSync(PLAYGROUND_CPP, "utf8");
+  const named = {
+    ADDR_VEML7700: SENSORS.veml7700,
+    ADDR_BH1750: SENSORS.bh1750,
+    ADDR_VL53L0X: SENSORS.vl53l0x,
+    ADDR_MPR121: SENSORS.mpr121,
+  };
+  const addr = (tok) => (tok in named ? named[tok] : parseInt(tok, 16));
+  const nameFn = cpp.match(/const char\* i2c_device_name\(uint8_t addr\) \{([\s\S]*?)\n\}/);
+  assert.ok(nameFn, "i2c_device_name() not found in playground.cpp");
+  const want = new Map();
+  for (const m of nameFn[1].matchAll(/((?:case [A-Za-z0-9_]+:\s*)+)return "([^"]*)";/g)) {
+    for (const c of m[1].matchAll(/case ([A-Za-z0-9_]+):/g)) want.set(addr(c[1]), m[2]);
+  }
+  assert.ok(want.size >= 20, `parsed only ${want.size} names from i2c_device_name()`);
+  for (let a = 0x08; a <= 0x77; a++) {
+    assert.strictEqual(i2cName(a), want.get(a) || "", `i2cName(${a.toString(16)})`);
+  }
+  const resFn = cpp.match(/bool i2c_addr_reserved\(uint8_t addr\) \{([\s\S]*?)\n\}/);
+  assert.ok(resFn, "i2c_addr_reserved() not found in playground.cpp");
+  const reserved = new Set([...resFn[1].matchAll(/addr == (0x[0-9A-Fa-f]+)/g)].map((m) => parseInt(m[1], 16)));
+  assert.ok(reserved.size >= 6, `parsed only ${reserved.size} reserved addresses`);
+  for (let a = 0x08; a <= 0x77; a++) {
+    assert.strictEqual(i2cReserved(a), reserved.has(a), `i2cReserved(${a.toString(16)})`);
+  }
+});
+
 test("RS485 probe reads a register; a quiet bus reports no reply", async () => {
   const { PlaygroundSim } = await importSim();
   const s = new PlaygroundSim();

@@ -31,9 +31,7 @@
 
 use std::collections::BTreeMap;
 
-use super::card::{
-    front_phrase, rear_admits, Badge, Card, CardValue, ClassOptions, PrivacyClass, Refusal,
-};
+use super::card::{front_phrase, rear_admits, Badge, Card, CardValue, ClassOptions, PrivacyClass};
 use super::device::{
     Align, Display, Element, Font, Frame, Rgba, PRIORITY_ADVISORY, PRIORITY_CALM, PRIORITY_DEGRADED,
 };
@@ -580,11 +578,6 @@ impl SurfaceState {
         };
     }
 
-    /// Drop the scrubber cursor and return to live.
-    pub fn scrub_live(&mut self) {
-        self.scrub = None;
-    }
-
     /// Expire the dwell and the quiet window against the clock. Called once
     /// per redraw; separated from the resolvers so they stay pure reads.
     pub fn tick(&mut self, now_ms: u64, timings: &Timings) {
@@ -1124,11 +1117,6 @@ pub fn compose(
 const REAR_IDS: [&str; MAX_REAR_LINES] = [
     "rear0", "rear1", "rear2", "rear3", "rear4", "rear5", "rear6", "rear7",
 ];
-
-/// Why a card was refused, for the operator log. Never rendered on the front.
-pub fn refusal_line(device_id: &str, card_id: &str, r: Refusal) -> String {
-    format!("{device_id}/{card_id}: {}", r.reason())
-}
 
 #[cfg(test)]
 mod tests {

@@ -359,3 +359,42 @@ test("finishes: the showcase cycles then stops for good on a manual pick", async
   assert.strictEqual(showcaseRunning(), false);
   setFinish("canary");
 });
+
+// Sweep A62: fleet.html#%E0 threw URIError at the end of boot(), because the
+// deep link was decoded bare. The helper is run here as shipped (lifted out of
+// app.js and evaluated), so the test is the code, not a description of it.
+test("a malformed fleet.html deep link opens nothing instead of throwing (A62)", () => {
+  const vm = require("node:vm");
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  const m = app.match(/^const deepLinkId = (\(hash\) => \{.*\});$/m);
+  assert.ok(m, "app.js lost its one-line deepLinkId helper");
+  const deepLinkId = vm.runInNewContext(m[1]);
+  assert.strictEqual(deepLinkId("#%E0"), "", "a broken escape must open nothing, not throw");
+  assert.strictEqual(deepLinkId("#%"), "");
+  assert.strictEqual(deepLinkId("#canary-display"), "canary-display");
+  assert.strictEqual(deepLinkId("#canary%2Ddisplay"), "canary-display");
+  assert.strictEqual(deepLinkId(""), "");
+  assert.match(app, /const target = deepLinkId\(location\.hash\);/,
+    "boot() must read its deep link through deepLinkId, not a bare decodeURIComponent");
+});
+
+test("no Lab page decodes a visitor-typed address outside a try (the A62 class)", () => {
+  // decodeURIComponent throws on a malformed escape, and an address is
+  // whatever the visitor typed or pasted. Each call sits on the line of the
+  // `try` that catches it, so a new one is visibly guarded or names itself here.
+  // file -> why its decode is not held here (each entry must say why its input
+  // is not an address). Empty: flash-core.js's releaseTagFromManifestUrl, the
+  // last one out, decodes the active manifest URL, which a ?manifest= override
+  // makes visitor-typed, so it is held like the rest.
+  const ALLOWED = new Map([]);
+  const offenders = [];
+  for (const f of readdirSync(join(ROOT, "assets")).filter((n) => n.endsWith(".js")).sort()) {
+    if (ALLOWED.has(f)) continue;
+    readFileSync(join(ROOT, "assets", f), "utf8").split("\n").forEach((line, i) => {
+      if (/decodeURIComponent\(/.test(line) && !/\btry\s*\{/.test(line)) offenders.push(`assets/${f}:${i + 1}`);
+    });
+  }
+  assert.deepStrictEqual(offenders, [],
+    "decode inside a try on the same line (malformed input opens nothing), " +
+      "or allowlist the file here with the reason its input is not an address");
+});

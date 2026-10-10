@@ -80,7 +80,12 @@ When adding any new committed `.html` page:
 1. If it is part of the user's build journey, add it as a `bench` or `depths`
    item under the right stage.
 2. If it is supporting documentation, a native/mobile runbook, an evidence page,
-   or a test/dev harness, add it under `htmlDocumentation.groups`.
+   or a test/dev harness, add it under `htmlDocumentation.groups`. A page under
+   `tests/` (a test fixture) links to its GitHub source, never to the relative
+   path: neither the hosted Lab nor the Lab app ships `tests/`
+   (`.github/workflows/pages.yml` deletes it, `desktop-lab/frontend-stage.json`
+   prunes it), so a relative link is a 404 on both. A generator input (a
+   template a build step fills) is not a page and is not listed.
 3. If it replaces an old page or slug, add the old slug to `redirects`.
 
 This keeps the sitemap expandable with one manifest edit and preserves the

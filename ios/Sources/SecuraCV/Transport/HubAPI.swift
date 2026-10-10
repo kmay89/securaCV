@@ -223,7 +223,6 @@ extension HubAPI {
         -> (outcome: HubOnboardOutcome, session: HubSession?) {
         let steps = try await onboardingSteps()
         var out = HubOnboardOutcome()
-        out.alreadyDone = steps.filter(\.done).map(\.step)
         let pending = HubOnboarding.pending(steps)
         var session: HubSession?
 

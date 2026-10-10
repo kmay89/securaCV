@@ -570,7 +570,12 @@ To change any security-hardened default, a developer must:
    greps for a new client socket
 3. Ed25519 private key has no read/export interface of any kind
 4. All cryptographic operations use vetted libraries (no custom crypto)
-5. All security-sensitive defaults are hardened (see `secure_defaults.h`)
+5. All security-sensitive defaults are hardened where they are set:
+   `firmware/canary/include/secure_defaults.h` maps each default to the
+   file that decides it, and `regression_check.sh` ("Security: hardened
+   defaults") holds the BLE, MQTT and SoftAP-client ones to their values.
+   No Canary image requires TLS today: the release image serves HTTP until
+   `FEATURE_HTTPS` fits its slot
 6. BLE is compiled only where a profile names it (the WAP's FULL and DEV
    profiles, gated on `HW_HAS_BLE`; the flagship's `full` env, Scout
    scanner and status service only); its adverts carry the device's own

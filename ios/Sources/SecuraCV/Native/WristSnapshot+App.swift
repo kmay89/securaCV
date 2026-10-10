@@ -40,7 +40,22 @@ extension WristSnapshot {
                          fingerprint: w.fingerprint.isEmpty ? nil : w.fingerprint,
                          suffixAmbiguous: w.fingerprint.isEmpty ? nil :
                             ProximityRanger.isSuffixAmbiguous(fingerprint: w.fingerprint,
-                                                              among: allFingerprints))
+                                                              among: allFingerprints),
+                         // The phone's own answer — the wrist can't see which
+                         // devices this iPhone can reach over Wi-Fi.
+                         canIdentify: store.canIdentify(w),
+                         // What it IS: the wrist resolves the figure and the
+                         // product name from these, through the same shared
+                         // resolvers the phone and the Wall use. A row with
+                         // no published type sends the coarse family's wire
+                         // name, so the wrist still draws what the phone does.
+                         publishedType: w.publishedType
+                            ?? (w.deviceType == .unknown ? nil : w.deviceType.rawValue),
+                         hardware: w.hardware,
+                         hubRaw: w.hub == .unknown ? nil : w.hub.rawValue,
+                         radarPresent: w.radarPresent,
+                         radarOccupants: w.radarOccupants,
+                         breathingLock: w.breathingLock)
         }
         self.init(revision: 0,
                   sentAt: Date(timeIntervalSince1970: 0),
@@ -57,7 +72,6 @@ extension WristSnapshot {
                   omittedWitnesses: max(0, fleet.count - rows.count),
                   faceRaw: store.canaryFace.rawValue,
                   postureRaw: store.canaryPosture.rawValue,
-                  anxiety: store.canaryAnxiety,
                   trustDays: store.canaryTrustDays,
                   moodLine: store.moodLine,
                   // Cap-aware order: rows that still need a human always

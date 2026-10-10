@@ -102,7 +102,11 @@ mirrors those siblings at their repo-relative paths into `dist/`, so the app's
 web root has the same shape as the deployed site's, and one set of relative URLs
 works on both. The mirror list is `frontend-stage.json`;
 `canary-local/tests/lab_bundle.test.js` fails CI if the frontend starts reaching
-for something the manifest doesn't carry.
+for something the manifest doesn't carry. The same manifest prunes what the
+site deploy deletes (`canary-local/tests/` and every `.py`/`.sh` under
+`canary-local/`: repo tooling no page loads), and the same test holds those
+prunes to `.github/workflows/pages.yml`'s, so the app never ships what the
+site stopped publishing.
 
 ## Develop
 

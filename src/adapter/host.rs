@@ -117,7 +117,7 @@ impl AdapterHost {
         self.config.min_confidence = min_confidence;
     }
 
-    /// Register an adapter to be polled by [`run_once`](Self::run_once) / [`run_loop`](Self::run_loop).
+    /// Register an adapter to be polled by [`run_once`](Self::run_once).
     pub fn register<A: SensorAdapter + 'static>(&mut self, adapter: A) {
         self.registry.register(adapter);
     }
@@ -335,23 +335,6 @@ impl AdapterHost {
         Ok(written)
     }
 
-    /// Run forever, polling every `poll_interval`. Per-cycle errors are logged, not fatal.
-    /// A one-line per-adapter stats summary is logged at INFO roughly once a minute.
-    pub fn run_loop(&mut self, poll_interval: Duration) -> Result<()> {
-        let log_every = stats_log_interval_cycles(poll_interval);
-        let mut cycle: u64 = 0;
-        loop {
-            if let Err(e) = self.run_once() {
-                log::warn!("adapter host poll cycle failed: {}", e);
-            }
-            cycle += 1;
-            if cycle.is_multiple_of(log_every) {
-                self.log_stats_summary();
-            }
-            std::thread::sleep(poll_interval);
-        }
-    }
-
     /// Emit a compact per-adapter stats line at INFO.
     pub fn log_stats_summary(&self) {
         for (name, s) in &self.stats {
@@ -371,7 +354,11 @@ fn now_epoch_s() -> u64 {
 }
 
 /// How many poll cycles approximate one minute, for the periodic stats log (>= 1).
-fn stats_log_interval_cycles(poll_interval: Duration) -> u64 {
+///
+/// The poll loop lives in the `adapter_host` binary (it also services config reloads and the
+/// stats endpoint between cycles); it calls this so the cadence of
+/// [`AdapterHost::log_stats_summary`] is defined once, here.
+pub fn stats_log_interval_cycles(poll_interval: Duration) -> u64 {
     let secs = poll_interval.as_secs().max(1);
     (60 / secs).max(1)
 }
@@ -538,5 +525,20 @@ mod tests {
         let mut g = m.lock_tolerant();
         *g += 1;
         assert_eq!(*g, 42);
+    }
+
+    /// The `adapter_host` binary's stats cadence comes from here, so pin it:
+    /// roughly once a minute, never zero (`n.is_multiple_of(0)` holds only for
+    /// `n == 0`, and the binary's cycle count starts at 1, so a zero would
+    /// silence the stats line for good).
+    #[test]
+    fn stats_log_interval_is_about_a_minute_and_never_zero() {
+        assert_eq!(stats_log_interval_cycles(Duration::from_secs(1)), 60);
+        assert_eq!(stats_log_interval_cycles(Duration::from_secs(30)), 2);
+        // A sub-second or zero interval is treated as one second.
+        assert_eq!(stats_log_interval_cycles(Duration::ZERO), 60);
+        assert_eq!(stats_log_interval_cycles(Duration::from_millis(500)), 60);
+        // Slower than a minute: log every cycle rather than never.
+        assert_eq!(stats_log_interval_cycles(Duration::from_secs(120)), 1);
     }
 }

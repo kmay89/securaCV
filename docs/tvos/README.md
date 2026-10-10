@@ -1,12 +1,31 @@
 # SecuraCV on Apple TV — the Witness Wall
 
-> Status: **built and continuously tested.** The app lives in
+> Status: **the Wall is built and continuously tested; several features this
+> brief describes are not in the app yet.** The app lives in
 > [`tvos/`](../../tvos/) (SwiftUI Wall + a Rust witness core, built and
 > tested on every PR); the App Store upload waits on an Apple Developer
 > account — see [`tvos/README.md`](../../tvos/README.md). This doc remains
 > the design brief — what it does, why it's the anti-surveillance-wall, and
 > how it self-heals, self-publishes, and self-updates so it "never rots,
-> works for years" (`docs/design/raspberry_pi_hub_flashing.md`).
+> works for years" (`docs/design/raspberry_pi_hub_flashing.md`). Read §2–3
+> against this table: where it says *emulator only*, the feature can be
+> driven in the browser emulator (securacv.com/witness-wall) but the native
+> app does not have it.
+>
+> | Feature | Status |
+> |---|---|
+> | Fleet tiles found over Bonjour, no account | **in the app** |
+> | "Verified" only against the key pinned at pairing (viewer-token receipt) | **in the app** |
+> | The day as a timeline of sealed windows | **in the app** |
+> | Home / Business / Apartment layouts (chosen in Settings; layout, never data) | **in the app** |
+> | Doctor cards | **in the app** |
+> | Stand watch (one coarse word to your own iCloud when a Canary goes dark) | **in the app** |
+> | Witness screensaver (ambient mode) | planned — emulator only |
+> | Household break-glass on the shared screen | planned — emulator only |
+> | One-tap Incident capture | planned — emulator only |
+> | Dispute-pack export | planned — emulator only |
+> | Multi-site board | planned — emulator only |
+> | Daily / close-of-night sealed digest | design only (not in the emulator either) |
 
 Witnessing without watching — on the biggest screen in the house, or behind
 the bar.
@@ -50,13 +69,13 @@ The Witness Wall shows **the verified record, not the footage**:
   pinned at pairing (a viewer-token receipt minted on the hub and pasted into
   the Wall's settings; a hub signing with any other key is an alarm). The reassurance the whole product is built to give,
   finally sitting where the household can see it.
-- **Ambient mode (the magic).** When idle, the Apple TV becomes a witness
+- **Ambient mode (the magic — planned, emulator only).** When idle, the Apple TV becomes a witness
   screensaver — the fleet slowly breathing, the chain growing link by link,
   *all is well* rendered as something you'd actually leave on. Apple's aerials,
   but it's your home telling you it's safe. Security that feels like calm
   instead of anxiety. It never paints stale data as fresh: if it can't verify
   right now, it says so, calmly, with a timestamp.
-- **Break-glass, in the open.** Unsealing evidence needs a quorum
+- **Break-glass, in the open (planned, emulator only).** Unsealing evidence needs a quorum
   (`spec/invariants.md`). On a phone that's a hidden tap. On the shared TV it
   becomes what it should be: a request that appears where the household sees
   it, and members approve together, on the record. The most serious action in
@@ -78,10 +97,13 @@ Their pain was never "watch the feed." It's **prove what happened**, and
 **don't get sued for how you proved it** — exactly what a tamper-evident
 witness layer is for, and nobody gives it to them free.
 
-The app picks its edition from what the kernel reports (a household vs a venue
-profile), the same way the Lab's nav adapts per platform. Same binary, same
-core, same tag-only pipeline — so the second edition adds **zero** release
-surface to rot.
+Today the household picks the room in the Wall's Settings (Home, Business or
+Apartment — a layout and emphasis, never different data); picking it from what
+the kernel reports is not built. Same binary, same core, same tag-only
+pipeline — so the second edition adds **zero** release surface to rot. Of the
+table's signature moves, Incident capture, dispute-pack export, the multi-site
+board and the sealed digests are not in the app yet (see the status table at
+the top).
 
 | | **Home — the Witness Wall** | **Business — the Witness Board** |
 |---|---|---|
@@ -110,39 +132,40 @@ already own.**
   *events* (`frigate/events`, `frigate/reviews`) and never sees video or
   the stream URL. A witness layer laid **over the cameras they already
   bought** — no rip-and-replace, no per-camera cloud subscription.
-- **Dispute-proof record.** Chargebacks, slip-and-fall claims, "your bartender
+- **A record for disputes.** Chargebacks, slip-and-fall claims, "your bartender
   overserved me," a walk-out, a fight at last call — each a semantic event,
-  signed and hash-chained. A **court-ready timeline edits can't touch** — the
-  evidentiary value venues pay four figures a month for, with no monthly bill.
-- **One-tap Incident capture.** Something just happened at table six: a single
+  signed and hash-chained, so an edit after the fact shows as a broken chain
+  — with no monthly bill.
+- **One-tap Incident capture (planned, emulator only).** Something just happened at table six: a single
   press seals a bookmarked evidence window around that moment for later
   quorum-gated break-glass. The staff action is one button; the accountability
   is automatic.
-- **Dispute-pack export.** Generate a verifiable bundle — the signed timeline
+- **Dispute-pack export (planned, emulator only).** Generate a verifiable bundle — the signed timeline
   plus the sealed clip (via break-glass) — to hand an insurer, a card
   processor, or an officer. It verifies offline, on their machine, without
   trusting us.
 - **A liability shield, not a face archive.** The record is *events* — "motion
   at register 2 · 11:47 pm · sealed" — never a biometric archive of every
   customer. In a BIPA / GDPR / CCPA world that is a real exposure reducer, and
-  the app carries a plain "what we do and don't record" screen you can show an
-  inspector or paste into a privacy notice: *we witness, we don't surveil our
+  the app is meant to carry a plain "what we do and don't record" screen (not
+  built yet) you can show an inspector or paste into a privacy notice: *we witness, we don't surveil our
   customers* (`spec/invariants.md`, Invariant I).
 - **The calm board behind the bar.** Not a grid staff learn to ignore — every
   camera's *health* and the verified timeline, ambient and readable, with a
-  **close-of-night sealed digest** a manager glances at on the way out.
-- **One screen for a group.** A small chain sees every location's health and
+  **close-of-night sealed digest** (design only) a manager glances at on the
+  way out.
+- **One screen for a group (planned, emulator only).** A small chain sees every location's health and
   chain integrity on a single multi-site board — all green, or exactly which
   site needs a look.
 
 ### What the Home edition keeps gentle
 
-- The **ambient witness screensaver** — the fleet breathing, the chain growing,
-  *all is well* as something you'd leave on.
-- **Household break-glass** — the family approves an unseal together, in the
-  open, on the shared screen.
-- **Gentle Doctor cards** and a quiet daily digest — "your Canaries," personal
-  and calm, never alarming.
+- The **ambient witness screensaver** (planned, emulator only) — the fleet
+  breathing, the chain growing, *all is well* as something you'd leave on.
+- **Household break-glass** (planned, emulator only) — the family approves an
+  unseal together, in the open, on the shared screen.
+- **Gentle Doctor cards** (in the app) and a quiet daily digest (design only)
+  — "your Canaries," personal and calm, never alarming.
 
 Neither edition asks anyone to trust a cloud, feed a subscription, or become the
 thing they'd be liable for. Both run local, on hardware most people already have.

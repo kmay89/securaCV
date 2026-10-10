@@ -13,6 +13,10 @@
 // words the screen shows.
 
 import SwiftUI
+import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct SetupView: View {
     @EnvironmentObject var store: FleetStore
@@ -29,28 +33,30 @@ struct SetupView: View {
         NavigationStack(path: $path) {
             List {
                 Section {
-                    NavigationLink(value: SetupTarget.hub) {
-                        choiceRow(icon: "externaldrive.connected.to.line.below",
-                                  title: hubRecord == nil ? "Set up a hub" : "Your hub",
-                                  body: hubRecord == nil
-                                    ? "A Raspberry Pi running Home Assistant and the witness kernel — the meeting point your Canaries report to. This phone finishes it: no setup wizard, no monitor."
-                                    : "\(hubRecord!.name) at \(hubRecord!.baseURL.host ?? "") — finished \(hubRecord!.finishedAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "partway"). Open the walkthrough again to re-check it; nothing is done twice.")
-                    }
+                    // A Canary first: it is what most people are holding
+                    // when they open this, and the one that needs nothing
+                    // else in the house to start.
                     NavigationLink(value: SetupTarget.canary) {
                         choiceRow(icon: "bird",
                                   title: "Add a Canary",
-                                  body: "Give a new Canary your Wi-Fi the way it can take it — a card when it asks over Bluetooth, a QR off a display's glass, or its own setup network — and watch it appear on the Fleet tab.")
+                                  body: "Power it on near this phone and tap the card that appears — this phone gives it your Wi-Fi.")
+                    }
+                    NavigationLink(value: SetupTarget.hub) {
+                        choiceRow(icon: "externaldrive.connected.to.line.below",
+                                  title: hubRecord == nil ? "Set up a hub" : "Your hub",
+                                  body: hubRow)
                     }
                 } header: {
                     Text("What are you setting up?")
                 } footer: {
-                    Text("Both walkthroughs explain every step and do the parts a phone can do. What stays yours is said out loud, never hidden behind a spinner.")
+                    Text("Each step says what this phone does, and what stays yours.")
                 }
                 if let login = HubSecretStore.brokerLogin() {
                     Section {
-                        Label("Broker login for your Canaries: \(login.username)", systemImage: "key.horizontal")
+                        Label("Hub login for your Canaries: \(login.username)", systemImage: "key.horizontal")
+                        BrokerPasswordCopyButton(password: login.password)
                     } footer: {
-                        Text("Minted on this phone when the hub was finished, kept in its Keychain. A Canary that asks for an MQTT login gets this one — the Canary walkthrough shows it when it's needed.")
+                        Text("Minted on this phone when the hub was finished, kept in its Keychain. A camera or radar Canary still takes it through the Flasher's MQTT fields: copy it here and paste it there (Universal Clipboard carries it to your Mac). The copy clears after two minutes.")
                     }
                 }
                 if let wifi = householdWiFi {
@@ -61,7 +67,7 @@ struct SetupView: View {
                             householdWiFi = nil
                         }
                     } footer: {
-                        Text("Kept in this phone's Keychain only, never in iCloud, so a second Canary joins with two taps. Forget it here any time.")
+                        Text("Kept in this phone's Keychain only, never in iCloud. Every Canary you add from this phone starts with it filled in, and Update fleet Wi-Fi keeps it current. Forget it here any time.")
                     }
                 }
             }
@@ -83,6 +89,14 @@ struct SetupView: View {
         }
     }
 
+    private var hubRow: String {
+        guard let hub = hubRecord else {
+            return "A Raspberry Pi running Home Assistant and the witness kernel — the meeting point your Canaries report to. This phone finishes it, no wizard."
+        }
+        let when = hub.finishedAt.map { "finished \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "finished partway"
+        return "\(hub.name) at \(hub.baseURL.host ?? "") — \(when). Open it again to re-check; nothing is done twice."
+    }
+
     private func choiceRow(icon: String, title: String, body: String) -> some View {
         HStack(alignment: .top, spacing: Theme.m) {
             Image(systemName: icon)
@@ -101,12 +115,14 @@ struct SetupView: View {
 
 /// The two walkthroughs, as a value — what a deep link names and what the
 /// navigation path holds.
-enum SetupTarget: String, Hashable, Sendable {
+enum SetupTarget: String, Hashable, Identifiable, Sendable {
     case hub, canary
+    var id: String { rawValue }
 }
 
-/// One walkthrough step as a list section: the title, the explanation,
-/// and — where the phone acts — the control under it.
+/// One walkthrough step as a list section: the title, the step in one
+/// sentence, the whole story one tap away, and — where the phone acts —
+/// the control under it.
 struct SetupStepSection<Control: View>: View {
     let index: Int
     let step: SetupStep
@@ -115,15 +131,47 @@ struct SetupStepSection<Control: View>: View {
     var body: some View {
         Section {
             VStack(alignment: .leading, spacing: Theme.s) {
-                Text(step.body)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Text(step.short)
+                    .font(.subheadline)
                     .fixedSize(horizontal: false, vertical: true)
+                DisclosureGroup("How it works") {
+                    Text(step.body)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, Theme.xs)
+                }
+                .font(.footnote)
                 control
             }
             .padding(.vertical, Theme.xs)
         } header: {
             Text("\(index). \(step.title)")
+        }
+    }
+}
+
+/// The hub's Canary login, one tap from the clipboard and gone after two
+/// minutes, instead of printed on screen for retyping. (A camera or radar
+/// Canary still needs it in the Flasher's MQTT fields: this phone has no
+/// channel to hand it over yet.) NOT `.localOnly`: the Flasher runs on a
+/// computer, and Universal Clipboard — the person's own devices, nothing
+/// else — is how a copy here becomes a paste there. A local-only copy had
+/// nowhere useful to go.
+struct BrokerPasswordCopyButton: View {
+    let password: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            #if canImport(UIKit)
+            UIPasteboard.general.setItems([[UTType.plainText.identifier: password]],
+                                          options: [.expirationDate: Date().addingTimeInterval(120)])
+            #endif
+            copied = true
+        } label: {
+            Label(copied ? "Password copied — clears in two minutes" : "Copy the password",
+                  systemImage: copied ? "checkmark" : "doc.on.doc")
         }
     }
 }

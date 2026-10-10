@@ -119,6 +119,10 @@ on:
       # fig3d.js and models/ had no line of their own.
       - "desktop/src/**"
       - "desktop-lab/frontend-stage.json"
+      # lab_bundle.test.js holds frontend-stage.json's prune / pruneExt to
+      # the website deploy's "Assemble site" rm -rf and find lines, read
+      # out of pages.yml, so the Lab app never ships what the site prunes
+      - ".github/workflows/pages.yml"
       # the shared Witness Wall emulator: both vendored copies + both hosts +
       # both native discovery commands (desktop_parity + the sync guard gate them;
       # the desktop copy and the two lib.rs files are in the src/** globs)
@@ -195,10 +199,10 @@ on:
       - ".github/workflows/vision-model-release.yml"
       # files the logic tests read that neither list had, found by the
       # recorded-reads gate below (scripts/check_path_filter_reads.py):
-      # desktop_parity reads the flagship's runtime_config.h (does it read a
-      # broker? -> broker_nvs); canary_local.test.js replays the Witness
+      # desktop_parity reads the flagship's broker reader (the NVS shape it
+      # reads -> broker_nvs); canary_local.test.js replays the Witness
       # Wall contract vectors against both vendored walls
-      - "firmware/canary/include/canary/runtime_config.h"
+      - "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
@@ -335,6 +339,10 @@ on:
       # fig3d.js and models/ had no line of their own.
       - "desktop/src/**"
       - "desktop-lab/frontend-stage.json"
+      # lab_bundle.test.js holds frontend-stage.json's prune / pruneExt to
+      # the website deploy's "Assemble site" rm -rf and find lines, read
+      # out of pages.yml, so the Lab app never ships what the site prunes
+      - ".github/workflows/pages.yml"
       # the shared Witness Wall emulator: both vendored copies + both hosts +
       # both native discovery commands (desktop_parity + the sync guard gate them;
       # the desktop copy and the two lib.rs files are in the src/** globs)
@@ -411,10 +419,10 @@ on:
       - ".github/workflows/vision-model-release.yml"
       # files the logic tests read that neither list had, found by the
       # recorded-reads gate below (scripts/check_path_filter_reads.py):
-      # desktop_parity reads the flagship's runtime_config.h (does it read a
-      # broker? -> broker_nvs); canary_local.test.js replays the Witness
+      # desktop_parity reads the flagship's broker reader (the NVS shape it
+      # reads -> broker_nvs); canary_local.test.js replays the Witness
       # Wall contract vectors against both vendored walls
-      - "firmware/canary/include/canary/runtime_config.h"
+      - "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)

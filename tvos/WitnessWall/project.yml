@@ -21,7 +21,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.2.4"
+    MARKETING_VERSION: "0.3.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "$(APPLE_DEVELOPMENT_TEAM)"   # from env / CI, never committed
@@ -97,6 +97,9 @@ targets:
       - path: ../../ios/Shared/FleetFigures.swift
       - path: ../../ios/Shared/FleetFigureBridge.swift
       - path: ../../ios/Shared/DeviceNaming.swift
+      # The one-line wellbeing and hub sentences a glance says about a
+      # device — the Wall's card and the watch's row read the same words.
+      - path: ../../ios/Shared/DeviceGlanceCopy.swift
       # The 3D half of the same vocabulary: the mm massing behind each figure
       # and the projector that turns it. On the phone the turntable is
       # drag-to-spin; on the Wall it turns by itself (a television has no

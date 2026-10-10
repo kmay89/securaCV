@@ -29,6 +29,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install libseccomp
         uses: ./.github/actions/setup-libseccomp
+        timeout-minutes: 5
       - name: Check formatting
         run: cargo fmt --check
       - name: Clippy
@@ -53,6 +54,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install libseccomp
         uses: ./.github/actions/setup-libseccomp
+        timeout-minutes: 5
       - name: Build release
         run: cargo build --release
       - name: Package binaries
@@ -141,10 +143,11 @@ jobs:
       - name: HACS Validation
         # Pinned to the same SHA as validate.yml — @main is a mutable ref
         # that can change under a release run.
+        # The brands check runs here too: validate.yml has run it green on
+        # main since the integration carried brand/icon.png.
         uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
         with:
           category: integration
-          ignore: brands
 
   # Any workflow that creates a GitHub release must also repair the
   # releases/latest pointer: GitHub moves `latest` to the newest non-prerelease
@@ -168,3 +171,17 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           context: kernel ${{ github.ref_name }} publish (release ${{ needs.release.result }})
+
+  # The bills of materials (Rust, Node, firmware), built from this tag and
+  # attached to the release above. A release this workflow creates with the
+  # GITHUB_TOKEN fires no `release: published` event, so sbom.yml's own
+  # trigger would never see it; it is called instead (the shape every other
+  # release workflow uses), and a failed attach turns this run red.
+  sbom:
+    name: Attach the SBOMs to the release
+    needs: release
+    uses: ./.github/workflows/sbom.yml
+    with:
+      tag: ${{ github.ref_name }}
+    permissions:
+      contents: write

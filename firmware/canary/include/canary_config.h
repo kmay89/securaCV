@@ -63,27 +63,18 @@
 #ifndef FEATURE_MESH_NETWORK
   #define FEATURE_MESH_NETWORK  0
 #endif
-#ifndef FEATURE_BLUETOOTH
-  #define FEATURE_BLUETOOTH     0
-#endif
 #ifndef FEATURE_BLE
-  #define FEATURE_BLE           0   // BLE Discovery (Opera/Chirp/Nearby)
+  #define FEATURE_BLE           0   // reports `ble` in the status feature list ([env:full]);
+                                    // the radio code is FEATURE_BLE_SCAN / _STATUS
 #endif
-#ifndef FEATURE_SYS_MONITOR
-  #define FEATURE_SYS_MONITOR   0
-#endif
-#ifndef FEATURE_WIFI_PRESENCE
-  #define FEATURE_WIFI_PRESENCE 0   // WiFi probe request presence detection
-#endif
-#ifndef FEATURE_AUDIBLE_CHIRP
-  #define FEATURE_AUDIBLE_CHIRP 0   // Local audible/visual alert tones
-#endif
-#ifndef FEATURE_RF_PRESENCE
-  #define FEATURE_RF_PRESENCE   0   // RF presence detection
-#endif
-#ifndef FEATURE_CHIRP
-  #define FEATURE_CHIRP         0   // Chirp community witness network
-#endif
+// No FEATURE_BLUETOOTH, _SYS_MONITOR, _WIFI_PRESENCE, _AUDIBLE_CHIRP,
+// _RF_PRESENCE or _CHIRP here: they are canary-wap sketch flags, and nothing
+// in this tree had code behind them, so defining them read as switches this
+// firmware does not have (removed 2026-10-09). BLE here is FEATURE_BLE_SCAN
+// and FEATURE_BLE_STATUS (+ the [env] lib_ignore), with FEATURE_BLE as the
+// reported tag; there is no Opera/Chirp/Nearby discovery code in this tree.
+// A port that brings one of those features over adds its flag with its code;
+// firmware/scripts/check_config_feature_flags.py fails on a flag nothing reads.
 #ifndef FEATURE_GNSS
   #define FEATURE_GNSS          1   // GPS/GNSS telemetry (enabled by default)
 #endif
@@ -176,7 +167,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define DEVICE_TYPE           "canary"
-#define FIRMWARE_VERSION      "2.4.15"
+#define FIRMWARE_VERSION      "2.4.16"
 
 // Optional build-time provenance for the 'f' fingerprint command. CI/PlatformIO
 // can inject the short commit with -DFIRMWARE_GIT_HASH=\"abc1234\"; when it
@@ -424,7 +415,6 @@
 #define RECORD_INTERVAL_MS       1000    // Record emission rate
 #define TIME_BUCKET_MS           600000  // Time coarsening bucket — the ten-minute grid (Invariant III); main.cpp derives BUCKET_10MIN_MS from it
 #define FIX_LOST_TIMEOUT_MS      3000    // GPS fix timeout
-#define VERIFY_INTERVAL_SEC      60      // Self-verify every N seconds
 #define WATCHDOG_TIMEOUT_SEC     8       // Hardware watchdog
 #define SD_PERSIST_INTERVAL      10      // Persist every N records
 
@@ -551,8 +541,8 @@
 #define NVS_KEY_BATT_SOC  "batt_soc_min"  // all-time lowest SoC %
 #define NVS_KEY_BATT_BO   "batt_bo_cnt"   // brownout reset count
 #define NVS_KEY_BATT_FC   "batt_fc_ms"    // last full charge millis()
-#define NVS_KEY_SETUP_OK  "setup_ok"
-#define NVS_KEY_DEV_NAME  "dev_name"
+#define NVS_KEY_SETUP_OK  "setup_ok"      // first-boot setup finished (securacv_setup)
+#define NVS_KEY_DEV_NAME  "dev_name"      // the owner-chosen device name (securacv_setup)
 
 // ════════════════════════════════════════════════════════════════
 // MQTT (Home Assistant)
@@ -560,9 +550,6 @@
 
 #ifndef MQTT_PORT
   #define MQTT_PORT          1883
-#endif
-#ifndef MQTT_TOPIC_PREFIX
-  #define MQTT_TOPIC_PREFIX  "securacv"
 #endif
 
 // ════════════════════════════════════════════════════════════════

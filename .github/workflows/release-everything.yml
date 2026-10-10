@@ -18,6 +18,9 @@
 #     and ship everything ELSE. Never re-ship a different tree under a version
 #     that is already published.
 #   • same version, nothing changed             → skip. ✅
+#   • newer version already built as a DRAFT    → say "publish the draft" and
+#     dispatch nothing (a draft has no tag, so without this the Lab's draft
+#     re-planned as a release on every press)
 #   • the site's published pages changed since the last successful deploy
 #     → redeploy (this is the "the docs need it" case)
 #   • an Apple target whose ENABLE_*_BUILD variable is off → don't spend a
@@ -81,8 +84,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Listing DRAFT releases needs push access: with contents: read the releases
+  # API returns published releases only, and the drafts are exactly what the
+  # plan has to see. This job holds that scope and does nothing else with it —
+  # no checkout, no repo code, one read — so the job that runs the planner and
+  # dispatches keeps contents: read. A failed read degrades to "no drafts
+  # known" with a warning: the plan is then what it was before drafts were
+  # read, never blocked.
+  drafts:
+    name: List unpublished draft releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      tags: ${{ steps.list.outputs.tags }}
+    steps:
+      - name: Read the draft releases' tag names
+        id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          if tags="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                       --jq '[.[] | select(.draft) | .tag_name]' | jq -cs 'add // []')"; then
+            echo "draft releases: $tags"
+          else
+            echo "::warning::could not list draft releases; planning without them (a built-but-unpublished draft will re-plan as a release)"
+            tags="[]"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
   update:
     name: Work out what needs releasing, then release exactly that
+    needs: drafts
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -169,6 +204,7 @@ jobs:
           ONLY: ${{ inputs.only }}
           FORCE: ${{ inputs.force }}
           PAGES_SINCE: ${{ steps.pages.outputs.sha }}
+          DRAFT_TAGS: ${{ needs.drafts.outputs.tags }}
           # Gates are preconditions, and a gated target would only no-op (or
           # fail), so there is no reason to spend a runner on it. Two kinds:
           # repo VARIABLES for the Apple targets (a developer account someone
@@ -180,12 +216,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # "What has actually been cut" comes from TAGS, not from published
-          # releases: the Lab publishes a DRAFT release, and a draft would look
-          # unpublished forever and make this button re-cut it on every press.
-          # A tag exists the moment a release is cut, draft or not.
+          # "What has actually been released" comes from TAGS. A DRAFT release
+          # has no tag — GitHub creates it when the draft is published — so the
+          # drafts come separately, from the job above, and the planner reports
+          # a draft at the source version as waiting to be published instead of
+          # re-cutting it on every press (desktop-release.yml always builds the
+          # Lab as a draft; lab-publish.yml publishes it).
           git tag -l | python3 -c 'import json,sys; json.dump([t.strip() for t in sys.stdin if t.strip()], sys.stdout)' > /tmp/tags.json
           echo "tags found: $(python3 -c 'import json;print(len(json.load(open("/tmp/tags.json"))))')"
+          printf '%s\n' "${DRAFT_TAGS:-[]}" > /tmp/drafts.json
+          echo "draft releases: $(cat /tmp/drafts.json)"
 
           gates="$(python3 -c '
           import json, os
@@ -206,6 +246,7 @@ jobs:
             --force="$FORCE" \
             --gates="$gates" \
             --pages-since="$PAGES_SINCE" \
+            --drafts-file=/tmp/drafts.json \
             < /tmp/tags.json > /tmp/plan.json
 
           echo "── plan ──"
@@ -226,7 +267,7 @@ jobs:
 
             const icons = {
               release: '🚀', up_to_date: '✅', needs_bump: '✋',
-              behind: '⚠️', gated: '🔒', skipped: '·',
+              behind: '⚠️', gated: '🔒', skipped: '·', draft_pending: '📝',
             };
 
             const actionable = plan.filter((d) => d.decision === 'release');
@@ -291,6 +332,14 @@ jobs:
                 .addList(bumps.map((d) => `${d.label}${d.source_version ? ` (still ${d.source_version})` : ''}`));
             }
 
+            const drafts = plan.filter((d) => d.decision === 'draft_pending');
+            if (drafts.length) {
+              summary
+                .addHeading('Built as a draft, waiting to be published', 3)
+                .addRaw('Each of these is already built at its source version. Nothing was dispatched for it: publish the draft (the row says how) and it ships.')
+                .addList(drafts.map((d) => `${d.label} (${d.source_version})`));
+            }
+
             await summary.write();
 
             // Honest exit codes: only a dispatch that was SUPPOSED to happen
@@ -308,7 +357,9 @@ jobs:
               core.notice(
                 bumps.length
                   ? `Nothing to release. ${bumps.length} target(s) changed but still need a version bump — see the summary.`
-                  : 'Everything is already up to date. Nothing was dispatched, and nothing was wasted. ✅'
+                  : drafts.length
+                    ? `Nothing to build. ${drafts.length} draft release(s) are waiting to be published — see the summary.`
+                    : 'Everything is already up to date. Nothing was dispatched, and nothing was wasted. ✅'
               );
               return;
             }

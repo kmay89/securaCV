@@ -172,8 +172,8 @@ pub fn espflash_bundled(app: &AppHandle) -> bool {
 
 /// Serial ports the OS can see this instant — the Flasher's `list_ports`,
 /// under its own name so either frontend's port picker works here unchanged.
-/// (`list_serial_ports` in lib.rs is the same list under the name this seam
-/// always promised.)
+/// No Web Serial permission prompt, no Chromium: the platform enumerating its
+/// own devices (the Flash page's native bench polls it every second).
 #[tauri::command]
 pub fn list_ports() -> Result<Vec<PortDto>, String> {
     flash_engine::ports::list_ports()
@@ -243,14 +243,6 @@ pub fn start_serial_monitor(
     post_flash: Option<bool>,
 ) -> Result<(), String> {
     state.start(TauriHost(app), port, vid, pid, baud, post_flash)
-}
-
-#[tauri::command]
-pub fn serial_monitor_send(
-    state: State<'_, SerialMonitorState>,
-    command: String,
-) -> Result<(), String> {
-    state.send(command)
 }
 
 #[tauri::command]

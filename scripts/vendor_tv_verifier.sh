@@ -7,7 +7,9 @@ set -euo pipefail
 # lives in scripts/carry_to_site.py, the one tool for every fact the website
 # carries from this repo (the /checkup build matrix and the landing page's
 # kernel-status grid ride the same command).
-# This name keeps working for anyone who has it in muscle memory or a note.
+# This name keeps working for anyone who has it in muscle memory or a note,
+# and the website's docs/LAYOUT.md (its carried-files table) names it as the
+# alias — so it stays, though no workflow calls it.
 #
 # Usage (from anywhere, with a website checkout):
 #   scripts/vendor_tv_verifier.sh [path-to-securacv_website]

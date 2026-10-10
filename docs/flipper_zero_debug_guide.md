@@ -25,7 +25,7 @@ Even without the custom app, the built-in Bluetooth scanner is useful:
 3. Wait 5-10 seconds for devices to appear
 4. Look for:
    - `SecuraCV-Canary` — normal mode (device is alive and advertising)
-   - `SCV-DBG-XXXX` — debug mode (health data available in manufacturer data)
+   - `SCV-DBG-XXXX` — the old debug beacon; no current firmware emits it
    - `SCV-XXXX` — Opera-mode name (pubkey fingerprint suffix)
 
 ### What to check
@@ -35,37 +35,20 @@ Even without the custom app, the built-in Bluetooth scanner is useful:
 | Device appears with strong RSSI (> -60 dBm) | Device is nearby and BLE antenna is working |
 | Device appears with weak RSSI (< -85 dBm) | Device is far away or antenna issue |
 | Device does not appear at all | BLE not active, antenna disconnected, or WiFi/BLE coexistence issue |
-| Name shows `SCV-DBG-` prefix | Debug mode is active, manufacturer data contains health |
+| Name shows `SCV-DBG-` prefix | Older firmware with the debug beacon (removed; see below) |
 | Name shows `SecuraCV-Canary` | Normal mode — device is operating but not emitting debug data |
 
-## Activating firmware debug mode
+## Firmware debug mode (removed)
 
-Debug mode enriches BLE advertisements with a 20-byte health payload that
-any BLE scanner can read. Two ways to activate:
-
-### Option 1: Runtime (button hold)
-
-1. Locate the **BOOT** button on your XIAO ESP32-S3
-2. Press and hold for **3 seconds**
-3. The LED will blink **twice every 2 seconds** to confirm debug mode
-4. BLE device name changes from `SecuraCV-Canary` to `SCV-DBG-XXXX`
-5. To deactivate, reboot the device (press RESET or power cycle)
-
-### Option 2: Compile-time
-
-In `firmware/configs/canary-wap/default/config.h`, set:
-
-```c
-#define FEATURE_BLE_DEBUG  1
-```
-
-Then rebuild and flash:
-
-```bash
-pio run -e canary-wap -t upload
-```
-
-Debug mode will activate automatically on every boot.
+The debug beacon this guide used to describe — a `SCV-DBG-XXXX` name with a
+20-byte health payload in the manufacturer data, switched on by a 3-second
+BOOT hold or `FEATURE_BLE_DEBUG` — is not in any firmware built today. Its
+code was removed in the whole-repo cleanup (#1578); the flag survived only in
+`firmware/configs/canary-wap/default/config.h`, which no build compiles, and
+there is no `canary-wap` PlatformIO env (the WAP's envs are
+`canary-wap-default`, `-mobile`, `-debug` and `-usbdrive`). A Canary you scan
+today advertises its normal name only; the Scanner FAP below still decodes the
+old payload, so it shows a device's name and RSSI but no health view.
 
 ## Using the SecuraCV Scanner FAP
 
@@ -92,7 +75,8 @@ Or copy `dist/securacv_scanner.fap` to your Flipper's SD card:
 
 ### Detail view fields
 
-When viewing a debug-mode device, you see:
+When viewing a device running older firmware with the (since removed)
+debug beacon, you see:
 
 ```
 SCV-DBG-A3F7            [||||]
@@ -123,7 +107,8 @@ Chain:1042 V:OK E:OK
 
 ## Debug beacon wire format reference
 
-20-byte manufacturer-specific BLE advertising data:
+The removed beacon's 20-byte manufacturer-specific BLE advertising data, kept
+because the Scanner FAP still decodes it:
 
 | Offset | Size | Field | Notes |
 |---|---|---|---|
@@ -152,17 +137,17 @@ Chain:1042 V:OK E:OK
    active HTTP transfers), BLE advertising may be delayed or suppressed.
 3. **Range.** BLE TX power defaults to 0 dBm. Effective range is ~10-30m
    indoors depending on walls and interference.
-4. **Check `FEATURE_BLUETOOTH`.** In `config.h`, ensure
-   `FEATURE_BLUETOOTH` is set to `1`.
+4. **Check `FEATURE_BLUETOOTH`.** In the WAP sketch's `build_config.h` it
+   follows `HW_HAS_BLE` in the DEV and FULL profiles and is `0` in MINIMAL
+   (which no CI job builds).
 5. **Serial debug.** Connect via USB serial at 115200 baud and look for
    `"Bluetooth started"` in the boot log. If you see
    `"BLE Unavailable"`, the NimBLE stack failed to initialize.
 
 ### "I see the device but no debug data"
 
-Debug mode is not active. Either:
-- Hold the BOOT button for 3 seconds, or
-- Rebuild with `FEATURE_BLE_DEBUG 1`
+Expected: no current firmware emits the debug beacon (see "Firmware debug
+mode (removed)" above), so there is nothing to switch on.
 
 ### "Debug data looks wrong / checksum fails"
 

@@ -27,7 +27,6 @@ const ENC = "../docs/hardware/enclosure/";   // print-validated library (same ba
 // per-build so a finish swap re-lines every real-shape card.
 const shell = () => activeFinish().shell;    // primary printed shell
 const shell2 = () => activeFinish().shell2;  // stands & rear covers (depth cue)
-const GLASS_EDGE = [0.05, 0.05, 0.06];
 
 // Caches the PROMISE, not the mesh: the card grid and an open sheet load
 // the same files concurrently, and one request should serve both. A

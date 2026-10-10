@@ -3,9 +3,12 @@
 // One shared LookParams (scene, brightness, warmth, gamma, motion) read by
 // BOTH ambient channels — the WS2812 beacon (hal/ambient_led.cpp) and the
 // glass wash (ui/portrait_ui.cpp) — so the point of light and the pane always
-// agree on the look. The settings surface and an MQTT topic will own these at
-// runtime; today they default to the Canary Dawn scene. Nightstand flavor
-// only (the color engine lives in firmware/common/color).
+// agree on the look. Scene choice lives in the lantern (care/lantern.h: the
+// `lamp_scene` setting and the tap cycle); the lamp-lit paths copy
+// `lamp.scene()` into a local LookParams. This shared instance carries the
+// default scene (Canary Dawn), the color wheel's `custom_hue`, and the live
+// `night` flag the calm beacon reads. Nightstand flavor only (the color
+// engine lives in firmware/common/color).
 #pragma once
 #include "color/look_engine.h"
 #include "color/plumage.h"
@@ -49,13 +52,10 @@ struct LampFrame {
 
 LampFrame& lamp_frame();
 
-// Select / advance the scene (settings, MQTT, or a future BOOT-button demo).
-void look_set_scene(uint8_t idx);   // clamped to the scene count
-void look_cycle_scene();            // next scene, wrapping
-
 // The owner turned the color wheel. `hue` is 0..359; anything negative hands
-// the glass back to `scene_idx`. Picking a catalog scene clears it, so the
-// two controls can never both claim to be the current look.
+// the glass back to the chosen scene. Every path that picks a catalog scene
+// (the `lamp_scene` setting, the tap cycle) clears it with -1, so the two
+// controls can never both claim to be the current look.
 void look_set_custom_hue(int16_t hue);
 
 }  // namespace canary::ui

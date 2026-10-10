@@ -12,7 +12,7 @@
 #
 # THE TRAP THIS WORKFLOW EXISTS TO AVOID: GitHub suppresses `release:` events
 # for releases published with the default GITHUB_TOKEN (its recursion guard).
-# A human publish fires `release: published`; a CI publish does not. So the two
+# A human publish fires `release: published`; a CI publish does not. So the
 # things that used to happen *because of* that event have to be CALLED here
 # instead of waited for:
 #
@@ -22,6 +22,8 @@
 #     goes red. A fire-and-forget dispatch would let a broken updater manifest
 #     pass for a successful publish, which is the exact silent failure the
 #     pointer workflow was written to prevent.
+#   · sbom.yml — builds the SBOMs from the published tag and attaches them.
+#     Also called, for the same reason.
 #   · keep-firmware-latest — puts `releases/latest` back on the firmware. Every
 #     Canary in the field polls `releases/latest/download/manifest-*.json`; an
 #     app release taking that slot 404s the whole fleet's update check without
@@ -230,3 +232,16 @@ jobs:
     permissions:
       contents: write
     secrets: inherit
+
+  # The third thing the `release: published` event used to do and a CI
+  # publish never triggers: sbom.yml builds the bills of materials (Rust,
+  # Node, firmware) from the tag the publish above just created and attaches
+  # them. Called, like the pointer, so a failed attach fails this run.
+  sbom:
+    name: Attach the SBOMs to the release
+    needs: publish
+    uses: ./.github/workflows/sbom.yml
+    with:
+      tag: ${{ needs.publish.outputs.tag }}
+    permissions:
+      contents: write

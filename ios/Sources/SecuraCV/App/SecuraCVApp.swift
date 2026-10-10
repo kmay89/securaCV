@@ -134,6 +134,16 @@ struct RootView: View {
         .overlay(alignment: .top) {
             CanaryVoiceBubble(voice: store.voice) { section = $0 }
         }
+        // The card that comes to you: a brand-new Canary close to the phone
+        // slides one card up from the bottom of whatever section is showing
+        // — its figure, its name, Continue — the AirPods moment, instead of
+        // a row the person has to be on the right tab to find. Only with
+        // discovery consent (the scan behind it is that consent's), only
+        // for exactly one close Canary, never twice for the same one in a
+        // session (NearbyCanaries.autoOffer; NearbyOfferOverlay).
+        .overlay(alignment: .bottom) {
+            NearbyOfferOverlay()
+        }
         .onAppear { store.voice.arrive(at: section) }
         // The deep-link doors, both landing on the same route value: a
         // widget or link speaks the securacv:// dialect; a notification tap

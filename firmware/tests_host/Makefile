@@ -648,7 +648,12 @@ VISFSM_GRACE_BIN = $(BUILD_DIR)/test_vision_presence_fsm_grace
 EMU_DIR    = ../../canary-local/emulator
 VISCORE_SRC = $(VISION_SRC)/detect_config.cpp $(VISFSM_SRC) \
               $(EMU_DIR)/vision/vision_core_bindings.cpp $(EMU_DIR)/vision/vision_core_shim.cpp
-VISCORE_HDR = $(VISFSM_HDR) $(VISION_CFG)/config.h $(wildcard $(EMU_DIR)/shim/*.h) \
+# Every header vision_core_bindings.cpp includes is a prerequisite, the
+# detection pipeline among them (sweep F249): without it an incremental make
+# after a pipeline edit rebuilt test_vision_detection_pipeline and reused a
+# stale test_vision_core_bindings. CI builds fresh, so only local runs lied.
+VISCORE_HDR = $(VISFSM_HDR) $(VISION_PIPE_HDR) $(VISION_INC)/canary/version.h \
+              $(VISION_CFG)/config.h $(wildcard $(EMU_DIR)/shim/*.h) \
               stubs/emscripten/emscripten.h
 VISCORE_BIN = $(BUILD_DIR)/test_vision_core_bindings
 
@@ -937,6 +942,23 @@ $(DAILY_BIN): test_csi_daily_summary.cpp $(DAILY_INC) $(MODINT_SRC) $(MODINT_HDR
 run-daily-summary: $(DAILY_BIN)
 	./$(DAILY_BIN)
 run: run-daily-summary
+
+# Compile-only checks for sources no firmware build compiles, so they cannot
+# rot unseen (audit, 2026-10-09; firmware/scripts/
+# check_common_build_reachability.py waives the header on this basis):
+#   - common/chirp/chirp_channel.h, the ratified C-ABI Chirp API the ACTIVE
+#     tree's port will implement, as C and as C++ (`-include` of /dev/null,
+#     so `#pragma once` is not in the main file);
+#   - examples/modules/stub_door_opens.cpp, the template a third-party CSI
+#     module starts from, against the CSI library's host stubs.
+# Nothing to run: each passes by compiling under -Werror.
+.PHONY: run-syntax-checks
+run-syntax-checks:
+	$(CXX) $(CXXFLAGS) -fsyntax-only -x c++ -include ../common/chirp/chirp_channel.h /dev/null
+	$(CC) -std=c11 -Wall -Wextra -Werror -fsyntax-only -x c -include ../common/chirp/chirp_channel.h /dev/null
+	$(CXX) $(CXXFLAGS) -fsyntax-only -DCSI_TEST_HOST_BUILD -I ../common/csi/src -I ../common/csi/host_stubs \
+	    ../examples/modules/stub_door_opens.cpp
+run: run-syntax-checks
 
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@

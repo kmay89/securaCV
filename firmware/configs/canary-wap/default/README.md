@@ -1,54 +1,22 @@
-# Canary WAP - Default Configuration
+# Canary WAP — Lab descriptor (not compiled)
 
-Standard configuration for the Canary Wireless Access Point witness device.
+> **No build compiles this directory.** No PlatformIO env or `arduino-cli`
+> invocation puts `firmware/configs/canary-wap/` on an include path, and the
+> sketch includes no `config.h`. Nothing in `config.h` here configures a
+> device. (Audit, 2026-10-09.)
 
-## Target Hardware
+Where the WAP is actually configured:
 
-- **Board**: XIAO ESP32-S3 Sense
-- **Peripherals**: L76K GNSS, microSD card, OV2640 camera
+| What | Where |
+|------|-------|
+| Hardware target + build profile, every `FEATURE_*` flag | [`build_config.h`](../../../projects/canary-wap/arduino/canary_wap/build_config.h) (the `BUILD_PROFILE_MINIMAL` / `_DEV` / `_FULL` blocks) |
+| Pins (SD, GPS, camera) | [`canary_wap.ino`](../../../projects/canary-wap/arduino/canary_wap/canary_wap.ino) |
+| Which profile each PlatformIO env builds | [`envs/platformio/canary-wap.ini`](../../../envs/platformio/canary-wap.ini) (`canary-wap-default`: FULL; `canary-wap-mobile`: DEV) |
+| AP SSID prefix, channel, HTTP/HTTPS ports | [`wap_server.h`](../../../projects/canary-wap/arduino/canary_wap/wap_server.h) |
 
-## Features Enabled
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| SD Storage | ✅ | Append-only witness record storage |
-| WiFi AP | ✅ | Local access point for monitoring |
-| WiFi STA | ✅ | Connect to home network |
-| HTTP Server | ✅ | REST API and Web UI |
-| Camera Peek | ✅ | Live camera preview streaming |
-| Mesh Network | ✅ | Opera protocol peer-to-peer |
-| Bluetooth | ✅ | BLE pairing and configuration |
-| RF Presence | ✅ | Privacy-preserving device detection |
-| GNSS | ✅ | GPS location tracking |
-| Watchdog | ✅ | Hardware watchdog timer |
-| Tamper GPIO | ❌ | Enclosure breach sensor |
-
-## Privacy Settings
-
-- **Time Coarsening**: ten-minute buckets
-- **RF Presence**: No MAC address storage
-- **Session Rotation**: Every 4 hours
-
-## Network Settings
-
-| Setting | Value |
-|---------|-------|
-| AP SSID | SecuraCV-{fingerprint} |
-| AP Password | Device-unique (`cv-` + 12 chars, derived from the device private key; shown on serial at first boot) |
-| AP Channel | 1 |
-| Web/API | HTTPS on port 443 with HTTP→HTTPS redirect on port 80 when a TLS cert is available; HTTP-only (port 80) otherwise |
-
-> **Dev-only overrides:** `config.h` still defines `CONFIG_HTTP_PORT` (80),
-> but the current firmware does **not** use it — the serving port is chosen
-> by TLS availability. The legacy `CONFIG_AP_PASSWORD_DEFAULT` define was
-> removed entirely: the AP password is always derived per device (release
-> builds fail closed if provisioning is incomplete), and no shared default
-> exists anywhere to fall back to.
-
-## Usage
-
-This configuration is used by default when building the `canary-wap` project
-with the `xiao-esp32s3-sense` board.
-
-To override settings, create a `config_local.h` in your project that defines
-the values before including `config.h`.
+Why the file still exists: two Lab generators read it.
+`canary-local/tools/gen_enclosures.py` lists its `FEATURE_*` lines as the
+Workshop's WAP firmware flags, and `canary-local/tools/figures/gen_figures.mjs`
+maps its `CONFIG_DEVICE_TYPE` to the WAP figure. Both should read
+`build_config.h` (the WAP publishes `device_type` `"canary"`, not
+`"canary_wap"`); once they do, this directory can be deleted.

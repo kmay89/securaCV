@@ -112,14 +112,6 @@ impl Display {
             Display::Back => 160,
         }
     }
-
-    /// Pixel height, same source and same caveat.
-    pub fn height_px(self) -> u16 {
-        match self {
-            Display::Front => 16,
-            Display::Back => 80,
-        }
-    }
 }
 
 /// An `#RRGGBBAA` color. The only constructor takes components, so the

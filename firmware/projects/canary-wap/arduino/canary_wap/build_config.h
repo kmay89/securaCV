@@ -7,7 +7,8 @@
  * ARDUINO IDE BUILD SPEED TIPS:
  * ─────────────────────────────
  * 1. File > Preferences > Enable "Aggressively cache compiled core"
- * 2. Use MINIMAL profile during development iteration
+ * 2. Use the DEV profile during development iteration (no camera or mesh;
+ *    MINIMAL is faster still but no CI job builds it, see its block below)
  * 3. Don't close Arduino IDE between builds (keeps cache warm)
  * 4. Avoid "Verify" if you're going to "Upload" anyway
  */
@@ -148,6 +149,14 @@
   // ── MINIMAL: Core witness functionality only ──
   // Use for: Testing crypto, GPS, chain logic
   // Skips: WiFi, HTTP, SD, Camera, Mesh, BLE
+  //
+  // NO CI JOB COMPILES THIS PROFILE (firmware.yml compiles FULL on S3 and
+  // C3 and DEV on S3). The sketch fences the HTTP server's startup, not its
+  // handler bodies, so whether a MINIMAL build compiles, and what it links,
+  // is unverified: a declared gap (firmware/LESSONS_LEARNED.md, "Build
+  // profiles"). The warning below says so at build time instead of letting a
+  // doc recommend it; DEV is the lighter profile CI compiles.
+  #warning "BUILD_PROFILE_MINIMAL is compiled by no CI job and may not build; -DBUILD_PROFILE_DEV is the lighter profile CI compiles"
 
   #define FEATURE_SD_STORAGE    0
   #define FEATURE_WIFI_AP       0

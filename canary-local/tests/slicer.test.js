@@ -71,24 +71,32 @@ test("no vendored engine ⇒ loadEngine/sliceSeconds resolve null, never throw",
   assert.strictEqual(await sliceSeconds(bytes, {}), null, "falls back, no throw");
 });
 
-// C8, closed as intended: the engine is deliberately not vendored. The note a
-// person sees when they press the slice button speaks to someone printing a
-// case — what they get — and never tells them to run a maintainer script; that
-// pointer goes to the console, and the decision is recorded atop the vendor
-// README where the next person to consider vendoring will read it first.
-test("no engine: the Lab's note is user voice; the vendor pointer is console-only", async () => {
-  const { SLICER_ABSENT_NOTE, SLICER_ABSENT_CONSOLE } = await import("../assets/enclosure-lab.js");
-  assert.match(SLICER_ABSENT_NOTE, /estimate stands/);
-  assert.doesNotMatch(SLICER_ABSENT_NOTE, /vendor|tools\/|\.sh\b|assets\/|README/i,
-    "maintainer instructions leaked into user-facing copy");
-  // the note shares a card with the cost-to-build panel and a "now build it"
-  // hand-off: "this build" reads as the person's device, so it names the Lab
-  assert.doesNotMatch(SLICER_ABSENT_NOTE, /\bthis build\b/i, "'this build' is ambiguous beside a device's build");
-  assert.match(SLICER_ABSENT_NOTE, /this copy of the Lab/);
-  // kiri_slice_probe.mjs (CI, in a browser) finds the note on the page by this pattern
-  assert.match(SLICER_ABSENT_NOTE, /optional slicer engine.*estimate stands/i);
+// C8, closed as intended: the engine is deliberately not vendored, so no
+// shipped copy of the Lab can slice. The card used to offer "⚡ slice for
+// exact time" anyway, and tell the reader to press it, when the only possible
+// answer was "this copy doesn't include it". Now the button and the sentence
+// that points at it join the card only when slicerAvailable() says so, and the
+// how-to-vendor pointer goes to the console, never to the person printing.
+test("no engine: the card offers no slice button; the vendor pointer is console-only", async () => {
+  const { SLICER_ABSENT_CONSOLE } = await import("../assets/enclosure-lab.js");
   assert.match(SLICER_ABSENT_CONSOLE, /tools\/vendor_kiri\.sh/);
   assert.match(SLICER_ABSENT_CONSOLE, /vendor\/kiri\/README\.md/);
+  assert.match(SLICER_ABSENT_CONSOLE, /modeled estimate stands/);
+
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../assets/enclosure-lab.js"), "utf8");
+  // The row is built, never appended unconditionally: it is placed only in the
+  // slicerAvailable() continuation, and so is the sentence telling people to hit it.
+  assert.doesNotMatch(src, /card\.append\(sliceRow\)/, "the slice row must not join the card before the engine is known");
+  const gate = src.slice(src.indexOf("slicerAvailable().then("));
+  assert.ok(gate.length < src.length, "enclosure-lab.js must gate the slice row on slicerAvailable()");
+  const body = gate.slice(0, gate.indexOf("\n    });"));
+  assert.match(body, /if \(!ok\)[\s\S]*return;[\s\S]*totals\.after\(sliceRow\)/,
+    "the row goes in after the totals only when the engine is present");
+  assert.match(body, /hit ⚡ slice for exact time/,
+    "the provenance's pointer at the button lives inside the same gate");
+  const outside = src.replace(body, "");
+  assert.doesNotMatch(outside, /hit ⚡ slice for exact time/,
+    "no copy outside the gate may tell the reader to press a button that is not there");
 
   const { readFileSync } = require("node:fs");
   const { join } = require("node:path");

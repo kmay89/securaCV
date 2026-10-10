@@ -1,10 +1,10 @@
 {
   "$generated_by": "canary-local/tools/gen_flash.py — do not edit by hand",
   "$doc": "Browser flasher catalog. Live binaries come from manifest_url (the signed release); this file supplies the chip guard and the human copy, and is honest even before a release exists.",
-  "fw_train": "2.4.15",
+  "fw_train": "2.4.16",
   "repo": "kmay89/securaCV",
-  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.15",
-  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.15/manifest-flash.json",
+  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.16",
+  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.16/manifest-flash.json",
   "release_pubkey": "ae123a5c220c5499e579dc449e66392d83d5ad70d100747574eb7b2bac49b244",
   "flash_baud": 921600,
   "console_baud": 115200,
@@ -2207,7 +2207,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-watch.js",
         "factory": "createCanaryEmuWatch",
-        "fw_version": "2.4.15",
+        "fw_version": "2.4.16",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2234,7 +2234,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.4.15",
+        "fw_version": "2.4.16",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2261,7 +2261,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-nightstand.js",
         "factory": "createCanaryEmuNightstand",
-        "fw_version": "2.4.15",
+        "fw_version": "2.4.16",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2288,7 +2288,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-touch169.js",
         "factory": "createCanaryEmuTouch169",
-        "fw_version": "2.4.15",
+        "fw_version": "2.4.16",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2316,7 +2316,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-amoled241.js",
         "factory": "createCanaryEmuAmoled241",
-        "fw_version": "2.4.15",
+        "fw_version": "2.4.16",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2343,7 +2343,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.4.15",
+        "fw_version": "2.4.16",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2370,7 +2370,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-nightlight.js",
         "factory": "createCanaryEmuNightlight",
-        "fw_version": "2.4.15",
+        "fw_version": "2.4.16",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2738,7 +2738,7 @@
     "usb_pid": "0x55d3",
     "baud": 921600,
     "model_addr": "0x400000",
-    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.15/manifest-vision-model.json",
+    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.16/manifest-vision-model.json",
     "model": {
       "name": "Person Detection",
       "arch": "Swift-YOLO (tiny) · 192×192×3 RGB · compiled for the Ethos-U55",

@@ -185,7 +185,8 @@ pairing sheet → the Canary's own verdict — and, for a WAP, the claim ticket
 and the receipt over Wi-Fi, so it is paired from that one tap. The
 **Bluetooth setup door** is the device half, the **claim ticket** the
 WAP's second factor. Sense, Vision and the WAP's FULL profile today; the
-flagship `firmware/canary` build is a follow-up; a display keeps its glass
+flagship `firmware/canary` build is a follow-up (sweep
+[F251](audit/repo_todo_sweep_2026-09.md)); a display keeps its glass
 QR. Nothing of it is bench-tested yet.
 → [magic pairing (design)](design/magic_pairing.md),
 [the FAQ](FAQ.md#how-do-i-give-a-new-canary-my-wi-fi-do-i-have-to-type-a-setup-key)
@@ -514,8 +515,10 @@ broker pin (`mqtt_fp`, above), which protects the other direction.
 [`sbom/sbom-firmware.cdx.json`](../sbom/sbom-firmware.cdx.json), is derived
 from the build inputs by `scripts/gen_firmware_sbom.py`, committed,
 byte-gated and CycloneDX 1.5 schema-validated on every PR
-(`--check --validate`); the Rust and Node documents are produced in CI and
-attached to every release. → [`sbom/README.md`](../sbom/README.md)
+(`--check --validate`); the Rust and Node documents are produced in CI, and
+all three are attached to every release cut from October 2026 on (the firmware,
+Flasher, Lab and kernel release workflows call `sbom.yml` once published;
+earlier releases mostly carry none). → [`sbom/README.md`](../sbom/README.md)
 
 **Release buttons** — The operator's index of every release action, when to
 press it and when not to. The default is **Actions → "Update everything (only

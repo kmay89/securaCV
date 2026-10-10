@@ -173,5 +173,7 @@ Everything above assumes an ESP32-family part (the `common/` tree leans on
 ESP-IDF/Arduino-ESP32). A port beyond that (RP2040, STM32…) means a HAL
 conversation first — open a Hardware Support Request issue before writing
 code. Klipper's `Code_Overview.md` porting recipe is the model we'd follow:
-get serial + timers + GPIO up behind the existing HAL seams in
-`common/hal/`, then peripherals.
+get serial + timers + GPIO up behind a HAL seam, then peripherals. No such
+seam exists yet: the `common/hal/` headers that once sketched one were
+prototypes nothing compiled (one did not parse as C++), and were deleted on
+2026-10-09. The port that needs a HAL designs it against code that calls it.

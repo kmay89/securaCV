@@ -116,6 +116,33 @@ final class DeviceAPITests: XCTestCase {
         XCTAssertEqual(receipt.tlsCertFingerprint, fixtureFP)
     }
 
+    // ── a recovery kit saved during setup, used after the WAP joined ──
+    // The receipt names the setup network's 192.168.4.1, which is gone once
+    // the WAP is on your Wi-Fi; PairView moves it onto the host the device
+    // answers at, keeping the scheme, the port and the pin.
+
+    func testAKitNamingTheSetupAddressMovesToWhereTheDeviceAnswers() throws {
+        let json = Data(#"{"device_id":"wap-ab12","base_url":"https://192.168.4.1","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#.utf8)
+        let kit = try JSONDecoder().decode(ProvisioningReceipt.self, from: json)
+        let moved = kit.rebased(onto: DeviceAPI.url(forDiscoveredHost: "canary-ab12"))
+        XCTAssertEqual(moved.baseURL.absoluteString, "https://canary-ab12.local",
+                       "the receipt's https survives; only the host moves")
+        XCTAssertEqual(moved.tlsCertFingerprint, fixtureFP, "the pin is the kit's own")
+        XCTAssertEqual(moved.token, "cv_x")
+        XCTAssertTrue(DeviceAPI.isPrivate(moved.baseURL))
+    }
+
+    func testAKitNamingAnyOtherAddressIsKeptAsIs() throws {
+        let json = Data(#"{"device_id":"wap-ab12","base_url":"http://192.168.1.20","token":"cv_x"}"#.utf8)
+        let kit = try JSONDecoder().decode(ProvisioningReceipt.self, from: json)
+        XCTAssertEqual(kit.rebased(onto: URL(string: "http://canary-ab12.local")).baseURL.absoluteString,
+                       "http://192.168.1.20", "an address that still means something is the receipt's word")
+        let setup = try JSONDecoder().decode(ProvisioningReceipt.self,
+                                             from: Data(#"{"base_url":"http://192.168.4.1","token":"t"}"#.utf8))
+        XCTAssertEqual(setup.rebased(onto: nil).baseURL.absoluteString, "http://192.168.4.1",
+                       "nowhere seen: nothing to move it to")
+    }
+
     func testReceiptEmptyFingerprintIsNoPin() throws {
         // An http-only WAP writes "" — that is "no certificate", not a pin.
         let json = Data(#"{"device_id":"c","base_url":"http://192.168.4.1","token":"t","tls_cert_fp":""}"#.utf8)

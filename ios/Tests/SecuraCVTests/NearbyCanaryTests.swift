@@ -34,6 +34,13 @@ final class NearbyCanaryTests: XCTestCase {
         XCTAssertEqual(NearbyCanaries.parseName("Canary-1234")?.family, .wap, "the flagship pairs like a WAP")
         XCTAssertNil(NearbyCanaries.parseName("SCV-AB12"), "the beacon's provisional name is not a door")
         XCTAssertNil(NearbyCanaries.parseName("Sense-ab12"), "lower case is not how the firmware spells it")
+        // A Sense or Vision names itself from its pseudonym, which is drawn
+        // from the 54-character no-confusion alphabet and upper-cased — not
+        // hex. The hex-only rule turned real Canaries into family-less rows.
+        XCTAssertEqual(NearbyCanaries.parseName("Sense-K7MZ")?.family, .sense)
+        XCTAssertEqual(NearbyCanaries.parseName("Sense-K7MZ")?.suffix, "K7MZ")
+        XCTAssertEqual(NearbyCanaries.parseName("Vision-RT9W")?.family, .vision)
+        XCTAssertNil(NearbyCanaries.parseName("Sense-K7M!"), "only letters and digits")
         XCTAssertNil(NearbyCanaries.parseName("Sense-AB1"))
         XCTAssertNil(NearbyCanaries.parseName("Dash-AB12"), "displays do not open a Bluetooth door")
         XCTAssertNil(NearbyCanaries.parseName("Sense"))
@@ -113,5 +120,66 @@ final class NearbyCanaryTests: XCTestCase {
         // Improv advertised but neither a name nor a beacon to call it by.
         XCTAssertTrue(NearbyCanaries.candidates(from: [heard(name: nil)], pairedFingerprints: [],
                                                 dismissedSuffixes: [], now: now).isEmpty)
+    }
+
+    // MARK: - the card that comes to you
+
+    private func candidate(_ suffix: String, rssi: Int, family: CanaryFamily? = .sense) -> NearbyCanary {
+        NearbyCanary(peripheralID: UUID(), family: family, suffix: suffix, displayName: "Sense-\(suffix)",
+                     rssiDBM: rssi, lastHeard: now, improvState: .authorized, canIdentify: true, canScanWiFi: true)
+    }
+
+    func testOneCloseCanaryIsOfferedByItself() {
+        let one = candidate("K7MZ", rssi: -50)
+        XCTAssertEqual(NearbyCanaries.autoOffer([one], alreadyOffered: []), one)
+        XCTAssertEqual(NearbyCanaries.autoOffer([one, candidate("FAR1", rssi: -88)], alreadyOffered: []), one,
+                       "a faint one in the next room does not make the close one a choice")
+    }
+
+    func testTwoCloseCanariesAreAChoiceNotAGuess() {
+        XCTAssertNil(NearbyCanaries.autoOffer([candidate("AAAA", rssi: -50), candidate("BBBB", rssi: -60)],
+                                              alreadyOffered: []),
+                     "two on the table belong to the list, where each row has its own Blink")
+    }
+
+    func testAnOfferedCanaryIsNotOfferedAgain() {
+        let one = candidate("K7MZ", rssi: -50)
+        XCTAssertNil(NearbyCanaries.autoOffer([one], alreadyOffered: ["K7MZ"]))
+        // With the first one answered, the second on the table may come up.
+        let two = candidate("Q2WX", rssi: -55)
+        XCTAssertEqual(NearbyCanaries.autoOffer([one, two], alreadyOffered: ["K7MZ"]), two)
+    }
+
+    func testAFaintCanaryIsNotOfferedByItself() {
+        XCTAssertNil(NearbyCanaries.autoOffer([candidate("K7MZ", rssi: -71)], alreadyOffered: []))
+        XCTAssertNotNil(NearbyCanaries.autoOffer([candidate("K7MZ", rssi: NearbyCanaries.closeEnoughDBM)],
+                                                 alreadyOffered: []), "the band edge counts as close")
+    }
+
+    // MARK: - is that THIS Canary?
+
+    func testTheJoinedDeviceIsMatchedByItsPseudonymNotItsKind() {
+        // The firmware builds the advert name and the mDNS host from one
+        // pseudonym: "Vision-K7MZ" and "canary-vision-001-k7MzQ2".
+        XCTAssertTrue(NearbyCanaries.isSameDevice(suffix: "K7MZ", host: "canary-vision-001-k7MzQ2"))
+        XCTAssertTrue(NearbyCanaries.isSameDevice(suffix: "K7MZ", host: "canary-vision-001-k7mzq2.local"))
+        XCTAssertFalse(NearbyCanaries.isSameDevice(suffix: "K7MZ", host: "canary-vision-001-ffee00"),
+                       "the Vision you already own is not the new one")
+        XCTAssertFalse(NearbyCanaries.isSameDevice(suffix: "K7MZ", host: nil), "no host, no claim")
+        XCTAssertFalse(NearbyCanaries.isSameDevice(suffix: "K7MZ", host: ""))
+        XCTAssertFalse(NearbyCanaries.isSameDevice(suffix: "K7", host: "canary-vision-001-k7mzq2"),
+                       "a suffix that is not four characters proves nothing")
+    }
+
+    func testTheSetupNetworkNamesTheSameFourCharacters() {
+        XCTAssertEqual(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-aB3k"), "aB3k")
+        XCTAssertEqual(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-aB3k-x9"), "aB3k",
+                       "the per-session tag after a non-durable key is not identity")
+        XCTAssertNil(NearbyCanaries.suffix(ofSetupSSID: "HomeWiFi"))
+        XCTAssertNil(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-ab"))
+        // And the two halves meet: the setup network's characters match the
+        // host the same unit later announces.
+        let s = NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-aB3k")!
+        XCTAssertTrue(NearbyCanaries.isSameDevice(suffix: s, host: "canary-dash-001-aB3kZx"))
     }
 }

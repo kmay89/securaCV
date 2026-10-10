@@ -80,12 +80,16 @@ jobs:
         run: node --test privacy_witness_kernel/tests/test_wizard_dashboard_ids.test.js
 
       - name: Shellcheck add-on scripts
+        # discover_cameras.sh is POSIX sh (#!/bin/sh, Alpine's busybox ash),
+        # so it is checked as sh; its jq transform is held to the wizard's
+        # Python reference by the pytest step above.
         run: |
           shellcheck --shell=bash --exclude=SC1091 \
             privacy_witness_kernel/run.sh \
             privacy_witness_kernel/run_lib.sh \
             privacy_witness_kernel/tests/test_run_lib.sh \
             privacy_witness_kernel/tests/test_config_render.sh
+          shellcheck --shell=sh privacy_witness_kernel/discover_cameras.sh
 
       - name: Run run_lib tests
         run: bash privacy_witness_kernel/tests/test_run_lib.sh

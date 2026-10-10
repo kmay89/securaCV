@@ -115,7 +115,11 @@ enum ImprovWire {
             case .none: return ""
             case .invalidRPC: return "The Canary didn't understand that request, or got it too soon after the last one — wait a moment and try again."
             case .unknownRPC: return "This Canary's firmware doesn't know that request."
-            case .unableToConnect: return "The Canary couldn't join with those credentials — check the password."
+            // Improv reports one error for every way a join can fail, so
+            // the words name both real causes: a mistyped password, and a
+            // network the board cannot see at all (these boards join 2.4 GHz
+            // only, so a 5 GHz-only name fails the same way).
+            case .unableToConnect: return "The Canary couldn't join that network. Check the password (it's case-sensitive), and that the network is 2.4 GHz — these boards can't see 5 GHz-only Wi-Fi."
             case .notAuthorized: return "This Canary isn't accepting a new network right now: it already has Wi-Fi, or its setup door closed. Tap its BOOT button once to open it for a minute, or power-cycle a brand-new one; a WAP uses its setup page instead."
             case .badHostname: return "The Canary refused that name."
             case .unknown: return "The Canary reported an error it couldn't name."

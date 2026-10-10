@@ -771,7 +771,7 @@ fn hub_flash_blocking(
     let mut used_cache = false;
     let (xz_path, xz_is_temp, verified) = 'image: {
         if let Some(cp) = cached_path.as_ref().filter(|p| p.exists()) {
-            log("→ found a local copy — re-verifying it instead of downloading…".to_string());
+            log("→ found a local copy — re-checking it instead of downloading…".to_string());
             match hub_io::fetch::sha256_file(cp, cancel) {
                 // A cancel during the hash is a cancel, not a bad cache: stop
                 // cleanly and KEEP the file.
@@ -784,7 +784,8 @@ fn hub_flash_blocking(
                 Ok(sha) => {
                     match hub_core::hub_image::verify_download(&plan, &sha, published.as_deref()) {
                         Ok(v) => {
-                            log("✓ local copy verified — skipping the download".to_string());
+                            log("✓ local copy matched its checksum — skipping the download"
+                                .to_string());
                             used_cache = true;
                             break 'image (cp.clone(), false, v);
                         }
@@ -793,7 +794,7 @@ fn hub_flash_blocking(
                         Err(hub_core::hub_image::VerifyError::NoChecksumAvailable) => {
                             return Err(
                             "you're offline and this image isn't pinned yet, so the local copy \
-                             can't be verified — connect to the internet once and try again (your \
+                             can't be checked — connect to the internet once and try again (your \
                              download is kept)"
                                 .to_string(),
                         );
@@ -853,7 +854,7 @@ fn hub_flash_blocking(
         active: xz_is_temp,
     };
     log(format!(
-        "✓ image verified against {}",
+        "✓ image matched {}",
         if plan.expected_sha256.is_some() {
             "the repo-pinned checksum"
         } else {
@@ -1012,12 +1013,12 @@ fn hub_flash_blocking(
     }
     let receipt =
         hub_io::write::write_image(authz, &raw_path.path, &image_sha, cancel, &mut progress)?;
-    log("✓ written and read back — the card verifiably holds the image".to_string());
+    log("✓ written and read back — every byte on the card matches the image".to_string());
     if wifi_seeded {
         // Worth saying plainly: the settings are not a separate step that could
         // have quietly failed after the write. They were part of the image, so
         // the read-back above covers them too.
-        log("✓ your Wi-Fi is part of what was just verified on the card".to_string());
+        log("✓ your Wi-Fi is part of what was just read back from the card".to_string());
     }
 
     // 8) Offer a clean eject. Nothing depends on it — the card is complete and
@@ -1051,7 +1052,7 @@ fn hub_flash_blocking(
     // verified, so there is nothing half-written to lose.
     if let Some(ej) = eject_note.take() {
         eject_note = Some(format!(
-            "The card is finished and verified — it just wouldn't auto-eject, so eject it in your \
+            "The card is finished and read back — it just wouldn't auto-eject, so eject it in your \
              file manager before removing it. ({ej})"
         ));
     }

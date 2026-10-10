@@ -62,7 +62,14 @@ concurrency:
 jobs:
   render:
     name: Render + mesh check
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the OpenSCAD this job apt-installs IS the
+    # gate. The render log grep, the measured assembled envelopes and the
+    # hardware echoes are OpenSCAD 2021.01 behavior (Ubuntu 24.04's package;
+    # CLAUDE.md's CAD chain and regen_cad.py name that version), and
+    # ubuntu-latest moves to Ubuntu 26 from 2026-10-19 with whatever OpenSCAD
+    # it ships. Move this (and `fit` below) on purpose, in a PR that shows
+    # the new renderer's measurements, never with the label.
+    runs-on: ubuntu-24.04
     # Renders + mesh checks only. The seated-fit suite used to live here and
     # was the long pole by far; it now has its own job (see `fit` below), so
     # this one reports in minutes instead of waiting on it.
@@ -343,7 +350,9 @@ jobs:
 
   fit:
     name: fit ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    # Pinned for the same reason as `render`: the CGAL intersections are
+    # OpenSCAD 2021.01's, and the per-group budgets below were measured on it.
+    runs-on: ubuntu-24.04
     # A MATRIX, not a bigger number — and the history is why.
     #
     # These are full-assembly CGAL intersections, 21 of them, on a 2-core

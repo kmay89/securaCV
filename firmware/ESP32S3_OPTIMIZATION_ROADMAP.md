@@ -50,7 +50,7 @@ per-module change that follows.
 
 Today the shipping profiles are split across **two** toolchains:
 
-- `dev` / `release` / `minimal` / `standalone` build on the official `espressif32@6.9.0`
+- `dev` / `release` / `minimal` (and the other `[env]`-platform envs) build on the official `espressif32@6.9.0`
   (exact, `[platform_s3c3]` in [`envs/platformio/platforms.ini`](envs/platformio/platforms.ini);
   a floating `^7.0.0` until 2026-09-22, [`PLATFORMS.md`](PLATFORMS.md)), whose
   `framework=arduino` package is **Arduino 2.0.17 / IDF 4.4.7** — and so is 7.x's
@@ -287,6 +287,11 @@ unsafe behavior, verified during the audit.
    **active CSI probe (`csi_probe.cpp`) is never wired into the canary build**, so a device with
    no associated STA and `AP_MAX_CONNECTIONS=1` sees almost no frames. Fix: gate power-save on
    `csi_hal::is_running()` (force `WIFI_PS_NONE` when CSI is live) **and** start the existing probe.
+   *Half fixed:* the power-save half landed — `set_wifi_ps()` in
+   [`securacv_power_policy.cpp`](canary/lib/securacv_power_policy/src/securacv_power_policy.cpp)
+   forces power-save off while `csi_is_running()`. **Still open:** the probe half —
+   `csi_probe.cpp` is compiled into the canary build but nothing starts it
+   ([`platformio.ini`](canary/platformio.ini), "Compiled, not called"). Compile-tested only.
 
 7. **(fixed)** **Camera init/deinit races the peek-stream task.** Vision guarded with
    `if (isPeekActive()) return`, but the stream task's freeze-recovery set `peek_active=false`
@@ -306,8 +311,9 @@ unsafe behavior, verified during the audit.
 8. **Stale/false in-code claims to correct while touching these.** The auth header says "wiring
    happens in Phase 2" but auth **is** wired (`auth_gate` on ~91 of 98 handlers,
    [`securacv_network.cpp:757`](canary/lib/securacv_network/src/securacv_network.cpp)); the
-   `bluetooth_mgr.h` pairing/bonding manager is **orphaned dead code** (`ble_debug_beacon` was
-   removed in the repo audit cleanup);
+   `bluetooth_mgr.h` pairing/bonding manager was **orphaned dead code** (`ble_debug_beacon` was
+   removed in the repo audit cleanup; the header itself was deleted on 2026-10-09, and
+   `check_common_build_reachability.py`'s header pass now fails a shared header nothing includes);
    the "single main-loop task" thread-safety comments on the Scout tracker/roster are **wrong**
    (the advert callback runs in the NimBLE host task — a real data race the moment item 3 is
    fixed). Clean these up so the next reader isn't misled.
@@ -369,17 +375,24 @@ exp-backoff reconnect, mDNS `_securacv._tcp`, ESP-NOW mesh with **app-layer Ed25
 ChaCha20-Poly1305** (transport itself unencrypted, `encrypt=false`), MQTT via PubSubClient.
 
 Untapped / issues:
-- **PHY is never pinned.** Nothing calls `esp_wifi_set_protocol` / `set_bandwidth` /
-  `set_country` anywhere in the canary build — pure driver defaults. For CSI this is a real
+- **(fixed)** ~~**PHY is never pinned.** Nothing calls `esp_wifi_set_protocol` / `set_bandwidth` /
+  `set_country` anywhere in the canary build — pure driver defaults.~~ For CSI this was a real
   problem: an HT40 association or rate renegotiation changes the subcarrier count and destabilizes
-  the fixed 32-dim feature vector. Pin `11bgn` + `HT20` + country at init. **[P1]**
+  the fixed 32-dim feature vector. *Fixed:* the AP bring-up in
+  [`securacv_network.cpp`](canary/lib/securacv_network/src/securacv_network.cpp) (the block
+  that calls `esp_wifi_set_country_code`) pins the country (`CANARY_WIFI_COUNTRY`), `11bgn` and
+  `HT20` on both interfaces, and the TX ceiling (`CANARY_WIFI_TX_QDBM`), all non-fatal.
+  Compile-tested; no bench pass. **[P1]**
 - **Slow reconnects that disrupt sensing.** `WiFi.begin(ssid,pass)` with no cached BSSID/channel/
   static-IP does a full scan + DHCP every time
   ([`securacv_network.cpp:405`](canary/lib/securacv_network/src/securacv_network.cpp)); the scan
   sweeps channels and disrupts CSI/ESP-NOW mid-capture. Cache BSSID/channel/IP in NVS →
   `WiFi.config()` + `WiFi.begin(…,channel,bssid)` for **sub-300 ms** reconnect and no sweep. **[P1]**
-- **`network_set_tx_power()` exists but is never called at boot** — Seeed's weak-antenna
-  recommendation goes unused; set it at init. **[P1]**
+- **(fixed)** ~~**`network_set_tx_power()` exists but is never called at boot**~~ — the TX
+  ceiling is now set at init by the PHY block above, which calls `esp_wifi_set_max_tx_power()`
+  directly. That leaves `network_set_tx_power()` itself with no caller (only its declaration,
+  its definition and comments that cite it): route the PHY block through it or delete it
+  (item 30). **[P1]**
 - **(fixed, in three installments)** ~~MQTT is plaintext, QoS 0, blocking, with no offline queue~~ —
   each ask landed separately: `setSocketTimeout` + bounded connect stages came with the
   watchdog-budget work, TLS (CA-verified / SHA-256-pinned / lab modes, refused-not-downgraded)
@@ -423,10 +436,11 @@ Current: Arduino `SD.h` over FSPI SPI2, FAT, append-only `/WITNESS/records.jsonl
 `/CHAIN/backup.bin`, NVS chain-head cache every 10 records, SD-wins boot reconciliation (verified
 with signature — genuinely good design).
 
-- **SD SPI runs at 4 MHz** ([`canary_config.h:336`](canary/include/canary_config.h); the `pins.h`
-  `SD_SPI_FREQ_*` are dead duplicates). On the short XIAO-Sense traces **20–25 MHz is reliable →
-  ~5× throughput** and proportionally shorter loop stalls. Lowest-effort high-impact change in the
-  whole document (one constant, keep the 1 MHz init fallback). **[P1]**
+- **(fixed 2026-07-23, [`CONFIG_CHANGES.md`](CONFIG_CHANGES.md))** ~~**SD SPI runs at 4 MHz**~~
+  ([`canary_config.h`](canary/include/canary_config.h) `SD_SPI_FAST`, now 20 MHz and
+  `#ifndef`-guarded; the `pins.h` `SD_SPI_FREQ_*` duplicates were synced to match). On the short
+  XIAO-Sense traces 20–25 MHz is expected to be reliable, about 5× the throughput, with the
+  1 MHz `SD_SPI_SLOW` init fallback kept. The card-range bench pass is still pending. **[P1]**
 - **Per-record `open`/`write`/`close` on `loopTask`, no `flush` anywhere** — FAT directory re-read
   every record, tens-of-ms stalls ([`securacv_witness.cpp:266`](canary/lib/securacv_witness/src/securacv_witness.cpp)).
   Move to the durability task (§1.2) with a persistent handle + periodic flush. **[P1]**
@@ -607,7 +621,8 @@ confirmed against a real CI build log before anyone acts loudly on them:
   §3.8 item 2. (2026-09: the stream is `auth_gate`d and `handle_ui` withholds the token off-AP;
   both are now pinned by `canary/scripts/check_route_security.py`.)
 - **SD 20 MHz** is reliable on the reference wiring; validate on hardware with the specific card
-  mix before raising the default, keeping the slow-init fallback ladder.
+  mix before raising the default, keeping the slow-init fallback ladder. (The default was raised
+  on 2026-07-23 with the fallback kept; the card-mix validation is still outstanding.)
 - Everything tagged **[unblocked by §1.1]** presumes the core-3.x migration; on the legacy 2.0.17
   platform those driver/API moves don't exist.
 
@@ -622,16 +637,16 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 3 | (fixed) BLE Scout never scanned in PIO build — latch flipped in setup() after the stack owner | **P0** | BLE | `src/main.cpp` | Room attribution + fleet roster actually work |
 | 4 | (fixed) Camera never deinited on battery — loop() now acts on the policy signal | **P0** | Camera/Power | `canary/src/main.cpp` | ~40–60 mA (unmeasured est.) saved on battery |
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
-| 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
+| 6 | CSI under modem-sleep — PS forced off while CSI runs (fixed, `power_policy.cpp` `set_wifi_ps`); OPEN: `csi_probe` compiled but never started (`platformio.ini`) | **P0** | WiFi/CSI | `power_policy.cpp` `set_wifi_ps` | Reliable CSI on battery + lone devices |
 | 7 | (fixed) Camera init/deinit raced peek task — lifecycle mutex in CameraManager | **P0** | Camera | `securacv_camera.cpp` | Removes a crash vector |
 | 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images (refuses unless NVS is encrypted — flash encryption alone does not cover NVS, so every board under `framework = arduino`); posture self-reported (`key_at_rest`, `plaintext-nvs` everywhere today) | **P0→P1** | Crypto | `securacv_crypto.cpp:423` | Posture stated, not assumed; at-rest encryption needs NVS encryption (item 9), FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
 | 9 | Unify on core-3.x / IDF-5.x toolchain | **P1** | Build | `platformio.ini` | Unblocks §3.2–3.4, §1.4, WPA3, new drivers |
 | 10 | Dual-core task model (sensing + durability) | **P1** | Core | `main.cpp:1480` | Bounded loop latency, no WDT thrash |
 | 11 | One 8 MB partition table + `witness_log` | **P1** | Flash | `partitions_ota.csv` | Ends the table matrix; card-independent durability |
 | 12 | Enable `esp_pm` auto light-sleep | **P1** | Power | `power_policy.cpp:157` | Idle ~40→~3 mA, association kept |
-| 13 | SD SPI 4 → 20 MHz | **P1** | Storage | `canary_config.h:336` | ~5× write throughput (one constant) |
+| 13 | (fixed 2026-07-23, `CONFIG_CHANGES.md`) SD SPI 4 → 20 MHz — card-range bench pass pending | **P1** | Storage | `canary_config.h` `SD_SPI_FAST` | ~5× write throughput (one constant) |
 | 14 | Off-loop SD writes + flush + atomic backup | **P1** | Storage | `securacv_witness.cpp:266` | No loop stalls; power-loss safety |
-| 15 | Pin WiFi PHY (protocol/BW/country) + TX power | **P1** | WiFi/CSI | `securacv_network.cpp` | Stable CSI vector, correct regulatory/range |
+| 15 | (fixed) Pin WiFi PHY (11bgn/HT20) + country + TX power — no bench pass | **P1** | WiFi/CSI | `securacv_network.cpp` (AP bring-up PHY block) | Stable CSI vector, correct regulatory/range |
 | 16 | Fast reconnect (cached BSSID/channel/IP) | **P1** | WiFi | `securacv_network.cpp:405` | <300 ms reconnect, no CSI-disrupting sweep |
 | 17 | (fixed) MQTT: socket timeout + offline queue + TLS all landed | **P1** | MQTT | `common/mqtt/mqtt_offline_queue.h` | Outages delay events instead of dropping them; encrypted transport |
 | 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + atomic chain head (fixed, PIO canary tree) — OPEN: (c) DS/HMAC-bound key and (d) an eFuse/RTC rollback anchor; both need the IDF-component toolchain (item 9) plus a bench, the DS route is RSA-only and reserved per `hardware_root_of_trust.md` §5.4 / §8 #4, and `key_at_rest.h` already reserves the `hw-bound` label for it | **P1** | Crypto | `securacv_crypto.cpp:206` | Real at-rest + anti-forgery guarantees |
@@ -646,7 +661,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 27 | I2C expandability: RTC (wall-clock) + IMU (tamper) | **P2** | Sensors/Pins | `pins.h` I2C D4/D5 | Trustworthy timestamps; robust tamper |
 | 28 | Implement co-signing (`PWK/Endorsement/v1`) | **P2** | Crypto/Mesh | `spec/co_signing.md` | Cross-device attestation |
 | 29 | ESP-NOW rate config / LR; FTM ranging | **P2** | Mesh | `mesh_transport.cpp` | Mesh range/reliability; fusion localization |
-| 30 | Dead-code cleanup + stale-comment fixes | **P2** | All | §2 item 8 | Correct the record for the next reader |
+| 30 | Dead-code cleanup + stale-comment fixes (still open, among others: `network_set_tx_power()` has no caller since item 15) | **P2** | All | §2 item 8 | Correct the record for the next reader |
 
 ---
 

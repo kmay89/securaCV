@@ -16,6 +16,42 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.0 — 2026-10-10
+
+**The Lab flashes over USB by itself, and keeps an eye on your fleet from
+the menu bar.**
+
+- **Native USB flashing.** The Lab carries the Flasher's flash engine and
+  its pinned espflash, so the Flash page installs signed firmware without
+  Chrome — the same chip guard, size, SHA-256 and Ed25519 release checks,
+  Wi-Fi provisioning, receipts and diagnostics. Serial ports are listed
+  natively, and the 2.4.16 firmware catalog is baked in.
+- **A menu bar fleet companion:** a tray icon counts the Canaries that are
+  online and posts a notification when one changes state; a board that just
+  goes quiet reads "not heard lately" and never raises an alert.
+- **LAN discovery by mDNS**, so Vision and Sense boards (no web server) are
+  found too.
+- **Broker encryption on the Flash page**, offered only when the pinned
+  firmware release carries TLS (the form names the release that brings it).
+- **Test it over Bluetooth** says where the check runs (the iPhone app, or
+  the browser Lab in Chrome or Edge) instead of telling you to switch
+  browsers.
+- **Links that land:** *SecuraCV everywhere* opens the family map; old Lab
+  addresses for pages that moved to securacv.com go to those pages; Help
+  opens the Help Desk; the Witness Wall's back link returns to its bench.
+- **Lighter:** the app no longer bundles page tests, Python generators or
+  shell scripts, its native interface is trimmed to the commands its pages
+  use, and the print estimate drops a slice button that could only say no.
+- **Linux:** the .deb installs a udev rule covering Espressif native USB and
+  the CP210x, CH340 and CH9102 bridges, so a Canary's serial port opens
+  without root and ModemManager leaves it alone.
+- Network: besides your own devices, the Lab fetches its update manifest
+  (15 s after launch, then every 6 h), asks GitHub which signed firmware is
+  published once a board is connected, and downloads the image you chose
+  when you press Flash.
+- Under the hood: rustls 0.23.45 (RUSTSEC-2026-0285), mdns-sd 0.21.4, Tauri
+  CLI 2.12.0; publishing a draft attaches the project's SBOMs.
+
 ## 0.2.4 — 2026-09-03
 
 **Honest about the one thing it fetches.**

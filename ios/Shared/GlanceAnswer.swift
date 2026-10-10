@@ -40,8 +40,8 @@ enum GlanceAnswer {
         }
         // The dead-man's-switch outranks green rows: a fleet that LOOKS fine
         // while the provably-alive path is dark or failed must say both.
-        if snap.severity == .ok,
-           snap.heartbeat == .dark || snap.heartbeat == .failed {
+        // Same rule as every glance surface (WristSnapshot.pathAlarm).
+        if snap.pathAlarm {
             sentences.append(ensurePeriod(snap.heartbeatSummary(now: now)))
         }
         if snap.isDemoData { sentences.append("Sample data.") }
@@ -71,7 +71,7 @@ enum GlanceAnswer {
     }
 
     /// The path test's verdict, spoken. `summary` is HeartbeatCopy's sentence
-    /// (the same one the provably-alive card and the wrist show). The verified
+    /// (the same one the provably-alive card and the wrist show). The success
     /// wording claims exactly what today's self-test proved — this device
     /// posted a real notification and iOS accepted it — never a device→relay
     /// round trip it didn't make (AGENTS rule 4: don't overclaim; the away

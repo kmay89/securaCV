@@ -97,7 +97,7 @@ if (tv && stage) {
         `<span class="f act" data-action="breakglass" tabindex="-1"><span class="k">⌂</span>Break-glass</span>` +
         `<span class="f act" data-action="screensaver" tabindex="-1"><span class="k">✦</span>Screensaver</span>` +
       `</div></div>` +
-      `<div class="col"><div class="col-label">Verified timeline</div><div class="events" id="events">${evHTML(homeEvents)}</div><div class="hashline">chain head · ed25519 · ${chainHead} ✓</div></div>`;
+      `<div class="col"><div class="col-label">Sealed timeline</div><div class="events" id="events">${evHTML(homeEvents)}</div><div class="hashline">chain head · ed25519 · ${chainHead} ✓</div></div>`;
     editionSync(); buildFocus();
   }
 
@@ -128,7 +128,7 @@ if (tv && stage) {
         `<span class="f act" data-action="disputepack" tabindex="-1"><span class="k">⇪</span>Dispute pack</span>` +
         `<span class="f act" data-action="breakglass" tabindex="-1"><span class="k">⌂</span>Break-glass</span>` +
       `</div></div>` +
-      `<div class="col"><div class="col-label">Verified timeline</div><div class="events">${evHTML(bizEvents.slice(0, 4))}</div><div class="hashline">chain head · ${chainHead} ✓ · open · staffed</div></div>`;
+      `<div class="col"><div class="col-label">Sealed timeline</div><div class="events">${evHTML(bizEvents.slice(0, 4))}</div><div class="hashline">chain head · ${chainHead} ✓ · open · staffed</div></div>`;
     editionSync(); buildFocus();
   }
 
@@ -335,9 +335,9 @@ if (tv && stage) {
     else if (a && a.indexOf('filter:') === 0) { filter = a.slice(7); render(); }
     else if (a === 'ackall') { bizEvents.forEach((e) => { e.acked = true; }); render(); showToast('All events acknowledged'); }
     else if (a === 'ack') { const id = +current.getAttribute('data-id'); if (bizEvents[id]) bizEvents[id].acked = true; render(); showToast('Event acknowledged'); }
-    else if (a === 'incident-review') { showToast('Dispute pack ready · signed timeline + sealed clip · verifies offline ✓'); }
+    else if (a === 'incident-review') { showToast('Dispute pack ready · signed timeline + sealed clip · checkable offline ✓'); }
     else if (a === 'tile') { showToast(current.getAttribute('data-name') + ' · online · chain intact'); }
-    else if (a === 'event') { showToast('Event verified · signature ✓ · chain intact'); }
+    else if (a === 'event') { showToast('Event sealed · chain intact ✓'); }
     else if (a === 'watch') { homeMode = 'watching'; render(); showToast('Now playing · your fleet keeps witnessing'); }
     else if (a === 'stopwatch') { homeMode = 'wall'; render(); showToast('Back to the Witness Wall'); }
     else if (a === 'doorbell') { warmAudio(); fireAlert('doorbell'); }
@@ -347,7 +347,7 @@ if (tv && stage) {
     else if (a === 'pip-talk') { showToast('Talk · two-way audio (demo)'); }
     else if (a === 'pip-dismiss') { closePip(); }
     else if (a === 'incident') { captureIncident(); }
-    else if (a === 'disputepack') { showToast('Dispute pack exported · verifies offline ✓'); }
+    else if (a === 'disputepack') { showToast('Dispute pack exported · checkable offline ✓'); }
     else if (a === 'breakglass') { openBreakGlass(); }
     else if (a === 'approve') { approve(); }
     else if (a === 'cancel') { closeOverlay(); }

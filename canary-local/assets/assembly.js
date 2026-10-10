@@ -110,7 +110,7 @@ function roundedBox(m, hw, hh, z0, z1, r = 1.2, seg = 4) {
 // ── procedural parts (mm; canonical frame, +Z up, seated by the transform) ──
 // Each returns [{builder,color,gloss}]. Fasteners point their shaft down -Z so
 // the "insert" animation drops them straight in.
-const STEEL = [0.66, 0.68, 0.72], BRASS = [0.72, 0.58, 0.28], GOLD = [0.85, 0.72, 0.30];
+const STEEL = [0.66, 0.68, 0.72], BRASS = [0.72, 0.58, 0.28];
 const NICKEL = [0.80, 0.81, 0.84], BLACK = [0.10, 0.10, 0.12], WHITE = [0.90, 0.90, 0.88];
 const LIPO = [0.20, 0.26, 0.52], RED = [0.75, 0.18, 0.15], CLEAR = [0.72, 0.82, 0.88];
 const FLEX = [0.61, 0.42, 0.14]; // amber polyimide FPC

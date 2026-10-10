@@ -143,7 +143,8 @@ struct FleetBeacon: Hashable, Sendable {
         // Index through a contiguous copy: Data slices can carry a non-zero
         // startIndex, and subscripting those with 0-based offsets traps.
         let b = [UInt8](mfg)
-        guard b[0] == 0xFF, b[1] == 0xFF else { return nil }   // company id (LE)
+        guard b[0] == UInt8(companyID & 0xFF),
+              b[1] == UInt8(companyID >> 8) else { return nil }   // company id (LE)
         guard b[2] == type else { return nil }
         let isV2 = b.count == mfgV2Length
         guard b[3] == (isV2 ? versionV2 : version) else { return nil }

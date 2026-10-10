@@ -48,7 +48,9 @@ from pathlib import Path
 from typing import NamedTuple
 
 HERE = Path(__file__).resolve().parent
-OPENSCAD = os.environ.get("OPENSCAD", "openscad")
+# Empty means the default, the way render.sh's ${OPENSCAD:-openscad} and
+# scripts/regen_cad.py read it — one rule for which binary every step runs.
+OPENSCAD = os.environ.get("OPENSCAD") or "openscad"
 # The render gate enclosure.yml applies to every render log, verbatim in spirit:
 # OpenSCAD exits 0 on geometry warnings, so the text is what decides.
 DIRTY = re.compile(r"ERROR|WARNING")
@@ -115,7 +117,15 @@ def render(src: Path, defines: dict[str, str] | None = None, *, export: str = "b
         for k, v in (defines or {}).items():
             cmd += ["-D", f"{k}={v}"]
         cmd.append(str(src))
-        r = subprocess.run(cmd, cwd=src.parent, capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, cwd=src.parent, capture_output=True, text=True)
+        except OSError as err:
+            # A missing (or non-executable) binary is a refusal like any
+            # other, not a traceback.
+            raise ProbeError(
+                f"{label}: OpenSCAD is not runnable ({OPENSCAD!r}: {err.strerror}) — install "
+                f"OpenSCAD 2021.01, or set OPENSCAD=/path/to/openscad"
+            ) from None
         diag = (r.stdout or "") + (r.stderr or "")
         if export == "echo" and out.exists():
             diag += out.read_text(encoding="utf-8", errors="replace")

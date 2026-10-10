@@ -8,11 +8,12 @@
 > Pages cannot set the headers) changes how every Lab page and the live-emulator
 > canvas are served, for one soft number. Revisit only together with a
 > COOP/COEP decision for the whole Lab; that call belongs to the maintainer.
-> Until then, **⚡ slice for exact time** tells the person printing that this
-> build doesn't include the optional slicer engine and the modeled estimate
-> stands; the pointer to this file and to
-> [`tools/vendor_kiri.sh`](../../../tools/vendor_kiri.sh) goes to the browser
-> console (`console.info`), not to them.
+> Until then, the print estimate card offers no **⚡ slice for exact time**
+> button at all (it joins the card only when `slicerAvailable()` finds an
+> engine) and shows the modeled estimate with its ± band; the pointer to this
+> file and to [`tools/vendor_kiri.sh`](../../../tools/vendor_kiri.sh) goes to
+> the browser console (`console.info`, once per page), not to the person
+> printing.
 
 The print guide's estimate ([`../../print-guide.js`](../../print-guide.js)) is
 always-on, offline, and exact on filament mass. The **one** number a
@@ -68,9 +69,8 @@ doesn't rediscover them:
    so it is intentionally left to a human, not silently added.
 
 Until someone makes that call and runs the vendor step, the print guide behaves
-exactly as before — the honest estimate — and `⚡ slice for exact time`
-degrades to a clear "not vendored" note. Nothing is broken; a feature is simply
-absent.
+exactly as before — the honest estimate — and `⚡ slice for exact time` is not
+offered. Nothing is broken; a feature is simply absent.
 
 ## Vendoring it
 

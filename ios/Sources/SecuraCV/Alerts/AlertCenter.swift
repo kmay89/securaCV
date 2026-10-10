@@ -123,7 +123,7 @@ final class AlertCenter: NSObject, ObservableObject {
     /// Notification category + action identifiers — one category for every
     /// witness alert, so Ack / Mute ride along to the wrist for free (the
     /// system mirrors categories and actions to a paired watch).
-    static let witnessCategoryID = "SECURACV_WITNESS"
+    static let witnessCategoryID = NotificationIDs.witnessCategory
     static let ackActionID = "SECURACV_ACK"
     static let muteActionID = "SECURACV_MUTE_1H"
     /// The 3am action: the barking-dog night wants "until morning", and

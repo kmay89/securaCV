@@ -35,8 +35,13 @@ const read = (p) => readFileSync(p, "utf8");
 const manifest = JSON.parse(read(join(APP, "frontend-stage.json")));
 const tauri = JSON.parse(read(join(APP, "src-tauri/tauri.conf.json")));
 
-// every file the app would ship, minus the ones the staging step prunes and the
-// test/tooling trees that never reach a browser
+// Every file the app would ship that a page could fetch by URL. third_party,
+// .build and tests are pruned from the bundle (frontend-stage.json, the same
+// trees pages.yml deletes from the site). tools/ DOES ship — assets/hatchery.js
+// imports tools/hatchery/derive.mjs at runtime — but its other .mjs files are
+// Node generators whose "../" paths are filesystem reads in the repo, not URLs
+// a page resolves, so they would only be noise here; the module the page does
+// load is covered by the "nothing a page loads is pruned" test below.
 const SKIP = new Set(["node_modules", "third_party", ".build", "tests", "tools"]);
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -181,4 +186,122 @@ test("the app builds from the staged root, not from canary-local directly", () =
     );
   }
   assert.equal(tauri.app.windows[0].url, manifest.entry);
+});
+
+// ── what the bundle leaves out, and that it is the site's list ───────────────
+// The site deploy (pages.yml, "Assemble site") deletes the page-logic tests and
+// every .py/.sh under canary-local after the copy — "publishing them only put
+// the hub host-provision script and two dozen generators on a public URL". The
+// app's web root is the same tree by design (frontend-stage.json `_why`), but
+// its prune list held only the two emulator build trees, so every macOS, Linux
+// and iPad bundle carried ~100 test files and 34 scripts, the host-provision
+// script among them. Parsing pages.yml keeps the two lists one list.
+function pagesAssembleStep() {
+  const yml = read(join(ROOT, ".github/workflows/pages.yml"));
+  const start = yml.indexOf("- name: Assemble site");
+  assert.ok(start >= 0, "pages.yml lost its \"Assemble site\" step — this gate reads it");
+  const rest = yml.slice(start + 1);
+  const end = rest.search(/\n\s*- (name|uses):/);
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
+test("the app prunes every tree the site deploy deletes from canary-local", () => {
+  const step = pagesAssembleStep();
+  const removed = [...step.matchAll(/^\s*rm -rf (.+)$/gm)]
+    .flatMap((m) => m[1].trim().split(/\s+/))
+    .filter((p) => p.startsWith("_site/canary-local/"))
+    .map((p) => p.slice("_site/".length).replace(/\/+$/, ""));
+  assert.ok(removed.includes("canary-local/tests"),
+    `pages.yml's rm -rf lines changed shape (found ${JSON.stringify(removed)}) — this gate reads them`);
+  for (const rel of removed) {
+    assert.ok(manifest.prune.includes(rel),
+      `pages.yml deletes ${rel} from the site, but desktop-lab/frontend-stage.json ` +
+        `does not prune it, so the app would ship what the site stopped publishing`);
+  }
+});
+
+test("the app drops the same file types the site deploy deletes", () => {
+  const step = pagesAssembleStep();
+  const finds = [...step.matchAll(/^\s*find _site\/(\S+) -type f (.+) -delete\s*$/gm)];
+  assert.ok(finds.length > 0, "pages.yml lost its find … -delete line — this gate reads it");
+  for (const [, dir, expr] of finds) {
+    const exts = [...expr.matchAll(/-name '\*(\.[A-Za-z0-9]+)'/g)].map((m) => m[1]).sort();
+    assert.ok(exts.length > 0, `could not read the -name patterns in: find _site/${dir} ${expr}`);
+    const ours = ((manifest.pruneExt || {})[dir.replace(/\/+$/, "")] || []).slice().sort();
+    assert.deepStrictEqual(ours, exts,
+      `pages.yml deletes ${exts.join(", ")} under ${dir}; frontend-stage.json pruneExt ` +
+        `must name the same types for it, or the app ships what the site does not`);
+  }
+  const staged = read(join(APP, "scripts/stage-frontend.mjs"));
+  assert.match(staged, /manifest\.pruneExt/,
+    "stage-frontend.mjs must act on pruneExt — a manifest key nothing reads prunes nothing");
+});
+
+test("nothing a page loads is pruned from the bundle", () => {
+  // The reason tools/ is not pruned wholesale: a page imports a module from it.
+  // Every module specifier and src/href in the shipped frontend must survive
+  // the prunes, or the app breaks where the site would not.
+  const exts = Object.entries(manifest.pruneExt || {});
+  const pruned = (p) =>
+    manifest.prune.some((d) => p === d || p.startsWith(d + "/")) ||
+    exts.some(([d, xs]) => p.startsWith(d + "/") && xs.some((x) => p.endsWith(x)));
+  const files = walk(CANARY);
+  let imports = 0;
+  for (const f of files) {
+    if (f.endsWith(".json")) continue;
+    const dir = posix.dirname("canary-local/" + relative(CANARY, f).split(sep).join("/"));
+    for (const m of stripComments(read(f)).matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bsrc=)["'](\.{1,2}\/[^"']+)["']/g)) {
+      const target = resolveRef(dir, m[1]);
+      if (target.startsWith("canary-local/tools/")) imports += 1;
+      assert.ok(!pruned(target),
+        `${relative(ROOT, f)} loads ${m[1]} (${target}), which frontend-stage.json prunes — ` +
+          `the app would fail to load it`);
+    }
+  }
+  assert.ok(imports > 0, "found no page import from tools/ — hatchery.js's derive.mjs import moved, re-check this gate");
+  assert.ok(manifest.sentinels.includes("canary-local/tools/hatchery/derive.mjs"),
+    "the staged root must prove tools/hatchery/derive.mjs survived the prunes (a sentinel)");
+});
+
+// ── the webview's IPC surface is exactly what the Lab's pages use ────────────
+// desktop-lab registered four commands no Lab page ever invoked — app_version
+// (app_info's older twin), list_serial_ports (list_ports under another name),
+// companion_snapshot (the tray is the companion's only display) and
+// serial_monitor_send (the native monitor has no command box). Each one was
+// reachable over IPC from the webview while serving no feature. Both
+// directions are held here: a registered command has a caller in canary-local,
+// and an invoke() in canary-local has a registered command, or the page's call
+// rejects at runtime with nothing in CI to say so. (The Flasher's commands are
+// held to the Lab's wrappers by desktop_parity.test.js; this is the Lab alone.)
+test("every command the Lab app registers is invoked by a Lab page, and vice versa", () => {
+  const libRs = read(join(APP, "src-tauri/src/lib.rs"));
+  const handlers = [...libRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+  assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler in desktop-lab lib.rs");
+  const registered = new Set(handlers.flatMap((h) =>
+    h.split(",").map((x) => x.trim().split("::").pop()).filter(Boolean)));
+  assert.ok(registered.has("app_info") && registered.has("flash"), "the handler parse found the wrong list");
+
+  const invoked = new Map(); // command -> first file that invokes it
+  const scan = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (["node_modules", "third_party", ".build", "tests", "dist"].includes(entry.name)) continue;
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) scan(p);
+      else if (/\.(m?js|html)$/.test(entry.name)) {
+        for (const m of stripComments(read(p)).matchAll(/\binvoke\(\s*["']([a-z_]+)["']/g)) {
+          if (!invoked.has(m[1])) invoked.set(m[1], relative(ROOT, p));
+        }
+      }
+    }
+  };
+  scan(CANARY);
+  assert.ok(invoked.has("native_capabilities"), "found no invoke() in canary-local — the scan broke, not the app");
+
+  const uncalled = [...registered].filter((c) => !invoked.has(c)).sort();
+  assert.deepStrictEqual(uncalled, [],
+    "desktop-lab registers commands no Lab page invokes — each is IPC surface serving " +
+      "no feature. Remove it from generate_handler! (and its fn), or wire the page that needs it");
+  const unregistered = [...invoked].filter(([c]) => !registered.has(c)).map(([c, f]) => `${c} (${f})`).sort();
+  assert.deepStrictEqual(unregistered, [],
+    "a Lab page invokes a command desktop-lab never registers — that call rejects in the app");
 });

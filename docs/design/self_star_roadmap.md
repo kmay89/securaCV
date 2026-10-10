@@ -1,10 +1,10 @@
 # Self-* roadmap — "plug it in and it proves itself"
 
 > **For a future AI or contributor picking this up.** This captures the
-> in-flight product arc, what has already shipped, and the two remaining
-> "coming soon" features with enough detail to build them without re-deriving
-> the context. Grep tokens: `self-manifest`, `randomart handshake`,
-> `fleet map`, `safe-mode`, `A/B rollback`.
+> in-flight product arc, what has already shipped, and the two "coming
+> soon" features (the first has since shipped) with enough detail to build
+> them without re-deriving the context. Grep tokens: `self-manifest`,
+> `randomart handshake`, `fleet map`, `safe-mode`, `A/B rollback`.
 
 ## The through-line
 
@@ -32,7 +32,7 @@ phone-first flow appears.
 
 ---
 
-## TODO 1 — Fleet map (self-modeling) · *in progress*
+## TODO 1 — Fleet map (self-modeling) · *shipped (hardware smoke pending)*
 
 **What.** The device already models its fleet and can reach peers over the
 direct BLE link (PR #1026, no broker/WiFi). Surface that as a **live fleet
@@ -42,26 +42,6 @@ renders the fleet the connected device reports.
 
 **Why (user value).** "Your Canaries at a glance," offline. Reinforces
 self-modeling and makes multi-device ownership legible without a cloud.
-
-**Status (2026-09-29) — supersedes the 2026-07 paragraph below where they
-disagree.** The rollback config premise was wrong: an Arduino build takes its
-bootloader and `sdkconfig.h` precompiled from the core, and the pinned cores
-(arduino-esp32 2.0.17 for esp32 / esp32-s3 / esp32-c3; the 3.x lib-builder)
-set `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, so the `verifyRollbackLater`
-override has been compiled into every shipping build that links the engine.
-It now fails the build (`#error`) on a core that does not enable it. Steps 1
-and 2 below are wired for the PlatformIO `canary` only: an NVS counter via
-`firmware/common/health/boot_guard.h` (host-tested in
-`tests_host/test_boot_guard.cpp`), a healthy gate (setup returned + 30 s of
-`loop()`) that both clears it and confirms a pending image, and a minimal
-serial safe mode (radio, storage, sensors and the witness chain never start;
-`c`+`y` or BOOT held 2 s clears and retries; a different build starts the
-count over). It prints a status card, not the `trust_card` — the identity it
-would print is one of the subsystems safe mode keeps off. The rule in
-"Risks" below still holds for this code: it is compile-checked, **not**
-proven on hardware, and needs a human sign-off plus the bad-image bench run
-(`docs/V1_BENCH_TEST_RUNBOOK.md` Track E) before anyone relies on it.
-Display, Sense, Vision and Sentinel: not wired.
 
 **Status (2026-07).** The **pure render layer landed** —
 `firmware/common/ui/fleet_view.h` (`scene::fleet_card`) turns a snapshot of the
@@ -83,23 +63,26 @@ renders it with `fleet_card`. The roster→view projection (incl. the millis→a
 math) is a pure, host-tested helper (`scene::fleet_peer_from_entry`), so the only
 CI-verified-not-locally piece is the thin main.cpp glue.
 
-**Still to wire:** the manifest `fleet[]` field — a cross-repo wire contract the
-website `/fleet` page reads, so make the schema decision deliberately (the
-website pins the schema string). (Note: the `commands[]` array already advertises
-`n` in the `full`-env manifest, which the website renders as an available tool —
-that's additive and needs no schema change.)
+**Shipped:** the manifest `fleet[]` array (#1112; `self_manifest.h`'s
+`Peer` struct and `fleet`/`fleet_count` fields, emitted as the `fleet` key) and
+the website `/fleet` page (securacv_website `docs/roadmap.md`, "Shipped":
+`fleet.html`, `js/serial.js`, `js/fleet.js`, `tests/fleet-facts.test.mjs`).
+Residual: a real-terminal smoke of `n` on hardware, which no bench runbook
+row covers yet. (The `commands[]` array also advertises `n` in the
+`full`-env manifest, which the website renders as an available tool.)
 
 **Surfaces / files.**
 - Firmware: DONE — the pure renderer (`firmware/common/ui/fleet_view.h`,
   host-tested), the `fleet_roster_feed::snapshot()` accessor, and the `n`
   console command (`kConsoleCommands` + dispatch + help in `main.cpp`) all ship.
   A real-terminal smoke on hardware is still worth doing before relying on it.
-- Manifest: extend `self_manifest.h` with a `fleet[]` array (peer id + short
-  fp + last-seen), single-sourced from the same model, so `/fleet` renders the
-  live truth (same approach as `commands[]`).
-- Website: `/fleet` page (add a `_redirects` extensionless route like `/canary`)
-  reading the manifest over WebSerial (reuse `js/verify.js` connection logic —
-  factor the serial read into a shared helper). Anti-rot test pinning the shape.
+- Manifest: DONE (#1112) — `self_manifest.h` carries a `fleet[]` array (peer
+  id + short fp + last-seen, health, battery, chain, status), single-sourced
+  from the same roster the `n` card reads (same approach as `commands[]`).
+- Website: DONE — the `/fleet` page (its own `_redirects` route) reads the
+  manifest over WebSerial through the shared `js/serial.js` helper that
+  `/canary` uses too; `tests/fleet-facts.test.mjs` pins the shape and the
+  unsigned framing.
 
 **Risks / gotchas.** Keep it read-only and public-only (peer **public** fps, no
 secrets — same rule as the manifest). BLE peer enumeration timing: bound the
@@ -110,7 +93,7 @@ scan like `verify.js` bounds its read window. Don't call a group of Canaries a
 
 ---
 
-## TODO 2 — Boot safe-mode + A/B auto-rollback (self-healing) · *in progress*
+## TODO 2 — Boot safe-mode + A/B auto-rollback (self-healing) · *built on the PlatformIO canary; bench-pending; other products not wired*
 
 **What.** A bad firmware image must not be able to brick trust. On boot, run
 the existing self-test; if it fails hard (or the app crashes N times), fall
@@ -119,8 +102,29 @@ the new slot fails its post-flash self-test, plus a minimal **safe-mode
 console** that still prints the trust card + a recovery URL even when the main
 app won't come up.
 
-**Status (2026-07).** The **app-level anti-rollback version floor** is done and
-host-tested in `test_ota_logic.cpp`. The **A/B rollback engine** (post-flash
+**Status (2026-09-29) — supersedes the 2026-07 paragraph below where they
+disagree.** The rollback config premise was wrong: an Arduino build takes its
+bootloader and `sdkconfig.h` precompiled from the core, and the pinned cores
+(arduino-esp32 2.0.17 for esp32 / esp32-s3 / esp32-c3; the 3.x lib-builder)
+set `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, so the `verifyRollbackLater`
+override has been compiled into every shipping build that links the engine.
+It now fails the build (`#error`) on a core that does not enable it. Steps 1
+and 2 below are wired for the PlatformIO `canary` only: an NVS counter via
+`firmware/common/health/boot_guard.h` (host-tested in
+`tests_host/test_boot_guard.cpp`), a healthy gate (setup returned + 30 s of
+`loop()`) that both clears it and confirms a pending image, and a minimal
+serial safe mode (radio, storage, sensors and the witness chain never start;
+`c`+`y` or BOOT held 2 s clears and retries; a different build starts the
+count over). It prints a status card, not the `trust_card` — the identity it
+would print is one of the subsystems safe mode keeps off. The rule in
+"Risks" below still holds for this code: it is compile-checked, **not**
+proven on hardware, and needs a human sign-off plus the bad-image bench run
+(`docs/V1_BENCH_TEST_RUNBOOK.md` Track E) before anyone relies on it.
+Display, Sense, Vision and Sentinel: not wired.
+
+*Superseded by the 2026-09-29 status above:* **Status (2026-07).** The
+**app-level anti-rollback version floor** is done and host-tested in
+`test_ota_logic.cpp`. The **A/B rollback engine** (post-flash
 self-test → mark-valid-or-revert, plus the `verifyRollbackLater` ownership that
 keeps a new image `PENDING_VERIFY`) is written in
 `firmware/common/ota/securacv_ota.*` and active in the `canary-ota` ESP-IDF
@@ -141,12 +145,12 @@ update or corrupted image degrades to a recoverable state instead of a dead
 device, and the evidence on the SD card stays intact and verifiable.
 
 **What already exists to build on.**
-- 🟡 **A/B rollback engine is written, but gated on the bootloader rollback
-  config.** `FEATURE_OTA_PULL` + `firmware/common/ota/securacv_ota.*` register the
-  post-flash self-tests (see `main.cpp` `k_ota_selftests[]`,
-  `securacv_ota_register_selftest`); `securacv_ota_boot_self_test()` runs them
-  and, on a required failure, calls `esp_ota_mark_app_invalid_rollback_and_reboot()`.
-  The engine overrides the Arduino core's weak `verifyRollbackLater()` so a new
+- *Superseded by the 2026-09-29 status above:* 🟡 **A/B rollback engine is
+  written, but gated on the bootloader rollback config.** `FEATURE_OTA_PULL` +
+  `firmware/common/ota/securacv_ota.*` register the post-flash self-tests
+  (see `main.cpp` `k_ota_selftests[]`, `securacv_ota_register_selftest`);
+  `securacv_ota_boot_self_test()` runs them and, on a required failure, calls
+  `esp_ota_mark_app_invalid_rollback_and_reboot()`. The engine overrides the Arduino core's weak `verifyRollbackLater()` so a new
   image stays `PENDING_VERIFY` until it confirms itself — a crash/hang/brownout
   before confirmation reverts to the previous image on the next boot. **This only
   functions where `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is set** — the
@@ -166,20 +170,23 @@ device, and the evidence on the SD card stays intact and verifiable.
    the app reaches "healthy"); after N failures, boot into safe-mode. **The pure
    decision for this is done** — `firmware/common/health/boot_policy.h`
    (`bootpolicy::decide()`), host-tested in `tests_host/test_boot_policy.cpp`.
-   *Pending (boot-path, hardware-validated):* the NVS counter + the early-boot
-   increment/reset wiring that calls it.
+   *Wired on the PlatformIO `canary`* (`health/boot_guard.h`, `main.cpp`'s
+   BOOT HEALTH block); Display/Sense/Vision/Sentinel not wired; the bench run
+   (`docs/V1_BENCH_TEST_RUNBOOK.md` Track E) is outstanding.
 2. Safe-mode: minimal init, print `welcome_card`/`trust_card` + recovery URL,
    accept only the read-only diagnostic console (`Tier::Diag`), offer re-flash.
-   *Pending (boot-path, hardware-validated).*
+   *Wired on the PlatformIO `canary`* as a status card (see the 2026-09-29
+   status: it does not print the `trust_card`); Display/Sense/Vision/Sentinel
+   not wired; bench Track E outstanding.
 3. **A/B: engine code in place; the crash-loop/safe-mode *decision* is now
    host-tested.** The post-flash self-test gates `mark_app_valid` and the
-   rollback-on-failure path is written (see "What already exists") — live only
-   where `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is enabled (`canary-ota`), still
-   to be turned on in the shipping builds. The crash-loop/safe-mode *decision*
+   rollback-on-failure path is written (see "What already exists") — live
+   wherever `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is set, which the pinned
+   Arduino cores already do (2026-09-29 status; `securacv_ota.cpp` now
+   `#error`s on a core that does not). The crash-loop/safe-mode *decision*
    logic now lives in the pure header `boot_policy.h`, proven in `tests_host` —
    mirroring `test_console.h`'s pure-policy pattern. Host-tested here: the
-   decision half. Needs hardware: the boot-path glue **and** the bootloader
-   rollback config in the shipping builds.
+   decision half. Needs hardware: a bench run of the boot-path glue (Track E).
 
 **Risks / gotchas.** **This touches the boot/OTA path — real bricking risk if
 wrong.** Do a design doc + explicit human sign-off before code. Must be proven
@@ -200,11 +207,13 @@ migration-sensitive for already-deployed devices.
 3. Anti-rot is non-negotiable: pin new wire formats with host tests in *both*
    repos, single-source from the firmware.
 4. Fleet map's device side is done — render layer (`fleet_view.h`), roster
-   accessor, and the `n` console command all ship (see TODO 1 Status). What's
-   left is the manifest `fleet[]` field + the website `/fleet` page (cross-repo).
-   No boot-path risk. Safe-mode/rollback
+   accessor, and the `n` console command all ship (see TODO 1 Status), and so
+   do the manifest `fleet[]` field and the website `/fleet` page. No boot-path
+   risk. Safe-mode/rollback
    has its design doc
    ([`hardware_root_of_trust.md`](hardware_root_of_trust.md) §7 Phase 1, signed
    off 2026-07-22) and its pure decision layer landed (`boot_policy.h`); the
-   remaining boot-path wiring still needs a hardware smoke test before it merges
-   — a bug there could brick the one thing we promise you can't brick.
+   boot-path wiring has since landed on the PlatformIO `canary` (TODO 2's
+   2026-09-29 status) and still needs its hardware run (Track E) before
+   anyone relies on it — a bug there could brick the one thing we promise you
+   can't brick.

@@ -244,7 +244,6 @@ button.flash-map-key:hover { color: var(--text); }
 /* ── done ──────────────────────────────────────────────────────────────── */
 .flash-done { text-align: center; }
 .flash-done .flash-row { justify-content: center; }
-.flash-done-bird { font-size: 52px; animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both; }
 
 /* ── the Hatchery: a whimsical name + birth certificate (parity with the native app) ── */
 .flash-cert-slot { display: flex; justify-content: center; }
@@ -531,7 +530,7 @@ button.flash-map-key:hover { color: var(--text); }
   to { transform: translate(var(--drift, 0), 108vh) rotate(320deg); opacity: 0.15; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .flash-plug, .flash-spinner, .flash-done-bird, .flash-confetti-bit, .flash-bar-fill, .flash-cert { animation: none; }
+  .flash-plug, .flash-spinner, .flash-confetti-bit, .flash-bar-fill, .flash-cert { animation: none; }
   .flash-confetti { display: none; }
 }
 
@@ -675,9 +674,6 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-dial-row input[type="range"] { flex: 1; accent-color: #ffd44f; }
 .flash-dial-val { min-width: 64px; text-align: right; font-size: 13px; color: #cfd8cf; }
 
-/* Sense reflexes: shown honestly */
-.flash-reflexes { margin: 12px 0 4px; }
-.flash-reflexes-body { padding: 4px 0; }
 .flash-knob {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 0; border-bottom: 1px dashed rgba(255,255,255,0.07);

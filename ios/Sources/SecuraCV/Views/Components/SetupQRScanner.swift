@@ -7,8 +7,9 @@
 // and host-tested; this file is only the camera.
 //
 // Not every device can scan (no camera, or a denied permission) — the
-// walkthrough asks `isSupported` first and offers the typed fields either
-// way, so the scanner is a convenience, never a gate.
+// walkthrough offers the button where the hardware can (`deviceCanScan`),
+// asks for the camera on the tap, and keeps the typed fields either way,
+// so the scanner is a convenience, never a gate.
 
 import SwiftUI
 #if canImport(VisionKit)
@@ -19,6 +20,20 @@ struct SetupQRScannerSheet: View {
     var onCode: (String) -> Void
     @Environment(\.dismiss) private var dismiss
 
+    /// Can this device scan at all (the hardware and the OS)? Asked BEFORE
+    /// any camera permission exists, so it must not depend on one — the
+    /// walkthrough offers the button on this, and asks for the camera when
+    /// it is tapped (CameraGate).
+    static var deviceCanScan: Bool {
+        #if canImport(VisionKit)
+        return DataScannerViewController.isSupported
+        #else
+        return false
+        #endif
+    }
+
+    /// Can it scan right now? `isAvailable` is also false until the camera
+    /// has been allowed — the in-sheet check, after the ask.
     static var isSupported: Bool {
         #if canImport(VisionKit)
         return DataScannerViewController.isSupported && DataScannerViewController.isAvailable

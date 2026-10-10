@@ -19,12 +19,18 @@
 // could never finish for most of the fleet.
 //
 // It now says what is actually true of the device in front of you, and offers
-// an action only where one exists. The receipt paste stays: it is the one path
-// that has always worked, for anything that can produce a receipt. Giving a
-// brand-new Canary its Wi-Fi in the first place is the Set up walkthrough's
-// job (SetupView → CanarySetupView), not this sheet's.
+// an action only where one exists. For a WAP that joined but never paired
+// (the one-tap claim was refused, or expired), the real paths are two: its
+// recovery kit — the receipt its own setup page saves after a short BOOT
+// tap — opened from Files or pasted, with the setup-network address the kit
+// names moved onto the address the WAP answers at now
+// (ProvisioningReceipt.rebased; the certificate pin is the kit's own); or a
+// fresh setup from this phone, which pairs in one tap. Giving a brand-new
+// Canary its Wi-Fi in the first place is the Set up walkthrough's job
+// (SetupView → CanarySetupView), not this sheet's.
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PairView: View {
     let canary: DiscoveredCanary
@@ -32,6 +38,7 @@ struct PairView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var receiptText = ""
     @State private var error: String?
+    @State private var importingKit = false
 
     /// Is this Canary already in the fleet — i.e. did it join by itself while
     /// the user was looking at it? The roster filters joined devices out of
@@ -89,24 +96,37 @@ struct PairView: View {
                     }
                 } else if !canary.deviceType.isHTTPPairable {
                     Section {
-                        Label("Onboarded through Home Assistant over MQTT, not paired here.",
+                        Label("Nothing to pair — this kind of Canary doesn't pair with a phone.",
                               systemImage: "info.circle")
                     }
                 } else {
                     // WAP-class hardware, the only kind that holds a key worth
-                    // handing over. Its onboarding lives on the device's own
-                    // setup portal, which issues the receipt below — this app
-                    // has no way to ask for one over the LAN.
-                    Section("Add this Canary") {
-                        Text("\(canary.name) hands over its key from its own setup page, which you reach by joining its Wi-Fi while it's in setup mode. That page gives you a receipt — paste it below.")
+                    // handing over. Its key comes one of two real ways.
+                    Section {
+                        Button {
+                            importingKit = true
+                        } label: {
+                            Label("Open its recovery kit", systemImage: "doc.badge.plus")
+                        }
+                        TextField("…or paste it: { \"device_id\": …, \"token\": … }", text: $receiptText, axis: .vertical)
+                            .lineLimit(2...5).font(.callout.monospaced())
+                        Button("Add from what I pasted") { pair(from: Data(receiptText.utf8)) }
+                            .disabled(receiptText.isEmpty)
+                    } header: {
+                        Text("Add it with its recovery kit")
+                    } footer: {
+                        Text("Its own setup page saves a recovery kit (canary-recovery-kit.json) after a short BOOT tap — that file is its key.")
+                    }
+                    Section {
+                        Text("Or set it up again from this phone: forget its Wi-Fi on its own page (a short BOOT tap lets you in), then bring it near this phone — the card pairs it in one tap.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                    }
-                    Section("Paste the receipt") {
-                        TextField("{ \"device_id\": …, \"token\": … }", text: $receiptText, axis: .vertical)
-                            .lineLimit(2...5).font(.callout.monospaced())
-                        Button("Add from receipt") { pairFromReceipt() }
-                            .disabled(receiptText.isEmpty)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let page = canary.host.flatMap(DeviceAPI.url(forDiscoveredHost:)) {
+                            Link("Open its page", destination: page)
+                        }
+                    } header: {
+                        Text("No recovery kit?")
                     }
                 }
 
@@ -118,14 +138,40 @@ struct PairView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }
+            .fileImporter(isPresented: $importingKit, allowedContentTypes: [.json, .plainText]) { result in
+                switch result {
+                case .success(let url):
+                    // A file from Files is security-scoped: read it inside
+                    // the grant, and only it.
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    if let data = try? Data(contentsOf: url) {
+                        pair(from: data)
+                    } else {
+                        error = "That file couldn't be read."
+                    }
+                case .failure:
+                    error = "That file couldn't be opened."
+                }
+            }
         }
     }
 
-    private func pairFromReceipt() {
-        guard let data = receiptText.data(using: .utf8),
-              let receipt = try? JSONDecoder().decode(ProvisioningReceipt.self, from: data),
-              DeviceAPI.isPrivate(receipt.baseURL) else {
-            error = "That receipt couldn't be read, or points off your local network."
+    private func pair(from data: Data) {
+        guard let decoded = try? JSONDecoder().decode(ProvisioningReceipt.self, from: data) else {
+            error = "That isn't a recovery kit or pairing receipt this app can read."
+            return
+        }
+        // A kit saved during setup names the WAP's setup-network address,
+        // gone since it joined your Wi-Fi: point it at where THIS device
+        // answers now — but only when the kit is this device's (an empty
+        // id falls back to the discovered one below, as it always did).
+        let sameDevice = decoded.deviceID.isEmpty || decoded.deviceID == canary.deviceID
+        let receipt = sameDevice
+            ? decoded.rebased(onto: canary.host.flatMap(DeviceAPI.url(forDiscoveredHost:)))
+            : decoded
+        guard DeviceAPI.isPrivate(receipt.baseURL) else {
+            error = "That receipt points off your local network, so it wasn't used."
             return
         }
         // A secure (https) Canary is reachable only through the certificate

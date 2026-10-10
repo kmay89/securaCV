@@ -25,8 +25,10 @@ final class SetupGuideTests: XCTestCase {
             switch family.path {
             case .setupNetwork:
                 XCTAssertEqual(actions, door + [.readSetupKey, .joinSetupNetwork, .watchForCanary], family.rawValue)
-            case .bluetooth:
-                XCTAssertEqual(actions, door + [.bluetoothProvision, .watchForCanary], family.rawValue)
+            case .ownPage:
+                // Its own page speaks its own wizard: explained, driven by
+                // the person — no control that pretends to drive it.
+                XCTAssertEqual(actions, door + [.watchForCanary], family.rawValue)
             }
             XCTAssertEqual(steps.first?.title, family.title)
             XCTAssertFalse(family.tagline.isEmpty)
@@ -34,8 +36,17 @@ final class SetupGuideTests: XCTestCase {
         }
     }
 
-    func testOnlyTheWAPSpeaksBluetoothAndOnlyDisplaysShowAQR() {
-        XCTAssertEqual(CanaryFamily.wap.path, .bluetooth)
+    func testTheWAPFallsBackToItsOwnPageAndOnlyDisplaysShowAQR() {
+        // The WAP's old fallback, "its bonded Bluetooth service", could
+        // never list a device: a new WAP does not advertise that console,
+        // and its reads need a PIN confirmed on the device. Its real
+        // fallback is its own setup page.
+        XCTAssertEqual(CanaryFamily.wap.path, .ownPage)
+        let page = SetupGuide.canary(.wap).first { $0.id == "page" }
+        XCTAssertNotNil(page)
+        XCTAssertTrue(page?.title.hasPrefix("If no card appears") ?? false)
+        XCTAssertFalse(SetupGuide.canary(.wap).contains { $0.body.contains("bonded Bluetooth") },
+                       "no step promises the bonded path")
         XCTAssertEqual(CanaryFamily.display.path, .setupNetwork(keySource: .glassQR))
         XCTAssertEqual(CanaryFamily.vision.path, .setupNetwork(keySource: .flasher))
         XCTAssertEqual(CanaryFamily.sense.path, .setupNetwork(keySource: .flasher))
@@ -81,6 +92,18 @@ final class SetupGuideTests: XCTestCase {
         }
         let ids = SetupGuide.hub.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count)
+    }
+
+    func testEveryStepSaysItselfInOneShortSentence() {
+        // The screen shows `short` first and the paragraph behind "How it
+        // works" — a step that needs more than twenty words up front is a
+        // manual, not a card. The long body stays, honest and pinned above.
+        for step in SetupGuide.allSteps {
+            let words = step.short.split(separator: " ").count
+            XCTAssertGreaterThan(words, 2, "\(step.id): says something")
+            XCTAssertLessThanOrEqual(words, 20, "\(step.id): \(step.short)")
+            XCTAssertLessThan(step.short.count, step.body.count, "\(step.id): the short line is shorter")
+        }
     }
 
     func testFamiliesMapToTheCoarseTypesTheFleetUses() {

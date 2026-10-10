@@ -879,6 +879,36 @@ kbd {
 .sense-tune-ctl { gap: 10px; align-items: center; flex-wrap: wrap; }
 .sense-raw-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 
+/* ── the self-check chips: the board's own self-manifest, in three words ── */
+.selfcheck { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; }
+.selfcheck-chip {
+  display: inline-flex; align-items: baseline; gap: 2px; padding: 3px 9px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--bg-alt);
+  font-size: 12px; color: var(--text-secondary);
+}
+.selfcheck-chip strong { font-weight: 600; color: var(--text); }
+.selfcheck-chip.is-ok { border-color: var(--success); background: var(--success-bg); color: var(--success); }
+.selfcheck-chip.is-warn { border-color: var(--caution); background: var(--caution-bg); color: var(--caution); }
+
+/* ── the WAP field bench: the room's WiFi, felt, off the monitor ────────── */
+.wap-field {
+  margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: rgba(255, 255, 255, 0.02); display: grid; gap: 8px;
+}
+.wap-field-head { align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.wap-field-head h4 { margin: 0 auto 0 0; font-size: 13.5px; }
+.wap-field-status.is-present { color: var(--success); }
+.wap-field p { margin: 0; font-size: 12.5px; }
+.wap-field .bench-meter-fill[data-level="faint"] { opacity: 0.45; }
+.wap-field .bench-meter-fill[data-level="soft"] { opacity: 0.75; }
+
+/* ── prove it, two ways (after a product flash) ─────────────────────────── */
+.prove-row { margin: 12px 0; display: grid; gap: 6px; }
+.prove-row h3 { margin: 0; font-size: 14.5px; }
+.prove-row .row { flex-wrap: wrap; gap: 8px; }
+.prove-row p { margin: 0; font-size: 12.5px; }
+.passport .pp-ask { margin-top: 8px; }
+
 /* ── the WE2 live bench (module flow) ─────────────────────────────────── */
 .bench { margin-top: 14px; display: grid; gap: 10px; }
 .bench h4 { margin: 0; font-size: 14.5px; }

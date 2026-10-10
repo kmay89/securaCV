@@ -82,7 +82,20 @@ struct DeviceDetailView: View {
                 )
             }
 
-            if let figure = device.figure, let massing = FleetMassing.all[figure.id] {
+            if DeviceNaming.isSoftware(published: device.product) {
+                // The hub's own row: the witness kernel is software, so the
+                // honest picture is no picture — and the "until the fleet
+                // figures carry it" promise below would be untrue of it.
+                Image(systemName: "server.rack")
+                    .font(.system(size: 120))
+                    .foregroundStyle(.secondary)
+                    .frame(height: 300)
+                Text("Your hub's witness kernel — software, so there is no hardware to draw.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 900)
+            } else if let figure = device.figure, let massing = FleetMassing.all[figure.id] {
                 FleetFigureTurntable(massing, title: figure.title)
                     .frame(width: 540, height: 540)
                 Text(rungLine(figure.confidence) + dimsLine(massing.envelope))

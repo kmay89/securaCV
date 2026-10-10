@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:8a0aee1e-d943-57b8-b24c-f525e78c13a7",
+  "serialNumber": "urn:uuid:50e24ada-2ca7-56d6-bb17-d051bfb35498",
   "version": 1,
   "metadata": {
     "tools": {
@@ -20,7 +20,7 @@
       "bom-ref": "securacv-firmware",
       "group": "securacv",
       "name": "securacv-firmware",
-      "version": "2.4.15",
+      "version": "2.4.16",
       "description": "SecuraCV Canary firmware — every PlatformIO product firmware/flavors.json builds",
       "properties": [
         {
@@ -1508,7 +1508,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary",
-      "version": "2.4.15",
+      "version": "2.4.16",
       "description": "PlatformIO product `canary` (firmware/canary)",
       "properties": [
         {
@@ -1538,7 +1538,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-display",
-      "version": "2.4.15",
+      "version": "2.4.16",
       "description": "PlatformIO product `canary-display` (firmware/projects/canary-display)",
       "properties": [
         {
@@ -1568,7 +1568,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-sense",
-      "version": "2.4.15",
+      "version": "2.4.16",
       "description": "PlatformIO product `canary-sense` (firmware/projects/canary-sense)",
       "properties": [
         {
@@ -1598,7 +1598,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-sentinel",
-      "version": "2.4.15",
+      "version": "2.4.16",
       "description": "PlatformIO product `canary-sentinel` (firmware/projects/canary-sentinel)",
       "properties": [
         {
@@ -1628,7 +1628,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-vision",
-      "version": "2.4.15",
+      "version": "2.4.16",
       "description": "PlatformIO product `canary-vision` (firmware/projects/canary-vision)",
       "properties": [
         {
@@ -1658,7 +1658,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-wap",
-      "version": "2.4.15",
+      "version": "2.4.16",
       "description": "PlatformIO product `canary-wap` (firmware/projects/canary-wap)",
       "properties": [
         {

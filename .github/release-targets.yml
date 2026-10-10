@@ -33,6 +33,11 @@
 #   gate_reason   optional text shown when the gate is closed. Say what is
 #                 missing and how to fix it; the default text only describes the
 #                 repo-variable case, which would be a lie for a derived gate.
+#   draft_publish optional, for a target whose release workflow leaves a DRAFT:
+#                 how a human publishes it. A draft has no git tag, so the plan
+#                 reads drafts from the releases API and, when one already holds
+#                 the source version, says "publish it" (DRAFT_PENDING) instead
+#                 of dispatching the same build again.
 
 targets:
   - name: firmware
@@ -122,6 +127,9 @@ targets:
       json_path: version
     tag_prefix: app-v
     workflow: desktop-release.yml
+    # desktop-release.yml always builds a draft (releaseDraft: true);
+    # lab-publish.yml is the button that publishes it.
+    draft_publish: Actions → "Publish the Lab (draft → live)"
     inputs:
       publish: "true"
     dev_inputs:
@@ -165,6 +173,31 @@ targets:
       export_method: app-store-connect
     watch:
       - tvos
+      # The Wall COMPILES these from the iPhone tree (tvos/WitnessWall/
+      # project.yml, every `- path: ../../ios/...` source), so each is an input
+      # to what the Wall ships. Without them a change to a shared file alone —
+      # regenerated device figures for a new product, say — reported the Wall
+      # "unchanged since 0.x.y — nothing to do" while tvos.yml rebuilt it: the
+      # Flasher's and the Lab's watch-what-the-build-embeds bug, on Apple TV.
+      # Listed file by file, not as ios/Shared, because the Wall compiles only
+      # part of that directory and an iPhone-only edit must not ask for a TV
+      # release. test_release_plan.py holds this list to project.yml both ways.
+      - ios/Shared/WakePayload.swift
+      - ios/Sources/SecuraCV/Cloud/CloudContainer.swift
+      - ios/Shared/Theme.swift
+      - ios/Shared/FleetEnums.swift
+      - ios/Shared/FleetFigures.swift
+      - ios/Shared/FleetFigureBridge.swift
+      - ios/Shared/DeviceNaming.swift
+      - ios/Shared/DeviceGlanceCopy.swift
+      - ios/Shared/FleetSolids.swift
+      - ios/Shared/FleetIsoProjector.swift
+      - ios/Shared/CanaryMood.swift
+      - ios/Shared/CanaryActor.swift
+      - ios/Sources/SecuraCV/Model/CanaryMoodKeeper.swift
+      - ios/Shared/TimelineScrub.swift
+      - ios/Shared/EventVocabulary.swift
+      - ios/Shared/AlertRecord.swift
     # Signing needs an Apple Developer account; without it the release workflow
     # is a friendly no-op, so there is no point spending a macOS runner on it.
     gate_var: ENABLE_TVOS_BUILD

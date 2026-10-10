@@ -81,7 +81,9 @@ struct UnsealView: View {
         }
         .confirmationDialog("Forget this phone's snapshot key?", isPresented: $confirmingForget,
                             titleVisibility: .visible) {
-            Button("Forget the key", role: .destructive) { model.forgetKey() }
+            Button("Forget the key", role: .destructive) {
+                Task { await model.forgetKey(telling: store.devices) }
+            }
         } message: {
             Text(VaultKeyStore.forgetWarning)
         }
@@ -357,10 +359,69 @@ final class UnsealModel: ObservableObject {
         }
     }
 
+    /// Forget the key on THIS phone only. The Canaries are told separately
+    /// (`forgetKey(telling:)`), because they need the key id while it still
+    /// exists to know which of them seal to it.
     func forgetKey() {
         discard()
         keys.forget()
         load()
+    }
+
+    /// Does this Canary's last answer say it seals to the key being
+    /// forgotten? Only then is it told to stop — a Canary sealing to some
+    /// OTHER phone's key is that phone's business, never this one's.
+    nonisolated static func sealsToKey(_ status: VaultStatus?, keyID: String) -> Bool {
+        guard let status, status.hasKey == true,
+              let theirs = status.keyID?.lowercased(), !theirs.isEmpty else { return false }
+        return theirs == keyID.lowercased()
+    }
+
+    /// The whole Forget, as the confirmation promises it: every paired
+    /// Canary that seals to this key is told to stop (`DELETE
+    /// /api/vault/key` — it drops the public key and turns its sealing
+    /// triggers off, since it cannot seal to nobody), THEN the key goes.
+    /// Before this, Forget deleted only the local key and every Canary kept
+    /// sealing snapshots nobody could ever open.
+    ///
+    /// A Canary that can't be reached keeps sealing until a new key is
+    /// registered; the ones that couldn't be told are named, never dropped.
+    func forgetKey(telling devices: DeviceStore) async {
+        discard()
+        var untold: [String] = []
+        if let ours = keyIDHex {
+            busy = "Telling your Canaries to stop sealing…"
+            for ref in devices.devices where ref.deviceType.isHTTPPairable {
+                // What the last refresh said about this one — so a Canary we
+                // can't reach is named only when it might seal to this key
+                // (it said so, or never said), never when it was known to
+                // seal to another phone's.
+                let lastKnown = canaries.first { $0.id == ref.id }?.status
+                let mightSealToUs = lastKnown == nil || Self.sealsToKey(lastKnown, keyID: ours)
+                guard let api = try? devices.api(for: ref) else {
+                    if mightSealToUs { untold.append(ref.name) }
+                    continue
+                }
+                do {
+                    let status = try await api.vaultStatus()
+                    guard Self.sealsToKey(status, keyID: ours) else { continue }
+                    try await api.vaultDeleteKey()
+                } catch DeviceError.noSealedSnapshots {
+                    continue   // firmware that seals nothing has nothing to stop
+                } catch {
+                    if mightSealToUs { untold.append(ref.name) }
+                }
+            }
+            busy = nil
+        }
+        forgetKey()
+        if !untold.isEmpty {
+            problem = "The key is gone from this phone. "
+                + (untold.count == 1 ? "\(untold[0]) couldn't be reached"
+                                     : "\(untold.joined(separator: ", ")) couldn't be reached")
+                + " — any that sealed to it keep sealing until you register a new key."
+        }
+        await refresh(devices: devices)
     }
 
     /// Nil the frame. Called on Done, on leaving, on backgrounding, before
@@ -514,7 +575,7 @@ struct UnsealedFrameView: View {
                 } else {
                     ContentUnavailableView("Opened, but not a picture",
                         systemImage: "photo.badge.exclamationmark",
-                        description: Text("The snapshot decrypted and its tag verified, but its \(frame.jpeg.count) bytes aren't an image this phone can show."))
+                        description: Text("The snapshot decrypted and its authentication tag checked out, but its \(frame.jpeg.count) bytes aren't an image this phone can show."))
                 }
                 VStack(spacing: 4) {
                     Text(frame.header.trigger.label).font(.headline)

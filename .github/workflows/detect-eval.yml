@@ -44,9 +44,23 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+
+      # The sample dataset the harness runs on below is generated and
+      # committed (eval/datasets/sample/generate.py). It was the one such
+      # generator no workflow ran: an edit to its FRAMES without a rerun left
+      # labels.json and the PNGs describing different scenes, silently. The
+      # check compares what each PNG draws (its scanlines), not its deflate
+      # bytes. Seconds; first, so a stale dataset fails before the build.
+      - name: Sample dataset is regenerated
+        run: python3 eval/datasets/sample/generate.py --check
+
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install libseccomp
         uses: ./.github/actions/setup-libseccomp
+        timeout-minutes: 5
 
       - name: Clippy (detect-eval)
         run: cargo clippy --features detect-eval --bin detect_eval --lib -- -D warnings

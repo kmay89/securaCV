@@ -22,11 +22,13 @@
  * CANONICAL CHIRP API (consolidation — 2026-06-09)
  *
  * This header is the **single canonical chirp-channel API** for the modular /
- * common firmware trees. It is consumed today by the canary-wap (PIO) lane
- * (firmware/projects/canary-wap/src/main.cpp) and is the contract the ACTIVE
- * tree (firmware/canary/) will implement when the chirp body is ported into a
- * `securacv_chirp` library — the remaining parity gap (see PARITY_PLAN.md and
- * the dependency-adaptation map in firmware/common/chirp/README.md).
+ * common firmware trees. No build includes it yet (the canary-wap PIO lane
+ * once said to consume it, firmware/projects/canary-wap/src/, was deleted;
+ * firmware/tests_host's Makefile only syntax-checks it as C and C++). It is
+ * the contract the ACTIVE tree (firmware/canary/) will implement when the
+ * chirp body is ported into a `securacv_chirp` library — the remaining parity
+ * gap (see PARITY_PLAN.md and the dependency-adaptation map in
+ * firmware/common/chirp/README.md).
  *
  * Reference implementation (to be adapted to this C-ABI API on port):
  *   firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp (~1480 LOC),
@@ -39,8 +41,8 @@
  *   - ble_chirp.h  (canary-wap Arduino): a *separate* BLE-advertisement broadcast
  *     feature (different transport), unrelated to this ESP-NOW mesh chirp.
  *
- * Do not change the signatures below without updating every consumer — the
- * canary-wap (PIO) build includes this header.
+ * Do not change the signatures below without updating the port that adopts
+ * them (none includes this header yet).
  * ─────────────────────────────────────────────────────────────────────────────
  */
 

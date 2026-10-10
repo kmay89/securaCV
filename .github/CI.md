@@ -72,12 +72,13 @@ other filtered workflow.
   node at all (`node --test`, a `.mjs` generator, `npx`) sets it up with
   `actions/setup-node@v7` — the image's node moves with the image, like
   its `python3` — on `node-version: "22"` (the major the page and host
-  tests run) unless a comment says why. Three jobs are on `20` with no
-  reason written down yet: `desktop-release.yml` and
-  `desktop-flasher-release.yml` (`build`, the two app releases) and
-  `sbom.yml` (`generate-sbom`). They are the known exceptions until
-  someone moves them or writes the reason next to the pin. Not
-  machine-checked yet; the reviewer holds it.
+  tests run) unless a comment says why. One job is on `20` with no
+  reason written down yet: `sbom.yml` (`generate-sbom`). It is the known
+  exception until someone moves it or writes the reason next to the pin.
+  (The two app releases, `desktop-release.yml` and
+  `desktop-flasher-release.yml`, moved to `22` on 2026-10-09, so a shipped
+  bundle is built on the Node its PR checks ran.) Not machine-checked yet;
+  the reviewer holds it.
 - **One-off big downloads** (Emscripten SDK, Playwright Chromium) get an
   `actions/cache` entry — pinned-version keys for pinned tools, weekly
   keys for floating ones (see canary-local.yml).

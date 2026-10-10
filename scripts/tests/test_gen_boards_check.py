@@ -134,6 +134,24 @@ class GenBoardsCheck(unittest.TestCase):
         self.assertEqual(len(bad), 1, bad)
         self.assertIn("missing", bad[0])
 
+    def test_a_procedural_terminal_off_its_builder_is_named(self):
+        # The Waveshare's pads and pinout anchors are typed out in the config;
+        # they must be the points build_waveshare_4_3b lays the terminals at,
+        # even when boards.json was regenerated to match the wrong config.
+        def ws(d):
+            return next(b for b in d["boards"] if b["id"] == "waveshare_4_3b")
+
+        def move(d):
+            ws(d)["pads"]["SDA"] = [0.0, -13.0, -25.9]
+            ws(d)["pinout"][0]["anchors"][0] = [1.0, 2.0, 3.0]
+        self.s.edit_cfg(move)
+        self.s.edit_out(lambda d: (d["boards"]["waveshare_4_3b"]["pads"].__setitem__("SDA", [0.0, -13.0, -25.9]),
+                                   d["boards"]["waveshare_4_3b"]["pinout"][0]["anchors"].__setitem__(0, [1.0, 2.0, 3.0])))
+        bad = self.s.problems()
+        self.assertEqual(len(bad), 2, bad)
+        self.assertTrue(bad[0].startswith("waveshare_4_3b.pads['SDA']:"), bad[0])
+        self.assertIn("no terminal", bad[1])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,122 @@
 
 ## [Unreleased]
 
+## [2.4.16] - 2026-10-10
+
+### release: the 2.4.16 train and every app that moved (iOS 0.7.0, tvOS 0.3.0, Flasher 0.12.0, Lab 0.3.0, kernel / HA / add-on 0.8.0)
+
+- **Firmware 2.4.16** — the seven version strings and `fw_train`. Everything
+  under [Unreleased] since `fw-v2.4.15` ships in it: MQTT over TLS for Sense
+  and Vision, BLE OTA v2, the Bluetooth setup door ("magic pairing") on
+  Sense, Vision and the WAP, the Doorbell chime, and the cleanup below. The
+  emulator dist, `flash.json` and the firmware SBOM move with it.
+- **iOS 0.7.0** (`MARKETING_VERSION`, `ios/project.yml`; the Apple Watch app
+  inherits it): the add-a-Canary rework and the Watch parity below. No
+  synced CloudKit record changed since `ios-v0.6.0`, so no schema promotion
+  is owed before this one. One trade-off a human should know about: the away
+  subscription belongs to the iCloud account, so setting every rule on one
+  device to *On Wi-Fi only* deletes it for the account's other devices too
+  until one with an *Anywhere* rule next opens (the Alerts footer says so).
+- **tvOS 0.3.0** — the first tvOS entry here since `tvos-v0.2.4`: viewer-token
+  pairing with a pinned key, the sealed-log day timeline, and the hub's own
+  row named as the witness kernel.
+- **Flasher 0.12.0** and **Lab 0.3.0** — see `desktop/RELEASE_NOTES.md` and
+  `desktop-lab/RELEASE_NOTES.md`.
+- **Kernel, HA integration and add-on 0.8.0** — the first bump since 0.7.0
+  (2026-08-21), so add-on installs are offered the kernel and add-on work
+  since; `homeassistant.json`, `hub_image.json` and `start.json` regenerated.
+
+### Cross-platform cleanup: the iPhone setup reads what it hears, the two flashers say the same things, the Lab keeps its links and sheds its dead weight, the kernel's legacy detector API is gone, flags that switched nothing are deleted, and the Watch and Wall catch up with the iPhone
+
+- **iOS.** A new Canary brought near the iPhone slides up a card showing
+  what it is; Continue does the rest, and the success card names and
+  confirms that exact device. A fresh install offers *Find my Canary*, and
+  iOS asks for Bluetooth and Local Network access only after that tap. Your
+  home Wi-Fi is asked for once and fills in every way of adding a Canary
+  (*Update fleet Wi-Fi* keeps it current); a setup-network join lists the
+  networks the Canary itself can see, and scanning a display's QR starts
+  the join. Errors name the cause and a next step (wrong password, a
+  5 GHz-only network, out of range, a phone off Wi-Fi while pairing a WAP),
+  and Bluetooth or Local Network off or denied says why with *Open
+  Settings*. A WAP that joined but did not pair shows under *Ready to pair*
+  on the Fleet tab: add it from its recovery kit, or try again while its
+  one-time key is live. The Scan QR button shows on new installs; a Canary
+  broadcasting alert or degraded state over Bluetooth alone reads as
+  needing a look. Away alerts turn off for real when every rule is *On
+  Wi-Fi only*; *Forget this phone's snapshot key* tells your Canaries to
+  stop sealing to it; the alert heartbeat says *Alert delivery confirmed*
+  ("verified" stays with checked signatures), and the widgets show it when
+  alerts cannot get through. The hub's Canary password can be copied for
+  the Flasher on a Mac (Universal Clipboard; it clears after two minutes).
+- **Apple Watch and Apple TV.** Acknowledge an alert with a swipe on the
+  wrist and it clears everywhere; each Canary shows its picture, product
+  name, hub status and the radar's room words; mirrored alerts get their own
+  layout; complications show when alerts cannot reach you; *Check the
+  Fleet* works from Siri, Shortcuts and the Ultra Action button; Chirp is
+  offered only for a Canary that can chirp. The Witness Wall names the
+  hub's own row as the SecuraCV witness kernel, shown as software.
+- **Flasher (desktop).** After a flash, *Prove it, two ways*: each board's
+  live proof plus its emulated twin in the browser Lab. The WAP gets a
+  field bench in the serial monitor (presence verdicts, a device count —
+  never an identity — and the CSI stir meter). A recognized board's
+  self-check score, temperature and tamper flag show before you flash, as in
+  the browser. Full-flash backups are named `canary-<mac6>[-<stamp>]-backup.bin`,
+  the browser's scheme (older backup names still restore). The birth
+  certificate takes its name from the board's own key. A confirmed write,
+  checksum or card read-back says *confirmed*, *checked* or *read back*;
+  "verified" is kept for the Ed25519 release signature. Linux: the udev
+  rule covers the CP210x, CH340 and CH9102 bridges and keeps ModemManager
+  off the port, and writing a Pi hub card says up front that a normal
+  account cannot write a raw disk, with a per-card fix (INSTALL.md, *Write
+  a Pi hub card (Linux)*).
+- **Lab.** Broker TLS options are offered only when the pinned firmware
+  release carries TLS (the form names the release that brings it). Inside
+  the Lab app, *Test it over Bluetooth* says where the check runs (the
+  iPhone app, or the browser Lab in Chrome or Edge). *SecuraCV everywhere*
+  opens the family map; old Lab addresses for pages that moved to
+  securacv.com go to those pages; the Witness Wall's back link returns to
+  its bench; the header's Help link opens securacv.com/help. A malformed
+  `fleet.html` / `choose.html` link no longer throws. The print estimate
+  drops a slice button that could only say no; the site map drops a test
+  fixture (a 404) and a template. The Lab app no longer bundles page tests,
+  Python generators or shell scripts, its native interface is trimmed to
+  the commands its pages call, and its Linux udev rule matches the
+  Flasher's. The Workshop no longer lists proof QR, chain verify and night
+  blackout as Display switches — none controlled anything. Publishing a Lab
+  draft attaches the SBOMs, and *Update everything* no longer rebuilds a
+  version already waiting as a draft.
+- **Kernel.** `witness_kernel::DetectorBackend` at the crate root now names
+  the detection trait every backend implements; the legacy `Detector`,
+  `StubDetector`, `CpuDetector`, `StubFrameSource` and frame.rs `Frame` are
+  removed, as are the unused `stub-frame-source` Cargo feature (synthetic
+  frames come from `stub://` URLs) and the direct `libseccomp-sys`
+  dependency. CI runs the ONNX (`backend-tract`) detector tests instead of
+  only compiling them.
+- **Firmware.** The canary's full image no longer sets six flags that
+  turned nothing on (Bluetooth, system monitor, Wi-Fi presence, audible
+  chirp, RF presence, chirp), and a "disabled for security" flag that
+  controlled nothing is replaced by the flags that keep BLE out of the dev,
+  release and secure images. The WAP's docs and its missing-NimBLE error no
+  longer recommend the MINIMAL profile (no CI job builds it; it now warns).
+  The `csi_minimal` sample prints breathing as the dashboard does (strongest
+  bin). CI compiles the canary's `dev_ha`, `minimal` and `usb-onboard` envs
+  and the CSI sample, and fails a config `FEATURE_*` flag or a shared header
+  no compiled code uses (`firmware/scripts/check_config_feature_flags.py`,
+  run from `scripts/lint_feature_flags.sh` on every PR). Firmware releases
+  now carry the Rust, Node and firmware SBOMs (CycloneDX) as release
+  assets; Flasher releases carry them again and build on Node 22.
+- **Home Assistant.** The Lovelace timeline and aim cards reload whenever a
+  card file changes (the cache key follows the file, not the integration
+  version). The add-on's go2rtc discovery keeps every valid camera when one
+  stream is malformed and never creates a camera at URL `null`. The setup
+  guide says what the firmware rollback and the Ed25519 signature check
+  actually do, and its event-count example reads the real `/digest`
+  endpoint.
+- **Docs.** `docs/tvos/README.md` marks each Witness Wall feature as in the
+  app, emulator only or design only (the screensaver, break-glass, Incident
+  capture, dispute pack, multi-site board and digests are not in the native
+  app). `tv/gen_tv_html.py` gained `--check`, which firmware CI now runs.
+
 ### Magic pairing follow-up: the first-boot window survives a software restart, a BOOT tap on an installed witness raises the portal its join needs, and the WAP's door is bounded by what its sketch actually does
 
 Follow-up to the Bluetooth setup door (below) from the adversarial review

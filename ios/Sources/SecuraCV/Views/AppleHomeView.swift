@@ -52,13 +52,27 @@ struct AppleHomeView: View {
                 }
 
                 // §6's rule: the concierge appears with the accessories,
-                // not before — no HomeKit UI advertises an unbuilt lane.
+                // not before — no HomeKit UI advertises an unbuilt lane. Once
+                // it appears, the readiness ladder decides whether the button
+                // can work: a household member who isn't a home administrator,
+                // or a home with no scenes, gets the ladder's one sentence in
+                // place of a button that would end in a raw HomeKit error.
                 if home.authorized && !home.accessoryNames.isEmpty {
+                    let readiness = conciergeReadiness
                     Section {
-                        Button {
-                            showingConcierge = true
-                        } label: {
-                            Label("Tell the house", systemImage: "wand.and.stars")
+                        switch readiness {
+                        case .ready, .readyWithoutHomeHub:
+                            Button {
+                                showingConcierge = true
+                            } label: {
+                                Label("Tell the house", systemImage: "wand.and.stars")
+                            }
+                        default:
+                            if let note = readiness.note {
+                                Label(note, systemImage: "exclamationmark.triangle")
+                                    .font(.footnote)
+                                    .foregroundStyle(Theme.color(.warn))
+                            }
                         }
                     } footer: {
                         Text("Pick a signal, pick one of your scenes, and it becomes a real Home app automation — running on your home hub, this app closed.")
@@ -91,6 +105,19 @@ struct AppleHomeView: View {
         .sheet(isPresented: $showingConcierge) {
             AutomationConciergeSheet(home: home)
         }
+    }
+
+    /// The concierge's ladder (HomeAutomationAuthor.swift), fed from the
+    /// live bridge — the one place that decides whether "Tell the house"
+    /// can be offered.
+    private var conciergeReadiness: ConciergeReadiness {
+        ConciergeReadiness.evaluate(
+            isEnabled: home.isEnabled,
+            authorized: home.authorized,
+            isAdministrator: home.isAdministrator(),
+            accessoryCount: home.accessoryNames.count,
+            sceneCount: home.userScenes().count,
+            homeHubPresent: home.homeHubPresent)
     }
 
     private var plainSignals: [HomeSignal] {

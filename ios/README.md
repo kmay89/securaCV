@@ -73,7 +73,8 @@ ios/
                            + Setup (SetupView → HubSetupView / CanarySetupView: the two walkthroughs)
     SecuraCVWidgets/       Dynamic Island / Live Activity UI
     SecuraCVNotificationService/  NSE: shape the content-free wake into a shown alert
-    SecuraCVWatch/         SecuraCV on your wrist: WristStore + 3 screens (glance/heartbeat/about)
+    SecuraCVWatch/         SecuraCV on your wrist: WristStore + glance / alerts / heartbeat / about,
+                           plus witness detail and Find, a custom alert long-look, Check the Fleet
     SecuraCVWatchWidgets/  watch complications + Smart Stack card (read the watch-local cache)
   Tests/SecuraCVTests/     ChainVerifier + model/push-discipline + wrist-contract tests,
                            WitnessPageFixtureTests (spec/fixtures/witness_page_v1.json)
@@ -253,8 +254,11 @@ Four rules keep "beautiful" from decaying into "busy":
   keeps no device-token registry. The wake carries a coarse class and
   nothing else (`Shared/WakePayload.swift` — pure Foundation, the one file
   the NSE compiles, so a reviewer can check that claim by reading it); the
-  phone writes the words itself. The limit is stated in the UI rather than
-  hidden: something has to be **home** to post the wake, exactly as HomeKit
+  phone turns the class into its fixed sentence (`WakeClass.line`) and shows
+  which Canary in the app after the tap. Away alerts follow the rules both
+  ways: with no rule set to Anywhere, the iCloud subscription is deleted
+  (`AwayArming`), so opting out is as real as opting in. The limit is
+  stated in the UI rather than hidden: something has to be **home** to post the wake, exactly as HomeKit
   needs a hub, and `AwayReach` says so instead of leaving "Anywhere" looking
   like a promise. See the design doc §5 for why this replaced the hosted
   relay — which stays easy to add, since the receiver already decodes both
@@ -294,10 +298,13 @@ Four rules keep "beautiful" from decaying into "busy":
 ## Setting up from the phone
 
 The one thing every SecuraCV surface forgot to say was how a fleet comes to
-exist. **Set up** (Fleet → Options, the Start here card on an empty Today,
+exist. **Set up** (Fleet → Options, the first-run card on an empty Today,
 the hub card, the hive's "+", or `securacv://setup?what=hub|canary`) is the
 door to two walkthroughs — data in `Shared/SetupGuide.swift`, so the tests
-read the words the screen shows — and the phone does the parts a phone can:
+read the words the screen shows; each step leads with one sentence of at
+most twenty words (`SetupStep.short`, counted by `SetupGuideTests`) and
+keeps the full paragraph behind "How it works" — and the phone does the
+parts a phone can. Adding a Canary comes first everywhere; the hub second:
 
 - **A hub.** The desktop Flasher writes the Raspberry Pi's card; the phone
   finishes it, because Home Assistant OS runs nothing from the card itself
@@ -315,59 +322,109 @@ read the words the screen shows — and the phone does the parts a phone can:
   the integration is present). What stays yours is listed, never hidden:
   Frigate's camera config and the integration's files. The token is revoked
   on the way out; the password is never stored.
-- **A Canary — magic pairing.** The card first: a Sense, Vision or WAP
-  with no Wi-Fi saved opens its Bluetooth setup door for 30 minutes after
-  power-on (Improv Wi-Fi, the open standard; `Shared/ImprovWire.swift` is
-  the pure twin of the firmware's `improv_core.h`, pinned to the same byte
-  vectors by `ImprovWireTests`), the transport hears it (`BLEConsole.heard`:
-  the beacon's setup bit, the "Sense-AB12" name, the Improv service in the
-  scan response), `Shared/NearbyCanary.swift` decides which sightings
-  qualify (`NearbyCanaryTests`), and `NearbyCanaryCard` shows up on Today,
-  Fleet (comb and list) and as the first step of the walkthrough for those
-  three families (`SetupGuide.hasBluetoothDoor`, `SetupGuideTests`). Tap →
-  `Transport/ImprovClient.swift` connects, asks the Canary which networks
-  it sees, the person picks one and types the password once → **the iOS
-  pairing sheet**: the Canary refuses the credentials write on an
-  unencrypted link, so the first write makes iOS ask once (LE Secure
-  Connections, Just Works); CoreBluetooth pairs and retries the write on
-  its own; nothing is bonded, so the next Canary asks again — by design,
-  and the screen says so → the Canary's own verdict on its state and error
-  characteristics ("check the password"; or "already has Wi-Fi and isn't
-  accepting a new network — tap its button, or use its setup network").
-  For a WAP, `MagicPairPlan` (pure, `MagicPairPlanTests`) then reads the
-  one-time **claim ticket** over the same link and spends it on the home
-  Wi-Fi — `GET /api/provisioning-receipt?claim=<hex>` at the device's
-  `.local` name, pinning `tls_cert_fp` when present — so the receipt lands
-  in `DeviceStore` and the WAP is paired; the bearer token never rides
-  Bluetooth. A 403 on the claim (expired after 180 s, burned, or the phone
-  is not on that Wi-Fi yet) falls back to BOOT tap + "Add from receipt".
-  The household Wi-Fi can be remembered: `Security/HouseholdWiFi.swift`
-  keeps one Keychain item (`com.securacv.witness.household-wifi`,
-  `ThisDeviceOnly` — never iCloud Keychain, never CloudKit), written only
-  with the toggle on and only after a Canary itself said it joined, and
-  **Forget** on the Set up screen deletes it; the second Canary is two
-  taps. The door shuts for good once the Canary has Wi-Fi; a Sense or
-  Vision reopens it for a minute on a BOOT tap, and a Canary whose saved
-  Wi-Fi is merely failing never reopens it (that is the setup network's
-  job). Then the older paths, one per family, each the one its firmware
-  serves
-  (`SetupGuide.canary`): a display's glass QR (scanned with VisionKit, or
-  typed) and the phone joining `SecuraCV-XXXX` itself —
-  `NEHotspotConfiguration`, the Hotspot Configuration entitlement — to post
-  the home Wi-Fi to the portal's `/join` and show the device's `/status`
-  verdict (`Model/SetupPortal.swift`, `Transport/SetupPortalClient.swift`);
-  the same portal path with the Flasher-printed key for a camera or radar
-  Canary; the bonded Bluetooth provisioning service for a brand-new WAP
-  (`BLEConsole.writeWiFiCredentials`, the rescue path, now also the first
-  path); and the Fleet tab's discovery for the appearance.
+- **A Canary — as easy as AirPods.** The target is one card, one tap, the
+  household Wi-Fi asked for at most once, and a success card that names
+  *this* Canary. How each piece is held to it:
+  - **No prompt before its reason.** `BLEConsole` builds no
+    `CBCentralManager` until the first scan or setup tap (creating one *is*
+    iOS's Bluetooth alert); the scan starts only after the discovery
+    consent, so Bluetooth and Local Network are asked right after the
+    person's own "Find my Canary" — on **Today itself** on a fresh install
+    (`FirstRunCard`, `TodayView`), not only on the Fleet tab
+    (`AddCanaryFlowTests` pins both: no manager at launch, one
+    construction site).
+  - **The card comes to you.** A Sense, Vision or WAP with no Wi-Fi saved
+    opens its Bluetooth setup door (Improv Wi-Fi, the open standard;
+    `Shared/ImprovWire.swift` is the pure twin of the firmware's
+    `improv_core.h`, pinned to the same byte vectors by `ImprovWireTests`)
+    for 30 minutes after power-on. The transport hears it
+    (`BLEConsole.heard`: the beacon's setup bit, the "Sense-K7MZ" name, the
+    Improv service in the scan response), `Shared/NearbyCanary.swift`
+    decides which sightings qualify — the name's four characters are the
+    device pseudonym upper-cased, not hex — and when exactly one is close
+    and not yet offered (`NearbyCanaries.autoOffer`), **one card slides up
+    over whatever screen is showing** (`NearbyOfferOverlay`, mounted at the
+    root): its figure, its name, Continue, Not now. Two on the table stay a
+    choice in the inline card (Today, Fleet, the "+" sheet and the first
+    section of the walkthrough — which listens before it asks "which
+    Canary is it?", because the advert already says).
+  - **One tap, then the Canary's own word.** Continue →
+    `Transport/ImprovClient.swift` connects; the first encrypted write (the
+    network scan) raises **the iOS Pair sheet**, and the screen says to tap
+    Pair right then (a declined pairing is named, not a silently empty
+    list); the Canary lists the networks *it* can see; the remembered
+    household Wi-Fi is preselected when it is in that list; Join → the
+    Canary's own verdict. Before sending, the likely failure is named (a
+    network the Canary can't see — these boards are 2.4 GHz only — or a
+    password under 8 characters), and a failed join says both real causes.
+  - **A WAP pairs in the same tap.** `MagicPairPlan` (pure,
+    `MagicPairPlanTests`) reads the one-time **claim ticket** over the same
+    link and spends it on the home Wi-Fi —
+    `GET /api/provisioning-receipt?claim=<hex>` at the device's `.local`
+    name, then the address it reported, pinning `tls_cert_fp` when present
+    — so the receipt lands in `DeviceStore`; the bearer token never rides
+    Bluetooth. When nothing answered (the phone off Wi-Fi — named, from
+    `NetworkVantage`, with no permission — or a `.local` name not settled
+    yet) the claim is unspent, so the card offers **Try again** while it
+    lives (180 s). A refused or expired claim ends on the device's row under
+    **Ready to pair** on the Fleet tab, where `PairView` takes its recovery
+    kit (the receipt its own setup page saves after a BOOT tap; opened from
+    Files or pasted, its setup-network address moved onto the address the
+    WAP answers at now by `ProvisioningReceipt.rebased`, the pin still the
+    kit's own) or walks a fresh setup. There is no in-app BOOT-tap pairing
+    over the LAN, and no message promises one.
+  - **The success card names this unit.** "Canary Sense K7MZ is on Home",
+    then the network watch ticks only the device whose mDNS host carries
+    the same pseudonym as its advert or its setup network
+    (`NearbyCanaries.isSameDevice`) — never "any Canary of the same kind",
+    so a Vision you already own cannot answer for the new one. The watch
+    ends in words after 90 s instead of spinning on.
+  - **Asked once.** `Security/HouseholdWiFi.swift` keeps one Keychain item
+    (`com.securacv.witness.household-wifi`, `ThisDeviceOnly` — never iCloud
+    Keychain, never CloudKit), written only with the toggle on and only
+    after a Canary itself said it joined. Every path that asks for Wi-Fi
+    opens with it (the card, a setup network), every proven join may save
+    it, **Update fleet Wi-Fi** replaces it once a Canary proved the new
+    password (only if it was remembered before), and **Forget** on the Set
+    up screen deletes it.
+  - **Never a spinner without a reason.** Bluetooth off, Bluetooth not
+    allowed, and Local Network not allowed (NWBrowser *waits* with
+    DNS-SD's policy-denied error; `Discovery.localNetworkBlocked`) each
+    replace "Listening…" with one sentence and, where the fix is this
+    app's Settings page, **Open Settings** (`Model/AddCanaryFlow.swift`,
+    `RadioAdviceRow`) — on Today, the walkthrough, the card, the Find
+    screen and the hub watch.
+
+  The door shuts for good once the Canary has Wi-Fi; a Sense or Vision
+  reopens it for a minute on a BOOT tap, and a Canary whose saved Wi-Fi is
+  merely failing never reopens it (that is the setup network's job). Then
+  the older paths, one per family, each the one its firmware serves
+  (`SetupGuide.canary`): a display's glass QR (the button asks for the
+  camera at the tap — VisionKit reports itself unavailable until it is
+  allowed — and a good scan starts the join by itself), or the
+  Flasher-printed key for a camera or radar Canary; the phone joins
+  `SecuraCV-XXXX` itself — `NEHotspotConfiguration`, the Hotspot
+  Configuration entitlement — asks the portal's `GET /scan` which networks
+  the Canary can see, posts the pick to `/join`, and shows the device's
+  `/status` verdict with the tip its own page would give and a retry that
+  needs no new prompt (`Model/SetupPortal.swift`,
+  `Transport/SetupPortalClient.swift`). A brand-new WAP's fallback is its
+  own setup page, which the walkthrough explains and the person drives (the
+  bonded Bluetooth step it used to show could never list a device: a new
+  WAP does not advertise that console). What still needs the Flasher is
+  said where it matters: a Sense or Vision's hub login goes into the
+  Flasher's MQTT fields, and the walkthrough copies the password to the
+  clipboard (two-minute expiry; Universal Clipboard carries it to the Mac
+  the Flasher runs on) instead of printing it.
 
 Honest status: the pure halves are host-tested (`ImprovWireTests`,
-`MagicPairPlanTests`, `NearbyCanaryTests`, `SetupGuideTests`); the
+`MagicPairPlanTests`, `NearbyCanaryTests`, `SetupGuideTests`,
+`SetupPortalTests`, `HouseholdWiFiTests`, `AddCanaryFlowTests`); the
 end-to-end runs want a real first boot and a real Canary, which the gated
 macOS CI cannot give. Magic pairing in particular has not been tried on a
 bench: the iOS pairing sheet's timing against NimBLE 1.4.x (a Vision), the
-once-only claim read on a WAP and the card's fifteen-second freshness
-against a real beacon are the open items
+once-only claim read on a WAP, the card's fifteen-second freshness and the
+pop-up's −70 dBm "close" band against a real beacon are the open items
 ([the design's checklist](../docs/design/magic_pairing.md#9-bench-checklist-what-to-verify-before-calling-it-shipped)).
 
 ## On your iPad
@@ -425,7 +482,31 @@ still lands somewhere sensible. The link carries only when the target is
 still honestly findable (named in the cached snapshot, beacon
 recognizable); anything less and the tap opens the app plainly instead of
 promising a search it can't run. The phone answers the same route: a
-`securacv://find?witness=…` link lands in its own Find screen.
+`securacv://find?witness=…` link lands in its own Find screen. "Chirp" is
+offered only for a row the phone says can answer it (`canIdentify` — a
+paired WAP, the only firmware that serves `/api/identify`).
+
+**What the device is, and how its room stands.** Each snapshot row carries
+additive-optional `publishedType` / `hardware` / `hubRaw` and the radar's
+coarse room words, so the wrist draws the same figure and product name the
+phone and the Witness Wall do (`FleetFigureBridge`, `DeviceNaming`) and says
+the room and hub in the Wall's exact sentences (`Shared/DeviceGlanceCopy`,
+compiled by both). The beacon's "seeing now" claim is deliberately not
+carried: it goes stale in two minutes. Complications redraw only when what
+they draw moved (`drawsSameGlance`), so room words don't spend the widget
+budget.
+
+**Acknowledge from the wrist, one acknowledgment everywhere.** The Alerts
+page's leading swipe asks the phone to acknowledge (`WristSync.commandAck`),
+through the same `acknowledgeAlert` the Alerts tab and the notification
+action call. Mirrored witness alerts get a custom long-look
+(`WitnessNotification.swift`, keyed on `Shared/NotificationIDs`): the
+alert's own words plus the Canary's figure, name and chain badge from the
+cache — never its cached severity, which may be older than the alert. And
+the glance never says "all quiet" over a dead delivery path: when every
+Canary is fine but the heartbeat is dark or failed, the complications and
+the glance header show the heartbeat (`WristSnapshot.pathAlarm`), the same
+rule the spoken answer follows.
 
 ## Ask, don't open — Siri, Shortcuts, Spotlight, the Action button
 
@@ -438,7 +519,10 @@ rot:
 
 - **Check the Fleet** — the one honest answer, spoken from the same glance
   cache the widgets render. No app launch, no radio, instant. "All's well —
-  5 of 5 healthy."
+  5 of 5 healthy." The watch exports the same verb
+  (`SecuraCVWatch/WristIntents.swift`) over its own cache, through the same
+  `GlanceAnswer` composer, so Siri on the wrist and an Ultra's Action button
+  answer the same way.
 - **Test Alert Path** — the alert self-test from anywhere a Shortcut can
   run: posts a real notification and confirms iOS accepted it, the same
   green check the provably-alive card lights. Opens the app on purpose: the
