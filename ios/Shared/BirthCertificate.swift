@@ -15,12 +15,13 @@
 //   there is nothing to drift — the property the fleet figures already have,
 //   applied to identity.
 //
-//   It also makes the name CHECKABLE. When a device asserts its own name (the
-//   firmware derives the same certificate at first boot and serves it), the
-//   app doesn't have to believe it: `verify(claimed:matches:)` recomputes from
-//   the key. A device that answers to a name its key doesn't produce is not a
-//   device with a nickname — it is a device whose identity doesn't add up, and
-//   that is worth seeing.
+//   It also makes the name CHECKABLE. No firmware serves its own name yet;
+//   when one does, the app won't have to believe it:
+//   `verify(claimed:fingerprint:)` recomputes from the key. A device that
+//   answers to a name its key doesn't produce is not a device with a
+//   nickname — it is a device whose identity doesn't add up, and that is
+//   worth seeing. (Host-tested today; no screen calls it until a device-served
+//   name exists to check.)
 //
 // AGREEMENT ACROSS LANGUAGES
 //   The algorithm also lives in canary-local/tools/hatchery/derive.mjs (the
@@ -139,11 +140,10 @@ public enum BirthCertificateDerivation {
 
     /// Does the name a device CLAIMS match the one its key produces?
     ///
-    /// The firmware derives its own certificate at first boot and serves it,
-    /// and this is why the app never has to take that at face value. A
-    /// mismatch is not cosmetic: the name is a function of the key, so two
-    /// different answers mean the thing answering is not the thing whose key
-    /// we pinned.
+    /// For the day a firmware serves its own name (none does yet): the app
+    /// never has to take that at face value. A mismatch is not cosmetic: the
+    /// name is a function of the key, so two different answers mean the
+    /// thing answering is not the thing whose key we pinned.
     public static func verify(claimed name: String, fingerprint: String) -> Bool {
         guard let derived = certificate(fingerprint: fingerprint) else { return false }
         return derived.name.compare(name.trimmingCharacters(in: .whitespacesAndNewlines),

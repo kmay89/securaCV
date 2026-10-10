@@ -1,8 +1,9 @@
-# Files staged into this directory by ../../setup.sh arduino from
-# environment-specific sources elsewhere in the repo:
-#   - pins.h, camera.h: firmware/boards/xiao-esp32s3-sense/pins/
-#   - config.h:         firmware/configs/canary-wap/default/
+# Files ../../setup.sh arduino writes here, or once wrote:
 #   - secrets.h:        gitignored everywhere; populated from secrets/secrets.h
+#                       (nothing in the sketch reads it)
+#   - pins.h, camera.h, config.h: staged by older versions of setup.sh, which
+#                       no longer copies them (the sketch includes none of
+#                       them). Still ignored so a leftover copy stays out of git.
 #
 # The CSI library files (csi_*, core_*, anomaly_baseline.*, meta_daily_summary.*)
 # are NOT gitignored — they are committed copies of firmware/common/csi/src/

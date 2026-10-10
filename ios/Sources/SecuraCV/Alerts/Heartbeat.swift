@@ -29,12 +29,12 @@
 //      the window at every foreground.
 //   2. SILENCE ONLY COUNTS IF SOMETHING WAS EXPECTED. With nothing paired
 //      there is no beat to miss, so `expectsBeats` stays false and the card
-//      says "not yet verified" instead of raising an alarm about a fleet the
-//      user hasn't got yet.
+//      says "Alert delivery not tested yet" instead of raising an alarm
+//      about a fleet the user hasn't got yet.
 //
 // `lastVerified`/`lastBeat` persist: an app relaunch must not throw away a
 // verification the user actually earned (before this, every cold start reset
-// the card to "Not yet verified" and the Test Alert had to be re-run to say
+// the card to "not tested yet" and the Test Alert had to be re-run to say
 // anything at all).
 
 import Foundation
@@ -223,7 +223,7 @@ final class Heartbeat: ObservableObject {
         // So does a FAILED one, until the path actually works again. This
         // matters more now that verifications persist: without it, "Test
         // failed: notifications are off for SecuraCV" would be overwritten by
-        // the next 20-second refresh with "Delivery verified 3 days ago" —
+        // the next 20-second refresh with "Alert delivery confirmed 3 days ago" —
         // a stale success papering over a live failure the user just saw.
         // Only a fresh `.pathVerified` beat clears it (see `recordBeat`); a
         // Canary checking in does not, because it doesn't fix what broke.

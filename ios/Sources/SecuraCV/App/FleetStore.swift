@@ -26,7 +26,6 @@ final class FleetStore: ObservableObject {
     /// URL, never the file: nothing is read until the screen reads it.
     @Published var pendingSealedSnapshot: URL?
     @Published var fleetName: String = "Your Canaries"
-    @Published var isRefreshing = false
 
     // Demo mode: the seeded DemoFleet joins (never replaces) anything real,
     // so the app demos on a Simulator or a hardware-free phone. Views flip it
@@ -37,10 +36,16 @@ final class FleetStore: ObservableObject {
     // Consent-first discovery: nil = never asked, false = "Not now", true =
     // radios may run. No mDNS browse, no BLE scan — and therefore no iOS
     // Local Network / Bluetooth permission dialog — before the user says so.
+    // (That includes the Bluetooth one: BLEConsole builds no central manager
+    // until the first scan — creating one is itself the prompt.)
     @Published private(set) var discoveryConsent: Bool?
     /// Setup-door suffixes ("AB12") the person waved away this session: the
     /// card stays quiet for them until the app is relaunched.
     @Published private(set) var dismissedNearby: Set<String> = []
+    /// Suffixes the card that slides up by itself has already offered this
+    /// session — answered or not, it never offers the same Canary twice
+    /// (the inline card on Today and Fleet still lists it).
+    @Published private(set) var offeredNearby: Set<String> = []
 
     // Collaborators
     let devices: DeviceStore
@@ -85,7 +90,6 @@ final class FleetStore: ObservableObject {
     let voice = CanaryVoiceStage()
     @Published private(set) var canaryFace: CanaryFace = .calm
     @Published private(set) var canaryPosture: CanaryPosture = .asFace
-    @Published private(set) var canaryAnxiety: Int = 0
     @Published private(set) var canaryTrustDays: Int = 0
     @Published private(set) var moodLine: String?
     /// Content fingerprint of the last glance snapshot handed to the iPhone
@@ -208,15 +212,17 @@ final class FleetStore: ObservableObject {
             Task { await alerts.requestAuthorization() }
         }
         Task { await hydrateFromCloud() }
-        // The away path, if the user armed it. Enabling is idempotent and
-        // never prompts — it only asks iOS for a push token and makes sure
-        // the iCloud subscription exists, so a reinstall or a new iPhone
-        // re-arms itself without the user hunting for a switch.
-        if AlertRule.anyReachesAnywhere(rules: alerts.rules) {
-            Task {
-                await AwayPush.shared.enable()
-                await AwayPush.shared.sweepOldWakes()
-            }
+        // The away path follows what the user armed, BOTH ways. Enabling is
+        // idempotent and never prompts — it only asks iOS for a push token
+        // and makes sure the iCloud subscription exists, so a reinstall or a
+        // new iPhone re-arms itself without the user hunting for a switch.
+        // With no rule set to Anywhere, a subscription this device may still
+        // hold is deleted instead (AwayArming), so an opt-out survives a
+        // relaunch that happened before iCloud confirmed it.
+        let rules = alerts.rules
+        Task {
+            await AwayPush.shared.follow(rules: rules)
+            await AwayPush.shared.sweepOldWakes()
         }
         // The household legs, re-armed the same way and for the same reason.
         // Both directions have to be asked rather than remembered: a device
@@ -260,8 +266,10 @@ final class FleetStore: ObservableObject {
     }
 
     /// The consent gate's one entry point. Granting starts the radios NOW —
-    /// so iOS's Local Network prompt appears right after the user's own yes,
-    /// in context. Declining stops them and clears anything they'd found.
+    /// so iOS's Bluetooth and Local Network prompts appear right after the
+    /// user's own yes, in context (the scan's first call is what builds
+    /// the Bluetooth manager, and so raises its prompt). Declining stops
+    /// them and clears anything they'd found.
     func setDiscoveryConsent(_ granted: Bool) {
         Consents.setDiscovery(granted)
         discoveryConsent = granted
@@ -300,6 +308,36 @@ final class FleetStore: ObservableObject {
         dismissedNearby.insert(suffix)
     }
 
+    /// The one Canary to offer by itself, AirPods-style (the policy is
+    /// NearbyCanaries.autoOffer: exactly one close, not yet offered).
+    var nearbyOffer: NearbyCanary? {
+        NearbyCanaries.autoOffer(nearbyCanaries, alreadyOffered: offeredNearby.union(dismissedNearby))
+    }
+
+    func noteOffered(_ suffix: String) {
+        offeredNearby.insert(suffix)
+    }
+
+    /// What a setup screen should say instead of "Listening…" over
+    /// Bluetooth — nil while the radio can hear (Model/AddCanaryFlow.swift).
+    var bluetoothAdvice: RadioAdvice? { SetupRadioAdvice.bluetooth(ble.radio) }
+
+    /// The same for a screen watching the Wi-Fi for a Canary to appear.
+    var localNetworkAdvice: RadioAdvice? { SetupRadioAdvice.localNetwork(blocked: discovery.localNetworkBlocked) }
+
+    /// The mDNS rows not already in the fleet, split into the ones this
+    /// phone can pair and the ones merely on the network (FleetMerge).
+    var discoveredRows: (pairable: [DiscoveredCanary], onNetwork: [DiscoveredCanary]) {
+        FleetMerge.discoveredRows(found: discovery.found, fleet: witnesses,
+                                  pairedIDs: Set(devices.devices.map(\.id)))
+    }
+
+    /// Is there a real (non-demo) fleet yet? Today's first-run card and
+    /// the walkthrough's ordering both turn on it.
+    var hasRealFleet: Bool {
+        !devices.devices.isEmpty || witnesses.contains { !$0.id.hasPrefix(DemoFleet.idPrefix) }
+    }
+
     private func startRadiosIfConsented() {
         guard discoveryConsent == true else { return }
         discovery.start()
@@ -330,10 +368,11 @@ final class FleetStore: ObservableObject {
         }
     }
 
-    /// Back to "Not yet verified" — but only if the beat was demo-fed; a real
-    /// confirmation is never discarded. The flag lives on the heartbeat (and
-    /// is never persisted) so this stays true across a relaunch: a demo beat
-    /// that outlived the app would be a stage prop nothing could revoke.
+    /// Back to "Alert delivery not tested yet" — but only if the beat was
+    /// demo-fed; a real confirmation is never discarded. The flag lives on
+    /// the heartbeat (and is never persisted) so this stays true across a
+    /// relaunch: a demo beat that outlived the app would be a stage prop
+    /// nothing could revoke.
     private func revokeDemoBeat() {
         if heartbeat.isDemoFed { heartbeat.reset() }
     }
@@ -382,9 +421,6 @@ final class FleetStore: ObservableObject {
     }
 
     func refreshOnce() async {
-        isRefreshing = true
-        defer { isRefreshing = false }
-
         var next: [Witness] = []
         var events: [TimelineEvent] = []
 
@@ -558,7 +594,6 @@ final class FleetStore: ObservableObject {
         let stageWasBlocked = canaryFace == .hidden
         canaryFace = reading.face
         canaryPosture = reading.posture
-        canaryAnxiety = reading.state.anxiety
         canaryTrustDays = reading.state.trustDays
         moodLine = composeMoodLine(reading: reading)
 
@@ -1697,6 +1732,17 @@ final class FleetStore: ObservableObject {
     }
 
     // MARK: - identify (make one Canary find YOU)
+
+    /// Can this Canary be asked to chirp from here? Only a paired WAP-class
+    /// Canary serves `/api/identify` (the route lives in canary-wap alone),
+    /// and only one this phone holds an address for can be reached. ONE
+    /// answer for the phone's Find screen and the wrist's (it rides the
+    /// snapshot as `WristWitness.canIdentify`), so neither offers a button
+    /// that can only fail.
+    func canIdentify(_ w: Witness) -> Bool {
+        w.deviceType == .wap
+            && devices.devices.contains { $0.id == w.id && $0.baseURL != nil }
+    }
 
     /// Ask one paired Canary to make itself known — the firmware's ~15 s
     /// identify (LED blink + chirp). Used by the phone's Find screen and by

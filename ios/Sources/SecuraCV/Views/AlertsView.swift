@@ -560,15 +560,19 @@ struct AlertRulesSheet: View {
                               : "exclamationmark.triangle")
                         .font(.footnote)
                         .foregroundStyle(away.reach.isReady ? .secondary : Theme.color(.warn))
-                    if !away.reach.isReady {
+                    // Offer the retry only when a rule actually wants the
+                    // away path. With every rule on Wi-Fi only the line above
+                    // already says it's off by choice, and a "Set up" button
+                    // would arm a path the very next rule check tears down.
+                    if !away.reach.isReady, AlertRule.anyReachesAnywhere(rules: center.rules) {
                         Button("Set up away alerts") {
-                            Task { await away.enable() }
+                            Task { await away.follow(rules: center.rules) }
                         }
                     }
                 } header: {
                     Text("Away from home")
                 } footer: {
-                    Text("Away alerts travel through your own iCloud: a device that's home posts a wake carrying nothing but how serious it is — no name, no time, no footage — and your iPhone writes the words itself. SecuraCV runs no server in that path and can't read any of it.")
+                    Text("Away alerts travel through your own iCloud: a device that's home posts a wake carrying nothing but how serious it is — no name, no time, no footage — and your iPhone writes the words in a fixed sentence for that class. SecuraCV runs no server in that path and can't read any of it. Set every rule to On Wi-Fi only and this iPhone deletes the away subscription from your iCloud; another of your devices with an Anywhere rule sets it up again when it next opens.")
                 }
             }
             .navigationTitle("Alerts")
@@ -579,8 +583,15 @@ struct AlertRulesSheet: View {
                 }
             }
             .sheet(isPresented: $showingHousehold) { HouseholdSheet() }
+            // The away path follows the rules both ways: a rule switched to
+            // Anywhere sets it up, the last one switched away tears the
+            // iCloud subscription down (AwayArming — opt-out as real as
+            // opt-in).
+            .onChange(of: center.rules) { _, rules in
+                Task { await away.follow(rules: rules) }
+            }
             .task {
-                if !away.reach.isReady { await away.enable() }
+                await away.follow(rules: center.rules)
                 // Who is actually on the share is only ever learned by
                 // asking — acceptance happens on someone else's device.
                 await household.refreshMembers()

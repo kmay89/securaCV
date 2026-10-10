@@ -58,13 +58,18 @@ final class ImprovClient: NSObject, ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .connecting
-    @Published private(set) var deviceState: ImprovWire.State?
     @Published private(set) var lastError: ImprovWire.Error = .none
     @Published private(set) var capabilities: UInt8 = 0
     /// The networks the Canary reported, strongest first as it sent them.
     @Published private(set) var networks: [ImprovWire.Network] = []
     /// Firmware name, version, hardware, device name — once asked.
     @Published private(set) var deviceInfo: [String] = []
+    /// The first encrypted write (the network scan, when the Canary can
+    /// scan) is what raises iOS's Pair sheet; when it was declined or
+    /// ignored, the scan comes back empty for that reason and not because
+    /// the Canary heard nothing. The sheet says so instead of silently
+    /// dropping to a typed name. Cleared by the next write that lands.
+    @Published private(set) var pairingDeclined = false
     /// The URLs the last WIFI_SETTINGS result carried.
     private var lastURLs: [String] = []
 
@@ -280,11 +285,16 @@ extension ImprovClient: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == Self.commandUUID, let error else { return }
+        guard characteristic.uuid == Self.commandUUID else { return }
+        guard let error else {
+            pairingDeclined = false   // a write landed: the link is encrypted now
+            return
+        }
         // The pairing sheet was declined, or the Canary refused the write.
         let why: String
         if let cb = error as? CBATTError,
            cb.code == .insufficientEncryption || cb.code == .insufficientAuthentication {
+            pairingDeclined = true
             why = "Bluetooth pairing was declined — tap Pair when iOS asks, so the credentials cross encrypted."
         } else {
             why = "The Canary refused the request — \(error.localizedDescription)"
@@ -319,8 +329,7 @@ extension ImprovClient: CBPeripheralDelegate {
             }
 
         case Self.stateUUID:
-            guard let s = ImprovWire.parseState(data) else { return }
-            deviceState = s
+            guard ImprovWire.parseState(data) != nil else { return }
             if phase == .discovering {
                 phase = .ready
                 if let w = readyWaiter { readyWaiter = nil; w.resume(returning: true) }

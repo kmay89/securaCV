@@ -173,7 +173,7 @@
     { "label": "Privacy", "href": "/privacy.html" },
     { "label": "GitHub", "href": "https://github.com/kmay89/securaCV" }
   ],
-  "$redirects_note": "Maps an old slug → the new canonical slug. Every target below is now defined as a `slug` on a bench (stages[].benches[]) or a site link (stages[].site[]), so a renderer can always resolve it.",
+  "$redirects_note": "Maps an old slug → the new canonical slug. Every target below is defined as a `slug` on a bench (stages[].benches[]) or a site link (stages[].site[]), so a renderer can always resolve it: a bench target opens that bench, and a site-link target leaves for that page on securacv.com (lab-shell.js siteRoute forwards lab.html#old-slug there; site-map.js links it directly). tests/build_line.test.js holds both halves.",
   "redirects": {
     "board-room": "boards", "wap": "first-boot", "homeassistant": "hub",
     "showroom": "see-it-in-3d", "playground": "test-bench",
@@ -189,9 +189,14 @@
           { "noun": "Site map", "href": "site-map.html", "purpose": "The complete Lab sitemap, rendered from this manifest: every bench, depth, site handoff, redirect and documentation page." },
           { "noun": "Legacy Lab front door", "href": "index.html", "purpose": "Redirects old links to the Lab shell or fleet cards." },
           { "noun": "Isometric room", "href": "room.html", "purpose": "Embedded workshop overview used by the Lab shell." },
-          { "noun": "Emulator harness", "href": "emulator/web/harness.html", "purpose": "Developer/CI boot harness for real display firmware compiled to WebAssembly." },
-          { "noun": "Kiri slicing fixture", "href": "tests/fixtures/kiri_harness.html", "purpose": "Offline test fixture for the enclosure/slicer bench." },
           { "noun": "Canary Voice sound board", "href": "voice/index.html", "purpose": "Hear the display's acoustic signatures (boot, alerts, interactions) — generated from voice_score.h and CI-gated, so it never drifts from the firmware." }
+        ]
+      },
+      {
+        "label": "For developers",
+        "items": [
+          { "noun": "Emulator harness", "href": "emulator/web/harness.html", "purpose": "Developer/CI boot harness for real display firmware compiled to WebAssembly." },
+          { "noun": "Kiri slicing fixture", "href": "https://github.com/kmay89/securaCV/blob/main/canary-local/tests/fixtures/kiri_harness.html", "purpose": "Offline test fixture for the enclosure/slicer bench. Source only: tests/ is not deployed with the Lab." }
         ]
       },
       {
@@ -207,7 +212,6 @@
           { "noun": "Witness kernel explainer", "href": "https://github.com/kmay89/securaCV/blob/main/docs/witness-kernel.html", "purpose": "Standalone architectural explainer for the privacy witness kernel." },
           { "noun": "Break-glass ceremony", "href": "https://github.com/kmay89/securaCV/blob/main/src/break_glass/breakglass.html", "purpose": "Local quorum unseal UI for raw-media access." },
           { "noun": "Evidence viewer", "href": "https://github.com/kmay89/securaCV/blob/main/viewer/evidence_viewer.html", "purpose": "Offline verifier/viewer for exported witness evidence." },
-          { "noun": "Evidence viewer template", "href": "https://github.com/kmay89/securaCV/blob/main/viewer/template.html", "purpose": "Template used to package static evidence viewer exports." },
           { "noun": "Privacy witness wizard", "href": "https://github.com/kmay89/securaCV/blob/main/privacy_witness_kernel/wizard/index.html", "purpose": "Standalone setup wizard for the privacy witness kernel prototype." }
         ]
       }

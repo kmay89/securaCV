@@ -1132,7 +1132,12 @@
 - **Principle:** All API traffic must be encrypted. No plaintext HTTP.
 - **Why:** Even on a local AP, an attacker in WiFi range can sniff plaintext
 - **Rule:** HTTP requests get 301 redirect to HTTPS. No `http://` endpoints.
-  `DEFAULT_TLS_REQUIRED` must be 1 in `secure_defaults.h`.
+  Not every canary image meets it yet: `[env:dev]` / `[env:full]` serve
+  HTTPS with the redirect (`FEATURE_HTTPS=1`), while `[env:release]` stays
+  HTTP until the TLS stack fits its OTA slot (`firmware/FEATURES.md` has the
+  per-image cell). The `DEFAULT_TLS_REQUIRED 1` that `secure_defaults.h` once
+  carried was read by nothing, so it stated the rule without holding it
+  (removed 2026-10-09).
 - **Regression check:** Script checks for HTTP listener without TLS redirect
 - **Date established:** 2026-02
 
@@ -1144,14 +1149,28 @@
   Chain corrupt → tamper alert. Never degrade silently.
 - **Date established:** 2026-02
 
-### Secure defaults in secure_defaults.h
-- **Principle:** All security-sensitive compile-time defaults are centralized
-  in `firmware/canary/include/secure_defaults.h`
-- **Why:** Scattered defaults are easy to misconfigure. Centralized defaults
-  with static assertions prevent accidental weakening.
-- **Rule:** Production builds should define `SECURACV_ENFORCE_SECURE_DEFAULTS=1`
-  to trigger compile-time checks against insecure values.
-- **Date established:** 2026-02
+### Secure defaults: a map of where each one lives, checked where it is set
+- **Principle:** Every security-sensitive default is written down in one
+  place, `firmware/canary/include/secure_defaults.h`, as a map: each
+  principle and the knob that really decides it (`canary_config.h`,
+  `platformio.ini`, the provisioning kit).
+- **What happened:** The header began (2026-02) as `DEFAULT_*` macros plus
+  an `#error` block "to enforce" them under
+  `SECURACV_ENFORCE_SECURE_DEFAULTS`. No source included it and no build
+  defined the switch, so none of the fourteen macros reached compiled code,
+  and the `#error`s compared the header's constants to themselves, so they could
+  not fire on a real setting even when enabled. Several values contradicted
+  the firmware (TLS "required" on an image that serves HTTP; secure boot and
+  flash encryption "1" on boards that ship without either). The
+  regression check passed because the file existed and named four macros.
+- **Rule:** A default is enforced where it is set, by a check that reads
+  that file. Never centralize a security default as a macro nothing
+  includes: it reads as enforcement and enforces nothing.
+- **Regression check:** `regression_check.sh` "Security: hardened defaults"
+  reads `platformio.ini`, `platformio_secure.ini` and `canary_config.h` (BLE
+  out of dev/release/secure, MQTT out by default, one SoftAP client) and
+  fails if `DEFAULT_*` macros come back into `secure_defaults.h`.
+- **Date established:** 2026-02; corrected 2026-10-09
 
 ---
 
@@ -1749,6 +1768,35 @@
   gated symbols is in this PR's history if it's ever wanted as a lint.
 - **Date learned:** 2026-08
 
+### A flag nothing reads, a header nothing includes, an env nothing builds: each reads as real
+- **What happened:** A dead-code audit (2026-10-09) found the same failure
+  in three shapes. Flags: `FEATURE_PROOF_QR`, `FEATURE_CHAIN_VERIFY` and
+  `FEATURE_NIGHT_BLACKOUT` in the display configs, and six canary
+  `[env:full]` flags (`FEATURE_BLUETOOTH` among them, also set to 0 in the
+  secure env "for security"), were read by no source, yet docs described a
+  first-boot night seed that did not exist, a size plan named a cut that
+  would remove nothing, and the Lab Workshop listed them as switches.
+  Headers: sixteen under `common/` (the whole `hal/` "seam") were included
+  by nothing, so one that did not parse as C++ sat there for months.
+  Envs and samples: four canary envs and both firmware samples were
+  compiled by no job, and one sample had already drifted from the library.
+  `firmware/configs/canary-wap/` was compiled by no build at all while the
+  Workshop, `FEATURES.md` and the Flipper guide quoted its flags.
+- **Root cause:** every one of these passed the guards that existed: the
+  reachability check looked at `.cpp` files, the flag lint at Cargo
+  features, and CI at the envs `flavors.json` lists. The shape of a feature
+  stayed after its substance left, and nothing compared the two.
+- **Rule:** a flag is read where its code compiles, a header is included by
+  compiled code, an env or sample a doc offers is compiled by CI; otherwise
+  it is deleted, or listed as a waiver/descriptor with its reason.
+- **Regression check:** `firmware/scripts/check_config_feature_flags.py`
+  (configs/ flags and the canary's `-D` / `canary_config.h` flags) and the
+  header pass of `check_common_build_reachability.py`, both in
+  `firmware.yml` Regression Guards; the canary's `dev_ha` / `minimal` /
+  `usb-onboard` compile-only step and the `examples/csi_minimal` compile in
+  `firmware.yml`, and `firmware/tests_host`'s `run-syntax-checks`.
+- **Date learned:** 2026-10
+
 ---
 
 ## Memory Budget
@@ -2264,6 +2312,12 @@
   `BUILD_PROFILE_MINIMAL` is still compiled by nobody and is a declared
   gap: the sketch fences the HTTP server's startup, not its handler
   bodies, so a no-WiFi/no-HTTP/no-SD build needs a fencing repair first.
+  Since 2026-10-09 the profile says so itself: `build_config.h` raises a
+  `#warning` on a MINIMAL build, the sketch's docs recommend DEV (the lighter
+  profile CI compiles) for fast iteration, and `ble_config.h`'s
+  missing-NimBLE message no longer offers MINIMAL as the way out: DEV
+  compiles BLE in too, so with MINIMAL unverified the honest fix is to
+  install NimBLE.
 - **Date learned:** 2026-09
 
 ## OTA: every install channel runs the same policy, or the policy is prose

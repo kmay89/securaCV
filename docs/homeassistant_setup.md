@@ -687,12 +687,15 @@ extra setup needed.
 
 - When a new release is published, the device's update entity shows
   "Update available" with the release notes. Press **Install**: the device
-  downloads the update over HTTPS, verifies its SHA-256 and Ed25519
-  release signature, installs it to the inactive partition, restarts, and
-  confirms itself healthy. A live progress bar tracks the whole cycle.
-- If the update fails for any reason, the device restores its previous
-  firmware automatically and reports what happened — it cannot be bricked
-  by a bad update, and a forged image can never pass the signature check.
+  downloads the update over HTTPS, checks its SHA-256, verifies its Ed25519
+  release signature against the release key built into its firmware,
+  installs it to the inactive partition, restarts, and confirms itself
+  healthy. A live progress bar tracks the whole cycle.
+- If the new firmware fails its health check after the restart, the device
+  boots its previous firmware again and reports what happened. An image
+  whose Ed25519 release signature does not verify against that key is
+  refused before the device ever boots it, and a download that fails leaves
+  the running firmware as it was.
 - Turn on the **Auto Update** switch (per device) to install new releases
   hands-free within a day of publication. It's off by default — a witness
   device never restarts unattended unless you choose that.
@@ -1037,10 +1040,11 @@ When enabled, PWK automatically creates these entities for each zone:
 
 The bridge asks Home Assistant for these ids with `default_entity_id`, which
 Home Assistant 2025.10 and later honors when it first registers an entity;
-`<zone>` is the zone name as Home Assistant slugs it (`Front Door` becomes
-`front_door`). An entity your Home Assistant registered before keeps the id it
-has, and an older Home Assistant ignores the key and names the entity from the
-device name and the entity name
+`<zone>` is the zone id without its `zone:` prefix, as Home Assistant slugs
+it (`zone:back-gate` becomes `back_gate`; a zone id is lowercase letters,
+digits, `_` and `-` only). An entity your Home Assistant registered before
+keeps the id it has, and an older Home Assistant ignores the key and names the
+entity from the device name and the entity name
 (`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`). That was read from
 Home Assistant core's source, not seen in a running Home Assistant, so if an
 automation below cannot find its entity, look up the id under **Settings >
@@ -1177,15 +1181,27 @@ sensor:
     scan_interval: 30
 ```
 
-### Template Sensor (Event Count)
+### REST Sensor (Event Count)
+
+The per-zone count sensors are MQTT Discovery entities, so without MQTT
+there is no count to read from another entity. Ask the app's `/digest`
+endpoint instead: its `event_types` map counts each event type over the last
+24 hours (a rolling window, not since midnight).
 
 ```yaml
 # configuration.yaml
-template:
-  - sensor:
-      - name: "Boundary Crossings Today"
-        state: "{{ states('sensor.pwk_boundary_crossing_count') | int }}"
-        icon: mdi:walk
+sensor:
+  - platform: rest
+    name: "PWK Boundary Crossings (24 h)"
+    resource: http://d0491a67-privacy-witness-kernel:8799/digest
+    headers:
+      Authorization: Bearer YOUR_API_TOKEN
+    value_template: >-
+      {{ (value_json.event_types.BoundaryCrossingObjectLarge | default(0) | int)
+         + (value_json.event_types.BoundaryCrossingObjectSmall | default(0) | int) }}
+    unit_of_measurement: "events"
+    icon: mdi:walk
+    scan_interval: 300
 ```
 
 ### Automation Example

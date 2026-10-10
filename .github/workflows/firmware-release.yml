@@ -74,6 +74,8 @@ jobs:
     name: Build, sign, and publish firmware
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v7
@@ -1082,3 +1084,20 @@ jobs:
             /tmp/release/manifest-canary-display-*.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt
+
+  # The bills of materials (Rust, Node, firmware), built from the tagged tree
+  # and attached to the release just published. sbom.yml's `release:
+  # published` trigger never fires for this release — CI created it with the
+  # GITHUB_TOKEN, and GitHub sends no event for that (the same recursion
+  # guard the vision-model chain above works around) — so it is CALLED, as a
+  # reusable workflow: a failed attach turns this run red rather than leaving
+  # a release quietly without its SBOM. Runs for the dev channel too: a
+  # prerelease ships binaries, so it ships their bill of materials.
+  sbom:
+    name: Attach the SBOMs to the release
+    needs: build-sign-release
+    uses: ./.github/workflows/sbom.yml
+    with:
+      tag: ${{ needs.build-sign-release.outputs.tag }}
+    permissions:
+      contents: write

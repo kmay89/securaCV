@@ -5598,7 +5598,6 @@ dependencies = [
  "image",
  "libc",
  "libseccomp",
- "libseccomp-sys",
  "log",
  "mdns-sd",
  "ouroboros",

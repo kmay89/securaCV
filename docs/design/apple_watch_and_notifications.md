@@ -4,13 +4,27 @@ Status: **partially built.** The wrist half of this doc is now real code:
 `ios/project.yml` carries the `SecuraCVWatch` app + `SecuraCVWatchWidgets`
 complications (§3.2's targets), `Shared/WristSnapshot.swift` +
 `ios/Sources/SecuraCV/Native/WatchLink.swift` are the `WCSession` pipeline
-into the watch-local app-group cache, and §3.3's screens 1–2 (fleet glance,
-heartbeat with wrist-started path test) plus witness detail ship in the
-target. Still design-only: everything relay-dependent (N0/R1/W0 — actionable
-notification categories, the custom notification scene, APNs/Web Push), the
-ack/mute *actions* on the wrist (mute state is shown; the phone app itself
-doesn't expose a mute action yet), and §5's PWA polish. The phasing table
-(§8) is annotated below.
+into the watch-local app-group cache. Built, matching §8:
+
+- the witness notification category with **Acknowledge / Mute 1 hour / Mute
+  until morning** on every mirrored local alert, and a custom long-look for
+  that category (`SecuraCVWatch/WitnessNotification.swift`);
+- the app's pages — fleet glance, **Alerts** ("what needed me?", with
+  Acknowledge and Mute as swipe actions the phone carries out), heartbeat
+  (wrist-started path test), about — plus witness detail (the device's
+  figure and product name, its hub line and the radar's room words, the
+  same sentences the Witness Wall says) with **wrist mute in three
+  lengths**, and **Find** on the watch's own radio (Chirp only for a
+  Canary that can answer it);
+- the complications, which show the delivery heartbeat when a quiet fleet's
+  path is dark or failed, and a **Check the Fleet** App Intent for Siri, the
+  Shortcuts app and the Action button.
+
+Still open: everything relay-dependent (N0/R1 — APNs/Web Push, the
+relay-delivered flavor of W0), §5's PWA polish (P1), and §3.3's per-witness
+24-bucket day strip and reason log, which the wrist does not draw (the
+Alerts page answers "what happened" instead). The phasing table (§8) is
+annotated below.
 
 This document scopes two things that are really one thing:
 
@@ -211,6 +225,13 @@ render with the system long-look.
    round-trip self-test (`runTestAlert(roundTrip:)`) from the wrist.
 3. **Ack/mute** — surface `fleet_model.h` semantics; nothing new invented.
 
+*As built:* the glance shows each row's figure and the fleet's heartbeat
+when a quiet fleet's path is down; witness detail shows the device, its hub
+and room lines and the three mute lengths, but **not** the heat strip or the
+reason log; Ack and Mute live on the Alerts page as swipe actions, carried
+out by the phone so one acknowledgment clears the alert everywhere (§1.1
+rule 4). The direct-to-hub fetch below is not built.
+
 Connectivity: the W1 `WCSession` pipeline, now driving full screens (the
 phone's `FleetStore` remains the source of truth); optional direct-to-hub URLSession
 fetch of `GET /api/fleet` (the tvOS `FleetClient` contract) when the phone
@@ -337,8 +358,8 @@ not a snowflake:
 | **N0** | — | SSE adoption in `FleetStore`; NSE signature-verify + hydrate; tier/controls UI in Alerts tab | open |
 | **R1** | `alert_relay.md` substrate decision | Relay MVP: APNs + Web Push, content-free payload, dedup + LAN-receipt suppression, heartbeat terminus | open |
 | **W0** | N0, R1 | Watch: actionable mirrored notifications (Ack/Mute/View from the wrist); no new targets | **built** for the local-alert path (categories + Ack/Mute actions + durable mute ledger); the relay-delivered flavor still waits on R1 |
-| **W1** | W0 | watchOS target + `WCSession` state pipeline; Smart Stack widget, complications, custom notification scene, Live Activity mirroring | **built**, except the custom notification scene (waits on W0's categories) |
-| **W2** | W1 | 3-screen Watch app (fleet glance / heartbeat / ack) | **built**: glance, heartbeat (wrist-started path test), witness detail with Mute-1h (phone-owned ledger, tamper punch-through preserved) |
+| **W1** | W0 | watchOS target + `WCSession` state pipeline; Smart Stack widget, complications, custom notification scene, Live Activity mirroring | **built** — the custom notification scene included (`WitnessNotification.swift`, keyed on the shared category id in `Shared/NotificationIDs.swift`); the long-look has not yet been tried on a real watch |
+| **W2** | W1 | 3-screen Watch app (fleet glance / heartbeat / ack) | **built**: glance, Alerts with Acknowledge + Mute (phone verbs: `WristSync.commandAck` / `commandMute`), heartbeat (wrist-started path test), witness detail with three mute lengths (phone-owned ledger, tamper punch-through preserved), Find, Check the Fleet intent. Not built: the per-witness day strip / reason log |
 | **P1** | R1 | Web monitor as installable PWA + Web Push (declarative payload, SW fallback) | open |
 
 (The W1/W2 build deliberately did not wait for W0/R1: the state pipeline and

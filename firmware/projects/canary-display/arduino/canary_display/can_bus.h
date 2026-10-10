@@ -11,6 +11,11 @@
 // wasm stays byte-for-byte identical. Bench-pending: TX/RX orientation, bit
 // timing, and the terminator jumper are VERIFY-tagged in pins.h until validated
 // on hardware.
+//
+// NO CALLER YET (audit, 2026-10-09): the dash-can env compiles this driver, but
+// nothing calls can_begin(), can_transmit(), can_receive() or can_loop(). The
+// playground (src/playground/playground.cpp) installs its own TWAI transport
+// on the same bus. Wiring one transport through here is planned work.
 
 #pragma once
 

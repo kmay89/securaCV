@@ -12,6 +12,78 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-10-09 (c) — The Witness Wall compiles iPhone files, and its release watch named only `tvos`
+
+- **Symptom (found by audit, not by a user):** the Wall compiles 15 Swift
+  files from `ios/Shared` and `ios/Sources` (`tvos/WitnessWall/project.yml`,
+  every `- path: ../../ios/...` source). `tvos.yml` rebuilt on them, but the
+  tvos row's `watch` was `[tvos]`, so a change to only those files — the
+  device figures regenerated for a new product — planned the Wall as
+  "unchanged — nothing to do". Since `tvos-v0.2.4` six of them had moved.
+- **Cause:** the 2026-09-23 (c) lesson (watch what the build embeds), on a
+  target its test did not cover: that test follows Cargo path dependencies,
+  and an XcodeGen source list is not one.
+- **Fix:** the tvos watch names each file the Wall compiles from `ios/`
+  (15 then, 16 once `DeviceGlanceCopy.swift` joined — file by file, not
+  `ios/Shared`: the Wall compiles only part of that directory, and an
+  iPhone-only edit must not ask for a TV release).
+  `test_every_source_the_wall_compiles_is_in_the_tvos_watch` holds the list
+  to `project.yml` both ways, and `workflows-lint.yml` now runs on a
+  `project.yml` edit, so adding a shared source runs it.
+- **Also this day:** both desktop release workflows built on Node 20 while
+  every PR check (desktop-lab-check's staging step included) ran 22. They
+  are on 22 now; the shipped Lab bundle is staged on the Node its checks ran.
+- **Applies to:** every Apple target that lists sources outside its own
+  directory. The iPhone target takes `ios/` whole and cannot miss one; a
+  future Watch or Mac row that compiles shared files belongs in the same test.
+
+## 2026-10-09 (b) — A draft release has no tag, and the planner read tags
+
+- **Symptom:** a built-but-unpublished Lab draft re-planned as RELEASE on
+  every press of "Update everything", which dispatched the same macOS and
+  Linux build again. Four stale drafts (app-v0.1.1, 0.1.2, 0.2.0, 0.2.1)
+  were still sitting in Releases.
+- **Cause:** the plan step's comment said "a tag exists the moment a
+  release is cut, draft or not". It does not: GitHub creates the tag when a
+  draft is PUBLISHED (lab-publish.yml's own header says so).
+- **Fix:** a `drafts` job lists draft releases (the one job holding
+  `contents: write`, which listing drafts needs; it runs no repo code) and
+  passes their tag names to `release_plan.py --drafts-file`. A draft at the
+  source version is DRAFT_PENDING: not dispatched, and the row says how to
+  publish it (the catalog's `draft_publish`). A stale draft below the
+  published version changes nothing; `force` still rebuilds on purpose. A
+  draft is not compared against the tree, so after a change that was not
+  bumped, `force` is how the draft gets rebuilt before it is published (the
+  row says so).
+- **Applies to:** any target whose release workflow leaves a draft (today
+  only the Lab). Delete stale drafts by hand; nothing else will.
+
+## 2026-10-09 — No release CI published carried an SBOM
+
+- **Symptom:** of the 64 published releases, 3 had `sbom-*.cdx.json`
+  assets — `app-v0.1.0`, `flasher-v0.1.4` and `app-v0.2.2`, publishes that
+  sent the `release` event — while README.md said the SBOMs are attached to
+  every release. Every current release (`fw-v2.4.15`, `flasher-v0.11.9`,
+  `app-v0.2.4`) was without them.
+- **Cause:** the 2026-07-27 (b) lesson, a second time. `sbom.yml` attached
+  on `release: published`, which GitHub never sends for a release created
+  with the `GITHUB_TOKEN` — every release CI cuts.
+- **Fix:** `sbom.yml` takes a `tag` through `workflow_call` (and
+  `workflow_dispatch`, to backfill), builds from the tagged tree, and
+  attaches. `firmware-release.yml`, `desktop-flasher-release.yml`,
+  `lab-publish.yml` and the kernel's `release.yml` each call it after their
+  publish job, as a reusable workflow, so a failed attach fails the run.
+  `test_release_plan.py`'s `SbomsRideEveryRelease` holds every publisher to
+  the call. Backfill is NOT available for the releases that went out
+  without them: a dispatch with a tag builds from that tag's own tree (an
+  SBOM must describe the tree it ships with), and every one of them predates
+  `scripts/gen_firmware_sbom.py`, so generate-sbom fails there and attaches
+  nothing. The next release on each train is the first to carry SBOMs; a
+  dispatch with a tag works for any tag cut from 2026-09-20 on.
+- **Generalize (again):** anything that must follow a CI publish is called
+  or dispatched by the publishing workflow. A `release:` trigger only ever
+  covers the human-published case.
+
 ## 2026-09-23 (c) — A file an app embeds from outside its directory is an input its watch must name
 
 - **Symptom (caught before it was paid for):** hardening the Pi hub's

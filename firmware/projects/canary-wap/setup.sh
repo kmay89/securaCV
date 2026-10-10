@@ -210,20 +210,11 @@ setup_arduino() {
         print_success "Created Arduino secrets.h"
     fi
 
-    # Copy board pins to Arduino folder
-    local pins_src="${FIRMWARE_ROOT}/boards/xiao-esp32s3-sense/pins"
-    if [ -d "$pins_src" ]; then
-        cp "${pins_src}/pins.h" "${arduino_dir}/pins.h" 2>/dev/null || true
-        cp "${pins_src}/camera.h" "${arduino_dir}/camera.h" 2>/dev/null || true
-        print_success "Copied board pin definitions"
-    fi
-
-    # Copy config to Arduino folder
-    local config_src="${FIRMWARE_ROOT}/configs/canary-wap/default"
-    if [ -d "$config_src" ]; then
-        cp "${config_src}/config.h" "${arduino_dir}/config.h" 2>/dev/null || true
-        print_success "Copied configuration"
-    fi
+    # No board pins or config header is staged: the sketch includes neither
+    # (its pins are in canary_wap.ino, its feature flags in build_config.h),
+    # and firmware/configs/canary-wap/ is on no build's include path. Copying
+    # pins.h, camera.h and config.h here made it look as if they configured
+    # the build; they never did.
 
     # Stage the SecuraCV CSI library next to the sketch. Arduino IDE only
     # searches the sketch directory, the sketch's `src/` subtree, and globally

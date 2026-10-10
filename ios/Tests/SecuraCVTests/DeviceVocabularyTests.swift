@@ -85,8 +85,10 @@ final class DeviceVocabularyTests: XCTestCase {
     func testTheNamingTableOnlyCarriesTypesThatArePublished() {
         // Display configs (CD_DEVICE_TYPE), plus the Sentinel's
         // SENT_DEVICE_TYPE from firmware/configs/canary-sentinel/door.
+        // And the witness kernel's own row (src/api/mod.rs KERNEL_NAME).
         for published in ["canary-dash", "canary-nightstand", "canary-nightstand7",
-                          "canary-nightlight", "canary-watch", "canary-sentinel"] {
+                          "canary-nightlight", "canary-watch", "canary-sentinel",
+                          "witness-kernel"] {
             XCTAssertNotNil(DeviceNaming.productTitle(forPublishedType: published),
                             "\(published) is published by a firmware config and needs a name")
         }
@@ -97,6 +99,20 @@ final class DeviceVocabularyTests: XCTestCase {
             XCTAssertNil(DeviceNaming.productTitle(forPublishedType: fiction),
                          "\(fiction) is not a device type any build publishes")
         }
+    }
+
+    /// The kernel's own row is software: named, never drawn, and never told
+    /// it is waiting for a hardware figure.
+    func testTheKernelRowIsNamedAndKnownToBeSoftware() {
+        XCTAssertEqual(DeviceNaming.productName(published: "witness-kernel", hardware: nil),
+                       "SecuraCV witness kernel")
+        XCTAssertTrue(DeviceNaming.isSoftware(published: "witness-kernel"))
+        XCTAssertTrue(DeviceNaming.isSoftware(published: "Witness_Kernel"))
+        XCTAssertFalse(DeviceNaming.isSoftware(published: "canary-wap"))
+        XCTAssertFalse(DeviceNaming.isSoftware(published: nil))
+        XCTAssertNil(FleetFigure.resolve(deviceType: DeviceType(tolerant: "witness-kernel"),
+                                         published: "witness-kernel"),
+                     "software has no figure — the caller draws the server symbol")
     }
 
     /// The board is asked BEFORE the type, because it is sometimes the more

@@ -20,6 +20,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  ruff:
+    name: ruff (repo Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+      - name: Ruff (lint) — the integration and every tooling tree
+        # Lived in python.yml, whose path filter is the Home Assistant
+        # integration: a PR touching only scripts/ or canary-local/tools was
+        # never linted, and its violation went red on the next unrelated HA
+        # PR. Here it is unfiltered (ci-policy.yml → unfiltered_ok covers this
+        # workflow) and wider: tools/, the enclosure generators, the CI
+        # scripts, the add-on, eval/ and integrations/ had never been linted,
+        # and held 12 findings when they joined. The pin is read from
+        # requirements_test.txt so this job and python.yml cannot disagree.
+        # Not yet in the list: firmware/scripts (open findings to fix first).
+        run: |
+          python3 -m pip install --quiet "$(grep -oE '^ruff==[0-9.]+' requirements_test.txt)"
+          ruff check custom_components/securacv canary-local/tools scripts tools \
+            docs/hardware/enclosure desktop/scripts .github/scripts \
+            privacy_witness_kernel eval integrations
+
   scripts:
     name: scripts/lint_*.sh
     runs-on: ubuntu-latest

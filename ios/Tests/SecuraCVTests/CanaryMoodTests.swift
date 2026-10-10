@@ -190,7 +190,6 @@ final class CanaryMoodTests: XCTestCase {
         var snap = WristSnapshot.sample()
         snap.faceRaw = CanaryFace.worried.rawValue
         snap.postureRaw = CanaryPosture.searching.rawValue
-        snap.anxiety = 5
         snap.trustDays = 12
         snap.moodLine = "Looking for Front Porch…"
         let context = try WristSync.context(for: snap)

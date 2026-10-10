@@ -99,7 +99,6 @@ libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libseccomp = "0.4"
-libseccomp-sys = "0.3"
 
 [features]
 rtsp-gstreamer = ["gstreamer", "gstreamer-app", "gstreamer-video"]
@@ -107,7 +106,6 @@ rtsp-ffmpeg = ["ffmpeg-next"]
 ingest-file-ffmpeg = ["ffmpeg-next"]
 ingest-esp32 = ["image", "ureq", "url"]
 ingest-v4l2 = ["v4l", "ouroboros"]
-stub-frame-source = []
 backend-tract = ["tract-onnx"]
 detect-eval = ["backend-tract", "image"]
 adapter-frigate = []

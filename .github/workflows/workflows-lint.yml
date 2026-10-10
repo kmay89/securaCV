@@ -22,6 +22,10 @@ on:
       - '.github/CI.md'
       - '.github/actionlint.yaml'
       - '.github/actionlint.yml'
+      # test_release_plan.py holds the tvos release watch to the sources the
+      # Wall compiles, read from here (CI.md: a filtered test lists every
+      # file it reads outside its own trees).
+      - 'tvos/WitnessWall/project.yml'
   pull_request:
     branches: [main]
     paths:
@@ -33,6 +37,10 @@ on:
       - '.github/CI.md'
       - '.github/actionlint.yaml'
       - '.github/actionlint.yml'
+      # test_release_plan.py holds the tvos release watch to the sources the
+      # Wall compiles, read from here (CI.md: a filtered test lists every
+      # file it reads outside its own trees).
+      - 'tvos/WitnessWall/project.yml'
 
 permissions:
   contents: read

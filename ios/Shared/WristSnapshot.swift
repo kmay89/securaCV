@@ -66,10 +66,41 @@ struct WristWitness: Codable, Hashable, Identifiable, Sendable {
     /// nil (an older phone) means the wrist falls back to checking the rows
     /// it can see — narrower, but never claiming more than it knows.
     var suffixAmbiguous: Bool? = nil
+    /// Can this Canary be asked to chirp? The PHONE's answer
+    /// (FleetStore.canIdentify — only a paired WAP serves /api/identify),
+    /// because the wrist cannot see which devices this iPhone holds an
+    /// address for. ADDITIVE OPTIONAL: nil (an older phone) means no Chirp
+    /// button, never one that can only fail.
+    var canIdentify: Bool? = nil
+
+    // WHAT the device is and how it stands — the same facts the phone's
+    // detail screen and the Wall's card render. ADDITIVE OPTIONALS, all of
+    // them: an older phone sends none, and the wrist draws the generic
+    // marker and says nothing about the room or the hub — never a guess.
+    /// The device type exactly as it published it (`/api/fleet` product,
+    /// mDNS `dt`) — the figure and the product name resolve from this.
+    var publishedType: String? = nil
+    /// The board it published (`hw`) — the most exact figure lookup.
+    var hardware: String? = nil
+    /// `HubState.rawValue` as the device reported it.
+    var hubRaw: String? = nil
+    /// The radar's coarse room words (canary-sense, relayed): presence,
+    /// a count that tops out at 2 (= 2+), a breathing rhythm sensed or not.
+    /// Nil keeps "not published" distinct from a real "clear". The beacon's
+    /// "seeing now" claim is deliberately NOT carried: it goes stale in two
+    /// minutes and would change the snapshot (and so re-push it) on every
+    /// beacon.
+    var radarPresent: Bool? = nil
+    var radarOccupants: Int? = nil
+    var breathingLock: Bool? = nil
 
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var link: Liveness { Liveness(tolerant: Int(linkRaw)) }
     var badge: TrustBadge { TrustBadge(tolerant: Int(badgeRaw)) }
+    /// The coarse family — `.unknown` for a row an older phone sent.
+    var deviceType: DeviceType { DeviceType(tolerant: publishedType) }
+    /// `.unknown` (draws nothing) when the phone didn't say.
+    var hub: HubState { HubState(tolerant: hubRaw) }
 
     /// What a live tamper should say on the wrist: the kind's story when the
     /// phone sent one, the bare truth otherwise. Empty reads as absent — a
@@ -135,8 +166,8 @@ enum WristBeatSource: UInt8, Codable, Sendable {
 /// sentence, no drift.
 enum HeartbeatCopy {
     /// How long ago, in units a person uses. Minutes stop being readable
-    /// somewhere around "verified 4320 min ago" — which is what a persisted
-    /// verification from three days back would otherwise say.
+    /// somewhere around "confirmed 4320 min ago" — which is what a persisted
+    /// delivery from three days back would otherwise say.
     static func ago(_ seconds: Int) -> String {
         if seconds < 90 { return "just now" }
         let minutes = seconds / 60
@@ -147,21 +178,25 @@ enum HeartbeatCopy {
         return days == 1 ? "yesterday" : "\(days) days ago"
     }
 
+    /// The words for the delivery path. NEVER "verified": in this project
+    /// that word means an Ed25519 signature checked against a pinned key
+    /// (AGENTS.md rule 4), and the evidence here is a notification iOS
+    /// accepted — so the strongest claim is "confirmed".
     static func summary(state: WristHeartbeatState,
                         secondsSinceVerified: Int?,
                         failureReason: String? = nil,
                         source: WristBeatSource? = nil) -> String {
         switch state {
-        case .unknown: return "Not yet verified"
+        case .unknown: return "Alert delivery not tested yet"
         case .alive:
             guard let s = secondsSinceVerified else {
-                return source == .fleetCheckIn ? "Your fleet checked in" : "Delivery verified"
+                return source == .fleetCheckIn ? "Your fleet checked in" : "Alert delivery confirmed"
             }
             // The honesty split: only a delivery iOS accepted may say
-            // "verified". A Canary answering says what it is.
+            // "confirmed". A Canary answering says what it is.
             return source == .fleetCheckIn
                 ? "Your fleet checked in \(ago(s))"
-                : "Delivery verified \(ago(s))"
+                : "Alert delivery confirmed \(ago(s))"
         case .testing: return "Testing the whole path…"
         case .dark:
             let s = secondsSinceVerified ?? 0
@@ -240,9 +275,11 @@ struct WristSnapshot: Codable, Hashable, Sendable {
     // The living canary (Shared/CanaryMood.swift — the display firmware's
     // mood engine, mirrored). ADDITIVE OPTIONALS by the schema rules: an
     // older phone simply sends no mood and the wrist derives a safe one.
+    // (An `anxiety` number once rode here too; no wrist surface read it, so
+    // it was dropped — an older phone that still sends it is ignored by the
+    // decoder, and an older watch never needed it.)
     var faceRaw: UInt8?
     var postureRaw: UInt8?
-    var anxiety: Int?
     var trustDays: Int?
     /// Ambient copy only — the Voice rule: a mood line may rephrase
     /// contentment or name who's being looked for; it never words alarms.
@@ -288,6 +325,37 @@ struct WristSnapshot: Codable, Hashable, Sendable {
     var posture: CanaryPosture {
         guard let raw = postureRaw else { return .asFace }
         return CanaryPosture(tolerant: Int(raw))
+    }
+
+    /// The dead-man's-switch outranks green rows. True when every Canary
+    /// is fine but the delivery path is dark or failed — the one state where
+    /// a glance drawn from `severity` alone would say "all quiet" over an
+    /// alert path that cannot carry anything. ONE rule for every glance
+    /// surface: the complications, the phone's widgets, the wrist's header
+    /// and the spoken answer (GlanceAnswer) all ask this.
+    var pathAlarm: Bool {
+        severity == .ok && (heartbeat == .dark || heartbeat == .failed)
+    }
+
+    /// The glyph a glance draws: the heartbeat's when `pathAlarm`, the
+    /// fleet's worst severity otherwise. A real fleet alarm keeps its own
+    /// glyph — it is the louder truth, and the path state has its own page.
+    var glanceSymbol: String { pathAlarm ? heartbeat.sfSymbol : severity.sfSymbol }
+    var glanceRole: Theme.Role { pathAlarm ? heartbeat.role : severity.role }
+
+    /// Does `other` draw the same glance? What the widgets render, compared
+    /// field by field, so the wrist can skip a WidgetKit reload (a budgeted
+    /// resource) for a snapshot that only moved what no complication shows —
+    /// a room's presence word, a mute on a row. `sentAt` is deliberately
+    /// excluded; the caller still reloads on a timer so "as of" stays true.
+    func drawsSameGlance(as other: WristSnapshot) -> Bool {
+        severityRaw == other.severityRaw && headline == other.headline
+            && healthy == other.healthy && total == other.total
+            && fleetName == other.fleetName && isDemoData == other.isDemoData
+            && heartbeatRaw == other.heartbeatRaw
+            && heartbeatFailureReason == other.heartbeatFailureReason
+            && (!pathAlarm || (lastBeatAt == other.lastBeatAt
+                               && lastVerifiedAt == other.lastVerifiedAt))
     }
 
     /// The same sentence the phone's provably-alive card shows, rendered from
@@ -353,6 +421,16 @@ enum WristSync {
     static let identifyOKKey = "chirpOK"
     static let identifyVisualOnlyKey = "chirpVisualOnly"
     static let identifyWhyKey = "chirpWhy"
+
+    /// Acknowledge one witness's alert from the wrist (payload: `ackIDKey` =
+    /// witness id). The PHONE carries it out through the same
+    /// FleetStore.acknowledgeAlert the Alerts tab and the notification's
+    /// Acknowledge action use — one acknowledgment, cleared everywhere
+    /// (RFC §1.1 rule 4) — and answers with the post-ack snapshot. A phone
+    /// too old to know the verb answers an empty reply, which the wrist
+    /// treats as "nothing changed": the row stays new.
+    static let commandAck = "ack"
+    static let ackIDKey = "id"
 
     /// Row cap for the snapshot — applicationContext has a small transfer
     /// budget and a wrist list past this is unreadable anyway. The cap is

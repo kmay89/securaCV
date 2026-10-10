@@ -360,6 +360,27 @@ jobs:
           pio run -e secure
           pio run -e secure_ha
 
+      - name: Compile the canary's opt-in envs (dev_ha, minimal, usb-onboard; compile-only)
+        # Three envs in firmware/canary/platformio.ini that no workflow ever
+        # compiled (firmware/PLATFORMS.md said so). usb-onboard is the ONLY
+        # env that links lib/securacv_usb_onboard (the default lib_ignore
+        # drops it) and turns on main.cpp's FEATURE_USB_ONBOARD sites, so that
+        # code had never been built; minimal is the only env with SD, Wi-Fi AP
+        # and HTTP off, the posture that once hid a years-old compile error
+        # (firmware/LESSONS_LEARNED.md, "A feature flag no *built* env sets to
+        # 0 is an untested branch"); dev_ha is dev plus the MQTT client.
+        # A compile gate only, like the secure step above: none is in
+        # flavors.json, so no size guard, release, flasher catalog, SBOM row
+        # or OTA manifest touches them. All three build on the [env] platform,
+        # as dev and release do, so they share the default PLATFORMIO_CORE_DIR.
+        if: matrix.flavor.name == 'canary'
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
+        run: |
+          pio run -e dev_ha
+          pio run -e minimal
+          pio run -e usb-onboard
+
   pio-check:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
@@ -494,8 +515,9 @@ jobs:
 
       - name: Compile firmware (DEV profile gate)
         run: |
-          # BUILD_PROFILE_DEV (WiFi + HTTP + SD, no mesh/BLE) was compiled by
-          # nobody: flavors.json's PlatformIO envs and both legs above are all
+          # BUILD_PROFILE_DEV (WiFi + HTTP + SD + the BLE pairing channel, no
+          # camera, mesh or Opera discovery) was compiled by nobody:
+          # flavors.json's PlatformIO envs and both legs above are all
           # FULL on S3, so any #if the profile gates could rot invisibly —
           # and one did (a tamper-module include landed inside a FULL-only
           # block; only review caught it). Compile-only: the gate is "every
@@ -532,6 +554,22 @@ jobs:
             --libraries firmware/common \
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DHARDWARE_XIAO_ESP32C3" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
+      - name: Compile the CSI library's sample sketch (examples/csi_minimal)
+        run: |
+          # firmware/examples/csi_minimal is the sketch the CSI library hands
+          # a third-party developer, and no job compiled it, so it drifted
+          # unseen: it averaged the breathing bins every other consumer
+          # reduces by peak (csi_breathing_peak()), printing a number about
+          # 8x smaller than the dashboard's (audit, 2026-10-09). Built the
+          # way its README says to, with firmware/common as the libraries
+          # root, on the core and libraries this job already installed.
+          # (The modules template, examples/modules, is syntax-checked by
+          # firmware/tests_host's Makefile.)
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3 \
+            --libraries firmware/common \
+            firmware/examples/csi_minimal
 
   build-arduino-cli-display:
     name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }}, core ${{ matrix.core.name }})
@@ -801,6 +839,19 @@ jobs:
           chmod +x firmware/scripts/check_signature_sync.sh
           firmware/scripts/check_signature_sync.sh
 
+      - name: Verify the display's TV page header matches tv/index.html
+        # tv/gen_tv_html.py bakes tv/index.html into the PROGMEM header the
+        # display serves at GET /tv (include/canary/net/tv_html.h). It was the
+        # one committed gen_*.py no workflow ran, so an index.html edit without
+        # the regen shipped the old page with CI green. The generator has no
+        # --check yet; it is deterministic (no timestamp, no hash), so this
+        # regenerates and fails on any diff. The sketch copy is the next
+        # step's job.
+        run: |
+          python3 firmware/projects/canary-display/tv/gen_tv_html.py
+          git diff --exit-code -- firmware/projects/canary-display/include/canary/net/tv_html.h \
+            || { echo "::error::tv_html.h is stale against tv/index.html — run python3 firmware/projects/canary-display/tv/gen_tv_html.py, then ./setup.sh regen, and commit both"; exit 1; }
+
       - name: Verify the Canary Display Arduino sketch is in sync with the PlatformIO tree
         # The display Arduino sketch is GENERATED from the canonical PlatformIO
         # tree (src/ + include/) by setup.sh, not hand-copied — this guard
@@ -889,8 +940,21 @@ jobs:
         # board's build job. The -I../../common include path resolves the
         # headers either way, which is what makes it so easy to miss in review.
         # This is a seconds-long check for a failure that otherwise costs a
-        # full firmware matrix run. Contract: the script's module docstring.
+        # full firmware matrix run. Its header pass fails a common/ header no
+        # compiled source or test includes (sixteen sat there as "seams",
+        # one not even parsing as C++). Contract: the script's module
+        # docstring.
         run: python3 firmware/scripts/check_common_build_reachability.py
+
+      - name: Check every config FEATURE_* flag gates code
+        # A FEATURE_* flag in firmware/configs/<project>/*/config.h, or set
+        # for the canary tree by canary_config.h / its platformio.ini files,
+        # must be read by that project's sources, or be a listed descriptor
+        # with its reason. FEATURE_PROOF_QR, FEATURE_CHAIN_VERIFY,
+        # FEATURE_NIGHT_BLACKOUT and six canary [env:full] flags gated
+        # nothing while docs, the Lab Workshop and a size-cut plan treated
+        # them as switches (audit, 2026-10-09).
+        run: python3 firmware/scripts/check_config_feature_flags.py
 
       - name: Check OTA channels (polled manifests are published ones)
         # Every SECURACV_OTA_MANIFEST_URL compiled into the firmware must be a

@@ -217,6 +217,14 @@ enum HubProvisionPlan {
         }
     }
 
+    /// `GET addons/<slug>/info` — what an add-on's options read from before
+    /// the runner writes them back (it merges, never replaces).
+    static func infoPath(slug: String) -> String { "addons/\(slug)/info" }
+
+    /// `POST addons/<slug>/restart` — the broker reads `logins` at start,
+    /// so a new login only takes once Mosquitto cycles.
+    static func restartPath(slug: String) -> String { "addons/\(slug)/restart" }
+
     /// Fold `GET /api/hassio/store/repositories`, `GET /api/hassio/addons`,
     /// the two add-ons' info and `GET /api/config/config_entries/entry`
     /// into one snapshot. Each argument is the raw JSON body (or nil when

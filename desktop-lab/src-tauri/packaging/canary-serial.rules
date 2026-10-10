@@ -17,7 +17,7 @@
 #    post-flash reset — looks like a modem. ModemManager opens the port,
 #    probes it with AT commands and toggles its control lines, which the
 #    ESP32-S3's USB-Serial/JTAG can take as a reset request. Symptom: the
-#    flash verifies, then the port stays busy for ~30 s and/or the board is
+#    write lands, then the port stays busy for ~30 s and/or the board is
 #    knocked over mid-boot, so the live boot receipt never arrives. The
 #    ID_MM_*_IGNORE marks tell ModemManager to leave these devices alone.
 #
@@ -25,3 +25,17 @@
 # 1a86:55d3  = WCH CH343 (the Grove Vision AI V2 camera module's port)
 ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
 ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+#
+# The catalog boards with no native USB reach the computer through a
+# USB-to-UART bridge chip instead, and /dev/ttyUSB* is root:dialout 0660 on a
+# stock desktop: the ESP32-CAM (its programmer board), the ESP32-WROOM
+# DevKit and the ESP32-C3-DevKitM-1. These bridges are generic parts that
+# plenty of other gadgets use, so they get seat access only (uaccess: the
+# logged-in user, not every account) — never MODE="0666" — plus the same
+# ModemManager opt-out. Scoped by product id, not by vendor:
+# 10c4:ea60  = Silicon Labs CP210x (CP2102 / CP2102N / CP2104)
+# 1a86:7523  = WCH CH340
+# 1a86:55d4  = WCH CH9102
+ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
+ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
+ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"

@@ -21,13 +21,15 @@
 //   connect — "Early unexpected exit, operation never finished bootstrapping."
 //   Every iOS test failed, and none of them were about iCloud.
 //
-//   Naming the container explicitly avoids the entitlement lookup entirely.
-//   `CKContainer(identifier:)` is handed a non-nil string, so the nil path is
-//   never taken; if the app then turns out not to be entitled to that
-//   container, the failure arrives as a `CKError` on the *operation* — an
-//   ordinary Swift error the existing `try?` and `isAvailable` gates already
-//   handle by leaving iCloud switched off. A missing entitlement should
-//   degrade to "no iCloud today", never to a crash.
+//   The first fix was to name the container — `CKContainer(identifier:)` —
+//   on the theory that it skips the entitlement lookup. It does not (the
+//   full story is below, at the `#if`): an unentitled process traps there
+//   too.
+//   What actually holds is a COMPILE-TIME rule: `CloudContainer.shared`
+//   exists only under `#if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT`, and
+//   the unsigned builds that cannot carry entitlements set that flag, so code
+//   that could construct a container in such a build does not compile into
+//   it. A missing entitlement degrades to "no iCloud today", never to a crash.
 //
 // THE RULE
 //   Nothing in this app may call `CKContainer.default()`. Reach for
@@ -48,53 +50,50 @@ enum CloudContainer {
     /// the linter asserts all three agree.
     static let identifier = "iCloud.com.securacv.witness"
 
-    /// Whether this BUILD can talk to CloudKit at all.
-    ///
-    /// Not "is the user signed in" — that is `CloudSync.isAvailable`, asked
-    /// later and answered by CloudKit. This is the question underneath it: may
-    /// this process construct a container without dying?
-    ///
-    /// It has to be answered at COMPILE time, and that is the whole lesson of
-    /// this file. Every runtime test is either wrong or unavailable:
-    ///
-    ///   * `CKContainer.default()` — raises an uncatchable ObjC CKException.
-    ///   * `CKContainer(identifier:)` — was the first fix here, on the theory
-    ///     that naming the container skips the entitlement lookup that
-    ///     `default()` dies in. It does not. CloudKit logs "Significant issue
-    ///     at CKContainer.m:748: your process must have a
-    ///     com.apple.developer.icloud-services entitlement" and then traps
-    ///     inside `__allocating_init(identifier:)` — EXC_BREAKPOINT, `brk 1`,
-    ///     which Swift cannot catch either. Same death, different signal
-    ///     (abrt -> trap), which is exactly how it read on CI.
-    ///   * `FileManager.default.ubiquityIdentityToken` — cheap and
-    ///     non-throwing, but it answers about iCloud DOCUMENTS. This app
-    ///     declares no ubiquity container, so gating on it risks switching
-    ///     iCloud off for every real user to protect a build nobody ships.
-    ///   * reading the entitlement from the code signature — `SecTask*` is not
-    ///     in the public iOS SDK.
-    ///
-    /// So the guard is the one fact known for certain before the app runs: a
-    /// build compiled without code signing cannot carry entitlements, and
-    /// therefore cannot use CloudKit no matter what it asks. `heal.sh` sets
-    /// `SECURACV_NO_CLOUDKIT` on exactly the builds it passes
-    /// `CODE_SIGNING_ALLOWED=NO` to, so the flag and the signing decision are
-    /// made in one place and cannot disagree.
-    ///
-    /// Signed builds — device, TestFlight, App Store — are untouched by this.
-    static var isUsable: Bool {
-        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
-        return true
-        #else
-        return false
-        #endif
-    }
+    // WHETHER THIS BUILD CAN TALK TO CLOUDKIT AT ALL — the `#if` around
+    // `shared` below, and nothing else. (A runtime `isUsable` once sat here
+    // beside the same `#if`; no caller ever read it, because every call site
+    // is already compiled out by the guard, which is the real check.)
+    //
+    // Not "is the user signed in" — that is `CloudSync.isAvailable`, asked
+    // later and answered by CloudKit. This is the question underneath it: may
+    // this process construct a container without dying?
+    //
+    // It has to be answered at COMPILE time, and that is the whole lesson of
+    // this file. Every runtime test is either wrong or unavailable:
+    //
+    //   * `CKContainer.default()` — raises an uncatchable ObjC CKException.
+    //   * `CKContainer(identifier:)` — was the first fix here, on the theory
+    //     that naming the container skips the entitlement lookup that
+    //     `default()` dies in. It does not. CloudKit logs "Significant issue
+    //     at CKContainer.m:748: your process must have a
+    //     com.apple.developer.icloud-services entitlement" and then traps
+    //     inside `__allocating_init(identifier:)` — EXC_BREAKPOINT, `brk 1`,
+    //     which Swift cannot catch either. Same death, different signal
+    //     (abrt -> trap), which is exactly how it read on CI.
+    //   * `FileManager.default.ubiquityIdentityToken` — cheap and
+    //     non-throwing, but it answers about iCloud DOCUMENTS. This app
+    //     declares no ubiquity container, so gating on it risks switching
+    //     iCloud off for every real user to protect a build nobody ships.
+    //   * reading the entitlement from the code signature — `SecTask*` is not
+    //     in the public iOS SDK.
+    //
+    // So the guard is the one fact known for certain before the app runs: a
+    // build compiled without code signing cannot carry entitlements, and
+    // therefore cannot use CloudKit no matter what it asks. `heal.sh` sets
+    // `SECURACV_NO_CLOUDKIT` on exactly the builds it passes
+    // `CODE_SIGNING_ALLOWED=NO` to, so the flag and the signing decision are
+    // made in one place and cannot disagree.
+    //
+    // Signed builds — device, TestFlight, App Store — are untouched by this.
 
     #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
     /// The app's container, named rather than defaulted.
     ///
-    /// Callers MUST check `isUsable` first — construction itself is what traps
-    /// in an unentitled process, so there is no safe way to hold one of these
-    /// and discover the problem later.
+    /// Reachable only under `#if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT`
+    /// — that compile-time guard IS the check. Construction itself is what
+    /// traps in an unentitled process, so there is no safe way to hold one of
+    /// these and discover the problem later.
     ///
     /// Computed rather than a stored `static let` on purpose: CloudKit already
     /// hands back the same container object for a given identifier, so there is

@@ -175,9 +175,12 @@ private struct FleetAnswerSnippet: View {
 
     var body: some View {
         HStack(spacing: Theme.s) {
-            Image(systemName: snapshot?.severity.sfSymbol ?? "bird")
+            // The glance's own glyph (WristSnapshot.glanceSymbol): a quiet
+            // fleet over a dark delivery path shows the path, as the spoken
+            // sentence above it says.
+            Image(systemName: snapshot?.glanceSymbol ?? "bird")
                 .font(.title2)
-                .foregroundStyle(Theme.color(snapshot.map { $0.severity.role } ?? .neutral))
+                .foregroundStyle(Theme.color(snapshot.map { $0.glanceRole } ?? .neutral))
             VStack(alignment: .leading, spacing: 1) {
                 Text(snapshot?.headline ?? "Open SecuraCV once to link your fleet.")
                     .font(.subheadline.weight(.semibold))

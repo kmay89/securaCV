@@ -117,13 +117,15 @@ section "File structure"
 
 # The live web UI is the canary-wap sketch's web_ui.h (checked by the
 # size gate below); the unbuilt common/web/web_ui.h scaffold that used to
-# be listed here was deleted as a dead duplicate (roadmap item 29).
+# be listed here was deleted as a dead duplicate (roadmap item 29), and its
+# prototype-only common/web/http_server.h, which nothing ever included,
+# followed it on 2026-10-09 (check_common_build_reachability.py's header
+# pass now fails on a shared header that nothing compiles).
 REQUIRED_FILES=(
   "canary/src/main.cpp"
   "canary/include/canary_config.h"
   "canary/include/log_level.h"
   "canary/platformio.ini"
-  "common/web/http_server.h"
 )
 
 for f in "${REQUIRED_FILES[@]}"; do
@@ -669,25 +671,76 @@ fi
 
 echo ""
 
-# ── Check: secure_defaults.h exists ──────────────────────────
-section "Security: Secure defaults header"
+# ── Check: hardened defaults, in the files that set them ─────────
+# This section used to pass whenever secure_defaults.h existed and named four
+# DEFAULT_* macros. Nothing included that header and nothing read the macros,
+# so the check proved a file existed, not that any default held (audit,
+# 2026-10-09). secure_defaults.h is now the map of where each default lives;
+# this reads those places: BLE compiled out of the canary's dev / release /
+# secure images, MQTT compiled out by default, one SoftAP client. And it
+# refuses DEFAULT_* macros coming back into the map, which would read as
+# enforcement again while enforcing nothing.
+section "Security: hardened defaults"
 
-if [ -f "$CANARY_DIR/include/secure_defaults.h" ]; then
-  check_pass "secure_defaults.h exists"
-  # Verify key defaults are present
-  DEFAULTS_OK=true
-  for def in DEFAULT_BLE_ENABLED DEFAULT_TLS_REQUIRED DEFAULT_MQTT_ENABLED DEFAULT_PRESENCE_STORE_RAW_MAC; do
-    if ! grep -q "$def" "$CANARY_DIR/include/secure_defaults.h" 2>/dev/null; then
-      check_warn "Missing $def in secure_defaults.h"
-      DEFAULTS_OK=false
-    fi
-  done
-  if [ "$DEFAULTS_OK" = true ]; then
-    check_pass "All critical security defaults defined in secure_defaults.h"
+CANARY_INI="$CANARY_DIR/platformio.ini"
+SECURE_INI="$FIRMWARE_DIR/provisioning/platformio_secure.ini"
+SECURE_DEFAULTS_H="$CANARY_DIR/include/secure_defaults.h"
+# The body of one [section] of an .ini, comments kept (callers match flags at
+# the start of a line, so a flag named in a comment never counts).
+ini_section() { awk -v want="[$2]" '/^\[/ { on = ($0 == want); next } on' "$1"; }
+# Here-strings, not pipes, into grep -q: under pipefail an early-exiting grep
+# can SIGPIPE its writer and turn a match into a failed pipeline.
+ini_sets() { # <file> <section> <-Dflag=value>: the section sets exactly that
+  local body; body=$(ini_section "$1" "$2")
+  grep -qE "^[[:space:]]*$3([[:space:]]|;|\$)" <<< "$body"
+}
+
+HARDENED_OK=true
+if ! ini_sets "$CANARY_INI" env "-DFEATURE_BLE_STATUS=0"; then
+  check_fail "firmware/canary/platformio.ini [env] no longer sets -DFEATURE_BLE_STATUS=0 (the BLE GATT service would compile into every image)"
+  HARDENED_OK=false
+fi
+BASE_IGNORES=$(ini_section "$CANARY_INI" env | awk '/^lib_ignore[[:space:]]*=/ { on = 1; next } /^[^[:space:]]/ { on = 0 } on')
+for lib in securacv_ble_scan securacv_ble_status; do
+  if ! grep -qE "^[[:space:]]+${lib}[[:space:]]*$" <<< "$BASE_IGNORES"; then
+    check_fail "firmware/canary/platformio.ini [env] lib_ignore no longer lists $lib"
+    HARDENED_OK=false
   fi
-else
-  check_fail "secure_defaults.h is missing! Security defaults must be centralized."
-  blue "  See: docs/security/THREAT_MODEL.md → Implementation Review Checklist"
+done
+for env in dev release; do
+  BODY=$(ini_section "$CANARY_INI" "env:$env")
+  if grep -qE '^[[:space:]]*-DFEATURE_BLE(_SCAN|_STATUS)?=1' <<< "$BODY"; then
+    check_fail "firmware/canary/platformio.ini [env:$env] compiles BLE in (only [env:full] may)"
+    HARDENED_OK=false
+  fi
+  if grep -qE '^lib_ignore[[:space:]]*=' <<< "$BODY"; then
+    check_fail "firmware/canary/platformio.ini [env:$env] overrides [env]'s lib_ignore (the BLE libraries would link)"
+    HARDENED_OK=false
+  fi
+  if grep -qE '^[[:space:]]*-DFEATURE_HA_MQTT=1' <<< "$BODY"; then
+    check_fail "firmware/canary/platformio.ini [env:$env] compiles MQTT in (outbound; only the *_ha images may)"
+    HARDENED_OK=false
+  fi
+done
+for flag in "-DFEATURE_BLE=0" "-DFEATURE_BLE_SCAN=0" "-DFEATURE_BLE_STATUS=0"; do
+  if ! ini_sets "$SECURE_INI" env:secure "$flag"; then
+    check_fail "firmware/provisioning/platformio_secure.ini [env:secure] no longer sets $flag"
+    HARDENED_OK=false
+  fi
+done
+for knob in "FEATURE_BLE 0" "FEATURE_HA_MQTT 0" "AP_MAX_CONNECTIONS 1"; do
+  name=${knob% *}; want=${knob#* }
+  if ! grep -qE "^[[:space:]]*#[[:space:]]*define[[:space:]]+${name}[[:space:]]+${want}([[:space:]]|\$)" "$CONFIG_H"; then
+    check_fail "canary_config.h no longer defines $name $want"
+    HARDENED_OK=false
+  fi
+done
+if grep -qE '^[[:space:]]*#[[:space:]]*define[[:space:]]+DEFAULT_' "$SECURE_DEFAULTS_H" 2>/dev/null; then
+  check_fail "secure_defaults.h defines DEFAULT_* macros again: nothing includes it, so they would read as enforcement and enforce nothing (set the knob where it lives)"
+  HARDENED_OK=false
+fi
+if [ "$HARDENED_OK" = true ]; then
+  check_pass "BLE out of the canary dev/release/secure images, MQTT out by default, one SoftAP client"
 fi
 
 echo ""

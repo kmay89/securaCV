@@ -65,11 +65,11 @@
                                         // one; idles standalone otherwise
                                         // (placeholder broker = standalone,
                                         // already the honest-dark case)
-#define FEATURE_CHAIN_VERIFY        1   // same trust engine as its siblings
 #define FEATURE_MDNS_DISCOVERY      1   // how the iPhone app finds it
-#define FEATURE_PROOF_QR            0   // size cut (the C6 lean build's next
-                                        // scoped cut, taken here from day 1 —
-                                        // a kid's clock mints no proof QRs)
+// (No FEATURE_CHAIN_VERIFY / FEATURE_PROOF_QR: neither gated any code. The
+// trust engine compiles on every flavor; the proof QR lives in the watch
+// glance and dash UIs, which this flavor never builds, so a kid's clock
+// mints no proof QRs without a switch. Removed 2026-10-09.)
 #define FEATURE_ACK_SYNC            1
 #define FEATURE_PRESENCE_WAKE       0   // a bedside lamp must not flare when
                                         // someone walks past a hall canary
@@ -94,10 +94,10 @@
 #define FEATURE_RHYTHM              1
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // the clock IS the product
-#define FEATURE_NIGHT_BLACKOUT      0   // nightlight departure: night keeps
-                                        // the calibrated glow — a clock a
-                                        // kid can read at 3 a.m. The honesty
-                                        // veto still outranks everything.
+// Night keeps the calibrated glow (glass_settings.cpp boots every flavor
+// DIM) — a clock a kid can read at 3 a.m. The honesty veto still outranks
+// everything. (The FEATURE_NIGHT_BLACKOUT 0 that said so gated nothing;
+// removed 2026-10-09.)
 #define FEATURE_COMFORT_WORDS       0   // no comfort sensors in this room
 #define FEATURE_HUB_WEATHER         0   // size cut; the face has no forecast
 #define FEATURE_WAKE_ALARM          1   // two-phase gentle wake (visual ramp)

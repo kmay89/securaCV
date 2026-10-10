@@ -15,7 +15,10 @@
 // phone's consent-first discovery choice, which travels in the snapshot.
 //
 // "Chirp" relays through the phone (identify travels over Wi-Fi by device
-// id) — offered when the phone is reachable, honest about why when not.
+// id) — offered only for a row the phone says can answer it (a paired WAP;
+// `WristWitness.canIdentify`) and only while the phone is reachable. A
+// Sense, a Vision or a display serves no identify route, so offering the
+// button there was a tap that could only fail.
 
 import SwiftUI
 import WidgetKit
@@ -37,6 +40,13 @@ struct WristFindView: View {
 
     private var consented: Bool {
         store.snapshot?.discoveryConsented == true
+    }
+
+    /// The phone's per-row answer, from the freshest snapshot copy of this
+    /// row. nil (an older phone) is no chirp — never a button that fails.
+    private var canChirp: Bool {
+        let live = store.snapshot?.witnesses.first { $0.id == witness.id } ?? witness
+        return live.canIdentify == true
     }
 
     /// The twin verdict. The PHONE's per-row answer wins when present — it
@@ -132,7 +142,8 @@ struct WristFindView: View {
                                          ? Theme.color(.calm) : Theme.color(.warn))
                 }
                 if suffixIsAmbiguous {
-                    Text("Two Canaries share this beacon id — the signal can't tell them apart. Chirp still reaches this one.")
+                    Text("Two Canaries share this beacon id — the signal can't tell them apart."
+                         + (canChirp ? " Chirp still reaches this one." : ""))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -148,7 +159,7 @@ struct WristFindView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if store.isPhoneReachable {
+                if canChirp && store.isPhoneReachable {
                     Button {
                         chirp()
                     } label: {

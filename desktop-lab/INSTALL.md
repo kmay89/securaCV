@@ -90,13 +90,14 @@ that macOS grants for free: permission to open the USB serial device, and
 **ModemManager keeping its hands off it**. ModemManager probes a just-plugged
 board (or one re-enumerating after the post-flash reset) as if it were a
 modem — it can hold the port for ~30 s and its probing can reset the board
-mid-boot, so the flash verifies but the live boot receipt never arrives.
+mid-boot, so the write lands but the live boot receipt never arrives.
 This is the same rule the SecuraCV Flasher ships.
 
 - **`.deb` users:** the rule ships with the package
   (`/usr/lib/udev/rules.d/61-securacv-lab.rules` — the Flasher's `.deb`
   installs the identical rule as `61-securacv-canary.rules`, and having both
-  is harmless) and fixes both — just **replug the board** after installing.
+  is harmless) and fixes both for every board below — just **replug the
+  board** after installing.
 - **AppImage / other users:** add it once (skip this if you already added it
   for the Flasher — it is the same file):
 
@@ -104,12 +105,26 @@ This is the same rule the SecuraCV Flasher ships.
   sudo tee /etc/udev/rules.d/61-securacv-canary.rules >/dev/null <<'EOF'
   ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
   ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+  ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
+  ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
+  ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
   EOF
   sudo udevadm control --reload-rules && sudo udevadm trigger
   ```
 
-  Then replug the board. (`303a` is the Canary's own ESP32 USB port;
-  `1a86:55d3` is the Grove Vision AI V2 camera module.)
+  Then replug the board. Which line is for which board:
+
+  | Line | Chip | Boards |
+  |---|---|---|
+  | `303a` | Espressif native USB | the boards that plug straight into the ESP32's own USB, the XIAO ESP32-S3 and C3 among them |
+  | `1a86:55d3` | WCH CH343 | the Grove Vision AI V2 camera module |
+  | `10c4:ea60` | Silicon Labs CP210x | the ESP32-C3-DevKitM-1, and many ESP32-WROOM DevKits |
+  | `1a86:7523` | WCH CH340 | the ESP32-CAM's programmer board, and other WROOM DevKits |
+  | `1a86:55d4` | WCH CH9102 | newer ESP32-WROOM DevKits |
+
+  The three bridge lines grant the logged-in user only (`uaccess`), never
+  `MODE="0666"`: those chips are generic parts other gadgets use too.
+  `lsusb` names the chip on yours if you're not sure.
 
 - **Fallback for the permission half only:** add yourself to the `dialout`
   group and log back in — but note this does *not* stop ModemManager:

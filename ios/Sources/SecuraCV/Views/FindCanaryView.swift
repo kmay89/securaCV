@@ -36,7 +36,18 @@ struct FindCanaryView: View {
 
     var body: some View {
         Group {
-            if store.discoveryConsent == true {
+            if store.discoveryConsent == true, let advice = store.bluetoothAdvice {
+                // Consent given, radio off or not allowed: the same "would be
+                // this screen lying" rule as below — the reason and the way
+                // out, never a ring that searches a radio that can't hear.
+                ContentUnavailableView {
+                    Label("Finding needs Bluetooth", systemImage: "dot.radiowaves.left.and.right")
+                } description: {
+                    Text(advice.text)
+                } actions: {
+                    if advice.opensSettings { OpenSettingsButton() }
+                }
+            } else if store.discoveryConsent == true {
                 findingBody
             } else {
                 // The radios only run with the user's consent (the same gate
@@ -216,11 +227,9 @@ struct FindCanaryView: View {
 
     // MARK: - make it answer back
 
-    /// Only a paired WAP-class Canary serves /api/identify.
-    private var canIdentify: Bool {
-        witness.deviceType == .wap
-            && store.devices.devices.contains { $0.id == witness.id && $0.baseURL != nil }
-    }
+    /// Only a paired WAP-class Canary serves /api/identify — the store's one
+    /// answer, shared with the wrist (FleetStore.canIdentify).
+    private var canIdentify: Bool { store.canIdentify(witness) }
 
     private var chirpButtonTitle: String {
         if let until = chirpUntil, until > Date() { return "Chirping…" }

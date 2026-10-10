@@ -276,16 +276,6 @@ pub fn companion_set_bases(
     Ok(accepted)
 }
 
-/// The companion's latest picture (None before the first poll finishes).
-#[tauri::command]
-pub fn companion_snapshot(state: State<'_, Companion>) -> Option<FleetSnapshot> {
-    state
-        .snapshot
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-}
-
 /// Load the stored bases, build the tray, and start the poll routine. A tray
 /// that cannot be built (no tray host) costs the menubar, never the app.
 pub fn start(app: &AppHandle) {

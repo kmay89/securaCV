@@ -21,7 +21,7 @@ struct DiscoveryConsentCard: View {
                         .font(.headline)
                         .labelStyle(.titleOnly)
                 }
-                Text("SecuraCV looks for Canaries on your own network and listens for their Bluetooth presence beacons. Everything stays between your devices — nothing touches any company server. iOS will ask for Local Network access next; that prompt is this feature.")
+                Text("SecuraCV looks for Canaries on your own network and listens for their Bluetooth beacons — that is also how it hears a brand-new one. Everything stays between your devices; nothing touches any company server. iOS asks for Bluetooth and Local Network access next — those prompts are this feature.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 HStack(spacing: Theme.s) {

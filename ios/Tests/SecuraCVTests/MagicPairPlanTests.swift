@@ -34,10 +34,10 @@ final class MagicPairPlanTests: XCTestCase {
 
     func testAClaimThatWasNotOursIsJoinedNotPaired() {
         XCTAssertEqual(MagicPairPlan.afterJoin(hasClaimService: true, claim: nil, isPrivateHost: DeviceAPI.isPrivate),
-                       .notPairedTapBoot(MagicPairPlan.Copy.noClaim),
+                       .notPaired(MagicPairPlan.Copy.noClaim),
                        "\"{}\": the Canary joined, but the door was somebody else's")
         XCTAssertEqual(MagicPairPlan.afterJoin(hasClaimService: true, claim: claim(url: ""), isPrivateHost: DeviceAPI.isPrivate),
-                       .notPairedTapBoot(MagicPairPlan.Copy.noClaim), "a claim with nowhere to spend it")
+                       .notPaired(MagicPairPlan.Copy.noClaim), "a claim with nowhere to spend it")
     }
 
     func testAnHTTPClaimIsSpentAtItsURLWithNoPin() throws {
@@ -89,18 +89,18 @@ final class MagicPairPlanTests: XCTestCase {
                        .retryViaIP(viaIP, pin: nil),
                        "the .local name may not resolve yet; the address the Canary reported stands in")
         XCTAssertEqual(MagicPairPlan.afterFetch(.unreachable, claim: c, triedIP: true, isPrivateHost: DeviceAPI.isPrivate),
-                       .notPairedTapBoot(MagicPairPlan.Copy.unreachable), "no third host")
+                       .notPaired(MagicPairPlan.Copy.unreachable), "no third host")
         XCTAssertEqual(MagicPairPlan.afterFetch(.unreachable, claim: claim(ip: nil), triedIP: false, isPrivateHost: DeviceAPI.isPrivate),
-                       .notPairedTapBoot(MagicPairPlan.Copy.unreachable), "no address reported")
+                       .notPaired(MagicPairPlan.Copy.unreachable), "no address reported")
         XCTAssertEqual(MagicPairPlan.afterFetch(.unreachable, claim: claim(ip: ""), triedIP: false, isPrivateHost: DeviceAPI.isPrivate),
-                       .notPairedTapBoot(MagicPairPlan.Copy.unreachable))
+                       .notPaired(MagicPairPlan.Copy.unreachable))
         XCTAssertEqual(MagicPairPlan.afterFetch(.unreachable, claim: claim(ip: "8.8.8.8"), triedIP: false, isPrivateHost: DeviceAPI.isPrivate),
-                       .notPairedTapBoot(MagicPairPlan.Copy.unreachable),
+                       .notPaired(MagicPairPlan.Copy.unreachable),
                        "a public address is not dialed, whoever reported it")
         // The address is the host already: there is no second host to try.
         let byIP = claim(url: "http://192.168.1.23/api/provisioning-receipt?claim=\(hex)")
         XCTAssertEqual(MagicPairPlan.afterFetch(.unreachable, claim: byIP, triedIP: false, isPrivateHost: DeviceAPI.isPrivate),
-                       .notPairedTapBoot(MagicPairPlan.Copy.unreachable))
+                       .notPaired(MagicPairPlan.Copy.unreachable))
     }
 
     func testTheAddressRetryKeepsThePin() throws {
@@ -114,15 +114,15 @@ final class MagicPairPlanTests: XCTestCase {
         // 403: spent, expired, or a wrong claim — the firmware burned it, so
         // an address on hand earns no second dial.
         XCTAssertEqual(MagicPairPlan.afterFetch(.refused, claim: claim(), triedIP: false, isPrivateHost: DeviceAPI.isPrivate),
-                       .notPairedTapBoot(MagicPairPlan.Copy.refused))
+                       .notPaired(MagicPairPlan.Copy.refused))
     }
 
     func testAnyOtherFailureIsFinalAndNamed() {
         let step = MagicPairPlan.afterFetch(.other("Device error 500: "), claim: claim(), triedIP: false,
                                             isPrivateHost: DeviceAPI.isPrivate)
-        guard case .notPairedTapBoot(let note) = step else { return XCTFail("\(step)") }
+        guard case .notPaired(let note) = step else { return XCTFail("\(step)") }
         XCTAssertTrue(note.contains("Device error 500"), "the error's own words")
-        XCTAssertTrue(note.contains("BOOT button"), "and the way to pair it later")
+        XCTAssertTrue(note.contains("Ready to pair"), "and where to finish pairing it")
         XCTAssertEqual(note, MagicPairPlan.Copy.other("Device error 500: "))
     }
 
@@ -152,14 +152,59 @@ final class MagicPairPlanTests: XCTestCase {
             XCTAssertFalse(s.isEmpty)
             XCTAssertTrue(s.hasSuffix("."), "a sentence: \(s)")
         }
-        let joinedNotPaired = [MagicPairPlan.Copy.noClaim, MagicPairPlan.Copy.unreachable,
-                               MagicPairPlan.Copy.refused, MagicPairPlan.Copy.tlsNoPin,
-                               MagicPairPlan.Copy.receiptTLSNoPin, MagicPairPlan.Copy.other("x")]
-        for s in joinedNotPaired {
-            XCTAssertTrue(s.contains("Fleet tab") && s.contains("BOOT button"),
+        // Joined, claim spent: the next door is a real one — the device's
+        // row under Ready to pair (PairView: its recovery kit, or a fresh
+        // setup). The Fleet tab never had a BOOT-tap pairing flow, so no
+        // sentence may send anyone looking for one.
+        let finishOnTheFleetTab = [MagicPairPlan.Copy.noClaim, MagicPairPlan.Copy.refused,
+                                   MagicPairPlan.Copy.claimExpired, MagicPairPlan.Copy.other("x")]
+        for s in finishOnTheFleetTab {
+            XCTAssertTrue(s.contains("Fleet tab") && s.contains("Ready to pair"),
                           "joined but not paired names the next door: \(s)")
         }
-        XCTAssertFalse(MagicPairPlan.Copy.notPrivate.contains("BOOT"),
+        // Nothing reached the Canary: the claim is unspent, so the next step
+        // is right here.
+        for s in [MagicPairPlan.Copy.unreachable, MagicPairPlan.Copy.phoneOffWiFi] {
+            XCTAssertTrue(s.contains("Try again"), "an unspent claim is retried in place: \(s)")
+        }
+        XCTAssertTrue(MagicPairPlan.Copy.phoneOffWiFi.contains("off Wi-Fi"), "the cause, named")
+        for s in [MagicPairPlan.Copy.tlsNoPin, MagicPairPlan.Copy.receiptTLSNoPin] {
+            XCTAssertTrue(s.contains("set it up from this phone again"), "firmware first, then the card: \(s)")
+        }
+        for s in MagicPairPlan.Copy.all {
+            XCTAssertFalse(s.contains("tap on its BOOT button"),
+                           "no promise of a BOOT-tap pairing the app does not have: \(s)")
+        }
+        XCTAssertFalse(MagicPairPlan.Copy.notPrivate.contains("Fleet tab"),
                        "a refusal before any dial is not a pairing instruction")
+    }
+
+    // MARK: - trying again
+
+    func testOnlyAnUnspentLiveClaimIsTriedAgain() {
+        let c = claim()   // expires_in 180
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertTrue(MagicPairPlan.mayRetry(after: .unreachable, claim: c, readAt: t0, now: t0.addingTimeInterval(30)),
+                      "nothing reached the Canary: the claim is unspent")
+        XCTAssertFalse(MagicPairPlan.mayRetry(after: .unreachable, claim: c, readAt: t0, now: t0.addingTimeInterval(178)),
+                       "too close to the expiry to be worth sending")
+        XCTAssertFalse(MagicPairPlan.mayRetry(after: .refused, claim: c, readAt: t0, now: t0.addingTimeInterval(5)),
+                       "a 403 spent it")
+        XCTAssertFalse(MagicPairPlan.mayRetry(after: .other("x"), claim: c, readAt: t0, now: t0.addingTimeInterval(5)),
+                       "an answer that was not a receipt may have spent it")
+        XCTAssertFalse(MagicPairPlan.mayRetry(after: .receipt, claim: c, readAt: t0, now: t0))
+        XCTAssertFalse(MagicPairPlan.mayRetry(after: nil, claim: c, readAt: t0, now: t0), "never dialed, nothing to retry")
+        var short = c
+        short.expiresIn = 20
+        XCTAssertFalse(MagicPairPlan.mayRetry(after: .unreachable, claim: short, readAt: t0, now: t0.addingTimeInterval(16)),
+                       "the claim's own lifetime wins over the default")
+        short.expiresIn = nil
+        XCTAssertTrue(MagicPairPlan.mayRetry(after: .unreachable, claim: short, readAt: t0, now: t0.addingTimeInterval(100)),
+                      "no lifetime named: the firmware's 180 s")
+    }
+
+    func testNothingAnsweredNamesThePhoneBeingOffWiFi() {
+        XCTAssertEqual(MagicPairPlan.unreachableNote(phoneOnWiFi: false), MagicPairPlan.Copy.phoneOffWiFi)
+        XCTAssertEqual(MagicPairPlan.unreachableNote(phoneOnWiFi: true), MagicPairPlan.Copy.unreachable)
     }
 }

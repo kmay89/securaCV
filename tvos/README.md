@@ -91,6 +91,14 @@ loudest element on screen, a hub that vanishes can never keep drawing a green
 fleet, and a squatted `canary.local` that answers with a login page is
 skipped, not trusted (`Tests/WitnessWallTests/`).
 
+A device is described the way the iPhone and the watch describe it, because
+the deciding code is compiled here rather than re-made (project.yml's parity
+block, held by `scripts/lint_apple_parity.py`): its figure and product name
+(`FleetFigureBridge`, `DeviceNaming`), and the one-line room and hub
+sentences the watch's rows say too (`Shared/DeviceGlanceCopy`). The hub's
+own first row — the witness kernel — is named and drawn as what it is,
+software, rather than as a device still waiting for its picture.
+
 ## Layout
 
 ```

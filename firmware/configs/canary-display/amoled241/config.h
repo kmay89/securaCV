@@ -56,10 +56,11 @@
                                         // both intents onto panel command 0x51
 #define FEATURE_WIFI_STA            1
 #define FEATURE_MQTT                1   // subscribe to the fleet, publish own status
-#define FEATURE_CHAIN_VERIFY        1   // on-device Ed25519 verify + TOFU pinning
 #define FEATURE_MDNS_DISCOVERY      1   // fleet discovery: find/gossip the broker
-#define FEATURE_PROOF_QR            1   // proof QR compiled (reachable once the
-                                        // BOOT-button gestures land — follow-up)
+// (FEATURE_CHAIN_VERIFY and FEATURE_PROOF_QR used to sit here. Neither gated
+// any code: the trust engine (trust.cpp: Ed25519 verify + TOFU pinning)
+// compiles on every flavor, and the proof QR wherever its UI does, the
+// watch glance and the dash. Removed 2026-10-09.)
 #define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
 #ifndef FEATURE_CHIME  // -D overridable: the emulator forces the chime on for
@@ -85,8 +86,10 @@
 // ── Nightstand wave (display_nightstand.md + display_nightstand_line.md) ──
 // The bedside contract holds on a glass this good: emission floor instead of
 // a backlight floor, gentle wake, comfort words.
-#define FEATURE_NIGHT_BLACKOUT      1   // first-boot seed: dark-when-safe at night
-                                        // (true black IS this panel's off state)
+// Night is a runtime setting (glass_settings.cpp): every flavor boots DIM,
+// and "off" (true black IS this panel's off state) is one tap away in
+// settings. The FEATURE_NIGHT_BLACKOUT "first-boot seed" that stood here was
+// read by no source; removed 2026-10-09.
 #define FEATURE_COMFORT_WORDS       1   // bedroom temp/humidity as sleep words
 #define FEATURE_HUB_WEATHER         1   // hub-republished forecast
 #define FEATURE_WAKE_ALARM          1   // on-device two-phase gentle wake (visual

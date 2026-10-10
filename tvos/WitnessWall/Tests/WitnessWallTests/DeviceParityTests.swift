@@ -233,4 +233,17 @@ final class DeviceParityTests: XCTestCase {
         XCTAssertFalse(snapshot.hasChainTrouble)
         XCTAssertEqual(snapshot.onlineCount, 1)
     }
+
+    // MARK: - the hub's own row
+
+    /// A Wall pointed at a hub shows the kernel's own row first (src/api
+    /// mod.rs: name "Witness kernel", product KERNEL_NAME). It is software:
+    /// it gets a name, and it is never told it is waiting for a hardware
+    /// figure the way an unknown DEVICE honestly is.
+    func testTheKernelsOwnRowIsNamedAndKnownToBeSoftware() throws {
+        let d = try device(from: #"{"kernel":"witness-kernel","verified_through":"now","devices":[{"name":"Witness kernel","online":true,"chain":"ok","product":"witness-kernel"}]}"#)
+        XCTAssertEqual(d.productName, "SecuraCV witness kernel")
+        XCTAssertTrue(DeviceNaming.isSoftware(published: d.product))
+        XCTAssertNil(d.figure, "no hardware to draw — the server symbol stands in")
+    }
 }

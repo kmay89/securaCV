@@ -68,7 +68,7 @@ Lifecycle key: `exp` experimental · `stable` · `dep` deprecated · `future` de
 
 ### Rust compile-time (Cargo `[features]`)
 
-Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
+Source of truth: the `[features]` table in `Cargo.toml`. Default build enables **none** of these
 (all are opt-in); the default detection path is the in-tree stub/CPU backend.
 
 | Flag | Default | Lifecycle | Scope / purpose | Removal criteria |
@@ -78,7 +78,6 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `ingest-file-ffmpeg` | off | stable | Local file decode via ffmpeg (`ingest_run`) | keep |
 | `ingest-esp32` | off | stable | ESP32-S3 HTTP/UDP camera ingest | keep |
 | `ingest-v4l2` | off | stable | `/dev/video*` ingest | keep |
-| `stub-frame-source` | off | stable | Synthetic frames for tests/dev | keep (test affordance) |
 | `backend-tract` | off | exp | ONNX object detection (tract). Off-by-default; default build is frame-diff stub | promote to stable + bundle a model once detection is the documented default (flag-report F-01) |
 | `detect-eval` | off | exp | Perception eval harness (`detect_eval` bin: precision/recall/AP/latency); pulls in `backend-tract` + `image` | keep as a dev/CI eval tool; promote only if it becomes a shipped runtime capability |
 | `adapter-frigate` | off | stable | Frigate event adapter | keep |

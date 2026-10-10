@@ -1,14 +1,18 @@
 // CloudSync.swift
 //
-// The "iCloud job that runs" — implemented as CloudKit's PRIVATE database. The
-// device list, alert rules, and event digests live in the USER's own iCloud;
-// SecuraCV has no server in the loop and cannot read any of it (Invariant IV,
-// local ownership, realized as infrastructure). This is how a second iPhone or
-// an iPad "just has your fleet." Secrets never come here — only Keychain holds
-// tokens and pinned keys, device-bound.
+// The "iCloud job that runs" — implemented as CloudKit's PRIVATE database. What
+// syncs is the paired-device list (`PairedDevice` records: name, type, base
+// URL, pairing date, pinned TLS fingerprint); it lives in the USER's own
+// iCloud, SecuraCV has no server in the loop and cannot read any of it
+// (Invariant IV, local ownership, realized as infrastructure). This is how a
+// second iPhone or an iPad "just has your fleet." Alert rules, quiet hours
+// and the alert ledger do NOT sync — they stay in each device's own
+// defaults — and the away wakes are a separate path (AwayPush). Secrets never
+// come here — only Keychain holds tokens and pinned keys, device-bound.
 //
-// Kept behind a tiny protocol so the pure model/test target never links
-// CloudKit; the concrete implementation runs only on device.
+// Every CloudKit call sits under `#if canImport(CloudKit)`, so the pure
+// model/test code never needs a CloudKit account; the concrete calls run only
+// on device.
 
 import Foundation
 #if canImport(CloudKit)

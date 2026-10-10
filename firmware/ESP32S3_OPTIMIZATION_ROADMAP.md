@@ -50,7 +50,7 @@ per-module change that follows.
 
 Today the shipping profiles are split across **two** toolchains:
 
-- `dev` / `release` / `minimal` / `standalone` build on the official `espressif32@6.9.0`
+- `dev` / `release` / `minimal` (and the other `[env]`-platform envs) build on the official `espressif32@6.9.0`
   (exact, `[platform_s3c3]` in [`envs/platformio/platforms.ini`](envs/platformio/platforms.ini);
   a floating `^7.0.0` until 2026-09-22, [`PLATFORMS.md`](PLATFORMS.md)), whose
   `framework=arduino` package is **Arduino 2.0.17 / IDF 4.4.7** — and so is 7.x's
@@ -306,8 +306,9 @@ unsafe behavior, verified during the audit.
 8. **Stale/false in-code claims to correct while touching these.** The auth header says "wiring
    happens in Phase 2" but auth **is** wired (`auth_gate` on ~91 of 98 handlers,
    [`securacv_network.cpp:757`](canary/lib/securacv_network/src/securacv_network.cpp)); the
-   `bluetooth_mgr.h` pairing/bonding manager is **orphaned dead code** (`ble_debug_beacon` was
-   removed in the repo audit cleanup);
+   `bluetooth_mgr.h` pairing/bonding manager was **orphaned dead code** (`ble_debug_beacon` was
+   removed in the repo audit cleanup; the header itself was deleted on 2026-10-09, and
+   `check_common_build_reachability.py`'s header pass now fails a shared header nothing includes);
    the "single main-loop task" thread-safety comments on the Scout tracker/roster are **wrong**
    (the advert callback runs in the NimBLE host task — a real data race the moment item 3 is
    fixed). Clean these up so the next reader isn't misled.

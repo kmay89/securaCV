@@ -583,31 +583,40 @@ def _frigate_config_destination() -> tuple:
 # go2rtc camera discovery (pre-fills the wizard's camera rows)
 # ---------------------------------------------------------------------------
 
+# str.lower() also folds non-ASCII letters, and a few of them grow ("İ" ->
+# "i̇", two code points), which would move the 64-character cut; jq's
+# ascii_downcase touches A-Z only.
+_ASCII_DOWNCASE = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
 def _go2rtc_streams_to_cameras(streams) -> list:
     """Transform a go2rtc /api/streams payload into wizard camera rows.
 
     Producers are objects carrying a "url" field (older go2rtc builds
-    emitted plain strings; both are handled). Streams without a usable
-    producer URL are skipped. Zone IDs must match zone:[a-z0-9_-]{1,64},
-    so the name is lowercased BEFORE the character sweep."""
+    emitted plain strings; both are handled). A URL is a non-empty string
+    and nothing else — a null or a number is skipped, never stringified —
+    and streams without one are skipped. Zone IDs must match
+    zone:[a-z0-9_-]{1,64}, so the name is lowercased (ASCII only, as jq's
+    ascii_downcase does) BEFORE the character sweep.
+
+    This is the REFERENCE for discover_cameras.sh, the jq copy the add-on
+    runs at every start: tests/test_serve_wizard.py feeds both the same
+    payloads and fails on any row they disagree about."""
     if not isinstance(streams, dict):
         return []
     cameras = []
     for name in sorted(streams):
         stream = streams.get(name)
-        producers = (stream or {}).get("producers") if isinstance(stream, dict) else None
+        producers = stream.get("producers") if isinstance(stream, dict) else None
         urls = []
-        for producer in producers or []:
-            if isinstance(producer, dict):
-                url = str(producer.get("url") or "")
-            else:
-                url = str(producer or "")
-            if url:
+        for producer in producers if isinstance(producers, list) else []:
+            url = producer.get("url") if isinstance(producer, dict) else producer
+            if isinstance(url, str) and url:
                 urls.append(url)
         if not urls:
             continue
         chosen = next((u for u in urls if u.startswith("rtsp://")), urls[0])
-        slug = re.sub(r"[^a-z0-9_-]", "_", str(name).lower())[:64]
+        slug = re.sub(r"[^a-z0-9_-]", "_", str(name).translate(_ASCII_DOWNCASE))[:64]
         cameras.append({
             "name": str(name),
             "url": chosen,

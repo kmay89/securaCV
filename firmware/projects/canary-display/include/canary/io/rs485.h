@@ -11,6 +11,11 @@
 // emulator builds see an empty translation unit, so the wasm stays byte-for-byte
 // identical. Bench-pending: TX/RX orientation and bus timing are VERIFY-tagged
 // in pins.h until validated on hardware.
+//
+// NO CALLER YET (audit, 2026-10-09): the dash-rs485 env compiles this driver,
+// but nothing calls rs485_begin(), rs485_read_holding() or rs485_loop(). The
+// playground (src/playground/playground.cpp) brings up its own thin transport
+// on the same bus. Wiring one transport through here is planned work.
 
 #pragma once
 

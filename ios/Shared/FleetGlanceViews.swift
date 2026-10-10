@@ -6,6 +6,12 @@
 // literally cannot tell a different story on a different surface. Each
 // target keeps only its own thin provider (which cache it reads, which
 // families it offers).
+//
+// The glyph and color come from `glanceSymbol` / `glanceRole`, not from the
+// fleet's severity alone: when every Canary is fine but the delivery path is
+// dark or failed (`pathAlarm`), a green "3/3 healthy" would be the false
+// comfort the spoken answer already refuses — so the glance shows the
+// heartbeat's glyph, and the families with room for words say why.
 
 import SwiftUI
 import WidgetKit
@@ -39,9 +45,9 @@ struct FleetGlanceWidgetView: View {
 
     private func circular(_ snap: WristSnapshot) -> some View {
         VStack(spacing: 0) {
-            Image(systemName: snap.severity.sfSymbol)
+            Image(systemName: snap.glanceSymbol)
                 .font(.title3)
-                .foregroundStyle(Theme.color(snap.severity.role))
+                .foregroundStyle(Theme.color(snap.glanceRole))
             Text("\(snap.healthy)/\(snap.total)")
                 .font(.caption2).monospacedDigit()
         }
@@ -50,9 +56,9 @@ struct FleetGlanceWidgetView: View {
 
     #if os(watchOS)
     private func corner(_ snap: WristSnapshot) -> some View {
-        Image(systemName: snap.severity.sfSymbol)
+        Image(systemName: snap.glanceSymbol)
             .font(.title3)
-            .foregroundStyle(Theme.color(snap.severity.role))
+            .foregroundStyle(Theme.color(snap.glanceRole))
             .widgetLabel {
                 Text("\(snap.healthy)/\(snap.total) healthy")
                     .monospacedDigit()
@@ -62,20 +68,20 @@ struct FleetGlanceWidgetView: View {
     #endif
 
     private func inline(_ snap: WristSnapshot) -> some View {
-        // Inline gets one line: glyph + the headline (or count when quiet).
-        Label(snap.severity == .ok ? "\(snap.healthy)/\(snap.total) healthy" : snap.headline,
-              systemImage: snap.severity.sfSymbol)
+        // Inline gets one line: glyph + the headline (or count when quiet) —
+        // or the heartbeat's sentence when a quiet fleet's path is down.
+        Label(inlineText(snap), systemImage: snap.glanceSymbol)
             .accessibilityLabel(accessibilitySummary(snap))
     }
 
     /// Home Screen small: the one honest answer, at a glance from a meter away.
     private func small(_ snap: WristSnapshot) -> some View {
         VStack(alignment: .leading, spacing: Theme.xs) {
-            Image(systemName: snap.severity.sfSymbol)
+            Image(systemName: snap.glanceSymbol)
                 .font(.title)
-                .foregroundStyle(Theme.color(snap.severity.role))
+                .foregroundStyle(Theme.color(snap.glanceRole))
             Spacer(minLength: 0)
-            Text(snap.headline)
+            Text(snap.pathAlarm ? snap.heartbeatSummary(now: entry.date) : snap.headline)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(2)
             HStack(spacing: Theme.xs) {
@@ -93,11 +99,12 @@ struct FleetGlanceWidgetView: View {
     private func rectangular(_ snap: WristSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: Theme.xs) {
-                Image(systemName: snap.severity.sfSymbol)
-                    .foregroundStyle(Theme.color(snap.severity.role))
+                Image(systemName: snap.glanceSymbol)
+                    .foregroundStyle(Theme.color(snap.glanceRole))
                 Text(snap.fleetName).font(.headline).lineLimit(1)
             }
-            Text(snap.headline).font(.caption2).lineLimit(1)
+            Text(snap.pathAlarm ? snap.heartbeatSummary(now: entry.date) : snap.headline)
+                .font(.caption2).lineLimit(1)
             HStack(spacing: Theme.xs) {
                 Text("\(snap.healthy)/\(snap.total) healthy").monospacedDigit()
                 if snap.isDemoData {
@@ -109,6 +116,11 @@ struct FleetGlanceWidgetView: View {
             .font(.caption2)
         }
         .accessibilityLabel(accessibilitySummary(snap))
+    }
+
+    private func inlineText(_ snap: WristSnapshot) -> String {
+        if snap.pathAlarm { return snap.heartbeatSummary(now: entry.date) }
+        return snap.severity == .ok ? "\(snap.healthy)/\(snap.total) healthy" : snap.headline
     }
 
     private var noData: some View {
@@ -130,6 +142,7 @@ struct FleetGlanceWidgetView: View {
     }
 
     private func accessibilitySummary(_ snap: WristSnapshot) -> String {
-        "\(snap.fleetName): \(snap.headline). \(snap.healthy) of \(snap.total) healthy."
+        let base = "\(snap.fleetName): \(snap.headline). \(snap.healthy) of \(snap.total) healthy."
+        return snap.pathAlarm ? base + " " + snap.heartbeatSummary(now: entry.date) + "." : base
     }
 }

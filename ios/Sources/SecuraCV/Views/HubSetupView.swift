@@ -71,6 +71,11 @@ struct HubSetupView: View {
                     }
                 }
             }
+            if probe != .ready, let advice = SetupRadioAdvice.localNetwork(blocked: runner.discovery.localNetworkBlocked) {
+                // The browse can't see anything at all — say so now, not
+                // after 25 minutes of a spinner.
+                RadioAdviceRow(advice: advice)
+            }
             if runner.escalated {
                 Text("Nothing has answered in 25 minutes. Check the Pi's light is blinking, that it is on the same Wi-Fi as this phone (or on ethernet), and look for \"homeassistant\" in your router's client list — then type its address here.")
                     .font(.footnote).foregroundStyle(Theme.color(.warn))

@@ -150,7 +150,8 @@ function render() {
 
 // Deep link pre-fill, e.g. from the Canary House:
 //   choose.html#place=door&want=see,prove&privacy=ok&power=outlet
-// Unknown questions/options are ignored; answers still never leave the page.
+// Unknown questions/options and malformed escapes are ignored; answers still
+// never leave the page.
 (function prefill() {
   const frag = location.hash.slice(1);
   if (!frag) return;
@@ -158,8 +159,12 @@ function render() {
     const [qid, raw] = pair.split("=");
     const q = QUESTIONS.find((x) => x.id === qid);
     if (!q || !raw) continue;
-    const ids = decodeURIComponent(raw).split(",")
-      .filter((id) => q.options.some((o) => o.id === id));
+    // A malformed escape (place=%E0) throws URIError, and this runs at module
+    // top level: unguarded, it stopped the module before the catalog fetch
+    // below, so a bad link left the chooser with no results. Skip the pair.
+    let ids;
+    try { ids = decodeURIComponent(raw).split(","); } catch { continue; }
+    ids = ids.filter((id) => q.options.some((o) => o.id === id));
     if (!ids.length) continue;
     answers[qid] = q.multi ? ids : ids[0];
     for (const id of ids) optButtons[qid]?.[id]?.classList.add("on");

@@ -111,8 +111,8 @@ final class GlanceAnswerTests: XCTestCase {
         // it — the verdict says that, never a device→relay round trip it
         // didn't make (rule 4: don't overclaim).
         let verdict = GlanceAnswer.pathTest(verified: true,
-                                            summary: "Delivery verified just now")
-        XCTAssertEqual(verdict, "Alerts can reach this device — delivery verified just now.")
+                                            summary: "Alert delivery confirmed just now")
+        XCTAssertEqual(verdict, "Alerts can reach this device — alert delivery confirmed just now.")
         XCTAssertFalse(verdict.contains("fleet can reach you"), verdict)
     }
 
@@ -122,5 +122,21 @@ final class GlanceAnswerTests: XCTestCase {
         XCTAssertEqual(verdict, "Test failed: notifications are off for SecuraCV.")
         // No double period when the reason already ends with one.
         XCTAssertFalse(verdict.hasSuffix(".."), verdict)
+    }
+
+    // MARK: - every surface that asks gets the same sentence
+
+    func testTheWatchAsksTheSameComposer() throws {
+        // The wrist's Check the Fleet must be this composer over the wrist's
+        // own cache — a second sentence builder on the watch is how the two
+        // answers would start to disagree.
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/SecuraCVWatch/WristIntents.swift")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path),
+                          "ios checkout not visible from the test host")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(src.contains("GlanceAnswer.spoken(WristCache.load())"))
+        XCTAssertTrue(src.contains("AppShortcutsProvider"))
     }
 }

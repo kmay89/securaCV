@@ -114,43 +114,38 @@ LOVELACE_CARD_FILENAMES = (
     "securacv-timeline-card.js",
     "securacv-aim-card.js",
 )
-TIMELINE_CARD_FILENAME = LOVELACE_CARD_FILENAMES[0]
-TIMELINE_CARD_URL = f"/{DOMAIN}_www/{TIMELINE_CARD_FILENAME}"
 
 
-def _manifest_version() -> str:
-    """The integration version from manifest.json, for cache-busting the cards.
+def _card_digest(path: str) -> str:
+    """A card file's cache key: the first 12 hex digits of its sha256.
 
-    Blocking read — reached only through `_card_assets`, which runs in an
-    executor.
+    Keyed on the card's own bytes, not the integration version: the version
+    sat at one number while the timeline card changed four times, and every
+    browser kept the JS it already had. Blocking read — reached only through
+    `_card_assets`, which runs in an executor.
     """
-    try:
-        import json
-        from pathlib import Path
+    import hashlib
 
-        with open(Path(__file__).parent / "manifest.json", encoding="utf-8") as fh:
-            return str(json.load(fh).get("version", "0"))
-    except (OSError, ValueError):
-        return "0"
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()[:12]
 
 
-def _card_assets() -> tuple[str, list[tuple[str, str]]]:
-    """The manifest version plus the card files that exist, in one hop.
+def _card_assets() -> list[tuple[str, str, str]]:
+    """The card files that exist, each with its cache key, in one hop.
 
-    Both halves block — `open()` on manifest.json and `Path.is_file()` per
-    card — and HA's blocking-call detector flags either one inside the event
-    loop. Gathered here so `_async_register_frontend` pays a single
+    Both halves block — `Path.is_file()` per card and the `open()` that
+    hashes it — and HA's blocking-call detector flags either one inside the
+    event loop. Gathered here so `_async_register_frontend` pays a single
     `async_add_executor_job`, the same discipline `_read_token_file` follows.
     """
     from pathlib import Path
 
     www = Path(__file__).parent / "www"
-    cards = [
-        (filename, str(www / filename))
+    return [
+        (filename, str(www / filename), _card_digest(str(www / filename)))
         for filename in LOVELACE_CARD_FILENAMES
         if (www / filename).is_file()
     ]
-    return _manifest_version(), cards
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
@@ -166,10 +161,10 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         return
     domain_data["_frontend_registered"] = True
     try:
-        version, cards = await hass.async_add_executor_job(_card_assets)
+        cards = await hass.async_add_executor_job(_card_assets)
 
         registered_any = False
-        for filename, card_path in cards:
+        for filename, card_path, digest in cards:
             card_url = f"/{DOMAIN}_www/{filename}"
             try:
                 from homeassistant.components.http import StaticPathConfig
@@ -183,13 +178,15 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
             from homeassistant.components.frontend import add_extra_js_url
 
-            # `?v=<manifest version>`: browsers and the HA frontend's service
-            # worker cache extra_module_url scripts aggressively, so without a
-            # version query every integration update left users on the old card
-            # JS (cache_headers=False above only shapes the server headers).
-            # Same convention HACS uses for every frontend resource; the static
-            # path itself stays unversioned.
-            add_extra_js_url(hass, f"{card_url}?v={version}")
+            # `?v=<digest of the card file>`: browsers and the HA frontend's
+            # service worker cache extra_module_url scripts aggressively, so
+            # without a query that moves every update left users on the old
+            # card JS (cache_headers=False above only shapes the server
+            # headers). It used to be the manifest version, which did not move
+            # when only a card did; the file's own hash moves exactly when its
+            # bytes do. Same convention HACS uses for every frontend resource;
+            # the static path itself stays unversioned.
+            add_extra_js_url(hass, f"{card_url}?v={digest}")
             registered_any = True
             _LOGGER.debug("SecuraCV card registered at %s", card_url)
         if not registered_any:
@@ -371,19 +368,6 @@ class SecuraCVApi:
         empty instead of erroring on older kernels.
         """
         return await self._async_get_json("/status", none_on_404=True)
-
-    async def async_get_health(self) -> dict[str, Any]:
-        """Check kernel health status."""
-        url = f"{self._base_url}/health"
-        try:
-            async with self._session.get(
-                url, timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status != 200:
-                    return {"status": "error", "code": resp.status}
-                return await resp.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            return {"status": "offline"}
 
 
 class SecuraCVCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -976,14 +960,6 @@ def async_record_verify(
                 blocking=False,
             )
         )
-
-
-@callback
-def async_get_trust_store(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore | None:
-    entry_data = hass.data[DOMAIN].get(entry.entry_id)
-    if not entry_data:
-        return None
-    return entry_data.get("trust_store")
 
 
 def unsigned_trust_attrs(

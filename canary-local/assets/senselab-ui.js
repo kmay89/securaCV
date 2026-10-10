@@ -16,7 +16,7 @@
 // The DOM-free scene/quality/power math lives in sense-sim.js (tested).
 
 import {
-  radarView, vitalsQuality, powerModel, TYPE_NAMES,
+  radarView, vitalsQuality, powerModel,
 } from "./sense-sim.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);

@@ -198,3 +198,26 @@ for (const tree of TREES) {
     assert.deepStrictEqual(wrong, []);
   });
 }
+
+// canary-wap's wap_server.h carries an endpoint list in a comment, the first
+// thing a reader opens to learn the API. Eight of its lines named routes
+// nothing registers (GET /api/health, /api/identity, /api/witness/:seq, ...),
+// each a 404 or 405 on a device (sweep F237). Every line it lists now routes
+// through the same table and matcher as the dashboards' requests, a `:name`
+// placeholder filled with 1, and must reach a registration of its own
+// method: a list that names a route nothing serves fails here.
+test("canary-wap: every route wap_server.h's endpoint comment lists is registered", () => {
+  const text = readFileSync(join(__dirname, "..", "projects", "canary-wap", "arduino", "canary_wap", "wap_server.h"), "utf8");
+  const a = text.indexOf("REST API Endpoints");
+  const b = text.indexOf("*/", a);
+  assert.ok(a >= 0 && b > a, "wap_server.h still carries its endpoint comment");
+  const listed = [...text.slice(a, b).matchAll(/^\s*\*\s+(GET|POST|PUT|PATCH|DELETE)\s+(\/\S*)/gm)]
+    .map((m) => ({ method: m[1], raw: m[2], target: m[2].replace(/:\w+/g, "1") }));
+  assert.ok(listed.length > 20, "the comment's routes were read");
+  const table = R.wapTable();
+  const { answers } = R.route(table, listed);
+  const phantom = listed.map((l, i) => typeof answers[i] === "number" && table[answers[i]].method === l.method
+    ? null : `${l.method} ${l.raw}: answered ${typeof answers[i] === "number" ? table[answers[i]].uri : answers[i]}`)
+    .filter(Boolean);
+  assert.deepStrictEqual(phantom, []);
+});

@@ -1,10 +1,20 @@
 /**
  * @file config.h
- * @brief Default configuration for Canary WAP
+ * @brief Canary WAP descriptor read by the Lab's tooling. NOT COMPILED.
  *
- * This configuration is for the standard Wireless Access Point witness
- * device with full feature set: GPS, SD storage, WiFi AP, mesh network,
- * Bluetooth, and RF presence detection.
+ * No build puts firmware/configs/canary-wap/ on an include path, and the
+ * sketch includes no config.h: the WAP's real flags are in
+ * firmware/projects/canary-wap/arduino/canary_wap/build_config.h (the
+ * BUILD_PROFILE_* blocks), its pins in canary_wap.ino. Nothing below
+ * configures a device. Several flags here have no counterpart in the sketch
+ * at all (FEATURE_GNSS: GPS is unconditional there; FEATURE_RF_PRESENCE,
+ * FEATURE_CHIRP, FEATURE_BLE_DEBUG: not sketch flags), and CONFIG_DEVICE_TYPE
+ * is not what the WAP publishes (canary_wap.ino's DEVICE_TYPE, "canary").
+ *
+ * It stays only because the Lab's generators still read it:
+ * canary-local/tools/gen_enclosures.py (the Workshop's firmware flags) and
+ * canary-local/tools/figures/gen_figures.mjs (the device-type map). Once those
+ * read build_config.h instead, delete this directory (audit 2026-10-09).
  */
 
 #pragma once

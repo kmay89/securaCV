@@ -198,7 +198,8 @@ struct VaultKeyStore {
     static let forgetWarning =
         "Every snapshot sealed to this key becomes unreadable — on this phone, on every "
         + "Canary that sealed one, forever. There is no backup and no way to recover it. "
-        + "Canaries you registered it on keep sealing to it until you register a new key."
+        + "Canaries that answer are told to stop sealing to it; any that can't be reached "
+        + "keep sealing to it until you register a new key."
 
     /// True when a key exists on this phone. Reads the public item only.
     var exists: Bool { publicKeyRaw != nil }

@@ -27,6 +27,26 @@ final class HouseholdWiFiTests: XCTestCase {
                       "the sheet trims the name; so does the rule")
     }
 
+    func testEveryWiFiFormOpensWithTheRememberedNetworkButNeverOverTyping() {
+        let home = HouseholdWiFi(ssid: "Home", password: "hunter22", savedAt: Date())
+        XCTAssertEqual(HouseholdWiFiStore.prefill(typedSSID: "", remembered: home)?.ssid, "Home")
+        XCTAssertEqual(HouseholdWiFiStore.prefill(typedSSID: "  ", remembered: home)?.password, "hunter22")
+        XCTAssertNil(HouseholdWiFiStore.prefill(typedSSID: "Attic", remembered: home),
+                     "what the person typed wins")
+        XCTAssertNil(HouseholdWiFiStore.prefill(typedSSID: "", remembered: nil), "nothing remembered, nothing to fill")
+    }
+
+    func testUpdatingTheFleetWiFiReplacesOnlyAnOptedInProvenRecord() {
+        let old = HouseholdWiFi(ssid: "Home", password: "old-pass", savedAt: Date())
+        XCTAssertTrue(HouseholdWiFiStore.shouldReplace(existing: old, anyMoved: true, ssid: "Home"),
+                      "a Canary came back on the new password: the next one gets it")
+        XCTAssertFalse(HouseholdWiFiStore.shouldReplace(existing: old, anyMoved: false, ssid: "Home"),
+                       "no Canary proved it: an unproven password is not remembered")
+        XCTAssertFalse(HouseholdWiFiStore.shouldReplace(existing: nil, anyMoved: true, ssid: "Home"),
+                       "the rollout is not an opt-in: nothing remembered stays nothing remembered")
+        XCTAssertFalse(HouseholdWiFiStore.shouldReplace(existing: old, anyMoved: true, ssid: " "))
+    }
+
     func testTheRecordRoundTripsAsJSON() throws {
         let saved = HouseholdWiFi(ssid: "Home", password: "hunter2",
                                   savedAt: Date(timeIntervalSince1970: 1_800_000_000))

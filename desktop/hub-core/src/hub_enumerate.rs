@@ -215,7 +215,10 @@ pub fn enumerate() -> Result<Vec<crate::hub_disk::TargetDisk>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hub_disk::{classify, Eligibility, Refusal};
+    // from_sysblock by name, not through `super::*`: the parent imports it
+    // only on Linux, and these pure tests run on every host (a macOS or
+    // Windows `cargo test` failed to compile them).
+    use crate::hub_disk::{classify, from_sysblock, Eligibility, Refusal};
 
     #[test]
     fn parent_disk_strips_sd_partition_numbers() {

@@ -154,9 +154,12 @@ jobs:
           workspaces: desktop/src-tauri -> target
 
       - name: Set up Node
+        # The major every PR check runs (desktop-lab-check.yml stages the Lab
+        # frontend on it, CI.md "Node jobs"): the shipped bundle is built on
+        # the Node its checks were green on. 20 reached end of life 2026-04-30.
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: "22"
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
@@ -805,6 +808,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -1026,3 +1031,18 @@ jobs:
           context: >-
             ${{ github.ref_type == 'tag' && github.ref_name || 'flasher' }} publish
             (build ${{ needs.build.result }})
+
+  # The bills of materials (Rust, Node, firmware), built from the tagged tree
+  # and attached to this release. sbom.yml's `release: published` trigger
+  # never fires for it — CI published it with the GITHUB_TOKEN, which sends
+  # no workflow event (the reason keep-latest above is a job, not a hope) —
+  # so it is called as a reusable workflow after finalize has resolved the
+  # tag; a failed attach turns this run red.
+  sbom:
+    name: Attach the SBOMs to the release
+    needs: finalize
+    uses: ./.github/workflows/sbom.yml
+    with:
+      tag: ${{ needs.finalize.outputs.tag }}
+    permissions:
+      contents: write

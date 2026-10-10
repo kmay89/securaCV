@@ -239,7 +239,7 @@ test("installVerdict: all six kinds, with honest copy", async () => {
 });
 
 // ── roles ──────────────────────────────────────────────────────────────────
-test("productRole + roleVerb: displays SHOW, everything else senses", async () => {
+test("productRole: a display, a Sense, a Vision, a WAP, or a Canary", async () => {
   const c = await core();
   assert.strictEqual(c.productRole("canary-display-watch"), "display");
   assert.strictEqual(c.productRole("canary-display-dash"), "display");
@@ -247,8 +247,6 @@ test("productRole + roleVerb: displays SHOW, everything else senses", async () =
   assert.strictEqual(c.productRole("securacv-canary-vision-xiao-c3"), "vision");
   assert.strictEqual(c.productRole("securacv-canary-wap"), "wap");
   assert.strictEqual(c.productRole("securacv-canary"), "canary");
-  assert.strictEqual(c.roleVerb("display"), "shows");
-  assert.strictEqual(c.roleVerb("sense"), "senses");
 });
 
 test("postFlashNextStep: a display board's next step is the glass", async () => {

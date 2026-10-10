@@ -15,6 +15,12 @@ import Network
 final class HubDiscovery: ObservableObject {
     @Published private(set) var found: [DiscoveredHub] = []
     @Published private(set) var isBrowsing = false
+    /// iOS refused the browse because Local Network access is off for this
+    /// app. NWBrowser says so by WAITING (not failing) with the DNS-SD
+    /// policy-denied error, and it moves on to .ready by itself once the
+    /// person turns the switch on in Settings — so this clears on its own
+    /// too. Read by the setup screens, which say why instead of spinning.
+    @Published private(set) var localNetworkBlocked = false
 
     private var browser: NWBrowser?
 
@@ -25,11 +31,24 @@ final class HubDiscovery: ObservableObject {
         let browser = NWBrowser(for: .bonjourWithTXTRecord(type: HubDiscoveryRows.serviceType, domain: nil),
                                 using: params)
         self.browser = browser
-        browser.stateUpdateHandler = { [weak self] state in
+        browser.stateUpdateHandler = { [weak self, weak browser] state in
             Task { @MainActor in
                 switch state {
-                case .ready: self?.isBrowsing = true
-                case .failed, .cancelled: self?.isBrowsing = false
+                case .ready:
+                    self?.isBrowsing = true
+                    self?.localNetworkBlocked = false
+                case .waiting(let error):
+                    self?.isBrowsing = false
+                    self?.localNetworkBlocked = Discovery.isPolicyDenied(error)
+                case .failed:
+                    // A failed browser never recovers; drop it so the next
+                    // start() (the next foreground) builds a fresh one.
+                    // (Only if it is still the current one — a stop/start
+                    // may already have replaced it.)
+                    self?.isBrowsing = false
+                    if let self, self.browser === browser { self.browser = nil }
+                case .cancelled:
+                    self?.isBrowsing = false
                 default: break
                 }
             }

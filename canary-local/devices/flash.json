@@ -355,7 +355,8 @@
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -527,7 +528,8 @@
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -691,7 +693,8 @@
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -864,7 +867,8 @@
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -1037,7 +1041,8 @@
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Sense Canary hatched",
         "title": "Your Sense Canary is listening with radar.",
@@ -1265,7 +1270,8 @@
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Wellbeing Canary hatched",
         "title": "Your Sense Wellbeing Canary is listening with radar.",
@@ -1645,7 +1651,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1715,7 +1722,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1771,7 +1779,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched — with gears",
         "title": "Your glass is waking up, and it's a multi-tool.",
@@ -1819,7 +1828,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1875,7 +1885,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1926,7 +1937,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1982,7 +1994,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -2038,7 +2051,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -2142,7 +2156,8 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "broker_nvs": true,
-      "broker_tls": true,
+      "broker_tls": false,
+      "broker_tls_from": "2.4.16",
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",

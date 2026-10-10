@@ -10,14 +10,13 @@
 //! break-glass validation before vault sealing. Normal operation cannot extract raw media.
 
 use anyhow::{anyhow, Result};
-use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::time::Instant;
 use zeroize::Zeroize;
 
 use crate::{
     break_glass::BreakGlassToken,
-    detect::{BackendRegistry, DetectionResult, SizeClass},
+    detect::{BackendRegistry, DetectionResult},
     RawMediaBoundary, TimeBucket,
 };
 
@@ -197,10 +196,6 @@ impl<'a> InferenceView<'a> {
 }
 
 // ----------------------------------------------------------------------------
-// Detector trait: how modules run inference
-// ----------------------------------------------------------------------------
-
-// ----------------------------------------------------------------------------
 // Inference backend selection
 // ----------------------------------------------------------------------------
 
@@ -295,141 +290,6 @@ pub fn select_inference_backend(
         }
     }
 }
-
-/// Detector trait for running inference on frames.
-///
-/// The `detect_internal` method receives raw bytes but:
-/// - Takes `&[u8]` not `Vec<u8>` (cannot take ownership)
-/// - Returns only `DetectionResult` (non-extractive)
-/// - The slice lifetime prevents capture across calls
-pub trait Detector {
-    /// Internal detection method. Modules implement this.
-    ///
-    /// SAFETY CONTRACT: Implementations MUST NOT:
-    /// - Store the pixel slice beyond this call
-    /// - Copy pixels to external storage
-    /// - Transmit pixels over network
-    ///
-    /// Violations are conformance failures.
-    fn detect_internal(&mut self, pixels: &[u8], width: u32, height: u32) -> DetectionResult;
-}
-
-/// Stub detector for MVP. Does simple "motion detection" via pixel variance.
-pub struct StubDetector {
-    last_hash: Option<[u8; 32]>,
-}
-
-impl StubDetector {
-    pub fn new() -> Self {
-        Self { last_hash: None }
-    }
-}
-
-impl Default for StubDetector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Detector for StubDetector {
-    fn detect_internal(&mut self, pixels: &[u8], _width: u32, _height: u32) -> DetectionResult {
-        // Simple "motion detection": hash pixels and compare to last frame.
-        let current_hash: [u8; 32] = Sha256::digest(pixels).into();
-
-        let motion = match self.last_hash {
-            Some(prev) => prev != current_hash,
-            None => false,
-        };
-
-        self.last_hash = Some(current_hash);
-
-        DetectionResult {
-            motion_detected: motion,
-            detections: vec![],
-            confidence: if motion { 0.85 } else { 0.0 },
-            size_class: if motion {
-                SizeClass::Large
-            } else {
-                SizeClass::Unknown
-            },
-        }
-    }
-}
-
-/// CPU detector that uses the same non-extractive primitives as the stub backend.
-pub struct CpuDetector {
-    inner: StubDetector,
-}
-
-impl CpuDetector {
-    pub fn new() -> Self {
-        Self {
-            inner: StubDetector::new(),
-        }
-    }
-}
-
-impl Default for CpuDetector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Detector for CpuDetector {
-    fn detect_internal(&mut self, pixels: &[u8], width: u32, height: u32) -> DetectionResult {
-        self.inner.detect_internal(pixels, width, height)
-    }
-}
-
-/// Backend-aware detector wrapper.
-pub enum DetectorBackend {
-    Stub(StubDetector),
-    Cpu(CpuDetector),
-}
-
-impl DetectorBackend {
-    pub fn for_backend(backend: InferenceBackend) -> Result<Self> {
-        match backend {
-            InferenceBackend::Stub => Ok(Self::Stub(StubDetector::new())),
-            InferenceBackend::Cpu => Ok(Self::Cpu(CpuDetector::new())),
-            InferenceBackend::Tract => Err(anyhow!(
-                "tract backend is only available via the backend registry"
-            )),
-            InferenceBackend::Accelerator => {
-                Err(anyhow!("accelerator backend requested but not available"))
-            }
-        }
-    }
-
-    pub fn backend(&self) -> InferenceBackend {
-        match self {
-            Self::Stub(_) => InferenceBackend::Stub,
-            Self::Cpu(_) => InferenceBackend::Cpu,
-        }
-    }
-}
-
-impl Detector for DetectorBackend {
-    fn detect_internal(&mut self, pixels: &[u8], width: u32, height: u32) -> DetectionResult {
-        match self {
-            Self::Stub(detector) => detector.detect_internal(pixels, width, height),
-            Self::Cpu(detector) => detector.detect_internal(pixels, width, height),
-        }
-    }
-}
-
-// ----------------------------------------------------------------------------
-// BreakGlassToken: Proof of quorum authorization
-// ----------------------------------------------------------------------------
-// A token proving that break-glass authorization has been granted.
-//
-// This token is:
-// - Created only by the quorum authorization system
-// - Required to export raw media from the vault
-// - Logged immutably upon creation
-// - Single-use (consumed on export)
-//
-// Authorization requires quorum logic via break-glass receipts and approvals.
 
 // ----------------------------------------------------------------------------
 // FrameBuffer: Bounded ring buffer for pre-roll
@@ -538,6 +398,7 @@ mod tests {
     };
     use crate::BreakGlassOutcome;
     use ed25519_dalek::SigningKey;
+    use sha2::{Digest, Sha256};
 
     fn make_test_frame(data: &[u8]) -> RawFrame {
         let bucket = TimeBucket {
@@ -633,23 +494,6 @@ mod tests {
 
         // Buffer should be at max capacity
         assert!(buf.len() <= MAX_BUFFER_FRAMES);
-    }
-
-    #[test]
-    fn stub_detector_detects_motion() {
-        let mut detector = StubDetector::new();
-
-        // First frame: no motion (no previous)
-        let r1 = detector.detect_internal(b"frame1", 10, 10);
-        assert!(!r1.motion_detected);
-
-        // Second frame: different content = motion
-        let r2 = detector.detect_internal(b"frame2", 10, 10);
-        assert!(r2.motion_detected);
-
-        // Third frame: same as second = no motion
-        let r3 = detector.detect_internal(b"frame2", 10, 10);
-        assert!(!r3.motion_detected);
     }
 
     #[test]

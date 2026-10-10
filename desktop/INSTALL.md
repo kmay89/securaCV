@@ -79,7 +79,8 @@ named `SecuraCV.Flasher_…`.)
   ./SecuraCV.Flasher_*_amd64.AppImage
   ```
 
-- **.deb** (Debian/Ubuntu):
+- **.deb** (Debian/Ubuntu — updates itself too, asking for your password
+  to install each update):
 
   ```sh
   sudo apt install ./SecuraCV.Flasher_*_amd64.deb
@@ -91,24 +92,38 @@ Flashing a **Canary** needs two things from Linux that macOS grants for free:
 permission to open the USB serial device, and **ModemManager keeping its hands
 off it**. ModemManager probes a just-plugged board (or one re-enumerating
 after the post-flash reset) as if it were a modem — it can hold the port for
-~30 s and its probing can reset the board mid-boot, so the flash verifies but
+~30 s and its probing can reset the board mid-boot, so the write lands but
 the live boot receipt never arrives.
 
 - **`.deb` users:** the rule ships with the package
-  (`/usr/lib/udev/rules.d/61-securacv-canary.rules`) and fixes both — just
-  **replug the board** after installing.
+  (`/usr/lib/udev/rules.d/61-securacv-canary.rules`) and fixes both for
+  every board below — just **replug the board** after installing.
 - **AppImage / other users:** add it once:
 
   ```sh
   sudo tee /etc/udev/rules.d/61-securacv-canary.rules >/dev/null <<'EOF'
   ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
   ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+  ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
+  ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
+  ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
   EOF
   sudo udevadm control --reload-rules && sudo udevadm trigger
   ```
 
-  Then replug the board. (`303a` is the Canary's own ESP32-S3 USB port;
-  `1a86:55d3` is the Grove Vision AI V2 camera module.)
+  Then replug the board. Which line is for which board:
+
+  | Line | Chip | Boards |
+  |---|---|---|
+  | `303a` | Espressif native USB | the boards that plug straight into the ESP32's own USB, the XIAO ESP32-S3 and C3 among them |
+  | `1a86:55d3` | WCH CH343 | the Grove Vision AI V2 camera module |
+  | `10c4:ea60` | Silicon Labs CP210x | the ESP32-C3-DevKitM-1, and many ESP32-WROOM DevKits |
+  | `1a86:7523` | WCH CH340 | the ESP32-CAM's programmer board, and other WROOM DevKits |
+  | `1a86:55d4` | WCH CH9102 | newer ESP32-WROOM DevKits |
+
+  The three bridge lines grant the logged-in user only (`uaccess`), never
+  `MODE="0666"`: those chips are generic parts other gadgets use too.
+  `lsusb` names the chip on yours if you're not sure.
 
 - **Fallback for the permission half only:** add yourself to the `dialout`
   group and log back in — but note this does *not* stop ModemManager:
@@ -143,14 +158,45 @@ needs nothing here, which is why it just works there.)
   Then replug the Pi. `2712` is Pi 5, `2711` is Pi 4; if `lsusb` shows a
   different `0a5c:` id while the Pi is in boot mode, add that one too.
 
+### Write a Pi hub card (Linux)
+
+Writing the **Home Assistant hub card** opens the card's raw disk device
+(`/dev/sdX` behind a USB card reader or for an SSD, `/dev/mmcblkN` in a
+built-in slot), and on Linux an account outside the `disk` group can't open
+one: the node belongs to `root:disk`. macOS asks for your password
+at that moment (the `authopen` prompt); on Linux the Flasher can't ask yet,
+so once the image is downloaded the write stops with **"no permission to
+write /dev/…"** and the exact path. Pick one:
+
+- **For this card only (recommended):** give your account that one device
+  until it's unplugged, then type ERASE again:
+
+  ```sh
+  sudo chown "$USER" /dev/sdX   # the path from the error, or from the card picker
+  ```
+
+  udev recreates the node owned by root the next time the card is plugged
+  in, so nothing about your system stays changed.
+- **Every time, without asking:** add yourself to the `disk` group and log
+  back in (`sudo usermod -aG disk "$USER"`). Know what it grants: `disk` can
+  write **every** disk on the machine, including the one your system runs
+  from, so on a shared computer prefer the line above.
+
+Whichever way you grant it, the rest stays as it is: the picker never offers
+your system disk or an internal fixed disk, the write still asks you to type
+ERASE, and every byte is read back afterwards.
+
 ---
 
 ## Updating
 
 You don't. The app checks the project's GitHub releases on launch and offers a
-one-click **Update & relaunch** when a newer signed build is out. (Self-update
-covers the macOS `.app` and the Linux **AppImage**; `.deb` users update through
-`apt` or by grabbing the next `.deb`.)
+one-click **Update & relaunch** when a newer signed build is out. Self-update
+covers the macOS `.app`, the Linux **AppImage** and the Linux **`.deb`**: a
+`.deb` install fetches the next signed `.deb` and asks for your password (a
+system prompt) to hand it to `dpkg`, since installing a package needs root.
+There is no apt repository; if you'd rather update by hand, grab the next
+`.deb` from the Releases page and install it as above.
 
 ---
 

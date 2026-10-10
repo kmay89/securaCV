@@ -66,8 +66,9 @@ test("slugs are unique across benches and site links (the shell's route space)",
   ];
   const dupes = slugs.filter((s, i) => slugs.indexOf(s) !== i);
   assert.deepStrictEqual(dupes, [], `duplicate slugs: ${dupes}`);
-  // Reserved shell views can never be shadowed by a bench.
-  for (const reserved of ["overview", "all"]) {
+  // Reserved shell views can never be shadowed by a bench. ("start" is the
+  // onramp's own slug, so it is in `slugs` by design.)
+  for (const reserved of ["overview", "all", "family", "settings"]) {
     assert.ok(!slugs.includes(reserved), `slug "${reserved}" shadows a shell view`);
   }
 });
@@ -89,6 +90,49 @@ test("every redirect target resolves to a defined slug ($redirects_note, enforce
   for (const [from, to] of Object.entries(M.redirects)) {
     assert.ok(known.has(to), `redirect "${from}" → "${to}" points at no defined slug`);
     assert.ok(!known.has(from), `redirect source "${from}" is also a live slug`);
+  }
+});
+
+test("every redirect lands where it says: on its bench, or on the securacv.com page that replaced it", () => {
+  // The site map promises old bookmarks "do not rot", and the test above only
+  // proves a target is DEFINED. Five targets are site links, not benches, and
+  // the shell's route allowlist (routeId) admits benches only — so for a
+  // while every one of those five opened the Overview. A site-link target has
+  // to be a securacv.com path (that is all lab-shell.js will leave for), and
+  // both renderers have to treat it as a page rather than a bench.
+  const benchSlugs = new Set([M.onramp.slug, ...allBenches.map((b) => b.slug)]);
+  const siteBySlug = new Map(allSite.filter((x) => x.slug).map((x) => [x.slug, x]));
+  for (const [from, to] of Object.entries(M.redirects)) {
+    if (benchSlugs.has(to)) continue;
+    const site = siteBySlug.get(to);
+    assert.ok(site, `redirect "${from}" → "${to}" is neither a bench nor a site link`);
+    assert.match(site.href, /^\/[^/]/,
+      `redirect "${from}" → "${to}": site link href "${site.href}" must be a securacv.com path ` +
+        `("/…"), the only kind lab-shell.js forwards to`);
+  }
+  if ([...Object.values(M.redirects)].some((to) => siteBySlug.has(to))) {
+    const shell = read(join(ROOT, "assets/lab-shell.js"));
+    assert.match(shell, /for \(const x of stage\.site \|\| \[\]\)[\s\S]{0,160}SITE_BY_SLUG\.set\(x\.slug, x\)/,
+      "lab-shell.js flatten() must index the stages' slugged site links (SITE_BY_SLUG)");
+    const arrive = shell.slice(shell.indexOf("function arrive()"));
+    assert.match(arrive.slice(0, 300), /siteRoute\(raw\)[\s\S]*goToSite\(site, true\)/,
+      "lab-shell.js arrive() must forward a hash that names a site link before the bench allowlist");
+    assert.match(shell, /addEventListener\("hashchange", arrive\)/,
+      "a hash edited in place must go through the same arrive() as the first load");
+    const map = read(join(ROOT, "assets/site-map.js"));
+    assert.match(map, /siteBySlug\.has\(to\)\?siteHref\(/,
+      "site-map.js must link a redirect onto a site link straight to that page, not to lab.html#slug");
+  }
+});
+
+test("no documentation entry links into tests/, which neither deploy ships", () => {
+  // pages.yml deletes canary-local/tests and the Lab app prunes it
+  // (desktop-lab/frontend-stage.json), so a relative link under tests/ is a
+  // 404 on the hosted Lab and in the app alike. Link the GitHub source.
+  for (const i of docItems) {
+    assert.ok(!/^(\.\/)?tests\//.test(i.href),
+      `htmlDocumentation "${i.noun}" links ${i.href}, which is not deployed — ` +
+        `point it at https://github.com/kmay89/securaCV/blob/main/canary-local/${i.href.replace(/^\.\//, "")}`);
   }
 });
 

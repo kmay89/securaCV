@@ -15,7 +15,9 @@
 //
 // The mirror list lives in ../frontend-stage.json (shared with the CI drift
 // gate, canary-local/tests/lab_bundle.test.js) — not here — so the manifest is
-// one file both the builder and the guard read.
+// one file both the builder and the guard read. So do the prunes: the test
+// holds them to what .github/workflows/pages.yml deletes from the site, so the
+// app never ships repo tooling the website already stopped publishing.
 //
 // Run: node scripts/stage-frontend.mjs   (tauri runs it via before*Command)
 
@@ -75,6 +77,29 @@ for (const rel of manifest.prune) {
   await rm(join(DIST, rel), { recursive: true, force: true });
 }
 
+// The file types the site deploy deletes under each tree (pages.yml's
+// `find … -delete`): repo tooling no page loads. Walked after the copy, so a
+// generator added anywhere under canary-local/ is dropped without a manifest
+// edit, the same way the site drops it.
+async function pruneByExt(dir, exts) {
+  let n = 0;
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) n += await pruneByExt(p, exts);
+    else if (exts.some((ext) => entry.name.endsWith(ext))) {
+      await rm(p, { force: true });
+      n += 1;
+    }
+  }
+  return n;
+}
+let prunedByExt = 0;
+for (const [rel, exts] of Object.entries(manifest.pruneExt || {})) {
+  const dir = join(DIST, rel);
+  if (!existsSync(dir)) die(`pruneExt names ${rel}, which the staged root does not have`);
+  prunedByExt += await pruneByExt(dir, exts);
+}
+
 // The bundle root mirrors the repo root, so the entry page is one level down.
 // tauri.conf.json points the window straight at it; this redirect is the same
 // one the site deploys at its root, and keeps a bare "/" working.
@@ -97,5 +122,6 @@ for (const rel of [manifest.entry, ...manifest.sentinels]) {
 const { files, bytes } = await measure(DIST);
 console.log(
   `stage-frontend: ${manifest.mirror.join(", ")} → desktop-lab/dist ` +
-    `(${files} files, ${(bytes / 1024 / 1024).toFixed(1)} MB), entry ${manifest.entry}`,
+    `(${files} files, ${(bytes / 1024 / 1024).toFixed(1)} MB), entry ${manifest.entry}; ` +
+    `pruned ${manifest.prune.length} trees and ${prunedByExt} tooling files`,
 );

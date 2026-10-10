@@ -25,6 +25,10 @@ Sources of truth this reads:
   - firmware/boards/boards.json ........ the support tier per board_id
   - .github/workflows/firmware-release.yml the published product ids + assets
   - canary-local/devices/registry.json . the firmware train (fw_train)
+  - CAPABILITY_TRAINS (below) ........... the first train whose RELEASE
+                                         carries a capability the tree shows
+                                         (broker_tls); a clone's fw-v* tags
+                                         corroborate it when they are present
 
 What the flasher does at runtime with this file:
   - chip guard: only products whose `chip` matches the physically-detected
@@ -40,6 +44,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -689,6 +694,12 @@ def reads_broker(project: str) -> bool:
     mqtt_mgr.cpp reads them every boot. The result was a display that could
     never be told which hub to talk to: not by the flasher, which hid the
     fields, and not on the glass, whose portal only ever asked for WiFi.
+
+    The flagship (firmware/canary) answers False, and rightly: it has no
+    runtime_config.h, and its broker reader (lib/securacv_mqtt) takes
+    mqtt_host as a blob and the port as a u32, where both flashers' NVS
+    builders write a string and a u16 — a seed it would read as empty.
+    tests/desktop_parity.test.js pins that reason.
     """
     candidates = [REPO / project / "include/canary/runtime_config.h",
                   *(REPO / project).glob("arduino/*/runtime_config.h")]
@@ -775,6 +786,90 @@ def honors_broker_tls(project: str, env: str) -> bool:
     # at boot. None: the env sets a flag no source line reads, so the
     # transport is still compiled and honored.
     return form is None
+
+
+# ── what the PINNED train carries, not just the working tree ────────────────
+# Every capability derivation above reads the WORKING TREE, but the catalog
+# describes the images at release_download — the fw-v<fw_train> tag. Between
+# a firmware change and the version bump that ships it, the tree runs ahead of
+# that release. The MQTT TLS transport landed in the tree five days after
+# fw-v2.4.15 was cut, and the catalog went on marking Vision, Sense and the
+# displays broker_tls for a 2.4.15 image with no TLS in it at all — so both
+# flashers offered modes the installed firmware never reads (it ignores the
+# key and connects plain, whatever was seeded).
+#
+# So a capability the sources show is offered only from the first train whose
+# release images carry it: one row per capability, written by the bump that
+# ships it, naming the file whose presence at a release tag is the evidence.
+# A shallow CI checkout carries no tags, so the row is the authority there;
+# where a clone DOES have the tags, corroborate_capability_trains() reads the
+# evidence at every fw-v<train> tag and refuses a row the tags contradict.
+CAPABILITY_TRAINS = {
+    "broker_tls": {
+        "since": "2.4.16",
+        "evidence": "firmware/common/network/mqtt_transport.h",
+    },
+}
+
+
+def train_key(train: str) -> tuple[int, ...]:
+    """'2.4.16' -> (2, 4, 16). Refuses any other spelling: a train this
+    cannot order cannot be compared with a capability's first train."""
+    if not isinstance(train, str) or not re.fullmatch(r"\d+(?:\.\d+)*", train):
+        die(f"firmware train {train!r} is not dotted digits — the capability gate "
+            f"(CAPABILITY_TRAINS) cannot order it")
+    return tuple(int(part) for part in train.split("."))
+
+
+def train_carries(capability: str, fw_train: str) -> bool:
+    """Whether the release images of `fw_train` carry `capability`."""
+    return train_key(fw_train) >= train_key(CAPABILITY_TRAINS[capability]["since"])
+
+
+def corroborate_capability_trains() -> None:
+    """Hold each CAPABILITY_TRAINS row to the release tags this clone has.
+
+    For every local fw-v<digits> tag, the row's evidence file must exist at
+    the tag exactly when the row says that train carries the capability: a
+    `since` set too early (the bug this ledger exists for) or too late both
+    fail here, by tag. No git, no repository, or no tags (a shallow CI
+    checkout) means there is nothing to read, and the row stands as written —
+    the catalog drift gate still pins what it produced."""
+    try:
+        listed = subprocess.run(
+            ["git", "-C", str(REPO), "tag", "--list", "fw-v*"],
+            capture_output=True, text=True, check=False)
+    except OSError:
+        return
+    if listed.returncode != 0:
+        return
+    tags = [t for t in listed.stdout.split() if re.fullmatch(r"fw-v\d+(?:\.\d+)*", t)]
+    for capability, row in CAPABILITY_TRAINS.items():
+        for tag in tags:
+            train = tag[len("fw-v"):]
+            present = subprocess.run(
+                ["git", "-C", str(REPO), "cat-file", "-e", f"{tag}:{row['evidence']}"],
+                capture_output=True, check=False).returncode == 0
+            if present != train_carries(capability, train):
+                die(f"CAPABILITY_TRAINS[{capability!r}] says {capability} arrives with "
+                    f"{row['since']}, but {row['evidence']} is "
+                    f"{'present' if present else 'absent'} at {tag} — set `since` to the "
+                    f"first release train whose tag carries it")
+
+
+def train_gated_broker_tls(project: str, env: str, fw_train: str) -> tuple[bool, str | None]:
+    """The catalog's (`broker_tls`, `broker_tls_from`) pair.
+
+    broker_tls is honors_broker_tls() AND the pinned train carries the
+    transport. broker_tls_from is set only when the sources honor TLS but the
+    pinned train predates it — the train it arrives with — so the flashers
+    can say THAT (the installed image would connect plain whatever mode was
+    seeded) instead of the plain-only build's reason, which would be false."""
+    if not honors_broker_tls(project, env):
+        return False, None
+    if train_carries("broker_tls", fw_train):
+        return True, None
+    return False, CAPABILITY_TRAINS["broker_tls"]["since"]
 
 # Post-flash "hatching" copy. This lives in the generated catalog instead of
 # desktop/web UI branches so every flasher surface can share the same first-use
@@ -2273,6 +2368,8 @@ def main() -> None:
     fw_train = registry.get("fw_train")
     if not fw_train:
         die("registry.json has no fw_train")
+    train_key(fw_train)
+    corroborate_capability_trains()
 
     # Pin every release asset URL to this train's tag (fw-v<train>) — see
     # release_download_base(): /latest/ is unsafe here because native-app
@@ -2327,6 +2424,7 @@ def main() -> None:
             die(f"{p['id']}: family '{p.get('family')}' is not in FAMILIES")
         role = product_role(p["id"])
         hatch = HATCH_MOMENTS[hatch_kind(p["id"], p["provisioning"])]
+        broker_tls, broker_tls_from = train_gated_broker_tls(project, p["env"], fw_train)
         entry = {
             "id": p["id"],
             "name": p["name"],
@@ -2341,11 +2439,14 @@ def main() -> None:
             "provisioning_note": PROVISIONING[p["provisioning"]],
             "wifi_nvs": wifi_scheme(project),
             "broker_nvs": reads_broker(project),
-            # Whether a provisioned TLS mode is honored (the shared transport
-            # is compiled in and the env does not build it out): both
-            # flashers offer the CA / fingerprint / lab modes only where this
-            # is true, and say why where it is not (nightstand-c6).
-            "broker_tls": honors_broker_tls(project, p["env"]),
+            # Whether a provisioned TLS mode is honored by the PINNED train's
+            # image (the shared transport is compiled in, the env does not
+            # build it out, and the release carries it — CAPABILITY_TRAINS):
+            # both flashers offer the CA / fingerprint / lab modes only where
+            # this is true, and say why where it is not (nightstand-c6's
+            # plain-only build; broker_tls_from's not-yet-released train).
+            "broker_tls": broker_tls,
+            **({"broker_tls_from": broker_tls_from} if broker_tls_from else {}),
             "hatch": hatch,
             "serial_receipt": supports_serial_receipt(project),
             "role": role,

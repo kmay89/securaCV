@@ -80,14 +80,13 @@ pub use adapter::{
     claim_kind_to_event_type, AdapterDescriptor, AdapterHost, AdapterRegistry, Claim, ClaimKind,
     SensorAdapter,
 };
-pub use detect::{Detection, DetectionResult, SizeClass};
+pub use detect::{Detection, DetectionResult, DetectorBackend, SizeClass};
 pub use envelope::{
     verify_envelope, verify_envelope_bytes, EnvelopeReport, EvidenceEnvelope, IntegrityStatus,
 };
 pub use frame::{
-    select_inference_backend, BackendSelection, CpuDetector, Detector, DetectorBackend,
-    DeviceCapabilities, FrameBuffer, InferenceBackend, InferenceView, RawFrame, StubDetector,
-    MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
+    select_inference_backend, BackendSelection, DeviceCapabilities, FrameBuffer, InferenceBackend,
+    InferenceView, RawFrame, MAX_BUFFER_FRAMES, MAX_PREROLL_SECS,
 };
 #[cfg(feature = "ingest-esp32")]
 pub use ingest::{esp32::Esp32Config, Esp32Source};
@@ -2219,6 +2218,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     ///
     /// Call this when a cryptographic operation (signing, verification, key loading) fails
     /// to ensure explicit failure events are recorded for auditability.
+    ///
+    /// The production recorder is the append path:
+    /// [`Self::append_event_with_failure_semantics`] classifies a failed append and records
+    /// `CryptoFailure` itself, so no in-tree caller needs this today. It stays as the entry
+    /// point for a crypto failure detected outside that path, beside its storage and clock
+    /// siblings.
     pub fn report_crypto_failure(
         &mut self,
         details: &str,
@@ -3086,25 +3091,6 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         EvidenceEnvelope::assemble(parts)
     }
 
-    /// Build a canonical evidence envelope under break-glass authorization (the deliberate,
-    /// receipted disclosure path). Mirrors [`Self::export_events_bundle_authorized`].
-    pub fn build_evidence_envelope_authorized(
-        &mut self,
-        expected_ruleset_hash: [u8; 32],
-        options: ExportOptions,
-        ruleset_id: &str,
-        kernel_version: &str,
-        token: &mut break_glass::BreakGlassToken,
-    ) -> Result<EvidenceEnvelope> {
-        let bundle = self.export_events_bundle_authorized(expected_ruleset_hash, options, token)?;
-        self.evidence_envelope_from_bundle(
-            bundle,
-            ruleset_id,
-            kernel_version,
-            expected_ruleset_hash,
-        )
-    }
-
     /// Build a canonical evidence envelope for local-only API access (no break-glass).
     /// The caller MUST enforce capability-token access control.
     pub fn build_evidence_envelope_for_api(
@@ -3903,14 +3889,10 @@ pub fn current_device_public_key(conn: &Connection) -> Result<[u8; 32]> {
         .public_key)
 }
 
-/// The device public key active at (i.e., signing entries up to) `event_id` — the latest
-/// validated lineage epoch whose `activated_at_event_id <= event_id`. Used to seed the
-/// verifier and to bound the trusted checkpoint signer when earlier events were pruned.
-pub fn device_key_active_at(conn: &Connection, event_id: i64) -> Result<[u8; 32]> {
-    device_key_active_at_in(&reconstruct_device_key_lineage(conn)?, event_id)
-}
-
-/// As [`device_key_active_at`] but over an already-reconstructed lineage.
+/// The device public key active at (i.e., signing entries up to) `event_id` within an
+/// already-reconstructed lineage (see [`reconstruct_device_key_lineage`]) — the latest
+/// validated epoch whose `activated_at_event_id <= event_id`. Used to seed the verifier and to
+/// bound the trusted checkpoint signer when earlier events were pruned.
 pub fn device_key_active_at_in(lineage: &[DeviceKeyEpoch], event_id: i64) -> Result<[u8; 32]> {
     lineage
         .iter()
@@ -4495,50 +4477,6 @@ impl Module for ZoneCrossingModule {
             Ok(vec![])
         }
     }
-}
-
-// -------------------- Legacy stub for compatibility --------------------
-
-/// Legacy stub frame source (for tests or dev/demo builds that don't need full RTSP).
-#[cfg(any(test, feature = "stub-frame-source"))]
-pub struct StubFrameSource {
-    source: RtspSource,
-}
-
-#[cfg(any(test, feature = "stub-frame-source"))]
-impl StubFrameSource {
-    pub fn new() -> Self {
-        let config = RtspConfig {
-            url: "stub://test".to_string(),
-            target_fps: 10,
-            width: 640,
-            height: 480,
-            backend: crate::config::RtspBackendPreference::Auto,
-            transport: None,
-        };
-        Self {
-            source: RtspSource::new(config).expect("stub RTSP source"),
-        }
-    }
-
-    pub fn next_frame(&mut self) -> Result<RawFrame> {
-        self.source.next_frame()
-    }
-}
-
-#[cfg(any(test, feature = "stub-frame-source"))]
-impl Default for StubFrameSource {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Legacy Frame type for backward compatibility.
-/// New code should use RawFrame + InferenceView.
-#[derive(Clone, Debug)]
-pub struct Frame {
-    pub dummy_motion: bool,
-    pub features_hash: [u8; 32],
 }
 
 // Re-exports for CLI/tools

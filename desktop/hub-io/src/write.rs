@@ -312,10 +312,16 @@ fn open_target(path: &str) -> Result<std::fs::File, String> {
         .custom_flags(libc::O_EXCL)
         .open(path)
         .map_err(|e| match e.kind() {
+            // Linux has no authopen: a normal account cannot open a raw disk,
+            // so name the narrowest grant first (this one device, until it is
+            // replugged) and the standing one second, with its cost.
+            // desktop/INSTALL.md "Write a Pi hub card (Linux)" says the same.
             std::io::ErrorKind::PermissionDenied => format!(
-                "no permission to write {path}. Run the flasher with the privileges your distro \
-                 uses for disk tools (e.g. launch via `pkexec` or `sudo`, or add your user to the \
-                 `disk` group and re-login)."
+                "no permission to write {path} — on Linux a normal account can't open a raw \
+                 disk. For this card only, run `sudo chown \"$USER\" {path}` in a terminal and \
+                 type ERASE again (udev gives it back to root when the card is replugged). Or \
+                 add yourself to the `disk` group and log back in — but that group can write \
+                 every disk on this computer, including the one it runs from."
             ),
             _ => format!(
                 "couldn't open {path} exclusively: {e}. If the card just mounted, eject it in \

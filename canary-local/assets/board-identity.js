@@ -102,13 +102,6 @@ async function catalogs() {
   return _cat;
 }
 
-function el(tag, cls, text) {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-}
-
 // Build the identity panel DOM for a product record (from flash.json) using
 // pre-loaded catalogs. Exported pure so it's unit-testable with a DOM shim.
 export function buildIdentityPanel(doc, product, boards, enclosures) {

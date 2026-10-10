@@ -1038,7 +1038,6 @@ function renderFlash(root) {
 
 // ── stage: BUILD CARD ───────────────────────────────────────────────────
 function renderBuildCard(root) {
-  const d = wsDev();
   const reg = state.registry.devices.find((x) => x.id === state.dev);
   const m = matchPackage();
   const parts = selectedParts();

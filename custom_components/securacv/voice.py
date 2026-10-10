@@ -28,9 +28,10 @@ spoken sentence is quoted out of context by design:
     arrival times, not the sealed coarse buckets, so "about" phrasing is
     also simply honest.
 
-There are deliberately no action intents and no identity answers — voice
-may query, never change the security posture (AGENTS.md rule 1, and the
-voice contract in docs/research/whisper_local_voice.md §3.1).
+There are deliberately no posture-changing intents and no identity
+answers — voice may query, and start a bounded, self-expiring watch
+(``intent.py``), but never arm, disarm, mute or unseal (AGENTS.md rule 1,
+and the voice contract in docs/research/whisper_local_voice.md §3.1).
 
 No Home Assistant imports here: pure functions over plain dicts, tested
 by ``tests/test_voice.py`` under the same stub harness as the rest of the

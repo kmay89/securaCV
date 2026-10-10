@@ -69,24 +69,24 @@ struct ProvisioningReceipt: Codable, Sendable {
         }
         baseURL = url
     }
-}
 
-/// `GET /api/wifi`, the fields the rollout cares about. Tolerant: anything
-/// the firmware adds later decodes right past us.
-struct WiFiStatus: Codable, Sendable {
-    var ok: Bool?
-    var state: String?
-    var staConnected: Bool?
-    var staSSID: String?
-    var rssi: Int?
-    var configured: Bool?
-    var failReason: String?
-
-    enum CodingKeys: String, CodingKey {
-        case ok, state, rssi, configured
-        case staConnected = "sta_connected"
-        case staSSID = "sta_ssid"
-        case failReason = "fail_reason"
+    /// The address a WAP writes into a receipt it serves on a BOOT tap or a
+    /// bearer is its setup network's (192.168.4.1) — which stops existing
+    /// the moment it joins your Wi-Fi, so a recovery kit saved during setup
+    /// points at nothing afterwards. When the receipt names that address and
+    /// the device has been seen on the network, swap in the host it is
+    /// answering at, keeping the receipt's own scheme, port and certificate
+    /// pin (the pin is what an https connection is held to, not the name).
+    /// Any other address is the receipt's word and is kept as it is.
+    func rebased(onto discovered: URL?) -> ProvisioningReceipt {
+        guard baseURL.host == SetupPortal.host,
+              let host = discovered?.host, !host.isEmpty,
+              var parts = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else { return self }
+        parts.host = host
+        guard let moved = parts.url else { return self }
+        var out = self
+        out.baseURL = moved
+        return out
     }
 }
 
@@ -235,8 +235,8 @@ enum DeviceError: Error, LocalizedError {
     case tlsPinMissing
     /// The Canary answered 403 to a claim ticket: already spent, expired
     /// (it lives 180 s), or not the claim it minted — a wrong guess burns
-    /// it. Final: the one-tap pairing did not happen; the BOOT-tap pairing
-    /// on the Fleet tab is the next door.
+    /// it. Final: the one-tap pairing did not happen; the device's row
+    /// under Ready to pair on the Fleet tab is the next door.
     case claimRefused
 
     var errorDescription: String? {
@@ -256,7 +256,7 @@ enum DeviceError: Error, LocalizedError {
                 + "was refused. Update the Canary's firmware and pair it again from its setup page."
         case .claimRefused:
             return "The Canary declined the pairing claim — it was already spent, or it expired. "
-                + "Pair it from the Fleet tab with a short tap on its BOOT button."
+                + "Tap it under Ready to pair on the Fleet tab to finish."
         case .badVaultFilename(let name):
             return "\"\(name)\" isn't a sealed-snapshot filename, so it wasn't requested."
         case .noSealedSnapshots:
@@ -411,12 +411,6 @@ actor DeviceAPI {
         let page: WitnessChainPage = try await get("/api/v1/witness",
                                                    query: [URLQueryItem(name: "last", value: "1")])
         return page.records.map(\.seq).max()
-    }
-
-    /// `GET /api/wifi` — where this Canary stands with its network, as it
-    /// tells it. Tolerantly decoded; only the fields the rollout needs.
-    func wifiStatus() async throws -> WiFiStatus {
-        try await get("/api/wifi")
     }
 
     /// `POST /api/wifi/connect` — hand this Canary new credentials. The

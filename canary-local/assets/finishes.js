@@ -78,8 +78,6 @@ const listeners = new Set();
 
 /** The finish every builder should paint with at build time (and tests read). */
 export function activeFinish() { return committed; }
-/** The finish the picker should highlight right now (tracks the showcase). */
-export function shownFinish() { return shown; }
 
 const ROLE_KEY = { shell: "shell", shell2: "shell2", gasket: "gasket", beacon: "beacon" };
 const smooth = (t) => t * t * (3 - 2 * t);

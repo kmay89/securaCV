@@ -246,6 +246,30 @@ final class UnsealFlowTests: XCTestCase {
         XCTAssertEqual(slots.items.count, 2, "the private key's record and its public twin, nothing else")
     }
 
+    func testForgetTellsOnlyTheCanariesThatSealToThisKey() throws {
+        // Forget used to delete only the local key; every Canary went on
+        // sealing to it. Now the ones that seal to THIS key are told to stop
+        // — and only those: another phone's key is that phone's business.
+        func status(_ json: String) throws -> VaultStatus {
+            try JSONDecoder().decode(VaultStatus.self, from: Data(json.utf8))
+        }
+        let ours = "0123456789abcdef"
+        XCTAssertTrue(UnsealModel.sealsToKey(
+            try status(#"{"has_key":true,"key_id":"0123456789ABCDEF"}"#), keyID: ours),
+                      "the id compares case-insensitively")
+        XCTAssertFalse(UnsealModel.sealsToKey(
+            try status(#"{"has_key":true,"key_id":"fedcba9876543210"}"#), keyID: ours),
+                       "a Canary sealing to another phone is left alone")
+        XCTAssertFalse(UnsealModel.sealsToKey(
+            try status(#"{"has_key":false,"key_id":""}"#), keyID: ours))
+        XCTAssertFalse(UnsealModel.sealsToKey(
+            try status(#"{"has_key":true}"#), keyID: ours),
+                       "no id is no claim — never delete on a guess")
+        XCTAssertFalse(UnsealModel.sealsToKey(nil, keyID: ours))
+        XCTAssertTrue(VaultKeyStore.forgetWarning.contains("told to stop"),
+                      "the confirmation says what Forget now does")
+    }
+
     func testForgetRemovesEverything() throws {
         let slots = MemorySlots()
         let wrapperSlots = MemorySlots()

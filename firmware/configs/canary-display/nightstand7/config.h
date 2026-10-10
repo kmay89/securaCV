@@ -45,9 +45,11 @@
 #define FEATURE_BACKLIGHT_DIM       0   // CH422G backlight is ON/OFF only (no PWM)
 #define FEATURE_WIFI_STA            1
 #define FEATURE_MQTT                1
-#define FEATURE_CHAIN_VERIFY        1
 #define FEATURE_MDNS_DISCOVERY      1
-#define FEATURE_PROOF_QR            1
+// (FEATURE_CHAIN_VERIFY and FEATURE_PROOF_QR used to sit here. Neither gated
+// any code: the trust engine (trust.cpp: Ed25519 verify + TOFU pinning)
+// compiles on every flavor, and the proof QR wherever its UI does, the
+// watch glance and the dash. Removed 2026-10-09.)
 #define FEATURE_ACK_SYNC            1
 #define FEATURE_PRESENCE_WAKE       1
 #define FEATURE_CHIME               0   // no piezo on this board
@@ -62,9 +64,11 @@
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1
 // ── Nightstand wave — this 7" IS a bedside device: the full set ──
-#define FEATURE_NIGHT_BLACKOUT      1   // dark-when-safe night (rendered dark +
-                                        // scheduled backlight-off; honesty veto
-                                        // in main.cpp keeps the glow on Warn+)
+// Night is a runtime setting (glass_settings.cpp): every flavor boots DIM;
+// dark-when-safe (rendered dark + scheduled backlight-off, the honesty veto
+// in main.cpp keeping the glow on Warn+) is the owner's "off" choice. The
+// FEATURE_NIGHT_BLACKOUT flag that stood here was read by no source;
+// removed 2026-10-09.
 #define FEATURE_COMFORT_WORDS       1   // bedroom temp/humidity as sleep words
 #define FEATURE_HUB_WEATHER         1   // hub-republished forecast + wx alerts
 #define FEATURE_WAKE_ALARM          1   // two-phase gentle wake; the sunrise is

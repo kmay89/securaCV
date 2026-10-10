@@ -517,9 +517,9 @@ def classify(
     #     public one. This is the exposure that needs no port forward at all,
     #     which is exactly why NAT-shaped intuition misses it: an ISP that
     #     hands out real IPv6 to LAN hosts gives you no NAT to hide behind.
-    wide = [l for l in listeners if l.port in SENSITIVE_PORTS and l.scope == "all"]
+    wide = [ln for ln in listeners if ln.port in SENSITIVE_PORTS and ln.scope == "all"]
     if wide:
-        listed = ", ".join(str(l.port) for l in sorted(wide, key=lambda x: x.port))
+        listed = ", ".join(str(ln.port) for ln in sorted(wide, key=lambda x: x.port))
         if report.global_addresses:
             report.findings.append(
                 Finding(
@@ -955,7 +955,7 @@ def render_text(report: Report) -> str:
         ROUTER_SKIPPED: "not checked (--no-router)",
     }[report.router_state]
     out.append(f"  Router forwards   : {router_line}")
-    watched = [l for l in report.listeners if l.port in SENSITIVE_PORTS]
+    watched = [ln for ln in report.listeners if ln.port in SENSITIVE_PORTS]
     out.append(f"  Services watched  : {len(watched)} listening on sensitive ports")
     out.append("")
 
@@ -969,16 +969,16 @@ def render_text(report: Report) -> str:
 
     if watched:
         out.append("Listening services on ports we care about:")
-        for l in sorted(watched, key=lambda x: x.port):
+        for ln in sorted(watched, key=lambda x: x.port):
             where = {
                 "host": "this machine only",
                 "overlay": "overlay only",
                 "lan": "your LAN",
                 "all": "every interface",
-            }[l.scope]
-            name = SENSITIVE_PORTS[l.port]
-            proc = f" [{l.process}]" if l.process else ""
-            out.append(f"  {l.port:>5}  {where:<18} {name}{proc}")
+            }[ln.scope]
+            name = SENSITIVE_PORTS[ln.port]
+            proc = f" [{ln.process}]" if ln.process else ""
+            out.append(f"  {ln.port:>5}  {where:<18} {name}{proc}")
         out.append("")
 
     for note in report.notes:
@@ -1019,14 +1019,14 @@ def render_json(report: Report) -> str:
             ],
             "listeners": [
                 {
-                    "address": l.address,
-                    "port": l.port,
-                    "scope": l.scope,
-                    "process": l.process,
-                    "service": SENSITIVE_PORTS.get(l.port, ""),
+                    "address": ln.address,
+                    "port": ln.port,
+                    "scope": ln.scope,
+                    "process": ln.process,
+                    "service": SENSITIVE_PORTS.get(ln.port, ""),
                 }
-                for l in report.listeners
-                if l.port in SENSITIVE_PORTS
+                for ln in report.listeners
+                if ln.port in SENSITIVE_PORTS
             ],
             "notes": report.notes,
         },
