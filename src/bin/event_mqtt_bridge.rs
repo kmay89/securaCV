@@ -14,6 +14,26 @@
 //! - `binary_sensor.pwk_chain_problem`: Sealed-log integrity (daemon mode)
 //! - `button.pwk_verify_now`: One-click verification (daemon mode)
 //!
+//! Two retained topics talk to the SecuraCV integration directly rather
+//! than through discovery (daemon mode):
+//! - `<prefix>/<device_id>/announce` — the signed announce: who this kernel
+//!   is (device id, verifying key, version), how to reach its API (scheme,
+//!   bind posture, port, optionally a host) and whether Home Assistant must
+//!   pair. Signed by the kernel key through `POST /api/sign-announce`; the
+//!   bridge holds no key. Cleared (empty retained payload) on a clean
+//!   shutdown so a removed kernel stops offering a "discovered" card;
+//!   `--no-announce` suppresses it.
+//! - `<prefix>/claim/<device_id>` — published BY the integration once it
+//!   owns this kernel's entities. While a claim fresher than 24 h is
+//!   retained there, the bridge withdraws its own discovery configs (empty
+//!   retained payloads; the state topics keep flowing, the integration
+//!   consumes them) and republishes them when the claim is cleared or goes
+//!   stale. `<prefix>/claim_state` (retained `claimed`/`unclaimed`) says
+//!   which the bridge is doing.
+//!
+//! The event payload on `<prefix>/last_event`, `<prefix>/events` and
+//! `<prefix>/zone/<zone>/event` is one shape, [`EventStatePayload`].
+//!
 //! Each discovery config asks for its id above with `default_entity_id`
 //! (sweep HA16), `<zone>` being the zone name as Home Assistant slugs it.
 //! Home Assistant 2025.10 and later honors that key when it first registers
@@ -33,7 +53,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use rumqttc::{Client, Connection, Event, Incoming, MqttOptions, QoS};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
+
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::io::{Read, Write};
@@ -57,11 +77,34 @@ const BRIDGE_NAME: &str = "event_mqtt_bridge";
 const EVENTS_PATH: &str = "/events";
 const DIGEST_PATH: &str = "/digest";
 const VERIFY_PATH: &str = "/verify";
+const IDENTITY_PATH: &str = "/api/identity";
+const SIGN_ANNOUNCE_PATH: &str = "/api/sign-announce";
 const DEFAULT_DISCOVERY_PREFIX: &str = "homeassistant";
 const DEFAULT_STATE_PREFIX: &str = "witness";
 const AVAILABILITY_TOPIC_SUFFIX: &str = "status";
+/// `<prefix>/claim_state`: what the bridge is doing about the claim.
+const CLAIM_STATE_TOPIC_SUFFIX: &str = "claim_state";
 const PAYLOAD_ONLINE: &str = "online";
 const PAYLOAD_OFFLINE: &str = "offline";
+const PAYLOAD_CLAIMED: &str = "claimed";
+const PAYLOAD_UNCLAIMED: &str = "unclaimed";
+/// How long after the first ConnAck the daemon waits for a retained claim
+/// before deciding whether to publish its discovery configs — a claim that
+/// arrives in that window is honored without a flash of `pwk_*` entities.
+const CLAIM_SETTLE: Duration = Duration::from_millis(2000);
+/// How long startup waits for that first ConnAck before carrying on
+/// without one (the poll loop copes with an absent broker by itself).
+const CONNACK_WAIT: Duration = Duration::from_secs(10);
+/// A claim older than this (by its `claimed_bucket_start`, against the
+/// bridge's own clock) is treated as cleared: the integration republishes
+/// hourly and on every load, so a claim nobody renews is a claim nobody
+/// holds any more.
+const CLAIM_FRESH_SECS: u64 = 24 * 60 * 60;
+/// Clock skew tolerated on a claim's bucket start (one bucket ahead).
+const CLAIM_SKEW_SECS: u64 = 600;
+/// How long a clean shutdown waits for the broker to acknowledge its last
+/// publishes (the announce clear, `offline`) before disconnecting anyway.
+const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Parser, Debug)]
 #[command(
@@ -156,6 +199,33 @@ struct Args {
     /// Disable Home Assistant discovery (publish raw events only).
     #[arg(long, env = "NO_DISCOVERY")]
     no_discovery: bool,
+
+    /// Do not publish the retained announce (daemon mode).
+    #[arg(long, env = "NO_ANNOUNCE")]
+    no_announce: bool,
+
+    /// The LAN posture of the kernel API as the announce reports it:
+    /// `loopback` or `all`. The bridge cannot observe the bind itself, so
+    /// the launcher that knows it says so here.
+    #[arg(long, env = "ANNOUNCE_API_BIND", default_value = "loopback")]
+    announce_api_bind: String,
+
+    /// A host name or address the announce names for the kernel API.
+    /// Unset, the announce carries no host (a host is a network identifier)
+    /// and the integration prefills its own guess.
+    #[arg(long, env = "ANNOUNCE_API_HOST")]
+    announce_api_host: Option<String>,
+
+    /// `http` or `https`: the scheme the kernel API answers on.
+    #[arg(long, env = "ANNOUNCE_API_SCHEME", default_value = "http")]
+    announce_api_scheme: String,
+
+    /// How Home Assistant gets a credential: `required` (it must pair with
+    /// a code, the sidecar) or `token_file` (it can read the rotating token
+    /// file, the add-on). A mode word only — never whether a code is
+    /// pending.
+    #[arg(long, env = "ANNOUNCE_PAIRING", default_value = "required")]
+    announce_pairing: String,
 
     /// Keep the fleet roll-call for the kernel's `GET /api/fleet` in this
     /// file (daemon mode). Point witnessd's `api.fleet_peers_path` (or
@@ -255,18 +325,207 @@ impl TokenSource {
     }
 }
 
-/// Event state payload for Home Assistant.
+/// The ONE event payload, on every event topic (`<prefix>/last_event`
+/// retained, `<prefix>/events` and `<prefix>/zone/<zone>/event` not).
+/// Field order is the wire order. Every time in it is a bucket start.
 #[derive(Serialize)]
 struct EventStatePayload {
+    /// PascalCase variant name (`BoundaryCrossingObjectLarge`).
     event_type: String,
     zone_id: String,
+    /// The exported (jittered) bucket, nested…
+    time_bucket: TimeBucket,
+    /// …and flattened, same numbers, for templates that cannot index.
     time_bucket_start: u64,
     time_bucket_size: u32,
     confidence: f32,
+    /// `adapter` / `ha-bridged`; absent means device/kernel-attested.
     #[serde(skip_serializing_if = "Option::is_none")]
     attestation: Option<String>,
+    kernel_version: String,
+    ruleset_id: String,
+    /// The bridge's device id (`pwk_…`).
+    device_id: String,
     published_bucket_start: u64,
     published_bucket_size: u32,
+    /// The KERNEL's own last `POST /verify` (this process's), a self-report
+    /// the integration shows as "kernel-reported", never as its own
+    /// verification. All three absent until a verify has run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified_bucket_start: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified_bucket_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified_ok: Option<bool>,
+    /// The sealed-log row id, when the kernel said (the state views carry
+    /// it); absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seq: Option<u64>,
+}
+
+/// The kernel's last self-verify as this process saw it (`POST /verify`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LastVerify {
+    bucket_start: u64,
+    bucket_size: u32,
+    ok: bool,
+}
+
+/// What the integration pins a kernel by: `GET /api/identity`'s id, version
+/// and key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct KernelIdentity {
+    device_id: String,
+    kernel_version: String,
+    verifying_key: String,
+}
+
+/// The retained announce (`<prefix>/<device_id>/announce`). Field order is
+/// the wire order; `sig` is last and absent on the bytes the kernel signs,
+/// so `serde_json::to_vec(&payload_without_sig)` is exactly the message
+/// `POST /api/sign-announce` receives and the integration re-serializes.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+struct AnnouncePayload {
+    v: u32,
+    device_id: String,
+    kernel_version: String,
+    verifying_key: String,
+    api: AnnounceApi,
+    /// `required` | `token_file` — a mode word, never "a code is pending".
+    pairing: String,
+    mqtt_topic_prefix: String,
+    discovery_prefix: String,
+    availability_topic: String,
+    announced_bucket_start: u64,
+    announced_bucket_size: u32,
+    /// Ed25519 by the kernel key over `securacv-announce|v1|` + the
+    /// sig-less compact payload, 128 hex. Filled in by the kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sig: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+struct AnnounceApi {
+    scheme: String,
+    /// `all` | `loopback`.
+    bind: String,
+    port: u16,
+    /// Only when `--announce-api-host` named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
+}
+
+fn announce_topic(state_prefix: &str, device_id: &str) -> String {
+    format!("{state_prefix}/{device_id}/announce")
+}
+
+fn claim_topic(state_prefix: &str, device_id: &str) -> String {
+    format!("{state_prefix}/claim/{device_id}")
+}
+
+/// The retained announce payload: the latest bytes published, re-published
+/// on every ConnAck (a clean-start reconnect keeps retained messages at the
+/// broker, but a broker that lost them — or one the bridge was pointed at
+/// anew — should hear the announce again), and cleared at shutdown.
+type AnnounceSlot = std::sync::Arc<std::sync::Mutex<Option<(String, Vec<u8>)>>>;
+
+/// The claim topics subscribed on every ConnAck: the bridge's own device
+/// id, plus the kernel's when `/api/identity` names a different one (a
+/// legacy `HA_DEVICE_ID` pin), so a claim addressed either way is heard.
+type ClaimTopics = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+/// What the retained claim topic last said.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ClaimRecord {
+    claimed_bucket_start: u64,
+}
+
+/// One message on the claim topic, as the bridge reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClaimMessage {
+    /// `{"v":1,"claimed":true,"nonce":…,"claimed_bucket_start":…}`.
+    Claimed(ClaimRecord),
+    /// The empty retained clear (or an explicit `claimed: false`).
+    Cleared,
+    /// Something else: ignored, state unchanged.
+    Unparsable,
+}
+
+fn parse_claim_message(payload: &[u8]) -> ClaimMessage {
+    if payload.is_empty() {
+        return ClaimMessage::Cleared;
+    }
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) else {
+        return ClaimMessage::Unparsable;
+    };
+    match (
+        value.get("claimed").and_then(|v| v.as_bool()),
+        value.get("claimed_bucket_start").and_then(|v| v.as_u64()),
+    ) {
+        (Some(true), Some(claimed_bucket_start)) => ClaimMessage::Claimed(ClaimRecord {
+            claimed_bucket_start,
+        }),
+        (Some(false), _) => ClaimMessage::Cleared,
+        _ => ClaimMessage::Unparsable,
+    }
+}
+
+/// Whether a claim is current against this clock: not older than
+/// [`CLAIM_FRESH_SECS`], and not from a clock more than one bucket ahead.
+fn claim_is_fresh(record: &ClaimRecord, now: u64) -> bool {
+    record.claimed_bucket_start <= now.saturating_add(CLAIM_SKEW_SECS)
+        && now.saturating_sub(record.claimed_bucket_start) < CLAIM_FRESH_SECS
+}
+
+/// The bridge's side of the claim: the last record heard, and whether the
+/// discovery configs are currently withdrawn because of it. Honoring is
+/// re-evaluated every settle (a fresh claim ages out at 24 h without any
+/// message), so `settle` is what reports a transition to act on.
+#[derive(Debug, Default)]
+struct ClaimTracker {
+    record: Option<ClaimRecord>,
+    honored: bool,
+}
+
+/// A change the bridge must act on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClaimTransition {
+    /// Withdraw the discovery configs (a fresh claim appeared).
+    Withdraw,
+    /// Republish them (the claim was cleared, or went stale).
+    Republish,
+}
+
+impl ClaimTracker {
+    fn observe(&mut self, payload: &[u8]) {
+        match parse_claim_message(payload) {
+            ClaimMessage::Claimed(record) => self.record = Some(record),
+            ClaimMessage::Cleared => self.record = None,
+            ClaimMessage::Unparsable => {
+                log::warn!("ignoring an unparsable claim payload; claim state unchanged")
+            }
+        }
+    }
+
+    fn honored_now(&self, now: u64) -> bool {
+        self.record
+            .is_some_and(|record| claim_is_fresh(&record, now))
+    }
+
+    /// Bring `honored` in line with the record and the clock; the
+    /// transition, if that changed anything.
+    fn settle(&mut self, now: u64) -> Option<ClaimTransition> {
+        let should = self.honored_now(now);
+        if should == self.honored {
+            return None;
+        }
+        self.honored = should;
+        Some(if should {
+            ClaimTransition::Withdraw
+        } else {
+            ClaimTransition::Republish
+        })
+    }
 }
 
 /// Zone state for tracking event counts.
@@ -302,6 +561,12 @@ struct DaemonWiring {
     /// The fleet roll-call filters (`FLEET_PEER_TOPIC_FILTERS`) when
     /// `--fleet-peers-path` is set; empty otherwise.
     fleet_filters: Vec<String>,
+    /// `<prefix>/claim/` — what the claim topics below start with.
+    claim_prefix: String,
+    /// The exact claim topics to (re)subscribe on every ConnAck.
+    claim_topics: ClaimTopics,
+    /// The announce to re-publish on every ConnAck, once there is one.
+    announce: AnnounceSlot,
 }
 
 #[derive(Default)]
@@ -319,6 +584,11 @@ struct MqttRuntime {
     /// cycle while the broker is down, so a blocking publish into the full
     /// bounded request queue can't wedge the loop (docs/strategy/12 FR-4).
     connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// QoS 1 publishes the broker has acknowledged, counted by the
+    /// eventloop thread. A clean shutdown waits on it so its last publishes
+    /// (the announce clear, `offline`) are on the broker before the socket
+    /// closes — `Client::publish` only queues.
+    acked: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl MqttRuntime {
@@ -340,8 +610,10 @@ impl MqttRuntime {
     fn new(client: Client, mut connection: Connection, daemon: Option<DaemonWiring>) -> Self {
         let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let connected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let acked = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let thread_shutdown = std::sync::Arc::clone(&shutdown);
         let thread_connected = std::sync::Arc::clone(&connected);
+        let thread_acked = std::sync::Arc::clone(&acked);
         let thread_client = client.clone();
         let handle = std::thread::spawn(move || {
             const BACKOFF_START: Duration = Duration::from_secs(2);
@@ -395,7 +667,32 @@ impl MqttRuntime {
                                     );
                                 }
                             }
+                            // The claim topics (exact, no wildcard) and the
+                            // announce: both are lost or stale across a
+                            // reconnect the same way the command filter is.
+                            let claim_topics =
+                                w.claim_topics.lock().map(|t| t.clone()).unwrap_or_default();
+                            for topic in claim_topics {
+                                if let Err(e) = thread_client.subscribe(&topic, QoS::AtLeastOnce) {
+                                    log::warn!(
+                                        "MQTT claim (re)subscribe failed for {}: {}",
+                                        topic,
+                                        e
+                                    );
+                                }
+                            }
+                            let announce = w.announce.lock().map(|a| a.clone()).unwrap_or(None);
+                            if let Some((topic, bytes)) = announce {
+                                if let Err(e) =
+                                    thread_client.publish(&topic, QoS::AtLeastOnce, true, bytes)
+                                {
+                                    log::warn!("MQTT announce re-publish failed: {}", e);
+                                }
+                            }
                         }
+                    }
+                    Ok(Event::Incoming(Incoming::PubAck(_))) => {
+                        thread_acked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     }
                     Ok(Event::Incoming(Incoming::Publish(publish))) => {
                         if let Some(w) = &daemon {
@@ -404,9 +701,10 @@ impl MqttRuntime {
                                 Err(_) => continue,
                             };
                             // Only what the poll loop handles is queued at
-                            // all: the command subtree, and the fleet
-                            // roll-call topics when that is on.
+                            // all: the command subtree, the claim topic, and
+                            // the fleet roll-call topics when that is on.
                             let wanted = topic.starts_with(&w.cmd_prefix)
+                                || topic.starts_with(&w.claim_prefix)
                                 || (!w.fleet_filters.is_empty() && topic.starts_with("securacv/"));
                             if !wanted {
                                 continue;
@@ -481,6 +779,7 @@ impl MqttRuntime {
             connection_handle: Some(handle),
             shutdown,
             connected,
+            acked,
         }
     }
 
@@ -488,6 +787,24 @@ impl MqttRuntime {
     /// ConnAck, no error since). The daemon loop gates publishing on this.
     fn is_connected(&self) -> bool {
         self.connected.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// QoS 1 publishes acknowledged so far.
+    fn acked(&self) -> u64 {
+        self.acked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Wait until `acked()` reaches `target`, or `timeout` passes. Returns
+    /// whether it did — a clean shutdown logs the difference and moves on.
+    fn wait_for_acks(&self, target: u64, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while self.acked() < target {
+            if Instant::now() >= deadline || !self.is_connected() {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        true
     }
 
     fn disconnect(mut self) -> Result<()> {
@@ -550,18 +867,16 @@ fn main() -> Result<()> {
     // Generate device ID from environment or use provided. Never a prefix of
     // the seed itself: this id lands in retained MQTT discovery topics that
     // every broker client can read, and a raw seed has no safe-to-publish
-    // prefix (nor a guaranteed length). A short hash is stable per seed.
+    // prefix (nor a guaranteed length). A short hash is stable per seed —
+    // `witness_kernel::ha_device_id`, the one derivation the kernel's
+    // `/api/identity`, the add-on and the sidecar share.
     let device_id = args.ha_device_id.clone().unwrap_or_else(|| {
         std::env::var("DEVICE_KEY_SEED")
-            .map(|s| {
-                // Same derivation as the add-on (privacy_witness_kernel/run.sh)
-                // and the sidecar (docker/sidecar/entrypoint.sh), so every
-                // deployment names a given seed the same way.
-                let digest = Sha256::digest(format!("securacv:ha-device-id:v1:{s}").as_bytes());
-                format!("pwk_{}", hex::encode(&digest[..4]))
-            })
+            .map(|seed| witness_kernel::ha_device_id(&seed))
             .unwrap_or_else(|_| "pwk_default".to_string())
     });
+
+    validate_announce_args(&args)?;
 
     let device_info = HaDeviceInfo {
         identifiers: vec![device_id.clone()],
@@ -604,11 +919,45 @@ struct RunContext<'a> {
     ui: &'a ui::Ui,
 }
 
+/// The announce flags take words, not free text; refuse anything else at
+/// startup so a typo cannot publish a posture the integration misreads.
+fn validate_announce_args(args: &Args) -> Result<()> {
+    if !matches!(args.announce_api_bind.as_str(), "loopback" | "all") {
+        return Err(anyhow!(
+            "--announce-api-bind must be `loopback` or `all`, got {:?}",
+            args.announce_api_bind
+        ));
+    }
+    if !matches!(args.announce_api_scheme.as_str(), "http" | "https") {
+        return Err(anyhow!(
+            "--announce-api-scheme must be `http` or `https`, got {:?}",
+            args.announce_api_scheme
+        ));
+    }
+    if !matches!(args.announce_pairing.as_str(), "required" | "token_file") {
+        return Err(anyhow!(
+            "--announce-pairing must be `required` or `token_file`, got {:?}",
+            args.announce_pairing
+        ));
+    }
+    if let Some(host) = &args.announce_api_host {
+        if host.trim().is_empty() || host.chars().any(|c| c.is_control() || c.is_whitespace()) {
+            return Err(anyhow!(
+                "--announce-api-host must be a host name or address without whitespace"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn run_oneshot(ctx: &RunContext<'_>) -> Result<()> {
     let artifact = {
-        let _stage = ctx.ui.stage("Fetch export artifact");
+        let _stage = ctx.ui.stage("Fetch event view");
         let token = ctx.tokens.current()?;
-        fetch_export_artifact(ctx.api_addr, &token)?
+        // The receipt-less state view from the start of the retained log:
+        // a bridge run is a projection onto the owner's broker, not a
+        // disclosure act, so it leaves no export receipt behind.
+        fetch_events_since(ctx.api_addr, &token, 0)?
     };
 
     let events = flatten_export_events(&artifact);
@@ -653,7 +1002,12 @@ fn run_oneshot(ctx: &RunContext<'_>) -> Result<()> {
 
     {
         let _stage = ctx.ui.stage("Publish events");
-        publish_events(&conn.client, &ctx.args.mqtt_topic_prefix, &events)?;
+        publish_events(
+            &conn.client,
+            &ctx.args.mqtt_topic_prefix,
+            ctx.device_id,
+            &events,
+        )?;
     }
 
     conn.disconnect()?;
@@ -668,12 +1022,25 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
         ctx.args.verify_interval_secs
     );
 
+    // SIGINT/SIGTERM end the loop cleanly: the retained announce is cleared
+    // and `offline` is published BEFORE the socket closes (a clean DISCONNECT
+    // suppresses the LWT, so the availability word has to be said here).
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let stop = std::sync::Arc::clone(&stop);
+        ctrlc::set_handler(move || {
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+        .context("installing the shutdown handler")?;
+    }
+
     let (cmd_tx, cmd_rx) = mpsc::sync_channel::<(String, Vec<u8>, bool)>(COMMAND_QUEUE_DEPTH);
     // Scoped to the command subtree only — this daemon must never consume
     // event or sensor traffic. Subscribed from the eventloop thread on every
-    // ConnAck so it survives broker reconnects. The one opt-in beyond it is
-    // the fleet roll-call (`--fleet-peers-path`): presence/health/chain/meta
-    // topics only, never `events` or `sensing` (see FLEET_PEER_TOPIC_FILTERS).
+    // ConnAck so it survives broker reconnects. Beyond it: the claim topic
+    // (exact, this device's id), and the fleet roll-call
+    // (`--fleet-peers-path`): presence/health/chain/meta topics only, never
+    // `events` or `sensing` (see FLEET_PEER_TOPIC_FILTERS).
     let cmd_filter = format!("{}/cmd/#", ctx.args.mqtt_topic_prefix);
     let mut peers = ctx
         .args
@@ -688,6 +1055,11 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     } else {
         Vec::new()
     };
+    let claim_topics: ClaimTopics = std::sync::Arc::new(std::sync::Mutex::new(vec![claim_topic(
+        &ctx.args.mqtt_topic_prefix,
+        ctx.device_id,
+    )]));
+    let announce_slot: AnnounceSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
     let conn = {
         let _stage = ctx.ui.stage("Connect to MQTT broker");
         connect_mqtt(
@@ -703,11 +1075,15 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                 cmd_filter,
                 availability_topic: ctx.availability_topic.to_string(),
                 fleet_filters,
+                claim_prefix: format!("{}/claim/", ctx.args.mqtt_topic_prefix),
+                claim_topics: std::sync::Arc::clone(&claim_topics),
+                announce: std::sync::Arc::clone(&announce_slot),
             }),
         )?
     };
 
     let verify_cmd_topic = format!("{}/cmd/verify", ctx.args.mqtt_topic_prefix);
+    let claim_prefix = format!("{}/claim/", ctx.args.mqtt_topic_prefix);
 
     // Publish availability online (retained)
     mqtt_publish_qos1(
@@ -718,37 +1094,106 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     )?;
     log::info!("Published online status to {}", ctx.availability_topic);
 
-    // Publish the zone-independent entities up front so the device appears
-    // in HA immediately, not only after the first event fires.
-    if !ctx.args.no_discovery {
-        publish_static_discovery(
-            &conn.client,
-            &ctx.args.ha_discovery_prefix,
-            &ctx.args.mqtt_topic_prefix,
-            ctx.availability_topic,
-            ctx.device_id,
-            ctx.device_info,
-        )?;
+    // The signed announce: identity from the kernel, signature from the
+    // kernel, bytes to the broker. A failed fetch is retried every poll
+    // cycle — the announce is never published without the key.
+    let mut announced = ctx.args.no_announce;
+    let mut identity: Option<KernelIdentity> = None;
+    if !announced {
+        match try_announce(ctx, &conn, &announce_slot, &claim_topics) {
+            Ok(id) => {
+                identity = Some(id);
+                announced = true;
+            }
+            Err(e) => log::warn!("announce deferred to the next poll cycle: {:#}", e),
+        }
     }
+
+    // Let a retained claim arrive before deciding whether to publish the
+    // discovery configs: a kernel the integration already owns must not
+    // flash its `pwk_*` entities into Home Assistant on every restart. The
+    // settle window is counted from the first ConnAck — the claim topic is
+    // subscribed there, and a retained claim is delivered right after — and
+    // a broker that has not answered within `CONNACK_WAIT` does not hold
+    // startup: the loop below handles an absent broker on its own.
+    let mut claim = ClaimTracker::default();
+    let mut discovered_zones: HashSet<String> = HashSet::new();
+    let connack_until = Instant::now() + CONNACK_WAIT;
+    let mut settle_until: Option<Instant> = None;
+    loop {
+        if stop.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        if settle_until.is_none() && conn.is_connected() {
+            settle_until = Some(Instant::now() + CLAIM_SETTLE);
+        }
+        let deadline = settle_until.unwrap_or(connack_until);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match cmd_rx.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            Ok((topic, payload, retained)) => {
+                if topic.starts_with(&claim_prefix) {
+                    claim.observe(&payload);
+                } else if let Some(tracker) = peers.as_mut() {
+                    if topic.starts_with("securacv/") {
+                        tracker.observe(&topic, &payload, retained);
+                    }
+                }
+                // A verify press during the settle window is served below,
+                // by the initial verification.
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    // The initial decision is a settle like any other, from `honored =
+    // false`: a fresh claim withdraws nothing (nothing is published yet)
+    // and no claim publishes the static set.
+    claim.settle(unix_now_secs());
+    if !ctx.args.no_discovery {
+        if claim.honored {
+            log::info!(
+                "claimed by the SecuraCV integration; MQTT discovery withheld, state topics continue"
+            );
+        } else {
+            publish_static_discovery(
+                &conn.client,
+                &ctx.args.ha_discovery_prefix,
+                &ctx.args.mqtt_topic_prefix,
+                ctx.availability_topic,
+                ctx.device_id,
+                ctx.device_info,
+            )?;
+        }
+    }
+    publish_claim_state(&conn.client, &ctx.args.mqtt_topic_prefix, claim.honored)?;
 
     // Initial verification populates the chain-integrity sensor right away.
     let verify_interval = ctx.args.verify_interval_secs;
     let mut last_auto_verify = Instant::now();
+    let mut last_verify: Option<LastVerify> = None;
     if verify_interval > 0 {
-        if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
-            log::warn!("Initial verification failed to run: {}", e);
+        match run_verify_and_publish(ctx, &conn.client) {
+            Ok(outcome) => last_verify = Some(outcome),
+            Err(e) => log::warn!("Initial verification failed to run: {}", e),
         }
     }
 
-    let mut discovered_zones: HashSet<String> = HashSet::new();
     let mut zone_states: HashMap<String, ZoneState> = HashMap::new();
     let mut publish_cursor: Option<PublishCursor> = None;
 
-    loop {
+    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
         // Each poll tick flushes whatever the roll-call heard since the last
         // one (the wait loop below also flushes, rate-limited, as it hears).
         if let Some(tracker) = peers.as_mut() {
             tracker.flush_if_due(true);
+        }
+
+        // A claim ages out at 24 h without a message; re-check each tick.
+        if let Some(transition) = claim.settle(unix_now_secs()) {
+            apply_claim_transition(ctx, &conn.client, transition, &discovered_zones)?;
         }
 
         // Only fetch+publish while the broker is reachable. During an outage
@@ -760,10 +1205,25 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
         // link (and, via ConnAck, availability) is restored. Command handling
         // and shutdown stay responsive through the wait loop below.
         if conn.is_connected() {
+            if !announced {
+                match try_announce(ctx, &conn, &announce_slot, &claim_topics) {
+                    Ok(id) => {
+                        identity = Some(id);
+                        announced = true;
+                    }
+                    Err(e) => log::warn!("announce still deferred: {:#}", e),
+                }
+            }
+
+            // The receipt-less incremental view from the cursor's bucket: the
+            // newest bucket already seen plus anything newer. The kernel
+            // writes no export receipt for it, so a 30 s poll costs the
+            // receipt ledger nothing (see `Kernel::view_events`).
+            let since_bucket = publish_cursor.map(|c| c.bucket_start_epoch_s).unwrap_or(0);
             match ctx
                 .tokens
                 .current()
-                .and_then(|token| fetch_export_artifact(ctx.api_addr, &token))
+                .and_then(|token| fetch_events_since(ctx.api_addr, &token, since_bucket))
             {
                 Ok(artifact) => {
                     let events = flatten_export_events(&artifact);
@@ -775,11 +1235,14 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                     let new_events = select_new_events(&events, &mut publish_cursor);
 
                     if !new_events.is_empty() {
-                        // Discover new zones
+                        // Discover new zones. Tracked whether or not the
+                        // integration holds the claim — a cleared claim
+                        // republishes every zone seen — but published only
+                        // while unclaimed.
                         if !ctx.args.no_discovery {
                             for event in &new_events {
                                 let zone = extract_zone_name(&event.zone_id);
-                                if !discovered_zones.contains(&zone) {
+                                if discovered_zones.insert(zone.clone()) && !claim.honored {
                                     publish_zone_discovery(
                                         &conn.client,
                                         &ctx.args.ha_discovery_prefix,
@@ -789,7 +1252,6 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                                         ctx.device_info,
                                         &zone,
                                     )?;
-                                    discovered_zones.insert(zone);
                                 }
                             }
                         }
@@ -801,17 +1263,16 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                             // Update zone state
                             let state = zone_states.entry(zone.clone()).or_default();
                             state.event_count += 1;
-                            state.last_event_time = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
+                            state.last_event_time = unix_now_secs();
 
                             // Publish event
                             publish_single_event(
                                 &conn.client,
                                 &ctx.args.mqtt_topic_prefix,
+                                ctx.device_id,
                                 event,
                                 &zone,
+                                last_verify,
                             )?;
 
                             // Publish zone count
@@ -833,7 +1294,8 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                         // Update last event state
                         if let Some(last) = new_events.last() {
                             let state_topic = format!("{}/last_event", ctx.args.mqtt_topic_prefix);
-                            let payload = build_event_state_payload(last)?;
+                            let payload =
+                                build_event_state_payload(last, ctx.device_id, last_verify)?;
                             let json = serde_json::to_vec(&payload)?;
                             mqtt_publish_qos1(&conn.client, &state_topic, &json, true)?;
                         }
@@ -866,26 +1328,39 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                 && last_auto_verify.elapsed() >= Duration::from_secs(verify_interval)
             {
                 last_auto_verify = Instant::now();
-                if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
-                    log::warn!("Scheduled verification failed to run: {}", e);
+                match run_verify_and_publish(ctx, &conn.client) {
+                    Ok(outcome) => last_verify = Some(outcome),
+                    Err(e) => log::warn!("Scheduled verification failed to run: {}", e),
                 }
             }
         } // end `if conn.is_connected()`
 
-        // Sleep until the next poll, waking early for button presses.
+        // Sleep until the next poll, waking early for button presses, claim
+        // changes and the shutdown signal.
         let deadline = Instant::now() + Duration::from_secs(ctx.args.poll_interval);
         loop {
+            if stop.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 break;
             }
-            match cmd_rx.recv_timeout(remaining) {
+            let slice = remaining.min(Duration::from_millis(250));
+            match cmd_rx.recv_timeout(slice) {
                 Ok((topic, _payload, _)) if topic == verify_cmd_topic => {
                     log::info!("Verify command received via {}", topic);
-                    if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
-                        log::warn!("Verification failed to run: {}", e);
+                    match run_verify_and_publish(ctx, &conn.client) {
+                        Ok(outcome) => last_verify = Some(outcome),
+                        Err(e) => log::warn!("Verification failed to run: {}", e),
                     }
                     last_auto_verify = Instant::now();
+                }
+                Ok((topic, payload, _)) if topic.starts_with(&claim_prefix) => {
+                    claim.observe(&payload);
+                    if let Some(transition) = claim.settle(unix_now_secs()) {
+                        apply_claim_transition(ctx, &conn.client, transition, &discovered_zones)?;
+                    }
                 }
                 Ok((topic, payload, retained)) => match peers.as_mut() {
                     Some(tracker) if topic.starts_with("securacv/") => {
@@ -894,7 +1369,7 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                     }
                     _ => log::debug!("Ignoring unknown command topic {}", topic),
                 },
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     // The eventloop thread has exited (only on shutdown now
                     // that it survives broker outages). Finish the wait on a
@@ -905,6 +1380,284 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
             }
         }
     }
+
+    log::info!("shutdown signal received; clearing the announce and going offline");
+    shutdown_cleanly(ctx, conn, &announce_slot, identity.as_ref())
+}
+
+/// Fetch the kernel's identity, have the kernel sign the announce built
+/// from it, publish it retained and remember it for ConnAck re-publishes.
+/// Returns the identity so the claim topic can follow the kernel's id.
+fn try_announce(
+    ctx: &RunContext<'_>,
+    conn: &MqttRuntime,
+    slot: &AnnounceSlot,
+    claim_topics: &ClaimTopics,
+) -> Result<KernelIdentity> {
+    let token = ctx.tokens.current()?;
+    let identity = fetch_identity(ctx.api_addr, &token)?;
+    if identity.device_id != ctx.device_id {
+        log::warn!(
+            "the kernel names itself {} but this bridge's device id is {}; the announce \
+             carries the kernel's (set --ha-device-id to the kernel's id, or drop the override)",
+            identity.device_id,
+            ctx.device_id
+        );
+        // Hear a claim addressed to the kernel's id as well as to ours.
+        let extra = claim_topic(&ctx.args.mqtt_topic_prefix, &identity.device_id);
+        if let Ok(mut topics) = claim_topics.lock() {
+            if !topics.contains(&extra) {
+                topics.push(extra.clone());
+                if let Err(e) = conn.client.subscribe(&extra, QoS::AtLeastOnce) {
+                    log::warn!("MQTT claim subscribe failed for {}: {}", extra, e);
+                }
+            }
+        }
+    }
+    let unsigned = build_announce_payload(ctx, &identity)?;
+    let unsigned_bytes = serde_json::to_vec(&unsigned)?;
+    let token = ctx.tokens.current()?;
+    let sig = sign_announce(ctx.api_addr, &token, &unsigned_bytes)?;
+    let signed = AnnouncePayload {
+        sig: Some(sig),
+        ..unsigned
+    };
+    let bytes = serde_json::to_vec(&signed)?;
+    let topic = announce_topic(&ctx.args.mqtt_topic_prefix, &identity.device_id);
+    mqtt_publish_qos1(&conn.client, &topic, &bytes, true)?;
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some((topic.clone(), bytes));
+    }
+    log::info!(
+        "Published signed announce to {} (pairing: {}, api: {} on port {})",
+        topic,
+        signed.pairing,
+        signed.api.bind,
+        signed.api.port
+    );
+    Ok(identity)
+}
+
+/// The announce for this kernel, unsigned (`sig: None`).
+fn build_announce_payload(
+    ctx: &RunContext<'_>,
+    identity: &KernelIdentity,
+) -> Result<AnnouncePayload> {
+    let announced = TimeBucket::now_10min()?;
+    Ok(AnnouncePayload {
+        v: 1,
+        device_id: identity.device_id.clone(),
+        kernel_version: identity.kernel_version.clone(),
+        verifying_key: identity.verifying_key.clone(),
+        api: AnnounceApi {
+            scheme: ctx.args.announce_api_scheme.clone(),
+            bind: ctx.args.announce_api_bind.clone(),
+            port: ctx.api_addr.port(),
+            host: ctx.args.announce_api_host.clone(),
+        },
+        pairing: ctx.args.announce_pairing.clone(),
+        mqtt_topic_prefix: ctx.args.mqtt_topic_prefix.clone(),
+        discovery_prefix: ctx.args.ha_discovery_prefix.clone(),
+        availability_topic: ctx.availability_topic.to_string(),
+        announced_bucket_start: announced.start_epoch_s,
+        announced_bucket_size: announced.size_s,
+        sig: None,
+    })
+}
+
+/// Act on a claim transition: withdraw every discovery config this bridge
+/// owns (empty retained payloads — the state topics are untouched), or
+/// republish them all; then say which on `<prefix>/claim_state`. A no-op
+/// for discovery under `--no-discovery` (nothing to withdraw), the state
+/// topic is still kept honest.
+fn apply_claim_transition<P: Publish>(
+    ctx: &RunContext<'_>,
+    publisher: &P,
+    transition: ClaimTransition,
+    zones: &HashSet<String>,
+) -> Result<()> {
+    if !ctx.args.no_discovery {
+        match transition {
+            ClaimTransition::Withdraw => {
+                withdraw_discovery(
+                    publisher,
+                    &ctx.args.ha_discovery_prefix,
+                    &ctx.args.mqtt_topic_prefix,
+                    ctx.availability_topic,
+                    ctx.device_id,
+                    ctx.device_info,
+                    zones,
+                )?;
+                log::info!(
+                    "claimed by the SecuraCV integration; MQTT discovery withdrawn, state topics continue"
+                );
+            }
+            ClaimTransition::Republish => {
+                republish_discovery(
+                    publisher,
+                    &ctx.args.ha_discovery_prefix,
+                    &ctx.args.mqtt_topic_prefix,
+                    ctx.availability_topic,
+                    ctx.device_id,
+                    ctx.device_info,
+                    zones,
+                )?;
+                log::info!("claim cleared; MQTT discovery republished");
+            }
+        }
+    }
+    publish_claim_state(
+        publisher,
+        &ctx.args.mqtt_topic_prefix,
+        transition == ClaimTransition::Withdraw,
+    )
+}
+
+fn publish_claim_state<P: Publish>(publisher: &P, state_prefix: &str, claimed: bool) -> Result<()> {
+    let topic = format!("{state_prefix}/{CLAIM_STATE_TOPIC_SUFFIX}");
+    let word = if claimed {
+        PAYLOAD_CLAIMED
+    } else {
+        PAYLOAD_UNCLAIMED
+    };
+    publisher.publish_qos1(&topic, word.as_bytes(), true)
+}
+
+/// Every discovery config topic this bridge owns right now: the static
+/// four plus the two per discovered zone — exactly the topics
+/// `publish_static_discovery` and `publish_zone_discovery` publish, derived
+/// from the same builders so the withdraw list cannot drift from them.
+fn owned_discovery_topics(
+    discovery_prefix: &str,
+    state_prefix: &str,
+    availability_topic: &str,
+    device_id: &str,
+    device_info: &HaDeviceInfo,
+    zones: &HashSet<String>,
+) -> Result<Vec<String>> {
+    let mut configs = static_discovery_configs(
+        discovery_prefix,
+        state_prefix,
+        availability_topic,
+        device_id,
+        device_info,
+    )?;
+    let mut sorted: Vec<&String> = zones.iter().collect();
+    sorted.sort();
+    for zone in sorted {
+        configs.extend(zone_discovery_configs(
+            discovery_prefix,
+            state_prefix,
+            availability_topic,
+            device_id,
+            device_info,
+            zone,
+        )?);
+    }
+    Ok(configs.into_iter().map(|c| c.topic).collect())
+}
+
+/// An empty retained payload on every owned discovery config topic: Home
+/// Assistant removes the entity, the state topics behind it keep flowing.
+fn withdraw_discovery<P: Publish>(
+    publisher: &P,
+    discovery_prefix: &str,
+    state_prefix: &str,
+    availability_topic: &str,
+    device_id: &str,
+    device_info: &HaDeviceInfo,
+    zones: &HashSet<String>,
+) -> Result<()> {
+    for topic in owned_discovery_topics(
+        discovery_prefix,
+        state_prefix,
+        availability_topic,
+        device_id,
+        device_info,
+        zones,
+    )? {
+        publisher.publish_qos1(&topic, b"", true)?;
+    }
+    Ok(())
+}
+
+/// The static set and every discovered zone, published again.
+fn republish_discovery<P: Publish>(
+    publisher: &P,
+    discovery_prefix: &str,
+    state_prefix: &str,
+    availability_topic: &str,
+    device_id: &str,
+    device_info: &HaDeviceInfo,
+    zones: &HashSet<String>,
+) -> Result<()> {
+    publish_static_discovery(
+        publisher,
+        discovery_prefix,
+        state_prefix,
+        availability_topic,
+        device_id,
+        device_info,
+    )?;
+    let mut sorted: Vec<&String> = zones.iter().collect();
+    sorted.sort();
+    for zone in sorted {
+        publish_zone_discovery(
+            publisher,
+            discovery_prefix,
+            state_prefix,
+            availability_topic,
+            device_id,
+            device_info,
+            zone,
+        )?;
+    }
+    Ok(())
+}
+
+/// Clear the retained announce, say `offline` on the availability topic,
+/// wait (bounded) for the broker to acknowledge both, then disconnect. The
+/// LWT on the availability topic is unchanged — this is the clean-exit
+/// path saying the same word the broker would have said for a crash.
+fn shutdown_cleanly(
+    ctx: &RunContext<'_>,
+    conn: MqttRuntime,
+    announce_slot: &AnnounceSlot,
+    identity: Option<&KernelIdentity>,
+) -> Result<()> {
+    if let Ok(mut guard) = announce_slot.lock() {
+        *guard = None;
+    }
+    let before = conn.acked();
+    let mut expected = 0u64;
+    if !ctx.args.no_announce {
+        let device_id = identity
+            .map(|id| id.device_id.as_str())
+            .unwrap_or(ctx.device_id);
+        let topic = announce_topic(&ctx.args.mqtt_topic_prefix, device_id);
+        if let Err(e) = mqtt_publish_qos1(&conn.client, &topic, b"", true) {
+            log::warn!("could not clear the retained announce on {}: {}", topic, e);
+        } else {
+            expected += 1;
+        }
+    }
+    match mqtt_publish_qos1(
+        &conn.client,
+        ctx.availability_topic,
+        PAYLOAD_OFFLINE.as_bytes(),
+        true,
+    ) {
+        Ok(()) => expected += 1,
+        Err(e) => log::warn!("could not publish offline availability: {}", e),
+    }
+    if expected > 0 && !conn.wait_for_acks(before + expected, SHUTDOWN_ACK_TIMEOUT) {
+        log::warn!(
+            "broker did not acknowledge the shutdown publishes within {:?}; disconnecting anyway \
+             (recover a stale announce with `mosquitto_pub -r -n -t <prefix>/<device_id>/announce`)",
+            SHUTDOWN_ACK_TIMEOUT
+        );
+    }
+    conn.disconnect()
 }
 
 /// How often the roll-call summary is rewritten while messages keep
@@ -1043,13 +1796,24 @@ fn unix_now_secs() -> u64 {
 /// `<prefix>/chain_problem` (retained ON/OFF for the `problem`-class binary
 /// sensor — ON means verification failed) and the full report JSON on
 /// `<prefix>/chain_problem/attrs` (retained, surfaced as HA attributes).
-fn run_verify_and_publish(ctx: &RunContext<'_>, client: &Client) -> Result<()> {
+fn run_verify_and_publish(ctx: &RunContext<'_>, client: &Client) -> Result<LastVerify> {
     let token = ctx.tokens.current()?;
     let report = post_verify(ctx.api_addr, &token)?;
-    let chain_valid = serde_json::from_slice::<serde_json::Value>(&report)
-        .ok()
-        .and_then(|v| v.get("chain_valid").and_then(|b| b.as_bool()))
+    let parsed = serde_json::from_slice::<serde_json::Value>(&report).ok();
+    let field = |name: &str| parsed.as_ref().and_then(|v| v.get(name).cloned());
+    let chain_valid = field("chain_valid")
+        .and_then(|b| b.as_bool())
         .unwrap_or(false);
+    let outcome = LastVerify {
+        bucket_start: field("verified_at_bucket_start")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        bucket_size: field("verified_at_bucket_size")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0),
+        ok: chain_valid,
+    };
 
     let state_topic = format!("{}/chain_problem", ctx.args.mqtt_topic_prefix);
     let attrs_topic = format!("{}/chain_problem/attrs", ctx.args.mqtt_topic_prefix);
@@ -1064,7 +1828,7 @@ fn run_verify_and_publish(ctx: &RunContext<'_>, client: &Client) -> Result<()> {
         "Sealed-log verification published: chain_valid={}",
         chain_valid
     );
-    Ok(())
+    Ok(outcome)
 }
 
 /// One retained Home Assistant discovery config: its topic and its JSON body.
@@ -1114,9 +1878,21 @@ fn ha_entity_id(domain: &str, object_id: &str) -> String {
     format!("{domain}.{}", ha_slug(object_id))
 }
 
-fn publish_configs(client: &Client, configs: &[DiscoveryConfig]) -> Result<()> {
+/// Where a QoS 1 publish goes: the broker client in production, a recorder
+/// in tests (the claim's withdraw/republish are proven against the recorder).
+trait Publish {
+    fn publish_qos1(&self, topic: &str, payload: &[u8], retain: bool) -> Result<()>;
+}
+
+impl Publish for Client {
+    fn publish_qos1(&self, topic: &str, payload: &[u8], retain: bool) -> Result<()> {
+        mqtt_publish_qos1(self, topic, payload, retain)
+    }
+}
+
+fn publish_configs<P: Publish>(publisher: &P, configs: &[DiscoveryConfig]) -> Result<()> {
     for config in configs {
-        mqtt_publish_qos1(client, &config.topic, &config.body, true)?;
+        publisher.publish_qos1(&config.topic, &config.body, true)?;
     }
     Ok(())
 }
@@ -1208,8 +1984,8 @@ fn static_discovery_configs(
     Ok(vec![last_event, digest, chain, button])
 }
 
-fn publish_static_discovery(
-    client: &Client,
+fn publish_static_discovery<P: Publish>(
+    publisher: &P,
     discovery_prefix: &str,
     state_prefix: &str,
     availability_topic: &str,
@@ -1217,7 +1993,7 @@ fn publish_static_discovery(
     device_info: &HaDeviceInfo,
 ) -> Result<()> {
     publish_configs(
-        client,
+        publisher,
         &static_discovery_configs(
             discovery_prefix,
             state_prefix,
@@ -1370,8 +2146,8 @@ fn zone_discovery_configs(
     Ok(vec![count, motion])
 }
 
-fn publish_zone_discovery(
-    client: &Client,
+fn publish_zone_discovery<P: Publish>(
+    publisher: &P,
     discovery_prefix: &str,
     state_prefix: &str,
     availability_topic: &str,
@@ -1380,7 +2156,7 @@ fn publish_zone_discovery(
     zone: &str,
 ) -> Result<()> {
     publish_configs(
-        client,
+        publisher,
         &zone_discovery_configs(
             discovery_prefix,
             state_prefix,
@@ -1394,14 +2170,19 @@ fn publish_zone_discovery(
     Ok(())
 }
 
-fn publish_events(client: &Client, topic_prefix: &str, events: &[ExportEvent]) -> Result<()> {
+fn publish_events(
+    client: &Client,
+    topic_prefix: &str,
+    device_id: &str,
+    events: &[ExportEvent],
+) -> Result<()> {
     let mut zone_counts: HashMap<String, u64> = HashMap::new();
 
     for event in events {
         let zone = extract_zone_name(&event.zone_id);
         *zone_counts.entry(zone.clone()).or_default() += 1;
 
-        publish_single_event(client, topic_prefix, event, &zone)?;
+        publish_single_event(client, topic_prefix, device_id, event, &zone, None)?;
     }
 
     // Publish final counts (retained)
@@ -1417,7 +2198,7 @@ fn publish_events(client: &Client, topic_prefix: &str, events: &[ExportEvent]) -
     // Publish last event (retained)
     if let Some(last) = events.last() {
         let state_topic = format!("{}/last_event", topic_prefix);
-        let payload = build_event_state_payload(last)?;
+        let payload = build_event_state_payload(last, device_id, None)?;
         let json = serde_json::to_vec(&payload)?;
         mqtt_publish_qos1(client, &state_topic, &json, true)?;
     }
@@ -1425,15 +2206,20 @@ fn publish_events(client: &Client, topic_prefix: &str, events: &[ExportEvent]) -
     Ok(())
 }
 
+/// One event to its zone topic and the firehose, as the shared
+/// [`EventStatePayload`] (the same shape `<prefix>/last_event` retains).
 fn publish_single_event(
     client: &Client,
     topic_prefix: &str,
+    device_id: &str,
     event: &ExportEvent,
     zone: &str,
+    last_verify: Option<LastVerify>,
 ) -> Result<()> {
+    let payload = serde_json::to_vec(&build_event_state_payload(event, device_id, last_verify)?)?;
+
     // Publish to zone-specific topic
     let topic = format!("{}/zone/{}/event", topic_prefix, zone);
-    let payload = serde_json::to_vec(event)?;
     mqtt_publish_qos1(client, &topic, &payload, false)?;
 
     // Publish to firehose topic
@@ -1443,11 +2229,16 @@ fn publish_single_event(
     Ok(())
 }
 
-fn build_event_state_payload(event: &ExportEvent) -> Result<EventStatePayload> {
+fn build_event_state_payload(
+    event: &ExportEvent,
+    device_id: &str,
+    last_verify: Option<LastVerify>,
+) -> Result<EventStatePayload> {
     let published_bucket = TimeBucket::now_10min()?;
     Ok(EventStatePayload {
         event_type: format!("{:?}", event.event_type),
         zone_id: event.zone_id.clone(),
+        time_bucket: event.time_bucket,
         time_bucket_start: event.time_bucket.start_epoch_s,
         time_bucket_size: event.time_bucket.size_s,
         confidence: event.confidence,
@@ -1457,8 +2248,15 @@ fn build_event_state_payload(event: &ExportEvent) -> Result<EventStatePayload> {
             .attestation
             .and_then(|a| serde_json::to_value(a).ok())
             .and_then(|v| v.as_str().map(str::to_string)),
+        kernel_version: event.kernel_version.clone(),
+        ruleset_id: event.ruleset_id.clone(),
+        device_id: device_id.to_string(),
         published_bucket_start: published_bucket.start_epoch_s,
         published_bucket_size: published_bucket.size_s,
+        verified_bucket_start: last_verify.map(|v| v.bucket_start),
+        verified_bucket_size: last_verify.map(|v| v.bucket_size),
+        verified_ok: last_verify.map(|v| v.ok),
+        seq: event.seq,
     })
 }
 
@@ -1491,21 +2289,72 @@ fn load_token(path: Option<PathBuf>, token: Option<String>) -> Result<String> {
     Ok(token)
 }
 
-fn fetch_export_artifact(addr: std::net::SocketAddr, token: &str) -> Result<ExportArtifact> {
-    let body = api_request(addr, token, "GET", EVENTS_PATH)?;
+/// The receipt-less event view from `since_bucket` (a true bucket start; 0
+/// for the whole retained log): `GET /events?since_bucket=<n>`.
+fn fetch_events_since(
+    addr: std::net::SocketAddr,
+    token: &str,
+    since_bucket: u64,
+) -> Result<ExportArtifact> {
+    let body = api_request(addr, token, "GET", &events_since_path(since_bucket), None)?;
     let artifact: ExportArtifact =
         serde_json::from_slice(&body).context("failed to parse /events response")?;
     Ok(artifact)
 }
 
+fn events_since_path(since_bucket: u64) -> String {
+    format!("{EVENTS_PATH}?since_bucket={since_bucket}")
+}
+
 /// Fetch the rolling 24h digest as raw JSON (republished verbatim to MQTT).
 fn fetch_digest(addr: std::net::SocketAddr, token: &str) -> Result<Vec<u8>> {
-    api_request(addr, token, "GET", DIGEST_PATH)
+    api_request(addr, token, "GET", DIGEST_PATH, None)
 }
 
 /// Trigger a full sealed-log verification; returns the VerifyReport JSON.
 fn post_verify(addr: std::net::SocketAddr, token: &str) -> Result<Vec<u8>> {
-    api_request(addr, token, "POST", VERIFY_PATH)
+    api_request(addr, token, "POST", VERIFY_PATH, None)
+}
+
+/// `GET /api/identity`: the id, version and key the announce carries.
+fn fetch_identity(addr: std::net::SocketAddr, token: &str) -> Result<KernelIdentity> {
+    let body = api_request(addr, token, "GET", IDENTITY_PATH, None)?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&body).context("failed to parse /api/identity response")?;
+    let field = |name: &str| -> Result<String> {
+        value
+            .get(name)
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("/api/identity response lacks {name}"))
+    };
+    let verifying_key = field("verifying_key")?;
+    if hex::decode(&verifying_key).map(|k| k.len()) != Ok(32) {
+        return Err(anyhow!(
+            "/api/identity verifying_key is not 64 hex characters"
+        ));
+    }
+    Ok(KernelIdentity {
+        device_id: field("device_id")?,
+        kernel_version: field("kernel_version")?,
+        verifying_key,
+    })
+}
+
+/// `POST /api/sign-announce` with the sig-less payload bytes; the kernel's
+/// 128-hex signature over them.
+fn sign_announce(addr: std::net::SocketAddr, token: &str, payload: &[u8]) -> Result<String> {
+    let body = api_request(addr, token, "POST", SIGN_ANNOUNCE_PATH, Some(payload))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&body).context("failed to parse /api/sign-announce response")?;
+    let sig = value
+        .get("sig")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("/api/sign-announce response lacks sig"))?;
+    if sig.len() != 128 || !sig.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!("/api/sign-announce returned a malformed signature"));
+    }
+    Ok(sig.to_string())
 }
 
 fn api_request(
@@ -1513,15 +2362,26 @@ fn api_request(
     token: &str,
     method: &str,
     path: &str,
+    body: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
 
+    let body_headers = match body {
+        Some(bytes) => format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n",
+            bytes.len()
+        ),
+        None => String::new(),
+    };
     let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nx-witness-token: {token}\r\nConnection: close\r\n\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nx-witness-token: {token}\r\n{body_headers}Connection: close\r\n\r\n",
         host = addr,
     );
     stream.write_all(request.as_bytes())?;
+    if let Some(bytes) = body {
+        stream.write_all(bytes)?;
+    }
 
     let mut response = Vec::new();
     stream.read_to_end(&mut response)?;
@@ -1796,22 +2656,359 @@ mod tests {
         assert!(select_new_events(&trimmed, &mut cursor).is_empty());
     }
 
+    // C5: one payload on every event topic — nested AND flattened bucket,
+    // the kernel's self-verify as `verified_*` bucket fields (absent until a
+    // verify ran), `seq` when the view carried it, and never a precise time.
     #[test]
     fn serialize_event_state_payload() {
-        let payload = EventStatePayload {
-            event_type: "BoundaryCrossingObjectLarge".to_string(),
-            zone_id: "zone:front_door".to_string(),
-            attestation: None,
-            time_bucket_start: 1_700_000_000,
-            time_bucket_size: 600,
-            confidence: 0.9,
-            published_bucket_start: 1_700_000_200,
-            published_bucket_size: 600,
+        let mut event = ev(1_700_000_000, "front_door");
+        event.seq = Some(42);
+        let verified = LastVerify {
+            bucket_start: 1_699_999_400,
+            bucket_size: 600,
+            ok: true,
         };
-
+        let payload =
+            build_event_state_payload(&event, "pwk_1a2b3c4d", Some(verified)).expect("payload");
         let json = serde_json::to_string(&payload).expect("serialize");
-        assert!(json.contains("BoundaryCrossingObjectLarge"));
-        assert!(json.contains("front_door"));
+        let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+        assert_eq!(v["event_type"], "BoundaryCrossingObjectLarge");
+        assert_eq!(v["zone_id"], "zone:front_door");
+        assert_eq!(v["time_bucket"]["start_epoch_s"], 1_700_000_000u64);
+        assert_eq!(v["time_bucket"]["size_s"], 600);
+        assert_eq!(v["time_bucket_start"], 1_700_000_000u64);
+        assert_eq!(v["time_bucket_size"], 600);
+        assert_eq!(v["kernel_version"], "test");
+        assert_eq!(v["ruleset_id"], "test-ruleset");
+        assert_eq!(v["device_id"], "pwk_1a2b3c4d");
+        assert_eq!(v["verified_bucket_start"], 1_699_999_400u64);
+        assert_eq!(v["verified_bucket_size"], 600);
+        assert_eq!(v["verified_ok"], true);
+        assert_eq!(v["seq"], 42);
+        assert!(
+            v.get("attestation").is_none(),
+            "device-attested omits the key"
+        );
+        assert!(
+            v.get("ruleset_hash").is_none(),
+            "the hash is not an HA attribute"
+        );
+        for forbidden in ["verified_at", "created_at", "correlation_token"] {
+            assert!(
+                v.get(forbidden).is_none(),
+                "{forbidden} must not be on the wire"
+            );
+        }
+        // Keys in contract (struct) order on the wire (a `Value` round trip
+        // would sort them, so the positions are read off the string).
+        let positions: Vec<usize> = [
+            "event_type",
+            "zone_id",
+            "time_bucket",
+            "time_bucket_start",
+            "time_bucket_size",
+            "confidence",
+            "kernel_version",
+            "ruleset_id",
+            "device_id",
+            "published_bucket_start",
+            "published_bucket_size",
+            "verified_bucket_start",
+            "verified_bucket_size",
+            "verified_ok",
+            "seq",
+        ]
+        .iter()
+        .map(|key| {
+            json.find(&format!("\"{key}\":"))
+                .unwrap_or_else(|| panic!("{key} missing from {json}"))
+        })
+        .collect();
+        assert!(
+            positions.windows(2).all(|w| w[0] < w[1]),
+            "keys out of contract order: {json}"
+        );
+
+        // Before any verify, and without a seq: all four keys are absent.
+        let bare = build_event_state_payload(&ev(1_700_000_000, "a"), "pwk_x", None).unwrap();
+        let v: serde_json::Value = serde_json::to_value(&bare).unwrap();
+        for absent in [
+            "verified_bucket_start",
+            "verified_bucket_size",
+            "verified_ok",
+            "seq",
+        ] {
+            assert!(v.get(absent).is_none(), "{absent}");
+        }
+    }
+
+    // C1: the announce serializes in contract order, `sig` last and absent
+    // until the kernel fills it, and `api.host` only when configured — so
+    // the sig-less bytes the bridge sends to `/api/sign-announce` are what
+    // the integration re-serializes to check the signature.
+    #[test]
+    fn announce_payload_serializes_in_contract_order() {
+        let payload = AnnouncePayload {
+            v: 1,
+            device_id: "pwk_1a2b3c4d".to_string(),
+            kernel_version: "2.4.16".to_string(),
+            verifying_key: "7f".repeat(32),
+            api: AnnounceApi {
+                scheme: "http".to_string(),
+                bind: "all".to_string(),
+                port: 8799,
+                host: None,
+            },
+            pairing: "required".to_string(),
+            mqtt_topic_prefix: "witness".to_string(),
+            discovery_prefix: "homeassistant".to_string(),
+            availability_topic: "witness/status".to_string(),
+            announced_bucket_start: 1_760_140_800,
+            announced_bucket_size: 600,
+            sig: None,
+        };
+        let unsigned = serde_json::to_string(&payload).expect("serialize");
+        assert_eq!(
+            unsigned,
+            format!(
+                r#"{{"v":1,"device_id":"pwk_1a2b3c4d","kernel_version":"2.4.16","verifying_key":"{}","api":{{"scheme":"http","bind":"all","port":8799}},"pairing":"required","mqtt_topic_prefix":"witness","discovery_prefix":"homeassistant","availability_topic":"witness/status","announced_bucket_start":1760140800,"announced_bucket_size":600}}"#,
+                "7f".repeat(32)
+            )
+        );
+        for forbidden in ["chain_length", "latest_hash", "token", "code", "seed"] {
+            assert!(
+                !unsigned.contains(forbidden),
+                "{forbidden} never rides the announce"
+            );
+        }
+        // Signing appends exactly one trailing key: the signed bytes minus
+        // `,"sig":"…"` are the unsigned bytes.
+        let signed = AnnouncePayload {
+            sig: Some("ab".repeat(64)),
+            ..payload.clone()
+        };
+        let signed_json = serde_json::to_string(&signed).expect("serialize");
+        assert_eq!(
+            signed_json,
+            format!(
+                "{},\"sig\":\"{}\"}}",
+                &unsigned[..unsigned.len() - 1],
+                "ab".repeat(64)
+            )
+        );
+        // A host rides only when one was configured.
+        let hosted = AnnouncePayload {
+            api: AnnounceApi {
+                host: Some("d0491a67-privacy-witness-kernel".to_string()),
+                ..payload.api.clone()
+            },
+            ..payload
+        };
+        let hosted_json = serde_json::to_string(&hosted).expect("serialize");
+        assert!(hosted_json.contains(r#""port":8799,"host":"d0491a67-privacy-witness-kernel"}"#));
+        assert_eq!(
+            announce_topic("witness", "pwk_1a2b3c4d"),
+            "witness/pwk_1a2b3c4d/announce"
+        );
+        assert_eq!(
+            claim_topic("witness", "pwk_1a2b3c4d"),
+            "witness/claim/pwk_1a2b3c4d"
+        );
+        assert_eq!(
+            events_since_path(1_760_140_800),
+            "/events?since_bucket=1760140800"
+        );
+    }
+
+    // C3: the claim payload's shapes, the freshness rule, and the tracker's
+    // transitions (claimed → withdraw, cleared or stale → republish, noise
+    // → nothing).
+    #[test]
+    fn claim_tracker_honors_fresh_claims_and_ages_them_out() {
+        let now = 1_760_140_800u64;
+        let claim = format!(
+            r#"{{"v":1,"claimed":true,"nonce":"0123456789abcdef","claimed_bucket_start":{}}}"#,
+            now - 600
+        );
+        assert_eq!(
+            parse_claim_message(claim.as_bytes()),
+            ClaimMessage::Claimed(ClaimRecord {
+                claimed_bucket_start: now - 600
+            })
+        );
+        assert_eq!(parse_claim_message(b""), ClaimMessage::Cleared);
+        assert_eq!(
+            parse_claim_message(br#"{"v":1,"claimed":false}"#),
+            ClaimMessage::Cleared
+        );
+        assert_eq!(parse_claim_message(b"not json"), ClaimMessage::Unparsable);
+        assert_eq!(
+            parse_claim_message(br#"{"v":1,"entry_id":"abc","claimed_at":1}"#),
+            ClaimMessage::Unparsable,
+            "the v1 entry_id shape is not a claim"
+        );
+
+        let mut tracker = ClaimTracker::default();
+        assert_eq!(tracker.settle(now), None, "nothing heard, nothing to do");
+        tracker.observe(claim.as_bytes());
+        assert_eq!(tracker.settle(now), Some(ClaimTransition::Withdraw));
+        assert_eq!(tracker.settle(now), None, "already honored");
+        tracker.observe(b"garbage");
+        assert_eq!(tracker.settle(now), None, "noise leaves the state alone");
+        // 24 h later with no renewal: stale, republish.
+        assert_eq!(
+            tracker.settle(now - 600 + CLAIM_FRESH_SECS),
+            Some(ClaimTransition::Republish)
+        );
+        // A renewal brings it back; an explicit clear takes it away.
+        let renewed = format!(
+            r#"{{"v":1,"claimed":true,"nonce":"ff","claimed_bucket_start":{}}}"#,
+            now + CLAIM_FRESH_SECS
+        );
+        tracker.observe(renewed.as_bytes());
+        assert_eq!(
+            tracker.settle(now + CLAIM_FRESH_SECS),
+            Some(ClaimTransition::Withdraw)
+        );
+        tracker.observe(b"");
+        assert_eq!(
+            tracker.settle(now + CLAIM_FRESH_SECS),
+            Some(ClaimTransition::Republish)
+        );
+
+        // Freshness: within 24 h, up to one bucket ahead of this clock.
+        let fresh = |start: u64, at: u64| {
+            claim_is_fresh(
+                &ClaimRecord {
+                    claimed_bucket_start: start,
+                },
+                at,
+            )
+        };
+        assert!(fresh(now, now));
+        assert!(fresh(now, now + CLAIM_FRESH_SECS - 1));
+        assert!(!fresh(now, now + CLAIM_FRESH_SECS));
+        assert!(fresh(now + CLAIM_SKEW_SECS, now));
+        assert!(!fresh(now + CLAIM_SKEW_SECS + 1, now));
+    }
+
+    /// Records every publish for the claim tests.
+    #[derive(Default)]
+    struct Recorder(std::cell::RefCell<Vec<(String, Vec<u8>, bool)>>);
+
+    impl Publish for Recorder {
+        fn publish_qos1(&self, topic: &str, payload: &[u8], retain: bool) -> Result<()> {
+            self.0
+                .borrow_mut()
+                .push((topic.to_string(), payload.to_vec(), retain));
+            Ok(())
+        }
+    }
+
+    // C3: a claim withdraws EVERY discovery config this bridge has published
+    // — the static four and both per zone — with an empty retained payload
+    // and touches no state topic; a clear republishes the same set with
+    // full bodies; both say so on `<prefix>/claim_state`.
+    #[test]
+    fn claim_withdraws_every_published_config_and_clear_republishes() {
+        let device = test_device();
+        let zones: HashSet<String> = ["front_door", "driveway"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let expected_topics: Vec<String> = {
+            let mut t = vec![
+                "homeassistant/sensor/pwk_1a2b3c4d/last_event/config",
+                "homeassistant/sensor/pwk_1a2b3c4d/daily_digest/config",
+                "homeassistant/binary_sensor/pwk_1a2b3c4d/chain_problem/config",
+                "homeassistant/button/pwk_1a2b3c4d/verify_now/config",
+                "homeassistant/sensor/pwk_1a2b3c4d/driveway_events/config",
+                "homeassistant/binary_sensor/pwk_1a2b3c4d/driveway_motion/config",
+                "homeassistant/sensor/pwk_1a2b3c4d/front_door_events/config",
+                "homeassistant/binary_sensor/pwk_1a2b3c4d/front_door_motion/config",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+            t.sort();
+            t
+        };
+        let mut owned = owned_discovery_topics(
+            "homeassistant",
+            "witness",
+            "witness/status",
+            "pwk_1a2b3c4d",
+            &device,
+            &zones,
+        )
+        .expect("topics");
+        owned.sort();
+        assert_eq!(owned, expected_topics);
+
+        let recorder = Recorder::default();
+        withdraw_discovery(
+            &recorder,
+            "homeassistant",
+            "witness",
+            "witness/status",
+            "pwk_1a2b3c4d",
+            &device,
+            &zones,
+        )
+        .expect("withdraw");
+        let withdrawn = recorder.0.borrow();
+        let mut topics: Vec<String> = withdrawn.iter().map(|(t, _, _)| t.clone()).collect();
+        topics.sort();
+        assert_eq!(topics, expected_topics);
+        for (topic, payload, retain) in withdrawn.iter() {
+            assert!(
+                payload.is_empty(),
+                "{topic}: an empty retained payload withdraws"
+            );
+            assert!(retain, "{topic}: must be retained to replace the config");
+            assert!(
+                topic.starts_with("homeassistant/") && topic.ends_with("/config"),
+                "{topic}: only discovery configs are withdrawn, never a state topic"
+            );
+        }
+        drop(withdrawn);
+
+        let recorder = Recorder::default();
+        republish_discovery(
+            &recorder,
+            "homeassistant",
+            "witness",
+            "witness/status",
+            "pwk_1a2b3c4d",
+            &device,
+            &zones,
+        )
+        .expect("republish");
+        let republished = recorder.0.borrow();
+        let mut topics: Vec<String> = republished.iter().map(|(t, _, _)| t.clone()).collect();
+        topics.sort();
+        assert_eq!(topics, expected_topics);
+        for (topic, payload, retain) in republished.iter() {
+            let v: serde_json::Value = serde_json::from_slice(payload).expect("config body");
+            assert!(v.get("unique_id").is_some(), "{topic}: a full config body");
+            assert!(retain);
+        }
+        drop(republished);
+
+        let recorder = Recorder::default();
+        publish_claim_state(&recorder, "witness", true).unwrap();
+        publish_claim_state(&recorder, "witness", false).unwrap();
+        assert_eq!(
+            *recorder.0.borrow(),
+            vec![
+                ("witness/claim_state".to_string(), b"claimed".to_vec(), true),
+                (
+                    "witness/claim_state".to_string(),
+                    b"unclaimed".to_vec(),
+                    true
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -1853,8 +3050,17 @@ mod tests {
     // header (and docs/homeassistant_setup.md, the Lovelace dashboard and
     // the HomeKit Bridge recipe) gives it, and keeps its unique id, so an
     // entity Home Assistant already registered keeps its registry entry.
+    // The announce and claim topics are NOT discovery configs: they live
+    // under the state prefix, never under `homeassistant/`.
     #[test]
     fn every_discovery_config_asks_for_its_documented_entity_id() {
+        for topic in [
+            announce_topic("witness", "pwk_1a2b3c4d"),
+            claim_topic("witness", "pwk_1a2b3c4d"),
+        ] {
+            assert!(!topic.starts_with("homeassistant/"), "{topic}");
+            assert!(!topic.ends_with("/config"), "{topic}");
+        }
         let device = test_device();
         let mut configs = static_discovery_configs(
             "homeassistant",
