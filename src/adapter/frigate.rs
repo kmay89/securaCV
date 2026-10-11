@@ -16,19 +16,14 @@ use anyhow::Result;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
 use crate::adapter::{LockTolerant, SensorAdapter};
-use crate::transport::frigate::{map_label_to_event_type, parse_frigate_event, parse_review_event};
+use crate::transport::frigate::{
+    camera_slug, parse_frigate_event, parse_review_event, select_event_type,
+};
 use crate::EventType;
 
-/// Default Frigate labels processed when none are configured (matches `frigate_bridge`).
-pub const DEFAULT_LABELS: &[&str] = &[
-    "person",
-    "car",
-    "dog",
-    "cat",
-    "bird",
-    "bicycle",
-    "motorcycle",
-];
+/// Default Frigate labels processed when none are configured — the one list
+/// `frigate_bridge` reads too ([`crate::transport::frigate::DEFAULT_LABELS`]).
+pub const DEFAULT_LABELS: &[&str] = crate::transport::frigate::DEFAULT_LABELS;
 
 static FRIGATE_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
     id: "frigate_adapter",
@@ -49,14 +44,18 @@ pub type FrigateMessage = (String, Vec<u8>);
 /// Camera/label/confidence filters, shared with the host so they can be hot-reloaded.
 #[derive(Clone)]
 pub struct FrigateFilter {
+    /// Camera allowlist as slugs ([`camera_slug`], the rule the add-on wizard
+    /// writes with), or `None` for every camera.
     pub allowed_cameras: Option<Vec<String>>,
+    /// Lowercase label allowlist. An identity label listed here still seals
+    /// nothing ([`select_event_type`]).
     pub allowed_labels: Vec<String>,
     pub min_confidence: f64,
 }
 
 impl FrigateFilter {
-    /// Normalize a filter: lowercase camera/label names; empty labels fall back to
-    /// [`DEFAULT_LABELS`].
+    /// Normalize a filter: camera names become slugs, labels lowercase; empty
+    /// labels fall back to [`DEFAULT_LABELS`].
     pub fn new(
         allowed_cameras: Option<Vec<String>>,
         allowed_labels: Vec<String>,
@@ -71,7 +70,7 @@ impl FrigateFilter {
                 .collect()
         };
         let allowed_cameras =
-            allowed_cameras.map(|cams| cams.into_iter().map(|c| c.to_lowercase()).collect());
+            allowed_cameras.map(|cams| cams.iter().map(|c| camera_slug(c)).collect());
         Self {
             allowed_cameras,
             allowed_labels,
@@ -94,7 +93,8 @@ pub struct FrigateAdapter {
 impl FrigateAdapter {
     /// Create a Frigate adapter and its feeding [`Sender`].
     ///
-    /// - `allowed_cameras`: if `Some`, only these (lowercased) camera names are processed.
+    /// - `allowed_cameras`: if `Some`, only cameras whose [`camera_slug`] equals one of
+    ///   these entries' slugs are processed.
     /// - `allowed_labels`: object labels to process (lowercased). Empty falls back to
     ///   [`DEFAULT_LABELS`].
     /// - `min_confidence`: drop detections below this score.
@@ -144,20 +144,22 @@ fn parse_with_filter(filter: &FrigateFilter, topic: &str, payload: &[u8]) -> Res
     };
 
     if let Some(allowed) = &filter.allowed_cameras {
-        if !allowed.contains(&parsed.camera.to_lowercase()) {
+        if !allowed.contains(&camera_slug(&parsed.camera)) {
             return Ok(vec![]);
         }
     }
 
-    if !filter.allowed_labels.contains(&parsed.label.to_lowercase()) {
+    // No label survived the allowlist (or only identity labels were named):
+    // nothing to seal.
+    let Some(event_type) = select_event_type(&parsed.labels, &filter.allowed_labels) else {
         return Ok(vec![]);
-    }
+    };
 
     if parsed.confidence < filter.min_confidence {
         return Ok(vec![]);
     }
 
-    let kind = match map_label_to_event_type(&parsed.label) {
+    let kind = match event_type {
         EventType::BoundaryCrossingObjectLarge => ClaimKind::LargeObjectBoundaryCrossing,
         // Everything else Frigate maps to a "small" crossing.
         _ => ClaimKind::SmallObjectBoundaryCrossing,
@@ -255,5 +257,52 @@ mod tests {
             .parse_to_claims("frigate/events", EVENT_PERSON.as_bytes())
             .expect("parse");
         assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn camera_allowlist_compares_slugs() {
+        // "Front Door" in the allowlist names the camera Frigate calls "front_door".
+        let (adapter, _tx) = FrigateAdapter::new(Some(vec!["Front Door".to_string()]), vec![], 0.5);
+        let claims = adapter
+            .parse_to_claims("frigate/events", EVENT_PERSON.as_bytes())
+            .expect("parse");
+        assert_eq!(claims.len(), 1);
+
+        let (adapter, _tx) = FrigateAdapter::new(Some(vec!["garage".to_string()]), vec![], 0.5);
+        let claims = adapter
+            .parse_to_claims("frigate/events", EVENT_PERSON.as_bytes())
+            .expect("parse");
+        assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn identity_labels_never_become_claims_even_when_allowlisted() {
+        let payload = r#"{"after":{"camera":"front_door","label":"face","top_score":0.99,
+            "entered_zones":["porch"]},"type":"new"}"#;
+        let (adapter, _tx) =
+            FrigateAdapter::new(None, vec!["face".to_string(), "person".to_string()], 0.5);
+        // The parser refuses the label outright: an error, never a claim.
+        assert!(adapter
+            .parse_to_claims("frigate/events", payload.as_bytes())
+            .is_err());
+    }
+
+    #[test]
+    fn review_alert_becomes_one_claim_at_full_confidence() {
+        let payload = r#"{"type":"new","before":null,"after":{"camera":"front_door",
+            "severity":"alert","data":{"objects":["dog","person"],"zones":["porch"]}}}"#;
+        let (adapter, _tx) = FrigateAdapter::new(None, vec![], 0.5);
+        let claims = adapter
+            .parse_to_claims("frigate/reviews", payload.as_bytes())
+            .expect("parse");
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].kind, ClaimKind::LargeObjectBoundaryCrossing);
+        assert_eq!(claims[0].zone_label, "porch");
+        assert!((claims[0].confidence - 1.0).abs() < f32::EPSILON);
+
+        let detection = payload.replace("\"severity\":\"alert\"", "\"severity\":\"detection\"");
+        assert!(adapter
+            .parse_to_claims("frigate/reviews", detection.as_bytes())
+            .is_err());
     }
 }

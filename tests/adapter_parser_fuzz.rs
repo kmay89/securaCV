@@ -161,3 +161,58 @@ fn frigate_parsing_never_panics() {
         let _ = adapter.parse_to_claims(topic, &payload);
     }
 }
+
+fn frigate_fixture(name: &str) -> Vec<u8> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/frigate")
+        .join(name);
+    std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+
+/// Structural mutations of the real Frigate 0.17 shapes — the ones that
+/// carry a recognized name, a plate, a trajectory and a GenAI summary, each
+/// populated with a `SENTINEL_` string or a 777… number. Whatever a few
+/// flipped bytes do to the JSON, the parser must neither panic nor let a
+/// discarded value into a claim: the only strings a claim may carry are the
+/// fixture's zone and camera names.
+#[test]
+fn frigate_mutated_real_payloads_never_panic_or_leak_a_discarded_value() {
+    let (adapter, _tx) = FrigateAdapter::new(None, vec![], 0.5);
+    let fixtures = [
+        ("frigate/events", frigate_fixture("events_0.17_new.json")),
+        (
+            "frigate/reviews",
+            frigate_fixture("reviews_0.17_new_alert_genai.json"),
+        ),
+    ];
+    let mut rng = Rng::new(0xF1_6A7E);
+    let mut parsed_some = 0usize;
+    for _ in 0..ITERS {
+        let (topic, fixture) = &fixtures[rng.range(fixtures.len())];
+        let mut payload = fixture.clone();
+        // One to four byte mutations, so the sweep covers both "still a valid
+        // document with one field changed" and "structurally broken".
+        for _ in 0..(1 + rng.range(4)) {
+            let i = rng.range(payload.len());
+            payload[i] = rng.byte();
+        }
+        if let Ok(claims) = adapter.parse_to_claims(topic, &payload) {
+            for claim in claims {
+                parsed_some += 1;
+                let text = format!("{claim:?}");
+                assert!(
+                    !text.contains("SENTINEL_") && !text.contains("777"),
+                    "a discarded Frigate value reached a claim: {text}"
+                );
+                assert!(
+                    claim.kind == ClaimKind::LargeObjectBoundaryCrossing
+                        || claim.kind == ClaimKind::SmallObjectBoundaryCrossing,
+                    "{text}"
+                );
+            }
+        }
+    }
+    // The unmutated shapes parse, so a meaningful share of light mutations
+    // must still yield claims — otherwise the leak check tested nothing.
+    assert!(parsed_some > ITERS / 20, "only {parsed_some} claims parsed");
+}
