@@ -1,7 +1,7 @@
 {
   "domain": "securacv",
   "name": "SecuraCV",
-  "after_dependencies": ["http", "frontend"],
+  "after_dependencies": ["http", "frontend", "media_source"],
   "codeowners": ["@kmay89"],
   "config_flow": true,
   "dependencies": ["mqtt"],
@@ -10,7 +10,7 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/kmay89/securaCV/issues",
   "loggers": ["securacv"],
-  "mqtt": ["securacv/#"],
+  "mqtt": ["securacv/#", "witness/+/announce"],
   "requirements": [],
   "version": "0.8.0"
 }

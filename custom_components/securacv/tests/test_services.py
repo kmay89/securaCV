@@ -98,13 +98,11 @@ def _hass(*, with_entry: bool = True) -> HomeAssistant:
     async def _unload(entry, platforms):
         return True
 
-    hass.config_entries = types.SimpleNamespace(
-        async_forward_entry_setups=_forward, async_unload_platforms=_unload
-    )
+    hass.config_entries.add(ENTRY)
     assert run(async_setup(hass, {})) is True
     if with_entry:
         assert run(async_setup_entry(hass, ENTRY)) is True
-        hass.data[DOMAIN]["e1"]["devices"] = dict(DEVICES)
+        ENTRY.runtime_data.devices.update(DEVICES)
     return hass
 
 
@@ -188,8 +186,9 @@ def test_the_vocabulary_is_watches_only_and_nothing_else_registers_actions() -> 
 
 
 class _CallBefore2025_1:
-    """homeassistant.core.ServiceCall as 2024.4.1 through 2024.12 define
-    it: slotted, and no ``hass`` (hacs.json's minimum is 2024.4.1)."""
+    """homeassistant.core.ServiceCall as cores through 2024.12 defined
+    it: slotted, and no ``hass``. Below hacs.json's floor now, kept so
+    the handlers provably never read ``call.hass``."""
 
     __slots__ = ("domain", "service", "data", "context", "return_response")
 
@@ -534,7 +533,7 @@ def test_every_action_refuses_once_no_entry_runs_the_tick(delivered) -> None:
     assert [w["label"] for w in _bucket(hass)] == ["the gate canary"], "nothing changed"
 
     assert run(async_setup_entry(hass, ENTRY)) is True
-    hass.data[DOMAIN]["e1"]["devices"] = dict(DEVICES)
+    ENTRY.runtime_data.devices.update(DEVICES)
     rows = _call(hass, "list_watches")["watches"]
     assert [row["label"] for row in rows] == ["the gate canary"], "the roster is still there"
 
@@ -542,6 +541,7 @@ def test_every_action_refuses_once_no_entry_runs_the_tick(delivered) -> None:
 def test_one_entry_unloading_leaves_the_other_s_tick_hosting() -> None:
     hass = _hass()
     other = types.SimpleNamespace(entry_id="e2", data=dict(ENTRY.data))
+    hass.config_entries.add(other)
     assert run(async_setup_entry(hass, other)) is True
     assert run(async_unload_entry(hass, ENTRY)) is True
     assert watch_runtime.watches_hosted(hass)

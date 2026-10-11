@@ -20,6 +20,109 @@ CONF_ADAPTER_STATS_URL = "adapter_stats_url"
 CONF_TOKEN_FILE = "token_file"
 DEFAULT_TOKEN_FILE = "/config/api_token"
 
+# =============================================================================
+# Kernel identity, pairing and the TOFU pin (contracts C1, C2, C4, C6)
+# =============================================================================
+# How the integration authenticates to the witness kernel. `token_file` reads
+# the kernel's rotating capability token off a shared volume (the app); `paired`
+# holds a long-lived paired token minted by POST /api/pair from a 6-digit code
+# (the Docker sidecar); `static` is a pasted capability token, which the kernel
+# rotates away within ten minutes (remote kernels only).
+CONF_AUTH_MODE = "auth_mode"
+AUTH_MODE_TOKEN_FILE = "token_file"
+AUTH_MODE_PAIRED = "paired"
+AUTH_MODE_STATIC = "static"
+# The kernel's device id (`pwk_<8 hex>`, served by GET /api/identity). It keys
+# the config entry's unique_id (`kernel_<device_id>`), the device registry
+# identifier and the retained claim topic.
+CONF_KERNEL_DEVICE_ID = "kernel_device_id"
+# The kernel's Ed25519 verifying key, 64 lowercase hex, pinned trust-on-first-
+# use over the AUTHENTICATED HTTP channel (the /api/pair response, or
+# /api/identity through the token file) — never from the retained MQTT announce.
+CONF_KERNEL_VERIFYING_KEY = "kernel_verifying_key"
+# Keys the pin was rotated away from (newest last), kept so a postmortem can
+# recover the identity a sealed log was signed under before a rotation.
+CONF_KERNEL_PREVIOUS_KEYS = "kernel_previous_verifying_keys"
+# When the current pin was taken, as a 10-minute bucket start (coarse time,
+# like every other "at" the integration keeps).
+CONF_KERNEL_KEY_PINNED_BUCKET_START = "kernel_key_pinned_bucket_start"
+# The paired token's id (8 hex), so async_remove_entry can revoke exactly its
+# own token with DELETE /api/pair/<id>.
+CONF_KERNEL_TOKEN_ID = "kernel_token_id"
+# The bridge's state prefix: the topic tree the kernel's MQTT bridge publishes
+# under (witness/last_event, witness/digest, witness/status, ...). Distinct from
+# CONF_MQTT_PREFIX, which is the Canaries' prefix (securacv/<id>/...).
+CONF_MQTT_TOPIC_PREFIX = "mqtt_topic_prefix"
+DEFAULT_MQTT_TOPIC_PREFIX = "witness"
+# The random per-entry nonce the retained claim carries instead of an entry id
+# (an entry id is a stable per-installation identifier; the nonce is not).
+CONF_CLAIM_NONCE = "claim_nonce"
+# Set once the one-time `entities_migrated` Repairs notice has been raised.
+CONF_MIGRATION_NOTICE_SHOWN = "migration_notice_shown"
+# The pairing form's code field (never persisted).
+CONF_PAIRING_CODE = "pairing_code"
+PAIRING_CODE_LENGTH = 6
+# The label the kernel files the paired token under.
+PAIRED_TOKEN_LABEL = "home-assistant"
+# The port the kernel's event API listens on, for the pairing-step prefill.
+DEFAULT_KERNEL_API_PORT = 8799
+# Evidence exports kept on disk (options flow; the oldest zip goes first).
+CONF_EVIDENCE_KEEP = "evidence_keep"
+DEFAULT_EVIDENCE_KEEP = 20
+MIN_EVIDENCE_KEEP = 1
+MAX_EVIDENCE_KEEP = 200
+
+# The kernel's 10-minute time bucket: every "at" the integration records is a
+# bucket start, never an event-precise epoch (coarse time, invariant III).
+TIME_BUCKET_SECONDS = 600
+
+# The bridge's retained state topics, relative to the state prefix. The claim
+# and the announce carry the kernel device id as a segment.
+KERNEL_TOPIC_LAST_EVENT = "last_event"
+KERNEL_TOPIC_EVENTS = "events"
+KERNEL_TOPIC_DIGEST = "digest"
+KERNEL_TOPIC_CHAIN_PROBLEM = "chain_problem"
+KERNEL_TOPIC_CHAIN_PROBLEM_ATTRS = "chain_problem/attrs"
+KERNEL_TOPIC_STATUS = "status"
+KERNEL_TOPIC_CLAIM_STATE = "claim_state"
+KERNEL_TOPIC_FRIGATE_LINK = "frigate_link"
+KERNEL_TOPIC_ANNOUNCE = "announce"
+KERNEL_TOPIC_CLAIM = "claim"
+# The availability LWT payloads on <prefix>/status (unchanged bridge contract).
+KERNEL_STATUS_ONLINE = "online"
+KERNEL_STATUS_OFFLINE = "offline"
+# claim_state payloads.
+CLAIM_STATE_CLAIMED = "claimed"
+CLAIM_STATE_UNCLAIMED = "unclaimed"
+
+# Repairs issue translation keys. Entry-scoped ids are `<key>_<entry_id>`;
+# `no_kernel_found` is global (it is raised by a config flow with no entry).
+ISSUE_NO_KERNEL_FOUND = "no_kernel_found"
+ISSUE_KERNEL_UNREACHABLE = "kernel_unreachable"
+ISSUE_TOFU_MISMATCH = "tofu_mismatch"
+ISSUE_STORAGE_REPLACE = "storage_replace"
+ISSUE_ENTITIES_MIGRATED = "entities_migrated"
+ISSUE_MQTT_SUBSCRIBE_FAILED = "mqtt_subscribe_failed"
+
+# Where the Repairs issues and the flow's final step send people. The my-HA
+# links open the user's own instance; the docs links are this repository.
+ADDON_REPOSITORY_LINK = (
+    "https://my.home-assistant.io/redirect/supervisor_add_addon_repository/"
+    "?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV"
+)
+DOCKER_QUICKSTART_LINK = (
+    "https://github.com/kmay89/securaCV/blob/main/docs/frigate_integration.md"
+)
+ENTITY_MIGRATION_DOCS_LINK = (
+    "https://github.com/kmay89/securaCV/blob/main/docs/homeassistant_setup.md"
+)
+KERNEL_UNREACHABLE_DOCS_LINK = (
+    "https://github.com/kmay89/securaCV/blob/main/docs/homeassistant_setup.md"
+)
+STORAGE_REPLACE_DOCS_LINK = (
+    "https://github.com/kmay89/securaCV/blob/main/docs/homeassistant_setup.md"
+)
+
 # Setup modes
 # `auto` is a flow-only choice: it probes for a running kernel and stores a
 # concrete mode (both / mqtt) in the entry — no entry ever persists "auto".
@@ -32,6 +135,9 @@ SETUP_MODE_BOTH = "both"
 # MQTT Topics (relative to prefix/{device_id}/)
 # =============================================================================
 TOPIC_STATUS = "status"
+# The canary base's last-will topic (securacv_mqtt.cpp): a bare
+# `online`/`offline`, retained; the other products say it in their status.
+TOPIC_AVAILABILITY = "availability"
 TOPIC_EVENTS = "events"
 TOPIC_HEALTH = "health"
 TOPIC_CHAIN = "chain"

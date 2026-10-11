@@ -292,6 +292,19 @@ class TrustStore:
     async def async_save(self) -> None:
         await self._store.async_save(self._data_to_save())
 
+    async def async_remove(self) -> None:
+        """Delete the persisted pins: the config entry is being removed.
+
+        The pins belong to the entry (the storage key carries its id), so
+        nothing else can ever read them back; leaving the file behind would
+        keep every Canary's identity on disk for an installation that no
+        longer exists.
+        """
+        self._devices.clear()
+        remove = getattr(self._store, "async_remove", None)
+        if remove is not None:
+            await remove()
+
     # ─── Public API ────────────────────────────────────────────────────
 
     def is_pinned(self, device_id: str) -> bool:

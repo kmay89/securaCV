@@ -44,6 +44,7 @@ from homeassistant.helpers.storage import Store
 
 from . import voice, watches
 from .const import DOMAIN
+from .data import runtime_for
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -232,31 +233,38 @@ class WatchAmbiguous(WatchError):
 
 
 def fleet_snapshot(hass: HomeAssistant) -> list[dict[str, Any]]:
-    """Plain-dict view of every config entry's runtime state.
+    """Plain-dict view of every loaded config entry's runtime state.
 
-    hass.data[DOMAIN] maps entry_id -> entry_data, plus domain-level values
-    (``_frontend_registered``, the ``watches`` list, the watch Store, the
-    tick hosts); only dicts that carry a ``devices`` slice are entries.
-    This is what ``voice.fleet_brief`` reads, for the intents and for
-    binding a watch's subject to a Canary.
+    Each loaded entry carries its state on ``entry.runtime_data``
+    (``data.SecuraCVRuntimeData``); ``hass.data[DOMAIN]`` holds only the
+    domain-level values (``_frontend_registered``, the ``watches`` list, the
+    watch Store, the tick hosts). This is what ``voice.fleet_brief`` reads,
+    for the intents and for binding a watch's subject to a Canary.
     """
     entries: list[dict[str, Any]] = []
-    for entry_data in hass.data.get(DOMAIN, {}).values():
-        if not isinstance(entry_data, dict) or "devices" not in entry_data:
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        runtime = runtime_for(entry)
+        if runtime is None:
             continue
         kernel: dict[str, Any] | None = None
-        coordinator = entry_data.get("coordinator")
+        coordinator = runtime.coordinator
         if coordinator is not None:
             kernel = {
-                "ok": bool(getattr(coordinator, "last_update_success", False)),
+                "ok": bool(
+                    getattr(
+                        coordinator,
+                        "kernel_available",
+                        getattr(coordinator, "last_update_success", False),
+                    )
+                ),
                 "latest_event": (getattr(coordinator, "data", None) or {}).get(
                     "latest_event"
                 ),
             }
         entries.append(
             {
-                "devices": entry_data.get("devices", {}),
-                "verify": entry_data.get("verify", {}),
+                "devices": runtime.devices,
+                "verify": runtime.verify,
                 "kernel": kernel,
             }
         )

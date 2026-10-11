@@ -53,15 +53,17 @@ ATTR_DURATION = "duration"
 ATTR_CONCERN = "concern"
 ATTR_WATCH = "watch"
 
-START_WATCH_SCHEMA = vol.Schema(
+# `Any`: the schema class is voluptuous on cores before 2026.9 and probatio
+# (through its `voluptuous` alias) after; mypy must not pin either.
+START_WATCH_SCHEMA: Any = vol.Schema(
     {
         vol.Required(ATTR_SUBJECT): cv.string,
         vol.Optional(ATTR_DURATION): cv.string,
         vol.Optional(ATTR_CONCERN): vol.In(watches.CONCERNS),
     }
 )
-END_WATCH_SCHEMA = vol.Schema({vol.Required(ATTR_WATCH): cv.string})
-LIST_WATCHES_SCHEMA = vol.Schema({})
+END_WATCH_SCHEMA: Any = vol.Schema({vol.Required(ATTR_WATCH): cv.string})
+LIST_WATCHES_SCHEMA: Any = vol.Schema({})
 
 # Every refusal the actions raise, by the key strings.json's ``exceptions``
 # section (and translations/en.json, its byte-identical copy) declares it
@@ -243,10 +245,11 @@ def _async_list_watches(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the actions, once; a second call is a no-op.
 
-    ``hass`` is bound here, never read off the call: ``ServiceCall`` has
-    no ``hass`` before Home Assistant 2025.1, and the integration supports
-    2024.4.1 and newer (hacs.json). A handler that read ``call.hass`` would
-    raise AttributeError on every call there.
+    ``hass`` is bound here, never read off the call: the handlers then
+    work with any ``ServiceCall`` shape, including the slotted one without
+    ``hass`` that cores before 2025.1 passed and the tests still drive
+    (hacs.json's floor is 2026.5.0 now, but the binding costs nothing and
+    keeps the handlers free of the call object's layout).
     """
     if hass.services.has_service(DOMAIN, SERVICE_START_WATCH):
         return

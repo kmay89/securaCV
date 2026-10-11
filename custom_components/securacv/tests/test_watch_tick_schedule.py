@@ -30,7 +30,6 @@ from .. import async_setup_entry, watch_runtime  # noqa: E402
 from ..const import (  # noqa: E402
     CONF_ENABLE_MQTT,
     CONF_SETUP_MODE,
-    DOMAIN,
     SETUP_MODE_MQTT,
 )
 
@@ -51,7 +50,7 @@ def _hass() -> HomeAssistant:
     async def _forward(entry, platforms):
         return True
 
-    hass.config_entries = types.SimpleNamespace(async_forward_entry_setups=_forward)
+    hass.config_entries.add(ENTRY)
     return hass
 
 
@@ -110,6 +109,6 @@ def test_the_tick_unsubscribe_is_released_on_unload(monkeypatch) -> None:
     hass = _hass()
     assert run(async_setup_entry(hass, ENTRY)) is True
 
-    for unsub in hass.data[DOMAIN]["e1"]["unsub_mqtt"]:
+    for unsub in list(ENTRY.runtime_data.unsub_mqtt):
         unsub()
     assert released == ["tick"]

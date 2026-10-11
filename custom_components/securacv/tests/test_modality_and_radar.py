@@ -82,7 +82,7 @@ from ..const import (  # noqa: E402
 from .. import sensor as sensor_mod  # noqa: E402
 from ..device_trust import TrustStore, fingerprint_from_pubkey_hex  # noqa: E402
 from ..signature import build_sentinel_event_canonical  # noqa: E402
-from .conftest import run  # noqa: E402
+from .conftest import make_runtime, run  # noqa: E402
 
 
 # ─── modality contract (const.py) ─────────────────────────────────────
@@ -215,14 +215,13 @@ def _pinned_last_event_sensor():
     store = TrustStore(hass, entry_id="e1")
     run(store.async_load())
     run(store.async_pin("sentinel01", _SENTINEL_PUB_HEX))
-    hass.data = {sensor_mod.DOMAIN: {"e1": {
-        "trust_store": store, "verify": {}, "replay": {}, "mismatch_notified": set(),
-    }}}
+    hass.data = {sensor_mod.DOMAIN: {}}
     cls = sensor_mod.SecuraCVCanaryLastEventSensor
     inst = cls.__new__(cls)
     inst._prefix = "securacv"
     inst._device_id = "sentinel01"
     inst._entry = types.SimpleNamespace(entry_id="e1")
+    inst._entry.runtime_data = make_runtime(hass, trust_store=store)
     inst.hass = hass
     inst.async_write_ha_state = lambda: None
     return inst
@@ -351,22 +350,19 @@ def test_last_event_handler_survives_non_dict_payloads():
 def test_device_type_for_reads_cached_status():
     hass = sensor_mod.HomeAssistant()
     entry = types.SimpleNamespace(entry_id="e1")
-    hass.data = {
-        sensor_mod.DOMAIN: {
-            "e1": {
-                "devices": {
-                    # status stored as the raw JSON string (as __init__.py does)
-                    "radar1": {"status": '{"device_type": "canary-sense"}'},
-                    # status stored already-parsed as a dict
-                    "radar2": {"status": {"device_type": "canary-sense"}},
-                    # a non-radar device
-                    "cam1": {"status": '{"device_type": "canary-vision"}'},
-                    # status without a device_type
-                    "old1": {"status": '{"firmware_version": "1.0"}'},
-                }
-            }
-        }
-    }
+    entry.runtime_data = make_runtime(
+        hass,
+        devices={
+            # status stored as the raw JSON string (as __init__.py does)
+            "radar1": {"status": '{"device_type": "canary-sense"}'},
+            # status stored already-parsed as a dict
+            "radar2": {"status": {"device_type": "canary-sense"}},
+            # a non-radar device
+            "cam1": {"status": '{"device_type": "canary-vision"}'},
+            # status without a device_type
+            "old1": {"status": '{"firmware_version": "1.0"}'},
+        },
+    )
     f = sensor_mod._device_type_for
     assert f(hass, entry, "radar1") == "canary-sense"
     assert f(hass, entry, "radar2") == "canary-sense"
@@ -380,16 +376,13 @@ def test_device_type_for_canonicalizes_underscore_spelling():
     # hyphen spelling; both must gate the radar-link sensor and modality.
     hass = sensor_mod.HomeAssistant()
     entry = types.SimpleNamespace(entry_id="e1")
-    hass.data = {
-        sensor_mod.DOMAIN: {
-            "e1": {
-                "devices": {
-                    "radar1": {"status": '{"device_type": "canary_sense"}'},
-                    "radar2": {"status": {"device_type": " Canary-Sense "}},
-                }
-            }
-        }
-    }
+    entry.runtime_data = make_runtime(
+        hass,
+        devices={
+            "radar1": {"status": '{"device_type": "canary_sense"}'},
+            "radar2": {"status": {"device_type": " Canary-Sense "}},
+        },
+    )
     f = sensor_mod._device_type_for
     assert f(hass, entry, "radar1") == "canary-sense"
     assert f(hass, entry, "radar2") == "canary-sense"
@@ -400,21 +393,20 @@ def test_device_type_for_canonicalizes_underscore_spelling():
 def test_device_type_for_degrades_on_malformed_entry_data():
     # None / wrong-typed containers anywhere along the lookup path must yield
     # None, never raise (regression for defensive isinstance guards).
-    entry = types.SimpleNamespace(entry_id="e1")
     f = sensor_mod._device_type_for
-    for data in (
+    hass = sensor_mod.HomeAssistant()
+    hass.data = {sensor_mod.DOMAIN: {}}
+    # No runtime at all (the entry unloaded), or a runtime of the wrong kind.
+    assert f(hass, types.SimpleNamespace(entry_id="e1"), "radar1") is None
+    assert f(hass, types.SimpleNamespace(entry_id="e1", runtime_data={"devices": {}}), "radar1") is None
+    for devices in (
         {},
-        {sensor_mod.DOMAIN: None},
-        {sensor_mod.DOMAIN: []},
-        {sensor_mod.DOMAIN: {"e1": None}},
-        {sensor_mod.DOMAIN: {"e1": {"devices": None}}},
-        {sensor_mod.DOMAIN: {"e1": {"devices": ["radar1"]}}},
-        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": None}}}},
-        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": {"status": None}}}}},
-        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": {"status": 42}}}}},
-        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": {"status": "not json"}}}}},
-        {sensor_mod.DOMAIN: {"e1": {"devices": {"radar1": {"status": '["a"]'}}}}},
+        {"radar1": None},
+        {"radar1": {"status": None}},
+        {"radar1": {"status": 42}},
+        {"radar1": {"status": "not json"}},
+        {"radar1": {"status": '["a"]'}},
     ):
-        hass = sensor_mod.HomeAssistant()
-        hass.data = data
+        entry = types.SimpleNamespace(entry_id="e1")
+        entry.runtime_data = make_runtime(hass, devices=devices)
         assert f(hass, entry, "radar1") is None

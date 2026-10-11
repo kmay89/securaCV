@@ -1,0 +1,275 @@
+"""The HTTP client for the Privacy Witness Kernel's event API.
+
+Three credentials reach the kernel, and the client treats them alike on the
+wire (`Authorization: Bearer <token>`):
+
+  - the rotating capability token read from a file the kernel rewrites every
+    ten-minute bucket (`token_file`; the app writes /config/api_token) — on a
+    401 the client re-reads the file once and retries;
+  - a long-lived paired token from POST /api/pair (`paired`), revocable by id;
+  - a pasted capability token (`static`), which goes stale within minutes.
+
+Every error is one of the three `SecuraCVApi*Error` classes so the
+coordinator and the config flow decide what to do without reading status
+codes. Nothing here is ever logged at a level that could carry a token.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+import aiohttp
+
+from .const import PAIRED_TOKEN_LABEL
+
+_LOGGER = logging.getLogger(__name__)
+
+# Seconds per request. Built into a ClientTimeout at call time (never at import).
+REQUEST_TIMEOUT_SECONDS = 10
+# The token is 64 hex chars; cap the read so a misconfigured path (device
+# node, huge file) can't balloon memory.
+TOKEN_FILE_READ_CAP = 4096
+
+
+class SecuraCVApiError(Exception):
+    """Base error for the SecuraCV API client."""
+
+
+class SecuraCVApiAuthError(SecuraCVApiError):
+    """The kernel refused the credential (401)."""
+
+
+class SecuraCVApiConnectionError(SecuraCVApiError):
+    """The kernel could not be reached."""
+
+
+class SecuraCVApiResponseError(SecuraCVApiError):
+    """The kernel answered with something other than the contract."""
+
+
+@dataclass(frozen=True)
+class PairResult:
+    """What POST /api/pair hands back on success (contract C2)."""
+
+    token: str
+    token_id: str
+    device_id: str
+    verifying_key: str
+    kernel_version: str
+
+
+class SecuraCVApi:
+    """API client for the SecuraCV Privacy Witness Kernel Event API."""
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        session: aiohttp.ClientSession,
+        token_file: str | None = None,
+    ) -> None:
+        """Initialize the API client."""
+        self._base_url = base_url.rstrip("/")
+        self._token = token
+        self._session = session
+        self._token_file = token_file
+        self._refresh_lock = asyncio.Lock()
+        # True after a token-file read failed (missing, unreadable). The
+        # coordinator reads it to tell "the kernel rotated and the file will
+        # catch up" from "nothing can ever authenticate this entry again".
+        self._token_file_unreadable = False
+
+    @property
+    def base_url(self) -> str:
+        """The kernel URL this client talks to."""
+        return self._base_url
+
+    @property
+    def token_file(self) -> str | None:
+        """The rotating-token file path, when one is configured."""
+        return self._token_file
+
+    @property
+    def token_file_unreadable(self) -> bool:
+        """Whether the last token-file read failed."""
+        return self._token_file_unreadable
+
+    def _read_token_file(self) -> str | None:
+        """Blocking read of the token file (run in executor)."""
+        if not self._token_file:
+            return None
+        try:
+            with open(self._token_file, encoding="utf-8") as fh:
+                token = fh.read(TOKEN_FILE_READ_CAP).strip()
+        except OSError as err:
+            _LOGGER.debug("could not read token file %s: %s", self._token_file, err)
+            self._token_file_unreadable = True
+            return None
+        self._token_file_unreadable = False
+        return token or None
+
+    async def _async_refresh_token(self, current_token: str) -> bool:
+        """Re-read the token file; True if a token differing from
+        `current_token` is now in place (whether loaded here or by a
+        concurrent task that refreshed first).
+
+        The kernel rotates its capability token every 10-minute bucket and
+        rewrites the token file (src/api/mod.rs, privacy_witness_kernel/run.sh
+        writes it to /config/api_token). A statically configured token
+        therefore goes stale within minutes; when a token file is configured
+        we re-read it on 401 so the integration follows the rotation.
+        """
+        if not self._token_file:
+            return False
+        async with self._refresh_lock:
+            if self._token != current_token:
+                # Another task already refreshed while we waited; retry
+                # with what it loaded instead of re-reading the file.
+                return True
+            loop = asyncio.get_running_loop()
+            token = await loop.run_in_executor(None, self._read_token_file)
+            if token is None or token == current_token:
+                return False
+            self._token = token
+            return True
+
+    async def _async_request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        none_on_404: bool = False,
+        authenticated: bool = True,
+    ) -> dict[str, Any] | None:
+        """Send one request, retrying once with a re-read token on 401."""
+        # Token-file-only setups start with an empty token; prime it from the
+        # file so the first request isn't a guaranteed 401 round-trip (and so
+        # a restart across a rotation boundary still has the one 401-retry in
+        # reserve for a stale file).
+        if authenticated and not self._token and self._token_file:
+            await self._async_refresh_token("")
+        url = f"{self._base_url}{path}"
+        for attempt in (0, 1):
+            current_token = self._token
+            headers = {"Authorization": f"Bearer {current_token}"} if authenticated else {}
+            try:
+                async with self._session.request(
+                    method, url, headers=headers, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
+                ) as resp:
+                    if resp.status == 401:
+                        if (
+                            authenticated
+                            and attempt == 0
+                            and await self._async_refresh_token(current_token)
+                        ):
+                            continue
+                        raise SecuraCVApiAuthError("unauthorized")
+                    if none_on_404 and resp.status == 404:
+                        return None
+                    if resp.status != 200:
+                        raise SecuraCVApiResponseError(
+                            f"unexpected status: {resp.status}"
+                        )
+                    try:
+                        data = await resp.json()
+                    except aiohttp.ContentTypeError as err:
+                        raise SecuraCVApiResponseError(
+                            f"invalid JSON response: {err}"
+                        ) from err
+                    return data if isinstance(data, dict) else {}
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                raise SecuraCVApiConnectionError("unable to reach API") from err
+        raise SecuraCVApiAuthError("unauthorized")
+
+    async def _async_get_json(
+        self, path: str, *, none_on_404: bool = False, authenticated: bool = True
+    ) -> dict[str, Any] | None:
+        """GET a kernel endpoint, retrying once with a re-read token on 401."""
+        return await self._async_request_json(
+            "GET", path, none_on_404=none_on_404, authenticated=authenticated
+        )
+
+    async def async_get_events(self) -> dict[str, Any]:
+        """Fetch events from the kernel Event API."""
+        data = await self._async_get_json("/events")
+        return data if data is not None else {}
+
+    async def async_get_latest_event(self) -> dict[str, Any] | None:
+        """Fetch the latest event from the kernel."""
+        return await self._async_get_json("/events/latest", none_on_404=True)
+
+    async def async_get_status(self) -> dict[str, Any] | None:
+        """Fetch the kernel's storage endurance & health report.
+
+        Returns None when the kernel predates the /status endpoint or has
+        storage-health monitoring disabled (404), so storage sensors stay
+        empty instead of erroring on older kernels.
+        """
+        return await self._async_get_json("/status", none_on_404=True)
+
+    async def async_get_digest(self) -> dict[str, Any] | None:
+        """Fetch the daily digest (the bridge publishes the same document)."""
+        return await self._async_get_json("/digest", none_on_404=True)
+
+    async def async_get_health(self) -> dict[str, Any]:
+        """Fetch the unauthenticated liveness probe."""
+        data = await self._async_get_json("/health", authenticated=False)
+        return data if data is not None else {}
+
+    async def async_get_identity(self) -> dict[str, Any] | None:
+        """Fetch GET /api/identity (contract C4): device id, verifying key,
+        kernel version, chain head, the kernel's own last verify.
+
+        None on a kernel that predates the endpoint (404), so an older app
+        keeps working with the URL-keyed device until it is updated.
+        """
+        return await self._async_get_json("/api/identity", none_on_404=True)
+
+    async def async_revoke_paired_token(self, token_id: str) -> None:
+        """DELETE /api/pair/<id>: a paired token may revoke itself."""
+        await self._async_request_json("DELETE", f"/api/pair/{token_id}")
+
+
+async def async_pair_kernel(
+    session: aiohttp.ClientSession, url: str, code: str, *, label: str = PAIRED_TOKEN_LABEL
+) -> PairResult:
+    """Exchange a 6-digit pairing code for a long-lived paired token.
+
+    The one unauthenticated write on the kernel. Raises
+    SecuraCVApiAuthError for the kernel's constant 401 (wrong, burned,
+    expired or absent code — the kernel answers all four the same so this
+    client cannot be an oracle for the pairing state), SecuraCVApiResponseError
+    for any other status (403 included), SecuraCVApiConnectionError when the
+    kernel cannot be reached. The code is never logged.
+    """
+    base = url.rstrip("/")
+    try:
+        async with session.post(
+            f"{base}/api/pair",
+            json={"code": code, "label": label},
+            timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS),
+        ) as resp:
+            if resp.status == 401:
+                raise SecuraCVApiAuthError("invalid_pairing_code")
+            if resp.status != 200:
+                raise SecuraCVApiResponseError(f"unexpected status: {resp.status}")
+            try:
+                data = await resp.json()
+            except aiohttp.ContentTypeError as err:
+                raise SecuraCVApiResponseError(f"invalid JSON response: {err}") from err
+    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        raise SecuraCVApiConnectionError("unable to reach API") from err
+    if not isinstance(data, dict):
+        raise SecuraCVApiResponseError("pair response is not an object")
+    try:
+        return PairResult(
+            token=str(data["token"]),
+            token_id=str(data["token_id"]),
+            device_id=str(data["device_id"]),
+            verifying_key=str(data["verifying_key"]),
+            kernel_version=str(data.get("kernel_version", "")),
+        )
+    except KeyError as err:
+        raise SecuraCVApiResponseError(f"pair response missing {err}") from err

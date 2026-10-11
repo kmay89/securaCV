@@ -56,6 +56,7 @@ COORDINATOR = types.SimpleNamespace(data=None, last_update_success=True)
 EXPECTED_NAMES: dict[str, dict[str, str]] = {
     "sensor": {
         "kernel_last_event": "SecuraCV Last Event",
+        "kernel_fingerprint": "Kernel key fingerprint",
         "storage_health": "Storage Health",
         "storage_free_pct": "Storage Free",
         "storage_wear_pct": "Storage Wear Estimate",
@@ -73,6 +74,7 @@ EXPECTED_NAMES: dict[str, dict[str, str]] = {
     "binary_sensor": {
         "kernel_online": "Online",
         "storage_replace": "Storage Replacement Recommended",
+        "frigate_link": "Frigate link",
         "online": "Online",
         "chain_valid": "Chain Valid",
         "tamper": "Tamper",
@@ -163,6 +165,15 @@ BINARY_SENSOR_ENTITIES = [
 PLATFORMS = {
     "sensor": (sensor_platform, SENSOR_ENTITIES),
     "binary_sensor": (bs_platform, BINARY_SENSOR_ENTITIES),
+}
+
+# Keys strings.json and icons.json already declare for entities the next
+# stage adds (the kernel key fingerprint diagnostic and the Frigate link
+# connectivity sensor, contract C11). Stage b removes this set when the
+# classes land; until then they are the only declared keys no class uses.
+PENDING_ENTITY_KEYS: dict[str, set[str]] = {
+    "sensor": {"kernel_fingerprint"},
+    "binary_sensor": {"frigate_link"},
 }
 
 
@@ -270,6 +281,7 @@ def test_every_declared_key_is_used_and_named_as_expected(platform: str) -> None
     declared = _strings()["entity"][platform]
     _module, entities = PLATFORMS[platform]
     used = {ctor(cls)._attr_translation_key for cls, ctors in entities for ctor in ctors}
+    used |= PENDING_ENTITY_KEYS[platform]
     assert set(declared) == used, (
         f"strings.json entity.{platform} keys and the keys entities use differ: "
         f"dead={sorted(set(declared) - used)} missing={sorted(used - set(declared))}"
