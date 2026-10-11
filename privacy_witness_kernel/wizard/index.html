@@ -89,6 +89,7 @@
   .field { margin-bottom: 18px; }
   .field-row { display: flex; gap: 12px; }
   .field-row .field { flex: 1; }
+  .hint { color: var(--text-muted); font-size: 0.8rem; display: block; margin-top: 2px; }
 
   /* ---- Toggle ---- */
   .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
@@ -109,6 +110,13 @@
   }
   input:checked + .slider { background: var(--primary); }
   input:checked + .slider:before { transform: translateX(20px); }
+
+  /* ---- Radio choice ---- */
+  .choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
+    border: 1.5px solid var(--border); border-radius: 7px; margin-bottom: 8px; cursor: pointer; }
+  .choice input { margin-top: 3px; }
+  .choice-label { font-size: 0.95rem; font-weight: 500; }
+  .choice-sub { font-size: 0.82rem; color: var(--text-muted); }
 
   /* ---- Camera card ---- */
   .camera-card {
@@ -131,12 +139,16 @@
   }
   .test-result.ok   { background: #e8f5e9; color: #2e7d32; display: block; }
   .test-result.fail { background: #fdecea; color: #c62828; display: block; }
+  .camera-list { list-style: none; margin: 8px 0 16px; }
+  .camera-list li { padding: 8px 12px; border: 1.5px solid var(--border); border-radius: 6px;
+    margin-bottom: 6px; font-family: monospace; font-size: 0.9rem; }
 
   /* ---- Buttons ---- */
   .btn {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 11px 24px; border-radius: 7px; font-size: 0.95rem; font-weight: 600;
     cursor: pointer; border: none; transition: background 0.2s, transform 0.1s;
+    text-decoration: none;
   }
   .btn:active { transform: translateY(1px); }
   .btn-primary { background: var(--primary); color: #fff; }
@@ -150,6 +162,7 @@
   .btn-sm { padding: 7px 14px; font-size: 0.82rem; }
   .btn-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 28px; }
   .btn-row .right { display: flex; gap: 10px; }
+  .link-note { font-size: 0.85rem; color: var(--text-muted); margin-top: 8px; }
 
   /* ---- Info boxes ---- */
   .info-box {
@@ -221,15 +234,16 @@
     <h1>SecuraCV</h1>
   </div>
   <p class="subtitle">
-    A security camera with a 24-hour memory.<br>
-    Clips stay on your hardware. They auto-delete. The only thing that
-    persists is a tamper-evident log that shows nobody altered the record.
+    The verified witness log for Frigate.<br>
+    Frigate keeps the video; SecuraCV keeps the proof: every event signed
+    into a tamper-evident chain, never faces, plates or footage.
   </p>
 
   <div class="info-box blue">
     <strong>What this wizard does:</strong>
-    Connects your cameras to Frigate, configures the Privacy Witness Kernel,
-    and sets up daily notifications — in about 2 minutes.
+    Connects SecuraCV to your Frigate and Mosquitto, chooses what to seal and
+    for how long, and sets up the daily digest — about two minutes, usually
+    nothing to type.
   </div>
 
   <div id="preflight-box" class="info-box blue">
@@ -244,24 +258,40 @@
 </div>
 
 <!-- ================================================================
-     Screen 2: Add Cameras
+     Screen 2: Cameras — Frigate's own list (nothing to type) when Frigate
+     is installed and its config can be read; the RTSP form otherwise.
      ================================================================ -->
 <div class="card hidden" id="screen-2">
-  <h2>📷 Add Cameras</h2>
-  <p class="subtitle">
-    Enter the name and RTSP stream URL for each camera. You can add more later
-    from the app configuration panel.
-  </p>
+  <div id="frigate-cameras">
+    <h2>📷 Frigate's cameras</h2>
+    <div id="frigate-summary" class="info-box green"></div>
+    <ul class="camera-list" id="frigate-camera-list"></ul>
+    <p class="link-note">
+      SecuraCV seals every person, car, dog and cat event Frigate reports on
+      these cameras. Faces, plates and names Frigate recognizes are dropped
+      before anything is written. Cameras are named by place, not by
+      person — keep it that way in Frigate.
+    </p>
+  </div>
 
-  <div id="discovered-note" class="info-box green hidden"></div>
+  <div id="rtsp-cameras">
+    <h2>📷 Add Cameras</h2>
+    <p class="subtitle">
+      No running Frigate was found, so SecuraCV writes Frigate's camera
+      config for you. Enter the name and RTSP stream URL for each camera.
+      Name cameras by place ("Front door", "Driveway"), not by person.
+    </p>
 
-  <div id="cameras-container"></div>
+    <div id="discovered-note" class="info-box green hidden"></div>
 
-  <button class="btn btn-secondary btn-sm" onclick="addCamera()" style="margin-bottom:20px">
-    + Add Another Camera
-  </button>
+    <div id="cameras-container"></div>
 
-  <div id="camera-error" class="info-box red hidden"></div>
+    <button class="btn btn-secondary btn-sm" onclick="addCamera()" style="margin-bottom:20px">
+      + Add Another Camera
+    </button>
+
+    <div id="camera-error" class="info-box red hidden"></div>
+  </div>
 
   <div class="btn-row">
     <button class="btn btn-secondary" onclick="goTo(1)">← Back</button>
@@ -276,17 +306,35 @@
   <h2>⚙️ Settings</h2>
 
   <div class="field">
-    <label for="retention">Clip retention period</label>
+    <label for="retention">Keep sealed events for</label>
     <select id="retention">
-      <option value="1" selected>24 hours (recommended)</option>
-      <option value="2">48 hours</option>
-      <option value="7">7 days</option>
+      <option value="7" selected>7 days (recommended)</option>
       <option value="30">30 days</option>
+      <option value="365">1 year</option>
     </select>
-    <small style="color:var(--text-muted);font-size:0.8rem">
-      Frigate clips older than this are automatically deleted.
-      The witness log is kept forever (it's tiny).
+    <small class="hint">
+      The witness log is tiny (coarse claims, never video). Exports are
+      self-contained, so you lose nothing by exporting first. Frigate's own
+      clip retention is Frigate's setting, untouched here.
     </small>
+  </div>
+
+  <div class="field">
+    <label>What to seal</label>
+    <label class="choice">
+      <input type="radio" name="seal" id="seal-events" value="events" checked>
+      <span>
+        <span class="choice-label">Every tracked object (default)</span><br>
+        <span class="choice-sub">One sealed event per camera, label and 10-minute window, as soon as Frigate tracks it.</span>
+      </span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="seal" id="seal-reviews" value="reviews">
+      <span>
+        <span class="choice-label">Only Frigate alerts</span><br>
+        <span class="choice-sub">Frigate's review items of severity "alert" — what Frigate itself would notify you about.</span>
+      </span>
+    </label>
   </div>
 
   <div class="toggle-row">
@@ -305,28 +353,6 @@
     <input type="time" id="digest-time" value="08:00">
   </div>
 
-  <div class="toggle-row">
-    <div>
-      <div class="toggle-label">Pattern-break alerts</div>
-      <div class="toggle-sub">Notify when activity is unusual for the time of day</div>
-    </div>
-    <label class="toggle">
-      <input type="checkbox" id="pattern-alerts" checked>
-      <span class="slider"></span>
-    </label>
-  </div>
-
-  <div class="toggle-row">
-    <div>
-      <div class="toggle-label">Integrity failure alerts</div>
-      <div class="toggle-sub">Persistent notification if witness log tampering is detected</div>
-    </div>
-    <label class="toggle">
-      <input type="checkbox" id="integrity-alerts" checked>
-      <span class="slider"></span>
-    </label>
-  </div>
-
   <div class="btn-row">
     <button class="btn btn-secondary" onclick="goTo(2)">← Back</button>
     <button class="btn btn-primary" onclick="goTo(4)">Next →</button>
@@ -342,10 +368,10 @@
   <ul class="summary-list" id="summary-list"></ul>
 
   <div class="info-box warn" style="margin-top:20px">
-    <strong>Your device signing key</strong>
+    <strong id="key-title">Your device signing key</strong>
     <div id="key-display" class="key-box">Generating…</div>
-    Back this up — it's stored at <code>/config/.securacv/device_key</code>.
-    Losing it means losing the ability to verify your witness log.
+    <span id="key-note">Back this up — it's stored at <code>/config/.securacv/device_key</code>.
+    Losing it means losing the ability to verify your witness log.</span>
   </div>
 
   <div id="start-error" class="info-box red hidden"></div>
@@ -364,25 +390,21 @@
 <div class="card hidden" id="screen-5">
   <div id="done-success" class="hidden">
     <div class="done-icon">✅</div>
-    <div class="done-title">You're protected.</div>
-    <div class="done-sub">SecuraCV is running. Restart Home Assistant to activate all sensors.</div>
-    <!-- Populated by showDoneSuccess from the /api/save response, so this
-         screen reports what actually happened (Frigate config location,
-         digest automation created or honestly skipped) — never a promise
-         the server silently dropped. -->
+    <div class="done-title">SecuraCV is running.</div>
+    <div class="done-sub" id="done-sub">One step left in Home Assistant.</div>
+    <!-- Populated by showDoneSuccess from the /api/save response and
+         /api/status, so this screen reports what actually happened
+         (Frigate config, digest automation, the integration's state) —
+         never a promise the server silently dropped. -->
     <div class="info-box green">
-      <strong>What happens next:</strong>
+      <strong>What happened:</strong>
       <div id="done-results" style="margin-top:6px"></div>
     </div>
-    <ul class="step-list">
-      <li>Restart Home Assistant to activate sensors</li>
-      <li>The SecuraCV integration will appear automatically via MQTT discovery</li>
-      <li>Open the SecuraCV dashboard from the sidebar</li>
-    </ul>
-    <div style="text-align:center;margin-top:20px">
-      <button class="btn btn-primary" id="btn-restart-ha" onclick="restartHA()">
-        Restart Home Assistant Now
-      </button>
+    <div id="done-primary" style="text-align:center;margin-top:8px"></div>
+    <div id="done-primary-note" class="link-note hidden" style="text-align:center"></div>
+    <div class="info-box blue" style="margin-top:20px">
+      <strong>Then:</strong>
+      <ul class="step-list" id="done-after"></ul>
     </div>
     <div style="text-align:center;margin-top:12px">
       <button class="btn btn-secondary btn-sm" onclick="openMeshWizard()">
@@ -397,7 +419,7 @@
     <div class="done-sub">Configuration was saved but the kernel could not start.</div>
     <div class="info-box red" id="done-error-detail"></div>
     <p style="font-size:0.9rem;color:var(--text-muted)">
-      Check the app logs: Settings → Apps → Privacy Witness Kernel → Logs
+      Check the app logs: Settings → Apps → SecuraCV → Logs
     </p>
   </div>
 
@@ -503,7 +525,7 @@
     <span class="card-icon">🛡</span>
     <h1>SecuraCV</h1>
   </div>
-  <p class="subtitle">Privacy Witness Kernel is configured and running.</p>
+  <p class="subtitle">The witness kernel is configured and running.</p>
 
   <div id="status-health" class="info-box blue">
     <strong>Checking kernel health…</strong>
@@ -524,6 +546,12 @@
   <div id="status-summary" class="info-box blue hidden">
     <strong>Configuration</strong>
     <div id="status-summary-items" style="margin-top:8px;font-size:0.88rem"></div>
+  </div>
+
+  <div id="status-integration" class="info-box blue hidden">
+    <strong>Home Assistant integration</strong>
+    <div id="status-integration-detail" style="margin-top:6px;font-size:0.88rem"></div>
+    <div id="status-integration-action" style="margin-top:10px"></div>
   </div>
 
   <div id="status-export" class="info-box blue">
@@ -557,23 +585,7 @@
     <button class="btn btn-secondary" onclick="statusRefresh()">Refresh</button>
     <div class="right">
       <button class="btn btn-primary" id="btn-verify-now" onclick="verifyNow()">Verify now</button>
-      <button class="btn btn-secondary" onclick="generateDashboard()">Generate dashboard</button>
       <button class="btn btn-secondary" onclick="startReconfigure()">Re-run setup wizard</button>
-    </div>
-  </div>
-
-  <div id="dashboard-box" class="hidden" style="margin-top:20px">
-    <h2>Lovelace dashboard YAML</h2>
-    <p class="subtitle" style="margin-bottom:10px">
-      Built from your actual zones and entity IDs. In Home Assistant:
-      Settings → Dashboards → Add dashboard → ⋮ → Raw configuration editor,
-      then paste this in.
-    </p>
-    <textarea id="dashboard-yaml" readonly
-      style="width:100%;height:220px;font-family:monospace;font-size:0.8rem;border:1.5px solid var(--border);border-radius:6px;padding:10px"></textarea>
-    <div class="btn-row" style="margin-top:10px">
-      <span></span>
-      <button class="btn btn-primary" onclick="copyDashboard()">Copy to clipboard</button>
     </div>
   </div>
 </div>
@@ -599,12 +611,223 @@ const base = (() => {
   return p.endsWith("/") ? p : p + "/";
 })();
 
+// ===========================================================================
+// setup-flow: begin
+//
+// The setup wizard's decisions, as pure functions of the server's answers
+// and the form — no DOM, no fetch — so tests/test_wizard_setup_flow.test.js
+// can lift this section and drive them. The DOM glue after the section
+// only renders what these return.
+// ===========================================================================
+
+// Which camera screen the wizard shows. Frigate installed AND its config
+// readable → Frigate's own camera list, nothing to type (its cameras may
+// still be an empty list: "every camera Frigate reports"). Otherwise the
+// RTSP form, and SecuraCV writes Frigate's camera config.
+function wizardPath(checks) {
+  const c = checks || {};
+  if (c.frigate && c.frigate_config_found) {
+    return {
+      path: "frigate",
+      cameras: Array.isArray(c.frigate_cameras) ? c.frigate_cameras.slice() : [],
+      camerasRead: !!c.frigate_cameras_read,
+      running: !!c.frigate_running,
+    };
+  }
+  return { path: "rtsp", cameras: [], camerasRead: false, running: !!c.frigate_running };
+}
+
+// The preflight checklist. Each missing piece gets the my.home-assistant.io
+// link that opens the right page of the person's own Home Assistant (their
+// admin session installs it; the app has no Supervisor role to do so).
+function preflightView(checks, links) {
+  const c = checks || {};
+  const l = links || {};
+  const rows = [];
+  const link = (href, label) =>
+    `<a class="btn btn-primary btn-sm" style="margin:6px 0 10px" href="${escHtml(href)}" target="_blank" rel="noopener">${escHtml(label)}</a>`;
+  rows.push(c.mosquitto
+    ? '<div style="color:#2e7d32">✓ Mosquitto MQTT broker is running</div>'
+    : '<div style="color:#c62828">✗ Mosquitto MQTT broker is not running.</div>' +
+      (l.mosquitto ? link(l.mosquitto, "Install Mosquitto") +
+        '<div class="link-note">Opens the Mosquitto broker in your App Store — press Install, then Start, and come back here.</div>' : ""));
+  if (c.frigate) {
+    const n = Array.isArray(c.frigate_cameras) ? c.frigate_cameras.length : 0;
+    const cams = c.frigate_config_found
+      ? (c.frigate_cameras_read
+          ? (n ? ` with ${n} camera${n === 1 ? "" : "s"} — ${c.frigate_cameras.map(escHtml).join(", ")}` : " (no cameras in its config yet)")
+          : " (its config could not be read; every camera it reports will be sealed)")
+      : " (no config found yet)";
+    rows.push(c.frigate_running
+      ? `<div style="color:#2e7d32">✓ Frigate NVR is running${cams}</div>`
+      : `<div style="color:#fb8c00">! Frigate is installed but not running${cams} — start it after setup</div>`);
+  } else {
+    rows.push('<div style="color:#c62828">✗ Frigate NVR is not installed.</div>' +
+      (l.frigate ? link(l.frigate, "Install Frigate") +
+        '<div class="link-note">Opens Frigate in your App Store (adds its repository first) — press Install, then come back here. SecuraCV writes Frigate\'s camera config for you.</div>' : ""));
+  }
+  rows.push(c.mqtt_service
+    ? `<div style="color:#2e7d32">✓ MQTT credentials auto-discovered (${escHtml(c.mqtt_host)}:${escHtml(c.mqtt_port)}${c.mqtt_auth ? ", authenticated" : ""}) — nothing to type</div>`
+    : '<div style="color:#fb8c00">! No shared MQTT service found — broker defaults will be used</div>');
+  const ready = !!(c.mosquitto && c.frigate);
+  return { html: rows.join(""), ready, title: ready ? "Prerequisites ready" : "Prerequisites need attention" };
+}
+
+// The confirmation sentence of the Frigate camera screen.
+function frigateSummary(plan, checks) {
+  const c = checks || {};
+  const n = plan.cameras.length;
+  const list = n ? plan.cameras.join(", ") : "";
+  const cams = plan.camerasRead
+    ? (n ? `${n} camera${n === 1 ? "" : "s"} — ${list}` : "no cameras in its config yet")
+    : "a camera list this wizard could not read";
+  const broker = c.mqtt_service ? "Mosquitto is connected" : "the broker defaults will be used";
+  const running = plan.running ? "Frigate is running with" : "Frigate is installed (not running yet) with";
+  const seal = plan.camerasRead && n
+    ? "SecuraCV will seal every person, car, dog and cat event Frigate reports on them."
+    : "SecuraCV will seal every person, car, dog and cat event Frigate reports.";
+  return `${running} ${cams}, and ${broker}. Nothing to type. ${seal}`;
+}
+
+// What the Confirm screen lists.
+function summaryRows(form, plan) {
+  const cameras = plan.path === "frigate"
+    ? (plan.cameras.length ? plan.cameras.join(", ") : "every camera Frigate reports")
+    : (form.cameras.map(c => c.name || "(unnamed)").join(", ") || "—");
+  return [
+    ["Mode", "Frigate integration (recommended)"],
+    ["Cameras", cameras],
+    ["Keep sealed events for", form.retentionLabel],
+    ["What to seal", form.seal === "reviews" ? "Only Frigate alerts" : "Every tracked object"],
+    ["Daily digest", form.digestEnabled ? form.digestTime : "Disabled"],
+  ];
+}
+
+// The /api/save body. A re-run (the app is already configured) sends NO
+// device key: the page never holds the current seed (/api/status masks it),
+// and the server keeps the existing identity when none is sent — a fresh
+// seed would orphan the sealed log and the server refuses one without proof
+// of the current seed anyway.
+function savePayload(form, plan, state) {
+  const payload = {
+    mode: "frigate",
+    frigate_detected: plan.path === "frigate",
+    cameras: plan.path === "frigate"
+      ? plan.cameras.map(name => ({ name }))
+      : form.cameras.map(c => ({
+          name: c.name.trim(),
+          url: c.url.trim(),
+          zone_id: c.zone_id || `zone:${c.name.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+        })),
+    retention_days: form.retentionDays,
+    enable_reviews: form.seal === "reviews",
+    digest_enabled: form.digestEnabled,
+    digest_time: form.digestTime,
+  };
+  if (!state.reconfigure && state.deviceKeySeed) {
+    payload.device_key_seed = state.deviceKeySeed;
+  }
+  return payload;
+}
+
+// The done screen: what happened (from the save result) and the one next
+// step (from /api/status's view of the integration). Never "appears
+// automatically": the discovered card needs the integration loaded, and
+// loading it needs one restart the person clicks.
+function donePlan(saveResult, status) {
+  const result = saveResult || {};
+  const s = status || {};
+  const integration = s.integration || {};
+  const links = s.links || {};
+  const lines = [];
+  if (result.frigate_detected) {
+    lines.push(result.frigate_config ||
+      "Frigate keeps its own camera config — nothing was written to it.");
+  } else if (result.frigate_config) {
+    lines.push(result.frigate_config);
+  }
+  lines.push("Every event Frigate reports is sealed into the witness log — a signed, coarse claim (place, window, kind), never a face, a plate or a frame.");
+  const digest = result.digest || {};
+  if (digest.created) {
+    lines.push("✓ Daily digest automation created: " + (digest.detail || ""));
+  } else if (digest.detail === "digest disabled in the wizard") {
+    lines.push("Daily digest: disabled (your choice in Settings).");
+  } else {
+    lines.push("Daily digest was NOT set up" + (digest.detail ? ": " + digest.detail : "."));
+  }
+
+  let primary;
+  const installed = integration.state && integration.state !== "absent";
+  if (integration.loaded === true) {
+    lines.push(`✓ The SecuraCV integration (${integration.version || "installed"}) is already loaded in Home Assistant.`);
+    primary = { kind: "integrations", label: "Open Settings → Devices & Services",
+                href: links.integrations || "" };
+  } else if (installed) {
+    lines.push(`✓ The SecuraCV integration (${integration.version || "installed"}) is installed under /config/custom_components${integration.state === "foreign" ? " (by HACS or by hand)" : ""} but not loaded yet.`);
+    primary = { kind: "restart", label: "Restart Home Assistant to load the SecuraCV integration" };
+  } else if (integration.install_integration) {
+    lines.push(`The SecuraCV integration (${integration.carried_version || "carried by this app"}) is ready to install from this app.`);
+    primary = { kind: "install", label: "Install the integration and restart Home Assistant" };
+  } else {
+    lines.push("The SecuraCV integration is not installed, and this app is set not to install it (install_integration is off).");
+    primary = { kind: "hacs", label: "Install the SecuraCV integration from HACS",
+                href: integration.hacs_url || links.hacs || "" };
+  }
+
+  const after = [];
+  if (integration.loaded === true) {
+    after.push("Settings → Devices & Services: the \"SecuraCV discovered\" card is there (it may take a moment after the app restarts). Press Configure — nothing to type.");
+  } else {
+    after.push("After the restart: Settings → Devices & Services → \"SecuraCV discovered\" → Configure. Nothing to type.");
+  }
+  after.push("Then walk past a camera: the first sealed event appears within a minute, \"Verified ✓\" follows the next chain check.");
+  after.push("Add the dashboard: Settings → Dashboards → Add dashboard → SecuraCV.");
+  return { lines, primary, after, dashboardsUrl: links.dashboards || "" };
+}
+
+// The status panel's integration box.
+function integrationStatusView(integration, links) {
+  const i = integration || {};
+  const l = links || {};
+  const version = i.version ? ` ${i.version}` : "";
+  if (i.state === "absent" || !i.state) {
+    if (i.install_integration) {
+      return { text: "Not installed yet.", action: "install",
+               label: "Install the integration and restart Home Assistant" };
+    }
+    return { text: "Not installed; this app is set not to install it (install_integration is off).",
+             action: "hacs", label: "Install from HACS", href: i.hacs_url || l.hacs || "" };
+  }
+  const where = i.state === "foreign" ? " (installed by HACS or by hand; HACS updates it)"
+    : i.state === "modified" ? " (edited after the app placed it; the app leaves it alone)"
+    : " (placed by this app; it follows app updates)";
+  if (i.loaded === true) {
+    return { text: `SecuraCV${version} is installed and loaded${where}.`, action: "none" };
+  }
+  if (i.loaded === false) {
+    return { text: `SecuraCV${version} is installed${where} but not loaded — restart Home Assistant.`,
+             action: "restart", label: "Restart Home Assistant" };
+  }
+  return { text: `SecuraCV${version} is installed${where}.`, action: "none" };
+}
+
+// ===========================================================================
+// setup-flow: end
+// ===========================================================================
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 let currentStep = 1;
 let cameras = [];
 let deviceKeySeed = "";
+// The server's preflight answer and the path it implies.
+let preflightChecks = null;
+let preflightLinks = {};
+let plan = { path: "rtsp", cameras: [], camerasRead: false, running: false };
+// True when the app is already configured and the wizard is re-run: the
+// existing device key is kept and never sent.
+let reconfigure = false;
 
 // ---------------------------------------------------------------------------
 // Navigation
@@ -625,10 +848,7 @@ function goTo(step) {
     startBtn.innerHTML = "Start SecuraCV";
     document.getElementById("start-error").classList.add("hidden");
   }
-  if (step === 2) {
-    if (cameras.length === 0) addCamera();
-    discoverCameras();
-  }
+  if (step === 2) renderCameraScreen();
   if (step === 4) renderSummary();
 }
 
@@ -642,8 +862,31 @@ function updateProgressBar() {
 }
 
 // ---------------------------------------------------------------------------
-// Camera management
+// Camera screen: Frigate's list, or the RTSP form
 // ---------------------------------------------------------------------------
+function renderCameraScreen() {
+  plan = wizardPath(preflightChecks);
+  const frigateBox = document.getElementById("frigate-cameras");
+  const rtspBox = document.getElementById("rtsp-cameras");
+  if (plan.path === "frigate") {
+    frigateBox.classList.remove("hidden");
+    rtspBox.classList.add("hidden");
+    document.getElementById("frigate-summary").textContent = frigateSummary(plan, preflightChecks);
+    const list = document.getElementById("frigate-camera-list");
+    list.innerHTML = "";
+    plan.cameras.forEach(name => {
+      const li = document.createElement("li");
+      li.textContent = name;
+      list.appendChild(li);
+    });
+    return;
+  }
+  frigateBox.classList.add("hidden");
+  rtspBox.classList.remove("hidden");
+  if (cameras.length === 0) addCamera();
+  discoverCameras();
+}
+
 let cameraCounter = 0;
 
 function addCamera() {
@@ -677,7 +920,7 @@ function renderCameras() {
           : ""}
       </div>
       <div class="field">
-        <label>Name (e.g. "Front Door")</label>
+        <label>Name — by place, not by person (e.g. "Front Door")</label>
         <input type="text" placeholder="Front Door" value="${escHtml(cam.name)}"
           oninput="updateCamera(${cam.id}, 'name', this.value)">
       </div>
@@ -708,9 +951,9 @@ function updateCamera(id, key, val) {
 }
 
 // go2rtc camera discovery: ask the wizard server for streams it can see and
-// pre-fill the camera rows, so a Frigate/go2rtc user types nothing. Runs
-// once, and only replaces rows the user has not started typing into.
-// Discovery is a convenience — any failure just leaves the empty row.
+// pre-fill the camera rows, so a go2rtc user types nothing. Runs once, and
+// only replaces rows the user has not started typing into. Discovery is a
+// convenience — any failure just leaves the empty row.
 let discoveryTried = false;
 async function discoverCameras() {
   if (discoveryTried) return;
@@ -766,6 +1009,7 @@ async function testCamera(id) {
 }
 
 function validateCamerasAndNext() {
+  if (plan.path === "frigate") { goTo(3); return; }
   const errEl = document.getElementById("camera-error");
   errEl.classList.add("hidden");
 
@@ -785,34 +1029,38 @@ function validateCamerasAndNext() {
 }
 
 // ---------------------------------------------------------------------------
+// The form, read once
+// ---------------------------------------------------------------------------
+function readForm() {
+  const retention = document.getElementById("retention");
+  return {
+    cameras,
+    retentionDays: parseInt(retention.value, 10),
+    retentionLabel: retention.options[retention.selectedIndex].text,
+    seal: document.getElementById("seal-reviews").checked ? "reviews" : "events",
+    digestEnabled: document.getElementById("digest-enabled").checked,
+    digestTime: document.getElementById("digest-time").value,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 function renderSummary() {
-  // Generate key seed preview
-  if (!deviceKeySeed) {
-    deviceKeySeed = generateHex(32);
+  const keyDisplay = document.getElementById("key-display");
+  if (reconfigure) {
+    document.getElementById("key-title").textContent = "Your device signing key is kept";
+    keyDisplay.textContent = "existing key — unchanged";
+    document.getElementById("key-note").textContent =
+      "The sealed log stays bound to the key at /config/.securacv/device_key; re-running the wizard never replaces it.";
+  } else {
+    if (!deviceKeySeed) deviceKeySeed = generateHex(32);
+    keyDisplay.textContent = deviceKeySeed;
   }
-  document.getElementById("key-display").textContent = deviceKeySeed;
 
   const list = document.getElementById("summary-list");
   list.innerHTML = "";
-
-  const retention = document.getElementById("retention");
-  const digestEnabled = document.getElementById("digest-enabled").checked;
-  const digestTime = document.getElementById("digest-time").value;
-  const patternAlerts = document.getElementById("pattern-alerts").checked;
-  const integrityAlerts = document.getElementById("integrity-alerts").checked;
-
-  const items = [
-    ["Mode", "Frigate integration (recommended)"],
-    ["Cameras", cameras.map(c => c.name || "(unnamed)").join(", ") || "—"],
-    ["Clip retention", retention.options[retention.selectedIndex].text],
-    ["Daily digest", digestEnabled ? digestTime : "Disabled"],
-    ["Pattern-break alerts", patternAlerts ? "Enabled" : "Disabled"],
-    ["Integrity failure alerts", integrityAlerts ? "Enabled" : "Disabled"],
-  ];
-
-  items.forEach(([key, val]) => {
+  summaryRows(readForm(), plan).forEach(([key, val]) => {
     const li = document.createElement("li");
     li.innerHTML = `<span class="summary-key">${escHtml(key)}</span>
                     <span class="summary-value">${escHtml(String(val))}</span>`;
@@ -831,26 +1079,7 @@ async function startSetup() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Saving…';
 
-  const retention = document.getElementById("retention");
-  const digestEnabled = document.getElementById("digest-enabled").checked;
-  const digestTime = document.getElementById("digest-time").value;
-  const patternAlerts = document.getElementById("pattern-alerts").checked;
-  const integrityAlerts = document.getElementById("integrity-alerts").checked;
-
-  const payload = {
-    mode: "frigate",
-    cameras: cameras.map(c => ({
-      name: c.name.trim(),
-      url: c.url.trim(),
-      zone_id: c.zone_id || `zone:${c.name.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-    })),
-    retention_days: parseInt(retention.value, 10),
-    digest_enabled: digestEnabled,
-    digest_time: digestTime,
-    pattern_alerts: patternAlerts,
-    integrity_alerts: integrityAlerts,
-    device_key_seed: deviceKeySeed,
-  };
+  const payload = savePayload(readForm(), plan, { reconfigure, deviceKeySeed });
 
   try {
     const res = await api("api/save", payload);
@@ -883,11 +1112,13 @@ async function startSetup() {
 
     goTo(5);
     if (verified) {
-      showDoneSuccess(res);
+      let status = null;
+      try { status = await fetch(base + "api/status").then(r => r.json()); } catch (_) { /* shown without it */ }
+      showDoneSuccess(res, status);
     } else {
       showDoneError("Verification timed out — the kernel did not report healthy within " +
         VERIFY_WINDOW_S + " seconds. The configuration was saved; check the app logs " +
-        "(Settings → Apps → Privacy Witness Kernel → Logs) to see why it is not starting.");
+        "(Settings → Apps → SecuraCV → Logs) to see why it is not starting.");
     }
   } catch (e) {
     btn.disabled = false;
@@ -897,49 +1128,99 @@ async function startSetup() {
   }
 }
 
-async function restartHA() {
-  const btn = document.getElementById("btn-restart-ha");
+// The one restart the app ever asks for: this click. The server POSTs
+// /core/api/services/homeassistant/restart; nothing restarts on its own.
+async function restartHA(btn) {
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Restarting…';
+  btn.innerHTML = '<span class="spinner"></span> Restarting Home Assistant…';
   try {
     const res = await api("api/restart-ha", {});
     if (!res || res.ok === false) throw new Error((res && res.error) || "restart failed");
-    btn.innerHTML = "✓ Restarting — page will reload shortly";
-  } catch (_) {
+    btn.innerHTML = "✓ Home Assistant is restarting — this page reloads when it is back";
+  } catch (e) {
     btn.disabled = false;
     btn.innerHTML = "Restart manually: Settings → System → Restart";
+    const note = document.getElementById("done-primary-note");
+    if (note) {
+      note.textContent = (e && e.message) || "restart failed";
+      note.classList.remove("hidden");
+    }
   }
 }
 
-// The done screen reports what the save actually did, from the /api/save
-// response: where the Frigate config landed (saveResult.frigate_config) and
-// whether the daily-digest automation was really created (saveResult.digest)
-// — never a promise the server silently skipped.
-function showDoneSuccess(saveResult) {
-  const result = saveResult || {};
-  const lines = [
-    "Camera events will appear in Frigate, each one witnessed in the sealed log.",
-  ];
-  if (result.frigate_config) {
-    lines.push(result.frigate_config);
+// Install the carried integration (the explicit click, D15), then restart.
+// A refused install (a HACS copy, an edited copy) stops here and says why;
+// nothing restarts for a copy that did not change.
+async function installIntegrationAndRestart(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Installing the integration…';
+  const note = document.getElementById("done-primary-note");
+  try {
+    const res = await api("api/integration/install", {});
+    if (!res || res.ok === false) throw new Error((res && res.error) || "install refused");
+    if (note) {
+      note.textContent = res.detail || `SecuraCV integration ${res.installed_version || ""} installed.`;
+      note.classList.remove("hidden");
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = "Try again";
+    if (note) {
+      note.textContent = "The integration was not installed: " + ((e && e.message) || e) +
+        " You can install it from HACS instead.";
+      note.classList.remove("hidden");
+    }
+    return;
   }
-  const digest = result.digest || {};
-  if (digest.created) {
-    lines.push("✓ Daily digest automation created: " + (digest.detail || ""));
-  } else if (digest.detail === "digest disabled in the wizard") {
-    lines.push("Daily digest: disabled (your choice in Settings).");
-  } else {
-    lines.push("Daily digest was NOT set up" +
-      (digest.detail ? ": " + digest.detail : ".") );
+  await restartHA(btn);
+}
+
+function renderPrimary(container, primary) {
+  container.innerHTML = "";
+  if (!primary || primary.kind === "none") return;
+  if (primary.kind === "install" || primary.kind === "restart") {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-primary";
+    btn.id = "btn-primary-action";
+    btn.textContent = primary.label;
+    btn.onclick = () => (primary.kind === "install" ? installIntegrationAndRestart(btn) : restartHA(btn));
+    container.appendChild(btn);
+    return;
   }
-  lines.push("The SecuraCV integration will appear under Settings → Devices & Services.");
+  const a = document.createElement("a");
+  a.className = "btn btn-primary";
+  a.id = "btn-primary-action";
+  a.href = primary.href || "#";
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = primary.label;
+  container.appendChild(a);
+}
+
+// The done screen reports what the save actually did (the /api/save
+// response) and the integration's real state (/api/status) — never a
+// promise the server silently skipped.
+function showDoneSuccess(saveResult, status) {
+  const d = donePlan(saveResult, status);
   const box = document.getElementById("done-results");
   box.innerHTML = "";
-  lines.forEach(line => {
+  d.lines.forEach(line => {
     const div = document.createElement("div");
     div.textContent = line;
     div.style.marginBottom = "4px";
     box.appendChild(div);
+  });
+  document.getElementById("done-sub").textContent =
+    d.primary.kind === "install" || d.primary.kind === "restart"
+      ? "Home Assistant needs one restart to load the SecuraCV integration."
+      : "Now connect it in Home Assistant.";
+  renderPrimary(document.getElementById("done-primary"), d.primary);
+  const after = document.getElementById("done-after");
+  after.innerHTML = "";
+  d.after.forEach(line => {
+    const li = document.createElement("li");
+    li.textContent = line;
+    after.appendChild(li);
   });
   document.getElementById("done-success").classList.remove("hidden");
   document.getElementById("done-error").classList.add("hidden");
@@ -1462,6 +1743,7 @@ async function meshCancel() {
   closeMeshWizard();
 }
 
+
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
@@ -1497,35 +1779,13 @@ async function runPreflight() {
     const res = await fetch(base + "api/preflight");
     const data = await res.json();
     if (data.ok) {
-      const c = data.checks;
-      // "Install it for me" buttons POST api/preflight/install with a fixed
-      // target name — the server only accepts its two known Supervisor
-      // targets, so nothing user-controlled picks what gets installed.
-      const installControls = (target, label) =>
-        '<div style="margin:6px 0 10px">' +
-        `<button class="btn btn-primary btn-sm" id="install-btn-${target}" ` +
-        `onclick="installPrereq('${target}')">${label}</button>` +
-        `<div id="install-note-${target}" style="margin-top:6px;color:var(--text-muted)"></div>` +
-        "</div>";
-      let html = "";
-      html += c.mosquitto
-        ? '<div style="color:#2e7d32">✓ Mosquitto MQTT broker is running</div>'
-        : '<div style="color:#c62828">✗ Mosquitto MQTT broker is not running.</div>' +
-          installControls("mosquitto", "Install Mosquitto for me");
-      html += c.frigate
-        ? (c.frigate_running
-            ? '<div style="color:#2e7d32">✓ Frigate NVR is running</div>'
-            : '<div style="color:#fb8c00">! Frigate is installed but not running — start it after setup</div>')
-        : '<div style="color:#c62828">✗ Frigate NVR is not installed.</div>' +
-          installControls("frigate", "Install Frigate for me");
-      html += c.mqtt_service
-        ? `<div style="color:#2e7d32">✓ MQTT credentials auto-discovered (${escHtml(c.mqtt_host)}:${escHtml(c.mqtt_port)}${c.mqtt_auth ? ", authenticated" : ""}) — nothing to type</div>`
-        : '<div style="color:#fb8c00">! No shared MQTT service found — broker defaults will be used</div>';
-      results.innerHTML = html;
-      box.className = (c.mosquitto && c.frigate) ? "info-box green" : "info-box warn";
-      box.querySelector("strong").textContent = (c.mosquitto && c.frigate)
-        ? "Prerequisites ready"
-        : "Prerequisites need attention";
+      preflightChecks = data.checks || {};
+      preflightLinks = data.links || {};
+      plan = wizardPath(preflightChecks);
+      const view = preflightView(preflightChecks, preflightLinks);
+      results.innerHTML = view.html;
+      box.className = view.ready ? "info-box green" : "info-box warn";
+      box.querySelector("strong").textContent = view.title;
     } else {
       results.innerHTML = "";
       const div = document.createElement("div");
@@ -1539,51 +1799,6 @@ async function runPreflight() {
   }
 }
 
-// One-click prerequisite install. The request stays in flight while the
-// Supervisor pulls the container image (minutes on a Pi), so the button
-// narrates elapsed time instead of appearing hung, then the preflight
-// re-runs to show the new state.
-async function installPrereq(target) {
-  const btn = document.getElementById(`install-btn-${target}`);
-  const note = document.getElementById(`install-note-${target}`);
-  if (!btn || !note) return;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Installing…';
-  const startedAt = Date.now();
-  const pretty = target === "mosquitto" ? "Mosquitto" : "Frigate";
-  note.textContent = `Asking the Supervisor to install ${pretty}. This pulls a ` +
-    "container image and can take several minutes — leave this page open.";
-  const tick = setInterval(() => {
-    const s = Math.round((Date.now() - startedAt) / 1000);
-    btn.innerHTML = `<span class="spinner"></span> Installing… ${s}s`;
-  }, 1000);
-  try {
-    const res = await api("api/preflight/install", { target });
-    clearInterval(tick);
-    if (res.ok) {
-      note.style.color = "#2e7d32";
-      note.textContent = res.message || `${pretty} installed.`;
-    } else {
-      note.style.color = "#c62828";
-      note.textContent = `Install failed: ${res.error || "unknown error"}. ` +
-        "You can install it manually from Settings → Apps → App Store.";
-      btn.disabled = false;
-      btn.innerHTML = "Try again";
-      return;
-    }
-  } catch (e) {
-    clearInterval(tick);
-    note.style.color = "#c62828";
-    note.textContent = "Install request failed: " + ((e && e.message) || e) +
-      ". You can install it manually from Settings → Apps → App Store.";
-    btn.disabled = false;
-    btn.innerHTML = "Try again";
-    return;
-  }
-  // Success: refresh the checklist so the ✓ replaces the button.
-  runPreflight();
-}
-
 // ---------------------------------------------------------------------------
 // Status panel (configured installs)
 // ---------------------------------------------------------------------------
@@ -1595,6 +1810,7 @@ function showStatusPanel() {
 }
 
 function startReconfigure() {
+  reconfigure = true;
   document.getElementById("screen-status").classList.add("hidden");
   document.getElementById("progress-bar").classList.remove("hidden");
   document.getElementById(`screen-${currentStep}`).classList.remove("hidden");
@@ -1603,13 +1819,11 @@ function startReconfigure() {
     const note = document.createElement("div");
     note.id = "reconfigure-note";
     note.className = "info-box warn";
-    note.innerHTML = "<strong>Already configured.</strong> Completing the wizard again will overwrite your current settings (the existing device key is kept).";
+    note.innerHTML = "<strong>Already configured.</strong> Completing the wizard again overwrites the settings it collects (cameras, retention, what to seal, the digest). The existing device key is kept; the Configuration tab's other settings are left alone.";
     card.insertBefore(note, card.querySelector(".btn-row"));
   }
   runPreflight();
 }
-
-let statusZones = [];
 
 async function statusRefresh() {
   const health = document.getElementById("status-health");
@@ -1641,25 +1855,54 @@ async function statusRefresh() {
       const o = data.options;
       const summary = document.getElementById("status-summary");
       const items = document.getElementById("status-summary-items");
+      const frigateCams = (o.frigate && o.frigate.cameras && o.frigate.cameras.length)
+        ? o.frigate.cameras.join(", ") : "every camera Frigate reports";
       const rows = [
         ["Mode", o.mode || "—"],
         ["MQTT broker", (o.frigate && o.frigate.mqtt_host) ? o.frigate.mqtt_host : "auto-discovered"],
         ["Frigate topic prefix", (o.frigate && o.frigate.topic_prefix) || "frigate"],
-        ["Retention", (o.retention_days || "—") + " days"],
+        ["Cameras", frigateCams],
+        ["What to seal", (o.frigate && o.frigate.enable_reviews) ? "only Frigate alerts" : "every tracked object"],
+        ["Keep sealed events for", (o.retention_days || "—") + " days"],
         ["HA sensors", (o.mqtt_publish && o.mqtt_publish.enabled === false) ? "disabled" : "enabled"],
       ];
       items.innerHTML = rows.map(([k, v]) =>
         `<div><strong>${escHtml(k)}:</strong> ${escHtml(v)}</div>`).join("");
       summary.classList.remove("hidden");
+      renderIntegrationStatus(data.integration, data.links);
     }
   } catch (_) { /* ignore */ }
+}
+
+function renderIntegrationStatus(integration, links) {
+  const box = document.getElementById("status-integration");
+  const detail = document.getElementById("status-integration-detail");
+  const action = document.getElementById("status-integration-action");
+  const view = integrationStatusView(integration, links);
+  detail.textContent = view.text + " Dashboard: Settings → Dashboards → Add dashboard → SecuraCV.";
+  action.innerHTML = "";
+  if (view.action === "install" || view.action === "restart") {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-primary btn-sm";
+    btn.textContent = view.label;
+    btn.onclick = () => (view.action === "install" ? installIntegrationAndRestart(btn) : restartHA(btn));
+    action.appendChild(btn);
+  } else if (view.action === "hacs" && view.href) {
+    const a = document.createElement("a");
+    a.className = "btn btn-primary btn-sm";
+    a.href = view.href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = view.label;
+    action.appendChild(a);
+  }
+  box.classList.remove("hidden");
 }
 
 function renderDigest(digest) {
   const box = document.getElementById("status-digest");
   const detail = document.getElementById("status-digest-detail");
   const zones = Object.keys(digest.per_zone || {});
-  statusZones = zones;
   let html = `<div><strong>${digest.total_events || 0}</strong> witnessed event(s)</div>`;
   zones.forEach(z => {
     html += `<div>${escHtml(z)}: ${digest.per_zone[z]}</div>`;
@@ -1678,9 +1921,10 @@ function renderChain(report) {
   if (report.chain_valid) {
     box.className = "info-box green";
     detail.innerHTML =
-      `✓ Chain verified — ${report.events_verified} event(s), ` +
+      `✓ Chain self-check passed — ${report.events_verified} event(s), ` +
       `${report.break_glass_receipts_verified} break-glass receipt(s), ` +
-      `${report.export_receipts_verified} export receipt(s)` +
+      `${report.export_receipts_verified} export receipt(s). ` +
+      "(The kernel's own walk; Home Assistant's \"Verified ✓\" is the integration's check against its pinned key.)" +
       (report.alarm_count ? `<div style="color:#fb8c00">! ${report.alarm_count} conformance alarm(s) recorded</div>` : "");
   } else {
     box.className = "info-box red";
@@ -1714,78 +1958,6 @@ function downloadEvents() {
   // Plain navigation: the wizard proxy marks the response as an attachment,
   // so the browser saves the signed bundle without leaving the panel.
   window.location.href = base + "api/kernel/export" + query;
-}
-
-// A zone's entity id as the kernel's MQTT bridge asks Home Assistant for it
-// (src/bin/event_mqtt_bridge.rs: extract_zone_name, then ha_entity_id; sweep
-// HA16). The digest keys a zone by its raw zone id ("zone:front_door"), and
-// the bridge drops the "zone:" prefix, then slugs the whole object id the way
-// Home Assistant slugs an ASCII name: letters lowercased, digits kept, every
-// run of anything else one "_", none at either end. A non-ASCII character is
-// kept, as the bridge keeps it. Anything else names an entity nobody creates.
-function haSlug(s) {
-  let out = "";
-  let gap = false;
-  for (const c of s) {
-    const ascii = c.codePointAt(0) < 128;
-    if (ascii && !/[A-Za-z0-9]/.test(c)) {
-      gap = out.length > 0;
-      continue;
-    }
-    if (gap) {
-      out += "_";
-      gap = false;
-    }
-    out += ascii ? c.toLowerCase() : c;
-  }
-  return out;
-}
-
-function zoneEntityId(domain, zoneId, suffix) {
-  const zone = zoneId.startsWith("zone:") ? zoneId.slice("zone:".length) : zoneId;
-  return `${domain}.${haSlug(`pwk_${zone}_${suffix}`)}`;
-}
-
-function generateDashboard() {
-  const zones = statusZones.length ? statusZones : ["front_door"];
-  const lines = [
-    "# SecuraCV dashboard — generated by the app panel from your live zones",
-    "title: SecuraCV",
-    "views:",
-    "  - title: Witness",
-    "    icon: mdi:shield-check",
-    "    cards:",
-    "      - type: entities",
-    "        title: Sealed log",
-    "        entities:",
-    "          - entity: binary_sensor.pwk_chain_problem",
-    "            name: Log integrity",
-    "          - entity: button.pwk_verify_now",
-    "            name: Verify now",
-    "          - entity: sensor.pwk_daily_digest",
-    "            name: Events (24h)",
-    "          - entity: sensor.pwk_last_event",
-    "            name: Last event",
-  ];
-  zones.forEach(z => {
-    lines.push(
-      "      - type: entities",
-      `        title: ${z}`,
-      "        entities:",
-      `          - entity: ${zoneEntityId("sensor", z, "events")}`,
-      "            name: Events",
-      `          - entity: ${zoneEntityId("binary_sensor", z, "motion")}`,
-      "            name: Recent activity",
-    );
-  });
-  document.getElementById("dashboard-yaml").value = lines.join("\n") + "\n";
-  document.getElementById("dashboard-box").classList.remove("hidden");
-}
-
-function copyDashboard() {
-  const ta = document.getElementById("dashboard-yaml");
-  ta.select();
-  navigator.clipboard.writeText(ta.value).catch(() => document.execCommand("copy"));
 }
 
 // ---------------------------------------------------------------------------
