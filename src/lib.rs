@@ -904,6 +904,16 @@ pub struct ExportEvent {
     pub kernel_version: String,
     pub ruleset_id: String,
     pub ruleset_hash: [u8; 32],
+    /// The sealed-log row id this event was read from — carried ONLY by the
+    /// receipt-less state views ([`Kernel::view_events`]: `/events/latest`
+    /// and `/events?since_bucket=`), so a consumer that also walks
+    /// `GET /api/sealed-log` can match the two by `seq`. Never set on a
+    /// receipted export: the artifact those receipts hash is re-serialized
+    /// field-by-field by the offline verifiers (`viewer/verify_core.js`),
+    /// which do not know this key, and absent means those bytes are
+    /// exactly what they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -939,6 +949,11 @@ pub struct ExportArtifact {
 /// How an export was authorized. Recorded on the signed export receipt so a
 /// verifier can distinguish owner-authorized disclosure from trustee-quorum
 /// disclosure. Absent on receipts written before this field existed.
+///
+/// Every variant serializes as a plain string (`"api"`, `"paired"`, …): the
+/// offline verifiers treat `auth_mode` as an opaque label and must keep
+/// doing so, which is why `Paired` carries no payload here — the paired
+/// credential's id rides beside it as [`ExportReceipt::token_id`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportAuthMode {
@@ -948,6 +963,23 @@ pub enum ExportAuthMode {
     SelfExport,
     /// Local capability-token API access.
     Api,
+    /// A long-lived paired bearer (`POST /api/pair`, the Home Assistant
+    /// integration's credential); the receipt names which one in
+    /// [`ExportReceipt::token_id`] so a disclosure act stays tied to the
+    /// credential that performed it (Invariant IV).
+    Paired,
+}
+
+/// The credential class behind one API export, as the route handler knows
+/// it. Maps onto the receipt's [`ExportAuthMode`] (+ `token_id` for a paired
+/// bearer); the API layer can only ever label an export with one of these
+/// two, never as break-glass or self-export.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApiCredential {
+    /// The rotating capability token.
+    Capability,
+    /// A paired bearer, by its 8-hex id.
+    Paired { token_id: String },
 }
 
 /// Half-open time window `[start_epoch_s, end_epoch_s)` restricting an export
@@ -1023,6 +1055,12 @@ pub struct ExportReceipt {
     pub auth_mode: Option<ExportAuthMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<ExportWindow>,
+    /// The paired credential's id (8 hex) when `auth_mode` is
+    /// [`ExportAuthMode::Paired`]; absent for every other credential class.
+    /// Inside the signed bytes, like the rest of the receipt, so which
+    /// bearer exported cannot be edited after the fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1055,6 +1093,12 @@ pub struct ExportBundle {
 pub struct SealedLogDocumentEntry {
     /// Sealed-log row id (append order; ids are monotonic).
     pub id: i64,
+    /// The same row id as `id`, under the name the incremental cursor uses
+    /// (`GET /api/sealed-log?from_seq=`, [`SealedLogHead::seq`]). A reader
+    /// that predates the cursor keeps `id`; one that follows it reads `seq`
+    /// and never has to know the two are one number.
+    #[serde(default)]
+    pub seq: u64,
     /// The exact stored `payload_json` bytes, verbatim.
     pub payload: String,
     /// Hex chain link: the previous entry's hash (or the anchor).
@@ -1105,6 +1149,39 @@ pub struct SealedLogDocument {
     /// predate the field (witness-core today) ignore it harmlessly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rotation_records: Vec<SealedLogDocumentEntry>,
+    /// The chain head at the moment the document was assembled — the row
+    /// with the greatest id across the WHOLE log, not just the served tail
+    /// — so an incremental reader can tell "nothing new" (`head.seq` equals
+    /// its cursor) from "served tail re-anchored past my cursor" and from a
+    /// rollback (`head.seq` below its cursor). Genesis (`seq` 0, all-zero
+    /// hash) on an empty log.
+    #[serde(default)]
+    pub head: SealedLogHead,
+    /// The cursor the caller asked for (`?from_seq=<n>`), echoed; absent on
+    /// a full document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_seq: Option<u64>,
+}
+
+/// Where the sealed log ends: the greatest row id and that row's hex
+/// `entry_hash` ([`SealedLogDocument::head`], `/api/identity`'s
+/// `chain_length`/`latest_hash` pair).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SealedLogHead {
+    /// The greatest `sealed_events` row id; 0 when the log is empty.
+    pub seq: u64,
+    /// Hex `entry_hash` of that row, or the all-zero genesis anchor.
+    pub entry_hash: String,
+}
+
+impl Default for SealedLogHead {
+    /// Genesis: nothing sealed yet.
+    fn default() -> Self {
+        Self {
+            seq: 0,
+            entry_hash: hex::encode([0u8; 32]),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2874,8 +2951,61 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportArtifact> {
+        self.export_events_for_api_with(expected_ruleset_hash, options, ApiCredential::Capability)
+    }
+
+    /// [`Self::export_events_for_api`] naming the credential class the route
+    /// handler authenticated: the receipt is labeled `api` for the rotating
+    /// capability token and `paired` + `token_id` for a paired bearer, so
+    /// each disclosure act names the credential that performed it.
+    pub fn export_events_for_api_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        credential: ApiCredential,
+    ) -> Result<ExportArtifact> {
         Self::validate_export_options(&options)?;
-        self.export_events_sequential_unchecked(expected_ruleset_hash, options, ExportAuthMode::Api)
+        let (auth_mode, token_id) = match credential {
+            ApiCredential::Capability => (ExportAuthMode::Api, None),
+            ApiCredential::Paired { token_id } => (ExportAuthMode::Paired, Some(token_id)),
+        };
+        let artifact = self.build_export_artifact(expected_ruleset_hash, options, None, false)?;
+        self.receipt_export(
+            expected_ruleset_hash,
+            &options,
+            &artifact,
+            auth_mode,
+            token_id,
+        )?;
+        Ok(artifact)
+    }
+
+    /// A receipt-less READ of the privacy-filtered event view — the same
+    /// bucketed, jittered, batched artifact an export produces, with every
+    /// event's sealed-log `seq` attached, and NO export receipt.
+    ///
+    /// Invariant IV ties a receipt to "a specific disclosure act", and
+    /// `docs/evidence_lifecycle.md` §3 makes ordinary access "a read-only
+    /// view of the sealed log" while §4 reserves receipts for explicit
+    /// artifacts. A state poll every 30 s is a continuous feed, not a
+    /// disclosure: receipting it grew the (unprunable) receipt ledger by
+    /// thousands of signed rows a day for nobody's benefit. So the state
+    /// routes (`/events/latest`, `/digest`, `/events?since_bucket=`) read
+    /// through here, and the artifact routes (`/events` bulk,
+    /// `/export/bundle`, the CLIs) keep [`Self::export_events_for_api`].
+    ///
+    /// `since_bucket_start`, when given, keeps only records whose TRUE
+    /// (pre-jitter) bucket start is at or after it — a sequential cursor,
+    /// still "sequential, context-bound review" under Invariant VII and not
+    /// a selector on any identity-like field (Invariant II).
+    pub fn view_events(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        since_bucket_start: Option<u64>,
+    ) -> Result<ExportArtifact> {
+        Self::validate_export_options(&options)?;
+        self.build_export_artifact(expected_ruleset_hash, options, since_bucket_start, true)
     }
 
     /// Owner self-export of the privacy-filtered event artifact (no break-glass).
@@ -2928,7 +3058,23 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportBundle> {
-        let artifact = self.export_events_for_api(expected_ruleset_hash, options)?;
+        self.export_events_bundle_for_api_with(
+            expected_ruleset_hash,
+            options,
+            ApiCredential::Capability,
+        )
+    }
+
+    /// [`Self::export_events_bundle_for_api`] naming the credential class
+    /// (see [`Self::export_events_for_api_with`]).
+    pub fn export_events_bundle_for_api_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        credential: ApiCredential,
+    ) -> Result<ExportBundle> {
+        let artifact =
+            self.export_events_for_api_with(expected_ruleset_hash, options, credential)?;
         self.bundle_from_artifact(artifact)
     }
 
@@ -2969,6 +3115,68 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// exact — everything served verifies, and everything older is anchored
     /// history, not re-served bytes.
     pub fn sealed_log_document(&self) -> Result<SealedLogDocument> {
+        self.sealed_log_document_from(None)
+    }
+
+    /// Where the sealed log ends: the row count (every record kind — the
+    /// chain length a verifier reports) and the newest row's `entry_hash`,
+    /// `None` on an empty log. One query, shared by `/api/identity`'s
+    /// `chain_length`/`latest_hash` and the sealed-log document's `head`,
+    /// so the two can never disagree about the same chain.
+    pub fn sealed_log_tail(&self) -> Result<(u64, Option<[u8; 32]>)> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?;
+        let newest: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT entry_hash FROM sealed_events ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let newest = match newest {
+            Some(bytes) => Some(blob32(bytes, "sealed_events.entry_hash")?),
+            None => None,
+        };
+        Ok((u64::try_from(count).unwrap_or(0), newest))
+    }
+
+    /// The chain head as [`SealedLogHead`]: `seq` is the greatest row id
+    /// (which equals the row count only while nothing has ever been pruned
+    /// — ids are never reused, so after retention `seq` runs ahead of
+    /// `chain_length`), and `entry_hash` the newest row's hash.
+    fn sealed_log_head(&self) -> Result<SealedLogHead> {
+        let newest: Option<(i64, Vec<u8>)> = self
+            .conn
+            .query_row(
+                "SELECT id, entry_hash FROM sealed_events ORDER BY id DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        match newest {
+            Some((id, hash)) => Ok(SealedLogHead {
+                seq: u64::try_from(id).unwrap_or(0),
+                entry_hash: hex::encode(blob32(hash, "sealed_events.entry_hash")?),
+            }),
+            None => Ok(SealedLogHead::default()),
+        }
+    }
+
+    /// [`Self::sealed_log_document`] from a cursor: with `from_seq =
+    /// Some(n)` only rows with `seq > n` are served, and when row `n` is
+    /// itself inside the retained tail its `entry_hash` becomes the anchor
+    /// (`checkpoint_head`), so an incremental reader that remembered
+    /// `(n, hash_n)` resumes its walk exactly where it stopped. A cursor
+    /// older than the tail's anchor (pruned, or past a rotation) gets the
+    /// ordinary anchor instead: the reader sees the first served entry's
+    /// `prev_hash` is not its remembered hash and re-walks from the anchor
+    /// — a detectable re-anchoring, never a silent gap. `head` always
+    /// names the whole log's newest row, so "nothing new" and "rolled
+    /// back" are both visible against the cursor.
+    pub fn sealed_log_document_from(&self, from_seq: Option<u64>) -> Result<SealedLogDocument> {
+        let head = self.sealed_log_head()?;
         let checkpoint = crate::verify::latest_checkpoint(&self.conn)?;
         let (checkpoint_head, cutoff_event_id) =
             match (checkpoint.chain_head_hash, checkpoint.cutoff_event_id) {
@@ -2996,6 +3204,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             }
             entries.push(SealedLogDocumentEntry {
                 id,
+                seq: u64::try_from(id).unwrap_or(0),
                 payload,
                 prev_hash: hex::encode(prev_hash),
                 entry_hash: hex::encode(entry_hash),
@@ -3058,11 +3267,27 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             entries.drain(..=boundary);
         }
 
+        // The incremental cursor, applied LAST so it can only narrow what
+        // the checkpoint, rotation and size-cap rules already allow: rows
+        // at or before the cursor leave, and when the cursor row itself is
+        // in the tail its hash becomes the anchor the next row links to.
+        // A cursor before the tail (or inside the rows a rotation or the
+        // cap already dropped) changes nothing — the reader resumes from
+        // the anchor it is handed and sees the re-anchoring in prev_hash.
+        if let Some(from) = from_seq {
+            if let Some(pos) = entries.iter().position(|e| e.seq == from) {
+                anchor = Some(entries[pos].entry_hash.clone());
+            }
+            entries.retain(|e| e.seq > from);
+        }
+
         Ok(SealedLogDocument {
             verifying_key: hex::encode(self.device_key.verifying_key().to_bytes()),
             checkpoint_head: anchor,
             entries,
             rotation_records,
+            head,
+            from_seq,
         })
     }
 
@@ -3134,7 +3359,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         )
     }
 
-    /// Export events sequentially, grouped into coarse time buckets with batching and jitter.
+    /// Export events sequentially, grouped into coarse time buckets with
+    /// batching and jitter, and append the signed export receipt that makes
+    /// it a disclosure act. The receipt-less read is [`Self::view_events`].
     fn export_events_sequential_unchecked(
         &mut self,
         expected_ruleset_hash: [u8; 32],
@@ -3142,17 +3369,61 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         auth_mode: ExportAuthMode,
     ) -> Result<ExportArtifact> {
         Self::validate_export_options(&options)?;
+        let artifact = self.build_export_artifact(expected_ruleset_hash, options, None, false)?;
+        self.receipt_export(expected_ruleset_hash, &options, &artifact, auth_mode, None)?;
+        Ok(artifact)
+    }
 
+    /// Append the signed, hash-chained export receipt for `artifact`
+    /// (Invariant IV: every disclosure act leaves one). `token_id` names
+    /// the paired bearer when `auth_mode` is [`ExportAuthMode::Paired`].
+    fn receipt_export(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: &ExportOptions,
+        artifact: &ExportArtifact,
+        auth_mode: ExportAuthMode,
+        token_id: Option<String>,
+    ) -> Result<()> {
+        let artifact_bytes = serde_json::to_vec(artifact)?;
+        let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
+        let receipt = ExportReceipt {
+            time_bucket: TimeBucket::now_10min()?,
+            ruleset_hash: expected_ruleset_hash,
+            batch_size: options.max_events_per_batch,
+            artifact_hash,
+            auth_mode: Some(auth_mode),
+            window: options.window,
+            token_id,
+        };
+        self.log_export_receipt(&receipt)?;
+        Ok(())
+    }
+
+    /// The pure projection every export and state view is built from:
+    /// read the sealed log in order, drop the non-semantic records, bind
+    /// the ruleset, apply the window (and the `since_bucket_start` cursor)
+    /// on TRUE bucket starts, coarsen and jitter, then batch. Writes
+    /// nothing — no receipt — except the conformance alarm a foreign
+    /// ruleset hash raises, which is a corruption finding, not a
+    /// disclosure. `with_seq` attaches each event's row id, which only the
+    /// receipt-less views may carry (see [`ExportEvent::seq`]).
+    fn build_export_artifact(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        since_bucket_start: Option<u64>,
+        with_seq: bool,
+    ) -> Result<ExportArtifact> {
         let payloads = {
             let mut stmt = self
                 .conn
-                .prepare("SELECT payload_json FROM sealed_events ORDER BY id ASC")?;
+                .prepare("SELECT id, payload_json FROM sealed_events ORDER BY id ASC")?;
             let mut rows = stmt.query([])?;
-            let mut payloads = Vec::new();
+            let mut payloads: Vec<(i64, String)> = Vec::new();
 
             while let Some(row) = rows.next()? {
-                let payload: String = row.get(0)?;
-                payloads.push(payload);
+                payloads.push((row.get(0)?, row.get(1)?));
             }
 
             payloads
@@ -3162,7 +3433,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let mut bucket_index: std::collections::BTreeMap<(u64, u32), usize> =
             std::collections::BTreeMap::new();
 
-        for payload in payloads {
+        for (row_id, payload) in payloads {
             let record = SealedLogRecord::deserialize_compat(&payload)?;
 
             // Key-rotation records are identity-administration entries, not exportable
@@ -3194,6 +3465,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                     continue;
                 }
             }
+            // The state-view cursor: the same true-start rule as the window.
+            if since_bucket_start.is_some_and(|since| record_bucket.start_epoch_s < since) {
+                continue;
+            }
             let key = (record_bucket.start_epoch_s, record_bucket.size_s);
             let idx = if let Some(existing) = bucket_index.get(&key) {
                 *existing
@@ -3220,6 +3495,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                         kernel_version: ev.kernel_version,
                         ruleset_id: ev.ruleset_id,
                         ruleset_hash: ev.ruleset_hash,
+                        seq: with_seq.then(|| u64::try_from(row_id).unwrap_or(0)),
                     };
                     buckets[idx].events.push(export_event);
                 }
@@ -3266,26 +3542,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             batches.push(current);
         }
 
-        let artifact = ExportArtifact {
+        Ok(ExportArtifact {
             batches,
             max_events_per_batch: options.max_events_per_batch,
             jitter_s: options.jitter_s,
             jitter_step_s: options.jitter_step_s,
-        };
-
-        let artifact_bytes = serde_json::to_vec(&artifact)?;
-        let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
-        let receipt = ExportReceipt {
-            time_bucket: TimeBucket::now_10min()?,
-            ruleset_hash: expected_ruleset_hash,
-            batch_size: options.max_events_per_batch,
-            artifact_hash,
-            auth_mode: Some(auth_mode),
-            window: options.window,
-        };
-        self.log_export_receipt(&receipt)?;
-
-        Ok(artifact)
+        })
     }
 
     pub fn device_key_for_verify_only(&self) -> [u8; 32] {
@@ -3318,6 +3580,18 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     pub fn device_verifying_key(&self) -> VerifyingKey {
         self.device_key.verifying_key()
+    }
+
+    /// Sign a sig-less MQTT announce payload with the device key: plain
+    /// Ed25519 over [`crate::api::announce::announce_message`]'s bytes,
+    /// returned as 128 hex. The ONE raw-message signature the kernel makes
+    /// (every ledger entry signs a domain-separated digest), scoped by the
+    /// prefix inside the message and by the route that calls it, which
+    /// refuses a body that does not name this kernel.
+    pub fn sign_announce(&self, payload_without_sig: &[u8]) -> String {
+        use ed25519_dalek::Signer;
+        let message = crate::api::announce::announce_message(payload_without_sig);
+        hex::encode(self.device_key.sign(&message).to_bytes())
     }
 
     pub fn sign_break_glass_token(
@@ -3386,6 +3660,20 @@ const ARGON2_MAX_T: u32 = 16;
 const ARGON2_MAX_P: u32 = 8;
 /// Minimum salt length (bytes) for a v1 Argon2id seed.
 const ARGON2_MIN_SALT_LEN: usize = 16;
+
+/// The Home Assistant device id this kernel goes by on the owner's broker:
+/// `pwk_` + the first 8 hex of `sha256("securacv:ha-device-id:v1:" + seed)`.
+///
+/// ONE derivation for every producer — the MQTT bridge's retained discovery
+/// device, the add-on's Supervisor discovery payload, the sidecar's
+/// announce and `GET /api/identity` — so a given seed is named the same way
+/// everywhere, and never by any prefix of the seed itself (the id lands on
+/// retained topics every broker client can read; a short hash is stable per
+/// seed and reveals nothing about it).
+pub fn ha_device_id(seed: &str) -> String {
+    let digest = Sha256::digest(format!("securacv:ha-device-id:v1:{seed}").as_bytes());
+    format!("pwk_{}", hex::encode(&digest[..4]))
+}
 
 pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
     let trimmed = seed.trim();

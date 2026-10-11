@@ -71,6 +71,26 @@ impl TestApi {
             parts.next().unwrap_or("").to_string(),
         ))
     }
+
+    /// `POST /api/pair` with a well-formed (and, with no code issued,
+    /// refused) body.
+    fn post_pair(&self) -> Result<(String, String)> {
+        let handle = self.api_handle.as_ref().expect("api handle");
+        let mut stream = TcpStream::connect(handle.addr)?;
+        let body = r#"{"code":"123456"}"#;
+        let request = format!(
+            "POST /api/pair HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes())?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        let mut parts = response.splitn(2, "\r\n\r\n");
+        Ok((
+            parts.next().unwrap_or("").to_string(),
+            parts.next().unwrap_or("").to_string(),
+        ))
+    }
 }
 
 impl Drop for TestApi {
@@ -110,6 +130,22 @@ fn limit_applies_before_token_validation() -> Result<()> {
         assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
     }
     let (headers, body) = api.get("/digest", false)?;
+    assert!(
+        headers.contains("429 Too Many Requests"),
+        "headers: {headers}"
+    );
+    assert!(body.contains("rate_limited"), "body: {body}");
+
+    // The unauthenticated pairing write is in the limited set too: a code
+    // guesser is throttled by the limiter before the per-code budget and
+    // the per-IP strikes ever see the guess.
+    let api = TestApi::new(2)?;
+    for _ in 0..2 {
+        let (headers, body) = api.post_pair()?;
+        assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+        assert!(body.contains("invalid_pairing_code"), "body: {body}");
+    }
+    let (headers, body) = api.post_pair()?;
     assert!(
         headers.contains("429 Too Many Requests"),
         "headers: {headers}"

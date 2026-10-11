@@ -1649,6 +1649,7 @@ mod tests {
             api_fleet_peers_path: None,
             api_viewer_token_path: None,
             api_rate_limit_per_minute: witness_kernel::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE,
+            api_access: Default::default(),
             ingest: IngestSettings {
                 backend: IngestBackend::Rtsp,
                 failure_threshold: Duration::ZERO,
