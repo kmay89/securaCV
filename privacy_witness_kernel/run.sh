@@ -1,13 +1,31 @@
 #!/usr/bin/with-contenv bashio
 set -euo pipefail
-# Privacy Witness Kernel - Home Assistant Add-on Entry Script
-# Supports two modes:
-# - standalone: Process RTSP streams directly
-# - frigate: Subscribe to Frigate MQTT events for detection
+# SecuraCV app — the shared setup, run ONCE at container start as an s6
+# cont-init step (rootfs/etc/cont-init.d/securacv-setup, a copy of this
+# file). It renders everything the long-running services need and leaves
+# it under /run/securacv:
 #
-# Both modes can optionally publish events to MQTT with HA Discovery for
-# automatic entity creation in Home Assistant. The same publisher keeps the
-# fleet roll-call the kernel's GET /api/fleet serves (see FLEET_PEERS_FILE).
+#   /run/securacv/setup.sh     bash-sourceable: MODE, the kernel config
+#                              paths, the argv arrays and the per-broker
+#                              passwords of each service (0600, tmpfs)
+#   /run/securacv/configured   present only when the app is configured;
+#                              every kernel service and the watchdog probe
+#                              gate on it, so an unconfigured app runs the
+#                              setup wizard alone without flapping
+#
+# The services (rootfs/etc/services.d/*): panel (always), witness_api +
+# frigate_bridge (frigate mode), witnessd (standalone mode),
+# event_mqtt_bridge (when publishing), discovery (announces the API to the
+# Supervisor once it answers /health). Each sources setup.sh and execs its
+# binary; none of them renders config.
+#
+# Two things this step also does on every start, before the gate:
+#   * places the bundled blueprints under /config/blueprints/automation/
+#     securacv (never over a copy the user edited; run_lib.sh install_blueprints)
+#   * updates the SecuraCV integration the image carries, but ONLY a copy
+#     this app placed itself and only to a newer version, then asks for a
+#     restart with a persistent notification (integration_carry.py; D15).
+#     The first install is a click in the wizard, never a boot.
 
 
 CONFIG_FILE="/config/witness_config.json"
@@ -28,12 +46,17 @@ TOKEN_FILE="/config/api_token"
 FLEET_PEERS_FILE="/config/fleet_peers.json"
 DEVICE_KEY_FILE="/config/.securacv/device_key"
 INGRESS_PORT="${INGRESS_PORT:-8788}"
+RUN_DIR="/run/securacv"
+SETUP_FILE="$RUN_DIR/setup.sh"
+CONFIGURED_MARKER="$RUN_DIR/configured"
+BLUEPRINT_SRC="/usr/share/securacv/blueprints"
+BLUEPRINT_DEST="/config/blueprints/automation/securacv"
 
 # shellcheck source=privacy_witness_kernel/run_lib.sh disable=SC1091
 source /usr/local/bin/run_lib.sh
 
 # Log startup
-bashio::log.info "Starting Privacy Witness Kernel add-on..."
+bashio::log.info "SecuraCV: preparing the app..."
 
 # The Supervisor provides SUPERVISOR_TOKEN directly; HASSIO_TOKEN is the
 # deprecated alias and only a fallback. Never let the alias clobber the
@@ -42,12 +65,46 @@ bashio::log.info "Starting Privacy Witness Kernel add-on..."
 # (wizard saves, discovery, restarts).
 export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-${HASSIO_TOKEN:-}}"
 
+# A fresh run directory: nothing from a previous start survives, so a
+# service can never read a stale gate or a stale argv.
+rm -rf "$RUN_DIR"
+mkdir -p "$RUN_DIR"
+chmod 700 "$RUN_DIR"
+
+# ============================================================================
+# Bundled blueprints → /config/blueprints/automation/securacv. Missing or
+# app-owned-and-unedited copies follow the image; an edited copy is kept.
+# ============================================================================
+if [ -d "$BLUEPRINT_SRC" ]; then
+    while IFS= read -r line; do
+        bashio::log.info "Blueprints: $line"
+    done < <(install_blueprints "$BLUEPRINT_SRC" "$BLUEPRINT_DEST")
+fi
+
+# ============================================================================
+# The carried integration (D15): update the app's own copy when the image
+# carries a newer version; never a first install, never a HACS or edited
+# copy, never a Core restart — the CLI raises a persistent notification
+# asking for one. Skipped entirely when the option is off.
+# ============================================================================
+INSTALL_INTEGRATION="true"
+if bashio::config.has_value 'install_integration'; then
+    INSTALL_INTEGRATION=$(bashio::config 'install_integration')
+fi
+if [ "$INSTALL_INTEGRATION" = "true" ]; then
+    carry_result=$(/usr/bin/python3 /usr/local/bin/integration_carry.py on-start --notify 2>&1 || true)
+    bashio::log.info "Integration: ${carry_result}"
+else
+    bashio::log.info "Integration: install_integration is off; the app leaves /config/custom_components alone (HACS manages it)."
+fi
+
 # ============================================================================
 # First-run detection: the device key is auto-generated, so its absence no
-# longer marks a fresh install. The add-on is considered configured when the
+# longer marks a fresh install. The app is considered configured when the
 # user has made any deliberate choice: a key (option or wizard-written file),
-# frigate mode, or manually configured cameras. Otherwise serve the setup
-# wizard exclusively so the kernel doesn't crash-loop on factory defaults.
+# frigate mode, or manually configured cameras. Otherwise only the setup
+# wizard (the panel service) runs, so the kernel doesn't crash-loop on
+# factory defaults.
 # ============================================================================
 DEVICE_KEY_SEED=$(bashio::config 'device_key_seed' || echo "")
 MODE=$(bashio::config 'mode')
@@ -64,16 +121,15 @@ elif bashio::config.has_value 'cameras' && [ "$(bashio::config 'cameras' | jq le
 fi
 
 if [ "$CONFIGURED" != "true" ]; then
-    bashio::log.info "=== First-run detected: serving setup wizard on port ${INGRESS_PORT} ==="
-    bashio::log.info "Open the add-on Web UI to complete setup."
-
-    exec /usr/bin/python3 /usr/local/bin/serve_wizard.py
+    bashio::log.info "=== First-run detected: only the setup wizard runs (port ${INGRESS_PORT}) ==="
+    bashio::log.info "Open the app's Web UI to complete setup."
+    {
+        declare -p MODE
+        printf 'CONFIGURED="false"\n'
+    } > "$SETUP_FILE"
+    chmod 600 "$SETUP_FILE"
+    exit 0
 fi
-
-# Configured: keep the panel available alongside the kernel (status view,
-# reconfiguration, health checks). It is a stdlib-only Python process.
-/usr/bin/python3 /usr/local/bin/serve_wizard.py &
-bashio::log.info "Status panel started on port ${INGRESS_PORT} (PID: $!)"
 
 # Resolve the device key: option → wizard-written key file → auto-generate
 # and persist (0600). /config is captured by HA backups; the panel reminds
@@ -83,6 +139,12 @@ if [ -z "$DEVICE_KEY_SEED" ]; then
     bashio::log.error "Failed to resolve or generate a device key seed."
     exit 1
 fi
+
+# The public device id every producer shares (run_lib.sh ha_device_id):
+# the Supervisor discovery payload, the bridge's MQTT discovery and the
+# kernel's own /api/identity all name this seed the same way. Computed
+# here, once, before anything announces it.
+DEVICE_ID=$(ha_device_id "$DEVICE_KEY_SEED")
 
 # Read common configuration
 RETENTION_DAYS=$(bashio::config 'retention_days')
@@ -138,7 +200,7 @@ BUCKET_SECS=$((TIME_BUCKET_MIN * 60))
 # Ensure vault directory exists
 mkdir -p "$VAULT_PATH"
 
-# Export common environment variables
+# Common environment of every kernel process (exported into setup.sh below).
 export DEVICE_KEY_SEED
 export WITNESS_CONFIG="$CONFIG_FILE"
 export WITNESS_VAULT_PATH="$VAULT_PATH"
@@ -148,6 +210,7 @@ bashio::log.info "Mode: $MODE"
 bashio::log.info "Database: $DB_PATH"
 bashio::log.info "Retention: $RETENTION_DAYS days"
 bashio::log.info "Time bucket: $TIME_BUCKET_MIN minutes"
+bashio::log.info "Device ID: $DEVICE_ID"
 if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
     bashio::log.info "Fleet peers: $FLEET_PEERS_FILE (the MQTT publisher writes it; GET /api/fleet lists the Canaries it hears)"
 else
@@ -169,48 +232,9 @@ fi
 export WITNESS_API_ALLOW_INSECURE=1
 API_BIND_ADDR="0.0.0.0:8799"
 
-# ============================================================================
-# Supervisor discovery announcement. Once the kernel's Event API answers
-# /health, tell the Supervisor where it lives so the SecuraCV integration
-# can show a zero-click discovered card. Non-fatal: setup works without
-# it — discovery only removes typing on the integration side.
-# ============================================================================
-announce_discovery() {
-    local addon_host payload
-    addon_host=$(bashio::addon.hostname 2>/dev/null || hostname)
-    if [ -z "$addon_host" ]; then
-        bashio::log.warning "Discovery: could not determine the add-on hostname; skipping announcement."
-        return 0
-    fi
-
-    bashio::log.info "Discovery: waiting for the Event API before announcing to the Supervisor..."
-    local ready="false"
-    for _ in $(seq 1 60); do
-        if curl -sf http://127.0.0.1:8799/health > /dev/null 2>&1; then
-            ready="true"
-            break
-        fi
-        sleep 2
-    done
-    if [ "$ready" != "true" ]; then
-        bashio::log.warning "Discovery: Event API never became healthy; skipping announcement."
-        return 0
-    fi
-
-    payload=$(compose_discovery_payload "$addon_host" 8799)
-    if curl -sf -X POST \
-        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        http://supervisor/discovery > /dev/null 2>&1; then
-        bashio::log.info "Discovery: announced the Event API to the Supervisor (${addon_host}:8799)."
-        bashio::log.info "Discovery: the SecuraCV integration will now appear under Settings -> Devices & Services."
-    else
-        bashio::log.warning "Discovery: announcement to the Supervisor failed (non-fatal)."
-        bashio::log.warning "Discovery: add the SecuraCV integration manually; the kernel itself is unaffected."
-    fi
-    return 0
-}
+# The Supervisor-internal hostname the discovery payload and the MQTT
+# announce carry (contract C1/C6). Not a LAN address.
+ADDON_HOST=$(bashio::addon.hostname 2>/dev/null || hostname)
 
 # ============================================================================
 # Function to write API config for Frigate mode
@@ -232,17 +256,18 @@ EOF
 }
 
 # ============================================================================
-# Function to start MQTT publishing daemon (if enabled)
+# The MQTT publisher's argv (the event_mqtt_bridge service execs it).
 # ============================================================================
-start_mqtt_publisher() {
+PUBLISHER_CMD_ARRAY=()
+PUBLISHER_MQTT_PASSWORD=""
+PUBLISH_PREFIX="witness"
+prepare_mqtt_publisher() {
     if [ "$MQTT_PUBLISH_ENABLED" != "true" ]; then
         return
     fi
 
-    bashio::log.info "Starting MQTT event publisher with HA Discovery..."
-
     # Read MQTT publish configuration: explicit option → discovered → default
-    local PUBLISH_HOST PUBLISH_PORT PUBLISH_PREFIX DISCOVERY_PREFIX
+    local PUBLISH_HOST PUBLISH_PORT DISCOVERY_PREFIX
     local PUBLISH_USER="" PUBLISH_PASS=""
     local OPT_HOST="" OPT_PORT="" OPT_USER="" OPT_PASS=""
 
@@ -266,8 +291,6 @@ start_mqtt_publisher() {
 
     if bashio::config.has_value 'mqtt_publish.topic_prefix'; then
         PUBLISH_PREFIX=$(bashio::config 'mqtt_publish.topic_prefix')
-    else
-        PUBLISH_PREFIX="witness"
     fi
 
     if bashio::config.has_value 'mqtt_publish.discovery_prefix'; then
@@ -276,31 +299,10 @@ start_mqtt_publisher() {
         DISCOVERY_PREFIX="homeassistant"
     fi
 
-    # Wait for API to be ready
-    bashio::log.info "Waiting for witness API..."
-    for _ in $(seq 1 30); do
-        if curl -sf http://127.0.0.1:8799/health > /dev/null 2>&1; then
-            break
-        fi
-        sleep 1
-    done
-
-    # Public HA device id. It lands in retained MQTT discovery topics that every
-    # broker client can read, so it must carry ZERO bits of the seed: sha256 of
-    # the seed under a domain-separation prefix — the same derivation as the
-    # Docker sidecar (docker/sidecar/entrypoint.sh) and event_mqtt_bridge's own
-    # fallback, so every deployment names a given seed the same way. This line
-    # used to publish the first 8 characters of the seed itself.
-    #
-    # Entity-id MIGRATION: `pwk_<seed[0:8]>` becomes `pwk_<sha256(...)[0:8]>`,
-    # so entity_ids (sensor.pwk_<id>_*) change once on upgrade — old entities
-    # orphan and re-create under the new id. Re-point dashboards or automations
-    # that named the old ids, or delete the orphans in HA.
-    local DEVICE_ID
-    DEVICE_ID="pwk_$(printf '%s' "securacv:ha-device-id:v1:${DEVICE_KEY_SEED}" | sha256sum | cut -c1-8)"
-
-    # Scheduled sealed-log verification cadence (hours; 0 disables)
-    local VERIFY_INTERVAL_HOURS=24
+    # Scheduled sealed-log verification cadence (hours; 0 disables). Hourly
+    # by default so the kernel's self-report stays current beside the
+    # integration's own verification.
+    local VERIFY_INTERVAL_HOURS=1
     if bashio::config.has_value 'verify_interval_hours'; then
         VERIFY_INTERVAL_HOURS=$(bashio::config 'verify_interval_hours')
     fi
@@ -310,8 +312,10 @@ start_mqtt_publisher() {
     # Canary's availability/status/health/chain/state/meta topics (never
     # events or sensing) and keeps the summary the kernel's GET /api/fleet
     # reads. Both kernel config blocks name the same file — one variable.
-    local MQTT_CMD_ARRAY
-    MQTT_CMD_ARRAY=(
+    # The announce flags (contract C1): the API binds every interface inside
+    # the container, HA reads the rotating token file (no pairing), and the
+    # host is the Supervisor-internal name.
+    PUBLISHER_CMD_ARRAY=(
         "/usr/local/bin/event_mqtt_bridge"
         --daemon
         --allow-remote-mqtt
@@ -323,37 +327,36 @@ start_mqtt_publisher() {
         --fleet-peers-path "$FLEET_PEERS_FILE"
         --poll-interval 30
         --verify-interval-secs "$((VERIFY_INTERVAL_HOURS * 3600))"
+        --announce-api-bind all
+        --announce-pairing token_file
+        --announce-api-host "$ADDON_HOST"
     )
 
     if [ -n "$PUBLISH_USER" ]; then
-        MQTT_CMD_ARRAY+=(--mqtt-username "$PUBLISH_USER")
+        PUBLISHER_CMD_ARRAY+=(--mqtt-username "$PUBLISH_USER")
     fi
 
     # The password travels in the environment, never on argv: argv is readable
     # from /proc/<pid>/cmdline by anything in the container and shows up in
     # process listings and crash reports. event_mqtt_bridge reads MQTT_PASSWORD
-    # itself (clap `env`), the same way it already takes DEVICE_KEY_SEED. Set
-    # for this one child only (`env` below), not exported: in Frigate mode the
-    # frigate bridge may talk to a different broker with a different password.
-    local -a PUB_ENV=()
-    if [ -n "$PUBLISH_PASS" ]; then
-        PUB_ENV=(MQTT_PASSWORD="$PUBLISH_PASS")
-    fi
+    # itself (clap `env`), the same way it already takes DEVICE_KEY_SEED. The
+    # service sets it for that one child only: in Frigate mode the frigate
+    # bridge may talk to a different broker with a different password.
+    PUBLISHER_MQTT_PASSWORD="$PUBLISH_PASS"
 
     bashio::log.info "MQTT Publisher: $PUBLISH_HOST:$PUBLISH_PORT"
     bashio::log.info "  Topic prefix: $PUBLISH_PREFIX"
     bashio::log.info "  Discovery prefix: $DISCOVERY_PREFIX"
-    bashio::log.info "  Device ID: $DEVICE_ID"
     bashio::log.info "  Fleet peers file: $FLEET_PEERS_FILE"
-
-    # Start in background
-    env "${PUB_ENV[@]}" "${MQTT_CMD_ARRAY[@]}" &
-    bashio::log.info "MQTT publisher started (PID: $!)"
 }
+
+prepare_mqtt_publisher
 
 # ============================================================================
 # FRIGATE MODE
 # ============================================================================
+FRIGATE_CMD_ARRAY=()
+FRIGATE_MQTT_PASSWORD=""
 if [ "$MODE" = "frigate" ]; then
     bashio::log.info "=== Frigate Integration Mode ==="
 
@@ -396,7 +399,9 @@ if [ "$MODE" = "frigate" ]; then
     MQTT_TOPIC=$(resolve_frigate_topic "$OPT_FRIGATE_TOPIC" "$TOPIC_PREFIX")
     MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence')
 
-    # Get cameras and labels as comma-separated strings
+    # Get cameras and labels as comma-separated strings. Cameras are the
+    # shared slugs the wizard wrote (contract C8); the bridge slugs both
+    # sides before comparing, so a hand-typed name still meets Frigate's.
     FRIGATE_CAMERAS=""
     if bashio::config.has_value 'frigate.cameras'; then
         FRIGATE_CAMERAS=$(bashio::config 'frigate.cameras' | jq -r 'join(",")')
@@ -413,13 +418,14 @@ if [ "$MODE" = "frigate" ]; then
     bashio::log.info "Cameras: ${FRIGATE_CAMERAS:-all}"
     bashio::log.info "Labels: ${FRIGATE_LABELS:-default}"
     bashio::log.info "MQTT Auth: $([ -n "$MQTT_USER" ] && echo "enabled" || echo "disabled")"
+    bashio::log.info "Seals: $([ "$ENABLE_REVIEWS" = "true" ] && echo "only Frigate alerts (reviews)" || echo "every tracked object (events)")"
 
     # Build frigate_bridge command using array for safe argument handling
     # Note: --allow-remote-mqtt is safe in HA because:
     # 1. The MQTT broker (core-mosquitto) is a trusted HA component
     # 2. All event data is still sanitized before logging
     # 3. No raw media ever flows through this path
-    CMD_ARRAY=(
+    FRIGATE_CMD_ARRAY=(
         "/usr/local/bin/frigate_bridge"
         --allow-remote-mqtt
         --mqtt-broker-addr "$MQTT_HOST:$MQTT_PORT"
@@ -432,54 +438,32 @@ if [ "$MODE" = "frigate" ]; then
 
     # Legacy full-topic override wins over the prefix when explicitly set.
     if [ -n "$OPT_FRIGATE_TOPIC" ]; then
-        CMD_ARRAY+=(--frigate-topic "$OPT_FRIGATE_TOPIC")
+        FRIGATE_CMD_ARRAY+=(--frigate-topic "$OPT_FRIGATE_TOPIC")
     fi
 
     if [ "$ENABLE_REVIEWS" = "true" ]; then
-        CMD_ARRAY+=(--enable-reviews)
+        FRIGATE_CMD_ARRAY+=(--enable-reviews)
     fi
 
     if [ -n "$MQTT_USER" ]; then
-        CMD_ARRAY+=(--mqtt-username "$MQTT_USER")
+        FRIGATE_CMD_ARRAY+=(--mqtt-username "$MQTT_USER")
     fi
 
     # The broker password reaches frigate_bridge through the environment,
-    # never argv — set right at the exec below, so it is THIS broker's
-    # password and not the publisher's.
+    # never argv — the service sets it right at its exec, so it is THIS
+    # broker's password and not the publisher's.
+    FRIGATE_MQTT_PASSWORD="$MQTT_PASS"
 
     if [ -n "$FRIGATE_CAMERAS" ]; then
-        CMD_ARRAY+=(--cameras "$FRIGATE_CAMERAS")
+        FRIGATE_CMD_ARRAY+=(--cameras "$FRIGATE_CAMERAS")
     fi
 
     if [ -n "$FRIGATE_LABELS" ]; then
-        CMD_ARRAY+=(--labels "$FRIGATE_LABELS")
+        FRIGATE_CMD_ARRAY+=(--labels "$FRIGATE_LABELS")
     fi
 
-    bashio::log.info "Starting witness API service for Frigate mode..."
     write_frigate_api_config
-    /usr/local/bin/witness_api &
-    WITNESS_API_PID=$!
-    bashio::log.info "Witness API started (PID: $WITNESS_API_PID)"
-
-    # Announce the Event API for zero-click integration setup (background;
-    # waits for /health itself, never blocks or fails startup).
-    announce_discovery &
-
-    # Start MQTT publisher in background if enabled (for HA Discovery)
-    if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
-        start_mqtt_publisher
-    fi
-
-    # Password through the environment, not argv (readable from
-    # /proc/<pid>/cmdline by anything in the container). Set — or cleared —
-    # right here so the exec'd bridge sees its own broker's password only.
-    if [ -n "$MQTT_PASS" ]; then
-        export MQTT_PASSWORD="$MQTT_PASS"
-    else
-        unset MQTT_PASSWORD
-    fi
-    bashio::log.info "Starting frigate_bridge..."
-    exec "${CMD_ARRAY[@]}"
+    bashio::log.info "Configuration written to $CONFIG_FILE (witness_api + frigate_bridge start next)"
 
 # ============================================================================
 # STANDALONE MODE (Direct RTSP)
@@ -523,7 +507,7 @@ else
     if [ "$CAMERA_COUNT" -eq 0 ]; then
         bashio::log.error "No cameras configured!"
         bashio::log.error "Either:"
-        bashio::log.error "  1. Add cameras manually in the add-on configuration"
+        bashio::log.error "  1. Add cameras manually in the app configuration"
         bashio::log.error "  2. Enable go2rtc_discovery and ensure go2rtc is running"
         bashio::log.error "  3. Switch to 'frigate' mode if using Frigate NVR"
         exit 1
@@ -577,21 +561,24 @@ else
 }
 EOF
 
-    bashio::log.info "Configuration written to $CONFIG_FILE"
-
-    # Start MQTT publisher in background if enabled (for HA Discovery)
-    if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
-        (
-            # Wait for witnessd to start, then launch publisher
-            sleep 5
-            start_mqtt_publisher
-        ) &
-    fi
-
-    # Announce the Event API for zero-click integration setup (background;
-    # waits for /health itself, never blocks or fails startup).
-    announce_discovery &
-
-    bashio::log.info "Starting witnessd..."
-    exec /usr/local/bin/witnessd
+    bashio::log.info "Configuration written to $CONFIG_FILE (witnessd starts next)"
 fi
+
+# ============================================================================
+# Hand everything to the services. `declare -p` serializes the arrays and
+# keeps the exports exported; the file is root-only on tmpfs because it
+# carries the seed and the broker passwords.
+# ============================================================================
+{
+    printf '# Rendered by run.sh at container start; sourced by the s6 services.\n'
+    printf 'CONFIGURED="true"\n'
+    declare -p MODE DEVICE_ID ADDON_HOST TOKEN_FILE PUBLISH_PREFIX \
+        MQTT_PUBLISH_ENABLED INSTALL_INTEGRATION
+    declare -p DEVICE_KEY_SEED WITNESS_CONFIG WITNESS_VAULT_PATH RUST_LOG \
+        WITNESS_API_ALLOW_INSECURE
+    declare -p PUBLISHER_CMD_ARRAY PUBLISHER_MQTT_PASSWORD
+    declare -p FRIGATE_CMD_ARRAY FRIGATE_MQTT_PASSWORD
+} > "$SETUP_FILE"
+chmod 600 "$SETUP_FILE"
+touch "$CONFIGURED_MARKER"
+bashio::log.info "Setup complete; starting the services."

@@ -1,0 +1,289 @@
+#include <tunables/global>
+
+# SecuraCV app — custom AppArmor profile.
+#
+# Shape: the official apps-example (home-assistant/addons-example): one
+# profile for s6-overlay, bashio and the setup script, plus one child
+# profile per long-running process, each confined to the paths it needs.
+# The Supervisor rewrites the profile name to the app's installed slug
+# (d0491a67_privacy_witness_kernel); the `peer=*_privacy_witness_kernel`
+# globs below are written for that.
+#
+# Writes are listed by path on purpose. The only places the app writes:
+#   /data              the app's own state (options.json lives here)
+#   /run, /tmp         s6 and the setup's rendered service environment
+#   /config/witness.db*            the sealed log (SQLite WAL)
+#   /config/witness_config.json    the kernel config the setup renders
+#   /config/api_token (+ temp)     the rotating capability token
+#   /config/fleet_peers.json (+ temp)  the roll-call the publisher keeps
+#   /config/.securacv/**           the device key, wizard preferences
+#   /config/custom_components/securacv/**  the carried integration (D15),
+#        plus its atomic-rename siblings /config/custom_components/.securacv.*
+#   /config/blueprints/automation/securacv/**  the bundled blueprints
+#   /config/frigate.yml            the legacy Frigate config path (wizard)
+#   /addon_configs/ccab4aaf_frigate/config.yml{,.new}  Frigate's config (wizard)
+#   /share/**                      the vault
+# Nothing else under /config is written, and nothing is read from it that
+# the app does not own (the integration tree is read to verify the app's
+# own manifest before touching it).
+
+profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Capabilities: the container runs as root; file access is what this
+  # profile limits.
+  capability,
+  signal (send) set=(kill,term,int,hup,cont),
+  signal (receive) peer=*_privacy_witness_kernel,
+
+  # bashio and the setup talk to the Supervisor (http://supervisor) and the
+  # kernel (127.0.0.1:8799); go2rtc discovery and DNS need the rest.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+
+  # S6-Overlay
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /package/** ix,
+  /command/** ix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /run/{,**} rwk,
+  /dev/tty rw,
+  /dev/null rw,
+  /dev/urandom r,
+
+  # Bashio
+  /usr/lib/bashio/** ix,
+  /tmp/** rwk,
+
+  # Interpreters, libraries, the app's own scripts and the carried payloads
+  /usr/lib/** mr,
+  /lib/** mr,
+  /usr/local/bin/** rix,
+  /usr/local/share/securacv-wizard/** r,
+  /usr/share/securacv/** r,
+  /etc/** r,
+  /proc/** r,
+  /sys/** r,
+
+  # Access to options.json and other files within the app
+  /data/ rw,
+  /data/** rw,
+
+  # The setup's writes under the Home Assistant config directory, by name
+  /config/ r,
+  /config/api_token r,
+  /config/witness_config.json rw,
+  /config/.securacv/ rw,
+  /config/.securacv/** rw,
+  /config/blueprints/ rw,
+  /config/blueprints/automation/ rw,
+  /config/blueprints/automation/securacv/ rw,
+  /config/blueprints/automation/securacv/** rw,
+  /config/custom_components/ r,
+  /config/custom_components/securacv/ r,
+  /config/custom_components/securacv/** r,
+  /share/ rw,
+  /share/** rw,
+
+  # Start new profiles for the services
+  /usr/local/bin/witness_api cx -> witness_api,
+  /usr/local/bin/witnessd cx -> witnessd,
+  /usr/local/bin/frigate_bridge cx -> frigate_bridge,
+  /usr/local/bin/event_mqtt_bridge cx -> event_mqtt_bridge,
+  /usr/bin/python3* cx -> panel,
+
+  # The Event API in Frigate mode: serves the sealed log, rotates the token.
+  profile witness_api flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    # Receive signals from S6-Overlay
+    signal (receive) peer=*_privacy_witness_kernel,
+
+    network inet stream,
+    network inet6 stream,
+    network inet dgram,
+    network inet6 dgram,
+
+    /usr/local/bin/witness_api r,
+    /usr/lib/** mr,
+    /lib/** mr,
+    /etc/** r,
+    /proc/** r,
+    /sys/** r,
+    /dev/null rw,
+    /dev/urandom r,
+    /tmp/** rwk,
+
+    /config/ r,
+    /config/witness_config.json r,
+    /config/witness.db rwk,
+    /config/witness.db-* rwk,
+    /config/api_token rw,
+    /config/.api_token.*.tmp rw,
+    /config/viewer_tokens.json r,
+    /config/paired_tokens.json rw,
+    /config/.paired_tokens.json.*.tmp rw,
+    /config/pairing_code rw,
+    /config/.pairing_code.*.tmp rw,
+    /config/fleet_peers.json r,
+    /share/ r,
+    /share/** rwk,
+  }
+
+  # The standalone kernel: reads one RTSP camera, seals, serves the API.
+  profile witnessd flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    signal (receive) peer=*_privacy_witness_kernel,
+
+    network inet stream,
+    network inet6 stream,
+    network inet dgram,
+    network inet6 dgram,
+
+    /usr/local/bin/witnessd r,
+    /usr/lib/** mr,
+    /lib/** mr,
+    /etc/** r,
+    /proc/** r,
+    /sys/** r,
+    /dev/null rw,
+    /dev/urandom r,
+    /dev/video* rw,
+    /dev/shm/** rwk,
+    /tmp/** rwk,
+    # GStreamer keeps its plugin registry cache under $HOME/.cache.
+    /root/ r,
+    /root/.cache/ rw,
+    /root/.cache/** rwk,
+
+    /config/ r,
+    /config/witness_config.json r,
+    /config/witness.db rwk,
+    /config/witness.db-* rwk,
+    /config/api_token rw,
+    /config/.api_token.*.tmp rw,
+    /config/viewer_tokens.json r,
+    /config/paired_tokens.json rw,
+    /config/.paired_tokens.json.*.tmp rw,
+    /config/pairing_code rw,
+    /config/.pairing_code.*.tmp rw,
+    /config/fleet_peers.json r,
+    /share/ rw,
+    /share/** rwk,
+  }
+
+  # Frigate ingestion: MQTT in, sealed events into the same database.
+  profile frigate_bridge flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    signal (receive) peer=*_privacy_witness_kernel,
+
+    network inet stream,
+    network inet6 stream,
+    network inet dgram,
+    network inet6 dgram,
+
+    /usr/local/bin/frigate_bridge r,
+    /usr/lib/** mr,
+    /lib/** mr,
+    /etc/** r,
+    /proc/** r,
+    /sys/** r,
+    /dev/null rw,
+    /dev/urandom r,
+    /tmp/** rwk,
+
+    /config/ r,
+    /config/witness_config.json r,
+    /config/witness.db rwk,
+    /config/witness.db-* rwk,
+  }
+
+  # The Home Assistant publisher: reads the API with the token, publishes
+  # MQTT, keeps the fleet roll-call file.
+  profile event_mqtt_bridge flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    signal (receive) peer=*_privacy_witness_kernel,
+
+    network inet stream,
+    network inet6 stream,
+    network inet dgram,
+    network inet6 dgram,
+
+    /usr/local/bin/event_mqtt_bridge r,
+    /usr/lib/** mr,
+    /lib/** mr,
+    /etc/** r,
+    /proc/** r,
+    /sys/** r,
+    /dev/null rw,
+    /dev/urandom r,
+    /tmp/** rwk,
+
+    /config/ r,
+    /config/api_token r,
+    /config/fleet_peers.json rw,
+    /config/fleet_peers.json.tmp rw,
+  }
+
+  # The ingress panel (python3 serve_wizard.py) and the integration carry
+  # CLI (python3 integration_carry.py): the only process that writes the
+  # integration tree, the blueprint-reading digest step, and Frigate's config.
+  profile panel flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    signal (receive) peer=*_privacy_witness_kernel,
+
+    network inet stream,
+    network inet6 stream,
+    network inet dgram,
+    network inet6 dgram,
+
+    /usr/bin/python3* rix,
+    /usr/lib/** mr,
+    /lib/** mr,
+    /usr/local/bin/serve_wizard.py r,
+    /usr/local/bin/integration_carry.py r,
+    /usr/local/share/securacv-wizard/** r,
+    /usr/share/securacv/** r,
+    /etc/** r,
+    /proc/** r,
+    /sys/** r,
+    /dev/null rw,
+    /dev/urandom r,
+    /tmp/** rwk,
+    /run/securacv/ r,
+    /run/securacv/** r,
+
+    /data/ r,
+    /data/** r,
+    /config/ r,
+    /config/api_token r,
+    /config/.securacv/ rw,
+    /config/.securacv/** rw,
+    /config/frigate.yml rw,
+    /config/blueprints/automation/securacv/ r,
+    /config/blueprints/automation/securacv/** r,
+    /config/custom_components/ rw,
+    /config/custom_components/securacv/ rw,
+    /config/custom_components/securacv/** rw,
+    /config/custom_components/.securacv.* rw,
+    /config/custom_components/.securacv.*/ rw,
+    /config/custom_components/.securacv.*/** rw,
+    /addon_configs/ r,
+    /addon_configs/** r,
+    /addon_configs/ccab4aaf_frigate/ rw,
+    /addon_configs/ccab4aaf_frigate/config.yml rw,
+    /addon_configs/ccab4aaf_frigate/config.yml.new rw,
+  }
+}

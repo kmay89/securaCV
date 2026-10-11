@@ -1,8 +1,11 @@
-# Privacy Witness Kernel - Home Assistant Add-on Configuration
+# SecuraCV — Home Assistant app (add-on) configuration
 # https://github.com/kmay89/securaCV
+#
+# The slug stays `privacy_witness_kernel` so existing installs upgrade in
+# place; "Privacy Witness Kernel" survives as the kernel device's model name.
 
-name: "Privacy Witness Kernel"
-description: "Privacy-preserving video surveillance that produces claims, not recordings"
+name: "SecuraCV"
+description: "The verified witness log for Frigate — signed events, no footage, no identity"
 version: "0.8.0"
 slug: "privacy_witness_kernel"
 url: "https://github.com/kmay89/securaCV"
@@ -10,22 +13,38 @@ url: "https://github.com/kmay89/securaCV"
 # With `image:` set, the Supervisor PULLS this instead of compiling the Rust
 # kernel on-device (a slow/heavy build on a Pi). {arch} is substituted by HA.
 image: "ghcr.io/kmay89/{arch}-addon-privacy_witness_kernel"
+# Block style on purpose: verify_published_image.sh reads this list with awk.
 arch:
-  - amd64
   - aarch64
+  - amd64
+# The Home Assistant floor. Shared with the integration (hacs.json) and the
+# blueprints' min_version: the discovered card, the strategy dashboard and
+# the event platform the integration relies on all exist from here.
+homeassistant: "2026.5.0"
+# The image's s6-overlay is PID 1 (rootfs/etc/services.d), not docker-init.
 init: false
 homeassistant_api: true
 hassio_api: true
+# No hassio_role: every Supervisor path the app calls is within the default
+# role (its own options, /services/mqtt, /addons/<slug>/info, /discovery) or
+# the core API proxy that homeassistant_api opens. "Install it for me" is a
+# my.home-assistant.io link; a Core restart is POST
+# /core/api/services/homeassistant/restart on the person's click.
+
+# The Supervisor restarts the app when this stops answering 200. The panel
+# answers 200 only while the kernel's own /health does (and while the setup
+# wizard is the whole app, before configuration — see serve_wizard.py).
+watchdog: "http://[HOST]:[PORT:8788]/api/health"
 
 # Ask the Supervisor for the shared MQTT service (Mosquitto add-on) so the
 # broker host/credentials can be auto-discovered at startup. `want` (not
-# `need`): users with an external broker can still start the add-on.
+# `need`): users with an external broker can still start the app.
 services:
   - "mqtt:want"
 
 # Announce the Event API to the Supervisor after startup so the SecuraCV
-# integration can offer a zero-click discovered card (run.sh POSTs
-# /discovery once the kernel answers /health).
+# integration can offer a zero-click discovered card (the discovery service
+# POSTs /discovery once the kernel answers /health; payload per contract C6).
 discovery:
   - securacv
 
@@ -33,7 +52,7 @@ discovery:
 # integration reaches it over the internal add-on network at
 # http://d0491a67-privacy-witness-kernel:8799 (every request needs the
 # capability token from /config/api_token). The host port mapping is
-# DISABLED by default — enable it in the add-on's Network settings only if
+# DISABLED by default — enable it in the app's Network settings only if
 # something outside Home Assistant needs the API on your LAN.
 ports:
   8799/tcp: null
@@ -47,16 +66,22 @@ ports_description:
     client outside Home Assistant needs it; the SecuraCV integration already
     reaches the API over the internal add-on network.
 
-# Persistent storage
+# Persistent storage. Typed entries with explicit paths keep every path the
+# app, the kernel and the integration already agree on byte-identical
+# (/config/api_token, /config/witness.db, /config/custom_components/securacv,
+# /addon_configs/ccab4aaf_frigate/config.yml) while retiring the legacy
+# `config` / `all_addon_configs` map names.
 map:
-  - config:rw      # For witness.db and configuration
-  - share:rw       # For vault storage
-  - ssl:ro         # For camera certificates if needed
-  # For the wizard-generated Frigate config: the modern Frigate add-on reads
-  # /addon_configs/ccab4aaf_frigate/config.yml, not /config/frigate.yml.
-  - all_addon_configs:rw
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+  - type: all_app_configs
+    read_only: false
+    path: /addon_configs
+  - type: share
+    read_only: false
 
-# Add-on options (configurable via HA UI)
+# Add-on options (configurable via HA UI). translations/en.yaml names each.
 options:
   # Mode: "standalone" (process RTSP directly) or "frigate" (subscribe to Frigate events)
   mode: "standalone"
@@ -66,6 +91,7 @@ options:
   # service (Mosquitto add-on); set them only for an external broker.
   # topic_prefix matches Frigate's mqtt.topic_prefix (default "frigate");
   # mqtt_topic is a legacy full-topic override that wins when set.
+  # cameras holds camera SLUGS (the wizard writes them; contract C8).
   frigate:
     mqtt_host: ""
     mqtt_port: 1883
@@ -84,7 +110,7 @@ options:
   go2rtc_url: "http://homeassistant.local:1984"
 
   # MQTT event publishing with Home Assistant Discovery
-  # When enabled, PWK automatically creates sensors in Home Assistant.
+  # When enabled, the kernel's events reach Home Assistant over MQTT.
   # Enabled by default so events are visible in HA out of the box; broker
   # settings left empty are auto-discovered like the frigate ones above.
   mqtt_publish:
@@ -101,9 +127,14 @@ options:
   retention_days: 7
   time_bucket_minutes: 10
   log_level: "info"
-  # Hours between automatic sealed-log verifications (0 disables).
-  # Keeps the chain-integrity sensor fresh without pressing "Verify Now".
-  verify_interval_hours: 24
+  # Hours between automatic sealed-log verifications (0 disables). Hourly
+  # keeps "Verified" current; the integration verifies on its own as well.
+  verify_interval_hours: 1
+  # Let the app place the SecuraCV integration it carries into
+  # /config/custom_components when you click "Install the integration" on
+  # the wizard's done screen, and keep its own copy updated on app start
+  # (never a copy HACS or you installed; never an automatic restart).
+  install_integration: true
 
 schema:
   mode: list(standalone|frigate)
@@ -141,6 +172,7 @@ schema:
   time_bucket_minutes: int(5,60)
   log_level: list(debug|info|warn|error)
   verify_interval_hours: int(0,168)?
+  install_integration: bool?
 
 # Environment variables passed to the add-on
 environment:
@@ -157,5 +189,6 @@ panel_title: "SecuraCV"
 startup: services
 boot: auto
 
-# Security options
+# Security options: the custom profile in apparmor.txt (named after the slug)
+# confines each process to the paths it needs.
 apparmor: true
