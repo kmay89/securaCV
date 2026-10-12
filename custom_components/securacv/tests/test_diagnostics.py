@@ -231,7 +231,7 @@ def test_canary_status_is_projected_not_copied() -> None:
     assert diag["canary_device_count"] == 1
     assert diag["mqtt"] == {"enabled": True, "prefix": "securacv", "subscription_count": 2}
     assert diag["evidence_exports"] == {"count": 0}
-    assert diag["platforms_loaded"] == ["sensor", "binary_sensor"]
+    assert diag["platforms_loaded"] == ["sensor", "binary_sensor", "event", "button"]
     assert diag["chain_verification"]["ok"] is None
     assert diag["chain_verification"]["covered"] == 0
 

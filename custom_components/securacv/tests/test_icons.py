@@ -15,6 +15,8 @@ from pathlib import Path
 from . import conftest  # noqa: F401  (installs the base HA stubs)
 
 from .. import binary_sensor as bs_platform  # noqa: E402
+from .. import button as button_platform  # noqa: E402
+from .. import event as event_platform  # noqa: E402
 from .. import sensor as sensor_platform  # noqa: E402
 from ..const import ALL_TAMPER_TYPES, ALL_TRANSPORTS  # noqa: E402
 
@@ -68,7 +70,12 @@ def _class_icons(module, platform: str) -> dict[str, str]:
 
 
 def test_in_code_icons_agree_with_the_translations():
-    for platform, module in (("sensor", sensor_platform), ("binary_sensor", bs_platform)):
+    for platform, module in (
+        ("sensor", sensor_platform),
+        ("binary_sensor", bs_platform),
+        ("event", event_platform),
+        ("button", button_platform),
+    ):
         for key, icon in _class_icons(module, platform).items():
             assert ICONS["entity"][platform][key]["default"] == icon, (platform, key)
     # The per-type tables feed the constructor; they agree too.

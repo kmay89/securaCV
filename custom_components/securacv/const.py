@@ -72,6 +72,76 @@ DEFAULT_EVIDENCE_KEEP = 20
 MIN_EVIDENCE_KEEP = 1
 MAX_EVIDENCE_KEEP = 200
 
+# =============================================================================
+# The integration's OWN verification (D10) — vocabulary and cadence
+# =============================================================================
+# `verification` on every kernel event row. "verified" is earned only by the
+# integration's chain walk (Ed25519 + hash chain against the pinned key);
+# "sealed" is kernel-signed but not yet covered by a walk; "failed" is the
+# last walk rejecting an entry. A kernel self-report never reaches this word.
+VERIFICATION_SEALED = "sealed"
+VERIFICATION_VERIFIED = "verified"
+VERIFICATION_FAILED = "failed"
+# `trust_reason` beside it: why the row carries the verification it does.
+TRUST_REASON_HA_VERIFIED_CHAIN = "ha_verified_chain"
+TRUST_REASON_KERNEL_SEALED = "kernel_sealed"
+TRUST_REASON_HA_VERIFY_FAILED = "ha_verify_failed"
+TRUST_REASON_KERNEL_KEY_MISMATCH = "kernel_key_mismatch"
+
+# The verification event entity's types (contract C10 as amended).
+VERIFICATION_EVENT_CHAIN_VERIFIED = "chain_verified"
+VERIFICATION_EVENT_CHAIN_FAILED = "chain_verification_failed"
+VERIFICATION_EVENT_KEY_CHANGED = "witness_key_changed"
+VERIFICATION_EVENT_TYPES: tuple[str, ...] = (
+    VERIFICATION_EVENT_CHAIN_VERIFIED,
+    VERIFICATION_EVENT_CHAIN_FAILED,
+    VERIFICATION_EVENT_KEY_CHANGED,
+)
+# What started a walk, carried on the verification event as `trigger`.
+VERIFY_TRIGGER_BUTTON = "button"
+VERIFY_TRIGGER_SERVICE = "service"
+VERIFY_TRIGGER_SCHEDULED = "scheduled"
+VERIFY_TRIGGER_IDLE = "idle"
+VERIFY_TRIGGER_BRIDGE = "bridge"
+# The walk's cadence: a 15-minute backstop, and 60 s after new entries go
+# idle (a few thousand Ed25519 checks is sub-second, so "Verified" is what a
+# person normally sees).
+VERIFY_BACKSTOP_INTERVAL_SECONDS = 15 * 60
+VERIFY_IDLE_DELAY_SECONDS = 60
+# How long the covered-entry index remembers an entry when the kernel's
+# digest does not say its retention; and a hard cap on the index.
+VERIFY_COVERED_DEFAULT_RETENTION_SECONDS = 30 * 24 * 3600
+VERIFY_COVERED_MAX_ENTRIES = 100_000
+# The Frigate link is "on" while the bridge says connected AND Frigate was
+# heard within this long (a quiet night is not a dead link, an hour is).
+FRIGATE_LINK_STALE_AFTER_SECONDS = 3600
+
+# =============================================================================
+# Evidence export (contract C7 as replaced by the delta)
+# =============================================================================
+# The export directory under the Home Assistant configuration directory —
+# never under www/ (served without authentication) — 0700, files 0600.
+EVIDENCE_DIR_PARTS = ("securacv", "evidence")
+EVIDENCE_INDEX_FILENAME = "index.json"
+# The authenticated view that streams a zip, and the signed-link lifetime.
+EVIDENCE_VIEW_URL = "/api/securacv/evidence/{export_id}"
+EVIDENCE_VIEW_NAME = "api:securacv:evidence"
+EVIDENCE_LINK_HOURS = 24
+# The export window, in whole hours.
+EXPORT_WINDOW_MIN_HOURS = 1
+EXPORT_WINDOW_MAX_HOURS = 720
+EXPORT_WINDOW_DEFAULT_HOURS = 24
+# What W5 ships under www/ and what each zip carries: the offline viewer
+# (byte-equal to viewer/evidence_viewer.html), the recipient's recipe, and
+# the pinned witness key so "self-attested" can become "authorship confirmed".
+EVIDENCE_VIEWER_SOURCE = "securacv-evidence-viewer.html"
+EVIDENCE_README_SOURCE = "evidence-README.txt"
+EVIDENCE_ZIP_VIEWER = "evidence_viewer.html"
+EVIDENCE_ZIP_README = "README.txt"
+EVIDENCE_ZIP_KEY = "WITNESS_KEY.txt"
+# The kernel's bundle download must stay bounded: one coarse log is small.
+EXPORT_BUNDLE_MAX_BYTES = 64 * 1024 * 1024
+
 # The kernel's 10-minute time bucket: every "at" the integration records is a
 # bucket start, never an event-precise epoch (coarse time, invariant III).
 TIME_BUCKET_SECONDS = 600
@@ -290,12 +360,17 @@ WARNING_BATTERY_THRESHOLD_PERCENT = 25   # < 25% battery = warning
 # These are claims, never identities: no plates, faces, or precise location.
 # =============================================================================
 EVENT_TYPE_METADATA = {
+    # D13: a Frigate person and a Frigate car both seal as the large class,
+    # a dog or a cat as the small one. The label says what the coarse claim
+    # means to a person; the dictionary id (and the kernel's variant) is
+    # unchanged. The honest coarsening is explained once, in the strategy
+    # header, not per row.
     "boundary_crossing_object_large": {
-        "label": "Large object crossed boundary",
+        "label": "Person or vehicle",
         "icon": "mdi:car",
     },
     "boundary_crossing_object_small": {
-        "label": "Small object crossed boundary",
+        "label": "Animal or small object",
         "icon": "mdi:paw",
     },
     "acoustic_impulse_in_zone": {
@@ -504,26 +579,52 @@ def normalize_attestation(value: str | None) -> str:
     return ATTESTATION_DEVICE
 
 
+# The witness event-type ids, DERIVED from the metadata table above (which
+# scripts/lint_dictionary_sync.py holds to spec/witness_dictionary.json). The
+# event platform's `event_types` and the verifier's covered-entry index both
+# read this tuple; neither retypes an id (the linter asserts event.py holds
+# no literal list).
+WITNESS_EVENT_TYPES: tuple[str, ...] = tuple(EVENT_TYPE_METADATA)
+
+
+def normalize_event_type(event_type: object) -> str | None:
+    """The snake_case dictionary id of an event type, or None.
+
+    The kernel and its bridge spell event types as the Rust enum variant
+    (``BoundaryCrossingObjectLarge``); Home Assistant's event entities and
+    the dictionary spell them snake_case (``boundary_crossing_object_large``).
+    One fold, used by every consumer, so an event pushed by the bridge, an
+    entry walked out of the sealed log and the entity's ``event_types`` list
+    agree on the spelling they are compared by. Unknown types fold the same
+    way (the caller decides whether an unknown id is an error).
+    """
+    if not isinstance(event_type, str):
+        return None
+    key = event_type.strip()
+    if not key:
+        return None
+    if key in EVENT_TYPE_METADATA:
+        return key
+    snake = ""
+    for i, ch in enumerate(key):
+        if ch.isupper() and i > 0:
+            snake += "_"
+        snake += ch.lower()
+    return snake
+
+
 def event_type_metadata(event_type: str | None) -> dict[str, str]:
     """Return {'label', 'icon'} for an event_type, with a sensible default.
 
     Accepts both snake_case (e.g. "acoustic_impulse_in_zone") and the kernel's
     CamelCase enum form (e.g. "AcousticImpulseInZone").
     """
-    if not event_type:
+    key = normalize_event_type(event_type)
+    if key is None:
         return {"label": "Unknown", "icon": DEFAULT_EVENT_ICON}
-    key = event_type.strip()
-    if key not in EVENT_TYPE_METADATA:
-        # Normalize CamelCase -> snake_case so kernel enum names also resolve.
-        snake = ""
-        for i, ch in enumerate(key):
-            if ch.isupper() and i > 0:
-                snake += "_"
-            snake += ch.lower()
-        key = snake
     meta = EVENT_TYPE_METADATA.get(key)
     if meta is None:
-        return {"label": event_type, "icon": DEFAULT_EVENT_ICON}
+        return {"label": str(event_type), "icon": DEFAULT_EVENT_ICON}
     return meta
 
 

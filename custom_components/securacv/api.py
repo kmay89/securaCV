@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
 
-from .const import PAIRED_TOKEN_LABEL
+from .const import EXPORT_BUNDLE_MAX_BYTES, PAIRED_TOKEN_LABEL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +33,9 @@ REQUEST_TIMEOUT_SECONDS = 10
 # The token is 64 hex chars; cap the read so a misconfigured path (device
 # node, huge file) can't balloon memory.
 TOKEN_FILE_READ_CAP = 4096
+# The kernel names a bundle download `securacv-events-<bucket start>.json`
+# (src/api/mod.rs); anything else in the header is not a filename we keep.
+BUNDLE_FILENAME_RE = re.compile(r'filename="?(securacv-events-\d+\.json)"?')
 
 
 class SecuraCVApiError(Exception):
@@ -58,6 +63,23 @@ class PairResult:
     device_id: str
     verifying_key: str
     kernel_version: str
+
+
+@dataclass(frozen=True)
+class BundleDownload:
+    """GET /export/bundle: the kernel's filename and the bytes, verbatim."""
+
+    filename: str
+    content: bytes
+
+
+def bundle_filename(content_disposition: str | None, fallback: str) -> str:
+    """The kernel's filename from a Content-Disposition header, else `fallback`."""
+    if content_disposition:
+        match = BUNDLE_FILENAME_RE.search(content_disposition)
+        if match:
+            return match.group(1)
+    return fallback
 
 
 class SecuraCVApi:
@@ -144,6 +166,34 @@ class SecuraCVApi:
         authenticated: bool = True,
     ) -> dict[str, Any] | None:
         """Send one request, retrying once with a re-read token on 401."""
+
+        async def _read_json(resp: Any) -> dict[str, Any]:
+            try:
+                data = await resp.json()
+            except aiohttp.ContentTypeError as err:
+                raise SecuraCVApiResponseError(f"invalid JSON response: {err}") from err
+            return data if isinstance(data, dict) else {}
+
+        return await self._async_request(
+            method, path, _read_json, none_on_404=none_on_404, authenticated=authenticated
+        )
+
+    async def _async_request(
+        self,
+        method: str,
+        path: str,
+        read: Any,
+        *,
+        none_on_404: bool = False,
+        authenticated: bool = True,
+    ) -> Any:
+        """Send one request and hand the 200 response to `read`.
+
+        Retries once with a re-read token on 401 (the rotating token file).
+        `read` is an async callable over the aiohttp response — JSON for the
+        state endpoints, the raw bytes for a bundle download — so the retry
+        and the error mapping live here once.
+        """
         # Token-file-only setups start with an empty token; prime it from the
         # file so the first request isn't a guaranteed 401 round-trip (and so
         # a restart across a rotation boundary still has the one 401-retry in
@@ -172,13 +222,7 @@ class SecuraCVApi:
                         raise SecuraCVApiResponseError(
                             f"unexpected status: {resp.status}"
                         )
-                    try:
-                        data = await resp.json()
-                    except aiohttp.ContentTypeError as err:
-                        raise SecuraCVApiResponseError(
-                            f"invalid JSON response: {err}"
-                        ) from err
-                    return data if isinstance(data, dict) else {}
+                    return await read(resp)
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 raise SecuraCVApiConnectionError("unable to reach API") from err
         raise SecuraCVApiAuthError("unauthorized")
@@ -230,6 +274,57 @@ class SecuraCVApi:
     async def async_revoke_paired_token(self, token_id: str) -> None:
         """DELETE /api/pair/<id>: a paired token may revoke itself."""
         await self._async_request_json("DELETE", f"/api/pair/{token_id}")
+
+    async def async_get_sealed_log(self, from_seq: int | None = None) -> dict[str, Any]:
+        """GET /api/sealed-log[?from_seq=<n>] (contract C4 as amended).
+
+        The checkpoint-anchored sealed-log document: the verifying key, the
+        anchor, the entries exactly as stored (each with its `seq`), and the
+        chain head. With `from_seq` only entries newer than that row are
+        served, so a poller that remembers its last verified head downloads
+        the increment. Receipt-less on the kernel (a state read).
+        """
+        path = "/api/sealed-log"
+        if from_seq is not None:
+            path = f"{path}?from_seq={int(from_seq)}"
+        data = await self._async_request_json("GET", path)
+        return data if data is not None else {}
+
+    async def async_download_export_bundle(self, window_hours: int) -> BundleDownload:
+        """GET /export/bundle?last=<hours>h: the signed bundle, verbatim.
+
+        The bytes are kept exactly as the kernel sent them (the receipt
+        signs the artifact hash; a re-serialization would break offline
+        verification) and the kernel's filename is kept from the
+        Content-Disposition header. The download is capped so a misbehaving
+        kernel cannot balloon memory. This is the one receipted read the
+        integration makes (a disclosure act, D5).
+        """
+        hours = int(window_hours)
+        # The kernel names the file by the current 10-minute bucket start.
+        fallback = f"securacv-events-{int(time.time()) // 600 * 600}.json"
+
+        async def _read_bytes(resp: Any) -> BundleDownload:
+            length = getattr(resp, "content_length", None)
+            if isinstance(length, int) and length > EXPORT_BUNDLE_MAX_BYTES:
+                raise SecuraCVApiResponseError(f"export bundle too large: {length} bytes")
+            content = await resp.read()
+            if len(content) > EXPORT_BUNDLE_MAX_BYTES:
+                raise SecuraCVApiResponseError(
+                    f"export bundle too large: {len(content)} bytes"
+                )
+            disposition = None
+            headers = getattr(resp, "headers", None)
+            if headers is not None:
+                disposition = headers.get("Content-Disposition")
+            return BundleDownload(
+                filename=bundle_filename(disposition, fallback), content=bytes(content)
+            )
+
+        result = await self._async_request("GET", f"/export/bundle?last={hours}h", _read_bytes)
+        if not isinstance(result, BundleDownload):
+            raise SecuraCVApiResponseError("export bundle download produced no body")
+        return result
 
 
 async def async_pair_kernel(

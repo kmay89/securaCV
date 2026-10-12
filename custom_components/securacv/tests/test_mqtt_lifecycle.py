@@ -30,6 +30,7 @@ from homeassistant.core import HomeAssistant  # noqa: E402  (the stub)
 
 from .. import async_unload_entry  # noqa: E402
 from .. import binary_sensor as bs_platform  # noqa: E402
+from .. import event as event_platform  # noqa: E402
 from .. import sensor as sensor_platform  # noqa: E402
 from ..const import DOMAIN  # noqa: E402
 
@@ -79,6 +80,7 @@ ENTITY_CLASSES = [
     (bs_platform.SecuraCVCanaryOccupancySensor, ()),     # 2 subscriptions
     (bs_platform.SecuraCVCanaryMeshConnectedSensor, ()),
     (bs_platform.SecuraCVCanaryChirpActiveSensor, ()),
+    (event_platform.SecuraCVCanaryTamperEventEntity, ()),
 ]
 
 
@@ -113,6 +115,7 @@ def test_discovery_subscriptions_land_in_unsub_mqtt(monkeypatch) -> None:
     for setup, expected_topics in (
         (sensor_platform._setup_mqtt_sensors, 5),
         (bs_platform._setup_mqtt_binary_sensors, 8),
+        (event_platform._async_setup_tamper_events, 2),
     ):
         recorder = _Recorder()
         monkeypatch.setattr(MQTT_STUB, "async_subscribe", recorder.async_subscribe)

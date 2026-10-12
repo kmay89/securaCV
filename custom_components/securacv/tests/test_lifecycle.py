@@ -139,10 +139,10 @@ def test_both_mode_setup_subscribes_claims_and_registers_the_kernel_device():
     assert runtime.coordinator.backstop_ok is True
 
     topics = [t for t, _cb in hass.data["_securacv_test_mqtt_subscriptions"]]
-    assert topics[:7] == [f"witness/{s}" for s in (
-        "last_event", "digest", "chain_problem", "chain_problem/attrs", "status", "claim_state",
-        "frigate_link")]
-    assert topics[7:] == ["securacv/+/status", "securacv/+/availability", "securacv/+/health"]
+    assert topics[:8] == [f"witness/{s}" for s in (
+        "last_event", "events", "digest", "chain_problem", "chain_problem/attrs", "status",
+        "claim_state", "frigate_link")]
+    assert topics[8:] == ["securacv/+/status", "securacv/+/availability", "securacv/+/health"]
 
     # The claim went out retained, and will be refreshed hourly.
     (claim,) = [m for m in published(hass) if m["topic"] == f"witness/claim/{DEVICE_ID}"]
@@ -161,7 +161,10 @@ def test_both_mode_setup_subscribes_claims_and_registers_the_kernel_device():
     assert device.serial_number == DEVICE_ID and device.sw_version == "2.4.16"
     assert device.configuration_url == "http://kernel:8799"
     assert all(isinstance(getattr(device, k), str) for k in ("name", "model", "sw_version"))
-    assert hass.config_entries.forwarded[0][1] == ["sensor", "binary_sensor"]
+    assert hass.config_entries.forwarded[0][1] == ["sensor", "binary_sensor", "event", "button"]
+    # The chain verifier is running for the kernel and is released with the entry.
+    assert runtime.verifier is not None
+    assert runtime.verifier.async_stop in runtime.unsub_mqtt
 
 
 def test_the_migration_notice_is_raised_once():
@@ -247,7 +250,7 @@ def test_unload_releases_everything_but_keeps_the_claim():
     assert run(async_unload_entry(hass, entry)) is True
     assert runtime.unsub_mqtt == []
     assert published(hass) == before, "unload never withdraws the claim"
-    assert hass.config_entries.unloaded[0][1] == ["sensor", "binary_sensor"]
+    assert hass.config_entries.unloaded[0][1] == ["sensor", "binary_sensor", "event", "button"]
 
 
 def test_remove_entry_withdraws_the_claim_revokes_the_token_and_clears_issues():

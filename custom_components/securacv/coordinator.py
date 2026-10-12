@@ -26,12 +26,14 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import OrderedDict
 from datetime import timedelta
 from typing import Any, Callable
 
 from homeassistant.components import mqtt
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 import aiohttp
@@ -50,16 +52,20 @@ from .const import (
     CLAIM_STATE_UNCLAIMED,
     CONF_KERNEL_KEY_PINNED_BUCKET_START,
     CONF_KERNEL_VERIFYING_KEY,
+    DOMAIN,
     KERNEL_STATUS_OFFLINE,
     KERNEL_STATUS_ONLINE,
     KERNEL_TOPIC_CHAIN_PROBLEM,
     KERNEL_TOPIC_CHAIN_PROBLEM_ATTRS,
     KERNEL_TOPIC_CLAIM_STATE,
     KERNEL_TOPIC_DIGEST,
+    KERNEL_TOPIC_EVENTS,
     KERNEL_TOPIC_FRIGATE_LINK,
     KERNEL_TOPIC_LAST_EVENT,
     KERNEL_TOPIC_STATUS,
     TIME_BUCKET_SECONDS,
+    VERIFICATION_EVENT_KEY_CHANGED,
+    normalize_event_type,
 )
 from .data import SecuraCVConfigEntry, runtime_for
 from .health_metrics import replacement_recommended, storage_status
@@ -90,6 +96,49 @@ DATA_FRIGATE_LINK = "frigate_link"
 DATA_KEY_MISMATCH = "key_mismatch"
 DATA_LAST_PUSH_BUCKET_START = "last_push_bucket_start"
 DATA_BACKSTOP_BUCKET_START = "backstop_bucket_start"
+
+# How many (zone, bucket, event type) keys the event dedupe remembers. The
+# bridge publishes one sealed event per camera + label + 10-minute bucket, so
+# a day of a busy fleet is a few hundred; the bound is for a hostile broker.
+EVENT_DEDUPE_MAX = 4096
+
+
+def witness_event_signal(entry_id: str) -> str:
+    """Dispatcher signal carrying each NEW witness event (the C5 payload).
+
+    Sent once per dedupe key, never for a retained replay: the event
+    entities fire on it and the verifier arms its idle walk on it.
+    """
+    return f"{DOMAIN}_witness_event_{entry_id}"
+
+
+def verification_event_signal(entry_id: str) -> str:
+    """Dispatcher signal carrying (event_type, attributes) for the
+    verification event entity: the integration's walk results and a key
+    change."""
+    return f"{DOMAIN}_verification_event_{entry_id}"
+
+
+def chain_problem_signal(entry_id: str) -> str:
+    """Dispatcher signal carrying the bridge's chain_problem transitions (bool)."""
+    return f"{DOMAIN}_chain_problem_{entry_id}"
+
+
+def event_dedupe_key(event: dict[str, Any] | None) -> tuple[str, int, str] | None:
+    """(zone_id, bucket start, snake_case event type), the one-event identity.
+
+    The bridge's `seq` is ignored on purpose: the same sealed event reaches
+    HA on several topics and through the HTTP backstop, and only this triple
+    is on every copy.
+    """
+    if not isinstance(event, dict):
+        return None
+    zone_id = event.get("zone_id")
+    bucket = event_bucket_start(event)
+    event_type = normalize_event_type(event.get("event_type"))
+    if not isinstance(zone_id, str) or bucket is None or event_type is None:
+        return None
+    return (zone_id, bucket, event_type)
 
 
 def bucket_start(now: float | None = None) -> int:
@@ -168,6 +217,9 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Topics pushed at least once this load: the backstop then leaves
         # that key to the push feed instead of re-fetching it.
         self._pushed: set[str] = set()
+        # Dedupe keys of the events already handed to the event entities,
+        # oldest first; a key is fired once however many topics carry it.
+        self._seen_events: OrderedDict[tuple[str, int, str], None] = OrderedDict()
         self.data = empty_kernel_data()
 
     # ── availability ─────────────────────────────────────────────────
@@ -182,6 +234,68 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """The pinned key's fingerprint, for the device page and diagnostics."""
         return kernel_key_fingerprint(self.pinned_key) if self.pinned_key else None
 
+    # ── the kernel's OWN last verify (an attribute, never "verified") ──
+
+    @property
+    def kernel_reported_chain_ok(self) -> bool | None:
+        """What the kernel says about its own chain: `witness/chain_problem`
+        first (push), then the `/attrs` report, then `/api/identity`'s
+        `last_verify`. None until the kernel has said anything."""
+        data = self.data if isinstance(self.data, dict) else {}
+        problem = data.get(DATA_CHAIN_PROBLEM)
+        if isinstance(problem, bool):
+            return not problem
+        report = data.get(DATA_CHAIN_REPORT)
+        if isinstance(report, dict) and isinstance(report.get("chain_valid"), bool):
+            return bool(report["chain_valid"])
+        identity = data.get(DATA_IDENTITY)
+        if isinstance(identity, dict):
+            last_verify = identity.get("last_verify")
+            if isinstance(last_verify, dict) and isinstance(last_verify.get("ok"), bool):
+                return bool(last_verify["ok"])
+        return None
+
+    @property
+    def kernel_reported_verified_bucket_start(self) -> int | None:
+        """The bucket the kernel's own last verify ran in (coarse time)."""
+        data = self.data if isinstance(self.data, dict) else {}
+        report = data.get(DATA_CHAIN_REPORT)
+        if isinstance(report, dict):
+            for key in ("verified_bucket_start", "verified_at_bucket_start"):
+                value = report.get(key)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    return value
+        identity = data.get(DATA_IDENTITY)
+        if isinstance(identity, dict):
+            last_verify = identity.get("last_verify")
+            if isinstance(last_verify, dict):
+                value = last_verify.get("at")
+                if isinstance(value, int) and not isinstance(value, bool):
+                    return value
+        return None
+
+    @property
+    def kernel_chain_length(self) -> int | None:
+        """`/api/identity`.chain_length, the chain_length sensor's fallback."""
+        data = self.data if isinstance(self.data, dict) else {}
+        identity = data.get(DATA_IDENTITY)
+        if isinstance(identity, dict):
+            value = identity.get("chain_length")
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+        return None
+
+    @property
+    def kernel_latest_hash(self) -> str | None:
+        """`/api/identity`.latest_hash (hex), for the chain_length attributes."""
+        data = self.data if isinstance(self.data, dict) else {}
+        identity = data.get(DATA_IDENTITY)
+        if isinstance(identity, dict):
+            value = identity.get("latest_hash")
+            if isinstance(value, str) and value:
+                return value
+        return None
+
     # ── the push feed ───────────────────────────────────────────────
 
     async def async_subscribe_push(self) -> None:
@@ -193,6 +307,7 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         handlers: dict[str, Callable[[mqtt.ReceiveMessage], None]] = {
             KERNEL_TOPIC_LAST_EVENT: self._handle_last_event,
+            KERNEL_TOPIC_EVENTS: self._handle_event,
             KERNEL_TOPIC_DIGEST: self._handle_digest,
             KERNEL_TOPIC_CHAIN_PROBLEM: self._handle_chain_problem,
             KERNEL_TOPIC_CHAIN_PROBLEM_ATTRS: self._handle_chain_report,
@@ -229,6 +344,42 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._async_push(DATA_LATEST_EVENT, event)
 
     @callback
+    def _handle_event(self, msg: mqtt.ReceiveMessage) -> None:
+        """`<prefix>/events`: the live feed the event entities fire on.
+
+        Only a NON-retained message that carries a dedupe key not seen
+        before is dispatched (contract C10): a retained replay — every
+        restart and every broker reconnect replays the retained topics —
+        feeds the last-event sensor only, so a proof notification never
+        re-fires on a reboot.
+        """
+        event = parse_mqtt_json(msg.payload)
+        if event is None:
+            return
+        if getattr(msg, "retain", False):
+            return
+        self.async_dispatch_event(event)
+
+    @callback
+    def async_dispatch_event(self, event: dict[str, Any]) -> bool:
+        """Hand one new event to the event entities, once per dedupe key.
+
+        Returns True when the event was new. The latest-event slot follows
+        when the event's bucket is newer than what the retained topic said.
+        """
+        key = event_dedupe_key(event)
+        if key is None or key in self._seen_events:
+            return False
+        self._seen_events[key] = None
+        while len(self._seen_events) > EVENT_DEDUPE_MAX:
+            self._seen_events.popitem(last=False)
+        current = event_bucket_start(self.data.get(DATA_LATEST_EVENT) if self.data else None)
+        if current is None or key[1] >= current:
+            self._async_push(DATA_LATEST_EVENT, event)
+        async_dispatcher_send(self.hass, witness_event_signal(self.entry.entry_id), event)
+        return True
+
+    @callback
     def _handle_digest(self, msg: mqtt.ReceiveMessage) -> None:
         digest = parse_mqtt_json(msg.payload)
         if digest is None:
@@ -243,7 +394,15 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         word = text.strip().upper()
         if word not in ("ON", "OFF"):
             return
-        self._async_push(DATA_CHAIN_PROBLEM, word == "ON")
+        problem = word == "ON"
+        previous = self.data.get(DATA_CHAIN_PROBLEM) if self.data else None
+        self._async_push(DATA_CHAIN_PROBLEM, problem)
+        # Only a transition seen in this load is the kernel's own report
+        # MOVING; the retained word that arrives at every (re)connect is a
+        # replay and fires nothing (the state is on the chain_valid sensor,
+        # and the integration's own walk reaches its verdict regardless).
+        if isinstance(previous, bool) and previous != problem:
+            async_dispatcher_send(self.hass, chain_problem_signal(self.entry.entry_id), problem)
 
     @callback
     def _handle_chain_report(self, msg: mqtt.ReceiveMessage) -> None:
@@ -373,11 +532,30 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._set_key_mismatch(False)
 
     @callback
+    def async_note_served_key(self, served_key: str) -> None:
+        """The verifier saw the sealed log signed by `served_key`: the same
+        pin check the identity backstop runs, so one owner raises Repairs."""
+        self._check_pin({"verifying_key": served_key})
+
+    @callback
     def _set_key_mismatch(self, mismatch: bool) -> None:
+        flipped_on = mismatch and not self.key_mismatch
         self.key_mismatch = mismatch
         runtime = runtime_for(self.entry)
         if runtime is not None:
             runtime.verification.key_mismatch = mismatch
+        if flipped_on:
+            # Once per flip: the verification event entity says the key
+            # changed; the Repairs issue says what to do about it.
+            async_dispatcher_send(
+                self.hass,
+                verification_event_signal(self.entry.entry_id),
+                VERIFICATION_EVENT_KEY_CHANGED,
+                {
+                    "pinned_fingerprint": self.pinned_fingerprint,
+                    "trigger": "identity",
+                },
+            )
 
     @callback
     def _check_storage(self, status: dict[str, Any] | None) -> None:
@@ -446,6 +624,14 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             incoming = event_bucket_start(latest)
             if latest is not None and (current is None or (incoming or 0) > current):
                 data[DATA_LATEST_EVENT] = latest
+                # A message the push feed missed (HA was down, the broker
+                # dropped it): the event entities hear it exactly once.
+                key = event_dedupe_key(latest)
+                if key is not None and key not in self._seen_events:
+                    self._seen_events[key] = None
+                    async_dispatcher_send(
+                        self.hass, witness_event_signal(self.entry.entry_id), latest
+                    )
 
         if DATA_DIGEST not in self._pushed:
             try:

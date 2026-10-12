@@ -12,9 +12,9 @@ test_mqtt_payload_hardening are enough to instantiate every entity class):
   1. strings.json and translations/en.json are the same document — HA
      reads the latter at runtime and hassfest validates the former, and
      nothing else kept them in step;
-  2. every concrete entity class in sensor.py / binary_sensor.py (each
-     tamper type and each transport, from the ALL_* lists) sets
-     ``_attr_translation_key`` to a key strings.json declares for its
+  2. every concrete entity class in sensor.py / binary_sensor.py / event.py
+     / button.py (each tamper type and each transport, from the ALL_* lists)
+     sets ``_attr_translation_key`` to a key strings.json declares for its
      platform, and NO class or instance defines ``_attr_name`` — an entity
      that keeps ``_attr_name`` silently bypasses its translation;
   3. every key strings.json declares is used by some class (no dead keys),
@@ -41,8 +41,15 @@ from .test_mqtt_payload_hardening import _install_platform_stubs
 _install_platform_stubs()
 
 from .. import binary_sensor as bs_platform  # noqa: E402
+from .. import button as button_platform  # noqa: E402
+from .. import event as event_platform  # noqa: E402
 from .. import sensor as sensor_platform  # noqa: E402
-from ..const import ALL_TAMPER_TYPES, ALL_TRANSPORTS  # noqa: E402
+from ..const import (  # noqa: E402
+    ALL_TAMPER_TYPES,
+    ALL_TRANSPORTS,
+    EVENT_TYPE_METADATA,
+    VERIFICATION_EVENT_TYPES,
+)
 
 PACKAGE_DIR = Path(sensor_platform.__file__).resolve().parent
 STRINGS = PACKAGE_DIR / "strings.json"
@@ -57,6 +64,7 @@ EXPECTED_NAMES: dict[str, dict[str, str]] = {
     "sensor": {
         "kernel_last_event": "SecuraCV Last Event",
         "kernel_fingerprint": "Kernel key fingerprint",
+        "daily_digest": "Daily digest",
         "storage_health": "Storage Health",
         "storage_free_pct": "Storage Free",
         "storage_wear_pct": "Storage Wear Estimate",
@@ -101,6 +109,17 @@ EXPECTED_NAMES: dict[str, dict[str, str]] = {
         "mesh_connected": "Mesh Connected",
         "chirp_active": "Chirp Active",
     },
+    "event": {
+        # One witness entity per zone, named after the zone ("Front door" →
+        # event.securacv_front_door); the placeholder is the entity's own.
+        "witness": "{zone}",
+        "tamper_events": "Tamper events",
+        "verification_events": "Chain verification",
+    },
+    "button": {
+        "verify_now": "Verify now",
+        "export_evidence": "Export evidence",
+    },
 }
 
 
@@ -121,6 +140,9 @@ def _kernel(cls):
 # derive is exercised.
 SENSOR_ENTITIES = [
     (sensor_platform.SecuraCVKernelLastEventSensor, [_kernel]),
+    (sensor_platform.SecuraCVKernelChainLengthSensor, [_kernel]),
+    (sensor_platform.SecuraCVKernelDailyDigestSensor, [_kernel]),
+    (sensor_platform.SecuraCVKernelFingerprintSensor, [_kernel]),
     (sensor_platform.SecuraCVKernelStorageHealthSensor, [_kernel]),
     (sensor_platform.SecuraCVKernelStorageFreeSensor, [_kernel]),
     (sensor_platform.SecuraCVKernelStorageWearSensor, [_kernel]),
@@ -137,6 +159,8 @@ SENSOR_ENTITIES = [
 ]
 BINARY_SENSOR_ENTITIES = [
     (bs_platform.SecuraCVKernelOnlineSensor, [_kernel]),
+    (bs_platform.SecuraCVKernelChainValidSensor, [_kernel]),
+    (bs_platform.SecuraCVKernelFrigateLinkSensor, [_kernel]),
     (bs_platform.SecuraCVKernelStorageReplaceSensor, [_kernel]),
     (bs_platform.SecuraCVCanaryOnlineSensor, [_canary]),
     (bs_platform.SecuraCVCanaryChainValidSensor, [_canary]),
@@ -162,18 +186,29 @@ BINARY_SENSOR_ENTITIES = [
     (bs_platform.SecuraCVCanaryMeshConnectedSensor, [_canary]),
     (bs_platform.SecuraCVCanaryChirpActiveSensor, [_canary]),
 ]
+EVENT_ENTITIES = [
+    (
+        event_platform.SecuraCVWitnessEventEntity,
+        [lambda cls: cls(COORDINATOR, ENTRY, "front_door", "Front door")],
+    ),
+    (event_platform.SecuraCVVerificationEventEntity, [_kernel]),
+    (event_platform.SecuraCVCanaryTamperEventEntity, [_canary]),
+]
+BUTTON_ENTITIES = [
+    (button_platform.SecuraCVVerifyNowButton, [_kernel]),
+    (button_platform.SecuraCVExportEvidenceButton, [_kernel]),
+]
 PLATFORMS = {
     "sensor": (sensor_platform, SENSOR_ENTITIES),
     "binary_sensor": (bs_platform, BINARY_SENSOR_ENTITIES),
+    "event": (event_platform, EVENT_ENTITIES),
+    "button": (button_platform, BUTTON_ENTITIES),
 }
-
-# Keys strings.json and icons.json already declare for entities the next
-# stage adds (the kernel key fingerprint diagnostic and the Frigate link
-# connectivity sensor, contract C11). Stage b removes this set when the
-# classes land; until then they are the only declared keys no class uses.
-PENDING_ENTITY_KEYS: dict[str, set[str]] = {
-    "sensor": {"kernel_fingerprint"},
-    "binary_sensor": {"frigate_link"},
+PLATFORM_BASES = {
+    "sensor": "SensorEntity",
+    "binary_sensor": "BinarySensorEntity",
+    "event": "EventEntity",
+    "button": "ButtonEntity",
 }
 
 
@@ -235,8 +270,7 @@ def test_strings_json_and_en_json_are_identical() -> None:
 @pytest.mark.parametrize("platform", sorted(PLATFORMS))
 def test_entity_table_covers_every_concrete_class(platform: str) -> None:
     module, entities = PLATFORMS[platform]
-    base_name = "SensorEntity" if platform == "sensor" else "BinarySensorEntity"
-    concrete = _concrete_entity_classes(module, base_name)
+    concrete = _concrete_entity_classes(module, PLATFORM_BASES[platform])
     assert concrete, f"no entity classes found in {module.__name__}"
     assert {cls for cls, _ in entities} == concrete, (
         "an entity class was added to the platform without a row in this "
@@ -281,7 +315,6 @@ def test_every_declared_key_is_used_and_named_as_expected(platform: str) -> None
     declared = _strings()["entity"][platform]
     _module, entities = PLATFORMS[platform]
     used = {ctor(cls)._attr_translation_key for cls, ctors in entities for ctor in ctors}
-    used |= PENDING_ENTITY_KEYS[platform]
     assert set(declared) == used, (
         f"strings.json entity.{platform} keys and the keys entities use differ: "
         f"dead={sorted(set(declared) - used)} missing={sorted(used - set(declared))}"
@@ -293,5 +326,30 @@ def test_every_declared_key_is_used_and_named_as_expected(platform: str) -> None
     )
 
 
-def test_strings_declare_only_the_two_platforms() -> None:
-    assert set(_strings()["entity"]) == set(PLATFORMS)
+def test_strings_declare_only_the_four_platforms() -> None:
+    assert set(_strings()["entity"]) == set(PLATFORMS) == {
+        "sensor", "binary_sensor", "event", "button"
+    }
+
+
+def test_the_witness_name_is_the_zone_and_the_entity_supplies_it() -> None:
+    """`{zone}` in the name is filled from the entity's translation
+    placeholders (HA refuses a placeholder nothing supplies), so one
+    entity per camera renders as the camera's name."""
+    entity = event_platform.SecuraCVWitnessEventEntity(COORDINATOR, ENTRY, "front_door", "Front door")
+    assert entity._attr_translation_placeholders == {"zone": "Front door"}
+    assert _strings()["entity"]["event"]["witness"]["name"] == "{zone}"
+
+
+def test_event_type_state_names_cover_exactly_the_derived_lists() -> None:
+    """The per-event-type names the UI shows for an event entity's
+    `event_type` attribute name exactly the ids the entities can fire —
+    derived in const.py, mirrored here so a dictionary change is caught."""
+    event_strings = _strings()["entity"]["event"]
+    witness = event_strings["witness"]["state_attributes"]["event_type"]["state"]
+    assert set(witness) == set(EVENT_TYPE_METADATA)
+    assert witness == {key: meta["label"] for key, meta in EVENT_TYPE_METADATA.items()}
+    tamper = event_strings["tamper_events"]["state_attributes"]["event_type"]["state"]
+    assert set(tamper) == set(ALL_TAMPER_TYPES)
+    verification = event_strings["verification_events"]["state_attributes"]["event_type"]["state"]
+    assert set(verification) == set(VERIFICATION_EVENT_TYPES)

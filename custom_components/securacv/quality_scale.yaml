@@ -30,8 +30,11 @@ rules:
     status: done
     comment: No requirements; cryptography ships with Home Assistant core.
   docs-actions:
-    status: done
-    comment: docs/homeassistant_setup.md documents every securacv.* action.
+    status: todo
+    comment: >-
+      docs/homeassistant_setup.md documents the three watch actions; W8 adds
+      securacv.verify and securacv.export_evidence (services.yaml and
+      strings.json already describe both).
   docs-conditions:
     status: exempt
     comment: The integration provides no conditions.
@@ -46,8 +49,9 @@ rules:
   entity-event-setup:
     status: done
     comment: >-
-      Every subscription is made in async_added_to_hass and released through
-      async_on_remove; tests/test_mqtt_lifecycle.py holds every entity to it.
+      Every subscription (MQTT, dispatcher) is made in async_added_to_hass and
+      released through async_on_remove — the event and button platforms
+      included; tests/test_mqtt_lifecycle.py holds every entity to it.
   entity-unique-id: done
   has-entity-name: done
   runtime-data:
@@ -87,7 +91,11 @@ rules:
     comment: >-
       The coordinator logs the backstop failing and recovering once each;
       witness/status and Canary offline/online transitions log once each.
-  parallel-updates: done
+  parallel-updates:
+    status: done
+    comment: >-
+      0 on the push-fed platforms (sensor, binary_sensor, event); 1 on button,
+      whose presses are actions against one kernel.
   reauthentication-flow:
     status: done
     comment: ConfigEntryAuthFailed on a definitive 401; reauth_confirm re-pairs or re-points the token file.
@@ -134,7 +142,9 @@ rules:
     comment: Canaries are added as they first report on the status topic.
   entity-category:
     status: done
-    comment: Storage, adapter-host and link diagnostics are EntityCategory.DIAGNOSTIC.
+    comment: >-
+      Storage, adapter-host, the Frigate link and the kernel key fingerprint
+      are EntityCategory.DIAGNOSTIC.
   entity-device-class: done
   entity-disabled-by-default:
     status: todo

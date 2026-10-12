@@ -38,11 +38,23 @@ import pytest
 
 from . import conftest  # noqa: F401  (installs the base HA stubs)
 from .conftest import run
-from .test_services import ENTRY, _call, _hass
+from .test_services import (
+    ENTRY,
+    FakeKernelApi,
+    FakeVerifier,
+    _call,
+    _hass,
+    _kernel_hass,
+)
 
-from homeassistant.exceptions import ServiceValidationError  # noqa: E402
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError  # noqa: E402
 
-from .. import async_unload_entry, services, watches  # noqa: E402
+from .. import async_unload_entry, evidence, services, watches  # noqa: E402
+from ..api import (  # noqa: E402
+    SecuraCVApiAuthError,
+    SecuraCVApiConnectionError,
+    SecuraCVApiResponseError,
+)
 from ..const import DOMAIN  # noqa: E402
 
 PACKAGE_DIR = Path(services.__file__).resolve().parent
@@ -202,6 +214,33 @@ def _twins():
     return hass
 
 
+def _two_kernels():
+    return _kernel_hass("k1", "k2")
+
+
+def _unreachable_kernel():
+    return _kernel_hass(verifier=FakeVerifier(error=SecuraCVApiConnectionError("x")))
+
+
+def _rejecting_kernel():
+    return _kernel_hass(verifier=FakeVerifier(error=SecuraCVApiAuthError("unauthorized")))
+
+
+def _odd_kernel():
+    return _kernel_hass(
+        api=FakeKernelApi(error=SecuraCVApiResponseError("export bundle too large: 9 bytes"))
+    )
+
+
+def _full_disk():
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    hass = _kernel_hass()
+    hass.data["_securacv_test_compose"] = _boom
+    return hass
+
+
 class Case(NamedTuple):
     key: str
     setup: Callable[[], Any]
@@ -263,7 +302,49 @@ CASES = [
         "watch_ambiguous", _twins, "end_watch", {"watch": "the gate canary"},
         "'the gate canary' names 2 watches (w1-1700000000, w2-1700000000); end it by id.",
     ),
+    # The kernel actions.
+    Case(
+        "no_kernel_entry", _hass, "verify", {},
+        "No SecuraCV entry with a witness kernel is loaded, so there is no sealed log to "
+        "verify or export. Add the SecuraCV app or sidecar first.",
+    ),
+    Case(
+        "kernel_entry_ambiguous", _two_kernels, "verify", {},
+        "2 SecuraCV entries have a witness kernel; say which one with entry_id.",
+    ),
+    Case(
+        "entry_not_loaded", _kernel_hass, "export_evidence", {"entry_id": "k9"},
+        "SecuraCV entry k9 is not loaded or has no witness kernel.",
+    ),
+    Case(
+        "window_out_of_range", _kernel_hass, "export_evidence", {"window_hours": 0},
+        "window_hours is 0; give a whole number of hours from 1 to 720.",
+    ),
+    Case(
+        "kernel_unreachable", _unreachable_kernel, "verify", {},
+        "The witness kernel did not answer. Check that the SecuraCV app or sidecar is "
+        "running, then try again.",
+    ),
+    Case(
+        "kernel_auth_failed", _rejecting_kernel, "verify", {},
+        "The witness kernel rejected Home Assistant's credential. Re-authenticate the "
+        "SecuraCV entry under Settings → Devices & services.",
+    ),
+    Case(
+        "kernel_bad_response", _odd_kernel, "export_evidence", {},
+        "The witness kernel answered with something other than the sealed log or the "
+        "evidence bundle: export bundle too large: 9 bytes.",
+    ),
+    Case(
+        "export_write_failed", _full_disk, "export_evidence", {},
+        "The evidence pack could not be written under the configuration directory: disk full.",
+    ),
 ]
+
+# The refusals (validation) and the failures (the kernel did not do it).
+FAILURE_KEYS = {
+    "kernel_unreachable", "kernel_auth_failed", "kernel_bad_response", "export_write_failed"
+}
 
 
 def test_every_declared_key_has_a_pinned_case() -> None:
@@ -271,11 +352,16 @@ def test_every_declared_key_has_a_pinned_case() -> None:
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.key)
-def test_each_refusal_reads_as_it_always_did(case: Case) -> None:
+def test_each_refusal_reads_as_it_always_did(case: Case, monkeypatch) -> None:
     hass = case.setup()
-    with pytest.raises(ServiceValidationError) as info:
+    if (compose := hass.data.get("_securacv_test_compose")) is not None:
+        monkeypatch.setattr(evidence, "compose_export", compose)
+    expected_cls = HomeAssistantError if case.key in FAILURE_KEYS else ServiceValidationError
+    with pytest.raises(expected_cls) as info:
         _call(hass, case.action, case.data)
     err = info.value
+    if case.key in FAILURE_KEYS:
+        assert not isinstance(err, ServiceValidationError), "a failure is not a refusal"
 
     assert str(err) == case.english
     assert err.translation_domain == DOMAIN

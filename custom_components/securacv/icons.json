@@ -45,6 +45,9 @@
       },
       "radar_link": {
         "default": "mdi:radar"
+      },
+      "daily_digest": {
+        "default": "mdi:calendar-today"
       }
     },
     "binary_sensor": {
@@ -152,6 +155,25 @@
       },
       "chirp_active": {
         "default": "mdi:bird"
+      }
+    },
+    "event": {
+      "witness": {
+        "default": "mdi:shield-eye"
+      },
+      "tamper_events": {
+        "default": "mdi:shield-alert"
+      },
+      "verification_events": {
+        "default": "mdi:shield-search"
+      }
+    },
+    "button": {
+      "verify_now": {
+        "default": "mdi:shield-search"
+      },
+      "export_evidence": {
+        "default": "mdi:file-certificate"
       }
     }
   }

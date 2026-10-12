@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import os
 import sys
 import types
 from collections.abc import Iterable, Mapping
@@ -194,6 +195,19 @@ def _augment_core(core_mod: types.ModuleType) -> None:
             core_mod.HomeAssistant.async_add_executor_job = _async_add_executor_job
         core_mod._securacv_rich = True
 
+        # The four platforms the package forwards to: the thin repo-root
+        # stub knows two. Added before the reload below so PLATFORMS reads
+        # every member.
+        const_mod = _module("homeassistant.const")
+        platform = getattr(const_mod, "Platform", None)
+        if platform is None:
+            platform = const_mod.Platform = types.SimpleNamespace(
+                SENSOR="sensor", BINARY_SENSOR="binary_sensor"
+            )
+        for member, value in (("EVENT", "event"), ("BUTTON", "button")):
+            if not hasattr(platform, member):
+                setattr(platform, member, value)
+
         # The integration package is this conftest's own parent, so Python
         # imported it BEFORE any line here ran — its module-level
         # `@callback` decorations were applied by the identity stub and
@@ -304,6 +318,32 @@ def _augment_core(core_mod: types.ModuleType) -> None:
         ha_cls._securacv_config_entries_rich = True
     if not hasattr(core_mod, "CALLBACK_TYPE"):
         core_mod.CALLBACK_TYPE = object
+
+    # ── hass.config: a configuration directory per instance ────────────
+    # `hass.config.path(*parts)` is where the evidence packs land; the stub
+    # hands each HomeAssistant its own temporary directory and lets a test
+    # assign `hass.config` outright.
+    if not getattr(ha_cls, "_securacv_config_rich", False):
+
+        def _config(self):
+            config = self.__dict__.get("_config")
+            if config is None:
+                import tempfile
+
+                root = tempfile.mkdtemp(prefix="securacv-ha-config-")
+                config = self.__dict__["_config"] = types.SimpleNamespace(
+                    config_dir=root,
+                    path=lambda *parts: os.path.join(root, *parts),
+                    time_zone="UTC",
+                    language="en",
+                )
+            return config
+
+        def _set_config(self, value):
+            self.__dict__["_config"] = value
+
+        ha_cls.config = property(_config, _set_config)
+        ha_cls._securacv_config_rich = True
 
 
 class ConfigEntriesStub:
@@ -464,6 +504,36 @@ def _augment_aiohttp() -> None:
         aiohttp_mod.ClientTimeout = _StubClientTimeout
     if not hasattr(aiohttp_mod, "ContentTypeError"):
         aiohttp_mod.ContentTypeError = aiohttp_mod.ClientError
+    # aiohttp.web: what the evidence view returns and raises.
+    web_mod = sys.modules.get("aiohttp.web")
+    if web_mod is None or not hasattr(web_mod, "FileResponse"):
+        web_mod = web_mod or types.ModuleType("aiohttp.web")
+
+        class _HTTPException(Exception):
+            status = 500
+
+        class _HTTPNotFound(_HTTPException):
+            status = 404
+
+        class _StreamResponse:
+            def __init__(self, *, status=200, headers=None) -> None:
+                self.status = status
+                self.headers = dict(headers or {})
+
+        class _FileResponse(_StreamResponse):
+            """Records the path and headers the view served."""
+
+            def __init__(self, path, *, headers=None, status=200, **kwargs) -> None:
+                super().__init__(status=status, headers=headers)
+                self.path = path
+
+        web_mod.Request = object
+        web_mod.StreamResponse = _StreamResponse
+        web_mod.FileResponse = _FileResponse
+        web_mod.HTTPException = _HTTPException
+        web_mod.HTTPNotFound = _HTTPNotFound
+        sys.modules["aiohttp.web"] = web_mod
+        aiohttp_mod.web = web_mod
 
 
 def _augment_voluptuous() -> None:
@@ -525,6 +595,7 @@ def _augment_voluptuous() -> None:
     vol_mod.All = lambda *validators: validators
     vol_mod.Range = lambda **kw: kw
     vol_mod.Match = lambda pattern, **kw: pattern
+    vol_mod.Coerce = lambda type_: type_
     vol_mod._securacv_rich = True
 
 
@@ -1074,6 +1145,11 @@ class _EntityBase:
 
     hass: Any = None
 
+    @property
+    def unique_id(self) -> str | None:
+        """HA's Entity reads the `_attr_` field; so does the stub."""
+        return getattr(self, "_attr_unique_id", None)
+
     async def async_added_to_hass(self) -> None:
         return None
 
@@ -1244,6 +1320,172 @@ def _augment_platform_bases() -> None:
     if getattr(aiohttp_client, "async_get_clientsession", None) is None:
         aiohttp_client.async_get_clientsession = lambda hass, *a, **kw: None
 
+    # The event platform: a recording EventEntity with HA's own guard (an
+    # event type outside `event_types` is a ValueError, never a state).
+    event_comp = _module("homeassistant.components.event")
+    if not hasattr(event_comp, "EventEntity"):
+
+        class EventEntity(_EntityBase):
+            _attr_event_types: list[str] = []
+
+            @property
+            def event_types(self) -> list[str]:
+                return list(getattr(self, "_attr_event_types", []))
+
+            def _trigger_event(self, event_type, event_attributes=None) -> None:
+                if event_type not in self.event_types:
+                    raise ValueError(f"Invalid event type {event_type}")
+                self.__dict__.setdefault("fired", []).append((event_type, event_attributes))
+                self.__dict__["last_event_type"] = event_type
+                self.__dict__["last_event_attributes"] = event_attributes
+
+            @property
+            def state(self):
+                return self.__dict__.get("last_event_type")
+
+        event_comp.EventEntity = EventEntity
+        event_comp.EventDeviceClass = enum_ns(DOORBELL="doorbell", MOTION="motion")
+    button_comp = _module("homeassistant.components.button")
+    if not hasattr(button_comp, "ButtonEntity"):
+
+        class ButtonEntity(_EntityBase):
+            async def async_press(self) -> None:
+                raise NotImplementedError
+
+        button_comp.ButtonEntity = ButtonEntity
+
+
+def _augment_http() -> None:
+    """HomeAssistantView and async_sign_path (the evidence view's surface)."""
+    http_mod = _module("homeassistant.components.http")
+    if not hasattr(http_mod, "HomeAssistantView"):
+
+        class HomeAssistantView:
+            url: str | None = None
+            name: str | None = None
+            requires_auth = True
+
+        http_mod.HomeAssistantView = HomeAssistantView
+    if not hasattr(http_mod, "StaticPathConfig"):
+
+        class StaticPathConfig:
+            def __init__(self, url, path, cache_headers) -> None:
+                self.url = url
+                self.path = path
+                self.cache_headers = cache_headers
+
+        http_mod.StaticPathConfig = StaticPathConfig
+    auth_mod = _module("homeassistant.components.http.auth")
+    if not hasattr(auth_mod, "async_sign_path"):
+
+        def async_sign_path(hass, path, expiration, **kwargs) -> str:
+            """Records every signing; the URL carries the lifetime in seconds."""
+            hass.data.setdefault("_securacv_test_signed_paths", []).append(
+                (path, expiration)
+            )
+            return f"{path}?authSig=test-{int(expiration.total_seconds())}"
+
+        auth_mod.async_sign_path = async_sign_path
+
+
+def _augment_media() -> None:
+    """media_player classes and the media_source bases."""
+    enum_ns = types.SimpleNamespace
+    player_mod = _module("homeassistant.components.media_player")
+    if not hasattr(player_mod, "MediaClass"):
+        player_mod.MediaClass = enum_ns(DIRECTORY="directory", URL="url", APP="app")
+    if not hasattr(player_mod, "BrowseError"):
+        player_mod.BrowseError = type("BrowseError", (Exception,), {})
+    ms_mod = _module("homeassistant.components.media_source")
+    if getattr(ms_mod, "_securacv_rich", False):
+        return
+
+    class BrowseMediaSource:
+        """Records every keyword the integration builds a node with."""
+
+        def __init__(self, *, domain, identifier, **kwargs) -> None:
+            self.domain = domain
+            self.identifier = identifier
+            self.media_content_id = f"media-source://{domain}" + (
+                f"/{identifier}" if identifier else ""
+            )
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+            self.children = kwargs.get("children")
+
+    class MediaSource:
+        name: str | None = None
+
+        def __init__(self, domain: str) -> None:
+            self.domain = domain
+
+    @dataclass
+    class MediaSourceItem:
+        hass: Any
+        domain: str | None
+        identifier: str
+        target_media_player: str | None = None
+
+    @dataclass
+    class PlayMedia:
+        url: str
+        mime_type: str
+
+    ms_mod.BrowseMediaSource = BrowseMediaSource
+    ms_mod.MediaSource = MediaSource
+    ms_mod.MediaSourceItem = MediaSourceItem
+    ms_mod.PlayMedia = PlayMedia
+    ms_mod.Unresolvable = type("Unresolvable", (Exception,), {})
+    ms_mod._securacv_rich = True
+
+
+def _augment_notifications_registry_dt() -> None:
+    """persistent_notification, the entity registry, and util.dt."""
+    pn_mod = _module("homeassistant.components.persistent_notification")
+    if not hasattr(pn_mod, "async_create"):
+
+        def async_create(hass, message, title=None, notification_id=None) -> None:
+            hass.data.setdefault("_securacv_test_notifications", []).append(
+                {"message": message, "title": title, "notification_id": notification_id}
+            )
+
+        def async_dismiss(hass, notification_id) -> None:
+            notes = hass.data.setdefault("_securacv_test_notifications", [])
+            notes[:] = [n for n in notes if n["notification_id"] != notification_id]
+
+        pn_mod.async_create = async_create
+        pn_mod.async_dismiss = async_dismiss
+
+    er_mod = _module("homeassistant.helpers.entity_registry")
+    if not hasattr(er_mod, "async_entries_for_config_entry"):
+
+        class _EntityRegistryStub:
+            """Rows a test adds to `hass.data["_securacv_test_entity_registry"]`:
+            anything with .domain, .unique_id, .config_entry_id, .original_name."""
+
+            def __init__(self, hass) -> None:
+                self._hass = hass
+
+            @property
+            def entities(self) -> list[Any]:
+                return self._hass.data.setdefault("_securacv_test_entity_registry", [])
+
+        er_mod.async_get = lambda hass: _EntityRegistryStub(hass)
+        er_mod.async_entries_for_config_entry = lambda registry, entry_id: [
+            row for row in registry.entities if getattr(row, "config_entry_id", None) == entry_id
+        ]
+        er_mod.RegistryEntry = types.SimpleNamespace
+
+    dt_mod = _module("homeassistant.util.dt")
+    if not hasattr(dt_mod, "now"):
+        from datetime import datetime, timezone
+
+        dt_mod.utcnow = lambda: datetime.now(timezone.utc)
+        dt_mod.now = lambda: datetime.now(timezone.utc)
+    util_mod = _module("homeassistant.util")
+    if not hasattr(util_mod, "dt"):
+        util_mod.dt = dt_mod
+
 
 def _augment_ha_stubs() -> None:
     """Upgrade the installed stubs with the full surface the package needs."""
@@ -1265,6 +1507,9 @@ def _augment_ha_stubs() -> None:
     _augment_mqtt()
     _augment_update_coordinator()
     _augment_platform_bases()
+    _augment_http()
+    _augment_media()
+    _augment_notifications_registry_dt()
 
 
 def _add_repo_root_to_path() -> None:
@@ -1330,3 +1575,18 @@ def published(hass) -> list[dict[str, Any]]:
 def device_registry(hass) -> DeviceRegistryStub:
     """The recording device registry for `hass`."""
     return sys.modules["homeassistant.helpers.device_registry"].async_get(hass)
+
+
+def notifications(hass) -> list[dict[str, Any]]:
+    """Every persistent notification the integration created, in order."""
+    return hass.data.get("_securacv_test_notifications", [])
+
+
+def signed_paths(hass) -> list[tuple[str, Any]]:
+    """Every (path, lifetime) the integration asked async_sign_path to sign."""
+    return hass.data.get("_securacv_test_signed_paths", [])
+
+
+def dispatched(hass, signal: str) -> list[Any]:
+    """The listeners connected to a dispatcher signal (to fire one by hand)."""
+    return hass.data.get("_securacv_test_dispatcher", {}).get(signal, [])

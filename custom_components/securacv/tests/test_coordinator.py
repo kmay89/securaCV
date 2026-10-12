@@ -126,6 +126,7 @@ def test_subscribes_to_every_bridge_topic_under_the_prefix():
     topics = [t for t, _cb in hass.data["_securacv_test_mqtt_subscriptions"]]
     assert topics == [
         "witness/last_event",
+        "witness/events",
         "witness/digest",
         "witness/chain_problem",
         "witness/chain_problem/attrs",
@@ -357,3 +358,87 @@ def test_event_bucket_start_reads_both_payload_shapes():
     assert coord_mod.event_bucket_start({"time_bucket": {"start_epoch_s": True}}) is None
     assert coord_mod.event_bucket_start({}) is None
     assert coord_mod.event_bucket_start(None) is None
+
+
+# ── the kernel's own report, and the signals stage b reads ──────────────
+
+
+def test_kernel_reported_chain_ok_prefers_push_then_report_then_identity():
+    hass, _entry, _api, coordinator = _coordinator()
+    assert coordinator.kernel_reported_chain_ok is None
+    run(coordinator.async_refresh())
+    assert coordinator.kernel_reported_chain_ok is None, "identity without last_verify says nothing"
+    coordinator.data["identity"]["last_verify"] = {"at": 1760140200, "bucket_size": 600, "ok": True}
+    assert coordinator.kernel_reported_chain_ok is True
+    assert coordinator.kernel_reported_verified_bucket_start == 1760140200
+    coordinator._handle_chain_report(_msg("witness/chain_problem/attrs",
+                                          json.dumps({"chain_valid": False, "verified_bucket_start": 1760140800})))
+    assert coordinator.kernel_reported_chain_ok is False
+    assert coordinator.kernel_reported_verified_bucket_start == 1760140800
+    coordinator._handle_chain_problem(_msg("witness/chain_problem", "OFF"))
+    assert coordinator.kernel_reported_chain_ok is True, "the push topic wins"
+    assert coordinator.kernel_chain_length == 3 and coordinator.kernel_latest_hash == "9c" * 32
+
+
+def test_chain_problem_transitions_are_dispatched_replays_are_not():
+    hass, entry, _api, coordinator = _coordinator()
+    seen: list = []
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    async_dispatcher_connect(hass, coord_mod.chain_problem_signal(entry.entry_id), seen.append)
+    coordinator._handle_chain_problem(_msg("witness/chain_problem", "OFF"))  # the retained state
+    assert seen == []
+    coordinator._handle_chain_problem(_msg("witness/chain_problem", "OFF"))
+    assert seen == []
+    coordinator._handle_chain_problem(_msg("witness/chain_problem", "ON"))
+    coordinator._handle_chain_problem(_msg("witness/chain_problem", "ON"))
+    coordinator._handle_chain_problem(_msg("witness/chain_problem", "OFF"))
+    assert seen == [True, False]
+    # A kernel whose FIRST word is a problem: the retained replay that every
+    # restart delivers is not a transition, so nothing fires (the state is on
+    # the chain_valid sensor and the integration's own walk says the rest).
+    hass2, entry2, _api2, coordinator2 = _coordinator()
+    seen2: list = []
+    async_dispatcher_connect(hass2, coord_mod.chain_problem_signal(entry2.entry_id), seen2.append)
+    coordinator2._handle_chain_problem(_msg("witness/chain_problem", "ON"))
+    assert seen2 == []
+    assert coordinator2.kernel_reported_chain_ok is False
+
+
+def test_a_served_key_other_than_the_pin_raises_repairs_and_the_key_changed_event_once():
+    hass, entry, _api, coordinator = _coordinator()
+    seen: list = []
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    async_dispatcher_connect(hass, coord_mod.verification_event_signal(entry.entry_id),
+                             lambda event_type, attrs: seen.append((event_type, attrs)))
+    coordinator.async_note_served_key(OTHER_KEY)
+    coordinator.async_note_served_key(OTHER_KEY)
+    assert coordinator.key_mismatch is True
+    assert entry.runtime_data.verification.key_mismatch is True
+    assert (DOMAIN, f"{ISSUE_TOFU_MISMATCH}_{entry.entry_id}") in issues(hass)
+    assert [e[0] for e in seen] == ["witness_key_changed"], "once per flip"
+    assert seen[0][1]["pinned_fingerprint"] == kernel_key_fingerprint(KEY)
+    coordinator.async_note_served_key(KEY)
+    assert coordinator.key_mismatch is False
+    assert (DOMAIN, f"{ISSUE_TOFU_MISMATCH}_{entry.entry_id}") not in issues(hass)
+    coordinator.async_note_served_key(OTHER_KEY)
+    assert [e[0] for e in seen] == ["witness_key_changed", "witness_key_changed"]
+
+
+def test_the_dedupe_key_is_the_zone_bucket_and_folded_type():
+    event = {"event_type": "BoundaryCrossingObjectLarge", "zone_id": "zone:a",
+             "time_bucket": {"start_epoch_s": 600, "size_s": 600}}
+    assert coord_mod.event_dedupe_key(event) == ("zone:a", 600, "boundary_crossing_object_large")
+    flat = {"event_type": "boundary_crossing_object_large", "zone_id": "zone:a", "time_bucket_start": 600}
+    assert coord_mod.event_dedupe_key(flat) == coord_mod.event_dedupe_key(event)
+    assert coord_mod.event_dedupe_key({"zone_id": "zone:a"}) is None
+    assert coord_mod.event_dedupe_key(None) is None
+
+
+def test_the_dedupe_memory_is_bounded():
+    hass, _entry, _api, coordinator = _coordinator()
+    for i in range(coord_mod.EVENT_DEDUPE_MAX + 10):
+        coordinator.async_dispatch_event({"event_type": "AcousticImpulseInZone", "zone_id": f"zone:{i}",
+                                          "time_bucket": {"start_epoch_s": 600, "size_s": 600}})
+    assert len(coordinator._seen_events) == coord_mod.EVENT_DEDUPE_MAX

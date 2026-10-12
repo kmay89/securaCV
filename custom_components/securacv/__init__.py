@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TOKEN, CONF_URL, Platform
@@ -79,7 +79,25 @@ from .voice import status_online
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+# The four platforms (contract C11). Spelled through `_platform` so the thin
+# repo-root test stubs — a `Platform` namespace that predates the event and
+# button members — can still import this module; on a real core and in the
+# integration's own stub lane every member resolves.
+def _platform(name: str) -> Platform:
+    """`Platform.<NAME>` by value, tolerant of a stub that lacks the member."""
+    member = getattr(Platform, name.upper(), None)
+    if member is not None:
+        return cast(Platform, member)
+    # A stub namespace without the member: the bare value (a StrEnum's value).
+    return cast(Platform, name)
+
+
+PLATFORMS: list[Platform] = [
+    _platform("sensor"),
+    _platform("binary_sensor"),
+    _platform("event"),
+    _platform("button"),
+]
 
 # Config-entry only: nothing is read from configuration.yaml. Declared
 # because an integration with an async_setup must say so (hassfest).
@@ -553,6 +571,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> 
 
     # Forward to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    if has_kernel and runtime.coordinator is not None and runtime.api is not None:
+        # The integration's own chain walk (D10): after the platforms, so the
+        # verification event entity hears the first verdict. Its timers and
+        # listeners are released with the entry.
+        from .evidence import async_register_view
+        from .kernel_verify import KernelVerifier
+
+        verifier = KernelVerifier(hass, entry, runtime.coordinator, runtime.api)
+        runtime.verifier = verifier
+        try:
+            await verifier.async_start()
+        except Exception:  # noqa: BLE001 - verification is retried on its timers, setup is not
+            _LOGGER.warning("chain verifier did not start; it retries on its backstop", exc_info=True)
+        runtime.unsub_mqtt.append(verifier.async_stop)
+        # The authenticated download view for evidence packs, once per instance.
+        async_register_view(hass)
 
     _LOGGER.info(
         "SecuraCV integration loaded (mode: %s, mqtt: %s)",

@@ -70,6 +70,7 @@ from .const import (
     homekit_signals_for_event,
 )
 from homeassistant.helpers.event import async_call_later
+from .const import FRIGATE_LINK_STALE_AFTER_SECONDS
 from .data import runtime_for
 from .entity import SecuraCVKernelEntity, canary_device_info, canary_status_signal
 from . import (
@@ -168,6 +169,8 @@ async def async_setup_entry(
     entities: list[BinarySensorEntity] = []
     if coordinator is not None:
         entities.append(SecuraCVKernelOnlineSensor(coordinator, entry))
+        entities.append(SecuraCVKernelChainValidSensor(coordinator, entry))
+        entities.append(SecuraCVKernelFrigateLinkSensor(coordinator, entry))
         entities.append(SecuraCVKernelStorageReplaceSensor(coordinator, entry))
     async_add_entities(entities)
 
@@ -391,6 +394,118 @@ class SecuraCVKernelStorageReplaceSensor(SecuraCVKernelEntity, BinarySensorEntit
         if status is None:
             return None
         return {"storage_status": status}
+
+
+class SecuraCVKernelChainValidSensor(SecuraCVKernelEntity, BinarySensorEntity):
+    """The INTEGRATION's verdict on the kernel's sealed log.
+
+    `on` = the integration's last chain walk verified every served entry's
+    hash link and Ed25519 signature against the pinned key; `off` = the
+    last walk failed (or the served key is not the pin); unknown until the
+    first walk. No device class on purpose: the card wants `on` = intact.
+    The kernel's own self-check is an attribute (`kernel_reported_chain_ok`),
+    never this state.
+    """
+
+    _attr_translation_key = "chain_valid"
+    _attr_icon = "mdi:shield-check"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "chain_valid")
+
+    def _state(self):
+        runtime = runtime_for(self._entry)
+        return runtime.verification if runtime is not None else None
+
+    @property
+    def is_on(self) -> bool | None:
+        """True iff the last walk succeeded against the pinned key."""
+        state = self._state()
+        if state is None:
+            return None
+        if state.key_mismatch:
+            return False
+        return state.ok
+
+    @property
+    def extra_state_attributes(self) -> dict[str, _Any]:
+        """What the walk established, and what the kernel says about itself."""
+        state = self._state()
+        return {
+            "verified_seq": state.verified_seq if state else None,
+            "verified_entries": state.verified_entries if state else 0,
+            "verified_bucket_start": state.verified_bucket_start if state else None,
+            "verified_bucket_size": state.verified_bucket_size if state else None,
+            "head_seq": state.head_seq if state else None,
+            "failed_seq": state.failed_seq if state else None,
+            "key_mismatch": state.key_mismatch if state else False,
+            "verifying": state.verifying if state else False,
+            "last_trigger": state.last_trigger if state else None,
+            "kernel_reported_chain_ok": self.coordinator.kernel_reported_chain_ok,
+            "kernel_verified_bucket_start": (
+                self.coordinator.kernel_reported_verified_bucket_start
+            ),
+            "error": state.error if state else None,
+        }
+
+
+class SecuraCVKernelFrigateLinkSensor(SecuraCVKernelEntity, BinarySensorEntity):
+    """Diagnostic: is Frigate still talking to the bridge?
+
+    From the bridge's retained `witness/frigate_link`: `on` iff the bridge
+    says it is connected to the broker's Frigate topics AND Frigate was
+    heard within the last hour — so a quiet night ("no events") and a
+    Frigate that stopped publishing (MQTT disabled, wrong topic prefix,
+    a broker ACL) read differently.
+    """
+
+    _attr_translation_key = "frigate_link"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:video-off"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "frigate_link")
+
+    def _link(self) -> dict[str, _Any] | None:
+        data = self.coordinator.data
+        link = data.get("frigate_link") if isinstance(data, dict) else None
+        return link if isinstance(link, dict) else None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Connected and heard within the hour; unknown until the bridge says."""
+        link = self._link()
+        if link is None:
+            return None
+        if link.get("connected") is not True:
+            return False
+        last = link.get("last_message_bucket_start")
+        if isinstance(last, bool) or not isinstance(last, int):
+            return False
+        size = link.get("last_message_bucket_size")
+        size_s = size if isinstance(size, int) and not isinstance(size, bool) else 600
+        return (last + size_s) >= (datetime.now(timezone.utc).timestamp() - FRIGATE_LINK_STALE_AFTER_SECONDS)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, _Any] | None:
+        """The bridge's payload, as published."""
+        link = self._link()
+        if link is None:
+            return None
+        return {
+            key: link.get(key)
+            for key in (
+                "connected",
+                "topic_prefix",
+                "last_message_bucket_start",
+                "last_message_bucket_size",
+                "messages_since_start",
+                "mode",
+            )
+        }
 
 
 # =============================================================================

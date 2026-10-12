@@ -43,9 +43,12 @@ from .const import (
     modality_metadata,
     normalize_attestation,
 )
+from .const import CONF_KERNEL_KEY_PINNED_BUCKET_START
 from .data import runtime_for
 from .device_trust import TrustStore, normalize_hex
 from .entity import SecuraCVKernelEntity, canary_device_info, canary_status_signal
+from .kernel_trust import kernel_key_fingerprint
+from .kernel_verify import kernel_device_id_of, witness_event_attributes
 from . import (
     async_record_verify,
     parse_mqtt_json,
@@ -320,6 +323,9 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
     if coordinator is not None:
         entities.append(SecuraCVKernelLastEventSensor(coordinator, entry))
+        entities.append(SecuraCVKernelChainLengthSensor(coordinator, entry))
+        entities.append(SecuraCVKernelDailyDigestSensor(coordinator, entry))
+        entities.append(SecuraCVKernelFingerprintSensor(coordinator, entry))
         # Storage endurance & health diagnostics (kernel GET /status).
         # Older kernels without the endpoint simply leave these empty.
         entities.extend(
@@ -486,24 +492,140 @@ class SecuraCVKernelLastEventSensor(SecuraCVKernelEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Return additional event attributes."""
+        """The C5 attribute table, with the integration's D10 verdict.
+
+        `verification` / `verified` / `trust_reason` come from the
+        integration's own chain walk (kernel_verify); the kernel's self-report
+        is `kernel_reported_chain_ok`, never `verified`.
+        """
         if not (event := self._latest_event()):
             return None
-        keys = (
-            "zone_id",
-            "time_bucket",
-            "confidence",
-            "kernel_version",
-            "ruleset_id",
-            # Track B provenance ("adapter" / "ha-bridged") stamped by the
-            # kernel export; absent on device/kernel-attested events. The
-            # timeline card renders it as a provenance chip.
-            "attestation",
+        runtime = runtime_for(self._entry)
+        return witness_event_attributes(
+            event,
+            runtime.verification if runtime is not None else None,
+            kernel_device_id=kernel_device_id_of(self._entry),
+            kernel_reported_chain_ok=self.coordinator.kernel_reported_chain_ok,
+            kernel_verified_bucket_start=self.coordinator.kernel_reported_verified_bucket_start,
         )
-        attrs = {key: event[key] for key in keys if key in event}
-        # Human-readable label for the coarse claim, for nicer dashboard display.
-        attrs["friendly_event"] = event_type_metadata(event.get("event_type"))["label"]
-        return attrs or None
+
+
+class SecuraCVKernelChainLengthSensor(SecuraCVKernelEntity, SensorEntity):
+    """How many entries the sealed log holds: the head of the last walk.
+
+    State is `head.seq` from the integration's last chain walk, falling back
+    to `/api/identity`.chain_length before the first walk. Attributes carry
+    the chain head hash, the algorithm, the pinned key and whether it is
+    pinned — what the card's chain header reads.
+    """
+
+    _attr_translation_key = "chain_length"
+    _attr_icon = "mdi:link-variant"
+    _attr_native_unit_of_measurement = "blocks"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "chain_length")
+
+    def _state(self):
+        runtime = runtime_for(self._entry)
+        return runtime.verification if runtime is not None else None
+
+    @property
+    def native_value(self) -> int | None:
+        """The walk's head, else the kernel's reported length."""
+        state = self._state()
+        if state is not None and state.head_seq is not None:
+            return state.head_seq
+        return self.coordinator.kernel_chain_length
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The head hash and the key the chain is checked against."""
+        state = self._state()
+        head_hash = state.head_hash if state is not None else None
+        pinned = self.coordinator.pinned_key
+        return {
+            "latest_hash": head_hash or self.coordinator.kernel_latest_hash,
+            "algorithm": "ed25519",
+            "verifying_key": pinned,
+            "pinned": pinned is not None,
+            "verified_seq": state.verified_seq if state is not None else None,
+        }
+
+
+class SecuraCVKernelDailyDigestSensor(SecuraCVKernelEntity, SensorEntity):
+    """The kernel's daily digest: total events as state, the document as attributes.
+
+    Fed by the bridge's retained `witness/digest` (push) with `/digest` as
+    the backstop. Every key of the document rides along verbatim so the
+    digest blueprint reads counts per zone and per period from one place.
+    """
+
+    _attr_translation_key = "daily_digest"
+    _attr_icon = "mdi:calendar-today"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "daily_digest")
+
+    def _digest(self) -> dict[str, Any] | None:
+        data = self.coordinator.data
+        digest = data.get("digest") if isinstance(data, dict) else None
+        return digest if isinstance(digest, dict) else None
+
+    @property
+    def native_value(self) -> int | None:
+        """`total_events`, when the digest has arrived."""
+        digest = self._digest()
+        if digest is None:
+            return None
+        total = digest.get("total_events")
+        if isinstance(total, bool) or not isinstance(total, int):
+            return None
+        return total
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """The digest document, verbatim."""
+        digest = self._digest()
+        return dict(digest) if digest else None
+
+
+class SecuraCVKernelFingerprintSensor(SecuraCVKernelEntity, SensorEntity):
+    """The pinned witness key's fingerprint — what to read out by phone.
+
+    Diagnostic. State is the eight hex characters `pair`, the app's panel
+    and `doctor` print; attributes carry the full verifying key and the
+    bucket the pin was taken in. A recipient of an evidence pack compares
+    this against WITNESS_KEY.txt to turn "self-attested" into "authorship
+    confirmed".
+    """
+
+    _attr_translation_key = "kernel_fingerprint"
+    _attr_icon = "mdi:fingerprint"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "kernel_fingerprint")
+
+    @property
+    def native_value(self) -> str | None:
+        """The pinned key's fingerprint, or None before the pin."""
+        pinned = self.coordinator.pinned_key
+        return kernel_key_fingerprint(pinned) if pinned else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The full key and when it was pinned (a bucket start)."""
+        return {
+            "verifying_key": self.coordinator.pinned_key,
+            "pinned_bucket_start": self._entry.data.get(CONF_KERNEL_KEY_PINNED_BUCKET_START),
+            "key_mismatch": bool(getattr(self.coordinator, "key_mismatch", False)),
+        }
 
 
 class SecuraCVKernelStorageSensorBase(SecuraCVKernelEntity, SensorEntity):

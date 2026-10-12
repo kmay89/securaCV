@@ -24,31 +24,53 @@ from .device_trust import TrustStore
 if TYPE_CHECKING:
     from .api import SecuraCVApi
     from .coordinator import SecuraCVAdapterStatsCoordinator, SecuraCVKernelCoordinator
+    from .kernel_verify import KernelVerifier
 
 
 @dataclass
 class VerificationState:
     """The integration's OWN chain walk against the pinned kernel key.
 
-    Stage b (the sealed-log verifier) fills this in; stage a carries the
-    shape so the diagnostics, the chain_valid sensor and the event entities
-    read one place. ``ok`` is ``None`` until the first walk. "Verified"
-    means this walk checked Ed25519 signatures and the hash chain against
-    ``CONF_KERNEL_VERIFYING_KEY`` — never a kernel self-report.
+    Filled by ``kernel_verify.KernelVerifier``; the diagnostics, the
+    chain_valid and chain_length sensors, the verification event entity and
+    every kernel event row read this one place. ``ok`` is ``None`` until the
+    first walk. "Verified" means this walk checked Ed25519 signatures and
+    the hash chain against ``CONF_KERNEL_VERIFYING_KEY`` — never a kernel
+    self-report (that is ``kernel_reported_chain_ok``, an attribute).
     """
 
     ok: bool | None = None
+    # The cursor: the newest sealed-log row the walk verified and its hash.
+    # Persisted (kernel_verify's Store) so the next fetch is incremental.
     verified_seq: int | None = None
+    # How many entries the walks have verified since the cursor was anchored.
     verified_entries: int = 0
+    # The bucket the last successful walk ran in (coarse time).
     verified_bucket_start: int | None = None
+    verified_bucket_size: int = 600
     head_hash: str | None = None
+    # The served document's head (`head.seq`), the chain_length state.
+    head_seq: int | None = None
     error: str | None = None
+    # Which entry the last failed walk stopped at, when it did.
+    failed_seq: int | None = None
     # True while /api/identity serves a key other than the pin (Repairs
     # tofu_mismatch is open); events then render as key_mismatch, never as
     # "verification failed".
     key_mismatch: bool = False
-    # (event_type, zone_id, time_bucket_start) of every entry the last
-    # successful walk covered — the lookup the event rows' badge is decided by.
+    # A walk is in flight (the header shows "Verifying…").
+    verifying: bool = False
+    # What started the last walk (button / service / scheduled / idle).
+    last_trigger: str | None = None
+    # How many entries the LAST walk verified (the increment).
+    walk_entries: int = 0
+    # Set when the kernel re-anchored the served tail past the cursor (a
+    # checkpoint or the size cap): the entries verified, continuity across
+    # the gap is the kernel's claim, not this walk's proof.
+    anchor_moved: bool = False
+    # (event_type, zone_id, time_bucket_start) of every entry the walks have
+    # covered, bounded by retention — the lookup an event row's badge is
+    # decided by.
     covered: set[tuple[str, str, int]] = field(default_factory=set)
 
 
@@ -79,8 +101,10 @@ class SecuraCVRuntimeData:
     mismatch_notified: set[tuple[str, str]] = field(default_factory=set)
     # The Canary prefix actually subscribed (None when MQTT is off).
     mqtt_prefix: str | None = None
-    # Extension points for stage b: the verifier's state and the evidence
-    # exports' bookkeeping (counts only ever reach diagnostics).
+    # The chain verifier (kernel entries only) and its state; the evidence
+    # exports' bookkeeping (`{"exports": [index rows]}`; counts only ever
+    # reach diagnostics).
+    verifier: KernelVerifier | None = None
     verification: VerificationState = field(default_factory=VerificationState)
     exports: dict[str, Any] = field(default_factory=dict)
     # Set once the retained claim has been published this load.
