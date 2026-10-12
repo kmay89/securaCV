@@ -379,7 +379,7 @@ catches it only when the float drifts above 4.4 V.
   and exposes the battery detail as entity attributes for automations.
   Ready-made automations (low-battery push alert, worn-cell replacement
   reminder, recovery notice) ship in
-  [`homeassistant/automations/securacv_battery_health.yaml`](../../homeassistant/automations/securacv_battery_health.yaml).
+  the [`canary_battery_health.yaml`](../blueprints/canary_battery_health.yaml) blueprint.
 - **Self-test:** `power` metric in the self-test API reports mode, state,
   and divider detection.
 
