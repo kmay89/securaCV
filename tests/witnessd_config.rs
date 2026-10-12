@@ -21,9 +21,84 @@ fn clear_env() {
         "WITNESS_STORAGE_HEALTH_TBW",
         "WITNESS_STORAGE_HEALTH_DEVICE",
         "WITNESS_SQLITE_SYNCHRONOUS",
+        "WITNESS_API_PAIRED_TOKEN_PATH",
+        "WITNESS_API_PAIRING_CODE_PATH",
+        "WITNESS_API_PAIRING_TTL_SECS",
+        "WITNESS_API_FLEET_ROLLCALL",
     ] {
         std::env::remove_var(key);
     }
+}
+
+#[test]
+fn api_access_env_round_trips_and_defaults_beside_the_token() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_env();
+    std::env::set_var("WITNESS_RTSP_URL", "rtsp://camera-1");
+
+    // Defaults: full roll-call, 600 s codes, pairing files beside the token.
+    std::env::set_var("WITNESS_API_TOKEN_PATH", "/data/api_token");
+    let cfg = WitnessdConfig::load().expect("load config");
+    assert_eq!(
+        cfg.api_access.fleet_rollcall,
+        witness_kernel::api::FleetRollcall::Full
+    );
+    assert_eq!(cfg.api_access.pairing_ttl_secs, 600);
+    assert_eq!(
+        cfg.api_access.paired_token_path.as_deref(),
+        Some(std::path::Path::new("/data/paired_tokens.json"))
+    );
+    assert_eq!(
+        cfg.api_access.pairing_code_path.as_deref(),
+        Some(std::path::Path::new("/data/pairing_code"))
+    );
+    let paths = cfg.api_access.pairing_paths().expect("pairing on");
+    assert_eq!(
+        paths.code_path,
+        std::path::PathBuf::from("/data/pairing_code")
+    );
+
+    // Env names win over the defaults.
+    std::env::set_var("WITNESS_API_PAIRED_TOKEN_PATH", "/secrets/paired.json");
+    std::env::set_var("WITNESS_API_PAIRING_CODE_PATH", "/secrets/code");
+    std::env::set_var("WITNESS_API_PAIRING_TTL_SECS", "300");
+    std::env::set_var("WITNESS_API_FLEET_ROLLCALL", "self");
+    let cfg = WitnessdConfig::load().expect("load config with env");
+    assert_eq!(
+        cfg.api_access.paired_token_path.as_deref(),
+        Some(std::path::Path::new("/secrets/paired.json"))
+    );
+    assert_eq!(
+        cfg.api_access.pairing_code_path.as_deref(),
+        Some(std::path::Path::new("/secrets/code"))
+    );
+    assert_eq!(cfg.api_access.pairing_ttl_secs, 300);
+    assert_eq!(
+        cfg.api_access.fleet_rollcall,
+        witness_kernel::api::FleetRollcall::SelfOnly
+    );
+
+    // No token path and a lone half: refused (a redeemable code with
+    // nowhere to keep the bearer). A bad roll-call word and a zero TTL too.
+    std::env::remove_var("WITNESS_API_TOKEN_PATH");
+    std::env::remove_var("WITNESS_API_PAIRED_TOKEN_PATH");
+    let err = WitnessdConfig::load().expect_err("a lone pairing_code_path must be rejected");
+    assert!(err.to_string().contains("go together"), "got: {err}");
+    std::env::remove_var("WITNESS_API_PAIRING_CODE_PATH");
+    let cfg = WitnessdConfig::load().expect("neither half is fine");
+    assert_eq!(cfg.api_access.pairing_paths(), None);
+    std::env::set_var("WITNESS_API_FLEET_ROLLCALL", "everyone");
+    let err = WitnessdConfig::load().expect_err("unknown roll-call word");
+    assert!(
+        err.to_string().contains("WITNESS_API_FLEET_ROLLCALL"),
+        "got: {err}"
+    );
+    std::env::set_var("WITNESS_API_FLEET_ROLLCALL", "full");
+    std::env::set_var("WITNESS_API_PAIRING_TTL_SECS", "0");
+    let err = WitnessdConfig::load().expect_err("zero ttl");
+    assert!(err.to_string().contains("pairing_ttl_secs"), "got: {err}");
+
+    clear_env();
 }
 
 #[test]
