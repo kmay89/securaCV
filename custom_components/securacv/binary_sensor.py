@@ -342,7 +342,6 @@ class SecuraCVKernelOnlineSensor(SecuraCVKernelEntity, BinarySensorEntity):
     # holds every key to a strings.json entry and pins the rendered names.
     _attr_translation_key = "kernel_online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_icon = "mdi:server-network"
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -370,7 +369,6 @@ class SecuraCVKernelStorageReplaceSensor(SecuraCVKernelEntity, BinarySensorEntit
 
     _attr_translation_key = "storage_replace"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_icon = "mdi:sd-alert"
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -408,7 +406,6 @@ class SecuraCVKernelChainValidSensor(SecuraCVKernelEntity, BinarySensorEntity):
     """
 
     _attr_translation_key = "chain_valid"
-    _attr_icon = "mdi:shield-check"
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -463,7 +460,6 @@ class SecuraCVKernelFrigateLinkSensor(SecuraCVKernelEntity, BinarySensorEntity):
     _attr_translation_key = "frigate_link"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:video-off"
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -570,7 +566,6 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for Canary device online/offline status."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_icon = "mdi:access-point-network"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -623,7 +618,6 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
 class SecuraCVCanaryChainValidSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for hash chain integrity."""
 
-    _attr_icon = "mdi:shield-check"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -671,7 +665,6 @@ class SecuraCVCanaryTamperSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for general tamper detection (any tamper type)."""
 
     _attr_device_class = BinarySensorDeviceClass.TAMPER
-    _attr_icon = "mdi:shield-alert"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -871,7 +864,6 @@ class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
     """
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_icon = "mdi:sd-alert"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -913,7 +905,6 @@ class SecuraCVCanaryEventIdSpaceLowSensor(SecuraCVCanaryBinarySensorBase):
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:counter"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -950,9 +941,17 @@ class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):
 
     Shows which communication paths are alive. Canary uses ANY available
     transport to get witness data out - this shows path resilience.
+
+    Diagnostic, and disabled by default (the entity-disabled-by-default
+    rule): six connectivity sensors per Canary are plumbing most people
+    never look at, and the device page offers them to anyone who does. The
+    aggregate `online` sensor stays on; so do the per-type tamper sensors,
+    which are the automation targets (docs/blueprints/securacv_alerts.yaml).
     """
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,
@@ -1107,7 +1106,6 @@ class SecuraCVCanaryMotionSensor(SecuraCVCanaryProjectedSensorBase):
     """
 
     _attr_device_class = BinarySensorDeviceClass.MOTION
-    _attr_icon = "mdi:motion-sensor"
     _signal = "motion"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
@@ -1125,7 +1123,6 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
     """
 
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-    _attr_icon = "mdi:account-question"
     _signal = "occupancy"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
@@ -1165,7 +1162,6 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for Opera mesh network connection status."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_icon = "mdi:lan-connect"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -1223,7 +1219,6 @@ class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
     for community awareness without surveillance.
     """
 
-    _attr_icon = "mdi:bird"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""

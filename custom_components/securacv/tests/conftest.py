@@ -822,7 +822,17 @@ def _augment_config_entries() -> None:
             return self.async_abort(reason=reason)
 
     class _OptionsFlow(_FlowHandlerBase):
-        pass
+        """The core's shape since 2024.11: no entry in __init__; the
+        `config_entry` property resolves the flow's `handler` (the entry
+        id the options-flow manager assigns) through hass.config_entries."""
+
+        handler: str | None = None
+
+        @property
+        def config_entry(self):
+            if self.hass is None or self.handler is None:
+                raise ValueError("The config entry is not available during initialization")
+            return self.hass.config_entries.async_get_known_entry(self.handler)
 
     class _ConfigEntry:
         """Attribute-bag entry stand-in; tests may also use SimpleNamespace."""

@@ -143,17 +143,27 @@ rules:
   entity-category:
     status: done
     comment: >-
-      Storage, adapter-host, the Frigate link and the kernel key fingerprint
-      are EntityCategory.DIAGNOSTIC.
+      Storage, adapter-host, the Frigate link, the kernel key fingerprint and
+      a Canary's per-transport connectivity sensors are
+      EntityCategory.DIAGNOSTIC.
   entity-device-class: done
   entity-disabled-by-default:
-    status: todo
-    comment: The per-type tamper and transport sensors should ship disabled by default (stage c).
+    status: done
+    comment: >-
+      The six per-transport connectivity sensors of a Canary are diagnostic
+      and disabled by default (binary_sensor.SecuraCVCanaryTransportSensor);
+      the per-type tamper sensors stay enabled because they are the
+      automation targets (docs/blueprints/securacv_alerts.yaml names them).
   entity-translations: done
   exception-translations:
     status: done
     comment: Every securacv.* refusal carries a translation key (tests/test_exception_translations.py).
-  icon-translations: done
+  icon-translations:
+    status: done
+    comment: >-
+      icons.json is the one source: no entity class sets a static icon in
+      code (tests/test_icons.py), so the translated defaults and the state
+      icons (chain_valid, tamper, frigate_link, online) are what renders.
   reconfiguration-flow:
     status: done
     comment: reconfigure moves the URL, credential and prefixes; a different kernel is refused (wrong_kernel).

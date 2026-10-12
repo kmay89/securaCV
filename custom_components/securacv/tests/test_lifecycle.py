@@ -14,7 +14,15 @@ import types
 import pytest
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
-from .conftest import device_registry, issues, make_entry, make_runtime, published, run
+from .conftest import (
+    device_registry,
+    issues,
+    make_entry,
+    make_runtime,
+    notifications,
+    published,
+    run,
+)
 
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.exceptions import ConfigEntryNotReady  # noqa: E402
@@ -34,6 +42,7 @@ from securacv.const import (  # noqa: E402
     AUTH_MODE_TOKEN_FILE,
     CONF_AUTH_MODE,
     CONF_CLAIM_NONCE,
+    CONF_DASHBOARD_NOTICE_SHOWN,
     CONF_ENABLE_MQTT,
     CONF_KERNEL_DEVICE_ID,
     CONF_KERNEL_TOKEN_ID,
@@ -104,6 +113,21 @@ def _hass() -> HomeAssistant:
     return hass
 
 
+def _bridge_entity(hass, object_id: str = "last_event", domain: str = "sensor") -> None:
+    """A row MQTT discovery made from the bridge's config: the `mqtt`
+    platform, unique_id `<device_id>_<object>`, entity id `*.pwk_<object>`."""
+    hass.data.setdefault("_securacv_test_entity_registry", []).append(
+        types.SimpleNamespace(
+            domain=domain,
+            platform="mqtt",
+            unique_id=f"{DEVICE_ID}_{object_id}",
+            entity_id=f"{domain}.pwk_{object_id}",
+            config_entry_id="mqtt-entry",
+            original_name=None,
+        )
+    )
+
+
 def _both_entry(hass, **extra):
     data = {
         "url": "http://kernel:8799",
@@ -130,6 +154,7 @@ def _both_entry(hass, **extra):
 def test_both_mode_setup_subscribes_claims_and_registers_the_kernel_device():
     hass = _hass()
     issues(hass)[(DOMAIN, ISSUE_NO_KERNEL_FOUND)] = {"translation_key": ISSUE_NO_KERNEL_FOUND}
+    _bridge_entity(hass)
     entry = _both_entry(hass)
     assert run(async_setup_entry(hass, entry)) is True
     runtime = entry.runtime_data
@@ -169,9 +194,106 @@ def test_both_mode_setup_subscribes_claims_and_registers_the_kernel_device():
 
 def test_the_migration_notice_is_raised_once():
     hass = _hass()
+    _bridge_entity(hass)
     entry = _both_entry(hass, **{CONF_MIGRATION_NOTICE_SHOWN: True})
     run(async_setup_entry(hass, entry))
     assert (DOMAIN, f"{ISSUE_ENTITIES_MIGRATED}_{entry.entry_id}") not in issues(hass)
+
+
+def test_a_fresh_install_without_the_bridge_entities_gets_no_migration_notice():
+    """Nothing was replaced on an instance where MQTT discovery never made
+    the bridge's pwk_* entities; the flag is still set, so the notice can
+    never appear later either."""
+    hass = _hass()
+    hass.data["_securacv_test_entity_registry"] = [
+        # Other mqtt entities, and a securacv one, are not the bridge's.
+        types.SimpleNamespace(domain="sensor", platform="mqtt", unique_id="tasmota_1_power",
+                              entity_id="sensor.kitchen_power", config_entry_id="mqtt-entry"),
+        types.SimpleNamespace(domain="sensor", platform="securacv", unique_id="securacv_e1_latest_event",
+                              entity_id="sensor.securacv_last_event", config_entry_id="e1"),
+    ]
+    entry = _both_entry(hass)
+    assert run(async_setup_entry(hass, entry)) is True
+    assert entry.runtime_data.claim_published is True
+    assert (DOMAIN, f"{ISSUE_ENTITIES_MIGRATED}_{entry.entry_id}") not in issues(hass)
+    assert entry.data[CONF_MIGRATION_NOTICE_SHOWN] is True
+
+
+def test_the_migration_notice_recognizes_the_bridge_by_entity_id_too():
+    """An entity the person renamed keeps its unique_id; one MQTT discovery
+    re-keyed keeps its pwk_ object id. Either is proof the bridge's entities
+    were here."""
+    hass = _hass()
+    hass.data["_securacv_test_entity_registry"] = [
+        types.SimpleNamespace(domain="binary_sensor", platform="mqtt", unique_id="legacy-id",
+                              entity_id="binary_sensor.pwk_chain_problem", config_entry_id="mqtt-entry"),
+    ]
+    entry = _both_entry(hass)
+    run(async_setup_entry(hass, entry))
+    assert (DOMAIN, f"{ISSUE_ENTITIES_MIGRATED}_{entry.entry_id}") in issues(hass)
+
+
+def test_an_unreadable_registry_keeps_the_contracts_default(monkeypatch):
+    er_mod = sys.modules["homeassistant.helpers.entity_registry"]
+
+    def _boom(hass):
+        raise RuntimeError("registry not loaded")
+
+    monkeypatch.setattr(er_mod, "async_get", _boom)
+    hass = _hass()
+    entry = _both_entry(hass)
+    run(async_setup_entry(hass, entry))
+    assert (DOMAIN, f"{ISSUE_ENTITIES_MIGRATED}_{entry.entry_id}") in issues(hass)
+
+
+# ── the one-time "add the dashboard" notice (J1) ─────────────────────────
+
+
+def _strategy_served(hass, served: bool = True) -> None:
+    hass.data.setdefault(DOMAIN, {})[package.DATA_FRONTEND_CARDS] = (
+        ["securacv-timeline-card.js", "securacv-aim-card.js", "securacv-strategy.js"]
+        if served
+        else ["securacv-timeline-card.js", "securacv-aim-card.js"]
+    )
+
+
+def test_the_dashboard_notice_is_posted_once_when_the_strategy_is_served():
+    hass = _hass()
+    _strategy_served(hass)
+    entry = _both_entry(hass)
+    assert run(async_setup_entry(hass, entry)) is True
+    (note,) = [n for n in notifications(hass) if n["notification_id"] == f"securacv_dashboard_{entry.entry_id}"]
+    assert note["title"] == "SecuraCV: add the dashboard"
+    assert "Settings → Dashboards → Add dashboard → SecuraCV" in note["message"]
+    assert "https://my.home-assistant.io/redirect/lovelace_dashboards/" in note["message"]
+    assert entry.data[CONF_DASHBOARD_NOTICE_SHOWN] is True
+    # A reload never repeats it.
+    run(async_unload_entry(hass, entry))
+    hass.data["_securacv_test_notifications"] = []
+    assert run(async_setup_entry(hass, entry)) is True
+    assert notifications(hass) == []
+
+
+def test_the_dashboard_notice_waits_for_the_strategy_module():
+    """Without the strategy served, "Add dashboard → SecuraCV" does not exist
+    on this instance, so the notice is not posted and the flag stays clear
+    (a later load with the module posts it)."""
+    hass = _hass()
+    _strategy_served(hass, served=False)
+    entry = _both_entry(hass)
+    assert run(async_setup_entry(hass, entry)) is True
+    assert not [n for n in notifications(hass) if "dashboard" in n["notification_id"]]
+    assert CONF_DASHBOARD_NOTICE_SHOWN not in entry.data
+
+
+def test_an_mqtt_only_entry_posts_no_dashboard_notice():
+    hass = _hass()
+    _strategy_served(hass)
+    entry = make_entry(data={CONF_ENABLE_MQTT: True, CONF_MQTT_PREFIX: "securacv",
+                             CONF_SETUP_MODE: SETUP_MODE_MQTT})
+    hass.config_entries.add(entry)
+    assert run(async_setup_entry(hass, entry)) is True
+    assert notifications(hass) == []
 
 
 def test_mqtt_unavailable_is_not_ready():
@@ -253,11 +375,31 @@ def test_unload_releases_everything_but_keeps_the_claim():
     assert hass.config_entries.unloaded[0][1] == ["sensor", "binary_sensor", "event", "button"]
 
 
-def test_remove_entry_withdraws_the_claim_revokes_the_token_and_clears_issues():
+def test_remove_entry_withdraws_the_claim_revokes_the_token_and_clears_issues(monkeypatch):
+    from securacv import kernel_verify
+
+    removed_stores: list[str] = []
+    real_store = kernel_verify.Store
+
+    class _RecordingStore(real_store):  # type: ignore[misc,valid-type]
+        async def async_remove(self):
+            removed_stores.append(self._key)
+            await super().async_remove()
+
+    monkeypatch.setattr(kernel_verify, "Store", _RecordingStore)
     hass = _hass()
+    _strategy_served(hass)
     entry = _both_entry(hass, **{CONF_AUTH_MODE: AUTH_MODE_PAIRED, "token": "f1" * 32,
                                  CONF_KERNEL_TOKEN_ID: "0a1b2c3d"})
     run(async_setup_entry(hass, entry))
+    # An export's and the dashboard notice outlive nothing: both go with the entry.
+    hass.data["_securacv_test_notifications"].append(
+        {"message": "m", "title": "t", "notification_id": f"securacv_export_{entry.entry_id}"}
+    )
+    hass.data["_securacv_test_notifications"].append(
+        {"message": "m", "title": "t", "notification_id": "securacv_mismatch_canary01"}
+    )
+    assert any(n["notification_id"] == f"securacv_dashboard_{entry.entry_id}" for n in notifications(hass))
     run(async_unload_entry(hass, entry))
     run(async_remove_entry(hass, entry))
     withdrawal = published(hass)[-1]
@@ -265,6 +407,10 @@ def test_remove_entry_withdraws_the_claim_revokes_the_token_and_clears_issues():
     assert FakeApi.instances[-1].revoked == ["0a1b2c3d"]
     assert FakeApi.instances[-1].token == "f1" * 32
     assert not any(key[1].endswith(entry.entry_id) for key in issues(hass))
+    # The verifier's cursor and covered index are deleted with the entry.
+    assert removed_stores == [f"securacv.verify_{entry.entry_id}"]
+    # The entry's notifications are dismissed; a Canary's key notice is per device and stays.
+    assert [n["notification_id"] for n in notifications(hass)] == ["securacv_mismatch_canary01"]
 
 
 def test_remove_entry_without_mqtt_or_pairing_is_quiet():
@@ -395,6 +541,24 @@ def test_canary_status_registers_the_device_linked_to_the_kernel_and_tracks_live
     status_cb(types.SimpleNamespace(topic="securacv/../status", payload=b"online"))
     status_cb(types.SimpleNamespace(topic="securacv/canary02/status", payload=b"\xff\xfe"))
     assert set(devices) == {"canary01"}
+
+    # A device name that is not a string, or too long, never reaches the
+    # registry as published: every DeviceInfo value is a bounded str.
+    status_cb(types.SimpleNamespace(topic="securacv/canary03/status", payload=json.dumps({
+        "online": True, "device_name": {"evil": 1},
+    }).encode()))
+    status_cb(types.SimpleNamespace(topic="securacv/canary04/status", payload=json.dumps({
+        "online": True, "device_name": "x" * 500,
+    }).encode()))
+    status_cb(types.SimpleNamespace(topic="securacv/canary05/status", payload=json.dumps({
+        "online": True, "device_name": "  Back   garden  ",
+    }).encode()))
+    registry = device_registry(hass)
+    assert registry.async_get_device(identifiers={(DOMAIN, "canary_canary03")}).name == (
+        "SecuraCV Canary canary03"
+    )
+    assert registry.async_get_device(identifiers={(DOMAIN, "canary_canary04")}).name == "x" * 64
+    assert registry.async_get_device(identifiers={(DOMAIN, "canary_canary05")}).name == "Back garden"
 
 
 def test_canary_entities_follow_their_devices_liveness():

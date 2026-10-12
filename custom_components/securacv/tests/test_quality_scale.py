@@ -101,6 +101,13 @@ def test_claims_the_code_can_back_are_backed():
         "test-before-setup": "ConfigEntryNotReady" in _source("__init__.py"),
         "config-entry-unloading": "async def async_unload_entry(" in _source("__init__.py"),
         "action-setup": "async_setup_services(hass)" in _source("__init__.py"),
+        "entity-disabled-by-default": (
+            "_attr_entity_registry_enabled_default = False" in _source("binary_sensor.py")
+        ),
+        "entity-category": any(
+            "EntityCategory.DIAGNOSTIC" in _source(f"{platform}.py")
+            for platform in ("sensor", "binary_sensor")
+        ),
     }
     for rule, backed in claims.items():
         status = _status(rules[rule])

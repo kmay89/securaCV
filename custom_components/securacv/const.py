@@ -59,6 +59,8 @@ DEFAULT_MQTT_TOPIC_PREFIX = "witness"
 CONF_CLAIM_NONCE = "claim_nonce"
 # Set once the one-time `entities_migrated` Repairs notice has been raised.
 CONF_MIGRATION_NOTICE_SHOWN = "migration_notice_shown"
+# Set once the one-time "add the dashboard" notification has been posted.
+CONF_DASHBOARD_NOTICE_SHOWN = "dashboard_notice_shown"
 # The pairing form's code field (never persisted).
 CONF_PAIRING_CODE = "pairing_code"
 PAIRING_CODE_LENGTH = 6
@@ -192,6 +194,9 @@ KERNEL_UNREACHABLE_DOCS_LINK = (
 STORAGE_REPLACE_DOCS_LINK = (
     "https://github.com/kmay89/securaCV/blob/main/docs/homeassistant_setup.md"
 )
+# Settings → Dashboards on the user's own instance, where the SecuraCV
+# dashboard strategy is one "Add dashboard" click away (J1).
+DASHBOARDS_LINK = "https://my.home-assistant.io/redirect/lovelace_dashboards/"
 
 # Setup modes
 # `auto` is a flow-only choice: it probes for a running kernel and stores a

@@ -8,7 +8,9 @@ kernel is out of reach, so a button never promises what it cannot do.
 
 from __future__ import annotations
 
+import json
 import types
+from pathlib import Path
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
 from .conftest import make_entry, make_runtime, run
@@ -18,6 +20,8 @@ from homeassistant.core import HomeAssistant  # noqa: E402
 from .. import button as button_platform  # noqa: E402
 from .. import services  # noqa: E402
 from ..const import EXPORT_WINDOW_DEFAULT_HOURS, VERIFY_TRIGGER_BUTTON  # noqa: E402
+
+PACKAGE_DIR = Path(button_platform.__file__).resolve().parent
 
 
 def _setup(with_kernel: bool = True):
@@ -40,7 +44,12 @@ def test_two_buttons_per_kernel_and_none_without_one():
         f"securacv_{entry.entry_id}_verify_now", f"securacv_{entry.entry_id}_export_evidence"
     ]
     assert [b._attr_translation_key for b in added] == ["verify_now", "export_evidence"]
-    assert [b._attr_icon for b in added] == ["mdi:shield-search", "mdi:file-certificate"]
+    # The icons live in icons.json only (the icon-translations rule).
+    icons = json.loads((PACKAGE_DIR / "icons.json").read_text(encoding="utf-8"))["entity"]["button"]
+    assert [icons[b._attr_translation_key]["default"] for b in added] == [
+        "mdi:shield-search", "mdi:file-certificate"
+    ]
+    assert not any("_attr_icon" in vars(type(b)) for b in added)
     assert all(b._attr_has_entity_name for b in added)
     assert getattr(added[0], "_attr_entity_category", None) is None
     assert button_platform.PARALLEL_UPDATES == 1

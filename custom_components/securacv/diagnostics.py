@@ -168,6 +168,27 @@ def _identity_shape(identity: Any, pinned_key: str | None) -> dict[str, Any] | N
     }
 
 
+def _storage_shape(status: Any) -> dict[str, Any] | None:
+    """The storage endurance numbers only; `source_device` is a device path."""
+    if not isinstance(status, dict):
+        return None
+    storage = status.get("storage")
+    if not isinstance(storage, dict):
+        return None
+    return {
+        key: storage.get(key)
+        for key in (
+            "status",
+            "free_pct",
+            "wear_pct",
+            "write_rate_bytes_per_day",
+            "estimated_days_remaining",
+            "replace_recommended",
+        )
+        if key in storage
+    }
+
+
 def _canary_shape(device: dict[str, Any]) -> dict[str, Any]:
     """Firmware, hardware and liveness — never the raw status payload."""
     status = device.get("status")
@@ -216,9 +237,7 @@ async def async_get_config_entry_diagnostics(
         "claim_published": runtime.claim_published if runtime else False,
         "frigate_link": _frigate_link_shape(data.get("frigate_link")),
         "identity": _identity_shape(data.get("identity"), pinned_key),
-        "storage_status": (data.get("status") or {}).get("storage")
-        if isinstance(data.get("status"), dict)
-        else None,
+        "storage_status": _storage_shape(data.get("status")),
     }
 
     # Canary ids are the owner's local pseudonyms; the dump keeps eight

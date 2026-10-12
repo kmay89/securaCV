@@ -50,7 +50,6 @@ class SecuraCVVerifyNowButton(SecuraCVKernelEntity, ButtonEntity):
     """Walk the sealed log now, against the pinned key."""
 
     _attr_translation_key = "verify_now"
-    _attr_icon = "mdi:shield-search"
 
     def __init__(self, coordinator: SecuraCVKernelCoordinator, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -66,7 +65,6 @@ class SecuraCVExportEvidenceButton(SecuraCVKernelEntity, ButtonEntity):
     """Export the last 24 hours as a signed evidence pack."""
 
     _attr_translation_key = "export_evidence"
-    _attr_icon = "mdi:file-certificate"
 
     def __init__(self, coordinator: SecuraCVKernelCoordinator, entry: ConfigEntry) -> None:
         """Initialize."""

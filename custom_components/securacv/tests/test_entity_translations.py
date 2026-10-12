@@ -353,3 +353,31 @@ def test_event_type_state_names_cover_exactly_the_derived_lists() -> None:
     assert set(tamper) == set(ALL_TAMPER_TYPES)
     verification = event_strings["verification_events"]["state_attributes"]["event_type"]["state"]
     assert set(verification) == set(VERIFICATION_EVENT_TYPES)
+
+
+# ─── 4. entity defaults the quality scale claims ──────────────────────
+
+
+def test_transport_sensors_are_diagnostic_and_disabled_by_default() -> None:
+    """The entity-disabled-by-default rule, as quality_scale.yaml states it:
+    the six per-transport connectivity sensors are plumbing (diagnostic,
+    off until enabled from the device page); the per-type tamper sensors
+    are the automation targets and stay on."""
+    for transport in ALL_TRANSPORTS:
+        sensor = _canary(bs_platform.SecuraCVCanaryTransportSensor, transport,
+                         bs_platform.TRANSPORT_SENSORS[transport])
+        assert sensor._attr_entity_registry_enabled_default is False, transport
+        assert sensor._attr_entity_category == bs_platform.EntityCategory.DIAGNOSTIC, transport
+    for tamper_type in ALL_TAMPER_TYPES:
+        sensor = _canary(bs_platform.SecuraCVCanaryTamperTypeSensor, tamper_type,
+                         bs_platform.TAMPER_TYPE_SENSORS[tamper_type])
+        assert getattr(sensor, "_attr_entity_registry_enabled_default", True) is True, tamper_type
+    # Nothing else in the package ships disabled: a kernel entity that was
+    # off by default would hide the product.
+    for platform, (module, entities) in PLATFORMS.items():
+        for cls, _ctors in entities:
+            if cls is bs_platform.SecuraCVCanaryTransportSensor:
+                continue
+            assert vars(cls).get("_attr_entity_registry_enabled_default", True) is True, (
+                platform, cls.__name__,
+            )

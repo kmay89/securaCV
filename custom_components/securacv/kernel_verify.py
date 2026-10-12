@@ -584,6 +584,17 @@ def storage_key(entry_id: str) -> str:
     return f"{DOMAIN}.verify_{entry_id}"
 
 
+async def async_remove_verify_store(hass: HomeAssistant, entry_id: str) -> None:
+    """Delete the entry's persisted cursor and covered index (the entry is being removed).
+
+    The key carries the entry id, so nothing could ever read the file back;
+    leaving it would keep a map of which zones saw events in which buckets
+    on disk for an installation that no longer exists.
+    """
+    store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, storage_key(entry_id))
+    await store.async_remove()
+
+
 def _prune_covered(
     covered: set[CoveredKey], *, now: float, retention_seconds: int
 ) -> set[CoveredKey]:

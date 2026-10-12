@@ -82,7 +82,15 @@ def _entry_with_kernel(hass: HomeAssistant, fp: str | None = FULL_FP):
             "latest_event": LATEST_EVENT,
             "digest": DIGEST,
             "identity": IDENTITY,
-            "status": {"storage": {"free_pct": 71.0, "wear_pct": 3}},
+            "status": {
+                "storage": {
+                    "status": "good",
+                    "free_pct": 71.0,
+                    "wear_pct": 3,
+                    "source_device": "/dev/mmcblk0p2",
+                    "lifetime_bytes_written": 123456789,
+                }
+            },
             "chain_problem": False,
             "claim_state": "claimed",
             "frigate_link": {
@@ -173,6 +181,7 @@ def test_nothing_secret_or_identifying_survives() -> None:
         "driveway",
         "9c" * 32,
         "pwk_1a2b3c4d",
+        "/dev/mmcblk0p2",
     ):
         assert secret not in text, secret
 
@@ -214,6 +223,9 @@ def test_the_kernel_section_is_a_projection() -> None:
     }
     assert kernel["claim_state"] == "claimed" and kernel["claim_published"] is True
     assert kernel["chain_problem"] is False
+    # The storage report is projected to its endurance numbers: the block
+    # device path and the raw counters stay out.
+    assert kernel["storage_status"] == {"status": "good", "free_pct": 71.0, "wear_pct": 3}
 
 
 def test_canary_status_is_projected_not_copied() -> None:

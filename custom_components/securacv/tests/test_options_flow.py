@@ -61,8 +61,11 @@ def _flow(*, with_store: bool = True, notified=None):
         run(store.async_load())
         runtime = make_runtime(hass, trust_store=store, mismatch_notified=set(notified or ()))
         entry.runtime_data = runtime
-    flow = SecuraCVOptionsFlow(entry)
+    hass.config_entries.add(entry)
+    flow = SecuraCVOptionsFlow()
     flow.hass = hass
+    # What the options-flow manager does on start: the handler is the entry id.
+    flow.handler = entry.entry_id
     return flow, store, runtime
 
 
@@ -94,6 +97,10 @@ def test_configure_button_opens_the_trust_menu():
     entry = SimpleNamespace(entry_id="e1", data={}, options={})
     flow = SecuraCVConfigFlow.async_get_options_flow(entry)
     assert isinstance(flow, SecuraCVOptionsFlow)
+    # The entry is never stored on the flow: `config_entry` is the core's
+    # property (resolved from the handler), so the deprecated pattern of
+    # assigning it in __init__ cannot come back unnoticed.
+    assert "_config_entry" not in vars(flow) and "config_entry" not in vars(flow)
 
     result = run(flow.async_step_init())
     assert result["type"] == "menu"

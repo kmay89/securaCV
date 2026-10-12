@@ -284,8 +284,14 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        """Return the OptionsFlow handler for this entry."""
-        return SecuraCVOptionsFlow(config_entry)
+        """Return the OptionsFlow handler for this entry.
+
+        The entry is not handed to the flow: ``OptionsFlow.config_entry`` is
+        a property the core resolves from the flow's handler (2024.11+), and
+        storing the entry on the instance was the pattern that property
+        replaced.
+        """
+        return SecuraCVOptionsFlow()
 
     # Discovery-step state. Class-level defaults (not an __init__) so the
     # base flow machinery's construction is left completely alone.
@@ -1232,13 +1238,11 @@ def _looks_like_pubkey_hex(value: str) -> bool:
 
 
 class SecuraCVOptionsFlow(OptionsFlow):
-    """Per-entry trust-store management surface, plus the export settings."""
+    """Per-entry trust-store management surface, plus the export settings.
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        # `_config_entry` matches HA's recommended naming so HA core
-        # internals can introspect it. The deprecated `self.config_entry`
-        # alias is still set by the parent class.
-        self._config_entry = config_entry
+    No ``__init__``: the entry is ``self.config_entry``, which the core
+    resolves from the flow's handler once the flow is started.
+    """
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -1254,7 +1258,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """How many evidence exports to keep on disk."""
         errors: dict[str, str] = {}
-        current = int(self._config_entry.options.get(CONF_EVIDENCE_KEEP, DEFAULT_EVIDENCE_KEEP))
+        current = int(self.config_entry.options.get(CONF_EVIDENCE_KEEP, DEFAULT_EVIDENCE_KEEP))
         if user_input is not None:
             try:
                 keep = int(user_input.get(CONF_EVIDENCE_KEEP, current))
@@ -1262,7 +1266,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
                 keep = -1
             if MIN_EVIDENCE_KEEP <= keep <= MAX_EVIDENCE_KEEP:
                 return self.async_create_entry(
-                    title="", data={**self._config_entry.options, CONF_EVIDENCE_KEEP: keep}
+                    title="", data={**self.config_entry.options, CONF_EVIDENCE_KEEP: keep}
                 )
             errors[CONF_EVIDENCE_KEEP] = "invalid_evidence_keep"
             current = keep if keep > 0 else current
@@ -1278,7 +1282,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
         compares belong to the key, so a new key starts them over — kept in
         step with `async_clear_replay_marks` in __init__.py without
         importing the package (the flow module is loaded on its own)."""
-        runtime = runtime_for(self._config_entry)
+        runtime = runtime_for(self.config_entry)
         if runtime is not None:
             runtime.replay.pop(device_id, None)
 
@@ -1290,7 +1294,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
         breaking the "warn loudly" guarantee. Pin is a key-changing path too
         — it replaces a TOFU pin with a manual one — and is the action an
         alarmed operator is most likely to reach for."""
-        runtime = runtime_for(self._config_entry)
+        runtime = runtime_for(self.config_entry)
         if runtime is None:
             return
         notified = runtime.mismatch_notified
@@ -1322,7 +1326,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
                     # under this key all read as replays of the old one.
                     self._forget_replay_marks(device_id)
                     self._forget_mismatch_notifications(device_id)
-                    return self.async_create_entry(title="", data=dict(self._config_entry.options))
+                    return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
         return self.async_show_form(
             step_id="pin",
@@ -1364,7 +1368,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
                     # device so the operator's rotation takes effect
                     # immediately on the UI side.
                     self._forget_mismatch_notifications(device_id)
-                    return self.async_create_entry(title="", data=dict(self._config_entry.options))
+                    return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
         return self.async_show_form(
             step_id="rotate",
@@ -1399,7 +1403,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
                     # Whatever key TOFU-pins next starts its counters over.
                     self._forget_replay_marks(device_id)
                     self._forget_mismatch_notifications(device_id)
-                    return self.async_create_entry(title="", data=dict(self._config_entry.options))
+                    return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
         return self.async_show_form(
             step_id="unpin",
@@ -1411,5 +1415,5 @@ class SecuraCVOptionsFlow(OptionsFlow):
         """Lazy accessor — the runtime is created in async_setup_entry, so
         it always exists by the time the options flow runs (the button is
         only enabled after setup)."""
-        runtime = runtime_for(self._config_entry)
+        runtime = runtime_for(self.config_entry)
         return runtime.trust_store if runtime is not None else None

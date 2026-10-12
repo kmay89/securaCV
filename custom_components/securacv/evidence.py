@@ -53,6 +53,7 @@ from homeassistant.util import dt as dt_util
 from .api import BundleDownload
 from .const import (
     CONF_EVIDENCE_KEEP,
+    CONF_KERNEL_DEVICE_ID,
     DEFAULT_EVIDENCE_KEEP,
     DOMAIN,
     EVIDENCE_DIR_PARTS,
@@ -394,7 +395,7 @@ async def async_export_evidence(
     verifying_key = normalize_kernel_key(
         runtime.coordinator.pinned_key if runtime.coordinator is not None else None
     )
-    kernel_device_id = entry.data.get("kernel_device_id")
+    kernel_device_id = entry.data.get(CONF_KERNEL_DEVICE_ID)
     export_id = new_export_id()
     now = time.time()
     composed = await hass.async_add_executor_job(

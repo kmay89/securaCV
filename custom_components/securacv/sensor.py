@@ -34,7 +34,6 @@ from .const import (
     CRITICAL_BATTERY_THRESHOLD_PERCENT,
     WARNING_BATTERY_THRESHOLD_PERCENT,
     WARNING_MEMORY_THRESHOLD_BYTES,
-    DEFAULT_EVENT_ICON,
     DEVICE_TYPE_CANARY_SENSE,
     MODALITY_UNKNOWN,
     canonical_device_type,
@@ -476,11 +475,15 @@ class SecuraCVKernelLastEventSensor(SecuraCVKernelEntity, SensorEntity):
         return event if isinstance(event, dict) else None
 
     @property
-    def icon(self) -> str:
-        """Icon reflects the latest event type, so the dashboard reads at a glance."""
+    def icon(self) -> str | None:
+        """Icon reflects the latest event type, so the dashboard reads at a glance.
+
+        None before the first event: the default then comes from icons.json
+        (the icon-translations rule), the one place every default lives.
+        """
         if event := self._latest_event():
             return event_type_metadata(event.get("event_type"))["icon"]
-        return DEFAULT_EVENT_ICON
+        return None
 
     @property
     def native_value(self) -> str | None:
@@ -520,7 +523,6 @@ class SecuraCVKernelChainLengthSensor(SecuraCVKernelEntity, SensorEntity):
     """
 
     _attr_translation_key = "chain_length"
-    _attr_icon = "mdi:link-variant"
     _attr_native_unit_of_measurement = "blocks"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
@@ -564,7 +566,6 @@ class SecuraCVKernelDailyDigestSensor(SecuraCVKernelEntity, SensorEntity):
     """
 
     _attr_translation_key = "daily_digest"
-    _attr_icon = "mdi:calendar-today"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
@@ -605,7 +606,6 @@ class SecuraCVKernelFingerprintSensor(SecuraCVKernelEntity, SensorEntity):
     """
 
     _attr_translation_key = "kernel_fingerprint"
-    _attr_icon = "mdi:fingerprint"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
@@ -660,7 +660,6 @@ class SecuraCVKernelStorageSensorBase(SecuraCVKernelEntity, SensorEntity):
 class SecuraCVKernelStorageHealthSensor(SecuraCVKernelStorageSensorBase):
     """Overall SD-card / storage health status with full metrics attached."""
 
-    _attr_icon = "mdi:sd"
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
@@ -687,7 +686,6 @@ class SecuraCVKernelStorageHealthSensor(SecuraCVKernelStorageSensorBase):
 class SecuraCVKernelStorageFreeSensor(SecuraCVKernelStorageSensorBase):
     """Free space on the filesystem holding the sealed log."""
 
-    _attr_icon = "mdi:harddisk"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
 
@@ -711,7 +709,6 @@ class SecuraCVKernelStorageWearSensor(SecuraCVKernelStorageSensorBase):
     data): whole-device bytes written versus the configured TBW rating.
     """
 
-    _attr_icon = "mdi:sd"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
 
@@ -744,7 +741,6 @@ class SecuraCVKernelStorageWearSensor(SecuraCVKernelStorageSensorBase):
 class SecuraCVKernelStorageWriteRateSensor(SecuraCVKernelStorageSensorBase):
     """Whole-device write rate (MB/day) — the pace at which the card wears."""
 
-    _attr_icon = "mdi:database-arrow-down"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "MB/d"
 
@@ -803,7 +799,6 @@ class SecuraCVAdapterStatsSensor(CoordinatorEntity, SensorEntity):
     """
 
     _attr_translation_key = "adapter_stats"
-    _attr_icon = "mdi:hub"
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -922,7 +917,6 @@ class SecuraCVCanarySensorBase(SensorEntity):
 class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
     """Sensor for total witness record count from a Canary device."""
 
-    _attr_icon = "mdi:counter"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "records"
 
@@ -965,7 +959,6 @@ class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
 class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
     """Sensor for hash chain length from a Canary device."""
 
-    _attr_icon = "mdi:link-variant"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "blocks"
 
@@ -1013,7 +1006,6 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
 class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
     """Sensor for last witness event from a Canary device."""
 
-    _attr_icon = "mdi:eye-outline"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -1121,7 +1113,6 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
     docs/csi_developer_api.md.
     """
 
-    _attr_icon = "mdi:heart-pulse"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -1276,7 +1267,6 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
     that does not yet report the `sd` health object.
     """
 
-    _attr_icon = "mdi:sd"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
@@ -1325,7 +1315,6 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
 class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
     """Sensor for GPS fix status from a Canary device."""
 
-    _attr_icon = "mdi:crosshairs-gps"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -1395,7 +1384,6 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
         }
     """
 
-    _attr_icon = "mdi:radar"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     # Treat the link as stale (vs. down) past this frame age. The radar streams

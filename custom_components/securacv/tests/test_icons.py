@@ -1,15 +1,20 @@
-"""icons.json: every entity key has an icon, and it agrees with the code.
+"""icons.json: every entity key has an icon, and icons.json is the one source.
 
 Icon translations are keyed by platform and translation key, like the
-names in strings.json. Until the in-code `_attr_icon` attributes are
-retired (they are the fallback for cores that ignore icons.json), the two
-must say the same thing, or a card shows one icon and the entity page
-another.
+names in strings.json. An entity that also sets `_attr_icon` in code hides
+its translation: Home Assistant renders `_attr_icon` and never consults
+icons.json for it, so the state icons (`chain_valid` off → alert) would be
+dead. Every core the floor admits (hacs.json: 2026.5.0) honors icons.json,
+so no class sets a static icon any more; the only in-code icons left are
+the per-type tables that feed the tamper / transport constructors (held
+equal to icons.json below) and the last-event sensors' DYNAMIC icon, which
+follows the event type and otherwise defers to the translation.
 """
 
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 
 from . import conftest  # noqa: F401  (installs the base HA stubs)
@@ -56,29 +61,53 @@ def test_the_state_icons_are_where_the_contract_wants_them():
     assert link["on"] != link["off"]
 
 
-def _class_icons(module, platform: str) -> dict[str, str]:
-    """{translation_key: _attr_icon} for every class that sets both as class attributes."""
-    found = {}
+PLATFORM_MODULES = (
+    ("sensor", sensor_platform),
+    ("binary_sensor", bs_platform),
+    ("event", event_platform),
+    ("button", button_platform),
+)
+
+
+def _package_classes(module):
     for value in vars(module).values():
-        if not isinstance(value, type) or value.__module__ != module.__name__:
-            continue
-        key = vars(value).get("_attr_translation_key")
-        icon = vars(value).get("_attr_icon")
-        if isinstance(key, str) and isinstance(icon, str):
-            found[key] = icon
-    return found
+        if isinstance(value, type) and value.__module__ == module.__name__:
+            yield value
 
 
-def test_in_code_icons_agree_with_the_translations():
-    for platform, module in (
-        ("sensor", sensor_platform),
-        ("binary_sensor", bs_platform),
-        ("event", event_platform),
-        ("button", button_platform),
-    ):
-        for key, icon in _class_icons(module, platform).items():
-            assert ICONS["entity"][platform][key]["default"] == icon, (platform, key)
-    # The per-type tables feed the constructor; they agree too.
+def test_no_class_hides_its_icon_translation_behind_a_static_icon():
+    """A class-level `_attr_icon` wins over icons.json at runtime, so the
+    translated default and every state icon would be dead for that entity."""
+    for platform, module in PLATFORM_MODULES:
+        for cls in _package_classes(module):
+            for klass in cls.__mro__:
+                if klass.__module__.startswith(sensor_platform.__name__.rsplit(".", 1)[0]):
+                    assert "_attr_icon" not in vars(klass), (
+                        f"{platform}.{klass.__name__} sets _attr_icon, which hides its "
+                        "icons.json entry (and any state icon) from Home Assistant"
+                    )
+
+
+def test_the_last_event_sensor_defers_to_the_translation_until_an_event_arrives():
+    """The kernel last-event icon follows the event type (a dynamic icon the
+    translation cannot express); with no event it returns None so the
+    icons.json default applies rather than a second in-code default."""
+    coordinator = types.SimpleNamespace(data=None, last_update_success=True)
+    entry = types.SimpleNamespace(entry_id="e1", data={})
+    sensor = sensor_platform.SecuraCVKernelLastEventSensor.__new__(
+        sensor_platform.SecuraCVKernelLastEventSensor
+    )
+    sensor.coordinator = coordinator
+    sensor._entry = entry
+    assert sensor.icon is None
+    coordinator.data = {"latest_event": {"event_type": "BoundaryCrossingObjectLarge"}}
+    assert sensor.icon == "mdi:car"
+    assert ICONS["entity"]["sensor"]["kernel_last_event"]["default"] == "mdi:shield-eye"
+
+
+def test_the_per_type_tables_agree_with_the_translations():
+    # The per-type tables feed the tamper / transport constructors (one row
+    # per advertised type, tests/test_feature_flags.py); they agree too.
     for tamper_type in ALL_TAMPER_TYPES:
         assert (
             ICONS["entity"]["binary_sensor"][f"tamper_{tamper_type}"]["default"]

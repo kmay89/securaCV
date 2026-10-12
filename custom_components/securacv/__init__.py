@@ -45,6 +45,7 @@ from .const import (
     CONF_ADAPTER_STATS_URL,
     CONF_AUTH_MODE,
     CONF_CLAIM_NONCE,
+    CONF_DASHBOARD_NOTICE_SHOWN,
     CONF_ENABLE_MQTT,
     CONF_KERNEL_DEVICE_ID,
     CONF_KERNEL_TOKEN_ID,
@@ -54,6 +55,7 @@ from .const import (
     CONF_MQTT_TOPIC_PREFIX,
     CONF_SETUP_MODE,
     CONF_TOKEN_FILE,
+    DASHBOARDS_LINK,
     DEFAULT_MQTT_TOPIC_PREFIX,
     DOMAIN,
     MANUFACTURER,
@@ -116,6 +118,12 @@ LOVELACE_CARD_FILENAMES = (
     "securacv-aim-card.js",
     "securacv-strategy.js",
 )
+# The dashboard strategy module: when it was served, "Add dashboard →
+# SecuraCV" exists in Settings → Dashboards and the one-time notice below
+# may say so.
+STRATEGY_CARD_FILENAME = "securacv-strategy.js"
+# hass.data[DOMAIN] key listing the card files actually served this run.
+DATA_FRONTEND_CARDS = "_frontend_cards"
 
 
 def _card_digest(path: str) -> str:
@@ -165,6 +173,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         cards = await hass.async_add_executor_job(_card_assets)
 
         registered_any = False
+        served: list[str] = domain_data.setdefault(DATA_FRONTEND_CARDS, [])
         for filename, card_path, digest in cards:
             card_url = f"/{DOMAIN}_www/{filename}"
             from homeassistant.components.http import StaticPathConfig
@@ -185,6 +194,8 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             # the static path itself stays unversioned.
             add_extra_js_url(hass, f"{card_url}?v={digest}")
             registered_any = True
+            if filename not in served:
+                served.append(filename)
             _LOGGER.debug("SecuraCV card registered at %s", card_url)
         if not registered_any:
             domain_data["_frontend_registered"] = False
@@ -380,14 +391,55 @@ async def _async_adopt_identity(hass: HomeAssistant, entry: SecuraCVConfigEntry)
     hass.config_entries.async_update_entry(entry, **kwargs)
 
 
+@callback
+def _bridge_entities_present(hass: HomeAssistant, kernel_device_id: str) -> bool:
+    """Whether MQTT discovery ever created the bridge's own entities here.
+
+    The bridge's discovery configs carry ``unique_id`` ``<device_id>_<object>``
+    (``pwk_1a2b3c4d_last_event``) and default entity ids ``*.pwk_*``, on the
+    ``mqtt`` platform. Read BEFORE the claim goes out: the claim is what
+    makes the bridge withdraw them. When the registry cannot be read the
+    answer is "yes" — the contract's default is to raise the notice.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    try:
+        rows: Any = er.async_get(hass).entities
+        if hasattr(rows, "values"):
+            rows = rows.values()
+        for row in rows:
+            if getattr(row, "platform", None) != "mqtt":
+                continue
+            unique_id = getattr(row, "unique_id", None)
+            if isinstance(unique_id, str) and unique_id.startswith(f"{kernel_device_id}_"):
+                return True
+            entity_id = getattr(row, "entity_id", None)
+            if isinstance(entity_id, str) and entity_id.partition(".")[2].startswith("pwk_"):
+                return True
+        return False
+    except Exception:  # noqa: BLE001 - cannot tell: keep the contract's default
+        _LOGGER.debug("entity registry unreadable; assuming bridge entities exist", exc_info=True)
+        return True
+
+
 async def _async_claim_kernel(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> None:
-    """Publish the retained claim and keep it fresh; raise the migration notice once."""
+    """Publish the retained claim and keep it fresh; raise the migration notice once.
+
+    The ``entities_migrated`` notice is for the people whose automations and
+    dashboards named the bridge's ``pwk_*`` entities; a fresh install where
+    MQTT discovery never created them is not told about a replacement that
+    never happened. Either way the flag is set once, so the notice can
+    never be raised twice.
+    """
     from . import repairs
     from .claim import async_publish_claim, async_schedule_claim_republish
 
     runtime = runtime_for(entry)
     if runtime is None:
         return
+    device_id = str(entry.data.get(CONF_KERNEL_DEVICE_ID) or "")
+    show_migration = not entry.data.get(CONF_MIGRATION_NOTICE_SHOWN) and bool(device_id)
+    bridge_entities = show_migration and _bridge_entities_present(hass, device_id)
     try:
         published = await async_publish_claim(hass, entry)
     except Exception as err:  # noqa: BLE001 - the claim is a courtesy to the bridge, not setup
@@ -397,11 +449,44 @@ async def _async_claim_kernel(hass: HomeAssistant, entry: SecuraCVConfigEntry) -
         return
     runtime.claim_published = True
     runtime.unsub_mqtt.append(async_schedule_claim_republish(hass, entry))
-    if not entry.data.get(CONF_MIGRATION_NOTICE_SHOWN):
-        repairs.async_report_entities_migrated(hass, entry)
+    if show_migration:
+        if bridge_entities:
+            repairs.async_report_entities_migrated(hass, entry)
         hass.config_entries.async_update_entry(
             entry, data={**entry.data, CONF_MIGRATION_NOTICE_SHOWN: True}
         )
+
+
+@callback
+def _async_dashboard_notice(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> None:
+    """Once per kernel entry: say where the dashboard is (J1).
+
+    The strategy registers itself with the frontend, so the dashboard is
+    one "Add dashboard" click away rather than created for the person; the
+    notice says so, once, and only when the strategy module was really
+    served this run — a sentence about a picker entry that does not exist
+    would be a lie. Posted on the first load whether or not the kernel is
+    reachable at that moment: the flow already probed it, and the dashboard
+    is worth adding either way.
+    """
+    if entry.data.get(CONF_DASHBOARD_NOTICE_SHOWN):
+        return
+    served = hass.data.get(DOMAIN, {}).get(DATA_FRONTEND_CARDS) or []
+    if STRATEGY_CARD_FILENAME not in served:
+        return
+    from homeassistant.components import persistent_notification
+
+    persistent_notification.async_create(
+        hass,
+        "SecuraCV is connected. Add the dashboard: Settings → Dashboards → "
+        "Add dashboard → SecuraCV. It builds itself from your cameras and the "
+        f"witness chain.\n\n[Open Dashboards]({DASHBOARDS_LINK})",
+        "SecuraCV: add the dashboard",
+        f"securacv_dashboard_{entry.entry_id}",
+    )
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_DASHBOARD_NOTICE_SHOWN: True}
+    )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> bool:
@@ -588,6 +673,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> 
         runtime.unsub_mqtt.append(verifier.async_stop)
         # The authenticated download view for evidence packs, once per instance.
         async_register_view(hass)
+        _async_dashboard_notice(hass, entry)
 
     _LOGGER.info(
         "SecuraCV integration loaded (mode: %s, mqtt: %s)",
@@ -656,7 +742,27 @@ async def async_remove_entry(hass: HomeAssistant, entry: SecuraCVConfigEntry) ->
         await TrustStore(hass, entry.entry_id).async_remove()
     except Exception:  # noqa: BLE001 - storage may already be gone
         _LOGGER.debug("trust store removal failed", exc_info=True)
+    if entry.data.get(CONF_URL):
+        from .kernel_verify import async_remove_verify_store
+
+        try:
+            await async_remove_verify_store(hass, entry.entry_id)
+        except Exception:  # noqa: BLE001 - storage may already be gone
+            _LOGGER.debug("verification store removal failed", exc_info=True)
     repairs.async_clear_entry_issues(hass, entry)
+    # The entry's own notifications (the export link, the dashboard pointer)
+    # would otherwise outlive it; a Canary key-mismatch notice is per device
+    # and stays until the owner reads it.
+    try:
+        from homeassistant.components import persistent_notification
+
+        for notification_id in (
+            f"securacv_export_{entry.entry_id}",
+            f"securacv_dashboard_{entry.entry_id}",
+        ):
+            persistent_notification.async_dismiss(hass, notification_id)
+    except Exception:  # noqa: BLE001 - a notice left behind is not worth failing a removal
+        _LOGGER.debug("notification dismissal failed", exc_info=True)
 
 
 async def async_remove_config_entry_device(
@@ -681,6 +787,23 @@ async def async_remove_config_entry_device(
             ):
                 return False
     return True
+
+
+# The longest device name a status payload may set; the broker is untrusted.
+DEVICE_NAME_MAX_LENGTH = 64
+
+
+def _device_display_name(friendly_name: Any, device_id: str) -> str:
+    """The Canary's device name: what the owner named it, else the id.
+
+    Always a str (a non-string DeviceInfo value is refused from 2026.12), and
+    bounded — the broker is untrusted input.
+    """
+    if isinstance(friendly_name, str):
+        name = " ".join(friendly_name.split())[:DEVICE_NAME_MAX_LENGTH]
+        if name:
+            return name
+    return f"SecuraCV Canary {device_id}"
 
 
 def _safe_config_url(ap_ip: Any) -> str | None:
@@ -778,8 +901,9 @@ def _async_device_status_received(hass: HomeAssistant, entry: SecuraCVConfigEntr
         if device_id not in devices:
             _LOGGER.info("Discovered SecuraCV Canary device: %s", device_id)
             devices[device_id] = {"status": payload}
-            friendly_name = status_data.get("device_name") or status_data.get("name")
-            display_name = friendly_name or f"SecuraCV Canary {device_id}"
+            display_name = _device_display_name(
+                status_data.get("device_name") or status_data.get("name"), device_id
+            )
 
             from .entity import kernel_via_device_kwargs
 
