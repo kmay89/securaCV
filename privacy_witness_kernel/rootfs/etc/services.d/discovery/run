@@ -1,0 +1,57 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# SecuraCV: the Supervisor discovery announcement. Once the Event API
+# answers /health, tell the Supervisor where it lives (contract C6: host,
+# port, token file path, MQTT state prefix, device id) so the SecuraCV
+# integration can show a zero-click discovered card. Runs once per
+# container start, then stays down. Non-fatal: setup works without it —
+# discovery only removes typing on the integration side.
+# ==============================================================================
+# DEVICE_ID, TOKEN_FILE, PUBLISH_PREFIX and ADDON_HOST come from the sourced
+# /run/securacv/setup.sh (rendered by run.sh), which shellcheck cannot follow.
+# shellcheck disable=SC2153
+set -euo pipefail
+
+# shellcheck source=privacy_witness_kernel/run_lib.sh disable=SC1091
+source /usr/local/bin/run_lib.sh
+
+# The setup step (run.sh, cont-init) renders /run/securacv/setup.sh and
+# leaves /run/securacv/configured only when the app is configured. Before
+# that the setup wizard is the whole app: this service steps aside without
+# flapping (`s6-svc -O .` = do not restart me when I exit 0).
+SETUP_FILE=/run/securacv/setup.sh
+if [ ! -f /run/securacv/configured ] || [ ! -f "$SETUP_FILE" ]; then
+  bashio::log.info "discovery: SecuraCV is not configured yet (open the app's Web UI); staying down."
+  s6-svc -O .
+  exit 0
+fi
+# shellcheck disable=SC1090
+source "$SETUP_FILE"
+
+# Every exit of this service is on purpose: announced, or gave up.
+s6-svc -O .
+
+if [ -z "${ADDON_HOST:-}" ]; then
+  bashio::log.warning "discovery: could not determine the app hostname; skipping the announcement."
+  exit 0
+fi
+
+bashio::log.info "discovery: waiting for the Event API before announcing to the Supervisor..."
+if ! wait_for_kernel_health "http://127.0.0.1:8799/health" 60 2; then
+  bashio::log.warning "discovery: the Event API never became healthy; skipping the announcement."
+  exit 0
+fi
+
+payload=$(compose_discovery_payload "$ADDON_HOST" 8799 "$TOKEN_FILE" "$PUBLISH_PREFIX" "$DEVICE_ID")
+if curl -sf -X POST \
+    -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-${HASSIO_TOKEN:-}}" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    http://supervisor/discovery > /dev/null 2>&1; then
+  bashio::log.info "discovery: announced the Event API to the Supervisor (${ADDON_HOST}:8799, device ${DEVICE_ID})."
+  bashio::log.info "discovery: the SecuraCV integration shows a discovered card under Settings -> Devices & Services."
+else
+  bashio::log.warning "discovery: announcement to the Supervisor failed (non-fatal)."
+  bashio::log.warning "discovery: add the SecuraCV integration manually; the kernel itself is unaffected."
+fi
+exit 0

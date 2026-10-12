@@ -1,0 +1,87 @@
+# What the Configuration and Network tabs show for each option and port.
+# Every top-level key under `options:` in config.yaml has an entry here;
+# tests/test_addon_store.py holds the two files to each other.
+configuration:
+  mode:
+    name: Mode
+    description: >-
+      "frigate" seals the events Frigate publishes over MQTT (the recommended
+      setup; the wizard chooses it when Frigate is installed). "standalone"
+      makes the kernel read one RTSP camera itself.
+  frigate:
+    name: Frigate connection
+    description: >-
+      How the kernel listens to Frigate. Broker fields left empty are filled
+      from the Mosquitto add-on automatically. topic_prefix must match
+      Frigate's mqtt.topic_prefix (default "frigate"). enable_reviews seals
+      only Frigate alerts instead of every tracked object. cameras lists the
+      camera slugs to seal (empty = every camera Frigate reports); the setup
+      wizard fills it from Frigate's own config. labels and min_confidence
+      filter what gets sealed.
+  cameras:
+    name: Direct RTSP cameras (standalone mode)
+    description: >-
+      Cameras the kernel reads itself when mode is "standalone". Each entry
+      needs a name and an RTSP URL; zone_id, fps, width and height are
+      optional. Only the first camera is processed today.
+  go2rtc_discovery:
+    name: Discover cameras from go2rtc
+    description: >-
+      In standalone mode, pre-fill the camera list from a reachable go2rtc
+      (Frigate's built-in restreamer or a standalone one).
+  go2rtc_url:
+    name: go2rtc URL
+    description: The go2rtc API the camera discovery asks, for example http://ccab4aaf-frigate:1984.
+  mqtt_publish:
+    name: Publish to Home Assistant over MQTT
+    description: >-
+      Keep enabled: this is how sealed events, the daily digest and the
+      chain state reach Home Assistant, and how the kernel announces itself
+      for the discovered card. Broker fields left empty are filled from the
+      Mosquitto add-on. topic_prefix is the state prefix (default
+      "witness"); discovery_prefix is Home Assistant's (default
+      "homeassistant").
+  device_key_seed:
+    name: Device key seed
+    description: >-
+      The secret the kernel's signing key derives from. Leave empty: the app
+      generates one on first start and keeps it in
+      /config/.securacv/device_key (included in Home Assistant backups).
+      Changing it orphans the existing witness log.
+  retention_days:
+    name: Keep sealed events for (days)
+    description: >-
+      How long sealed witness events stay in the log before the kernel
+      prunes them. Exports are self-contained, so nothing is lost by
+      exporting first.
+  time_bucket_minutes:
+    name: Time bucket (minutes)
+    description: >-
+      The coarse window every sealed event is placed in. Ten minutes is the
+      privacy default; a smaller bucket is a more precise record.
+  log_level:
+    name: Log level
+    description: How much the kernel writes to the app log.
+  verify_interval_hours:
+    name: Hours between chain verifications
+    description: >-
+      How often the kernel re-walks its own sealed log and reports the
+      result (0 disables). The SecuraCV integration verifies the chain on
+      its own schedule as well; this keeps the kernel's self-report fresh.
+  install_integration:
+    name: Let the app install the SecuraCV integration
+    description: >-
+      The app carries the SecuraCV integration. When on, the wizard's done
+      screen offers "Install the integration and restart Home Assistant"
+      (one click; nothing is copied without it), and on each app start the
+      app updates the copy it placed itself — never a copy HACS or you
+      installed, never with an automatic restart. Turn off to manage the
+      integration through HACS only.
+network:
+  8799/tcp: >-
+    The kernel's Event API. Leave disabled: the SecuraCV integration reaches
+    it over the internal add-on network. Enable only for a client outside
+    Home Assistant (the Apple TV Witness Wall); every data endpoint still
+    needs the capability token, and the fleet roll-call GET /api/fleet
+    (names, online state, coarse wellbeing words; no keys, no events) then
+    answers anything on your LAN.

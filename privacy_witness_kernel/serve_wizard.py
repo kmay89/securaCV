@@ -2,20 +2,26 @@
 """
 SecuraCV Setup Wizard HTTP Server
 
-Serves the first-run setup wizard on the add-on's ingress port.
-Called by run.sh when device_key_seed is not yet configured.
+Serves the first-run setup wizard (and, once configured, the status panel)
+on the app's ingress port. Started by the `panel` s6 service in every state;
+the kernel services gate themselves on the setup run.sh performs.
 
 Endpoints:
   GET  /            → wizard HTML
   GET  /static/*    → static assets
+  GET  /api/health  → the Supervisor watchdog probe (200 iff the kernel's
+                       own /health answers; 200 while the wizard is the only
+                       thing expected to run)
   POST /api/save    → validate and save add-on options via HA Supervisor API
   POST /api/test-camera → test RTSP/IP camera TCP reachability
-  GET  /api/status  → current add-on options (for pre-filling the form)
-  GET  /api/preflight → check Mosquitto and Frigate prerequisites
-  POST /api/preflight/install → one-click install of a missing prerequisite
+  GET  /api/status  → current add-on options + integration state (never a secret)
+  GET  /api/preflight → check Mosquitto and Frigate prerequisites; read
+                       Frigate's camera list from its mapped config
   GET  /api/discover-cameras → cameras discovered from go2rtc, pre-fillable
   POST /api/verify  → run a quick health check after setup
-  POST /api/restart-ha → restart Home Assistant core
+  POST /api/integration/install → copy the carried SecuraCV integration into
+                       /config/custom_components (the explicit click; D15)
+  POST /api/restart-ha → restart Home Assistant Core (user click only)
 
 All URLs the wizard page requests are joined relative to the page's own
 ingress path, so this server only ever sees bare paths ("/api/save").
@@ -23,6 +29,7 @@ Query strings are stripped before routing.
 """
 
 import http.server
+import importlib.util
 import ipaddress
 import json
 import os
@@ -41,23 +48,38 @@ WIZARD_DIR = Path("/usr/local/share/securacv-wizard")
 DEVICE_KEY_FILE = Path("/config/.securacv/device_key")
 API_TOKEN_FILE = Path("/config/api_token")
 KERNEL_API_URL = "http://127.0.0.1:8799"
+# run.sh (the s6 setup step) creates this marker once the add-on is
+# configured and the kernel services are expected to run. The watchdog probe
+# reads it: before setup the panel alone is the add-on, and a watchdog that
+# demanded a kernel then would restart the wizard forever.
+CONFIGURED_MARKER = Path("/run/securacv/configured")
 # Wizard preferences the add-on options schema has no field for (digest
-# time, alert toggles). Persisted so a re-run of the wizard and the done
-# screen reflect what the user actually chose.
+# time). Persisted so a re-run of the wizard and the done screen reflect
+# what the user actually chose.
 WIZARD_PREFS_FILE = Path("/config/.securacv/wizard_prefs.json")
-# Supervisor slug + store repository of the Frigate add-on.
+# Supervisor slug + store repository of the Frigate add-on. The first slug
+# is the one the wizard writes a generated config for; the others are the
+# same add-on's full-access / beta variants, recognized so preflight can
+# read their camera list too.
 FRIGATE_ADDON_SLUG = "ccab4aaf_frigate"
+FRIGATE_ADDON_SLUGS = (
+    FRIGATE_ADDON_SLUG,
+    "ccab4aaf_frigate-fa",
+    "ccab4aaf_frigate_beta",
+    "ccab4aaf_frigate-fa-beta",
+)
 FRIGATE_REPO_URL = "https://github.com/blakeblackshear/frigate-hass-addons"
 # The modern Frigate add-on reads its config from /addon_configs/<slug>/
-# (mounted via `all_addon_configs:rw` in config.yaml). The legacy path is
-# only a fallback for old Frigate versions.
-FRIGATE_ADDON_CONFIG_DIR = Path("/addon_configs") / FRIGATE_ADDON_SLUG
+# (mounted via the `all_app_configs` map at /addon_configs in config.yaml).
+# The legacy path is only a fallback for old Frigate versions.
+ADDON_CONFIGS_DIR = Path("/addon_configs")
+FRIGATE_ADDON_CONFIG_DIR = ADDON_CONFIGS_DIR / FRIGATE_ADDON_SLUG
 LEGACY_FRIGATE_CONF = Path("/config/frigate.yml")
-# Daily-digest automation: blueprint installed by scripts/install.sh, wired
-# through the HA core API proxy under a stable automation object id.
-DIGEST_BLUEPRINT_FILE = Path(
-    "/config/blueprints/automation/securacv/securacv_daily_digest.yaml"
-)
+# Daily-digest automation: the blueprint the image carries and run.sh places
+# under /config/blueprints/automation/securacv, wired through the HA core
+# API proxy under a stable automation object id.
+BLUEPRINT_DIR = Path("/config/blueprints/automation/securacv")
+DIGEST_BLUEPRINT_FILE = BLUEPRINT_DIR / "securacv_daily_digest.yaml"
 DIGEST_AUTOMATION_ID = "securacv_daily_digest"
 # Default go2rtc endpoint when the add-on options carry none.
 GO2RTC_DEFAULT_URL = "http://homeassistant.local:1984"
@@ -69,10 +91,30 @@ RESTART_DELAY_SECONDS = 1.0
 # object; the cap only exists to fail closed on absurd declared lengths.
 MAX_POST_BODY_BYTES = 1024 * 1024
 
+# "Install it for me" is a link, not a Supervisor call: my.home-assistant.io
+# redirects open the right page of the person's own Home Assistant, where
+# their own admin session installs the add-on. The app therefore needs no
+# `hassio_role` (D2), and the wizard has no lever over other add-ons.
+MY_HA_LINKS = {
+    "mosquitto": "https://my.home-assistant.io/redirect/supervisor_addon/?addon=core_mosquitto",
+    "frigate": (
+        "https://my.home-assistant.io/redirect/supervisor_addon/?addon="
+        f"{FRIGATE_ADDON_SLUG}&repository_url="
+        "https%3A%2F%2Fgithub.com%2Fblakeblackshear%2Ffrigate-hass-addons"
+    ),
+    "hacs": (
+        "https://my.home-assistant.io/redirect/hacs_repository/?owner=kmay89"
+        "&repository=securacv-homeassistant&category=integration"
+    ),
+    "integrations": "https://my.home-assistant.io/redirect/integrations/",
+    "dashboards": "https://my.home-assistant.io/redirect/lovelace_dashboards/",
+}
+
 # The only legitimate clients of this port: the Supervisor's ingress proxy
 # (requests that passed Home Assistant's own authentication always originate
-# from 172.30.32.2) and the add-on's own loopback. The server binds 0.0.0.0 on
-# the Supervisor Docker network, so without this gate any co-resident container
+# from 172.30.32.2; the Supervisor's watchdog probe arrives from the same
+# address) and the add-on's own loopback. The server binds 0.0.0.0 on the
+# Supervisor Docker network, so without this gate any co-resident container
 # could rewrite the add-on options — including installing a device_key_seed it
 # knows and forging the sealed log from then on — or use the wizard's proxies.
 # This is the same adversary `_public_status_options` hardens the read path
@@ -85,6 +127,25 @@ def _trusted_client_ips() -> frozenset:
     ips = {INGRESS_PROXY_IP, "127.0.0.1", "::1"}
     ips.update(ip.strip() for ip in extra.split(",") if ip.strip())
     return frozenset(ips)
+
+
+# ---------------------------------------------------------------------------
+# The carried integration (option G). integration_carry.py sits beside this
+# file in the image (/usr/local/bin) and in the repo; load it by path so the
+# add-on root needs no package.
+# ---------------------------------------------------------------------------
+
+def _load_integration_carry():
+    here = Path(__file__).resolve().parent
+    spec = importlib.util.spec_from_file_location(
+        "integration_carry", here / "integration_carry.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+integration_carry = _load_integration_carry()
 
 
 # ---------------------------------------------------------------------------
@@ -141,15 +202,25 @@ def _is_blocked_host(host: str) -> bool:
 # Supervisor API helpers
 # ---------------------------------------------------------------------------
 
+class SupervisorForbidden(RuntimeError):
+    """The Supervisor answered 403: the add-on has no role for that path.
+
+    Mapped to a precise sentence so the wizard never shows a bare status
+    code. Every Supervisor path this server still calls is within the default
+    role (/addons/self/*, /services/*, /addons/<slug>/info, /discovery) or the
+    core API proxy (homeassistant_api: true), so a 403 here means a Supervisor
+    policy change or a misconfigured app, and the message says what to do.
+    """
+
+
 def _supervisor_request(
     method: str, path: str, data: dict | None = None, timeout: int = 10
 ):
     """Make an authenticated request to the HA Supervisor API.
 
-    `timeout` is overridable because store installs legitimately take
-    minutes (image pulls on a Pi). Returns the parsed JSON body — usually a
-    dict, but the /core/api/* proxy passes core responses through verbatim
-    (GET /core/api/services returns a list).
+    Returns the parsed JSON body — usually a dict, but the /core/api/* proxy
+    passes core responses through verbatim (GET /core/api/services returns a
+    list). A 403 raises SupervisorForbidden; every other failure RuntimeError.
     """
     url = f"{SUPERVISOR_URL}{path}"
     body = json.dumps(data).encode() if data is not None else None
@@ -168,6 +239,12 @@ def _supervisor_request(
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
         body_text = exc.read().decode(errors="replace")
+        if exc.code == 403:
+            raise SupervisorForbidden(
+                f"Home Assistant refused this request (HTTP 403 on {path}): the "
+                "SecuraCV app has no Supervisor role for it. The app asks for none "
+                "— update the app, or do this step from Settings yourself."
+            ) from exc
         raise RuntimeError(f"Supervisor API error {exc.code}: {body_text}") from exc
     except Exception as exc:
         raise RuntimeError(f"Supervisor API unreachable: {exc}") from exc
@@ -297,6 +374,16 @@ def _kernel_download(path: str):
         return None, f"kernel API unreachable: {exc}"
 
 
+def _kernel_health_ok(timeout: int = 3) -> bool:
+    """True iff the kernel's own unauthenticated GET /health answers 200."""
+    try:
+        req = urllib.request.Request(f"{KERNEL_API_URL}/health")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def _export_query_suffix(query: str):
     """Validate the export window query string, failing closed.
 
@@ -335,20 +422,27 @@ def _public_status_options(opts: dict) -> dict:
     object carries the root `device_key_seed` (the sealed-log integrity secret)
     and MQTT passwords; returning it wholesale hands those to the browser (and
     to any co-resident container that reaches the port directly). The panel
-    only reads mode / retention / broker host / topic prefix / HA-sensor
-    enablement (see wizard/index.html), so we allowlist exactly those and drop
-    everything else. This mirrors the deliberate secret-minimization already
-    applied in `_discover_mqtt` / `_handle_preflight`.
+    only reads mode / retention / broker host / topic prefix / what-to-seal /
+    camera names / HA-sensor enablement / the install_integration switch (see
+    wizard/index.html), so we allowlist exactly those and drop everything
+    else. This mirrors the deliberate secret-minimization already applied in
+    `_discover_mqtt` / `_handle_preflight`.
     """
     frigate = opts.get("frigate") or {}
     mqtt_publish = opts.get("mqtt_publish") or {}
+    cameras = frigate.get("cameras") or []
     return {
         "mode": opts.get("mode", ""),
         "retention_days": opts.get("retention_days"),
+        "verify_interval_hours": opts.get("verify_interval_hours"),
+        "install_integration": bool(opts.get("install_integration", True)),
         "frigate": {
             # host is not a secret; the broker password is never surfaced.
             "mqtt_host": str(frigate.get("mqtt_host", "") or ""),
             "topic_prefix": str(frigate.get("topic_prefix", "") or ""),
+            "enable_reviews": bool(frigate.get("enable_reviews", False)),
+            # Camera names are the operator's own place labels (contract §4).
+            "cameras": [str(c) for c in cameras if isinstance(c, str)],
         },
         "mqtt_publish": {
             "enabled": bool(mqtt_publish.get("enabled", True)),
@@ -388,6 +482,18 @@ def _discover_mqtt() -> dict:
     return {"found": False, "host": "", "port": 1883, "username": ""}
 
 
+def _core_component_loaded(domain: str) -> bool | None:
+    """Whether Core has `domain` loaded, via GET /core/api/components.
+    None when Core cannot be asked (best effort; never a blocker)."""
+    try:
+        resp = _supervisor_request("GET", "/core/api/components")
+    except Exception:
+        return None
+    if not isinstance(resp, list):
+        return None
+    return domain in resp
+
+
 # ---------------------------------------------------------------------------
 # Deferred add-on restart (save-race fix)
 # ---------------------------------------------------------------------------
@@ -414,12 +520,12 @@ def _restart_addon_soon() -> None:
 # ---------------------------------------------------------------------------
 
 def _persist_wizard_prefs(prefs: dict) -> None:
-    """Persist the wizard's digest/alert choices to /config/.securacv/.
+    """Persist the wizard's digest choices to /config/.securacv/.
 
     The add-on options schema deliberately has no fields for these (they
-    configure HA-side automations, not the kernel), but silently discarding
-    them made the done screen dishonest. Best-effort: a failure is logged,
-    never fatal to the save."""
+    configure an HA-side automation, not the kernel), but silently
+    discarding them made the done screen dishonest. Best-effort: a failure
+    is logged, never fatal to the save."""
     try:
         WIZARD_PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
         WIZARD_PREFS_FILE.write_text(
@@ -436,6 +542,129 @@ def load_wizard_prefs() -> dict:
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+# ---------------------------------------------------------------------------
+# A small YAML key scanner (stdlib only — the image has no PyYAML).
+#
+# Enough to read the camera names out of Frigate's config and the input
+# names out of a blueprint: the keys of ONE block mapping at a known path,
+# told apart by indentation. It never evaluates values, never follows
+# anchors, and answers None when the path is not there.
+# ---------------------------------------------------------------------------
+
+_YAML_KEY_RE = re.compile(r"""^(?P<indent>[ ]*)(?P<key>"[^"]*"|'[^']*'|[^\s#:'"][^:#]*?)\s*:(?:\s|$)""")
+
+
+def _yaml_lines(text: str):
+    """(indent, key_or_None, rest) for every meaningful line, in order."""
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw.lstrip().startswith("- "):
+            # A sequence item: not a mapping key at this level.
+            yield len(raw) - len(raw.lstrip(" ")), None, raw.strip()
+            continue
+        match = _YAML_KEY_RE.match(raw)
+        if not match:
+            yield len(raw) - len(raw.lstrip(" ")), None, raw.strip()
+            continue
+        key = match.group("key").strip().strip("'\"")
+        rest = raw[match.end():].split("#", 1)[0].strip()
+        yield len(match.group("indent")), key, rest
+
+
+def yaml_child_keys(text: str, path: tuple) -> list | None:
+    """The keys directly under the block mapping at `path`, or None when the
+    path is absent. An inline value (`cameras: {}`) yields [] — a mapping
+    with nothing in it, not a missing one.
+
+    Each level of `path` is looked up at that mapping's own indentation
+    (0 for the document, else the indentation of the first line under the
+    parent key), so a same-named key nested deeper never matches."""
+    lines = list(_yaml_lines(text))
+    index = 0
+    level_indent = 0
+    parent_indent = -1
+    for depth, want in enumerate(path):
+        if depth > 0:
+            if index >= len(lines) or lines[index][0] <= parent_indent:
+                return None  # the parent key has no block beneath it
+            level_indent = lines[index][0]
+        found = False
+        while index < len(lines):
+            line_indent, key, rest = lines[index]
+            if line_indent < level_indent:
+                break  # left the mapping without finding `want`
+            if line_indent == level_indent and key == want:
+                found = True
+                parent_indent = line_indent
+                index += 1
+                if rest:
+                    # `key: {}` / `key: []` / `key: value` — inline, no children.
+                    return [] if depth == len(path) - 1 else None
+                break
+            index += 1
+        if not found:
+            return None
+    if index >= len(lines) or lines[index][0] <= parent_indent:
+        return []
+    child_indent = lines[index][0]
+    children = []
+    while index < len(lines):
+        line_indent, key, _rest = lines[index]
+        if line_indent <= parent_indent:
+            break
+        if line_indent == child_indent and key is not None:
+            children.append(key)
+        index += 1
+    return children
+
+
+# ---------------------------------------------------------------------------
+# Frigate: find its config, read its camera list
+# ---------------------------------------------------------------------------
+
+def frigate_config_candidates() -> list:
+    """Where a running Frigate's config can be, most likely first: the
+    mapped add-on config directory of each known Frigate slug (config.yml,
+    then config.yaml), then the legacy /config/frigate.yml."""
+    candidates = []
+    for slug in FRIGATE_ADDON_SLUGS:
+        for name in ("config.yml", "config.yaml"):
+            candidates.append(ADDON_CONFIGS_DIR / slug / name)
+    candidates.append(LEGACY_FRIGATE_CONF)
+    return candidates
+
+
+def find_frigate_config():
+    """The first existing Frigate config file, or None."""
+    for candidate in frigate_config_candidates():
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def frigate_camera_names(path) -> list | None:
+    """The camera names Frigate's config declares (the keys under its
+    top-level `cameras:`), in file order. None when the file cannot be read
+    or has no `cameras:` mapping — the wizard then falls back to "every
+    camera Frigate reports" instead of guessing."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    names = yaml_child_keys(text, ("cameras",))
+    if names is None:
+        return None
+    seen = []
+    for name in names:
+        if name and name not in seen:
+            seen.append(name)
+    return seen
 
 
 # ---------------------------------------------------------------------------
@@ -476,34 +705,64 @@ def _normalize_digest_time(value: str) -> str:
     return ""
 
 
+def _blueprint_input_names(path) -> list | None:
+    """The input names a blueprint declares (`blueprint.input` keys), or None
+    when the file cannot be read as one."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return yaml_child_keys(text, ("blueprint", "input"))
+
+
 def _setup_digest_automation(digest_time: str) -> dict:
     """Create the daily-digest automation through the HA core API proxy.
 
     Returns {"created": bool, "detail": str} and the done screen shows the
     detail either way — the wizard never promises a digest it did not set
-    up. Skips honestly when the blueprint file is missing (installer not
-    run), no mobile-app notify service exists, or the time is invalid."""
+    up. Skips honestly when the blueprint file is missing, when it asks for
+    an input this wizard cannot supply (a phone picked by device, say), when
+    no mobile-app notify service exists, or when the time is invalid. Only
+    inputs the blueprint declares are passed, so a blueprint revision that
+    drops `notify_service` is not fed one."""
     if not DIGEST_BLUEPRINT_FILE.is_file():
         return {
             "created": False,
             "detail": (
                 "digest blueprint not installed "
-                f"(expected {DIGEST_BLUEPRINT_FILE}); run the SecuraCV "
-                "installer or import the blueprint manually, then add the "
-                "automation from Settings → Automations → Blueprints"
+                f"(expected {DIGEST_BLUEPRINT_FILE}); restart the SecuraCV app "
+                "(it places its blueprints there) or import the blueprint, then add "
+                "the automation from Settings → Automations → Blueprints"
             ),
         }
     at_time = _normalize_digest_time(digest_time)
     if not at_time:
         return {"created": False, "detail": f"invalid digest time {digest_time!r}"}
-    notify_service = _detect_notify_service()
-    if not notify_service:
+    declared = _blueprint_input_names(DIGEST_BLUEPRINT_FILE)
+    if declared is None:
+        return {"created": False, "detail": "digest blueprint could not be read"}
+    inputs: dict = {}
+    if "digest_time" in declared:
+        inputs["digest_time"] = at_time
+    if "notify_service" in declared:
+        notify_service = _detect_notify_service()
+        if not notify_service:
+            return {
+                "created": False,
+                "detail": (
+                    "no mobile-app notify service found — install the Home "
+                    "Assistant companion app on your phone, then create the "
+                    "digest automation from Settings → Automations → Blueprints"
+                ),
+            }
+        inputs["notify_service"] = notify_service
+    elif any(name.startswith("notify") for name in declared):
         return {
             "created": False,
             "detail": (
-                "no mobile-app notify service found — install the Home "
-                "Assistant companion app on your phone, then create the "
-                "digest automation from Settings → Automations → Blueprints"
+                "the digest blueprint asks you to pick the phone to notify; add "
+                "the automation from Settings → Automations → Blueprints → "
+                "SecuraCV Daily Digest"
             ),
         }
     try:
@@ -515,18 +774,16 @@ def _setup_digest_automation(digest_time: str) -> dict:
                 "description": "Created by the SecuraCV setup wizard.",
                 "use_blueprint": {
                     "path": "securacv/securacv_daily_digest.yaml",
-                    "input": {
-                        "digest_time": at_time,
-                        "notify_service": notify_service,
-                    },
+                    "input": inputs,
                 },
             },
         )
     except Exception as exc:
         return {"created": False, "detail": f"automation API error: {exc}"}
+    via = f" via {inputs['notify_service']}" if "notify_service" in inputs else ""
     return {
         "created": True,
-        "detail": f"daily digest at {at_time[:5]} via {notify_service}",
+        "detail": f"daily digest at {at_time[:5]}{via}",
     }
 
 
@@ -580,13 +837,25 @@ def _frigate_config_destination() -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# go2rtc camera discovery (pre-fills the wizard's camera rows)
+# Names: the camera slug rule (contract C8) and the go2rtc zone rule
 # ---------------------------------------------------------------------------
 
 # str.lower() also folds non-ASCII letters, and a few of them grow ("İ" ->
 # "i̇", two code points), which would move the 64-character cut; jq's
 # ascii_downcase touches A-Z only.
 _ASCII_DOWNCASE = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def camera_slug(name: str) -> str:
+    """The ONE camera-name rule, shared with frigate_bridge
+    (src/transport/frigate.rs camera_slug, contract C8): A–Z lowercased
+    (ASCII only), then every code point outside [a-z0-9] becomes "_" (no run
+    collapsing, no trimming), then cut to 64. `Front Door` → `front_door`,
+    `Front  Door` → `front__door`, `Café` → `caf_`. The wizard writes this
+    slug to `frigate.cameras` AND names the camera by it in a generated
+    Frigate config, so the bridge's allowlist and Frigate's `camera` field
+    always meet. Zone ids keep their own rule (zones, not cameras)."""
+    return re.sub(r"[^a-z0-9]", "_", str(name).translate(_ASCII_DOWNCASE))[:64]
 
 
 def _go2rtc_streams_to_cameras(streams) -> list:
@@ -738,6 +1007,11 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         if not path or path == "/":
             path = "/index.html"
 
+        # The Supervisor watchdog (config.yaml `watchdog:`) probes this path.
+        if path == "/api/health":
+            body, status = self._handle_health()
+            self._json_response(body, status=status)
+            return
         # API: current add-on status/options
         if path == "/api/status":
             self._json_response(self._handle_status())
@@ -841,14 +1115,14 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             self._json_response(result)
             if result.get("ok"):
                 _restart_addon_soon()
-        elif path == "/api/preflight/install":
-            self._json_response(self._handle_preflight_install(payload))
         elif path == "/api/kernel/verify":
             self._json_response(_kernel_request("POST", "/verify"))
         elif path == "/api/test-camera":
             self._json_response(self._handle_test_camera(payload))
         elif path == "/api/verify":
             self._json_response(self._handle_verify())
+        elif path == "/api/integration/install":
+            self._json_response(self._handle_integration_install())
         elif path == "/api/restart-ha":
             self._json_response(self._handle_restart_ha())
         # ── "Add another Canary" pairing-wizard device proxies ──────────
@@ -891,6 +1165,33 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         return _canary_request(address, token, method, device_path, data)
 
     # ------------------------------------------------------------------
+    def _handle_health(self) -> tuple:
+        """The watchdog answer: (body, status).
+
+        Configured (run.sh left its marker) → 200 only when the kernel's own
+        /health answers, 503 otherwise, so a dead kernel gets the add-on
+        restarted by the Supervisor. Not configured → 200: the wizard is the
+        whole add-on then, and it is up."""
+        if not CONFIGURED_MARKER.exists():
+            return {"ok": True, "kernel": "not_configured", "panel": "ok"}, 200
+        if _kernel_health_ok():
+            return {"ok": True, "kernel": "ok", "panel": "ok"}, 200
+        return {"ok": False, "kernel": "unreachable", "panel": "ok"}, 503
+
+    def _integration_state(self, install_integration: bool) -> dict:
+        """What the done screen and the status panel say about the
+        integration: installed state/version, the version the image
+        carries, whether Core has it loaded, and the HACS link."""
+        state = integration_carry.inspect()
+        return {
+            "state": state["state"],
+            "version": state["version"],
+            "carried_version": integration_carry.read_version(integration_carry.DEFAULT_SRC),
+            "install_integration": install_integration,
+            "loaded": _core_component_loaded("securacv"),
+            "hacs_url": MY_HA_LINKS["hacs"],
+        }
+
     def _handle_status(self) -> dict:
         try:
             opts = get_addon_options()
@@ -900,12 +1201,16 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             # Try reading device key from file too
             if not configured and DEVICE_KEY_FILE.exists():
                 configured = True
+            public = _public_status_options(opts)
             # Never return the raw options: they carry device_key_seed and MQTT
             # passwords. Surface only the non-secret fields the panel renders.
             return {
                 "ok": True,
                 "configured": configured,
-                "options": _public_status_options(opts),
+                "options": public,
+                "integration": self._integration_state(public["install_integration"]),
+                "blueprints": {"digest": DIGEST_BLUEPRINT_FILE.is_file()},
+                "links": dict(MY_HA_LINKS),
             }
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -917,13 +1222,14 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         Expected payload:
         {
           "mode": "frigate" | "standalone",
-          "cameras": [{"name": str, "url": str, "zone_id": str}],
+          "cameras": [{"name": str, "url": str?, "zone_id": str?}],
+          "frigate_detected": bool   (the cameras came from Frigate's own
+                                      config: nothing to write for Frigate),
           "retention_days": int,
+          "enable_reviews": bool     (seal only Frigate alerts),
           "digest_enabled": bool,
           "digest_time": "HH:MM",
-          "pattern_alerts": bool,
-          "integrity_alerts": bool,
-          "device_key_seed": str  (optional; generated if omitted)
+          "device_key_seed": str  (optional; omitted = keep/generate)
         }
 
         Does NOT restart the add-on itself: do_POST flushes the response
@@ -938,15 +1244,19 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         try:
             mode = payload.get("mode", "frigate")
             cameras = payload.get("cameras", [])
-            retention_days = int(payload.get("retention_days", 1))
-            device_key_seed = payload.get("device_key_seed", "").strip()
+            if not isinstance(cameras, list):
+                cameras = []
+            frigate_detected = bool(payload.get("frigate_detected", False))
+            retention_days = int(payload.get("retention_days", 7))
+            device_key_seed = str(payload.get("device_key_seed", "") or "").strip()
 
             # The sealed log's identity is bound to the existing seed, so a
             # reconfigure must never silently mint or swap it. Omitted seed +
-            # existing key -> reuse the existing identity. A DIFFERENT seed
-            # replaces an existing one only with proof of knowledge of the
-            # current seed — otherwise any client that reaches this endpoint
-            # could install a key it knows and forge the log from then on.
+            # existing key -> reuse the existing identity (the re-run wizard
+            # sends none: the page never holds the current seed). A DIFFERENT
+            # seed replaces an existing one only with proof of knowledge of
+            # the current seed — otherwise any client that reaches this
+            # endpoint could install a key it knows and forge the log.
             existing_seed = ""
             if DEVICE_KEY_FILE.exists():
                 existing_seed = DEVICE_KEY_FILE.read_text().strip()
@@ -992,15 +1302,25 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             mqtt_username = str(mqtt_override.get("username", "") or "")
             mqtt_password = str(mqtt_override.get("password", "") or "")
 
-            # Build add-on options
-            options: dict = {
+            # The wizard owns the ceremony, the Configuration tab owns the
+            # settings: start from the options as they are, overlay only the
+            # keys the wizard collected, and leave verify_interval_hours,
+            # install_integration, log_level, labels, min_confidence and the
+            # rest as the person set them.
+            try:
+                current = get_addon_options() or {}
+            except Exception:
+                current = {}
+            current_frigate = current.get("frigate") if isinstance(current.get("frigate"), dict) else {}
+            options: dict = dict(current)
+            options.update({
                 "mode": mode,
                 "device_key_seed": device_key_seed,
                 "retention_days": max(1, min(365, retention_days)),
-                "time_bucket_minutes": 10,
-                "log_level": "info",
-                "go2rtc_discovery": True,
-                "go2rtc_url": "http://homeassistant.local:1984",
+                "time_bucket_minutes": int(current.get("time_bucket_minutes") or 10),
+                "log_level": str(current.get("log_level") or "info"),
+                "go2rtc_discovery": bool(current.get("go2rtc_discovery", True)),
+                "go2rtc_url": str(current.get("go2rtc_url") or GO2RTC_DEFAULT_URL),
                 "mqtt_publish": {
                     "enabled": True,
                     "host": mqtt_host,
@@ -1010,8 +1330,18 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     "topic_prefix": "witness",
                     "discovery_prefix": "homeassistant",
                 },
-            }
+            })
 
+            camera_slugs: list = []
+            for cam in cameras:
+                if not isinstance(cam, dict) or not cam.get("name"):
+                    continue
+                slug = camera_slug(cam["name"])
+                if slug and slug not in camera_slugs:
+                    camera_slugs.append(slug)
+
+            labels = current_frigate.get("labels") if isinstance(current_frigate.get("labels"), list) else None
+            min_confidence = current_frigate.get("min_confidence")
             if mode == "frigate":
                 options["frigate"] = {
                     "mqtt_host": mqtt_host,
@@ -1021,9 +1351,11 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     "enable_reviews": bool(payload.get("enable_reviews", False)),
                     "mqtt_username": mqtt_username,
                     "mqtt_password": mqtt_password,
-                    "min_confidence": 0.5,
-                    "cameras": [c["name"] for c in cameras if c.get("name")],
-                    "labels": ["person", "car", "dog", "cat"],
+                    "min_confidence": float(min_confidence) if min_confidence is not None else 0.5,
+                    # The shared slug (C8): what frigate_bridge's allowlist
+                    # compares against Frigate's `camera` field.
+                    "cameras": camera_slugs,
+                    "labels": labels if labels else ["person", "car", "dog", "cat"],
                 }
                 options["cameras"] = []
             else:
@@ -1038,6 +1370,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                         "enabled": True,
                     }
                     for i, c in enumerate(cameras)
+                    if isinstance(c, dict)
                 ]
                 options["frigate"] = {
                     "mqtt_host": mqtt_host,
@@ -1047,7 +1380,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     "enable_reviews": False,
                     "mqtt_username": mqtt_username,
                     "mqtt_password": mqtt_password,
-                    "min_confidence": 0.5,
+                    "min_confidence": float(min_confidence) if min_confidence is not None else 0.5,
                     "cameras": [],
                     "labels": [],
                 }
@@ -1061,8 +1394,6 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             _persist_wizard_prefs({
                 "digest_enabled": digest_enabled,
                 "digest_time": digest_time,
-                "pattern_alerts": bool(payload.get("pattern_alerts", False)),
-                "integrity_alerts": bool(payload.get("integrity_alerts", True)),
             })
 
             # Daily digest: create the automation for real (through the core
@@ -1072,11 +1403,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             else:
                 digest_result = {"created": False, "detail": "digest disabled in the wizard"}
 
-            # Write the Frigate camera config where Frigate actually reads
-            # it (never overwriting an existing config — see
-            # _frigate_config_destination for the full decision).
+            # Write a Frigate camera config only when the wizard collected
+            # RTSP cameras itself. When the cameras came from a running
+            # Frigate's own config there is nothing to write — Frigate
+            # already has them — and nothing to merge later.
             frigate_note = ""
-            if mode == "frigate" and cameras:
+            rtsp_cameras = [c for c in cameras if isinstance(c, dict) and c.get("url")]
+            if mode == "frigate" and rtsp_cameras and not frigate_detected:
                 target, frigate_note = _frigate_config_destination()
                 if target is not None:
                     discovered = _discover_mqtt()
@@ -1090,13 +1423,20 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                         mqtt_username or (not mqtt_host and discovered["username"])
                     )
                     self._write_frigate_config(
-                        cameras,
+                        rtsp_cameras,
                         retention_days,
                         broker_host,
                         broker_port,
                         needs_auth,
                         dest=target,
                     )
+            elif mode == "frigate" and frigate_detected:
+                frigate_note = (
+                    "Frigate keeps its own camera config — nothing was written "
+                    "to it. SecuraCV seals the events of: "
+                    + (", ".join(camera_slugs) if camera_slugs else "every camera Frigate reports")
+                    + "."
+                )
 
             # NOTE: the add-on restart is deliberately NOT triggered here —
             # do_POST schedules it (_restart_addon_soon) after the response is
@@ -1109,10 +1449,12 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             # that can read this response.
             return {
                 "ok": True,
-                "message": "Configuration saved. Restarting Privacy Witness Kernel…",
+                "message": "Configuration saved. Restarting SecuraCV…",
                 "device_key_file": str(DEVICE_KEY_FILE),
                 "digest": digest_result,
                 "frigate_config": frigate_note,
+                "frigate_detected": frigate_detected,
+                "cameras": camera_slugs,
             }
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -1136,6 +1478,9 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         the Frigate HA add-on injects FRIGATE_MQTT_USER/FRIGATE_MQTT_PASSWORD
         from the Supervisor MQTT service automatically. External-broker
         users replace the placeholders with their own credentials.
+
+        Cameras are named by the shared slug (camera_slug, C8) so the name
+        Frigate publishes is the one frigate_bridge's allowlist holds.
         """
         # Emit a string as a single-quoted YAML scalar (doubling embedded
         # quotes), the same treatment the camera URL below gets. `broker_host`
@@ -1166,8 +1511,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             "cameras:",
         ]
         for cam in cameras:
-            name = cam.get("name", "camera").lower().replace(" ", "_")
-            name = "".join(c for c in name if c.isalnum() or c == "_")
+            name = camera_slug(cam.get("name", "camera")) or "camera"
             url = cam.get("url", "")
             if not url:
                 continue
@@ -1228,21 +1572,41 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             return {"ok": False, "error": str(exc)}
 
     def _handle_preflight(self) -> dict:
-        """Check Mosquitto/Frigate prerequisites and MQTT auto-discovery."""
-        checks = {}
+        """Check Mosquitto/Frigate prerequisites and MQTT auto-discovery.
+
+        Frigate-aware: when a Frigate add-on is installed, its camera list is
+        read from the config the `all_app_configs` map exposes, so the wizard
+        can skip the RTSP screen and confirm instead of asking. Every check
+        is paired with the my.home-assistant.io link that installs the
+        missing piece in the person's own Home Assistant (no Supervisor
+        install calls, no role)."""
+        checks: dict = {}
         try:
             resp = _supervisor_request("GET", "/addons/core_mosquitto/info")
             checks["mosquitto"] = resp.get("data", {}).get("state") == "started"
         except Exception:
             checks["mosquitto"] = False
-        try:
-            resp = _supervisor_request("GET", f"/addons/{FRIGATE_ADDON_SLUG}/info")
+        checks["frigate"] = False
+        checks["frigate_running"] = False
+        checks["frigate_slug"] = ""
+        for slug in FRIGATE_ADDON_SLUGS:
+            try:
+                resp = _supervisor_request("GET", f"/addons/{slug}/info")
+            except Exception:
+                continue
             state = resp.get("data", {}).get("state", "")
-            checks["frigate"] = state in ("started", "stopped")
-            checks["frigate_running"] = state == "started"
-        except Exception:
-            checks["frigate"] = False
-            checks["frigate_running"] = False
+            if state in ("started", "stopped"):
+                checks["frigate"] = True
+                checks["frigate_running"] = state == "started"
+                checks["frigate_slug"] = slug
+                break
+        # Frigate's own camera list, from the config it reads.
+        config_path = find_frigate_config()
+        names = frigate_camera_names(config_path) if config_path is not None else None
+        checks["frigate_config_path"] = str(config_path) if config_path is not None else ""
+        checks["frigate_config_found"] = config_path is not None
+        checks["frigate_cameras"] = names if names is not None else []
+        checks["frigate_cameras_read"] = names is not None
         # MQTT service discovery: report presence + non-secret details only
         # (the password stays server-side; run.sh re-discovers it at startup).
         mqtt = _discover_mqtt()
@@ -1250,83 +1614,44 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         checks["mqtt_host"] = mqtt["host"]
         checks["mqtt_port"] = mqtt["port"]
         checks["mqtt_auth"] = bool(mqtt["username"])
-        return {"ok": True, "checks": checks}
+        return {"ok": True, "checks": checks, "links": dict(MY_HA_LINKS)}
 
-    def _handle_preflight_install(self, payload: dict) -> dict:
-        """One-click install of a missing prerequisite (Mosquitto/Frigate).
-
-        The target is a fixed enum, never a URL or slug from the browser:
-        every request this method makes goes through _supervisor_request,
-        whose base is the hardcoded http://supervisor — the wizard cannot
-        be steered at any other host (SSRF posture matches the rest of the
-        server). Anything but the two known targets is refused before any
-        network activity.
-
-        Store installs pull container images, so the timeouts are long;
-        the wizard UI narrates while this request is in flight.
-        """
-        target = payload.get("target", "")
-        if target == "mosquitto":
-            steps = []
-            try:
-                _supervisor_request(
-                    "POST", "/store/addons/core_mosquitto/install", timeout=600
-                )
-                steps.append("installed core_mosquitto")
-                _supervisor_request(
-                    "POST", "/addons/core_mosquitto/start", timeout=120
-                )
-                steps.append("started core_mosquitto")
-            except Exception as exc:
-                return {"ok": False, "target": target, "steps": steps,
-                        "error": str(exc)}
+    def _handle_integration_install(self) -> dict:
+        """The explicit click (D15): copy the carried integration into
+        /config/custom_components/securacv — first install or update of the
+        app's own copy, never a HACS or edited copy, never a downgrade, and
+        only while the `install_integration` option is on. Restarting Core
+        is a separate click (`/api/restart-ha`), never a side effect here."""
+        try:
+            opts = get_addon_options()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        if not bool(opts.get("install_integration", True)):
             return {
-                "ok": True,
-                "target": target,
-                "steps": steps,
-                "message": (
-                    "Mosquitto MQTT broker installed and started. Broker "
-                    "credentials are auto-discovered — nothing to type."
+                "ok": False,
+                "error": (
+                    "install_integration is off in the app's Configuration tab; "
+                    "install the SecuraCV integration from HACS instead"
                 ),
+                "hacs_url": MY_HA_LINKS["hacs"],
             }
-        if target == "frigate":
-            steps = []
-            # Adding a repository that is already registered fails harmlessly;
-            # the install below is the real test, so this step is best-effort.
-            try:
-                _supervisor_request(
-                    "POST", "/store/repositories",
-                    {"repository": FRIGATE_REPO_URL}, timeout=120,
-                )
-                steps.append("added Frigate add-on repository")
-            except Exception:
-                steps.append("Frigate add-on repository already present")
-            try:
-                _supervisor_request(
-                    "POST", f"/store/addons/{FRIGATE_ADDON_SLUG}/install",
-                    timeout=600,
-                )
-                steps.append(f"installed {FRIGATE_ADDON_SLUG}")
-            except Exception as exc:
-                return {"ok": False, "target": target, "steps": steps,
-                        "error": str(exc)}
-            return {
-                "ok": True,
-                "target": target,
-                "steps": steps,
-                "message": (
-                    "Frigate NVR installed. It is not started yet — finish "
-                    "this wizard first (it writes Frigate's camera config), "
-                    "then start Frigate from Settings → Apps."
-                ),
-            }
-        return {"ok": False, "error": "unknown install target"}
+        result = integration_carry.install()
+        ok = result.get("action") in ("installed", "updated", "unchanged")
+        out = {"ok": ok, **result}
+        if not ok:
+            out["error"] = result.get("detail", "install refused")
+        return out
 
     def _handle_restart_ha(self) -> dict:
-        """Restart Home Assistant core."""
+        """Restart Home Assistant Core — on the person's click, never
+        otherwise. Goes through the core API proxy
+        (POST /core/api/services/homeassistant/restart), which
+        `homeassistant_api: true` opens without any Supervisor role."""
         try:
-            _supervisor_request("POST", "/core/restart")
+            _supervisor_request("POST", "/core/api/services/homeassistant/restart", {})
             return {"ok": True}
+        except SupervisorForbidden as exc:
+            return {"ok": False, "error": str(exc), "forbidden": True}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -1381,9 +1706,9 @@ def main():
         )
 
     # ThreadingHTTPServer, not HTTPServer: a slow request (a 60 s chain
-    # verify, a minutes-long store install) must not freeze every other
-    # panel interaction — the single-threaded server made the whole UI
-    # unresponsive whenever one endpoint was busy.
+    # verify) must not freeze every other panel interaction — the
+    # single-threaded server made the whole UI unresponsive whenever one
+    # endpoint was busy.
     server = http.server.ThreadingHTTPServer(("0.0.0.0", INGRESS_PORT), WizardHandler)
     server.daemon_threads = True
     sys.stdout.write(f"[wizard] Listening on port {INGRESS_PORT}\n")

@@ -1,15 +1,24 @@
-# Privacy Witness Kernel - Home Assistant Add-on
+# SecuraCV — Home Assistant app (add-on)
 #
-# Multi-stage build. Both stages use the SAME Home Assistant add-on base
-# (Alpine + s6-overlay + bashio, published multi-arch), so the build-time and
-# runtime musl / GStreamer ABIs match exactly and run.sh gets the
-# `with-contenv` / `bashio` it relies on. The base is selected via BUILD_FROM
-# and is the only external image this add-on depends on.
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.1.3
+# Multi-stage build. The runtime is the OFFICIAL Home Assistant base image
+# (ghcr.io/home-assistant/<arch>-base: Alpine + s6-overlay v3 + bashio),
+# pinned to the Alpine release the builder stage uses, so the compiled
+# binaries link against the exact musl / GStreamer / SQLite sonames present
+# at runtime. The arch is selected by BuildKit's TARGETARCH through a pair of
+# named stages (there is no build.yaml; config.yaml `image:` names the
+# published per-arch image). The image runs s6-overlay as PID 1
+# (config.yaml `init: false`): the services under rootfs/etc/services.d
+# supervise the kernel, the bridges and the panel, and run.sh is the one
+# setup step that runs before them (cont-init).
+ARG TARGETARCH
+ARG ALPINE_VERSION=3.18
 
-# Builder: pinned to the SAME Alpine release as the runtime add-on base
-# (hassio-addons/base 14.1.3 == Alpine 3.18, GStreamer 1.22, SQLite 3.41), so the
-# compiled binaries link against the exact C-library sonames present at runtime.
+# The runtime base, one stage per arch. Alpine 3.18 == GStreamer 1.22,
+# SQLite 3.41, Python 3.11 — move ALPINE_VERSION and these two tags together.
+FROM ghcr.io/home-assistant/amd64-base:3.18 AS runtime-amd64
+FROM ghcr.io/home-assistant/aarch64-base:3.18 AS runtime-arm64
+
+# Builder: pinned to the SAME Alpine release as the runtime base.
 # Alpine 3.18's own Rust is too old (1.71) for this crate's dependencies, so we
 # install a current stable toolchain via rustup (which targets musl on Alpine).
 #
@@ -18,7 +27,7 @@ ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.1.3
 # the cached dependency layer (and, with the buildx GHA cache wired in
 # .github/workflows/addon-image.yml, across CI runs too) — only the crate itself is
 # then recompiled.
-FROM docker.io/library/alpine:3.18 AS chef
+FROM docker.io/library/alpine:${ALPINE_VERSION} AS chef
 
 RUN apk add --no-cache \
     build-base cmake perl pkgconf linux-headers musl-dev \
@@ -31,10 +40,10 @@ RUN apk add --no-cache \
 # reproducible — this matches the Rust version the root Dockerfile builds the
 # same crate with. `set -eux` fails the layer on any error in the pipe.
 # NOTE (supply chain, tracked): the rustup installer is fetched over TLS but not
-# checksum-verified, and the two base images below (BUILD_FROM and alpine:3.18)
-# are pinned by tag, not digest. The root Dockerfile pins its bases by
-# `@sha256:` — apply the same to BUILD_FROM/alpine here and add a sha256 check
-# of rustup-init to close this fully (needs registry/artifact digests).
+# checksum-verified, and the base images are pinned by tag, not digest. The
+# root Dockerfile pins its bases by `@sha256:` — apply the same here and add a
+# sha256 check of rustup-init to close this fully (needs registry/artifact
+# digests).
 ARG RUST_TOOLCHAIN=1.97.0
 RUN set -eux; \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -82,8 +91,37 @@ RUN cargo chef cook --release --features rtsp-gstreamer --recipe-path recipe.jso
 COPY . .
 RUN cargo build --release --features rtsp-gstreamer
 
+# Carry: the SecuraCV integration and the blueprints the app places into
+# /config (option G, D15). The integration tree is pruned here — no tests/,
+# no www/*.test.js, no caches — so the copy a user ends up with is the same
+# clean tree HACS serves (Docker COPY has no exclude, so an intermediate
+# stage prunes). The carried integration's version must equal the app's
+# (config.yaml): this layer refuses a mismatch, as scripts/lint_version_sync.sh
+# and the pwk-wizard-tests job do before any image is built.
+FROM docker.io/library/alpine:${ALPINE_VERSION} AS carry
+COPY custom_components/securacv /carry/integration/securacv
+COPY docs/blueprints/ /carry/blueprints/
+COPY privacy_witness_kernel/config.yaml /carry/config.yaml
+RUN set -eu; \
+    rm -rf /carry/integration/securacv/tests; \
+    rm -f /carry/integration/securacv/www/*.test.js; \
+    find /carry -type d -name __pycache__ -prune -exec rm -rf {} +; \
+    find /carry -type f -name '*.pyc' -delete; \
+    find /carry/blueprints -type f ! -name '*.yaml' -delete; \
+    carried=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' /carry/integration/securacv/manifest.json | head -n1); \
+    app=$(sed -n 's/^version:[[:space:]]*"\([^"]*\)".*/\1/p' /carry/config.yaml | head -n1); \
+    test -n "$carried" && test -n "$app"; \
+    if [ "$carried" != "$app" ]; then \
+      echo "carried integration version $carried != app version $app" >&2; exit 1; \
+    fi; \
+    rm -f /carry/config.yaml
+
 # Runtime stage
-FROM ${BUILD_FROM}
+FROM runtime-${TARGETARCH}
+ARG TARGETARCH
+RUN if [ -z "${TARGETARCH}" ]; then \
+      echo "TARGETARCH is not set, please use Docker BuildKit for the build." && exit 1; \
+    fi
 
 # Install runtime dependencies. Note: libcrypto.so.3 (needed by the SQLCipher-linked
 # binaries) is already provided by the base image's pinned libcrypto3/libssl3, so we must
@@ -112,16 +150,31 @@ COPY --from=builder /build/target/release/export_verify /usr/local/bin/
 COPY --from=builder /build/target/release/log_anchor /usr/local/bin/
 COPY --from=builder /build/target/release/court_export /usr/local/bin/
 
-# Copy add-on scripts and wizard
-COPY privacy_witness_kernel/run.sh /run.sh
+# The carried integration and blueprints (read by run.sh / serve_wizard.py)
+COPY --from=carry /carry/integration /usr/share/securacv/integration
+COPY --from=carry /carry/blueprints /usr/share/securacv/blueprints
+
+# App scripts, the panel and the s6 service tree. run.sh is the one-time
+# setup step: s6-overlay runs /etc/cont-init.d before any service starts.
+COPY privacy_witness_kernel/run.sh /etc/cont-init.d/10-securacv-setup
 COPY privacy_witness_kernel/run_lib.sh /usr/local/bin/run_lib.sh
 COPY privacy_witness_kernel/discover_cameras.sh /usr/local/bin/
 COPY privacy_witness_kernel/serve_wizard.py /usr/local/bin/
+COPY privacy_witness_kernel/integration_carry.py /usr/local/bin/
 COPY privacy_witness_kernel/wizard/ /usr/local/share/securacv-wizard/
-RUN chmod +x /run.sh /usr/local/bin/discover_cameras.sh /usr/local/bin/serve_wizard.py
+COPY privacy_witness_kernel/rootfs/ /
+RUN chmod +x /etc/cont-init.d/10-securacv-setup \
+      /usr/local/bin/discover_cameras.sh \
+      /usr/local/bin/serve_wizard.py \
+      /usr/local/bin/integration_carry.py \
+      /etc/services.d/*/run /etc/services.d/*/finish
 
 # Data directories
-RUN mkdir -p /data/vault /config
+RUN mkdir -p /data/vault
 
-WORKDIR /config
-CMD ["/run.sh"]
+LABEL \
+    org.opencontainers.image.title="SecuraCV" \
+    org.opencontainers.image.description="The verified witness log for Frigate — signed events, no footage, no identity" \
+    org.opencontainers.image.source="https://github.com/kmay89/securaCV" \
+    org.opencontainers.image.documentation="https://github.com/kmay89/securaCV/blob/main/privacy_witness_kernel/DOCS.md" \
+    org.opencontainers.image.licenses="See repository LICENSE"
