@@ -325,10 +325,13 @@ split_addr_port() {
 # ---------------------------------------------------------------------------
 
 # How many Home Assistant tokens are paired: one "id" key per entry in the
-# paired-token set (the file holds sha256 hashes only). 0 when none.
+# paired-token set (the file holds sha256 hashes only). 0 when none — and
+# "none" includes a set whose last token was just revoked (`{"tokens":[]}`),
+# where grep finds nothing and exits 1; under `set -o pipefail` that would
+# otherwise abort `doctor` right before its pairing line.
 paired_token_count() {
     if [ -s "$PAIRED_TOKENS_FILE" ]; then
-        grep -o '"id"' "$PAIRED_TOKENS_FILE" | wc -l | tr -d '[:space:]'
+        { grep -o '"id"' "$PAIRED_TOKENS_FILE" || true; } | wc -l | tr -d '[:space:]'
     else
         echo 0
     fi
