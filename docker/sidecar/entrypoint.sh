@@ -3,15 +3,17 @@
 #
 # Supervises the three daemons that turn Frigate MQTT events into a sealed,
 # privacy-preserving witness log:
-#   witness_api        — event API + capability token (:8799, loopback by default)
+#   witness_api        — event API + capability token (:8799, every interface
+#                        in the container by default so Home Assistant can
+#                        pair across the LAN; see SECURACV_API_BIND)
 #   frigate_bridge     — Frigate MQTT events → sealed log
 #   event_mqtt_bridge  — sealed log → HA MQTT Discovery sensors (optional);
-#                        also keeps the fleet roll-call (/data/fleet_peers.json,
-#                        the Canaries it hears on the broker) that witness_api's
-#                        GET /api/fleet serves. No witnessd runs here — Frigate
-#                        owns the cameras — and the API stays on loopback
-#                        unless SECURACV_API_BIND=all opts it onto the LAN
-#                        for the Witness Wall.
+#                        publishes the retained, kernel-signed announce Home
+#                        Assistant discovers the kernel by; also keeps the
+#                        fleet roll-call (/data/fleet_peers.json, the
+#                        Canaries it hears on the broker) that witness_api's
+#                        GET /api/fleet serves. No witnessd runs here —
+#                        Frigate owns the cameras.
 #
 # Environment contract (only FRIGATE_MQTT_HOST is required):
 #   FRIGATE_MQTT_HOST       broker hostname Frigate publishes to   (required*)
@@ -23,33 +25,50 @@
 #   MQTT_PASSWORD           broker auth                            (none)
 #   FRIGATE_TOPIC_PREFIX    Frigate's mqtt.topic_prefix            (frigate)
 #   FRIGATE_MQTT_TOPIC      full topic override                    (<prefix>/events)
-#   FRIGATE_ENABLE_REVIEWS  also ingest <prefix>/reviews (0.14+)   (false)
-#   VERIFY_INTERVAL_SECS    auto-verification cadence, 0 disables  (86400)
+#   FRIGATE_ENABLE_REVIEWS  seal <prefix>/reviews alerts instead   (false)
+#                           of every tracked object (Frigate 0.14+)
+#   VERIFY_INTERVAL_SECS    auto-verification cadence, 0 disables  (3600)
 #   FRIGATE_CAMERAS         comma-separated camera allowlist       (all)
 #   FRIGATE_LABELS          comma-separated label allowlist        (bridge default)
 #   FRIGATE_MIN_CONFIDENCE  minimum detection confidence           (0.5)
 #   RETENTION_DAYS          sealed-event retention                 (7)
 #   TIME_BUCKET_MINUTES     timestamp coarsening bucket            (10)
-#   SECURACV_PUBLISH        publish HA Discovery sensors           (true)
+#   SECURACV_PUBLISH        publish HA Discovery + the announce    (true)
 #   HA_DISCOVERY_PREFIX     HA discovery prefix                    (homeassistant)
 #   MQTT_TOPIC_PREFIX       state topic prefix                     (witness)
 #   POLL_INTERVAL           publisher poll seconds                 (30)
 #   BROKER_WAIT_SECS        max seconds to wait for the broker     (30)
-#   SECURACV_API_BIND       loopback|all — all makes /api/fleet     (loopback)
-#                           reachable on the LAN for the Witness Wall
-#                           (binds 0.0.0.0:8799 in the container; you still
-#                           publish the port yourself, the image EXPOSEs none)
+#   SECURACV_API_BIND       all|loopback — where witness_api        (all)
+#                           listens. all: 0.0.0.0:8799 in the container, the
+#                           address the quickstart publishes so Home
+#                           Assistant can pair; loopback: 127.0.0.1:8799,
+#                           this container only (no pairing, no Wall)
+#   SECURACV_ANNOUNCE_HOST  this docker host's LAN name or address  (unset)
+#                           — named in the announce so Home Assistant
+#                           prefills the kernel URL; unset, the announce
+#                           carries no host (a host is a network identifier)
+#                           and Home Assistant prefills its broker's host
+#   SECURACV_FLEET_ROLLCALL 1 → GET /api/fleet lists every Canary   (unset)
+#                           the bridge hears (the Witness Wall's roll-call);
+#                           unset → this kernel's own row only
 #   DEVICE_KEY_SEED         64-hex signing seed; if unset, read from
 #                           /run/secrets/device_key_seed, then /data/device_key,
 #                           else auto-generated and persisted (0600)
 #
-# Subcommands:
+# Subcommands (run inside the running container: `docker exec securacv <cmd>`;
+# the image installs `pair`, `unpair` and `doctor` as shims onto this file):
 #   entrypoint.sh           run the sidecar (default)
-#   entrypoint.sh doctor    diagnose broker/Frigate/sealed-log health
+#   entrypoint.sh pair      issue the 6-digit code Home Assistant redeems,
+#                           printed ONCE with the kernel key fingerprint
+#   entrypoint.sh unpair <id>
+#                           revoke one paired Home Assistant token (ids: the
+#                           `pair` response, `doctor`, or `unpair` alone)
+#   entrypoint.sh doctor    setup checks that pass on an idle, fresh install
+#   entrypoint.sh doctor --live
+#                           the same, then listen 30 s for a Frigate event
 #   entrypoint.sh mint-viewer-token --label <s> [--base-url <url>]
 #   entrypoint.sh revoke-viewer-token <id>
-#                           pair (or unpair) a Witness Wall for verification;
-#                           run inside the running container, see viewer_token
+#                           pair (or unpair) a Witness Wall for verification
 set -euo pipefail
 
 DATA_DIR="${DATA_DIR:-/data}"
@@ -66,6 +85,15 @@ CONFIG_FILE="$DATA_DIR/witness_config.json"
 # per-room wellbeing words. The config block and pub_args below read this
 # one variable, so the kernel and the bridge can never name two files.
 FLEET_PEERS_FILE="$DATA_DIR/fleet_peers.json"
+# The two pairing files witness_api keeps beside the capability token (its
+# defaults, so nothing here names them to the kernel): the outstanding
+# code's sha256 + expiry + guess budget, and the sha256 of every paired
+# Home Assistant token. This script only ever READS them, for `doctor` —
+# it never learns a code (the clear code exists on `pair`'s stdout only).
+PAIRING_CODE_FILE="$DATA_DIR/pairing_code"
+PAIRED_TOKENS_FILE="$DATA_DIR/paired_tokens.json"
+# The kernel's port inside the container; the quickstart publishes it 1:1.
+API_PORT=8799
 
 # Logs go to stderr: several helpers are called inside $(...) command
 # substitutions, where anything on stdout would pollute the captured value.
@@ -107,7 +135,11 @@ resolve_broker_addr() {
     echo "${host}:${port}"
 }
 
-resolve_device_key_seed() {
+# The device key seed this container already has, from the environment, the
+# docker secret or the persisted file — or nothing. Never generates one:
+# `doctor` and the pairing subcommands must report on the identity the
+# daemons use, not mint a second one.
+find_device_key_seed() {
     if [ -n "${DEVICE_KEY_SEED:-}" ]; then
         echo "$DEVICE_KEY_SEED"
         return
@@ -120,7 +152,16 @@ resolve_device_key_seed() {
         head -n1 "$KEY_FILE" | tr -d '[:space:]'
         return
     fi
+    echo ""
+}
+
+resolve_device_key_seed() {
     local seed
+    seed=$(find_device_key_seed)
+    if [ -n "$seed" ]; then
+        echo "$seed"
+        return
+    fi
     if ! seed=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n'); then
         die "failed to generate a device key seed"
     fi
@@ -134,39 +175,97 @@ resolve_device_key_seed() {
     echo "$seed"
 }
 
+# The public Home Assistant device id for a seed: pwk_ + the first 8 hex of
+# sha256("securacv:ha-device-id:v1:" + seed). The id lands on retained MQTT
+# topics every broker client can read, so it must carry ZERO bits of the
+# signing seed users are told to back up — hence a domain-separated hash,
+# never a prefix of the seed. The same derivation event_mqtt_bridge,
+# frigate_bridge and the add-on's run.sh use, so every producer names one
+# seed the same way.
+ha_device_id_for_seed() {
+    printf 'pwk_%s' "$(printf '%s' "securacv:ha-device-id:v1:$1" | sha256sum | cut -c1-8)"
+}
+
 # Where witness_api listens inside the container, from SECURACV_API_BIND.
 # Sets API_BIND_MODE and API_ADDR for the callers (run's config block, the
-# doctor's report) and, in `all` mode only, exports the kernel's cleartext
-# acknowledgment: witness_api refuses a non-loopback bind without
-# WITNESS_API_ALLOW_INSECURE=1 (src/api/mod.rs), so the two must flip
-# together — a bind alone would make the container refuse to start. Not a
-# $(...) helper on purpose: the export has to land in this shell.
+# doctor's report, pair's hint) and, in `all` mode only, exports the
+# kernel's cleartext acknowledgment: witness_api refuses a non-loopback
+# bind without WITNESS_API_ALLOW_INSECURE=1 (src/api/mod.rs), so the two
+# must flip together — a bind alone would make the container refuse to
+# start. Not a $(...) helper on purpose: the export has to land in this
+# shell.
 #
-#   loopback (default)  127.0.0.1:8799 — reachable from this container only,
-#                       as the HEALTHCHECK and `docker compose exec` use it.
-#   all                 0.0.0.0:8799 — the add-on's posture (run.sh binds all
-#                       interfaces with the host port disabled): every data
-#                       endpoint still needs the rotating capability token,
-#                       and the one open read, GET /api/fleet (names, online
-#                       state, coarse room words; no events, no keys), is
-#                       what the Apple TV Witness Wall polls. Nothing is
-#                       published until you map the port in compose.
+#   all (default)       0.0.0.0:8799 — the quickstart publishes this port
+#                       from the first start so Home Assistant can pair over
+#                       the LAN. What that opens to anyone who reaches the
+#                       port: GET /health (liveness), POST /api/pair (redeems
+#                       the code `pair` printed; 5 wrong guesses burn it and
+#                       every refusal is the same 401) and GET /api/fleet
+#                       (this kernel's own row unless SECURACV_FLEET_ROLLCALL
+#                       widens it). Every data route needs a token: the
+#                       rotating capability token, which never leaves the
+#                       container, or the paired token Home Assistant earned.
+#   loopback            127.0.0.1:8799 — reachable from this container only
+#                       (the HEALTHCHECK and `docker exec` still work). No
+#                       Home Assistant pairing and no Witness Wall.
 configure_api_bind() {
-    API_BIND_MODE="${SECURACV_API_BIND:-loopback}"
+    # Self-contained on purpose (the port defaults here too): the add-on's
+    # config-render test lifts this one function out of the file and runs
+    # it in an emptied environment to prove the real mapping.
+    API_BIND_MODE="${SECURACV_API_BIND:-all}"
     case "$API_BIND_MODE" in
         loopback)
-            API_ADDR="127.0.0.1:8799"
+            API_ADDR="127.0.0.1:${API_PORT:-8799}"
             ;;
         all)
-            API_ADDR="0.0.0.0:8799"
+            API_ADDR="0.0.0.0:${API_PORT:-8799}"
             export WITNESS_API_ALLOW_INSECURE=1
             ;;
         *)
             die "SECURACV_API_BIND='$API_BIND_MODE' is not a bind mode.
-  Use 'loopback' (the default: the API answers inside this container only)
-  or 'all' (0.0.0.0:8799 in the container, for the Witness Wall — then
-  publish the port yourself with  ports: - \"8799:8799\"  in compose)."
+  Use 'all' (the default: 0.0.0.0:${API_PORT:-8799} in the container, published
+  by the quickstart so Home Assistant can pair) or 'loopback' (the API answers
+  inside this container only — no Home Assistant pairing, no Witness Wall)."
             ;;
+    esac
+}
+
+# What GET /api/fleet discloses to anyone who reaches the published port,
+# from SECURACV_FLEET_ROLLCALL into the kernel's WITNESS_API_FLEET_ROLLCALL:
+# the kernel's own row (`self`, the default — a sidecar is published for
+# Home Assistant pairing, not to roll-call the LAN) or every Canary the
+# bridge hears (`full`, the Witness Wall's opt-in). Exported, because the
+# kernel reads it from its environment.
+configure_fleet_rollcall() {
+    case "${SECURACV_FLEET_ROLLCALL:-}" in
+        1|true|TRUE|True|full)
+            export WITNESS_API_FLEET_ROLLCALL=full
+            ;;
+        ""|0|false|FALSE|False|self)
+            export WITNESS_API_FLEET_ROLLCALL=self
+            ;;
+        *)
+            die "SECURACV_FLEET_ROLLCALL='${SECURACV_FLEET_ROLLCALL}' is not a switch.
+  Set it to 1 so GET /api/fleet lists every Canary the bridge hears (the
+  Witness Wall on your Apple TV), or leave it unset: the roll-call then
+  names this kernel alone."
+            ;;
+    esac
+}
+
+# The host part of the URL Home Assistant confirms, as `pair` prints it:
+# SECURACV_ANNOUNCE_HOST when set (bracketed if it is a bare IPv6 literal),
+# else a placeholder the operator fills in by reading their own network.
+announce_host_for_url() {
+    local host="${SECURACV_ANNOUNCE_HOST:-}"
+    if [ -z "$host" ]; then
+        echo "<this docker host>"
+        return
+    fi
+    case "$host" in
+        \[*\]) echo "$host" ;;
+        *:*:*) echo "[$host]" ;;
+        *) echo "$host" ;;
     esac
 }
 
@@ -222,32 +321,104 @@ split_addr_port() {
 }
 
 # ---------------------------------------------------------------------------
+# pairing state — read from the files witness_api owns, never the code
+# ---------------------------------------------------------------------------
+
+# How many Home Assistant tokens are paired: one "id" key per entry in the
+# paired-token set (the file holds sha256 hashes only). 0 when none.
+paired_token_count() {
+    if [ -s "$PAIRED_TOKENS_FILE" ]; then
+        grep -o '"id"' "$PAIRED_TOKENS_FILE" | wc -l | tr -d '[:space:]'
+    else
+        echo 0
+    fi
+}
+
+# The expiry (epoch seconds) of the outstanding pairing code, or nothing.
+# The file carries the code's sha256, never the digits, so reading it
+# cannot disclose a code — and this script never prints anything from it
+# but the minutes left.
+pairing_code_expires() {
+    if [ -s "$PAIRING_CODE_FILE" ]; then
+        sed -n 's/.*"expires":\([0-9][0-9]*\).*/\1/p' "$PAIRING_CODE_FILE" | head -n1
+    fi
+}
+
+# The lines `doctor` prints about pairing. Informational: a fresh install
+# is unpaired, and that is a hint, not a failure.
+pairing_state_report() {
+    local tokens expires now left_min
+    tokens=$(paired_token_count)
+    if [ "$tokens" -eq 1 ]; then
+        echo "✓ paired: yes (1 token)"
+    elif [ "$tokens" -gt 1 ]; then
+        echo "✓ paired: yes ($tokens tokens)"
+    else
+        echo "- paired: no"
+        echo "  - Pair Home Assistant: docker exec securacv pair, then enter the code it prints"
+        echo "    in Settings → Devices & Services → SecuraCV (discovered) → Configure."
+    fi
+    expires=$(pairing_code_expires)
+    now=$(date +%s)
+    if [ -n "$expires" ] && [ "$expires" -gt "$now" ]; then
+        left_min=$(( (expires - now + 59) / 60 ))
+        echo "- pairing code outstanding: yes (expires in ${left_min} min)"
+    else
+        echo "- pairing code outstanding: no"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # doctor — diagnose the integration without changing anything
 # ---------------------------------------------------------------------------
 
+# Plain `doctor` runs the setup checks — every one of them passes on an
+# idle, freshly started install (nothing has to walk past a camera):
+# broker reachable, credentials accepted, witness_api answering, the
+# capability token written, the retained announce Home Assistant discovers
+# the kernel by present, the pairing state, and the sealed log intact.
+# `doctor --live` adds the 30 s listen for real Frigate traffic.
 doctor() {
+    local live=0 arg
+    for arg in "$@"; do
+        case "$arg" in
+            --live) live=1 ;;
+            *) die "doctor: unknown argument '$arg' (the only option is --live)" ;;
+        esac
+    done
     local failures=0
-    local addr host port topic prefix
+    local addr host port topic prefix state_prefix publish
     addr=$(resolve_broker_addr)
     host=$(split_addr_host "$addr")
     port=$(split_addr_port "$addr")
     prefix="${FRIGATE_TOPIC_PREFIX:-frigate}"
     topic="${FRIGATE_MQTT_TOPIC:-${prefix}/events}"
+    state_prefix="${MQTT_TOPIC_PREFIX:-witness}"
+    publish="${SECURACV_PUBLISH:-true}"
     local listen_secs="${DOCTOR_LISTEN_SECS:-30}"
+    local announce_wait="${DOCTOR_ANNOUNCE_WAIT_SECS:-20}"
     configure_api_bind
+    configure_fleet_rollcall
 
     echo "SecuraCV sidecar doctor"
     echo "  broker: $addr   frigate topic: $topic"
     echo "  api bind: $API_BIND_MODE ($API_ADDR inside the container)"
-    if [ "$API_BIND_MODE" = "all" ]; then
-        # The Wall adds only http:// to a bare host and would otherwise poll
-        # port 80, and its own search looks at canary.local, not at a docker
-        # host — so the address is typed, and typed with the port.
-        echo "  witness wall: publish the port (ports: - \"8799:8799\" in compose), then"
-        echo "                type  http://<docker-host-ip>:8799  into the Wall — with the port"
+    if [ "$WITNESS_API_FLEET_ROLLCALL" = full ]; then
+        echo "  fleet roll-call: full (GET /api/fleet lists every Canary the bridge hears)"
     else
-        echo "  witness wall: unreachable (loopback). SECURACV_API_BIND=all plus a published"
-        echo "                8799 opens GET /api/fleet to the LAN — docs/frigate_integration.md"
+        echo "  fleet roll-call: self (GET /api/fleet lists this kernel only)"
+    fi
+    if [ "$API_BIND_MODE" = "all" ]; then
+        echo "  home assistant: pairs over the published port — docker exec securacv pair"
+        if [ -n "${SECURACV_ANNOUNCE_HOST:-}" ]; then
+            echo "                  kernel URL it is offered: http://$(announce_host_for_url):$API_PORT"
+        else
+            echo "                  kernel URL it is offered: its broker's host, port $API_PORT (editable there;"
+            echo "                  set SECURACV_ANNOUNCE_HOST to prefill this docker host's address)"
+        fi
+    else
+        echo "  home assistant: cannot reach this API (loopback). SECURACV_API_BIND=all plus the"
+        echo "                  published 8799 (ports: - \"8799:8799\" in compose) opens pairing."
     fi
     echo
 
@@ -276,22 +447,87 @@ doctor() {
         failures=$((failures + 1))
     fi
 
-    # 3) Is Frigate actually publishing?
-    echo "… Listening on $topic for ${listen_secs}s (walk past a camera to trigger an event)"
-    if mosquitto_sub -h "$host" -p "$port" "${auth_args[@]}" -t "$topic" -C 1 -W "$listen_secs" >/dev/null 2>&1; then
-        echo "✓ Frigate traffic seen on $topic"
+    # 3) The kernel API answers. Probed on loopback, which both bind modes
+    #    include — the same URL the HEALTHCHECK uses.
+    if curl -fsS --max-time 5 "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1; then
+        echo "✓ witness_api answers http://127.0.0.1:$API_PORT/health"
     else
-        echo "✗ No messages on $topic within ${listen_secs}s"
-        echo "  - Is 'mqtt: enabled: true' set in your frigate config?"
-        echo "  - Does Frigate's mqtt.topic_prefix match FRIGATE_TOPIC_PREFIX ('$prefix')?"
-        echo "  - Debug by hand: mosquitto_sub -h $host -p $port -t '$topic' -v"
+        echo "✗ witness_api is not answering http://127.0.0.1:$API_PORT/health"
+        echo "  - Ran this with 'docker compose run'? The daemons live in the running container:"
+        echo "    docker exec securacv doctor"
+        echo "  - Otherwise: docker logs securacv — the first lines say what refused to start."
         failures=$((failures + 1))
     fi
 
-    # 4) Sealed log integrity (only if events have been ingested already)
-    if [ -s "$DB_PATH" ]; then
-        local seed
-        seed=$(resolve_device_key_seed)
+    # 4) The rotating capability token the daemons share. It never leaves
+    #    the container; Home Assistant gets its own token by pairing.
+    if [ -s "$TOKEN_FILE" ]; then
+        echo "✓ Capability token present ($TOKEN_FILE; rotating, never leaves the container)"
+    else
+        echo "✗ No capability token at $TOKEN_FILE (witness_api has not started, or /data is not writable)"
+        failures=$((failures + 1))
+    fi
+
+    # 5) The retained announce Home Assistant discovers the kernel by. The
+    #    bridge publishes it once it has fetched the kernel's identity, so
+    #    a just-started sidecar may need a few seconds; the wait is bounded.
+    local seed device_id announce_topic announce
+    seed=$(find_device_key_seed)
+    device_id=""
+    [ -n "$seed" ] && device_id=$(ha_device_id_for_seed "$seed")
+    if [ "$publish" != "true" ]; then
+        echo "- Announce: not published (SECURACV_PUBLISH=$publish) — Home Assistant shows no discovered card"
+    else
+        announce_topic="$state_prefix/${device_id:-+}/announce"
+        if announce=$(mosquitto_sub -h "$host" -p "$port" "${auth_args[@]}" -t "$announce_topic" -C 1 -W "$announce_wait" 2>/dev/null) \
+           && [ -n "$announce" ]; then
+            case "$announce" in
+                *'"pairing":"required"'*)
+                    echo "✓ Retained announce present on $announce_topic (Home Assistant shows the discovered card)" ;;
+                *)
+                    echo "✗ Retained announce on $announce_topic does not say pairing is required"
+                    echo "  - This sidecar expects Home Assistant to pair with a code; the bridge's flags are off."
+                    failures=$((failures + 1)) ;;
+            esac
+            if [ -z "${SECURACV_ANNOUNCE_HOST:-}" ]; then
+                case "$announce" in
+                    *'"host":'*)
+                        echo "✗ The announce names a host although SECURACV_ANNOUNCE_HOST is unset"
+                        failures=$((failures + 1)) ;;
+                esac
+            fi
+        else
+            echo "✗ No retained announce on $announce_topic within ${announce_wait}s"
+            echo "  - The bridge publishes it shortly after start; a sidecar started seconds ago may"
+            echo "    simply not have yet — run doctor again."
+            echo "  - Check the broker lets this user publish under '$state_prefix/' (ACLs), and that"
+            echo "    Home Assistant's MQTT integration uses the SAME broker."
+            failures=$((failures + 1))
+        fi
+    fi
+
+    # 6) Pairing state — never the code.
+    pairing_state_report
+
+    # 7) Frigate traffic: only with --live, because it needs someone to
+    #    walk past a camera. Without it, say how to run that check.
+    if [ "$live" -eq 1 ]; then
+        echo "… Listening on $topic for ${listen_secs}s (walk past a camera to trigger an event)"
+        if mosquitto_sub -h "$host" -p "$port" "${auth_args[@]}" -t "$topic" -C 1 -W "$listen_secs" >/dev/null 2>&1; then
+            echo "✓ Frigate traffic seen on $topic"
+        else
+            echo "✗ No messages on $topic within ${listen_secs}s"
+            echo "  - Is 'mqtt: enabled: true' set in your frigate config?"
+            echo "  - Does Frigate's mqtt.topic_prefix match FRIGATE_TOPIC_PREFIX ('$prefix')?"
+            echo "  - Debug by hand: mosquitto_sub -h $host -p $port -t '$topic' -v"
+            failures=$((failures + 1))
+        fi
+    else
+        echo "- Frigate traffic: not checked (doctor --live listens on $topic for ${listen_secs}s)"
+    fi
+
+    # 8) Sealed log integrity (only if the kernel has opened one already)
+    if [ -s "$DB_PATH" ] && [ -n "$seed" ]; then
         if DEVICE_KEY_SEED="$seed" log_verify --db "$DB_PATH" >/dev/null 2>&1; then
             echo "✓ Sealed log at $DB_PATH verifies (hash chain + signatures)"
         else
@@ -299,7 +535,7 @@ doctor() {
             failures=$((failures + 1))
         fi
     else
-        echo "- No sealed log yet at $DB_PATH (nothing ingested so far)"
+        echo "- No sealed log yet at $DB_PATH (the kernel has not started here)"
     fi
 
     echo
@@ -336,7 +572,8 @@ broker_unreachable_exit() {
 [securacv]          docker compose -f quickstart-with-broker.compose.yml up -d
 [securacv]      (file: docker/sidecar/quickstart-with-broker.compose.yml)
 [securacv]
-[securacv] To diagnose interactively:
+[securacv] To diagnose interactively (the container cannot stay up, so run a
+[securacv] throwaway one; the broker checks are the ones that matter here):
 [securacv]     docker compose run --rm securacv doctor
 [securacv] ------------------------------------------------------------------
 EOF
@@ -344,35 +581,134 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# viewer tokens — pair a Witness Wall for verification
+# operator subcommands against the running kernel's config and key
 # ---------------------------------------------------------------------------
 
+# kernel_cli_env SUBCOMMAND — resolve the config the running sidecar
+# rendered and its device key into this shell's environment, so a
+# witness_api subcommand run here signs, pins and files against the same
+# kernel the daemons serve. Never generates a key: a receipt or a pairing
+# code that pinned a fresh one would pin a key nothing signs with.
+kernel_cli_env() {
+    [ -s "$CONFIG_FILE" ] \
+        || die "no $CONFIG_FILE yet: start the sidecar once (docker compose up -d), then run this inside it (docker exec securacv $1 ...)"
+    if [ -z "$(find_device_key_seed)" ]; then
+        die "no device key (DEVICE_KEY_SEED, /run/secrets/device_key_seed or $KEY_FILE): a receipt must pin the key the running sidecar signs with"
+    fi
+    DEVICE_KEY_SEED=$(find_device_key_seed)
+    export DEVICE_KEY_SEED
+    export WITNESS_CONFIG="$CONFIG_FILE"
+}
+
 # viewer_token SUBCOMMAND [ARGS...] — witness_api's mint-viewer-token /
-# revoke-viewer-token, run against the config the running sidecar rendered
-# and with its device key, so a receipt pins the key the sealed log is
-# signed with. Run it inside the running container:
-#   docker compose exec securacv entrypoint.sh mint-viewer-token \
+# revoke-viewer-token, for a Witness Wall. Run it inside the running
+# container:
+#   docker exec securacv entrypoint.sh mint-viewer-token \
 #       --label "living room tv" --base-url http://<docker-host-ip>:8799
 # stdout is the pairing receipt, one JSON line and the token's only copy;
 # the kernel keeps its sha256 in /data/viewer_tokens.json (beside the
 # capability token, 0600) and reads that file per request, so a mint or a
-# revoke takes effect without a restart. Never generates a key: a receipt
-# that pinned a fresh one would pin a key nothing signs with.
+# revoke takes effect without a restart.
 viewer_token() {
-    [ -s "$CONFIG_FILE" ] \
-        || die "no $CONFIG_FILE yet: start the sidecar once (docker compose up -d), then run this inside it (docker compose exec securacv entrypoint.sh $1 ...)"
-    if [ -z "${DEVICE_KEY_SEED:-}" ] && [ ! -s /run/secrets/device_key_seed ] && [ ! -s "$KEY_FILE" ]; then
-        die "no device key (DEVICE_KEY_SEED, /run/secrets/device_key_seed or $KEY_FILE): a receipt must pin the key the running sidecar signs with"
-    fi
-    DEVICE_KEY_SEED=$(resolve_device_key_seed)
-    export DEVICE_KEY_SEED
-    export WITNESS_CONFIG="$CONFIG_FILE"
+    kernel_cli_env "$1"
     exec witness_api "$@"
+}
+
+# One field of a compact serde_json line (`"name":"value"` or `"name":123`),
+# without jq in the image. Prints nothing when the field is absent.
+json_line_field() {
+    local line="$1" name="$2"
+    printf '%s' "$line" | sed -n "s/.*\"$name\":\"\\([^\"]*\\)\".*/\\1/p; s/.*\"$name\":\\([0-9][0-9]*\\).*/\\1/p" | head -n1
+}
+
+# pair [--ttl-secs <n>] — issue the 6-digit code Home Assistant redeems at
+# POST /api/pair (one outstanding code at a time; this replaces it) and
+# print the ceremony card once. The code comes from `witness_api
+# issue-pairing-code`, which files only its sha256 (with a 5-guess budget
+# and the expiry) beside the capability token; the daemon log never sees
+# the digits — only this command's stdout does, so `docker exec` is the
+# one place a code ever appears.
+pair() {
+    kernel_cli_env pair
+    configure_api_bind
+    local receipt errlog
+    errlog=$(mktemp)
+    # stdout: the receipt, one JSON line, parsed below and never echoed.
+    # stderr: witness_api's own sentence (it repeats the code) — kept back
+    # unless the command fails, so the card below is the one copy.
+    if ! receipt=$(witness_api issue-pairing-code --label "docker exec securacv pair" "$@" 2>"$errlog"); then
+        cat "$errlog" >&2
+        rm -f "$errlog"
+        die "issue-pairing-code failed (see above). An older kernel without pairing support prints 'unknown subcommand' here."
+    fi
+    rm -f "$errlog"
+    local code expires attempts fingerprint
+    code=$(json_line_field "$receipt" pairing_code)
+    expires=$(json_line_field "$receipt" expires)
+    attempts=$(json_line_field "$receipt" attempts)
+    fingerprint=$(json_line_field "$receipt" fingerprint)
+    [[ "$code" =~ ^[0-9]{6}$ ]] || die "issue-pairing-code printed no 6-digit code"
+    [[ "$fingerprint" =~ ^[0-9a-f]{8}$ ]] || die "issue-pairing-code printed no key fingerprint"
+    [[ "$expires" =~ ^[0-9]+$ ]] || die "issue-pairing-code printed no expiry"
+    [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=5
+    local now minutes
+    now=$(date +%s)
+    minutes=$(( (expires - now + 59) / 60 ))
+    [ "$minutes" -lt 1 ] && minutes=1
+
+    printf 'SecuraCV pairing code: %s   (valid %s minutes, %s attempts)\n' "$code" "$minutes" "$attempts"
+    printf 'Kernel key fingerprint: %s   (Home Assistant shows the same fingerprint before it pairs)\n' "$fingerprint"
+    printf 'Kernel URL to confirm in Home Assistant: http://%s:%s\n' "$(announce_host_for_url)" "$API_PORT"
+    printf 'In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code.\n'
+
+    if [ "$API_BIND_MODE" != "all" ]; then
+        log "SECURACV_API_BIND=$API_BIND_MODE: Home Assistant cannot reach this API to redeem the code. Set SECURACV_API_BIND=all and publish the port (ports: - \"8799:8799\" in compose)."
+    fi
+}
+
+# unpair <id> — revoke one paired Home Assistant token; its next request is
+# refused, no restart needed. Without an id, list the paired tokens (id,
+# label, minted — never the token) so the operator can pick one.
+unpair() {
+    kernel_cli_env unpair
+    case $# in
+        0)
+            echo "usage: docker exec securacv unpair <id>" >&2
+            echo "paired tokens on this kernel (id, label, minted):" >&2
+            witness_api list-paired-tokens
+            exit 2
+            ;;
+        1)
+            exec witness_api revoke-paired-token "$1"
+            ;;
+        *)
+            die "unpair takes exactly one argument, the token id (run 'unpair' alone to list them)"
+            ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
 # run — supervise the three daemons
 # ---------------------------------------------------------------------------
+
+# The daemons `run` started, and whether a stop was asked for. Globals,
+# because the signal trap that reads them runs outside run()'s scope.
+DAEMON_PIDS=()
+SHUTDOWN_REQUESTED=0
+
+# `docker stop` sends SIGTERM to this script (PID 1). A bash that dies
+# without forwarding it leaves the daemons to the SIGKILL ten seconds
+# later — so the bridge could never clear its retained announce (a removed
+# sidecar would keep offering a "discovered" card) and frigate_bridge
+# could never seal its clean-shutdown record. Forward it, then let run()
+# wait for them.
+stop_daemons() {
+    SHUTDOWN_REQUESTED=1
+    log "shutdown signal received; stopping the daemons"
+    if [ "${#DAEMON_PIDS[@]}" -gt 0 ]; then
+        kill -TERM "${DAEMON_PIDS[@]}" 2>/dev/null || true
+    fi
+}
 
 run() {
     local addr host port
@@ -401,10 +737,18 @@ run() {
     # Resolved before the broker wait so a mistyped mode fails in the first
     # line of the log, not after thirty seconds of waiting for mosquitto.
     configure_api_bind
+    configure_fleet_rollcall
 
-    log "broker=$addr topic=$topic retention=${retention_days}d bucket=${bucket_min}m publish=$publish api_bind=$API_BIND_MODE"
+    log "broker=$addr topic=$topic retention=${retention_days}d bucket=${bucket_min}m publish=$publish api_bind=$API_BIND_MODE fleet_rollcall=$WITNESS_API_FLEET_ROLLCALL"
     if [ "$API_BIND_MODE" = "all" ]; then
-        log "SECURACV_API_BIND=all: witness_api binds $API_ADDR, so GET /api/fleet (names, online state, coarse room words; no events, no keys) reads without a token to anything that reaches a published 8799 — every other endpoint still needs the rotating capability token. The image exposes no port: map it yourself (ports: - \"8799:8799\") and type http://<docker-host-ip>:8799 into the Witness Wall."
+        local rollcall_words="this kernel's own row only"
+        [ "$WITNESS_API_FLEET_ROLLCALL" = full ] && rollcall_words="every Canary the bridge hears — SECURACV_FLEET_ROLLCALL=1"
+        log "SECURACV_API_BIND=all: witness_api binds $API_ADDR. Across a published 8799 anyone on your LAN can reach GET /health, POST /api/pair (redeems the code 'docker exec securacv pair' prints; five wrong guesses burn it) and GET /api/fleet ($rollcall_words). Every data route needs a token: the rotating capability token (never leaves this container) or the paired token Home Assistant earns. Keep the port on your own network; it is plaintext HTTP."
+    else
+        log "SECURACV_API_BIND=loopback: witness_api binds $API_ADDR — this container only. Home Assistant cannot pair and no Witness Wall can read the roll-call; set SECURACV_API_BIND=all (the default) and publish 8799 for either."
+    fi
+    if [ -n "${SECURACV_ANNOUNCE_HOST:-}" ]; then
+        log "SECURACV_ANNOUNCE_HOST=$SECURACV_ANNOUNCE_HOST: the announce names this host, so Home Assistant prefills http://$(announce_host_for_url):$API_PORT"
     fi
 
     # The broker may still be starting: compose `depends_on` (and the e2e
@@ -443,11 +787,11 @@ EOF
     # passes contract enforcement before it is sealed.
     export ALLOW_REMOTE_MQTT=true
 
-    local pids=()
+    trap stop_daemons TERM INT
 
     witness_api &
-    pids+=($!)
-    log "witness_api started (PID ${pids[-1]})"
+    DAEMON_PIDS+=($!)
+    log "witness_api started (PID ${DAEMON_PIDS[-1]})"
 
     for _ in $(seq 1 30); do
         [ -s "$TOKEN_FILE" ] && break
@@ -473,24 +817,15 @@ EOF
     # argv, which anything in the container can read from /proc/<pid>/cmdline.
 
     frigate_bridge "${bridge_args[@]}" &
-    pids+=($!)
-    log "frigate_bridge started (PID ${pids[-1]})"
+    DAEMON_PIDS+=($!)
+    log "frigate_bridge started (PID ${DAEMON_PIDS[-1]})"
 
     if [ "$publish" = "true" ]; then
-        # The public HA device id must carry ZERO bits of the signing seed.
-        # DEVICE_KEY_SEED is the secret Ed25519 seed users are told to back up,
-        # and the device id is published in MQTT discovery topics every broker
-        # client can read — so derive the id from sha256(seed) under a
-        # domain-separation prefix. Stable per seed, but the seed is not
-        # recoverable from it (previously it exposed the first 32 seed bits).
-        #
-        # HA entity-id MIGRATION: this changes the id from `pwk_<seed[0:8]>` to
-        # `pwk_<sha256(...)[0:8]>`, so entity_ids (sensor.pwk_<id>_*) change on
-        # upgrade — old entities orphan and re-create under the new id. Re-map
-        # any dashboards/automations that referenced the old ids once, or delete
-        # the orphaned entities in HA.
+        # The public HA device id must carry ZERO bits of the signing seed:
+        # see ha_device_id_for_seed. (It changed once, from a seed prefix to
+        # this hash — entity ids sensor.pwk_<id>_* moved with it.)
         local ha_device_id
-        ha_device_id="pwk_$(printf '%s' "securacv:ha-device-id:v1:${DEVICE_KEY_SEED}" | sha256sum | cut -c1-8)"
+        ha_device_id=$(ha_device_id_for_seed "$DEVICE_KEY_SEED")
         local pub_args=(
             --daemon
             --mqtt-broker-addr "$addr"
@@ -500,30 +835,49 @@ EOF
             --mqtt-topic-prefix "${MQTT_TOPIC_PREFIX:-witness}"
             --ha-device-id "$ha_device_id"
             --poll-interval "${POLL_INTERVAL:-30}"
-            --verify-interval-secs "${VERIFY_INTERVAL_SECS:-86400}"
+            --verify-interval-secs "${VERIFY_INTERVAL_SECS:-3600}"
+            # The announce (retained, signed by the kernel key through the
+            # API): the API's LAN posture, which the bridge cannot observe
+            # itself, and that Home Assistant must pair with a code — a mode
+            # word, never "a code is pending". The host rides along only when
+            # the operator named one; a host is a network identifier.
+            --announce-api-bind "$API_BIND_MODE"
+            --announce-pairing required
         )
+        [ -n "${SECURACV_ANNOUNCE_HOST:-}" ] && pub_args+=(--announce-api-host "$SECURACV_ANNOUNCE_HOST")
         [ -n "${MQTT_USERNAME:-}" ] && pub_args+=(--mqtt-username "$MQTT_USERNAME")
         # MQTT_PASSWORD stays in the environment (clap reads it there) — never
         # on argv; see frigate_bridge above.
         event_mqtt_bridge "${pub_args[@]}" &
-        pids+=($!)
-        log "event_mqtt_bridge started (PID ${pids[-1]})"
-        log "fleet roll-call: $FLEET_PEERS_FILE (GET /api/fleet on $API_ADDR lists the Canaries the bridge hears)"
+        DAEMON_PIDS+=($!)
+        log "event_mqtt_bridge started (PID ${DAEMON_PIDS[-1]})"
+        log "fleet roll-call: $FLEET_PEERS_FILE (GET /api/fleet on $API_ADDR serves $WITNESS_API_FLEET_ROLLCALL)"
+        log "announce: retained on ${MQTT_TOPIC_PREFIX:-witness}/$ha_device_id/announce — Home Assistant shows 'SecuraCV sidecar discovered'; pair it with: docker exec securacv pair"
     else
-        log "HA Discovery publishing disabled (SECURACV_PUBLISH=$publish); no bridge listens for Canaries, so GET /api/fleet lists this kernel only (an earlier roll-call file is kept for its pins, not served)"
+        log "HA Discovery publishing disabled (SECURACV_PUBLISH=$publish); no announce is published (Home Assistant discovers nothing), no bridge listens for Canaries, so GET /api/fleet lists this kernel only (an earlier roll-call file is kept for its pins, not served)"
     fi
 
-    # Propagate the first child exit so the container restarts on failure.
+    # Propagate the first child exit so the container restarts on failure —
+    # unless the exit is the shutdown this script asked for.
     local status=0
-    wait -n "${pids[@]}" || status=$?
+    wait -n "${DAEMON_PIDS[@]}" || status=$?
+    if [ "$SHUTDOWN_REQUESTED" -eq 1 ]; then
+        # Give each daemon its clean exit (the bridge clears its retained
+        # announce and publishes offline; frigate_bridge seals its record).
+        wait || true
+        log "sidecar stopped"
+        exit 0
+    fi
     log "a service exited (status $status); shutting the sidecar down"
-    kill "${pids[@]}" 2>/dev/null || true
+    kill "${DAEMON_PIDS[@]}" 2>/dev/null || true
     wait || true
     exit "$status"
 }
 
 case "${1:-run}" in
-    doctor) doctor ;;
+    doctor) shift; doctor "$@" ;;
+    pair) shift; pair "$@" ;;
+    unpair) shift; unpair "$@" ;;
     run) run ;;
     mint-viewer-token|revoke-viewer-token) viewer_token "$@" ;;
     *) exec "$@" ;;

@@ -2,12 +2,19 @@ name: Docker sidecar
 
 # Build, test, and publish the standalone Frigate sidecar image
 # (docker/sidecar/). The e2e job runs the REAL image against a live
-# mosquitto container and asserts the zero-config promise: only
-# FRIGATE_MQTT_HOST is set, the device key is auto-generated, a published
-# frigate/events message lands in the sealed log, log_verify passes
-# in-container, and the HA Discovery topic is retained.
+# mosquitto container and asserts the quickstart's promises: only
+# FRIGATE_MQTT_HOST is set, the device key is auto-generated, the API
+# answers on the published port by default, Frigate's own message shapes
+# (0.13 → 0.17, events and reviews, every identity field a sentinel) land
+# in the sealed log with no identity anywhere, log_verify passes
+# in-container, the kernel-signed announce is retained and carries no
+# host/code/token/seed, the pairing ceremony holds its posture (constant
+# 401, five-guess burn, single use, revocation), state reads add no
+# receipts, `doctor` passes on a fresh install, and a clean stop clears the
+# announce.
 #
-# - On pull requests: lint + compose validation + build + e2e, no push.
+# - On pull requests: lint + fixture validation + compose validation +
+#   build + e2e, no push.
 # - On push to main / version tags: additionally push to GHCR as
 #   ghcr.io/<owner>/securacv-sidecar.
 
@@ -46,7 +53,7 @@ concurrency:
 
 jobs:
   lint:
-    name: Lint scripts and compose files
+    name: Lint scripts, fixtures and compose files
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -68,6 +75,19 @@ jobs:
       - name: Render and parse the sidecar's kernel config
         run: bash privacy_witness_kernel/tests/test_config_render.sh
 
+      # The replay fixtures are the e2e's identity-leak oracle: each must be
+      # JSON, and each must carry at least one sentinel, or a fixture that
+      # lost its sentinels would make the sweep pass vacuously.
+      - name: Validate the Frigate replay fixtures
+        run: |
+          set -euo pipefail
+          for f in docker/sidecar/fixtures/frigate/*.json; do
+            jq -e . "$f" > /dev/null
+            n=$(jq -r '.. | strings | select(startswith("SENTINEL_"))' "$f" | wc -l)
+            [ "$n" -gt 0 ] || { echo "$f carries no SENTINEL_ string" >&2; exit 1; }
+            echo "$f: $n sentinel strings"
+          done
+
       - name: Validate compose files
         env:
           # Required-variable placeholder: the integrations compose marks the
@@ -77,16 +97,28 @@ jobs:
           docker compose -f docker/sidecar/quickstart.compose.yml config -q
           docker compose -f docker/sidecar/quickstart-with-broker.compose.yml config -q
           docker compose -f integrations/ha_frigate_mqtt/docker-compose.yml config -q
+          # The quickstarts publish the API port from the first start (the
+          # Home Assistant pairing path) and say what that opens.
+          for f in docker/sidecar/quickstart.compose.yml docker/sidecar/quickstart-with-broker.compose.yml; do
+            docker compose -f "$f" config | grep -q 'published: "8799"' || { echo "$f does not publish 8799" >&2; exit 1; }
+            grep -q 'POST /api/pair' "$f" || { echo "$f does not explain what the published port opens" >&2; exit 1; }
+            grep -q 'docker exec securacv pair' "$f" || { echo "$f does not name the pairing command" >&2; exit 1; }
+          done
 
   e2e:
     name: Build and e2e test
     needs: lint
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
       - name: Run sidecar e2e
+        # Every step must run on the merged tree: a step the script would
+        # skip on a partial tree (no pairing endpoint, no tolerant parser)
+        # is a failure here.
+        env:
+          CI_E2E_REQUIRE_ALL: "1"
         run: docker/sidecar/ci_e2e.sh securacv-sidecar:ci
 
   publish:
