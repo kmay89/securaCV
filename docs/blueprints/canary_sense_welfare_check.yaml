@@ -38,7 +38,7 @@ blueprint:
   domain: automation
   author: "ERRERlabs"
   homeassistant:
-    min_version: "2024.6.0"
+    min_version: "2026.5.0"
   source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_welfare_check.yaml"
 
   input:
@@ -95,17 +95,34 @@ blueprint:
           mode: box
       default: 15
 
+    notify_device:
+      name: "Phone (Home Assistant Companion app)"
+      description: >-
+        The device that runs the Companion app. Leave it unset only if you fill
+        in a notification service below.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+      default: false
+
     notify_service:
-      name: "Notification service"
-      description: "Where to send the welfare prompt (e.g. notify.mobile_app_your_phone)."
+      name: "Notification service (optional override)"
+      description: >-
+        Any notify service to use instead of the phone above, e.g.
+        notify.family_phones, notify.telegram. Leave empty to notify the phone.
       selector:
         text:
-      default: "notify.mobile_app"
+      default: ""
 
 mode: single
 max_exceeded: silent
 
 variables:
+  notify_device: !input notify_device
+  notify_service: !input notify_service
+  notify_target: >-
+    {{ notify_service if notify_service else 'notify.mobile_app_' ~ (device_attr(notify_device, 'name') | slugify) }}
   presence_entity: !input presence_entity
   breathing_entity: !input breathing_entity
   minutes_without_lock: !input minutes_without_lock
@@ -143,7 +160,7 @@ condition:
       minutes: !input minutes_without_lock
 
 action:
-  - service: !input notify_service
+  - service: "{{ notify_target }}"
     data:
       title: "SecuraCV Welfare Check"
       message: >-

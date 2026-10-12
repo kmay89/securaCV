@@ -5,45 +5,85 @@
 #   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_daily_digest.yaml
 #
 # Sends a morning push notification summarizing the last 24 hours of
-# privacy-preserving witness events: total count, per-zone breakdown, and
-# sealed-log integrity status. The numbers come from the kernel-computed
-# digest sensor (sensor.pwk_daily_digest), so no template surgery or
-# entity-ID substitution is needed — pick your entities and notify service.
+# privacy-preserving witness events: total count, per-camera and per-period
+# breakdown, and the chain state. The numbers come from the kernel-computed
+# digest sensor (sensor.securacv_daily_digest), so no template surgery or
+# entity-ID substitution is needed — pick your phone and the time.
+#
+# It ALWAYS sends, including on a quiet night: a digest that is silent when
+# nothing happened cannot tell you the witness is alive. "Quiet night: no
+# witness events. Chain verified ✓ at 03:00 · 1,204 entries." is the
+# proof-of-life line.
+#
+# Chain state, honestly: the default chain sensor is the integration's
+# binary_sensor.securacv_chain_valid — `on` means Home Assistant itself walked
+# the chain against the key it pinned ("verified"). The add-on's unclaimed
+# binary_sensor.pwk_chain_problem (device_class problem, `on` = broken) is
+# still accepted; the digest then says "kernel-reported", never "verified".
 
 blueprint:
   name: "SecuraCV Daily Digest"
   description: >-
     Every morning, send a summary of the last 24 hours of SecuraCV witness
-    activity: how many events were sealed, in which zones, and whether the
-    tamper-evident log still verifies. Privacy by design — counts and coarse
-    periods only, never video or precise timestamps.
+    activity: how many events were sealed, on which cameras, in which periods,
+    and whether the chain verified. Always sends — a quiet night reads
+    "Quiet night: no witness events" with the chain state, so silence is never
+    ambiguous. Privacy by design — counts and coarse periods only, never video
+    or precise timestamps.
   domain: automation
   author: "ERRERlabs"
+  homeassistant:
+    min_version: "2026.5.0"
   source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_daily_digest.yaml"
 
   input:
     digest_sensor:
       name: "Daily digest sensor"
-      description: "The SecuraCV digest sensor (created automatically by the add-on)"
+      description: "The SecuraCV digest sensor (sensor.securacv_daily_digest; the add-on's unclaimed sensor.pwk_daily_digest also works)."
       selector:
         entity:
           domain: sensor
-      default: sensor.pwk_daily_digest
+      default: sensor.securacv_daily_digest
 
     chain_sensor:
-      name: "Chain integrity sensor"
-      description: "The sealed-log integrity sensor (problem class; 'on' means verification failed)"
+      name: "Chain sensor"
+      description: >-
+        The chain-state binary sensor: binary_sensor.securacv_chain_valid
+        ('on' = Home Assistant verified the chain against its pinned key) or
+        the add-on's binary_sensor.pwk_chain_problem (problem class, 'on' =
+        failed; reported by the kernel itself).
       selector:
         entity:
           domain: binary_sensor
-      default: binary_sensor.pwk_chain_problem
+      default: binary_sensor.securacv_chain_valid
+
+    chain_length_sensor:
+      name: "Chain length sensor (optional)"
+      description: "sensor.securacv_chain_length — adds the entry count to the chain line. Leave empty to skip."
+      selector:
+        entity:
+          domain: sensor
+      default: sensor.securacv_chain_length
+
+    notify_device:
+      name: "Phone (Home Assistant Companion app)"
+      description: >-
+        The device that runs the Companion app. Leave it unset only if you fill
+        in a notification service below.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+      default: false
 
     notify_service:
-      name: "Notification service"
-      description: "Where to send the digest (e.g. notify.mobile_app_your_phone)"
+      name: "Notification service (optional override)"
+      description: >-
+        Any notify service to use instead of the phone above, e.g.
+        notify.family_phones. Leave empty to notify the phone.
       selector:
         text:
-      default: "notify.mobile_app"
+      default: ""
 
     digest_time:
       name: "Delivery time"
@@ -61,25 +101,54 @@ trigger:
 variables:
   digest_sensor: !input digest_sensor
   chain_sensor: !input chain_sensor
+  chain_length_sensor: !input chain_length_sensor
+  notify_device: !input notify_device
   notify_service: !input notify_service
+  notify_target: >-
+    {{ notify_service if notify_service else 'notify.mobile_app_' ~ (device_attr(notify_device, 'name') | slugify) }}
   event_count: "{{ states(digest_sensor) | int(0) }}"
   per_zone: "{{ state_attr(digest_sensor, 'per_zone') or {} }}"
   per_period: "{{ state_attr(digest_sensor, 'per_period') or {} }}"
-  chain_failed: "{{ is_state(chain_sensor, 'on') }}"
-  chain_unknown: "{{ states(chain_sensor) in ('unknown', 'unavailable') }}"
+  # A problem-class sensor is the kernel's own report, inverted; anything else
+  # is the integration's chain_valid ('on' = verified).
+  chain_is_problem_class: "{{ state_attr(chain_sensor, 'device_class') == 'problem' }}"
+  chain_state: "{{ states(chain_sensor) }}"
+  chain_failed: >-
+    {{ chain_state == ('on' if chain_is_problem_class else 'off') }}
+  chain_unknown: "{{ chain_state in ['unknown', 'unavailable', 'none'] }}"
+  chain_when: >-
+    {% set vbs = state_attr(chain_sensor, 'verified_bucket_start')
+         if not chain_is_problem_class else state_attr(chain_sensor, 'verified_at_bucket_start') %}
+    {{ (vbs | timestamp_custom('%H:%M')) if vbs is number else '' }}
+  chain_entries: >-
+    {% set n = state_attr(chain_sensor, 'verified_entries') %}
+    {% if n is not number and chain_length_sensor and states(chain_length_sensor) | is_number %}{% set n = states(chain_length_sensor) | int %}{% endif %}
+    {{ '{:,}'.format(n | int) if n is number else '' }}
+  chain_line: >-
+    {% if chain_failed %}Chain check FAILED{% if chain_when %} at {{ chain_when }}{% endif %} — the witness log may have been altered; export now, entries before the break still verify.
+    {%- elif chain_unknown %}Chain not verified yet.
+    {%- elif chain_is_problem_class %}Chain OK (kernel-reported){% if chain_when %} at {{ chain_when }}{% endif %}{% if chain_entries %} · {{ chain_entries }} entries{% endif %}.
+    {%- else %}Chain verified ✓{% if chain_when %} at {{ chain_when }}{% endif %}{% if chain_entries %} · {{ chain_entries }} entries{% endif %}.
+    {%- endif %}
+  zone_line: >-
+    {% set ns = namespace(parts=[]) %}
+    {% for zone, count in per_zone.items() %}{% set ns.parts = ns.parts + [(zone | replace('zone:', '') | replace('_', ' ')) ~ ' ' ~ count] %}{% endfor %}
+    {{ ns.parts | join(', ') }}
+  period_line: >-
+    {% set ns = namespace(parts=[]) %}
+    {% for period in ['night', 'morning', 'afternoon', 'evening'] if period in per_period %}{% set ns.parts = ns.parts + [period ~ ' ' ~ per_period[period]] %}{% endfor %}
+    {{ ns.parts | join(', ') }}
 
 action:
-  - service: "{{ notify_service }}"
+  - service: "{{ notify_target }}"
     data:
       title: >-
-        {% if chain_failed %}🔴 SecuraCV: INTEGRITY ALERT{% else %}🛡 SecuraCV daily digest{% endif %}
+        {% if chain_failed %}SecuraCV: chain check failed{% else %}SecuraCV daily digest{% endif %}
       message: >-
-        {% if chain_failed %}
-        Sealed-log verification FAILED — the witness log may have been
-        altered. Check the SecuraCV add-on immediately.
-        {% else %}
-        {{ event_count }} event(s) witnessed in the last 24h
-        {%- if per_zone %} ({% for zone, count in per_zone.items() %}{{ zone }}: {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %}.
-        {%- if per_period %} Activity: {% for period, count in per_period.items() %}{{ period }} {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
-        {%- if chain_unknown %} Integrity: not yet verified today.{% else %} Sealed log verified ✓.{% endif %}
-        {% endif %}
+        {% if event_count == 0 %}Quiet night: no witness events. {{ chain_line }}
+        {%- else %}{{ event_count }} event{{ '' if event_count == 1 else 's' }}{% if zone_line %}: {{ zone_line }}{% endif %}{% if period_line %} · {{ period_line }}{% endif %} · {{ chain_line[0] | lower }}{{ chain_line[1:] }}
+        {%- endif %}
+      data:
+        tag: securacv-daily-digest
+        group: SecuraCV
+        importance: "{{ 'high' if chain_failed else 'default' }}"
