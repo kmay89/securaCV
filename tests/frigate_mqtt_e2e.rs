@@ -510,6 +510,101 @@ fn frigate_fixture(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
+/// Every string and number under `value`, plus every object key (an
+/// `attributes` dict keys on the recognized label), as text.
+fn json_leaves(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(s) => out.push(s.clone()),
+        serde_json::Value::Number(n) => out.push(n.to_string()),
+        serde_json::Value::Array(items) => items.iter().for_each(|v| json_leaves(v, out)),
+        serde_json::Value::Object(map) => {
+            for (key, v) in map {
+                out.push(key.clone());
+                json_leaves(v, out);
+            }
+        }
+        serde_json::Value::Bool(_) | serde_json::Value::Null => {}
+    }
+}
+
+/// The discarded values a fixture carries, recognizably: every `SENTINEL_`
+/// string or key and every number at or above 7770 (the convention
+/// tests/frigate_integration.rs pins — scores above 1, ids and epochs from
+/// 1970, never a bucket start, a confidence or a count). Numbers are kept
+/// as their JSON text, so a leak is matched as a whole value.
+fn fixture_sentinels(fixture: &[u8]) -> std::collections::BTreeSet<String> {
+    let value: serde_json::Value = serde_json::from_slice(fixture).expect("fixture is JSON");
+    let mut leaves = Vec::new();
+    json_leaves(&value, &mut leaves);
+    leaves
+        .into_iter()
+        .filter(|leaf| {
+            leaf.starts_with("SENTINEL_") || leaf.parse::<f64>().is_ok_and(|n| n >= 7770.0)
+        })
+        .collect()
+}
+
+/// The first value in `json` (a bridge payload or a sealed record) that is
+/// a discarded fixture value: a string or key carrying `SENTINEL_`, or a
+/// number whose JSON text is one of the fixture's numeric sentinels. Whole
+/// values only — a digit-substring test once failed this gate because a
+/// wall-clock bucket start (1791777000) happened to contain "777".
+fn leaked_sentinel(json: &str, sentinels: &std::collections::BTreeSet<String>) -> Option<String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).unwrap_or_else(|e| panic!("output is not JSON ({e}): {json}"));
+    let mut leaves = Vec::new();
+    json_leaves(&value, &mut leaves);
+    leaves
+        .into_iter()
+        .find(|leaf| leaf.contains("SENTINEL_") || sentinels.contains(leaf))
+}
+
+#[test]
+fn sentinel_sweep_matches_whole_values_not_digit_substrings() {
+    // Negative control for the sweep below: a discarded fixture value that
+    // reaches an output is flagged whichever shape it takes, and a legitimate
+    // value that merely shares digits with one is not.
+    let sentinels = fixture_sentinels(&frigate_fixture("events_0.17_new.json"));
+    assert!(
+        sentinels.len() > 60,
+        "the 0.17 fixture carries {} distinct sentinel values, too few to be the widest shape",
+        sentinels.len()
+    );
+    assert!(sentinels.contains("7770620") && sentinels.contains("7770.86"));
+    assert!(
+        sentinels.contains("SENTINEL_ID_017") && sentinels.contains("SENTINEL_UNKNOWN_KEY_017")
+    );
+
+    let leaked_number = r#"{"record_type":"event","zone_id":"zone:driveway","area":7770620}"#;
+    assert_eq!(
+        leaked_sentinel(leaked_number, &sentinels).as_deref(),
+        Some("7770620")
+    );
+    let leaked_score = r#"{"confidence":7770.86}"#;
+    assert_eq!(
+        leaked_sentinel(leaked_score, &sentinels).as_deref(),
+        Some("7770.86")
+    );
+    let leaked_string = r#"{"v":1,"nested":{"deep":["SENTINEL_PLATE_017"]}}"#;
+    assert_eq!(
+        leaked_sentinel(leaked_string, &sentinels).as_deref(),
+        Some("SENTINEL_PLATE_017")
+    );
+    let leaked_key = r#"{"attributes":{"SENTINEL_ATTRIBUTE_FACE_017":0.5}}"#;
+    assert_eq!(
+        leaked_sentinel(leaked_key, &sentinels).as_deref(),
+        Some("SENTINEL_ATTRIBUTE_FACE_017")
+    );
+    let leaked_in_text = r#"{"note":"plate SENTINEL_PLATE_017 seen"}"#;
+    assert!(leaked_sentinel(leaked_in_text, &sentinels).is_some());
+
+    // The CI run that motivated this: buckets 1791777000 and 1791777600, and
+    // an April 2026 bucket (1777062000) that contains the `area` sentinel
+    // 7770620 as a digit substring. Neither is a discarded value.
+    let legitimate = r#"{"v":1,"device_id":"pwk_0123abcd","connected":true,"topic_prefix":"frigate","last_message_bucket_start":1791777000,"last_message_bucket_size":600,"messages_since_start":2,"mode":"events","other":1791777600,"april":1777062000,"confidence":0.87}"#;
+    assert_eq!(leaked_sentinel(legitimate, &sentinels), None);
+}
+
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
@@ -687,14 +782,14 @@ fn frigate_bridge_run_seals_heartbeats_prunes_and_publishes_frigate_link() {
         vec!["witness/frigate_link"],
         "frigate_link is the bridge's only MQTT output"
     );
+    let sentinels = fixture_sentinels(&event_017);
     for published in &log.published {
         assert!(published.retain, "frigate_link is retained");
         assert_eq!(published.qos, 1, "frigate_link is QoS 1");
         let text = String::from_utf8_lossy(&published.payload);
-        assert!(
-            !text.contains("SENTINEL_") && !text.contains("777"),
-            "a discarded Frigate value reached MQTT: {text}"
-        );
+        if let Some(leak) = leaked_sentinel(&text, &sentinels) {
+            panic!("a discarded Frigate value ({leak}) reached MQTT: {text}");
+        }
     }
     let links = frigate_link_payloads(&log);
     assert!(links.len() >= 3, "connect, heard, shutdown: {links:?}");
@@ -783,10 +878,9 @@ fn frigate_bridge_run_seals_heartbeats_prunes_and_publishes_frigate_link() {
     assert!(sealed.contains("BoundaryCrossingObjectLarge"), "{sealed}");
     assert!(sealed.contains("\"attestation\":\"adapter\""), "{sealed}");
     for payload in &payloads {
-        assert!(
-            !payload.contains("SENTINEL_") && !payload.contains("777"),
-            "a discarded Frigate value reached the sealed log: {payload}"
-        );
+        if let Some(leak) = leaked_sentinel(payload, &sentinels) {
+            panic!("a discarded Frigate value ({leak}) reached the sealed log: {payload}");
+        }
     }
     let checkpoints: i64 = kernel
         .conn

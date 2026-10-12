@@ -11,9 +11,12 @@
 #   2. the replayed fixtures seal what they should (four tracked objects in
 #      events mode, three review alerts in reviews mode) and NOTHING Frigate
 #      said about who was seen survives: no sentinel in the sealed log (the
-#      API document AND a raw dump of the database), on /events/latest, on
-#      any witness/# or homeassistant/# topic, or in the daemon log; a
-#      `face`-labeled object and a `face`-only review alert seal nothing;
+#      sealed-log document AND the whole events view, read from inside the
+#      container — the database itself is SQLCipher-encrypted, so a copied
+#      file is "not a database" to anything but the kernel), on
+#      /events/latest, in the export bundle, on any witness/# or
+#      homeassistant/# topic, or in the daemon log; a `face`-labeled object
+#      and a `face`-only review alert seal nothing;
 #   3. the sealed log verifies in-container (log_verify, derived keys);
 #   4. GET /api/fleet answers with the kernel's own row and nothing else
 #      (SECURACV_FLEET_ROLLCALL unset → `self`); with it set, the identity
@@ -251,46 +254,64 @@ else
 fi
 
 echo "==> Sweeping every output for the fixtures' sentinels"
-# The capability token reads the sealed-log document and the latest events;
-# the database itself is copied out and dumped cell by cell; the MQTT
-# capture and the daemon log complete the set.
+# The capability token reads the sealed-log document and the latest event
+# across the published port; the whole retained log is read the way its
+# owner reads it — the kernel API from INSIDE the container, every event
+# since bucket zero, with the token the container holds (the database is
+# SQLCipher-encrypted: a copied witness.db is "file is not a database" to
+# sqlite3, so a raw dump cannot be the sweep); the MQTT capture and the
+# daemon log complete the set. The export bundle joins the set later, when
+# the receipts step fetches one.
+events_view() {
+    # events_view CONTAINER FILE — GET /events?since_bucket=0 from inside
+    # the container (curl ships in the image for the HEALTHCHECK).
+    docker exec "$1" sh -c 'curl -fsS -H "Authorization: Bearer $(tr -d "[:space:]" < /data/api_token)" "http://127.0.0.1:8799/events?since_bucket=0"' > "$2"
+}
+# events_in FILE — how many sealed events an events view (or any kernel
+# event document) carries, whatever the batch/bucket nesting.
+events_in() { jq '[.. | objects | select(has("zone_id") and has("time_bucket"))] | length' "$1"; }
 curl -fsS -H "Authorization: Bearer $(cap_token "$SIDECAR")" "http://127.0.0.1:${PORT_A}/api/sealed-log" > "$SCRATCH/a_sealed_log.json" \
     || fail "GET /api/sealed-log failed with the capability token" "$SIDECAR"
 curl -fsS -H "Authorization: Bearer $(cap_token "$SIDECAR")" "http://127.0.0.1:${PORT_A}/events/latest" > "$SCRATCH/a_events_latest.json" \
     || fail "GET /events/latest failed with the capability token" "$SIDECAR"
-docker cp "$SIDECAR:/data/witness.db" "$SCRATCH/a_witness.db" >/dev/null
-python3 -I - "$SCRATCH/a_witness.db" > "$SCRATCH/a_db_dump.txt" <<'EOF'
-import sqlite3, sys
-conn = sqlite3.connect(sys.argv[1])
-for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
-    for row in conn.execute(f'SELECT * FROM "{name}"'):
-        for cell in row:
-            if isinstance(cell, bytes):
-                cell = cell.decode("utf-8", "replace")
-            print(name, cell)
-EOF
+events_view "$SIDECAR" "$SCRATCH/a_events_view.json" \
+    || fail "GET /events?since_bucket=0 inside sidecar A failed (curl with the container's own token)" "$SIDECAR"
 docker logs "$SIDECAR" > "$SCRATCH/a_logs.txt" 2>&1 || true
 docker logs "$CAPTURE" > "$SCRATCH/mqtt_capture.txt" 2>&1 || true
 [ -s "$SCRATCH/mqtt_capture.txt" ] || fail "the MQTT capture is empty — nothing was published under witness/# or homeassistant/#" "$CAPTURE"
 sweep_outputs() {
     # sweep_outputs LABEL FILE... — fail on the first sentinel found anywhere.
+    # A token must stand as a whole word (grep -w): the numeric sentinels
+    # are 7770-prefixed, and a digit-substring match once failed on a
+    # wall-clock bucket start (1777062000 contains the `area` sentinel
+    # 7770620). The SENTINEL_ prefix is a leak wherever it appears.
     local label="$1"; shift
     local tok hit
+    if hit=$(grep -lF -- "SENTINEL_" "$@" 2>/dev/null) && [ -n "$hit" ]; then
+        echo "a SENTINEL_ string found in: $hit" >&2
+        grep -nF -- "SENTINEL_" "$hit" | head -n 5 >&2
+        fail "identity leaked ($label): a SENTINEL_ string reached an output"
+    fi
     while IFS= read -r tok; do
         [ -n "$tok" ] || continue
-        if hit=$(grep -lF -- "$tok" "$@" 2>/dev/null) && [ -n "$hit" ]; then
+        if hit=$(grep -lwF -- "$tok" "$@" 2>/dev/null) && [ -n "$hit" ]; then
             echo "sentinel '$tok' found in: $hit" >&2
-            grep -nF -- "$tok" "$hit" | head -n 5 >&2
+            grep -nwF -- "$tok" "$hit" | head -n 5 >&2
             fail "identity leaked ($label): Frigate's '$tok' reached an output"
         fi
     done < "$SCRATCH/sentinels"
     pass "no sentinel in $label"
 }
-sweep_outputs "sidecar A: sealed-log document, /events/latest, raw database dump, MQTT capture, daemon log" \
-    "$SCRATCH/a_sealed_log.json" "$SCRATCH/a_events_latest.json" "$SCRATCH/a_db_dump.txt" \
+sweep_outputs "sidecar A: sealed-log document, events view since bucket zero, /events/latest, MQTT capture, daemon log" \
+    "$SCRATCH/a_sealed_log.json" "$SCRATCH/a_events_view.json" "$SCRATCH/a_events_latest.json" \
     "$SCRATCH/mqtt_capture.txt" "$SCRATCH/a_logs.txt"
-# Belt and braces: the DB dump must have seen the sealed payloads at all.
-grep -q "sealed_events" "$SCRATCH/a_db_dump.txt" || fail "the database dump has no sealed_events rows — the sweep read nothing"
+# Belt and braces: the events view must have carried the sealed events at
+# all, or the sweep read nothing.
+view_events_a=$(events_in "$SCRATCH/a_events_view.json")
+[ "$view_events_a" -ge "$expect_a" ] \
+    || fail "the events view inside sidecar A carries $view_events_a events, fewer than the $expect_a sealed — the sweep read nothing"
+grep -q '"payload"' "$SCRATCH/a_sealed_log.json" || fail "the sealed-log document has no entries — the sweep read nothing"
+pass "the events view carries $view_events_a sealed events for the sweep"
 
 echo "==> Verifying the sealed log in-container"
 if ! docker exec "$SIDECAR" sh -c 'DEVICE_KEY_SEED=$(head -n1 /data/device_key) log_verify --db /data/witness.db'; then
@@ -485,11 +506,15 @@ if [ "$W2_PRESENT" -eq 1 ]; then
     after_polls=$(receipt_count)
     [ "$after_polls" = "$before" ] || fail "5 polls of /events/latest moved the export receipt count from $before to $after_polls"
     pass "5 polls of /events/latest added no export receipt ($before)"
-    [ "$(http_status -H "Authorization: Bearer $PAIRED_TOKEN" "http://127.0.0.1:${PORT_A}/export/bundle?last=24h")" = "200" ] \
-        || fail "/export/bundle did not answer 200 to the paired token" "$SIDECAR"
+    export_status=$(curl -sS -o "$SCRATCH/a_export_bundle.json" -w '%{http_code}' \
+        -H "Authorization: Bearer $PAIRED_TOKEN" "http://127.0.0.1:${PORT_A}/export/bundle?last=24h" || true)
+    [ "$export_status" = "200" ] || fail "/export/bundle answered HTTP ${export_status:-<none>} to the paired token (expected 200)" "$SIDECAR"
     after_export=$(receipt_count)
     [ "$after_export" = "$((before + 1))" ] || fail "one /export/bundle moved the export receipt count from $before to $after_export (expected $((before + 1)))"
     pass "one /export/bundle added exactly one export receipt ($after_export)"
+    # The bundle is the hand-off unit: swept like every other output.
+    [ "$(events_in "$SCRATCH/a_export_bundle.json")" -ge 1 ] || fail "the export bundle carries no events — nothing to sweep"
+    sweep_outputs "sidecar A: export bundle (24h, paired token)" "$SCRATCH/a_export_bundle.json"
 else
     skip "receipt accounting (needs the receipt-less state reads)"
 fi
@@ -563,6 +588,10 @@ for f in "$FIXTURES"/reviews_*.json; do
 done
 # Three alerts seal; the detection-only update and the face-only alert do not.
 EXPECTED_B=3
+# What the events view must carry for the sweep to have read anything: the
+# exact count with the tolerant parser, nothing to insist on without it.
+expect_b="$EXPECTED_B"
+[ "$W1_PRESENT" -eq 1 ] || expect_b=0
 if [ "$W1_PRESENT" -eq 1 ]; then
     sealed_b=0
     for _ in $(seq 1 60); do
@@ -585,22 +614,16 @@ curl -fsS -H "Authorization: Bearer $(cap_token "$SIDECAR_B")" "http://127.0.0.1
     || fail "GET /api/sealed-log on B failed with the capability token" "$SIDECAR_B"
 curl -fsS -H "Authorization: Bearer $(cap_token "$SIDECAR_B")" "http://127.0.0.1:${PORT_B}/events/latest" > "$SCRATCH/b_events_latest.json" \
     || fail "GET /events/latest on B failed with the capability token" "$SIDECAR_B"
-docker cp "$SIDECAR_B:/data/witness.db" "$SCRATCH/b_witness.db" >/dev/null
-python3 -I - "$SCRATCH/b_witness.db" > "$SCRATCH/b_db_dump.txt" <<'EOF'
-import sqlite3, sys
-conn = sqlite3.connect(sys.argv[1])
-for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
-    for row in conn.execute(f'SELECT * FROM "{name}"'):
-        for cell in row:
-            if isinstance(cell, bytes):
-                cell = cell.decode("utf-8", "replace")
-            print(name, cell)
-EOF
+events_view "$SIDECAR_B" "$SCRATCH/b_events_view.json" \
+    || fail "GET /events?since_bucket=0 inside sidecar B failed (curl with the container's own token)" "$SIDECAR_B"
 docker logs "$SIDECAR_B" > "$SCRATCH/b_logs.txt" 2>&1 || true
 docker logs "$CAPTURE" > "$SCRATCH/mqtt_capture.txt" 2>&1 || true
-sweep_outputs "sidecar B: sealed-log document, /events/latest, raw database dump, MQTT capture, daemon log" \
-    "$SCRATCH/b_sealed_log.json" "$SCRATCH/b_events_latest.json" "$SCRATCH/b_db_dump.txt" \
+sweep_outputs "sidecar B: sealed-log document, events view since bucket zero, /events/latest, MQTT capture, daemon log" \
+    "$SCRATCH/b_sealed_log.json" "$SCRATCH/b_events_view.json" "$SCRATCH/b_events_latest.json" \
     "$SCRATCH/mqtt_capture.txt" "$SCRATCH/b_logs.txt"
+view_events_b=$(events_in "$SCRATCH/b_events_view.json")
+[ "$view_events_b" -ge "$expect_b" ] \
+    || fail "the events view inside sidecar B carries $view_events_b events, fewer than the $expect_b sealed — the sweep read nothing"
 
 echo "==> Checking B's announce names the operator's host, and its roll-call is full"
 if [ "$W2_PRESENT" -eq 1 ]; then

@@ -49,6 +49,12 @@ and [`docs/frigate_integration.md`](docs/frigate_integration.md).
   `<zone>` are gone) and the fixable `tofu_mismatch` issue carries its
   explanation in the fix flow's confirm step, as the strings schema
   requires; `tests/ha/test_hassfest_subset.py` applies hassfest's rules.
+- The Frigate sentinel sweeps match whole JSON values (`cargo test
+  frigate_mqtt_e2e`) and whole tokens (`docker/sidecar/ci_e2e.sh`), never
+  digit substrings, so a wall-clock bucket start that happens to contain
+  "777" is not a leak; the sidecar's sweep reads the whole events view
+  through the kernel API from inside the container (the database is
+  SQLCipher-encrypted) and sweeps the export bundle too.
 
 **Breaking changes**
 
