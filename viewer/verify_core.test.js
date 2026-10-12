@@ -243,6 +243,10 @@ describe('runtime without Ed25519 support', () => {
 describe('export-bundle verification parity', () => {
   const BUNDLE_FIXTURES = path.join(__dirname, '..', 'tests', 'fixtures', 'export_bundle');
   const loadBundle = () => JSON.parse(fs.readFileSync(path.join(BUNDLE_FIXTURES, 'valid_bundle.json'), 'utf8'));
+  // The bundle a paired bearer (the Home Assistant integration's credential)
+  // downloads: receipt `auth_mode: paired`, a disclosure window, and the
+  // trailing `token_id` — every optional receipt field populated.
+  const loadPairedBundle = () => JSON.parse(fs.readFileSync(path.join(BUNDLE_FIXTURES, 'valid_bundle_paired.json'), 'utf8'));
 
   it('recognizes the two input kinds', () => {
     assert.equal(V.looksLikeExportBundle(loadBundle()), true);
@@ -262,6 +266,46 @@ describe('export-bundle verification parity', () => {
     assert.equal(report.events, 3);
     assert.equal(report.failures, 0);
     assert.ok(report.checks.some((c) => /artifact bound/i.test(c)));
+  });
+
+  it('verifies the paired-bearer fixture the Rust verifier pins (auth_mode + window + token_id on the receipt)', async () => {
+    const bundle = loadPairedBundle();
+    assert.equal(bundle.receipt_entry.receipt.auth_mode, 'paired');
+    assert.equal(bundle.receipt_entry.receipt.token_id, '0badf00d');
+    assert.ok(bundle.receipt_entry.receipt.window, 'the paired export was windowed');
+    const report = await V.verifyExportBundle(loadPairedBundle());
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.events, 3);
+    assert.ok(report.checks.some((c) => /artifact bound/i.test(c)));
+    // The serializer puts token_id LAST, after window — the order the kernel signed.
+    const keyHex = bundle.device_public_key.map((b) => b.toString(16).padStart(2, '0')).join('');
+    const trusted = await V.verifyExportBundle(bundle, { trustedDeviceKeyHex: keyHex });
+    assert.equal(trusted.ok, true, trusted.error);
+    assert.equal(trusted.authorship, 'trusted');
+  });
+
+  it('rejects a paired bundle whose bearer id is edited or scrubbed (token_id is signed)', async () => {
+    const edited = loadPairedBundle();
+    edited.receipt_entry.receipt.token_id = 'deadbeef';
+    const report = await V.verifyExportBundle(edited);
+    assert.equal(report.ok, false);
+    assert.match(report.error, /entry_hash mismatch/);
+
+    const scrubbed = loadPairedBundle();
+    delete scrubbed.receipt_entry.receipt.token_id;
+    const report2 = await V.verifyExportBundle(scrubbed);
+    assert.equal(report2.ok, false);
+    assert.match(report2.error, /entry_hash mismatch/);
+  });
+
+  it('treats an unknown auth_mode as an opaque label (a new credential class never breaks an old viewer)', async () => {
+    // Re-labeling a receipt breaks its signed hash (that is tamper), but the
+    // serializer itself must accept any string: it never interprets the mode.
+    const bundle = loadPairedBundle();
+    bundle.receipt_entry.receipt.auth_mode = 'some_future_mode';
+    const report = await V.verifyExportBundle(bundle);
+    assert.equal(report.ok, false);
+    assert.match(report.error, /entry_hash mismatch/, 'rejected by the hash, not by a vocabulary check');
   });
 
   it('confirms authorship when the matching trusted key is supplied', async () => {

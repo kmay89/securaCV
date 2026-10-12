@@ -1,10 +1,17 @@
-//! Regenerate the cross-language export-bundle fixture in
-//! `tests/fixtures/export_bundle/`. The fixture is the exact artifact
-//! `export_events --self-export` writes (an `ExportBundle`), and is consumed
-//! by both the Rust verifier (`verify_export_bundle`, pinned in
-//! `tests/export_bundle_fixtures.rs`) and the offline JS verifier
-//! (`viewer/verify_core.js`, pinned in `viewer/verify_core.test.js`) to
-//! guarantee byte-for-byte parity.
+//! Regenerate the cross-language export-bundle fixtures in
+//! `tests/fixtures/export_bundle/`. Each fixture is an exact `ExportBundle`
+//! as a kernel writes it, consumed by both the Rust verifier
+//! (`verify_export_bundle`, pinned in `tests/export_bundle_fixtures.rs`) and
+//! the offline JS verifier (`viewer/verify_core.js`, pinned in
+//! `viewer/verify_core.test.js`) to guarantee byte-for-byte parity:
+//!
+//! - `valid_bundle.json` — the owner self-export (`export_events
+//!   --self-export`): receipt `auth_mode: self_export`, no window.
+//! - `valid_bundle_paired.json` — `GET /export/bundle` under a paired bearer
+//!   (the Home Assistant integration's credential): receipt
+//!   `auth_mode: paired`, a disclosure window, and the trailing `token_id`.
+//!   Every optional receipt field is populated, so a verifier that
+//!   re-serializes the receipt field by field is held to the full order.
 //!
 //! Run with:  `cargo run --example gen_export_bundle_fixture`
 //!
@@ -19,14 +26,62 @@ use std::path::Path;
 use std::time::Duration;
 
 use witness_kernel::{
-    CandidateEvent, EventType, ExportOptions, InferenceBackend, Kernel, KernelConfig,
-    ModuleDescriptor, TimeBucket, ZonePolicy,
+    ApiCredential, CandidateEvent, EventType, ExportOptions, ExportWindow, InferenceBackend,
+    Kernel, KernelConfig, ModuleDescriptor, TimeBucket, ZonePolicy,
 };
+
+/// The paired bearer's id the paired fixture names (8 hex, as `POST
+/// /api/pair` mints them). A fixed value: the fixture is a vector, not a
+/// credential.
+const PAIRED_TOKEN_ID: &str = "0badf00d";
 
 fn main() -> anyhow::Result<()> {
     let out_dir = Path::new("tests/fixtures/export_bundle");
     fs::create_dir_all(out_dir)?;
 
+    // Owner self-export, jitter 0 so bucket times in the artifact stay the
+    // exact appended values; the receipt itself is signed over whatever it
+    // says, so the fixture verifies forever regardless of when it was cut.
+    let (mut kernel, cfg) = seeded_kernel()?;
+    let bundle = kernel.export_events_bundle_self(
+        cfg.ruleset_hash,
+        ExportOptions {
+            jitter_s: 0,
+            ..ExportOptions::default()
+        },
+    )?;
+    write_fixture(&out_dir.join("valid_bundle.json"), &bundle)?;
+
+    // The same three events exported by a paired bearer over a disclosure
+    // window — a fresh kernel, so each fixture stands alone (its receipt is
+    // the first row of its own ledger). The window covers every sample
+    // bucket; `token_id` follows it on the wire.
+    let (mut kernel, cfg) = seeded_kernel()?;
+    let bundle = kernel.export_events_bundle_for_api_with(
+        cfg.ruleset_hash,
+        ExportOptions {
+            jitter_s: 0,
+            window: Some(ExportWindow::aligned(0, 2400)?),
+            ..ExportOptions::default()
+        },
+        ApiCredential::Paired {
+            token_id: PAIRED_TOKEN_ID.to_string(),
+        },
+    )?;
+    write_fixture(&out_dir.join("valid_bundle_paired.json"), &bundle)?;
+    Ok(())
+}
+
+fn write_fixture(path: &Path, bundle: &witness_kernel::ExportBundle) -> anyhow::Result<()> {
+    let json = serde_json::to_string_pretty(bundle)?;
+    fs::write(path, json + "\n")?;
+    println!("wrote {}", path.display());
+    Ok(())
+}
+
+/// An in-memory kernel with the three sample events sealed — the same
+/// sample set as the envelope fixtures.
+fn seeded_kernel() -> anyhow::Result<(Kernel, KernelConfig)> {
     let cfg = KernelConfig {
         db_path: ":memory:".to_string(),
         ruleset_id: "ruleset:fixture".to_string(),
@@ -69,20 +124,5 @@ fn main() -> anyhow::Result<()> {
         )?;
     }
 
-    // Owner self-export, jitter 0 so bucket times in the artifact stay the
-    // exact appended values; the receipt itself is signed over whatever it
-    // says, so the fixture verifies forever regardless of when it was cut.
-    let bundle = kernel.export_events_bundle_self(
-        cfg.ruleset_hash,
-        ExportOptions {
-            jitter_s: 0,
-            ..ExportOptions::default()
-        },
-    )?;
-
-    let path = out_dir.join("valid_bundle.json");
-    let json = serde_json::to_string_pretty(&bundle)?;
-    fs::write(&path, json + "\n")?;
-    println!("wrote {}", path.display());
-    Ok(())
+    Ok((kernel, cfg))
 }
