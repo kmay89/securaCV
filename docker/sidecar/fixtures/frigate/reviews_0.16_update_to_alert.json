@@ -1,0 +1,33 @@
+{
+  "type": "update",
+  "before": {
+    "id": "SENTINEL_BEFORE_REVIEW_ID_016",
+    "camera": "Back Yard",
+    "start_time": 77701101.5,
+    "end_time": null,
+    "severity": "detection",
+    "thumb_path": "SENTINEL_BEFORE_THUMB_PATH_016",
+    "data": {
+      "detections": ["SENTINEL_BEFORE_DETECTION_ID_016"],
+      "objects": ["dog"],
+      "sub_labels": [],
+      "zones": [],
+      "audio": []
+    }
+  },
+  "after": {
+    "id": "SENTINEL_REVIEW_ID_016",
+    "camera": "Back Yard",
+    "start_time": 77701102.5,
+    "end_time": null,
+    "severity": "alert",
+    "thumb_path": "SENTINEL_THUMB_PATH_016",
+    "data": {
+      "detections": ["SENTINEL_DETECTION_ID_016_A", "SENTINEL_DETECTION_ID_016_B"],
+      "objects": ["dog", "person"],
+      "sub_labels": ["SENTINEL_FACE_NAME_016", "SENTINEL_PLATE_ALIAS_016"],
+      "zones": ["lawn"],
+      "audio": ["SENTINEL_AUDIO_016"]
+    }
+  }
+}
