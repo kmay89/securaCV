@@ -35,6 +35,37 @@ use witness_kernel::{V4l2Config, V4l2Source};
 #[path = "../ui.rs"]
 mod ui;
 
+/// The event API's configuration as `witnessd` serves it, from the loaded
+/// [`witness_kernel::config::WitnessdConfig`]: the same keys `witness_api`
+/// wires — the pairing files and roll-call mode (`api.paired_token_path`,
+/// `api.pairing_code_path`, `api.fleet_rollcall` and their `WITNESS_API_*`
+/// names) included, so a witnessd-served API honors the config exactly as a
+/// witness_api-served one does. Shared by `main` and the unit test that
+/// holds it to the config.
+fn api_config_from(config: &witness_kernel::config::WitnessdConfig) -> Result<ApiConfig> {
+    Ok(ApiConfig {
+        addr: config.api_addr.clone(),
+        token_path: config.api_token_path.clone(),
+        fleet_peers_path: config.api_fleet_peers_path.clone(),
+        viewer_token_path: config.api_viewer_token_path.clone(),
+        pairing: config.api_access.pairing_paths(),
+        fleet_rollcall: config.api_access.fleet_rollcall,
+        rate_limit_per_minute: config.api_rate_limit_per_minute,
+        // Explicit opt-in required to expose the plaintext API off-loopback.
+        allow_insecure: std::env::var("WITNESS_API_ALLOW_INSECURE")
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true")
+            })
+            .unwrap_or(false),
+        // In-process TLS material (WITNESS_API_TLS_CERT / WITNESS_API_TLS_KEY,
+        // paths to PEM files). Terminated by the server only on an `api-tls`
+        // build; configuring it on any other build is a startup error.
+        tls: ApiTlsConfig::from_env()?,
+        ..ApiConfig::default()
+    })
+}
+
 fn main() -> Result<()> {
     // Initialize logging (simple stderr for MVP)
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -170,25 +201,22 @@ fn main() -> Result<()> {
     let storage_health: SharedStorageHealth = std::sync::Arc::new(std::sync::RwLock::new(None));
     let storage_write_errors = storage_monitor.as_ref().map(|m| m.error_counter());
 
-    let api_config = ApiConfig {
-        addr: config.api_addr.clone(),
-        token_path: config.api_token_path.clone(),
-        fleet_peers_path: config.api_fleet_peers_path.clone(),
-        viewer_token_path: config.api_viewer_token_path.clone(),
-        rate_limit_per_minute: config.api_rate_limit_per_minute,
-        // Explicit opt-in required to expose the plaintext API off-loopback.
-        allow_insecure: std::env::var("WITNESS_API_ALLOW_INSECURE")
-            .map(|v| {
-                let v = v.trim();
-                v == "1" || v.eq_ignore_ascii_case("true")
-            })
-            .unwrap_or(false),
-        // In-process TLS material (WITNESS_API_TLS_CERT / WITNESS_API_TLS_KEY,
-        // paths to PEM files). Terminated by the server only on an `api-tls`
-        // build; configuring it on any other build is a startup error.
-        tls: ApiTlsConfig::from_env()?,
-        ..ApiConfig::default()
-    };
+    let api_config = api_config_from(&config)?;
+    if api_config.pairing.is_some() {
+        log::info!(
+            "pairing enabled: codes from `witness_api issue-pairing-code`, bearers in {}",
+            config
+                .api_access
+                .paired_token_path
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        );
+    }
+    log::info!(
+        "fleet roll-call: {}",
+        config.api_access.fleet_rollcall.as_str()
+    );
     let api_handle = {
         let _stage = ui.stage("Start event API");
         ApiServer::new(api_config, cfg.clone())
@@ -1727,6 +1755,45 @@ mod tests {
                 matches!(record, SealedLogRecord::Failure(f) if f.failure_type == failure_type)
             })
             .count()
+    }
+
+    #[test]
+    fn api_config_wires_pairing_and_roll_call_from_the_config() {
+        use std::path::PathBuf;
+        use witness_kernel::api::{FleetRollcall, PairingPaths};
+        use witness_kernel::config::ApiAccessSettings;
+
+        // Defaults: no token path means no pairing files, and the roll-call
+        // is the Witness Wall's `full`.
+        let api = api_config_from(&test_config()).expect("api config");
+        assert_eq!(api.pairing, None);
+        assert_eq!(api.fleet_rollcall, FleetRollcall::Full);
+
+        // What the config says is what the served API gets: the two pairing
+        // files (`POST /api/pair` redeems the code, the bearer set it
+        // appends to) and the `self` roll-call — the keys `witness_api`
+        // wires, so a witnessd-served API honors them the same way.
+        let mut config = test_config();
+        config.api_token_path = Some(PathBuf::from("/data/api_token"));
+        config.api_access = ApiAccessSettings {
+            paired_token_path: Some(PathBuf::from("/data/paired_tokens.json")),
+            pairing_code_path: Some(PathBuf::from("/data/pairing_code")),
+            fleet_rollcall: FleetRollcall::SelfOnly,
+            ..ApiAccessSettings::default()
+        };
+        let api = api_config_from(&config).expect("api config");
+        assert_eq!(
+            api.pairing,
+            Some(PairingPaths {
+                code_path: PathBuf::from("/data/pairing_code"),
+                tokens_path: PathBuf::from("/data/paired_tokens.json"),
+            })
+        );
+        assert_eq!(api.fleet_rollcall, FleetRollcall::SelfOnly);
+        assert_eq!(
+            api.token_path.as_deref(),
+            Some(std::path::Path::new("/data/api_token"))
+        );
     }
 
     #[test]
