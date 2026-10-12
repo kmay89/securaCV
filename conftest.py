@@ -15,10 +15,49 @@ HA API without us noticing.
 
 from __future__ import annotations
 
+import importlib.util
+import os
 import sys
 import types
 import json
 from typing import Any
+
+# The stub suite, the one target these stubs exist for.
+STUB_SUITE_PATH = os.path.join("custom_components", "securacv", "tests")
+# Set to 1/0 to force the stubs on or off whatever the invocation looks like.
+STUBS_ENV = "SECURACV_HA_STUBS"
+
+
+def _stub_suite_targeted(argv: list[str]) -> bool:
+    """Whether this pytest invocation is the stub lane.
+
+    True when the plugin is switched off (``-p no:homeassistant`` is how the
+    stub suite is run), when a target path names the stub suite, or when no
+    target is named at all (a bare ``pytest`` from the root collects it).
+    """
+    if any(arg == "no:homeassistant" or arg.endswith(":no:homeassistant") or arg == "-pno:homeassistant" for arg in argv):
+        return True
+    targets = [arg for arg in argv if not arg.startswith("-")]
+    if not targets:
+        return True
+    return any(STUB_SUITE_PATH in arg.replace("\\", "/").replace("/", os.sep) for arg in targets)
+
+
+def _stubs_wanted() -> bool:
+    """Install the stubs only when the stub suite is what runs.
+
+    With a real Home Assistant importable and another target named (the
+    real-HA lane, ``tests/ha``, or any other suite), the stubs would shadow
+    the core and break it; the recipe for that lane also uses
+    ``--confcutdir=tests/ha`` so this file is never even collected.
+    """
+    forced = os.environ.get(STUBS_ENV)
+    if forced is not None:
+        return forced.strip().lower() not in {"", "0", "false", "no"}
+    if importlib.util.find_spec("homeassistant") is None:
+        # No core installed: the stubs are the only way the package imports.
+        return True
+    return _stub_suite_targeted(sys.argv[1:])
 
 
 def _install_minimum_stubs() -> None:
@@ -236,4 +275,5 @@ def _install_minimum_stubs() -> None:
         sys.modules[name] = mod
 
 
-_install_minimum_stubs()
+if _stubs_wanted():
+    _install_minimum_stubs()
