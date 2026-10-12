@@ -35,19 +35,21 @@ rules:
     status: done
     comment: No requirements; cryptography ships with Home Assistant core.
   docs-actions:
-    status: todo
+    status: done
     comment: >-
-      docs/homeassistant_setup.md documents the three watch actions; W8 adds
-      securacv.verify and securacv.export_evidence (services.yaml and
-      strings.json already describe both).
+      docs/homeassistant_setup.md "Actions" documents all five:
+      securacv.verify, securacv.export_evidence and the three watch actions,
+      with fields, responses and refusals.
   docs-conditions:
     status: exempt
     comment: The integration provides no conditions.
   docs-high-level-description: done
   docs-installation-instructions: done
   docs-removal-instructions:
-    status: todo
-    comment: W8 adds the removal section to docs/homeassistant_setup.md.
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Removing the integration": what deleting
+      the entry withdraws, revokes and deletes, and what it leaves.
   docs-triggers:
     status: exempt
     comment: The integration provides no triggers.
@@ -80,11 +82,16 @@ rules:
   action-exceptions: done
   config-entry-unloading: done
   docs-configuration-parameters:
-    status: todo
-    comment: W8 documents the options (evidence_keep, the trust-store menu).
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Configuration parameters": the Configure
+      menu (pin / rotate / unpin, evidence_keep), reconfigure and reauth.
   docs-installation-parameters:
-    status: todo
-    comment: W8 documents the pairing code, the token file path and the prefixes.
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Configuration parameters" (installation
+      parameters table): kernel URL, pairing code / token file / static
+      token, the two prefixes, the adapter stats URL.
   entity-unavailable:
     status: done
     comment: >-
@@ -127,26 +134,36 @@ rules:
       A rediscovered app updates the entry's URL, token file and prefix
       through _abort_if_unique_id_configured(updates=..., reload_on_update=True).
   docs-data-update:
-    status: todo
-    comment: W8 documents push vs the five-minute backstop.
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "How the integration gets its data": MQTT
+      push, the five-minute HTTP backstop, the 15-minute chain walk, the
+      hourly claim, the receipt-less reads.
   docs-examples:
-    status: todo
-    comment: W8 ships the automation examples beside the blueprints.
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Actions" and "Use cases" carry automation
+      YAML (a watch, a weekly export, a sealed-event notification); the
+      blueprints README is the catalog.
   docs-known-limitations:
-    status: todo
-    comment: W8.
+    status: done
+    comment: docs/homeassistant_setup.md "Known limitations".
   docs-supported-devices:
-    status: todo
-    comment: W8.
+    status: done
+    comment: docs/homeassistant_setup.md "Supported devices and functions".
   docs-supported-functions:
-    status: todo
-    comment: W8.
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Supported devices and functions" and the
+      Step 4 entity catalog (every entity the integration creates).
   docs-troubleshooting:
-    status: todo
-    comment: W8.
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Troubleshooting": every Repairs issue and
+      a symptom table for the kernel path.
   docs-use-cases:
-    status: todo
-    comment: W8.
+    status: done
+    comment: docs/homeassistant_setup.md "Use cases".
   dynamic-devices:
     status: done
     comment: Canaries are added as they first report on the status topic.

@@ -1,11 +1,15 @@
 # Home Assistant Integration Guide
 
-On Home Assistant OS, one command installs and wires everything — broker,
-Frigate, the Privacy Witness Kernel, the SecuraCV integration, blueprints,
-dashboards. That command is the first section below. The rest of this guide
-is the same setup by hand: install the integration via HACS, then connect it
-to your SecuraCV Canary devices via MQTT or to the Privacy Witness Kernel via
-its HTTP API.
+SecuraCV is **the verified witness log for Frigate and Home Assistant**.
+Frigate keeps the video; SecuraCV keeps the proof. Every person, car, dog or
+cat event Frigate reports is sealed into a signed, hash-chained log as a
+coarse claim — which camera, which ten-minute window, what kind of thing —
+and never a face, a plate, a name or a frame. In Home Assistant you get the
+chain's state, one witness event entity per camera, a daily digest,
+notifications with proof attached, and a one-tap signed evidence export
+that anyone can verify offline. Canary devices — the project's own small
+witnesses — join the same integration over MQTT, each with its own signed
+chain.
 
 > **Prefer the guided version?** [`canary-local/homeassistant.html`](../canary-local/homeassistant.html)
 > ("The Hub") walks this same setup interactively — a 3D Raspberry Pi build you
@@ -14,38 +18,98 @@ its HTTP API.
 > and versions are generated from this doc and drift-checked in CI, so the two
 > can't disagree.
 
-## Quick start: one command
+## The three ways in
 
-On Home Assistant OS, open the **Terminal & SSH** app (install it from
-**Settings → Apps → App Store** if you haven't) and run:
+| You run | Install this | What you type | Read |
+|---|---|---|---|
+| **Home Assistant OS** | the **SecuraCV** app from the App Store; it carries the integration and installs it on your click | nothing | [Path 1](#path-1-home-assistant-os--the-securacv-app) |
+| **Home Assistant with HACS** already | the integration from HACS (a custom repository), then the app or the sidecar | nothing (app) or one 6-digit code (sidecar) | [Path 2](#path-2-hacs-first) |
+| **Home Assistant Container** beside a Docker Frigate | the Docker sidecar next to Frigate, the integration from HACS | one 6-digit code | [Path 3](#path-3-home-assistant-container-and-the-docker-sidecar) |
+
+Every path needs **Home Assistant 2026.5.0 or newer** — the integration's
+`hacs.json`, the app's `config.yaml` and every blueprint's `min_version`
+name the same floor — an **MQTT broker** Home Assistant and Frigate share
+(Mosquitto on Home Assistant OS), and **Frigate 0.14 or newer with MQTT
+enabled**. Only Canary devices and no Frigate? The integration works
+MQTT-only; start at the [Canary walkthrough](#manual-walkthrough-canary-via-mqtt).
+
+## What you need
+
+| Item | Notes |
+|------|-------|
+| Raspberry Pi 4 (4 GB+) or x86 PC | Pi 5 works great; ~3 cameras at 10 fps |
+| Home Assistant 2026.5.0 or newer | Home Assistant OS for the app path; Container for the sidecar path |
+| IP camera(s) with RTSP | Hikvision, Dahua, Reolink, Amcrest, Ubiquiti, etc. — Frigate reads them |
+| HA Companion App (optional) | For push notifications to your phone; every blueprint takes a Phone input |
+| HDMI touchscreen (optional) | e.g. 7" 1024x600 IPS with USB touch — the hub runs headless by default, but the HAOSKiosk app (the `display` self-setup extra) can show your dashboard right on it |
+
+## Path 1: Home Assistant OS — the SecuraCV app
+
+1. **Settings → Apps → App Store → ⋮ → Repositories**, add
+   `https://github.com/kmay89/securaCV`
+   ([one click](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV)),
+   then install **SecuraCV** — "The verified witness log for Frigate —
+   signed events, no footage, no identity". The store slug is still
+   `privacy_witness_kernel`, so an older install upgrades in place;
+   "Privacy Witness Kernel" survives as the kernel device's model name.
+2. **Start** the app and open its **Web UI**. The setup wizard checks that
+   Mosquitto is running and Frigate is installed, reads Frigate's cameras
+   from `/addon_configs/ccab4aaf_frigate/config.yml` (so there is no RTSP
+   screen), and takes the broker credentials from the Supervisor — nothing
+   to type. Anything missing is a link into your own App Store: "Install it
+   for me" is a my.home-assistant.io link on purpose, because the app holds
+   no Supervisor role and cannot install, start or stop other apps. You
+   choose how long to keep sealed events (7 days, 30 days, 1 year), what to
+   seal (every tracked object, or only Frigate alerts) and whether you want
+   the daily digest. The device signing key is generated once and kept at
+   `/config/.securacv/device_key`, inside your Home Assistant backups —
+   back it up.
+3. The done screen's one primary button is **Install the integration and
+   restart Home Assistant**. It copies the integration the app carries into
+   `/config/custom_components/securacv`, marks the copy as the app's own,
+   and restarts Home Assistant Core — the only time the app ever restarts
+   Core, and only on that click
+   ([what the carried copy does and never does](../privacy_witness_kernel/DOCS.md#the-integration-carried-in-this-app)).
+   With the integration already installed from HACS the button reads **Open
+   Settings → Devices & Services** instead; the app never touches a copy
+   HACS or you installed.
+4. After the restart, **Settings → Devices & Services** shows a **SecuraCV
+   discovered** card. Press **Configure**. The form has no fields — *"The
+   SecuraCV app announced its witness kernel. Submit to connect — nothing to
+   type. Frigate events appear as sealed witness events within a minute of
+   the next detection."* Submit.
+5. A one-time notification appears, **SecuraCV: add the dashboard** —
+   *"SecuraCV is connected. Add the dashboard: Settings → Dashboards → Add
+   dashboard → SecuraCV. It builds itself from your cameras and the witness
+   chain."* Do that ([the dashboard](#add-the-dashboard)).
+6. Walk past a camera. The first event shows **Sealed ✓** within a minute of
+   Frigate's detection; **Verified ✓** follows the integration's next chain
+   check — [what the badges mean](#what-sealed--verified--and-failed--mean).
+
+### The one-command installer (terminal)
+
+The same result from the **Terminal & SSH** app (install it from
+**Settings → Apps → App Store** if you haven't):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash
 ```
 
-The installer narrates each step — what it is doing and why — and does all of
-this through the Supervisor API:
-
-- registers both app repositories (Frigate's and this one)
-- installs and starts **Mosquitto**, and mints a `canary` broker login for
-  your devices — the password is never printed to the terminal; read it any
-  time under **Settings → Apps → Mosquitto broker → Configuration → Logins**
-- connects Home Assistant itself to the broker (the MQTT config entry)
-- installs **Frigate** and places the curated starting config at
-  `/addon_configs/ccab4aaf_frigate/config.yml`
-- installs the **Privacy Witness Kernel** app in frigate mode and starts it
-  (the device key is auto-generated on first start — nothing to type)
-- installs the **SecuraCV integration**, restarts Home Assistant Core, and
-  creates the integration's config entry automatically
-- installs the notification blueprints to
-  `/config/blueprints/automation/securacv/` and the dashboards to
-  `/config/securacv/dashboards/`, registering them as a YAML dashboard when
-  your `configuration.yaml` allows it (see
-  [Step 4c](#step-4c-ready-made-dashboards))
-- creates the daily-digest automation when a mobile-app notify service
-  exists (install the HA Companion app first if you want that on day one)
-
-It is idempotent: re-running it is safe and never repeats a finished step.
+The installer narrates each step and does all of this through the
+Supervisor API: registers both app repositories (Frigate's and this one);
+installs and starts **Mosquitto** and mints a `canary` broker login for your
+devices (the password is never printed — read it under **Settings → Apps →
+Mosquitto broker → Configuration → Logins**); connects Home Assistant itself
+to the broker; installs **Frigate** with a curated starting config at
+`/addon_configs/ccab4aaf_frigate/config.yml`; installs the **SecuraCV** app
+(slug `privacy_witness_kernel`) in frigate mode and starts it; installs the
+integration, restarts Home Assistant Core and creates its config entry;
+places the blueprints under `/config/blueprints/automation/securacv/` and
+the dashboards under `/config/securacv/dashboards/`, registering the
+strategy dashboard as a YAML dashboard when your `configuration.yaml`
+allows it ([Step 4c](#step-4c-ready-made-dashboards)); and creates the
+daily-digest automation when a mobile-app notify service exists. It is
+idempotent: re-running it never repeats a finished step.
 
 Two things stay yours, and the installer says so when it finishes:
 
@@ -54,38 +118,205 @@ Two things stay yours, and the installer says so when it finishes:
    flip the example camera's `enabled: true`, and restart Frigate.
 2. **Point your Canaries at the broker.** Host `homeassistant.local`, port
    `1883`, username `canary`, password from the Mosquitto Logins page above —
-   Step 3 of the manual walkthrough covers the device side. That link is
+   Step 3 of the Canary walkthrough covers the device side. That link is
    plain MQTT: the installer leaves Mosquitto on its default `1883`
    listener, so the `canary` password crosses your LAN unencrypted unless
    you ask the plan for the broker's TLS listener (`--with broker_tls`,
    from a certificate you supply) and provision the Canaries for it
    (Step 3 says how).
 
-### Prefer clicking?
+## Path 2: HACS first
 
-The same result from a browser, no terminal:
+SecuraCV is a HACS **custom repository**; it is not in the default HACS
+store yet.
 
-1. [Add the SecuraCV app repository](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV)
-   in one click, then install **Privacy Witness Kernel** from the App Store.
-2. Open its Web UI — the setup wizard walks keys, MQTT, and mode, and can
-   install Mosquitto and Frigate itself if they are missing.
-3. [Add the integration through HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=kmay89&repository=securacv-homeassistant&category=integration)
-   in one click, restart Home Assistant, then **Settings → Devices &
-   Services → Add Integration → SecuraCV** and keep the default
-   **Automatic — detect what's installed**.
+1. HACS → **⋮ → Custom repositories** → add
+   `https://github.com/kmay89/securacv-homeassistant` (the integration's
+   distribution mirror) with type **Integration**
+   ([one click](https://my.home-assistant.io/redirect/hacs_repository/?owner=kmay89&repository=securacv-homeassistant&category=integration)).
+2. Search HACS for **SecuraCV**, install it, restart Home Assistant.
+3. **Settings → Devices & Services → Add Integration → SecuraCV**. Keep the
+   default **Automatic — detect what's installed** and Submit. Automatic:
+   - probes the app at `http://d0491a67-privacy-witness-kernel:8799`
+     through its token file `/config/api_token` and, when it answers,
+     creates the kernel + MQTT entry keyed on the kernel's identity —
+     nothing to type;
+   - otherwise listens five seconds for a Docker sidecar's signed
+     announcement on the broker (`witness/+/announce`) and, hearing one,
+     continues to the pairing step of
+     [Path 3](#path-3-home-assistant-container-and-the-docker-sidecar);
+   - finding neither, it creates the MQTT-only entry for Canary devices,
+     ends with *"No witness kernel is running yet. SecuraCV is set up and
+     will connect by itself when one appears."* plus links to the app
+     repository and the Docker quickstart, and raises the Repairs issue
+     **No SecuraCV witness kernel found** — dismissable, and cleared by
+     itself once a kernel entry loads.
 
-Everything below is the same setup done step by step — for reference, for
-installs that aren't Home Assistant OS, and for troubleshooting.
+   Installing the app afterwards ([Path 1](#path-1-home-assistant-os--the-securacv-app))
+   raises the discovered card, and the app's wizard sees the HACS copy and
+   skips its own install step.
 
-## What you need
+## Path 3: Home Assistant Container and the Docker sidecar
 
-| Item | Notes |
-|------|-------|
-| Raspberry Pi 4 (4 GB+) or x86 PC | Pi 5 works great; ~3 cameras at 10 fps |
-| Home Assistant OS | Installed from the official image |
-| IP camera(s) with RTSP | Hikvision, Dahua, Reolink, Amcrest, Ubiquiti, etc. |
-| HA Companion App (optional) | For push notifications to your phone |
-| HDMI touchscreen (optional) | e.g. 7" 1024x600 IPS with USB touch — the hub runs headless by default, but the HAOSKiosk app (the `display` self-setup extra) can show your dashboard right on it |
+No Supervisor, no app: the sidecar runs the witness kernel in one container
+beside Frigate and pairs with Home Assistant over your LAN. Home Assistant
+must use the **same MQTT broker** as Frigate and the sidecar.
+
+1. On the Docker host, fetch the quickstart and edit two lines — the broker
+   Frigate publishes to, and its credentials:
+
+   ```bash
+   curl -fsSLO https://raw.githubusercontent.com/kmay89/securaCV/main/docker/sidecar/quickstart.compose.yml
+   # edit FRIGATE_MQTT_HOST and MQTT_USERNAME / MQTT_PASSWORD, then
+   docker compose -f quickstart.compose.yml up -d
+   docker exec securacv doctor
+   ```
+
+   `doctor` runs the setup checks a fresh install passes — broker reachable,
+   broker login accepted, the kernel's `/health`, the capability token
+   present, the retained announcement published, the pairing state, the
+   sealed log verifying. `docker exec securacv doctor --live` also waits
+   30 s for a real Frigate event.
+2. Issue the pairing code:
+
+   ```
+   $ docker exec securacv pair
+   SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)
+   Kernel key fingerprint: ab12cd34   (Home Assistant shows the same fingerprint before it pairs)
+   Kernel URL to confirm in Home Assistant: http://<this docker host>:8799
+   In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code.
+   ```
+
+   The code is printed once, on that terminal only; the daemon's log never
+   carries it.
+3. In Home Assistant, **Settings → Devices & Services** shows the card
+   within a minute of the sidecar's start. Press **Configure**: *"A SecuraCV
+   sidecar announced its witness kernel `pwk_…` (kernel 0.8.0). Its key
+   fingerprint is `ab12cd34` — the same eight characters `docker exec
+   securacv pair` prints. Submit to pair; the next step asks for the 6-digit
+   code and confirms the kernel URL."* Compare the fingerprint with the
+   card `pair` printed, then Submit.
+4. **Pair with the SecuraCV sidecar** has two fields. **Kernel URL** is
+   prefilled — from `SECURACV_ANNOUNCE_HOST` when you set it in the compose
+   file, otherwise from the host of Home Assistant's own MQTT broker — and
+   is yours to correct if the sidecar runs elsewhere (`http://<docker
+   host>:8799`). **Pairing code** takes the six digits. Submit.
+   *"The code was not accepted. Run `docker exec securacv pair` again and
+   enter the new code within 10 minutes."* means exactly that: a code is
+   single-use, lives ten minutes and burns after five wrong tries, and the
+   kernel answers every refusal identically.
+5. What just happened: Home Assistant exchanged the code for a long-lived
+   **paired token** (32 random bytes; the kernel keeps only its sha256 in
+   `paired_tokens.json`), pinned the kernel's verifying key from that
+   authenticated answer — never from the broadcast announcement — and
+   claimed the kernel so the bridge's own `pwk_*` MQTT entities step
+   aside. Revoke the token any time with `docker exec securacv unpair <id>`
+   (`unpair` alone lists the ids), or by removing the integration entry,
+   which revokes it for you. Until TLS lands for the sidecar, that token
+   crosses your LAN as plaintext HTTP, so keep port 8799 on your own
+   network and never forward it from the internet
+   ([the security model](security/SECURITY_MODEL.md#home-assistant-pairing-and-what-crosses-your-network)).
+6. From here the product is the same as Path 1: the dashboard notification,
+   **Sealed ✓** within a minute of a detection, **Verified ✓** after the next
+   chain check.
+
+The sidecar's full story — what the published port opens, every
+environment variable, `doctor`, clean shutdown and the Witness Wall — is in
+[the Frigate guide](frigate_integration.md#quick-start-docker-no-home-assistant).
+
+## What Sealed ✓, Verified ✓ and Failed ⚠ mean
+
+"Verified" is a reserved word in this project: *an Ed25519 signature checked
+against a pinned key*, nothing looser. On a kernel event in Home Assistant it
+means **the integration itself** did the checking:
+
+| Badge | `verification` | `trust_reason` | Meaning |
+|---|---|---|---|
+| **Sealed ✓** (muted) | `sealed` | `kernel_sealed` | The kernel signed the event into its chain. Home Assistant has not yet walked the chain past it. |
+| **Verified ✓** | `verified` | `ha_verified_chain` | The integration fetched the sealed log (`GET /api/sealed-log?from_seq=…`), recomputed every hash link and checked every Ed25519 signature against the key it pinned when you connected, and that walk covered this event's event type, zone and ten-minute window. `verified_bucket_start` is the walk's window. |
+| **Failed ⚠** | `failed` | `ha_verify_failed` | The last walk rejected the chain. Every kernel row reads Failed until a walk passes again, `binary_sensor.securacv_chain_valid` turns off, and the **Chain verification** event entity fires `chain_verification_failed`. Export now: entries before the break still verify in the offline viewer. |
+
+A **key change is never shown as Failed**. When the kernel serves a key
+other than the pinned one — a restore to new hardware, a reinstalled app or
+sidecar, or something else answering at that address — Settings → Repairs
+gets **The witness kernel's key changed**; kernel rows carry `trust_reason:
+kernel_key_mismatch`, the dashboard header reads *Witness key changed —
+confirm it in Settings → Repairs*, and the fix flow shows the pinned and the
+received fingerprints and asks you to compare the new one with what the
+kernel itself prints (`docker exec securacv pair`, the app's panel, or
+`doctor`) before it rotates the pin. The previous key stays recorded in the
+entry so earlier logs remain attributable.
+
+The kernel's **own** self-check (`POST /verify`, the hourly
+`verify_interval_hours`) is shown only as the attributes
+`kernel_reported_chain_ok` and `kernel_verified_bucket_start`, and on an
+unclaimed bridge as *Chain OK (kernel-reported)* — never as Verified. A
+kernel vouching for itself with its own key is not a check you ran.
+
+When the walk runs: the **Verify now** button, the `securacv.verify`
+action, every 15 minutes, 60 seconds after new witness events stop arriving,
+and (a walk, never a verdict) when the bridge's `chain_problem` sensor
+clears. The walk is incremental — the newest verified entry's `seq` and
+hash are the cursor, kept in `.storage/securacv.verify_<entry_id>` — so an
+hour of events costs one small fetch, and it leaves no receipt on the
+kernel. After a replaced or restored log (the chain head behind the last
+verified entry) the automatic walks keep reporting the failure; pressing
+**Verify now** re-anchors and walks the served log again.
+
+The dashboard's chain-status header says the same in words: *Chain verified ✓
+12 min ago · 1,204 entries · key pinned*, *Verifying…*, *Verification failed
+at entry #1,190*, *Not verified yet*, *Witness key changed — confirm it in
+Settings → Repairs* — and, for an unclaimed bridge, *Chain OK
+(kernel-reported)*.
+
+## Add the dashboard
+
+**Settings → Dashboards → Add dashboard → SecuraCV** (under *Community
+dashboards* on Home Assistant 2026.5 and later). The integration ships a
+dashboard **strategy** that builds the whole page from whatever SecuraCV
+entities exist when it opens, in this order: the chain-status header with
+**Verify now** and **Export evidence**, **Today** (the verified timeline),
+**Cameras** (one tile per camera with its last sealed event and an **Open
+Frigate** link), **Last 24 hours** (the digest), **Health** (Frigate link,
+kernel online, chain length, the witness key fingerprint, storage) and
+**Canaries** when you have any. Nothing to configure, no entity ids to
+type.
+
+From YAML instead — a dashboard whose whole configuration is
+`strategy: {type: custom:securacv}`, which is what
+[`homeassistant/lovelace/securacv-dashboard.yaml`](../homeassistant/lovelace/securacv-dashboard.yaml)
+holds and what the one-command installer registers; or
+[`securacv-dashboard-plain.yaml`](../homeassistant/lovelace/securacv-dashboard-plain.yaml),
+the same page from stock cards only. Options, the header copy, the badges,
+and the timeline card on its own: [`docs/lovelace_timeline.md`](lovelace_timeline.md).
+
+## Entity ids: `pwk_*` → `securacv_*`
+
+Before the integration connects, the kernel's MQTT bridge registers its own
+entities through MQTT discovery (`sensor.pwk_last_event`,
+`sensor.pwk_daily_digest`, `binary_sensor.pwk_chain_problem`,
+`button.pwk_verify_now`, per-zone counters) — Home Assistant's core `mqtt`
+integration owns them, and they show the kernel's self-report, never
+"Verified". When the integration connects it **claims** the kernel (a
+retained `witness/claim/<kernel id>` message), the bridge withdraws those
+discovery entities, and the integration's own take over:
+
+| Before | Now |
+|---|---|
+| `sensor.pwk_last_event` | `sensor.securacv_last_event` |
+| `sensor.pwk_daily_digest` | `sensor.securacv_daily_digest` |
+| `binary_sensor.pwk_chain_problem` | `binary_sensor.securacv_chain_valid` (note the sense: **on** means the chain verified) |
+| `button.pwk_verify_now` | `button.securacv_verify_now` |
+| `sensor.pwk_<zone>_events` | `event.securacv_<zone>` — one event entity per camera, named after it |
+
+On an instance where the `pwk_*` entities existed, Settings → Repairs gets
+the notice **SecuraCV replaced the app's pwk_* entities** once, with this
+table; a fresh install never sees it. Re-point automations and dashboards
+that named the old ids. The shipped blueprints and the dashboard strategy
+already use the new ones, and an automation created from an older digest
+blueprint keeps working through the change (the digest reads a
+problem-class sensor as "kernel-reported"). Removing the integration
+withdraws the claim and the bridge republishes its `pwk_*` entities.
 
 ## Two witness logs, two trust roots
 
@@ -124,22 +355,35 @@ default HACS store yet):
 4. Search HACS for "SecuraCV" and install it
 5. Restart Home Assistant
 
+On Home Assistant OS the SecuraCV app installs the same integration on your
+click instead ([Path 1](#path-1-home-assistant-os--the-securacv-app)).
+
 ### Step 2: Configure the Integration
 
-The one-command installer creates this config entry for you — skip to Step 3
-if you ran it. By hand:
+The one-command installer and the app's discovered card create this config
+entry for you — skip to Step 3 if you used either. By hand:
 
 1. Go to **Settings > Devices & Services > Add Integration**
 2. Search for "SecuraCV"
 3. Keep the default, **"Automatic — detect what's installed"**, and click
-   Submit. The integration probes for the Privacy Witness Kernel (its
-   `/health` endpoint at `http://d0491a67-privacy-witness-kernel:8799` and
-   the token file at `/config/api_token`) and configures itself: kernel +
-   MQTT when the kernel answers, MQTT-only otherwise. Nothing to type.
+   Submit: it probes the app at `http://d0491a67-privacy-witness-kernel:8799`
+   through the token file `/config/api_token`, listens for a sidecar's
+   announcement, and configures kernel + MQTT or MQTT-only to match
+   ([Path 2](#path-2-hacs-first) spells out each outcome). Nothing to type.
 4. Or pick **"Canary devices via MQTT"** explicitly. Its one option, the MQTT
    topic prefix, defaults to `securacv` — the prefix Canary firmware always
    publishes on. Leave it alone; there is nothing to invent or match. (Change
    it only if you have deliberately re-bridged topics under another prefix.)
+5. The two manual kernel forms, **Witness Kernel Connection** and **MQTT +
+   Kernel Connection**, exist for unusual layouts: a kernel on another host
+   whose token file Home Assistant can read, or a re-bridged prefix. Their
+   fields are the **Kernel URL**, the **API token file** (recommended;
+   default `/config/api_token`, re-read whenever the kernel rotates its
+   token) or a **Static API token** (goes stale within ten minutes unless a
+   token file is also set), the **Witness MQTT prefix** the kernel's bridge
+   publishes under (default `witness`), and an optional **Adapter host stats
+   URL**. A Docker sidecar is better added through its announcement, which
+   pairs with a 6-digit code instead ([Path 3](#path-3-home-assistant-container-and-the-docker-sidecar)).
 
 ### Step 3: Configure the Canary Device
 
@@ -255,30 +499,89 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
 
 ### Step 4: Verify Discovery
 
-Within 30 seconds of the Canary connecting to MQTT:
+Within 30 seconds of a Canary connecting to MQTT, and within a minute of a
+kernel being configured, **Settings > Devices & Services > SecuraCV** shows
+the devices below with their entities. This list is what the integration
+itself creates (`custom_components/securacv/sensor.py`, `binary_sensor.py`,
+`event.py` and `button.py`); each entity appears the first time its topic or
+API answer is seen. The names in bold are what Home Assistant renders after
+the device name; they come from each entity's translation key, not from the
+code. To rename one, edit `custom_components/securacv/strings.json`, copy it
+over `translations/en.json` (a test keeps the two byte-identical), and
+mirror the rename in this list and in the names
+`tests/test_entity_translations.py` pins; other languages go in their own
+`translations/<lang>.json`. Entity ids are never set by the code — Home
+Assistant derives them from the device and entity names, so a fresh install
+gets `sensor.securacv_last_event`, `event.securacv_front_door` and so on.
 
-1. Go to **Settings > Devices & Services > SecuraCV**
-2. You should see your Canary device listed with the entities below. This
-   list is what the integration itself creates
-   (`custom_components/securacv/sensor.py` and `binary_sensor.py`); each
-   entity appears the first time its topic is seen, and every unique ID is
-   `securacv_canary_<device_id>_<suffix>` with the suffix shown in
-   parentheses. **Signed** means the publish carries the device's Ed25519
-   signature and the integration checks it against the pinned key
-   ([Step 6](#step-6-verify-per-device-pki-optional-but-recommended)),
-   stamping `verified` / `trust_reason` / `pinned_fingerprint` /
-   `received_fingerprint` attributes. Every other topic is **unsigned** — the
-   firmware puts no signature on it — and those entities carry the same four
-   attributes with `verified: false`, `trust_reason: unsigned`, so a
-   dashboard can tell an unsigned publish from a verified one.
+#### The kernel device: "SecuraCV"
 
-   The names in bold are what Home Assistant renders after the device
-   name; they come from each entity's translation key, not from the code.
-   To rename one, edit `custom_components/securacv/strings.json`, copy it
-   over `translations/en.json` (a test keeps the two byte-identical), and
-   mirror the rename in this list and in the names
-   `tests/test_entity_translations.py` pins; other languages go in their
-   own `translations/<lang>.json`.
+One device per witness kernel (the app or a sidecar): name **SecuraCV**,
+model *Privacy Witness Kernel*, serial number the kernel id (`pwk_` plus
+eight hex characters), software version the kernel's, configuration URL the
+kernel's API. Every Canary device hangs off it (*via device*). Unique ids
+are `securacv_<entry_id>_<key>` with the key shown in parentheses. Kernel
+entities are available while the bridge's `witness/status` says online **or**
+the last five-minute HTTP backstop succeeded; the **Online** sensor stays
+available to report offline.
+
+   Sensors:
+   - **SecuraCV Last Event** — the newest sealed event, with the full attribute table of a witness event below (`kernel_last_event`; retained `witness/last_event`)
+   - **Chain Length** — entries in the sealed log, from the integration's last chain walk (`head.seq`) else `/api/identity`, with `latest_hash`, `algorithm`, `verifying_key`, `pinned` and `verified_seq` (`chain_length`; unit blocks)
+   - **Daily digest** — total sealed events over the kernel's rolling 24-hour window, with the whole `/digest` document as attributes: counts by event type, by zone and by coarse day period (`daily_digest`; retained `witness/digest`)
+   - **Kernel key fingerprint** — the first eight hex characters of sha256 over the pinned verifying key, the same eight `docker exec securacv pair`, the app's panel and `doctor` print, with `verifying_key`, `pinned_bucket_start` and `key_mismatch` (`kernel_fingerprint`; diagnostic)
+   - **Storage Health** — `healthy` / `warning` / `critical` for the kernel's database storage from `GET /status` (`storage_health`; diagnostic)
+   - **Storage Free** — free space of the database directory in percent (`storage_free_pct`; diagnostic)
+   - **Storage Wear Estimate** — estimated media wear in percent where the host exposes it, else unknown (`storage_wear_pct`; diagnostic)
+   - **Storage Write Rate** — megabytes written per day where known, else unknown (`storage_write_rate`; diagnostic)
+   - **SoC Temperature** — the kernel host's SoC temperature where the host exposes it (`soc_temperature`; diagnostic)
+   - **SecuraCV Adapter Host** — per-adapter health read from an optional adapter-host stats URL; created only when that URL is set (`adapter_stats`; diagnostic)
+
+   Binary sensors:
+   - **Online** — the kernel is reachable: the bridge's `witness/status` last-will topic says online, or the five-minute HTTP backstop answered (`kernel_online`; connectivity)
+   - **Chain Valid** — ON when the integration's own last chain walk verified the sealed log against the pinned key, OFF when it rejected it, unknown until the first walk; attributes `verified_seq`, `verified_entries`, `verified_bucket_start`, `verified_bucket_size`, `head_seq`, `failed_seq`, `key_mismatch`, `verifying`, `last_trigger`, `kernel_reported_chain_ok`, `kernel_verified_bucket_start`, `error` (`chain_valid`)
+   - **Frigate link** — ON when `frigate_bridge` holds its broker connection AND Frigate was heard within the last hour, so a quiet night and a Frigate that stopped publishing read differently; attributes are the retained `witness/frigate_link` payload (`frigate_link`; connectivity, diagnostic)
+   - **Storage Replacement Recommended** — the kernel's `/status` recommends replacing its storage; Settings → Repairs says so too (`storage_replace`; problem)
+
+   Events:
+   - **Witness events, one per camera** — one event entity per camera or zone the kernel has sealed an event for, named after the zone (`event.securacv_front_door` for Frigate camera `front_door`), created on the first sealed event for that zone and restored on reload; its event types are the witness dictionary's ids (`boundary_crossing_object_large`, `boundary_crossing_object_small`, `presence_in_restricted_zone`, …) and it fires only on live `witness/events` messages, never on a retained replay after a restart (`witness`)
+   - **Chain verification** — the integration's own chain walks: `chain_verified`, `chain_verification_failed` (also when the bridge's own `chain_problem` turns on, marked `kernel_reported: true`), and `witness_key_changed`; attributes `trigger`, `verified_seq`, `verified_entries`, `verified_bucket_start`, `verified_bucket_size`, `failed_seq`, `error` (`verification_events`)
+
+   Buttons:
+   - **Verify now** — run the integration's chain walk now; the same coroutine the `securacv.verify` action runs (`verify_now`; unavailable while the kernel is unreachable)
+   - **Export evidence** — write a signed evidence pack for the last 24 hours; the same as `securacv.export_evidence` with its defaults (`export_evidence`; unavailable while the kernel is unreachable)
+
+Every witness event — on the per-camera event entities and on **SecuraCV
+Last Event** — carries its event type (the dictionary id: the event entity's
+`event_type`, the sensor's state) and the same attributes: `zone_id` and
+`zone` (`zone:front_door` and `front_door`), `time_bucket`
+(`start_epoch_s`, `size_s` — a ten-minute window, never a precise time),
+`confidence`, `attestation` (`adapter` for a Frigate event), `friendly_event`
+(*Person or vehicle* and *Animal or small object* for the two Frigate
+classes; the dictionary ids are unchanged), `kernel_version`, `ruleset_id`,
+`kernel_device_id`, `seq` (the sealed-log row), `signed`, and the verdict:
+`verification`, `verified`, `trust_reason`, `verified_bucket_start` from the
+integration's walk, plus `kernel_reported_chain_ok` and
+`kernel_verified_bucket_start` from the kernel's self-check
+([what each means](#what-sealed--verified--and-failed--mean)). One sealed
+event per camera, object class and ten-minute window is the kernel's rule,
+not data loss.
+
+#### Canary devices: "SecuraCV Canary <id>"
+
+One device per Canary, created the first time its `securacv/<id>/status`
+publish is seen, attached under the kernel device when one exists. Every
+unique id is `securacv_canary_<device_id>_<suffix>` with the suffix shown in
+parentheses. **Signed** means the publish carries the device's Ed25519
+signature and the integration checks it against the pinned key
+([Step 6](#step-6-verify-per-device-pki-optional-but-recommended)),
+stamping `verified` / `trust_reason` / `pinned_fingerprint` /
+`received_fingerprint` attributes. Every other topic is **unsigned** — the
+firmware puts no signature on it — and those entities carry the same four
+attributes with `verified: false`, `trust_reason: unsigned`, so a dashboard
+can tell an unsigned publish from a verified one. Canary entities are
+available while the device's own `status` / `availability` last-will topic
+says online; the **Online** sensor stays available to report offline.
 
    Sensors:
    - **Witness Count** — total witness records created (`witness_count`; signed `counts` topic)
@@ -297,15 +600,12 @@ Within 30 seconds of the Canary connecting to MQTT:
    - **SD Replacement Recommended** — the device recommends replacing its SD card (`sd_replace`; `health` topic, unsigned)
    - **Event ID Space Low** — ON once the device's event-id counter nears the end of its space, and after it wraps (Home Assistant then refuses its events); only for devices whose health carries the flag, the Canary base and the canary-wap (`event_id_space_low`; `health` topic, unsigned; diagnostic)
    - **Motion** and **Occupancy** — standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)
-   - **WiFi AP**, **WiFi Station**, **MQTT**, **Bluetooth**, **Mesh Network**, **Chirp Network** — per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it — see the [transport catalog](#transport-catalog))
+   - **WiFi AP**, **WiFi Station**, **MQTT**, **Bluetooth**, **Mesh Network**, **Chirp Network** — per-transport connectivity, diagnostic and **disabled by default** — enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it — see the [transport catalog](#transport-catalog))
    - **Mesh Connected** — Opera mesh peers present, with peer and relay counts (`mesh_connected`; `mesh` topic, unsigned)
    - **Chirp Active** — Chirp community network enabled and ready, with the session emoji and alert counters (`chirp_active`; `chirp` topic, unsigned)
 
-   With a kernel configured, the integration also creates the kernel's own
-   device: SecuraCV Last Event, Storage Health, Storage Free, Storage Wear
-   Estimate, Storage Write Rate and SoC Temperature sensors, Online and
-   Storage Replacement Recommended binary sensors, and — when an adapter
-   stats URL is set — a SecuraCV Adapter Host diagnostic.
+   Events:
+   - **Tamper events** — one event entity per Canary with the ten tamper types above as its event types; fires on the device's live `tamper` publishes, with `kind` and `device_id` (`tamper_events`)
 
    The Canary firmware also announces entities of its own through native
    MQTT discovery (`homeassistant/*/securacv_*/config`, retained). Those
@@ -354,22 +654,24 @@ claim, never a raw measurement. Its events are signed over their own
 kind; its **Last Event** reads `level_changed`, and its sensing modality
 shows as "Other sensor" because it fuses several media at once.
 
-### Step 4b: Add the verified-✓ timeline card
+### Step 4b: Add the dashboard and the timeline card
 
-For the "single pane of glass" view, add the bundled Lovelace card: edit a
-dashboard → **Add Card** → search **"SecuraCV Verified Timeline"**. It renders a
-verified-✓ event timeline with a hash-chain status header from the entities
-above, and auto-discovers them. Full options and a no-custom-card YAML fallback:
-[`docs/lovelace_timeline.md`](lovelace_timeline.md).
+**Settings → Dashboards → Add dashboard → SecuraCV** gives you the whole
+page ([above](#add-the-dashboard)). For the "single pane of glass" card on a
+dashboard of your own, edit it → **Add Card** → search **"SecuraCV Verified
+Timeline"**: a verified-✓ event timeline with the chain-status header,
+auto-discovering the entities above. Options and a no-custom-card YAML
+fallback: [`docs/lovelace_timeline.md`](lovelace_timeline.md).
 
 ### Step 4c: Ready-made dashboards
 
-Three ready-made dashboards ship in
-[`homeassistant/lovelace/`](../homeassistant/lovelace/) — the kernel pipeline
-view, the Canary fleet view, and the Vision view. The one-command installer
-copies them to `/config/securacv/dashboards/` and, when your
-`configuration.yaml` has no `lovelace:` key of its own, registers a YAML
-dashboard in the sidebar (a clearly marked block, validated with
+[`homeassistant/lovelace/`](../homeassistant/lovelace/) holds the strategy
+dashboard (`securacv-dashboard.yaml`, one `strategy:` block), the same page
+from stock cards only (`securacv-dashboard-plain.yaml`, for installs that
+block auto-registered modules), and the Canary Vision views. The one-command
+installer copies them to `/config/securacv/dashboards/` and, when your
+`configuration.yaml` has no `lovelace:` key of its own, registers the
+strategy dashboard in the sidebar (a clearly marked block, validated with
 `ha core check` and rolled back if validation fails). If you already manage a
 `lovelace:` key, the installer leaves it untouched and tells you so — the
 files are still placed, and registering them is the snippet below.
@@ -382,40 +684,67 @@ file" button in the UI, so a YAML dashboard is declared in
 lovelace:
   mode: storage            # keeps your existing UI-editable dashboards
   dashboards:
-    securacv-canary:
+    securacv-witness:
       mode: yaml
       title: SecuraCV
       icon: mdi:shield-check
       show_in_sidebar: true
-      filename: securacv/dashboards/securacv-canary-dashboard.yaml
+      filename: securacv/dashboards/securacv-dashboard.yaml
 ```
 
-…then restart Home Assistant. Or skip registration entirely: open any
-dashboard, enter edit mode, **Add card → Manual**, and paste the cards you
-want out of the YAML files.
+…then restart Home Assistant. Or skip registration entirely: **Settings →
+Dashboards → Add dashboard → SecuraCV** is the same page with no file at
+all, and any dashboard's **Add card → Manual** takes the cards out of the
+plain YAML.
 
 ### Step 5: Set Up Notifications
 
-The one-command installer pre-installs all the SecuraCV blueprints to
+The one-command installer and the SecuraCV app place every blueprint under
 `/config/blueprints/automation/securacv/`, where Home Assistant loads them
-automatically — if you ran it, skip straight to creating an automation
-(**Settings > Automations > Blueprints**, pick a SecuraCV blueprint). It also
-creates the daily-digest automation for you when a mobile-app notify service
-exists.
+without importing — if you used either, go straight to **Settings →
+Automations → Blueprints** and pick one. Every blueprint that notifies takes
+a **Phone** input (a device running the Home Assistant Companion app) and
+derives its `notify.mobile_app_…` service by itself; the optional
+*Notification service* text input overrides it for groups, Telegram,
+Pushover and the like. The catalog, with a one-click import badge for each:
+[`docs/blueprints/README.md`](blueprints/README.md).
 
-To import the Alert Blueprint by hand instead, use the one-click badge —
-[import `securacv_alerts.yaml`](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV%2Fblob%2Fmain%2Fdocs%2Fblueprints%2Fsecuracv_alerts.yaml)
-— or the URL flow:
+For the witness log:
+
+- **Witness notification with proof**
+  ([`securacv_witness_notification.yaml`](blueprints/securacv_witness_notification.yaml)):
+  Frigate raises an alert on a camera → the automation waits up to 90 s for
+  SecuraCV to seal it → one push: *Front door · Person — 14:03 · Sealed ✓
+  into the witness log (entry #1,204, window 14:00–14:10)*, or *seal pending*
+  on timeout, with **Open Frigate** and **Export evidence** actions and an
+  optional Frigate thumbnail through the Frigate integration's notification
+  proxy. It renders only the camera, Frigate's object label, the zones and
+  the seal state — never a recognized name or plate. One automation per
+  camera.
+- **Daily digest** ([`securacv_daily_digest.yaml`](blueprints/securacv_daily_digest.yaml)):
+  every morning, *7 events: front door 4, driveway 3 · morning 2, evening 5 ·
+  chain verified ✓ at 03:00 · 1,204 entries.* It always sends — a quiet night
+  reads *Quiet night: no witness events* with the chain state, so silence is
+  never ambiguous. Defaults: `sensor.securacv_daily_digest`,
+  `binary_sensor.securacv_chain_valid`, `sensor.securacv_chain_length`.
+- **Quiet-hours activity & silent zone**
+  ([`securacv_pattern_break.yaml`](blueprints/securacv_pattern_break.yaml)).
+
+For Canary devices, the **Canary alerts** blueprint
+([import `securacv_alerts.yaml`](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV%2Fblob%2Fmain%2Fdocs%2Fblueprints%2Fsecuracv_alerts.yaml)):
 
 1. Go to **Settings > Automations > Blueprints > Import Blueprint**
 2. Enter URL: `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml`
 3. Create an automation from the blueprint
 4. Pick the sensors you want monitored (each alert type is optional — leave
    an input empty to skip it): smoke/CO alarm heard (critical pushes that
-   bypass silent mode), tamper, chain failure, offline, GPS loss
-5. Enter your notification service (e.g. `notify.mobile_app_your_phone`)
+   bypass silent mode), tamper, power loss, chain failure, offline, GPS loss
+5. Pick your phone (or type a notification service)
 
-Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
+Or copy automations from
+[`docs/homeassistant_automations.yaml`](homeassistant_automations.yaml) for
+manual setup; battery health has its own blueprint,
+[`canary_battery_health.yaml`](blueprints/canary_battery_health.yaml).
 
 **Have a Philips Hue (or any color) bulb?** The Alert Light blueprint is
 pre-installed by the one-command installer too; to import it by hand,
@@ -445,10 +774,57 @@ stock-card **wellbeing tile**. See
 
 ### Actions
 
-The integration registers three Home Assistant actions, all of them about
-[watches](design/watches.md): bounded attention that ends by itself. Try
-them from **Developer tools → Actions**, or call them from an automation or
-a script.
+The integration registers five Home Assistant actions. Try them from
+**Developer tools → Actions**, or call them from an automation or a script.
+
+Two are about the witness kernel:
+
+| Action | Takes | Returns |
+|---|---|---|
+| `securacv.verify` | `entry_id` (optional; the kernel entry to verify, a config-entry selector — required only when more than one entry has a kernel) | `chain_valid`, `verdict`, `events_verified`, `verified_entries`, `verified_seq`, `verified_bucket_start`, `verified_bucket_size`, `key_mismatch`, `error`, `kernel_device_id` |
+| `securacv.export_evidence` | `window_hours` (1–720; 24 if left out), `entry_id` (optional, as above) | `export_id`, `file`, `url` (a download link signed for 24 hours), `sha256`, `events`, `window_hours`, `kernel_device_id` |
+
+`securacv.verify` walks the kernel's sealed log now and checks every entry's
+hash link and Ed25519 signature against the key Home Assistant pinned when
+it connected — the only walk that earns an event its **Verified ✓**
+([above](#what-sealed--verified--and-failed--mean)). It is the same
+coroutine the **Verify now** button runs.
+
+`securacv.export_evidence` downloads the kernel's signed evidence bundle for
+the last N hours (`GET /export/bundle`, a receipted disclosure on the kernel)
+and writes **one zip** —
+`securacv-evidence-<YYYY-MM-DD>-<8 hex>.zip` — under
+`<config>/securacv/evidence` (directory `0700`, files `0600`, never under
+`www/`), holding the kernel's bundle verbatim
+(`securacv-events-<bucket>.json`), `evidence_viewer.html` (the offline
+checker), `README.txt` (the recipient's recipe) and `WITNESS_KEY.txt`
+(`verifying_key=…`, `fingerprint=…`, `kernel=…`). Nothing is added to,
+removed from or re-serialized in the bundle. A persistent notification,
+**SecuraCV evidence export ready**, reads *"Evidence pack ready — last 24
+hours, 17 sealed events, chain verified ✓. Download the evidence pack (link
+valid 24 hours; also under Media → SecuraCV evidence). Send the whole zip to
+whoever needs to check it. Your witness key fingerprint, to confirm by phone:
+`ab12cd34`."* The pack is served only by an authenticated Home Assistant
+view (`/api/securacv/evidence/<export_id>`) through a link signed for 24
+hours; an expired link needs a new export or **Media → SecuraCV evidence**,
+where each pack resolves to a fresh link. The **Export evidence** button is
+this action with its defaults; the timeline card's per-row **Export** action
+calls it with a window covering that row. How many packs stay is the
+`evidence_keep` option ([Configuration parameters](#configuration-parameters)):
+the oldest zip is removed and the notification says *Removed N older
+export(s) to stay within your limit of 20.* The recipient's side —
+dropping the zip on the viewer, "self-attested" versus "authorship
+confirmed" — is [`viewer/README.md`](../viewer/README.md).
+
+Both refuse, with a message, when no kernel entry is loaded, when
+`entry_id` is needed and missing, when the entry is not loaded, or when
+`window_hours` is out of range; they fail with a message when the kernel is
+unreachable, rejects Home Assistant's credential (re-authenticate the entry),
+answers something other than the sealed log or the bundle, or the pack
+cannot be written.
+
+The other three are about [watches](design/watches.md): bounded attention
+that ends by itself.
 
 | Action | Takes | Returns |
 |---|---|---|
@@ -471,11 +847,21 @@ a script.
         concern: stopped
 ```
 
-The example is written in the automation syntax of Home Assistant 2024.10
-and newer. The integration supports 2024.4.1 and newer, and on a release
-before 2024.10 the same automation is written with `trigger:` and
-`- platform: state`, then `action:` and `- service: securacv.start_watch`.
-The action and its fields don't change.
+```yaml
+# automations.yaml — a signed evidence pack every Sunday morning, kept to the
+# evidence_keep limit; the download link arrives as a notification
+- alias: "Weekly witness export"
+  triggers:
+    - trigger: time
+      at: "07:00:00"
+  conditions:
+    - condition: time
+      weekday: [sun]
+  actions:
+    - action: securacv.export_evidence
+      data:
+        window_hours: 168
+```
 
 What to expect:
 
@@ -493,9 +879,11 @@ What to expect:
   than answering from an empty list. The same goes if the stored watches
   could not be read. The file is left as it is, nothing is written over
   it, and reloading the integration tries again.
-- There are no actions for pinning, rotating or unpinning a device key.
-  Those stay in the options flow on purpose
+- There are no actions for pinning, rotating or unpinning a device key, and
+  none that pins or rotates the kernel's key. Those stay in the options flow
+  and in Settings → Repairs on purpose
   ([why](device_trust.md#why-pin-rotate-and-unpin-are-not-actions)).
+  Actions never mutate trust.
 
 ### Step 6: Verify per-device PKI (optional but recommended)
 
@@ -708,17 +1096,227 @@ hosting, and the full security model.
 
 ---
 
+## Configuration parameters
+
+**Installation parameters** (asked once, in the config flow):
+
+| Parameter | Where it comes from | Notes |
+|---|---|---|
+| Kernel URL | Supervisor discovery (the app: `http://d0491a67-privacy-witness-kernel:8799`), the sidecar's announcement or your MQTT broker's host (prefilled, editable), or typed in a manual form | Must carry its scheme: `http://192.168.1.20:8799` |
+| Credential | **Pairing code** — the six digits `docker exec securacv pair` prints (single-use, ten minutes, five tries); **API token file** — the path of the kernel's rotating token, `/config/api_token` for the app, re-read when the token rotates; or a **Static API token** for a kernel whose file Home Assistant cannot read (goes stale within ten minutes) | A pairing code becomes a long-lived paired token Home Assistant keeps; the kernel stores only its hash |
+| Witness MQTT prefix | the announcement or the discovery payload (`mqtt_topic_prefix`), default `witness` | The prefix the kernel's bridge publishes under |
+| MQTT topic prefix (Canaries) | default `securacv` | The prefix Canary firmware always publishes on |
+| Adapter host stats URL | optional | A read-only `adapter_host` stats endpoint, surfaced as the diagnostic **SecuraCV Adapter Host** sensor |
+
+**Options** (Settings → Devices & services → SecuraCV → **Configure**), a
+menu of four:
+
+| Menu item | What it does |
+|---|---|
+| **Pin a device pubkey (manual)** | Pin a Canary's Ed25519 public key by hand from its `device_id` and 64-hex key, read off the device ([Step 6](#step-6-verify-per-device-pki-optional-but-recommended)) |
+| **Rotate a pinned device key** | Replace a Canary's pin; the previous key stays in the audit trail and the device's mismatch notification clears |
+| **Unpin a device** | Drop a Canary's pin; the next publish pins whatever key arrives (TOFU) |
+| **Evidence export settings** | `evidence_keep`: how many evidence packs to keep under `<config>/securacv/evidence` — 1 to 200, default 20. When a new export exceeds it the oldest pack is removed and the export notification says so |
+
+The kernel's key is not in that menu on purpose: it is pinned over the
+authenticated channel at pairing or discovery and rotated only through the
+Repairs fix flow after you have compared fingerprints.
+
+**Reconfigure** (the entry's ⋮ menu) moves the kernel URL, the credential
+(a fresh pairing code, or the token file path) and the witness prefix in
+place; the entry stays bound to the same kernel and a different kernel is
+refused (*That is a different witness kernel. Add it as a new entry instead
+of moving this one.*). **Re-authenticate** starts by itself when the kernel
+definitively rejects Home Assistant's credential (a revoked paired token, an
+unreadable token file): *"The witness kernel rejected Home Assistant's
+credential. For a paired sidecar, run `docker exec securacv pair` on the
+Docker host and enter the new 6-digit code; for the app, check the token
+file path."*
+
+## How the integration gets its data
+
+The integration is **push-fed**. The kernel's MQTT bridge publishes under
+the witness prefix — `witness/last_event`, `witness/events`, `witness/digest`,
+`witness/chain_problem`, `witness/status` (the last-will availability
+topic), `witness/claim_state` and `witness/frigate_link` — and the
+integration subscribes to all of them, so a sealed event reaches the event
+entities on the bridge's next poll of the kernel (every 30 s by default,
+`POLL_INTERVAL`).
+Canary devices publish on `securacv/<id>/…` and are handled the same way
+([MQTT Topic Reference](#mqtt-topic-reference)).
+
+An **HTTP backstop** runs every five minutes against the kernel's API —
+`GET /health`, `GET /api/identity`, `GET /status` — so a broker outage never
+leaves the entities stale; a missed event the backstop finds is fired
+exactly once. Fifteen minutes of consecutive backstop failures raise the
+Repairs issue **SecuraCV can't reach the witness kernel**, which clears
+itself on the next success. None of these reads leaves a receipt on the
+kernel: the bridge's own polling uses `GET /events?since_bucket=…`, a state
+read, and only the two disclosure routes (`GET /events` in bulk and
+`GET /export/bundle`) are receipted.
+
+The chain walk that earns **Verified ✓** runs every 15 minutes, 60 s after
+new events go idle, on **Verify now** and on `securacv.verify`
+([above](#what-sealed--verified--and-failed--mean)). The claim that keeps
+the bridge's `pwk_*` entities withdrawn is republished on every load and
+hourly (the bridge treats a claim older than 24 hours as cleared). The
+**Frigate link** sensor turns off when Frigate has not been heard for an
+hour, whatever the bridge says.
+
+## Removing the integration
+
+**Settings → Devices & services → SecuraCV → ⋮ → Delete.** Removing the
+entry:
+
+- withdraws the claim (an empty retained message on `witness/claim/<kernel
+  id>`), so the bridge republishes its own `pwk_*` MQTT-discovery entities —
+  within seconds if the broker answers, otherwise when the bridge's 24-hour
+  freshness window lapses;
+- revokes the paired token on a sidecar (`DELETE /api/pair/<id>`; `docker
+  exec securacv unpair <id>` does the same from the Docker host);
+- deletes the Canary trust store and the chain-walk cursor
+  (`.storage/securacv.verify_<entry_id>`), clears the entry's Repairs issues
+  and dismisses its export and dashboard notifications.
+
+**Evidence packs on disk are left for you** under `<config>/securacv/evidence`.
+Uninstalling the app or stopping the sidecar does **not** remove the entry
+(it is keyed on the kernel's identity, not on the app): after fifteen
+minutes it reports *SecuraCV can't reach the witness kernel* until you
+delete it. The app's own uninstall leaves `/config/witness.db*`,
+`/config/.securacv`, `/config/api_token` and the carried
+`/config/custom_components/securacv` in place — they are yours and part of
+your backups; the app's [documentation tab](../privacy_witness_kernel/DOCS.md#revoking-and-uninstalling)
+lists what to delete by hand. A HACS install is removed from HACS as usual
+after the entry is deleted. A Canary that left the fleet can be deleted
+from its device page; one still reporting, or still pinned, comes back on
+its next publish.
+
+## Known limitations
+
+- **The sidecar's API is plaintext HTTP.** Home Assistant's paired token
+  crosses your LAN unencrypted on every request until TLS with a pinned
+  fingerprint lands for the sidecar; keep port 8799 on your own network and
+  never forward it. The app has no such exposure (its port mapping ships
+  disabled and the integration reaches it over the Supervisor's internal
+  network).
+- **Behind Docker Desktop's userland proxy, or any reverse proxy, every
+  client reaches the kernel from one source address**, so the kernel's
+  per-address lockout becomes a shared bucket: a LAN host guessing pairing
+  codes can hold Home Assistant's polling at `429` for the lockout's length.
+- **A failed walk marks every kernel row Failed ⚠**, including rows sealed
+  before the rejected entry, until a walk passes again; the offline viewer
+  shows which entries before the break still verify.
+- **One sealed event per camera, object class and ten-minute window** in
+  events mode, one per camera and window in Frigate-alerts mode. Three
+  people at the door inside ten minutes are one claim — the coarsening is
+  the privacy guarantee, not a bug. The per-camera event entity fires once
+  per sealed event.
+- **Verified means the integration's walk.** A row stays **Sealed ✓** until a
+  walk covers it (at most 15 minutes, 60 s after the chain goes idle);
+  Frigate's own notification fires before the seal, which is why the
+  witness-notification blueprint waits for it.
+- **HACS lists SecuraCV as a custom repository**, not in its default store;
+  the app installs the same integration on a click instead.
+- **The `pwk_*` entities come back** if the integration is removed or
+  Home Assistant stops claiming the kernel for 24 hours — that is the
+  bridge's fallback, not a bug.
+- **Sealed Frigate events are not Canary events.** The kernel's chain and
+  each Canary's chain are separate trust roots
+  ([above](#two-witness-logs-two-trust-roots)).
+
+## Supported devices and functions
+
+**Witness kernels** — one device per kernel, discovered through the
+Supervisor (the SecuraCV app) or a signed MQTT announcement (the Docker
+sidecar), or added by URL: the kernel's chain state, chain length, daily
+digest, Frigate link, storage health, key fingerprint, one witness event
+entity per camera, the chain-verification event, the **Verify now** and
+**Export evidence** buttons, the `securacv.verify` and
+`securacv.export_evidence` actions, evidence packs under **Media → SecuraCV
+evidence**, redacted diagnostics, Repairs issues for the conditions you can
+act on, re-authentication and reconfiguration.
+
+**Canary devices** — every Canary that publishes on `securacv/<id>/…`: the
+`firmware/canary` flagship, Canary WAP, Canary Sense, Canary Vision (and
+the unreleased Canary Sentinel), with per-publish Ed25519 verification
+against a pinned key, the tamper, health, GPS, radar-link, mesh and chirp
+entities, the HomeKit-friendly motion and occupancy projections, the
+firmware update entity the device announces itself, and the three watch
+actions. Canary Display has no signing key and no entities of its own
+beyond what its firmware announces.
+
+**Not supported:** anything that would identify a person — there is no
+face, plate, name or clip in any entity, attribute, notification, export or
+diagnostics dump, by construction.
+
+## Use cases
+
+- **Proof beside the recording.** Frigate keeps a day of clips; SecuraCV keeps
+  a year of signed claims. When something happens, **Export evidence** and
+  send the zip; the recipient checks it offline and confirms authorship by
+  phone with your fingerprint.
+- **A notification you can rely on.** The witness-notification blueprint
+  delivers *Sealed ✓ into the witness log (entry #…)* per camera, with
+  **Open Frigate** and **Export evidence** actions.
+- **Silence that means something.** The daily digest always sends, and the
+  **Frigate link** sensor tells a quiet night from a Frigate that stopped
+  publishing.
+- **Automations on sealed events** — trigger on the per-camera event entity
+  (`event.securacv_front_door`) rather than on Frigate's raw MQTT, so the
+  automation fires once per sealed claim and carries the verdict.
+- **Away watches** — `securacv.start_watch` for two weeks of attention on
+  one Canary, ending by itself.
+
+More YAML: [`docs/homeassistant_automations.yaml`](homeassistant_automations.yaml)
+and the [blueprints](blueprints/README.md).
+
+## Troubleshooting
+
+### Repairs: what each issue means
+
+| Issue (Settings → Repairs) | Severity | What to do |
+|---|---|---|
+| **No SecuraCV witness kernel found** | warning | Automatic found neither the app nor a sidecar; Canary devices still work. Install the app or the sidecar — the issue clears itself when a kernel entry loads. Only Canary devices? Dismiss it. |
+| **SecuraCV can't reach the witness kernel** | error | Fifteen minutes of failed backstops. Check the app or sidecar is running and the URL is right (⋮ → Reconfigure). Clears on the next success. |
+| **The witness kernel's key changed** | critical, fixable | Compare the received fingerprint with what the kernel prints (`docker exec securacv pair`, the app's panel, `doctor`). Submit the fix flow only if they match; it rotates the pin and keeps the previous key. Until then kernel rows show a key mismatch and are never shown as verified. |
+| **The witness kernel's storage should be replaced** | warning | Export your evidence first, then replace the card or disk; the sealed log lives in the app's or sidecar's data directory and moves with it. |
+| **SecuraCV replaced the app's pwk_* entities** | warning | Informational, once: re-point automations and dashboards to the new ids ([the table](#entity-ids-pwk_--securacv_)) and dismiss. |
+| **SecuraCV can't subscribe to MQTT** | warning | Home Assistant's MQTT integration is not connected; install the broker, add the MQTT integration, reload SecuraCV. |
+
+Facts that are not actionable — a failed chain walk, a tamper, Frigate
+silent — are sensors and events, not issues.
+
+### Symptoms
+
+| Symptom | Check |
+|---|---|
+| No **SecuraCV discovered** card after the app restart | The app must have started once with the kernel answering `/health` (its log says `discovery` posted); the integration must be installed (the done screen's button, or HACS) and Home Assistant restarted after installing it. Settings → Devices & Services → Add Integration → SecuraCV → Automatic finds the app without the card. |
+| No **Add the SecuraCV sidecar** card | Home Assistant and the sidecar must share one broker. `docker exec securacv doctor` must show the retained announce published; a sidecar stopped uncleanly leaves no announce — restart it, or clear a stale one with `mosquitto_pub -r -n -t witness/<kernel id>/announce`. The manifest subscribes `witness/+/announce`, so a non-default witness prefix is not discovered — add it through the **Witness Kernel Connection** form, or set `MQTT_TOPIC_PREFIX` back to `witness`. |
+| *The code was not accepted* | Codes are single-use, live ten minutes and burn after five wrong tries; run `pair` again. Behind one shared source address (Docker Desktop, a proxy) a `429` lockout from other guesses blocks pairing too — wait it out. |
+| Kernel URL wrong on the pair form | It is a guess from the announcement or your broker's host. Type `http://<docker host>:8799`; set `SECURACV_ANNOUNCE_HOST` in the compose file to prefill it next time. |
+| Events arrive but stay **Sealed ✓** | The walk runs every 15 minutes and 60 s after events go idle; press **Verify now**. If **Chain Valid** is unknown forever, the kernel's `/api/sealed-log` is not answering — check the entry's credential (Repairs would say) and the kernel log. |
+| **Chain Valid** off / rows **Failed ⚠** | The walk rejected the chain. Export evidence now (entries before the break still verify in the viewer). A replaced or restored log needs **Verify now** to re-anchor; a key change is a Repairs issue instead, never a failure. |
+| **Frigate link** off | Frigate has not been heard for an hour, or `frigate_bridge` lost the broker. Check Frigate's MQTT settings (host, `topic_prefix`), `docker exec securacv doctor --live`, the app's log. Its attributes carry the bridge's last-message window and mode. |
+| The dashboard notification never appeared | It is posted once per entry, only when the strategy module was served this run. Add the dashboard by hand: **Settings → Dashboards → Add dashboard → SecuraCV**, or paste `strategy: {type: custom:securacv}` into a new dashboard's raw editor. |
+| **SecuraCV** is missing from Add dashboard | Hard-refresh the browser (the module is cached), or register `/securacv_www/securacv-strategy.js` as a JavaScript module resource under **Settings → Dashboards → ⋮ → Resources** if your install blocks auto-registered modules. |
+| The Export button is unavailable | The kernel is unreachable; both buttons follow the kernel's availability. |
+| The export notification's link says expired | Links live 24 hours. **Media → SecuraCV evidence** resolves each pack to a fresh link; or export again. |
+| `pwk_*` entities and `securacv_*` entities both show | The claim has not reached the bridge yet: it needs the broker, and a bridge from this release or later. `witness/claim_state` reads `claimed` once it has. |
+| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names and coordinates are redacted; fingerprints are truncated to eight characters. |
+
 ## Alternative Setup Modes
 
 The integration's config flow offers four choices. **Automatic** is the
 default and the right answer for almost everyone — the manual modes exist for
-unusual layouts (a kernel on another host, a re-bridged topic prefix).
+unusual layouts (a kernel on another host, a re-bridged topic prefix). A
+Docker sidecar is added through its discovered card, which pairs with a
+6-digit code, not through a manual mode.
 
 | Mode | Best For | How It Works |
 |------|----------|--------------|
-| **Automatic** (default) | Everyone | Probes for the kernel and configures kernel + MQTT, or MQTT-only, to match what's installed — zero typing |
+| **Automatic** (default) | Everyone | Probes for the app, listens for a sidecar's announcement, and configures kernel + MQTT or MQTT-only to match what's installed — zero typing |
 | **MQTT only** | Canary device users | Auto-discover devices via MQTT |
-| **Kernel only** | PWK API users | Poll the Witness Kernel HTTP API |
+| **Kernel only** | A kernel on another host | The kernel's HTTP API, push-fed over its witness MQTT prefix when the broker is there |
 | **Both** | Advanced users | MQTT for Canary + HTTP for the kernel |
 
 ---
@@ -728,9 +1326,9 @@ unusual layouts (a kernel on another host, a re-bridged topic prefix).
 > wizard) already did for you, kept for unusual layouts and for anyone
 > untangling an older install; click one to expand it. The reference
 > material stays open and applies to every install: the configuration
-> reference, go2rtc, MQTT discovery, the
+> reference, go2rtc, the kernel's MQTT topics, the
 > [API reference](#api-reference), [privacy features](#privacy-features),
-> and [troubleshooting](#troubleshooting).
+> and [troubleshooting the app](#troubleshooting-the-app).
 
 <details>
 <summary><strong>Legacy: Witness Kernel Setup</strong> — picking the kernel's frigate/standalone mode by hand, with the Frigate + MQTT checklist; the installer and the kernel's own wizard make this choice for you</summary>
@@ -784,7 +1382,7 @@ Cameras → go2rtc → PWK (detection + logging)
 
 ## Kernel Setup by Hand (HACS + Kernel)
 
-> The [one-command installer](#quick-start-one-command) at the top of this
+> The [one-command installer](#the-one-command-installer-terminal) at the top of this
 > page does all of this unattended. This section is the same setup done
 > manually.
 
@@ -803,7 +1401,7 @@ Choose one runtime option:
 **Option A: Home Assistant app (custom repository)**
 1. Go to **Settings → Apps → App Store**
 2. Click **⋮ → Repositories** → Add: `https://github.com/kmay89/securaCV`
-3. Install **Privacy Witness Kernel**
+3. Install **SecuraCV**
 
 **Option B: Docker / another host**
 1. Run the kernel using your preferred deployment method
@@ -818,7 +1416,8 @@ nothing needs to exist before it will run.
 Then open the app's **Web UI** (ingress). The setup wizard confirms the mode
 (**frigate** when Frigate is present, **standalone** otherwise), discovers
 the Mosquitto broker, and checks that Mosquitto and Frigate are installed —
-it can install either one for you if they are missing. Nothing to type.
+anything missing is a link into your own App Store (the app holds no
+Supervisor role). Nothing to type.
 
 Back up the device key once the kernel is running: if it is lost, old event
 signatures can no longer be verified.
@@ -878,7 +1477,7 @@ mqtt_publish:
 ## Distribution
 
 - **HACS integration (current):** install the SecuraCV integration in Home Assistant.
-- **Kernel runtime:** run the Privacy Witness Kernel as an app, container, or service. The integration connects to its Event API.
+- **Kernel runtime:** run the witness kernel as the SecuraCV app, the Docker sidecar, or a service of your own. The integration connects to its Event API.
 
 ---
 
@@ -892,7 +1491,7 @@ mqtt_publish:
 1. In Home Assistant, go to **Settings → Apps → App Store**
 2. Click the menu (⋮) → **Repositories**
 3. Add: `https://github.com/kmay89/securaCV`
-4. Find "Privacy Witness Kernel" and click **Install**
+4. Find "SecuraCV" and click **Install**
 
 ### Option 2: Local Installation
 
@@ -973,7 +1572,7 @@ Click **Start**. Check the logs for any errors.
 
 ## go2rtc Integration
 
-[go2rtc](https://github.com/AlexxIT/go2rtc) is the recommended way to connect cameras in Home Assistant. The Privacy Witness Kernel can auto-discover cameras from go2rtc.
+[go2rtc](https://github.com/AlexxIT/go2rtc) is the recommended way to connect cameras in Home Assistant. In standalone mode the witness kernel can auto-discover cameras from go2rtc.
 
 ### If You Already Use go2rtc
 
@@ -1000,9 +1599,12 @@ go2rtc_url: "http://frigate:1984"
 
 ---
 
-## MQTT Discovery (Automatic Sensors)
+## The kernel's MQTT topics and the unclaimed bridge
 
-PWK supports **Home Assistant MQTT Discovery**, which automatically creates sensors without any manual configuration.
+The kernel's `event_mqtt_bridge` (in the app and in the sidecar) publishes
+the kernel's state to your broker under the witness prefix (`witness`, the
+`mqtt_publish.topic_prefix` option or `MQTT_TOPIC_PREFIX`). The integration
+reads those topics; so can anything else on your broker.
 
 ### Enable MQTT Publishing
 
@@ -1028,80 +1630,110 @@ If your broker requires TLS, enable it via the bridge environment (or CLI flags)
 | `MQTT_TLS_CLIENT_CERT_PATH` | Path to PEM-encoded client certificate (mutual TLS) |
 | `MQTT_TLS_CLIENT_KEY_PATH` | Path to PEM-encoded client private key (mutual TLS) |
 
-### Auto-Created Entities
+### Kernel topics
 
-When enabled, PWK automatically creates these entities for each zone:
+| Topic | Retained | Payload |
+|---|---|---|
+| `witness/status` | yes (last will) | `online` / `offline` — the bridge's liveness; kernel entities follow it |
+| `witness/<kernel id>/announce` | yes | the kernel's **signed announcement** (`v`, `device_id`, `kernel_version`, `verifying_key`, `api{scheme,bind,port[,host]}`, `pairing`, `mqtt_topic_prefix`, `discovery_prefix`, `availability_topic`, `announced_bucket_start`, `announced_bucket_size`, `sig`), Ed25519 by the kernel's device key over `securacv-announce\|v1\|` + the compact payload without `sig`. Published after `online`, republished on every reconnect, **cleared** (empty retained payload) on a clean shutdown. The integration discovers a sidecar by it and, once a key is pinned, refuses an announcement that is not signed by that key. `api.host` is present only when the operator set `SECURACV_ANNOUNCE_HOST` — a host is a network identifier |
+| `witness/claim/<kernel id>` | yes | written by the **integration**: `{"v":1,"claimed":true,"nonce":"<16 hex>","claimed_bucket_start":<bucket start>}` on every load and hourly; an empty payload withdraws it. Never an entry id. The bridge honors a claim younger than 24 hours by withdrawing its MQTT-discovery configs, and republishes them when it clears |
+| `witness/claim_state` | yes | `claimed` / `unclaimed` — what the bridge is doing about the claim |
+| `witness/last_event` | yes | the newest sealed event (the payload below) |
+| `witness/events` | no | every sealed event as it is published — the feed the per-camera event entities fire on |
+| `witness/zone/<zone>/event` | no | the same event, per zone |
+| `witness/zone/<zone>/count` | yes | the zone's event count |
+| `witness/zone/<zone>/motion` | no | `ON` for the bridge's per-zone motion sensor (auto-off after 10 min) |
+| `witness/digest` | — | the kernel's rolling 24-hour digest (`/digest`) |
+| `witness/chain_problem`, `witness/chain_problem/attrs` | — | the kernel's **self**-verification: a problem flag and its `VerifyReport`; shown as `kernel_reported_chain_ok`, never as Verified |
+| `witness/frigate_link` | yes | from `frigate_bridge`: `{"v":1,"device_id":"pwk_…","connected":true,"topic_prefix":"frigate","last_message_bucket_start":…,"last_message_bucket_size":600,"messages_since_start":…,"mode":"events"}` — republished on change, after a reconnect and at least every 300 s; `connected:false` on a clean shutdown ([the field table](frigate_integration.md#frigate-link-health-witnessfrigate_link)) |
+
+The event payload on `witness/last_event`, `witness/events` and
+`witness/zone/<zone>/event`, in wire order — time is a coarse bucket, never a
+precise timestamp:
+
+```json
+{
+  "event_type": "BoundaryCrossingObjectLarge",
+  "zone_id": "zone:front_door",
+  "time_bucket": {"start_epoch_s": 1706140800, "size_s": 600},
+  "time_bucket_start": 1706140800,
+  "time_bucket_size": 600,
+  "confidence": 0.85,
+  "attestation": "adapter",
+  "kernel_version": "0.8.0",
+  "ruleset_id": "ruleset:frigate_v1",
+  "device_id": "pwk_1a2b3c4d",
+  "published_bucket_start": 1706141400,
+  "published_bucket_size": 600,
+  "verified_bucket_start": 1706140800,
+  "verified_bucket_size": 600,
+  "verified_ok": true,
+  "seq": 1204
+}
+```
+
+`verified_bucket_start`, `verified_bucket_size` and `verified_ok` are the
+**kernel's** last self-verify (absent until one ran in this bridge process)
+and become the `kernel_reported_chain_ok` / `kernel_verified_bucket_start`
+attributes — the integration's own verdict is computed by its walk and never
+read off this payload. `attestation` is `adapter` for a Frigate event (the
+kernel's bridge attested it, not a device) and `ha-bridged` for an event that
+transited Home Assistant; it is omitted when the kernel itself attested the
+event.
+
+### Before the integration claims the kernel
+
+With `mqtt_publish.enabled` the bridge also publishes **MQTT discovery**
+configs (`homeassistant/{sensor,binary_sensor,button}/<kernel id>/…/config`,
+retained) so a Home Assistant with no SecuraCV integration still sees the
+kernel through its core `mqtt` integration:
 
 | Entity | Type | Description |
 |--------|------|-------------|
 | `sensor.pwk_<zone>_events` | Sensor | Total event count (state_class: total_increasing) |
 | `binary_sensor.pwk_<zone>_motion` | Binary Sensor | Motion detected (auto-off after 10 min) |
 | `sensor.pwk_last_event` | Sensor | Most recent event with full attributes |
+| `sensor.pwk_daily_digest` | Sensor | The kernel's rolling 24-hour digest |
+| `binary_sensor.pwk_chain_problem` | Binary Sensor | The kernel's **self**-report of a chain problem |
+| `button.pwk_verify_now` | Button | Ask the kernel to verify itself |
 
 The bridge asks Home Assistant for these ids with `default_entity_id`, which
 Home Assistant 2025.10 and later honors when it first registers an entity;
 `<zone>` is the zone id without its `zone:` prefix, as Home Assistant slugs
-it (`zone:back-gate` becomes `back_gate`; a zone id is lowercase letters,
-digits, `_` and `-` only). An entity your Home Assistant registered before
-keeps the id it has, and an older Home Assistant ignores the key and names the
-entity from the device name and the entity name
-(`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`). That was read from
-Home Assistant core's source, not seen in a running Home Assistant, so if an
-automation below cannot find its entity, look up the id under **Settings >
-Devices & Services**, on the Entities tab.
+it (`zone:back-gate` becomes `back_gate`). An entity your Home Assistant
+registered before keeps the id it has, and an older Home Assistant names the
+entity from the device name and the entity name.
 
-### Entity Attributes
+These entities show the kernel's **self-report**: the dashboard and the
+blueprints label them *Chain OK (kernel-reported)*, never Verified. Once the
+SecuraCV integration connects it claims the kernel and the bridge withdraws
+every one of them (the state topics above are never paused); the
+integration's `securacv_*` entities take over, and Settings → Repairs lists
+the old → new ids once where they existed
+([the migration table](#entity-ids-pwk_--securacv_)).
 
-The `sensor.pwk_last_event` entity includes these attributes:
-Time is reported as coarse buckets (typically 10 minutes), not precise timestamps.
-
-```yaml
-event_type: "BoundaryCrossingObjectLarge"
-zone_id: "zone:front_door"
-time_bucket_start: 1706140800
-time_bucket_size: 600
-confidence: 0.85
-published_bucket_start: 1706141400
-published_bucket_size: 600
-```
-
-### Availability Tracking
-
-PWK publishes to `witness/status` with Last Will Testament (LWT):
-- **Online**: PWK is running and publishing events
-- **Offline**: PWK has disconnected (set automatically by MQTT broker)
-
-All entities use this availability topic, so they show "unavailable" when PWK is offline.
-
-### MQTT Topics Published
-
-| Topic | Payload | Retained |
-|-------|---------|----------|
-| `witness/status` | `online` / `offline` | Yes |
-| `witness/last_event` | JSON event details | Yes |
-| `witness/zone/<name>/count` | Event count integer | Yes |
-| `witness/zone/<name>/motion` | `ON` | No |
-| `witness/zone/<name>/event` | Full event JSON | No |
-| `witness/events` | All events (firehose) | No |
-
-### Example Automation with MQTT Sensors
+### Example Automation with the integration's entities
 
 ```yaml
 # automations.yaml
 automation:
-  - alias: "Notify on Front Door Motion"
-    trigger:
-      - platform: state
-        entity_id: binary_sensor.pwk_front_door_motion
-        to: "on"
-    action:
-      - service: notify.mobile_app
+  - alias: "Notify on a sealed front-door event"
+    triggers:
+      - trigger: state
+        entity_id: event.securacv_front_door
+    actions:
+      - action: notify.mobile_app_your_phone
         data:
-          title: "Motion Detected"
+          title: "Witness event"
           message: >
-            Motion at front door.
-            Confidence: {{ state_attr('sensor.pwk_last_event', 'confidence') }}
+            {{ state_attr('event.securacv_front_door', 'friendly_event') }}
+            at the front door, {{ state_attr('event.securacv_front_door', 'verification') }}
+            (confidence {{ state_attr('event.securacv_front_door', 'confidence') }})
 ```
+
+The witness-notification blueprint does this per camera with the seal wait,
+the proof line and the Frigate and export actions built in
+([Step 5](#step-5-set-up-notifications)).
 
 ### Witness Wall: the fleet roll-call
 
@@ -1121,7 +1753,7 @@ still needs from you, and why:
   `_securacv._tcp` Bonjour service, and its 8799 host port ships disabled
   (see [Event API exposure](../privacy_witness_kernel/README.md#event-api-exposure)),
   so the Wall cannot discover it. Enable the port under **Settings → Apps →
-  Privacy Witness Kernel → Configuration** (Network section), then enter
+  SecuraCV → Configuration** (Network section), then enter
   `http://<your-home-assistant-host>:8799` in the Wall — with the port,
   because the Wall adds only `http://` to a bare host and would otherwise
   poll port 80; a typed hub is remembered and never aged out. Know what the
@@ -1141,6 +1773,13 @@ still needs from you, and why:
   instead of re-pinning every device. The file is written `0600`, and
   `/api/fleet` serves the roll-call's coarse words only, never the keys.
 
+On the **Docker sidecar** the port is published from the first start —
+that is how Home Assistant pairs — and the roll-call there serves **only the
+kernel's own row** unless you set `SECURACV_FLEET_ROLLCALL=1` in the compose
+file (`WITNESS_API_FLEET_ROLLCALL=full`): who is home is yours to opt into,
+never a side effect of pairing. `GET /api/identity` reports the mode as
+`fleet_rollcall`.
+
 `online` on that roll-call is not a liveness proof: it means a signed chain
 publish verified against the pinned key within the last 180 s, no more —
 the exact wording is in
@@ -1152,13 +1791,13 @@ the exact wording is in
 
 If you prefer not to use MQTT Discovery, you can create sensors manually using the REST API.
 
-The app exposes an Event API on port 8799. When Home Assistant is running
-alongside the app, use the app hostname so HA can reach it over the
-Supervisor network. The Supervisor derives that hostname from the full app
+The app exposes an Event API on port 8799 inside its container. When Home
+Assistant is running alongside the app, use the app hostname so HA can reach
+it over the Supervisor network. The Supervisor derives that hostname from the full app
 slug — repository hash plus app name, underscores becoming dashes — which for
 this repository is `d0491a67_privacy_witness_kernel`, giving
 `http://d0491a67-privacy-witness-kernel:8799`. You can confirm the hostname
-in **Settings → Apps → Privacy Witness Kernel → Info**, where Home Assistant
+in **Settings → Apps → SecuraCV → Info**, where Home Assistant
 lists the app hostname/slug.
 
 ### REST Sensor (Basic)
@@ -1226,22 +1865,95 @@ automation:
 ## API Reference
 
 The Event API is available at `http://d0491a67-privacy-witness-kernel:8799`
-when running as a Home Assistant app (or your configured port), as this
-hostname is automatically resolved by the Supervisor. If the kernel runs
-elsewhere, replace the hostname with the reachable IP/DNS name for that host.
+when running as the Home Assistant app (the Supervisor resolves that
+hostname), at `http://<docker host>:8799` on the Docker sidecar, or wherever
+you configured a kernel of your own. The whole surface is JSON; errors are
+`{"error":"<snake_case_code>"}` with an optional `retry_after` or `detail`.
 
 ### Authentication
 
-The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the app starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment. The SecuraCV integration handles rotation automatically when configured with the token-file path (its default); scripts and other clients must re-read the file on every `401`.
-`/health` and the fleet roll-call `GET /api/fleet` are the two routes that answer without a token. The kernel refuses to bind a non-loopback address without TLS or an explicit override and, when bound to loopback, answers only loopback peers (`403`); the app binds all interfaces inside its own container so Home Assistant core can reach it, and ships the 8799 host port disabled. Every other route takes the capability token — or, on `GET /api/sealed-log` alone, a [viewer token](#viewer-tokens-witness-wall). Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
+Three credentials open the API, all presented the same way — `Authorization:
+Bearer <64 hex>` (or `x-witness-token: <64 hex>`), never in the query string
+(`?token=` is refused with `400 token_query_param_not_allowed` for every
+credential):
+
+- **The capability token** rotates every 10 minutes and is written to the
+  kernel's token file — `/config/api_token` in the app, `/data/api_token` in
+  the sidecar — so a client that can read the file re-reads it on every
+  `401`. The token rotated out last is still accepted for 90 seconds, so a
+  reader a moment behind is not refused. The integration handles this by
+  itself when configured with the token-file path (the app's default).
+- **A paired token** is what the Docker sidecar hands Home Assistant for a
+  6-digit pairing code ([Pairing](#pairing-the-docker-sidecar-and-home-assistant)):
+  32 random bytes, 64 hex on the wire, long-lived, kept by the kernel only as
+  a sha256 in `paired_tokens.json` (`0600`, re-read per request so a
+  revocation lands on the next call), and admitted to every route the
+  capability token opens. The only differences are its receipts — an export
+  under a paired token is receipted `auth_mode: paired` with the token id —
+  and the revocation rule below.
+- **A viewer token** opens exactly one route, `GET /api/sealed-log`
+  ([Viewer tokens](#viewer-tokens-witness-wall)).
+
+Every failed credential is a strike against the caller's address, and
+enough strikes lock that address out with `429 {"error":"rate_limited",
+"retry_after":…}` before the request is even read; a capability or paired
+success clears the address's history, a viewer success does not. The kernel
+reads a refused request's body (up to 64 KiB) before answering, so a client
+gets its `400` or `401` rather than a connection reset. `GET /health` and the
+fleet roll-call `GET /api/fleet` answer without a token; `POST /api/pair`
+takes the pairing code as its credential. Every other route takes a token.
 
 ```bash
 # Read the token
 TOKEN=$(cat /config/api_token)
 
 # Make authenticated requests (Bearer token only)
-curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:8799/events
+curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:8799/api/identity
 ```
+
+### Pairing (the Docker sidecar and Home Assistant)
+
+`docker exec securacv pair` runs `witness_api issue-pairing-code` inside the
+container: the kernel writes `pairing_code` (`0600`, beside the token file)
+holding the code's **sha256**, its expiry (600 s by default,
+`WITNESS_API_PAIRING_TTL_SECS`), a label and `attempts_left: 5`, and prints
+the clear code once, with the kernel key fingerprint (the first eight hex of
+sha256 over the raw 32-byte key — the same eight the integration shows
+before it pairs, and the **Kernel key fingerprint** sensor afterwards). Only
+one code is outstanding at a time; issuing again replaces it.
+
+`POST /api/pair` with `{"code":"483921","label":"home-assistant"}` (body ≤
+1024 bytes; `label` optional, ≤ 64 characters) redeems it. On success the
+kernel deletes the code file **before** it writes the new bearer's hash to
+`paired_tokens.json` and **before** it answers
+`{"token","token_id","device_id","verifying_key","kernel_version"}` — the
+token's only copy. Every refusal of a code — wrong, never issued, burned,
+expired, or pairing not configured on this kernel (the app runs with pairing
+off) — is the **same** `401 {"error":"invalid_pairing_code"}`, so an attacker
+learns nothing about which it was, and each is a strike against the
+address. Each wrong guess decrements `attempts_left` **durably before** the
+refusal is written; at zero the file is deleted (the code is burned) and an
+expired file is deleted on first touch. Malformed input (`400 bad_request`,
+`body_required`, `body_too_large`) is not a strike. A pairing success does
+not clear the address's strikes — only the first authenticated request with
+the new token does.
+
+Revocation: `DELETE /api/pair/<id>` (eight lowercase hex) answers
+`200 {"revoked":"<id>"}`; it is accepted with the capability token for any
+id, or with a paired token for **its own** id only — any other id is
+`403 {"error":"forbidden"}`; an unknown id, or a kernel with pairing off, is
+`404 not_found`. From the Docker host: `docker exec securacv unpair <id>`
+(`witness_api revoke-paired-token`); `unpair` alone lists the paired tokens
+(`witness_api list-paired-tokens`: id, label, minted — never the hash). The
+daemon's log never prints a code or a token; `doctor` reports only *pairing
+code outstanding: yes (expires in N min)* and *paired: yes (N tokens)*.
+
+Environment: `WITNESS_API_PAIRED_TOKEN_PATH` / `WITNESS_API_PAIRING_CODE_PATH`
+(both or neither; defaults `paired_tokens.json` and `pairing_code` beside
+the token file — no token path means pairing is off and `/api/pair` answers
+the constant `401`), `WITNESS_API_PAIRING_TTL_SECS` (600), and
+`WITNESS_API_FLEET_ROLLCALL` (`full` | `self`; the sidecar sets `self`
+unless `SECURACV_FLEET_ROLLCALL=1`).
 
 ### Viewer tokens (Witness Wall)
 
@@ -1269,23 +1981,32 @@ or a revoke takes effect without a restart. The receipt carries the
 kernel's current verifying key, which the Wall pins at pairing: its
 "Verified" then means Ed25519 signatures checked against that pinned key,
 not whatever key the hub serves today. The Docker sidecar wraps both
-commands (`docker compose exec securacv entrypoint.sh mint-viewer-token …`,
+commands (`docker exec securacv entrypoint.sh mint-viewer-token …`,
 see [frigate_integration.md](frigate_integration.md)); the Home Assistant
-add-on reads the file but has no control that mints one yet.
+app reads the file but has no control that mints one yet.
 
 ### Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/events` | GET | Export events as batched buckets |
-| `/events/latest` | GET | Get the most recent event (single event JSON) |
-| `/digest` | GET | Coarse activity digest for dashboards (bucketed counts, no per-event detail) |
-| `/status` | GET | Daemon status snapshot (retention, verify state) |
-| `/verify` | POST | Run sealed-log verification and return the `VerifyReport` |
-| `/export/bundle` | GET | Receipted export bundle (events reshaped for disclosure; correlation tokens stripped) |
-| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design). The one route a [viewer token](#viewer-tokens-witness-wall) also opens |
-| `/api/fleet` | GET, OPTIONS | The fleet roll-call the Witness Wall reads — coarse words only (name, online, chain verdict, product, presence/occupants/breathing while proven online); **no token**, an origin allow-list for browsers; see [Witness Wall: the fleet roll-call](#witness-wall-the-fleet-roll-call) |
-| `/health` | GET | Check daemon health (unauthenticated) |
+| `/health` | GET | Check daemon health (unauthenticated): `{"status":"ok"}` |
+| `/api/fleet` | GET, OPTIONS | The fleet roll-call the Witness Wall reads — coarse words only (name, online, chain verdict, product, presence/occupants/breathing while proven online); **no token**, an origin allow-list for browsers; under `WITNESS_API_FLEET_ROLLCALL=self` (the sidecar's default) only the kernel's own row; see [Witness Wall: the fleet roll-call](#witness-wall-the-fleet-roll-call) |
+| `/api/pair` | POST | Redeem a 6-digit pairing code for a paired bearer — no bearer token on this one route, the code in the body is the credential, and every refusal is the identical `401 invalid_pairing_code` and a strike ([Pairing](#pairing-the-docker-sidecar-and-home-assistant)) |
+| `/api/pair/<id>` | DELETE | Revoke a paired token by its 8-hex id; capability token for any id, a paired token for its own id only |
+| `/api/identity` | GET | The kernel's identity, receipt-less: `v`, `device_id` (`pwk_…`), `verifying_key` (64 hex), `key_algorithm`, `kernel_version`, `ruleset_id`, `chain_length`, `latest_hash`, `last_verify` (`null`, or `at` as a bucket start, `bucket_size`, `ok`, `verdict`, `identity_verified` — the kernel's own self-check), `fleet_rollcall`, `paired_tokens`. The integration pins `verifying_key` from this answer (or from `/api/pair`), never from the MQTT announcement. Capability or paired token |
+| `/api/sign-announce` | POST | Sign the MQTT announcement for the bridge, which holds no key: body ≤ 2048 bytes, a JSON object without `sig` whose `device_id` and `verifying_key` are this kernel's; `{"sig":"<128 hex>"}`, Ed25519 over `securacv-announce\|v1\|` + the exact body bytes. Capability or paired token |
+| `/events` | GET | Without a query: the receipted bulk export of events as batched buckets. With `?since_bucket=<epoch_s>`: a receipt-less **state read** of events whose bucket start is at or after it, each carrying its `seq` — the cursor the bridge polls every cycle, so its polling adds no receipts |
+| `/events/latest` | GET | The most recent event (single event JSON, with `seq`); receipt-less |
+| `/digest` | GET | Coarse activity digest for dashboards (bucketed counts, no per-event detail); receipt-less |
+| `/status` | GET | Daemon status snapshot — `kernel_version`, `storage` (free space of the database directory sampled every 600 s, wear and write rate where the host exposes them, else `null`), `thermal`, `time_bucket`; `404 not_available` only until the first sample. In Frigate mode `witness_api` attaches the sampler itself, so the app's and the sidecar's storage entities read |
+| `/verify` | POST | Run the kernel's **own** sealed-log verification and return the `VerifyReport` — a self-report (shown as `kernel_reported_chain_ok`), never Home Assistant's "Verified" |
+| `/export/bundle` | GET | Receipted export bundle (`?last=24h`, or `?start=&end=`; events reshaped for disclosure, correlation tokens stripped) — what `securacv.export_evidence` downloads verbatim; under a paired token the receipt reads `auth_mode: paired` with the token id |
+| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, each entry with its `seq`, plus `head: {seq, entry_hash}`. One query parameter, the incremental cursor `?from_seq=<n>` (entries with `seq > n`; when row `n` is in the served tail its hash becomes the anchor; `head.seq < n` means the log was rolled back); anything else in a query string is ignored — the log is non-queryable by design. Receipt-less. The one route a [viewer token](#viewer-tokens-witness-wall) also opens; capability and paired tokens open it too |
+
+Receipts, in one line: `GET /events` without a cursor and `GET /export/bundle`
+are disclosures and log a tamper-evident receipt each; `/events/latest`,
+`/events?since_bucket=`, `/digest`, `/api/identity` and `/api/sealed-log`
+are state reads and log none. Receipts are never pruned.
 
 ### `/events/latest` Response (Event)
 
@@ -1381,11 +2102,11 @@ See [Break-Glass Documentation](../spec/break_glass.md) for details.
 
 ---
 
-## Troubleshooting
+## Troubleshooting the app
 
 ### App Won't Start
 
-1. Check logs: **Settings → Apps → Privacy Witness Kernel → Logs**
+1. Check logs: **Settings → Apps → SecuraCV → Logs**
 2. If you set `device_key_seed` yourself, verify it is valid (64 hex
    characters) — left empty, the app generates one on first start
 3. Ensure cameras are reachable
@@ -1412,7 +2133,7 @@ See [Break-Glass Documentation](../spec/break_glass.md) for details.
 
 ## Architecture Notes
 
-The Privacy Witness Kernel runs as a separate process (app) for isolation:
+The witness kernel runs as a separate process (the SecuraCV app) for isolation:
 
 1. **No HA core access**: The app cannot access HA internals
 2. **Local storage only**: All data stays on your HA instance
@@ -1428,9 +2149,11 @@ This design means even if the app is compromised, it cannot:
 
 ## Updates
 
-The app updates independently of Home Assistant:
+The app updates independently of Home Assistant, and an updated app
+refreshes its own carried copy of the integration on start (never a copy
+from HACS), then asks for a restart with a notification:
 
-1. Go to **Settings → Apps → Privacy Witness Kernel**
+1. Go to **Settings → Apps → SecuraCV**
 2. Click **Update** when available
 
 Update notes are in the [CHANGELOG](../CHANGELOG.md).
@@ -1441,4 +2164,4 @@ Update notes are in the [CHANGELOG](../CHANGELOG.md).
 
 - [GitHub Issues](https://github.com/kmay89/securaCV/issues)
 - [Home Assistant Community](https://community.home-assistant.io/)
-- [Documentation](../README.md)
+- [Documentation](../README.md) · [the product design doc](design/ha_frigate_product.md)

@@ -82,9 +82,10 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <summary><strong>Home Assistant</strong> — the best-supported path</summary>
 
 - [**The full stack, end to end**](full_stack_setup.md) — the golden path across every piece: flash the hub → first boot → broker + securaCV → camera detection (Pi, Coral, or a Jetson) → Canaries, with what "working" looks like at each step
-- [Home Assistant setup](homeassistant_setup.md) — flashing, first boot, add-ons, entity catalog
-- [Frigate integration](frigate_integration.md) — compose quickstart, doctor check, API tokens
-- [The Verified Timeline card](lovelace_timeline.md) — ✓-badged events on your dashboard
+- [Home Assistant setup](homeassistant_setup.md) — the three ways in (the SecuraCV app, HACS first, the Docker sidecar with one 6-digit code), what Sealed ✓ / Verified ✓ / Failed ⚠ mean, the dashboard, the entity catalog, the actions, the kernel API
+- [Frigate integration](frigate_integration.md) — what the bridge keeps and discards, events vs alerts mode, the sidecar quickstart and its published port, pairing, `doctor`, the Frigate link
+- [**SecuraCV for Home Assistant + Frigate — the product, as built (design)**](design/ha_frigate_product.md) — the three journeys, the sixteen decisions with the review-driven changes, the deferred sidecar TLS pin
+- [The SecuraCV dashboard and the Verified Timeline card](lovelace_timeline.md) — the strategy, the chain-status header, ✓-badged events on your dashboard
 - [Blueprints](blueprints/README.md) — every blueprint with a one-click import badge; wellbeing notes in [canary_sense_wellbeing.md](blueprints/canary_sense_wellbeing.md); the YAML: [witness notification](blueprints/securacv_witness_notification.yaml), [alerts](blueprints/securacv_alerts.yaml), [daily digest](blueprints/securacv_daily_digest.yaml), [pattern break](blueprints/securacv_pattern_break.yaml), [battery health](blueprints/canary_battery_health.yaml), [after-hours presence](blueprints/canary_sense_after_hours_presence.yaml), [lights-out tamper](blueprints/canary_sense_lights_out_tamper.yaml), [welfare check](blueprints/canary_sense_welfare_check.yaml), [Busy Bar desk light](blueprints/securacv_busybar_alert.yaml)
 - [Busy Bar alerts, worked recipe](integrations/busy-bar.md) — the busy.app desk light as an alert beacon, both lanes: the HA blueprint (hold-until-clear) and the alert relay's LAN-only sink (auto-expiring)
 - [Example automations](homeassistant_automations.yaml) — copy-paste YAML
