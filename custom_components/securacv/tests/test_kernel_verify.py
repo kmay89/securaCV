@@ -73,6 +73,17 @@ REPO = Path(__file__).resolve().parents[3]
 VECTOR = REPO / "tests" / "fixtures" / "envelope" / "sealed_log_document_vector.json"
 VERIFY_CORE = REPO / "viewer" / "verify_core.js"
 
+# The HACS mirror (kmay89/securacv-homeassistant) carries this file without the
+# monorepo's tests/fixtures tree, where the kernel's own sealed-log vector
+# lives; there this module skips itself (the monorepo's CI runs it) instead of
+# failing collection and taking the whole mirror suite with it.
+if not VECTOR.exists():
+    pytest.skip(
+        f"needs the monorepo's {VECTOR.relative_to(REPO)} (absent in the HACS mirror; "
+        "runs in kmay89/securaCV CI)",
+        allow_module_level=True,
+    )
+
 DOC = json.loads(VECTOR.read_text(encoding="utf-8"))
 KEY = DOC["verifying_key"]
 OTHER_KEY = "cd" * 32
