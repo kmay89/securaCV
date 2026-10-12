@@ -493,6 +493,47 @@ async def test_announce_confirm_and_pair_create_the_paired_entry(
     assert f"Bearer {PAIRED_TOKEN}" in kernel.auth_headers("/api/identity")
 
 
+async def test_a_full_paired_set_keeps_the_code_and_names_the_remedy(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient
+) -> None:
+    """The kernel's 403 `paired_token_limit` (its paired set is full; the
+    right code was presented and NOT consumed) is its own form error, so the
+    person revokes a token on the Docker host and submits the same code."""
+    announce = kernel.kernel.announce()
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_MQTT},
+        data=mqtt_info(f"witness/{KERNEL_DEVICE_ID}/announce", announce),
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "pair"
+
+    kernel.pair_status = 403
+    kernel.pair_error = "paired_token_limit"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_URL: KERNEL_URL, CONF_PAIRING_CODE: "483921"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "pair"
+    assert result["errors"] == {"base": "paired_token_limit"}
+    # Any other 403 stays the generic connection error (C2).
+    kernel.pair_error = "forbidden"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_URL: KERNEL_URL, CONF_PAIRING_CODE: "483921"}
+    )
+    assert result["errors"] == {"base": "cannot_connect"}
+
+    # A token revoked on the host: the same code pairs.
+    kernel.pair_status = 200
+    kernel.pair_error = None
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_URL: KERNEL_URL, CONF_PAIRING_CODE: "483921"}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].data[CONF_AUTH_MODE] == AUTH_MODE_PAIRED
+
+
 async def test_announce_signature_is_checked_against_the_pin(
     hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
 ) -> None:

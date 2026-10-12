@@ -61,6 +61,7 @@ from .api import (
     SecuraCVApi,
     SecuraCVApiAuthError,
     SecuraCVApiError,
+    SecuraCVApiPairLimitError,
     async_pair_kernel,
 )
 from .claim import new_claim_nonce
@@ -853,6 +854,10 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 except SecuraCVApiAuthError:
                     errors["base"] = "invalid_pairing_code"
+                except SecuraCVApiPairLimitError:
+                    # The code is still valid: the person revokes a token
+                    # on the Docker host and submits the same code again.
+                    errors["base"] = "paired_token_limit"
                 except SecuraCVApiError:
                     errors["base"] = "cannot_connect"
                 else:

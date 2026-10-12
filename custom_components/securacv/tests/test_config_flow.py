@@ -40,6 +40,7 @@ from ..api import (
     PairResult,
     SecuraCVApiAuthError,
     SecuraCVApiConnectionError,
+    SecuraCVApiPairLimitError,
     SecuraCVApiResponseError,
 )
 from ..config_flow import (
@@ -352,6 +353,8 @@ def test_pairing_errors_keep_the_person_on_the_form(monkeypatch):
     for outcome, expected in (
         (SecuraCVApiAuthError("invalid_pairing_code"), {"base": "invalid_pairing_code"}),
         (SecuraCVApiResponseError("unexpected status: 403"), {"base": "cannot_connect"}),
+        # A full paired set: the code is still valid, the remedy is named.
+        (SecuraCVApiPairLimitError("paired_token_limit"), {"base": "paired_token_limit"}),
         (SecuraCVApiConnectionError("unable to reach API"), {"base": "cannot_connect"}),
     ):
         fake_pair(monkeypatch, outcome)

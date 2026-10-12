@@ -61,6 +61,12 @@ and [`docs/frigate_integration.md`](docs/frigate_integration.md).
   one bucket — no longer let the second read Verified on the first's
   signature; a row without `seq` is Verified only once a walk that began
   after its bucket closed reached the kernel's head.
+- The paired-token set is bounded at 32: `POST /api/pair` answers the right
+  code `403 paired_token_limit` without consuming it (a wrong guess is still
+  the constant 401), the pair form shows the remedy (`docker exec securacv
+  unpair`), and the same code pairs once a token is revoked — a set that
+  grew past the file's 64 KiB read bound would have refused every paired
+  client at once.
 
 **Breaking changes**
 

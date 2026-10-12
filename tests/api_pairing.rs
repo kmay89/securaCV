@@ -12,8 +12,8 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 use witness_kernel::api::pairing::{
-    PairRequest, PairResponse, PairingCodeFile, PAIRED_TOKEN_FILE_NAME, PAIRING_CODE_ATTEMPTS,
-    PAIRING_CODE_FILE_NAME,
+    PairRequest, PairResponse, PairingCodeFile, PAIRED_TOKEN_FILE_NAME, PAIRED_TOKEN_LIMIT,
+    PAIRING_CODE_ATTEMPTS, PAIRING_CODE_FILE_NAME,
 };
 use witness_kernel::api::{ApiConfig, ApiHandle, ApiServer, PairingPaths, ViewerTokenSet};
 use witness_kernel::{
@@ -482,6 +482,80 @@ impl LetFile for witness_kernel::api::pairing::IssuedPairingCode {
     fn let_file(self, path: &Path) -> Result<PairingCodeFile> {
         PairingCodeFile::load(path)?.ok_or_else(|| anyhow::anyhow!("issued file missing"))
     }
+}
+
+// The paired set is bounded: the 33rd ceremony is refused as such, to the
+// right code only, without consuming it — and the remedy (revoke one, the
+// CLI's `revoke-paired-token` / `docker exec securacv unpair <id>`) makes
+// the SAME code pair. A wrong guess against a full set is still the
+// constant 401, so the capacity answer is no oracle for an outsider.
+#[test]
+fn pair_refuses_a_full_paired_set_without_consuming_the_code() -> Result<()> {
+    let api = TestApi::new(true)?;
+    for i in 0..PAIRED_TOKEN_LIMIT {
+        ViewerTokenSet::append(
+            &api.paths().tokens_path,
+            &format!("earlier {i}"),
+            "paired token",
+        )?;
+    }
+    let set = ViewerTokenSet::load_kind(&api.paths().tokens_path, "paired token")?;
+    assert_eq!(set.tokens.len(), PAIRED_TOKEN_LIMIT);
+    let code = api.issue_code()?;
+
+    let (headers, body) = api.pair(&format!(r#"{{"code":"{code}","label":"home-assistant"}}"#))?;
+    assert!(
+        headers.contains("403 Forbidden"),
+        "headers: {headers} body: {body}"
+    );
+    assert_eq!(body.trim(), r#"{"error":"paired_token_limit"}"#);
+    let kept = PairingCodeFile::load(&api.paths().code_path)?.expect("the code file is kept");
+    assert_eq!(
+        kept.attempts_left, PAIRING_CODE_ATTEMPTS,
+        "no try was spent"
+    );
+    assert_eq!(
+        ViewerTokenSet::load_kind(&api.paths().tokens_path, "paired token")?
+            .tokens
+            .len(),
+        PAIRED_TOKEN_LIMIT,
+        "nothing was minted"
+    );
+    // Not a strike: the capability token's next request is not locked out
+    // and /api/identity counts the full set.
+    let (headers, body) = api.request("GET", "/api/identity", Some(&api.capability()), None)?;
+    assert!(headers.contains("200 OK"), "headers: {headers}");
+    let identity: Value = serde_json::from_str(&body)?;
+    assert_eq!(identity["paired_tokens"], PAIRED_TOKEN_LIMIT as u64);
+
+    // A wrong guess against the full set: the constant refusal, a try spent.
+    let (headers, body) = api.pair(&format!(r#"{{"code":"{}"}}"#, wrong_code(&code)))?;
+    assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+    assert_eq!(body.trim(), INVALID);
+    assert_eq!(
+        PairingCodeFile::load(&api.paths().code_path)?
+            .expect("file")
+            .attempts_left,
+        PAIRING_CODE_ATTEMPTS - 1
+    );
+
+    // The remedy: revoke one (what `revoke-paired-token` / `unpair` do),
+    // then the same code pairs, is consumed, and the bearer opens a route.
+    ViewerTokenSet::revoke_kind(&api.paths().tokens_path, &set.tokens[0].id, "paired token")?;
+    let (token, token_id) = api.pair_ok(&code, "home-assistant")?;
+    assert!(
+        PairingCodeFile::load(&api.paths().code_path)?.is_none(),
+        "consumed"
+    );
+    let (headers, body) = api.request("GET", "/api/identity", Some(&token), None)?;
+    assert!(
+        headers.contains("200 OK"),
+        "headers: {headers} body: {body}"
+    );
+    let after = ViewerTokenSet::load_kind(&api.paths().tokens_path, "paired token")?;
+    assert_eq!(after.tokens.len(), PAIRED_TOKEN_LIMIT);
+    assert!(after.tokens.iter().any(|entry| entry.id == token_id));
+    Ok(())
 }
 
 #[test]

@@ -54,6 +54,13 @@ class SecuraCVApiResponseError(SecuraCVApiError):
     """The kernel answered with something other than the contract."""
 
 
+class SecuraCVApiPairLimitError(SecuraCVApiResponseError):
+    """`POST /api/pair` answered 403 `paired_token_limit`: the kernel already
+    holds its limit of paired tokens. The code was NOT consumed — the
+    operator revokes one (`docker exec securacv unpair <id>`, `witness_api
+    revoke-paired-token <id>`) and the same code pairs."""
+
+
 @dataclass(frozen=True)
 class PairResult:
     """What POST /api/pair hands back on success (contract C2)."""
@@ -333,6 +340,17 @@ class SecuraCVApi:
         return result
 
 
+async def _error_word(resp: aiohttp.ClientResponse) -> str | None:
+    """The `error` word of a JSON refusal body, None when the body is not that."""
+    try:
+        body = await resp.json()
+    except (aiohttp.ContentTypeError, ValueError):
+        return None
+    if isinstance(body, dict) and isinstance(body.get("error"), str):
+        return body["error"]
+    return None
+
+
 async def async_pair_kernel(
     session: aiohttp.ClientSession, url: str, code: str, *, label: str = PAIRED_TOKEN_LABEL
 ) -> PairResult:
@@ -341,9 +359,12 @@ async def async_pair_kernel(
     The one unauthenticated write on the kernel. Raises
     SecuraCVApiAuthError for the kernel's constant 401 (wrong, burned,
     expired or absent code — the kernel answers all four the same so this
-    client cannot be an oracle for the pairing state), SecuraCVApiResponseError
-    for any other status (403 included), SecuraCVApiConnectionError when the
-    kernel cannot be reached. The code is never logged.
+    client cannot be an oracle for the pairing state),
+    SecuraCVApiPairLimitError for the kernel's 403 `paired_token_limit` (a
+    full paired set; the right code was presented and is still valid),
+    SecuraCVApiResponseError for any other status (a plain 403 included),
+    SecuraCVApiConnectionError when the kernel cannot be reached. The code
+    is never logged.
     """
     base = url.rstrip("/")
     try:
@@ -354,6 +375,8 @@ async def async_pair_kernel(
         ) as resp:
             if resp.status == 401:
                 raise SecuraCVApiAuthError("invalid_pairing_code")
+            if resp.status == 403 and await _error_word(resp) == "paired_token_limit":
+                raise SecuraCVApiPairLimitError("paired_token_limit")
             if resp.status != 200:
                 raise SecuraCVApiResponseError(f"unexpected status: {resp.status}")
             try:

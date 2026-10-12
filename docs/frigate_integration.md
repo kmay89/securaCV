@@ -222,6 +222,10 @@ docker exec securacv unpair            # lists paired tokens: id, label, minted
 docker exec securacv unpair <id>       # revoke one; its next request is refused, no restart
 ```
 
+A kernel keeps at most **32** paired tokens. Past that, the right code is
+answered `403 paired_token_limit` and **not** consumed — Home Assistant's
+pair form says so and names `unpair` — so revoking one stale token lets the
+same code pair; a wrong guess against a full set is still the constant 401.
 Removing the integration entry in Home Assistant revokes its token too. A
 revoked token sends Home Assistant into its re-authentication flow, which
 asks for a fresh code from `pair`. The exact screens and the Repairs issue a

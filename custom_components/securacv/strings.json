@@ -148,6 +148,7 @@
       "invalid_auth": "Invalid API token. Check the token file path, or re-read the token from the kernel's api_token file.",
       "token_required": "Provide an API token file path or a static token (the token file is recommended — the kernel rotates the token every 10 minutes).",
       "invalid_pairing_code": "The code was not accepted. Run `docker exec securacv pair` again and enter the new code within 10 minutes.",
+      "paired_token_limit": "The kernel already holds its limit of 32 paired tokens, so nothing was paired and this code is still valid. On the Docker host run `docker exec securacv unpair` to list them, revoke one with `docker exec securacv unpair` followed by its id, then submit the same code again.",
       "kernel_identity_unavailable": "The kernel answered but has no identity endpoint. Update the SecuraCV app or sidecar, then try again.",
       "invalid_url": "Enter the kernel URL with its scheme, like http://192.168.1.20:8799."
     },

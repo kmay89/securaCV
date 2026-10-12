@@ -84,9 +84,19 @@ pub struct IssuedPairingCode {
     pub label: String,
 }
 
+/// How many paired bearers one kernel keeps. The set lives in one JSON
+/// file that `ViewerTokenSet::load_kind` refuses past 64 KiB — past that,
+/// EVERY paired client would be refused at once — so the ceremony stops
+/// well short of it: `POST /api/pair` answers 403 `paired_token_limit` to
+/// the right code without consuming it, and the operator revokes one
+/// (`witness_api list-paired-tokens` / `revoke-paired-token <id>`,
+/// `docker exec securacv unpair <id>`) and enters the same code again.
+pub const PAIRED_TOKEN_LIMIT: usize = 32;
+
 /// The outcome of presenting a code. Every refusal is the SAME variant on
 /// purpose: the caller cannot tell a wrong guess from a burned, expired or
-/// never-issued code, and must not try.
+/// never-issued code, and must not try. `AtCapacity` is the one answer that
+/// differs, and only a caller holding the RIGHT code ever sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Redeem {
     /// The code matched; the file is already gone. `label` is the issuer's
@@ -95,6 +105,10 @@ pub enum Redeem {
         label: String,
     },
     Refused,
+    /// The code matched but the paired set is full ([`PAIRED_TOKEN_LIMIT`]):
+    /// nothing was consumed or counted, so the same code pairs once a
+    /// bearer has been revoked.
+    AtCapacity,
 }
 
 impl PairingCodeFile {
@@ -192,6 +206,14 @@ impl PairingCodeFile {
     /// refusal is returned (burned at zero: deleted). Missing, unreadable,
     /// malformed and expired files all refuse the same way.
     pub fn redeem(path: &Path, code: &str, now: u64) -> Result<Redeem> {
+        Self::redeem_if(path, code, now, true)
+    }
+
+    /// [`Self::redeem`] with room for the bearer it would mint: when
+    /// `has_room` is false a matching code answers [`Redeem::AtCapacity`]
+    /// and is left exactly as it was (file, budget), while a wrong guess is
+    /// still a refusal and still costs a try — the full set is no oracle.
+    pub fn redeem_if(path: &Path, code: &str, now: u64, has_room: bool) -> Result<Redeem> {
         let file = match Self::load(path) {
             Ok(Some(file)) => file,
             Ok(None) => return Ok(Redeem::Refused),
@@ -218,6 +240,9 @@ impl PairingCodeFile {
         // SECURITY: constant-time compare of the two digests, so response
         // timing says nothing about how many leading bytes agreed.
         if code_digest(code).ct_eq(&stored).unwrap_u8() == 1 {
+            if !has_room {
+                return Ok(Redeem::AtCapacity);
+            }
             // Consumed durably first: a code that could be redeemed twice
             // would mint two bearers for one ceremony.
             std::fs::remove_file(path).map_err(|err| {
@@ -369,6 +394,47 @@ mod tests {
             PairingCodeFile::redeem(&path, &issued.code, 1_100)?,
             Redeem::Refused
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_full_paired_set_refuses_the_right_code_without_consuming_it() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(PAIRING_CODE_FILE_NAME);
+        let issued = PairingCodeFile::issue(&path, 600, "pair", 1_000)?;
+        // The right code against a full set: refused as such, kept whole.
+        assert_eq!(
+            PairingCodeFile::redeem_if(&path, &issued.code, 1_100, false)?,
+            Redeem::AtCapacity
+        );
+        let kept = PairingCodeFile::load(&path)?.expect("the code file stays");
+        assert_eq!(
+            kept.attempts_left, PAIRING_CODE_ATTEMPTS,
+            "no try was spent"
+        );
+        // A wrong guess against a full set is the ordinary refusal and
+        // still costs a try: the capacity answer never reaches a guesser.
+        let wrong = if issued.code == "000000" {
+            "000001"
+        } else {
+            "000000"
+        };
+        assert_eq!(
+            PairingCodeFile::redeem_if(&path, wrong, 1_100, false)?,
+            Redeem::Refused
+        );
+        assert_eq!(
+            PairingCodeFile::load(&path)?.expect("file").attempts_left,
+            PAIRING_CODE_ATTEMPTS - 1
+        );
+        // Once there is room, the same code pairs and is consumed.
+        assert_eq!(
+            PairingCodeFile::redeem_if(&path, &issued.code, 1_100, true)?,
+            Redeem::Accepted {
+                label: "pair".to_string()
+            }
+        );
+        assert!(!path.exists());
         Ok(())
     }
 

@@ -1475,18 +1475,40 @@ fn handle_pair<S: Write>(
     let Some(paths) = &state.cfg.pairing else {
         return refuse(stream, auth_tracker);
     };
-    let issued_for = match PairingCodeFile::redeem(&paths.code_path, &parsed.code, now_epoch_s()) {
-        Ok(Redeem::Accepted { label }) => label,
-        Ok(Redeem::Refused) => return refuse(stream, auth_tracker),
-        Err(err) => {
-            // The code's bookkeeping could not be written; refusing without
-            // counting the guess would make it free, and minting on top of
-            // a file we cannot update would be worse. Say so and stop.
-            log::error!("pairing refused: {err:#}");
-            write_json_response(stream, 500, r#"{"error":"internal_error"}"#)?;
-            return Ok(());
-        }
+    // The paired set is bounded (`pairing::PAIRED_TOKEN_LIMIT`): past the
+    // file's read bound every paired client would be refused at once. A
+    // full set refuses the ceremony BEFORE the code is consumed — and only
+    // to a caller holding the right code, so the answer is no oracle — and
+    // the log names the remedy. A set the kernel cannot read is left to
+    // `append` below, which says why as a 500.
+    let has_room = match ViewerTokenSet::load_kind(&paths.tokens_path, "paired token") {
+        Ok(set) => set.tokens.len() < pairing::PAIRED_TOKEN_LIMIT,
+        Err(_) => true,
     };
+    let issued_for =
+        match PairingCodeFile::redeem_if(&paths.code_path, &parsed.code, now_epoch_s(), has_room) {
+            Ok(Redeem::Accepted { label }) => label,
+            Ok(Redeem::Refused) => return refuse(stream, auth_tracker),
+            Ok(Redeem::AtCapacity) => {
+                log::warn!(
+                    "pairing refused: {} paired tokens are already issued (the limit); the code \
+                 is still valid — revoke one with `witness_api list-paired-tokens` and \
+                 `witness_api revoke-paired-token <id>` (`docker exec securacv unpair <id>`), \
+                 then enter the same code again",
+                    pairing::PAIRED_TOKEN_LIMIT
+                );
+                write_json_response(stream, 403, r#"{"error":"paired_token_limit"}"#)?;
+                return Ok(());
+            }
+            Err(err) => {
+                // The code's bookkeeping could not be written; refusing without
+                // counting the guess would make it free, and minting on top of
+                // a file we cannot update would be worse. Say so and stop.
+                log::error!("pairing refused: {err:#}");
+                write_json_response(stream, 500, r#"{"error":"internal_error"}"#)?;
+                return Ok(());
+            }
+        };
     let minted = match ViewerTokenSet::append(&paths.tokens_path, &label, "paired token") {
         Ok(minted) => minted,
         Err(err) => {

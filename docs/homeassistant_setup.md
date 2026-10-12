@@ -218,7 +218,10 @@ must use the **same MQTT broker** as Frigate and the sidecar.
    claimed the kernel so the bridge's own `pwk_*` MQTT entities step
    aside. Revoke the token any time with `docker exec securacv unpair <id>`
    (`unpair` alone lists the ids), or by removing the integration entry,
-   which revokes it for you. Until TLS lands for the sidecar, that token
+   which revokes it for you. A kernel keeps at most **32** paired tokens:
+   past that the pair form says so (*The kernel already holds its limit of
+   32 paired tokens*), the code is **not** consumed, and `unpair` of a stale
+   one lets the same code pair. Until TLS lands for the sidecar, that token
    crosses your LAN as plaintext HTTP, so keep port 8799 on your own
    network and never forward it from the internet
    ([the security model](security/SECURITY_MODEL.md#home-assistant-pairing-and-what-crosses-your-network)).
@@ -1946,6 +1949,15 @@ expired file is deleted on first touch. Malformed input (`400 bad_request`,
 not clear the address's strikes — only the first authenticated request with
 the new token does.
 
+Capacity: the paired set is bounded at **32 tokens** (`PAIRED_TOKEN_LIMIT`;
+the file is read under a 64 KiB bound, past which every paired client would
+be refused at once). A full set answers the **right** code with
+`403 {"error":"paired_token_limit"}` and leaves the code file and its
+attempt budget untouched — so the operator revokes one and enters the same
+code — while a wrong guess against a full set is still the constant 401 and
+a strike (the capacity answer never reaches a guesser). The integration
+shows it as its own form error naming `unpair`.
+
 Revocation: `DELETE /api/pair/<id>` (eight lowercase hex) answers
 `200 {"revoked":"<id>"}`; it is accepted with the capability token for any
 id, or with a paired token for **its own** id only — any other id is
@@ -1999,7 +2011,7 @@ app reads the file but has no control that mints one yet.
 |----------|--------|-------------|
 | `/health` | GET | Check daemon health (unauthenticated): `{"status":"ok"}` |
 | `/api/fleet` | GET, OPTIONS | The fleet roll-call the Witness Wall reads — coarse words only (name, online, chain verdict, product, presence/occupants/breathing while proven online); **no token**, an origin allow-list for browsers; under `WITNESS_API_FLEET_ROLLCALL=self` (the sidecar's default) only the kernel's own row; see [Witness Wall: the fleet roll-call](#witness-wall-the-fleet-roll-call) |
-| `/api/pair` | POST | Redeem a 6-digit pairing code for a paired bearer — no bearer token on this one route, the code in the body is the credential, and every refusal is the identical `401 invalid_pairing_code` and a strike ([Pairing](#pairing-the-docker-sidecar-and-home-assistant)) |
+| `/api/pair` | POST | Redeem a 6-digit pairing code for a paired bearer — no bearer token on this one route, the code in the body is the credential, and every refusal of a code is the identical `401 invalid_pairing_code` and a strike; the right code against a full set of 32 paired tokens is `403 paired_token_limit`, the code kept ([Pairing](#pairing-the-docker-sidecar-and-home-assistant)) |
 | `/api/pair/<id>` | DELETE | Revoke a paired token by its 8-hex id; capability token for any id, a paired token for its own id only |
 | `/api/identity` | GET | The kernel's identity, receipt-less: `v`, `device_id` (`pwk_…`), `verifying_key` (64 hex), `key_algorithm`, `kernel_version`, `ruleset_id`, `chain_length`, `latest_hash`, `last_verify` (`null`, or `at` as a bucket start, `bucket_size`, `ok`, `verdict`, `identity_verified` — the kernel's own self-check), `fleet_rollcall`, `paired_tokens`. The integration pins `verifying_key` from this answer (or from `/api/pair`), never from the MQTT announcement. Capability or paired token |
 | `/api/sign-announce` | POST | Sign the MQTT announcement for the bridge, which holds no key: body ≤ 2048 bytes, a JSON object without `sig` whose `device_id` and `verifying_key` are this kernel's; `{"sig":"<128 hex>"}`, Ed25519 over `securacv-announce\|v1\|` + the exact body bytes. Capability or paired token |

@@ -325,6 +325,9 @@ class KernelMock:
     bundle_filename: str = "securacv-events-1700000400.json"
     bundle_status: int = 200
     pair_status: int = 200
+    # The `error` word of a non-200 pair answer; None picks the kernel's
+    # default for the status (401 invalid_pairing_code, else forbidden).
+    pair_error: str | None = None
     pair_code_accepted: str = "483921"
     revoke_status: int = 200
     revoked: list[str] = field(default_factory=list)
@@ -443,7 +446,8 @@ class KernelMock:
 
     async def _pair(self, method: str, url: Any, data: Any) -> AiohttpClientMockResponse:
         if self.pair_status != 200:
-            return self._reply(method, url, self.pair_status, json_body={"error": "invalid_pairing_code" if self.pair_status == 401 else "forbidden"})
+            word = self.pair_error or ("invalid_pairing_code" if self.pair_status == 401 else "forbidden")
+            return self._reply(method, url, self.pair_status, json_body={"error": word})
         body = data if isinstance(data, dict) else json.loads(data or b"{}")
         if body.get("code") != self.pair_code_accepted:
             return self._reply(method, url, 401, json_body={"error": "invalid_pairing_code"})
