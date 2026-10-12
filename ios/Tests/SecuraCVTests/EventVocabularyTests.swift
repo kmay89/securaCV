@@ -223,10 +223,10 @@ final class EventVocabularyTests: XCTestCase {
     func testDictionaryEventsReadAsTheirLabels() {
         XCTAssertEqual(EventVocabulary.headline(forWire: "boundary_crossing_object_large",
                                                 zone: "driveway", deviceName: "Drive"),
-                       "Large object crossed boundary · driveway")
+                       "Person or vehicle · driveway")
         XCTAssertEqual(EventVocabulary.headline(forWire: "BoundaryCrossingObjectLarge",
                                                 zone: "", deviceName: "Drive"),
-                       "Large object crossed boundary")
+                       "Person or vehicle")
     }
 
     // MARK: - the future never breaks

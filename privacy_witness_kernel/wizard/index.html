@@ -1866,6 +1866,16 @@ async function statusRefresh() {
         ["Keep sealed events for", (o.retention_days || "—") + " days"],
         ["HA sensors", (o.mqtt_publish && o.mqtt_publish.enabled === false) ? "disabled" : "enabled"],
       ];
+      // The kernel's own printout of its identity (GET /api/identity, never a
+      // secret): the eight characters Home Assistant shows when it pairs and
+      // in Settings → Repairs → "witness key changed" — compare them here.
+      const k = data.kernel || {};
+      if (k.fingerprint) {
+        rows.push(["Witness key fingerprint", k.fingerprint + " — Home Assistant shows the same eight characters; compare them if Repairs says the key changed"]);
+      }
+      if (k.device_id) {
+        rows.push(["Kernel device id", k.device_id + (k.kernel_version ? " (kernel " + k.kernel_version + ")" : "")]);
+      }
       items.innerHTML = rows.map(([k, v]) =>
         `<div><strong>${escHtml(k)}:</strong> ${escHtml(v)}</div>`).join("");
       summary.classList.remove("hidden");

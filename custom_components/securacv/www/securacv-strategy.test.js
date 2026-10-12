@@ -89,7 +89,7 @@ function reg(entityId, translationKey, deviceId, extra) {
 function connectedHass(overrides) {
   const bucket = { start_epoch_s: 1760140800, size_s: 600 };
   const witnessAttrs = (zone) => ({
-    event_type: "boundary_crossing_object_large", friendly_event: "Large object crossed boundary",
+    event_type: "boundary_crossing_object_large", friendly_event: "Person or vehicle",
     zone_id: `zone:${zone}`, zone, time_bucket: bucket, confidence: 0.87, kernel_device_id: "pwk_1a2b3c4d",
     verification: "sealed", verified: false, trust_reason: "kernel_sealed", seq: 12,
     event_types: ["boundary_crossing_object_large", "boundary_crossing_object_small"],

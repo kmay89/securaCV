@@ -28,6 +28,7 @@ ingress path, so this server only ever sees bare paths ("/api/save").
 Query strings are stripped before routing.
 """
 
+import hashlib
 import http.server
 import importlib.util
 import ipaddress
@@ -298,6 +299,50 @@ def _canary_request(address: str, token: str, method: str, path: str,
         return {"ok": False, "error": f"Device HTTP error {exc.code}: {body_text}"}
     except Exception as exc:
         return {"ok": False, "error": f"Device unreachable: {exc}"}
+
+
+KERNEL_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+# How many hex characters of the key's SHA-256 a person is asked to compare
+# (the integration's pairing step and its Repairs "witness key changed" fix
+# flow show the same eight; `docker exec securacv pair` prints them too).
+KERNEL_FINGERPRINT_LENGTH = 8
+
+
+def kernel_key_fingerprint(verifying_key_hex: str) -> str:
+    """First 8 hex of SHA-256 over the 32 RAW key bytes — the one fingerprint
+    rule shared with witness_api issue-pairing-code, the sidecar's `pair` card
+    and custom_components/securacv/kernel_trust.py. Raises on a non-key."""
+    key = verifying_key_hex.strip().lower()
+    if not KERNEL_KEY_RE.fullmatch(key):
+        raise ValueError("kernel verifying key must be 64 hex characters")
+    return hashlib.sha256(bytes.fromhex(key)).hexdigest()[:KERNEL_FINGERPRINT_LENGTH]
+
+
+def _kernel_identity_summary() -> dict:
+    """The kernel's PUBLIC identity for the status panel, from GET /api/identity:
+    device id, key fingerprint and kernel version. This is what the integration's
+    Repairs "witness key changed" fix flow asks the person to compare against
+    "the kernel's own printout" — the Docker sidecar has `pair` and `doctor`
+    for that, the app has this panel. Never the key's seed, never a token;
+    best-effort (an unreachable kernel yields {})."""
+    result = _kernel_request("GET", "/api/identity")
+    data = result.get("data") if isinstance(result, dict) and result.get("ok") else None
+    if not isinstance(data, dict):
+        return {}
+    summary: dict = {}
+    device_id = data.get("device_id")
+    if isinstance(device_id, str) and device_id:
+        summary["device_id"] = device_id
+    key = data.get("verifying_key")
+    if isinstance(key, str):
+        try:
+            summary["fingerprint"] = kernel_key_fingerprint(key)
+        except ValueError:
+            pass
+    version = data.get("kernel_version")
+    if isinstance(version, str) and version:
+        summary["kernel_version"] = version
+    return summary
 
 
 def _kernel_request(method: str, path: str) -> dict:
@@ -1209,6 +1254,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 "configured": configured,
                 "options": public,
                 "integration": self._integration_state(public["install_integration"]),
+                "kernel": _kernel_identity_summary() if configured else {},
                 "blueprints": {"digest": DIGEST_BLUEPRINT_FILE.is_file()},
                 "links": dict(MY_HA_LINKS),
             }

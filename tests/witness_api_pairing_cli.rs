@@ -120,6 +120,44 @@ fn issue_prints_the_code_once_a_running_api_redeems_it_and_revoke_removes_it() -
     assert_eq!(receipt["verifying_key"], served_key.as_str());
     let fingerprint = key_fingerprint(&served_key)?;
     assert_eq!(receipt["fingerprint"], fingerprint.as_str());
+    // The receipt's keys, in the order the sidecar's `pair` reads them (its
+    // json_line_field runs over this line without jq): the shared vector
+    // tests/fixtures/ha_contract/pair.json holds the same line, and
+    // privacy_witness_kernel/tests/test_config_render.sh parses THAT with the
+    // lifted shell function — so the two sides meet in one file.
+    let fixture_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ha_contract/pair.json");
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(&fixture_path)?)?;
+    let vector_line = fixture["issue_pairing_code_stdout"]
+        .as_str()
+        .expect("stdout vector");
+    let keys_in = |line: &str| -> Vec<String> {
+        let mut found: Vec<(usize, String)> = Vec::new();
+        for key in [
+            "kernel",
+            "pairing_code",
+            "expires",
+            "attempts",
+            "device_id",
+            "verifying_key",
+            "fingerprint",
+        ] {
+            let needle = format!("\"{key}\":");
+            let at = line
+                .find(&needle)
+                .unwrap_or_else(|| panic!("{key} missing from {line}"));
+            found.push((at, key.to_string()));
+        }
+        found.sort();
+        found.into_iter().map(|(_, k)| k).collect()
+    };
+    assert_eq!(keys_in(printed.trim()), keys_in(vector_line));
+    let vector: Value = serde_json::from_str(vector_line)?;
+    assert_eq!(
+        vector.as_object().map(|o| o.len()),
+        receipt.as_object().map(|o| o.len()),
+        "the receipt grew or shrank: regenerate the vector and update pair's reader"
+    );
     // The human sentence names the fingerprint and the budget; the code is
     // on stderr as the operator's own echo (the daemon never logs it).
     let human = stderr(&out);

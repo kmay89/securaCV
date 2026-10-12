@@ -20,7 +20,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import stat
+import subprocess
 import zipfile
 from datetime import timedelta
 from pathlib import Path
@@ -100,6 +102,47 @@ def test_the_pack_is_private_atomic_and_holds_the_contract_s_members(tmp_path):
         assert zf.read("WITNESS_KEY.txt").decode() == (
             f"verifying_key={KEY}\nfingerprint={kernel_key_fingerprint(KEY)}\nkernel=pwk_1a2b3c4d\n"
         )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_the_viewer_s_zip_core_reads_the_pack_the_integration_writes(tmp_path):
+    """Contract C7, both ends: the zip this module writes is opened by the
+    offline viewer's own zip reader (viewer/zip_core.js, inlined into the
+    viewer the pack carries) — it finds the kernel-named bundle member, hands
+    back its bytes verbatim, and reads WITNESS_KEY.txt."""
+    zip_core = Path(__file__).resolve().parents[3] / "viewer" / "zip_core.js"
+    if not zip_core.is_file():
+        pytest.skip("viewer/zip_core.js lives at the repository root")
+    directory = tmp_path / "securacv" / "evidence"
+    viewer = tmp_path / "securacv-evidence-viewer.html"
+    viewer.write_text("<html>viewer</html>", encoding="utf-8")
+    readme = tmp_path / "evidence-README.txt"
+    readme.write_text("Open evidence_viewer.html offline.\n", encoding="utf-8")
+    composed = _compose(directory, "deadbeef", 1700000400, viewer_source=viewer, readme_source=readme)
+    zip_path = directory / composed.record.file
+
+    # Under `node -e`, the user arguments start at process.argv[1].
+    script = (
+        "const z = require(process.argv[1]);"
+        "const bytes = require('node:fs').readFileSync(process.argv[2]);"
+        "z.extractEvidence(new Uint8Array(bytes)).then((out) => {"
+        "  process.stdout.write(JSON.stringify({memberName: out.memberName, text: out.text,"
+        "    members: out.members, witnessKey: out.witnessKey}));"
+        "}).catch((e) => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });"
+    )
+    proc = subprocess.run(
+        ["node", "-e", script, str(zip_core), str(zip_path)],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["memberName"] == "securacv-events-1700000400.json"
+    assert out["text"].encode("utf-8") == BUNDLE, "the bundle, byte for byte"
+    assert sorted(out["members"]) == sorted(
+        ["securacv-events-1700000400.json", "evidence_viewer.html", "README.txt", "WITNESS_KEY.txt"]
+    )
+    assert out["witnessKey"]["verifying_key"] == KEY
+    assert out["witnessKey"]["fingerprint"] == kernel_key_fingerprint(KEY)
 
 
 def test_a_viewer_or_readme_w5_has_not_shipped_is_left_out_not_fatal(tmp_path):

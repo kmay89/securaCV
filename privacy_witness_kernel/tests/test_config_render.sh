@@ -388,6 +388,52 @@ else
     fail "entrypoint.sh: could not find the kernel config heredoc"
 fi
 
+# ---- the sidecar's pairing receipt reader (contract C2) ---------------------
+# `pair` parses the one JSON line `witness_api issue-pairing-code` prints with
+# json_line_field (the image has no jq). The shared seam vector
+# tests/fixtures/ha_contract/pair.json carries that line, and the Rust CLI
+# test (tests/witness_api_pairing_cli.rs) holds the real binary's stdout to the
+# same keys in the same order — so the lifted reader runs here over the SAME
+# bytes, and the four-line card the delta spells out is pinned as the script's
+# printf formats.
+PAIR_FIXTURE="$HERE/../../tests/fixtures/ha_contract/pair.json"
+if [ ! -f "$PAIR_FIXTURE" ]; then
+    echo "skip: pairing seam vector not carried beside this checkout ($PAIR_FIXTURE)"
+elif shell_function "$ENTRYPOINT_SH" json_line_field > "$TMP/json_line_field.sh"; then
+    ok "entrypoint.sh: json_line_field is a top-level function (liftable, so this test runs the real reader)"
+    receipt=$(jq -r '.issue_pairing_code_stdout' "$PAIR_FIXTURE")
+    read_field() {
+        env -i PATH="$PATH" bash -u -c 'source "$1"; json_line_field "$2" "$3"' _ \
+            "$TMP/json_line_field.sh" "$receipt" "$1"
+    }
+    assert_eq "$(jq -r '.code' "$PAIR_FIXTURE")" "$(read_field pairing_code)" \
+        "entrypoint.sh: json_line_field reads pairing_code from the receipt vector"
+    assert_eq "$(jq -r '.issue_pairing_code_stdout | fromjson | .expires' "$PAIR_FIXTURE")" \
+        "$(read_field expires)" \
+        "entrypoint.sh: json_line_field reads the integer expires from the receipt vector"
+    assert_eq "$(jq -r '.issue_pairing_code_stdout | fromjson | .attempts' "$PAIR_FIXTURE")" \
+        "$(read_field attempts)" \
+        "entrypoint.sh: json_line_field reads attempts from the receipt vector"
+    assert_eq "$(jq -r '.issue_pairing_code_stdout | fromjson | .fingerprint' "$PAIR_FIXTURE")" \
+        "$(read_field fingerprint)" \
+        "entrypoint.sh: json_line_field reads the key fingerprint the card prints"
+    assert_eq "" "$(read_field no_such_field)" \
+        "entrypoint.sh: json_line_field prints nothing for an absent field"
+    # The card (delta C2), as the script's own printf formats: code line,
+    # fingerprint line, URL line, the Home Assistant instruction.
+    assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" "printf 'SecuraCV pairing code: %s   (valid %s minutes, %s attempts)\n'")" \
+        "entrypoint.sh: pair card line 1 is the contract's code line"
+    assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" "printf 'Kernel key fingerprint: %s   (Home Assistant shows the same fingerprint before it pairs)\n'")" \
+        "entrypoint.sh: pair card line 2 is the contract's fingerprint line"
+    assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" "printf 'Kernel URL to confirm in Home Assistant: http://%s:%s\n'")" \
+        "entrypoint.sh: pair card line 3 is the contract's URL line"
+    assert_eq "$(jq -r '.pair_card[3]' "$PAIR_FIXTURE")" \
+        "$(code_lines "$ENTRYPOINT_SH" | sed -n "s/^[[:space:]]*printf '\(In Home Assistant: .*\)\\\\n'$/\1/p" | head -n1)" \
+        "entrypoint.sh: pair card line 4 is the contract's Home Assistant instruction, verbatim"
+else
+    fail "entrypoint.sh: could not lift json_line_field (the receipt reader must be a top-level function)"
+fi
+
 # ----------------------------------------------------------------------------
 if [ "$FAILURES" -gt 0 ]; then
     echo "$FAILURES config render check(s) failed" >&2
