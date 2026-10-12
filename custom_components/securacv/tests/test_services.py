@@ -1,13 +1,15 @@
-"""The securacv.* actions — the automation surface for watches.
+"""The securacv.* actions — watches, the chain walk and the evidence export.
 
-Three actions and no more: ``start_watch``, ``end_watch`` and
-``list_watches`` (response only). Before them nothing could end a watch
-early, although the design says ending "happens on an authenticated
-surface" and the voice answer at the cap told people to "end one on the
-dashboard", which had no such control. Pin / rotate / unpin are
-deliberately NOT actions (docs/device_trust.md, "Why pin, rotate and
-unpin are not actions"): an automation reacting to a key-mismatch
-notification must not be able to rotate the pin to the key it just saw.
+Five actions and no more: ``start_watch``, ``end_watch``, ``list_watches``
+(response only), ``verify`` and ``export_evidence``. Before the watch
+actions nothing could end a watch early, although the design says ending
+"happens on an authenticated surface" and the voice answer at the cap told
+people to "end one on the dashboard", which had no such control. Pin /
+rotate / unpin are deliberately NOT actions (docs/device_trust.md, "Why
+pin, rotate and unpin are not actions"): an automation reacting to a
+key-mismatch notification must not be able to rotate the pin to the key it
+just saw. ``verify`` and ``export_evidence`` only read: the walk against
+the pinned key, and the kernel's signed bundle into a pack.
 
 What is pinned here:
   - registration: exactly the three, once, from ``async_setup``, never fatal;
@@ -24,6 +26,7 @@ What is pinned here:
 
 from __future__ import annotations
 
+import asyncio
 import ast
 import json
 import logging
@@ -42,7 +45,7 @@ from .conftest import run
 from .test_intent_start_watch import DEVICES, GATE, _start  # noqa: E402
 
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse  # noqa: E402
-from homeassistant.exceptions import ServiceValidationError  # noqa: E402
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError  # noqa: E402
 
 from .. import (  # noqa: E402
     async_setup,
@@ -52,12 +55,23 @@ from .. import (  # noqa: E402
     watch_runtime,
     watches,
 )
+from ..api import (  # noqa: E402
+    BundleDownload,
+    SecuraCVApiAuthError,
+    SecuraCVApiConnectionError,
+    SecuraCVApiResponseError,
+)
 from ..const import (  # noqa: E402
     CONF_ENABLE_MQTT,
+    CONF_KERNEL_DEVICE_ID,
     CONF_SETUP_MODE,
     DOMAIN,
+    SETUP_MODE_BOTH,
     SETUP_MODE_MQTT,
+    VERIFY_TRIGGER_SERVICE,
 )
+from ..data import VerificationState  # noqa: E402
+from .conftest import make_entry, make_runtime  # noqa: E402
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 NOW = 1_700_000_000.0
@@ -98,23 +112,95 @@ def _hass(*, with_entry: bool = True) -> HomeAssistant:
     async def _unload(entry, platforms):
         return True
 
-    hass.config_entries = types.SimpleNamespace(
-        async_forward_entry_setups=_forward, async_unload_platforms=_unload
-    )
+    hass.config_entries.add(ENTRY)
     assert run(async_setup(hass, {})) is True
     if with_entry:
         assert run(async_setup_entry(hass, ENTRY)) is True
-        hass.data[DOMAIN]["e1"]["devices"] = dict(DEVICES)
+        ENTRY.runtime_data.devices.update(DEVICES)
     return hass
 
 
 def _call(hass, service: str, data: dict | None = None, *, call_cls=None):
     """Call a registered handler the way HA does. The conftest ServiceCall
     is the pre-2025.1 shape (no ``.hass``), the oldest this integration
-    supports, so every test here would fail on a handler that reads it."""
+    supports, so every test here would fail on a handler that reads it.
+    The kernel actions are coroutines (they do I/O); those are driven."""
     registered = hass.services.registered[(DOMAIN, service)]
     call_cls = call_cls or ServiceCall
-    return registered.func(call_cls(DOMAIN, service, data or {}, return_response=True))
+    result = registered.func(call_cls(DOMAIN, service, data or {}, return_response=True))
+    if asyncio.iscoroutine(result):
+        result = run(result)
+    return result
+
+
+# ── a kernel entry for the verify / export actions ──────────────────────
+
+KERNEL_DEVICE_ID = "pwk_1a2b3c4d"
+KERNEL_KEY = "ab" * 32
+
+
+class FakeVerifier:
+    """Stands in for kernel_verify.KernelVerifier: answers, or raises."""
+
+    def __init__(self, *, state=None, error=None) -> None:
+        self.state = state or VerificationState(
+            ok=True, verified_seq=3, verified_entries=3, verified_bucket_start=1_700_000_400,
+            walk_entries=2, head_seq=3,
+        )
+        self.error = error
+        self.triggers: list[str] = []
+
+    async def async_verify(self, trigger: str):
+        self.triggers.append(trigger)
+        if self.error is not None:
+            raise self.error
+        return self.state
+
+
+class FakeKernelApi:
+    """A kernel API for the export path: a canned bundle, or an error."""
+
+    def __init__(self, *, error=None, bundle: bytes | None = None) -> None:
+        self.error = error
+        self.bundle = bundle if bundle is not None else json.dumps(
+            {"artifact": {"batches": [{"buckets": [{"events": [{}, {}]}]}]}}
+        ).encode()
+        self.windows: list[int] = []
+
+    async def async_download_export_bundle(self, window_hours: int) -> BundleDownload:
+        self.windows.append(window_hours)
+        if self.error is not None:
+            raise self.error
+        return BundleDownload(filename="securacv-events-1700000400.json", content=self.bundle)
+
+
+def _kernel_hass(*entries_spec, verifier=None, api=None) -> HomeAssistant:
+    """A Home Assistant with securacv's actions registered and `n` kernel
+    entries (default one), each loaded with a fake coordinator, verifier and
+    API. `verifier` / `api` apply to the first entry."""
+    hass = HomeAssistant()
+    hass.data = {}
+    assert run(async_setup(hass, {})) is True
+    specs = list(entries_spec) or ["k1"]
+    for index, entry_id in enumerate(specs):
+        coordinator = types.SimpleNamespace(
+            pinned_key=KERNEL_KEY, kernel_available=True, key_mismatch=False, data={}
+        )
+        runtime = make_runtime(
+            hass,
+            entry_id,
+            setup_mode=SETUP_MODE_BOTH,
+            coordinator=coordinator,
+            api=(api if index == 0 and api is not None else FakeKernelApi()),
+            verifier=(verifier if index == 0 and verifier is not None else FakeVerifier()),
+        )
+        make_entry(
+            hass,
+            entry_id,
+            data={CONF_SETUP_MODE: SETUP_MODE_BOTH, CONF_KERNEL_DEVICE_ID: KERNEL_DEVICE_ID},
+            runtime=runtime,
+        )
+    return hass
 
 
 def _bucket(hass) -> list:
@@ -130,20 +216,29 @@ def _stored(hass) -> list:
 # ── Registration ────────────────────────────────────────────────────────
 
 
-def test_async_setup_registers_exactly_the_three_watch_actions() -> None:
+def test_async_setup_registers_exactly_the_five_actions() -> None:
     hass = _hass(with_entry=False)
     assert set(hass.services.registered) == {
         (DOMAIN, "start_watch"),
         (DOMAIN, "end_watch"),
         (DOMAIN, "list_watches"),
+        (DOMAIN, "verify"),
+        (DOMAIN, "export_evidence"),
     }
     registered = hass.services.registered
     assert registered[(DOMAIN, "start_watch")].supports_response == SupportsResponse.OPTIONAL
     assert registered[(DOMAIN, "end_watch")].supports_response == SupportsResponse.OPTIONAL
     assert registered[(DOMAIN, "list_watches")].supports_response == SupportsResponse.ONLY
+    assert registered[(DOMAIN, "verify")].supports_response == SupportsResponse.OPTIONAL
+    assert registered[(DOMAIN, "export_evidence")].supports_response == SupportsResponse.OPTIONAL
     assert registered[(DOMAIN, "start_watch")].schema is services.START_WATCH_SCHEMA
     assert registered[(DOMAIN, "end_watch")].schema is services.END_WATCH_SCHEMA
     assert registered[(DOMAIN, "list_watches")].schema is services.LIST_WATCHES_SCHEMA
+    assert registered[(DOMAIN, "verify")].schema is services.VERIFY_SCHEMA
+    assert registered[(DOMAIN, "export_evidence")].schema is services.EXPORT_EVIDENCE_SCHEMA
+    # The kernel actions do I/O: coroutine handlers, never @callback.
+    assert asyncio.iscoroutinefunction(registered[(DOMAIN, "verify")].func)
+    assert asyncio.iscoroutinefunction(registered[(DOMAIN, "export_evidence")].func)
 
 
 def test_registration_happens_once() -> None:
@@ -168,11 +263,15 @@ def test_a_failure_to_register_never_fails_setup(monkeypatch, caplog) -> None:
     assert any("actions not registered" in r.getMessage() for r in caplog.records)
 
 
-def test_the_vocabulary_is_watches_only_and_nothing_else_registers_actions() -> None:
+def test_the_vocabulary_is_the_five_and_nothing_else_registers_actions() -> None:
     """Action names are a compatibility promise, and trust decisions are
-    not automatable: pin / rotate / unpin stay in the options flow. A new
-    registration anywhere else in the package would bypass this list."""
-    assert services.SERVICES == ("start_watch", "end_watch", "list_watches")
+    not automatable: pin / rotate / unpin stay in the options flow and the
+    Repairs fix flow; verify and export only read. A new registration
+    anywhere else in the package (button.py included — the buttons call the
+    same coroutines) would bypass this list."""
+    assert services.SERVICES == (
+        "start_watch", "end_watch", "list_watches", "verify", "export_evidence"
+    )
     for name in services.SERVICES:
         assert not re.search(r"pin|rotate|trust|key", name), name
 
@@ -188,8 +287,9 @@ def test_the_vocabulary_is_watches_only_and_nothing_else_registers_actions() -> 
 
 
 class _CallBefore2025_1:
-    """homeassistant.core.ServiceCall as 2024.4.1 through 2024.12 define
-    it: slotted, and no ``hass`` (hacs.json's minimum is 2024.4.1)."""
+    """homeassistant.core.ServiceCall as cores through 2024.12 defined
+    it: slotted, and no ``hass``. Below hacs.json's floor now, kept so
+    the handlers provably never read ``call.hass``."""
 
     __slots__ = ("domain", "service", "data", "context", "return_response")
 
@@ -534,7 +634,7 @@ def test_every_action_refuses_once_no_entry_runs_the_tick(delivered) -> None:
     assert [w["label"] for w in _bucket(hass)] == ["the gate canary"], "nothing changed"
 
     assert run(async_setup_entry(hass, ENTRY)) is True
-    hass.data[DOMAIN]["e1"]["devices"] = dict(DEVICES)
+    ENTRY.runtime_data.devices.update(DEVICES)
     rows = _call(hass, "list_watches")["watches"]
     assert [row["label"] for row in rows] == ["the gate canary"], "the roster is still there"
 
@@ -542,6 +642,7 @@ def test_every_action_refuses_once_no_entry_runs_the_tick(delivered) -> None:
 def test_one_entry_unloading_leaves_the_other_s_tick_hosting() -> None:
     hass = _hass()
     other = types.SimpleNamespace(entry_id="e2", data=dict(ENTRY.data))
+    hass.config_entries.add(other)
     assert run(async_setup_entry(hass, other)) is True
     assert run(async_unload_entry(hass, ENTRY)) is True
     assert watch_runtime.watches_hosted(hass)
@@ -632,6 +733,8 @@ def test_services_yaml_strings_and_schemas_name_the_same_fields() -> None:
         "start_watch": services.START_WATCH_SCHEMA,
         "end_watch": services.END_WATCH_SCHEMA,
         "list_watches": services.LIST_WATCHES_SCHEMA,
+        "verify": services.VERIFY_SCHEMA,
+        "export_evidence": services.EXPORT_EVIDENCE_SCHEMA,
     }
     for action in services.SERVICES:
         assert declared[action] == _schema_fields(schemas[action]), action
@@ -647,3 +750,137 @@ def test_the_concern_choices_are_the_engine_s_concerns() -> None:
     assert tuple(concern.container) == watches.CONCERNS
     text = (PACKAGE_DIR / "services.yaml").read_text(encoding="utf-8")
     assert tuple(re.findall(r"- value: ([a-z]+)", text)) == watches.CONCERNS
+
+
+def test_export_evidence_declares_the_config_entry_selector_and_the_window() -> None:
+    """The two kernel actions target a kernel by config entry (the selector
+    the frontend renders as a picker) and the export window is bounded in
+    the file the frontend reads, not only in the handler."""
+    text = (PACKAGE_DIR / "services.yaml").read_text(encoding="utf-8")
+    export = text[text.index("\nexport_evidence:") :]
+    assert "config_entry:" in export and "integration: securacv" in export
+    assert re.search(r"min: 1\n\s+max: 720", export)
+    verify = text[text.index("\nverify:") : text.index("\nexport_evidence:")]
+    assert "config_entry:" in verify and "integration: securacv" in verify
+
+
+# ── verify ───────────────────────────────────────────────────────────────
+
+
+def test_verify_runs_the_entry_s_walk_and_shapes_the_response() -> None:
+    verifier = FakeVerifier()
+    hass = _kernel_hass(verifier=verifier)
+    response = _call(hass, "verify")
+    assert verifier.triggers == [VERIFY_TRIGGER_SERVICE]
+    assert response["chain_valid"] is True
+    assert response["events_verified"] == 2 and response["verified_entries"] == 3
+    assert response["verified_seq"] == 3
+    assert response["verified_bucket_start"] == 1_700_000_400
+    assert response["verified_bucket_size"] == 600
+    assert response["kernel_device_id"] == KERNEL_DEVICE_ID
+    assert response["error"] is None and response["key_mismatch"] is False
+    assert "2 new entries verified" in response["verdict"]
+    json.dumps(response)
+
+
+def test_verify_targets_the_named_entry_when_several_have_a_kernel() -> None:
+    first = FakeVerifier()
+    hass = _kernel_hass("k1", "k2", verifier=first)
+    with pytest.raises(ServiceValidationError, match="say which one"):
+        _call(hass, "verify")
+    response = _call(hass, "verify", {"entry_id": "k1"})
+    assert first.triggers == [VERIFY_TRIGGER_SERVICE]
+    assert response["chain_valid"] is True
+    with pytest.raises(ServiceValidationError, match="not loaded"):
+        _call(hass, "verify", {"entry_id": "k9"})
+
+
+def test_verify_without_any_kernel_entry_refuses_by_name() -> None:
+    hass = _hass()  # the mqtt-only entry: no coordinator
+    with pytest.raises(ServiceValidationError, match="no sealed log"):
+        _call(hass, "verify")
+
+
+def test_verify_reports_a_failed_walk_as_a_response_not_an_error() -> None:
+    state = VerificationState(ok=False, error="sealed_events integrity check failed at index 1: "
+                              "prev_hash mismatch", failed_seq=2, verified_seq=1)
+    hass = _kernel_hass(verifier=FakeVerifier(state=state))
+    response = _call(hass, "verify")
+    assert response["chain_valid"] is False
+    assert "prev_hash mismatch" in response["verdict"]
+    assert response["error"] == state.error
+
+
+@pytest.mark.parametrize(
+    ("error", "match"),
+    [
+        (SecuraCVApiConnectionError("unable to reach API"), "did not answer"),
+        (SecuraCVApiAuthError("unauthorized"), "rejected Home Assistant"),
+        (SecuraCVApiResponseError("unexpected status: 500"), "unexpected status: 500"),
+    ],
+)
+def test_verify_translates_kernel_failures(error, match) -> None:
+    hass = _kernel_hass(verifier=FakeVerifier(error=error))
+    with pytest.raises(HomeAssistantError, match=match) as info:
+        _call(hass, "verify")
+    assert not isinstance(info.value, ServiceValidationError), "a failure, not a refusal"
+    assert info.value.translation_domain == DOMAIN
+
+
+# ── export_evidence ──────────────────────────────────────────────────────
+
+
+def test_export_evidence_defaults_to_24_hours_and_returns_the_pack(monkeypatch) -> None:
+    api = FakeKernelApi()
+    hass = _kernel_hass(api=api)
+    response = _call(hass, "export_evidence")
+    assert api.windows == [24]
+    assert set(response) == {
+        "export_id", "file", "url", "sha256", "events", "window_hours", "kernel_device_id"
+    }
+    assert re.fullmatch(r"[0-9a-f]{8}", response["export_id"])
+    assert response["file"].endswith(f"-{response['export_id']}.zip")
+    assert response["url"].startswith(f"/api/securacv/evidence/{response['export_id']}?authSig=")
+    assert response["events"] == 2 and response["window_hours"] == 24
+    assert response["kernel_device_id"] == KERNEL_DEVICE_ID
+    json.dumps(response)
+
+
+def test_export_evidence_takes_the_window_and_bounds_it() -> None:
+    api = FakeKernelApi()
+    hass = _kernel_hass(api=api)
+    assert _call(hass, "export_evidence", {"window_hours": 168})["window_hours"] == 168
+    assert _call(hass, "export_evidence", {"window_hours": "72"})["window_hours"] == 72
+    assert api.windows == [168, 72]
+    for bad in (0, 721, "soon", True, -5):
+        with pytest.raises(ServiceValidationError, match="whole number of hours"):
+            _call(hass, "export_evidence", {"window_hours": bad})
+    assert api.windows == [168, 72], "a refused window never reaches the kernel"
+
+
+@pytest.mark.parametrize(
+    ("error", "match"),
+    [
+        (SecuraCVApiConnectionError("unable to reach API"), "did not answer"),
+        (SecuraCVApiAuthError("unauthorized"), "rejected Home Assistant"),
+        (SecuraCVApiResponseError("export bundle too large: 9 bytes"), "too large"),
+    ],
+)
+def test_export_evidence_translates_kernel_failures(error, match) -> None:
+    hass = _kernel_hass(api=FakeKernelApi(error=error))
+    with pytest.raises(HomeAssistantError, match=match) as info:
+        _call(hass, "export_evidence")
+    assert not isinstance(info.value, ServiceValidationError)
+
+
+def test_export_evidence_translates_a_write_failure(monkeypatch) -> None:
+    from .. import evidence
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(evidence, "compose_export", _boom)
+    hass = _kernel_hass()
+    with pytest.raises(HomeAssistantError, match="disk full") as info:
+        _call(hass, "export_evidence")
+    assert info.value.translation_key == "export_write_failed"

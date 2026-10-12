@@ -47,7 +47,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .test_mqtt_payload_hardening import HomeAssistant  # noqa: F401  (platform stubs)
-from .conftest import run
+from .conftest import make_runtime, run
 
 from .. import _async_health_for_tofu, async_record_verify
 from .. import sensor as sensor_platform
@@ -133,16 +133,8 @@ def _setup() -> tuple[_Hass, TrustStore]:
     hass = _Hass()
     store = TrustStore(hass, entry_id="e1")
     run(store.async_load())
-    hass.data = {
-        DOMAIN: {
-            "e1": {
-                "trust_store": store,
-                "verify": {},
-                "replay": {},
-                "mismatch_notified": set(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
+    ENTRY.runtime_data = make_runtime(hass, trust_store=store)
     return hass, store
 
 
@@ -379,7 +371,7 @@ def test_one_mismatch_notice_per_fingerprint_whatever_its_case():
             ),
         )
     assert len(hass.notifications) == 1
-    assert hass.data[DOMAIN]["e1"]["mismatch_notified"] == {(DEVICE_ID, WAP_FP.lower())}
+    assert ENTRY.runtime_data.mismatch_notified == {(DEVICE_ID, WAP_FP.lower())}
 
 
 # ─── HA22: a 64-character key that is not 64 hex digits never reaches the pin task ──

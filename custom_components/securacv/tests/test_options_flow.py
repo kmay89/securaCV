@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from . import conftest  # noqa: F401  (installs/augments ha stubs at import time)
-from .conftest import run
+from .conftest import make_runtime, run
 
 from homeassistant.core import HomeAssistant
 
@@ -28,6 +28,7 @@ from ..config_flow import (
     PIN_ACTION_ROTATE,
     PIN_ACTION_UNPIN,
     SecuraCVConfigFlow,
+    OPTIONS_SETTINGS,
     SecuraCVOptionsFlow,
 )
 from ..const import DOMAIN
@@ -46,19 +47,26 @@ KEY_B = "22" * 32
 
 
 def _flow(*, with_store: bool = True, notified=None):
-    """An options flow over a fresh entry slice. Returns (flow, store, entry_data)."""
+    """An options flow over a fresh entry. Returns (flow, store, runtime).
+
+    Without a store the entry carries no runtime at all — what the flow
+    sees when the entry failed to set up."""
     hass = HomeAssistant()
     entry = SimpleNamespace(entry_id="e1", data={}, options={}, unique_id=None)
-    entry_data: dict = {"mismatch_notified": set(notified or ())}
+    hass.data = {DOMAIN: {}}
     store = None
+    runtime = None
     if with_store:
         store = TrustStore(hass, entry_id="e1")
         run(store.async_load())
-        entry_data["trust_store"] = store
-    hass.data = {DOMAIN: {"e1": entry_data}}
-    flow = SecuraCVOptionsFlow(entry)
+        runtime = make_runtime(hass, trust_store=store, mismatch_notified=set(notified or ()))
+        entry.runtime_data = runtime
+    hass.config_entries.add(entry)
+    flow = SecuraCVOptionsFlow()
     flow.hass = hass
-    return flow, store, entry_data
+    # What the options-flow manager does on start: the handler is the entry id.
+    flow.handler = entry.entry_id
+    return flow, store, runtime
 
 
 def _keypair(seed: bytes):
@@ -89,11 +97,15 @@ def test_configure_button_opens_the_trust_menu():
     entry = SimpleNamespace(entry_id="e1", data={}, options={})
     flow = SecuraCVConfigFlow.async_get_options_flow(entry)
     assert isinstance(flow, SecuraCVOptionsFlow)
+    # The entry is never stored on the flow: `config_entry` is the core's
+    # property (resolved from the handler), so the deprecated pattern of
+    # assigning it in __init__ cannot come back unnoticed.
+    assert "_config_entry" not in vars(flow) and "config_entry" not in vars(flow)
 
     result = run(flow.async_step_init())
     assert result["type"] == "menu"
     assert result["step_id"] == "init"
-    assert result["menu_options"] == [PIN_ACTION_PIN, PIN_ACTION_ROTATE, PIN_ACTION_UNPIN]
+    assert result["menu_options"] == [PIN_ACTION_PIN, PIN_ACTION_ROTATE, PIN_ACTION_UNPIN, OPTIONS_SETTINGS]
 
 
 # ---------------------------------------------------------------------------
@@ -170,12 +182,12 @@ def test_pin_clears_the_notification_dedup_like_rotate_and_unpin():
 
     result = run(flow.async_step_pin({CONF_PIN_DEVICE_ID: DEVICE, CONF_PIN_PUBKEY_HEX: KEY_B}))
     assert result["type"] == "create_entry"
-    assert entry_data["mismatch_notified"] == {("other-dev", "ff" * 8)}
+    assert entry_data.mismatch_notified == {("other-dev", "ff" * 8)}
 
     # First-time pins clear too — same path, no pre-existing pin.
     flow, store, entry_data = _flow(notified={("fresh-dev", "aa" * 8)})
     run(flow.async_step_pin({CONF_PIN_DEVICE_ID: "fresh-dev", CONF_PIN_PUBKEY_HEX: KEY_A}))
-    assert entry_data["mismatch_notified"] == set()
+    assert entry_data.mismatch_notified == set()
 
 
 def test_pin_without_a_trust_store_reports_it_instead_of_crashing():
@@ -237,7 +249,7 @@ def test_rotate_replaces_the_key_and_a_real_signature_follows():
     # ...and the OLD key no longer verifies: rotation is a replacement.
     assert verify_chain(store, DEVICE, _signed_chain(priv_a, pub_a, 6)).reason == "mismatch"
 
-    assert entry_data["mismatch_notified"] == {("other-dev", "ff" * 8)}
+    assert entry_data.mismatch_notified == {("other-dev", "ff" * 8)}
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +268,7 @@ def test_unpin_drops_the_pin_and_clears_the_notification_dedup():
     assert store.is_pinned("other-dev"), "unpin is per device"
     # Without this a spoofed fp seen before the unpin would be suppressed
     # forever after a re-pin — the dedup key must go with the pin.
-    assert entry_data["mismatch_notified"] == {("other-dev", "bb" * 8)}
+    assert entry_data.mismatch_notified == {("other-dev", "bb" * 8)}
 
     # A second unpin of the same device is an error, not a silent no-op.
     result = run(flow.async_step_unpin({CONF_PIN_DEVICE_ID: DEVICE}))

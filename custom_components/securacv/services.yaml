@@ -1,8 +1,10 @@
-# The securacv.* actions. Watches only — pinning, rotating and unpinning a
-# device key stay human-only in the options flow (docs/device_trust.md,
-# "Why pin, rotate and unpin are not actions"). The names and descriptions
-# are repeated in strings.json / translations/en.json, which is what Home
-# Assistant renders; keep the three in step.
+# The securacv.* actions: the three watch actions, the chain walk and the
+# evidence export. Pinning, rotating and unpinning a device key stay
+# human-only in the options flow and the Repairs fix flow
+# (docs/device_trust.md, "Why pin, rotate and unpin are not actions");
+# services never mutate trust. The names and descriptions are repeated in
+# strings.json / translations/en.json, which is what Home Assistant renders;
+# keep the three in step.
 
 start_watch:
   name: Start a watch
@@ -75,3 +77,54 @@ list_watches:
   description: >-
     Returns the watches currently running, each with its state, what it is
     bound to and how many days it has left. Response only.
+
+verify:
+  name: Verify the witness chain
+  description: >-
+    Walks the kernel's sealed log now and checks every entry's hash link
+    and Ed25519 signature against the key Home Assistant pinned when it
+    connected. Only this walk earns an event its "Verified" mark; the
+    kernel's own self-check never does. Returns the verdict, how many new
+    entries verified and the bucket the walk ran in.
+  fields:
+    entry_id:
+      name: Kernel
+      description: >-
+        Which SecuraCV entry to verify, when more than one has a witness
+        kernel. The only one if left out.
+      required: false
+      selector:
+        config_entry:
+          integration: securacv
+
+export_evidence:
+  name: Export evidence
+  description: >-
+    Downloads the kernel's signed evidence bundle for the last N hours and
+    writes ONE zip under the configuration directory (securacv/evidence,
+    readable by Home Assistant only): the bundle verbatim, the offline
+    viewer, a README for the recipient and the witness key. A persistent
+    notification carries a download link valid 24 hours; the pack is also
+    under Media → SecuraCV evidence. Nothing is added to, removed from or
+    re-serialized in the bundle.
+  fields:
+    window_hours:
+      name: Window
+      description: How far back, in whole hours (1–720). 24 if left out.
+      required: false
+      default: 24
+      selector:
+        number:
+          min: 1
+          max: 720
+          mode: box
+          unit_of_measurement: h
+    entry_id:
+      name: Kernel
+      description: >-
+        Which SecuraCV entry to export from, when more than one has a
+        witness kernel. The only one if left out.
+      required: false
+      selector:
+        config_entry:
+          integration: securacv

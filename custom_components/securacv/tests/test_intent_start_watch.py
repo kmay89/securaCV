@@ -21,7 +21,7 @@ import types
 from datetime import datetime
 
 from . import conftest  # noqa: F401  (installs the base HA stubs)
-from .conftest import run
+from .conftest import make_entry, make_runtime, run
 
 
 def _install_intent_stubs() -> None:
@@ -77,7 +77,9 @@ class _Response:
 
 def _hass() -> HomeAssistant:
     hass = HomeAssistant()
-    hass.data = {DOMAIN: {"e1": {"devices": DEVICES, "verify": {}}}}
+    hass.data = {DOMAIN: {}}
+    # A loaded entry whose runtime carries the fleet the voice binds against.
+    make_entry(hass, runtime=make_runtime(hass, devices=dict(DEVICES)))
     return hass
 
 

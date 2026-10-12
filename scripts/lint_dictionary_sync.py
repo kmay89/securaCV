@@ -334,6 +334,24 @@ def main() -> int:
     compare("timeline-card.js EVENT_TYPE_METADATA keys vs dictionary",
             ev_ids, brace_object_keys(card_js, r"EVENT_TYPE_METADATA\s*=\s*\{", "timeline-card.js", "EVENT_TYPE_METADATA"))
 
+    # --- The HA event platform derives its event_types, never retypes them ---
+    # custom_components/securacv/event.py builds `event_types` from
+    # const.WITNESS_EVENT_TYPES (tuple(EVENT_TYPE_METADATA), checked above).
+    # A literal id in that module would be a second copy of the vocabulary
+    # with no linter on it, so the module may not spell any event type.
+    event_rel = "custom_components/securacv/event.py"
+    event_py = read(event_rel)
+    if "WITNESS_EVENT_TYPES" not in event_py:
+        err(f"[drift] {event_rel} does not read const.WITNESS_EVENT_TYPES for its event_types")
+    for ev_id in ev_ids:
+        if re.search(r"""(?<![A-Za-z0-9_])["']""" + re.escape(ev_id) + r"""["']""", event_py):
+            err(f"[literal] {event_rel} spells event type {ev_id!r} itself; derive it from "
+                "const.WITNESS_EVENT_TYPES instead")
+    for ev_variant in ev_variants:
+        if re.search(r"""["']""" + re.escape(ev_variant) + r"""["']""", event_py):
+            err(f"[literal] {event_rel} spells the Rust variant {ev_variant!r}; the platform "
+                "folds wire spellings through const.normalize_event_type")
+
     # --- Offline viewer's scrub-timeline mirror (viewer/timeline_core.js) ---
     # Keys must match the dictionary ids; the labels are pinned to the
     # dictionary by viewer/timeline_core.test.js, which runs in viewer.yml.

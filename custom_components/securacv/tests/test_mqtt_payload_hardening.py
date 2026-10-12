@@ -25,6 +25,7 @@ import sys
 import types
 
 from . import conftest  # noqa: F401  (installs the base HA stubs)
+from .conftest import make_runtime
 
 
 def _install_platform_stubs() -> None:
@@ -116,8 +117,15 @@ def _msg(payload) -> types.SimpleNamespace:
 
 
 def _hass(entry_data: dict | None = None) -> HomeAssistant:
+    """A Home Assistant, with ENTRY's runtime built from `entry_data` (the
+    runtime's field names) or, with None, with no runtime at all — the
+    state a callback sees after its entry unloaded."""
     hass = HomeAssistant()
-    hass.data = {DOMAIN: {} if entry_data is None else {"e1": entry_data}}
+    hass.data = {DOMAIN: {}}
+    if entry_data is None:
+        ENTRY.__dict__.pop("runtime_data", None)
+    else:
+        ENTRY.runtime_data = make_runtime(hass, **entry_data)
     return hass
 
 
