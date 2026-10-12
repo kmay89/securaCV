@@ -15,7 +15,7 @@ import json
 from types import SimpleNamespace
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
-from .conftest import run
+from .conftest import make_runtime, run
 
 from homeassistant.core import HomeAssistant
 
@@ -57,16 +57,8 @@ def _setup():
     hass = _Hass()
     store = TrustStore(hass, entry_id="e1")
     run(store.async_load())
-    hass.data = {
-        DOMAIN: {
-            "e1": {
-                "trust_store": store,
-                "verify": {},
-                "replay": {},
-                "mismatch_notified": set(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
+    ENTRY.runtime_data = make_runtime(hass, trust_store=store)
     return hass, store, _async_health_for_tofu(hass, ENTRY)
 
 
@@ -117,9 +109,9 @@ def test_a_changed_key_is_not_re_pinned_and_verifies_as_a_mismatch():
     # ...and recording it warns loudly exactly once per (device, fp).
     async_record_verify(hass, ENTRY, "canary01", verdict)
     async_record_verify(hass, ENTRY, "canary01", verdict)
-    entry_data = hass.data[DOMAIN]["e1"]
-    assert entry_data["verify"]["canary01"]["reason"] == "mismatch"
-    assert entry_data["mismatch_notified"] == {("canary01", fp_b)}
+    runtime = ENTRY.runtime_data
+    assert runtime.verify["canary01"]["reason"] == "mismatch"
+    assert runtime.mismatch_notified == {("canary01", fp_b)}
     assert len(hass.notifications) == 1
     note = hass.notifications[0]
     assert (note["domain"], note["service"]) == ("persistent_notification", "create")

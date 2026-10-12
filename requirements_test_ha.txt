@@ -1,0 +1,14 @@
+# The real-Home-Assistant test lane (tests/ha): the CURRENT cell.
+# pytest-homeassistant-custom-component pins the Home Assistant release it was
+# cut for (and pytest, pytest-asyncio, syrupy, freezegun, aiohttp...), so this
+# one line decides which core the lane runs on. The floor cell — the release
+# hacs.json names — is pinned in .github/workflows/python.yml's matrix, which
+# installs this file minus the plugin line and the floor plugin instead.
+#
+# Install (Python 3.14, the interpreter Home Assistant itself requires):
+#   pip install -r requirements_test_ha.txt
+#   pytest -c tests/ha/pytest.ini --confcutdir=tests/ha tests/ha
+pytest-homeassistant-custom-component==0.13.372   # Home Assistant 2026.10.1
+paho-mqtt==2.1.0   # the mqtt integration's own requirement (mqtt_mock drives it; tests skip pip)
+mypy==2.3.1        # the same pin as requirements_test.txt; run against the real core on 3.14
+ruff==0.16.9

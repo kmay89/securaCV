@@ -32,7 +32,7 @@ blueprint:
   domain: automation
   author: "ERRERlabs"
   homeassistant:
-    min_version: "2024.6.0"
+    min_version: "2026.5.0"
   source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml"
 
   input:
@@ -126,14 +126,25 @@ blueprint:
           multiple: false
       default: []
 
-    notify_service:
-      name: "Notification Service"
+    notify_device:
+      name: "Phone (Home Assistant Companion app)"
       description: >-
-        The notification service to use
-        (e.g. notify.mobile_app_your_phone, notify.telegram, notify.pushover)
+        The device that runs the Companion app. Leave it unset only if you fill
+        in a notification service below.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+      default: false
+
+    notify_service:
+      name: "Notification service (optional override)"
+      description: >-
+        Any notify service to use instead of the phone above, e.g.
+        notify.family_phones, notify.telegram. Leave empty to notify the phone.
       selector:
         text:
-      default: "notify.mobile_app"
+      default: ""
 
     offline_delay:
       name: "Offline Delay"
@@ -142,6 +153,12 @@ blueprint:
         duration:
       default:
         minutes: 5
+
+variables:
+  notify_device: !input notify_device
+  notify_service: !input notify_service
+  notify_target: >-
+    {{ notify_service if notify_service else 'notify.mobile_app_' ~ (device_attr(notify_device, 'name') | slugify) }}
 
 trigger:
   - platform: state
@@ -194,7 +211,7 @@ action:
           - condition: trigger
             id: smoke
         sequence:
-          - service: !input notify_service
+          - service: "{{ notify_target }}"
             data:
               title: "🔥 SMOKE ALARM HEARD"
               message: >-
@@ -216,7 +233,7 @@ action:
           - condition: trigger
             id: co
         sequence:
-          - service: !input notify_service
+          - service: "{{ notify_target }}"
             data:
               title: "⚠️ CO ALARM HEARD"
               message: >-
@@ -239,7 +256,7 @@ action:
           - condition: trigger
             id: tamper
         sequence:
-          - service: !input notify_service
+          - service: "{{ notify_target }}"
             data:
               title: "SecuraCV Tamper Alert"
               message: >-
@@ -253,7 +270,7 @@ action:
           - condition: trigger
             id: power_loss
         sequence:
-          - service: !input notify_service
+          - service: "{{ notify_target }}"
             data:
               title: "SecuraCV Power Event"
               message: >-
@@ -268,7 +285,7 @@ action:
           - condition: trigger
             id: chain_fail
         sequence:
-          - service: !input notify_service
+          - service: "{{ notify_target }}"
             data:
               title: "SecuraCV Chain Integrity Failure"
               message: >-
@@ -282,7 +299,7 @@ action:
           - condition: trigger
             id: offline
         sequence:
-          - service: !input notify_service
+          - service: "{{ notify_target }}"
             data:
               title: "SecuraCV Device Offline"
               message: >-
@@ -295,7 +312,7 @@ action:
           - condition: trigger
             id: gps_lost
         sequence:
-          - service: !input notify_service
+          - service: "{{ notify_target }}"
             data:
               title: "SecuraCV GPS Fix Lost"
               message: >-

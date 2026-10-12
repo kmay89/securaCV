@@ -33,11 +33,15 @@ _install_platform_stubs()
 
 from .. import binary_sensor as bs_platform  # noqa: E402
 from .. import const  # noqa: E402
+from .. import event as event_platform  # noqa: E402
 from ..const import (  # noqa: E402
     ALL_TAMPER_TYPES,
     ALL_TRANSPORTS,
+    EVENT_TYPE_METADATA,
     FUTURE_TAMPER_TYPES,
     FUTURE_TRANSPORTS,
+    VERIFICATION_EVENT_TYPES,
+    WITNESS_EVENT_TYPES,
 )
 
 
@@ -113,4 +117,24 @@ def test_transport_sensor_table_matches_the_advertised_list() -> None:
     assert set(bs_platform.TRANSPORT_SENSORS) == set(ALL_TRANSPORTS), (
         "binary_sensor.TRANSPORT_SENSORS must have exactly one row per "
         "ALL_TRANSPORTS entry"
+    )
+
+
+# ─── the event entities' types are the advertised lists, derived ──────
+
+
+def test_tamper_event_types_are_the_advertised_tamper_list() -> None:
+    assert event_platform.SecuraCVCanaryTamperEventEntity._attr_event_types == list(
+        ALL_TAMPER_TYPES
+    )
+    assert set(event_platform.SecuraCVCanaryTamperEventEntity._attr_event_types).isdisjoint(
+        FUTURE_TAMPER_TYPES
+    ), "a FUTURE_* tamper type is advertised as an event type"
+
+
+def test_witness_event_types_are_the_dictionary_ids_derived_from_const() -> None:
+    assert WITNESS_EVENT_TYPES == tuple(EVENT_TYPE_METADATA)
+    assert event_platform.SecuraCVWitnessEventEntity._attr_event_types == list(WITNESS_EVENT_TYPES)
+    assert event_platform.SecuraCVVerificationEventEntity._attr_event_types == list(
+        VERIFICATION_EVENT_TYPES
     )

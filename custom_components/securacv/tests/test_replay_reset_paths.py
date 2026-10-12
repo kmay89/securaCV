@@ -17,7 +17,7 @@ import json
 from types import SimpleNamespace
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
-from .conftest import run
+from .conftest import make_runtime, run
 from .test_options_flow import _flow
 from .test_tofu_health_hook import _Hass
 
@@ -45,21 +45,15 @@ def test_tofu_first_sight_forgets_the_old_marks_for_that_device_only():
     hass = _Hass()
     store = TrustStore(hass, entry_id="e1")
     run(store.async_load())
-    hass.data = {
-        DOMAIN: {
-            "e1": {
-                "trust_store": store,
-                "verify": {},
-                "replay": {DEVICE: dict(STALE_MARKS), OTHER: dict(STALE_MARKS)},
-                "mismatch_notified": set(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
+    ENTRY.runtime_data = make_runtime(
+        hass, trust_store=store, replay={DEVICE: dict(STALE_MARKS), OTHER: dict(STALE_MARKS)}
+    )
     hook = _async_health_for_tofu(hass, ENTRY)
 
     hook(_health_msg(DEVICE, KEY_A))
     assert store.is_pinned(DEVICE)
-    replay = hass.data[DOMAIN]["e1"]["replay"]
+    replay = ENTRY.runtime_data.replay
     assert DEVICE not in replay, "a first-sight pin is a new identity; its marks start over"
     assert replay[OTHER] == STALE_MARKS, "another device's marks are untouched"
 
@@ -69,16 +63,8 @@ def test_a_health_publish_for_an_already_pinned_device_keeps_the_marks():
     store = TrustStore(hass, entry_id="e1")
     run(store.async_load())
     run(store.async_tofu_pin_if_unknown(DEVICE, KEY_A))
-    hass.data = {
-        DOMAIN: {
-            "e1": {
-                "trust_store": store,
-                "verify": {},
-                "replay": {DEVICE: dict(STALE_MARKS)},
-                "mismatch_notified": set(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
+    ENTRY.runtime_data = make_runtime(hass, trust_store=store, replay={DEVICE: dict(STALE_MARKS)})
     hook = _async_health_for_tofu(hass, ENTRY)
 
     # Same key, and even a different key: no pin happens (TOFU keeps the
@@ -86,36 +72,36 @@ def test_a_health_publish_for_an_already_pinned_device_keeps_the_marks():
     # a second publisher would attempt — stay put.
     hook(_health_msg(DEVICE, KEY_A))
     hook(_health_msg(DEVICE, KEY_B))
-    assert hass.data[DOMAIN]["e1"]["replay"][DEVICE] == STALE_MARKS
+    assert ENTRY.runtime_data.replay[DEVICE] == STALE_MARKS
 
 
 def test_manual_pin_rotate_and_unpin_each_forget_the_marks():
     flow, store, entry_data = _flow()
-    entry_data["replay"] = {DEVICE: dict(STALE_MARKS), OTHER: dict(STALE_MARKS)}
+    entry_data.replay = {DEVICE: dict(STALE_MARKS), OTHER: dict(STALE_MARKS)}
 
     result = run(flow.async_step_pin({CONF_PIN_DEVICE_ID: DEVICE, CONF_PIN_PUBKEY_HEX: KEY_A}))
     assert result["type"] == "create_entry"
-    assert DEVICE not in entry_data["replay"]
-    assert entry_data["replay"][OTHER] == STALE_MARKS
+    assert DEVICE not in entry_data.replay
+    assert entry_data.replay[OTHER] == STALE_MARKS
 
-    entry_data["replay"][DEVICE] = dict(STALE_MARKS)
+    entry_data.replay[DEVICE] = dict(STALE_MARKS)
     result = run(flow.async_step_rotate({CONF_PIN_DEVICE_ID: DEVICE, CONF_PIN_PUBKEY_HEX: KEY_B}))
     assert result["type"] == "create_entry"
-    assert DEVICE not in entry_data["replay"]
+    assert DEVICE not in entry_data.replay
 
-    entry_data["replay"][DEVICE] = dict(STALE_MARKS)
+    entry_data.replay[DEVICE] = dict(STALE_MARKS)
     result = run(flow.async_step_unpin({CONF_PIN_DEVICE_ID: DEVICE}))
     assert result["type"] == "create_entry"
-    assert DEVICE not in entry_data["replay"]
-    assert entry_data["replay"][OTHER] == STALE_MARKS
+    assert DEVICE not in entry_data.replay
+    assert entry_data.replay[OTHER] == STALE_MARKS
 
 
 def test_a_refused_options_step_leaves_the_marks_alone():
     flow, store, entry_data = _flow()
-    entry_data["replay"] = {DEVICE: dict(STALE_MARKS)}
+    entry_data.replay = {DEVICE: dict(STALE_MARKS)}
 
     # Rotating a device that was never pinned is refused; nothing changed.
     result = run(flow.async_step_rotate({CONF_PIN_DEVICE_ID: DEVICE, CONF_PIN_PUBKEY_HEX: KEY_B}))
     assert result["type"] == "form"
     assert result["errors"] == {"device_id": "device_not_pinned"}
-    assert entry_data["replay"][DEVICE] == STALE_MARKS
+    assert entry_data.replay[DEVICE] == STALE_MARKS

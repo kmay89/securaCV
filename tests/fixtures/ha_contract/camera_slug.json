@@ -1,0 +1,46 @@
+{
+  "$comment": "Contract C8: ASCII-lowercase, every other code point becomes `_`, per code point, no collapsing, no trimming, cut to max_len. The wizard writes the allowlist with it; the bridge compares slugs.",
+  "max_len": 64,
+  "vectors": [
+    {
+      "input": "Front Door",
+      "slug": "front_door"
+    },
+    {
+      "input": "front-door",
+      "slug": "front_door"
+    },
+    {
+      "input": "Front  Door",
+      "slug": "front__door"
+    },
+    {
+      "input": "Garage_2",
+      "slug": "garage_2"
+    },
+    {
+      "input": "Café",
+      "slug": "caf_"
+    },
+    {
+      "input": "porch",
+      "slug": "porch"
+    },
+    {
+      "input": "BACK yard!",
+      "slug": "back_yard_"
+    },
+    {
+      "input": "İstanbul",
+      "slug": "_stanbul"
+    },
+    {
+      "input": "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ",
+      "slug": "ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_ab_a"
+    },
+    {
+      "input": "",
+      "slug": ""
+    }
+  ]
+}

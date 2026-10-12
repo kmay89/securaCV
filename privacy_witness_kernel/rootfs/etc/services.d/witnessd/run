@@ -1,0 +1,29 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# SecuraCV: the standalone kernel (direct RTSP). Reads the camera, seals
+# events, serves the Event API itself. In Frigate mode this service steps
+# aside: witness_api + frigate_bridge do that work.
+# ==============================================================================
+set -euo pipefail
+
+# The setup step (run.sh, cont-init) renders /run/securacv/setup.sh and
+# leaves /run/securacv/configured only when the app is configured. Before
+# that the setup wizard is the whole app: this service steps aside without
+# flapping (`s6-svc -O .` = do not restart me when I exit 0).
+SETUP_FILE=/run/securacv/setup.sh
+if [ ! -f /run/securacv/configured ] || [ ! -f "$SETUP_FILE" ]; then
+  bashio::log.info "witnessd: SecuraCV is not configured yet (open the app's Web UI); staying down."
+  s6-svc -O .
+  exit 0
+fi
+# shellcheck disable=SC1090
+source "$SETUP_FILE"
+
+if [ "$MODE" = "frigate" ]; then
+  bashio::log.info "witnessd: Frigate mode — witness_api and frigate_bridge run instead; staying down."
+  s6-svc -O .
+  exit 0
+fi
+
+bashio::log.info "witnessd: starting the standalone kernel"
+exec /usr/local/bin/witnessd

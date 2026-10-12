@@ -146,8 +146,10 @@ def test_speak_last_event_uses_friendly_label_and_coarse_time():
         }
     }
     speech = speak_last_event(fleet_brief([_entry(devices)], NOW))
+    # The label is const.py's D13 wording for the coarse class ("Person or
+    # vehicle"), the same one the dashboard shows.
     assert speech == (
-        "Large object crossed boundary, within the last ten minutes, "
+        "Person or vehicle, within the last ten minutes, "
         "from Canary gate. The event signature is verified against the "
         "device's pinned key."
     )
@@ -235,8 +237,8 @@ def test_whats_up_reads_naturally_all_good():
     verify = {k: {"trusted": True, "reason": "ok"} for k in ("gate", "porch")}
     speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
     assert speech == (
-        "Pretty quiet — the last thing witnessed was large object crossed "
-        "boundary, about 2 hours ago, from the gate Canary. "
+        "Pretty quiet — the last thing witnessed was person or vehicle, "
+        "about 2 hours ago, from the gate Canary. "
         "All 2 Canaries are online, every signature verified."
     )
 

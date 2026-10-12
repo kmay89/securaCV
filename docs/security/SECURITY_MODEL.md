@@ -333,8 +333,13 @@ of the four has run on hardware. The flagship's release images (`release`,
 `release_ha` and the board envs built on them) stay plain HTTP on port 80
 until the size budget shows HTTPS fits and the maintainer turns it on, and
 the displays' LAN page and the headless products' setup portals are plain
-HTTP on your own network. The hub's API has the same shape: plain on
-loopback by default, TLS through the kernel's `api-tls` build feature. The
+HTTP on your own network. The hub's API has the same shape — plain HTTP,
+TLS through the kernel's `api-tls` build feature — and where it listens
+depends on the product: the SecuraCV app's kernel listens inside its own
+container with its host port disabled, and the Docker sidecar's on every
+interface with port 8799 published from the first start, so Home Assistant
+can pair over the LAN (what that opens, and what crosses the wire, is
+[below](#home-assistant-pairing-and-what-crosses-your-network)). The
 iPhone app pins the certificate fingerprint in the receipt's `tls_cert_fp` —
 the WAP's pairing receipt and QR, and the flagship's receipt on its HTTPS
 builds, which `/api/status` also reports — refuses an https Canary it
@@ -362,12 +367,115 @@ not yet bench-tested.
 the coarse words the Witness Wall paints — each Canary's name, whether it is
 online, its chain verdict and product, and the presence / occupants /
 breathing words while it is proven online — never an event, a zone or a key.
-That is why the kernel listens on loopback by default and the port is yours
-to expose; the origin allow-list only stops other websites' scripts, not a
-device on your LAN. And "online" there is a verified, chain-advancing
+The origin allow-list only stops other websites' scripts, not a device on
+your LAN, so the port is open only where the product needs it: the
+SecuraCV app ships its 8799 host port disabled (the integration reaches the
+kernel over the Supervisor's internal network, and the Witness Wall is the
+reason to enable it), and the Docker sidecar — which publishes 8799 so Home
+Assistant can pair — serves **only the kernel's own row** there unless you
+set `SECURACV_FLEET_ROLLCALL=1`: who is home is yours to opt into, never a
+side effect of pairing. And "online" there is a verified, chain-advancing
 signature seen within three minutes — stronger than a heartbeat, but not a
 liveness proof against someone who can publish on your MQTT broker
 (`tvos/discovery/DISCOVERY.md` spells out the difference).
+
+### Home Assistant pairing and what crosses your network
+
+The SecuraCV integration reads the witness kernel over HTTP and MQTT. What
+each link carries, product by product, and the bounds on each:
+
+**The Docker sidecar publishes port 8799 by default** and the kernel binds
+every interface in its container, because that is how Home Assistant pairs
+with a kernel that has no Supervisor. Anyone who can reach the host gets
+three things: `GET /health` (liveness), `POST /api/pair` (below) and
+`GET /api/fleet` (the kernel's own row only, unless you opt in). Every data
+route — events, the digest, the sealed log, the export, the identity, the
+status — needs a token: the rotating capability token, which never leaves
+the container, or the paired token Home Assistant earned. There is no
+"LAN policy" switch; the tokens are the boundary, and
+`SECURACV_API_BIND=loopback` (with the port mapping deleted) is the opt-out
+that also ends pairing.
+
+**Pairing is a 6-digit code with a hard budget.** `docker exec securacv
+pair` prints the code once (never the daemon log), with the kernel key's
+fingerprint for you to compare on the Home Assistant side. The kernel keeps
+only the code's sha256, its 10-minute expiry and a budget of five attempts;
+each wrong guess spends one durably **before** the refusal is sent, the fifth
+burns the code, and an expired code is deleted on first touch. Every refusal
+— wrong, absent, burned, expired, or a kernel with pairing off — is the
+identical `401 invalid_pairing_code`, so a guesser learns nothing from the
+answer, and each one is a strike toward the kernel's per-address lockout.
+At one million codes, five tries and ten minutes, the odds against a guess
+are what they look like; the lockout is the second bound. One honest limit:
+behind Docker Desktop's userland proxy, or any reverse proxy, every client
+shares one source address, so the lockout a guesser earns also holds Home
+Assistant's polling at `429` for its length.
+
+**The paired token is a bearer secret in plaintext until TLS lands.**
+Home Assistant holds the 32-byte token the pairing minted; the kernel holds
+its sha256 (`paired_tokens.json`, `0600`), re-read per request, so a
+revocation (`docker exec securacv unpair <id>`, `DELETE /api/pair/<id>`, or
+removing the integration entry) takes effect on the next call. The sidecar
+serves plain HTTP today, so that token crosses your LAN in the clear on
+every request a host that can watch your network could read — the same
+exposure as the capability token and the Wall's viewer token. Keep the port
+on your own network and never forward it; TLS for the sidecar (a self-signed
+certificate whose fingerprint `pair` prints and Home Assistant pins) is the
+tracked follow-up. The app has no such exposure: its token file is read
+over the Supervisor's internal network and its host port is disabled.
+
+**Verified means the integration checked.** Home Assistant pins the kernel's
+Ed25519 verifying key only over the authenticated HTTP channel — the
+`/api/pair` answer, or `/api/identity` through the app's token file — never
+from the broadcast announcement. "Verified ✓" on an event means the
+integration itself fetched the sealed log and checked every hash link and
+signature against that pin; a key that changes raises a Repairs issue that
+asks you to compare fingerprints before it rotates the pin, and is never
+rendered as a failure or quietly adopted.
+
+**The announcement on your broker names the kernel.** The kernel's MQTT
+publisher retains a signed announcement (`witness/<kernel id>/announce`):
+the kernel's id, its public verifying key, where its API listens, the
+pairing posture, and a bucket-start timestamp — never a token, a code or the
+seed, and never a host unless you set `SECURACV_ANNOUNCE_HOST` (a host is a
+network identifier, and Home Assistant redacts it in diagnostics). The
+signature lets a pinned integration refuse an announcement the kernel did
+not sign. This is fleet-internal reconciliation on a broker you run — the
+same Invariant III posture as the Canaries' own retained status topics —
+not telemetry: nothing leaves your network, and the broker's own access
+control is the boundary. The integration's claim on the same broker
+(`witness/claim/<kernel id>`) carries a random nonce and a bucket start,
+never an entry id.
+
+**The app holds no Supervisor role.** The SecuraCV app calls only its own
+options, the shared MQTT service, the add-on info reads its preflight
+needs, the discovery endpoint and Home Assistant's own API; "Install it for
+me" is a my.home-assistant.io link, and the one Core restart happens on your
+click. The integration the app carries is copied only on that click (first
+install) or, on app start, into a copy that carries the app's own marker and
+a matching sha256 manifest — never a copy HACS or you installed, never a
+downgrade, never followed by an automatic restart (a notification asks for
+one). A custom AppArmor profile confines each process to the paths it needs.
+
+**Diagnostics are projections, not copies.** A Home Assistant diagnostics
+dump of the integration carries shapes — the kernel URL's scheme and port,
+a four-hex prefix of the kernel id, fingerprints cut to eight characters,
+availability flags, the latest event's type, window and attestation, digest
+counts, per-Canary firmware and online state — and is then swept by
+Home Assistant's redaction over tokens, the pairing token id, hosts, URLs,
+device ids, keys, hashes, entry ids, nonces, IP and MAC addresses, SSIDs,
+names, coordinates and the seed, so a value that reaches the dump through
+a path the projection did not foresee is still replaced.
+
+**Evidence exports sit behind Home Assistant's authentication.** An export
+is one zip under `<config>/securacv/evidence` (directory `0700`, files
+`0600`, never under `www/` or `/local`), served only by an authenticated
+Home Assistant view through a link signed for 24 hours — in the export
+notification and under Media → SecuraCV evidence — and each export is a
+receipted disclosure on the kernel. The pack carries the coarse sealed
+record, the offline viewer and the public witness key, nothing a stranger
+could use against the kernel; the receipt names the credential that asked
+(`auth_mode: paired` with the token id for a paired Home Assistant).
 
 ---
 
@@ -377,7 +485,7 @@ liveness proof against someone who can publish on your MQTT broker
 |-----|---------|
 | **ERRERlabs** (the manufacturer) | We have no remote access capability. No backdoor exists. |
 | **Law enforcement** (without the physical device) | There is no ERRERlabs server to subpoena. A Canary talks only to the broker and hub you run and to the update host, which sees an anonymous manifest fetch; the evidence lives on the device and on your hub. |
-| **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and, on the display line, SNTP. No path carries an identifier beyond what your own broker login already is. |
+| **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and, on the display line, SNTP. No path carries an identifier beyond what your own broker login already is. On the hub they also see the kernel's plain HTTP where it crosses the LAN — the Docker sidecar's paired token on every Home Assistant request until TLS lands for it — and the coarse claims and the signed announcement on your own broker. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
 | **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds from the first boot after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |

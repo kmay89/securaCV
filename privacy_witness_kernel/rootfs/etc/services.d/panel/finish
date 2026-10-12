@@ -1,0 +1,18 @@
+#!/usr/bin/env bashio
+# ==============================================================================
+# Take down the S6 supervision tree when panel fails
+# (the official apps-example shape; s6-overlay docs:
+# https://github.com/just-containers/s6-overlay). A service that ended on
+# purpose exits 0 after `s6-svc -O .` and is left down; a crash halts the
+# container so the Supervisor's watchdog restarts the whole app, visibly.
+# ==============================================================================
+
+declare APP_EXIT_CODE=${1}
+
+if [[ "${APP_EXIT_CODE}" -ne 0 ]] && [[ "${APP_EXIT_CODE}" -ne 256 ]]; then
+  bashio::log.warning "Halt app: panel exited with code ${APP_EXIT_CODE}"
+  echo "${APP_EXIT_CODE}" > /run/s6-linux-init-container-results/exitcode
+  exec /run/s6/basedir/bin/halt
+fi
+
+bashio::log.info "panel: service ended (exit ${APP_EXIT_CODE})"

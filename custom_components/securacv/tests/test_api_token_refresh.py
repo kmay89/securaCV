@@ -48,7 +48,7 @@ class _FakeSession:
         self._responses = list(responses)
         self.auth_headers: list[str] = []
 
-    def get(self, url, headers=None, timeout=None):
+    def request(self, method, url, headers=None, timeout=None, **kwargs):
         self.auth_headers.append((headers or {}).get("Authorization", ""))
         return self._responses.pop(0)
 
@@ -160,8 +160,8 @@ def test_stale_file_at_boot_recovers_after_kernel_rotates(tmp_path):
     token_file.write_text("stale-from-last-bucket")
 
     class _RotatingSession(_FakeSession):
-        def get(self, url, headers=None, timeout=None):
-            resp = super().get(url, headers=headers, timeout=timeout)
+        def request(self, method, url, headers=None, timeout=None, **kwargs):
+            resp = super().request(method, url, headers=headers, timeout=timeout)
             # Mimic the kernel rotating its bucket on the first request:
             # rejects the stale token but rewrites the token file.
             token_file.write_text("fresh-after-rotation")

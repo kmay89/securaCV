@@ -1,0 +1,217 @@
+# Integration Quality Scale self-assessment (the 54 rules, hyphenated ids, in
+# the shape script/hassfest/quality_scale.py validates for core integrations).
+# hassfest does not grade a custom integration; tests/test_quality_scale.py
+# holds this file to the rule set, the value schema, and to the code for the
+# rules a test can check (runtime-data, parallel-updates, icon-translations,
+# diagnostics, reauthentication-flow, reconfiguration-flow, repair-issues,
+# stale-devices). Honest: `todo` where the work is not done, `exempt` with
+# the reason where a rule does not apply.
+rules:
+  # ── Bronze ──────────────────────────────────────────────────────────
+  action-setup: done
+  appropriate-polling:
+    status: done
+    comment: >-
+      Push-fed by the kernel's retained MQTT topics; the HTTP backstop runs
+      every five minutes (coordinator.HEALTH_BACKSTOP_INTERVAL) and adds no
+      receipt rows to the kernel's export ledger.
+  brands: done
+  common-modules:
+    status: done
+    comment: coordinator.py, entity.py, api.py, data.py.
+  config-flow: done
+  config-flow-test-coverage:
+    status: done
+    comment: >-
+      tests/ha/test_config_flow.py drives every step on a real core through
+      pytest-homeassistant-custom-component: user (every mode), Automatic
+      (app found / nothing found / announce heard), Supervisor discovery
+      (create, rediscovery update + reload, identical repeat, legacy payload),
+      the MQTT announce (confirm, pair, wrong code, signature and key
+      checks, revoke on mismatch), reauth (paired and token file, wrong
+      kernel), reconfigure, options and the VERSION 2 → 3 migration; the
+      stub lane (tests/test_config_flow*.py) keeps the same table.
+  dependency-transparency:
+    status: done
+    comment: No requirements; cryptography ships with Home Assistant core.
+  docs-actions:
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Actions" documents all five:
+      securacv.verify, securacv.export_evidence and the three watch actions,
+      with fields, responses and refusals.
+  docs-conditions:
+    status: exempt
+    comment: The integration provides no conditions.
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions:
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Removing the integration": what deleting
+      the entry withdraws, revokes and deletes, and what it leaves.
+  docs-triggers:
+    status: exempt
+    comment: The integration provides no triggers.
+  entity-event-setup:
+    status: done
+    comment: >-
+      Every subscription (MQTT, dispatcher) is made in async_added_to_hass and
+      released through async_on_remove — the event and button platforms
+      included; tests/test_mqtt_lifecycle.py holds every entity to it.
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data:
+    status: done
+    comment: data.SecuraCVRuntimeData on entry.runtime_data; the alias is SecuraCVConfigEntry.
+  test-before-configure:
+    status: done
+    comment: Every kernel path reads GET /api/identity before an entry is created.
+  test-before-setup:
+    status: done
+    comment: >-
+      ConfigEntryNotReady when MQTT is unavailable in mqtt/both modes;
+      async_config_entry_first_refresh in kernel-only mode; `both` mode is
+      deliberately tolerant of a kernel that is down so the Canaries keep
+      reporting.
+  unique-config-entry:
+    status: done
+    comment: kernel_<device_id> for every kernel entry, mqtt_<prefix> for MQTT-only.
+
+  # ── Silver ──────────────────────────────────────────────────────────
+  action-exceptions: done
+  config-entry-unloading: done
+  docs-configuration-parameters:
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Configuration parameters": the Configure
+      menu (pin / rotate / unpin, evidence_keep), reconfigure and reauth.
+  docs-installation-parameters:
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Configuration parameters" (installation
+      parameters table): kernel URL, pairing code / token file / static
+      token, the two prefixes, the adapter stats URL.
+  entity-unavailable:
+    status: done
+    comment: >-
+      Kernel entities follow witness/status OR the HTTP backstop; Canary
+      entities follow their own status / availability last-will topics.
+  integration-owner: done
+  log-when-unavailable:
+    status: done
+    comment: >-
+      The coordinator logs the backstop failing and recovering once each;
+      witness/status and Canary offline/online transitions log once each.
+  parallel-updates:
+    status: done
+    comment: >-
+      0 on the push-fed platforms (sensor, binary_sensor, event); 1 on button,
+      whose presses are actions against one kernel.
+  reauthentication-flow:
+    status: done
+    comment: ConfigEntryAuthFailed on a definitive 401; reauth_confirm re-pairs or re-points the token file.
+  test-coverage:
+    status: todo
+    comment: >-
+      Measured with both lanes in one interpreter (the stub suite plus
+      tests/ha on Home Assistant 2026.10.1): 93% of the package, every
+      module at or above 90% except intent.py (53%), which the rule's 95%
+      floor on every module still misses. The real-Home-Assistant lane
+      itself is in place (tests/ha, two cells in .github/workflows/python.yml).
+
+  # ── Gold ────────────────────────────────────────────────────────────
+  devices: done
+  diagnostics:
+    status: done
+    comment: async_redact_data over a projected result; nothing raw is copied in.
+  discovery:
+    status: done
+    comment: Supervisor discovery (the app) and MQTT (the sidecar's signed announce).
+  discovery-update-info:
+    status: done
+    comment: >-
+      A rediscovered app updates the entry's URL, token file and prefix
+      through _abort_if_unique_id_configured(updates=..., reload_on_update=True).
+  docs-data-update:
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "How the integration gets its data": MQTT
+      push, the five-minute HTTP backstop, the 15-minute chain walk, the
+      hourly claim, the receipt-less reads.
+  docs-examples:
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Actions" and "Use cases" carry automation
+      YAML (a watch, a weekly export, a sealed-event notification); the
+      blueprints README is the catalog.
+  docs-known-limitations:
+    status: done
+    comment: docs/homeassistant_setup.md "Known limitations".
+  docs-supported-devices:
+    status: done
+    comment: docs/homeassistant_setup.md "Supported devices and functions".
+  docs-supported-functions:
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Supported devices and functions" and the
+      Step 4 entity catalog (every entity the integration creates).
+  docs-troubleshooting:
+    status: done
+    comment: >-
+      docs/homeassistant_setup.md "Troubleshooting": every Repairs issue and
+      a symptom table for the kernel path.
+  docs-use-cases:
+    status: done
+    comment: docs/homeassistant_setup.md "Use cases".
+  dynamic-devices:
+    status: done
+    comment: Canaries are added as they first report on the status topic.
+  entity-category:
+    status: done
+    comment: >-
+      Storage, adapter-host, the Frigate link, the kernel key fingerprint and
+      a Canary's per-transport connectivity sensors are
+      EntityCategory.DIAGNOSTIC.
+  entity-device-class: done
+  entity-disabled-by-default:
+    status: done
+    comment: >-
+      The six per-transport connectivity sensors of a Canary are diagnostic
+      and disabled by default (binary_sensor.SecuraCVCanaryTransportSensor);
+      the per-type tamper sensors stay enabled because they are the
+      automation targets (docs/blueprints/securacv_alerts.yaml names them).
+  entity-translations: done
+  exception-translations:
+    status: done
+    comment: Every securacv.* refusal carries a translation key (tests/test_exception_translations.py).
+  icon-translations:
+    status: done
+    comment: >-
+      icons.json is the one source: no entity class sets a static icon in
+      code (tests/test_icons.py), so the translated defaults and the state
+      icons (chain_valid, tamper, frigate_link, online) are what renders.
+  reconfiguration-flow:
+    status: done
+    comment: reconfigure moves the URL, credential and prefixes; a different kernel is refused (wrong_kernel).
+  repair-issues:
+    status: done
+    comment: >-
+      Only actionable conditions are issues (repairs.py); tofu_mismatch has
+      a fix flow; facts are PROBLEM sensors.
+  stale-devices:
+    status: done
+    comment: async_remove_config_entry_device lets a Canary that left the fleet be deleted.
+
+  # ── Platinum ────────────────────────────────────────────────────────
+  async-dependency:
+    status: done
+    comment: No third-party library; the in-package client is async over aiohttp.
+  inject-websession:
+    status: done
+    comment: async_get_clientsession everywhere a request is made.
+  strict-typing:
+    status: todo
+    comment: >-
+      mypy runs against real Home Assistant in the 3.14 venv but the package
+      is not yet strict (config_flow and tests are ignore_errors in pyproject).

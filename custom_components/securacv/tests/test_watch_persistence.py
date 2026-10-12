@@ -21,7 +21,7 @@ import time
 import types
 
 from . import conftest  # noqa: F401  (installs the base HA stubs)
-from .conftest import run
+from .conftest import make_entry, make_runtime, run
 
 # Installs the intent-platform stubs at import; also lends us the voice
 # path so a watch here is started exactly the way a person starts one.
@@ -86,11 +86,11 @@ def _boot() -> HomeAssistant:
     async def _forward(entry, platforms):
         return True
 
-    hass.config_entries = types.SimpleNamespace(async_forward_entry_setups=_forward)
+    hass.config_entries.add(ENTRY)
     assert run(async_setup_entry(hass, ENTRY)) is True
     # What the status handler would have learned over MQTT: the fleet the
     # voice binds a subject against.
-    hass.data[DOMAIN]["e1"]["devices"] = dict(DEVICES)
+    ENTRY.runtime_data.devices.update(DEVICES)
     return hass
 
 
@@ -302,14 +302,15 @@ def test_a_watch_spoken_before_the_restore_is_neither_lost_nor_written_over_the_
     saved[watch_runtime.STORAGE_KEY] = {"version": 1, "watches": [_bound_watch("persisted")]}
 
     hass = HomeAssistant()
-    hass.data = {DOMAIN: {"e1": {"devices": DEVICES, "verify": {}}}}
+    hass.data = {DOMAIN: {}}
+    hass.config_entries.add(ENTRY)
+    ENTRY.runtime_data = make_runtime(hass, devices=dict(DEVICES))
     _start(hass, "back door")  # before any setup ran
     assert [w["id"] for w in _stored(saved)] == ["persisted"], "no write before the restore"
 
     async def _forward(entry, platforms):
         return True
 
-    hass.config_entries = types.SimpleNamespace(async_forward_entry_setups=_forward)
     assert run(async_setup_entry(hass, ENTRY)) is True
     ids = [w["id"] for w in _bucket(hass)]
     assert ids[0] == "persisted"
@@ -518,7 +519,8 @@ def test_existing_start_path_still_works_without_any_setup() -> None:
     no store and no restore must keep starting watches (saves simply wait
     for a restore that, in that harness, never comes)."""
     hass = HomeAssistant()
-    hass.data = {DOMAIN: {"e1": {"devices": DEVICES, "verify": {}}}}
+    hass.data = {DOMAIN: {}}
+    make_entry(hass, runtime=make_runtime(hass, devices=dict(DEVICES)))
     _start(hass, "the gate canary")
     assert len(_bucket(hass)) == 1
     assert "_watch_store" not in hass.data[DOMAIN]

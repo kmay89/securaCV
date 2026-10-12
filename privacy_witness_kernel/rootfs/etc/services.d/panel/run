@@ -1,0 +1,10 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# SecuraCV: the ingress panel — the setup wizard on first run, the status
+# panel thereafter. Always runs; answers the Supervisor watchdog at
+# /api/health (config.yaml `watchdog:`).
+# ==============================================================================
+set -euo pipefail
+
+bashio::log.info "panel: serving the SecuraCV panel on port ${INGRESS_PORT:-8788}"
+exec /usr/bin/python3 /usr/local/bin/serve_wizard.py

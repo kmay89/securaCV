@@ -510,11 +510,12 @@
   <section id="intake">
     <div id="drop" role="button" tabindex="0" aria-label="Drop an evidence bundle or press Enter to choose a file">
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      <div class="big">Drop an evidence bundle or event export (.json) to verify</div>
+      <div class="big">Drop an evidence pack (.zip) or event export (.json) to verify</div>
       <div class="hint">or click to choose a file — nothing is uploaded, nothing is changed, and checking
-        can't hurt the file. Verification runs locally. Both bundle kinds are recognized automatically:
-        a full evidence envelope, or an event export from <span class="mono">export_events</span>.</div>
-      <input type="file" id="file" accept="application/json,.json">
+        can't hurt the file. Verification runs locally. Every kind is recognized automatically: the
+        <span class="mono">securacv-evidence-….zip</span> pack Home Assistant exports (the bundle inside it is
+        read in place), a full evidence envelope, or an event export from <span class="mono">export_events</span>.</div>
+      <input type="file" id="file" accept="application/json,.json,application/zip,.zip">
     </div>
     <div class="actions">
       <button class="btn primary" id="choose" type="button">Choose file…</button>
@@ -566,11 +567,16 @@
 </script>
 
 <script>
+/*__ZIP_CORE__*/
+</script>
+
+<script>
 'use strict';
 const SAMPLE_ENVELOPE = /*__SAMPLE_ENVELOPE__*/ null;
 const SAMPLE_BUNDLE = /*__SAMPLE_BUNDLE__*/ null;
 const V = globalThis.SecuraCVVerify;
 const T = globalThis.SecuraCVTimeline;
+const Z = globalThis.SecuraCVZip;
 const $ = (id) => document.getElementById(id);
 const out = $('out'), drop = $('drop'), fileInput = $('file');
 
@@ -599,16 +605,58 @@ fileInput.addEventListener('change', (e) => { const f = e.target.files[0]; if (f
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('hover'); }));
 drop.addEventListener('drop', (e) => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
 
+// What WITNESS_KEY.txt in the last dropped pack said, or null for a bare .json.
+// Shown beside the bundle's own key — never fed into the trusted-key field: a
+// key that traveled with the pack is the owner's claim, not an independent one.
+let packKey = null;
+
 function readFile(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onerror = () => renderBad('Could not read that file.', '');
+  reader.onload = async () => {
+    const bytes = new Uint8Array(reader.result);
+    if (Z.looksLikeZip(bytes)) return readPack(bytes, file);
+    packKey = null;
     let env;
-    try { env = JSON.parse(reader.result); }
+    try { env = JSON.parse(new TextDecoder('utf-8').decode(bytes)); }
     catch (err) { return renderBad('That file is not valid JSON.', err.message); }
     process(env, file.name + ' (' + fmtBytes(file.size) + ')');
   };
-  reader.onerror = () => renderBad('Could not read that file.', '');
-  reader.readAsText(file);
+  reader.readAsArrayBuffer(file);
+}
+
+// An evidence pack: read the bundle member in place (no unzip tool needed) and
+// verify it exactly as a dropped .json. Only the bundle's own bytes reach the
+// verifier; the zip is a wrapper, not evidence.
+async function readPack(bytes, file) {
+  let pack;
+  try { pack = await Z.extractEvidence(bytes); }
+  catch (err) {
+    if (err && err.code === 'no_decompression_stream') {
+      return renderBad('This browser cannot unpack a compressed evidence pack.',
+        'Unzip the pack with your system\'s unzip tool and drop the securacv-events-….json file inside it here instead. Nothing else changes: the .json is the evidence, the zip is only its wrapper.');
+    }
+    return renderBad('That zip is not an evidence pack this viewer can read.', err.message || String(err));
+  }
+  packKey = pack.witnessKey;
+  let env;
+  try { env = JSON.parse(pack.text); }
+  catch (err) { return renderBad('The bundle inside the pack is not valid JSON.', pack.memberName + ': ' + err.message); }
+  process(env, file.name + ' › ' + pack.memberName + ' (' + fmtBytes(file.size) + ' pack)');
+}
+
+// The note under the bundle's device key when the pack carried WITNESS_KEY.txt.
+function packKeyNote(bundleKeyHex) {
+  if (!packKey || (!packKey.verifying_key && !packKey.fingerprint)) return '';
+  const same = packKey.verifying_key && bundleKeyHex
+    && packKey.verifying_key.toLowerCase() === String(bundleKeyHex).toLowerCase();
+  const who = packKey.fingerprint ? `fingerprint <span class="mono">${esc(packKey.fingerprint)}</span>` : 'a key';
+  const agree = packKey.verifying_key
+    ? (same ? ' It is the same key the bundle names.' : ' <strong>It is not the key the bundle names</strong> — ask the owner which one is theirs before relying on either.')
+    : '';
+  return `<div class="hint">The pack's WITNESS_KEY.txt names ${who}.${agree} Either way that file traveled with the pack, so it is the owner's own claim: `
+    + 'confirm the fingerprint with the owner through another channel (a phone call, the fingerprint shown on their Home Assistant device page), '
+    + 'then paste the key above and verify again to turn "self-attested" into "authorship confirmed".</div>';
 }
 
 // ---- helpers -------------------------------------------------------------
@@ -799,7 +847,8 @@ async function processBundle(bundle, sourceLabel, stale) {
       <button class="btn copy" id="copyfp" type="button">Copy</button></div>
     <div class="hint">${report.authorship === 'trusted'
       ? 'Matches the key you supplied — authorship confirmed.'
-      : 'Taken from the export itself. To confirm authorship, compare it against the key published by the device owner (or paste that key above and re-verify).'}</div></div>`;
+      : 'Taken from the export itself. To confirm authorship, compare it against the key published by the device owner (or paste that key above and re-verify).'}</div>
+    ${packKeyNote(report.device_public_key)}</div>`;
 
   html += `<div class="panel"><h2>Contents</h2><div class="stats">
     ${stat(report.events, 'Verified events')}
@@ -1053,7 +1102,7 @@ function whatThisMeans(kind) {
   const copy = {
     verified: {
       what: 'The record’s integrity is intact: every event was signed by the device’s key, and nothing has been added, removed, or altered since it was sealed. You did everything right — the checks above are the same ones an expert would run.',
-      next: ['Keep the original <strong>.json</strong> bundle file — it is the evidence; this page is only a check of it.',
+      next: ['Keep the original file exactly as you received it — the <strong>.zip</strong> pack or the <strong>.json</strong> bundle is the evidence; this page is only a check of it.',
              'Use <strong>Save / print report</strong> below for a dated record of <em>what</em> you verified and <em>when</em>.',
              'To let someone else confirm it, send them the bundle file and this viewer. ' + reproduce] },
     notes: {

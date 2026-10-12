@@ -20,6 +20,189 @@ CONF_ADAPTER_STATS_URL = "adapter_stats_url"
 CONF_TOKEN_FILE = "token_file"
 DEFAULT_TOKEN_FILE = "/config/api_token"
 
+# =============================================================================
+# Kernel identity, pairing and the TOFU pin (contracts C1, C2, C4, C6)
+# =============================================================================
+# How the integration authenticates to the witness kernel. `token_file` reads
+# the kernel's rotating capability token off a shared volume (the app); `paired`
+# holds a long-lived paired token minted by POST /api/pair from a 6-digit code
+# (the Docker sidecar); `static` is a pasted capability token, which the kernel
+# rotates away within ten minutes (remote kernels only).
+CONF_AUTH_MODE = "auth_mode"
+AUTH_MODE_TOKEN_FILE = "token_file"
+AUTH_MODE_PAIRED = "paired"
+AUTH_MODE_STATIC = "static"
+# The kernel's device id (`pwk_<8 hex>`, served by GET /api/identity). It keys
+# the config entry's unique_id (`kernel_<device_id>`), the device registry
+# identifier and the retained claim topic.
+CONF_KERNEL_DEVICE_ID = "kernel_device_id"
+# The kernel's Ed25519 verifying key, 64 lowercase hex, pinned trust-on-first-
+# use over the AUTHENTICATED HTTP channel (the /api/pair response, or
+# /api/identity through the token file) — never from the retained MQTT announce.
+CONF_KERNEL_VERIFYING_KEY = "kernel_verifying_key"
+# Keys the pin was rotated away from (newest last), kept so a postmortem can
+# recover the identity a sealed log was signed under before a rotation.
+CONF_KERNEL_PREVIOUS_KEYS = "kernel_previous_verifying_keys"
+# When the current pin was taken, as a 10-minute bucket start (coarse time,
+# like every other "at" the integration keeps).
+CONF_KERNEL_KEY_PINNED_BUCKET_START = "kernel_key_pinned_bucket_start"
+# The paired token's id (8 hex), so async_remove_entry can revoke exactly its
+# own token with DELETE /api/pair/<id>.
+CONF_KERNEL_TOKEN_ID = "kernel_token_id"
+# The bridge's state prefix: the topic tree the kernel's MQTT bridge publishes
+# under (witness/last_event, witness/digest, witness/status, ...). Distinct from
+# CONF_MQTT_PREFIX, which is the Canaries' prefix (securacv/<id>/...).
+CONF_MQTT_TOPIC_PREFIX = "mqtt_topic_prefix"
+DEFAULT_MQTT_TOPIC_PREFIX = "witness"
+# The random per-entry nonce the retained claim carries instead of an entry id
+# (an entry id is a stable per-installation identifier; the nonce is not).
+CONF_CLAIM_NONCE = "claim_nonce"
+# Set once the one-time `entities_migrated` Repairs notice has been raised.
+CONF_MIGRATION_NOTICE_SHOWN = "migration_notice_shown"
+# Set once the one-time "add the dashboard" notification has been posted.
+CONF_DASHBOARD_NOTICE_SHOWN = "dashboard_notice_shown"
+# The pairing form's code field (never persisted).
+CONF_PAIRING_CODE = "pairing_code"
+PAIRING_CODE_LENGTH = 6
+# The label the kernel files the paired token under.
+PAIRED_TOKEN_LABEL = "home-assistant"
+# The port the kernel's event API listens on, for the pairing-step prefill.
+DEFAULT_KERNEL_API_PORT = 8799
+# Evidence exports kept on disk (options flow; the oldest zip goes first).
+CONF_EVIDENCE_KEEP = "evidence_keep"
+DEFAULT_EVIDENCE_KEEP = 20
+MIN_EVIDENCE_KEEP = 1
+MAX_EVIDENCE_KEEP = 200
+
+# =============================================================================
+# The integration's OWN verification (D10) — vocabulary and cadence
+# =============================================================================
+# `verification` on every kernel event row. "verified" is earned only by the
+# integration's chain walk (Ed25519 + hash chain against the pinned key);
+# "sealed" is kernel-signed but not yet covered by a walk; "failed" is the
+# last walk rejecting an entry. A kernel self-report never reaches this word.
+VERIFICATION_SEALED = "sealed"
+VERIFICATION_VERIFIED = "verified"
+VERIFICATION_FAILED = "failed"
+# `trust_reason` beside it: why the row carries the verification it does.
+TRUST_REASON_HA_VERIFIED_CHAIN = "ha_verified_chain"
+TRUST_REASON_KERNEL_SEALED = "kernel_sealed"
+TRUST_REASON_HA_VERIFY_FAILED = "ha_verify_failed"
+TRUST_REASON_KERNEL_KEY_MISMATCH = "kernel_key_mismatch"
+
+# The verification event entity's types (contract C10 as amended).
+VERIFICATION_EVENT_CHAIN_VERIFIED = "chain_verified"
+VERIFICATION_EVENT_CHAIN_FAILED = "chain_verification_failed"
+VERIFICATION_EVENT_KEY_CHANGED = "witness_key_changed"
+VERIFICATION_EVENT_TYPES: tuple[str, ...] = (
+    VERIFICATION_EVENT_CHAIN_VERIFIED,
+    VERIFICATION_EVENT_CHAIN_FAILED,
+    VERIFICATION_EVENT_KEY_CHANGED,
+)
+# What started a walk, carried on the verification event as `trigger`.
+VERIFY_TRIGGER_BUTTON = "button"
+VERIFY_TRIGGER_SERVICE = "service"
+VERIFY_TRIGGER_SCHEDULED = "scheduled"
+VERIFY_TRIGGER_IDLE = "idle"
+VERIFY_TRIGGER_BRIDGE = "bridge"
+# The walk's cadence: a 15-minute backstop, and 60 s after new entries go
+# idle (a few thousand Ed25519 checks is sub-second, so "Verified" is what a
+# person normally sees).
+VERIFY_BACKSTOP_INTERVAL_SECONDS = 15 * 60
+VERIFY_IDLE_DELAY_SECONDS = 60
+# What the chain_valid sensor's `error` (and the verify action's verdict)
+# says while the kernel serves a key other than the pin: a key change is
+# a Repairs matter, never a chain failure, and the card/strategy header
+# read it as such.
+VERIFY_ERROR_KEY_CHANGED = "the witness key changed; confirm it in Settings → Repairs"
+# How long the covered-entry index remembers an entry when the kernel's
+# digest does not say its retention; and a hard cap on the index.
+VERIFY_COVERED_DEFAULT_RETENTION_SECONDS = 30 * 24 * 3600
+VERIFY_COVERED_MAX_ENTRIES = 100_000
+# The Frigate link is "on" while the bridge says connected AND Frigate was
+# heard within this long (a quiet night is not a dead link, an hour is).
+FRIGATE_LINK_STALE_AFTER_SECONDS = 3600
+
+# =============================================================================
+# Evidence export (contract C7 as replaced by the delta)
+# =============================================================================
+# The export directory under the Home Assistant configuration directory —
+# never under www/ (served without authentication) — 0700, files 0600.
+EVIDENCE_DIR_PARTS = ("securacv", "evidence")
+EVIDENCE_INDEX_FILENAME = "index.json"
+# The authenticated view that streams a zip, and the signed-link lifetime.
+EVIDENCE_VIEW_URL = "/api/securacv/evidence/{export_id}"
+EVIDENCE_VIEW_NAME = "api:securacv:evidence"
+EVIDENCE_LINK_HOURS = 24
+# The export window, in whole hours.
+EXPORT_WINDOW_MIN_HOURS = 1
+EXPORT_WINDOW_MAX_HOURS = 720
+EXPORT_WINDOW_DEFAULT_HOURS = 24
+# What W5 ships under www/ and what each zip carries: the offline viewer
+# (byte-equal to viewer/evidence_viewer.html), the recipient's recipe, and
+# the pinned witness key so "self-attested" can become "authorship confirmed".
+EVIDENCE_VIEWER_SOURCE = "securacv-evidence-viewer.html"
+EVIDENCE_README_SOURCE = "evidence-README.txt"
+EVIDENCE_ZIP_VIEWER = "evidence_viewer.html"
+EVIDENCE_ZIP_README = "README.txt"
+EVIDENCE_ZIP_KEY = "WITNESS_KEY.txt"
+# The kernel's bundle download must stay bounded: one coarse log is small.
+EXPORT_BUNDLE_MAX_BYTES = 64 * 1024 * 1024
+
+# The kernel's 10-minute time bucket: every "at" the integration records is a
+# bucket start, never an event-precise epoch (coarse time, invariant III).
+TIME_BUCKET_SECONDS = 600
+
+# The bridge's retained state topics, relative to the state prefix. The claim
+# and the announce carry the kernel device id as a segment.
+KERNEL_TOPIC_LAST_EVENT = "last_event"
+KERNEL_TOPIC_EVENTS = "events"
+KERNEL_TOPIC_DIGEST = "digest"
+KERNEL_TOPIC_CHAIN_PROBLEM = "chain_problem"
+KERNEL_TOPIC_CHAIN_PROBLEM_ATTRS = "chain_problem/attrs"
+KERNEL_TOPIC_STATUS = "status"
+KERNEL_TOPIC_CLAIM_STATE = "claim_state"
+KERNEL_TOPIC_FRIGATE_LINK = "frigate_link"
+KERNEL_TOPIC_ANNOUNCE = "announce"
+KERNEL_TOPIC_CLAIM = "claim"
+# The availability LWT payloads on <prefix>/status (unchanged bridge contract).
+KERNEL_STATUS_ONLINE = "online"
+KERNEL_STATUS_OFFLINE = "offline"
+# claim_state payloads.
+CLAIM_STATE_CLAIMED = "claimed"
+CLAIM_STATE_UNCLAIMED = "unclaimed"
+
+# Repairs issue translation keys. Entry-scoped ids are `<key>_<entry_id>`;
+# `no_kernel_found` is global (it is raised by a config flow with no entry).
+ISSUE_NO_KERNEL_FOUND = "no_kernel_found"
+ISSUE_KERNEL_UNREACHABLE = "kernel_unreachable"
+ISSUE_TOFU_MISMATCH = "tofu_mismatch"
+ISSUE_STORAGE_REPLACE = "storage_replace"
+ISSUE_ENTITIES_MIGRATED = "entities_migrated"
+ISSUE_MQTT_SUBSCRIBE_FAILED = "mqtt_subscribe_failed"
+
+# Where the Repairs issues and the flow's final step send people. The my-HA
+# links open the user's own instance; the docs links are this repository.
+ADDON_REPOSITORY_LINK = (
+    "https://my.home-assistant.io/redirect/supervisor_add_addon_repository/"
+    "?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV"
+)
+DOCKER_QUICKSTART_LINK = (
+    "https://github.com/kmay89/securaCV/blob/main/docs/frigate_integration.md"
+)
+ENTITY_MIGRATION_DOCS_LINK = (
+    "https://github.com/kmay89/securaCV/blob/main/docs/homeassistant_setup.md"
+)
+KERNEL_UNREACHABLE_DOCS_LINK = (
+    "https://github.com/kmay89/securaCV/blob/main/docs/homeassistant_setup.md"
+)
+STORAGE_REPLACE_DOCS_LINK = (
+    "https://github.com/kmay89/securaCV/blob/main/docs/homeassistant_setup.md"
+)
+# Settings → Dashboards on the user's own instance, where the SecuraCV
+# dashboard strategy is one "Add dashboard" click away (J1).
+DASHBOARDS_LINK = "https://my.home-assistant.io/redirect/lovelace_dashboards/"
+
 # Setup modes
 # `auto` is a flow-only choice: it probes for a running kernel and stores a
 # concrete mode (both / mqtt) in the entry — no entry ever persists "auto".
@@ -32,6 +215,9 @@ SETUP_MODE_BOTH = "both"
 # MQTT Topics (relative to prefix/{device_id}/)
 # =============================================================================
 TOPIC_STATUS = "status"
+# The canary base's last-will topic (securacv_mqtt.cpp): a bare
+# `online`/`offline`, retained; the other products say it in their status.
+TOPIC_AVAILABILITY = "availability"
 TOPIC_EVENTS = "events"
 TOPIC_HEALTH = "health"
 TOPIC_CHAIN = "chain"
@@ -184,12 +370,17 @@ WARNING_BATTERY_THRESHOLD_PERCENT = 25   # < 25% battery = warning
 # These are claims, never identities: no plates, faces, or precise location.
 # =============================================================================
 EVENT_TYPE_METADATA = {
+    # D13: a Frigate person and a Frigate car both seal as the large class,
+    # a dog or a cat as the small one. The label says what the coarse claim
+    # means to a person; the dictionary id (and the kernel's variant) is
+    # unchanged. The honest coarsening is explained once, in the strategy
+    # header, not per row.
     "boundary_crossing_object_large": {
-        "label": "Large object crossed boundary",
+        "label": "Person or vehicle",
         "icon": "mdi:car",
     },
     "boundary_crossing_object_small": {
-        "label": "Small object crossed boundary",
+        "label": "Animal or small object",
         "icon": "mdi:paw",
     },
     "acoustic_impulse_in_zone": {
@@ -398,26 +589,52 @@ def normalize_attestation(value: str | None) -> str:
     return ATTESTATION_DEVICE
 
 
+# The witness event-type ids, DERIVED from the metadata table above (which
+# scripts/lint_dictionary_sync.py holds to spec/witness_dictionary.json). The
+# event platform's `event_types` and the verifier's covered-entry index both
+# read this tuple; neither retypes an id (the linter asserts event.py holds
+# no literal list).
+WITNESS_EVENT_TYPES: tuple[str, ...] = tuple(EVENT_TYPE_METADATA)
+
+
+def normalize_event_type(event_type: object) -> str | None:
+    """The snake_case dictionary id of an event type, or None.
+
+    The kernel and its bridge spell event types as the Rust enum variant
+    (``BoundaryCrossingObjectLarge``); Home Assistant's event entities and
+    the dictionary spell them snake_case (``boundary_crossing_object_large``).
+    One fold, used by every consumer, so an event pushed by the bridge, an
+    entry walked out of the sealed log and the entity's ``event_types`` list
+    agree on the spelling they are compared by. Unknown types fold the same
+    way (the caller decides whether an unknown id is an error).
+    """
+    if not isinstance(event_type, str):
+        return None
+    key = event_type.strip()
+    if not key:
+        return None
+    if key in EVENT_TYPE_METADATA:
+        return key
+    snake = ""
+    for i, ch in enumerate(key):
+        if ch.isupper() and i > 0:
+            snake += "_"
+        snake += ch.lower()
+    return snake
+
+
 def event_type_metadata(event_type: str | None) -> dict[str, str]:
     """Return {'label', 'icon'} for an event_type, with a sensible default.
 
     Accepts both snake_case (e.g. "acoustic_impulse_in_zone") and the kernel's
     CamelCase enum form (e.g. "AcousticImpulseInZone").
     """
-    if not event_type:
+    key = normalize_event_type(event_type)
+    if key is None:
         return {"label": "Unknown", "icon": DEFAULT_EVENT_ICON}
-    key = event_type.strip()
-    if key not in EVENT_TYPE_METADATA:
-        # Normalize CamelCase -> snake_case so kernel enum names also resolve.
-        snake = ""
-        for i, ch in enumerate(key):
-            if ch.isupper() and i > 0:
-                snake += "_"
-            snake += ch.lower()
-        key = snake
     meta = EVENT_TYPE_METADATA.get(key)
     if meta is None:
-        return {"label": event_type, "icon": DEFAULT_EVENT_ICON}
+        return {"label": str(event_type), "icon": DEFAULT_EVENT_ICON}
     return meta
 
 

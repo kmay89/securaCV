@@ -2,7 +2,7 @@
 
 The gate in sensor.py refuses a validly signed publish whose counter runs
 backwards — "a lower counter cannot be the device's present state". The
-marks were kept only in ``entry_data["replay"]``, which
+marks were kept only in ``entry_data.replay``, which
 ``async_setup_entry`` rebuilds empty, while the pins they belong to
 persist. MQTT retains the last signed publish and anyone with publish
 access can overwrite a retained topic with an OLDER validly signed message,
@@ -33,7 +33,6 @@ from .. import device_trust  # noqa: E402
 from ..const import (  # noqa: E402
     CONF_ENABLE_MQTT,
     CONF_SETUP_MODE,
-    DOMAIN,
     SETUP_MODE_MQTT,
 )
 from ..device_trust import TrustVerdict  # noqa: E402
@@ -84,13 +83,14 @@ def _boot() -> HomeAssistant:
     async def _forward(entry, platforms):
         return True
 
-    hass.config_entries = types.SimpleNamespace(async_forward_entry_setups=_forward)
+    hass.config_entries.add(ENTRY)
     assert run(async_setup_entry(hass, ENTRY)) is True
     return hass
 
 
-def _entry_data(hass) -> dict:
-    return hass.data[DOMAIN]["e1"]
+def _entry_data(hass):
+    """The runtime the last setup on `hass` gave ENTRY (one entry per boot)."""
+    return ENTRY.runtime_data
 
 
 def _chain(hass, length: int) -> TrustVerdict:
@@ -103,14 +103,14 @@ def test_marks_survive_a_restart_and_still_refuse_the_stale_retained_publish(
     _persistent_storage(monkeypatch)
 
     hass = _boot()
-    run(_entry_data(hass)["trust_store"].async_pin(DEVICE, KEY_A))
+    run(_entry_data(hass).trust_store.async_pin(DEVICE, KEY_A))
     assert _chain(hass, 12).trusted is True
-    assert _entry_data(hass)["replay"][DEVICE] == {"length": 12}
+    assert _entry_data(hass).replay[DEVICE] == {"length": 12}
 
     # Restart: a brand-new hass and a brand-new entry_data over the same
     # storage. Before the fix the floor came back empty.
     hass2 = _boot()
-    assert _entry_data(hass2)["replay"][DEVICE] == {"length": 12}
+    assert _entry_data(hass2).replay[DEVICE] == {"length": 12}
 
     # The retained stale-but-signed publish a hostile broker left behind.
     stale = _chain(hass2, 5)
@@ -118,7 +118,7 @@ def test_marks_survive_a_restart_and_still_refuse_the_stale_retained_publish(
     assert stale.reason == "replay"
     assert "older than the last verified" in stale.detail
     # ...and it did not lower the floor on its way through.
-    assert _entry_data(hass2)["replay"][DEVICE] == {"length": 12}
+    assert _entry_data(hass2).replay[DEVICE] == {"length": 12}
     # The device's real, current publish still passes.
     assert _chain(hass2, 13).trusted is True
 
@@ -130,7 +130,7 @@ def test_a_re_pin_clears_the_persisted_marks_with_the_key(monkeypatch) -> None:
     _persistent_storage(monkeypatch)
 
     hass = _boot()
-    store = _entry_data(hass)["trust_store"]
+    store = _entry_data(hass).trust_store
     run(store.async_pin(DEVICE, KEY_A))
     _chain(hass, 12)
     assert store.get(DEVICE).counters == {"length": 12}
@@ -139,7 +139,7 @@ def test_a_re_pin_clears_the_persisted_marks_with_the_key(monkeypatch) -> None:
     assert store.get(DEVICE).counters == {}
 
     hass2 = _boot()
-    assert DEVICE not in _entry_data(hass2)["replay"]
+    assert DEVICE not in _entry_data(hass2).replay
     assert _chain(hass2, 1).trusted is True, "a new key starts its counters over"
 
 
@@ -147,13 +147,13 @@ def test_unpinning_takes_the_marks_with_it(monkeypatch) -> None:
     _persistent_storage(monkeypatch)
 
     hass = _boot()
-    store = _entry_data(hass)["trust_store"]
+    store = _entry_data(hass).trust_store
     run(store.async_pin(DEVICE, KEY_A))
     _chain(hass, 12)
     assert run(store.async_unpin(DEVICE)) is True
 
     hass2 = _boot()
-    assert _entry_data(hass2)["replay"] == {}
+    assert _entry_data(hass2).replay == {}
 
 
 def test_an_unpinned_device_records_nothing(monkeypatch) -> None:
@@ -162,10 +162,10 @@ def test_an_unpinned_device_records_nothing(monkeypatch) -> None:
 
     hass = _boot()
     assert _chain(hass, 12).trusted is True
-    assert _entry_data(hass)["replay"][DEVICE] == {"length": 12}  # in-session only
+    assert _entry_data(hass).replay[DEVICE] == {"length": 12}  # in-session only
 
     hass2 = _boot()
-    assert _entry_data(hass2)["replay"] == {}
+    assert _entry_data(hass2).replay == {}
 
 
 def test_a_corrupt_counter_in_storage_is_dropped_not_trusted(monkeypatch) -> None:
@@ -175,7 +175,7 @@ def test_a_corrupt_counter_in_storage_is_dropped_not_trusted(monkeypatch) -> Non
     saved = _persistent_storage(monkeypatch)
 
     hass = _boot()
-    run(_entry_data(hass)["trust_store"].async_pin(DEVICE, KEY_A))
+    run(_entry_data(hass).trust_store.async_pin(DEVICE, KEY_A))
     _chain(hass, 12)
 
     key = next(iter(saved))
@@ -186,4 +186,4 @@ def test_a_corrupt_counter_in_storage_is_dropped_not_trusted(monkeypatch) -> Non
     }
 
     hass2 = _boot()
-    assert _entry_data(hass2)["replay"][DEVICE] == {"total": 7}
+    assert _entry_data(hass2).replay[DEVICE] == {"total": 7}

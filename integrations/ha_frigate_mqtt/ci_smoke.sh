@@ -2,12 +2,20 @@
 #
 # ci_smoke.sh — deterministic, Docker-free CI smoke test of the Frigate → MQTT
 # ingest path. It proves the REAL `frigate_bridge` binary, connected to a live
-# mosquitto broker, ingests a `frigate/events` message into the sealed log.
+# mosquitto broker, ingests Frigate's messages into the sealed log — in BOTH of
+# its modes, one bridge run each:
+#
+#   • events mode (the default): subscribes to `frigate/events`, seals a
+#     tracked-object message;
+#   • alerts mode (`--enable-reviews`): subscribes to `frigate/reviews` INSTEAD
+#     and seals an alert-severity review item. The two modes are exclusive by
+#     design (a review alert is Frigate's own roll-up of the same detections),
+#     so one process never subscribes to both topics.
 #
 # This is the automated, live-broker half of the release gate. It deliberately
 # does NOT run Frigate or Home Assistant: real ML detection on a fixture is
 # non-deterministic, and SecuraCV cannot control whether Frigate fires. What
-# SecuraCV owns — "given a Frigate event on MQTT, the privacy-preserving claim
+# SecuraCV owns — "given a Frigate message on MQTT, the privacy-preserving claim
 # lands in the sealed log" — is what this asserts.
 #
 # The cryptographic verification of a bridge-produced (SQLCipher-encrypted) log
@@ -31,7 +39,6 @@ done
 
 WORKDIR="$(mktemp -d)"
 DB="$WORKDIR/witness.db"
-BRIDGE_LOG="$WORKDIR/bridge.log"
 MOSQ_CONF="$WORKDIR/mosquitto.conf"
 MOSQ_PID=""
 BRIDGE_PID=""
@@ -54,67 +61,65 @@ EOF
 mosquitto -c "$MOSQ_CONF" &
 MOSQ_PID=$!
 
-# 2) Start the real bridge. Loopback broker ⇒ no --allow-remote-mqtt needed.
-#    The bridge has its own connect/subscribe retry loop, so a slightly slow
-#    broker is fine; we wait for its "Subscribed" line before publishing.
-RUST_LOG=info "$BRIDGE_BIN" \
-  --db-path "$DB" \
-  --mqtt-broker-addr "${MQTT_HOST}:${MQTT_PORT}" \
-  --enable-reviews \
-  >"$BRIDGE_LOG" 2>&1 &
-BRIDGE_PID=$!
+# Wait until BRIDGE_LOG contains $1 (or the bridge exits); $2 names the wait.
+wait_for_line() {
+  local needle="$1" what="$2" seen=0
+  for _ in $(seq 1 60); do
+    if grep -q -- "$needle" "$BRIDGE_LOG"; then seen=1; break; fi
+    if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then break; fi
+    sleep 0.5
+  done
+  if [ "$seen" -ne 1 ]; then
+    echo "❌ frigate_bridge $what." >&2
+    cat "$BRIDGE_LOG" >&2
+    exit 1
+  fi
+}
 
-subscribed=0
-for _ in $(seq 1 60); do
-  if grep -q "Subscribed to frigate/events" "$BRIDGE_LOG"; then subscribed=1; break; fi
-  if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then break; fi
-  sleep 0.5
-done
-if [ "$subscribed" -ne 1 ]; then
-  echo "❌ frigate_bridge never subscribed to the broker." >&2
-  cat "$BRIDGE_LOG" >&2
-  exit 1
-fi
+# One bridge run: start the real binary with the given mode flags, wait for its
+# "Subscribed to <topic>" line, publish one message (retained, so a reconnect
+# can't drop it), and require the "Event logged" line that is printed iff
+# parse → sanitize → append_event_checked all succeeded — i.e. the MQTT-wired
+# binary produced a sealed event. Then stop the bridge so the next mode starts
+# from a quiet broker. Loopback broker ⇒ no --allow-remote-mqtt needed; the
+# bridge has its own connect/subscribe retry loop, so a slow broker is fine.
+run_mode() {
+  local label="$1" topic="$2" payload="$3"
+  shift 3
+  BRIDGE_LOG="$WORKDIR/bridge-${label}.log"
+  RUST_LOG=info "$BRIDGE_BIN" \
+    --db-path "$DB" \
+    --mqtt-broker-addr "${MQTT_HOST}:${MQTT_PORT}" \
+    "$@" \
+    >"$BRIDGE_LOG" 2>&1 &
+  BRIDGE_PID=$!
 
-# 3) Publish a realistic person detection (retained, so a reconnect can't drop it).
-EVENT='{"before":null,"after":{"id":"1719000000.ci-object-id","camera":"front_door","label":"person","sub_label":null,"score":0.81,"top_score":0.92,"current_zones":["porch"],"entered_zones":["driveway","porch"],"false_positive":false,"has_clip":true,"has_snapshot":true},"type":"new"}'
-mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t frigate/events -r -m "$EVENT"
+  wait_for_line "Subscribed to ${topic}" "never subscribed to ${topic} in ${label} mode"
+  mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t "$topic" -r -m "$payload"
+  wait_for_line "Event logged" "did not ingest the ${topic} message in ${label} mode"
 
-# 4) The bridge logs "Event logged" iff parse → sanitize → append_event_checked
-#    all succeeded — i.e. the MQTT-wired binary produced a sealed event.
-ingested=0
-for _ in $(seq 1 60); do
-  if grep -q "Event logged" "$BRIDGE_LOG"; then ingested=1; break; fi
-  if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then break; fi
-  sleep 0.5
-done
-if [ "$ingested" -ne 1 ]; then
-  echo "❌ frigate_bridge did not ingest the frigate/events message." >&2
-  cat "$BRIDGE_LOG" >&2
-  exit 1
-fi
+  kill "$BRIDGE_PID" 2>/dev/null || true
+  wait "$BRIDGE_PID" 2>/dev/null || true
+  BRIDGE_PID=""
+  grep "Event logged" "$BRIDGE_LOG"
+}
+
+# 2) Events mode: a realistic person detection, as Frigate publishes it (the
+#    `sub_label` pair, the ids, the clip/snapshot flags are all discarded at
+#    parse; only the claim's fields reach the log).
+EVENT='{"before":null,"after":{"id":"1719000000.ci-object-id","camera":"front_door","label":"person","sub_label":["Someone Named","0.79"],"score":0.81,"top_score":0.92,"current_zones":["porch"],"entered_zones":["driveway","porch"],"false_positive":false,"has_clip":true,"has_snapshot":true},"type":"new"}'
+EVENT="${EVENT//\"0.79\"/0.79}"
+run_mode events frigate/events "$EVENT"
 
 if [ ! -s "$DB" ]; then
   echo "❌ sealed log database was not created at $DB." >&2
   exit 1
 fi
 
-# 5) A real (Frigate 0.14+) frigate/reviews payload must also land. Different
-#    camera, so the camera+label-per-bucket dedup can't fold it into step 3.
+# 3) Alerts mode: a real (Frigate 0.14+) frigate/reviews item that is already an
+#    alert at `new`, on a different camera so the camera+bucket dedup cannot fold
+#    it into step 2.
 REVIEW='{"type":"new","before":{"id":"1719000001.5-rev1","camera":"garage","severity":"detection","data":{"detections":["1719000001.4-obj1"],"objects":["person"],"sub_labels":[],"zones":[],"audio":[]}},"after":{"id":"1719000001.5-rev1","camera":"garage","severity":"alert","data":{"detections":["1719000001.4-obj1"],"objects":["person"],"sub_labels":[],"zones":["garage_zone"],"audio":[]}}}'
-mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t frigate/reviews -r -m "$REVIEW"
+run_mode alerts frigate/reviews "$REVIEW" --enable-reviews
 
-reviews_ingested=0
-for _ in $(seq 1 60); do
-  if [ "$(grep -c "Event logged" "$BRIDGE_LOG")" -ge 2 ]; then reviews_ingested=1; break; fi
-  if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then break; fi
-  sleep 0.5
-done
-if [ "$reviews_ingested" -ne 1 ]; then
-  echo "❌ frigate_bridge did not ingest the frigate/reviews message." >&2
-  cat "$BRIDGE_LOG" >&2
-  exit 1
-fi
-
-echo "✅ frigate_bridge ingested frigate/events and frigate/reviews messages into a sealed log."
-grep "Event logged" "$BRIDGE_LOG"
+echo "✅ frigate_bridge ingested a frigate/events message (events mode) and a frigate/reviews alert (alerts mode) into a sealed log."

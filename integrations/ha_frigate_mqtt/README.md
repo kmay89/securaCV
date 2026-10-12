@@ -118,7 +118,9 @@ mosquitto_sub -h localhost -u securacv -P <password> -t 'witness/#' -v
   - `cargo test --test frigate_mqtt_e2e` — a `frigate/events` payload → sealed log →
     real `log_verify` against the SQLCipher-encrypted DB.
   - `./ci_smoke.sh` — the real `frigate_bridge` binary ingesting a `frigate/events`
-    message from a live mosquitto broker (run `BRIDGE_BIN=path/to/frigate_bridge ./ci_smoke.sh`).
+    message (events mode) and a `frigate/reviews` alert (`--enable-reviews`, one
+    bridge run each) from a live mosquitto broker
+    (run `BRIDGE_BIN=path/to/frigate_bridge ./ci_smoke.sh`).
 - **Tick-as-you-go bring-up:** [`RUNBOOK.md`](RUNBOOK.md) walks one bring-up of
   this stack step by step with the expected output of each command (derived from
   the files here, not a recorded run — it says so in its header).

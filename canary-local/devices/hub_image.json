@@ -72,13 +72,13 @@
       "domain": "securacv",
       "name": "SecuraCV",
       "version": "0.8.0",
-      "min_ha": "2024.4.1",
+      "min_ha": "2026.5.0",
       "source": "canary-local/devices/homeassistant.json:integration"
     },
     "add_ons": [
       {
         "slug": "privacy_witness_kernel",
-        "name": "Privacy Witness Kernel",
+        "name": "SecuraCV",
         "source": "securacv",
         "from": "privacy_witness_kernel/config.yaml"
       },
@@ -98,8 +98,8 @@
     ],
     "dashboards": [
       {
-        "file": "homeassistant/lovelace/securacv-canary-dashboard.yaml",
-        "name": "canary dashboard"
+        "file": "homeassistant/lovelace/securacv-dashboard-plain.yaml",
+        "name": "dashboard plain"
       },
       {
         "file": "homeassistant/lovelace/securacv-dashboard.yaml",
@@ -116,24 +116,8 @@
     ],
     "automations": [
       {
-        "file": "homeassistant/automations/securacv_battery_health.yaml",
-        "name": "battery health"
-      },
-      {
-        "file": "homeassistant/automations/securacv_daily_digest.yaml",
-        "name": "daily digest"
-      },
-      {
-        "file": "homeassistant/automations/securacv_integrity_failure.yaml",
-        "name": "integrity failure"
-      },
-      {
         "file": "homeassistant/automations/securacv_litterbox.yaml",
         "name": "litterbox"
-      },
-      {
-        "file": "homeassistant/automations/securacv_pattern_break.yaml",
-        "name": "pattern break"
       },
       {
         "file": "homeassistant/automations/securacv_vision_presence.yaml",
@@ -141,6 +125,10 @@
       }
     ],
     "blueprints": [
+      {
+        "file": "docs/blueprints/canary_battery_health.yaml",
+        "name": "canary battery health"
+      },
       {
         "file": "docs/blueprints/canary_sense_after_hours_presence.yaml",
         "name": "canary sense after hours presence"
@@ -168,6 +156,14 @@
       {
         "file": "docs/blueprints/securacv_hue_alert_light.yaml",
         "name": "hue alert light"
+      },
+      {
+        "file": "docs/blueprints/securacv_pattern_break.yaml",
+        "name": "pattern break"
+      },
+      {
+        "file": "docs/blueprints/securacv_witness_notification.yaml",
+        "name": "witness notification"
       }
     ],
     "frigate_config": [

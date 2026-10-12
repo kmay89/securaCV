@@ -189,6 +189,11 @@ fn subcommands_never_create_a_device_identity() -> Result<()> {
         "stderr: {}",
         stderr(&out)
     );
+    assert!(
+        stderr(&out).contains("issue-pairing-code"),
+        "stderr: {}",
+        stderr(&out)
+    );
 
     let out = run(&["mint-viewer-token", "--label", "tv"]);
     assert!(!out.status.success(), "a mint with no identity must refuse");
@@ -201,6 +206,31 @@ fn subcommands_never_create_a_device_identity() -> Result<()> {
 
     let out = run(&["revoke-viewer-token", "no-such-id"]);
     assert!(!out.status.success(), "an unknown id is refused");
+
+    // The pairing subcommands are held to the same rule: a code pins the
+    // served key, so a host with no identity gets no code — and listing or
+    // revoking paired bearers needs no identity at all.
+    let out = run(&["issue-pairing-code"]);
+    assert!(!out.status.success(), "a code with no identity must refuse");
+    assert!(
+        stderr(&out).contains("no device identity"),
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert!(stdout(&out).is_empty(), "no code: {}", stdout(&out));
+    let out = run(&["list-paired-tokens"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out).trim(), "[]");
+    let out = run(&["revoke-paired-token", "no-such-id"]);
+    assert!(!out.status.success(), "an unknown id is refused");
+    assert!(
+        !dir.path().join("pairing_code").exists(),
+        "a refused issue wrote the pairing code file"
+    );
+    assert!(
+        !dir.path().join("paired_tokens.json").exists(),
+        "listing created the paired token file"
+    );
 
     assert!(!seed_file.exists(), "a subcommand minted a device identity");
     assert!(!db.exists(), "a subcommand created the database");

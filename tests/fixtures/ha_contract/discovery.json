@@ -1,0 +1,13 @@
+{
+  "$comment": "Contract C6: compose_discovery_payload HOST PORT TOKEN_FILE PREFIX DEVICE_ID emits `payload` byte for byte (jq -c); the integration's hassio step reads config.* and keys the entry kernel_<device_id>.",
+  "args": {
+    "host": "d0491a67-privacy-witness-kernel",
+    "port": 8799,
+    "token_file": "/config/api_token",
+    "mqtt_topic_prefix": "witness",
+    "device_id": "pwk_1a2b3c4d"
+  },
+  "payload": "{\"service\":\"securacv\",\"config\":{\"host\":\"d0491a67-privacy-witness-kernel\",\"port\":8799,\"token_file\":\"/config/api_token\",\"mqtt_topic_prefix\":\"witness\",\"device_id\":\"pwk_1a2b3c4d\"}}",
+  "unique_id": "kernel_pwk_1a2b3c4d",
+  "url": "http://d0491a67-privacy-witness-kernel:8799"
+}

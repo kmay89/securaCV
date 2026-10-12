@@ -1,119 +1,129 @@
 """SecuraCV - Privacy Witness Kernel integration for Home Assistant.
 
 Connects to SecuraCV Canary devices via MQTT and/or the Privacy Witness
-Kernel via HTTP API. Surfaces semantic witness events, hash chain integrity,
-and device health — never raw video or identity data. Privacy by design.
+Kernel via MQTT (push) and HTTP (backstop). Surfaces semantic witness
+events, hash chain integrity, and device health — never raw video or
+identity data. Privacy by design.
 
 Setup modes:
-  - MQTT only: Auto-discovers Canary devices via MQTT (recommended)
-  - Kernel only: Polls the PWK Event API via HTTP
-  - Both: MQTT for Canary devices + HTTP for the kernel
+  - MQTT only: Auto-discovers Canary devices via MQTT
+  - Kernel only: the witness kernel over HTTP (no MQTT at all)
+  - Both: MQTT for Canary devices and the kernel's push topics, HTTP for
+    the kernel backstop (the app and the sidecar both end up here)
+
+Module-level imports here are deliberately limited to what the repo-root
+test stubs provide; the kernel-side modules (coordinator, claim, repairs,
+entity) are imported where they are used, after the stub lane has loaded
+its richer surface. Everything else in the package imports normally.
 """
 from __future__ import annotations
 
-import asyncio
-import re
 import logging
+import re
 from datetime import timedelta
-from typing import Any
-
-import aiohttp
+from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TOKEN, CONF_URL, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.components import mqtt
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 
-import json
-
-from .device_trust import TrustStore, TrustVerdict, normalize_hex
-from .const import (
-    DOMAIN,
-    CONF_MQTT_PREFIX,
-    CONF_ENABLE_MQTT,
-    CONF_SETUP_MODE,
-    CONF_ADAPTER_STATS_URL,
-    CONF_TOKEN_FILE,
-    TOPIC_STATUS,
-    MANUFACTURER,
-    MODEL_KERNEL,
-    MODEL_CANARY,
-    SETUP_MODE_KERNEL,
-    SETUP_MODE_BOTH,
+from .api import (  # noqa: F401 - re-exported: the client moved here from api.py
+    SecuraCVApi,
+    SecuraCVApiAuthError,
+    SecuraCVApiConnectionError,
+    SecuraCVApiError,
+    SecuraCVApiResponseError,
 )
+from .const import (
+    AUTH_MODE_PAIRED,
+    AUTH_MODE_STATIC,
+    AUTH_MODE_TOKEN_FILE,
+    CONF_ADAPTER_STATS_URL,
+    CONF_AUTH_MODE,
+    CONF_CLAIM_NONCE,
+    CONF_DASHBOARD_NOTICE_SHOWN,
+    CONF_ENABLE_MQTT,
+    CONF_KERNEL_DEVICE_ID,
+    CONF_KERNEL_TOKEN_ID,
+    CONF_KERNEL_VERIFYING_KEY,
+    CONF_MIGRATION_NOTICE_SHOWN,
+    CONF_MQTT_PREFIX,
+    CONF_MQTT_TOPIC_PREFIX,
+    CONF_SETUP_MODE,
+    CONF_TOKEN_FILE,
+    DASHBOARDS_LINK,
+    DEFAULT_MQTT_TOPIC_PREFIX,
+    DOMAIN,
+    MANUFACTURER,
+    MODEL_CANARY,
+    SETUP_MODE_BOTH,
+    SETUP_MODE_KERNEL,
+    TOPIC_AVAILABILITY,
+    TOPIC_HEALTH,
+    TOPIC_STATUS,
+)
+from .data import SecuraCVConfigEntry, SecuraCVRuntimeData, runtime_for
+from .device_trust import TrustStore, TrustVerdict, normalize_hex
+from .kernel_trust import normalize_kernel_key, valid_kernel_device_id
+from .mqtt_payload import (  # noqa: F401 - re-exported: every handler imports the gate from here
+    DEVICE_ID_RE,
+    MAX_MQTT_PAYLOAD_BYTES,
+    mqtt_payload_text,
+    mqtt_payload_within_cap,
+    parse_mqtt_json,
+    valid_device_id,
+)
+from .voice import status_online
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
-DEFAULT_UPDATE_INTERVAL = timedelta(seconds=30)
+# The four platforms (contract C11). Spelled through `_platform` so the thin
+# repo-root test stubs — a `Platform` namespace that predates the event and
+# button members — can still import this module; on a real core and in the
+# integration's own stub lane every member resolves.
+def _platform(name: str) -> Platform:
+    """`Platform.<NAME>` by value, tolerant of a stub that lacks the member."""
+    member = getattr(Platform, name.upper(), None)
+    if member is not None:
+        return cast(Platform, member)
+    # A stub namespace without the member: the bare value (a StrEnum's value).
+    return cast(Platform, name)
+
+
+PLATFORMS: list[Platform] = [
+    _platform("sensor"),
+    _platform("binary_sensor"),
+    _platform("event"),
+    _platform("button"),
+]
 
 # Config-entry only: nothing is read from configuration.yaml. Declared
 # because an integration with an async_setup must say so (hassfest).
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-# Untrusted-broker hardening: cap how much of any single MQTT payload this
-# integration will decode/parse. Real device publishes are well under 8 KiB;
-# anything larger is malformed or hostile and gets dropped before json.loads.
-MAX_MQTT_PAYLOAD_BYTES = 64 * 1024
-
-
-def mqtt_payload_within_cap(payload: Any) -> bool:
-    """True when a raw MQTT payload is within the untrusted-broker cap."""
-    try:
-        return len(payload) <= MAX_MQTT_PAYLOAD_BYTES
-    except TypeError:
-        return False
-
-
-# What a Canary actually puts in the device-id segment of its topics: the
-# firmware's device_pseudonym / hostname alphabet. Anything else on the wildcard
-# subscription is a hostile or misconfigured publisher, and before this gate it
-# minted a device-registry entry plus up to ~20 entities per topic segment,
-# unbounded (device_id was taken verbatim from the topic).
-DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-
-
-def valid_device_id(device_id: Any) -> bool:
-    """True iff `device_id` is a topic segment a real Canary could publish."""
-    # fullmatch, not match: `$` would accept a trailing newline.
-    return isinstance(device_id, str) and DEVICE_ID_RE.fullmatch(device_id) is not None
-
-
-def parse_mqtt_json(payload: Any) -> dict[str, Any] | None:
-    """Decode an MQTT payload into a JSON object, or None.
-
-    The single defensive gate every MQTT callback shares: enforces the
-    untrusted-broker size cap BEFORE decoding, tolerates bytes or str, and
-    only ever returns a dict. Valid JSON that is a bare scalar or array
-    returns None too — every handler indexes by key, and a hostile broker
-    must never be able to AttributeError a @callback out of existence
-    (payload "5" would make ``data.get(...)`` raise on the int).
-    """
-    if not mqtt_payload_within_cap(payload):
-        return None
-    if isinstance(payload, bytes):
-        try:
-            payload = payload.decode()
-        except UnicodeDecodeError:
-            return None
-    try:
-        data = json.loads(payload)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
+# The current config-entry schema (config_flow.SecuraCVConfigFlow.VERSION).
+CONFIG_ENTRY_VERSION = 3
 
 # Lovelace cards (custom_components/securacv/www/). Served and auto-loaded
 # best-effort so `type: custom:securacv-timeline-card` /
-# `custom:securacv-aim-card` resolve without the user hand-adding a frontend
-# resource.
+# `custom:securacv-aim-card` and the `custom:securacv` dashboard strategy
+# resolve without the user hand-adding a frontend resource. A file that is
+# not on disk (the strategy ships separately) is skipped, not an error.
 LOVELACE_CARD_FILENAMES = (
     "securacv-timeline-card.js",
     "securacv-aim-card.js",
+    "securacv-strategy.js",
 )
+# The dashboard strategy module: when it was served, "Add dashboard →
+# SecuraCV" exists in Settings → Dashboards and the one-time notice below
+# may say so.
+STRATEGY_CARD_FILENAME = "securacv-strategy.js"
+# hass.data[DOMAIN] key listing the card files actually served this run.
+DATA_FRONTEND_CARDS = "_frontend_cards"
 
 
 def _card_digest(path: str) -> str:
@@ -153,8 +163,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
     The frontend is optional — the integration is just as useful headless — so
     any registration hiccup is logged at debug and swallowed rather than failing
-    setup. Runs once per HA instance (guarded in hass.data), and tolerates the
-    static-path API change across HA versions.
+    setup. Runs once per HA instance (guarded in hass.data).
     """
     domain_data = hass.data.setdefault(DOMAIN, {})
     if domain_data.get("_frontend_registered"):
@@ -164,17 +173,14 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         cards = await hass.async_add_executor_job(_card_assets)
 
         registered_any = False
+        served: list[str] = domain_data.setdefault(DATA_FRONTEND_CARDS, [])
         for filename, card_path, digest in cards:
             card_url = f"/{DOMAIN}_www/{filename}"
-            try:
-                from homeassistant.components.http import StaticPathConfig
+            from homeassistant.components.http import StaticPathConfig
 
-                await hass.http.async_register_static_paths(
-                    [StaticPathConfig(card_url, card_path, False)]
-                )
-            except (ImportError, AttributeError):
-                # Older HA without the bulk async API.
-                hass.http.register_static_path(card_url, card_path, False)
+            await hass.http.async_register_static_paths(
+                [StaticPathConfig(card_url, card_path, False)]
+            )
 
             from homeassistant.components.frontend import add_extra_js_url
 
@@ -188,6 +194,8 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             # the static path itself stays unversioned.
             add_extra_js_url(hass, f"{card_url}?v={digest}")
             registered_any = True
+            if filename not in served:
+                served.append(filename)
             _LOGGER.debug("SecuraCV card registered at %s", card_url)
         if not registered_any:
             domain_data["_frontend_registered"] = False
@@ -196,254 +204,84 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         _LOGGER.debug("SecuraCV Lovelace cards not registered", exc_info=True)
 
 
-def _mqtt_issue_id(entry: ConfigEntry) -> str:
-    """Stable Repairs-issue id for this entry's MQTT subscribe failure."""
-    return f"mqtt_subscribe_failed_{entry.entry_id}"
-
-
-def _async_report_mqtt_subscribe_failed(
-    hass: HomeAssistant, entry: ConfigEntry, prefix: Any, err: Exception
-) -> None:
-    """Raise a Repairs issue so an MQTT subscribe failure is visible.
-
-    A log warning is easy to miss; a Repairs issue puts "your Canaries
-    are silent, here is the fix" on the Settings page. Imported lazily
-    and wrapped so headless/stub environments skip cleanly.
-    """
-    try:
-        from homeassistant.helpers import issue_registry as ir
-
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _mqtt_issue_id(entry),
-            is_fixable=False,
-            severity=ir.IssueSeverity.WARNING,
-            learn_more_url="https://www.home-assistant.io/integrations/mqtt/",
-            translation_key="mqtt_subscribe_failed",
-            translation_placeholders={"prefix": str(prefix), "error": str(err)},
-        )
-    except Exception:  # noqa: BLE001 - repairs are best-effort, never fatal
-        _LOGGER.debug("could not create MQTT repairs issue", exc_info=True)
-
-
-def _async_clear_mqtt_subscribe_issue(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
-    """Clear the MQTT-subscribe Repairs issue once the subscribe works."""
-    try:
-        from homeassistant.helpers import issue_registry as ir
-
-        ir.async_delete_issue(hass, DOMAIN, _mqtt_issue_id(entry))
-    except Exception:  # noqa: BLE001 - repairs are best-effort, never fatal
-        _LOGGER.debug("could not clear MQTT repairs issue", exc_info=True)
-
-
-class SecuraCVApiError(Exception):
-    """Base error for the SecuraCV API client."""
-
-
-class SecuraCVApiAuthError(SecuraCVApiError):
-    """Error for authentication failures."""
-
-
-class SecuraCVApiConnectionError(SecuraCVApiError):
-    """Error for connectivity failures."""
-
-
-class SecuraCVApiResponseError(SecuraCVApiError):
-    """Error for unexpected API responses."""
-
-
-class SecuraCVApi:
-    """API client for the SecuraCV Privacy Witness Kernel Event API."""
-
-    def __init__(
-        self,
-        base_url: str,
-        token: str,
-        session: aiohttp.ClientSession,
-        token_file: str | None = None,
-    ) -> None:
-        """Initialize the API client."""
-        self._base_url = base_url.rstrip("/")
-        self._token = token
-        self._session = session
-        self._token_file = token_file
-        self._refresh_lock = asyncio.Lock()
-
-    def _read_token_file(self) -> str | None:
-        """Blocking read of the token file (run in executor)."""
-        if not self._token_file:
-            return None
-        try:
-            with open(self._token_file, encoding="utf-8") as fh:
-                # The token is 64 hex chars; cap the read so a misconfigured
-                # path (device node, huge file) can't balloon memory.
-                token = fh.read(4096).strip()
-        except OSError as err:
-            _LOGGER.debug("could not read token file %s: %s", self._token_file, err)
-            return None
-        return token or None
-
-    async def _async_refresh_token(self, current_token: str) -> bool:
-        """Re-read the token file; True if a token differing from
-        `current_token` is now in place (whether loaded here or by a
-        concurrent task that refreshed first).
-
-        The kernel rotates its capability token every 10-minute bucket and
-        rewrites the token file (src/api/mod.rs, privacy_witness_kernel/run.sh
-        writes it to /config/api_token). A statically configured token
-        therefore goes stale within minutes; when a token file is configured
-        we re-read it on 401 so the integration follows the rotation.
-        """
-        if not self._token_file:
-            return False
-        async with self._refresh_lock:
-            if self._token != current_token:
-                # Another task already refreshed while we waited; retry
-                # with what it loaded instead of re-reading the file.
-                return True
-            loop = asyncio.get_running_loop()
-            token = await loop.run_in_executor(None, self._read_token_file)
-            if token is None or token == current_token:
-                return False
-            self._token = token
+def _unique_id_in_use(hass: HomeAssistant, unique_id: str, entry: ConfigEntry) -> bool:
+    """True when another securacv entry already holds `unique_id`."""
+    for other in hass.config_entries.async_entries(DOMAIN):
+        if other.entry_id != entry.entry_id and other.unique_id == unique_id:
             return True
-
-    async def _async_get_json(
-        self, path: str, *, none_on_404: bool = False
-    ) -> dict[str, Any] | None:
-        """GET a kernel endpoint, retrying once with a re-read token on 401."""
-        # Token-file-only setups start with an empty token; prime it from the
-        # file so the first request isn't a guaranteed 401 round-trip (and so
-        # a restart across a rotation boundary still has the one 401-retry in
-        # reserve for a stale file).
-        if not self._token and self._token_file:
-            await self._async_refresh_token("")
-        url = f"{self._base_url}{path}"
-        for attempt in (0, 1):
-            current_token = self._token
-            headers = {"Authorization": f"Bearer {current_token}"}
-            try:
-                async with self._session.get(
-                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 401:
-                        if attempt == 0 and await self._async_refresh_token(
-                            current_token
-                        ):
-                            continue
-                        raise SecuraCVApiAuthError("unauthorized")
-                    if none_on_404 and resp.status == 404:
-                        return None
-                    if resp.status != 200:
-                        raise SecuraCVApiResponseError(
-                            f"unexpected status: {resp.status}"
-                        )
-                    try:
-                        return await resp.json()
-                    except aiohttp.ContentTypeError as err:
-                        raise SecuraCVApiResponseError(
-                            f"invalid JSON response: {err}"
-                        ) from err
-            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-                raise SecuraCVApiConnectionError("unable to reach API") from err
-        raise SecuraCVApiAuthError("unauthorized")
-
-    async def async_get_events(self) -> dict[str, Any]:
-        """Fetch events from the kernel Event API."""
-        data = await self._async_get_json("/events")
-        return data if data is not None else {}
-
-    async def async_get_latest_event(self) -> dict[str, Any] | None:
-        """Fetch the latest event from the kernel."""
-        return await self._async_get_json("/events/latest", none_on_404=True)
-
-    async def async_get_status(self) -> dict[str, Any] | None:
-        """Fetch the kernel's storage endurance & health report.
-
-        Returns None when the kernel predates the /status endpoint or has
-        storage-health monitoring disabled (404), so storage sensors stay
-        empty instead of erroring on older kernels.
-        """
-        return await self._async_get_json("/status", none_on_404=True)
+    return False
 
 
-class SecuraCVCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinator for SecuraCV data updates via HTTP API."""
+def _migrated_entry_data(data: dict[str, Any]) -> dict[str, Any]:
+    """The v3 shape of pre-v3 entry data (no network, pure)."""
+    from .claim import new_claim_nonce
 
-    def __init__(self, hass: HomeAssistant, api: SecuraCVApi) -> None:
-        """Initialize the coordinator."""
-        super().__init__(
-            hass,
-            logger=_LOGGER,
-            name="SecuraCV",
-            update_interval=DEFAULT_UPDATE_INTERVAL,
+    new_data = dict(data)
+    if new_data.get(CONF_URL):
+        if not new_data.get(CONF_AUTH_MODE):
+            new_data[CONF_AUTH_MODE] = (
+                AUTH_MODE_TOKEN_FILE if new_data.get(CONF_TOKEN_FILE) else AUTH_MODE_STATIC
+            )
+        new_data.setdefault(CONF_MQTT_TOPIC_PREFIX, DEFAULT_MQTT_TOPIC_PREFIX)
+        new_data.setdefault(CONF_CLAIM_NONCE, new_claim_nonce())
+    return new_data
+
+
+async def _async_identity_for_migration(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any] | None:
+    """Best-effort GET /api/identity during migration; None when unreachable."""
+    try:
+        api = SecuraCVApi(
+            data[CONF_URL],
+            data.get(CONF_TOKEN, ""),
+            async_get_clientsession(hass),
+            token_file=data.get(CONF_TOKEN_FILE),
         )
-        self.api = api
-
-    async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from the kernel API."""
-        try:
-            latest_event = await self.api.async_get_latest_event()
-        except SecuraCVApiError as err:
-            raise UpdateFailed(str(err)) from err
-        # Storage health is auxiliary: a failure here must never take down
-        # the event pipeline, so degrade to None rather than UpdateFailed.
-        try:
-            status = await self.api.async_get_status()
-        except SecuraCVApiError:
-            status = None
-        return {"latest_event": latest_event, "status": status}
-
-
-class SecuraCVAdapterStatsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Polls the adapter_host read-only stats endpoint (operational counters only)."""
-
-    def __init__(
-        self, hass: HomeAssistant, url: str, session: aiohttp.ClientSession
-    ) -> None:
-        """Initialize the coordinator."""
-        super().__init__(
-            hass,
-            logger=_LOGGER,
-            name="SecuraCV Adapter Stats",
-            update_interval=DEFAULT_UPDATE_INTERVAL,
-        )
-        self._url = url.rstrip("/")
-        self._session = session
-
-    async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch the per-adapter stats JSON. Returns {} only on an empty body."""
-        try:
-            async with self._session.get(
-                self._url, timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status != 200:
-                    raise UpdateFailed(f"stats endpoint status {resp.status}")
-                # The endpoint sends application/json; tolerate a missing/odd content-type.
-                return await resp.json(content_type=None)
-        # ValueError covers a misconfigured URL (e.g. missing scheme) raised by aiohttp.
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
-            raise UpdateFailed(f"unable to reach adapter stats endpoint: {err}") from err
+        return await api.async_get_identity()
+    except Exception:  # noqa: BLE001 - the kernel may be down; setup retries later
+        _LOGGER.debug("identity not readable during migration", exc_info=True)
+        return None
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate old config entries to the current version.
+    """Migrate old config entries to VERSION 3.
 
-    The config flow declares VERSION = 2. Without this handler, HA refuses
-    to load any entry stored with a lower version ("Migration handler not
-    found"), permanently bricking it on upgrade. Version 1 predates this
-    repository's history and used a compatible data schema, so the
-    migration is a straight version bump.
+    Version 1 predates this repository's history and used a compatible data
+    schema; version 2 keyed kernel entries on the kernel URL, `hassio` or
+    `mqtt_<prefix>`. Version 3 keys every kernel entry on the kernel's own
+    device id (`kernel_<device_id>`, from GET /api/identity), records how it
+    authenticates, the bridge's state prefix and the claim nonce, and pins
+    the verifying key the identity served. A kernel that does not answer
+    during migration keeps its old unique_id; async_setup_entry adopts the
+    identity on the first backstop that reaches it.
     """
-    if entry.version > 2:
+    if entry.version > CONFIG_ENTRY_VERSION:
         # Downgrade from a future version — refuse rather than guess.
         return False
-    if entry.version < 2:
-        hass.config_entries.async_update_entry(entry, version=2)
-        _LOGGER.info("Migrated SecuraCV config entry from version %s to 2", entry.version)
+    if entry.version == CONFIG_ENTRY_VERSION:
+        return True
+
+    new_data = _migrated_entry_data(dict(entry.data))
+    unique_id = entry.unique_id
+    if new_data.get(CONF_URL) and not new_data.get(CONF_KERNEL_DEVICE_ID):
+        identity = await _async_identity_for_migration(hass, new_data)
+        if identity is not None:
+            device_id = identity.get("device_id")
+            if valid_kernel_device_id(device_id):
+                new_data[CONF_KERNEL_DEVICE_ID] = device_id
+                candidate = f"kernel_{device_id}"
+                if not _unique_id_in_use(hass, candidate, entry):
+                    unique_id = candidate
+            key = normalize_kernel_key(identity.get("verifying_key"))
+            if key is not None and not new_data.get(CONF_KERNEL_VERIFYING_KEY):
+                new_data[CONF_KERNEL_VERIFYING_KEY] = key
+    hass.config_entries.async_update_entry(
+        entry, data=new_data, unique_id=unique_id, version=CONFIG_ENTRY_VERSION
+    )
+    _LOGGER.info(
+        "Migrated SecuraCV config entry from version %s to %s",
+        entry.version,
+        CONFIG_ENTRY_VERSION,
+    )
     return True
 
 
@@ -465,17 +303,13 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up SecuraCV from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
+async def _async_restore_watches(hass: HomeAssistant) -> None:
+    """Restore persisted watches BEFORE anything can feed them.
 
-    # Serve + auto-load the Lovelace timeline card (best-effort, non-fatal).
-    await _async_register_frontend(hass)
-
-    # Restore persisted watches BEFORE anything can feed them: the first
-    # MQTT event after a restart must reach a restored watch, not a bucket
-    # that is still empty. Once per HA instance (the loader is idempotent);
-    # never fatal — watches are optional, setup is not.
+    The first MQTT event after a restart must reach a restored watch, not a
+    bucket that is still empty. Once per HA instance (the loader is
+    idempotent); never fatal — watches are optional, setup is not.
+    """
     try:
         from .watch_runtime import async_load_watches
 
@@ -483,50 +317,206 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception:  # noqa: BLE001 - watches are optional, setup is not
         _LOGGER.debug("watches not restored", exc_info=True)
 
+
+@callback
+def _async_register_kernel_device(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> None:
+    """Create or merge the kernel device with every identifier known now."""
+    from .coordinator import DATA_IDENTITY
+    from .entity import kernel_device_info
+
+    runtime = runtime_for(entry)
+    kernel_version = None
+    if runtime is not None and runtime.coordinator is not None and runtime.coordinator.data:
+        identity = runtime.coordinator.data.get(DATA_IDENTITY)
+        if isinstance(identity, dict):
+            kernel_version = identity.get("kernel_version")
+    info = kernel_device_info(entry, kernel_version)
+    dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **info)
+
+
+async def _async_adopt_identity(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> None:
+    """Key the entry on the kernel's device id once /api/identity answered.
+
+    An entry created before the identity endpoint existed (or while the
+    kernel was down) carries a URL-, `hassio`- or prefix-keyed unique_id and
+    no device id. The first backstop that reads the identity fixes both, so
+    the claim (which needs the id) and the discovery flows (which dedupe on
+    it) work without the person touching anything.
+    """
+    from .claim import new_claim_nonce
+    from .coordinator import DATA_IDENTITY
+
+    runtime = runtime_for(entry)
+    if runtime is None or runtime.coordinator is None or not runtime.coordinator.data:
+        return
+    identity = runtime.coordinator.data.get(DATA_IDENTITY)
+    if not isinstance(identity, dict):
+        return
+    device_id = identity.get("device_id")
+    if not valid_kernel_device_id(device_id):
+        return
+    configured = entry.data.get(CONF_KERNEL_DEVICE_ID)
+    if configured and configured != device_id:
+        # A different kernel answers at this URL. The reconfigure flow is
+        # the place to move an entry to another kernel; adopting silently
+        # here would claim an id the person never paired with.
+        _LOGGER.warning(
+            "The kernel at %s identifies as %s but this entry was set up for %s; "
+            "reconfigure the entry if the kernel was replaced",
+            entry.data.get(CONF_URL),
+            device_id,
+            configured,
+        )
+        return
+    changes: dict[str, Any] = {}
+    if not configured:
+        changes[CONF_KERNEL_DEVICE_ID] = device_id
+    if not entry.data.get(CONF_CLAIM_NONCE):
+        changes[CONF_CLAIM_NONCE] = new_claim_nonce()
+    if not entry.data.get(CONF_MQTT_TOPIC_PREFIX):
+        changes[CONF_MQTT_TOPIC_PREFIX] = DEFAULT_MQTT_TOPIC_PREFIX
+    candidate = f"kernel_{device_id}"
+    new_unique_id = (
+        candidate
+        if entry.unique_id != candidate and not _unique_id_in_use(hass, candidate, entry)
+        else None
+    )
+    if not changes and new_unique_id is None:
+        return
+    kwargs: dict[str, Any] = {}
+    if changes:
+        kwargs["data"] = {**entry.data, **changes}
+    if new_unique_id is not None:
+        kwargs["unique_id"] = new_unique_id
+    hass.config_entries.async_update_entry(entry, **kwargs)
+
+
+@callback
+def _bridge_entities_present(hass: HomeAssistant, kernel_device_id: str) -> bool:
+    """Whether MQTT discovery ever created the bridge's own entities here.
+
+    The bridge's discovery configs carry ``unique_id`` ``<device_id>_<object>``
+    (``pwk_1a2b3c4d_last_event``) and default entity ids ``*.pwk_*``, on the
+    ``mqtt`` platform. Read BEFORE the claim goes out: the claim is what
+    makes the bridge withdraw them. When the registry cannot be read the
+    answer is "yes" — the contract's default is to raise the notice.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    try:
+        rows: Any = er.async_get(hass).entities
+        if hasattr(rows, "values"):
+            rows = rows.values()
+        for row in rows:
+            if getattr(row, "platform", None) != "mqtt":
+                continue
+            unique_id = getattr(row, "unique_id", None)
+            if isinstance(unique_id, str) and unique_id.startswith(f"{kernel_device_id}_"):
+                return True
+            entity_id = getattr(row, "entity_id", None)
+            if isinstance(entity_id, str) and entity_id.partition(".")[2].startswith("pwk_"):
+                return True
+        return False
+    except Exception:  # noqa: BLE001 - cannot tell: keep the contract's default
+        _LOGGER.debug("entity registry unreadable; assuming bridge entities exist", exc_info=True)
+        return True
+
+
+async def _async_claim_kernel(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> None:
+    """Publish the retained claim and keep it fresh; raise the migration notice once.
+
+    The ``entities_migrated`` notice is for the people whose automations and
+    dashboards named the bridge's ``pwk_*`` entities; a fresh install where
+    MQTT discovery never created them is not told about a replacement that
+    never happened. Either way the flag is set once, so the notice can
+    never be raised twice.
+    """
+    from . import repairs
+    from .claim import async_publish_claim, async_schedule_claim_republish
+
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return
+    device_id = str(entry.data.get(CONF_KERNEL_DEVICE_ID) or "")
+    show_migration = not entry.data.get(CONF_MIGRATION_NOTICE_SHOWN) and bool(device_id)
+    bridge_entities = show_migration and _bridge_entities_present(hass, device_id)
+    try:
+        published = await async_publish_claim(hass, entry)
+    except Exception as err:  # noqa: BLE001 - the claim is a courtesy to the bridge, not setup
+        _LOGGER.warning("Could not publish the kernel claim: %s", err)
+        return
+    if not published:
+        return
+    runtime.claim_published = True
+    runtime.unsub_mqtt.append(async_schedule_claim_republish(hass, entry))
+    if show_migration:
+        if bridge_entities:
+            repairs.async_report_entities_migrated(hass, entry)
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_MIGRATION_NOTICE_SHOWN: True}
+        )
+
+
+@callback
+def _async_dashboard_notice(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> None:
+    """Once per kernel entry: say where the dashboard is (J1).
+
+    The strategy registers itself with the frontend, so the dashboard is
+    one "Add dashboard" click away rather than created for the person; the
+    notice says so, once, and only when the strategy module was really
+    served this run — a sentence about a picker entry that does not exist
+    would be a lie. Posted on the first load whether or not the kernel is
+    reachable at that moment: the flow already probed it, and the dashboard
+    is worth adding either way.
+    """
+    if entry.data.get(CONF_DASHBOARD_NOTICE_SHOWN):
+        return
+    served = hass.data.get(DOMAIN, {}).get(DATA_FRONTEND_CARDS) or []
+    if STRATEGY_CARD_FILENAME not in served:
+        return
+    from homeassistant.components import persistent_notification
+
+    persistent_notification.async_create(
+        hass,
+        "SecuraCV is connected. Add the dashboard: Settings → Dashboards → "
+        "Add dashboard → SecuraCV. It builds itself from your cameras and the "
+        f"witness chain.\n\n[Open Dashboards]({DASHBOARDS_LINK})",
+        "SecuraCV: add the dashboard",
+        f"securacv_dashboard_{entry.entry_id}",
+    )
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_DASHBOARD_NOTICE_SHOWN: True}
+    )
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> bool:
+    """Set up SecuraCV from a config entry."""
+    hass.data.setdefault(DOMAIN, {})
+
+    # Serve + auto-load the Lovelace cards (best-effort, non-fatal).
+    await _async_register_frontend(hass)
+    await _async_restore_watches(hass)
+
     setup_mode = entry.data.get(CONF_SETUP_MODE, SETUP_MODE_KERNEL)
     has_kernel = setup_mode in (SETUP_MODE_KERNEL, SETUP_MODE_BOTH)
-    enable_mqtt = entry.data.get(CONF_ENABLE_MQTT, False)
+    enable_mqtt = bool(entry.data.get(CONF_ENABLE_MQTT, False))
+    mqtt_prefix = entry.data.get(CONF_MQTT_PREFIX) if enable_mqtt else None
+    topic_prefix = entry.data.get(CONF_MQTT_TOPIC_PREFIX) or DEFAULT_MQTT_TOPIC_PREFIX
 
-    # Initialize the HTTP-API coordinator iff a kernel is configured.
-    # MQTT-only mode has no HTTP surface, so there's no coordinator to
-    # build; the kernel sensor platforms gate themselves on coordinator
-    # presence in entry_data.
-    if has_kernel:
-        session = async_get_clientsession(hass)
-        api = SecuraCVApi(
-            entry.data[CONF_URL],
-            entry.data.get(CONF_TOKEN, ""),
-            session,
-            token_file=entry.data.get(CONF_TOKEN_FILE),
-        )
-        # Type is inferred as `SecuraCVCoordinator | None` across this if/else;
-        # within this branch it's known non-None, so the refresh call is safe.
-        coordinator = SecuraCVCoordinator(hass, api)
-        if enable_mqtt:
-            # "Both" mode (the auto flow, hassio discovery and install.sh all
-            # create it): a kernel that is stopped, updating or still booting
-            # used to raise ConfigEntryNotReady here and take every Canary
-            # MQTT entity down with it, before a single subscription was
-            # made. A tolerant refresh lets the kernel entities report
-            # unavailable (last_update_success) and recover on the next poll
-            # while the Canaries keep working. Pure kernel mode keeps the
-            # strict first refresh: there is nothing else to serve.
-            await coordinator.async_refresh()
-        else:
-            await coordinator.async_config_entry_first_refresh()
-    else:
-        api = None
-        coordinator = None
+    # test-before-setup: in mqtt/both modes the broker is a hard dependency.
+    # A setup that goes on without it would subscribe nothing and show
+    # every Canary as silent; ConfigEntryNotReady retries with backoff and
+    # says why on the integration card.
+    mqtt_ready = False
+    if enable_mqtt:
+        mqtt_ready = await mqtt.async_wait_for_mqtt_client(hass)
+        if not mqtt_ready:
+            from homeassistant.exceptions import ConfigEntryNotReady
 
-    # Optional adapter_host stats endpoint (read-only operational counters). Setup must not fail
-    # if it is unreachable, so we use a tolerant refresh rather than first_refresh.
-    adapter_stats_url = entry.data.get(CONF_ADAPTER_STATS_URL)
-    adapter_stats_coordinator: SecuraCVAdapterStatsCoordinator | None = None
-    if adapter_stats_url:
-        adapter_stats_coordinator = SecuraCVAdapterStatsCoordinator(
-            hass, adapter_stats_url, async_get_clientsession(hass)
-        )
-        await adapter_stats_coordinator.async_refresh()
+            raise ConfigEntryNotReady(
+                "The MQTT integration is not available yet; SecuraCV needs it "
+                "for the Canary and witness topics"
+            )
 
     # Trust store — persisted Ed25519 pubkey pins per device_id.
     # Created (and storage loaded) before the MQTT subscribe so the
@@ -534,84 +524,106 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     trust_store = TrustStore(hass, entry.entry_id)
     await trust_store.async_load()
 
-    # Store entry data
-    entry_data: dict[str, Any] = {
-        "api": api,
-        "coordinator": coordinator,
-        "adapter_stats_coordinator": adapter_stats_coordinator,
-        "devices": {},
-        "unsub_mqtt": [],
-        "setup_mode": setup_mode,
-        "trust_store": trust_store,
-        # Per-device verify state cache. Sensors read this to set
-        # extra_state_attributes["verified"] on their entities.
-        # Shape: { device_id: { "trusted": bool, "reason": str,
-        #                       "pinned_fingerprint": str|None,
-        #                       "received_fingerprint": str|None } }
-        "verify": {},
+    runtime = SecuraCVRuntimeData(
+        trust_store=trust_store,
+        setup_mode=setup_mode,
+        mqtt_prefix=mqtt_prefix,
         # Per-device, per-kind high-water marks of the counters inside
         # VERIFIED publishes (event_id / seq / chain length / counts total).
         # A validly signed publish whose counter goes BACKWARDS is a replay
         # of an older message and must not move entity state — the
         # signatures alone cover no timestamp or nonce. Reset when a device
-        # is (re)pinned via TOFU. Shape: { device_id: { field: int } }
-        #
-        # Seeded from the pins, which persist them: an empty mark accepts a
-        # retained stale-but-signed publish as current, so starting every
-        # reload from zero would hand back the replay window on each restart.
-        "replay": {
+        # is (re)pinned via TOFU. Seeded from the pins, which persist them:
+        # an empty mark accepts a retained stale-but-signed publish as
+        # current, so starting every reload from zero would hand back the
+        # replay window on each restart.
+        replay={
             device_id: dict(pin.counters)
             for device_id, pin in trust_store.all_devices().items()
             if pin.counters
         },
-        # Mismatches we've already surfaced as persistent_notification —
-        # one entry per (device_id, fp) so we don't spam the user.
-        "mismatch_notified": set(),
-    }
-    hass.data[DOMAIN][entry.entry_id] = entry_data
+    )
+    entry.runtime_data = runtime
 
-    # Register the kernel as a device (only if kernel mode)
     if has_kernel:
-        dev_registry = dr.async_get(hass)
-        dev_registry.async_get_or_create(
-            config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, entry.data[CONF_URL])},
-            manufacturer=MANUFACTURER,
-            model=MODEL_KERNEL,
-            name="SecuraCV Privacy Witness Kernel",
-            configuration_url=entry.data[CONF_URL],
+        from . import repairs
+        from .coordinator import SecuraCVKernelCoordinator
+
+        api = SecuraCVApi(
+            entry.data[CONF_URL],
+            entry.data.get(CONF_TOKEN, ""),
+            async_get_clientsession(hass),
+            token_file=entry.data.get(CONF_TOKEN_FILE),
         )
+        coordinator = SecuraCVKernelCoordinator(
+            hass,
+            entry,
+            api,
+            auth_mode=entry.data.get(CONF_AUTH_MODE, AUTH_MODE_TOKEN_FILE),
+            topic_prefix=topic_prefix,
+            pinned_key=entry.data.get(CONF_KERNEL_VERIFYING_KEY),
+        )
+        runtime.api = api
+        runtime.coordinator = coordinator
+        if mqtt_ready:
+            try:
+                await coordinator.async_subscribe_push()
+            except Exception as err:  # noqa: BLE001 - the HTTP backstop keeps the kernel alive
+                _LOGGER.warning("Kernel push subscriptions failed, HTTP backstop only: %s", err)
+                repairs.async_report_mqtt_subscribe_failed(hass, entry, topic_prefix, err)
+        if enable_mqtt:
+            # "Both" mode: a kernel that is stopped, updating or still
+            # booting must not take every Canary MQTT entity down with it,
+            # so the first refresh is tolerant; the kernel entities report
+            # unavailable and recover on the next backstop or push. Pure
+            # kernel mode keeps the strict first refresh: there is nothing
+            # else to serve.
+            await coordinator.async_refresh()
+        else:
+            await coordinator.async_config_entry_first_refresh()
+        await _async_adopt_identity(hass, entry)
+        _async_register_kernel_device(hass, entry)
+        if mqtt_ready:
+            await _async_claim_kernel(hass, entry)
+        repairs.async_clear_no_kernel_found(hass)
+
+    # Optional adapter_host stats endpoint (read-only operational counters).
+    # Setup must not fail if it is unreachable, so a tolerant refresh.
+    adapter_stats_url = entry.data.get(CONF_ADAPTER_STATS_URL)
+    if adapter_stats_url:
+        from .coordinator import SecuraCVAdapterStatsCoordinator
+
+        runtime.adapter_stats_coordinator = SecuraCVAdapterStatsCoordinator(
+            hass, entry, adapter_stats_url, async_get_clientsession(hass)
+        )
+        await runtime.adapter_stats_coordinator.async_refresh()
 
     # Set up MQTT subscriptions for Canary devices
-    mqtt_prefix = entry.data.get(CONF_MQTT_PREFIX)
+    if mqtt_ready and mqtt_prefix:
+        from . import repairs
 
-    if enable_mqtt and mqtt_prefix:
         try:
-            await mqtt.async_wait_for_mqtt_client(hass)
-            unsub = await mqtt.async_subscribe(
-                hass,
-                f"{mqtt_prefix}/+/{TOPIC_STATUS}",
-                _async_device_status_received(hass, entry),
-            )
-            entry_data["unsub_mqtt"].append(unsub)
-            entry_data["mqtt_prefix"] = mqtt_prefix
+            status_callback = _async_device_status_received(hass, entry)
+            for suffix in (TOPIC_STATUS, TOPIC_AVAILABILITY):
+                runtime.unsub_mqtt.append(
+                    await mqtt.async_subscribe(hass, f"{mqtt_prefix}/+/{suffix}", status_callback)
+                )
             # Health-topic subscription: snags the device's pubkey_hex
             # the first time we see it and TOFU-pins via the trust
             # store. Sensor.py also subscribes to health for its own
             # state — that's fine, MQTT allows multiple subscribers
             # per topic and the two callbacks operate on independent
-            # entry_data slices.
-            unsub_health = await mqtt.async_subscribe(
-                hass,
-                f"{mqtt_prefix}/+/health",
-                _async_health_for_tofu(hass, entry),
+            # runtime slices.
+            runtime.unsub_mqtt.append(
+                await mqtt.async_subscribe(
+                    hass, f"{mqtt_prefix}/+/{TOPIC_HEALTH}", _async_health_for_tofu(hass, entry)
+                )
             )
-            entry_data["unsub_mqtt"].append(unsub_health)
             _LOGGER.info("SecuraCV MQTT subscriptions active (prefix: %s)", mqtt_prefix)
-            _async_clear_mqtt_subscribe_issue(hass, entry)
-        except Exception as err:
+            repairs.async_clear_mqtt_subscribe_failed(hass, entry)
+        except Exception as err:  # noqa: BLE001 - say what failed, keep the kernel side up
             _LOGGER.warning("MQTT setup failed, continuing without MQTT: %s", err)
-            _async_report_mqtt_subscribe_failed(hass, entry, mqtt_prefix, err)
+            repairs.async_report_mqtt_subscribe_failed(hass, entry, mqtt_prefix, err)
 
     # The watch tick: evaluates every watch, delivers what fired, and
     # announces expiry. Without it a started watch would be recorded but
@@ -631,7 +643,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # notification simply never arrives.
             async_tick(hass)
 
-        entry_data["unsub_mqtt"].append(
+        runtime.unsub_mqtt.append(
             async_track_time_interval(
                 hass,
                 _watch_tick,
@@ -645,6 +657,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Forward to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    if has_kernel and runtime.coordinator is not None and runtime.api is not None:
+        # The integration's own chain walk (D10): after the platforms, so the
+        # verification event entity hears the first verdict. Its timers and
+        # listeners are released with the entry.
+        from .evidence import async_register_view
+        from .kernel_verify import KernelVerifier
+
+        verifier = KernelVerifier(hass, entry, runtime.coordinator, runtime.api)
+        runtime.verifier = verifier
+        try:
+            await verifier.async_start()
+        except Exception:  # noqa: BLE001 - verification is retried on its timers, setup is not
+            _LOGGER.warning("chain verifier did not start; it retries on its backstop", exc_info=True)
+        runtime.unsub_mqtt.append(verifier.async_stop)
+        # The authenticated download view for evidence packs, once per instance.
+        async_register_view(hass)
+        _async_dashboard_notice(hass, entry)
+
     _LOGGER.info(
         "SecuraCV integration loaded (mode: %s, mqtt: %s)",
         setup_mode,
@@ -654,27 +684,126 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a SecuraCV config entry."""
-    entry_data = hass.data[DOMAIN].get(entry.entry_id, {})
+async def async_unload_entry(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> bool:
+    """Unload a SecuraCV config entry.
 
-    # Unsubscribe from MQTT topics (and cancel the watch tick, which rides
-    # the same list). This entry no longer runs the tick either way, even
-    # if the platform unload below fails.
-    for unsub in entry_data.get("unsub_mqtt", []):
-        unsub()
+    Releases every subscription and timer this load registered. The
+    retained claim stays: a reload or restart must not flip the bridge's
+    entities out and in (it is withdrawn only in async_remove_entry).
+    """
+    runtime = runtime_for(entry)
+    if runtime is not None:
+        # Unwind and CLEAR, so a retried unload (HA retries when a platform
+        # refused) never calls an MQTT unsubscribe twice.
+        for unsub in runtime.unsub_mqtt:
+            unsub()
+        runtime.unsub_mqtt.clear()
+        if runtime.coordinator is not None:
+            runtime.coordinator.async_unsubscribe_push()
     from .watch_runtime import remove_watch_host
 
     remove_watch_host(hass, entry.entry_id)
 
-    # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
         _LOGGER.info("SecuraCV integration unloaded")
-
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> None:
+    """The entry is being deleted: withdraw the claim, revoke the paired token.
+
+    Best-effort, every step: the entry is gone whatever happens here. The
+    evidence exports on disk are the owner's and are left alone.
+    """
+    from . import repairs
+    from .claim import async_withdraw_claim, claim_identity
+
+    identity = claim_identity(entry)
+    if identity is not None and entry.data.get(CONF_ENABLE_MQTT):
+        prefix, device_id, _nonce = identity
+        try:
+            if await mqtt.async_wait_for_mqtt_client(hass):
+                await async_withdraw_claim(hass, prefix, device_id)
+        except Exception:  # noqa: BLE001 - the bridge's 24 h freshness window clears it anyway
+            _LOGGER.debug("claim withdrawal failed", exc_info=True)
+
+    token_id = entry.data.get(CONF_KERNEL_TOKEN_ID)
+    if entry.data.get(CONF_AUTH_MODE) == AUTH_MODE_PAIRED and token_id and entry.data.get(CONF_URL):
+        api = SecuraCVApi(
+            entry.data[CONF_URL], entry.data.get(CONF_TOKEN, ""), async_get_clientsession(hass)
+        )
+        try:
+            await api.async_revoke_paired_token(str(token_id))
+        except Exception:  # noqa: BLE001 - revocation is a courtesy; `unpair` works too
+            _LOGGER.debug("paired token revocation failed", exc_info=True)
+
+    try:
+        await TrustStore(hass, entry.entry_id).async_remove()
+    except Exception:  # noqa: BLE001 - storage may already be gone
+        _LOGGER.debug("trust store removal failed", exc_info=True)
+    if entry.data.get(CONF_URL):
+        from .kernel_verify import async_remove_verify_store
+
+        try:
+            await async_remove_verify_store(hass, entry.entry_id)
+        except Exception:  # noqa: BLE001 - storage may already be gone
+            _LOGGER.debug("verification store removal failed", exc_info=True)
+    repairs.async_clear_entry_issues(hass, entry)
+    # The entry's own notifications (the export link, the dashboard pointer)
+    # would otherwise outlive it; a Canary key-mismatch notice is per device
+    # and stays until the owner reads it.
+    try:
+        from homeassistant.components import persistent_notification
+
+        for notification_id in (
+            f"securacv_export_{entry.entry_id}",
+            f"securacv_dashboard_{entry.entry_id}",
+        ):
+            persistent_notification.async_dismiss(hass, notification_id)
+    except Exception:  # noqa: BLE001 - a notice left behind is not worth failing a removal
+        _LOGGER.debug("notification dismissal failed", exc_info=True)
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: SecuraCVConfigEntry, device_entry: dr.DeviceEntry
+) -> bool:
+    """Allow deleting a Canary that left the fleet; never the kernel.
+
+    A Canary still reporting on the status topic, or still pinned in the
+    trust store, is part of the fleet and comes back on its next publish;
+    the delete button is for the ones that are really gone.
+    """
+    runtime = runtime_for(entry)
+    for domain, identifier in device_entry.identifiers:
+        if domain != DOMAIN:
+            continue
+        if identifier.startswith("kernel_") or identifier == entry.data.get(CONF_URL):
+            return False
+        if identifier.startswith("canary_"):
+            device_id = identifier[len("canary_"):]
+            if runtime is not None and (
+                device_id in runtime.devices or runtime.trust_store.is_pinned(device_id)
+            ):
+                return False
+    return True
+
+
+# The longest device name a status payload may set; the broker is untrusted.
+DEVICE_NAME_MAX_LENGTH = 64
+
+
+def _device_display_name(friendly_name: Any, device_id: str) -> str:
+    """The Canary's device name: what the owner named it, else the id.
+
+    The rule lives in ``entity.canary_display_name`` so every entity's
+    ``device_info`` names the device exactly as the status handler does (a
+    differing name in an entity's DeviceInfo replaces the owner's). Kept here
+    as the name the status handler and its tests call.
+    """
+    from .entity import canary_display_name
+
+    return canary_display_name(friendly_name, device_id)
 
 
 def _safe_config_url(ap_ip: Any) -> str | None:
@@ -692,7 +821,6 @@ def _safe_config_url(ap_ip: Any) -> str | None:
     if not isinstance(ap_ip, str) or not ap_ip or len(ap_ip) > 253:
         return None
     import ipaddress
-    import re
 
     try:
         ip = ipaddress.ip_address(ap_ip)
@@ -711,77 +839,105 @@ def _safe_config_url(ap_ip: Any) -> str | None:
     return None
 
 
-def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
-    """Return callback for Canary device status MQTT messages."""
+@callback
+def _async_canary_online_changed(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str, online: bool | None
+) -> None:
+    """Tell the device's entities their availability moved."""
+    from homeassistant.helpers.dispatcher import async_dispatcher_send
+
+    from .entity import canary_status_signal
+
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return
+    device = runtime.devices.setdefault(device_id, {"status": None})
+    if device.get("online") == online:
+        return
+    was_online = device.get("online")
+    device["online"] = online
+    if online is False:
+        _LOGGER.info("SecuraCV Canary %s reports offline", device_id)
+    elif was_online is False:
+        _LOGGER.info("SecuraCV Canary %s is back online", device_id)
+    async_dispatcher_send(hass, canary_status_signal(entry.entry_id, device_id))
+
+
+def _async_device_status_received(hass: HomeAssistant, entry: SecuraCVConfigEntry):
+    """Return callback for Canary device status and availability messages."""
 
     @callback
     def _callback(msg: mqtt.ReceiveMessage) -> None:
-        """Handle device status message - register Canary device in HA."""
-        # Topic format: {prefix}/{device_id}/status
+        """Handle a status/availability message: register the Canary, track liveness."""
+        # Topic format: {prefix}/{device_id}/status or /availability
         parts = msg.topic.split("/")
         if len(parts) < 3:
             return
-        if not mqtt_payload_within_cap(msg.payload):
-            return
-
         device_id = parts[-2]
         if not valid_device_id(device_id):
             return
-        entry_data = hass.data[DOMAIN].get(entry.entry_id)
-        if not entry_data:
+        runtime = runtime_for(entry)
+        if runtime is None:
+            return
+        payload = mqtt_payload_text(msg.payload)
+        if payload is None:
             return
 
-        devices = entry_data["devices"]
-        status_payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
+        if parts[-1] == TOPIC_AVAILABILITY:
+            # The canary base's last-will topic: a bare online/offline.
+            word = payload.strip().lower()
+            if word == "online":
+                _async_canary_online_changed(hass, entry, device_id, True)
+            elif word == "offline":
+                _async_canary_online_changed(hass, entry, device_id, False)
+            return
+
+        devices = runtime.devices
+        status_data = parse_mqtt_json(payload) or {}
+        fw_version = status_data.get("firmware_version") or status_data.get("fw_version")
+        hw_version = status_data.get("hardware") or status_data.get("board")
+        config_url = _safe_config_url(status_data.get("ap_ip") or status_data.get("ip"))
 
         if device_id not in devices:
             _LOGGER.info("Discovered SecuraCV Canary device: %s", device_id)
-            devices[device_id] = {"status": status_payload}
-
-            # Parse status for device info enrichment. A bare "online"
-            # string (non-JSON) or a non-object payload parses to None and
-            # simply skips the enrichment.
-            status_data = parse_mqtt_json(status_payload) or {}
-            fw_version = status_data.get("firmware_version") or status_data.get("fw_version")
-            hw_version = status_data.get("hardware") or status_data.get("board")
-            friendly_name = status_data.get("device_name") or status_data.get("name")
-            config_url = _safe_config_url(
-                status_data.get("ap_ip") or status_data.get("ip")
+            devices[device_id] = {"status": payload}
+            display_name = _device_display_name(
+                status_data.get("device_name") or status_data.get("name"), device_id
             )
 
-            display_name = friendly_name or f"SecuraCV Canary {device_id}"
+            from .entity import kernel_via_device_kwargs
 
-            dev_registry = dr.async_get(hass)
-            dev_registry.async_get_or_create(
+            dr.async_get(hass).async_get_or_create(
                 config_entry_id=entry.entry_id,
                 identifiers={(DOMAIN, f"canary_{device_id}")},
                 manufacturer=MANUFACTURER,
                 model=MODEL_CANARY,
                 name=display_name,
-                sw_version=fw_version,
-                hw_version=hw_version,
+                sw_version=str(fw_version) if fw_version else None,
+                hw_version=str(hw_version) if hw_version else None,
                 configuration_url=config_url,
+                **kernel_via_device_kwargs(hass, entry),
             )
         else:
-            devices[device_id]["status"] = status_payload
+            devices[device_id]["status"] = payload
+            if fw_version and fw_version != devices[device_id].get("_last_fw"):
+                devices[device_id]["_last_fw"] = fw_version
+                from .entity import kernel_via_device_kwargs
 
-            status_data = parse_mqtt_json(status_payload) or {}
-            fw = status_data.get("firmware_version") or status_data.get("fw_version")
-            if fw and fw != devices[device_id].get("_last_fw"):
-                devices[device_id]["_last_fw"] = fw
-                dev_registry = dr.async_get(hass)
-                hw = status_data.get("hardware") or status_data.get("board")
-                dev_registry.async_get_or_create(
+                dr.async_get(hass).async_get_or_create(
                     config_entry_id=entry.entry_id,
                     identifiers={(DOMAIN, f"canary_{device_id}")},
-                    sw_version=fw,
-                    hw_version=hw,
-                    configuration_url=_safe_config_url(
-                        status_data.get("ap_ip") or status_data.get("ip")
-                    ),
+                    sw_version=str(fw_version),
+                    hw_version=str(hw_version) if hw_version else None,
+                    configuration_url=config_url,
+                    **kernel_via_device_kwargs(hass, entry),
                 )
+        # The verdict comes from voice.py so the entities, the spoken answer
+        # and the availability can never disagree about which Canaries are up.
+        _async_canary_online_changed(hass, entry, device_id, status_online(payload))
 
     return _callback
+
 
 
 # =============================================================================
@@ -800,17 +956,17 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
 #      the `public_key` the health publish carries; no HTTP round-trip is
 #      involved (nothing in the integration fetches /api/device/enroll).
 #   2. Calls the kind-specific verifier (signature.verify_chain etc.).
-#   3. Stamps the result into entry_data["verify"][device_id] so any
+#   3. Stamps the result into runtime.verify[device_id] so any
 #      entity reading it can surface "verified: true/false".
 #   4. Fires a one-shot persistent_notification on mismatch (dedup'd
-#      via entry_data["mismatch_notified"]).
+#      via runtime.mismatch_notified).
 #
 # We deliberately *accept* the payload regardless of verdict — the
 # scope decision is "warn loudly, accept" so a benign re-flash doesn't
 # stall a live deployment.
 
 
-def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
+def _async_health_for_tofu(hass: HomeAssistant, entry: SecuraCVConfigEntry):
     """Subscriber for `{prefix}/+/health` that TOFU-pins the device's
     pubkey the first time it appears.
 
@@ -846,10 +1002,10 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
         device_id = parts[-2]
         if not valid_device_id(device_id):
             return
-        entry_data = hass.data[DOMAIN].get(entry.entry_id)
-        if not entry_data:
+        runtime = runtime_for(entry)
+        if runtime is None:
             return
-        trust_store: TrustStore = entry_data["trust_store"]
+        trust_store = runtime.trust_store
         if trust_store.is_pinned(device_id):
             return
         data = parse_mqtt_json(msg.payload)
@@ -897,9 +1053,9 @@ def async_clear_replay_marks(hass: HomeAssistant, entry: ConfigEntry, device_id:
     replacement device's first publishes all read as replays of the old one
     until its counters climb past the old high-water marks.
     """
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if isinstance(entry_data, dict):
-        entry_data.setdefault("replay", {}).pop(device_id, None)
+    runtime = runtime_for(entry)
+    if runtime is not None:
+        runtime.replay.pop(device_id, None)
 
 
 @callback
@@ -909,11 +1065,11 @@ def async_record_verify(
     device_id: str,
     verdict: "TrustVerdict",
 ) -> None:
-    """Stamp the verify outcome into entry_data and surface mismatches."""
-    entry_data = hass.data[DOMAIN].get(entry.entry_id)
-    if not entry_data:
+    """Stamp the verify outcome into the runtime and surface mismatches."""
+    runtime = runtime_for(entry)
+    if runtime is None:
         return
-    entry_data["verify"][device_id] = {
+    runtime.verify[device_id] = {
         "trusted": verdict.trusted,
         "reason": verdict.reason,
         "pinned_fingerprint": verdict.pinned_fingerprint,
@@ -933,14 +1089,17 @@ def async_record_verify(
         # when the operator either re-pins or unpins the device.
         # Lowercased so two spellings of one fingerprint are one notice.
         key = (device_id, normalize_hex(verdict.received_fingerprint or ""))
-        notified: set = entry_data["mismatch_notified"]
+        notified = runtime.mismatch_notified
         if key in notified:
             return
         notified.add(key)
         # `persistent_notification.create` is awaitable but we're in a
         # @callback context; schedule it on the event loop. The
         # notification ID is stable per device so a follow-up create
-        # replaces the previous payload rather than stacking.
+        # replaces the previous payload rather than stacking. A Canary key
+        # mismatch stays a notification: the kernel's key mismatch is the
+        # Repairs issue (repairs.async_report_tofu_mismatch), because only
+        # the kernel pin has a fix flow.
         hass.async_create_task(
             hass.services.async_call(
                 "persistent_notification",
@@ -979,13 +1138,11 @@ def unsigned_trust_attrs(
     which Canary this is; there is no received fingerprint to show.
     """
     pinned: str | None = None
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if isinstance(entry_data, dict):
-        trust_store = entry_data.get("trust_store")
-        if isinstance(trust_store, TrustStore):
-            pin = trust_store.get(device_id)
-            if pin is not None:
-                pinned = pin.fingerprint_hex
+    runtime = runtime_for(entry)
+    if runtime is not None:
+        pin = runtime.trust_store.get(device_id)
+        if pin is not None:
+            pinned = pin.fingerprint_hex
     return {
         "verified": False,
         "trust_reason": "unsigned",

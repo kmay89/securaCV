@@ -1,5 +1,4 @@
 {
   "name": "SecuraCV",
-  "homeassistant": "2024.4.1",
-  "render_readme": true
+  "homeassistant": "2026.5.0"
 }
