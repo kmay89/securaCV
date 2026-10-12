@@ -9,7 +9,7 @@
  },
  "integration": {
   "version": "0.8.0",
-  "min_ha": "2024.4.1"
+  "min_ha": "2026.5.0"
  },
  "readme": {
   "frigate_addons_repo": "https://github.com/blakeblackshear/frigate-hass-addons",
