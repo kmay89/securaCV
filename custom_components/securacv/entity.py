@@ -90,13 +90,50 @@ def kernel_via_device_kwargs(hass: HomeAssistant, entry: ConfigEntry) -> dict[st
     return {"via_device": identifier}
 
 
+# The longest device name a status payload may set; the broker is untrusted.
+DEVICE_NAME_MAX_LENGTH = 64
+
+
+def canary_display_name(friendly_name: Any, device_id: str) -> str:
+    """The Canary's device name: what the owner named it, else the id.
+
+    Always a str (a non-string DeviceInfo value is refused from 2026.12), and
+    bounded — the broker is untrusted input.
+    """
+    if isinstance(friendly_name, str):
+        name = " ".join(friendly_name.split())[:DEVICE_NAME_MAX_LENGTH]
+        if name:
+            return name
+    return f"SecuraCV Canary {device_id}"
+
+
+def canary_name_for(entry: ConfigEntry, device_id: str) -> str:
+    """The name the device registry should carry for `device_id`.
+
+    Read from the Canary's last status payload (``device_name`` / ``name``),
+    the one source ``__init__`` names the device from. Every entity's
+    ``device_info`` goes through ``async_get_or_create`` too, and a name
+    there REPLACES the device's name — so an entity that said
+    "SecuraCV Canary <id>" wiped the owner's "Kitchen cam" the moment its
+    first entity registered. One rule, one name.
+    """
+    from .data import runtime_for
+    from .mqtt_payload import parse_mqtt_json
+
+    runtime = runtime_for(entry)
+    device = runtime.devices.get(device_id) if runtime is not None else None
+    status = device.get("status") if isinstance(device, dict) else None
+    data = status if isinstance(status, dict) else (parse_mqtt_json(status) or {})
+    return canary_display_name(data.get("device_name") or data.get("name"), device_id)
+
+
 def canary_device_info(hass: HomeAssistant, entry: ConfigEntry, device_id: str) -> DeviceInfo:
     """A Canary device, linked to the kernel when the entry has one."""
     info = DeviceInfo(
         identifiers={(DOMAIN, f"canary_{device_id}")},
         manufacturer=MANUFACTURER,
         model=MODEL_CANARY,
-        name=f"SecuraCV Canary {device_id}",
+        name=canary_name_for(entry, device_id),
     )
     link = kernel_via_device_kwargs(hass, entry)
     if link:

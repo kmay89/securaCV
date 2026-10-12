@@ -15,7 +15,7 @@ answers ``None`` instead of raising.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 from homeassistant.config_entries import ConfigEntry
 
@@ -112,7 +112,10 @@ class SecuraCVRuntimeData:
 
 
 if TYPE_CHECKING:
-    SecuraCVConfigEntry = ConfigEntry[SecuraCVRuntimeData]
+    # Annotated as an alias on purpose: in the stub lane (no core installed)
+    # ConfigEntry resolves to Any, and a bare assignment of Any is a variable
+    # to mypy, not a type - every `entry: SecuraCVConfigEntry` then fails.
+    SecuraCVConfigEntry: TypeAlias = ConfigEntry[SecuraCVRuntimeData]
 else:
     # The stub lane's ConfigEntry cannot be subscripted; annotations are
     # strings (``from __future__ import annotations``) so nothing evaluates

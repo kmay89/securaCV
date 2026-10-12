@@ -796,14 +796,14 @@ DEVICE_NAME_MAX_LENGTH = 64
 def _device_display_name(friendly_name: Any, device_id: str) -> str:
     """The Canary's device name: what the owner named it, else the id.
 
-    Always a str (a non-string DeviceInfo value is refused from 2026.12), and
-    bounded — the broker is untrusted input.
+    The rule lives in ``entity.canary_display_name`` so every entity's
+    ``device_info`` names the device exactly as the status handler does (a
+    differing name in an entity's DeviceInfo replaces the owner's). Kept here
+    as the name the status handler and its tests call.
     """
-    if isinstance(friendly_name, str):
-        name = " ".join(friendly_name.split())[:DEVICE_NAME_MAX_LENGTH]
-        if name:
-            return name
-    return f"SecuraCV Canary {device_id}"
+    from .entity import canary_display_name
+
+    return canary_display_name(friendly_name, device_id)
 
 
 def _safe_config_url(ap_ip: Any) -> str | None:
