@@ -84,6 +84,39 @@ async def test_retained_state_topics_feed_the_sensors(
     assert hass.states.get(DIGEST).state == "6"
 
 
+async def test_a_row_older_than_the_live_window_shows_but_never_fires(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry, freezer: FrozenDateTimeFactory
+) -> None:
+    """A non-retained message whose bucket is older than two bucket sizes —
+    a bridge that restarted or was told to replay its log, a backstop
+    catching up after an outage — updates the last-event sensor and never
+    fires an event entity (so no automation sees a camera seeing someone now)."""
+    await setup_kernel_entry(enable_mqtt=True)
+    assert hass.states.get(WITNESS_FRONT_DOOR) is None
+
+    stale = bridge_event(zone="front_door", bucket=bucket_start() - 3 * 600, seq=1)
+    fire(hass, "witness/events", stale, retain=False)
+    await hass.async_block_till_done()
+    assert hass.states.get(WITNESS_FRONT_DOOR) is None, "a stale row must not create or fire the entity"
+    assert hass.states.get(LAST_EVENT).attributes["time_bucket"]["start_epoch_s"] == stale["time_bucket_start"]
+    assert hass.states.get(LAST_EVENT).attributes["seq"] == 1
+
+    # The backstop serving a newer, still-stale row: the same.
+    kernel.latest_event = bridge_event(zone="front_door", bucket=bucket_start() - 2 * 600 - 60, seq=2)
+    await backstop(hass, freezer)
+    assert hass.states.get(WITNESS_FRONT_DOOR) is None
+    assert hass.states.get(LAST_EVENT).attributes["seq"] == 2
+
+    # A live row fires, and the entity shows that one.
+    live = bridge_event(zone="front_door", seq=3)
+    fire(hass, "witness/events", live, retain=False)
+    await hass.async_block_till_done()
+    state = hass.states.get(WITNESS_FRONT_DOOR)
+    assert state is not None and state.state != "unknown"
+    assert state.attributes["seq"] == 3
+    assert hass.states.get(LAST_EVENT).attributes["seq"] == 3
+
+
 async def test_only_live_events_fire_the_witness_entity_once(
     hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry, freezer: FrozenDateTimeFactory
 ) -> None:

@@ -841,6 +841,10 @@ EOF
             --mqtt-topic-prefix "${MQTT_TOPIC_PREFIX:-witness}"
             --ha-device-id "$ha_device_id"
             --poll-interval "${POLL_INTERVAL:-30}"
+            # The kernel's bucket, so the publisher's start cursor (one
+            # bucket back on start, never the whole log) sits on the same
+            # grid frigate_bridge seals on.
+            --bucket-size-secs "$bucket_secs"
             --verify-interval-secs "${VERIFY_INTERVAL_SECS:-3600}"
             # The announce (retained, signed by the kernel key through the
             # API): the API's LAN posture, which the bridge cannot observe

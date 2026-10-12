@@ -190,6 +190,22 @@ struct Args {
     #[arg(long, env = "POLL_INTERVAL", default_value_t = 30)]
     poll_interval: u64,
 
+    /// The kernel's time bucket size in seconds (what `frigate_bridge
+    /// --bucket-size-secs` seals with; the launchers pass both the same
+    /// value). The publish cursor starts ONE such bucket back on daemon
+    /// start, so a restart republishes at most the previous and the
+    /// current bucket — never the whole retained log.
+    #[arg(long, env = "WITNESS_BUCKET_SIZE", default_value_t = 600)]
+    bucket_size_secs: u64,
+
+    /// Publish the whole retained log on daemon start (every event since
+    /// bucket zero, as non-retained messages on `<prefix>/events`) instead
+    /// of starting one bucket back. A migration tool, not a restart
+    /// posture: Home Assistant shows but never fires a row older than two
+    /// buckets, and the bridge's own zone counters count from this start.
+    #[arg(long, env = "REPLAY_FROM_GENESIS")]
+    replay_from_genesis: bool,
+
     /// Interval between automatic full sealed-log verifications in daemon
     /// mode (seconds; 0 disables). One verification also runs at daemon
     /// start so the chain-integrity sensor is populated immediately.
@@ -1182,7 +1198,21 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     }
 
     let mut zone_states: HashMap<String, ZoneState> = HashMap::new();
-    let mut publish_cursor: Option<PublishCursor> = None;
+    let mut publish_cursor = initial_publish_cursor(
+        unix_now_secs(),
+        ctx.args.bucket_size_secs,
+        ctx.args.replay_from_genesis,
+    );
+    match publish_cursor {
+        Some(cursor) => log::info!(
+            "Publishing events from bucket {} (one bucket back; --replay-from-genesis publishes the whole log)",
+            cursor.bucket_start_epoch_s
+        ),
+        None => log::warn!(
+            "--replay-from-genesis: every retained event is republished on {}/events as a non-retained message",
+            ctx.args.mqtt_topic_prefix
+        ),
+    }
 
     while !stop.load(std::sync::atomic::Ordering::SeqCst) {
         // Each poll tick flushes whatever the roll-call heard since the last
@@ -2416,6 +2446,33 @@ struct PublishCursor {
     published_in_bucket: usize,
 }
 
+/// Where the publish cursor stands when the daemon starts: the bucket
+/// before the current one, with nothing published in it, so the first poll
+/// asks the kernel for `since_bucket=<that start>` and publishes the
+/// previous and the current bucket only. The first bridge started from
+/// bucket zero and republished every retained event as a non-retained
+/// message on every restart — a fresh Home Assistant treated each as a
+/// camera seeing someone now. `replay_from_genesis` restores that start
+/// on purpose (a migration, never a restart). The grid is the kernel's
+/// bucket size, so the cursor never lands inside the current bucket of a
+/// kernel sealing wider buckets than the default (the kernel keeps only
+/// records whose TRUE start is at or past the cursor).
+fn initial_publish_cursor(
+    now_epoch_s: u64,
+    bucket_size_s: u64,
+    replay_from_genesis: bool,
+) -> Option<PublishCursor> {
+    if replay_from_genesis {
+        return None;
+    }
+    let size = bucket_size_s.max(1);
+    let current = now_epoch_s / size * size;
+    Some(PublishCursor {
+        bucket_start_epoch_s: current.saturating_sub(size),
+        published_in_bucket: 0,
+    })
+}
+
 /// The events not yet published, in export order, advancing the cursor.
 ///
 /// Sealed events all carry the same bucket size, so "bucket start > last
@@ -2581,6 +2638,59 @@ mod tests {
             size_s: 600,
         };
         e
+    }
+
+    #[test]
+    fn the_daemon_starts_its_cursor_one_bucket_back_never_at_zero() {
+        // 12:25 on a 600 s grid: the current bucket starts 12:20, the
+        // cursor at 12:10 — the kernel then serves 12:10 and 12:20 only.
+        let now = 1_760_140_800 + 25 * 60;
+        let cursor = initial_publish_cursor(now, 600, false).expect("a cursor");
+        assert_eq!(cursor.bucket_start_epoch_s, 1_760_140_800 + 10 * 60);
+        assert_eq!(cursor.published_in_bucket, 0);
+        // The kernel's own grid, not the default's: an 1800 s kernel at
+        // 12:25 is in the 12:00 bucket, so the cursor is 11:30 — a 600 s
+        // cursor (12:10) would have skipped the open 12:00 bucket entirely.
+        let wide = initial_publish_cursor(now, 1800, false).expect("a cursor");
+        assert_eq!(wide.bucket_start_epoch_s, 1_760_140_800 - 30 * 60);
+        // Early in the epoch the cursor cannot go below zero; a zero size is
+        // treated as one second rather than dividing by it.
+        assert_eq!(
+            initial_publish_cursor(100, 600, false).map(|c| c.bucket_start_epoch_s),
+            Some(0)
+        );
+        assert_eq!(
+            initial_publish_cursor(100, 0, false).map(|c| c.bucket_start_epoch_s),
+            Some(99)
+        );
+        // --replay-from-genesis is the old start: no cursor, since_bucket=0.
+        assert!(initial_publish_cursor(now, 600, true).is_none());
+    }
+
+    #[test]
+    fn the_initial_cursor_publishes_the_previous_and_current_bucket_once() {
+        // What the first poll sees with the cursor one bucket back: the
+        // kernel serves the previous and the current bucket; every event
+        // in both is new, once, and the cursor moves to the newest.
+        let now = 1_760_140_800 + 25 * 60;
+        let mut cursor = initial_publish_cursor(now, 600, false);
+        let previous = 1_760_140_800 + 10 * 60;
+        let current = 1_760_140_800 + 20 * 60;
+        let served = vec![ev(previous, "a"), ev(previous, "b"), ev(current, "a")];
+        let first = select_new_events(&served, &mut cursor);
+        assert_eq!(first.len(), 3, "both buckets publish on the first poll");
+        assert_eq!(cursor.map(|c| c.bucket_start_epoch_s), Some(current));
+        assert_eq!(cursor.map(|c| c.published_in_bucket), Some(1));
+        // The next poll (same bucket, one more event) publishes just that one.
+        let again = vec![
+            ev(previous, "a"),
+            ev(previous, "b"),
+            ev(current, "a"),
+            ev(current, "b"),
+        ];
+        let second = select_new_events(&again, &mut cursor);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].zone_id, "zone:b");
     }
 
     #[test]

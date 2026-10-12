@@ -125,6 +125,30 @@ def chain_problem_signal(entry_id: str) -> str:
     return f"{DOMAIN}_chain_problem_{entry_id}"
 
 
+# How far back a pushed row may reach and still fire the event entities, in
+# bucket sizes before now. The bridge starts its publish cursor one bucket
+# back (event_mqtt_bridge `initial_publish_cursor`), so a bridge restart
+# re-publishes at most the last two buckets; anything older on the wire is
+# history — a `--replay-from-genesis`, a broker replay, a backstop catching
+# up after Home Assistant was down — and history updates the last-event
+# sensor, never an automation.
+LIVE_EVENT_MAX_AGE_BUCKETS = 2
+
+
+def event_is_live(event: dict[str, Any] | None, *, now: float | None = None) -> bool:
+    """Whether a row is recent enough to fire: its canonical bucket started
+    no more than `LIVE_EVENT_MAX_AGE_BUCKETS` bucket sizes before now (the
+    wire's own size, the kernel's 600 s when it states none)."""
+    bucket = event_bucket_start(event)
+    if bucket is None or not isinstance(event, dict):
+        return False
+    size = wire_bucket_size(event)
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        size = TIME_BUCKET_SECONDS
+    stamp = time.time() if now is None else now
+    return stamp - bucket <= LIVE_EVENT_MAX_AGE_BUCKETS * size
+
+
 def event_dedupe_key(event: dict[str, Any] | None) -> tuple[str, int, str] | None:
     """(zone_id, bucket start, snake_case event type), the one-event identity.
 
@@ -416,8 +440,12 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def async_dispatch_event(self, event: dict[str, Any]) -> bool:
         """Hand one new event to the event entities, once per dedupe key.
 
-        Returns True when the event was new. The latest-event slot follows
-        when the event's bucket is newer than what the retained topic said.
+        Returns True when the event was new AND live. The latest-event slot
+        follows whenever the event's bucket is newer than what the retained
+        topic said; a row older than the live window (`event_is_live`)
+        takes the slot, is remembered, and fires nothing — a bridge that
+        restarted, or was told to replay the log, is not a camera seeing
+        someone now.
         """
         key = event_dedupe_key(event)
         if key is None or key in self._seen_events:
@@ -428,6 +456,12 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         current = event_bucket_start(self.data.get(DATA_LATEST_EVENT) if self.data else None)
         if current is None or key[1] >= current:
             self._async_push(DATA_LATEST_EVENT, event)
+        if not event_is_live(event):
+            _LOGGER.debug(
+                "witness event in bucket %s is older than the live window; shown, not fired",
+                key[1],
+            )
+            return False
         async_dispatcher_send(self.hass, witness_event_signal(self.entry.entry_id), event)
         return True
 
@@ -686,13 +720,16 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if latest is not None and (current is None or (incoming or 0) > current):
                 data[DATA_LATEST_EVENT] = latest
                 # A message the push feed missed (HA was down, the broker
-                # dropped it): the event entities hear it exactly once.
+                # dropped it): the event entities hear it exactly once —
+                # while it is still live; a backstop catching up after a
+                # long outage shows the row and fires nothing.
                 key = event_dedupe_key(latest)
                 if key is not None and key not in self._seen_events:
                     self._seen_events[key] = None
-                    async_dispatcher_send(
-                        self.hass, witness_event_signal(self.entry.entry_id), latest
-                    )
+                    if event_is_live(latest):
+                        async_dispatcher_send(
+                            self.hass, witness_event_signal(self.entry.entry_id), latest
+                        )
 
         if DATA_DIGEST not in self._pushed:
             try:

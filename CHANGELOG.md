@@ -67,6 +67,15 @@ and [`docs/frigate_integration.md`](docs/frigate_integration.md).
   unpair`), and the same code pairs once a token is revoked — a set that
   grew past the file's 64 KiB read bound would have refused every paired
   client at once.
+- `event_mqtt_bridge` starts its publish cursor one bucket back (the
+  kernel's bucket, `--bucket-size-secs`, which both launchers now pass) and
+  never republishes the whole retained log on a restart;
+  `--replay-from-genesis` / `REPLAY_FROM_GENESIS=1` keeps the old start as a
+  migration tool. The integration fires an event entity (and so the
+  blueprints) only for a row whose bucket started within the last two bucket
+  sizes; an older row — a replay, a backstop catching up after an outage —
+  updates the last-event sensor and fires nothing. The per-zone `count`
+  topic counts from the bridge's start.
 
 **Breaking changes**
 

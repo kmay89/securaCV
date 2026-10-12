@@ -326,6 +326,7 @@ prepare_mqtt_publisher() {
         --api-token-path "$TOKEN_FILE"
         --fleet-peers-path "$FLEET_PEERS_FILE"
         --poll-interval 30
+        --bucket-size-secs "$BUCKET_SECS"
         --verify-interval-secs "$((VERIFY_INTERVAL_HOURS * 3600))"
         --announce-api-bind all
         --announce-pairing token_file

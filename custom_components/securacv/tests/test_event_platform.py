@@ -115,6 +115,14 @@ def _added(entity, hass):
     return on_remove
 
 
+def _clock_at(monkeypatch, stamp: float) -> None:
+    """Freeze the clock beside the fixture's 2023 buckets: a pushed row fires
+    only while it is live (coordinator.event_is_live, two buckets back)."""
+    import time as _time
+
+    monkeypatch.setattr(_time, "time", lambda: stamp)
+
+
 # ─── the coordinator's live feed ────────────────────────────────────────
 
 
@@ -130,7 +138,8 @@ def test_a_retained_replay_feeds_the_last_event_sensor_only():
     assert seen == [], "a retained replay never fires an event entity"
 
 
-def test_a_live_event_fires_once_whatever_carried_it():
+def test_a_live_event_fires_once_whatever_carried_it(monkeypatch):
+    _clock_at(monkeypatch, 1700000700.0)
     hass, entry, _api, coordinator = _kernel()
     seen: list = []
     from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -150,7 +159,8 @@ def test_a_live_event_fires_once_whatever_carried_it():
     assert seen == [EVENT, later]
 
 
-def test_the_backstop_fires_a_missed_event_exactly_once():
+def test_the_backstop_fires_a_missed_event_exactly_once(monkeypatch):
+    _clock_at(monkeypatch, 1700000700.0)
     hass, entry, api, coordinator = _kernel()
     seen: list = []
     from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -162,6 +172,40 @@ def test_the_backstop_fires_a_missed_event_exactly_once():
     assert seen == [EVENT]
     coordinator._handle_event(_msg(EVENT))
     assert seen == [EVENT], "the push copy of a backstopped event is a duplicate"
+
+
+def test_a_stale_row_updates_the_last_event_sensor_but_never_fires(monkeypatch):
+    """A non-retained row whose bucket is older than two bucket sizes (a
+    bridge that restarted or replayed its log, a backstop catching up after
+    an outage) is history: it takes the last-event slot and fires nothing."""
+    hass, entry, api, coordinator = _kernel()
+    seen: list = []
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    async_dispatcher_connect(hass, witness_event_signal(entry.entry_id), seen.append)
+    # 1900 s after the row's bucket started: past the 1200 s live window.
+    _clock_at(monkeypatch, 1700000400 + 1900.0)
+    coordinator._handle_event(_msg(EVENT))
+    assert seen == [], "a row older than the live window never fires"
+    assert coordinator.data["latest_event"] == EVENT, "but the last-event sensor shows it"
+    # Its key is remembered: a second copy is not a new event either.
+    coordinator._handle_event(_msg(EVENT))
+    assert seen == []
+    # The backstop serving an old row behaves the same.
+    older = dict(EVENT, zone_id="zone:yard", time_bucket={"start_epoch_s": 1700000400 - 600, "size_s": 600})
+    api.latest = dict(EVENT, time_bucket={"start_epoch_s": 1700000400 + 600, "size_s": 600})
+    run(coordinator.async_refresh())
+    assert seen == []
+    assert coordinator.data["latest_event"]["time_bucket"]["start_epoch_s"] == 1700000400 + 600
+    coordinator._handle_event(_msg(older))
+    assert seen == []
+    # A row in the live window fires: the current bucket, and one that
+    # started 1100 s ago (inside two bucket sizes).
+    live = dict(EVENT, time_bucket={"start_epoch_s": 1700000400 + 1800, "size_s": 600})
+    coordinator._handle_event(_msg(live))
+    edge = dict(EVENT, zone_id="zone:side", time_bucket={"start_epoch_s": 1700000400 + 1200, "size_s": 600})
+    coordinator._handle_event(_msg(edge))
+    assert seen == [live, edge]
 
 
 def test_junk_on_the_events_topic_is_ignored():
@@ -209,7 +253,8 @@ def test_the_first_event_for_a_zone_creates_its_entity_which_fires_it():
     assert len(added) == 2 and len(entity.fired) == 2
 
 
-def test_a_covered_event_fires_verified():
+def test_a_covered_event_fires_verified(monkeypatch):
+    _clock_at(monkeypatch, 1700000700.0)
     hass, entry, _api, coordinator = _kernel()
     entry.runtime_data.verification = VerificationState(
         ok=True, verified_bucket_start=1700001200,
@@ -252,7 +297,8 @@ def test_witness_entities_are_restored_from_the_registry_on_reload():
     assert len(added) == 2 and len(by_slug["front_door"].fired) == 1
 
 
-def test_setup_entry_wires_the_signal_and_the_verification_entity():
+def test_setup_entry_wires_the_signal_and_the_verification_entity(monkeypatch):
+    _clock_at(monkeypatch, 1700000700.0)
     hass, entry, _api, coordinator = _kernel()
     added: list = []
 

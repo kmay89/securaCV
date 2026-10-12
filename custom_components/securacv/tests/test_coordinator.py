@@ -397,15 +397,50 @@ def _jittered(event: dict, offset: int) -> dict:
     return dict(event, time_bucket=bucket)
 
 
+def _clock_at(monkeypatch, stamp: float) -> None:
+    """Freeze the clock beside a test's buckets: a pushed row fires only while
+    it is live (`event_is_live`, two bucket sizes back from now)."""
+    import time as _time
+
+    monkeypatch.setattr(_time, "time", lambda: stamp)
+
+
+def test_event_is_live_is_two_bucket_sizes_back_from_now():
+    """The live window the dispatch gate applies: the row's canonical bucket
+    started at most two bucket sizes (the wire's own size; 600 s unsaid)
+    before now. The bridge republishes one bucket back on a restart, so a
+    restart never fires an older row as if a camera saw someone now."""
+    row = {"event_type": "BoundaryCrossingObjectLarge", "zone_id": "zone:a",
+           "time_bucket": {"start_epoch_s": 1760140800, "size_s": 600}}
+    assert coord_mod.LIVE_EVENT_MAX_AGE_BUCKETS == 2
+    assert coord_mod.event_is_live(row, now=1760140800 + 1200) is True
+    assert coord_mod.event_is_live(row, now=1760140800 + 1201) is False
+    assert coord_mod.event_is_live(row, now=1760140800 - 60) is True, "a bucket ahead of this clock is live"
+    # The kernel's export jitter is undone first: a draw 120 s early is the same bucket.
+    drawn = dict(row, time_bucket={"start_epoch_s": 1760140800 - 120, "size_s": 600})
+    assert coord_mod.event_is_live(drawn, now=1760140800 + 1200) is True
+    # The wire's own bucket size sets the window; a size it does not state is 600 s.
+    short = dict(row, time_bucket={"start_epoch_s": 1760140800, "size_s": 300})
+    assert coord_mod.event_is_live(short, now=1760140800 + 600) is True
+    assert coord_mod.event_is_live(short, now=1760140800 + 601) is False
+    flat = {"event_type": "TamperDetected", "zone_id": "zone:a", "time_bucket_start": 1760140800}
+    assert coord_mod.event_is_live(flat, now=1760140800 + 1200) is True
+    assert coord_mod.event_is_live(flat, now=1760140800 + 1201) is False
+    # No bucket, no row: never live.
+    assert coord_mod.event_is_live({"event_type": "TamperDetected"}, now=1760140800) is False
+    assert coord_mod.event_is_live(None, now=1760140800) is False
+
+
 @pytest.mark.parametrize("push_offset,backstop_offset", [
     (-120, 60), (60, -120), (0, 120), (120, 0), (-60, -60),
 ])
-def test_one_event_seen_by_push_and_by_the_backstop_fires_exactly_once(push_offset, backstop_offset):
+def test_one_event_seen_by_push_and_by_the_backstop_fires_exactly_once(push_offset, backstop_offset, monkeypatch):
     """The bridge publishes one draw of a sealed event's bucket; five minutes
     later /events/latest serves the same event under a fresh draw. That is
     one event: one dispatch, one latest-event slot, however the draws fell."""
     from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
+    _clock_at(monkeypatch, 1760140800 + 300.0)
     sealed = {"event_type": "BoundaryCrossingObjectLarge", "zone_id": "zone:front_door",
               "time_bucket": {"start_epoch_s": 1760140800, "size_s": 600}, "seq": 7}
     pushed = _jittered(sealed, push_offset)
@@ -435,11 +470,13 @@ def test_one_event_seen_by_push_and_by_the_backstop_fires_exactly_once(push_offs
     assert seen2 == [served]
 
 
-def test_a_retained_replay_and_a_rejittered_backstop_never_refire_on_reload():
+def test_a_retained_replay_and_a_rejittered_backstop_never_refire_on_reload(monkeypatch):
     """After a restart the retained last_event replays one draw and the first
     backstop serves another: nothing fires (C10), and the newer-than test
     does not flap on the draw."""
     from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    _clock_at(monkeypatch, 1760141400 + 300.0)
 
     sealed = {"event_type": "TamperDetected", "zone_id": "zone:a",
               "time_bucket": {"start_epoch_s": 1760140800, "size_s": 600}}

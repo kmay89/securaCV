@@ -86,7 +86,7 @@ SEALED_LOG_VECTOR_PATH = REPO_ROOT / "tests" / "fixtures" / "envelope" / "sealed
 SEALED_LOG_VECTOR: dict[str, Any] = json.loads(SEALED_LOG_VECTOR_PATH.read_text(encoding="utf-8"))
 VECTOR_KEY: str = SEALED_LOG_VECTOR["verifying_key"]
 # The vector's entries live in November 2023; tests that walk it freeze time there.
-VECTOR_NOW = 1700001800.0
+VECTOR_NOW = 1700001500.0  # inside the live window of the vector's buckets (coordinator.event_is_live)
 
 # The sealed-log entry signing domain (src/crypto/signatures.rs; verify_core.js).
 SEALED_LOG_DOMAIN = b"securacv:pwk:sealed-log-entry:v2"

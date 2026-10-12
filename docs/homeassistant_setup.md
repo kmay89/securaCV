@@ -1650,9 +1650,9 @@ If your broker requires TLS, enable it via the bridge environment (or CLI flags)
 | `witness/claim/<kernel id>` | yes | written by the **integration**: `{"v":1,"claimed":true,"nonce":"<16 hex>","claimed_bucket_start":<bucket start>}` on every load and hourly; an empty payload withdraws it. Never an entry id. The bridge honors a claim younger than 24 hours by withdrawing its MQTT-discovery configs, and republishes them when it clears |
 | `witness/claim_state` | yes | `claimed` / `unclaimed` — what the bridge is doing about the claim |
 | `witness/last_event` | yes | the newest sealed event (the payload below) |
-| `witness/events` | no | every sealed event as it is published — the feed the per-camera event entities fire on |
+| `witness/events` | no | every sealed event as it is published — the feed the per-camera event entities fire on. On a daemon start the bridge publishes from **one bucket back** (the previous and the current bucket), never the whole retained log; `--replay-from-genesis` (`REPLAY_FROM_GENESIS=1`) republishes everything since bucket zero as a migration. The integration fires an event entity only for a row whose bucket started within the last two bucket sizes; an older row updates the last-event sensor and nothing else |
 | `witness/zone/<zone>/event` | no | the same event, per zone |
-| `witness/zone/<zone>/count` | yes | the zone's event count |
+| `witness/zone/<zone>/count` | yes | the zone's event count since the bridge started (a restart counts from its start bucket, not from the whole log) |
 | `witness/zone/<zone>/motion` | no | `ON` for the bridge's per-zone motion sensor (auto-off after 10 min) |
 | `witness/digest` | — | the kernel's rolling 24-hour digest (`/digest`) |
 | `witness/chain_problem`, `witness/chain_problem/attrs` | — | the kernel's **self**-verification: a problem flag and its `VerifyReport`; shown as `kernel_reported_chain_ok`, never as Verified |
