@@ -88,8 +88,9 @@ def test_mqtt_discovery_reads_topic_as_attribute() -> None:
     result = run(flow.async_step_mqtt(_info("securacv/canary01/status")))
     assert result == {"type": "form", "step_id": "confirm"}
     assert called.get("confirm") is True
-    # The prefix seen on the wire pre-fills the confirm step and keys dedupe.
-    assert flow.context["mqtt_prefix"] == "securacv"
+    # The prefix seen on the wire pre-fills the confirm step and keys dedupe;
+    # the flow keeps it on itself (ConfigFlowContext has no key for it).
+    assert flow._discovered_prefix == "securacv"
     assert flow.context["title_placeholders"] == {"name": "securacv"}
     assert called.get("unique_id") == "mqtt_securacv"
 
@@ -99,7 +100,7 @@ def test_mqtt_discovery_with_short_topic_still_routes() -> None:
     flow, called = _flow_with_captured_next_step()
     run(flow.async_step_mqtt(_info("securacv")))
     assert called.get("confirm") is True
-    assert flow.context["mqtt_prefix"] == DEFAULT_MQTT_PREFIX
+    assert flow._discovered_prefix == DEFAULT_MQTT_PREFIX
 
 
 def test_mqtt_discovery_accepts_dict_payload_from_older_cores() -> None:
@@ -107,7 +108,7 @@ def test_mqtt_discovery_accepts_dict_payload_from_older_cores() -> None:
     flow, called = _flow_with_captured_next_step()
     run(flow.async_step_mqtt({"topic": "barn/canary02/status"}))
     assert called.get("confirm") is True
-    assert flow.context["mqtt_prefix"] == "barn"
+    assert flow._discovered_prefix == "barn"
     assert called.get("unique_id") == "mqtt_barn"
 
 

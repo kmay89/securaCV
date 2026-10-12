@@ -21,11 +21,16 @@ rules:
     comment: coordinator.py, entity.py, api.py, data.py.
   config-flow: done
   config-flow-test-coverage:
-    status: todo
+    status: done
     comment: >-
-      Every step is covered in the stub lane (tests/test_config_flow*.py);
-      the real-Home-Assistant lane (pytest-homeassistant-custom-component)
-      is W7's job and is what this rule asks for.
+      tests/ha/test_config_flow.py drives every step on a real core through
+      pytest-homeassistant-custom-component: user (every mode), Automatic
+      (app found / nothing found / announce heard), Supervisor discovery
+      (create, rediscovery update + reload, identical repeat, legacy payload),
+      the MQTT announce (confirm, pair, wrong code, signature and key
+      checks, revoke on mismatch), reauth (paired and token file, wrong
+      kernel), reconfigure, options and the VERSION 2 → 3 migration; the
+      stub lane (tests/test_config_flow*.py) keeps the same table.
   dependency-transparency:
     status: done
     comment: No requirements; cryptography ships with Home Assistant core.
@@ -101,7 +106,12 @@ rules:
     comment: ConfigEntryAuthFailed on a definitive 401; reauth_confirm re-pairs or re-points the token file.
   test-coverage:
     status: todo
-    comment: The real-Home-Assistant lane with coverage is W7's.
+    comment: >-
+      Measured with both lanes in one interpreter (the stub suite plus
+      tests/ha on Home Assistant 2026.10.1): 93% of the package, every
+      module at or above 90% except intent.py (53%), which the rule's 95%
+      floor on every module still misses. The real-Home-Assistant lane
+      itself is in place (tests/ha, two cells in .github/workflows/python.yml).
 
   # ── Gold ────────────────────────────────────────────────────────────
   devices: done

@@ -34,9 +34,18 @@ import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
+if TYPE_CHECKING:
+    # Home Assistant 2026.9 and later validate with probatio and install it as
+    # `voluptuous` before any integration imports (install_as_voluptuous in
+    # homeassistant/__init__.py), so the runtime import below IS probatio on
+    # those cores and voluptuous on the 2026.5 floor. The core's flow helpers
+    # are typed against probatio alone, so the type checker reads it as that;
+    # the names used here are the API both libraries share.
+    import probatio as vol
+else:
+    import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components import mqtt
@@ -713,7 +722,6 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._discovered_prefix = prefix
         self.context["title_placeholders"] = {"name": prefix}
-        self.context["mqtt_prefix"] = prefix
 
         await self.async_set_unique_id(f"mqtt_{prefix}")
         self._abort_if_unique_id_configured()

@@ -276,7 +276,10 @@ def test_the_view_serves_a_known_pack_as_an_attachment_and_404s_the_rest(monkeyp
 
     served = run(view.get(object(), "0badf00d"))
     assert isinstance(served, web.FileResponse)
-    assert Path(served.path).name == response["file"]
+    # The stub FileResponse records `path`; the real aiohttp one keeps `_path`
+    # (this suite also runs with a real aiohttp installed beside the stubs).
+    served_path = getattr(served, "path", None) or getattr(served, "_path")
+    assert Path(served_path).name == response["file"]
     assert served.headers["Content-Type"] == "application/zip"
     assert served.headers["Content-Disposition"] == f'attachment; filename="{response["file"]}"'
 

@@ -113,24 +113,26 @@ def _run_guarded(monkeypatch, hass) -> list:
 
 
 WWW = pathlib.Path(__file__).resolve().parent.parent / "www"
+# The card files W5 ships: the two cards and the dashboard strategy module.
+# Derived from the tuple the integration serves and what is on disk, in the
+# tuple's order, so this file never has to be told when a module lands.
+SHIPPED_CARDS = [name for name in LOVELACE_CARD_FILENAMES if (WWW / name).is_file()]
 
 
 def test_card_registration_does_every_blocking_read_in_the_executor(monkeypatch) -> None:
     JS_URLS.clear()
     STATIC_PATHS.clear()
     hass = _hass()
+    assert SHIPPED_CARDS, "no card file on disk to register"
     # Read before the guards go up — inside the test they would trip it.
-    digests = {name: _card_digest(str(WWW / name)) for name in LOVELACE_CARD_FILENAMES}
+    digests = {name: _card_digest(str(WWW / name)) for name in SHIPPED_CARDS}
 
     dispatched = _run_guarded(monkeypatch, hass)
 
     assert dispatched == [_card_assets], "the card probe was not sent to an executor"
     assert hass.data[DOMAIN]["_frontend_registered"] is True
-    # The cards and the dashboard strategy really were served and auto-loaded,
-    # each keyed by its bytes, in the order the integration declares them.
-    assert JS_URLS == [
-        f"/{DOMAIN}_www/{name}?v={digests[name]}" for name in LOVELACE_CARD_FILENAMES
-    ]
+    # The cards really were served and auto-loaded, each keyed by its bytes.
+    assert JS_URLS == [f"/{DOMAIN}_www/{name}?v={digests[name]}" for name in SHIPPED_CARDS]
     assert [c.url for c in STATIC_PATHS] == [u.split("?")[0] for u in JS_URLS]
 
 
@@ -142,9 +144,9 @@ def test_registration_runs_once_per_hass(monkeypatch) -> None:
     hass = _hass()
 
     _run_guarded(monkeypatch, hass)
-    assert len(JS_URLS) == len(LOVELACE_CARD_FILENAMES)
+    assert len(JS_URLS) == len(SHIPPED_CARDS)
     assert _run_guarded(monkeypatch, hass) == []
-    assert len(JS_URLS) == len(LOVELACE_CARD_FILENAMES)
+    assert len(JS_URLS) == len(SHIPPED_CARDS)
 
 
 def test_card_assets_reports_the_files_on_disk_and_their_keys() -> None:
@@ -152,14 +154,10 @@ def test_card_assets_reports_the_files_on_disk_and_their_keys() -> None:
     there is no second blocking probe left on the loop."""
     cards = _card_assets()
 
-    # The two cards and the dashboard strategy, in the integration's order;
-    # the evidence viewer and its README are static files, not cards.
-    assert [name for name, _path, _key in cards] == list(LOVELACE_CARD_FILENAMES)
-    assert LOVELACE_CARD_FILENAMES == (
-        "securacv-timeline-card.js",
-        "securacv-aim-card.js",
-        "securacv-strategy.js",
-    )
+    assert [name for name, _path, _key in cards] == SHIPPED_CARDS
+    # The strategy module ships beside the two cards (W5); a missing one is
+    # a regression in the www/ tree, not a tolerated absence.
+    assert "securacv-strategy.js" in SHIPPED_CARDS
     assert all(pathlib.Path(path).is_file() for _name, path, _key in cards)
     for _name, path, key in cards:
         expected = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()[:12]

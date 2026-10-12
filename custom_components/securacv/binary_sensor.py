@@ -369,6 +369,11 @@ class SecuraCVKernelStorageReplaceSensor(SecuraCVKernelEntity, BinarySensorEntit
 
     _attr_translation_key = "storage_replace"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    # A verdict about the kernel's own hardware, beside the four storage
+    # sensors it summarizes (the entity-category rule; quality_scale.yaml
+    # names the storage entities diagnostic — this one used to be the
+    # exception without a reason).
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -576,6 +581,25 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
     def available(self) -> bool:
         """Always: `off` is the information."""
         return True
+
+    @property
+    def is_on(self) -> bool:
+        """The device's liveness verdict.
+
+        The entry's status handler merges BOTH liveness topics — the JSON
+        ``status`` and the canary base's bare ``availability`` last will — into
+        one verdict every other entity's availability follows. This sensor
+        used to read only its own ``status`` subscription, so after the
+        last will said ``offline`` it kept saying ``on`` while the device's
+        other entities went unavailable. The merged verdict wins when it
+        exists; the status-derived word is the fallback until it does.
+        """
+        runtime = runtime_for(self._entry)
+        if runtime is not None:
+            online = runtime.devices.get(self._device_id, {}).get("online")
+            if isinstance(online, bool):
+                return online
+        return bool(self._attr_is_on)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT status topic; release the subscription on removal."""
