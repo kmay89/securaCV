@@ -45,6 +45,10 @@ and [`docs/frigate_integration.md`](docs/frigate_integration.md).
   (the `pair` card, the compose comments and the guides agree); the
   Automatic flow's final screen names the missing MQTT integration when
   Home Assistant has none.
+- Hassfest: no translation string reads as HTML (`<docker host>`, `<id>`,
+  `<zone>` are gone) and the fixable `tofu_mismatch` issue carries its
+  explanation in the fix flow's confirm step, as the strings schema
+  requires; `tests/ha/test_hassfest_subset.py` applies hassfest's rules.
 
 **Breaking changes**
 

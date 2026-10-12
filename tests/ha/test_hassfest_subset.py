@@ -6,7 +6,11 @@ from __future__ import annotations
 import json
 
 import yaml
+import re
+import string as string_module
+
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import icon as icon_helper
 from homeassistant.helpers import translation
 from homeassistant.helpers.service import async_get_all_descriptions
@@ -17,6 +21,58 @@ from custom_components.securacv import binary_sensor, button, event, sensor
 from custom_components.securacv.const import DOMAIN
 
 INTEGRATION = REPO_ROOT / "custom_components" / "securacv"
+
+# hassfest's translation rules (script/hassfest/translations.py), the ones a
+# custom integration trips: a string must not look like HTML (`<[a-z].*?>`,
+# which is what `<docker host>`, `<id>` and `<zone>` did), must not carry a
+# URL, a placeholder in single quotes, a combined `[%key:...%]` reference,
+# or leading/trailing whitespace; every placeholder is an identifier; a
+# fixable issue is `title` + `fix_flow` OR `title` + `description`, never
+# both (the `fixable` exclusive group), and at least one of the two.
+HASSFEST_RE_URL = re.compile(
+    r"(((ftp|ftps|scp|http|https|mqtt|mqtts|socket|socks5):\/\/|www\.)"
+    r"[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,5}(:[0-9]{1,5})?(\/.*)?)",
+    re.IGNORECASE,
+)
+HASSFEST_RE_COMBINED_REFERENCE = re.compile(r"(.+\[%)|(%\].+)")
+HASSFEST_RE_PLACEHOLDER_IN_SINGLE_QUOTES = re.compile(r"'{\w+}'")
+
+
+def hassfest_string_problems(path: str, value: str) -> list[str]:
+    """What hassfest's `validate_translation_value` would say about one string."""
+    problems: list[str] = []
+    try:
+        cv.string_with_no_html(value)
+    except Exception as err:  # noqa: BLE001 - the validator's own message is the finding
+        problems.append(f"{path}: {err}")
+    if "<" in value:
+        # Stricter than the core regex on purpose: an angle bracket in copy
+        # reads as a tag to a translator too.
+        problems.append(f"{path}: contains '<'")
+    if HASSFEST_RE_PLACEHOLDER_IN_SINGLE_QUOTES.search(value):
+        problems.append(f"{path}: placeholder inside single quotes")
+    for _, field_name, _, _ in string_module.Formatter().parse(value):
+        if field_name and not field_name.isidentifier():
+            problems.append(f"{path}: placeholder {field_name!r} is not an identifier")
+    if HASSFEST_RE_COMBINED_REFERENCE.search(value):
+        problems.append(f"{path}: combined translation reference")
+    if value != value.strip():
+        problems.append(f"{path}: leading or trailing whitespace")
+    if HASSFEST_RE_URL.search(value):
+        problems.append(f"{path}: contains a URL (use a description placeholder)")
+    return problems
+
+
+def walk_strings(node, path: str = "") -> list[tuple[str, str]]:
+    """Every (dotted path, string) leaf under a strings.json node."""
+    if isinstance(node, dict):
+        out: list[tuple[str, str]] = []
+        for key, value in node.items():
+            out.extend(walk_strings(value, f"{path}.{key}" if path else key))
+        return out
+    if isinstance(node, str):
+        return [(path, node)]
+    return []
 
 
 def translation_keys_in(module) -> set[str]:
@@ -87,6 +143,50 @@ async def test_strings_match_translations_and_every_entity_key_resolves(hass: Ho
     for issue in ("no_kernel_found", "kernel_unreachable", "tofu_mismatch", "storage_replace", "entities_migrated", "mqtt_subscribe_failed"):
         assert f"component.{DOMAIN}.issues.{issue}.title" in issues, issue
     assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.step.confirm.title" in issues
+
+
+def test_strings_pass_hassfest_s_translation_rules() -> None:
+    """The rules hassfest applies to strings.json, run here so a `<id>` in
+    copy or a fixable issue with both a description and a fix flow fails
+    locally instead of in the Hassfest Validation job."""
+    strings = json.loads((INTEGRATION / "strings.json").read_text())
+    problems: list[str] = []
+    for path, value in walk_strings(strings):
+        problems.extend(hassfest_string_problems(path, value))
+    assert problems == []
+
+    for key, issue in strings["issues"].items():
+        assert "title" in issue, key
+        assert "description" in issue or "fix_flow" in issue, f"{key}: an issue needs a description or a fix flow"
+        assert not ("description" in issue and "fix_flow" in issue), (
+            f"{key}: a fixable issue carries title + fix_flow, never a description beside it "
+            "(hassfest's exclusive 'fixable' group)"
+        )
+    # The one fixable issue is the rotate ceremony, and its confirm step
+    # carries the explanation the issue description used to.
+    tofu = strings["issues"]["tofu_mismatch"]
+    assert set(tofu) == {"title", "fix_flow"}
+    confirm = tofu["fix_flow"]["step"]["confirm"]
+    for placeholder in ("{pinned_fingerprint}", "{received_fingerprint}", "{url}"):
+        assert placeholder in confirm["description"], placeholder
+
+    # data_description keys must name a field in data (the same step).
+    for section in ("config", "options"):
+        for step_id, step in strings.get(section, {}).get("step", {}).items():
+            for field in step.get("data_description", {}):
+                assert field in step.get("data", {}), f"{section}.step.{step_id}.data_description.{field} is not in data"
+
+
+def test_the_hassfest_rule_check_catches_what_it_is_for() -> None:
+    """Negative control: the three shapes that failed in CI are flagged."""
+    assert hassfest_string_problems("x", "usually http://<docker host>:8799")
+    assert hassfest_string_problems("x", "run `docker exec securacv unpair <id>`")
+    assert hassfest_string_problems("x", "`event.securacv_<zone>`")
+    assert hassfest_string_problems("x", "see https://example.com/docs")
+    assert hassfest_string_problems("x", "a '{placeholder}' quoted")
+    assert hassfest_string_problems("x", "trailing ")
+    assert hassfest_string_problems("x", "{not-an-identifier}")
+    assert hassfest_string_problems("x", "usually http://DOCKER-HOST:8799 ({url})") == []
 
 
 async def test_services_yaml_renders_the_five_actions(hass: HomeAssistant, kernel: KernelMock, setup_kernel_entry) -> None:

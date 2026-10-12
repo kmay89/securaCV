@@ -26,13 +26,13 @@
       },
       "pair": {
         "title": "Pair with the SecuraCV sidecar",
-        "description": "On the Docker host run `docker exec securacv pair` and enter the 6-digit code it prints (valid 10 minutes). The kernel key fingerprint it prints beside the code must read `{fingerprint}` (kernel `{device_id}`). Home Assistant keeps its own paired key afterwards; revoke it any time with `docker exec securacv unpair <id>`.",
+        "description": "On the Docker host run `docker exec securacv pair` and enter the 6-digit code it prints (valid 10 minutes). The kernel key fingerprint it prints beside the code must read `{fingerprint}` (kernel `{device_id}`). Home Assistant keeps its own paired key afterwards; revoke it any time with `docker exec securacv unpair` followed by the token id (`unpair` alone lists them).",
         "data": {
           "url": "Kernel URL",
           "pairing_code": "Pairing code"
         },
         "data_description": {
-          "url": "Where Home Assistant reaches the sidecar's event API, usually http://<docker host>:8799. Pre-filled from the announcement or your MQTT broker's address — correct it if the sidecar runs elsewhere.",
+          "url": "Where Home Assistant reaches the sidecar's event API, usually http://DOCKER-HOST:8799 with the Docker host's LAN address in place of DOCKER-HOST. Pre-filled from the announcement or your MQTT broker's address — correct it if the sidecar runs elsewhere.",
           "pairing_code": "The 6 digits `pair` printed. Each code is single-use and burns after five wrong tries."
         }
       },
@@ -183,12 +183,11 @@
     },
     "tofu_mismatch": {
       "title": "The witness kernel's key changed",
-      "description": "The witness kernel at {url} now serves the key with fingerprint `{received_fingerprint}`; Home Assistant pinned `{pinned_fingerprint}`. This happens after a restore to new hardware or a reinstalled app or sidecar — or when something else answers at that address. Until you confirm the new key, kernel events show a key mismatch and are never shown as verified.\n\nBefore confirming, compare `{received_fingerprint}` with what the kernel itself prints: `docker exec securacv pair`, the app's panel, or `doctor`.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Confirm the kernel's new key",
-            "description": "Pinned: `{pinned_fingerprint}`. Received: `{received_fingerprint}` (kernel at {url}).\n\nSubmit only if the kernel's own printout shows `{received_fingerprint}`. The previous key stays recorded in the entry so earlier sealed logs remain attributable; the integration reloads and verifies against the new key."
+            "description": "The witness kernel at {url} now serves the key with fingerprint `{received_fingerprint}`; Home Assistant pinned `{pinned_fingerprint}`. This happens after a restore to new hardware or a reinstalled app or sidecar — or when something else answers at that address. Until you confirm the new key, kernel events show a key mismatch and are never shown as verified.\n\nBefore submitting, compare `{received_fingerprint}` with what the kernel itself prints: `docker exec securacv pair`, the app's panel, or `doctor`. Submit only if they match. The previous key stays recorded in the entry so earlier sealed logs remain attributable; the integration reloads and verifies against the new key."
           }
         },
         "abort": {
@@ -202,7 +201,7 @@
     },
     "entities_migrated": {
       "title": "SecuraCV replaced the app's pwk_* entities",
-      "description": "Now that the SecuraCV integration manages this witness kernel, the entities the app published through MQTT discovery have been withdrawn and replaced:\n\n- `sensor.pwk_last_event` → `sensor.securacv_last_event`\n- `sensor.pwk_daily_digest` → `sensor.securacv_daily_digest`\n- `binary_sensor.pwk_chain_problem` → `binary_sensor.securacv_chain_valid` (on means the chain is intact)\n- `button.pwk_verify_now` → `button.securacv_verify_now`\n- the per-zone sensors → `event.securacv_<zone>` (one event entity per camera, named after it)\n\nUpdate automations and dashboards that referenced the old ids; the SecuraCV dashboard strategy already uses the new ones. Dismiss this notice when done."
+      "description": "Now that the SecuraCV integration manages this witness kernel, the entities the app published through MQTT discovery have been withdrawn and replaced:\n\n- `sensor.pwk_last_event` → `sensor.securacv_last_event`\n- `sensor.pwk_daily_digest` → `sensor.securacv_daily_digest`\n- `binary_sensor.pwk_chain_problem` → `binary_sensor.securacv_chain_valid` (on means the chain is intact)\n- `button.pwk_verify_now` → `button.securacv_verify_now`\n- the per-zone sensors → one `event.securacv_` entity per camera, named after it (`event.securacv_front_door`, say)\n\nUpdate automations and dashboards that referenced the old ids; the SecuraCV dashboard strategy already uses the new ones. Dismiss this notice when done."
     }
   },
   "options": {
