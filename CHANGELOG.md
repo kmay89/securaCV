@@ -55,6 +55,12 @@ and [`docs/frigate_integration.md`](docs/frigate_integration.md).
   "777" is not a leak; the sidecar's sweep reads the whole events view
   through the kernel API from inside the container (the database is
   SQLCipher-encrypted) and sweeps the export bundle too.
+- A row is Verified ✓ only when the integration's walk verified ITS entry:
+  the wire's `seq` names the sealed-log row (C5), and two entries sharing
+  one `(event_type, zone_id, bucket)` key — a dog and a cat in one zone in
+  one bucket — no longer let the second read Verified on the first's
+  signature; a row without `seq` is Verified only once a walk that began
+  after its bucket closed reached the kernel's head.
 
 **Breaking changes**
 

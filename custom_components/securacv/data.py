@@ -69,9 +69,14 @@ class VerificationState:
     # the gap is the kernel's claim, not this walk's proof.
     anchor_moved: bool = False
     # (event_type, zone_id, time_bucket_start) of every entry the walks have
-    # covered, bounded by retention — the lookup an event row's badge is
-    # decided by.
+    # covered, bounded by retention — the lookup a row WITHOUT a `seq` falls
+    # back to (kernel_verify.event_verification states the rule).
     covered: set[tuple[str, str, int]] = field(default_factory=set)
+    # The same entries by their sealed-log `seq`: seq → the entry's key. A
+    # row that carries `seq` (contract C5) is Verified by this index alone,
+    # so two entries sharing one key in one bucket (a dog and a cat in one
+    # zone) never let the second read Verified on the first's signature.
+    covered_seqs: dict[int, tuple[str, str, int]] = field(default_factory=dict)
 
 
 @dataclass

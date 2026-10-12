@@ -324,13 +324,79 @@ EVENT = {
 }
 
 
-def test_verified_iff_the_walk_covered_the_event_s_key():
-    state = VerificationState(ok=True, covered={("boundary_crossing_object_large", "zone:a", 1700000400)})
+KEY_A = ("boundary_crossing_object_large", "zone:a", 1700000400)
+
+
+def test_verified_iff_the_walk_covered_the_event_s_own_entry():
+    """A row with `seq` is Verified by the seq index alone: the walk must have
+    verified THAT entry, with the row's own key."""
+    state = VerificationState(ok=True, covered={KEY_A}, covered_seqs={1: KEY_A})
     assert kv.event_verification(state, EVENT) == (VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN)
     other = dict(EVENT, zone_id="zone:b")
     assert kv.event_verification(state, other) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
     later = dict(EVENT, time_bucket={"start_epoch_s": 1700001000, "size_s": 600})
     assert kv.event_verification(state, later) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
+    # The same key under another seq is another entry: not this one's proof.
+    unwalked = dict(EVENT, seq=2)
+    assert kv.event_verification(state, unwalked) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
+    # A seq the walk verified under a different key is not this row either.
+    assert kv.event_verification(VerificationState(ok=True, covered_seqs={1: ("tamper_detected", "zone:a", 1700000400)}), EVENT) == (
+        VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
+
+
+def test_two_entries_sharing_one_key_are_verified_one_by_one():
+    """A dog and a cat in one zone in one bucket: two sealed entries, one
+    (event_type, zone_id, bucket) key. Walking the dog's entry must not make
+    the cat's row read Verified before the cat's signature is walked."""
+    key = ("boundary_crossing_object_small", "zone:yard", 1700000400)
+    dog = dict(EVENT, event_type="BoundaryCrossingObjectSmall", zone_id="zone:yard", seq=10)
+    cat = dict(dog, seq=11)
+    after_dog = VerificationState(
+        ok=True, verified_seq=10, head_seq=10, verified_bucket_start=1700001200,
+        covered={key}, covered_seqs={10: key},
+    )
+    assert kv.event_verification(after_dog, dog) == (VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN)
+    assert kv.event_verification(after_dog, cat) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
+    after_cat = VerificationState(
+        ok=True, verified_seq=11, head_seq=11, verified_bucket_start=1700001200,
+        covered={key}, covered_seqs={10: key, 11: key},
+    )
+    assert kv.event_verification(after_cat, cat) == (VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN)
+    assert kv.event_verification(after_cat, dog) == (VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN)
+
+
+def test_a_row_without_seq_is_verified_only_once_its_bucket_was_walked_closed():
+    """A key-only row (an older bridge, no `seq`) cannot name its entry, so it
+    is Verified only when the walk began after its bucket closed and reached
+    the head — then every entry of that bucket was walked, this one included."""
+    key_only = {k: v for k, v in EVENT.items() if k != "seq"}
+    walked_open = VerificationState(
+        ok=True, verified_seq=3, head_seq=3, verified_bucket_start=1700000400,
+        covered={KEY_A}, covered_seqs={1: KEY_A},
+    )
+    assert kv.event_verification(walked_open, key_only) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED), (
+        "the walk ran in the row's own bucket: a later entry with this key may still be unwalked")
+    walked_closed = VerificationState(
+        ok=True, verified_seq=3, head_seq=3, verified_bucket_start=1700001000,
+        covered={KEY_A}, covered_seqs={1: KEY_A},
+    )
+    assert kv.event_verification(walked_closed, key_only) == (VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN)
+    # The walk stopped short of the kernel's declared head: not every entry
+    # of the bucket was walked.
+    short = VerificationState(
+        ok=True, verified_seq=3, head_seq=5, verified_bucket_start=1700001000,
+        covered={KEY_A}, covered_seqs={1: KEY_A},
+    )
+    assert kv.event_verification(short, key_only) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
+    # A flat row carries its own bucket size; a size the wire does not state
+    # is the kernel's 600 s.
+    flat = {"event_type": "BoundaryCrossingObjectLarge", "zone_id": "zone:a",
+            "time_bucket_start": 1700000400, "time_bucket_size": 1200}
+    assert kv.event_verification(walked_closed, flat) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
+    assert kv.event_verification(
+        VerificationState(ok=True, verified_seq=3, head_seq=3, verified_bucket_start=1700001600,
+                          covered={KEY_A}, covered_seqs={1: KEY_A}), flat,
+    ) == (VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN)
 
 
 def test_a_kernel_self_report_never_makes_an_event_verified():
@@ -369,8 +435,9 @@ def test_chain_trust_reason_speaks_the_rows_vocabulary():
 
 def test_the_c5_attribute_table_exactly():
     state = VerificationState(
-        ok=True, verified_bucket_start=1700001200,
+        ok=True, verified_bucket_start=1700001200, verified_seq=3, head_seq=3,
         covered={("boundary_crossing_object_large", "zone:a", 1700000400)},
+        covered_seqs={1: ("boundary_crossing_object_large", "zone:a", 1700000400)},
     )
     attrs = kv.witness_event_attributes(
         EVENT, state, kernel_device_id="pwk_ffffffff",
@@ -441,7 +508,10 @@ def test_a_jittered_wire_row_matches_the_verified_entry_s_true_bucket(offset, fl
     canonical start, so every draw of a verified entry reads Verified."""
     covered = {kv.covered_key_of_payload(DOC["entries"][0]["payload"])}
     assert covered == {("boundary_crossing_object_large", "zone:a", 1700000400)}
-    state = VerificationState(ok=True, verified_bucket_start=1700001200, covered=covered)
+    state = VerificationState(
+        ok=True, verified_bucket_start=1700001200, covered=covered,
+        covered_seqs={1: ("boundary_crossing_object_large", "zone:a", 1700000400)},
+    )
     row = _jittered(EVENT, offset, flat=flat)
     assert kv.covered_key_of_event(row) == ("boundary_crossing_object_large", "zone:a", 1700000400)
     assert kv.event_verification(state, row) == (VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN)
@@ -549,15 +619,19 @@ def test_the_first_walk_verifies_from_the_anchor_and_persists_the_cursor(monkeyp
         ("boundary_crossing_object_large", "zone:a", 1700000400),
         ("boundary_crossing_object_large", "zone:b", 1700001000),
     }
+    assert state.covered_seqs == {
+        1: ("boundary_crossing_object_large", "zone:a", 1700000400),
+        2: ("boundary_crossing_object_large", "zone:b", 1700001000),
+    }
     assert state.verified_bucket_start == 1700001600
     stored = verifier._store._payload
     assert stored["v"] == 1 and stored["verified_seq"] == 3
     assert stored["verified_hash"] == DOC["entries"][2]["entry_hash"]
     assert stored["verified_entries"] == 3
     assert stored["covered"] == [
-        ["boundary_crossing_object_large", "zone:a", 1700000400],
-        ["boundary_crossing_object_large", "zone:b", 1700001000],
-    ], "the covered index survives a restart"
+        ["boundary_crossing_object_large", "zone:a", 1700000400, 1],
+        ["boundary_crossing_object_large", "zone:b", 1700001000, 2],
+    ], "the covered index, seq included, survives a restart"
     assert events[-1][0] == VERIFICATION_EVENT_CHAIN_VERIFIED
     attrs = events[-1][1]
     assert attrs["chain_valid"] is True and attrs["events_verified"] == 3

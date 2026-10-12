@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message, async_fire_time_changed
 from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
-from conftest import SEALED_LOG_VECTOR, VECTOR_KEY, VECTOR_NOW, KernelMock, bridge_event, settle
+from conftest import SEALED_LOG_VECTOR, VECTOR_KEY, VECTOR_NOW, KernelMock, bridge_event, bucket_start, settle
 from custom_components.securacv.const import DOMAIN
 
 CHAIN_VALID = "binary_sensor.securacv_chain_valid"
@@ -148,6 +148,49 @@ async def test_a_served_key_other_than_the_pin_is_a_key_change_not_a_failure(
     assert hass.states.get(LAST_EVENT).attributes["trust_reason"] == "kernel_key_mismatch"
     assert hass.states.get(LAST_EVENT).attributes["verification"] == "sealed", "a key change is never Failed (D10)"
     assert hass.states.get(LAST_EVENT).attributes["verified"] is False
+
+
+async def test_two_entries_sharing_one_key_are_verified_one_by_one(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry, freezer: FrozenDateTimeFactory
+) -> None:
+    """A dog and a cat in one zone in one bucket are two sealed entries with
+    one (event_type, zone_id, bucket) key. Walking the dog's entry must not
+    render the cat's row Verified before the cat's own signature is walked:
+    the row's `seq` names its entry (C5), and the key alone proves nothing."""
+    bucket = bucket_start()
+    kernel.kernel.seal_event(event_type="BoundaryCrossingObjectSmall", zone="yard", bucket=bucket)
+    await setup_kernel_entry(enable_mqtt=True)
+    assert hass.states.get(CHAIN_VALID).attributes["verified_seq"] == 1
+
+    dog = bridge_event(event_type="BoundaryCrossingObjectSmall", zone="yard", bucket=bucket, seq=1)
+    push(hass, "witness/events", dog)
+    await hass.async_block_till_done()
+    row = hass.states.get("event.securacv_yard")
+    assert row.attributes["verification"] == "verified" and row.attributes["seq"] == 1
+
+    # The cat: sealed after the walk, same key, seq 2. The bridge's retained
+    # last_event shows it (the live feed dedupes it onto the dog's key, as
+    # C5 states) — and it is Sealed, not Verified on the dog's signature.
+    kernel.kernel.seal_event(event_type="BoundaryCrossingObjectSmall", zone="yard", bucket=bucket)
+    cat = bridge_event(event_type="BoundaryCrossingObjectSmall", zone="yard", bucket=bucket, seq=2)
+    push(hass, "witness/last_event", cat, retain=True)
+    await hass.async_block_till_done()
+    last = hass.states.get(LAST_EVENT)
+    assert last.attributes["seq"] == 2
+    assert last.attributes["verification"] == "sealed"
+    assert last.attributes["verified"] is False
+    assert last.attributes["trust_reason"] == "kernel_sealed"
+
+    # The next walk (the 15-minute backstop) verifies the cat's entry; the
+    # sensor then reads Verified for seq 2 on its own proof.
+    freezer.tick(timedelta(minutes=15, seconds=1))
+    async_fire_time_changed(hass)
+    await settle(hass)
+    assert hass.states.get(CHAIN_VALID).attributes["verified_seq"] == 2
+    last = hass.states.get(LAST_EVENT)
+    assert last.attributes["seq"] == 2
+    assert last.attributes["verification"] == "verified"
+    assert last.attributes["verified"] is True
 
 
 async def test_the_walk_is_incremental_idle_triggered_and_persisted(

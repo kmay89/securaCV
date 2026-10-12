@@ -214,6 +214,7 @@ def test_a_covered_event_fires_verified():
     entry.runtime_data.verification = VerificationState(
         ok=True, verified_bucket_start=1700001200,
         covered={("boundary_crossing_object_large", "zone:front_door", 1700000400)},
+        covered_seqs={12: ("boundary_crossing_object_large", "zone:front_door", 1700000400)},
     )
     entity = event_platform.SecuraCVWitnessEventEntity(coordinator, entry, "front_door", "Front door")
     _added(entity, hass)

@@ -25,12 +25,14 @@ continuity claim, never as this walk's proof. A chain that was rewritten at
 the cursor, or a head that moved backwards, is a failed walk.
 
 What the walk produces, beyond pass/fail, is the covered-entry index: the
-``(event_type, zone_id, time_bucket_start)`` of every entry it verified,
-bounded by the kernel's retention. An event row is "Verified ✓" iff its key
-is in that index; otherwise it is "Sealed ✓" (kernel-signed, not yet walked);
-a failed walk renders every row "Failed ⚠"; a served key that differs from
-the pin is a key change — Repairs ``tofu_mismatch`` and
-``trust_reason: kernel_key_mismatch`` — never "Failed".
+``seq`` and the ``(event_type, zone_id, time_bucket_start)`` of every entry
+it verified, bounded by the kernel's retention. An event row is "Verified ✓"
+iff the walk verified ITS entry — by ``seq`` when the row carries one (C5),
+by the key only under the rule ``event_verification`` states; otherwise it
+is "Sealed ✓" (kernel-signed, not yet walked); a failed walk renders every
+row "Failed ⚠"; a served key that differs from the pin is a key change —
+Repairs ``tofu_mismatch`` and ``trust_reason: kernel_key_mismatch`` — never
+"Failed".
 
 Triggers: the Verify now button, the ``securacv.verify`` action, a 15-minute
 backstop, 60 s after new entries go idle, and (a walk only, never a
@@ -92,6 +94,7 @@ from .coordinator import (
     chain_problem_signal,
     event_bucket_start,
     verification_event_signal,
+    wire_bucket_size,
     witness_event_signal,
 )
 from .data import SecuraCVConfigEntry, VerificationState, runtime_for
@@ -279,6 +282,8 @@ class WalkResult:
     # The document's declared head (`head.seq`), when it carries one.
     head_seq: int | None = None
     covered: list[CoveredKey] = field(default_factory=list)
+    # The same entries by seq (entries served without one index by key only).
+    covered_seqs: dict[int, CoveredKey] = field(default_factory=dict)
     failure: WalkFailure | None = None
     # Set when the served key is not the pinned key: a key change, not a
     # chain failure. `served_key` is what the kernel offered.
@@ -354,6 +359,8 @@ def walk_entries(
         key = covered_key_of_payload(entry.payload)
         if key is not None:
             result.covered.append(key)
+            if entry.seq is not None:
+                result.covered_seqs[entry.seq] = key
     return result
 
 
@@ -494,10 +501,24 @@ def event_verification(
 ) -> tuple[str, str]:
     """(verification, trust_reason) for one kernel event row.
 
-    `verified` iff the last successful walk covered the event's
-    (event_type, zone_id, time_bucket); `failed` iff the last walk failed;
-    a key mismatch wins over everything (Repairs tofu_mismatch is open);
-    otherwise `sealed`.
+    `verified` iff the last successful walk verified THE ROW'S OWN entry;
+    `failed` iff the last walk failed; a key mismatch wins over everything
+    (Repairs tofu_mismatch is open); otherwise `sealed`.
+
+    Which entry is the row's: its `seq` (C5 — every bridge payload and
+    kernel view since the amended contract carries the sealed-log row id),
+    and the walk must have verified that seq with the row's own key. The
+    key alone — (event_type, zone_id, bucket) — is not an identity: a dog
+    and a cat in one zone in one bucket are two entries with one key, and
+    the second must not read Verified on the first's signature. A row with
+    no `seq` is therefore Verified only when its key is in the index AND
+    the walk that built the index began after the row's bucket closed
+    (`verified_bucket_start` is the bucket the walk started in) AND that
+    walk reached the kernel's declared head: every entry of that bucket
+    existed when the walk ran and was walked, so whichever entry the row
+    is, it was verified. A key-only row in the open bucket stays Sealed
+    until the next walk after the bucket turns. (Continuity across a
+    re-anchor gap stays the kernel's claim, as the walk already states.)
     """
     if state is None:
         return VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED
@@ -509,9 +530,30 @@ def event_verification(
     if state.ok is False:
         return VERIFICATION_FAILED, TRUST_REASON_HA_VERIFY_FAILED
     key = covered_key_of_event(event)
-    if key is not None and key in state.covered:
+    if key is None or not isinstance(event, dict):
+        return VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED
+    seq = event.get("seq")
+    if isinstance(seq, int) and not isinstance(seq, bool):
+        if state.covered_seqs.get(seq) == key:
+            return VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN
+        return VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED
+    if key in state.covered and _walk_closed_over(state, key, event):
         return VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN
     return VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED
+
+
+def _walk_closed_over(state: VerificationState, key: CoveredKey, event: dict[str, Any]) -> bool:
+    """Whether the last walk began after the row's bucket closed and reached
+    the kernel's declared head — the condition under which a key-only row
+    (no `seq`) is known to have been walked whichever entry it is."""
+    if state.verified_bucket_start is None or state.verified_seq is None:
+        return False
+    if state.head_seq is None or state.head_seq != state.verified_seq:
+        return False
+    size = wire_bucket_size(event)
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        size = TIME_BUCKET_SECONDS
+    return key[2] + size <= state.verified_bucket_start
 
 
 def chain_trust_reason(state: VerificationState | None) -> str | None:
@@ -632,6 +674,29 @@ def _prune_covered(
     return kept
 
 
+def _prune_covered_seqs(
+    covered_seqs: dict[int, CoveredKey], *, now: float, retention_seconds: int
+) -> dict[int, CoveredKey]:
+    """The seq index under the same retention bound and cap (newest seqs win)."""
+    floor = int(now) - retention_seconds
+    kept = {seq: key for seq, key in covered_seqs.items() if key[2] >= floor}
+    if len(kept) > VERIFY_COVERED_MAX_ENTRIES:
+        newest = sorted(kept, reverse=True)[:VERIFY_COVERED_MAX_ENTRIES]
+        kept = {seq: kept[seq] for seq in newest}
+    return kept
+
+
+def _covered_rows(state: VerificationState) -> list[list[Any]]:
+    """The persisted index: `[event_type, zone_id, bucket_start, seq | None]`
+    per entry, oldest bucket first — one row per seq, plus a seq-less row
+    for a key no seq names (an entry served without one)."""
+    rows: list[list[Any]] = [[*key, seq] for seq, key in state.covered_seqs.items()]
+    keyed = set(state.covered_seqs.values())
+    rows.extend([*key, None] for key in state.covered if key not in keyed)
+    rows.sort(key=lambda row: (row[2], row[3] is None, row[3] or 0, row[0], row[1]))
+    return rows
+
+
 class KernelVerifier:
     """Runs the walk on its triggers and keeps ``runtime.verification`` true."""
 
@@ -731,18 +796,30 @@ class KernelVerifier:
                 verified_entries=int(verified_entries) if isinstance(verified_entries, int) else 0,
             )
         covered: set[CoveredKey] = set()
+        covered_seqs: dict[int, CoveredKey] = {}
         for row in data.get("covered") or []:
+            # [event_type, zone_id, bucket_start, seq] — a store written
+            # before the seq index has three-element rows (key only).
             if (
                 isinstance(row, list)
-                and len(row) == 3
+                and len(row) in (3, 4)
                 and isinstance(row[0], str)
                 and isinstance(row[1], str)
                 and isinstance(row[2], int)
+                and not isinstance(row[2], bool)
             ):
-                covered.add((row[0], row[1], row[2]))
+                key: CoveredKey = (row[0], row[1], row[2])
+                covered.add(key)
+                seq = row[3] if len(row) == 4 else None
+                if isinstance(seq, int) and not isinstance(seq, bool):
+                    covered_seqs[seq] = key
         state = self.state
+        now = time.time()
         state.covered = _prune_covered(
-            covered, now=time.time(), retention_seconds=self._retention_seconds()
+            covered, now=now, retention_seconds=self._retention_seconds()
+        )
+        state.covered_seqs = _prune_covered_seqs(
+            covered_seqs, now=now, retention_seconds=self._retention_seconds()
         )
         if self._cursor is not None:
             state.verified_seq = self._cursor.seq
@@ -756,7 +833,7 @@ class KernelVerifier:
             "verified_seq": self._cursor.seq if self._cursor else None,
             "verified_hash": self._cursor.entry_hash.hex() if self._cursor else None,
             "verified_entries": self._cursor.verified_entries if self._cursor else 0,
-            "covered": [list(key) for key in sorted(state.covered, key=lambda key: key[2])],
+            "covered": _covered_rows(state),
         }
 
     def _retention_seconds(self) -> int:
@@ -860,12 +937,16 @@ class KernelVerifier:
             # A person asked, after the head moved backwards: re-anchor at
             # the document's own anchor and walk everything served again.
             cursor = None
+        # The walk's bucket is the one the FETCH began in: a key-only row's
+        # Verified rests on its bucket having closed before this instant
+        # (`event_verification`), so the stamp is taken before the kernel
+        # answers, never after.
+        bucket = bucket_start(time.time())
         doc = await self.api.async_get_sealed_log(
             from_seq=cursor.seq if cursor is not None else None
         )
         result = await self.hass.async_add_executor_job(verify_document, doc, pinned, cursor)
         now = time.time()
-        bucket = bucket_start(now)
 
         if result.key_mismatch:
             # The served key is not the pin: the coordinator owns the Repairs
@@ -902,6 +983,11 @@ class KernelVerifier:
             covered.update(result.covered)
             state.covered = _prune_covered(
                 covered, now=now, retention_seconds=self._retention_seconds()
+            )
+            covered_seqs = dict(state.covered_seqs)
+            covered_seqs.update(result.covered_seqs)
+            state.covered_seqs = _prune_covered_seqs(
+                covered_seqs, now=now, retention_seconds=self._retention_seconds()
             )
             self._store.async_delay_save(self._stored, 5)
             if result.anchor == ANCHOR_REANCHORED:
