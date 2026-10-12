@@ -12,7 +12,12 @@
 # Writes are listed by path on purpose. The only places the app writes:
 #   /data              the app's own state (options.json lives here)
 #   /run, /tmp         s6 and the setup's rendered service environment
-#   /config/witness.db*            the sealed log (SQLite WAL)
+#   /config/witness.db*            the sealed log (SQLite WAL), plus the
+#        storage-health state beside it (witness.db.health.json + .tmp)
+#   /config/witness.ed25519.seed   the device key seed beside the database:
+#        witnessd (standalone mode) creates it at start when it is absent
+#        (crypto::resolve_device_seed_persisting_env); witness_api and
+#        frigate_bridge read it for the seed-mismatch check
 #   /config/witness_config.json    the kernel config the setup renders
 #   /config/api_token (+ temp)     the rotating capability token
 #   /config/fleet_peers.json (+ temp)  the roll-call the publisher keeps
@@ -25,7 +30,12 @@
 #   /share/**                      the vault
 # Nothing else under /config is written, and nothing is read from it that
 # the app does not own (the integration tree is read to verify the app's
-# own manifest before touching it).
+# own manifest before touching it). The setup never sets SECURACV_HWM_PATH,
+# so no high-water-mark file is written anywhere.
+#
+# privacy_witness_kernel/tests/test_addon_store.py holds every path a
+# process opens to the profile of that process, by literal — a new file in
+# the Rust sources needs a row there and a rule here.
 
 profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
@@ -126,6 +136,13 @@ profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
     /config/witness_config.json r,
     /config/witness.db rwk,
     /config/witness.db-* rwk,
+    # The /status storage sampler's state (StorageHealthMonitor, temp + rename).
+    /config/witness.db.health.json rw,
+    /config/witness.db.health.json.tmp rw,
+    # The device seed beside the database: read for the seed-mismatch check
+    # (the setup always hands the seed over in the environment, so this
+    # process never creates it).
+    /config/witness.ed25519.seed r,
     /config/api_token rw,
     /config/.api_token.*.tmp rw,
     /config/viewer_tokens.json r,
@@ -169,6 +186,13 @@ profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
     /config/witness_config.json r,
     /config/witness.db rwk,
     /config/witness.db-* rwk,
+    # The storage-health monitor's state (temp + rename).
+    /config/witness.db.health.json rw,
+    /config/witness.db.health.json.tmp rw,
+    # The device seed beside the database. witnessd alone persists the
+    # environment seed here on a first standalone start (create_new, 0600)
+    # and reads it back on every later one.
+    /config/witness.ed25519.seed rw,
     /config/api_token rw,
     /config/.api_token.*.tmp rw,
     /config/viewer_tokens.json r,
@@ -206,6 +230,8 @@ profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
     /config/witness_config.json r,
     /config/witness.db rwk,
     /config/witness.db-* rwk,
+    # The device seed beside the database: read for the seed-mismatch check.
+    /config/witness.ed25519.seed r,
   }
 
   # The Home Assistant publisher: reads the API with the token, publishes

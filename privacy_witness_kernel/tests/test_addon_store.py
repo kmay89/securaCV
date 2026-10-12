@@ -163,6 +163,7 @@ def test_apparmor_never_grants_blanket_file_access_and_limits_writes():
         "/root/.cache/",  # GStreamer's plugin registry cache (witnessd)
         "/etc/services.d/", "/etc/cont-init.d/", "/etc/cont-finish.d/",
         "/config/witness.db", "/config/witness_config.json",
+        "/config/witness.ed25519.seed",
         "/config/api_token", "/config/.api_token.",
         "/config/paired_tokens.json", "/config/.paired_tokens.json.",
         "/config/pairing_code", "/config/.pairing_code.",
@@ -181,15 +182,133 @@ def test_apparmor_never_grants_blanket_file_access_and_limits_writes():
     assert re.search(r"^\s*/addon_configs/\*\* rw", APPARMOR, re.M) is None
 
 
-def test_apparmor_only_the_panel_writes_the_integration_tree():
-    def block(name):
-        start = APPARMOR.index(f"profile {name} ")
-        end = APPARMOR.index("\n  }\n", start)
-        return APPARMOR[start:end]
+def _profile_block(name):
+    start = APPARMOR.index(f"profile {name} ")
+    end = APPARMOR.index("\n  }\n", start)
+    return APPARMOR[start:end]
 
-    assert "/config/custom_components/securacv/** rw," in block("panel")
+
+def _file_rules(block):
+    """{path: permission letters} for every path rule in a profile block."""
+    return {
+        path: perms
+        for path, perms in re.findall(r"^\s*(/\S+)\s+([a-z]+),\s*$", block, re.M)
+    }
+
+
+def test_apparmor_only_the_panel_writes_the_integration_tree():
+    assert "/config/custom_components/securacv/** rw," in _profile_block("panel")
     for name in ("witness_api", "witnessd", "frigate_bridge", "event_mqtt_bridge"):
-        assert "custom_components" not in block(name), name
+        assert "custom_components" not in _profile_block(name), name
+
+
+# Every file a confined process opens under /config, by the literal the Rust
+# source (or the setup) spells, with the least permission that keeps it
+# running — a standalone install crash-looped once because witnessd's own
+# seed file (crypto::resolve_device_seed_persisting_env creates
+# `<db>.ed25519.seed` at every first start) had no rule. A new file in the
+# sources is a new row here AND a new rule in apparmor.txt.
+#
+#   witness.db(-wal/-shm)        storage.rs (SQLite WAL)            witnessd, witness_api, frigate_bridge
+#   witness.db.health.json(.tmp) storage_health.rs store_state      witnessd, witness_api
+#   witness.ed25519.seed         crypto/mod.rs device_key_path_for_db  witnessd (creates), witness_api + frigate_bridge (read)
+#   api_token + .api_token.*.tmp api/mod.rs write_restricted         witnessd, witness_api (write); event_mqtt_bridge, panel (read)
+#   paired_tokens.json (+tmp)    api/pairing.rs PAIRED_TOKEN_FILE_NAME  witnessd, witness_api
+#   pairing_code (+tmp)          api/pairing.rs PAIRING_CODE_FILE_NAME  witnessd, witness_api
+#   viewer_tokens.json           api/mod.rs VIEWER_TOKEN_FILE_NAME   witnessd, witness_api (read)
+#   fleet_peers.json (+ .tmp)    fleet_peers.rs write_atomic         event_mqtt_bridge (write); witnessd, witness_api (read)
+#   witness_config.json          run.sh CONFIG_FILE                  every kernel process (read)
+REQUIRED_FILE_RULES = {
+    "witnessd": {
+        "/config/witness_config.json": "r",
+        "/config/witness.db": "rwk",
+        "/config/witness.db-*": "rwk",
+        "/config/witness.db.health.json": "rw",
+        "/config/witness.db.health.json.tmp": "rw",
+        "/config/witness.ed25519.seed": "rw",
+        "/config/api_token": "rw",
+        "/config/.api_token.*.tmp": "rw",
+        "/config/viewer_tokens.json": "r",
+        "/config/paired_tokens.json": "rw",
+        "/config/.paired_tokens.json.*.tmp": "rw",
+        "/config/pairing_code": "rw",
+        "/config/.pairing_code.*.tmp": "rw",
+        "/config/fleet_peers.json": "r",
+        "/share/**": "rwk",
+    },
+    "witness_api": {
+        "/config/witness_config.json": "r",
+        "/config/witness.db": "rwk",
+        "/config/witness.db-*": "rwk",
+        "/config/witness.db.health.json": "rw",
+        "/config/witness.db.health.json.tmp": "rw",
+        "/config/witness.ed25519.seed": "r",
+        "/config/api_token": "rw",
+        "/config/.api_token.*.tmp": "rw",
+        "/config/viewer_tokens.json": "r",
+        "/config/paired_tokens.json": "rw",
+        "/config/.paired_tokens.json.*.tmp": "rw",
+        "/config/pairing_code": "rw",
+        "/config/.pairing_code.*.tmp": "rw",
+        "/config/fleet_peers.json": "r",
+        "/share/**": "rwk",
+    },
+    "frigate_bridge": {
+        "/config/witness_config.json": "r",
+        "/config/witness.db": "rwk",
+        "/config/witness.db-*": "rwk",
+        "/config/witness.ed25519.seed": "r",
+    },
+    "event_mqtt_bridge": {
+        "/config/api_token": "r",
+        "/config/fleet_peers.json": "rw",
+        "/config/fleet_peers.json.tmp": "rw",
+    },
+    "panel": {
+        "/config/api_token": "r",
+        "/config/.securacv/**": "rw",
+        "/config/frigate.yml": "rw",
+        "/config/blueprints/automation/securacv/**": "r",
+        "/config/custom_components/securacv/**": "rw",
+        "/addon_configs/ccab4aaf_frigate/config.yml": "rw",
+        "/addon_configs/ccab4aaf_frigate/config.yml.new": "rw",
+    },
+}
+
+
+@pytest.mark.parametrize("profile", sorted(REQUIRED_FILE_RULES))
+def test_apparmor_names_every_file_each_process_opens(profile):
+    rules = _file_rules(_profile_block(profile))
+    for path, needed in REQUIRED_FILE_RULES[profile].items():
+        assert path in rules, f"{profile}: no rule for {path} (the process opens it)"
+        missing = set(needed) - set(rules[path])
+        assert not missing, f"{profile}: {path} needs {needed!r}, has {rules[path]!r}"
+
+
+def test_apparmor_the_seed_file_is_created_by_witnessd_alone():
+    """witnessd persists the environment seed on a first standalone start;
+    the other kernel processes only read it (resolve_device_seed never
+    writes a seed it was given)."""
+    assert "w" in _file_rules(_profile_block("witnessd"))["/config/witness.ed25519.seed"]
+    for profile in ("witness_api", "frigate_bridge"):
+        assert _file_rules(_profile_block(profile))["/config/witness.ed25519.seed"] == "r", profile
+    for profile in ("event_mqtt_bridge", "panel"):
+        assert "/config/witness.ed25519.seed" not in _file_rules(_profile_block(profile)), profile
+
+
+def test_apparmor_rules_name_the_literals_the_sources_spell():
+    """The file names are the Rust constants', so a renamed file is caught."""
+    pairing = (REPO / "src" / "api" / "pairing.rs").read_text()
+    assert 'PAIRING_CODE_FILE_NAME: &str = "pairing_code"' in pairing
+    assert 'PAIRED_TOKEN_FILE_NAME: &str = "paired_tokens.json"' in pairing
+    assert 'VIEWER_TOKEN_FILE_NAME: &str = "viewer_tokens.json"' in (REPO / "src" / "api" / "mod.rs").read_text()
+    assert 'with_extension("ed25519.seed")' in (REPO / "src" / "crypto" / "mod.rs").read_text()
+    assert '"{}.health.json"' in (REPO / "src" / "storage_health.rs").read_text()
+    assert 'with_extension("json.tmp")' in (REPO / "src" / "storage_health.rs").read_text()
+    assert 'tmp.push(".tmp")' in (REPO / "src" / "fleet_peers.rs").read_text()
+    assert 'format!(".{file_name}.{:016x}.tmp"' in (REPO / "src" / "break_glass" / "backend.rs").read_text()
+    assert 'DB_PATH="/config/witness.db"' in RUN_SH and 'TOKEN_FILE="/config/api_token"' in RUN_SH
+    assert 'FLEET_PEERS_FILE="/config/fleet_peers.json"' in RUN_SH
 
 
 # ---------------------------------------------------------------------------
