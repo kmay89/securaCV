@@ -698,6 +698,12 @@ unpair() {
 # because the signal trap that reads them runs outside run()'s scope.
 DAEMON_PIDS=()
 SHUTDOWN_REQUESTED=0
+# How long a forwarded shutdown waits for the daemons' own clean exits
+# before ending what is left and exiting anyway. Docker's default stop
+# grace is 10 s; past it the container is SIGKILLed and exits 137 for a
+# stop that was asked for. The daemons bound their own clean paths well
+# under this (the bridge: 2 s for its last acks, 5 s for the disconnect).
+STOP_GRACE_SECS="${SECURACV_STOP_GRACE_SECS:-8}"
 
 # `docker stop` sends SIGTERM to this script (PID 1). A bash that dies
 # without forwarding it leaves the daemons to the SIGKILL ten seconds
@@ -711,6 +717,33 @@ stop_daemons() {
     if [ "${#DAEMON_PIDS[@]}" -gt 0 ]; then
         kill -TERM "${DAEMON_PIDS[@]}" 2>/dev/null || true
     fi
+}
+
+# wait_daemons_bounded SECS — wait for every daemon in DAEMON_PIDS to exit,
+# at most SECS; then SIGKILL whatever is left and name it. Returns 0 when
+# they all exited on their own, 1 when any had to be ended. bash reaps a
+# background child the moment it exits, so `kill -0` is a liveness test
+# here, not a zombie test.
+wait_daemons_bounded() {
+    local grace="$1" ticks=0 pid alive
+    while :; do
+        alive=()
+        for pid in "${DAEMON_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then alive+=("$pid"); fi
+        done
+        if [ "${#alive[@]}" -eq 0 ]; then
+            wait 2>/dev/null || true
+            return 0
+        fi
+        if [ "$ticks" -ge "$((grace * 10))" ]; then
+            log "daemon(s) ${alive[*]} did not exit within ${grace}s of SIGTERM; ending them"
+            kill -KILL "${alive[@]}" 2>/dev/null || true
+            wait 2>/dev/null || true
+            return 1
+        fi
+        sleep 0.1
+        ticks=$((ticks + 1))
+    done
 }
 
 run() {
@@ -876,14 +909,19 @@ EOF
     wait -n "${DAEMON_PIDS[@]}" || status=$?
     if [ "$SHUTDOWN_REQUESTED" -eq 1 ]; then
         # Give each daemon its clean exit (the bridge clears its retained
-        # announce and publishes offline; frigate_bridge seals its record).
-        wait || true
-        log "sidecar stopped"
+        # announce and publishes offline; frigate_bridge seals its record)
+        # — bounded, so a daemon that cannot finish never turns a requested
+        # stop into Docker's SIGKILL and a non-zero exit.
+        if wait_daemons_bounded "$STOP_GRACE_SECS"; then
+            log "sidecar stopped"
+        else
+            log "sidecar stopped (a daemon had to be ended; its retained MQTT state may be stale — see docs/frigate_integration.md, Clean shutdown and recovery)"
+        fi
         exit 0
     fi
     log "a service exited (status $status); shutting the sidecar down"
-    kill "${DAEMON_PIDS[@]}" 2>/dev/null || true
-    wait || true
+    kill -TERM "${DAEMON_PIDS[@]}" 2>/dev/null || true
+    wait_daemons_bounded "$STOP_GRACE_SECS" || true
     exit "$status"
 }
 

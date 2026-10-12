@@ -14,6 +14,21 @@ and [`docs/frigate_integration.md`](docs/frigate_integration.md).
 
 **Review fixes before release**
 
+- Two kernels on one broker leave each other alone: every bridge connects
+  with the client id `<bridge>-<device id>` (`MQTT_CLIENT_ID` still
+  overrides it) instead of its bare name, so a second sidecar, or the app
+  beside one, no longer replaces the first one's broker session every few
+  seconds.
+- `docker stop` always exits 0, and the clean exit it asks for is bounded:
+  the publisher's eventloop never blocks on its own request queue (the
+  re-asserts after a reconnect are queued without blocking and kept for the
+  next event while the queue is full — a ConnAck landing on a shutdown used
+  to deadlock it until Docker's SIGKILL), its last publishes and the
+  disconnect are capped at 2 s and 5 s, a poll-loop publish gives up the
+  moment a shutdown is requested, and the sidecar's entrypoint ends anything
+  still running after `SECURACV_STOP_GRACE_SECS` (default 8 s). The sidecar
+  e2e now also proves both daemons log their own clean stop and that a
+  second sidecar on the same broker does not flap the first.
 - Every copy of one sealed event is one event: the kernel's export view
   re-draws a bucket start by ±0/60/120 s on every fetch, and the
   integration now keys dedupe, the verified-entry index and the HTTP

@@ -3675,6 +3675,22 @@ pub fn ha_device_id(seed: &str) -> String {
     format!("pwk_{}", hex::encode(&digest[..4]))
 }
 
+/// The MQTT client id a bridge connects with: `<bridge name>-<device id>`.
+///
+/// A broker keeps one session per client id: a second client connecting
+/// with the same id replaces the first, which reconnects and replaces the
+/// second, and the two flap each other every few seconds ("Connection
+/// closed by peer abruptly" on both sides). Two kernels on one broker — two
+/// sidecars, or the app next to a sidecar — each have their own
+/// [`ha_device_id`], so an id derived from it is unique per kernel by
+/// construction, and the bridge name keeps a kernel's two bridges apart.
+/// `MQTT_CLIENT_ID` still overrides it. The result is longer than the 23
+/// bytes MQTT 3.1.1 obliges a broker to accept; Mosquitto (the Home
+/// Assistant add-on's broker) accepts ids far past that.
+pub fn mqtt_client_id(bridge_name: &str, device_id: &str) -> String {
+    format!("{bridge_name}-{device_id}")
+}
+
 pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
     let trimmed = seed.trim();
     if trimmed.is_empty() {
@@ -4781,6 +4797,37 @@ mod tests {
     use super::*;
     use crate::break_glass::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
     use ed25519_dalek::SigningKey;
+
+    #[test]
+    fn mqtt_client_ids_are_unique_per_kernel_and_per_bridge() {
+        // Two kernels (two seeds) on one broker never share an id, and a
+        // kernel's two bridges do not either — the collision that made two
+        // sidecars on one broker replace each other's session every few
+        // seconds and hang the first one's clean shutdown.
+        let a = ha_device_id("devkey:kernel-a");
+        let b = ha_device_id("devkey:kernel-b");
+        assert_ne!(a, b);
+        assert_ne!(
+            mqtt_client_id("event_mqtt_bridge", &a),
+            mqtt_client_id("event_mqtt_bridge", &b)
+        );
+        assert_ne!(
+            mqtt_client_id("event_mqtt_bridge", &a),
+            mqtt_client_id("frigate_bridge", &a)
+        );
+        // The shape is the bridge's name, a dash, the device id — what an
+        // operator sees in the broker's client list.
+        assert_eq!(
+            mqtt_client_id("frigate_bridge", "pwk_272543fb"),
+            "frigate_bridge-pwk_272543fb"
+        );
+        // Deterministic: a restart reconnects under the same id, so the
+        // broker replaces the dead session instead of leaving it behind.
+        assert_eq!(
+            mqtt_client_id("event_mqtt_bridge", &a),
+            mqtt_client_id("event_mqtt_bridge", &a)
+        );
+    }
 
     fn setup_test_kernel() -> Result<(Kernel, KernelConfig)> {
         let cfg = KernelConfig {

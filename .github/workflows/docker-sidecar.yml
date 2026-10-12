@@ -65,7 +65,15 @@ jobs:
             docker/sidecar/entrypoint.sh \
             docker/sidecar/ci_e2e.sh \
             docker/sidecar/verify_published_image.sh \
+            docker/sidecar/tests/test_stop_grace.sh \
             integrations/ha_frigate_mqtt/up.sh
+
+      # `docker stop` must never end in SIGKILL: the entrypoint's forwarded
+      # shutdown waits a bounded time for the daemons' clean exits, then ends
+      # what is left. This runs that function (lifted from entrypoint.sh)
+      # against real children, one of which ignores SIGTERM.
+      - name: The forwarded shutdown is bounded
+        run: bash docker/sidecar/tests/test_stop_grace.sh
 
       # The sidecar writes the kernel's config from a heredoc that the kernel
       # parses with deny_unknown_fields; this renders and parses it (and

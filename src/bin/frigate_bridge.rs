@@ -179,9 +179,12 @@ struct Args {
     #[arg(long, env = "FRIGATE_ENABLE_REVIEWS")]
     enable_reviews: bool,
 
-    /// MQTT client identifier.
-    #[arg(long, env = "MQTT_CLIENT_ID", default_value = BRIDGE_NAME)]
-    mqtt_client_id: String,
+    /// MQTT client identifier. Defaults to `frigate_bridge-<device id>`
+    /// (`witness_kernel::mqtt_client_id`), unique per kernel: a broker
+    /// keeps one session per id, so two kernels sharing one would replace
+    /// each other's connection every few seconds.
+    #[arg(long, env = "MQTT_CLIENT_ID")]
+    mqtt_client_id: Option<String>,
 
     /// Prefix of the kernel's own state topics (`witness`, the same prefix
     /// `event_mqtt_bridge` publishes under). This bridge publishes one
@@ -825,6 +828,11 @@ fn main() -> Result<()> {
         .ha_device_id
         .clone()
         .unwrap_or_else(|| witness_kernel::ha_device_id(&device_key_seed));
+    let mqtt_client_id = args
+        .mqtt_client_id
+        .clone()
+        .unwrap_or_else(|| witness_kernel::mqtt_client_id(BRIDGE_NAME, &device_id));
+    log::info!("MQTT client id: {}", mqtt_client_id);
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&args.ruleset_id);
     let cfg = KernelConfig {
         db_path: args.db_path.clone(),
@@ -950,7 +958,7 @@ fn main() -> Result<()> {
         let connect_result = connect_mqtt(
             &mqtt_endpoint,
             &tls_config,
-            &args.mqtt_client_id,
+            &mqtt_client_id,
             args.mqtt_username.as_deref(),
             args.mqtt_password.as_deref(),
         );

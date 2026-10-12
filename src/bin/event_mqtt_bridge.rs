@@ -105,6 +105,30 @@ const CLAIM_SKEW_SECS: u64 = 600;
 /// How long a clean shutdown waits for the broker to acknowledge its last
 /// publishes (the announce clear, `offline`) before disconnecting anyway.
 const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long [`MqttRuntime::disconnect`] waits for the eventloop thread to
+/// take the DISCONNECT and exit before letting the process end without it.
+/// A wedged or unreachable broker must not hold SIGTERM past the
+/// supervisor's grace (the sidecar's entrypoint allows 8 s, Docker 10 s):
+/// the ack wait above plus this stays under both.
+const SHUTDOWN_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a poll-loop publish waits for room in the request queue before
+/// giving up. The queue stays full only while the eventloop thread cannot
+/// drain it, so a minute of that is a dead link, not backpressure — the
+/// daemon exits with the reason and the supervisor restarts it.
+const PUBLISH_QUEUE_WAIT: Duration = Duration::from_secs(60);
+/// Bounded request queue between the publishers and the eventloop thread.
+/// Sized for one ConnAck's re-asserts (availability, the announce, the
+/// command, claim and roll-call subscriptions) plus a poll tick's burst, so
+/// a reconnect landing on a burst rarely has to defer anything.
+const REQUEST_QUEUE_DEPTH: usize = 64;
+/// Reconnect backoff bounds for the eventloop thread.
+const RECONNECT_BACKOFF_START: Duration = Duration::from_secs(2);
+const RECONNECT_BACKOFF_CAP: Duration = Duration::from_secs(60);
+/// Set by the SIGINT/SIGTERM handler. A publish waiting for queue room gives
+/// up when it is set, so a shutdown is never held behind a full queue — the
+/// daemon goes straight to its clean-shutdown path instead.
+static SHUTDOWN_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Parser, Debug)]
 #[command(
@@ -171,9 +195,13 @@ struct Args {
     #[arg(long, env = "MQTT_TOPIC_PREFIX", default_value = DEFAULT_STATE_PREFIX)]
     mqtt_topic_prefix: String,
 
-    /// MQTT client identifier.
-    #[arg(long, env = "MQTT_CLIENT_ID", default_value = BRIDGE_NAME)]
-    mqtt_client_id: String,
+    /// MQTT client identifier. Defaults to `event_mqtt_bridge-<device id>`
+    /// (`witness_kernel::mqtt_client_id`), unique per kernel: a broker
+    /// keeps one session per id, so two kernels sharing one would replace
+    /// each other's connection every few seconds — and a bridge whose link
+    /// flaps on every ConnAck cannot finish a clean shutdown in time.
+    #[arg(long, env = "MQTT_CLIENT_ID")]
+    mqtt_client_id: Option<String>,
 
     /// Device identifier for Home Assistant. Defaults to pwk_<8 hex chars of
     /// sha256("securacv:ha-device-id:v1:" || DEVICE_KEY_SEED)> — the derivation
@@ -623,7 +651,26 @@ impl MqttRuntime {
     /// connects with clean-start, subscriptions do not survive a reconnect,
     /// so `subscribe_filter` is (re)subscribed on every ConnAck — including
     /// the first.
-    fn new(client: Client, mut connection: Connection, daemon: Option<DaemonWiring>) -> Self {
+    ///
+    /// Everything this thread sends — the re-asserts after a ConnAck — goes
+    /// through the client's non-blocking calls. This thread is the one that
+    /// drains the bounded request queue, so a blocking call from it waits on
+    /// itself: with the poll loop queueing at the same moment (a shutdown's
+    /// announce clear and `offline`, say) the queue filled, the thread hung
+    /// in its own publish, and `docker stop` ended in SIGKILL — seen when two
+    /// sidecars shared a client id and the broker flapped the link every
+    /// few seconds, so a ConnAck coincided with the shutdown. What a full
+    /// queue refuses is kept in `deferred` and retried on the next event.
+    ///
+    /// `backoff_start` is the first reconnect delay (doubling to
+    /// [`RECONNECT_BACKOFF_CAP`]); production passes
+    /// [`RECONNECT_BACKOFF_START`], tests a few milliseconds.
+    fn new(
+        client: Client,
+        mut connection: Connection,
+        daemon: Option<DaemonWiring>,
+        backoff_start: Duration,
+    ) -> Self {
         let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let connected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let acked = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -632,10 +679,11 @@ impl MqttRuntime {
         let thread_acked = std::sync::Arc::clone(&acked);
         let thread_client = client.clone();
         let handle = std::thread::spawn(move || {
-            const BACKOFF_START: Duration = Duration::from_secs(2);
-            const BACKOFF_CAP: Duration = Duration::from_secs(60);
-            let mut backoff = BACKOFF_START;
+            let mut backoff = backoff_start;
             let mut outage_logged = false;
+            // Re-asserts a full request queue refused at the last ConnAck,
+            // retried on every event until they are queued or the link drops.
+            let mut deferred: Vec<ReAssert> = Vec::new();
             // One warn/info pair per full episode of the inbound queue: set on
             // the first drop, cleared when a publish is accepted again after
             // QUEUE_DRAIN_QUIET of no drops (so a queue hovering at full does
@@ -647,65 +695,34 @@ impl MqttRuntime {
                 if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                     break;
                 }
+                if !deferred.is_empty() {
+                    flush_reasserts(&thread_client, &mut deferred);
+                }
                 match event {
                     Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                         if outage_logged {
                             log::info!("MQTT broker connection restored");
                             outage_logged = false;
                         }
-                        backoff = BACKOFF_START;
+                        backoff = backoff_start;
                         queue_full_logged = false;
-                        thread_connected.store(true, std::sync::atomic::Ordering::SeqCst);
                         if let Some(w) = &daemon {
                             // Re-assert availability (broker holds the retained
                             // LWT `offline` from the drop) and re-subscribe the
                             // command filter, both lost across a clean-start
                             // reconnect. Retained state topics self-heal on the
-                            // next poll cycle, so only these two need replaying.
-                            if let Err(e) = thread_client.publish(
-                                &w.availability_topic,
-                                QoS::AtLeastOnce,
-                                true,
-                                PAYLOAD_ONLINE.as_bytes().to_vec(),
-                            ) {
-                                log::warn!("MQTT availability re-publish failed: {}", e);
-                            }
-                            if let Err(e) = thread_client.subscribe(&w.cmd_filter, QoS::AtLeastOnce)
-                            {
-                                log::warn!("MQTT command (re)subscribe failed: {}", e);
-                            }
-                            for filter in &w.fleet_filters {
-                                if let Err(e) = thread_client.subscribe(filter, QoS::AtLeastOnce) {
-                                    log::warn!(
-                                        "MQTT fleet (re)subscribe failed for {}: {}",
-                                        filter,
-                                        e
-                                    );
-                                }
-                            }
-                            // The claim topics (exact, no wildcard) and the
-                            // announce: both are lost or stale across a
-                            // reconnect the same way the command filter is.
-                            let claim_topics =
-                                w.claim_topics.lock().map(|t| t.clone()).unwrap_or_default();
-                            for topic in claim_topics {
-                                if let Err(e) = thread_client.subscribe(&topic, QoS::AtLeastOnce) {
-                                    log::warn!(
-                                        "MQTT claim (re)subscribe failed for {}: {}",
-                                        topic,
-                                        e
-                                    );
-                                }
-                            }
-                            let announce = w.announce.lock().map(|a| a.clone()).unwrap_or(None);
-                            if let Some((topic, bytes)) = announce {
-                                if let Err(e) =
-                                    thread_client.publish(&topic, QoS::AtLeastOnce, true, bytes)
-                                {
-                                    log::warn!("MQTT announce re-publish failed: {}", e);
-                                }
-                            }
+                            // next poll cycle, so only these need replaying —
+                            // plus the claim topics (exact, no wildcard) and
+                            // the announce, lost or stale across a reconnect
+                            // the same way the command filter is. A new
+                            // ConnAck supersedes whatever the last one left
+                            // deferred: the connection it was for is gone.
+                            deferred = connack_reasserts(w);
+                            flush_reasserts(&thread_client, &mut deferred);
                         }
+                        // Connected only once the re-asserts are queued, so
+                        // the poll loop's first publishes land behind them.
+                        thread_connected.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                     Ok(Event::Incoming(Incoming::PubAck(_))) => {
                         thread_acked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -761,6 +778,9 @@ impl MqttRuntime {
                     Ok(_) => {}
                     Err(e) => {
                         thread_connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                        // The re-asserts belonged to the connection that just
+                        // ended; the next ConnAck rebuilds them.
+                        deferred.clear();
                         if !outage_logged {
                             log::warn!("MQTT connection error (retrying with backoff): {}", e);
                             outage_logged = true;
@@ -784,7 +804,7 @@ impl MqttRuntime {
                         if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                             break;
                         }
-                        backoff = std::cmp::min(backoff * 2, BACKOFF_CAP);
+                        backoff = std::cmp::min(backoff * 2, RECONNECT_BACKOFF_CAP);
                     }
                 }
             }
@@ -823,21 +843,115 @@ impl MqttRuntime {
         true
     }
 
+    /// Ask the eventloop thread to send DISCONNECT and exit, and wait for
+    /// it — at most [`SHUTDOWN_JOIN_TIMEOUT`].
+    ///
+    /// The flag goes up first: the thread no longer exits on connection
+    /// errors, so this is what ends it when the broker is already gone. The
+    /// DISCONNECT is queued with the non-blocking call and retried while
+    /// waiting, so a request queue the thread is not draining cannot block
+    /// this call the way `Client::disconnect` (a blocking send) did. A
+    /// thread still running at the deadline is left to process exit with a
+    /// warning: everything queued ahead of the DISCONNECT had its ack wait
+    /// already, and the LWT says `offline` for a socket that closes unsent.
     fn disconnect(mut self) -> Result<()> {
-        // Raise the flag before disconnecting: the eventloop thread no
-        // longer exits on connection errors, so this is what lets join()
-        // return when the broker is already gone. The disconnect itself is
-        // best-effort for the same reason — it can fail against a dead
-        // broker, and the thread must still be joined.
         self.shutdown
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let disconnect_result = self.client.disconnect();
-        if let Some(handle) = self.connection_handle.take() {
-            let _ = handle.join();
+        let Some(handle) = self.connection_handle.take() else {
+            return Ok(());
+        };
+        let deadline = Instant::now() + SHUTDOWN_JOIN_TIMEOUT;
+        let mut disconnect_queued = false;
+        loop {
+            if !disconnect_queued && self.client.try_disconnect().is_ok() {
+                disconnect_queued = true;
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
         }
-        disconnect_result?;
+        log::warn!(
+            "MQTT eventloop did not finish within {:?} (DISCONNECT {}); leaving it to process exit",
+            SHUTDOWN_JOIN_TIMEOUT,
+            if disconnect_queued {
+                "queued"
+            } else {
+                "not queued: the request queue stayed full"
+            }
+        );
+        drop(handle);
         Ok(())
     }
+}
+
+/// One thing the eventloop thread re-asserts after a ConnAck: a retained
+/// publish or a subscription. Built by [`connack_reasserts`], queued by
+/// [`flush_reasserts`] with the client's non-blocking calls only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReAssert {
+    Publish { topic: String, payload: Vec<u8> },
+    Subscribe { filter: String },
+}
+
+/// What a fresh connection has to be told again, in order: availability
+/// `online` (the broker published the retained LWT `offline` at the drop),
+/// the command filter, the roll-call filters, the claim topics, and the
+/// announce once there is one. Clean-start reconnects keep none of it.
+fn connack_reasserts(w: &DaemonWiring) -> Vec<ReAssert> {
+    let mut out = vec![
+        ReAssert::Publish {
+            topic: w.availability_topic.clone(),
+            payload: PAYLOAD_ONLINE.as_bytes().to_vec(),
+        },
+        ReAssert::Subscribe {
+            filter: w.cmd_filter.clone(),
+        },
+    ];
+    out.extend(w.fleet_filters.iter().map(|filter| ReAssert::Subscribe {
+        filter: filter.clone(),
+    }));
+    let claim_topics = w.claim_topics.lock().map(|t| t.clone()).unwrap_or_default();
+    out.extend(
+        claim_topics
+            .into_iter()
+            .map(|filter| ReAssert::Subscribe { filter }),
+    );
+    if let Some((topic, payload)) = w.announce.lock().map(|a| a.clone()).unwrap_or(None) {
+        out.push(ReAssert::Publish { topic, payload });
+    }
+    out
+}
+
+/// Queue each re-assert once with the non-blocking client calls, keeping
+/// the ones a full request queue refused for the caller's next pass. Never
+/// blocks: it runs on the thread that drains that queue.
+fn flush_reasserts(client: &Client, deferred: &mut Vec<ReAssert>) {
+    let mut kept = Vec::new();
+    for item in deferred.drain(..) {
+        let queued = match &item {
+            ReAssert::Publish { topic, payload } => client
+                .try_publish(topic.as_str(), QoS::AtLeastOnce, true, payload.clone())
+                .is_ok(),
+            ReAssert::Subscribe { filter } => client
+                .try_subscribe(filter.as_str(), QoS::AtLeastOnce)
+                .is_ok(),
+        };
+        if !queued {
+            kept.push(item);
+        }
+    }
+    if !kept.is_empty() {
+        log::debug!(
+            "MQTT request queue full; {} re-assert(s) deferred to the next event",
+            kept.len()
+        );
+    }
+    *deferred = kept;
 }
 
 fn main() -> Result<()> {
@@ -903,6 +1017,11 @@ fn main() -> Result<()> {
     };
 
     let availability_topic = format!("{}/{}", args.mqtt_topic_prefix, AVAILABILITY_TOPIC_SUFFIX);
+    let mqtt_client_id = args
+        .mqtt_client_id
+        .clone()
+        .unwrap_or_else(|| witness_kernel::mqtt_client_id(BRIDGE_NAME, &device_id));
+    log::info!("MQTT client id: {} (device {})", mqtt_client_id, device_id);
 
     let run_ctx = RunContext {
         args: &args,
@@ -911,6 +1030,7 @@ fn main() -> Result<()> {
         tls_config: &tls_config,
         tokens: &tokens,
         device_id: &device_id,
+        mqtt_client_id: &mqtt_client_id,
         device_info: &device_info,
         availability_topic: &availability_topic,
         ui: &ui,
@@ -930,6 +1050,8 @@ struct RunContext<'a> {
     tls_config: &'a TlsConfig,
     tokens: &'a TokenSource,
     device_id: &'a str,
+    /// `--mqtt-client-id`, or the per-kernel default derived from `device_id`.
+    mqtt_client_id: &'a str,
     device_info: &'a HaDeviceInfo,
     availability_topic: &'a str,
     ui: &'a ui::Ui,
@@ -987,7 +1109,7 @@ fn run_oneshot(ctx: &RunContext<'_>) -> Result<()> {
         connect_mqtt(
             ctx.mqtt_endpoint,
             ctx.tls_config,
-            &ctx.args.mqtt_client_id,
+            ctx.mqtt_client_id,
             ctx.args.mqtt_username.as_deref(),
             ctx.args.mqtt_password.as_deref(),
             ctx.availability_topic,
@@ -1046,6 +1168,7 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
         let stop = std::sync::Arc::clone(&stop);
         ctrlc::set_handler(move || {
             stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            SHUTDOWN_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
         })
         .context("installing the shutdown handler")?;
     }
@@ -1081,7 +1204,7 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
         connect_mqtt(
             ctx.mqtt_endpoint,
             ctx.tls_config,
-            &ctx.args.mqtt_client_id,
+            ctx.mqtt_client_id,
             ctx.args.mqtt_username.as_deref(),
             ctx.args.mqtt_password.as_deref(),
             ctx.availability_topic,
@@ -1214,205 +1337,243 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
         ),
     }
 
-    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
-        // Each poll tick flushes whatever the roll-call heard since the last
-        // one (the wait loop below also flushes, rate-limited, as it hears).
-        if let Some(tracker) = peers.as_mut() {
-            tracker.flush_if_due(true);
-        }
-
-        // A claim ages out at 24 h without a message; re-check each tick.
-        if let Some(transition) = claim.settle(unix_now_secs()) {
-            apply_claim_transition(ctx, &conn.client, transition, &discovered_zones)?;
-        }
-
-        // Only fetch+publish while the broker is reachable. During an outage
-        // the eventloop thread is reconnecting with backoff and cannot drain
-        // the bounded request queue, so a blocking publish would wedge this
-        // loop after ~10 queued messages (docs/strategy/12 FR-4). Skipping the
-        // cycle is safe: retained state topics self-heal on the next poll, and
-        // events accumulated during the outage publish as a catch-up once the
-        // link (and, via ConnAck, availability) is restored. Command handling
-        // and shutdown stay responsive through the wait loop below.
-        if conn.is_connected() {
-            if !announced {
-                match try_announce(ctx, &conn, &announce_slot, &claim_topics) {
-                    Ok(id) => {
-                        identity = Some(id);
-                        announced = true;
-                    }
-                    Err(e) => log::warn!("announce still deferred: {:#}", e),
-                }
+    // The poll loop runs inside a closure so an error in it (a publish the
+    // request queue would not take before the shutdown came, say) still
+    // reaches the clean-shutdown path below instead of leaving the retained
+    // announce and `online` on the broker.
+    let poll_outcome: Result<()> = (|| -> Result<()> {
+        while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+            // Each poll tick flushes whatever the roll-call heard since the last
+            // one (the wait loop below also flushes, rate-limited, as it hears).
+            if let Some(tracker) = peers.as_mut() {
+                tracker.flush_if_due(true);
             }
 
-            // The receipt-less incremental view from the cursor's bucket: the
-            // newest bucket already seen plus anything newer. The kernel
-            // writes no export receipt for it, so a 30 s poll costs the
-            // receipt ledger nothing (see `Kernel::view_events`).
-            let since_bucket = publish_cursor.map(|c| c.bucket_start_epoch_s).unwrap_or(0);
-            match ctx
-                .tokens
-                .current()
-                .and_then(|token| fetch_events_since(ctx.api_addr, &token, since_bucket))
-            {
-                Ok(artifact) => {
-                    let events = flatten_export_events(&artifact);
+            // A claim ages out at 24 h without a message; re-check each tick.
+            if let Some(transition) = claim.settle(unix_now_secs()) {
+                apply_claim_transition(ctx, &conn.client, transition, &discovered_zones)?;
+            }
 
-                    // Filter to only new events. The cursor remembers how many
-                    // events of the newest bucket were already published, so a
-                    // 30 s poll inside a 10-minute bucket does not republish the
-                    // whole bucket (and re-count every zone) every time.
-                    let new_events = select_new_events(&events, &mut publish_cursor);
+            // Only fetch+publish while the broker is reachable. During an outage
+            // the eventloop thread is reconnecting with backoff and cannot drain
+            // the bounded request queue, so a blocking publish would wedge this
+            // loop after ~10 queued messages (docs/strategy/12 FR-4). Skipping the
+            // cycle is safe: retained state topics self-heal on the next poll, and
+            // events accumulated during the outage publish as a catch-up once the
+            // link (and, via ConnAck, availability) is restored. Command handling
+            // and shutdown stay responsive through the wait loop below.
+            if conn.is_connected() {
+                if !announced {
+                    match try_announce(ctx, &conn, &announce_slot, &claim_topics) {
+                        Ok(id) => {
+                            identity = Some(id);
+                            announced = true;
+                        }
+                        Err(e) => log::warn!("announce still deferred: {:#}", e),
+                    }
+                }
 
-                    if !new_events.is_empty() {
-                        // Discover new zones. Tracked whether or not the
-                        // integration holds the claim — a cleared claim
-                        // republishes every zone seen — but published only
-                        // while unclaimed.
-                        if !ctx.args.no_discovery {
-                            for event in &new_events {
-                                let zone = extract_zone_name(&event.zone_id);
-                                if discovered_zones.insert(zone.clone()) && !claim.honored {
-                                    publish_zone_discovery(
-                                        &conn.client,
-                                        &ctx.args.ha_discovery_prefix,
-                                        &ctx.args.mqtt_topic_prefix,
-                                        ctx.availability_topic,
-                                        ctx.device_id,
-                                        ctx.device_info,
-                                        &zone,
-                                    )?;
+                // The receipt-less incremental view from the cursor's bucket: the
+                // newest bucket already seen plus anything newer. The kernel
+                // writes no export receipt for it, so a 30 s poll costs the
+                // receipt ledger nothing (see `Kernel::view_events`).
+                let since_bucket = publish_cursor.map(|c| c.bucket_start_epoch_s).unwrap_or(0);
+                match ctx
+                    .tokens
+                    .current()
+                    .and_then(|token| fetch_events_since(ctx.api_addr, &token, since_bucket))
+                {
+                    Ok(artifact) => {
+                        let events = flatten_export_events(&artifact);
+
+                        // Filter to only new events. The cursor remembers how many
+                        // events of the newest bucket were already published, so a
+                        // 30 s poll inside a 10-minute bucket does not republish the
+                        // whole bucket (and re-count every zone) every time.
+                        let new_events = select_new_events(&events, &mut publish_cursor);
+
+                        if !new_events.is_empty() {
+                            // Discover new zones. Tracked whether or not the
+                            // integration holds the claim — a cleared claim
+                            // republishes every zone seen — but published only
+                            // while unclaimed.
+                            if !ctx.args.no_discovery {
+                                for event in &new_events {
+                                    let zone = extract_zone_name(&event.zone_id);
+                                    if discovered_zones.insert(zone.clone()) && !claim.honored {
+                                        publish_zone_discovery(
+                                            &conn.client,
+                                            &ctx.args.ha_discovery_prefix,
+                                            &ctx.args.mqtt_topic_prefix,
+                                            ctx.availability_topic,
+                                            ctx.device_id,
+                                            ctx.device_info,
+                                            &zone,
+                                        )?;
+                                    }
                                 }
                             }
+
+                            // Publish events and update zone states
+                            for event in &new_events {
+                                let zone = extract_zone_name(&event.zone_id);
+
+                                // Update zone state
+                                let state = zone_states.entry(zone.clone()).or_default();
+                                state.event_count += 1;
+                                state.last_event_time = unix_now_secs();
+
+                                // Publish event
+                                publish_single_event(
+                                    &conn.client,
+                                    &ctx.args.mqtt_topic_prefix,
+                                    ctx.device_id,
+                                    event,
+                                    &zone,
+                                    last_verify,
+                                )?;
+
+                                // Publish zone count
+                                let count_topic =
+                                    format!("{}/zone/{}/count", ctx.args.mqtt_topic_prefix, zone);
+                                mqtt_publish_qos1(
+                                    &conn.client,
+                                    &count_topic,
+                                    state.event_count.to_string().as_bytes(),
+                                    true,
+                                )?;
+
+                                // Trigger motion sensor
+                                let motion_topic =
+                                    format!("{}/zone/{}/motion", ctx.args.mqtt_topic_prefix, zone);
+                                mqtt_publish_qos1(&conn.client, &motion_topic, b"ON", false)?;
+                            }
+
+                            // Update last event state
+                            if let Some(last) = new_events.last() {
+                                let state_topic =
+                                    format!("{}/last_event", ctx.args.mqtt_topic_prefix);
+                                let payload =
+                                    build_event_state_payload(last, ctx.device_id, last_verify)?;
+                                let json = serde_json::to_vec(&payload)?;
+                                mqtt_publish_qos1(&conn.client, &state_topic, &json, true)?;
+                            }
+
+                            log::info!("Published {} new events", new_events.len());
                         }
-
-                        // Publish events and update zone states
-                        for event in &new_events {
-                            let zone = extract_zone_name(&event.zone_id);
-
-                            // Update zone state
-                            let state = zone_states.entry(zone.clone()).or_default();
-                            state.event_count += 1;
-                            state.last_event_time = unix_now_secs();
-
-                            // Publish event
-                            publish_single_event(
-                                &conn.client,
-                                &ctx.args.mqtt_topic_prefix,
-                                ctx.device_id,
-                                event,
-                                &zone,
-                                last_verify,
-                            )?;
-
-                            // Publish zone count
-                            let count_topic =
-                                format!("{}/zone/{}/count", ctx.args.mqtt_topic_prefix, zone);
-                            mqtt_publish_qos1(
-                                &conn.client,
-                                &count_topic,
-                                state.event_count.to_string().as_bytes(),
-                                true,
-                            )?;
-
-                            // Trigger motion sensor
-                            let motion_topic =
-                                format!("{}/zone/{}/motion", ctx.args.mqtt_topic_prefix, zone);
-                            mqtt_publish_qos1(&conn.client, &motion_topic, b"ON", false)?;
-                        }
-
-                        // Update last event state
-                        if let Some(last) = new_events.last() {
-                            let state_topic = format!("{}/last_event", ctx.args.mqtt_topic_prefix);
-                            let payload =
-                                build_event_state_payload(last, ctx.device_id, last_verify)?;
-                            let json = serde_json::to_vec(&payload)?;
-                            mqtt_publish_qos1(&conn.client, &state_topic, &json, true)?;
-                        }
-
-                        log::info!("Published {} new events", new_events.len());
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to fetch events: {}", e);
                     }
                 }
-                Err(e) => {
-                    log::warn!("Failed to fetch events: {}", e);
-                }
-            }
 
-            // Refresh the retained 24h digest each cycle.
-            match ctx
-                .tokens
-                .current()
-                .and_then(|token| fetch_digest(ctx.api_addr, &token))
-            {
-                Ok(digest) => {
-                    let digest_topic = format!("{}/digest", ctx.args.mqtt_topic_prefix);
-                    mqtt_publish_qos1(&conn.client, &digest_topic, &digest, true)?;
+                // Refresh the retained 24h digest each cycle.
+                match ctx
+                    .tokens
+                    .current()
+                    .and_then(|token| fetch_digest(ctx.api_addr, &token))
+                {
+                    Ok(digest) => {
+                        let digest_topic = format!("{}/digest", ctx.args.mqtt_topic_prefix);
+                        mqtt_publish_qos1(&conn.client, &digest_topic, &digest, true)?;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to fetch digest: {}", e);
+                    }
                 }
-                Err(e) => {
-                    log::warn!("Failed to fetch digest: {}", e);
-                }
-            }
 
-            // Scheduled re-verification keeps the integrity sensor fresh.
-            if verify_interval > 0
-                && last_auto_verify.elapsed() >= Duration::from_secs(verify_interval)
-            {
-                last_auto_verify = Instant::now();
-                match run_verify_and_publish(ctx, &conn.client) {
-                    Ok(outcome) => last_verify = Some(outcome),
-                    Err(e) => log::warn!("Scheduled verification failed to run: {}", e),
-                }
-            }
-        } // end `if conn.is_connected()`
-
-        // Sleep until the next poll, waking early for button presses, claim
-        // changes and the shutdown signal.
-        let deadline = Instant::now() + Duration::from_secs(ctx.args.poll_interval);
-        loop {
-            if stop.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            let slice = remaining.min(Duration::from_millis(250));
-            match cmd_rx.recv_timeout(slice) {
-                Ok((topic, _payload, _)) if topic == verify_cmd_topic => {
-                    log::info!("Verify command received via {}", topic);
+                // Scheduled re-verification keeps the integrity sensor fresh.
+                if verify_interval > 0
+                    && last_auto_verify.elapsed() >= Duration::from_secs(verify_interval)
+                {
+                    last_auto_verify = Instant::now();
                     match run_verify_and_publish(ctx, &conn.client) {
                         Ok(outcome) => last_verify = Some(outcome),
-                        Err(e) => log::warn!("Verification failed to run: {}", e),
-                    }
-                    last_auto_verify = Instant::now();
-                }
-                Ok((topic, payload, _)) if topic.starts_with(&claim_prefix) => {
-                    claim.observe(&payload);
-                    if let Some(transition) = claim.settle(unix_now_secs()) {
-                        apply_claim_transition(ctx, &conn.client, transition, &discovered_zones)?;
+                        Err(e) => log::warn!("Scheduled verification failed to run: {}", e),
                     }
                 }
-                Ok((topic, payload, retained)) => match peers.as_mut() {
-                    Some(tracker) if topic.starts_with("securacv/") => {
-                        tracker.observe(&topic, &payload, retained);
-                        tracker.flush_if_due(false);
-                    }
-                    _ => log::debug!("Ignoring unknown command topic {}", topic),
-                },
-                Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    // The eventloop thread has exited (only on shutdown now
-                    // that it survives broker outages). Finish the wait on a
-                    // plain sleep; the next is_connected() check gates work.
-                    std::thread::sleep(remaining);
+            } // end `if conn.is_connected()`
+
+            // Sleep until the next poll, waking early for button presses, claim
+            // changes and the shutdown signal.
+            let deadline = Instant::now() + Duration::from_secs(ctx.args.poll_interval);
+            loop {
+                if stop.load(std::sync::atomic::Ordering::SeqCst) {
                     break;
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                let slice = remaining.min(Duration::from_millis(250));
+                match cmd_rx.recv_timeout(slice) {
+                    Ok((topic, _payload, _)) if topic == verify_cmd_topic => {
+                        log::info!("Verify command received via {}", topic);
+                        match run_verify_and_publish(ctx, &conn.client) {
+                            Ok(outcome) => last_verify = Some(outcome),
+                            Err(e) => log::warn!("Verification failed to run: {}", e),
+                        }
+                        last_auto_verify = Instant::now();
+                    }
+                    Ok((topic, payload, _)) if topic.starts_with(&claim_prefix) => {
+                        claim.observe(&payload);
+                        if let Some(transition) = claim.settle(unix_now_secs()) {
+                            apply_claim_transition(
+                                ctx,
+                                &conn.client,
+                                transition,
+                                &discovered_zones,
+                            )?;
+                        }
+                    }
+                    Ok((topic, payload, retained)) => match peers.as_mut() {
+                        Some(tracker) if topic.starts_with("securacv/") => {
+                            tracker.observe(&topic, &payload, retained);
+                            tracker.flush_if_due(false);
+                        }
+                        _ => log::debug!("Ignoring unknown command topic {}", topic),
+                    },
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        // The eventloop thread has exited (only on shutdown now
+                        // that it survives broker outages). Finish the wait on a
+                        // plain sleep; the next is_connected() check gates work.
+                        std::thread::sleep(remaining);
+                        break;
+                    }
                 }
             }
         }
-    }
+        Ok(())
+    })();
 
-    log::info!("shutdown signal received; clearing the announce and going offline");
-    shutdown_cleanly(ctx, conn, &announce_slot, identity.as_ref())
+    match poll_outcome {
+        Ok(()) => {
+            log::info!("shutdown signal received; clearing the announce and going offline");
+        }
+        Err(e) if stop.load(std::sync::atomic::Ordering::SeqCst) => {
+            log::warn!(
+                "shutdown signal received while publishing ({:#}); clearing the announce and going offline",
+                e
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "poll loop failed ({:#}); clearing the announce and going offline before exiting",
+                e
+            );
+            if let Err(cleanup) = shutdown_cleanly(ctx, conn, &announce_slot, identity.as_ref()) {
+                log::warn!(
+                    "clean shutdown after the failure did not complete: {:#}",
+                    cleanup
+                );
+            }
+            return Err(e);
+        }
+    }
+    shutdown_cleanly(ctx, conn, &announce_slot, identity.as_ref())?;
+    log::info!("event_mqtt_bridge stopped");
+    Ok(())
 }
 
 /// Fetch the kernel's identity, have the kernel sign the announce built
@@ -1665,17 +1826,18 @@ fn shutdown_cleanly(
             .map(|id| id.device_id.as_str())
             .unwrap_or(ctx.device_id);
         let topic = announce_topic(&ctx.args.mqtt_topic_prefix, device_id);
-        if let Err(e) = mqtt_publish_qos1(&conn.client, &topic, b"", true) {
+        if let Err(e) = publish_qos1_within(&conn.client, &topic, b"", true, SHUTDOWN_ACK_TIMEOUT) {
             log::warn!("could not clear the retained announce on {}: {}", topic, e);
         } else {
             expected += 1;
         }
     }
-    match mqtt_publish_qos1(
+    match publish_qos1_within(
         &conn.client,
         ctx.availability_topic,
         PAYLOAD_OFFLINE.as_bytes(),
         true,
+        SHUTDOWN_ACK_TIMEOUT,
     ) {
         Ok(()) => expected += 1,
         Err(e) => log::warn!("could not publish offline availability: {}", e),
@@ -2603,24 +2765,305 @@ fn connect_mqtt(
     options.set_last_will(will);
     options.set_transport(tls_config.build_transport(endpoint)?);
 
-    let (client, connection) = rumqttc::ClientBuilder::new(options).capacity(10).build();
+    let (client, connection) = rumqttc::ClientBuilder::new(options)
+        .capacity(REQUEST_QUEUE_DEPTH)
+        .build();
     log::info!(
         "Connected to MQTT broker (TLS: {}, backend: {}, auth: {})",
         endpoint.use_tls,
         tls_config.backend,
         username.is_some()
     );
-    Ok(MqttRuntime::new(client, connection, daemon))
+    Ok(MqttRuntime::new(
+        client,
+        connection,
+        daemon,
+        RECONNECT_BACKOFF_START,
+    ))
 }
 
+/// Queue one QoS 1 publish for the eventloop thread, waiting for room in
+/// the bounded request queue — at most [`PUBLISH_QUEUE_WAIT`], and not at
+/// all once a shutdown was requested. `Client::publish` is a blocking send
+/// on that queue; a daemon blocked there cannot see SIGTERM, which is how a
+/// full queue turned `docker stop` into SIGKILL. A topic the client rejects
+/// outright (not a full queue) is an error at once.
 fn mqtt_publish_qos1(client: &Client, topic: &str, payload: &[u8], retain: bool) -> Result<()> {
-    client.publish(topic, QoS::AtLeastOnce, retain, payload.to_vec())?;
-    Ok(())
+    let deadline = Instant::now() + PUBLISH_QUEUE_WAIT;
+    loop {
+        match client.try_publish(topic, QoS::AtLeastOnce, retain, payload.to_vec()) {
+            Ok(()) => return Ok(()),
+            Err(rumqttc::ClientError::TryRequest(_)) => {
+                if SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err(anyhow!(
+                        "shutdown requested while the MQTT request queue was full; {} not queued",
+                        topic
+                    ));
+                }
+                if Instant::now() >= deadline {
+                    return Err(anyhow!(
+                        "MQTT request queue stayed full for {:?}; the eventloop is not draining it ({} not queued)",
+                        PUBLISH_QUEUE_WAIT,
+                        topic
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+/// Queue one QoS 1 publish, waiting at most `wait` for room in the request
+/// queue whatever else is going on. The clean-shutdown path uses it: its
+/// publishes must not be refused for the shutdown that caused them, and
+/// must not wait on a queue the eventloop thread may no longer drain.
+fn publish_qos1_within(
+    client: &Client,
+    topic: &str,
+    payload: &[u8],
+    retain: bool,
+    wait: Duration,
+) -> Result<()> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match client.try_publish(topic, QoS::AtLeastOnce, retain, payload.to_vec()) {
+            Ok(()) => return Ok(()),
+            Err(rumqttc::ClientError::TryRequest(_)) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "MQTT request queue did not take {} within {:?}: {}",
+                    topic,
+                    wait,
+                    e
+                ))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+    use std::sync::{Arc, Mutex};
+
+    /// A stub broker on loopback. `flap: true` answers every CONNECT with a
+    /// CONNACK and closes the socket at once — the "Connection closed by
+    /// peer abruptly" a broker produces when another client takes over the
+    /// same client id. `flap: false` accepts and never answers. Either way
+    /// it counts the connections it took.
+    struct StubBroker {
+        port: u16,
+        connects: Arc<AtomicUsize>,
+        stop: Arc<AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl StubBroker {
+        fn start(flap: bool) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+            listener
+                .set_nonblocking(true)
+                .expect("nonblocking listener");
+            let port = listener.local_addr().expect("addr").port();
+            let connects = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (thread_connects, thread_stop) = (Arc::clone(&connects), Arc::clone(&stop));
+            let thread = std::thread::spawn(move || {
+                let mut held: Vec<std::net::TcpStream> = Vec::new();
+                while !thread_stop.load(SeqCst) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            thread_connects.fetch_add(1, SeqCst);
+                            if flap {
+                                stream
+                                    .set_read_timeout(Some(Duration::from_millis(500)))
+                                    .expect("read timeout");
+                                let mut connect = [0u8; 256];
+                                let _ = std::io::Read::read(&mut stream, &mut connect);
+                                // CONNACK: session present 0, success, no properties.
+                                let _ = std::io::Write::write_all(
+                                    &mut stream,
+                                    &[0x20, 0x03, 0x00, 0x00, 0x00],
+                                );
+                                let _ = std::io::Write::flush(&mut stream);
+                                drop(stream);
+                            } else {
+                                held.push(stream);
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => panic!("stub broker accept: {e}"),
+                    }
+                }
+            });
+            Self {
+                port,
+                connects,
+                stop,
+                thread: Some(thread),
+            }
+        }
+
+        fn connects(&self) -> usize {
+            self.connects.load(SeqCst)
+        }
+    }
+
+    impl Drop for StubBroker {
+        fn drop(&mut self) {
+            self.stop.store(true, SeqCst);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    /// The daemon wiring a real run has: command filter, every roll-call
+    /// filter, one claim topic and an announce — nine re-asserts per ConnAck.
+    fn test_wiring() -> (DaemonWiring, mpsc::Receiver<(String, Vec<u8>, bool)>) {
+        let (commands, rx) = mpsc::sync_channel(8);
+        let wiring = DaemonWiring {
+            commands,
+            cmd_prefix: "witness/cmd/".to_string(),
+            cmd_filter: "witness/cmd/#".to_string(),
+            availability_topic: "witness/status".to_string(),
+            fleet_filters: FLEET_PEER_TOPIC_FILTERS
+                .iter()
+                .map(|f| f.to_string())
+                .collect(),
+            claim_prefix: "witness/claim/".to_string(),
+            claim_topics: Arc::new(Mutex::new(vec!["witness/claim/pwk_test".to_string()])),
+            announce: Arc::new(Mutex::new(Some((
+                "witness/pwk_test/announce".to_string(),
+                b"{\"v\":1}".to_vec(),
+            )))),
+        };
+        (wiring, rx)
+    }
+
+    fn test_runtime(port: u16, daemon: Option<DaemonWiring>) -> MqttRuntime {
+        let mut options = MqttOptions::new(format!("stub-test-{port}"), ("127.0.0.1", port));
+        options.set_keep_alive(60);
+        options.set_clean_start(true);
+        let (client, connection) = rumqttc::ClientBuilder::new(options)
+            .capacity(REQUEST_QUEUE_DEPTH)
+            .build();
+        // A 20 ms first backoff so thirty flaps take a second, not a minute.
+        MqttRuntime::new(client, connection, daemon, Duration::from_millis(20))
+    }
+
+    #[test]
+    fn a_flapping_broker_never_wedges_the_eventloop_and_disconnect_stays_bounded() {
+        // Two sidecars on one broker with one client id: the broker closes
+        // the older session on every new CONNECT, so each side sees a
+        // ConnAck and a drop every few seconds. Every ConnAck re-asserts
+        // nine requests from the drain thread itself; thirty in a row prove
+        // it never waits on its own queue (a wedged thread stops
+        // reconnecting, so the connect count stops climbing).
+        let broker = StubBroker::start(true);
+        let (wiring, _rx) = test_wiring();
+        let runtime = test_runtime(broker.port, Some(wiring));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while broker.connects() < 30 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            broker.connects() >= 30,
+            "eventloop stopped reconnecting after {} connects",
+            broker.connects()
+        );
+        // SIGTERM's path — the disconnect — returns within its bound while
+        // the link is still flapping (it used to hang here until SIGKILL).
+        let started = Instant::now();
+        runtime.disconnect().expect("disconnect");
+        assert!(
+            started.elapsed() < SHUTDOWN_JOIN_TIMEOUT + Duration::from_secs(2),
+            "disconnect took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn disconnect_returns_within_its_bound_when_the_broker_never_answers() {
+        let broker = StubBroker::start(false);
+        let (wiring, _rx) = test_wiring();
+        let runtime = test_runtime(broker.port, Some(wiring));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while broker.connects() == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(broker.connects(), 1, "the client connected once");
+        let started = Instant::now();
+        runtime.disconnect().expect("disconnect");
+        assert!(
+            started.elapsed() < SHUTDOWN_JOIN_TIMEOUT + Duration::from_secs(2),
+            "disconnect took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn reasserts_a_full_queue_refuses_are_kept_in_order_not_blocked_on() {
+        // A client whose eventloop is never polled: nothing drains its
+        // queues, so a blocking call here would never return.
+        let mut options = MqttOptions::new("never-polled", ("127.0.0.1", 1));
+        options.set_keep_alive(60);
+        let (client, _connection) = rumqttc::ClientBuilder::new(options).capacity(2).build();
+        let (wiring, _rx) = test_wiring();
+        let mut deferred = connack_reasserts(&wiring);
+        let all = deferred.clone();
+        assert_eq!(
+            all.first(),
+            Some(&ReAssert::Publish {
+                topic: "witness/status".to_string(),
+                payload: b"online".to_vec(),
+            }),
+            "availability first: the broker holds the retained LWT offline"
+        );
+        assert_eq!(
+            all.get(1),
+            Some(&ReAssert::Subscribe {
+                filter: "witness/cmd/#".to_string()
+            })
+        );
+        assert_eq!(
+            all.last(),
+            Some(&ReAssert::Publish {
+                topic: "witness/pwk_test/announce".to_string(),
+                payload: b"{\"v\":1}".to_vec(),
+            }),
+            "the announce last, behind the subscriptions it is answered on"
+        );
+        assert!(
+            all.len() > 4,
+            "a real run re-asserts more than the queue holds"
+        );
+
+        flush_reasserts(&client, &mut deferred);
+        assert!(
+            !deferred.is_empty() && deferred.len() < all.len(),
+            "some fit the queue, the rest are kept: {} of {} deferred",
+            deferred.len(),
+            all.len()
+        );
+        // The kept ones are the refused ones, in their original order.
+        let mut cursor = all.iter();
+        for kept in &deferred {
+            assert!(
+                cursor.any(|item| item == kept),
+                "{kept:?} kept out of order"
+            );
+        }
+        let still_full = deferred.clone();
+        flush_reasserts(&client, &mut deferred);
+        assert_eq!(deferred, still_full, "nothing drained, nothing dropped");
+    }
 
     fn ev(start: u64, zone: &str) -> ExportEvent {
         let mut e: ExportEvent = serde_json::from_value(serde_json::json!({

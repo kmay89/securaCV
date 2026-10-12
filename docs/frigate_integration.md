@@ -288,6 +288,18 @@ mosquitto_pub -r -n -t witness/<kernel id>/announce
 mosquitto_pub -r -n -t witness/frigate_link
 ```
 
+Both exits are bounded. Each daemon caps its own clean path (the publisher
+waits at most 2 s for its last acknowledgments and 5 s for the disconnect,
+`frigate_bridge` 2 s for its link publish), and the entrypoint gives them
+`SECURACV_STOP_GRACE_SECS` (default 8, under Docker's 10 s stop timeout)
+before ending whatever is left — so `docker stop` exits 0 even against a
+broker that has gone away. A `did not exit within` line in the container
+log means a daemon took that forced path; its retained state is then the
+stale case above. Two kernels on one broker do not get in each other's way
+here either: every bridge connects as `<bridge>-<device id>`
+(`MQTT_CLIENT_ID` overrides it), so a second sidecar, or the app beside a
+sidecar, never replaces the first one's broker session.
+
 ### The Witness Wall on the sidecar
 
 The published port is also what the Apple TV Witness Wall reads — type
@@ -473,7 +485,7 @@ Flags and environment the bridge reads (clap; every flag has the env form):
 | `--frigate-topic` | `FRIGATE_MQTT_TOPIC` | `frigate/events` — legacy full-topic override, events mode only |
 | `--frigate-topic-prefix` | `FRIGATE_TOPIC_PREFIX` | `frigate` |
 | `--enable-reviews` | `FRIGATE_ENABLE_REVIEWS` | off — alerts mode |
-| `--mqtt-client-id` | `MQTT_CLIENT_ID` | the bridge's name |
+| `--mqtt-client-id` | `MQTT_CLIENT_ID` | `frigate_bridge-<device id>` — unique per kernel, so two kernels on one broker never replace each other's session (`event_mqtt_bridge` likewise defaults to `event_mqtt_bridge-<device id>`) |
 | `--mqtt-topic-prefix` | `MQTT_TOPIC_PREFIX` | `witness` — the state prefix `frigate_link` is published under |
 | `--ha-device-id` | `HA_DEVICE_ID` | `pwk_` + 8 hex of sha256(`securacv:ha-device-id:v1:` ‖ seed) — the derivation the app, the sidecar and `event_mqtt_bridge` share |
 | `--db-path` | `WITNESS_DB_PATH` | `witness.db` |

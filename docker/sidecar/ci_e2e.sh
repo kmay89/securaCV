@@ -651,6 +651,15 @@ $doctor_b"
 else
     skip "B's announce host, roll-call and doctor (kernel has no announce)"
 fi
+# Two sidecars on one broker must not fight over the broker: each bridge's
+# MQTT client id is derived from its kernel's device id, so B's bridges never
+# replaced A's sessions. A link that flapped while B was up is that collision
+# (the broker closes the older session for every new one with the same id),
+# and it is what left A's bridge unable to finish its clean shutdown in time.
+if logs_have "$SIDECAR" "Connection closed by peer abruptly"; then
+    fail "sidecar A's broker link dropped while sidecar B was up: the two collided on the broker (MQTT client ids not unique per kernel?)" "$SIDECAR"
+fi
+pass "sidecar A's broker link held while sidecar B shared the broker (client ids unique per kernel)"
 docker rm -f "$SIDECAR_B" >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
@@ -678,6 +687,15 @@ exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$SIDECAR")
 [ "$exit_code" = "0" ] || fail "docker stop ended the sidecar with exit code $exit_code (SIGTERM was not forwarded cleanly)" "$SIDECAR"
 logs_have "$SIDECAR" "shutdown signal received; stopping the daemons" || fail "the entrypoint did not log the forwarded shutdown" "$SIDECAR"
 pass "docker stop → exit 0 after a forwarded shutdown"
+# Exit 0 alone would also be the entrypoint's bounded fallback (SIGKILL after
+# its grace); the daemons' own last lines prove each clean path ran to its end.
+logs_have "$SIDECAR" "event_mqtt_bridge stopped" || fail "event_mqtt_bridge did not finish its clean shutdown (announce clear, offline, DISCONNECT)" "$SIDECAR"
+logs_have "$SIDECAR" "frigate_bridge stopped" || fail "frigate_bridge did not finish its clean shutdown" "$SIDECAR"
+if logs_have "$SIDECAR" "did not exit within"; then
+    fail "the entrypoint had to end a daemon: a clean-shutdown path is not bounded" "$SIDECAR"
+fi
+logs_have "$SIDECAR" "sidecar stopped" || fail "the entrypoint did not log its own clean stop" "$SIDECAR"
+pass "every daemon finished its own clean exit before the entrypoint's grace (no SIGKILL fallback)"
 if [ "$W2_PRESENT" -eq 1 ]; then
     if leftover=$(mq_sub -v -t "witness/$ANNOUNCE_DEVICE_ID/announce" -C 1 -W 5) && [ -n "$leftover" ]; then
         fail "the retained announce survived a clean shutdown: $leftover"
