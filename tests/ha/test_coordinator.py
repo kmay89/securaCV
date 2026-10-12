@@ -200,11 +200,17 @@ async def test_a_rejittered_backstop_copy_of_a_pushed_event_never_refires(
         # The push copy keeps the slot: the newer-than test compares canonical starts.
         assert hass.states.get(LAST_EVENT).attributes["time_bucket"]["start_epoch_s"] == true_bucket - 120
 
-    # A genuinely newer bucket, drawn downwards, is still a new event.
-    kernel.latest_event = bridge_event(zone="front_door", bucket=true_bucket + 600 - 120, seq=5)
+    # A genuinely newer bucket, drawn downwards, is still a new event. The
+    # four backstops above moved the clock twenty minutes on, so "newer" is
+    # the bucket the clock is in NOW: a fixed `true_bucket + 600` would fall
+    # out of the live window (two buckets) whenever the test starts late in
+    # its own bucket, and the rule under test would rightly refuse to fire.
+    newer_bucket = bucket_start()
+    assert newer_bucket > true_bucket
+    kernel.latest_event = bridge_event(zone="front_door", bucket=newer_bucket - 120, seq=5)
     await backstop(hass, freezer)
     assert hass.states.get(WITNESS_FRONT_DOOR).state != fired
-    assert hass.states.get(LAST_EVENT).attributes["time_bucket"]["start_epoch_s"] == true_bucket + 600 - 120
+    assert hass.states.get(LAST_EVENT).attributes["time_bucket"]["start_epoch_s"] == newer_bucket - 120
 
 
 async def test_availability_follows_the_lwt_and_the_backstop(
