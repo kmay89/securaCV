@@ -35,9 +35,11 @@ Not sure of your exact ids? **Developer Tools → States**, filter `securacv`.
 
 ## Blueprints
 
-Three blueprints ship alongside the canary alert and daily-digest ones. Import
-each via **Settings → Automations → Blueprints → Import Blueprint** and paste
-its URL:
+Three blueprints ship alongside the canary alert and daily-digest ones (the
+full list, with a one-click badge for each, is [`README.md`](README.md)). Click a
+badge, or import via **Settings → Automations → Blueprints → Import Blueprint**
+and paste the URL. Each takes a *Phone* (Companion app device) input and derives
+the notify service itself; the *Notification service* text input overrides it.
 
 ### a) After-hours presence alert
 `docs/blueprints/canary_sense_after_hours_presence.yaml`
@@ -47,6 +49,8 @@ Radar presence turns on inside a configured overnight window (default
 total darkness a camera can't. Optional **require corroboration** toggle: only
 alert when a second, independent witness (e.g. a camera person sensor) also
 reads on at the same time — a two-physics corroborated event.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV%2Fblob%2Fmain%2Fdocs%2Fblueprints%2Fcanary_sense_after_hours_presence.yaml)
 
 Import URL:
 `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_after_hours_presence.yaml`
@@ -60,6 +64,8 @@ leave: a possible enclosure cover-up or a light cut to blind a co-located
 camera. Radar is unaffected by the darkness, which is what makes it a good
 cross-check. Inputs: lux entity, presence entity, lux threshold, drop window,
 notify service.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV%2Fblob%2Fmain%2Fdocs%2Fblueprints%2Fcanary_sense_lights_out_tamper.yaml)
 
 Import URL:
 `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_lights_out_tamper.yaml`
@@ -75,6 +81,8 @@ person entered), **not** "the person stopped breathing". Works on the **P0
 breathing-lock binary alone** — the P1 opt-in BPM sensors are not required.
 Inputs: presence entity, breathing entity, sleep window, minutes-without-lock,
 notify service.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV%2Fblob%2Fmain%2Fdocs%2Fblueprints%2Fcanary_sense_welfare_check.yaml)
 
 Import URL:
 `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_welfare_check.yaml`

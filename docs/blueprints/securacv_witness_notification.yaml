@@ -1,0 +1,291 @@
+# SecuraCV — Witness notification with proof (Frigate + SecuraCV)
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_witness_notification.yaml
+#
+# One automation per camera. Frigate raises an alert on the camera (its
+# `frigate/reviews` topic, severity "alert" — the same moment the SecuraCV
+# bridge seals in reviews mode); this automation then waits, up to 90 s, for
+# SecuraCV's witness event entity for that camera to fire, and pushes ONE
+# notification to your phone:
+#
+#   Front door · Person
+#   14:03 · Sealed ✓ into the witness log (entry #1,204, window 14:00–14:10)
+#
+# or, if the seal has not landed in time:
+#
+#   14:03 · seal pending — Frigate reported it, SecuraCV has not sealed it yet
+#
+# with two actions: Open Frigate and Export evidence (a signed evidence pack
+# from `securacv.export_evidence`, receipted and owner-authenticated). An
+# optional Frigate thumbnail is attached through the Frigate integration's
+# notification proxy — Frigate's own image, from Frigate; the proof covers the
+# sealed claim, never the pixels, and the message says so.
+#
+# PRIVACY, SPELLED OUT. The trigger payload is Frigate's, and Frigate 0.16+
+# puts recognized identities in it (`sub_label`, `recognized_license_plate`,
+# `data.sub_labels`, in 0.17 GenAI `description`/`title`). This blueprint
+# renders exactly four things from that payload: the camera, the object label
+# (checked against Frigate's base-label list below, so a recognized name can
+# never slip in as a "label"), the zones, and the tracked-object id used only to
+# ask Frigate for its thumbnail. Nothing else is read, and nothing from Frigate
+# reaches the sealed log: the SecuraCV bridge discards every identity field at
+# parse time (the kernel never has them to leak). A notification under
+# SecuraCV's name must not carry a name or a plate, so this file does not
+# template them — if you edit it, keep it that way.
+#
+# Timing, honestly: the HH:MM in the message is when Frigate reported the
+# alert; the witness log keeps 10-minute windows, never the second — the
+# window is printed beside the entry number so the two never look like a
+# "wrong timestamp".
+
+blueprint:
+  name: "SecuraCV — Witness notification with proof"
+  description: >-
+    When Frigate raises an alert on a camera, wait for SecuraCV to seal the
+    matching witness event (up to 90 s), then notify your phone with the proof
+    state — "Sealed ✓ into the witness log (entry #N, window HH:MM–HH:MM)" or
+    "seal pending" — plus Open Frigate and Export evidence actions, and an
+    optional Frigate thumbnail. One automation per camera. Renders only the
+    camera, Frigate's object label, zones and the SecuraCV seal state; never a
+    recognized name or plate.
+  domain: automation
+  author: "ERRERlabs"
+  homeassistant:
+    min_version: "2026.5.0"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_witness_notification.yaml"
+
+  input:
+    camera:
+      name: "Frigate camera"
+      description: >-
+        The camera's name exactly as Frigate spells it in its config
+        (e.g. front_door). The alert is matched on it.
+      selector:
+        text:
+
+    witness_entity:
+      name: "SecuraCV witness event for this camera"
+      description: >-
+        The SecuraCV witness event entity for the same camera
+        (e.g. event.securacv_front_door). It fires when the kernel seals the
+        event; the notification waits for it.
+      selector:
+        entity:
+          filter:
+            - domain: event
+              integration: securacv
+
+    notify_device:
+      name: "Phone (Home Assistant Companion app)"
+      description: >-
+        The device that runs the Companion app. Leave it unset only if you fill
+        in a notification service below.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+      default: false
+
+    notify_service:
+      name: "Notification service (optional override)"
+      description: >-
+        Any notify service to use instead of the phone above, e.g.
+        notify.family_phones. Leave empty to notify the phone.
+      selector:
+        text:
+      default: ""
+
+    frigate_topic_prefix:
+      name: "Frigate MQTT topic prefix"
+      description: "Frigate's mqtt.topic_prefix (default frigate). The alerts arrive on <prefix>/reviews."
+      selector:
+        text:
+      default: "frigate"
+
+    seal_timeout:
+      name: "Wait for the seal"
+      description: >-
+        How long to wait for SecuraCV to seal the event before sending the
+        notification as "seal pending". The bridge seals within a few seconds
+        of Frigate's report; 90 s covers a busy broker.
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: s
+          mode: box
+      default: 90
+
+    attach_thumbnail:
+      name: "Attach Frigate's thumbnail"
+      description: >-
+        Requires the Frigate integration with its notification proxy enabled
+        (it serves /api/frigate/notifications/<id>/thumbnail.jpg). The image is
+        Frigate's and comes from Frigate; the notification says so. Off, the
+        notification is text only.
+      selector:
+        boolean:
+      default: false
+
+    frigate_url:
+      name: "Open Frigate link"
+      description: >-
+        Where the Open Frigate action goes. On Home Assistant OS the Frigate
+        app's ingress path (the default) opens it inside Home Assistant; for
+        Frigate elsewhere use its full URL, e.g. https://frigate.local:8971/.
+        It opens Frigate at the camera, not a specific clip — the sealed log
+        carries no clip id, by design.
+      selector:
+        text:
+      default: "/hassio/ingress/ccab4aaf_frigate"
+
+    export_window_hours:
+      name: "Export window"
+      description: "How many hours the Export evidence action asks the kernel for (1–720)."
+      selector:
+        number:
+          min: 1
+          max: 720
+          unit_of_measurement: h
+          mode: box
+      default: 24
+
+mode: parallel
+max: 10
+max_exceeded: silent
+
+trigger_variables:
+  frigate_topic_prefix: !input frigate_topic_prefix
+
+triggers:
+  - trigger: mqtt
+    topic: "{{ frigate_topic_prefix }}/reviews"
+
+variables:
+  camera: !input camera
+  witness_entity: !input witness_entity
+  notify_device: !input notify_device
+  notify_service: !input notify_service
+  attach_thumbnail: !input attach_thumbnail
+  frigate_url: !input frigate_url
+  # Frigate's base object labels (its default model's classes plus the common
+  # extras). A review's `data.objects` entry that is not one of these — a
+  # recognized name, a plate, a GenAI title — is never rendered.
+  safe_labels:
+    - person
+    - car
+    - truck
+    - bus
+    - motorcycle
+    - bicycle
+    - dog
+    - cat
+    - bird
+    - horse
+    - deer
+    - bear
+    - sheep
+    - cow
+    - rabbit
+    - raccoon
+    - fox
+    - squirrel
+    - package
+    - umbrella
+    - animal
+    - vehicle
+  after: "{{ trigger.payload_json.after if trigger.payload_json is mapping else {} }}"
+  label: >-
+    {{ ((after.data.objects | default([])) | select('in', safe_labels) | list | first) | default('object') }}
+  zones: "{{ (after.data.zones | default([])) | join(', ') }}"
+  # The tracked-object id names the thumbnail the Frigate integration's proxy
+  # serves. It is used for that one fetch and nowhere else.
+  detection_id: "{{ ((after.data.detections | default([])) | first) | default('') }}"
+  camera_name: "{{ camera | replace('_', ' ') | replace('-', ' ') | title }}"
+  notify_target: >-
+    {{ notify_service if notify_service else 'notify.mobile_app_' ~ (device_attr(notify_device, 'name') | slugify) }}
+  export_action_id: "securacv_export_{{ camera }}_{{ now().timestamp() | int }}"
+
+conditions:
+  # The alert that the SecuraCV bridge seals in reviews mode: a review that is
+  # an alert when it is created, or the update at which it becomes one.
+  - condition: template
+    value_template: >-
+      {{ trigger.payload_json is mapping
+         and after is mapping
+         and after.camera == camera
+         and after.severity == 'alert'
+         and (trigger.payload_json.type == 'new'
+              or (trigger.payload_json.type == 'update'
+                  and (trigger.payload_json.before.severity | default('')) != 'alert')) }}
+
+actions:
+  # Wait for the seal: the witness entity's state is the time of its last
+  # event, so any change means the kernel sealed one for this camera.
+  - wait_for_trigger:
+      - trigger: state
+        entity_id: !input witness_entity
+    timeout:
+      seconds: !input seal_timeout
+    continue_on_timeout: true
+
+  - variables:
+      sealed: "{{ wait.trigger is not none }}"
+      seal_line: >-
+        {% set when = now().strftime('%H:%M') %}
+        {% if wait.trigger is not none %}
+          {% set a = wait.trigger.to_state.attributes %}
+          {% set tb = a.time_bucket %}
+          {% set seq = a.seq %}
+          {% set parts = [] %}
+          {% if seq is number %}{% set parts = parts + ['entry #' ~ '{:,}'.format(seq | int)] %}{% endif %}
+          {% if tb is mapping and tb.start_epoch_s is number %}
+            {% set parts = parts + ['window ' ~ (tb.start_epoch_s | timestamp_custom('%H:%M')) ~ '–' ~ ((tb.start_epoch_s + (tb.size_s | default(600))) | timestamp_custom('%H:%M'))] %}
+          {% endif %}
+          {{ when }} · Sealed ✓ into the witness log{% if parts %} ({{ parts | join(', ') }}){% endif %}
+        {% else %}
+          {{ when }} · seal pending — Frigate reported it, SecuraCV has not sealed it yet
+        {% endif %}
+      image_url: >-
+        {{ '/api/frigate/notifications/' ~ detection_id ~ '/thumbnail.jpg' if attach_thumbnail and detection_id else '' }}
+
+  - action: "{{ notify_target }}"
+    data:
+      title: "{{ camera_name }} · {{ label | title }}"
+      message: >-
+        {{ seal_line | trim }}{% if zones %} · {{ zones }}{% endif %}{% if image_url %} · Sealed by SecuraCV — image from Frigate{% endif %}
+      data: >-
+        {% set d = {
+          'tag': 'securacv-witness-' ~ camera,
+          'group': 'SecuraCV',
+          'url': frigate_url,
+          'clickAction': frigate_url,
+          'actions': [
+            {'action': 'URI', 'title': 'Open Frigate', 'uri': frigate_url},
+            {'action': export_action_id, 'title': 'Export evidence'},
+          ],
+        } %}
+        {% if image_url %}{% set d = dict(d, image=image_url) %}{% endif %}
+        {{ d }}
+
+  # The Export evidence action: the owner's phone asks the integration for a
+  # signed evidence pack; the download link arrives as a notification and
+  # under Media → SecuraCV evidence. Waits up to 30 min, then gives up quietly.
+  - wait_for_trigger:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "{{ export_action_id }}"
+    timeout:
+      minutes: 30
+    continue_on_timeout: true
+
+  - if:
+      - condition: template
+        value_template: "{{ wait.trigger is not none }}"
+    then:
+      - action: securacv.export_evidence
+        data:
+          window_hours: !input export_window_hours
