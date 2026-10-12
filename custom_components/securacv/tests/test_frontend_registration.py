@@ -27,7 +27,12 @@ from .conftest import run
 
 from homeassistant.core import HomeAssistant  # noqa: E402  (the stub)
 
-from .. import _async_register_frontend, _card_assets, _card_digest  # noqa: E402
+from .. import (  # noqa: E402
+    LOVELACE_CARD_FILENAMES,
+    _async_register_frontend,
+    _card_assets,
+    _card_digest,
+)
 from ..const import DOMAIN  # noqa: E402
 
 
@@ -115,17 +120,16 @@ def test_card_registration_does_every_blocking_read_in_the_executor(monkeypatch)
     STATIC_PATHS.clear()
     hass = _hass()
     # Read before the guards go up — inside the test they would trip it.
-    timeline = _card_digest(str(WWW / "securacv-timeline-card.js"))
-    aim = _card_digest(str(WWW / "securacv-aim-card.js"))
+    digests = {name: _card_digest(str(WWW / name)) for name in LOVELACE_CARD_FILENAMES}
 
     dispatched = _run_guarded(monkeypatch, hass)
 
     assert dispatched == [_card_assets], "the card probe was not sent to an executor"
     assert hass.data[DOMAIN]["_frontend_registered"] is True
-    # The cards really were served and auto-loaded, each keyed by its bytes.
+    # The cards and the dashboard strategy really were served and auto-loaded,
+    # each keyed by its bytes, in the order the integration declares them.
     assert JS_URLS == [
-        f"/{DOMAIN}_www/securacv-timeline-card.js?v={timeline}",
-        f"/{DOMAIN}_www/securacv-aim-card.js?v={aim}",
+        f"/{DOMAIN}_www/{name}?v={digests[name]}" for name in LOVELACE_CARD_FILENAMES
     ]
     assert [c.url for c in STATIC_PATHS] == [u.split("?")[0] for u in JS_URLS]
 
@@ -138,9 +142,9 @@ def test_registration_runs_once_per_hass(monkeypatch) -> None:
     hass = _hass()
 
     _run_guarded(monkeypatch, hass)
-    assert len(JS_URLS) == 2
+    assert len(JS_URLS) == len(LOVELACE_CARD_FILENAMES)
     assert _run_guarded(monkeypatch, hass) == []
-    assert len(JS_URLS) == 2
+    assert len(JS_URLS) == len(LOVELACE_CARD_FILENAMES)
 
 
 def test_card_assets_reports_the_files_on_disk_and_their_keys() -> None:
@@ -148,10 +152,14 @@ def test_card_assets_reports_the_files_on_disk_and_their_keys() -> None:
     there is no second blocking probe left on the loop."""
     cards = _card_assets()
 
-    assert [name for name, _path, _key in cards] == [
+    # The two cards and the dashboard strategy, in the integration's order;
+    # the evidence viewer and its README are static files, not cards.
+    assert [name for name, _path, _key in cards] == list(LOVELACE_CARD_FILENAMES)
+    assert LOVELACE_CARD_FILENAMES == (
         "securacv-timeline-card.js",
         "securacv-aim-card.js",
-    ]
+        "securacv-strategy.js",
+    )
     assert all(pathlib.Path(path).is_file() for _name, path, _key in cards)
     for _name, path, key in cards:
         expected = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()[:12]
