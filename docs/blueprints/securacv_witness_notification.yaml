@@ -197,12 +197,15 @@ variables:
     - animal
     - vehicle
   after: "{{ trigger.payload_json.after if trigger.payload_json is mapping else {} }}"
+  # `after.data` is read defensively: a review message without it (or a
+  # payload that is not JSON) must not error the run, only fail the condition.
+  data: "{{ after.data | default({}) if after is mapping else {} }}"
   label: >-
-    {{ ((after.data.objects | default([])) | select('in', safe_labels) | list | first) | default('object') }}
-  zones: "{{ (after.data.zones | default([])) | join(', ') }}"
+    {{ ((data.objects | default([])) | select('in', safe_labels) | list | first) | default('object') }}
+  zones: "{{ (data.zones | default([])) | join(', ') }}"
   # The tracked-object id names the thumbnail the Frigate integration's proxy
   # serves. It is used for that one fetch and nowhere else.
-  detection_id: "{{ ((after.data.detections | default([])) | first) | default('') }}"
+  detection_id: "{{ ((data.detections | default([])) | first) | default('') }}"
   camera_name: "{{ camera | replace('_', ' ') | replace('-', ' ') | title }}"
   notify_target: >-
     {{ notify_service if notify_service else 'notify.mobile_app_' ~ (device_attr(notify_device, 'name') | slugify) }}
