@@ -223,6 +223,17 @@ test("generate: a connected kernel gets the six sections in order, with honest c
   assert.match(md, /Verification failed/);
   assert.match(md, /Not verified yet/);
   assert.match(md, /Witness key changed — confirm it in Settings → Repairs/);
+  // A key change is decided on the chain_valid entity's own `key_mismatch`
+  // attribute (the sensor sets it, with `trust_reason: kernel_key_mismatch`
+  // and an `error` naming Repairs), and that branch comes BEFORE the
+  // `st == 'off'` branch, so a key change never renders as a failure.
+  assert.match(md, /state_attr\(cv, 'key_mismatch'\) is true/);
+  assert.match(md, /state_attr\(cv, 'trust_reason'\) == 'kernel_key_mismatch'/);
+  const keyChangedAt = md.indexOf("Witness key changed");
+  const failedAt = md.indexOf("Verification failed");
+  const offBranchAt = md.indexOf("st == 'off'");
+  assert.ok(keyChangedAt > -1 && failedAt > -1 && offBranchAt > -1);
+  assert.ok(keyChangedAt < offBranchAt && offBranchAt < failedAt, "the key-change branch precedes the off branch");
   assert.match(md, /SecuraCV can't reach the witness kernel/);
   assert.match(md, /Frigate not heard/);
   assert.match(md, /SecuraCV records coarse claims/);

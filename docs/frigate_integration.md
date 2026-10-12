@@ -192,15 +192,17 @@ Home Assistant must use the **same broker**. The sidecar's bridge publishes a
 retained, kernel-**signed announcement** on `witness/<kernel id>/announce`
 (the kernel's id and verifying key, where the API listens, that pairing is
 required — never a token, a code or the seed), and the integration's MQTT
-discovery filter picks it up: a **SecuraCV sidecar discovered** card appears
-within about a minute of the start.
+discovery filter picks it up: a **SecuraCV sidecar** card appears under
+**Discovered** within about a minute of the start — titled *SecuraCV sidecar
+`pwk_…`* with the kernel id, or *SecuraCV sidecar at `<address>`* when the
+compose file sets `SECURACV_ANNOUNCE_HOST`.
 
 ```
 $ docker exec securacv pair
 SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)
 Kernel key fingerprint: ab12cd34   (Home Assistant shows the same fingerprint before it pairs)
 Kernel URL to confirm in Home Assistant: http://<this docker host>:8799
-In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code.
+In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.
 ```
 
 That is the whole card, printed once on that terminal; the daemon's log never
@@ -852,7 +854,7 @@ address (Docker Desktop's proxy, a reverse proxy) another host's wrong
 guesses can lock Home Assistant's address out with `429` for a while — wait
 it out.
 
-### No "SecuraCV sidecar discovered" card
+### No "SecuraCV sidecar" card under Discovered
 
 Home Assistant and the sidecar must share one broker. `docker exec securacv
 doctor` must report the retained announcement present; a sidecar removed

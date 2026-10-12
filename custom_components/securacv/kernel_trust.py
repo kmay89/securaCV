@@ -22,6 +22,7 @@ printout is the contract.)
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 from dataclasses import dataclass
@@ -36,6 +37,16 @@ KERNEL_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 KERNEL_DEVICE_ID_RE = re.compile(r"^pwk_[0-9a-f]{8}$")
 # An Ed25519 signature, 64 bytes as 128 hex.
 SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
+# A host as RFC 1123 spells one: labels of letters, digits and hyphens (no
+# leading or trailing hyphen, at most 63 characters), joined by dots, at most
+# 253 characters in all — which also admits a dotted-quad IPv4 — or an IPv6
+# literal in brackets. Nothing else: a colon, a slash, `?`, `#`, `@`,
+# whitespace or a control character would let an announced host (unsigned
+# until a pin exists) smuggle a port, a path or a fragment into the URL the
+# pairing code is POSTed to. The port is `api.port`, never part of the host.
+_HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+HOST_NAME_RE = re.compile(rf"^{_HOST_LABEL}(?:\.{_HOST_LABEL})*$")
+BRACKETED_IPV6_RE = re.compile(r"^\[[0-9A-Fa-f:.]{2,45}\]$")
 # The canonical message the kernel signs: the prefix, then the compact JSON
 # of the announce payload without its `sig` field, keys in the order the
 # bridge serialized them.
@@ -73,6 +84,24 @@ def valid_kernel_device_id(value: Any) -> bool:
     return isinstance(value, str) and KERNEL_DEVICE_ID_RE.fullmatch(value) is not None
 
 
+def valid_api_host(value: Any) -> bool:
+    """True iff `value` is a bare host: an RFC 1123 hostname, a dotted-quad
+    IPv4 address, or a bracketed IPv6 literal that parses as one. Anything
+    that could carry URL syntax (a port, a path, a query, a fragment, user
+    info, whitespace, control characters) is not a host."""
+    if not isinstance(value, str) or not value:
+        return False
+    if HOST_NAME_RE.fullmatch(value) is not None:
+        return len(value) <= 253
+    if BRACKETED_IPV6_RE.fullmatch(value) is not None:
+        try:
+            ipaddress.IPv6Address(value[1:-1])
+        except ValueError:
+            return False
+        return True
+    return False
+
+
 @dataclass(frozen=True)
 class Announce:
     """A parsed, shape-checked `<prefix>/<device_id>/announce` payload."""
@@ -102,13 +131,21 @@ class Announce:
     def api_url(self, fallback_host: str | None) -> str | None:
         """The kernel URL to prefill: the announced host when one was set
         explicitly, else `fallback_host` (the broker host HA already talks
-        to), else nothing — a person corrects it either way."""
+        to), else nothing — a person corrects it either way.
+
+        Only ever `scheme://host:port`: the host is checked as a bare host
+        (`valid_api_host`) after bracketing a bare IPv6 literal, so no
+        announced or configured value can carry its own port, path or
+        fragment into the URL; anything else yields no prefill at all.
+        """
         host = self.api_host or fallback_host
         if not host:
             return None
         if ":" in host and not host.startswith("["):
-            # A bare IPv6 literal needs brackets in a URL.
+            # A bare IPv6 literal (HA's own broker setting) needs brackets in a URL.
             host = f"[{host}]"
+        if not valid_api_host(host):
+            return None
         return f"{self.api_scheme}://{host}:{self.api_port}"
 
 
@@ -172,10 +209,14 @@ def parse_announce(payload: Any) -> Announce | None:
         return None
     host: str | None = None
     if "host" in api:
-        host = _nonempty_str(api.get("host"), max_len=253)
-        if host is None or "/" in host or "@" in host or any(c.isspace() for c in host):
-            # A host that carries URL syntax is not a host.
+        # Unsigned until a pin exists, and the pairing code is POSTed to the
+        # URL built from it: a host is a hostname, an IPv4 address or a
+        # bracketed IPv6 literal and nothing more (no port, path, query,
+        # fragment, user info, whitespace or control characters).
+        raw_host = api.get("host")
+        if not isinstance(raw_host, str) or not valid_api_host(raw_host):
             return None
+        host = raw_host
     mqtt_topic_prefix = _nonempty_str(data.get("mqtt_topic_prefix"), max_len=64)
     if mqtt_topic_prefix is None or "#" in mqtt_topic_prefix or "+" in mqtt_topic_prefix:
         return None

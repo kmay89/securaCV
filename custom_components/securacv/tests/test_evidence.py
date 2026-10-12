@@ -292,6 +292,68 @@ def test_keep_n_from_the_options_is_honored_and_said(monkeypatch):
     assert evidence.evidence_keep(entry) == 20
 
 
+def test_concurrent_exports_are_serialized_and_both_rows_survive(monkeypatch):
+    """index.json is one file per instance, read-modified-written per export:
+    two exports in flight at once (a button press beside an automation) must
+    both land in it. The compose + index step holds the instance lock, so the
+    second export's compose only starts after the first one's index write."""
+    import asyncio
+    import types
+
+    hass = HomeAssistant()
+    hass.data = {}
+    gate = asyncio.Event()
+
+    class GatedApi:
+        """Both downloads are in flight before either export composes."""
+
+        def __init__(self):
+            self.windows: list[int] = []
+
+        async def async_download_export_bundle(self, window_hours):
+            self.windows.append(window_hours)
+            await gate.wait()
+            return DOWNLOAD
+
+    api = GatedApi()
+    coordinator = types.SimpleNamespace(pinned_key=KEY, kernel_available=True, data={})
+    runtime = make_runtime(hass, coordinator=coordinator, api=api)
+    runtime.verification = VerificationState(ok=True, verified_bucket_start=1700001200)
+    entry = make_entry(hass, data={CONF_KERNEL_DEVICE_ID: "pwk_1a2b3c4d"}, runtime=runtime)
+    ids = iter(["00000001", "00000002"])
+    monkeypatch.setattr(evidence, "new_export_id", lambda: next(ids))
+
+    held: list[bool] = []
+    real_compose = evidence.compose_export
+
+    def spying_compose(*args, **kwargs):
+        held.append(evidence.export_lock(hass).locked())
+        return real_compose(*args, **kwargs)
+
+    monkeypatch.setattr(evidence, "compose_export", spying_compose)
+
+    async def two_at_once():
+        first = asyncio.ensure_future(evidence.async_export_evidence(hass, entry, window_hours=24))
+        second = asyncio.ensure_future(evidence.async_export_evidence(hass, entry, window_hours=48))
+        await asyncio.sleep(0)
+        assert api.windows == [24, 48], "both downloads were in flight before either composed"
+        gate.set()
+        return await asyncio.gather(first, second)
+
+    first, second = run(two_at_once())
+    assert held == [True, True], "every compose ran under the instance lock"
+    assert evidence.export_lock(hass).locked() is False
+    directory = Path(hass.config.path("securacv", "evidence"))
+    rows = evidence.read_index(directory)
+    assert {r.export_id for r in rows} == {"00000001", "00000002"}, "neither row was dropped"
+    assert sorted(p.name for p in directory.glob("*.zip")) == sorted(r.file for r in rows)
+    assert {first["export_id"], second["export_id"]} == {"00000001", "00000002"}
+    assert sorted(r["export_id"] for r in entry.runtime_data.exports["exports"]) == ["00000001", "00000002"]
+    assert sorted(r.export_id for r in run(evidence.async_load_records(hass))) == ["00000001", "00000002"]
+    # One lock per instance, shared by every entry; never a fresh one per call.
+    assert evidence.export_lock(hass) is evidence.export_lock(hass)
+
+
 def test_an_entry_without_a_kernel_cannot_export():
     hass = HomeAssistant()
     hass.data = {}

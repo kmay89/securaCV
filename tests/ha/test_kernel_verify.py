@@ -70,6 +70,26 @@ async def test_the_shared_vector_verifies_and_marks_its_events_verified(
     assert row.attributes["trust_reason"] == "kernel_sealed"
     assert row.attributes["verified_bucket_start"] is None
 
+    # Entry 2 (zone:b, true bucket 1700001000) as the bridge publishes it: the
+    # kernel's export view re-draws the bucket start by -120/-60/0/+60/+120 s
+    # on every fetch, so the wire never has to carry the grid start for the
+    # row to be covered — and every further draw is the SAME event (no second
+    # fire), the row keeping the window of the copy that fired it.
+    push(hass, "witness/events", bridge_event(zone="b", bucket=1700001000 - 120, seq=2))
+    await hass.async_block_till_done()
+    row = hass.states.get("event.securacv_b")
+    assert row.attributes["verification"] == "verified"
+    assert row.attributes["verified"] is True
+    assert row.attributes["time_bucket"]["start_epoch_s"] == 1700001000 - 120
+    fired = row.state
+    for offset in (-60, 0, 60, 120):
+        push(hass, "witness/events", bridge_event(zone="b", bucket=1700001000 + offset, seq=2))
+        await hass.async_block_till_done()
+        row = hass.states.get("event.securacv_b")
+        assert row.state == fired, f"a re-drawn copy ({offset:+d} s) is not a new event"
+        assert row.attributes["verification"] == "verified"
+        assert row.attributes["time_bucket"]["start_epoch_s"] == 1700001000 - 120
+
 
 async def test_a_tampered_entry_fails_the_walk_and_every_row(
     hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
@@ -115,14 +135,19 @@ async def test_a_served_key_other_than_the_pin_is_a_key_change_not_a_failure(
     await settle(hass)
 
     state = hass.states.get(CHAIN_VALID)
-    assert state.state == "off"
+    # Never `off`: every consumer renders `off` as "Verification failed", and
+    # a key change is a Repairs matter. Unknown, with the words that say so.
+    assert state.state == "unknown"
     assert state.attributes["key_mismatch"] is True
+    assert state.attributes["trust_reason"] == "kernel_key_mismatch"
+    assert state.attributes["error"] == "the witness key changed; confirm it in Settings → Repairs"
     assert state.attributes["failed_seq"] is None
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"tofu_mismatch_{entry.entry_id}") is not None
     push(hass, "witness/last_event", bridge_event(zone="a", seq=1), retain=True)
     await hass.async_block_till_done()
     assert hass.states.get(LAST_EVENT).attributes["trust_reason"] == "kernel_key_mismatch"
-    assert hass.states.get(LAST_EVENT).attributes["verification"] == "failed"
+    assert hass.states.get(LAST_EVENT).attributes["verification"] == "sealed", "a key change is never Failed (D10)"
+    assert hass.states.get(LAST_EVENT).attributes["verified"] is False
 
 
 async def test_the_walk_is_incremental_idle_triggered_and_persisted(

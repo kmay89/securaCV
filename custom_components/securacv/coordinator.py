@@ -65,6 +65,7 @@ from .const import (
     KERNEL_TOPIC_STATUS,
     TIME_BUCKET_SECONDS,
     VERIFICATION_EVENT_KEY_CHANGED,
+    VERIFY_ERROR_KEY_CHANGED,
     normalize_event_type,
 )
 from .data import SecuraCVConfigEntry, runtime_for
@@ -129,7 +130,9 @@ def event_dedupe_key(event: dict[str, Any] | None) -> tuple[str, int, str] | Non
 
     The bridge's `seq` is ignored on purpose: the same sealed event reaches
     HA on several topics and through the HTTP backstop, and only this triple
-    is on every copy.
+    is on every copy. The bucket start is the CANONICAL one
+    (`event_bucket_start`): the wire carries the kernel's export jitter, and
+    two copies of one event drawn ±120 s apart are still one event.
     """
     if not isinstance(event, dict):
         return None
@@ -165,8 +168,35 @@ def empty_kernel_data() -> dict[str, Any]:
     }
 
 
-def event_bucket_start(event: dict[str, Any] | None) -> int | None:
-    """The bucket start of a C5 event payload (nested or flattened), if any."""
+def canonical_bucket_start(start: int, size_s: Any = None) -> int:
+    """The true, grid-aligned bucket start behind a wire bucket start.
+
+    The kernel's export view (`Kernel::view_events`, src/lib.rs
+    `jitter_time_bucket`) re-draws every exported bucket start on every
+    fetch by `choice * jitter_step_s` with `choice` uniform in
+    `-steps..=steps` (`steps = jitter_s / jitter_step_s`; the defaults are
+    120 s in 60 s steps, so the offsets are -120, -60, 0, +60, +120 s),
+    clamped at zero. The bridge republishes that drawn start in the C5
+    payload and `/events/latest` draws afresh per fetch, while the sealed
+    log the chain walk reads carries the TRUE start. The jitter is
+    two-signed and bounded by `jitter_s`, which the kernel keeps below half
+    the bucket (120 s against the 300 s minimum bucket), so the nearest
+    multiple of the bucket size is exactly the true start — the same rule
+    the bridge's own `stable_bucket_start` applies for its publish cursor.
+    A missing or unusable size is the dictionary's 600 s bucket.
+
+    This is the ONE normalizer: the dedupe key, the covered-index key the
+    verifier builds from the sealed log, the key an event row is looked up
+    by, and the backstop's newer-than comparison all go through it.
+    """
+    size = size_s if isinstance(size_s, int) and not isinstance(size_s, bool) else 0
+    if size <= 0:
+        size = TIME_BUCKET_SECONDS
+    return (start + size // 2) // size * size
+
+
+def wire_bucket_start(event: dict[str, Any] | None) -> int | None:
+    """The bucket start exactly as the payload carries it (nested or flat)."""
     if not isinstance(event, dict):
         return None
     bucket = event.get("time_bucket")
@@ -177,6 +207,28 @@ def event_bucket_start(event: dict[str, Any] | None) -> int | None:
     if isinstance(start, bool) or not isinstance(start, int):
         return None
     return start
+
+
+def wire_bucket_size(event: dict[str, Any]) -> Any:
+    """The bucket size the payload carries (nested or flat), unchecked."""
+    bucket = event.get("time_bucket")
+    if isinstance(bucket, dict):
+        return bucket.get("size_s")
+    return event.get("time_bucket_size")
+
+
+def event_bucket_start(event: dict[str, Any] | None) -> int | None:
+    """The CANONICAL bucket start of a C5 event payload (nested or flat).
+
+    The wire's start is undone of the kernel's export jitter
+    (`canonical_bucket_start`); a sealed-log record, which carries the true
+    start, passes through unchanged. Every identity decision keys on this;
+    only display attributes show the wire's own window.
+    """
+    start = wire_bucket_start(event)
+    if start is None or not isinstance(event, dict):
+        return None
+    return canonical_bucket_start(start, wire_bucket_size(event))
 
 
 class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -544,6 +596,13 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         runtime = runtime_for(self.entry)
         if runtime is not None:
             runtime.verification.key_mismatch = mismatch
+            # The chain_valid sensor's `error` names the key change while it
+            # lasts (the card and the strategy header read it beside
+            # `key_mismatch`), and only that message is cleared with it.
+            if mismatch:
+                runtime.verification.error = VERIFY_ERROR_KEY_CHANGED
+            elif runtime.verification.error == VERIFY_ERROR_KEY_CHANGED:
+                runtime.verification.error = None
         if flipped_on:
             # Once per flip: the verification event entity says the key
             # changed; the Repairs issue says what to do about it.
@@ -614,7 +673,9 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # The push feed owns the latest event once it has delivered one; the
         # backstop only fills a gap (a message missed while HA was down),
-        # never re-fires anything.
+        # never re-fires anything. Both buckets compare canonical: the kernel
+        # re-jitters `/events/latest` on every fetch, so the raw start of the
+        # same event reads newer one poll and older the next.
         try:
             latest = await self.api.async_get_latest_event()
         except SecuraCVApiError as err:

@@ -412,7 +412,7 @@ $card"
         || fail "pair card line 2 is off-contract: $(printf '%s\n' "$card" | sed -n 2p)"
     [ "$(printf '%s\n' "$card" | sed -n 3p)" = "Kernel URL to confirm in Home Assistant: http://<this docker host>:8799" ] \
         || fail "pair card line 3 is off-contract: $(printf '%s\n' "$card" | sed -n 3p)"
-    [ "$(printf '%s\n' "$card" | sed -n 4p)" = "In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code." ] \
+    [ "$(printf '%s\n' "$card" | sed -n 4p)" = 'In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.' ] \
         || fail "pair card line 4 is off-contract: $(printf '%s\n' "$card" | sed -n 4p)"
     [ "$fp1" = "$(fingerprint_of "$ANNOUNCE_KEY")" ] || fail "pair fingerprint $fp1 is not sha256 of the announced key ($(fingerprint_of "$ANNOUNCE_KEY"))"
     pass "pair prints exactly the four-line card; its fingerprint is sha256 of the announced key"

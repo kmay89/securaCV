@@ -252,7 +252,7 @@ def pair_fixture(key: str) -> dict:
             f"SecuraCV pairing code: {code}   (valid 10 minutes, 5 attempts)",
             f"Kernel key fingerprint: {fingerprint(key)}   (Home Assistant shows the same fingerprint before it pairs)",
             "Kernel URL to confirm in Home Assistant: http://<this docker host>:8799",
-            "In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code.",
+            "In Home Assistant: Settings → Devices & Services → the discovered \"SecuraCV sidecar\" card → Configure → enter the code.",
         ],
     }
 

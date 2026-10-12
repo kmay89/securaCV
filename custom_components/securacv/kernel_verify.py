@@ -79,6 +79,7 @@ from .const import (
     VERIFY_TRIGGER_BUTTON,
     VERIFY_TRIGGER_IDLE,
     VERIFY_TRIGGER_SCHEDULED,
+    VERIFY_ERROR_KEY_CHANGED,
     VERIFY_TRIGGER_SERVICE,
     event_type_metadata,
     normalize_attestation,
@@ -233,7 +234,12 @@ def covered_key_of_payload(payload: str) -> CoveredKey | None:
 
 
 def covered_key_of_event(event: Any) -> CoveredKey | None:
-    """The covered-entry key of a C5 event payload or a sealed event record."""
+    """The covered-entry key of a C5 event payload or a sealed event record.
+
+    The bucket is the canonical start (`coordinator.event_bucket_start`):
+    a sealed-log record carries the true start and a wire row the kernel's
+    export-jittered one, and the two must meet on one key.
+    """
     if not isinstance(event, dict):
         return None
     record_type = event.get("record_type", "event")
@@ -496,13 +502,32 @@ def event_verification(
     if state is None:
         return VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED
     if state.key_mismatch:
-        return VERIFICATION_FAILED, TRUST_REASON_KERNEL_KEY_MISMATCH
+        # A key change is not a walk failure (D10: Repairs tofu_mismatch,
+        # never Failed): the row stays Sealed, and the reason says why the
+        # badge cannot be more than that until a person confirms the key.
+        return VERIFICATION_SEALED, TRUST_REASON_KERNEL_KEY_MISMATCH
     if state.ok is False:
         return VERIFICATION_FAILED, TRUST_REASON_HA_VERIFY_FAILED
     key = covered_key_of_event(event)
     if key is not None and key in state.covered:
         return VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN
     return VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED
+
+
+def chain_trust_reason(state: VerificationState | None) -> str | None:
+    """The chain_valid sensor's `trust_reason`, the same vocabulary the
+    event rows use: `kernel_key_mismatch` while the served key is not the
+    pin (whatever the last walk said), `ha_verified_chain` / `ha_verify_failed`
+    for a walk that passed / failed, None before the first walk."""
+    if state is None:
+        return None
+    if state.key_mismatch:
+        return TRUST_REASON_KERNEL_KEY_MISMATCH
+    if state.ok is True:
+        return TRUST_REASON_HA_VERIFIED_CHAIN
+    if state.ok is False:
+        return TRUST_REASON_HA_VERIFY_FAILED
+    return None
 
 
 def _time_bucket_of(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -828,6 +853,7 @@ class KernelVerifier:
             return state
         if self.coordinator.key_mismatch:
             state.key_mismatch = True
+            state.error = VERIFY_ERROR_KEY_CHANGED
             return state
         cursor = self._cursor
         if cursor is not None and self._regressed and trigger in MANUAL_TRIGGERS:
@@ -847,6 +873,7 @@ class KernelVerifier:
             if result.served_key is not None:
                 self.coordinator.async_note_served_key(result.served_key)
             state.key_mismatch = True
+            state.error = VERIFY_ERROR_KEY_CHANGED
             self.coordinator.async_update_listeners()
             return state
 
@@ -946,7 +973,7 @@ async def async_verify_entry(
 def verification_response(state: VerificationState, kernel_device_id: str | None) -> dict[str, Any]:
     """The `securacv.verify` action's response (and the button's log line)."""
     if state.key_mismatch:
-        verdict = "the witness key changed; confirm it in Settings → Repairs"
+        verdict = VERIFY_ERROR_KEY_CHANGED
     elif state.ok is True:
         verdict = (
             f"{state.walk_entries} new entries verified against the pinned key"

@@ -110,6 +110,11 @@ VERIFY_TRIGGER_BRIDGE = "bridge"
 # person normally sees).
 VERIFY_BACKSTOP_INTERVAL_SECONDS = 15 * 60
 VERIFY_IDLE_DELAY_SECONDS = 60
+# What the chain_valid sensor's `error` (and the verify action's verdict)
+# says while the kernel serves a key other than the pin: a key change is
+# a Repairs matter, never a chain failure, and the card/strategy header
+# read it as such.
+VERIFY_ERROR_KEY_CHANGED = "the witness key changed; confirm it in Settings → Repairs"
 # How long the covered-entry index remembers an entry when the kernel's
 # digest does not say its retention; and a hard cap on the index.
 VERIFY_COVERED_DEFAULT_RETENTION_SECONDS = 30 * 24 * 3600

@@ -72,6 +72,7 @@ from .const import (
 from homeassistant.helpers.event import async_call_later
 from .const import FRIGATE_LINK_STALE_AFTER_SECONDS
 from .data import runtime_for
+from .kernel_verify import chain_trust_reason
 from .entity import SecuraCVKernelEntity, canary_device_info, canary_status_signal
 from . import (
     mqtt_payload_within_cap,
@@ -404,10 +405,15 @@ class SecuraCVKernelChainValidSensor(SecuraCVKernelEntity, BinarySensorEntity):
 
     `on` = the integration's last chain walk verified every served entry's
     hash link and Ed25519 signature against the pinned key; `off` = the
-    last walk failed (or the served key is not the pin); unknown until the
-    first walk. No device class on purpose: the card wants `on` = intact.
-    The kernel's own self-check is an attribute (`kernel_reported_chain_ok`),
-    never this state.
+    last walk failed; unknown until the first walk AND while the kernel
+    serves a key other than the pin (a key change is Repairs
+    `tofu_mismatch`, never "verification failed": the walk cannot run
+    against the pin, so there is no verdict). The attributes the card, the
+    dashboard strategy and the digest blueprint read — `key_mismatch`,
+    `trust_reason`, `error`, `verifying`, `failed_seq`, `verified_seq` —
+    are the one vocabulary the event rows use. No device class on purpose:
+    the card wants `on` = intact. The kernel's own self-check is an
+    attribute (`kernel_reported_chain_ok`), never this state.
     """
 
     _attr_translation_key = "chain_valid"
@@ -422,12 +428,11 @@ class SecuraCVKernelChainValidSensor(SecuraCVKernelEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """True iff the last walk succeeded against the pinned key."""
+        """True iff the last walk succeeded against the pinned key; unknown
+        while the served key is not the pin (see `key_mismatch`)."""
         state = self._state()
-        if state is None:
+        if state is None or state.key_mismatch:
             return None
-        if state.key_mismatch:
-            return False
         return state.ok
 
     @property
@@ -442,6 +447,7 @@ class SecuraCVKernelChainValidSensor(SecuraCVKernelEntity, BinarySensorEntity):
             "head_seq": state.head_seq if state else None,
             "failed_seq": state.failed_seq if state else None,
             "key_mismatch": state.key_mismatch if state else False,
+            "trust_reason": chain_trust_reason(state),
             "verifying": state.verifying if state else False,
             "last_trigger": state.last_trigger if state else None,
             "kernel_reported_chain_ok": self.coordinator.kernel_reported_chain_ok,

@@ -514,17 +514,24 @@ class SecuraCVKernelLastEventSensor(SecuraCVKernelEntity, SensorEntity):
 
 
 class SecuraCVKernelChainLengthSensor(SecuraCVKernelEntity, SensorEntity):
-    """How many entries the sealed log holds: the head of the last walk.
+    """The sealed log's head: the newest entry's sequence number.
 
-    State is `head.seq` from the integration's last chain walk, falling back
-    to `/api/identity`.chain_length before the first walk. Attributes carry
-    the chain head hash, the algorithm, the pinned key and whether it is
-    pinned — what the card's chain header reads.
+    One semantic, documented once: the state is the walk head `seq` (the
+    sealed_events row id of the newest entry the integration's last chain
+    walk saw, contract C11) as soon as a walk has run; before the first
+    walk it is `/api/identity`.chain_length, the kernel's own row COUNT,
+    and the `source` attribute says which. The two differ once retention
+    has pruned rows (COUNT shrinks, seq never does), so this is a plain
+    reading with NO state class: a `total_increasing` class would have
+    HA's long-term statistics read the switch from one measure to the
+    other — and a pruned COUNT — as a meter reset and inflate the sum on
+    every restart. Attributes carry the chain head hash, the kernel's own
+    count, the algorithm, the pinned key and whether it is pinned — what
+    the card's chain header reads.
     """
 
     _attr_translation_key = "chain_length"
     _attr_native_unit_of_measurement = "blocks"
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -534,22 +541,34 @@ class SecuraCVKernelChainLengthSensor(SecuraCVKernelEntity, SensorEntity):
         runtime = runtime_for(self._entry)
         return runtime.verification if runtime is not None else None
 
+    def _head_seq(self) -> int | None:
+        state = self._state()
+        return state.head_seq if state is not None else None
+
     @property
     def native_value(self) -> int | None:
-        """The walk's head, else the kernel's reported length."""
-        state = self._state()
-        if state is not None and state.head_seq is not None:
-            return state.head_seq
+        """The walk's head `seq` once known, else the kernel's reported count."""
+        head_seq = self._head_seq()
+        if head_seq is not None:
+            return head_seq
         return self.coordinator.kernel_chain_length
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """The head hash and the key the chain is checked against."""
+        """The head hash, which measure the state is, and the key the chain
+        is checked against."""
         state = self._state()
         head_hash = state.head_hash if state is not None else None
         pinned = self.coordinator.pinned_key
+        head_seq = self._head_seq()
         return {
             "latest_hash": head_hash or self.coordinator.kernel_latest_hash,
+            # `walk_head`: the state is the sealed log's head seq from the
+            # integration's walk; `kernel_identity`: no walk yet, the state is
+            # the kernel's own row count (`kernel_chain_length` either way).
+            "source": "walk_head" if head_seq is not None else "kernel_identity",
+            "head_seq": head_seq,
+            "kernel_chain_length": self.coordinator.kernel_chain_length,
             "algorithm": "ed25519",
             "verifying_key": pinned,
             "pinned": pinned is not None,

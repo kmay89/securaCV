@@ -145,6 +145,35 @@ async def test_the_backstop_fires_a_missed_event_exactly_once(
     assert hass.states.get("event.securacv_porch").state == fired
 
 
+async def test_a_rejittered_backstop_copy_of_a_pushed_event_never_refires(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry, freezer: FrozenDateTimeFactory
+) -> None:
+    """The kernel's export view re-draws every bucket start by ±0/60/120 s per
+    fetch: the bridge published one draw, /events/latest serves another five
+    minutes later. One sealed event is one fire and one latest-event slot,
+    whatever the draws — the identity is the canonical (grid) bucket."""
+    await setup_kernel_entry(enable_mqtt=True)
+    true_bucket = bucket_start()
+    pushed = bridge_event(zone="front_door", bucket=true_bucket - 120, seq=4)
+    fire(hass, "witness/events", pushed)
+    await hass.async_block_till_done()
+    fired = hass.states.get(WITNESS_FRONT_DOOR).state
+    assert fired != "unknown"
+
+    for offset in (60, 120, -60, 0):
+        kernel.latest_event = bridge_event(zone="front_door", bucket=true_bucket + offset, seq=4)
+        await backstop(hass, freezer)
+        assert hass.states.get(WITNESS_FRONT_DOOR).state == fired, offset
+        # The push copy keeps the slot: the newer-than test compares canonical starts.
+        assert hass.states.get(LAST_EVENT).attributes["time_bucket"]["start_epoch_s"] == true_bucket - 120
+
+    # A genuinely newer bucket, drawn downwards, is still a new event.
+    kernel.latest_event = bridge_event(zone="front_door", bucket=true_bucket + 600 - 120, seq=5)
+    await backstop(hass, freezer)
+    assert hass.states.get(WITNESS_FRONT_DOOR).state != fired
+    assert hass.states.get(LAST_EVENT).attributes["time_bucket"]["start_epoch_s"] == true_bucket + 600 - 120
+
+
 async def test_availability_follows_the_lwt_and_the_backstop(
     hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry, freezer: FrozenDateTimeFactory
 ) -> None:

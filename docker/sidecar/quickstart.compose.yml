@@ -18,8 +18,9 @@
 #   Pair it:    docker exec securacv pair
 #               (prints a 6-digit code and the kernel key fingerprint)
 #
-#   In Home Assistant — which must use the SAME broker — a "SecuraCV sidecar
-#   discovered" card appears within a minute of the start. Configure →
+#   In Home Assistant — which must use the SAME broker — a "SecuraCV sidecar"
+#   card appears under Discovered within a minute of the start (titled with
+#   the kernel id, or with SECURACV_ANNOUNCE_HOST when you set it). Configure →
 #   compare the fingerprint → enter the code. Done: Frigate events arrive as
 #   sealed, signed witness events. Without Home Assistant the sealed log
 #   works exactly the same and `log_verify` proves it offline.

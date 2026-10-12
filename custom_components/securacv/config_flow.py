@@ -308,6 +308,8 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     _announce: Announce | None = None
     _hassio: dict[str, Any] | None = None
     _pair_url: str | None = None
+    # The app's name from Supervisor discovery, for the hassio_confirm copy.
+    _hassio_name: str = "SecuraCV"
 
     # ── shared helpers ───────────────────────────────────────────────
 
@@ -347,6 +349,19 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if data.get(CONF_URL) and not unique_id.startswith("kernel_"):
                 return entry
         return None
+
+    def _mqtt_configured(self) -> bool:
+        """Whether Home Assistant has an MQTT integration entry at all.
+
+        A sidecar is discovered over the broker Home Assistant and the
+        sidecar share; without an MQTT entry here there is nothing to hear
+        it on, however many announces the sidecar publishes.
+        """
+        try:
+            return bool(self.hass.config_entries.async_entries(mqtt.DOMAIN))
+        except Exception:  # noqa: BLE001 - a courtesy, never a dead end
+            _LOGGER.debug("mqtt entry lookup failed", exc_info=True)
+            return False
 
     def _broker_host(self) -> str | None:
         """The host of the MQTT broker Home Assistant talks to, if known.
@@ -584,6 +599,10 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._mqtt_prefix_already_configured(DEFAULT_MQTT_PREFIX):
             return self.async_abort(reason="already_configured")
         repairs.async_report_no_kernel_found(self.hass)
+        # Without Home Assistant's MQTT integration no announce can ever be
+        # heard, so "connects by itself when one appears" would be a false
+        # promise: the final screen then says what to set up first.
+        description = "no_kernel_found" if self._mqtt_configured() else "no_kernel_found_no_mqtt"
         return self.async_create_entry(
             title=f"SecuraCV ({DEFAULT_MQTT_PREFIX})",
             data={
@@ -591,7 +610,7 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX,
                 CONF_SETUP_MODE: SETUP_MODE_MQTT,
             },
-            description="no_kernel_found",
+            description=description,
             description_placeholders={
                 "addon_repo_url": ADDON_REPOSITORY_LINK,
                 "docker_quickstart_url": DOCKER_QUICKSTART_LINK,
@@ -740,6 +759,10 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # down cleanly: nothing to offer.
             return self.async_abort(reason="invalid_discovery_info")
         self._announce = announce
+        # The discovered card's title (flow_title "SecuraCV {name}"): "SecuraCV
+        # sidecar at <host>" when the sidecar announced an address, else
+        # "SecuraCV sidecar <kernel id>" — the docs and the `pair` card name
+        # it the same way.
         where = f"at {announce.api_host}" if announce.api_host else announce.device_id
         self.context["title_placeholders"] = {"name": f"sidecar {where}"}
 
@@ -748,31 +771,39 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             pinned = normalize_kernel_key(
                 (getattr(existing, "data", None) or {}).get(CONF_KERNEL_VERIFYING_KEY)
             )
+            if pinned is None:
+                # No pin yet, so nothing in this announce is verifiable: an
+                # entry's topic prefix and URL are never moved (nor the entry
+                # reloaded) on the word of an unsigned retained message. The
+                # backstop adopts the identity and the pin on its own.
+                self._abort_if_unique_id_configured()
+                return self.async_abort(reason="already_configured")
+            if not verify_announce_signature(announce, pinned):
+                return self.async_abort(reason="announce_signature_invalid")
+            if announce.verifying_key != pinned:
+                repairs.async_report_tofu_mismatch(
+                    self.hass,
+                    existing,
+                    pinned_fingerprint=kernel_key_fingerprint(pinned),
+                    received_fingerprint=announce.fingerprint,
+                    received_key=announce.verifying_key,
+                    url=announce.api_url(None) or str(existing.data.get(CONF_URL, "")),
+                )
+                return self.async_abort(
+                    reason="announce_key_mismatch",
+                    description_placeholders={
+                        "pinned_fingerprint": kernel_key_fingerprint(pinned),
+                        "received_fingerprint": announce.fingerprint,
+                    },
+                )
+            # Signed by the pinned key: the kernel's own word on where its
+            # topics and (when it announced a host) its API live.
             updates: dict[str, Any] = {CONF_MQTT_TOPIC_PREFIX: announce.mqtt_topic_prefix}
-            if pinned is not None:
-                if not verify_announce_signature(announce, pinned):
-                    return self.async_abort(reason="announce_signature_invalid")
-                if announce.verifying_key != pinned:
-                    repairs.async_report_tofu_mismatch(
-                        self.hass,
-                        existing,
-                        pinned_fingerprint=kernel_key_fingerprint(pinned),
-                        received_fingerprint=announce.fingerprint,
-                        received_key=announce.verifying_key,
-                        url=announce.api_url(None) or str(existing.data.get(CONF_URL, "")),
-                    )
-                    return self.async_abort(
-                        reason="announce_key_mismatch",
-                        description_placeholders={
-                            "pinned_fingerprint": kernel_key_fingerprint(pinned),
-                            "received_fingerprint": announce.fingerprint,
-                        },
-                    )
-                url = announce.api_url(None)
-                if url:
-                    # An explicitly announced host, signed by the pinned key,
-                    # is the kernel telling us it moved (discovery-update-info).
-                    updates[CONF_URL] = url
+            url = announce.api_url(None)
+            if url:
+                # An explicitly announced host, signed by the pinned key,
+                # is the kernel telling us it moved (discovery-update-info).
+                updates[CONF_URL] = url
             self._abort_if_unique_id_configured(updates=updates, reload_on_update=True)
         return await self.async_step_announce_confirm()
 
@@ -877,7 +908,14 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if self.source == config_entries.SOURCE_REAUTH
                 else self._get_reconfigure_entry()
             )
-            self._abort_if_other_kernel(entry, result.device_id)
+            try:
+                self._abort_if_other_kernel(entry, result.device_id)
+            except AbortFlow:
+                # The code was redeemed on a kernel this entry is not for:
+                # the bearer it minted would otherwise stay live with nobody
+                # holding it. Revoke it (best effort) before refusing.
+                await self._async_revoke_quietly(url, result)
+                raise
             # The pin stays: a key the kernel changed is the coordinator's
             # Repairs issue to raise, not something a re-pairing adopts.
             if not (getattr(entry, "data", None) or {}).get(CONF_KERNEL_VERIFYING_KEY):
@@ -1099,8 +1137,12 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         topic_prefix = str(config.get("mqtt_topic_prefix") or DEFAULT_MQTT_TOPIC_PREFIX)
         device_id = config.get("device_id")
 
+        # flow_title is "SecuraCV {name}"; the app announces itself as
+        # "SecuraCV", so the discovered card reads "SecuraCV app" rather
+        # than the name twice. The confirm step still shows the app's name.
         name = getattr(discovery_info, "name", None) or config.get("addon") or "SecuraCV"
-        self.context["title_placeholders"] = {"name": str(name)}
+        self.context["title_placeholders"] = {"name": "app"}
+        self._hassio_name = str(name)
 
         probe: KernelProbe | None = None
         if not valid_kernel_device_id(device_id):
@@ -1195,7 +1237,7 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({}),
             errors=errors,
             description_placeholders={
-                "name": str(self.context.get("title_placeholders", {}).get("name", "SecuraCV")),
+                "name": self._hassio_name,
                 "url": info[CONF_URL],
             },
         )

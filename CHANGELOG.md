@@ -12,6 +12,40 @@ is [`docs/design/ha_frigate_product.md`](docs/design/ha_frigate_product.md);
 the user guides are [`docs/homeassistant_setup.md`](docs/homeassistant_setup.md)
 and [`docs/frigate_integration.md`](docs/frigate_integration.md).
 
+**Review fixes before release**
+
+- Every copy of one sealed event is one event: the kernel's export view
+  re-draws a bucket start by ±0/60/120 s on every fetch, and the
+  integration now keys dedupe, the verified-entry index and the HTTP
+  backstop's newer-than test on the canonical (grid) bucket, so a row
+  reads Verified ✓ after the walk covers it whatever the draw was, and the
+  5-minute backstop never re-fires a pushed event (the card still shows the
+  wire's own window).
+- The app's AppArmor profile names the device seed file
+  (`/config/witness.ed25519.seed`) and the storage-health state beside the
+  database; a standalone-mode install no longer crash-loops on the
+  profile.
+- A witness key change is never "Verification failed":
+  `binary_sensor.securacv_chain_valid` reads unknown with `key_mismatch`,
+  `trust_reason: kernel_key_mismatch` and an `error` naming Settings →
+  Repairs; rows stay Sealed ✓; the dashboard header and the daily digest
+  say *Witness key changed — confirm it in Settings → Repairs*.
+- `sensor.securacv_chain_length` is the walk head `seq` once a walk has run
+  (else the kernel's row count, `source` says which) and drops its
+  `total_increasing` state class — statistics no longer see a reset on
+  every restart or retention prune.
+- An announced `api.host` must be a bare hostname, IPv4 or bracketed IPv6
+  (no port, path, query, fragment or user info can reach the pairing URL);
+  an unsigned announce never moves an unpinned entry's topic prefix or
+  reloads it; a code redeemed on the wrong kernel during reauth has its
+  token revoked; concurrent evidence exports are serialized so no index
+  row is lost.
+- The discovered cards are named as Home Assistant shows them: *SecuraCV
+  app*, and *SecuraCV sidecar `pwk_…`* / *SecuraCV sidecar at `<address>`*
+  (the `pair` card, the compose comments and the guides agree); the
+  Automatic flow's final screen names the missing MQTT integration when
+  Home Assistant has none.
+
 **Breaking changes**
 
 - **Home Assistant 2026.5.0 or newer** (`hacs.json`, the app's

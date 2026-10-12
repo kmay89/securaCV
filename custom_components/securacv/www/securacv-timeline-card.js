@@ -384,7 +384,7 @@
     }
     return {
       level, symbol: "✓", label: "Sealed ✓", reason: s.trustReason || "kernel_sealed",
-      tooltip: `Signed into the witness chain${entryRef ? ` (${entryRef})` : ""}. The chain check runs hourly; this entry is newer than the last one.${keyNote}`,
+      tooltip: `Signed into the witness chain${entryRef ? ` (${entryRef})` : ""}. The chain check runs every 15 minutes and a minute after new entries stop arriving; this entry is newer than the last one.${keyNote}`,
     };
   }
 

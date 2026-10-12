@@ -75,8 +75,11 @@ async def test_tofu_mismatch_is_raised_and_fixed_through_the_repairs_api(
     verification = hass.states.get("event.securacv_chain_verification")
     assert verification.attributes["event_type"] == "witness_key_changed"
     chain_valid = hass.states.get("binary_sensor.securacv_chain_valid")
-    assert chain_valid.state == "off"
+    # Unknown, never off: a key change is this Repairs issue, not a failed walk.
+    assert chain_valid.state == "unknown"
     assert chain_valid.attributes["key_mismatch"] is True
+    assert chain_valid.attributes["trust_reason"] == "kernel_key_mismatch"
+    assert "Repairs" in chain_valid.attributes["error"]
     assert entry.data[CONF_KERNEL_VERIFYING_KEY] == pinned, "never an automatic re-pin"
 
     client = await hass_client()

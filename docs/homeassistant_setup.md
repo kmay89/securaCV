@@ -148,7 +148,11 @@ store yet.
    - finding neither, it creates the MQTT-only entry for Canary devices,
      ends with *"No witness kernel is running yet. SecuraCV is set up and
      will connect by itself when one appears."* plus links to the app
-     repository and the Docker quickstart, and raises the Repairs issue
+     repository and the Docker quickstart — or, when Home Assistant has no
+     MQTT integration at all, *"…and Home Assistant's MQTT integration is
+     not set up; a sidecar can only be discovered once Home Assistant and
+     the sidecar share a broker"*, because without one no announcement can
+     ever be heard — and raises the Repairs issue
      **No SecuraCV witness kernel found** — dismissable, and cleared by
      itself once a kernel entry loads.
 
@@ -184,13 +188,15 @@ must use the **same MQTT broker** as Frigate and the sidecar.
    SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)
    Kernel key fingerprint: ab12cd34   (Home Assistant shows the same fingerprint before it pairs)
    Kernel URL to confirm in Home Assistant: http://<this docker host>:8799
-   In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code.
+   In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.
    ```
 
    The code is printed once, on that terminal only; the daemon's log never
    carries it.
 3. In Home Assistant, **Settings → Devices & Services** shows the card
-   within a minute of the sidecar's start. Press **Configure**: *"A SecuraCV
+   under **Discovered** within a minute of the sidecar's start — *SecuraCV
+   sidecar `pwk_…`*, or *SecuraCV sidecar at `<address>`* when the compose
+   file sets `SECURACV_ANNOUNCE_HOST`. Press **Configure**: *"A SecuraCV
    sidecar announced its witness kernel `pwk_…` (kernel 0.8.0). Its key
    fingerprint is `ab12cd34` — the same eight characters `docker exec
    securacv pair` prints. Submit to pair; the next step asks for the 6-digit
@@ -239,9 +245,11 @@ means **the integration itself** did the checking:
 A **key change is never shown as Failed**. When the kernel serves a key
 other than the pinned one — a restore to new hardware, a reinstalled app or
 sidecar, or something else answering at that address — Settings → Repairs
-gets **The witness kernel's key changed**; kernel rows carry `trust_reason:
-kernel_key_mismatch`, the dashboard header reads *Witness key changed —
-confirm it in Settings → Repairs*, and the fix flow shows the pinned and the
+gets **The witness kernel's key changed**; kernel rows stay Sealed ✓ with
+`trust_reason: kernel_key_mismatch`, `binary_sensor.securacv_chain_valid`
+reads unknown (not off) with `key_mismatch: true`, the dashboard header and
+the daily digest read *Witness key changed — confirm it in Settings →
+Repairs*, and the fix flow shows the pinned and the
 received fingerprints and asks you to compare the new one with what the
 kernel itself prints (`docker exec securacv pair`, the app's panel, or
 `doctor`) before it rotates the pin. The previous key stays recorded in the
@@ -527,7 +535,7 @@ available to report offline.
 
    Sensors:
    - **SecuraCV Last Event** — the newest sealed event, with the full attribute table of a witness event below (`kernel_last_event`; retained `witness/last_event`)
-   - **Chain Length** — entries in the sealed log, from the integration's last chain walk (`head.seq`) else `/api/identity`, with `latest_hash`, `algorithm`, `verifying_key`, `pinned` and `verified_seq` (`chain_length`; unit blocks)
+   - **Chain Length** — the sealed log's head: the newest entry's sequence number from the integration's last chain walk (`head.seq`), or the kernel's own row count from `/api/identity` until the first walk — `source` says which (`walk_head` / `kernel_identity`); the two differ once retention has pruned rows, so the sensor has no statistics class. Attributes `latest_hash`, `source`, `head_seq`, `kernel_chain_length`, `algorithm`, `verifying_key`, `pinned`, `verified_seq` (`chain_length`; unit blocks)
    - **Daily digest** — total sealed events over the kernel's rolling 24-hour window, with the whole `/digest` document as attributes: counts by event type, by zone and by coarse day period (`daily_digest`; retained `witness/digest`)
    - **Kernel key fingerprint** — the first eight hex characters of sha256 over the pinned verifying key, the same eight `docker exec securacv pair`, the app's panel and `doctor` print, with `verifying_key`, `pinned_bucket_start` and `key_mismatch` (`kernel_fingerprint`; diagnostic)
    - **Storage Health** — `healthy` / `warning` / `critical` for the kernel's database storage from `GET /status` (`storage_health`; diagnostic)
@@ -539,7 +547,7 @@ available to report offline.
 
    Binary sensors:
    - **Online** — the kernel is reachable: the bridge's `witness/status` last-will topic says online, or the five-minute HTTP backstop answered (`kernel_online`; connectivity)
-   - **Chain Valid** — ON when the integration's own last chain walk verified the sealed log against the pinned key, OFF when it rejected it, unknown until the first walk; attributes `verified_seq`, `verified_entries`, `verified_bucket_start`, `verified_bucket_size`, `head_seq`, `failed_seq`, `key_mismatch`, `verifying`, `last_trigger`, `kernel_reported_chain_ok`, `kernel_verified_bucket_start`, `error` (`chain_valid`)
+   - **Chain Valid** — ON when the integration's own last chain walk verified the sealed log against the pinned key, OFF when it rejected it, unknown until the first walk and while the kernel serves a key other than the pinned one (`key_mismatch: true`, `trust_reason: kernel_key_mismatch`, `error` naming Settings → Repairs — a key change is never shown as a failure); attributes `verified_seq`, `verified_entries`, `verified_bucket_start`, `verified_bucket_size`, `head_seq`, `failed_seq`, `key_mismatch`, `trust_reason`, `verifying`, `last_trigger`, `kernel_reported_chain_ok`, `kernel_verified_bucket_start`, `error` (`chain_valid`)
    - **Frigate link** — ON when `frigate_bridge` holds its broker connection AND Frigate was heard within the last hour, so a quiet night and a Frigate that stopped publishing read differently; attributes are the retained `witness/frigate_link` payload (`frigate_link`; connectivity, diagnostic)
    - **Storage Replacement Recommended** — the kernel's `/status` recommends replacing its storage; Settings → Repairs says so too (`storage_replace`; problem)
 
@@ -1290,8 +1298,8 @@ silent — are sensors and events, not issues.
 
 | Symptom | Check |
 |---|---|
-| No **SecuraCV discovered** card after the app restart | The app must have started once with the kernel answering `/health` (its log says `discovery` posted); the integration must be installed (the done screen's button, or HACS) and Home Assistant restarted after installing it. Settings → Devices & Services → Add Integration → SecuraCV → Automatic finds the app without the card. |
-| No **Add the SecuraCV sidecar** card | Home Assistant and the sidecar must share one broker. `docker exec securacv doctor` must show the retained announce published; a sidecar stopped uncleanly leaves no announce — restart it, or clear a stale one with `mosquitto_pub -r -n -t witness/<kernel id>/announce`. The manifest subscribes `witness/+/announce`, so a non-default witness prefix is not discovered — add it through the **Witness Kernel Connection** form, or set `MQTT_TOPIC_PREFIX` back to `witness`. |
+| No **SecuraCV app** card under Discovered after the app restart | The app must have started once with the kernel answering `/health` (its log says `discovery` posted); the integration must be installed (the done screen's button, or HACS) and Home Assistant restarted after installing it. Settings → Devices & Services → Add Integration → SecuraCV → Automatic finds the app without the card. |
+| No **SecuraCV sidecar** card under Discovered | Home Assistant and the sidecar must share one broker. `docker exec securacv doctor` must show the retained announce published; a sidecar stopped uncleanly leaves no announce — restart it, or clear a stale one with `mosquitto_pub -r -n -t witness/<kernel id>/announce`. The manifest subscribes `witness/+/announce`, so a non-default witness prefix is not discovered — add it through the **Witness Kernel Connection** form, or set `MQTT_TOPIC_PREFIX` back to `witness`. |
 | *The code was not accepted* | Codes are single-use, live ten minutes and burn after five wrong tries; run `pair` again. Behind one shared source address (Docker Desktop, a proxy) a `429` lockout from other guesses blocks pairing too — wait it out. |
 | Kernel URL wrong on the pair form | It is a guess from the announcement or your broker's host. Type `http://<docker host>:8799`; set `SECURACV_ANNOUNCE_HOST` in the compose file to prefill it next time. |
 | Events arrive but stay **Sealed ✓** | The walk runs every 15 minutes and 60 s after events go idle; press **Verify now**. If **Chain Valid** is unknown forever, the kernel's `/api/sealed-log` is not answering — check the entry's credential (Repairs would say) and the kernel log. |

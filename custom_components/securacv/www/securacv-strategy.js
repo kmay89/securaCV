@@ -390,7 +390,7 @@
       "{% set fs = state_attr(cv, 'failed_seq') %}",
       "{% if state_attr(cv, 'verifying') %}",
       "### Verifying…",
-      "{% elif state_attr(cv, 'trust_reason') == 'kernel_key_mismatch' or ('key' in err and ('mismatch' in err or 'changed' in err)) %}",
+      "{% elif state_attr(cv, 'key_mismatch') is true or state_attr(cv, 'trust_reason') == 'kernel_key_mismatch' or ('key' in err and ('mismatch' in err or 'changed' in err)) %}",
       "### ⚠ Witness key changed — confirm it in Settings → Repairs",
       "{% elif st == 'on' and vbs is number %}",
       "### ✅ Chain verified ✓ {{ relative_time(as_datetime(vbs)) }} ago{% if n is number %} · {{ '{:,}'.format(n | int) }} entries{% endif %} · key pinned",

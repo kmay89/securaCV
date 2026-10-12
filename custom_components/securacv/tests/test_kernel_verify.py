@@ -340,11 +340,31 @@ def test_a_kernel_self_report_never_makes_an_event_verified():
     assert kv.event_verification(None, EVENT) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
 
 
-def test_a_failed_walk_renders_every_row_failed_and_a_key_change_wins():
+def test_a_failed_walk_renders_every_row_failed_and_a_key_change_is_never_failed():
     failed = VerificationState(ok=False, covered={("boundary_crossing_object_large", "zone:a", 1700000400)})
     assert kv.event_verification(failed, EVENT) == (VERIFICATION_FAILED, TRUST_REASON_HA_VERIFY_FAILED)
+    # D10 / C5: a key change is Repairs tofu_mismatch, never "Failed". The
+    # row stays Sealed (it IS sealed) and the reason names the key, which
+    # is what the card's tooltip and the strategy header key on; it wins
+    # over a covered index and over a failed walk alike.
     mismatch = VerificationState(ok=True, key_mismatch=True, covered=failed.covered)
-    assert kv.event_verification(mismatch, EVENT) == (VERIFICATION_FAILED, TRUST_REASON_KERNEL_KEY_MISMATCH)
+    assert kv.event_verification(mismatch, EVENT) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_KEY_MISMATCH)
+    assert kv.event_verification(VerificationState(ok=False, key_mismatch=True), EVENT) == (
+        VERIFICATION_SEALED, TRUST_REASON_KERNEL_KEY_MISMATCH)
+    attrs = kv.witness_event_attributes(
+        EVENT, mismatch, kernel_device_id=None, kernel_reported_chain_ok=None, kernel_verified_bucket_start=None,
+    )
+    assert attrs["verification"] == "sealed" and attrs["verified"] is False
+    assert attrs["trust_reason"] == "kernel_key_mismatch"
+
+
+def test_chain_trust_reason_speaks_the_rows_vocabulary():
+    assert kv.chain_trust_reason(None) is None
+    assert kv.chain_trust_reason(VerificationState()) is None
+    assert kv.chain_trust_reason(VerificationState(ok=True)) == TRUST_REASON_HA_VERIFIED_CHAIN
+    assert kv.chain_trust_reason(VerificationState(ok=False)) == TRUST_REASON_HA_VERIFY_FAILED
+    for ok in (None, True, False):
+        assert kv.chain_trust_reason(VerificationState(ok=ok, key_mismatch=True)) == TRUST_REASON_KERNEL_KEY_MISMATCH
 
 
 def test_the_c5_attribute_table_exactly():
@@ -397,6 +417,59 @@ def test_covered_keys_fold_the_wire_spelling_to_the_dictionary_id():
     assert kv.covered_key_of_event(EVENT) == ("boundary_crossing_object_large", "zone:a", 1700000400)
     assert kv.covered_key_of_payload(DOC["entries"][2]["payload"]) is None, "a heartbeat is not an event"
     assert kv.covered_key_of_payload("not json") is None
+
+
+# Every bucket-start draw the kernel's export jitter can make (src/lib.rs
+# jitter_time_bucket: -steps..=steps times 60 s, steps = 120 / 60).
+JITTER_OFFSETS = (-120, -60, 0, 60, 120)
+
+
+def _jittered(event: dict, offset: int, *, flat: bool = False) -> dict:
+    """The C5 row of a sealed event, as the bridge publishes one export draw."""
+    start = event["time_bucket"]["start_epoch_s"] + offset
+    if flat:
+        row = {k: v for k, v in event.items() if k != "time_bucket"}
+        return dict(row, time_bucket_start=start, time_bucket_size=600)
+    return dict(event, time_bucket={"start_epoch_s": start, "size_s": 600})
+
+
+@pytest.mark.parametrize("offset", JITTER_OFFSETS)
+@pytest.mark.parametrize("flat", [False, True])
+def test_a_jittered_wire_row_matches_the_verified_entry_s_true_bucket(offset, flat):
+    """The sealed log carries the true bucket; the wire row carries the
+    kernel's export draw. The covered index and the lookup meet on the
+    canonical start, so every draw of a verified entry reads Verified."""
+    covered = {kv.covered_key_of_payload(DOC["entries"][0]["payload"])}
+    assert covered == {("boundary_crossing_object_large", "zone:a", 1700000400)}
+    state = VerificationState(ok=True, verified_bucket_start=1700001200, covered=covered)
+    row = _jittered(EVENT, offset, flat=flat)
+    assert kv.covered_key_of_event(row) == ("boundary_crossing_object_large", "zone:a", 1700000400)
+    assert kv.event_verification(state, row) == (VERIFICATION_VERIFIED, TRUST_REASON_HA_VERIFIED_CHAIN)
+    attrs = kv.witness_event_attributes(
+        row, state, kernel_device_id=None, kernel_reported_chain_ok=None, kernel_verified_bucket_start=None,
+    )
+    assert attrs["verification"] == "verified" and attrs["verified"] is True
+    # The display window is the wire's own; only the identity is canonical.
+    assert attrs["time_bucket"] == {"start_epoch_s": 1700000400 + offset, "size_s": 600}
+    # The neighboring true bucket, drawn towards this one, is still another entry.
+    neighbor = _jittered(dict(EVENT, time_bucket={"start_epoch_s": 1700001000, "size_s": 600}), -120, flat=flat)
+    assert kv.event_verification(state, neighbor) == (VERIFICATION_SEALED, TRUST_REASON_KERNEL_SEALED)
+
+
+@pytest.mark.parametrize("offset", JITTER_OFFSETS)
+def test_the_walk_s_covered_index_verifies_every_draw_of_its_rows(monkeypatch, offset):
+    """End to end: the walk indexes the sealed log's true buckets, and a
+    wire row under any export draw of those buckets is covered."""
+    import time as _time
+
+    monkeypatch.setattr(_time, "time", lambda: 1700002000.0)
+    _hass, _entry, _api, _coordinator, verifier, _events = _verifier([_with_seq(_doc())])
+    state = run(verifier.async_verify(VERIFY_TRIGGER_SCHEDULED))
+    assert state.ok is True
+    for entry_payload in (DOC["entries"][0]["payload"], DOC["entries"][1]["payload"]):
+        sealed = json.loads(entry_payload)
+        row = _jittered(sealed, offset)
+        assert kv.event_verification(state, row)[0] == VERIFICATION_VERIFIED, (offset, sealed["zone_id"])
 
 
 # ─── the verifier ──────────────────────────────────────────────────────
@@ -547,6 +620,8 @@ def test_a_foreign_key_goes_through_the_coordinator_to_repairs_never_failed():
     state = run(verifier.async_verify(VERIFY_TRIGGER_SERVICE))
     assert state.key_mismatch is True
     assert state.ok is None, "a key change is not a chain failure"
+    assert state.error == "the witness key changed; confirm it in Settings → Repairs"
+    assert kv.chain_trust_reason(state) == TRUST_REASON_KERNEL_KEY_MISMATCH
     assert coordinator.key_mismatch is True
     assert (DOMAIN, f"{ISSUE_TOFU_MISMATCH}_{entry.entry_id}") in issues(hass)
     assert [e[0] for e in events] == [VERIFICATION_EVENT_KEY_CHANGED]

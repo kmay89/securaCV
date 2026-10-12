@@ -158,6 +158,30 @@ async def test_export_evidence_writes_one_private_zip_and_notifies(
     assert "Removed" not in note["message"]
 
 
+async def test_two_concurrent_exports_both_land_in_the_index(
+    hass: HomeAssistant, kernel: KernelMock, setup_kernel_entry
+) -> None:
+    """index.json is read-modified-written per export; a button press beside an
+    automation must not drop either row. The real executor runs both."""
+    import asyncio
+
+    kernel.kernel.seal_event()
+    await setup_kernel_entry(auth_mode="paired")
+
+    first, second = await asyncio.gather(
+        hass.services.async_call(DOMAIN, "export_evidence", {"window_hours": 24}, blocking=True, return_response=True),
+        hass.services.async_call(DOMAIN, "export_evidence", {"window_hours": 48}, blocking=True, return_response=True),
+    )
+    await hass.async_block_till_done()
+    assert first["export_id"] != second["export_id"]
+
+    directory = Path(hass.config.path("securacv", "evidence"))
+    index = json.loads((directory / "index.json").read_text())
+    assert {row["export_id"] for row in index["exports"]} == {first["export_id"], second["export_id"]}
+    assert sorted(row["file"] for row in index["exports"]) == sorted(p.name for p in directory.glob("*.zip"))
+    assert len(kernel.calls("/export/bundle")) == 2
+
+
 async def test_export_window_is_validated_and_keep_n_prunes(
     hass: HomeAssistant, kernel: KernelMock, setup_kernel_entry
 ) -> None:

@@ -237,7 +237,9 @@ test("resolveVerification: kernel rows get exactly three badges from `verificati
   const sealed = resolveVerification({ verification: "sealed", verified: false, trustReason: "kernel_sealed", seq: 1204 });
   assert.equal(sealed.level, "sealed");
   assert.equal(sealed.label, "Sealed ✓");
-  assert.equal(sealed.tooltip, "Signed into the witness chain (entry #1,204). The chain check runs hourly; this entry is newer than the last one.");
+  // The cadence is the integration's (const.VERIFY_BACKSTOP_INTERVAL_SECONDS = 15 min,
+  // VERIFY_IDLE_DELAY_SECONDS = 60 s), not the kernel's hourly self-check.
+  assert.equal(sealed.tooltip, "Signed into the witness chain (entry #1,204). The chain check runs every 15 minutes and a minute after new entries stop arriving; this entry is newer than the last one.");
 
   // "failed" — the walk rejected the chain; the export nudge rides the tooltip.
   const failed = resolveVerification({ verification: "failed", verified: false, trustReason: "ha_verify_failed", seq: 1190 });
@@ -251,7 +253,7 @@ test("resolveVerification: kernel rows get exactly three badges from `verificati
 
   // Without a seq the copy stays honest and omits the entry number.
   assert.equal(resolveVerification({ verification: "sealed" }).tooltip,
-    "Signed into the witness chain. The chain check runs hourly; this entry is newer than the last one.");
+    "Signed into the witness chain. The chain check runs every 15 minutes and a minute after new entries stop arriving; this entry is newer than the last one.");
   assert.match(resolveVerification({ verification: "verified" }).tooltip, /^This entry is covered by the last chain check against the key pinned/);
 
   // A key change is never rendered as "Failed": the badge follows `verification`

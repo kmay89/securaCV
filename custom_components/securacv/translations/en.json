@@ -164,7 +164,8 @@
       "cannot_connect": "The announced witness kernel could not be identified yet; it will be offered again on the app's next start."
     },
     "create_entry": {
-      "no_kernel_found": "No witness kernel is running yet. SecuraCV is set up and will connect by itself when one appears.\n\nOn Home Assistant OS: [add the SecuraCV app repository]({addon_repo_url}) and install SecuraCV from the App Store. Running Frigate under Docker? [Follow the quickstart]({docker_quickstart_url}). Only Canary devices? Nothing to do — they appear as they report."
+      "no_kernel_found": "No witness kernel is running yet. SecuraCV is set up and will connect by itself when one appears.\n\nOn Home Assistant OS: [add the SecuraCV app repository]({addon_repo_url}) and install SecuraCV from the App Store. Running Frigate under Docker? [Follow the quickstart]({docker_quickstart_url}). Only Canary devices? Nothing to do — they appear as they report.",
+      "no_kernel_found_no_mqtt": "No witness kernel is running yet, and Home Assistant's MQTT integration is not set up; a sidecar can only be discovered once Home Assistant and the sidecar share a broker. SecuraCV is set up and connects by itself once that is in place.\n\nOn Home Assistant OS: [add the SecuraCV app repository]({addon_repo_url}) and install SecuraCV from the App Store. Running Frigate under Docker? [Follow the quickstart]({docker_quickstart_url}) and add the MQTT integration pointing at the same broker. Only Canary devices? Add the MQTT integration — they appear as they report."
     }
   },
   "issues": {

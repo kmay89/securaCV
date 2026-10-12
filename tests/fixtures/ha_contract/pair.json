@@ -31,6 +31,6 @@
     "SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)",
     "Kernel key fingerprint: 10ba682c   (Home Assistant shows the same fingerprint before it pairs)",
     "Kernel URL to confirm in Home Assistant: http://<this docker host>:8799",
-    "In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code."
+    "In Home Assistant: Settings → Devices & Services → the discovered \"SecuraCV sidecar\" card → Configure → enter the code."
   ]
 }

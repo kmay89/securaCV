@@ -92,3 +92,114 @@ async def test_blueprint_loads_and_renders_a_valid_automation(
     assert automation.raw_blueprint_inputs["use_blueprint"] == config["use_blueprint"]
     assert automation.get("triggers") or automation.get("trigger")
     assert automation.get("actions") or automation.get("action")
+
+
+# ── the digest's chain line, through the core's own template engine ──────
+
+DIGEST = REPO_ROOT / "docs" / "blueprints" / "securacv_daily_digest.yaml"
+
+
+def _digest_variables() -> dict[str, str]:
+    """The digest blueprint's `variables:` block, `!input` resolved to one
+    chain sensor, in the order the automation renders them."""
+    import yaml
+
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    def _input(loader: yaml.SafeLoader, node: yaml.Node) -> str:
+        name = loader.construct_scalar(node)
+        return {
+            "digest_sensor": "sensor.securacv_daily_digest",
+            "chain_sensor": "binary_sensor.securacv_chain_valid",
+            "chain_length_sensor": "sensor.securacv_chain_length",
+            "notify_device": "",
+            "notify_service": "notify.mobile_app_phone",
+            "digest_time": "08:00:00",
+        }[name]
+
+    _Loader.add_constructor("!input", _input)
+    document = yaml.load(DIGEST.read_text(encoding="utf-8"), Loader=_Loader)
+    return document["variables"]
+
+
+def _render_digest(hass: HomeAssistant) -> dict[str, Any]:
+    """Render the digest's variables and its notification title the way the
+    automation does (each variable may read the ones before it)."""
+    from homeassistant.helpers.template import Template
+
+    context: dict[str, Any] = {}
+    for name, value in _digest_variables().items():
+        if name == "notify_target":
+            context[name] = "notify.mobile_app_phone"
+            continue
+        context[name] = Template(str(value), hass).async_render(variables=dict(context))
+    import yaml
+
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    _Loader.add_constructor("!input", lambda loader, node: "x")
+    document = yaml.load(DIGEST.read_text(encoding="utf-8"), Loader=_Loader)
+    action = document["action"][0]["data"]
+    context["title"] = Template(action["title"], hass).async_render(variables=dict(context))
+    context["message"] = Template(action["message"], hass).async_render(variables=dict(context))
+    context["importance"] = Template(action["data"]["importance"], hass).async_render(variables=dict(context))
+    return context
+
+
+@pytest.mark.parametrize(
+    "chain_state,attributes,expected_title,expected_line,importance",
+    [
+        (
+            "unknown",
+            {"key_mismatch": True, "trust_reason": "kernel_key_mismatch",
+             "error": "the witness key changed; confirm it in Settings → Repairs", "verified_entries": 1204},
+            "SecuraCV: witness key changed",
+            "Witness key changed — confirm it in Settings → Repairs.",
+            "high",
+        ),
+        (
+            "off",
+            {"key_mismatch": False, "trust_reason": "ha_verify_failed", "failed_seq": 1190, "verified_entries": 1189},
+            "SecuraCV: chain check failed",
+            "Chain check FAILED — the witness log may have been altered; export now, entries before the break still verify.",
+            "high",
+        ),
+        (
+            "on",
+            {"key_mismatch": False, "trust_reason": "ha_verified_chain", "verified_entries": 1204},
+            "SecuraCV daily digest",
+            "Chain verified ✓ · 1,204 entries.",
+            "default",
+        ),
+        (
+            "unknown",
+            {"key_mismatch": False, "trust_reason": None},
+            "SecuraCV daily digest",
+            "Chain not verified yet.",
+            "default",
+        ),
+    ],
+    ids=["key-changed", "failed", "verified", "not-yet"],
+)
+async def test_the_digest_renders_a_key_change_as_repairs_never_as_failed(
+    hass: HomeAssistant, chain_state: str, attributes: dict[str, Any], expected_title: str, expected_line: str, importance: str
+) -> None:
+    """D10 in the morning notification: a key change is 'Witness key changed —
+    confirm it in Settings → Repairs', with the digest's title saying so, and
+    only a failed walk is 'Chain check FAILED'."""
+    hass.states.async_set("sensor.securacv_daily_digest", "0", {"per_zone": {}, "per_period": {}})
+    hass.states.async_set("binary_sensor.securacv_chain_valid", chain_state, attributes)
+    hass.states.async_set("sensor.securacv_chain_length", "1204")
+    await hass.async_block_till_done()
+
+    rendered = _render_digest(hass)
+    assert rendered["chain_key_changed"] is (attributes.get("key_mismatch") is True)
+    assert rendered["chain_line"] == expected_line
+    assert rendered["title"] == expected_title
+    assert rendered["importance"] == importance
+    assert rendered["message"] == f"Quiet night: no witness events. {expected_line}"
+    if attributes.get("key_mismatch"):
+        assert "FAILED" not in rendered["message"] and "altered" not in rendered["message"]
+        assert rendered["chain_failed"] is False

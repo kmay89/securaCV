@@ -24,6 +24,7 @@ from ..kernel_trust import (  # noqa: E402
     kernel_key_fingerprint,
     normalize_kernel_key,
     parse_announce,
+    valid_api_host,
     valid_kernel_device_id,
     verify_announce_signature,
 )
@@ -97,6 +98,92 @@ def test_api_url_falls_back_to_the_broker_host_and_brackets_ipv6():
     assert a.api_url(None) is None
     assert a.api_url("10.0.0.5") == "http://10.0.0.5:8799"
     assert a.api_url("fd00::1") == "http://[fd00::1]:8799"
+    assert a.api_url("[fd00::1]") == "http://[fd00::1]:8799"
+    assert a.api_url("mosquitto") == "http://mosquitto:8799"
+
+
+# What an announced `api.host` may NOT be: anything that would carry its own
+# port, path, query, fragment or user info into the URL the 6-digit code is
+# POSTed to (the announce is unsigned until a pin exists), plus whitespace,
+# control characters, a bare IPv6 (brackets are the only spelling), and
+# names RFC 1123 refuses.
+HOSTILE_HOSTS = [
+    "192.168.1.9:1234#",
+    "192.168.1.9:1234",
+    "192.168.1.9#frag",
+    "192.168.1.9?x=1",
+    "evil.example/x",
+    "a@b",
+    "user:pw@host",
+    "host name",
+    "host\tname",
+    "host\nname",
+    " host",
+    "host ",
+    "host\x00",
+    "ho\x7fst",
+    "fd00::1",
+    "[fd00::1]:8799",
+    "[fd00::1]#",
+    "[not-an-address]",
+    "[fd00::1%eth0]",
+    "[192.168.1.9]",
+    "[]",
+    "-bad.example",
+    "bad-.example",
+    "ex..ample",
+    ".example",
+    "example.",
+    "under_score.example",
+    "h\u00f6st.example",
+    "a" * 64 + ".example",
+    ".".join(["a" * 63] * 4) + ".ab",
+    "",
+    "http://192.168.1.9",
+]
+
+
+@pytest.mark.parametrize("bad", HOSTILE_HOSTS)
+def test_an_announced_host_that_is_not_a_bare_host_is_refused(bad):
+    assert not valid_api_host(bad), bad
+    assert parse_announce(json.dumps(payload(api={"scheme": "http", "bind": "all", "port": 8799, "host": bad}))) is None
+
+
+@pytest.mark.parametrize("non_string", [None, 1, True, ["h"], {"h": 1}])
+def test_a_non_string_host_is_refused(non_string):
+    assert not valid_api_host(non_string)
+    assert parse_announce(json.dumps(payload(api={"scheme": "http", "bind": "all", "port": 8799, "host": non_string}))) is None
+
+
+@pytest.mark.parametrize("good,url_host", [
+    ("192.168.1.9", "192.168.1.9"),
+    ("sidecar", "sidecar"),
+    ("frigate.lan", "frigate.lan"),
+    ("my-host.example.com", "my-host.example.com"),
+    ("Host.Example", "Host.Example"),
+    ("9front", "9front"),
+    ("[fd00::1]", "[fd00::1]"),
+    ("[::1]", "[::1]"),
+    ("[2001:db8::ffff:192.168.1.9]", "[2001:db8::ffff:192.168.1.9]"),
+    ("a" * 63 + ".example", "a" * 63 + ".example"),
+])
+def test_a_bare_host_is_accepted_and_the_url_is_scheme_host_port_only(good, url_host):
+    assert valid_api_host(good)
+    a = parse_announce(json.dumps(payload(api={"scheme": "https", "bind": "all", "port": 8443, "host": good})))
+    assert a is not None and a.api_host == good
+    assert a.api_url("ignored") == f"https://{url_host}:8443"
+
+
+@pytest.mark.parametrize("bad", HOSTILE_HOSTS)
+def test_api_url_never_builds_a_url_from_a_hostile_fallback_host(bad):
+    """The fallback (HA's own broker setting) is trusted input, but the URL
+    is still only ever scheme://host:port — anything else prefills nothing."""
+    a = parse_announce(json.dumps(payload()))
+    if bad == "fd00::1":
+        # The one courtesy: a bare IPv6 from HA's own MQTT entry gets brackets.
+        assert a.api_url(bad) == "http://[fd00::1]:8799"
+    else:
+        assert a.api_url(bad) is None, bad
 
 
 @pytest.mark.parametrize(

@@ -26,6 +26,7 @@ Media → SecuraCV evidence.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -86,6 +87,10 @@ FILE_MODE = 0o600
 DATA_VIEW_REGISTERED = "_evidence_view_registered"
 # hass.data key of the cached index rows (one directory per instance).
 DATA_INDEX_CACHE = "_evidence_index"
+# One lock per instance around compose + index: index.json is one file for
+# every entry, read-modified-written per export, so two exports in flight
+# at once (a button press beside an automation) would drop one's row.
+DATA_EXPORT_LOCK = "_evidence_export_lock"
 
 NOTIFICATION_TITLE = "SecuraCV evidence export ready"
 # The persistent notification, exactly as the contract words it.
@@ -357,6 +362,20 @@ def _cache_records(hass: HomeAssistant, records: list[ExportRecord]) -> None:
     hass.data.setdefault(DOMAIN, {})[DATA_INDEX_CACHE] = list(records)
 
 
+def export_lock(hass: HomeAssistant) -> asyncio.Lock:
+    """The instance-wide lock every export's compose + index update holds.
+
+    Instance-wide, not per entry: the index (and the keep-N pruning that
+    rewrites it) is shared by every kernel entry on this Home Assistant.
+    """
+    store = hass.data.setdefault(DOMAIN, {})
+    lock = store.get(DATA_EXPORT_LOCK)
+    if not isinstance(lock, asyncio.Lock):
+        lock = asyncio.Lock()
+        store[DATA_EXPORT_LOCK] = lock
+    return lock
+
+
 async def async_load_records(hass: HomeAssistant) -> list[ExportRecord]:
     """The index rows, read once from disk and cached for this instance."""
     cached = hass.data.get(DOMAIN, {}).get(DATA_INDEX_CACHE)
@@ -398,24 +417,27 @@ async def async_export_evidence(
     kernel_device_id = entry.data.get(CONF_KERNEL_DEVICE_ID)
     export_id = new_export_id()
     now = time.time()
-    composed = await hass.async_add_executor_job(
-        lambda: compose_export(
-            evidence_dir(hass),
-            download=download,
-            verifying_key=verifying_key,
-            kernel_device_id=str(kernel_device_id) if kernel_device_id else None,
-            entry_id=entry.entry_id,
-            window_hours=hours,
-            export_id=export_id,
-            date=dt_util.now().strftime("%Y-%m-%d"),
-            created_bucket_start=int(now // TIME_BUCKET_SECONDS) * TIME_BUCKET_SECONDS,
-            keep=evidence_keep(entry),
-            viewer_source=www_dir() / EVIDENCE_VIEWER_SOURCE,
-            readme_source=www_dir() / EVIDENCE_README_SOURCE,
+    # The download runs concurrently with anything; the pack + index write
+    # is one export at a time (index.json is a shared read-modify-write).
+    async with export_lock(hass):
+        composed = await hass.async_add_executor_job(
+            lambda: compose_export(
+                evidence_dir(hass),
+                download=download,
+                verifying_key=verifying_key,
+                kernel_device_id=str(kernel_device_id) if kernel_device_id else None,
+                entry_id=entry.entry_id,
+                window_hours=hours,
+                export_id=export_id,
+                date=dt_util.now().strftime("%Y-%m-%d"),
+                created_bucket_start=int(now // TIME_BUCKET_SECONDS) * TIME_BUCKET_SECONDS,
+                keep=evidence_keep(entry),
+                viewer_source=www_dir() / EVIDENCE_VIEWER_SOURCE,
+                readme_source=www_dir() / EVIDENCE_README_SOURCE,
+            )
         )
-    )
-    _cache_records(hass, composed.records)
-    _mirror_to_runtime(hass, composed.records)
+        _cache_records(hass, composed.records)
+        _mirror_to_runtime(hass, composed.records)
 
     record = composed.record
     signed_url = signed_download_url(hass, record.export_id)

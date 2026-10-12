@@ -216,6 +216,31 @@ async def test_automatic_finds_the_app_at_its_hostname(
     assert entry.state is ConfigEntryState.LOADED
 
 
+async def test_automatic_without_an_mqtt_integration_names_the_missing_broker(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, kernel: KernelMock
+) -> None:
+    """J2 with no MQTT integration at all: no announce can be heard, so the
+    final screen says the MQTT integration and a shared broker come first,
+    instead of promising to connect by itself."""
+    assert hass.config_entries.async_entries("mqtt") == []
+    aioclient_mock.get(f"{DEFAULT_KERNEL_URL}/api/identity", exc=aiohttp.ClientConnectionError("no app"))
+    with patch("custom_components.securacv.config_flow.ANNOUNCE_LISTEN_SECONDS", 0.2):
+        result = await start_user_flow(hass, SETUP_MODE_AUTO)
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["description"] == "no_kernel_found_no_mqtt"
+    assert set(result["description_placeholders"]) == {"addon_repo_url", "docker_quickstart_url"}
+    entry = result["result"]
+    assert entry.data == {CONF_ENABLE_MQTT: True, CONF_MQTT_PREFIX: "securacv", CONF_SETUP_MODE: SETUP_MODE_MQTT}
+    assert ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_NO_KERNEL_FOUND) is not None
+    # The words themselves, through the translation Home Assistant renders.
+    from homeassistant.helpers.translation import async_get_translations
+
+    translations = await async_get_translations(hass, "en", "config", {DOMAIN})
+    text = translations[f"component.{DOMAIN}.config.create_entry.no_kernel_found_no_mqtt"]
+    assert "MQTT integration is not set up" in text and "share a broker" in text
+
+
 async def test_automatic_with_nothing_running_creates_the_mqtt_entry_and_the_repair(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mqtt_mock: MqttMockHAClient, kernel: KernelMock
 ) -> None:

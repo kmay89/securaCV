@@ -356,7 +356,7 @@ pairing_state_report() {
     else
         echo "- paired: no"
         echo "  - Pair Home Assistant: docker exec securacv pair, then enter the code it prints"
-        echo "    in Settings → Devices & Services → SecuraCV (discovered) → Configure."
+        echo "    in Settings → Devices & Services → the discovered 'SecuraCV sidecar' card → Configure."
     fi
     expires=$(pairing_code_expires)
     now=$(date +%s)
@@ -659,7 +659,7 @@ pair() {
     printf 'SecuraCV pairing code: %s   (valid %s minutes, %s attempts)\n' "$code" "$minutes" "$attempts"
     printf 'Kernel key fingerprint: %s   (Home Assistant shows the same fingerprint before it pairs)\n' "$fingerprint"
     printf 'Kernel URL to confirm in Home Assistant: http://%s:%s\n' "$(announce_host_for_url)" "$API_PORT"
-    printf 'In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code.\n'
+    printf 'In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.\n'
 
     if [ "$API_BIND_MODE" != "all" ]; then
         log "SECURACV_API_BIND=$API_BIND_MODE: Home Assistant cannot reach this API to redeem the code. Set SECURACV_API_BIND=all and publish the port (ports: - \"8799:8799\" in compose)."
@@ -858,7 +858,7 @@ EOF
         DAEMON_PIDS+=($!)
         log "event_mqtt_bridge started (PID ${DAEMON_PIDS[-1]})"
         log "fleet roll-call: $FLEET_PEERS_FILE (GET /api/fleet on $API_ADDR serves $WITNESS_API_FLEET_ROLLCALL)"
-        log "announce: retained on ${MQTT_TOPIC_PREFIX:-witness}/$ha_device_id/announce — Home Assistant shows 'SecuraCV sidecar discovered'; pair it with: docker exec securacv pair"
+        log "announce: retained on ${MQTT_TOPIC_PREFIX:-witness}/$ha_device_id/announce — Home Assistant shows a discovered 'SecuraCV sidecar' card; pair it with: docker exec securacv pair"
     else
         log "HA Discovery publishing disabled (SECURACV_PUBLISH=$publish); no announce is published (Home Assistant discovers nothing), no bridge listens for Canaries, so GET /api/fleet lists this kernel only (an earlier roll-call file is kept for its pins, not served)"
     fi

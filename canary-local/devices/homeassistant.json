@@ -522,7 +522,7 @@
     },
     {
       "name": "Chain Length",
-      "desc": "entries in the sealed log, from the integration's last chain walk (`head.seq`) else `/api/identity`, with `latest_hash`, `algorithm`, `verifying_key`, `pinned` and `verified_seq` (`chain_length`; unit blocks)"
+      "desc": "the sealed log's head: the newest entry's sequence number from the integration's last chain walk (`head.seq`), or the kernel's own row count from `/api/identity` until the first walk \u2014 `source` says which (`walk_head` / `kernel_identity`); the two differ once retention has pruned rows, so the sensor has no statistics class"
     },
     {
       "name": "Daily digest",
@@ -562,7 +562,7 @@
     },
     {
       "name": "Chain Valid",
-      "desc": "ON when the integration's own last chain walk verified the sealed log against the pinned key, OFF when it rejected it, unknown until the first walk; attributes `verified_seq`, `verified_entries`, `verified_bucket_start`, `verified_bucket_size`, `head_seq`, `failed_seq`, `key_mismatch`, `verifying`, `last_trigger`, `kernel_reported_chain_ok`, `kernel_verified_bucket_start`, `error` (`chain_valid`)"
+      "desc": "ON when the integration's own last chain walk verified the sealed log against the pinned key, OFF when it rejected it, unknown until the first walk and while the kernel serves a key other than the pinned one (`key_mismatch: true`, `trust_reason: kernel_key_mismatch`, `error` naming Settings \u2192 Repairs \u2014 a key change is never shown as a failure); attributes `verified_seq`, `verified_entries`, `verified_bucket_start`, `verified_bucket_size`, `head_seq`, `failed_seq`, `key_mismatch`, `trust_reason`, `verifying`, `last_trigger`, `kernel_reported_chain_ok`, `kernel_verified_bucket_start`, `error` (`chain_valid`)"
     },
     {
       "name": "Frigate link",

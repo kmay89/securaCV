@@ -113,9 +113,15 @@ variables:
   # is the integration's chain_valid ('on' = verified).
   chain_is_problem_class: "{{ state_attr(chain_sensor, 'device_class') == 'problem' }}"
   chain_state: "{{ states(chain_sensor) }}"
+  # The kernel serves a key other than the one the integration pinned: a
+  # Repairs matter (tofu_mismatch), never a chain failure — the sensor says
+  # so in `key_mismatch` / `trust_reason`, and this line wins over the state.
+  chain_key_changed: >-
+    {{ state_attr(chain_sensor, 'key_mismatch') is true
+       or state_attr(chain_sensor, 'trust_reason') == 'kernel_key_mismatch' }}
   chain_failed: >-
-    {{ chain_state == ('on' if chain_is_problem_class else 'off') }}
-  chain_unknown: "{{ chain_state in ['unknown', 'unavailable', 'none'] }}"
+    {{ not chain_key_changed and chain_state == ('on' if chain_is_problem_class else 'off') }}
+  chain_unknown: "{{ not chain_key_changed and chain_state in ['unknown', 'unavailable', 'none'] }}"
   chain_when: >-
     {% set vbs = state_attr(chain_sensor, 'verified_bucket_start')
          if not chain_is_problem_class else state_attr(chain_sensor, 'verified_at_bucket_start') %}
@@ -125,7 +131,8 @@ variables:
     {% if n is not number and chain_length_sensor and states(chain_length_sensor) | is_number %}{% set n = states(chain_length_sensor) | int %}{% endif %}
     {{ '{:,}'.format(n | int) if n is number else '' }}
   chain_line: >-
-    {% if chain_failed %}Chain check FAILED{% if chain_when %} at {{ chain_when }}{% endif %} — the witness log may have been altered; export now, entries before the break still verify.
+    {% if chain_key_changed %}Witness key changed — confirm it in Settings → Repairs.
+    {%- elif chain_failed %}Chain check FAILED{% if chain_when %} at {{ chain_when }}{% endif %} — the witness log may have been altered; export now, entries before the break still verify.
     {%- elif chain_unknown %}Chain not verified yet.
     {%- elif chain_is_problem_class %}Chain OK (kernel-reported){% if chain_when %} at {{ chain_when }}{% endif %}{% if chain_entries %} · {{ chain_entries }} entries{% endif %}.
     {%- else %}Chain verified ✓{% if chain_when %} at {{ chain_when }}{% endif %}{% if chain_entries %} · {{ chain_entries }} entries{% endif %}.
@@ -143,7 +150,7 @@ action:
   - service: "{{ notify_target }}"
     data:
       title: >-
-        {% if chain_failed %}SecuraCV: chain check failed{% else %}SecuraCV daily digest{% endif %}
+        {% if chain_key_changed %}SecuraCV: witness key changed{% elif chain_failed %}SecuraCV: chain check failed{% else %}SecuraCV daily digest{% endif %}
       message: >-
         {% if event_count == 0 %}Quiet night: no witness events. {{ chain_line }}
         {%- else %}{{ event_count }} event{{ '' if event_count == 1 else 's' }}{% if zone_line %}: {{ zone_line }}{% endif %}{% if period_line %} · {{ period_line }}{% endif %} · {{ chain_line[0] | lower }}{{ chain_line[1:] }}
@@ -151,4 +158,4 @@ action:
       data:
         tag: securacv-daily-digest
         group: SecuraCV
-        importance: "{{ 'high' if chain_failed else 'default' }}"
+        importance: "{{ 'high' if (chain_failed or chain_key_changed) else 'default' }}"

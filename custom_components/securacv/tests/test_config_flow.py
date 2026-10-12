@@ -24,6 +24,7 @@ Runs against the stub ConfigFlow base from conftest — no HA core needed.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -480,16 +481,28 @@ def test_a_signed_announce_with_another_key_raises_the_repairs_issue():
     assert existing.data[CONF_URL] == "http://old:8799", "nothing moved"
 
 
-def test_an_unpinned_legacy_entry_takes_only_the_prefix_from_an_announce():
+def test_an_unpinned_legacy_entry_takes_nothing_from_an_unverifiable_announce():
+    """No pin, no signature check: a retained announce anyone on the broker
+    can publish must not move the entry's push subscriptions (its topic
+    prefix) or its URL, nor reload it — alternating prefixes would reload
+    the entry on every publish and point it at topics the publisher feeds."""
     existing = make_entry(
-        {CONF_URL: "http://old:8799", CONF_ENABLE_MQTT: True, CONF_SETUP_MODE: SETUP_MODE_BOTH},
+        {CONF_URL: "http://old:8799", CONF_ENABLE_MQTT: True, CONF_SETUP_MODE: SETUP_MODE_BOTH,
+         CONF_MQTT_TOPIC_PREFIX: "witness"},
         unique_id=UNIQUE_ID,
     )
     flow = make_flow(entries=[existing])
-    result = drive(flow.async_step_mqtt(announce_info(announce_payload())))
-    assert result["reason"] == "already_configured"
+    hostile = announce_payload(mqtt_topic_prefix="x")
+    result = drive(flow.async_step_mqtt(announce_info(hostile)))
+    assert result["type"] == "abort" and result["reason"] == "already_configured"
     assert existing.data[CONF_URL] == "http://old:8799", "an unverifiable announce never moves the URL"
-    assert existing.data[CONF_MQTT_TOPIC_PREFIX] == "witness"
+    assert existing.data[CONF_MQTT_TOPIC_PREFIX] == "witness", "nor the topic prefix"
+    assert flow._test_reloads == [] and flow.hass.config_entries.reloads == []
+    assert flow.hass.config_entries.updates == []
+    # Even a signed announce means nothing without a pin to check it against.
+    result = drive(flow.async_step_mqtt(announce_info(signed_announce(mqtt_topic_prefix="x"))))
+    assert result["reason"] == "already_configured"
+    assert existing.data[CONF_MQTT_TOPIC_PREFIX] == "witness" and flow._test_reloads == []
 
 
 def test_the_token_file_announce_path_probes_and_pins(monkeypatch):
@@ -566,7 +579,9 @@ def test_auto_mode_kernel_without_identity_still_counts_as_present(monkeypatch):
 def test_auto_mode_nothing_found_creates_mqtt_entry_and_says_where_to_look(monkeypatch):
     fake_probe(monkeypatch, CannotConnect())
     no_announce(monkeypatch)
-    flow = make_flow()
+    hass = make_hass()
+    hass.config_entries.add(SimpleNamespace(domain="mqtt", data={"broker": "10.0.0.5"}))
+    flow = make_flow(hass=hass)
     result = drive(flow.async_step_user({CONF_SETUP_MODE: SETUP_MODE_AUTO}))
 
     assert result["type"] == "create_entry", "auto must never dead-end in a form"
@@ -582,6 +597,26 @@ def test_auto_mode_nothing_found_creates_mqtt_entry_and_says_where_to_look(monke
     issue = issues(flow.hass)[(DOMAIN, ISSUE_NO_KERNEL_FOUND)]
     assert issue["is_fixable"] is False and issue["severity"] == "warning"
     assert issue["translation_placeholders"] == result["description_placeholders"]
+
+
+def test_auto_mode_without_an_mqtt_integration_says_the_broker_comes_first(monkeypatch):
+    """No MQTT entry in Home Assistant: no announce can ever be heard, so the
+    final screen must not promise to connect by itself — it names the
+    missing MQTT integration and the shared broker instead (same links)."""
+    fake_probe(monkeypatch, CannotConnect())
+    no_announce(monkeypatch)
+    flow = make_flow()
+    assert flow.hass.config_entries.async_entries("mqtt") == []
+    result = drive(flow.async_step_user({CONF_SETUP_MODE: SETUP_MODE_AUTO}))
+    assert result["type"] == "create_entry"
+    assert result["description"] == "no_kernel_found_no_mqtt"
+    assert set(result["description_placeholders"]) == {"addon_repo_url", "docker_quickstart_url"}
+    strings = json.loads((Path(config_flow.__file__).resolve().parent / "strings.json").read_text(encoding="utf-8"))
+    text = strings["config"]["create_entry"]["no_kernel_found_no_mqtt"]
+    assert "MQTT integration is not set up" in text and "share a broker" in text
+    assert "{addon_repo_url}" in text and "{docker_quickstart_url}" in text
+    assert "will connect by itself when one appears" not in text
+    assert (DOMAIN, ISSUE_NO_KERNEL_FOUND) in issues(flow.hass)
 
 
 def test_auto_mode_finds_a_sidecar_announce(monkeypatch):
@@ -722,7 +757,9 @@ def test_hassio_discovery_creates_both_entry(monkeypatch):
     assert result["data_schema"].schema == {}
     assert flow.confirm_only is True
     assert flow.unique_id == UNIQUE_ID
-    assert flow.context["title_placeholders"] == {"name": "SecuraCV"}
+    # flow_title is "SecuraCV {name}": the card reads "SecuraCV app", not the
+    # app's name twice; the confirm copy still has the name itself.
+    assert flow.context["title_placeholders"] == {"name": "app"}
     assert result["description_placeholders"] == {
         "name": "SecuraCV",
         "url": "http://d0491a67-privacy-witness-kernel:8799",
@@ -1047,9 +1084,21 @@ def test_reauth_of_a_paired_entry_asks_for_a_new_code(monkeypatch):
     assert flow.hass.config_entries.reloads == ["entry-1"]
 
 
-def test_reauth_refuses_a_different_kernel(monkeypatch):
+def test_reauth_refuses_a_different_kernel_and_revokes_the_token_it_minted(monkeypatch):
+    """The code was redeemed on kernel B while re-authing the entry for A:
+    B minted a live bearer nobody will hold — revoke it before refusing."""
     fake_pair(monkeypatch, PairResult(token="f1" * 32, token_id="0a1b2c3d", device_id="pwk_ffffffff",
                                       verifying_key=OTHER_KEY, kernel_version="2.4.16"))
+    revoked: list[tuple[str, str, str]] = []
+
+    class _Api:
+        def __init__(self, url, token, session, token_file=None):
+            self.url, self.token = url, token
+
+        async def async_revoke_paired_token(self, token_id):
+            revoked.append((self.url, self.token, token_id))
+
+    monkeypatch.setattr(config_flow, "SecuraCVApi", _Api)
     entry = _paired_entry()
     flow = make_flow(entries=[entry], source="reauth", context={"entry_id": "entry-1"})
     drive(flow.async_step_reauth(entry.data))
@@ -1057,6 +1106,28 @@ def test_reauth_refuses_a_different_kernel(monkeypatch):
                                                    CONF_PAIRING_CODE: "483921"}))
     assert result["type"] == "abort" and result["reason"] == "wrong_kernel"
     assert entry.data[CONF_URL] == "http://192.168.1.20:8799"
+    assert entry.data[CONF_TOKEN] != "f1" * 32, "the foreign token never reaches the entry"
+    assert revoked == [("http://192.168.1.99:8799", "f1" * 32, "0a1b2c3d")], "revoked with the token it minted, on the kernel that minted it"
+    assert flow.hass.config_entries.reloads == []
+
+
+def test_reauth_wrong_kernel_still_aborts_when_the_revoke_fails(monkeypatch):
+    fake_pair(monkeypatch, PairResult(token="f1" * 32, token_id="0a1b2c3d", device_id="pwk_ffffffff",
+                                      verifying_key=OTHER_KEY, kernel_version="2.4.16"))
+
+    class _Api:
+        def __init__(self, url, token, session, token_file=None):
+            pass
+
+        async def async_revoke_paired_token(self, token_id):
+            raise SecuraCVApiConnectionError("gone")
+
+    monkeypatch.setattr(config_flow, "SecuraCVApi", _Api)
+    entry = _paired_entry()
+    flow = make_flow(entries=[entry], source="reconfigure", context={"entry_id": "entry-1"})
+    result = drive(flow.async_step_reconfigure({CONF_URL: "http://192.168.1.99:8799",
+                                                CONF_PAIRING_CODE: "483921"}))
+    assert result["type"] == "abort" and result["reason"] == "wrong_kernel"
 
 
 def test_reauth_of_a_token_file_entry_asks_for_the_file(monkeypatch):

@@ -125,7 +125,7 @@ Kernel (Frigate) rows get exactly three badges, driven by the integration's
 
 | Badge | Meaning | Tooltip |
 |---|---|---|
-| **Sealed ✓** (muted) | signed into the witness chain, newer than the last chain check | *Signed into the witness chain (entry #1,204). The chain check runs hourly; this entry is newer than the last one.* — the card's wording; the integration's walk actually runs every 15 minutes and 60 s after the chain goes idle, so a row is Sealed for at most that long ([the cadence](homeassistant_setup.md#what-sealed--verified--and-failed--mean)) |
+| **Sealed ✓** (muted) | signed into the witness chain, newer than the last chain check | *Signed into the witness chain (entry #1,204). The chain check runs every 15 minutes and a minute after new entries stop arriving; this entry is newer than the last one.* — the integration's cadence, so a row is Sealed for at most that long ([the cadence](homeassistant_setup.md#what-sealed--verified--and-failed--mean)) |
 | **Verified ✓** (green) | covered by a chain check the integration ran against the key it pinned | *Entry #1,204 is covered by the chain check at 15:00 against the key pinned when you connected.* |
 | **Failed ⚠** | the chain check rejected the chain | *The chain check rejected the chain at entry #1,190; later entries can't be trusted. Export now: entries before entry #1,190 still verify.* |
 

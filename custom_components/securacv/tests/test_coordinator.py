@@ -360,6 +360,105 @@ def test_event_bucket_start_reads_both_payload_shapes():
     assert coord_mod.event_bucket_start(None) is None
 
 
+# The kernel's export jitter (src/lib.rs jitter_time_bucket): `choice` uniform
+# in -steps..=steps times jitter_step_s, defaults 120 s / 60 s. Every offset
+# the kernel can draw, for the default bucket and the kernel's minimum one.
+JITTER_OFFSETS = (-120, -60, 0, 60, 120)
+
+
+@pytest.mark.parametrize("offset", JITTER_OFFSETS)
+@pytest.mark.parametrize("size", [600, 300])
+def test_canonical_bucket_start_undoes_every_jitter_the_kernel_can_draw(offset, size):
+    true_start = 1760140800  # on both grids (a multiple of 600 is one of 300)
+    assert coord_mod.canonical_bucket_start(true_start + offset, size) == true_start
+    # The nested and the flat wire shapes, with the size beside the start.
+    nested = {"time_bucket": {"start_epoch_s": true_start + offset, "size_s": size}}
+    flat = {"time_bucket_start": true_start + offset, "time_bucket_size": size}
+    assert coord_mod.event_bucket_start(nested) == true_start
+    assert coord_mod.event_bucket_start(flat) == true_start
+    # The wire's own window is still readable, untouched, for display.
+    assert coord_mod.wire_bucket_start(nested) == true_start + offset
+
+
+def test_canonical_bucket_start_falls_back_to_the_dictionary_bucket():
+    # No size, a junk size, a bool: the 600 s bucket; a true start is a no-op.
+    for size in (None, 0, -5, True, "600"):
+        assert coord_mod.canonical_bucket_start(1760140800 - 120, size) == 1760140800
+    assert coord_mod.event_bucket_start({"time_bucket_start": 1760140800 + 60}) == 1760140800
+    assert coord_mod.canonical_bucket_start(0, 600) == 0
+    # The kernel clamps a negative draw at zero (saturating_sub): still bucket 0.
+    assert coord_mod.canonical_bucket_start(0, 600) == coord_mod.canonical_bucket_start(120, 600)
+
+
+def _jittered(event: dict, offset: int) -> dict:
+    """The same sealed event, exported with the kernel's draw `offset`."""
+    bucket = dict(event["time_bucket"])
+    bucket["start_epoch_s"] += offset
+    return dict(event, time_bucket=bucket)
+
+
+@pytest.mark.parametrize("push_offset,backstop_offset", [
+    (-120, 60), (60, -120), (0, 120), (120, 0), (-60, -60),
+])
+def test_one_event_seen_by_push_and_by_the_backstop_fires_exactly_once(push_offset, backstop_offset):
+    """The bridge publishes one draw of a sealed event's bucket; five minutes
+    later /events/latest serves the same event under a fresh draw. That is
+    one event: one dispatch, one latest-event slot, however the draws fell."""
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    sealed = {"event_type": "BoundaryCrossingObjectLarge", "zone_id": "zone:front_door",
+              "time_bucket": {"start_epoch_s": 1760140800, "size_s": 600}, "seq": 7}
+    pushed = _jittered(sealed, push_offset)
+    served = _jittered(sealed, backstop_offset)
+    api = FakeApi(latest_event=served)
+    hass, entry, _api, coordinator = _coordinator(api=api)
+    seen: list = []
+    async_dispatcher_connect(hass, coord_mod.witness_event_signal(entry.entry_id), seen.append)
+
+    coordinator._handle_event(types.SimpleNamespace(topic="witness/events", payload=json.dumps(pushed), retain=False))
+    assert seen == [pushed]
+    run(coordinator.async_refresh())
+    run(coordinator.async_refresh())
+    assert seen == [pushed], "a re-jittered copy of the same event is not a new event"
+    assert coordinator.data["latest_event"] == pushed, "the push copy keeps the slot"
+    assert coord_mod.event_dedupe_key(pushed) == coord_mod.event_dedupe_key(served) == (
+        "zone:front_door", 1760140800, "boundary_crossing_object_large")
+
+    # The other order: the backstop fills the gap first, then the push copy arrives.
+    api2 = FakeApi(latest_event=served)
+    hass2, entry2, _api2, coordinator2 = _coordinator(api=api2)
+    seen2: list = []
+    async_dispatcher_connect(hass2, coord_mod.witness_event_signal(entry2.entry_id), seen2.append)
+    run(coordinator2.async_refresh())
+    assert seen2 == [served]
+    coordinator2._handle_event(types.SimpleNamespace(topic="witness/events", payload=json.dumps(pushed), retain=False))
+    assert seen2 == [served]
+
+
+def test_a_retained_replay_and_a_rejittered_backstop_never_refire_on_reload():
+    """After a restart the retained last_event replays one draw and the first
+    backstop serves another: nothing fires (C10), and the newer-than test
+    does not flap on the draw."""
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    sealed = {"event_type": "TamperDetected", "zone_id": "zone:a",
+              "time_bucket": {"start_epoch_s": 1760140800, "size_s": 600}}
+    api = FakeApi(latest_event=_jittered(sealed, 120))
+    hass, entry, _api, coordinator = _coordinator(api=api)
+    seen: list = []
+    async_dispatcher_connect(hass, coord_mod.witness_event_signal(entry.entry_id), seen.append)
+    coordinator._handle_last_event(_msg("witness/last_event", json.dumps(_jittered(sealed, -120))))
+    run(coordinator.async_refresh())
+    assert seen == []
+    assert coordinator.data["latest_event"] == _jittered(sealed, -120)
+    # A genuinely newer bucket served by the backstop, drawn downwards, still lands.
+    newer = {"event_type": "TamperDetected", "zone_id": "zone:a",
+             "time_bucket": {"start_epoch_s": 1760141400 - 120, "size_s": 600}}
+    api.answers["latest_event"] = newer
+    run(coordinator.async_refresh())
+    assert seen == [newer] and coordinator.data["latest_event"] == newer
+
+
 # ── the kernel's own report, and the signals stage b reads ──────────────
 
 

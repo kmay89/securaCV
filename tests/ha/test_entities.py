@@ -94,7 +94,12 @@ async def test_kernel_entities_names_icons_and_categories(
     chain_length = hass.states.get("sensor.securacv_chain_length")
     assert chain_length.state == "0"
     assert chain_length.attributes["unit_of_measurement"] == "blocks"
-    assert chain_length.attributes["state_class"] == "total_increasing"
+    # No statistics class: the state switches from the kernel's row count to
+    # the walk head seq, and retention prunes the count — either would read
+    # as a meter reset under total_increasing.
+    assert "state_class" not in chain_length.attributes
+    assert chain_length.attributes["source"] in ("walk_head", "kernel_identity")
+    assert chain_length.attributes["kernel_chain_length"] == 0
     assert chain_length.attributes["pinned"] is True
     assert chain_length.attributes["algorithm"] == "ed25519"
 
