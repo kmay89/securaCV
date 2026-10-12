@@ -272,8 +272,14 @@ class SecuraCVApi:
         return await self._async_get_json("/api/identity", none_on_404=True)
 
     async def async_revoke_paired_token(self, token_id: str) -> None:
-        """DELETE /api/pair/<id>: a paired token may revoke itself."""
-        await self._async_request_json("DELETE", f"/api/pair/{token_id}")
+        """DELETE /api/pair/<id>: a paired token may revoke itself.
+
+        A 404 is "already gone" — the operator ran `unpair`, or the kernel
+        is the app (token-file mode, pairing off) and never held the id —
+        and is not an error; a 403 (`forbidden`: a paired bearer naming
+        another id) still raises, as it should.
+        """
+        await self._async_request_json("DELETE", f"/api/pair/{token_id}", none_on_404=True)
 
     async def async_get_sealed_log(self, from_seq: int | None = None) -> dict[str, Any]:
         """GET /api/sealed-log[?from_seq=<n>] (contract C4 as amended).

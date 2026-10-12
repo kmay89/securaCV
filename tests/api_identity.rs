@@ -10,7 +10,8 @@ use std::net::TcpStream;
 use std::path::Path;
 use tempfile::tempdir;
 use witness_kernel::api::{
-    ApiConfig, ApiHandle, ApiServer, FleetRollcall, ViewerTokenSet, VIEWER_TOKEN_FILE_NAME,
+    ApiConfig, ApiHandle, ApiServer, FleetRollcall, IdentityDocument, LastVerifySummary,
+    ViewerTokenSet, VIEWER_TOKEN_FILE_NAME,
 };
 use witness_kernel::{
     CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
@@ -228,6 +229,49 @@ fn api_identity_reports_key_and_chain_head() -> Result<()> {
     let v: Value = serde_json::from_str(&body)?;
     assert_eq!(v["chain_length"], 0);
     assert_eq!(v["latest_hash"], "0".repeat(64));
+    Ok(())
+}
+
+// C4 against the shared vector (tests/fixtures/ha_contract/identity.json,
+// written by gen_ha_contract_fixtures.py): the SAME bytes the integration's
+// coordinator test feeds its backstop, so a renamed or reordered field shows
+// on both sides from one file.
+#[test]
+fn api_identity_vector_is_the_document_the_integration_reads() -> Result<()> {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ha_contract/identity.json");
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    let wire = fixture["payload"].as_str().expect("payload");
+    let key = "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
+    let document = IdentityDocument {
+        v: 1,
+        device_id: "pwk_1a2b3c4d".to_string(),
+        verifying_key: key.to_string(),
+        key_algorithm: "ed25519".to_string(),
+        kernel_version: "2.4.16".to_string(),
+        ruleset_id: "ruleset:frigate_v1".to_string(),
+        chain_length: 1287,
+        latest_hash: "9c".repeat(32),
+        last_verify: Some(LastVerifySummary {
+            at: 1_760_140_200,
+            bucket_size: 600,
+            ok: true,
+            verdict: "self-consistent; identity unverified".to_string(),
+            identity_verified: false,
+        }),
+        fleet_rollcall: "self".to_string(),
+        paired_tokens: 1,
+    };
+    assert_eq!(serde_json::to_string(&document)?, wire);
+    // The fingerprint the pairing step, `pair` and the panel all show.
+    assert_eq!(
+        fixture["fingerprint"],
+        witness_kernel::api::pairing::key_fingerprint(key)?.as_str()
+    );
+    // The document parses back (the coordinator's reads are a subset).
+    let parsed: IdentityDocument = serde_json::from_str(wire)?;
+    assert_eq!(parsed.chain_length, 1287);
+    assert_eq!(parsed.last_verify.map(|v| v.at), Some(1_760_140_200));
     Ok(())
 }
 

@@ -1295,6 +1295,36 @@ mod tests {
         assert!(json.contains(r#""mode":"reviews""#));
     }
 
+    // C5 (D14) against the shared vector (tests/fixtures/ha_contract/,
+    // written by gen_ha_contract_fixtures.py): the SAME bytes the
+    // integration's frigate_link sensor test parses, so the two ends of the
+    // contract are held to one file.
+    #[test]
+    fn frigate_link_vector_is_the_wire_the_integration_parses() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ha_contract/frigate_link.json");
+        let text =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let fixture: serde_json::Value = serde_json::from_str(&text).expect("fixture");
+        let mut link = FrigateLink::new(
+            "pwk_1a2b3c4d".to_string(),
+            "frigate".to_string(),
+            FrigateMode::Events,
+        );
+        link.set_connected(true);
+        for _ in 0..12 {
+            link.note_message(1_760_140_800);
+        }
+        assert_eq!(
+            serde_json::to_string(&link.payload()).expect("serialize"),
+            fixture["payload"].as_str().unwrap()
+        );
+        assert_eq!(
+            fixture["topic"],
+            format!("witness/{FRIGATE_LINK_TOPIC_SUFFIX}").as_str()
+        );
+    }
+
     #[test]
     fn frigate_link_publishes_on_change_and_interval_not_per_message() {
         let t0 = Instant::now();

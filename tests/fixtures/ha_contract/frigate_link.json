@@ -1,0 +1,6 @@
+{
+  "$comment": "Contract C5 (D14): frigate_bridge's retained link-health payload, wire order. The integration's frigate_link sensor is on iff connected AND the last message bucket is within stale_after_secs.",
+  "topic": "witness/frigate_link",
+  "payload": "{\"v\":1,\"device_id\":\"pwk_1a2b3c4d\",\"connected\":true,\"topic_prefix\":\"frigate\",\"last_message_bucket_start\":1760140800,\"last_message_bucket_size\":600,\"messages_since_start\":12,\"mode\":\"events\"}",
+  "stale_after_secs": 3600
+}

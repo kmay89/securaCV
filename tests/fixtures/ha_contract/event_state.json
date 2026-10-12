@@ -1,0 +1,27 @@
+{
+  "$comment": "Contract C5 as amended: ONE EventStatePayload on witness/last_event (retained), witness/events and witness/zone/<zone>/event; field order is the wire order. `ha` is what the integration derives from it.",
+  "topics": [
+    "witness/last_event",
+    "witness/events",
+    "witness/zone/front_door/event"
+  ],
+  "payload": "{\"event_type\":\"BoundaryCrossingObjectLarge\",\"zone_id\":\"zone:front_door\",\"time_bucket\":{\"start_epoch_s\":1760140800,\"size_s\":600},\"time_bucket_start\":1760140800,\"time_bucket_size\":600,\"confidence\":0.87,\"attestation\":\"adapter\",\"kernel_version\":\"2.4.16\",\"ruleset_id\":\"ruleset:frigate_v1\",\"device_id\":\"pwk_1a2b3c4d\",\"published_bucket_start\":1760141400,\"published_bucket_size\":600,\"verified_bucket_start\":1760140200,\"verified_bucket_size\":600,\"verified_ok\":true,\"seq\":1287}",
+  "ha": {
+    "event_type": "boundary_crossing_object_large",
+    "zone_id": "zone:front_door",
+    "zone": "front_door",
+    "time_bucket_start": 1760140800,
+    "dedupe_key": [
+      "zone:front_door",
+      1760140800,
+      "boundary_crossing_object_large"
+    ],
+    "friendly_event": "Person or vehicle",
+    "attestation": "adapter",
+    "kernel_reported_chain_ok": true,
+    "kernel_verified_bucket_start": 1760140200,
+    "seq": 1287,
+    "verification_without_a_walk": "sealed",
+    "trust_reason_without_a_walk": "kernel_sealed"
+  }
+}

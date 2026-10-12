@@ -336,20 +336,23 @@ def test_preflight_only_reads_info_paths(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("name", "slug"),
-    [
-        ("Front Door", "front_door"),
-        ("front-door", "front_door"),
-        ("Front  Door", "front__door"),
-        ("Garage_2", "garage_2"),
-        ("Café", "caf_"),
-        ("porch", "porch"),
-        ("BACK yard!", "back_yard_"),
-        ("İstanbul", "_stanbul"),
-        ("x" * 80, "x" * 64),
-    ],
-)
+def _camera_slug_vectors() -> list[tuple[str, str]]:
+    """The contract's examples, from the ONE file tests/frigate_integration.rs
+    reads for the bridge's camera_slug (tests/fixtures/ha_contract/
+    camera_slug.json, written by gen_ha_contract_fixtures.py) — so the wizard
+    and the bridge cannot drift apart unnoticed. The fixture lives at the
+    repo root; a checkout that carries only the add-on keeps the inline
+    minimum below."""
+    fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "ha_contract" / "camera_slug.json"
+    if fixture.is_file():
+        data = json.loads(fixture.read_text(encoding="utf-8"))
+        vectors = [(v["input"], v["slug"]) for v in data["vectors"]]
+        assert len(vectors) >= 7, "the contract states seven examples"
+        return vectors
+    return [("Front Door", "front_door"), ("Café", "caf_"), ("x" * 80, "x" * 64)]
+
+
+@pytest.mark.parametrize(("name", "slug"), _camera_slug_vectors())
 def test_camera_slug_rule(name, slug):
     assert serve_wizard.camera_slug(name) == slug
 
@@ -628,6 +631,13 @@ def test_status_reports_integration_state_and_links(monkeypatch, tmp_path):
         lambda dest=None: {"state": "managed", "version": "0.9.0", "path": "x"},
     )
     monkeypatch.setattr(serve_wizard.integration_carry, "read_version", lambda tree: "0.9.0")
+    key = "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+    monkeypatch.setattr(
+        serve_wizard, "_kernel_request",
+        lambda m, p: {"ok": True, "data": {"v": 1, "device_id": "pwk_1a2b3c4d", "verifying_key": key,
+                                             "kernel_version": "2.4.16", "paired_tokens": 0}}
+        if p == "/api/identity" else {"ok": False, "error": "unexpected"},
+    )
     result = _bare_handler()._handle_status()
     assert result["ok"] is True
     assert result["integration"] == {
@@ -635,6 +645,14 @@ def test_status_reports_integration_state_and_links(monkeypatch, tmp_path):
         "install_integration": True, "loaded": True,
         "hacs_url": serve_wizard.MY_HA_LINKS["hacs"],
     }
+    # The kernel's own printout of its identity, for the Repairs "witness key
+    # changed" comparison: the device id, the 8-hex fingerprint (sha256 over
+    # the raw key — the rule `pair`, issue-pairing-code and kernel_trust.py
+    # share) and the version. Never the key itself, never a token.
+    assert result["kernel"] == {
+        "device_id": "pwk_1a2b3c4d", "fingerprint": "10ba682c", "kernel_version": "2.4.16",
+    }
+    assert key not in json.dumps(result)
     assert result["blueprints"] == {"digest": False}
     assert result["links"]["dashboards"].endswith("/lovelace_dashboards/")
     assert result["options"]["install_integration"] is True
@@ -644,6 +662,29 @@ def test_status_reports_integration_state_and_links(monkeypatch, tmp_path):
     assert "cafebabe" not in json.dumps(result)
     assert "hunter2" not in json.dumps(result)
     assert "frigate-broker-pw" not in json.dumps(result)
+
+
+def test_kernel_identity_summary_is_best_effort_and_matches_the_shared_fingerprint_rule(monkeypatch):
+    # The shared seam vector (tests/fixtures/ha_contract/identity.json, read by
+    # the Rust identity test and the integration's coordinator test) names the
+    # fingerprint the panel must print for its key.
+    fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "ha_contract" / "identity.json"
+    if fixture.is_file():
+        vector = json.loads(fixture.read_text(encoding="utf-8"))
+        identity = json.loads(vector["payload"])
+        monkeypatch.setattr(serve_wizard, "_kernel_request", lambda m, p: {"ok": True, "data": identity})
+        summary = serve_wizard._kernel_identity_summary()
+        assert summary["fingerprint"] == vector["fingerprint"]
+        assert summary["device_id"] == identity["device_id"]
+        assert summary["kernel_version"] == identity["kernel_version"]
+        assert serve_wizard.kernel_key_fingerprint(identity["verifying_key"]) == vector["fingerprint"]
+    # An unreachable or pre-identity kernel: nothing, not an error.
+    monkeypatch.setattr(serve_wizard, "_kernel_request", lambda m, p: {"ok": False, "error": "unreachable"})
+    assert serve_wizard._kernel_identity_summary() == {}
+    monkeypatch.setattr(serve_wizard, "_kernel_request", lambda m, p: {"ok": True, "data": {"verifying_key": "zz"}})
+    assert serve_wizard._kernel_identity_summary() == {}
+    with pytest.raises(ValueError):
+        serve_wizard.kernel_key_fingerprint("not-a-key")
 
 
 def test_core_component_loaded_is_best_effort(monkeypatch):

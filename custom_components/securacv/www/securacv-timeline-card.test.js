@@ -350,7 +350,7 @@ test("historyToTimelineItems: a kernel row seen through the sensor AND the event
   const kernelAttrs = {
     zone_id: "zone:front_door", zone: "front_door", time_bucket: bucket, confidence: 0.87,
     kernel_device_id: "pwk_1a2b3c4d", verification: "sealed", verified: false, trust_reason: "kernel_sealed", seq: 7,
-    friendly_event: "Large object crossed boundary",
+    friendly_event: "Person or vehicle",
   };
   const history = {
     // The integration's last-event sensor: state is the event type.

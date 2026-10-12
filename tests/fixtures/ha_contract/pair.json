@@ -1,0 +1,36 @@
+{
+  "$comment": "Contract C2 as amended: the request the integration POSTs, the one constant refusal, the success body, the revoke answers, and the receipt `witness_api issue-pairing-code` prints (the sidecar's `pair` parses it with json_line_field). Patterns, not credentials.",
+  "code": "483921",
+  "request": "{\"code\":\"483921\",\"label\":\"home-assistant\"}",
+  "refusal": {
+    "status": 401,
+    "body": "{\"error\":\"invalid_pairing_code\"}"
+  },
+  "malformed": {
+    "status": 400,
+    "body": "{\"error\":\"bad_request\"}"
+  },
+  "response": "{\"token\":\"abababababababababababababababababababababababababababababababab\",\"token_id\":\"0f1e2d3c\",\"device_id\":\"pwk_1a2b3c4d\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"kernel_version\":\"2.4.16\"}",
+  "revoke": {
+    "path": "/api/pair/0f1e2d3c",
+    "ok": {
+      "status": 200,
+      "body": "{\"revoked\":\"0f1e2d3c\"}"
+    },
+    "gone": {
+      "status": 404,
+      "body": "{\"error\":\"not_found\"}"
+    },
+    "forbidden": {
+      "status": 403,
+      "body": "{\"error\":\"forbidden\"}"
+    }
+  },
+  "issue_pairing_code_stdout": "{\"kernel\":\"witness-kernel\",\"pairing_code\":\"483921\",\"expires\":1760141400,\"attempts\":5,\"device_id\":\"pwk_1a2b3c4d\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"fingerprint\":\"10ba682c\"}",
+  "pair_card": [
+    "SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)",
+    "Kernel key fingerprint: 10ba682c   (Home Assistant shows the same fingerprint before it pairs)",
+    "Kernel URL to confirm in Home Assistant: http://<this docker host>:8799",
+    "In Home Assistant: Settings → Devices & Services → SecuraCV (discovered) → Configure → enter the code."
+  ]
+}

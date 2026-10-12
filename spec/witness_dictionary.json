@@ -8,13 +8,13 @@
       {
         "id": "boundary_crossing_object_large",
         "rust_variant": "BoundaryCrossingObjectLarge",
-        "label": "Large object crossed boundary",
+        "label": "Person or vehicle",
         "icon": "mdi:car"
       },
       {
         "id": "boundary_crossing_object_small",
         "rust_variant": "BoundaryCrossingObjectSmall",
-        "label": "Small object crossed boundary",
+        "label": "Animal or small object",
         "icon": "mdi:paw"
       },
       {

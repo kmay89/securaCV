@@ -78,6 +78,23 @@ assert_eq '{"service":"securacv","config":{"host":"we\"ird","port":1234,"token_f
     "discovery: host with a quote stays valid JSON"
 assert_eq "number" "$(compose_discovery_payload myaddon 8799 | jq -r '.config.port | type')" \
     "discovery: port is a JSON number"
+# The shared seam vector (tests/fixtures/ha_contract/discovery.json, written by
+# gen_ha_contract_fixtures.py): the SAME bytes the integration's hassio-step
+# test feeds its config flow, so the producer and the consumer are held to
+# one file.
+DISCOVERY_FIXTURE="$(dirname "$0")/../../tests/fixtures/ha_contract/discovery.json"
+if [ -f "$DISCOVERY_FIXTURE" ]; then
+    assert_eq "$(jq -r '.payload' "$DISCOVERY_FIXTURE")" \
+        "$(compose_discovery_payload \
+            "$(jq -r '.args.host' "$DISCOVERY_FIXTURE")" \
+            "$(jq -r '.args.port' "$DISCOVERY_FIXTURE")" \
+            "$(jq -r '.args.token_file' "$DISCOVERY_FIXTURE")" \
+            "$(jq -r '.args.mqtt_topic_prefix' "$DISCOVERY_FIXTURE")" \
+            "$(jq -r '.args.device_id' "$DISCOVERY_FIXTURE")")" \
+        "discovery: the payload is byte-identical to the shared C6 vector the integration reads"
+else
+    echo "skip: discovery seam vector not carried beside this checkout ($DISCOVERY_FIXTURE)"
+fi
 case "$(compose_discovery_payload myaddon 8799 /config/api_token witness pwk_1a2b3c4d)" in
     *token\":*) echo "FAIL: discovery: payload must never carry a token value" >&2; FAILURES=$((FAILURES+1)) ;;
     *) echo "ok: discovery: payload names the token file path, never a token" ;;

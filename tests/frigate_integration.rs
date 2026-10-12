@@ -733,21 +733,24 @@ fn zone_name_sanitization_limits_length() {
 
 #[test]
 fn camera_slug_matches_wizard_rule() {
-    // The examples the contract states; serve_wizard.py's camera_slug must agree.
-    let cases = [
-        ("Front Door", "front_door"),
-        ("front-door", "front_door"),
-        ("Front  Door", "front__door"),
-        ("Garage_2", "garage_2"),
-        ("Café", "caf_"),
-        ("porch", "porch"),
-        ("BACK yard!", "back_yard_"),
-    ];
-    for (input, expected) in cases {
+    // The contract's examples live in ONE file, tests/fixtures/ha_contract/
+    // camera_slug.json (written by gen_ha_contract_fixtures.py), which
+    // privacy_witness_kernel/tests/test_serve_wizard_setup.py reads for the
+    // wizard's camera_slug — so the two rules cannot drift apart unnoticed.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/ha_contract/camera_slug.json");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let fixture: serde_json::Value = serde_json::from_str(&text).expect("fixture");
+    let vectors = fixture["vectors"].as_array().expect("vectors");
+    assert!(vectors.len() >= 7, "the contract states seven examples");
+    for vector in vectors {
+        let input = vector["input"].as_str().unwrap();
+        let expected = vector["slug"].as_str().unwrap();
         assert_eq!(camera_slug(input), expected, "{input:?}");
     }
-    // Per code point, truncated to 64 — never trimmed or collapsed.
-    assert_eq!(camera_slug(&"ab ".repeat(40)).len(), 64);
+    // Per code point, truncated to max_len — never trimmed or collapsed.
+    let max_len = fixture["max_len"].as_u64().unwrap() as usize;
+    assert_eq!(camera_slug(&"ab ".repeat(40)).len(), max_len);
     assert_eq!(camera_slug(""), "");
     // The slug and the zone rule are different rules: a hyphenated camera
     // keeps its hyphen in the zone id, so existing sealed logs do not move.

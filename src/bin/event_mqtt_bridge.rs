@@ -2820,6 +2820,179 @@ mod tests {
         );
     }
 
+    /// One HA seam fixture (tests/fixtures/ha_contract/, written by
+    /// gen_ha_contract_fixtures.py): the SAME bytes the integration's own
+    /// tests read, so both ends of a contract are held to one file.
+    fn ha_contract_fixture(name: &str) -> serde_json::Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ha_contract")
+            .join(name);
+        let text =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        serde_json::from_str(&text).expect("fixture is JSON")
+    }
+
+    // C1 against the shared vector, byte for byte: the sig-less payload
+    // round-trips through `AnnouncePayload` unchanged (struct order IS wire
+    // order, which is what kernel_trust.py re-serializes), the kernel's
+    // message is the prefix + those bytes, the deterministic Ed25519
+    // signature under the vector's key is the vector's, and the published
+    // bytes are payload + `sig` last.
+    #[test]
+    fn announce_vector_matches_the_integration_s_canonical_bytes() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use witness_kernel::api::announce::{announce_message, verify_announce};
+        let fixture = ha_contract_fixture("announce.json");
+        let seed: [u8; 32] = hex::decode(fixture["signing_key_seed"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let key = SigningKey::from_bytes(&seed);
+        let verifying = hex::encode(key.verifying_key().to_bytes());
+        assert_eq!(fixture["verifying_key"], verifying.as_str());
+        assert_eq!(
+            fixture["fingerprint"],
+            witness_kernel::api::pairing::key_fingerprint(&verifying)
+                .unwrap()
+                .as_str()
+        );
+        assert_eq!(
+            fixture["topic"],
+            announce_topic("witness", "pwk_1a2b3c4d").as_str()
+        );
+        let vectors = fixture["vectors"].as_array().expect("vectors");
+        assert_eq!(vectors.len(), 2, "one per launcher posture");
+        for vector in vectors {
+            let name = vector["name"].as_str().unwrap();
+            let payload_json = vector["payload"].as_str().unwrap();
+            let parsed: AnnouncePayload =
+                serde_json::from_str(payload_json).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(
+                parsed.sig.is_none(),
+                "{name}: the vector payload is sig-less"
+            );
+            assert_eq!(
+                serde_json::to_string(&parsed).unwrap(),
+                payload_json,
+                "{name}: struct order is wire order"
+            );
+            let message = announce_message(payload_json.as_bytes());
+            assert_eq!(
+                message,
+                vector["canonical_message"].as_str().unwrap().as_bytes(),
+                "{name}: the signed message"
+            );
+            let sig = hex::encode(key.sign(&message).to_bytes());
+            assert_eq!(
+                vector["sig"],
+                sig.as_str(),
+                "{name}: Ed25519 is deterministic, so the vector's sig is reproducible"
+            );
+            verify_announce(&key.verifying_key(), payload_json.as_bytes(), &sig)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let signed = AnnouncePayload {
+                sig: Some(sig),
+                ..parsed
+            };
+            assert_eq!(
+                serde_json::to_string(&signed).unwrap(),
+                vector["published"].as_str().unwrap(),
+                "{name}: the retained bytes"
+            );
+            let republished: AnnouncePayload =
+                serde_json::from_str(vector["published"].as_str().unwrap()).unwrap();
+            assert_eq!(republished, signed, "{name}: published form parses back");
+        }
+        let hosted = &vectors[1]["payload"].as_str().unwrap();
+        assert!(hosted.contains(r#""host":"d0491a67-privacy-witness-kernel"}"#));
+        assert!(!vectors[0]["payload"].as_str().unwrap().contains("host"));
+    }
+
+    // C3 against the shared vector: the integration's compact claim parses
+    // as a claim for its bucket, the empty retained payload is the clear,
+    // the freshness constants are the ones the fixture states, and the
+    // `claim_state` words are the ones the coordinator accepts.
+    #[test]
+    fn claim_vector_matches_the_integration_s_payload() {
+        let fixture = ha_contract_fixture("claim.json");
+        assert_eq!(
+            fixture["topic"],
+            claim_topic("witness", "pwk_1a2b3c4d").as_str()
+        );
+        let bucket = fixture["claimed_bucket_start"].as_u64().unwrap();
+        assert_eq!(
+            parse_claim_message(fixture["payload"].as_str().unwrap().as_bytes()),
+            ClaimMessage::Claimed(ClaimRecord {
+                claimed_bucket_start: bucket
+            })
+        );
+        assert_eq!(
+            parse_claim_message(fixture["withdrawal"].as_str().unwrap().as_bytes()),
+            ClaimMessage::Cleared
+        );
+        assert_eq!(fixture["fresh_for_secs"], CLAIM_FRESH_SECS);
+        assert_eq!(fixture["future_skew_secs"], CLAIM_SKEW_SECS);
+        assert!(
+            fixture["republish_interval_secs"].as_u64().unwrap() < CLAIM_FRESH_SECS,
+            "the integration republishes well inside the freshness window"
+        );
+        assert_eq!(
+            fixture["claim_state_topic"],
+            format!("witness/{CLAIM_STATE_TOPIC_SUFFIX}").as_str()
+        );
+        assert_eq!(
+            fixture["claim_state_values"],
+            serde_json::json!([PAYLOAD_CLAIMED, PAYLOAD_UNCLAIMED])
+        );
+        let record = ClaimRecord {
+            claimed_bucket_start: bucket,
+        };
+        assert!(claim_is_fresh(&record, bucket + 3600));
+        assert!(!claim_is_fresh(&record, bucket + CLAIM_FRESH_SECS));
+    }
+
+    // C5 against the shared vector: the ONE event payload, byte for byte,
+    // as the coordinator and `witness_event_attributes` parse it.
+    #[test]
+    fn event_state_vector_is_the_wire_the_integration_parses() {
+        let fixture = ha_contract_fixture("event_state.json");
+        let payload = EventStatePayload {
+            event_type: "BoundaryCrossingObjectLarge".to_string(),
+            zone_id: "zone:front_door".to_string(),
+            time_bucket: witness_kernel::TimeBucket {
+                start_epoch_s: 1_760_140_800,
+                size_s: 600,
+            },
+            time_bucket_start: 1_760_140_800,
+            time_bucket_size: 600,
+            confidence: 0.87,
+            attestation: Some("adapter".to_string()),
+            kernel_version: "2.4.16".to_string(),
+            ruleset_id: "ruleset:frigate_v1".to_string(),
+            device_id: "pwk_1a2b3c4d".to_string(),
+            published_bucket_start: 1_760_141_400,
+            published_bucket_size: 600,
+            verified_bucket_start: Some(1_760_140_200),
+            verified_bucket_size: Some(600),
+            verified_ok: Some(true),
+            seq: Some(1287),
+        };
+        assert_eq!(
+            serde_json::to_string(&payload).unwrap(),
+            fixture["payload"].as_str().unwrap()
+        );
+        assert_eq!(
+            fixture["topics"],
+            serde_json::json!([
+                "witness/last_event",
+                "witness/events",
+                "witness/zone/front_door/event"
+            ])
+        );
+        assert_eq!(fixture["ha"]["zone_id"], "zone:front_door");
+        assert_eq!(fixture["ha"]["time_bucket_start"], 1_760_140_800u64);
+    }
+
     // C3: the claim payload's shapes, the freshness rule, and the tracker's
     // transitions (claimed → withdraw, cleared or stale → republish, noise
     // → nothing).

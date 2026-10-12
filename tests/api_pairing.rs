@@ -12,7 +12,8 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 use witness_kernel::api::pairing::{
-    PairingCodeFile, PAIRED_TOKEN_FILE_NAME, PAIRING_CODE_ATTEMPTS, PAIRING_CODE_FILE_NAME,
+    PairRequest, PairResponse, PairingCodeFile, PAIRED_TOKEN_FILE_NAME, PAIRING_CODE_ATTEMPTS,
+    PAIRING_CODE_FILE_NAME,
 };
 use witness_kernel::api::{ApiConfig, ApiHandle, ApiServer, PairingPaths, ViewerTokenSet};
 use witness_kernel::{
@@ -213,6 +214,90 @@ fn wrong_code(right: &str) -> &'static str {
     } else {
         "000000"
     }
+}
+
+// C2 against the shared vector (tests/fixtures/ha_contract/pair.json, written
+// by gen_ha_contract_fixtures.py): the request body the integration POSTs
+// deserializes as the kernel's `PairRequest`, the success body is
+// `PairResponse` in struct order, and the refusal / revoke bodies the server
+// writes are the bytes the integration maps — one file for both ends.
+#[test]
+fn pair_vector_matches_the_integration_s_request_and_the_constant_refusal() -> Result<()> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ha_contract/pair.json");
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+
+    let request: PairRequest = serde_json::from_str(fixture["request"].as_str().unwrap())?;
+    assert_eq!(request.code, fixture["code"]);
+    assert_eq!(request.label.as_deref(), Some("home-assistant"));
+
+    let response = PairResponse {
+        token: "ab".repeat(32),
+        token_id: "0f1e2d3c".to_string(),
+        device_id: "pwk_1a2b3c4d".to_string(),
+        verifying_key: "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+            .to_string(),
+        kernel_version: "2.4.16".to_string(),
+    };
+    assert_eq!(
+        serde_json::to_string(&response)?,
+        fixture["response"].as_str().unwrap()
+    );
+
+    // The one refusal, from a live server with no code issued, is the
+    // fixture's bytes and status.
+    assert_eq!(fixture["refusal"]["body"], INVALID);
+    let api = TestApi::new(true)?;
+    let (headers, body) = api.pair(fixture["request"].as_str().unwrap())?;
+    assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+    assert_eq!(body.trim(), fixture["refusal"]["body"].as_str().unwrap());
+    // Malformed input is the fixture's 400.
+    let (headers, body) = api.pair(r#"{"code":"12"}"#)?;
+    assert!(headers.contains("400 Bad Request"), "headers: {headers}");
+    assert_eq!(body.trim(), fixture["malformed"]["body"].as_str().unwrap());
+    // A revoke of an id nobody holds: the integration treats this as
+    // "already gone" when it cleans up after its own removal.
+    let (headers, body) = api.request(
+        "DELETE",
+        fixture["revoke"]["path"].as_str().unwrap(),
+        Some(&api.capability()),
+        None,
+    )?;
+    assert!(headers.contains("404 Not Found"), "headers: {headers}");
+    assert_eq!(
+        body.trim(),
+        fixture["revoke"]["gone"]["body"].as_str().unwrap()
+    );
+    // A paired bearer naming another id: the fixture's 403.
+    let code = api.issue_code()?;
+    let (token, token_id) = api.pair_ok(&code, "home-assistant")?;
+    assert_ne!(token_id, "0f1e2d3c");
+    let (headers, body) = api.request(
+        "DELETE",
+        fixture["revoke"]["path"].as_str().unwrap(),
+        Some(&token),
+        None,
+    )?;
+    assert!(headers.contains("403 Forbidden"), "headers: {headers}");
+    assert_eq!(
+        body.trim(),
+        fixture["revoke"]["forbidden"]["body"].as_str().unwrap()
+    );
+    // Self-revoke answers with the fixture's `revoked` shape.
+    let (headers, body) = api.request(
+        "DELETE",
+        &format!("/api/pair/{token_id}"),
+        Some(&token),
+        None,
+    )?;
+    assert!(headers.contains("200 OK"), "headers: {headers}");
+    assert_eq!(
+        body.trim(),
+        fixture["revoke"]["ok"]["body"]
+            .as_str()
+            .unwrap()
+            .replace("0f1e2d3c", &token_id)
+    );
+    Ok(())
 }
 
 fn file_mode(path: &Path) -> u32 {
