@@ -83,6 +83,11 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
+      # The version check below runs python3 (stdlib json only): on the
+      # pyproject floor, never the runner image's interpreter (CI.md R9).
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       # One native leg is enough signal for a pull request; the second arch
       # (and the multi-arch push) happens on main / tags.
