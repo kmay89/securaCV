@@ -425,11 +425,17 @@ if [ "$MODE" = "frigate" ]; then
     # 1. The MQTT broker (core-mosquitto) is a trusted HA component
     # 2. All event data is still sanitized before logging
     # 3. No raw media ever flows through this path
+    # The state prefix and device id are the publisher's (contract C5): the
+    # bridge's retained `<prefix>/frigate_link` must land beside the
+    # publisher's state topics and name the same `pwk_` id, or Home
+    # Assistant shows the Frigate link on a device it does not have.
     FRIGATE_CMD_ARRAY=(
         "/usr/local/bin/frigate_bridge"
         --allow-remote-mqtt
         --mqtt-broker-addr "$MQTT_HOST:$MQTT_PORT"
         --frigate-topic-prefix "$TOPIC_PREFIX"
+        --mqtt-topic-prefix "$PUBLISH_PREFIX"
+        --ha-device-id "$DEVICE_ID"
         --db-path "$DB_PATH"
         --bucket-size-secs "$BUCKET_SECS"
         --min-confidence "$MIN_CONFIDENCE"

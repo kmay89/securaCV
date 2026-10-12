@@ -799,9 +799,20 @@ EOF
     done
     [ -s "$TOKEN_FILE" ] || die "witness_api did not write its capability token to $TOKEN_FILE"
 
+    # The public HA device id must carry ZERO bits of the signing seed: see
+    # ha_device_id_for_seed. (It changed once, from a seed prefix to this
+    # hash — entity ids sensor.pwk_<id>_* moved with it.) Both daemons name
+    # it: the bridge's retained `<prefix>/frigate_link` (contract C5) must
+    # sit beside the publisher's state topics under the same `pwk_` id, or
+    # Home Assistant shows the Frigate link on a device it does not have.
+    local ha_device_id
+    ha_device_id=$(ha_device_id_for_seed "$DEVICE_KEY_SEED")
+
     local bridge_args=(
         --mqtt-broker-addr "$addr"
         --frigate-topic-prefix "$prefix"
+        --mqtt-topic-prefix "${MQTT_TOPIC_PREFIX:-witness}"
+        --ha-device-id "$ha_device_id"
         --db-path "$DB_PATH"
         --bucket-size-secs "$bucket_secs"
         --retention-secs "$retention_secs"
@@ -821,11 +832,6 @@ EOF
     log "frigate_bridge started (PID ${DAEMON_PIDS[-1]})"
 
     if [ "$publish" = "true" ]; then
-        # The public HA device id must carry ZERO bits of the signing seed:
-        # see ha_device_id_for_seed. (It changed once, from a seed prefix to
-        # this hash — entity ids sensor.pwk_<id>_* moved with it.)
-        local ha_device_id
-        ha_device_id=$(ha_device_id_for_seed "$DEVICE_KEY_SEED")
         local pub_args=(
             --daemon
             --mqtt-broker-addr "$addr"
