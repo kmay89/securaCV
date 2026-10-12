@@ -113,6 +113,69 @@ a pinned key* — nothing looser. Never use it to mean "probably fine," "seen," 
 **Presence** — The weaker claim: "I heard this device recently," self-reported
 and **unsigned**. Used for the nearby-device roster. Never a trust boundary.
 
+**Sealed ✓ / Verified ✓ / Failed ⚠** — The three words a kernel event wears
+in Home Assistant. *Sealed* — the kernel signed it into its chain. *Verified*
+— the **integration's own walk** of the chain tail
+(`GET /api/sealed-log?from_seq=`) checked every hash link and Ed25519
+signature against the key it pinned when it connected, and covered this
+event's type, zone and window. *Failed* — that walk rejected the chain. A
+key change is none of the three: it is a Repairs question (compare
+fingerprints), and the kernel's own self-check is *Chain OK
+(kernel-reported)*, never Verified.
+→ [the setup guide](homeassistant_setup.md#what-sealed--verified--and-failed--mean)
+
+**Evidence pack** — What Home Assistant's **Export evidence** hands the
+owner: one zip (`securacv-evidence-<date>-<id>.zip`) holding the kernel's
+signed export bundle byte for byte, the offline viewer, a README for the
+recipient and `WITNESS_KEY.txt` (the public witness key and its
+fingerprint). Written under the owner's configuration directory, never a
+public path, and downloaded only through an authenticated view with a
+24-hour link; the recipient drops the whole zip on the viewer and confirms
+authorship by phone with the fingerprint. Each pack is a receipted
+disclosure on the kernel. → [the recipient's page](../viewer/README.md),
+[the lifecycle](evidence_lifecycle.md)
+
+**Pairing code / paired token** — How Home Assistant earns a credential on a
+Docker sidecar. `docker exec securacv pair` prints a **6-digit code** once
+(valid ten minutes, five attempts, single-use; the kernel keeps only its
+sha256) beside the kernel key's fingerprint; Home Assistant redeems it at
+`POST /api/pair` and holds the **paired token** it gets back — 32 random
+bytes, long-lived, hashed at rest, the same rights as the kernel's rotating
+capability token, revocable by id (`unpair <id>`, `DELETE /api/pair/<id>`,
+or removing the integration). Plaintext on the LAN until TLS lands for the
+sidecar. Not the Canary **claim ticket** (above), which is a one-time
+Bluetooth-to-Wi-Fi second factor, and not a viewer token.
+→ [Path 3](homeassistant_setup.md#path-3-home-assistant-container-and-the-docker-sidecar),
+[the API](homeassistant_setup.md#pairing-the-docker-sidecar-and-home-assistant)
+
+**Announce (the kernel's)** — The retained, kernel-**signed** MQTT message
+(`witness/<kernel id>/announce`) by which a witness kernel offers itself to
+Home Assistant: its id, its public verifying key, where its API listens, the
+pairing posture, a bucket-start timestamp and an Ed25519 signature — never
+a token, a code, the seed or (unless the operator sets
+`SECURACV_ANNOUNCE_HOST`) a host. The integration discovers a sidecar by it
+but pins the key only from the authenticated API, and refuses an announce a
+pinned kernel did not sign. Cleared on a clean shutdown. Fleet-internal
+reconciliation on a broker you run, not telemetry.
+→ [the security model](security/SECURITY_MODEL.md#home-assistant-pairing-and-what-crosses-your-network)
+
+**Claim (the kernel's)** — The retained message the **integration** publishes
+on `witness/claim/<kernel id>` once it manages a kernel —
+`{"v":1,"claimed":true,"nonce":…,"claimed_bucket_start":…}`, never an entry
+id — on every load and hourly. While a claim fresher than 24 hours stands,
+the kernel's MQTT publisher withdraws its own `pwk_*` discovery entities and
+the integration's `securacv_*` entities take over; removing the integration
+withdraws the claim and the `pwk_*` entities return. `witness/claim_state`
+says `claimed` or `unclaimed`. Not a Canary claim ticket.
+→ [the migration note](homeassistant_setup.md#entity-ids-pwk_--securacv_)
+
+**Frigate link** — The retained `witness/frigate_link` payload the Frigate
+bridge publishes (connected, the ten-minute window Frigate was last heard
+in, the mode) and the diagnostic **Frigate link** sensor it drives, on iff
+connected and heard within the hour — so a quiet night and a Frigate that
+stopped publishing read differently. Never says which camera or what it saw.
+→ [the Frigate guide](frigate_integration.md#frigate-link-health-witnessfrigate_link)
+
 **On-glass only** — A Canary Display setting the LAN API refuses to write for
 every caller, token or not: `POST /api/set` answers
 `403 {"ok":false,"err":"on_glass_only"}` for `wx_direct` (the display's one
@@ -405,7 +468,9 @@ screen for homes and venues, not a wall of live feeds. It reads a hub's fleet
 roll-call (`GET /api/fleet`, next entry). From a Home Assistant add-on
 install that takes two steps: enable the kernel's 8799 host port (it ships
 disabled, and enabling it opens the roll-call to your LAN) and type
-`http://<host>:8799` into the Wall once. It says *Verified* only once it is
+`http://<host>:8799` into the Wall once; on the Docker sidecar the port is
+already published and the roll-call lists the kernel alone until
+`SECURACV_FLEET_ROLLCALL=1`. It says *Verified* only once it is
 paired: the operator mints a viewer token on the hub (`witness_api
 mint-viewer-token`), whose one-line receipt carries a token good for
 `GET /api/sealed-log` alone and the kernel's key, which the Wall pins; an
@@ -422,12 +487,40 @@ words only — name, online, chain verdict,
 product, and the per-room presence / occupants / breathing words while a peer
 is proven online; never an event, a zone or a key. From the Home Assistant
 add-on it lists the kernel first, then every Canary the MQTT bridge has heard
-and pinned. `online` means a signed, chain-advancing publish verified against
+and pinned; the Docker sidecar, whose port is published for Home Assistant
+pairing, serves only the kernel's own row unless its owner opts in with
+`SECURACV_FLEET_ROLLCALL=1` — who is home is never a side effect of pairing. `online` means a signed, chain-advancing publish verified against
 the pinned key within the last 180 s — stronger than a heartbeat, not a
 liveness proof. Each source answers the CORS preflight; the hub admits
 browser pages from an origin allow-list, the boards any origin.
 → [`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md) (the
 contract), [`src/fleet_peers.rs`](../src/fleet_peers.rs)
+
+**The SecuraCV app** — The Home Assistant OS add-on
+([`privacy_witness_kernel/`](../privacy_witness_kernel), store name
+**SecuraCV**; the slug and the kernel device's model name keep the old
+*Privacy Witness Kernel*) that runs the witness kernel in Frigate mode, with
+a wizard that reads Frigate's cameras and asks for nothing, holds no
+Supervisor role, and carries the integration — installed into
+`/config/custom_components` only on the person's click, updated only in its
+own marked copy, never with an automatic restart.
+→ [Path 1](homeassistant_setup.md#path-1-home-assistant-os--the-securacv-app),
+[the app's documentation tab](../privacy_witness_kernel/DOCS.md)
+
+**The Docker sidecar** — One container ([`docker/sidecar/`](../docker/sidecar))
+wrapping `witness_api`, `frigate_bridge` and `event_mqtt_bridge` beside a
+Docker Frigate, for a Home Assistant Container install (or no Home Assistant
+at all). Binds every interface and publishes port 8799 from the first start
+so Home Assistant can pair with the 6-digit code `docker exec securacv pair`
+prints; `doctor` is its setup check, `unpair` its revocation.
+→ [the Frigate guide](frigate_integration.md#quick-start-docker-no-home-assistant)
+
+**The SecuraCV dashboard** — Settings → Dashboards → Add dashboard →
+**SecuraCV**: a Lovelace **strategy** (`custom:securacv`) the integration
+ships, which builds the whole page from whatever SecuraCV entities exist —
+the chain-status header, Today's verified timeline, one tile per camera, the
+digest, health, the Canaries. The timeline card below is its centerpiece
+and can be added alone. → [the dashboard and the card](lovelace_timeline.md)
 
 **The Verified Timeline card** — The Home Assistant Lovelace card that shows
 ✓-badged events on a dashboard. → [Lovelace timeline](lovelace_timeline.md)
@@ -544,6 +637,7 @@ event vocabulary and signed witness record stay identical across profiles.
 |---|---|---|
 | "flock" (of Canaries) | **fleet** | A company called Flock soured the word. Only exception: the Unix `flock(2)` syscall. |
 | "verified" loosely | "heard," "reported," "presence" | "Verified" is reserved for a checked Ed25519 signature against a pinned key. |
+| "verified" for a kernel's self-check | **"Chain OK (kernel-reported)"**, `kernel_reported_chain_ok` | A kernel vouching for itself with its own key is not a check you ran; only the integration's walk, or the recipient's viewer, earns the word. |
 | face recognition, plate reading, gait, re-ID, demographics | — | Not disabled — **absent**. Invariant II; never implement. |
 | "secure" as a bare adjective | the specific property | Say what can't happen and what still has to be true. |
 | performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline. On the site, review keeps them out (no site test looks for them); here, `scripts/lint_bench_rows.py` fails the build on a pasted [benchmark](BENCHMARKS.md) table. |

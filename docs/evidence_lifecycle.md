@@ -21,14 +21,17 @@ This document describes how evidence moves through the Privacy Witness Kernel (P
 
 - Normal access is limited to **event claims** via the event API. This is a read-only view of the sealed log.
 - The system intentionally lacks APIs for raw playback, streaming, or bulk searching by identity. Review is sequential and context-bound.
+- A **state read** is not a disclosure and leaves no receipt: the latest event (`/events/latest`), the rolling digest (`/digest`), the kernel's identity (`/api/identity`), the signed chain tail a verifier walks (`/api/sealed-log`, with its sequential `from_seq` cursor — a position, never a selector) and the incremental event cursor the kernel's own MQTT publisher polls (`/events?since_bucket=`). A Home Assistant that watches the kernel all day therefore adds nothing to the receipt ledger.
+- Every read takes a credential — the rotating capability token, a paired token Home Assistant earned with a 6-digit code, or a viewer token good for the chain tail alone — except the liveness check and the coarse fleet roll-call.
 
 **Ties to existing concepts:** Non-queryability by design; No raw export; Contract Enforcer.
 
 ## 4) Export (Explicit, receipted disclosure)
 
 - Exports are **explicit artifacts** created by a deliberate act, not continuous feeds.
-- Each export is accompanied by a **tamper-evident receipt** that records the disclosure act without expanding the data itself.
+- Each export is accompanied by a **tamper-evident receipt** that records the disclosure act without expanding the data itself. Exactly two routes are receipted — the bulk event export (`GET /events` with no cursor) and the export bundle (`GET /export/bundle`) — and the receipt names the credential that asked (`auth_mode`: the kernel's own token, a paired Home Assistant with its token id, a self-export, break-glass). Receipts are never pruned.
 - Exported events keep coarse time buckets and zone identifiers; precise timestamps and identity fields remain forbidden.
+- In Home Assistant an export is one **evidence pack**: the kernel's bundle byte for byte, the offline viewer, a README for the recipient and the public witness key, zipped under the owner's configuration directory (readable by Home Assistant only, never under a public path) and handed out only through an authenticated view with a link that expires in 24 hours. The pack is the hand-off unit — the owner sends the whole zip.
 
 **Ties to existing concepts:** Export receipts; Local ownership and custody; Metadata minimization.
 
@@ -36,6 +39,7 @@ This document describes how evidence moves through the Privacy Witness Kernel (P
 
 - Verifiers can check that exported events match the sealed log and that the receipt corresponds to a specific disclosure.
 - Verification confirms integrity and provenance without revealing raw media or identity data.
+- "Verified" is reserved for a check **someone other than the kernel** ran against a key they hold: the recipient's offline viewer against the fingerprint confirmed by phone, or Home Assistant's own walk of the chain tail against the key it pinned when it connected. The kernel's self-check is reported as exactly that — *kernel-reported* — and a kernel key that changes is a question for the owner (compare fingerprints), never a silent acceptance and never a "failure".
 
 **Ties to existing concepts:** Sealed log integrity; Export receipts.
 

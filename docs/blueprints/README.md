@@ -8,7 +8,11 @@ later (`homeassistant.min_version`), the same floor as the integration.
 
 The one-command installer and the SecuraCV app (Home Assistant OS) also copy
 every file here to `/config/blueprints/automation/securacv/`, where Home
-Assistant loads them without importing.
+Assistant loads them without importing. Setting up the integration itself,
+and what *Sealed ✓* and *Verified ✓* mean on the events these blueprints
+read, is in [the setup guide](../homeassistant_setup.md#what-sealed--verified--and-failed--mean);
+the dashboard the digest and the witness notification point back to is
+[Settings → Dashboards → Add dashboard → SecuraCV](../homeassistant_setup.md#add-the-dashboard).
 
 **Notifications go to a phone.** Every blueprint that notifies takes a
 *Phone* input (a device running the Home Assistant Companion app) and derives
@@ -62,4 +66,6 @@ chain verified), `button.securacv_verify_now`, and one
 ids; an automation you created from an older digest blueprint keeps working
 through the migration (the digest reads a problem-class sensor as
 "kernel-reported"), and Home Assistant's Repairs panel lists the old → new ids
-the first time the integration claims.
+the first time the integration claims — on an instance where the `pwk_*`
+entities existed; a fresh install never sees the notice
+([the migration note](../homeassistant_setup.md#entity-ids-pwk_--securacv_)).

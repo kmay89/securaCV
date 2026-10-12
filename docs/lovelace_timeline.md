@@ -35,7 +35,10 @@ exist when the page opens, in this order:
 
 - **Home Assistant 2026.5 and later:** Settings → Dashboards → Add dashboard →
   **Community dashboards** → **SecuraCV**. That is the one click left after
-  the integration connects.
+  the integration connects — and the one-time notification **SecuraCV: add
+  the dashboard** says exactly that when a kernel entry first loads (it is
+  posted only when the strategy module was really served, so an install
+  without it is never told about a picker entry it does not have).
 - **From YAML** (any version the integration supports): a dashboard whose
   whole configuration is
 
@@ -71,7 +74,8 @@ them too — labeled **Chain OK (kernel-reported)**, never *verified*, because a
 kernel's report about itself is not a check Home Assistant ran. Once the
 integration connects it claims the kernel, those entities are withdrawn, and
 the `securacv_*` entities take over; Settings → Repairs lists the old → new
-ids once.
+ids once, on an instance where the `pwk_*` entities existed
+([the migration table](homeassistant_setup.md#entity-ids-pwk_--securacv_)).
 
 ## The timeline card
 
@@ -105,7 +109,7 @@ key it pinned when you connected. Its copy is fixed:
 | Header | Meaning |
 |---|---|
 | **Chain verified ✓ 12 min ago · 1,204 entries · key pinned** | the last walk passed, against the pinned key |
-| **Verifying…** | a walk is running (Verify now, the hourly check, or 60 s after new entries went idle) |
+| **Verifying…** | a walk is running (Verify now, the `securacv.verify` action, the 15-minute backstop, or 60 s after new entries went idle) |
 | **Verification failed at entry #1,190** | the walk rejected the chain; later entries can't be trusted — export now, entries before the break still verify |
 | **Not verified yet** | no walk has run |
 | **Witness key changed — confirm it in Settings → Repairs** | the kernel's key no longer matches the pin (a restore to new hardware, a replaced app); never rendered as a failure |
@@ -121,7 +125,7 @@ Kernel (Frigate) rows get exactly three badges, driven by the integration's
 
 | Badge | Meaning | Tooltip |
 |---|---|---|
-| **Sealed ✓** (muted) | signed into the witness chain, newer than the last chain check | *Signed into the witness chain (entry #1,204). The chain check runs hourly; this entry is newer than the last one.* |
+| **Sealed ✓** (muted) | signed into the witness chain, newer than the last chain check | *Signed into the witness chain (entry #1,204). The chain check runs hourly; this entry is newer than the last one.* — the card's wording; the integration's walk actually runs every 15 minutes and 60 s after the chain goes idle, so a row is Sealed for at most that long ([the cadence](homeassistant_setup.md#what-sealed--verified--and-failed--mean)) |
 | **Verified ✓** (green) | covered by a chain check the integration ran against the key it pinned | *Entry #1,204 is covered by the chain check at 15:00 against the key pinned when you connected.* |
 | **Failed ⚠** | the chain check rejected the chain | *The chain check rejected the chain at entry #1,190; later entries can't be trusted. Export now: entries before entry #1,190 still verify.* |
 
