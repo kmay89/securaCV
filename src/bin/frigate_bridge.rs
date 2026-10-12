@@ -27,7 +27,6 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use rumqttc::{Client, Connection, Event, Incoming, MqttOptions, QoS, RecvTimeoutError};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -253,16 +252,6 @@ struct Args {
         default_value_t = 86400
     )]
     checkpoint_interval_secs: u64,
-}
-
-/// `pwk_` + the first 8 hex of sha256("securacv:ha-device-id:v1:" || seed):
-/// the derivation the add-on (`run.sh`), the sidecar (`entrypoint.sh`) and
-/// `event_mqtt_bridge` use, so every producer names one seed the same way.
-/// Never a prefix of the seed itself — the id lands on a retained topic every
-/// broker client can read.
-fn ha_device_id_from_seed(seed: &str) -> String {
-    let digest = Sha256::digest(format!("securacv:ha-device-id:v1:{seed}").as_bytes());
-    format!("pwk_{}", hex::encode(&digest[..4]))
 }
 
 fn split_list(value: Option<&str>) -> Vec<String> {
@@ -835,7 +824,7 @@ fn main() -> Result<()> {
     let device_id = args
         .ha_device_id
         .clone()
-        .unwrap_or_else(|| ha_device_id_from_seed(&device_key_seed));
+        .unwrap_or_else(|| witness_kernel::ha_device_id(&device_key_seed));
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&args.ruleset_id);
     let cfg = KernelConfig {
         db_path: args.db_path.clone(),
@@ -1226,13 +1215,18 @@ mod tests {
 
     #[test]
     fn ha_device_id_matches_the_shell_derivation() {
-        // run.sh / entrypoint.sh: pwk_$(printf '%s' "securacv:ha-device-id:v1:${seed}" | sha256sum | cut -c1-8)
+        // The bridge's default `frigate_link` device id is the kernel's
+        // `witness_kernel::ha_device_id` (what `/api/identity` reports and
+        // `event_mqtt_bridge` publishes under), pinned here to the shell
+        // derivation the launchers use — run.sh / entrypoint.sh:
+        // pwk_$(printf '%s' "securacv:ha-device-id:v1:${seed}" | sha256sum | cut -c1-8)
+        use sha2::{Digest, Sha256};
         let expected = format!(
             "pwk_{}",
             &hex::encode(Sha256::digest(b"securacv:ha-device-id:v1:devkey:x"))[..8]
         );
-        assert_eq!(ha_device_id_from_seed("devkey:x"), expected);
-        assert_eq!(ha_device_id_from_seed("devkey:x").len(), 12);
+        assert_eq!(witness_kernel::ha_device_id("devkey:x"), expected);
+        assert_eq!(witness_kernel::ha_device_id("devkey:x").len(), 12);
     }
 
     #[test]
