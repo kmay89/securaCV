@@ -406,3 +406,44 @@ jobs:
         # SECURACV_MQTT_PASSWORD, so README/RUNBOOK step one must write .env
         # before any `docker compose` command, or it fails as written.
         run: bash integrations/ha_frigate_mqtt/tests/test_bringup_order.sh
+
+  hacs-store-page-links:
+    # The HACS store page is the mirror's README.md
+    # (kmay89/securacv-homeassistant), and it links here by absolute URL:
+    # into docs/ (most of them to a heading), to scripts/install.sh, which
+    # the page pipes to bash, and to homeassistant-mirror.yml. The mirror's
+    # own link check reads this repository's main once a week, so a PR here
+    # that renames a linked heading or moves a linked file merged green and
+    # broke the store page first (sweep HA35). This runs the mirror's own
+    # checker (lint_readme.py --source, one slugger for both repositories)
+    # against this PR's checkout, so the PR that breaks a link fails.
+    #
+    # Here rather than a filtered workflow: a link may point anywhere in the
+    # tree, and lint.yml is the unfiltered home for a check whose input is
+    # files anywhere in it (CI.md, "What a path filter must cover"). The cost
+    # is a four-file fetch and one Python run.
+    #
+    # Renaming a linked heading on purpose: open a mirror PR on a branch of
+    # the same name that updates the link (the mirror's link step passes it
+    # with a notice), merge that, then re-run this job.
+    name: HACS store page links land in this tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The job runs a script fetched from the mirror's main; leave no
+          # token in .git/config for it to find.
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+      - name: The store page's links into this repository land
+        # Fetches README.md, AGENTS.md, CLAUDE.md and
+        # .github/scripts/lint_readme.py from the mirror's main over
+        # raw.githubusercontent.com (public, no credentials, three tries),
+        # then runs the checker with -I against this checkout. Until
+        # securacv-homeassistant#28 merges, the mirror's checker has no
+        # --source mode, and the script says so in a warning annotation
+        # instead of running it.
+        run: python3 scripts/check_hacs_store_links.py
