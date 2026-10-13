@@ -539,7 +539,9 @@ void test_sketch_glue() {
   // Each grant passes its own name: a bearer, a served claim, else the tap.
   const std::string route = body_of(ino, "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {");
   CHECK(!route.empty());
-  CHECK(has(route, R"(api_auth_check_optional\(req, g_device\.api_token_str\)\) \{\s*return send_provisioning_receipt\(req, receipt_authority::Grant::BEARER\);)"));
+  // The first grant is the bearer header or an owner's session (F289,
+  // api_auth_check_credential_optional; test_receipt_session.cpp drives it).
+  CHECK(has(route, R"(api_auth_check_credential_optional\(req, g_device\.api_token_str\)\) \{\s*return send_provisioning_receipt\(req, receipt_authority::Grant::BEARER\);)"));
   CHECK(has(route, R"(send_provisioning_receipt\(\s*req, claim_served \? receipt_authority::Grant::SETUP_DOOR_CLAIM\s*: receipt_authority::Grant::BOOT_TAP\);)"));
   CHECK(count_of(ino, R"(\bsend_provisioning_receipt\()") == 3);   // the definition and the two calls
 

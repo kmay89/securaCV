@@ -9,6 +9,17 @@ endpoint (or a resurrected one: three /api/ble routes shipped without
 auth and were only unreachable because they overflowed the handler
 table) cannot silently widen the unauthenticated surface.
 
+It also holds the routes that answer a credential (sweep F289). The
+landing page at / mints a session for any caller that reaches the device,
+on the home network too, so a route that answers the bearer token or the
+SoftAP password takes the bearer header or a session minted beside a served
+receipt (api_auth_check_credential / _optional), never a gate that takes any
+session. Every function in canary_wap.ino that reads g_device.api_token_str
+or g_device.ap_password other than as the token a gate compares against is
+named in CREDENTIAL_READERS, as an HTTP answer or as a local use (serial,
+NVS, the AP's own bring-up); an unnamed reader fails, and an answer must sit
+in, or be called only from, a route handler gated that way.
+
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
 """
@@ -26,6 +37,8 @@ AUTH_MARKERS = (
     "api_auth_check(",            # Bearer + session cookie (401/403/429)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
     "api_auth_check_optional(",   # silent variant (caller enforces)
+    "api_auth_check_credential(", # Bearer header or an owner's session (F289)
+    "api_auth_check_credential_optional(",  # its silent variant (the receipt's grant 1)
     "CSI_AUTH_OR_RETURN",         # csi_integration session/Bearer macro
     "pair_token_valid(",          # 10-min wizard pair token
     "wifi_change_authorize(",     # pair token OR lockout-throttled admin cred
@@ -93,6 +106,166 @@ SELF_GATING_HANDLERS = {
     "handle_tune_page": "session-cookie check, 302 to / when absent",
     "handle_wifi_pair_token": "gated on setup_wizard::is_active + direct Host",
 }
+
+
+# ── Routes that answer a credential (sweep F289) ──────────────────────────
+#
+# The gates that may stand in front of an answer that carries the bearer
+# token or the SoftAP password: the Authorization header, or a session minted
+# beside a served receipt (a BOOT tap or a setup-door claim).
+CREDENTIAL_GATES = (
+    "api_auth_check_credential(",
+    "api_auth_check_credential_optional(",
+)
+# Gates that take any live session, the landing page's included: never in
+# front of such an answer.
+ANY_SESSION_GATES = (
+    "api_auth_check(",
+    "api_auth_check_optional(",
+    "api_auth_check_or_query(",
+    "CSI_AUTH_OR_RETURN",
+    "cv_session_validate(",
+    "session_validate_cookie(",
+    "authorized(req",
+)
+# Every function in canary_wap.ino that reads the bearer token or the SoftAP
+# password other than as the token a gate or a module compares against.
+# "answer": it puts the secret in an HTTP answer. "local": it never does.
+CREDENTIAL_READERS = {
+    "send_provisioning_receipt": ("answer", "the receipt's token and ap_password (the recovery kit)"),
+    "handle_pairing_qr": ("answer", "the pairing QR's payload carries the token"),
+    "resolve_ap_password": ("local", "hands the SoftAP its own password at bring-up"),
+    "provision_device": ("local", "derives and stores both at first boot"),
+    "print_quick_connect_details": ("local", "USB serial, at the desk"),
+    "handle_serial_commands": ("local", "USB serial commands"),
+    "setup": ("local", "boot banner on USB serial"),
+}
+_COMPARER = re.compile(
+    r"\b(?:api_auth_check\w*|\w+::register_routes|csi_integration::init)\s*\(\s*\w+"
+    r"\s*,\s*g_device\.api_token_str\s*\)")
+_SECRET = re.compile(r"\bg_device\.(?:api_token_str|ap_password)\b")
+_FUNC_HEAD = re.compile(
+    r"^(?!(?:if|for|while|switch|return|else|do)\b)[A-Za-z_][\w:<>\*&\s,]*?"
+    r"\b([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*(?:const\s*)?\{", re.M)
+
+
+def top_level_functions(text: str):
+    """(name, body) for every function defined at column 0 of `text` (a
+    comment-stripped source), braces matched over the string-blanked view."""
+    blanked = blank_string_contents(text)
+    out = []
+    for m in _FUNC_HEAD.finditer(blanked):
+        depth, i = 1, m.end()
+        while i < len(blanked) and depth:
+            if blanked[i] == "{":
+                depth += 1
+            elif blanked[i] == "}":
+                depth -= 1
+            i += 1
+        out.append((m.group(1), text[m.start():i]))
+    return out
+
+
+def credential_problems(ino: str, handlers: set) -> list:
+    """The F289 rule over canary_wap.ino (comment-stripped) and the names of
+    the handlers it registers. Returns the problems, empty when it holds."""
+    problems = []
+    funcs = top_level_functions(ino)
+    bodies = {}
+    for name, body in funcs:
+        bodies.setdefault(name, []).append(body)
+    readers = set()
+    for name, body in funcs:
+        if _SECRET.search(_COMPARER.sub("", body)):
+            readers.add(name)
+    for name in sorted(readers - set(CREDENTIAL_READERS)):
+        problems.append(f"{name}() reads the bearer token or the SoftAP password and is not "
+                        f"in CREDENTIAL_READERS (name it as an answer or a local use)")
+    for name in sorted(set(CREDENTIAL_READERS) - readers):
+        problems.append(f"CREDENTIAL_READERS names {name}(), which reads neither secret — "
+                        f"remove or fix it")
+
+    def gated_for_credentials(handler: str) -> str:
+        found = bodies.get(handler, [])
+        if len(found) != 1:
+            return f"{handler}() defined {len(found)} times"
+        body = found[0]
+        if not any(g in body for g in CREDENTIAL_GATES):
+            return f"{handler}() answers a credential behind no {' / '.join(CREDENTIAL_GATES)}"
+        took = [g for g in ANY_SESSION_GATES if g in body]
+        if took:
+            return (f"{handler}() answers a credential and takes {', '.join(took)}, which a "
+                    f"landing-page session passes")
+        return ""
+
+    for name, (kind, _why) in sorted(CREDENTIAL_READERS.items()):
+        if kind != "answer" or name not in readers:
+            continue
+        if name in handlers:
+            why = gated_for_credentials(name)
+            if why:
+                problems.append(why)
+            continue
+        call = re.compile(r"\b" + re.escape(name) + r"\s*\(")
+        callers = sorted({fn for fn, body in funcs
+                          if fn != name and call.search(body)})
+        if not callers:
+            problems.append(f"{name}() answers a credential and nothing calls it")
+        for fn in callers:
+            if fn not in handlers:
+                problems.append(f"{name}() answers a credential and is called from {fn}(), "
+                                f"not a registered route handler")
+                continue
+            why = gated_for_credentials(fn)
+            if why:
+                problems.append(why)
+    return problems
+
+
+def _assert_credential_rule() -> None:
+    """The F289 rule on fixtures, every run: the shapes it must pass and
+    the ones it must refuse."""
+    good = (
+        "static esp_err_t send_provisioning_receipt(httpd_req_t* req, Grant g) {\n"
+        "  in.token = g_device.api_token_str;\n  in.ap_password = g_device.ap_password;\n}\n"
+        "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {\n"
+        "  if (api_auth_check_credential_optional(req, g_device.api_token_str)) {\n"
+        "    return send_provisioning_receipt(req, Grant::BEARER);\n  }\n"
+        "  return send_provisioning_receipt(req, Grant::BOOT_TAP);\n}\n"
+        "static esp_err_t handle_pairing_qr(httpd_req_t* req) {\n"
+        "  if (!api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n"
+        "  snprintf(p, n, \"%s\", g_device.api_token_str);\n}\n"
+        "static esp_err_t handle_status_auth(httpd_req_t* req) {\n"
+        "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n}\n"
+        "static bool resolve_ap_password(char* o, size_t n) { snprintf(o, n, \"%s\", g_device.ap_password); }\n"
+        "static void provision_device() { x(g_device.api_token_str, g_device.ap_password); }\n"
+        "static void print_quick_connect_details() { p(g_device.api_token_str); }\n"
+        "static void handle_serial_commands() { p(g_device.ap_password); }\n"
+        "void setup() {\n  p(g_device.ap_password);\n"
+        "  bluetooth_api::register_routes(active_server, g_device.api_token_str);\n}\n"
+    )
+    handlers = {"handle_provisioning_receipt", "handle_pairing_qr", "handle_status_auth"}
+    assert credential_problems(good, handlers) == [], credential_problems(good, handlers)
+    bad = {
+        "the receipt's old first grant": good.replace(
+            "api_auth_check_credential_optional(req", "api_auth_check_optional(req"),
+        "the pairing QR's old gate": good.replace(
+            "api_auth_check_credential(req", "api_auth_check(req"),
+        "a credential gate beside a session gate": good.replace(
+            "  return send_provisioning_receipt(req, Grant::BOOT_TAP);",
+            "  if (cv_session_validate(req)) return send_provisioning_receipt(req, Grant::BEARER);"),
+        "a new answer nobody classified": good + (
+            "static esp_err_t handle_leak(httpd_req_t* req) {\n"
+            "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
+            "  return httpd_resp_sendstr(req, g_device.api_token_str);\n}\n"),
+        "the receipt written from a second route": good + (
+            "static esp_err_t handle_other(httpd_req_t* req) {\n"
+            "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
+            "  return send_provisioning_receipt(req, Grant::BEARER);\n}\n"),
+    }
+    handlers_bad = handlers | {"handle_leak", "handle_other"}
+    for why, text in bad.items():
+        assert credential_problems(text, handlers_bad), f"credential rule passed {why}"
 
 
 def strip_comments(text: str) -> str:
@@ -267,6 +440,7 @@ def _assert_parser_robust() -> None:
 
 def main() -> int:
     _assert_parser_robust()
+    _assert_credential_rule()
     sources = {}
     for path in sorted(SKETCH.glob("*.h")) + sorted(SKETCH.glob("*.cpp")) + sorted(
             SKETCH.glob("*.ino")):
@@ -349,6 +523,10 @@ def main() -> int:
             failures.append(f"{method} {uri}: handler {handler} "
                             f"({fname}) has NO credential gate and is not "
                             f"on the public allowlist")
+
+    ino_handlers = {h.split("::")[-1].split("<")[0]
+                    for _u, _m, h, f in routes if f == "canary_wap.ino"}
+    failures.extend(credential_problems(ino, ino_handlers))
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):
