@@ -1622,7 +1622,11 @@ def test_run_sh_never_takes_a_nameless_stream_as_the_primary_camera():
     assert "Invalid zone_id" not in err
 
 
-def test_run_sh_keeps_a_configured_camera_first_beside_a_nameless_stream():
+def test_run_sh_takes_the_configured_camera_beside_a_nameless_stream():
+    """Only the configured camera is left once the nameless stream is
+    skipped. (run.sh takes the first camera BY NAME across configured and
+    discovered rows, so a discovered name that sorts first would still be
+    primary; that is the pick's rule, not this item's.)"""
     configured = [{"name": "porch", "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch"}]
     code, primary, err = _run_sh_camera_pick(
         {"": {"producers": ["rtsp://10.0.0.1/empty"]}}, configured
