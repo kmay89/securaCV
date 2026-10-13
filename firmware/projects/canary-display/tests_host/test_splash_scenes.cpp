@@ -172,6 +172,12 @@ struct Read {
   int tail_moves;           // times the tail's seat changed while shown
   int tail_last_y;
   int line_same_sets;       // the bubble's line set to the text it held
+  // The mark's small reactions, as drawn (F279): a Tilt dips the beak below
+  // its rest seat, a Startle widens the eye. Each onset, in ms from the
+  // splash's start; the next mood's pose puts both back.
+  uint32_t t0;
+  bool dipped, wide;
+  std::vector<int> tilt_at, startle_at;
 };
 
 Read g_read;
@@ -209,6 +215,19 @@ void refresh() {
   lv_obj_t* bird = canary_mark_obj();
   const bool bird_up = bird != nullptr && bird->parent == scr &&
                        !lv_obj_has_flag(bird, LV_OBJ_FLAG_HIDDEN);
+  if (bird_up && bird->children.size() == 7) {
+    // tail, body, wing, head, beak, blush, eye (canary_mark_create's order)
+    const int d = bird->w;
+    const lv_obj_t* beak = bird->children[4];
+    const lv_obj_t* eye = bird->children[6];
+    const bool dipped = beak->sy > d * 24 / 100;
+    const bool wide = eye->w > (d * 10 / 100 < 3 ? 3 : d * 10 / 100);
+    const int t = (int)(fake_lvgl::tick() - R.t0);
+    if (dipped && !R.dipped) R.tilt_at.push_back(t);
+    if (wide && !R.wide) R.startle_at.push_back(t);
+    R.dipped = dipped;
+    R.wide = wide;
+  }
   if (bird_up) {
     R.bird_frames++;
     R.bird_d = bird->w == bird->h ? bird->w : -1;
@@ -321,6 +340,7 @@ void play(const Canvas& cv, int which, bool first, const std::string& subject) {
 
   R.home = lv_obj_create(nullptr);
   lv_scr_load(R.home);
+  R.t0 = fake_lvgl::tick();
   fake_lvgl::refresh_hook() = refresh;
   // Hello again holds long enough for the breath to swing out after the
   // hop (canary_mark: a 560 ms hop, then a 1.4 s half-breath at most x1.25).
@@ -361,6 +381,38 @@ void play(const Canvas& cv, int which, bool first, const std::string& subject) {
   CHECK(R.bird_y_lo >= 0 && R.bird_y_hi + d <= cv.h,
         "%s: the bird is drawn at y %d..%d on a %d px canvas", n, R.bird_y_lo,
         R.bird_y_hi + d, cv.h);
+
+  // F279: the first meeting a unit plays at power-on draws its opening Tilt
+  // (kHello's first Tilt beat, after its wordless arrival). The mark's
+  // Tilt/Startle ration starts as "never reacted"; its clock used to start
+  // at 0, so a Tilt in the first 8 s of uptime was refused as if one had
+  // just played, and the bird looked at you without its head-cock. Only the
+  // process's first splash starts at power-on (tick 0); every later one
+  // starts as the previous splash's ration left it. Printed for that one:
+  // when each reaction the mark let through was drawn.
+  if (first && R.t0 == 0) {
+    int at = 0, until = -1;
+    bool wordless = true;
+    for (uint8_t k = 0; k < canary::story::kHello.n; ++k) {
+      const canary::story::Beat& b = canary::story::kHello.beats[k];
+      if (b.pose == canary::story::Pose::Tilt) {
+        until = at + b.hold_ms;
+        break;
+      }
+      wordless = wordless && b.line == nullptr;
+      at += b.hold_ms;
+    }
+    CHECK(wordless && until > at, "%s: kHello's first Tilt follows wordless beats only "
+          "(its window is then their holds)", n);
+    const int first_tilt = R.tilt_at.empty() ? -1 : R.tilt_at[0];
+    CHECK(first_tilt >= at && first_tilt < until,
+          "%s, at power-on: the opening Tilt should be drawn %d..%d ms in (first Tilt "
+          "drawn at %d ms; -1 is none)", n, at, until, first_tilt);
+    std::string seen;
+    for (int t : R.tilt_at) seen += " Tilt@" + std::to_string(t);
+    for (int t : R.startle_at) seen += " Startle@" + std::to_string(t);
+    std::printf("      at power-on the mark drew (ms into the splash):%s\n", seen.c_str());
+  }
 
   char line[320];
   if (!first) {

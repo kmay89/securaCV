@@ -357,7 +357,13 @@ void flourish_cb(lv_timer_t* t) {
 // ── One-shot reactions (event-driven, layered over the mood) ─────────────
 
 lv_timer_t* s_react_timer = nullptr;  // tracked pose-restore one-shot
-uint32_t s_last_small_react = 0;      // Tilt/Startle ration clock
+// The Tilt/Startle ration: one small reaction per 8 s. It starts as "never
+// reacted". The clock alone used to start at 0 while LVGL's tick is
+// millis() from power-on, so every Tilt and Startle in the first 8 s of
+// uptime was refused as if one had just played: the first meeting's opening
+// Tilt, a touch in the first seconds, and a nightlight turned at 7 s (F279).
+bool s_small_reacted = false;         // a Tilt or Startle has played
+uint32_t s_last_small_react = 0;      // ...and when (lv_tick_get())
 bool s_base_recorded = false;         // base captured once, post-placement
 
 void react_restore_cb(lv_timer_t* t) {
@@ -602,8 +608,12 @@ void canary_mark_react(CanaryReact r) {
     return;
   const uint32_t now = lv_tick_get();
   const bool small = r == CanaryReact::Tilt || r == CanaryReact::Startle;
-  if (small && now - s_last_small_react < 8000) return;  // rationed
-  if (small) s_last_small_react = now;
+  if (small && s_small_reacted && now - s_last_small_react < 8000)
+    return;  // rationed
+  if (small) {
+    s_small_reacted = true;
+    s_last_small_react = now;
+  }
   // A pending glance return firing mid-reaction would clobber the
   // reaction's eye placement (review catch).
   if (s_look_timer) {

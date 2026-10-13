@@ -160,6 +160,21 @@ static void report(const char* what, const YSpan& s) {
 }
 
 int main() {
+  // A turn in the first seconds of uptime wears its Startle too (F279): the
+  // mark's Tilt/Startle ration starts as "never reacted". Its clock used to
+  // start at 0, so a nightlight turned 7 s after power-on refused the
+  // tumble's Startle as if one had just played (runtime_turn.sh measured it on
+  // all 12 turns). The fake's tick is 0 when the process starts.
+  std::printf("a turn 7 s after power-on wears its Startle (F279):\n");
+  {
+    CHECK(now() == 0, "this case runs at power-on (tick %u)", (unsigned)now());
+    fake_lvgl::run(7000);
+    const YSpan early = turn(320, 180, 1, CanaryMood::Idle);
+    report("a quarter turn 7 s after power-on", early);
+    CHECK(startled(early), "a turn 7 s after power-on hops with its Startle (y %d..%d, seat %d)",
+          early.lo, early.hi, seat_y());
+  }
+
   std::printf("the tumble's Startle comes with the first mood (F242):\n");
 
   // Every turn the apply path makes, on both glass shapes, wears its Startle.
@@ -177,7 +192,7 @@ int main() {
       {"landscape -> portrait, three quarters", 180, 320, 3},
   };
   for (const Turn& t : turns) {
-    fake_lvgl::run(9000);  // past the mark's 8 s Tilt/Startle ration
+    fake_lvgl::run(9000);  // past the 8 s ration since the last Startle
     const YSpan s = turn(t.w, t.h, t.delta, CanaryMood::Idle);
     report(t.what, s);
     CHECK(startled(s), "%s: the bird should hop with its Startle (y %d..%d, seat %d)",

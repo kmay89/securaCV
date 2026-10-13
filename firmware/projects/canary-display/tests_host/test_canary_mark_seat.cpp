@@ -407,7 +407,7 @@ static void check_hop(const char* what, CanaryMood mood, void (*start)(lv_timer_
   canary_mark_trust(trust);
   canary_mark_mood(mood);
   watch(scr, bird, 1000);  // mid-breath
-  fake_lvgl::run(8000);    // past the Tilt/Startle ration
+  fake_lvgl::run(8000);    // past the ration since any earlier Startle
   CHECK(anims_on(bird) == 1, "%s: one breath before the hop (%d anims)", what,
         anims_on(bird));
   CHECK(flourish != nullptr, "%s: the flourish timer", what);
@@ -526,7 +526,7 @@ static void test_temperament_reaches_breath() {
     lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
     canary_mark_mood(CanaryMood::Idle);
     watch(scr, bird, 1000);
-    fake_lvgl::run(8000);  // past the Tilt/Startle ration
+    fake_lvgl::run(8000);  // past the ration since any earlier Startle
     canary_mark_react(CanaryReact::Joyful);
     canary_mark_temperament(1.2f, 1.0f, 1.0f);
     CHECK(anims_on(bird) == 1 && the_breath(bird) == nullptr,
@@ -563,7 +563,7 @@ static void test_hop_leaves_host_slide() {
     lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
     canary_mark_mood(CanaryMood::Idle);
     watch(scr, bird, 1000);
-    fake_lvgl::run(8000);  // past the Tilt/Startle ration
+    fake_lvgl::run(8000);  // past the ration since any earlier Startle
     slide(bird, host_tx, 160);
     CHECK(flourish != nullptr, "%s: the flourish timer", h.what);
     if (flourish == nullptr) {
@@ -583,7 +583,58 @@ static void test_hop_leaves_host_slide() {
   fake_esp::script().clear();
 }
 
+// 0. The first small reaction after power-on plays (F279). The Tilt/Startle
+//    ration allows one per 8 s; its clock used to start at 0 while LVGL's
+//    tick is millis() from power-on, so every Tilt and Startle in the first
+//    8 s of uptime was refused as if one had just played. The fake's tick is
+//    0 when the process starts, so this runs first: a Tilt 1 s after power-on
+//    plays (the beak dips 3 px and the eye rises 2 px on a 100 px bird), a
+//    Startle a second later is rationed, and one 8 s after the Tilt plays.
+static void test_first_reaction_at_power_on() {
+  std::printf("the first reaction after power-on plays (F279):\n");
+  CHECK(fake_lvgl::tick() == 0, "this test runs at power-on (tick %u)",
+        (unsigned)fake_lvgl::tick());
+  lv_obj_t* content = nullptr;
+  lv_obj_t* scr = glass(320, 180, &content);
+  lv_obj_t* bird = canary_mark_create(content, 100);
+  lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+  // tail, body, wing, head, beak, blush, eye (canary_mark_create's order)
+  CHECK(bird->children.size() == 7, "the bird has %d parts, want 7",
+        (int)bird->children.size());
+  if (bird->children.size() != 7) return;
+  lv_obj_t* beak = bird->children[4];
+  lv_obj_t* eye = bird->children[6];
+  CHECK(beak->w == 14 && beak->h == 10 && eye->w == 10 && eye->h == 10,
+        "the beak (%dx%d) and the eye (%dx%d) are where the test looks", beak->w,
+        beak->h, eye->w, eye->h);
+  fake_lvgl::run(1000);
+  canary_mark_mood(CanaryMood::Idle);
+  const int beak_y = beak->sy, eye_y = eye->sy;
+  canary_mark_react(CanaryReact::Tilt);
+  std::printf("  a Tilt 1 s after power-on: beak y %d -> %d, eye y %d -> %d\n",
+              beak_y, beak->sy, eye_y, eye->sy);
+  CHECK(beak->sy == beak_y + 3 && eye->sy == eye_y - 2,
+        "a Tilt 1 s after power-on: the beak should dip 3 px (y %d -> %d) and the "
+        "eye rise 2 px (y %d -> %d)",
+        beak_y, beak->sy, eye_y, eye->sy);
+  // ...and the ration still holds: a Startle 1 s after the Tilt is refused.
+  fake_lvgl::run(1000);
+  canary_mark_react(CanaryReact::Startle);
+  CHECK((the_breath(bird) != nullptr) && eye->w == 10,
+        "a Startle 1 s after the Tilt is rationed (%s, eye %d px)",
+        (the_breath(bird) != nullptr) ? "the breath runs" : "a hop replaced the breath", eye->w);
+  // One 8 s after the Tilt plays: the eye goes wide and the bird hops.
+  fake_lvgl::run(7000);
+  canary_mark_react(CanaryReact::Startle);
+  CHECK(!(the_breath(bird) != nullptr) && anims_on(bird) == 1 && eye->w == 12,
+        "a Startle 8 s after the Tilt plays (%d anims on the bird, %s, eye %d px)",
+        anims_on(bird), (the_breath(bird) != nullptr) ? "a breath" : "no breath", eye->w);
+  std::printf("  a Startle 1 s later is rationed; one 8 s after the Tilt hops\n");
+  lv_obj_del(scr);
+}
+
 int main() {
+  test_first_reaction_at_power_on();
   test_first_mood_before_layout();
   test_first_mood_after_layout();
   test_rebase_walk();
