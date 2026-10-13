@@ -200,9 +200,12 @@ const requiresLiveReceipt = (product) => !product || product.serial_receipt !== 
     Wi-Fi / broker form — the browser's form, reused, so a Canary set up here
     gets exactly the fields (and the saved network) it gets in the browser.
     `monitorCmds` is flash.js's MONITOR_CMDS, handed over the same way: the
-    firmware's single-key commands the post-flash monitor offers as chips, one
-    table for both benches (and desktop_parity.test.js holds the Flasher's copy
-    to it). */
+    single-key chips the post-flash monitor offers, one table for both benches
+    (and desktop_parity.test.js holds the Flasher's copy to it). Its labels
+    follow the WAP sketch's menu; other firmwares answer some of those keys
+    differently or not at all (the flagship Canary's t/w/m, Vision's j/h only),
+    the same table the browser flasher and the Flasher show for every
+    product. */
 export async function mountNativeBench(mount, { catalog, renderWifiFields, monitorCmds = [] }) {
   const st = {
     ports: [], port: null, portInfo: null, chip: null, flashBytes: null, mac: null,

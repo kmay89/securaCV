@@ -3602,6 +3602,57 @@ test("A67: the Lab's post-flash monitor has the Flasher's command row, live only
   } finally { unstarted.close(); }
 });
 
+// Sweep A67 review: two paths the row test above did not drive. "Read the
+// board again" takes the port back from the monitor, and must take the row
+// with it: a row left enabled there looks live while sendCommand refuses
+// without a word. And the chips are the table the bench is HANDED: a bench
+// that drew its own copy of the eight keys would pass every check that hands
+// it those same eight, so this hands it a table no firmware has.
+test("A67: a re-read takes the row with the port, and the chips are the table the bench is handed", async () => {
+  const receipt = { target: "esp32-host", product_id: "securacv-canary", version: "9.9.9", release_sha256: "a".repeat(64),
+    installed_sha256: "b".repeat(64), bytes_written: 1, release_verification: "ed25519+sha256", channel: "stable",
+    chip_write_verified: true, provisioned: false };
+  const sends = (run) => run.calls.filter(([c]) => c === "serial_monitor_send").map(([, a]) => a.command);
+  const controls = (run) => {
+    const chips = [...run.mount.walk()].filter((n) => n.tagName === "button" && n.dataset.cmd);
+    const input = run.mount.find((n) => n.tagName === "input" && n.attrs["aria-label"] === "Serial command");
+    const send = run.mount.find((n) => n.tagName === "button" && n.textContent === "Send");
+    return { chips, input, send, all: [...chips, input, send].filter(Boolean) };
+  };
+
+  const reread = await runNativeBench({ flashAnswers: [receipt] });
+  try {
+    await reread.pick("securacv-canary");
+    const { chips, input, send, all } = controls(reread);
+    assert.strictEqual(all.length, browserMonitorCmds().length + 2);
+    for (const c of all) assert.strictEqual(c.disabled, false, "the row must be usable while the monitor runs");
+    const stopsBefore = reread.calls.filter(([c]) => c === "stop_serial_monitor").length;
+    reread.mount.find((n) => n.tagName === "button" && n.textContent === "Read the board again").fire("click");
+    await drain(); await drain();
+    assert.strictEqual(reread.calls.filter(([c]) => c === "stop_serial_monitor").length, stopsBefore + 1,
+      "a re-read must take the port back from the monitor");
+    for (const c of all) assert.strictEqual(c.disabled, true, "a re-read must disable the row with the monitor");
+    const atReread = sends(reread).length;
+    chips[0].fire("click");
+    input.value = "h";
+    send.fire("click");
+    await drain();
+    assert.strictEqual(sends(reread).length, atReread, "a re-read monitor must send nothing");
+  } finally { reread.close(); }
+
+  const odd = [["z", "zed"], ["q", "quiet"]];
+  const handed = await runNativeBench({ flashAnswers: [receipt], monitorCmds: odd });
+  try {
+    await handed.pick("securacv-canary");
+    const { chips } = controls(handed);
+    assert.deepStrictEqual(chips.map((b) => b.textContent), ["zed (z)", "quiet (q)"],
+      "the chips must be the table the bench is handed, not a copy of its own");
+    for (const b of chips) b.fire("click");
+    await drain();
+    assert.deepStrictEqual(sends(handed), ["z\n", "q\n"]);
+  } finally { handed.close(); }
+});
+
 // ── The derived birth certificate: one bird, one name, three surfaces ─────
 //
 // The Mac app can't import canary-local, so it inlines the derivation. That is
