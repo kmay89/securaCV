@@ -571,15 +571,17 @@ Once**, and the tap that signs it in offers **Save my recovery kit** in the
 wizard's words; one already signed in (a session cookie from the landing
 page, a tap or a claim, or a token) saves it from **Settings**, **Device**,
 **Recovery kit** without a tap. A kit saved on the setup network names the
-SoftAP address, which the app moves onto the address the WAP answers at
-now, the pin still its own; one saved over the home network names the
-`.local` name, which the app keeps as it is (F255: the receipt, and port
-80's redirect, name the SoftAP address only for a request that arrived over
-the SoftAP, or while the STA holds no address). The `.local` name lasts as
-long as the WAP's name: naming it later (the wizard, or `POST
-/api/device-name`) changes the host, and a kit saved before names a host
-nothing answers; the app does not yet move such a kit onto the host it
-discovered, so save the kit again after a rename. The app has no BOOT-tap
+SoftAP address; one saved over the home network names the `.local` name
+(F255: the receipt, and port 80's redirect, name the SoftAP address only
+for a request that arrived over the SoftAP, or while the STA holds no
+address). Neither lasts: the SoftAP is gone once the WAP is on your Wi-Fi,
+and the `.local` name lasts only as long as the WAP's name — naming it
+later (the wizard, or `POST /api/device-name`) changes the host. So the
+app moves a kit whose `device_id` is the row's onto the address the WAP
+answers at now, whatever host the kit names, keeping its scheme, port and
+pin (`ProvisioningReceipt.rebased`, A88); a kit with no `device_id` moves
+only off the SoftAP address, and another device's kit is used as it is.
+A kit saved before a rename is dialed at the new name. The app has no BOOT-tap
 pairing over the LAN: an installed WAP speaks https with no pin the phone
 could hold it to before the first dial (F256).
 
@@ -589,7 +591,8 @@ Tests: `ImprovWireTests` (the codec, pinned to the firmware's vectors),
 unit joined), `SetupGuideTests` (the words the screen shows, twenty words
 up front), `SetupPortalTests` (the scan list and the next step for every
 verdict), `AddCanaryFlowTests` (no prompt at launch, the first-run card,
-the radio and camera words).
+the radio and camera words), `DeviceAPITests` (which recovery kit moves
+onto the WAP it was opened for, and which stays as it is).
 
 ---
 
@@ -757,6 +760,10 @@ cannot speak to.
       failure; Forget clears it; it is absent from iCloud Keychain.
 - [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,
       and its recovery kit (saved before it joined) pairs it there.
+- [ ] A kit saved from the dashboard over the home network, then the WAP
+      named (`POST /api/device-name`, or the wizard's name), pairs it from
+      its row at the new `.local` name, the pin held on a TLS-enabled
+      unit; another WAP's kit opened from that row is not moved onto it.
 - [ ] With the phone on cellular at the claim, the card names it and Try
       again pairs once the phone is back on the home Wi-Fi (inside 180 s).
 - [ ] With an older Vision already on the network, the success card does
@@ -789,6 +796,7 @@ cannot speak to.
 | The walkthrough's words (pure) | [`ios/Shared/SetupGuide.swift`](../../ios/Shared/SetupGuide.swift) | `SetupGuideTests` |
 | The CoreBluetooth glue | `ios/Sources/SecuraCV/Transport/ImprovClient.swift` | bench |
 | The WAP sequence: claim → receipt → paired (pure) | [`ios/Shared/MagicPairPlan.swift`](../../ios/Shared/MagicPairPlan.swift) | `MagicPairPlanTests` |
+| Which recovery kit moves onto the WAP it was opened for (pure) | `ProvisioningReceipt.rebased` in `ios/Sources/SecuraCV/Transport/DeviceAPI.swift` | `DeviceAPITests` |
 | The remembered Wi-Fi (device-only Keychain) | `ios/Sources/SecuraCV/Security/HouseholdWiFi.swift` | — |
 | The card | `ios/Sources/SecuraCV/Views/Components/NearbyCanaryCard.swift` | — |
 | The lessons | [`firmware/LESSONS_LEARNED.md`](../../firmware/LESSONS_LEARNED.md) (three entries dated 2026-10-07) | — |

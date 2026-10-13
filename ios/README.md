@@ -368,10 +368,12 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
     yet) the claim is unspent, so the card offers **Try again** while it
     lives (180 s). A refused or expired claim ends on the device's row under
     **Ready to pair** on the Fleet tab, where `PairView` takes its recovery
-    kit (the receipt its own setup page saves after a BOOT tap; opened from
-    Files or pasted, its setup-network address moved onto the address the
-    WAP answers at now by `ProvisioningReceipt.rebased`, the pin still the
-    kit's own) or walks a fresh setup. There is no in-app BOOT-tap pairing
+    kit (the receipt its own pages save after a BOOT tap; opened from
+    Files or pasted, a kit of that WAP is moved onto the address it
+    answers at now by `ProvisioningReceipt.rebased`, whatever address the
+    kit named — the setup network's, or a `.local` name from before the
+    WAP was named — the scheme, port and pin still the kit's own; another
+    WAP's kit is never moved) or walks a fresh setup. There is no in-app BOOT-tap pairing
     over the LAN, and no message promises one.
   - **The success card names this unit.** "Canary Sense K7MZ is on Home",
     then the network watch ticks only the device whose mDNS host carries
