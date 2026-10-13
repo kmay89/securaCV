@@ -749,8 +749,9 @@ static const uint8_t CHIRP_CHANNEL = 0;            // 0 = follow current radio c
 static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length (legacy field; v0.2 uses structured fields)
 static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps (priority heap by urgency)
 // Deduplication: v0.3 switched to a 4 KB / 4-hash Bloom filter (audit C9
-// closure). The historical fixed-array constant is retained as a hint to
-// any external tool that snapshots header constants.
+// closure), held in two such halves since sweep F270 (NONCE_FILTER_HALF_MS).
+// The historical fixed-array constant is retained as a hint to any external
+// tool that snapshots header constants.
 static const size_t MAX_NONCE_CACHE = 1024;        // Deprecated since v0.3 — Bloom filter used instead
 static const size_t MAX_NEARBY_CACHE = 32;         // Nearby device cache
 static const size_t SESSION_ID_SIZE = 8;           // Ephemeral session ID
@@ -767,6 +768,24 @@ static const uint32_t CHIRP_TTL_MS = 300000;           // Messages valid for 5 m
 static const uint32_t NEARBY_TIMEOUT_MS = 180000;      // Nearby stale after 3 min
 static const uint32_t DEFAULT_DISPLAY_MS = 1800000;    // Display chirps for 30 min
 static const uint32_t PRESENCE_REQUIRED_MS = 600000;   // 10 min presence before can send
+
+// A witness's freshness window on a set wall clock (handle_witness()): its
+// timestamp at most WITNESS_MAX_AHEAD_S ahead of this device's clock and at
+// most WITNESS_MAX_AGE_S behind it. So a frame first heard at the earliest
+// it is accepted (its timestamp 30 s ahead) is accepted again for 330 s.
+static const uint32_t WITNESS_MAX_AGE_S = CHIRP_TTL_MS / 1000;   // 300 s
+static const uint32_t WITNESS_MAX_AHEAD_S = 30;
+// The nonce filter's half (sweep F270): a nonce is held from the moment it
+// goes in until the half it went into is cleared, at least this long and at
+// most twice this long. The window above, one second more for the whole
+// seconds the wall clock counts in: 331 s on the uptime clock. A filter
+// cleared whole every CHIRP_TTL_MS forgot a nonce at the next reset, however
+// recent, so a frame heard again just after one was stored again, still
+// fresh, and a suppressed chirp came back with no votes.
+static const uint32_t NONCE_FILTER_HALF_MS =
+    (WITNESS_MAX_AGE_S + WITNESS_MAX_AHEAD_S + 1) * 1000;
+static_assert(NONCE_FILTER_HALF_MS > (WITNESS_MAX_AGE_S + WITNESS_MAX_AHEAD_S) * 1000,
+              "a nonce must outlive the freshness window of the frame that carried it");
 
 // Escalating cooldowns (abuse prevention)
 static const uint32_t COOLDOWN_TIER_1_MS = 300000;     // 5 min after 1st chirp
@@ -992,7 +1011,8 @@ struct ReceivedChirp {
   uint8_t  suppressed_by[MAX_SUPPRESS_VOTERS][SESSION_PUBKEY_SIZE];
   uint8_t  suppress_count;
   bool     validated;                           // ≥ threshold confirmations (from pubkeys ≠ originator) received
-  bool     suppressed;                          // Community voted to suppress
+  bool     suppressed;                          // Never true in the table: the vote that suppresses a
+                                                // chirp takes its row out (sweep F269); the route keeps the key
   bool     relayed;                             // Did we relay this
   bool     dismissed;                           // User dismissed locally
   bool     unverifiable_timestamp;              // Time was unsynced on receipt; display with warning badge

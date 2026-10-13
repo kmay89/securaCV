@@ -94,28 +94,44 @@ static constexpr size_t NEARBY_BYTES =
     MAX_NEARBY_CACHE * sizeof(NearbyDevice);
 static size_t g_nearby_count = 0;
 
-// Nonce deduplication: Bloom filter (audit C9 closure).
+// Nonce deduplication: a Bloom filter in two halves (audit C9 closure;
+// sweep F270).
 //
-// v0.2 used a 1024-entry circular array — robust against the original
-// "100-entry can be flushed by a 101-frame flood" attack but still
-// bounded. v0.3 switches to a 4 KB Bloom filter with 4 hash functions.
+// v0.2 used a 1024-entry circular array, v0.3 one 4 KB Bloom filter with 4
+// hash functions, cleared whole every CHIRP_TTL_MS (5 min) on the reasoning
+// that a frame older than that fails the freshness window anyway. But the
+// reset forgot every nonce at once, however recent: a frame heard just before
+// a reset and again just after it (replayed, or relayed by a neighbor) was
+// stored a second time while still fresh, and a community-suppressed chirp
+// came back unsuppressed with no votes (sweep F270).
 //
-// Sizing math:
-//   - m = 32768 bits (4 KB)
-//   - k = 4 hash functions
-//   - At n = 4096 distinct nonces inserted (a 5-minute flood at ~14 fps),
-//     false positive rate ≈ (1 - e^(-kn/m))^k ≈ 0.4 %.
-//   - The filter is reset every CHIRP_TTL_MS (5 min) since chirps older
-//     than that are rejected by the freshness window anyway, capping
-//     drift over time.
+// Now a nonce goes into the current half, and every NONCE_FILTER_HALF_MS
+// (331 s) the older half is cleared and becomes current; a lookup reads
+// both. A nonce is held from the moment it goes in until the half it went
+// into is cleared: at least NONCE_FILTER_HALF_MS, at most twice that. That
+// is longer than any frame stays fresh (a timestamp up to 30 s ahead and up
+// to 300 s behind the wall clock: 330 s from the earliest moment it is
+// accepted, mesh_network.h), so a fresh frame's nonce is never forgotten.
+// The halves turn when a witness's lookup finds the current one due, which
+// can only lengthen how long a nonce is held; when both are due (no turn for
+// two halves' time) both are cleared, as every nonce in them went in more
+// than a half ago by then (an insert always turns a due half first).
+//
+// Sizing, per half: m = 32768 bits (4 KB), k = 4 hashes; 8 KB in all,
+// allocated once in PSRAM (the filter was 4 KB). With n nonces in a half,
+// its false-positive rate is (1 - e^(-kn/m))^k: about 0.02 % at n = 1,000
+// and 2.4 % at n = 4,096 (a frame every 81 ms for a whole half; this comment
+// gave 0.4 % there), and a lookup reads both halves, so up to about twice
+// that. A false positive drops a new witness as a repeat.
 //
 // Hash functions: 4 independent SipHash-like mixes derived by taking
 // (nonce ^ salt_i) and folding to 15 bits of bit-index.
-static const size_t BLOOM_BITS = 32768;
-static const size_t BLOOM_BYTES = BLOOM_BITS / 8;
+static const size_t BLOOM_BITS = 32768;             // per half
+static const size_t BLOOM_BYTES = BLOOM_BITS / 8;   // per half
 static const uint8_t BLOOM_HASHES = 4;
-static uint8_t* g_bloom = nullptr;
-static uint32_t g_bloom_reset_ms = 0;
+static uint8_t* g_bloom = nullptr;                  // two halves, 2 * BLOOM_BYTES
+static uint8_t g_bloom_current = 0;                 // the half new nonces go into
+static uint32_t g_bloom_turned_ms = 0;              // when that half became current
 
 // Per-pubkey rate-limit tracking (audit C14).
 // LRU of recently-originating pubkeys with a sliding-hour witness count.
@@ -504,28 +520,43 @@ static uint32_t bloom_hash(const uint8_t* nonce, uint32_t salt) {
   return a & (BLOOM_BITS - 1);
 }
 
-static void bloom_reset_if_due() {
-  uint32_t now = millis();
-  if (now - g_bloom_reset_ms > CHIRP_TTL_MS) {
-    memset(g_bloom, 0, BLOOM_BYTES);
-    g_bloom_reset_ms = now;
+static uint8_t* bloom_half(uint8_t which) { return g_bloom + (size_t)which * BLOOM_BYTES; }
+
+// Turns the halves when the current one has been current for
+// NONCE_FILTER_HALF_MS: the older half is cleared and takes the new nonces
+// (sweep F270; it cleared the one filter whole every CHIRP_TTL_MS).
+static void bloom_turn_if_due() {
+  const uint32_t now = millis();
+  const uint32_t since = now - g_bloom_turned_ms;
+  if (since < NONCE_FILTER_HALF_MS) return;
+  if (since >= 2 * NONCE_FILTER_HALF_MS) {
+    memset(g_bloom, 0, 2 * BLOOM_BYTES);   // both halves are past
+  } else {
+    g_bloom_current ^= 1;
+    memset(bloom_half(g_bloom_current), 0, BLOOM_BYTES);
   }
+  g_bloom_turned_ms = now;
 }
 
-static bool is_nonce_seen(const uint8_t* nonce) {
-  bloom_reset_if_due();
+static bool bloom_half_has(const uint8_t* half, const uint8_t* nonce) {
   for (uint8_t i = 0; i < BLOOM_HASHES; i++) {
     uint32_t bit = bloom_hash(nonce, BLOOM_SALTS[i]);
-    if ((g_bloom[bit / 8] & (1u << (bit & 7))) == 0) return false;
+    if ((half[bit / 8] & (1u << (bit & 7))) == 0) return false;
   }
   return true;
 }
 
+static bool is_nonce_seen(const uint8_t* nonce) {
+  bloom_turn_if_due();
+  return bloom_half_has(bloom_half(0), nonce) || bloom_half_has(bloom_half(1), nonce);
+}
+
 static void cache_nonce(const uint8_t* nonce) {
-  bloom_reset_if_due();
+  bloom_turn_if_due();
+  uint8_t* half = bloom_half(g_bloom_current);
   for (uint8_t i = 0; i < BLOOM_HASHES; i++) {
     uint32_t bit = bloom_hash(nonce, BLOOM_SALTS[i]);
-    g_bloom[bit / 8] |= (uint8_t)(1u << (bit & 7));
+    half[bit / 8] |= (uint8_t)(1u << (bit & 7));
   }
 }
 
@@ -644,6 +675,24 @@ static bool nearby_has_pubkey_with_presence(const uint8_t* pubkey) {
     }
   }
   return false;
+}
+
+// The recent table's row for `nonce`, or -1. A nonce has one row at most:
+// handle_witness() refuses a frame whose nonce a row holds (sweep F270).
+static int recent_index_of(const uint8_t* nonce) {
+  for (size_t i = 0; i < g_recent_chirp_count; i++) {
+    if (memcmp(g_recent_chirps[i].nonce, nonce, 8) == 0) return (int)i;
+  }
+  return -1;
+}
+
+// Takes row `i` out of the recent table, the rows after it moved up in
+// order, the freed slot zeroed.
+static void drop_recent_at(size_t i) {
+  if (i >= g_recent_chirp_count) return;
+  for (size_t j = i + 1; j < g_recent_chirp_count; j++) g_recent_chirps[j - 1] = g_recent_chirps[j];
+  g_recent_chirp_count--;
+  memset(&g_recent_chirps[g_recent_chirp_count], 0, sizeof(ReceivedChirp));
 }
 
 // C8: priority storage — replace FIFO with urgency-aware insert.
@@ -769,7 +818,15 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   const ChirpHeader* hdr = (const ChirpHeader*)data;
   const ChirpWitnessPayload* payload = (const ChirpWitnessPayload*)(data + sizeof(ChirpHeader));
 
-  if (is_nonce_seen(hdr->nonce)) return;
+  // One nonce, one chirp (sweep F270): a frame is refused when the nonce
+  // filter holds its nonce (every nonce heard for at least
+  // NONCE_FILTER_HALF_MS, longer than any frame stays fresh) or a row of
+  // the recent table does (a row lives up to DEFAULT_DISPLAY_MS, past the
+  // filter, and with no wall clock a frame has no freshness window to end
+  // it). Before, the filter was cleared whole every 5 minutes, and the same
+  // frame heard just after a reset was stored again: a second row of a
+  // chirp still held, or a suppressed chirp back with no votes.
+  if (is_nonce_seen(hdr->nonce) || recent_index_of(hdr->nonce) >= 0) return;
   cache_nonce(hdr->nonce);
 
   if (payload->urgency < (uint8_t)g_urgency_filter) return;
@@ -856,8 +913,8 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   bool unverifiable_ts = false;
   if (wall_clock_is_synced()) {
     uint32_t now_sec = wall_clock_now_seconds();
-    if (hdr->timestamp > now_sec + 30 ||
-        (now_sec > hdr->timestamp && now_sec - hdr->timestamp > 300)) {
+    if (hdr->timestamp > now_sec + WITNESS_MAX_AHEAD_S ||
+        (now_sec > hdr->timestamp && now_sec - hdr->timestamp > WITNESS_MAX_AGE_S)) {
       health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
                  "chirp: rejected witness — outside freshness window");
       return;
@@ -917,12 +974,8 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   priority_heap_insert(&chirp);
 
   if (g_chirp_callback) {
-    for (size_t i = 0; i < g_recent_chirp_count; i++) {
-      if (memcmp(g_recent_chirps[i].nonce, chirp.nonce, 8) == 0) {
-        g_chirp_callback(&g_recent_chirps[i]);
-        break;
-      }
-    }
+    const int at = recent_index_of(chirp.nonce);
+    if (at >= 0) g_chirp_callback(&g_recent_chirps[at]);
   }
 
   char log_detail[96];
@@ -1012,34 +1065,41 @@ static void handle_suppress_vote(const uint8_t* data, size_t len) {
   session_id_from_pubkey(payload->voter_session_pubkey, derived_sid);
   if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) return;
 
-  for (size_t i = 0; i < g_recent_chirp_count; i++) {
-    ReceivedChirp& c = g_recent_chirps[i];
-    if (memcmp(c.nonce, payload->original_nonce, 8) != 0) continue;
-    // Spec §2.5.6: a vote counts within SUPPRESS_WINDOW_MS of the chirp's
-    // arrival here, and is dropped after it. No window was read, so a vote
-    // counted at any age until the chirp left the table (sweep F233). A row
-    // whose window has closed is passed over, not the end of the search: the
-    // same chirp can be held twice once the nonce filter resets (every
-    // CHIRP_TTL_MS), and the later copy's window may still be open.
-    if (millis() - c.received_ms > SUPPRESS_WINDOW_MS) continue;
-    if (pubkey_set_contains(c.suppressed_by, c.suppress_count,
-                            payload->voter_session_pubkey)) return;
-    // The set holds the most votes any table size asks for, so this cap
-    // never stands below the threshold. It was MAX_CONFIRMERS_PER_CHIRP (8)
-    // under a threshold of 9 from 18 rows on (sweep F233).
-    if (c.suppress_count < MAX_SUPPRESS_VOTERS) {
-      memcpy(c.suppressed_by[c.suppress_count],
-             payload->voter_session_pubkey, SESSION_PUBKEY_SIZE);
-      c.suppress_count++;
-    }
-    // More than half of the nearby rows, and at least three (spec §2.5.6);
-    // it was at least half, rounded down (F233). Suppressed once, and logged
-    // once: a later vote does not log the line again (F233).
-    if (!c.suppressed && c.suppress_count >= suppress_votes_needed(g_nearby_count)) {
-      c.suppressed = true;
-      health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: community-suppressed");
-    }
-    return;
+  // A nonce has one row (sweep F270: handle_witness() refuses a frame whose
+  // nonce a row holds), and none once its chirp is suppressed (F269), so a
+  // vote for a suppressed chirp finds nothing and does nothing: the
+  // receiver does not echo or count further votes (spec §2.5.6).
+  const int at = recent_index_of(payload->original_nonce);
+  if (at < 0) return;
+  ReceivedChirp& c = g_recent_chirps[at];
+  // Spec §2.5.6: a vote counts within SUPPRESS_WINDOW_MS of the chirp's
+  // arrival here, and is dropped after it. No window was read, so a vote
+  // counted at any age until the chirp left the table (sweep F233). A frame
+  // heard again does not reopen it: it takes no second row (F270).
+  if (millis() - c.received_ms > SUPPRESS_WINDOW_MS) return;
+  if (pubkey_set_contains(c.suppressed_by, c.suppress_count,
+                          payload->voter_session_pubkey)) return;
+  // The set holds the most votes any table size asks for, so this cap
+  // never stands below the threshold. It was MAX_CONFIRMERS_PER_CHIRP (8)
+  // under a threshold of 9 from 18 rows on (sweep F233).
+  if (c.suppress_count < MAX_SUPPRESS_VOTERS) {
+    memcpy(c.suppressed_by[c.suppress_count],
+           payload->voter_session_pubkey, SESSION_PUBKEY_SIZE);
+    c.suppress_count++;
+  }
+  // More than half of the nearby rows, and at least three (spec §2.5.6);
+  // it was at least half, rounded down (F233). Suppressed, the chirp leaves
+  // the recent table at this vote (sweep F269): hidden from GET
+  // /api/chirp/recent from the pass that publishes it, never validated or
+  // relayed by a later confirmation (handle_ack() finds no row), refused to
+  // a local confirm or dismiss (not found), and logged once. It stayed
+  // until the next prune, up to 30 s: listed with "suppressed": true,
+  // confirmable, and relayed by the confirmations that validated it. Its
+  // nonce stays in the filter, so the same frame is not stored again while
+  // it is fresh (F270).
+  if (c.suppress_count >= suppress_votes_needed(g_nearby_count)) {
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: community-suppressed");
+    drop_recent_at((size_t)at);
   }
 }
 
@@ -1320,7 +1380,7 @@ bool init() {
   if (!g_nearby_devices)
     g_nearby_devices = (NearbyDevice*)csi_large_calloc(NEARBY_BYTES);
   if (!g_bloom)
-    g_bloom = (uint8_t*)csi_large_calloc(BLOOM_BYTES);
+    g_bloom = (uint8_t*)csi_large_calloc(2 * BLOOM_BYTES);
   if (!g_pubkey_rate)
     g_pubkey_rate = (PubkeyRateEntry*)csi_large_calloc(PUBKEY_RATE_BYTES);
   if (!g_selftest_seen)
@@ -1336,8 +1396,9 @@ bool init() {
   memset(&g_session, 0, sizeof(g_session));
   memset(g_recent_chirps, 0, RECENT_CHIRPS_BYTES);
   memset(g_nearby_devices, 0, NEARBY_BYTES);
-  memset(g_bloom, 0, BLOOM_BYTES);
-  g_bloom_reset_ms = millis();
+  memset(g_bloom, 0, 2 * BLOOM_BYTES);
+  g_bloom_current = 0;
+  g_bloom_turned_ms = millis();
   memset(g_pubkey_rate, 0, PUBKEY_RATE_BYTES);
   memset(g_selftest_seen, 0, SELFTEST_SEEN_BYTES);
   g_recent_chirp_count = 0;

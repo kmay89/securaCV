@@ -2017,6 +2017,7 @@ CHIRP_VIEW_CALLS = (
 CHIRP_TABLE_STATE = ("g_recent_chirps", "g_recent_chirp_count", "g_nearby_devices", "g_nearby_count")
 CHIRP_TABLE_FUNCS = ("handle_presence", "handle_witness", "handle_ack", "handle_suppress_vote",
                      "relay_chirp", "priority_heap_insert", "nearby_has_pubkey_with_presence",
+                     "recent_index_of", "drop_recent_at",
                      "prune_stale_nearby", "prune_old_chirps", "confirm_chirp", "dismiss_chirp",
                      "disable", "clear_chirps", "init", "publish_view", "get_status",
                      "get_recent_chirps", "get_pending_chirps", "get_nearby_count", "get_nearby_devices")
@@ -2030,6 +2031,9 @@ CHIRP_TABLE_CALLERS = {
     "relay_chirp": ("handle_ack",),
     "priority_heap_insert": ("handle_witness",),
     "nearby_has_pubkey_with_presence": ("handle_ack",),
+    # One nonce, one row (F270), and a suppressed chirp out at its vote (F269).
+    "recent_index_of": ("handle_witness", "handle_suppress_vote"),
+    "drop_recent_at": ("handle_suppress_vote",),
     "prune_stale_nearby": ("update",),
     "prune_old_chirps": ("update",),
 }

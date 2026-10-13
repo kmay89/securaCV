@@ -24,6 +24,24 @@
 // every voter here holds a row, except where the table is smaller than the
 // three-vote floor, which these cases leave alone.
 //
+// What a suppressed chirp does (sweep F269): it leaves the recent table at
+// the vote that suppresses it, so nothing reads it after that vote: GET
+// /api/chirp/recent does not list it, a confirmation neither validates nor
+// relays it, a local confirm or dismiss finds nothing and sends nothing, and
+// a later vote counts nowhere. It stayed until update()'s next prune, up to
+// 30 s, and in that time it was listed ("suppressed": true), confirmable,
+// and validated and relayed by the confirmations that reached it.
+//
+// One nonce, one chirp (sweep F270): a witness whose nonce the nonce filter
+// or a row of the recent table holds is refused, and the filter holds a
+// nonce for longer than the frame that carried it stays fresh. It was one
+// filter cleared whole every 5 minutes, as long as the freshness window, so
+// the same frame heard just after a reset was stored again: a suppressed
+// chirp came back with no votes, and a held one took a second row. The
+// freshness window the cases below hold the filter to is spec §3.3's as the
+// receiver reads it: a timestamp at most 30 s ahead of its wall clock and at
+// most 300 s behind it, in whole seconds.
+//
 // Host-tested only: the stubs stand in for the radio and the clock; the
 // Arduino compile is CI's.
 //
@@ -113,7 +131,8 @@ int g_checks = 0;
       std::exit(1);                                                       \
     }                                                                     \
   } while (0)
-// The same, naming the table size a failure happened at.
+// The same, naming the table size a failure happened at, or (CHECK_SEC) the
+// second of uptime a frame was heard at.
 #define CHECK_AT(rows, c)                                                            \
   do {                                                                               \
     ++g_checks;                                                                      \
@@ -122,6 +141,16 @@ int g_checks = 0;
                    (size_t)(rows), #c);                                              \
       std::exit(1);                                                                  \
     }                                                                                \
+  } while (0)
+
+#define CHECK_SEC(sec, c)                                                                \
+  do {                                                                                   \
+    ++g_checks;                                                                          \
+    if (!(c)) {                                                                          \
+      std::fprintf(stderr, "FAIL %s:%d (heard %u s after boot, less 1 ms): %s\n", __FILE__, \
+                   __LINE__, (unsigned)(sec), #c);                                       \
+      std::exit(1);                                                                      \
+    }                                                                                    \
   } while (0)
 
 namespace cc = chirp_channel;
@@ -187,17 +216,55 @@ std::vector<uint8_t> presence_of(const Neighbor& n) {
   p.last_chirp_age_min = 255;
   return frame_of(header_of(n, cc::CHIRP_MSG_PRESENCE, 0x70), p);
 }
-std::vector<uint8_t> witness_of(const Neighbor& n, uint8_t nonce_byte) {
-  const cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_WITNESS, nonce_byte);
+std::vector<uint8_t> witness_of(const Neighbor& n, uint8_t nonce_byte,
+                                cc::ChirpTemplate tpl = cc::TPL_INFRA_POWER_OUT,
+                                int32_t ahead_s = 0) {
+  cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_WITNESS, nonce_byte);
+  h.timestamp = (uint32_t)((int64_t)h.timestamp + ahead_s);   // the sender's clock, ahead or behind
   cc::ChirpWitnessPayload p;
   memset(&p, 0, sizeof p);
-  p.template_id = (uint8_t)cc::TPL_INFRA_POWER_OUT;
+  p.template_id = (uint8_t)tpl;
   p.detail_slot = (uint8_t)cc::DETAIL_NONE;
   p.urgency = (uint8_t)cc::CHIRP_URG_CAUTION;
   p.ttl_minutes = 15;
   memcpy(p.session_pubkey, n.pub, sizeof p.session_pubkey);
   uint8_t canonical[256];
   const size_t cl = cc::build_witness_canonical(&h, &p, n.pub, canonical, sizeof canonical);
+  CHECK(cl > 0);
+  Ed25519::sign(p.signature, n.priv, n.pub, canonical, cl);
+  return frame_of(h, p);
+}
+// `relayer`'s relay of the witness frame `w` (hop 1), as relay_chirp()
+// builds one: the same nonce and timestamp, the origin's key and signature in
+// the signed_origin envelope, re-signed under the relayer's own key.
+std::vector<uint8_t> relay_of(const Neighbor& relayer, const std::vector<uint8_t>& w) {
+  cc::ChirpHeader h;
+  cc::ChirpWitnessPayload p;
+  memcpy(&h, w.data(), sizeof h);
+  memcpy(&p, w.data() + sizeof h, sizeof p);
+  memcpy(p.signed_origin_pubkey, p.session_pubkey, sizeof p.signed_origin_pubkey);
+  memcpy(p.signed_origin_signature, p.signature, sizeof p.signed_origin_signature);
+  memcpy(h.session_id, relayer.sid, sizeof h.session_id);
+  h.hop_count = 1;
+  memcpy(p.session_pubkey, relayer.pub, sizeof p.session_pubkey);
+  uint8_t canonical[256];
+  const size_t cl = cc::build_witness_canonical(&h, &p, relayer.pub, canonical, sizeof canonical);
+  CHECK(cl > 0);
+  Ed25519::sign(p.signature, relayer.priv, relayer.pub, canonical, cl);
+  return frame_of(h, p);
+}
+// A signed confirmation (CHIRP_MSG_ACK, ack_type confirmed) of the chirp
+// `nonce` names.
+std::vector<uint8_t> confirm_of(const Neighbor& n, const uint8_t nonce[8]) {
+  const cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_ACK, 0x71);
+  cc::ChirpAckPayload p;
+  memset(&p, 0, sizeof p);
+  memcpy(p.original_nonce, nonce, 8);
+  p.ack_type = cc::CHIRP_ACK_CONFIRMED;
+  memcpy(p.confirmer_session_pubkey, n.pub, sizeof p.confirmer_session_pubkey);
+  uint8_t canonical[128];
+  const size_t cl = cc::build_ack_canonical(nonce, cc::CHIRP_ACK_CONFIRMED, n.pub, canonical,
+                                            sizeof canonical);
   CHECK(cl > 0);
   Ed25519::sign(p.signature, n.priv, n.pub, canonical, cl);
   return frame_of(h, p);
@@ -284,6 +351,39 @@ cc::ReceivedChirp* witness_arrives(uint8_t nonce_byte, uint8_t out_nonce[8]) {
   return nullptr;
 }
 
+// Whether the recent table holds a row for the chirp `nonce` names, and how
+// many.
+size_t rows_holding(const uint8_t nonce[8]) {
+  size_t n = 0;
+  for (size_t i = 0; i < cc::g_recent_chirp_count; ++i) {
+    if (memcmp(cc::g_recent_chirps[i].nonce, nonce, 8) == 0) ++n;
+  }
+  return n;
+}
+bool table_holds(const uint8_t nonce[8]) { return rows_holding(nonce) > 0; }
+// Empties the recent table, as a dismiss and the prune would, so a case can
+// hold the nonce filter alone to a frame.
+void drop_all_rows() {
+  memset(cc::g_recent_chirps, 0, cc::MAX_RECENT_CHIRPS * sizeof(cc::ReceivedChirp));
+  cc::g_recent_chirp_count = 0;
+}
+
+// The frames this device has sent since `from` (the stub's send log), of
+// `type`, and of those the relays: a witness at hop 1 or more.
+size_t sent_of_type(size_t from, cc::ChirpMsgType type, bool relays_only = false) {
+  size_t n = 0;
+  const auto& sent = host_sim::espnow->sent;
+  for (size_t i = from; i < sent.size(); ++i) {
+    CHECK(sent[i].bytes.size() >= sizeof(cc::ChirpHeader));
+    cc::ChirpHeader h;
+    memcpy(&h, sent[i].bytes.data(), sizeof h);
+    if (h.msg_type != type) continue;
+    if (relays_only && h.hop_count == 0) continue;
+    ++n;
+  }
+  return n;
+}
+
 size_t suppressed_lines() {
   return (size_t)std::count(g_health.begin(), g_health.end(),
                             std::string("chirp: community-suppressed"));
@@ -320,53 +420,51 @@ void suppressed_at_more_than_half(size_t rows, bool whole) {
   for (size_t v = 0; v < needed; ++v) {
     host_sim::now_ms += 1000;
     deliver(nearby[v], vote_of(nearby[v], nonce));
-    CHECK_AT(rows, c->suppress_count == v + 1);       // every distinct vote counted
     if (v + 1 < needed) {
-      CHECK_AT(rows, !c->suppressed);                 // half or fewer: held
+      CHECK_AT(rows, c->suppress_count == v + 1);     // every distinct vote counted
+      CHECK_AT(rows, table_holds(nonce));             // half or fewer: held
       CHECK_AT(rows, suppressed_lines() == lines_before);
     }
   }
-  CHECK_AT(rows, c->suppressed);                      // more than half: suppressed
+  // More than half: suppressed, and out of the table at that vote (F269).
+  CHECK_AT(rows, !table_holds(nonce));
+  CHECK_AT(rows, cc::g_recent_chirp_count == 0);
   CHECK_AT(rows, cc::g_nearby_count == rows);         // the table the votes were counted against
   if (!whole) return;
 
   CHECK_AT(rows, suppressed_lines() == lines_before + 1);   // logged at the vote that did it
-  // The pass after the vote publishes it: the recent route shows it suppressed.
+  // The pass after the vote publishes it: the recent route no longer lists
+  // it. It listed it, "suppressed": true, until the next prune (F269).
   cc::update();
-  CHECK_AT(rows, recent_route_shows(nonce) == 1);
+  CHECK_AT(rows, recent_route_shows(nonce) == -1);
   cc::StatusView s;
   cc::read_status(&s);
   CHECK_AT(rows, s.nearby_count == rows);
+  CHECK_AT(rows, s.recent_chirp_count == 0);
 
-  // The rest of the rows vote too: the set holds what it can and the chirp
-  // stays suppressed. The set holds at least the most any table asks for.
+  // The set holds at least the most votes any table asks for (F233), so a
+  // full table can reach its threshold.
   const size_t capacity = sizeof(c->suppressed_by) / sizeof(c->suppressed_by[0]);
   CHECK_AT(rows, capacity >= more_than_half(cc::MAX_NEARBY_CACHE));
+
+  // The rest of the rows vote too, then devices that hold no row, more than
+  // a set's worth: none of it counts anywhere, stores anything or logs the
+  // line again (every vote after the one that suppressed logged it once
+  // more before F233's review; until F269 they went on filling the set).
   for (size_t v = needed; v < rows; ++v) {
     host_sim::now_ms += 1000;
     deliver(nearby[v], vote_of(nearby[v], nonce));
-    CHECK_AT(rows, c->suppressed);
-    CHECK_AT(rows, c->suppress_count == std::min(v + 1, capacity));
+    CHECK_AT(rows, cc::g_recent_chirp_count == 0);
   }
-  // The suppression is logged once, at the vote that did it: the votes after
-  // it log nothing (every one of them logged the line again, 16 lines for
-  // one chirp at 32 rows).
-  CHECK_AT(rows, suppressed_lines() == lines_before + 1);
-
-  // Then votes from devices that hold no row, enough to fill the set and
-  // more: still suppressed, the set never past its size, and no second line,
-  // even from a vote that takes no slot. (Whether such a vote counts at all
-  // is F234's; these checks hold either way.)
   for (size_t k = 0; k < capacity + 3; ++k) {
     const Neighbor stranger = neighbor_of((uint8_t)(0x80 + k));
     host_sim::now_ms += 100;
     deliver(stranger, vote_of(stranger, nonce));
-    CHECK_AT(rows, c->suppressed);
-    CHECK_AT(rows, c->suppress_count <= capacity);
+    CHECK_AT(rows, cc::g_recent_chirp_count == 0);
   }
   CHECK_AT(rows, suppressed_lines() == lines_before + 1);
 
-  // The prune drops a suppressed chirp from the table, and the route with it.
+  // The next prune finds nothing to drop, and the route stays as it was.
   host_sim::now_ms += 31000;
   cc::update();
   CHECK_AT(rows, recent_route_shows(nonce) == -1);
@@ -418,15 +516,14 @@ void test_a_repeated_voter_counts_once() {
     const std::vector<uint8_t> again = vote_of(nearby[v], nonce, 0x72);
     deliver(nearby[v], again);                              // and the same bytes again
     CHECK(c->suppress_count == v + 1);
-    CHECK(!c->suppressed);
+    CHECK(table_holds(nonce));
   }
   host_sim::now_ms += 1000;
   deliver(nearby[0], vote_of(nearby[0], nonce, 0x74));      // the first voter, a fourth time
   CHECK(c->suppress_count == 3);
-  CHECK(!c->suppressed);
+  CHECK(table_holds(nonce));
   deliver(nearby[3], vote_of(nearby[3], nonce));
-  CHECK(c->suppress_count == 4);
-  CHECK(c->suppressed);
+  CHECK(!table_holds(nonce));                               // the fourth: suppressed, out
 
   boot_enabled();
   nearby = fill_nearby(32);
@@ -437,10 +534,9 @@ void test_a_repeated_voter_counts_once() {
     deliver(nearby[v], vote_of(nearby[v], nonce, 0x73));
   }
   CHECK(c->suppress_count == 16);
-  CHECK(!c->suppressed);
+  CHECK(table_holds(nonce));
   deliver(nearby[16], vote_of(nearby[16], nonce));
-  CHECK(c->suppress_count == 17);
-  CHECK(c->suppressed);
+  CHECK(!table_holds(nonce));                               // the 17th: suppressed, out
 }
 
 // ── Votes across the window ─────────────────────────────────────────────
@@ -465,16 +561,15 @@ void test_votes_across_the_window() {
     host_sim::now_ms = t0 + third_at;
     deliver(nearby[2], vote_of(nearby[2], nonce));
     if (third_at <= 120000u) {
-      CHECK(c->suppress_count == 3);
-      CHECK(c->suppressed);
+      CHECK(!table_holds(nonce));      // suppressed, out of the table
     } else {
       CHECK(c->suppress_count == 2);   // dropped, not stored for later
-      CHECK(!c->suppressed);
+      CHECK(table_holds(nonce));
       // A voter inside the window still counts, and later votes still do not.
       host_sim::now_ms = t0 + 200000;
       deliver(nearby[2], vote_of(nearby[2], nonce, 0x75));
       CHECK(c->suppress_count == 2);
-      CHECK(!c->suppressed);
+      CHECK(table_holds(nonce));
       cc::update();
       CHECK(recent_route_shows(nonce) == 0);   // still shown, not suppressed
     }
@@ -500,10 +595,12 @@ void test_votes_across_the_window() {
       deliver(nearby[v], vote_of(nearby[v], first));
       deliver(nearby[v], vote_of(nearby[v], second));
     }
-    CHECK(a->suppress_count == 0);
-    CHECK(!a->suppressed);
-    CHECK(b->suppress_count == 4);
-    CHECK(b->suppressed);
+    CHECK(!table_holds(second));      // suppressed at its 4th vote, out of the table
+    CHECK(table_holds(first));        // its window closed: no vote counted
+    a = &cc::g_recent_chirps[0];
+    CHECK(memcmp(a->nonce, first, 8) == 0);
+    CHECK(a->suppress_count == 0 && !a->suppressed);
+    (void)b;
   }
 
   // Uptime wraps (49.7 days): a chirp heard 50 s before the wrap still takes
@@ -516,21 +613,20 @@ void test_votes_across_the_window() {
     host_sim::now_ms = t0 + late;   // past the wrap
     CHECK(host_sim::now_ms < t0);
     for (size_t v = 0; v < 3; ++v) deliver(nearby[v], vote_of(nearby[v], nonce));
-    CHECK(c->suppressed == (late <= 120000u));
-    CHECK(c->suppress_count == (late <= 120000u ? 3 : 0));
+    CHECK(table_holds(nonce) == (late > 120000u));   // suppressed (out) inside the window only
+    if (late > 120000u) CHECK(c->suppress_count == 0);
   }
 }
 
-// The same chirp held twice: the nonce filter is cleared whole every
-// CHIRP_TTL_MS (300 s), and the freshness window is as long, so a witness
-// heard just before a reset and again just after it is stored a second time
-// (a NEW item asks that the second copy be refused). A vote is counted at the
-// first copy whose window is still open: here 380 s into the scene, 130 s
-// after the first copy (closed) and 70 s after the second (open). The first
-// copy's closed window ended the search, so the votes landed on neither
-// copy (review of F233). With the second copy refused, the votes would fall
-// outside the one window there is, and this case changes with that fix.
-void test_a_second_copy_takes_its_own_votes() {
+// One chirp, one row (sweep F270), and one window. The scene F233's review
+// found: a witness heard 250 s after the filter was cleared, then the same
+// frame again at 310 s, 60 s old. The filter was cleared whole every 300 s,
+// so the frame passed it and took a second row, and votes at 380 s (130 s
+// after the first copy, 70 s after the second) suppressed the second copy
+// (this case was a_second_copy_takes_its_own_votes, which held that). Now
+// the frame heard again takes no row, the votes fall 130 s after the only
+// copy arrived, outside its window, and the chirp is still shown.
+void test_a_chirp_heard_again_keeps_one_row_and_its_window() {
   boot_enabled();   // the filter was cleared at this boot
   const auto advance = [](uint32_t ms) {
     host_sim::now_ms += ms;
@@ -543,26 +639,21 @@ void test_a_second_copy_takes_its_own_votes() {
   uint8_t nonce[8];
   memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
   deliver(kOriginator, w);
-  advance(60000);   // 310 s: past the filter's reset; the frame is 60 s old
+  const uint32_t first_heard = host_sim::now_ms;
+  CHECK(rows_holding(nonce) == 1);
+  advance(60000);   // 310 s: past the old filter's reset; the frame is 60 s old
   deliver(kOriginator, w);
-  const auto copies = [&]() {
-    std::vector<cc::ReceivedChirp*> out;
-    for (size_t i = 0; i < cc::g_recent_chirp_count; ++i) {
-      if (memcmp(cc::g_recent_chirps[i].nonce, nonce, 8) == 0) out.push_back(&cc::g_recent_chirps[i]);
-    }
-    return out;
-  };
-  const std::vector<cc::ReceivedChirp*> held = copies();
-  CHECK(held.size() == 2);   // the scene this case is about
-  CHECK(held[1]->received_ms - held[0]->received_ms == 60000);
+  CHECK(rows_holding(nonce) == 1);   // refused: no second row
+  CHECK(cc::g_recent_chirp_count == 1);
+  CHECK(cc::g_recent_chirps[0].received_ms == first_heard);
 
   advance(70000);   // 380 s
   for (const Neighbor& n : nearby) deliver(n, presence_of(n));
   for (size_t v = 0; v < 3; ++v) deliver(nearby[v], vote_of(nearby[v], nonce));
-  CHECK(held[0]->suppress_count == 0);   // its window closed at 370 s
-  CHECK(!held[0]->suppressed);
-  CHECK(held[1]->suppress_count == 3);
-  CHECK(held[1]->suppressed);
+  CHECK(rows_holding(nonce) == 1);   // its window closed at 370 s: shown
+  CHECK(cc::g_recent_chirps[0].suppress_count == 0);
+  cc::update();
+  CHECK(recent_route_shows(nonce) == 0);
 }
 
 // A vote counts only when it verifies: its signature over the chirp's nonce
@@ -611,7 +702,7 @@ void test_a_vote_must_verify() {
     host_sim::now_ms += 1000;
     deliver(nearby[0], *f);
     CHECK(c->suppress_count == 0);
-    CHECK(!c->suppressed);
+    CHECK(table_holds(nonce));
   }
   CHECK(suppressed_lines() == lines_before);
 
@@ -619,9 +710,9 @@ void test_a_vote_must_verify() {
   for (size_t v = 0; v < 3; ++v) {
     host_sim::now_ms += 1000;
     deliver(nearby[v], vote_of(nearby[v], nonce));
-    CHECK(c->suppress_count == v + 1);
+    if (v < 2) CHECK(c->suppress_count == v + 1);
   }
-  CHECK(c->suppressed);
+  CHECK(!table_holds(nonce));          // the third: suppressed, out of the table
   CHECK(suppressed_lines() == lines_before + 1);
 }
 
@@ -639,9 +730,213 @@ void test_a_vote_before_its_chirp_is_not_kept() {
   CHECK(cc::g_recent_chirp_count == 1);
   cc::ReceivedChirp* c = &cc::g_recent_chirps[0];
   CHECK(c->suppress_count == 0);
-  CHECK(!c->suppressed);
+  CHECK(table_holds(nonce));
   for (size_t v = 0; v < 3; ++v) deliver(nearby[v], vote_of(nearby[v], nonce, 0x76));
-  CHECK(c->suppressed);
+  CHECK(!table_holds(nonce));          // suppressed, out of the table
+}
+
+// ── A suppressed chirp stops at once (sweep F269) ────────────────────────
+
+// The item's scene, at 3 rows (3 votes needed), for an infrastructure chirp
+// (two confirmations validate one, spec §3.4) and an emergency one (one
+// does). This device has met its presence requirement and its clock is set,
+// so a local confirm could go out. First the control, two votes: the chirp
+// is held, the confirmations validate it and relay it at hop 1, and a local
+// confirm sends one ACK, so the harness sees a relay and a confirm when
+// there is one. Then three votes: the chirp is out of the table at the third,
+// the same confirmations validate nothing and relay nothing, the route never
+// lists it, and a local confirm or dismiss finds nothing and sends nothing.
+// Before F269 the third vote set `suppressed` and nothing on the way out read
+// it until the next prune: the confirmations validated it and relayed it at
+// hop 1, the route listed it ("suppressed": true), and a local confirm sent a
+// signed ACK.
+void test_a_suppressed_chirp_stops_at_once() {
+  struct Kind {
+    cc::ChirpTemplate tpl;
+    size_t confirmations;   // that validate it: spec §3.4
+  };
+  const Kind kinds[] = {{cc::TPL_INFRA_POWER_OUT, 2}, {cc::TPL_EMERG_FIRE_VISIBLE, 1}};
+  for (const Kind& k : kinds) {
+    for (const size_t votes : {2u, 3u}) {
+      boot_enabled();
+      host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;   // this device may confirm
+      const std::vector<Neighbor> nearby = fill_nearby(3);
+      const std::vector<uint8_t> w = witness_of(kOriginator, 0x50, k.tpl);
+      uint8_t nonce[8];
+      memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
+      deliver(kOriginator, w);
+      CHECK(rows_holding(nonce) == 1);
+      for (size_t v = 0; v < votes; ++v) {
+        host_sim::now_ms += 1000;
+        deliver(nearby[v], vote_of(nearby[v], nonce));
+      }
+      const bool suppressed = votes == 3;
+      CHECK(table_holds(nonce) == !suppressed);       // out at the third vote, before any pass
+
+      // Neighbors confirm it: their signed ACKs, each from a row.
+      const size_t before = host_sim::espnow->sent.size();
+      for (size_t i = 0; i < k.confirmations; ++i) deliver(nearby[i], confirm_of(nearby[i], nonce));
+      const size_t relays = sent_of_type(before, cc::CHIRP_MSG_WITNESS, /*relays_only=*/true);
+      if (suppressed) {
+        CHECK(relays == 0);                           // not relayed
+        CHECK(cc::g_recent_chirp_count == 0);         // and nothing validated
+      } else {
+        CHECK(relays == 1);                           // the control: validated and relayed
+        CHECK(cc::g_recent_chirps[0].validated && cc::g_recent_chirps[0].relayed);
+        const cc::ChirpHeader* h =
+            reinterpret_cast<const cc::ChirpHeader*>(host_sim::espnow->sent.back().bytes.data());
+        CHECK(h->hop_count == 1 && memcmp(h->nonce, nonce, 8) == 0);
+      }
+
+      // The loop task's pass publishes what the routes show.
+      cc::update();
+      CHECK(recent_route_shows(nonce) == (suppressed ? -1 : 0));
+      cc::StatusView sv;
+      cc::read_status(&sv);
+      CHECK(sv.recent_chirp_count == (suppressed ? 0 : 1));
+
+      // The owner confirms it here, then dismisses it.
+      const size_t mark = host_sim::espnow->sent.size();
+      cc::ConfirmRefusal why = cc::CONFIRM_REFUSED_NONE;
+      const bool confirmed = cc::confirm_chirp(nonce, &why);
+      CHECK(confirmed == !suppressed);
+      CHECK(why == (suppressed ? cc::CONFIRM_REFUSED_NOT_FOUND : cc::CONFIRM_REFUSED_NONE));
+      CHECK(sent_of_type(mark, cc::CHIRP_MSG_ACK) == (suppressed ? 0u : 1u));
+      bool vote_sent = false;
+      cc::ConfirmRefusal vote_why = cc::CONFIRM_REFUSED_NONE;
+      const bool dismissed = cc::dismiss_chirp(nonce, &vote_sent, &vote_why);
+      CHECK(dismissed == !suppressed && vote_sent == !suppressed);
+      CHECK(vote_why == (suppressed ? cc::CONFIRM_REFUSED_NOT_FOUND : cc::CONFIRM_REFUSED_NONE));
+      CHECK(sent_of_type(mark, cc::CHIRP_MSG_SUPPRESS_VOTE) == (suppressed ? 0u : 1u));
+      if (suppressed) CHECK(host_sim::espnow->sent.size() == mark);   // nothing at all
+    }
+  }
+}
+
+// ── One nonce, one chirp (sweep F270) ────────────────────────────────────
+
+// The item's probe, the wall clock moving with uptime: a chirp heard 250 s
+// after the filter was cleared is suppressed there (and, before F269, pruned
+// at 281 s); the same frame heard again at 310 s, 60 s old, was stored anew
+// with no votes, as the filter had been cleared whole at 300 s. Now it is
+// refused, and so are a neighbor's relay of it and the frame again at the
+// last second of its freshness window, while a new chirp from the same
+// originator at that moment is stored (the receiver still takes witnesses).
+void test_a_suppressed_chirp_is_not_stored_again() {
+  boot_enabled();   // the filter was cleared at this boot
+  const auto advance = [](uint32_t ms) {
+    host_sim::now_ms += ms;
+    host_sim::wall_now += ms / 1000;
+  };
+  std::vector<Neighbor> nearby = fill_nearby(3);
+  advance(250000);
+  for (const Neighbor& n : nearby) deliver(n, presence_of(n));
+  const std::vector<uint8_t> w = witness_of(kOriginator, 0x51);
+  const time_t sent_at = host_sim::wall_now;
+  uint8_t nonce[8];
+  memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
+  deliver(kOriginator, w);
+  CHECK(rows_holding(nonce) == 1);
+  for (size_t v = 0; v < 3; ++v) deliver(nearby[v], vote_of(nearby[v], nonce));
+  CHECK(!table_holds(nonce));                         // suppressed
+  advance(31000);                                     // 281 s: a prune
+  cc::update();
+  CHECK(cc::g_recent_chirp_count == 0);
+
+  advance(29000);                                     // 310 s: the frame, 60 s old
+  deliver(kOriginator, w);
+  CHECK(cc::g_recent_chirp_count == 0);
+  advance(10000);                                     // 320 s: a neighbor relays it
+  deliver(nearby[0], relay_of(nearby[0], w));
+  CHECK(cc::g_recent_chirp_count == 0);
+  for (const Neighbor& n : nearby) deliver(n, presence_of(n));
+  // The last second its timestamp is accepted: 300 s after it was sent.
+  advance((uint32_t)(sent_at + 300 - host_sim::wall_now) * 1000);
+  CHECK(host_sim::wall_now == sent_at + 300);
+  for (uint32_t step = 0; step < 4; ++step) {          // 0, 333, 666 and 999 ms into that second
+    deliver(kOriginator, w);
+    deliver(nearby[1], relay_of(nearby[1], w));
+    CHECK(cc::g_recent_chirp_count == 0);
+    host_sim::now_ms += 333;
+    cc::update();                                     // passes run; the filter turns if due
+  }
+  const std::vector<uint8_t> fresh = witness_of(kOriginator, 0x52);
+  deliver(kOriginator, fresh);                        // the control: a new chirp is stored
+  CHECK(cc::g_recent_chirp_count == 1);
+  CHECK(memcmp(cc::g_recent_chirps[0].nonce, fresh.data() + offsetof(cc::ChirpHeader, nonce), 8) == 0);
+}
+
+// The filter holds every nonce for as long as the frame that carried it can
+// still be accepted, whenever it was heard. The worst case is a frame sent
+// with its timestamp 30 s ahead of this device's clock (the most the window
+// takes) heard at the first millisecond of a wall-clock second: it stays
+// acceptable to the last millisecond of the second 300 s past its timestamp,
+// 330.999 s later. Here such a frame is heard 1 ms before each whole second
+// of uptime from 1 to 700 s after boot, with the loop task's pass at every
+// whole second and the wall clock's seconds starting 1 ms before the uptime
+// clock's. Then the frame is heard again at the last millisecond the window
+// takes it: refused, every time. A half of 330 s (no second's margin) fails
+// here, at a frame heard at 329.999 s; the old filter, cleared whole past
+// every 300 s, at one heard at 300.999 s.
+void test_a_nonce_outlives_the_freshness_window() {
+  const time_t w0 = 1760000000;
+  for (uint32_t k = 1; k <= 700; ++k) {
+    const uint32_t t0 = boot_enabled();
+    // The receiver's clocks, `ms` after boot.
+    const auto at = [&](uint32_t ms) {
+      host_sim::now_ms = t0 + ms;
+      host_sim::wall_now = w0 + (time_t)((ms + 1) / 1000);
+    };
+    for (uint32_t sec = 1; sec < k; ++sec) {           // the passes before the frame
+      at(sec * 1000);
+      cc::update();
+    }
+    const uint32_t heard = k * 1000 - 1;
+    at(heard);
+    const std::vector<uint8_t> w = witness_of(kOriginator, (uint8_t)(0x60 + (k & 0x1F)),
+                                              cc::TPL_INFRA_POWER_OUT, /*ahead_s=*/30);
+    uint8_t nonce[8];
+    memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
+    deliver(kOriginator, w);
+    CHECK_SEC(k, rows_holding(nonce) == 1);             // accepted: 30 s ahead is in the window
+    const uint32_t ts = (uint32_t)host_sim::wall_now + 30;
+    drop_all_rows();                                   // only the filter holds it now
+    // The last millisecond of the second 300 s past its timestamp.
+    const uint32_t last = (uint32_t)((ts + 300 - w0 + 1) * 1000 - 2);
+    CHECK_SEC(k, last - heard == 330999);
+    for (uint32_t sec = k; sec * 1000 <= last; ++sec) {
+      at(sec * 1000);
+      cc::update();
+    }
+    at(last);
+    CHECK_SEC(k, (uint32_t)host_sim::wall_now == ts + 300);   // still in the window
+    deliver(kOriginator, w);
+    CHECK_SEC(k, cc::g_recent_chirp_count == 0);        // refused
+  }
+}
+
+// A row of the recent table holds its nonce too, longer than the filter
+// does (a row lives up to 30 min): with the wall clock not set, a witness
+// has no freshness window, and the same frame heard 700 s later (past
+// anything the filter holds) is refused while its chirp is still shown.
+// Before F270 it took a second row once the filter had been cleared.
+void test_a_held_chirp_takes_no_second_row() {
+  boot_enabled();
+  host_sim::wall_now = 1000;   // not set (before MIN_UNIX_TIME)
+  const std::vector<uint8_t> w = witness_of(kOriginator, 0x53);
+  uint8_t nonce[8];
+  memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
+  deliver(kOriginator, w);
+  CHECK(rows_holding(nonce) == 1);
+  CHECK(cc::g_recent_chirps[0].unverifiable_timestamp);
+  for (uint32_t s = 0; s < 700; s += 10) {
+    host_sim::now_ms += 10000;
+    cc::update();
+    deliver(kOriginator, w);
+    CHECK(rows_holding(nonce) == 1);
+  }
+  cc::update();
+  CHECK(recent_route_shows(nonce) == 0);
 }
 
 struct Test {
@@ -653,9 +948,14 @@ const Test kTests[] = {
     {"every_table_size_can_suppress", test_every_table_size_can_suppress},
     {"a_repeated_voter_counts_once", test_a_repeated_voter_counts_once},
     {"votes_across_the_window", test_votes_across_the_window},
-    {"a_second_copy_takes_its_own_votes", test_a_second_copy_takes_its_own_votes},
+    {"a_chirp_heard_again_keeps_one_row_and_its_window",
+     test_a_chirp_heard_again_keeps_one_row_and_its_window},
     {"a_vote_must_verify", test_a_vote_must_verify},
     {"a_vote_before_its_chirp_is_not_kept", test_a_vote_before_its_chirp_is_not_kept},
+    {"a_suppressed_chirp_stops_at_once", test_a_suppressed_chirp_stops_at_once},
+    {"a_suppressed_chirp_is_not_stored_again", test_a_suppressed_chirp_is_not_stored_again},
+    {"a_nonce_outlives_the_freshness_window", test_a_nonce_outlives_the_freshness_window},
+    {"a_held_chirp_takes_no_second_row", test_a_held_chirp_takes_no_second_row},
 };
 
 }  // namespace chirp_suppress
