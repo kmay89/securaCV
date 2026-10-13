@@ -231,6 +231,13 @@ static bool g_advertise_after_bringup = false;
 // reads it (acquire). Never cleared: the sketch runs its bring-up once per
 // boot.
 static bool g_boot_bring_up_tried = false;
+// Any task's (wave 16's verify): the sketch has started that bring-up, its
+// gate open and its worker created or being created. Set once, by
+// bringup_worker_started() on the loop task (release);
+// boot_bring_up_started() reads it (acquire). Never cleared. Between it and
+// g_boot_bring_up_tried a Start Advertising or Pair tap is told Bluetooth is
+// still starting, whatever the worker's init() answered.
+static bool g_boot_bring_up_started = false;
 
 // Scan results
 static ScannedDevice g_scanned_devices[MAX_SCANNED_DEVICES];
@@ -1773,6 +1780,7 @@ static void adopt_init_result() {
 // the loop task (the F167 review): see g_bringup_worker_running.
 void bringup_worker_started() {
   g_bringup_worker_running = true;
+  __atomic_store_n(&g_boot_bring_up_started, true, __ATOMIC_RELEASE);   // see g_boot_bring_up_started
 }
 
 void bringup_worker_finished() {
@@ -1792,6 +1800,11 @@ void boot_bring_up_finished() {
 // Any task (sweep F235's review): see g_boot_bring_up_tried.
 bool boot_bring_up_tried() {
   return __atomic_load_n(&g_boot_bring_up_tried, __ATOMIC_ACQUIRE);
+}
+
+// Any task (wave 16's verify): see g_boot_bring_up_started.
+bool boot_bring_up_started() {
+  return __atomic_load_n(&g_boot_bring_up_started, __ATOMIC_ACQUIRE);
 }
 
 [[maybe_unused]] static void deinit() {

@@ -374,6 +374,7 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_meta_hold_scanners = false;        // no hold pushed to the next init()
   bc::g_advertise_after_bringup = false;
   bc::g_boot_bring_up_tried = false;       // F235's review: the sketch's bring-up is not over
+  bc::g_boot_bring_up_started = false;     // nor started (wave 16's verify)
   bc::g_init_fail_reason = "";
   bc::g_server = nullptr;                  // the stack's objects went with the stack
   bc::g_service = nullptr;
@@ -2797,10 +2798,16 @@ void test_a_tap_while_the_stack_comes_up_says_so() {
 // Now each answers 503 and brings nothing up until the sketch says its
 // bring-up is over (boot_bring_up_finished(), the finalize stage's last
 // step, whatever the outcome): "still starting" while the worker's init()
-// holds the latch, else that Bluetooth starts once setup is done, through a
-// refused worker, its result taken and the rest of the finalize stage.
-// After it, a tap brings a refused stack up as F235 does. Saved off, a tap
-// brings the stack up as before (a_tap_brings_the_stack_up_whatever_the_setting).
+// holds the latch, else that Bluetooth starts once setup is done. Once the
+// sketch has started that bring-up (bringup_worker_started(), as the gate
+// opens) a tap is told it is still starting, through a refused worker, its
+// result taken and the rest of the finalize stage (wave 16's verify: it was
+// told Bluetooth had not started yet, once Wi-Fi setup was done or within
+// five minutes, while init_fail_reason() already named the worker's
+// refusal; a tap a moment later, after finalize, runs init() itself and
+// names its own). After it, a tap brings a refused stack up as F235 does.
+// Saved off, a tap brings the stack up as before
+// (a_tap_brings_the_stack_up_whatever_the_setting).
 void test_a_tap_before_the_boot_bring_up_waits_for_it() {
   const char* const kPending = bc::boot_bring_up_pending_error();
   for (const Handler first : {kAdvertise, kPair}) {
@@ -2826,20 +2833,30 @@ void test_a_tap_before_the_boot_bring_up_waits_for_it() {
     CHECK(host_sim::count("nimble_init") == 0 && !bc::is_initialized() && !bc::g_initialized);
     CHECK(bc::g_commands.queued() == 0 && host_sim::count("adv_start") == 0);
     CHECK(!host_sim::advertising.isAdvertising() && !host_sim::presence_disc);
-    CHECK(!bc::boot_bring_up_tried());
+    CHECK(!bc::boot_bring_up_tried() && !bc::boot_bring_up_started());
 
-    // The window clears: the worker's init(), refused by the heap guard. Its
-    // result is not taken yet (on FULL the worker goes on to ble_manager's
-    // own NimBLE init): the tap still waits, and runs no init().
+    // The window clears: the gate starts the worker (bringup_worker_started()
+    // before the create). Before its init() takes the latch, the tap is told
+    // Bluetooth is starting, and runs no init().
     host_sim::internal_largest_block = 20 * 1024;
     host_sim::internal_free = 30 * 1024;
     bc::bringup_worker_started();
+    CHECK(bc::boot_bring_up_started() && !bc::boot_bring_up_tried());
+    CHECK(!bc::init_running() && !bc::is_initialized());
+    t = tap(first);
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kStillStarting));
+    CHECK(t.inits == 0 && t.sleeps == 0);
+    // The worker's init(), refused by the heap guard. Its result is not
+    // taken yet (on FULL the worker goes on to ble_manager's own NimBLE
+    // init): the tap still waits, runs no init(), and is told Bluetooth is
+    // still starting, not that it has not started.
     host_sim::task = "bringup";
     CHECK(!bc::init());
     host_sim::task = "loop";
     loop_pass();
+    CHECK(!bc::init_running() && !bc::is_initialized() && !bc::bring_up_starting());
     t = tap(first);
-    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kPending));
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kStillStarting));
     CHECK(t.inits == 0 && t.sleeps == 0);
     CHECK(strcmp(bc::init_fail_reason(), kHeapRefused) == 0);
     // The sketch's finalize stage takes the worker's result
@@ -2849,7 +2866,7 @@ void test_a_tap_before_the_boot_bring_up_waits_for_it() {
     bc::bringup_worker_finished();
     heap_recovers();                                 // the heap allows now: only the wait keeps the tap out
     t = tap(first);
-    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kPending));
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kStillStarting));
     CHECK(t.inits == 0 && t.sleeps == 0 && host_sim::count("nimble_init") == 0);
     CHECK(!bc::boot_bring_up_tried());
     host_sim::internal_largest_block = 20 * 1024;
@@ -2878,7 +2895,15 @@ void test_a_tap_before_the_boot_bring_up_waits_for_it() {
     host_sim::task = "loop";
     t = tap(first);                                  // up, its result not taken yet: the tap runs
     CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)) && t.inits == 0);
+    // Answered 200, its advertising held (F167) until the finalize stage
+    // takes the worker's result: nothing on air before it (the bench row's
+    // "[OK] Bluetooth initialized" to "BLE bring-up finalized" window).
+    CHECK(!host_sim::advertising.isAdvertising() && host_sim::count("adv_start") == 0);
+    t = tap(second);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(second)) && t.inits == 0);
+    CHECK(!host_sim::advertising.isAdvertising() && host_sim::count("adv_start") == 0);
     bc::bringup_worker_finished();
+    CHECK(host_sim::advertising.isAdvertising() && host_sim::count("adv_start") == 1);
     bc::boot_bring_up_finished();
     CHECK(host_sim::count("nimble_init") == 1 && host_sim::count("nimble_init", "bringup") == 1);
   }

@@ -296,14 +296,19 @@ inline bool waits_for_boot_bring_up() {
 }
 
 // A tap that leaves the stack to the boot bring-up, before anything is
-// submitted: 503, "still starting" while a bring-up holds init()'s latch
-// (the worker's) or has just brought the stack up, otherwise that the
-// stack starts once Wi-Fi setup is done or within five minutes (a fresh
-// unit with nobody on its SoftAP within seconds), and not in safe mode. Before, such a
-// tap submitted to a stack that was down and answered a failed start.
+// submitted: 503, "still starting" once the sketch has started that
+// bring-up (boot_bring_up_started(): its gate open, the worker created),
+// whatever the worker's init() answered, and while a bring-up holds
+// init()'s latch or has just brought the stack up; otherwise that the stack
+// starts once Wi-Fi setup is done or within five minutes (a fresh unit with
+// nobody on its SoftAP within seconds), and not in safe mode. Before F235's
+// review such a tap submitted to a stack that was down and answered a
+// failed start; until wave 16's verify, a tap after the worker's init() was
+// refused and before the finalize stage was told Bluetooth had not started
+// yet, with Wi-Fi setup done and the refusal recorded.
 inline esp_err_t send_boot_bring_up_pending(httpd_req_t* req) {
   httpd_resp_set_status(req, http_status_line(503));
-  return send_error(req, bluetooth_channel::bring_up_starting()
+  return send_error(req, bluetooth_channel::boot_bring_up_started() || bluetooth_channel::bring_up_starting()
                              ? bluetooth_channel::bring_up_starting_error()
                              : bluetooth_channel::boot_bring_up_pending_error());
 }

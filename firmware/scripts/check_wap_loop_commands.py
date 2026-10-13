@@ -201,8 +201,16 @@ C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
     bluetooth_channel::read_enabled();` (saved off, a tap brings the stack up
     as before F235, as Enable does), called once by each of those two and by
     nothing else; `send_boot_bring_up_pending()` is exactly a 503 with
-    `bring_up_starting_error()` while `bring_up_starting()` says a bring-up
-    runs, else `boot_bring_up_pending_error()`. In `bluetooth_channel.cpp`,
+    `bring_up_starting_error()` once `boot_bring_up_started()` says the
+    sketch has started its boot bring-up or `bring_up_starting()` says a
+    bring-up runs, else `boot_bring_up_pending_error()` (wave 16's verify:
+    after the worker's init() was refused, and before the finalize stage, a
+    tap was told Bluetooth had not started yet, with Wi-Fi setup done and
+    the refusal recorded). In `bluetooth_channel.cpp`,
+    `boot_bring_up_started()` is exactly the acquire load of
+    `g_boot_bring_up_started`, whose one release store is
+    `bringup_worker_started()`'s (BV7 holds that body), and nothing else
+    names it;
     `boot_bring_up_tried()` is exactly the acquire load of
     `g_boot_bring_up_tried` and `boot_bring_up_finished()` exactly its
     release store, and nothing else names the flag (BV7 holds the sketch's
@@ -558,7 +566,9 @@ BV7. No advertising start while the sketch's bring-up worker registers GATT
      no other function starts `g_advertising`; `stop_advertising()` starts
      `g_advertise_after_bringup = false;`; `bringup_worker_started()` and
      `bringup_worker_finished()` are exactly `g_bringup_worker_running =
-     true;` and `g_bringup_worker_running = false; if
+     true; __atomic_store_n(&g_boot_bring_up_started, true,
+     __ATOMIC_RELEASE);` (the second since wave 16's verify, C3's
+     `boot_bring_up_started()`) and `g_bringup_worker_running = false; if
      (g_advertise_after_bringup) { g_advertise_after_bringup = false;
      start_advertising(); }`, and nothing else sets the flag. In
      `canary_wap.ino`: `ble_discovery_start_if_due()` calls
@@ -1374,13 +1384,20 @@ BT_WAITS_FOR_BOOT_BODY = ("return!bluetooth_channel::is_initialized()&&!bluetoot
                           "&&bluetooth_channel::read_enabled();")
 SIG_SEND_BOOT_PENDING = r"\binline\s+esp_err_t\s+send_boot_bring_up_pending\s*\([^)]*\)"
 BT_BOOT_PENDING_BODY = ("httpd_resp_set_status(req,http_status_line(503));"
-                        "returnsend_error(req,bluetooth_channel::bring_up_starting()"
+                        "returnsend_error(req,bluetooth_channel::boot_bring_up_started()"
+                        "||bluetooth_channel::bring_up_starting()"
                         "?bluetooth_channel::bring_up_starting_error()"
                         ":bluetooth_channel::boot_bring_up_pending_error());")
 SIG_BT_BOOT_TRIED = r"\bbool\s+boot_bring_up_tried\s*\(\s*\)"
 BT_BOOT_TRIED_BODY = "return__atomic_load_n(&g_boot_bring_up_tried,__ATOMIC_ACQUIRE);"
 BT_BOOT_TRIED_STORE = "__atomic_store_n(&g_boot_bring_up_tried,true,__ATOMIC_RELEASE);"
 SIG_BT_BOOT_FINISHED = r"\bvoid\s+boot_bring_up_finished\s*\(\s*\)"
+# Wave 16's verify: the boot bring-up has started (bringup_worker_started(),
+# the gate open), any task's read; from there until it is over a tap is told
+# Bluetooth is still starting, whatever the worker's init() answered.
+SIG_BT_BOOT_STARTED = r"\bbool\s+boot_bring_up_started\s*\(\s*\)"
+BT_BOOT_STARTED_BODY = "return__atomic_load_n(&g_boot_bring_up_started,__ATOMIC_ACQUIRE);"
+BT_BOOT_STARTED_STORE = "__atomic_store_n(&g_boot_bring_up_started,true,__ATOMIC_RELEASE);"
 # Where a bring_up() guard may stand: the bring-up handlers and the settings
 # POST turning Bluetooth on (BV1).
 BT_BRING_UP_GUARDED = BT_BRING_UP_HANDLERS + ("handle_bluetooth_settings_set",)
@@ -1732,8 +1749,10 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
     body = body_of(code, SIG_SEND_BOOT_PENDING, f"{BT_API}: send_boot_bring_up_pending()", errors)
     if body is not None and squash(body) != BT_BOOT_PENDING_BODY:
         errors.append(f"{BT_API}: send_boot_bring_up_pending() must answer 503 with "
-                      "bluetooth_channel::bring_up_starting_error() while bring_up_starting() says a "
-                      "bring-up runs, and boot_bring_up_pending_error() otherwise, exactly (F235's review)")
+                      "bluetooth_channel::bring_up_starting_error() once boot_bring_up_started() says the "
+                      "sketch has started its boot bring-up or bring_up_starting() says a bring-up runs, and "
+                      "boot_bring_up_pending_error() otherwise, exactly (F235's review; wave 16's verify: "
+                      "after the worker's init() was refused a tap was told Bluetooth had not started yet)")
     calls = [m for m in re.finditer(r"(?<![\w:.>])waits_for_boot_bring_up\s*\(", code)
              if not re.search(r"\bbool$", code[:m.start()].rstrip())]
     where = sorted(enclosing_function(spans, m.start()) or "file scope" for m in calls)
@@ -1751,7 +1770,19 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
         errors.append(f"{BT_CPP}: boot_bring_up_finished() must be exactly `__atomic_store_n("
                       "&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);` — the release a tap's acquire in "
                       "boot_bring_up_tried() pairs with (F235's review)")
+    body = body_of(cpp, SIG_BT_BOOT_STARTED, f"{BT_CPP}: boot_bring_up_started()", errors)
+    if body is not None and squash(body) != BT_BOOT_STARTED_BODY:
+        errors.append(f"{BT_CPP}: boot_bring_up_started() must be exactly `return "
+                      "__atomic_load_n(&g_boot_bring_up_started, __ATOMIC_ACQUIRE);` — any task asks it "
+                      "(wave 16's verify)")
     cspans = named_bodies(cpp)
+    for m in re.finditer(r"\bg_boot_bring_up_started\b", cpp):
+        where = enclosing_function(cspans, m.start())
+        if where not in (None, "bringup_worker_started", "boot_bring_up_started"):
+            errors.append(f"{BT_CPP}: {where}() names g_boot_bring_up_started — set only by "
+                          "bringup_worker_started() (its release store, BV7), as the sketch opens the gate, "
+                          "read only by boot_bring_up_started(); never cleared (wave 16's verify)")
+            break
     for m in re.finditer(r"\bg_boot_bring_up_tried\b", cpp):
         where = enclosing_function(cspans, m.start())
         if where not in (None, "boot_bring_up_finished", "boot_bring_up_tried"):
@@ -3264,7 +3295,7 @@ SIG_INO_DISCOVERY_START = r"\bstatic\s+void\s+ble_discovery_start_if_due\s*\(\s*
 SIG_INO_FINALIZE = r"\bstatic\s+void\s+ble_bringup_finalize_if_done\s*\(\s*\)"
 BT_ADV_HOLD = "if(g_bringup_worker_running){g_advertise_after_bringup=true;returntrue;}"
 BT_RESTORE_HOLD = "if(g_bringup_worker_running){g_advertise_after_bringup=true;}else{g_advertising->start();}"
-BT_WORKER_STARTED_BODY = "g_bringup_worker_running=true;"
+BT_WORKER_STARTED_BODY = "g_bringup_worker_running=true;" + BT_BOOT_STARTED_STORE
 BT_WORKER_FINISHED_BODY = ("g_bringup_worker_running=false;if(g_advertise_after_bringup){"
                            "g_advertise_after_bringup=false;start_advertising();}")
 INO_WORKER_STARTED = "bluetooth_channel::bringup_worker_started();"
@@ -4093,7 +4124,36 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("send_boot_bring_up_pending() answers 200",
      on_other(BT_API, SIG_SEND_BOOT_PENDING, r"httpd_resp_set_status\(req,\s*http_status_line\(503\)\);", "")),
     ("send_boot_bring_up_pending() never says still starting",
-     on_other(BT_API, SIG_SEND_BOOT_PENDING, r"bluetooth_channel::bring_up_starting\(\)\s*\?[^:]*:\s*", "")),
+     on_other(BT_API, SIG_SEND_BOOT_PENDING,
+              r"bluetooth_channel::boot_bring_up_started\(\)\s*\|\|\s*bluetooth_channel::bring_up_starting\(\)",
+              "false")),
+    ("send_boot_bring_up_pending() says not started after the worker's refused init (wave 16's verify)",
+     on_other(BT_API, SIG_SEND_BOOT_PENDING, r"bluetooth_channel::boot_bring_up_started\(\)\s*\|\|\s*", "")),
+    ("send_boot_bring_up_pending() reads the started bring-up and not the latch",
+     on_other(BT_API, SIG_SEND_BOOT_PENDING, r"\s*\|\|\s*bluetooth_channel::bring_up_starting\(\)", "")),
+    ("send_boot_bring_up_pending() says still starting before the worker started",
+     on_other(BT_API, SIG_SEND_BOOT_PENDING, r"bluetooth_channel::boot_bring_up_started\(\)",
+              "bluetooth_channel::read_enabled()")),
+    ("boot_bring_up_started() reads relaxed",
+     on_other(BT_CPP, SIG_BT_BOOT_STARTED, r"__ATOMIC_ACQUIRE", "__ATOMIC_RELAXED")),
+    ("boot_bring_up_started() always answers yes",
+     on_other(BT_CPP, SIG_BT_BOOT_STARTED, r"return\s+__atomic_load_n\([^;]*\);", "return true;")),
+    ("bringup_worker_started() marks the start with a relaxed store",
+     on_other(BT_CPP, SIG_BT_WORKER_STARTED, r"(&g_boot_bring_up_started, true, )__ATOMIC_RELEASE",
+              r"\1__ATOMIC_RELAXED")),
+    ("bringup_worker_started() marks the start with a plain store",
+     on_other(BT_CPP, SIG_BT_WORKER_STARTED,
+              r"__atomic_store_n\(&g_boot_bring_up_started, true, __ATOMIC_RELEASE\);",
+              "g_boot_bring_up_started = true;")),
+    ("bringup_worker_started() never marks the start",
+     on_other(BT_CPP, SIG_BT_WORKER_STARTED,
+              r"\n[ \t]*__atomic_store_n\(&g_boot_bring_up_started, true, __ATOMIC_RELEASE\);[^\n]*", "")),
+    ("bringup_worker_finished() clears the start",
+     on_other(BT_CPP, SIG_BT_WORKER_FINISHED, r"(g_bringup_worker_running = false;)",
+              r"\1\n  __atomic_store_n(&g_boot_bring_up_started, false, __ATOMIC_RELEASE);")),
+    ("deinit() clears the start",
+     on_other(BT_CPP, SIG_BT_DEINIT, r"(set_state\(BT_DISABLED\);)",
+              r"__atomic_store_n(&g_boot_bring_up_started, false, __ATOMIC_RELEASE);\n  \1")),
     ("send_boot_bring_up_pending() always says still starting",
      on_other(BT_API, SIG_SEND_BOOT_PENDING, r"\s*:\s*bluetooth_channel::boot_bring_up_pending_error\(\)",
               " : bluetooth_channel::bring_up_starting_error()")),

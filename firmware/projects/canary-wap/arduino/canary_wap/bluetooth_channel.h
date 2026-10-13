@@ -288,8 +288,18 @@ void bringup_worker_finished();
 // and, on FULL, ble_manager::init() when the channel's did not bring the
 // stack up; the Scout's at finalize), so a tap's init() would run beside
 // them, and init()'s latch holds only the channel's callers.
+// boot_bring_up_started(), any task: whether the sketch has started that
+// bring-up, bringup_worker_started() above having run (release, acquire;
+// once per boot, never cleared). From there until boot_bring_up_tried()
+// those two handlers answer that Bluetooth is still starting
+// (bring_up_starting_error()), whatever the worker's init() answered: a
+// refusal it met is not the last word (on FULL ble_manager's NimBLE init
+// and the Scout's follow it, and a tap after the finalize stage runs init()
+// again and names its own), and the stack is moments from its answer.
+// Before it, boot_bring_up_pending_error(): nothing has started yet.
 void boot_bring_up_finished();
 bool boot_bring_up_tried();
+bool boot_bring_up_started();
 inline const char* boot_bring_up_pending_error() {
   return "Bluetooth has not started yet; it starts once Wi-Fi setup is done or within five minutes (never in safe mode)";
 }
