@@ -118,6 +118,8 @@ test("the WAP's firmware flavor is build_config.h's FULL profile, flag for flag"
   // each value to the C preprocessor).
   const inBlock = [...new Set([...wapFullBlock().matchAll(/#\s*define\s+(FEATURE_\w+)/g)].map((m) => m[1]))];
   assert.deepStrictEqual(Object.keys(fw.flavors.full), inBlock);
+  assert.ok(!existsSync(join(ROOT, "../firmware/configs/canary-wap")),
+    "firmware/configs/canary-wap/ is gone: no build compiled it, and nothing reads it");
 });
 
 test("buzzer option: the piezo's flag is the one the sketch gates it on", () => {

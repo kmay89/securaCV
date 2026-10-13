@@ -86,12 +86,61 @@ const assembledDims = JSON.parse(readFileSync(join(ENCLOSURE, 'assembled_dims.js
 
 const LADDER = ['idea', 'prototype', 'confirmed', 'shipping'];
 
+// A device whose flags live in its own sources rather than a firmware/configs/
+// directory: the WAP's sketch includes no config.h, and build_config.h's
+// BUILD_PROFILE_* blocks set every flag. Its flavor is the one the Workshop
+// publishes from that header (gen_enclosures.py reads the FULL block through
+// _wap_profile.py), present while the header still has the block — so the
+// evidence moves if the block does.
+const SKETCH_FLAVORS = {
+  'canary-wap': {
+    header: 'firmware/projects/canary-wap/arduino/canary_wap/build_config.h',
+    flavors: { full: /^[ \t]*#[ \t]*elif[ \t]+defined\(BUILD_PROFILE_FULL\)[ \t]*$/m },
+  },
+};
+
+/* Device types published by a tree that reads no firmware/configs/ directory:
+ * the WAP's sketch. A config's DEVICE_TYPE is the type that device puts on
+ * the fleet's wire, which is what both lookups are fed (the glass's
+ * figure_for() reads device_type off a peer's MQTT status and state rows; the
+ * phone's forDeviceType() reads the mDNS `dt` record). The WAP's wire type is
+ * not its DEVICE_TYPE constant: canary_wap.ino declares DEVICE_TYPE "canary"
+ * for its REST /api/status, its signed records and its boot banner, but
+ * advertises `dt` "canary-wap" over mDNS and csi_mqtt.cpp publishes
+ * "device_type":"canary-wap" on its status topic. So the row reads the wire
+ * spelling from every place the sketch puts it, and refuses unless each place
+ * says it at least once and all of them agree. A row is keyed
+ * `<family>/<flavor>` like a config, so CONFIG_FIGURE, CONFIG_FIGURELESS and
+ * the one-device-family backing below treat it the same way, and carries its
+ * `source`. */
+const TREE_TYPES = [
+  {
+    family: 'canary-wap', flavor: 'sketch',
+    sources: [
+      { file: 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+        pattern: /MDNS\.addServiceTxt\("securacv",\s*"tcp",\s*"dt",\s*"([^"]+)"\)/g },
+      { file: 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp',
+        pattern: /\\"device_type\\":\\"([^"\\]+)\\"/g },
+    ],
+  },
+];
+
 function firmwareConfigs(deviceId) {
   // firmware/configs/<family>/<flavor>/config.h — the flavors that exist.
   // The registry's own family is the honest key where one exists (the
   // Nightlight is family canary-display without the name prefix); the
   // prefix collapse stays as the fallback for ids not in the registry.
   const dev = registry.devices.find((d) => d.id === deviceId);
+  const sketch = SKETCH_FLAVORS[dev?.family ?? deviceId];
+  if (sketch) {
+    const path = join(ROOT, sketch.header);
+    if (!existsSync(path)) {
+      throw new Error(`figures: ${deviceId}'s flags are read from ${sketch.header}, which is gone. `
+        + 'Point SKETCH_FLAVORS at the header the firmware builds from.');
+    }
+    const text = readFileSync(path, 'utf8');
+    return Object.entries(sketch.flavors).filter(([, re]) => re.test(text)).map(([f]) => f).sort();
+  }
   const family = (dev?.family && existsSync(join(ROOT, 'firmware/configs', dev.family)))
     ? dev.family
     : deviceId.startsWith('canary-display') ? 'canary-display' : deviceId;
@@ -571,8 +620,33 @@ function globIni(dir, nested = false) {
   return out.sort();
 }
 
+function walkTrees() {
+  return TREE_TYPES.map((t) => {
+    const seen = new Map();   // device type -> where it was read
+    for (const src of t.sources) {
+      const path = join(ROOT, src.file);
+      if (!existsSync(path)) {
+        throw new Error(`figures: TREE_TYPES reads ${t.family}'s device type from ${src.file}, which is gone. `
+          + 'Point the row at the files that publish it, or remove the row.');
+      }
+      const hits = [...readFileSync(path, 'utf8').matchAll(src.pattern)].map((m) => m[1]);
+      if (!hits.length) {
+        throw new Error(`figures: ${src.file} no longer publishes a device type in the form TREE_TYPES `
+          + `reads for ${t.family} (${src.pattern}). Fix the row's pattern, or drop the source.`);
+      }
+      for (const h of hits) seen.set(h, [...(seen.get(h) || []), src.file]);
+    }
+    if (seen.size !== 1) {
+      throw new Error(`figures: ${t.family} publishes ${seen.size} different device types on the wire `
+        + `(${[...seen].map(([dt, where]) => `"${dt}" in ${[...new Set(where)].join(', ')}`).join('; ')}). `
+        + 'A figure lookup can only follow one; make the sources agree.');
+    }
+    return { family: t.family, flavor: t.flavor, device_type: [...seen.keys()][0], source: t.sources[0].file };
+  });
+}
+
 function walkConfigs() {
-  const out = [];
+  const out = [...walkTrees()];
   const base = join(ROOT, 'firmware/configs');
   if (!existsSync(base)) return out;
   for (const fam of readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory())) {
@@ -622,15 +696,14 @@ function walkConfigs() {
 // device names its board_id and, once drawn, its figure. Envs with no pins
 // header of their own key on `board:<platformio id>`.
 
-// firmware/configs/<family>/<flavor> -> figure. Used ONLY to work out which
-// published device types are unambiguous; never as an identity itself, since
-// one config directory serves several panels.
+// firmware/configs/<family>/<flavor> (or a TREE_TYPES row) -> figure. Used
+// ONLY to work out which published device types are unambiguous; never as an
+// identity itself, since one config directory serves several panels.
 const CONFIG_FIGURE = {
   'canary-vision/default': 'device.canary-vision',
   'canary-sense/default': 'device.canary-sense',
   'canary-sense/wellbeing': 'device.canary-sense',
-  'canary-wap/default': 'device.canary-wap',
-  'canary-wap/mobile': 'device.canary-wap',
+  'canary-wap/sketch': 'device.canary-wap',
   'canary-display/watch': 'device.canary-display-watch',
   'canary-display/dash': 'device.canary-display-dash',
   'canary-display/dash7': 'device.canary-display-dash7',
@@ -671,9 +744,9 @@ const CONFIG_FIGURELESS = new Map([
 
 {
   // Every config directory on disk (a config.h, with or without a published
-  // DEVICE_TYPE) is accounted for: mapped, or explained above. Listed all at
-  // once so one run names every gap.
-  const onDisk = [];
+  // DEVICE_TYPE) and every TREE_TYPES row is accounted for: mapped, or
+  // explained above. Listed all at once so one run names every gap.
+  const onDisk = TREE_TYPES.map((t) => `${t.family}/${t.flavor}`);
   const base = join(ROOT, 'firmware/configs');
   for (const fam of readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory())) {
     for (const flav of readdirSync(join(base, fam.name), { withFileTypes: true }).filter((e) => e.isDirectory())) {
@@ -1025,6 +1098,7 @@ const ledger = {
     // firmware, because a config directory is not one piece of hardware.
     configs_audit: mappedConfigRows.map((r) => ({
       family: r.family, flavor: r.flavor, device_type: r.device_type, figure: r.fig.id,
+      ...(r.source ? { source: r.source } : {}),
     })),
   },
   // The EXACT lookup. Every build env compiles against exactly one
@@ -1398,8 +1472,8 @@ inline const FigureArt* figure_art(const char* figure_id) {
 /* ── Swift: what the phone and the wrist draw ───────────────────────── */
 
 // The firmware's mDNS advert canonicalizes DEVICE_TYPE before it goes on the
-// wire (canonical_dt: lowercase, underscores and spaces to hyphens), so the
-// phone sees "canary-wap" where a config says "canary_wap". The Swift map is
+// wire (canonical_dt: lowercase, underscores and spaces to hyphens), so a type
+// a source spells "canary_x" reaches the phone as "canary-x". The Swift map is
 // keyed on the canonical form and the lookup canonicalizes its input, so
 // both spellings land on one row. A collision between two device types'
 // canonical forms would silently merge them, so it is a hard error.
@@ -1514,7 +1588,7 @@ public struct FleetFigure: Sendable {
   /// none — draw the generic marker then, never a guessed product. The input
   /// is canonicalized the same way the firmware's mDNS advert canonicalizes
   /// its own DEVICE_TYPE (lowercase; underscores and spaces to hyphens), so
-  /// "canary_wap" from a config and "canary-wap" from the wire both resolve.
+  /// "canary_x" from a source and "canary-x" from the wire both resolve.
   public static func forDeviceType(_ deviceType: String) -> FleetFigure? {
     guard let id = deviceTypeToFigure[canonicalDeviceType(deviceType)] else { return nil }
     return all[id]

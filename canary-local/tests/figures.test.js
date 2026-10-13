@@ -370,8 +370,15 @@ test("a device type is never guessed onto the wrong hardware", () => {
     assert.ok(!seen.has(key), `${key} appears once`);
     seen.add(key);
     assert.ok(byId.get(fl.figure), `${key} -> unknown figure ${fl.figure}`);
-    assert.ok(existsSync(join(REPO, "firmware/configs", fl.family, fl.flavor, "config.h")),
-      `${key} is a real firmware config`);
+    if (fl.source) {
+      // a tree that reads no configs/ directory names the file it was read from
+      assert.ok(existsSync(join(REPO, fl.source)), `${key}: ${fl.source} exists`);
+      assert.ok(readFileSync(join(REPO, fl.source), "utf8").includes(`"${fl.device_type}"`),
+        `${key}: ${fl.source} publishes "${fl.device_type}"`);
+    } else {
+      assert.ok(existsSync(join(REPO, "firmware/configs", fl.family, fl.flavor, "config.h")),
+        `${key} is a real firmware config`);
+    }
   }
   // A type is mappable only when every config publishing it agrees.
   const byType = new Map();
@@ -383,6 +390,44 @@ test("a device type is never guessed onto the wrong hardware", () => {
     assert.strictEqual(byType.get(m.device_type).size, 1,
       `${m.device_type} is only mapped because its configs agree`);
   }
+});
+
+test("the WAP resolves by the device type it puts on the fleet's wire, read from its sketch", () => {
+  // Sweep F258: the WAP's rows came from firmware/configs/canary-wap/, which no
+  // build compiles, as "canary_wap" and "canary_wap_mobile" — types nothing
+  // publishes. The glass's figure_for() compares exactly, so a WAP peer (whose
+  // MQTT status says "canary-wap") never resolved on a display. The sketch
+  // advertises its type twice, and both must say the same thing: the mDNS `dt`
+  // record the phone keys on, and the device_type its status topic carries.
+  const WAP = join(REPO, "firmware/projects/canary-wap/arduino/canary_wap");
+  const ino = readFileSync(join(WAP, "canary_wap.ino"), "utf8");
+  const mqtt = readFileSync(join(WAP, "csi_mqtt.cpp"), "utf8");
+  const dts = [...ino.matchAll(/MDNS\.addServiceTxt\("securacv",\s*"tcp",\s*"dt",\s*"([^"]+)"\)/g)].map((m) => m[1]);
+  const statuses = [...mqtt.matchAll(/\\"device_type\\":\\"([^"\\]+)\\"/g)].map((m) => m[1]);
+  assert.ok(dts.length > 0 && statuses.length > 0, "the sketch advertises dt and publishes a status device_type");
+  const wire = [...new Set([...dts, ...statuses])];
+  assert.deepStrictEqual(wire, ["canary-wap"], "one wire type, everywhere the sketch puts it");
+  const dt = led.device_types;
+  const row = dt.mapped.find((m) => m.device_type === wire[0]);
+  assert.ok(row, `${wire[0]} resolves`);
+  assert.strictEqual(row.figure, "device.canary-wap");
+  for (const dead of ["canary_wap", "canary_wap_mobile"]) {
+    assert.ok(!dt.mapped.some((m) => m.device_type === dead), `${dead}: nothing publishes it`);
+  }
+  // ...and the glass's table carries that exact spelling (figure_streq does not
+  // canonicalize, unlike the phone's lookup).
+  const h = readFileSync(join(REPO, "firmware/common/core/fleet_figures.h"), "utf8");
+  assert.match(h, /\{ "canary-wap", "device\.canary-wap", "[0-9a-f]{8}", "shipping" \},/);
+  // The sketch's DEVICE_TYPE constant ("canary": REST, signed records, boot
+  // banner) is not the wire type and is not claimed for the WAP's figure.
+  assert.match(ino, /^static const char\* DEVICE_TYPE\s*=\s*"canary";/m);
+  assert.ok(!dt.mapped.some((m) => m.device_type === "canary"), "\"canary\" is not mapped to the WAP");
+  // The WAP figure's firmware evidence is the flavor the Workshop publishes
+  // from the same sketch (gen_enclosures.py), so its confidence stays derived.
+  const ws = JSON.parse(readFileSync(join(ROOT, "devices/workshop.json"), "utf8"));
+  assert.deepStrictEqual(byId.get("device.canary-wap").evidence.firmware_configs,
+    Object.keys(ws.devices["canary-wap"].firmware.flavors));
+  assert.strictEqual(byId.get("device.canary-wap").confidence, "shipping");
 });
 
 test("the exact lookup is keyed on something the build already depends on", () => {

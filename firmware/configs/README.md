@@ -6,7 +6,7 @@ Configuration sets and feature flags for firmware targets.
 
 Each config is a directory `configs/<app-id>/<config-id>/` holding a
 `config.h` (feature flags + behavior settings) and usually a `README.md`.
-Five families exist today:
+Four families exist today:
 
 ```
 configs/
@@ -14,9 +14,13 @@ configs/
 │                       # nightstand7, touch169, watch
 ├── canary-sense/       # default, wellbeing
 ├── canary-sentinel/    # door, window, hallway, mailbox-lite, perimeter-demo
-├── canary-vision/      # default
-└── canary-wap/         # default, mobile
+└── canary-vision/      # default
 ```
+
+The Canary WAP has no directory here. Its sketch takes every flag from its
+own `build_config.h` (the `BUILD_PROFILE_*` blocks, in
+[`../projects/canary-wap/arduino/canary_wap/`](../projects/canary-wap/arduino/canary_wap/)),
+and the Lab's generators read that header directly.
 
 ## Available Configurations
 
@@ -37,20 +41,19 @@ configs/
 | canary-sentinel | mailbox-lite | LITE tier (no radar, no CSI) |
 | canary-sentinel | perimeter-demo | HEAVY tier, the rigged demo |
 | canary-vision | default | Vision AI presence detection |
-| canary-wap | default | Lab descriptor of the FULL WAP; not compiled (see below) |
-| canary-wap | mobile | Lab descriptor; not compiled (`canary-wap-mobile` builds the sketch's DEV profile) |
 
-The canary-display, canary-sense, canary-sentinel and canary-vision configs
-are wired into PlatformIO builds via `-I` paths in
-[`../envs/platformio/`](../envs/platformio/). The two canary-wap configs are
-**not compiled by any build** — the WAP sketch's flags live in its
-`build_config.h` — but they are still consumed: the workshop-page generator
-(`canary-local/tools/gen_enclosures.py`) parses their `FEATURE_*` lines into
-`canary-local/devices/workshop.json`, which CI drift-gates, and
-`canary-local/tools/figures/gen_figures.mjs` reads their
-`CONFIG_DEVICE_TYPE`. `firmware/scripts/check_config_feature_flags.py`
-skips them for that reason; every other config's `FEATURE_*` flag must be
-read by its project's sources.
+Every config here is wired into PlatformIO builds via `-I` paths in
+[`../envs/platformio/`](../envs/platformio/), and
+`firmware/scripts/check_config_feature_flags.py` requires each config's
+`FEATURE_*` flags to be read by its project's sources. A directory no build
+compiles fails that check unless it is listed, with the reason, in the
+script's `SKIPPED_PROJECTS` (empty today). The Lab's generators read the
+`FEATURE_*` lines (`canary-local/tools/gen_enclosures.py`, into
+`canary-local/devices/workshop.json`) and the device types
+(`canary-local/tools/figures/gen_figures.mjs`) from these files; for the
+WAP they read the sketch instead — its flags from `build_config.h`, and the
+device type it puts on the fleet's wire from `canary_wap.ino`'s mDNS `dt`
+record and `csi_mqtt.cpp`'s status topic.
 
 ## Configuration Rules
 
@@ -69,11 +72,8 @@ read by its project's sources.
    changing a default in a behavior-visible way, requires a dated entry in
    [../CONFIG_CHANGES.md](../CONFIG_CHANGES.md) **and** updating every
    shipped config the change breaks, in the same PR. CI builds every
-   config that a PlatformIO env consumes on every PR, so a missed one in
-   those families fails loudly. The canary-wap configs are the exception —
-   no build compiles them (see above), so a breaking change there is caught
-   only by the workshop.json drift gate, and only if it moves a `FEATURE_*`
-   line.
+   config that a PlatformIO env consumes on every PR, so a missed one
+   fails loudly.
 
 6. **Capability mismatches fail the build**: feature flags are
    cross-checked against the board's `HAS_*` capability flags by
