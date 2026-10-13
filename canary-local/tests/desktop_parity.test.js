@@ -2664,11 +2664,12 @@ const FLASH_COMMANDS = [
   ["fetch_manifest", "desktop/src-tauri/src/lib.rs"],
   ["flash", "desktop/src-tauri/src/lib.rs"],
   ["start_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
+  // The Lab's post-flash monitor has the Flasher's command row (sweep A67:
+  // the MONITOR_CMDS chips and a typed command), so the command it sends
+  // through is back, held to the Flasher's text like the rest;
+  // lab_bundle.test.js holds the Lab's registration to that caller.
+  ["serial_monitor_send", "desktop/src-tauri/src/serial_monitor.rs"],
   ["stop_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
-  // serial_monitor_send is the Flasher's alone for now: the Lab's native
-  // monitor (flash-native.js) has no command box, and lab_bundle.test.js
-  // refuses a Lab command no page invokes. The day it gains one, the command
-  // comes back here, held to the Flasher's text like the rest.
 ];
 
 // One Rust fn — its attributes, signature and balanced body — whitespace
@@ -3206,7 +3207,7 @@ function fakeDocument() {
     set textContent(t) { for (const c of [...this.children]) c.remove(); this._text = String(t); }
     setAttribute(k, v) { this.attrs[k] = v; }
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
-    fire(type) { for (const fn of this.listeners[type] || []) fn({ target: this }); }
+    fire(type, ev = {}) { for (const fn of this.listeners[type] || []) fn({ target: this, ...ev }); }
     *walk() { yield this; for (const c of this.children) yield* c.walk(); }
     find(pred) { for (const n of this.walk()) if (pred(n)) return n; return null; }
   }
@@ -3216,8 +3217,19 @@ function fakeDocument() {
   };
 }
 
-async function runNativeBench({ flashAnswers, detectAnswer, ports }) {
+// flash.js's own MONITOR_CMDS, read from its source: the table flash.js hands
+// the native bench (sweep A67), so the harness hands over the same one.
+const browserMonitorCmds = () => {
+  const m = /const MONITOR_CMDS = \[([\s\S]*?)\];/.exec(read(join(CANARY, "assets/flash.js")));
+  assert.ok(m, "couldn't parse flash.js MONITOR_CMDS");
+  return [...m[1].matchAll(/\["([a-z])", "([a-z-]+)"\]/g)].map((x) => [x[1], x[2]]);
+};
+
+async function runNativeBench({ flashAnswers, detectAnswer, ports, startAnswer, monitorCmds }) {
   const calls = [];
+  // What the monitor commands answer, changeable mid-run: a string here is
+  // thrown the way Tauri rejects an invoke, with the command's Err text.
+  const answers = { send: null };
   // Every command and every touch of the form, in order — so a test can say
   // what happened BEFORE the flash (the password cleared) and after it (the
   // form redrawn from its Wi-Fi memory).
@@ -3246,7 +3258,13 @@ async function runNativeBench({ flashAnswers, detectAnswer, ports }) {
         if (typeof next === "string") throw next;
         return next;
       }
-      default: return null; // stop/start_serial_monitor
+      case "start_serial_monitor":
+        if (typeof startAnswer === "string") throw startAnswer;
+        return null;
+      case "serial_monitor_send":
+        if (typeof answers.send === "string") throw answers.send;
+        return null;
+      default: return null; // stop_serial_monitor
     }
   };
   const doc = fakeDocument();
@@ -3268,8 +3286,11 @@ async function runNativeBench({ flashAnswers, detectAnswer, ports }) {
       credentials: () => { timeline.push("form:read"); return { ok: true, wifi: { ssid: "home", pass: "hunter22" }, mqtt: null, autoUpdate: true }; },
       clear() { timeline.push("form:clear"); },
     };
-    await native.mountNativeBench(mount, { catalog, renderWifiFields: () => { timeline.push("form:draw"); return form; } });
-    const run = { calls, timeline, mount, doc, close: restore };
+    await native.mountNativeBench(mount, {
+      catalog, renderWifiFields: () => { timeline.push("form:draw"); return form; },
+      monitorCmds: monitorCmds || browserMonitorCmds(),
+    });
+    const run = { calls, timeline, mount, doc, answers, close: restore };
     run.emit = (evt, payload) => { for (const cb of heard[evt] || []) cb({ payload }); };
     run.text = () => mount.textContent;
     run.pick = async (id) => {
@@ -3434,6 +3455,137 @@ test("native flashing: the Lab's flash page drives the Flasher's commands with t
     assert.ok(!module.calls.some(([c]) => c === "detect_chip"), "the Vision module's port must not be read with board-info");
     assert.match(module.text(), /Grove Vision AI V2 camera module/);
   } finally { module.close(); }
+});
+
+// ── sweep A67: the Lab's post-flash monitor talks back ─────────────────────
+//
+// The Flasher's monitor sends commands (its MONITOR_CMDS chips and command
+// box) and so does the browser flasher's; the Lab app's native monitor only
+// read, and the Lab's serial_monitor_send registration had been removed for
+// want of a caller. The row is back on the Lab's receipt card: flash.js's own
+// MONITOR_CMDS table (handed to the bench, never retyped), the Flasher's words
+// for the box, each send through the Flasher's command with the newline the
+// firmware's parser reads, usable only while the monitor runs, and a refused
+// send said where the Flasher says it.
+test("A67: the Lab's post-flash monitor has the Flasher's command row, live only while the monitor runs", async () => {
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const labFlash = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+  // One table: flash.js hands its MONITOR_CMDS to the bench; the bench keeps none.
+  assert.match(flashJs, /mountNativeBench\(mount, \{ catalog: state\.catalog, renderWifiFields, monitorCmds: MONITOR_CMDS \}\)/,
+    "flash.js must hand the native bench its own MONITOR_CMDS");
+  assert.doesNotMatch(nativeJs, /MONITOR_CMDS\s*=/, "flash-native.js must not keep its own copy of the command table");
+  const cmds = browserMonitorCmds();
+  assert.strictEqual(cmds.length, 8, "the browser's command table is no longer the eight keys");
+
+  const receipt = { target: "esp32-host", product_id: "securacv-canary", version: "9.9.9", release_sha256: "a".repeat(64),
+    installed_sha256: "b".repeat(64), bytes_written: 1, release_verification: "ed25519+sha256", channel: "stable",
+    chip_write_verified: true, provisioned: false };
+  const sends = (run) => run.calls.filter(([c]) => c === "serial_monitor_send").map(([, a]) => a);
+  const controls = (run) => {
+    const chips = [...run.mount.walk()].filter((n) => n.tagName === "button" && n.dataset.cmd);
+    const input = run.mount.find((n) => n.tagName === "input" && n.attrs["aria-label"] === "Serial command");
+    const send = run.mount.find((n) => n.tagName === "button" && n.textContent === "Send");
+    return { chips, input, send, all: [...chips, input, send].filter(Boolean) };
+  };
+
+  const run = await runNativeBench({ flashAnswers: [receipt] });
+  try {
+    await run.pick("securacv-canary");
+    assert.ok(run.calls.some(([c]) => c === "start_serial_monitor"), "the flash must start the monitor");
+    const { chips, input, send, all } = controls(run);
+    // The chips: the table's keys, in order, in the Flasher's "label (key)" form.
+    assert.deepStrictEqual(chips.map((b) => b.dataset.cmd), cmds.map(([ch]) => ch));
+    assert.deepStrictEqual(chips.map((b) => b.textContent), cmds.map(([ch, label]) => `${label} (${ch})`));
+    // The box: the Flasher's placeholder, label and length, and a Send.
+    const flasherBox = /<input id="monitor-cmd"[\s\S]*?\/>/.exec(html)[0];
+    const attr = (name) => new RegExp(`${name}="([^"]*)"`).exec(flasherBox)[1];
+    assert.ok(input && send, "the receipt card has no command box");
+    assert.strictEqual(input.placeholder, attr("placeholder"), "the box must teach what the Flasher's teaches");
+    assert.strictEqual(input.attrs["aria-label"], attr("aria-label"));
+    assert.strictEqual(input.maxLength, Number(attr("maxlength")));
+    for (const c of all) assert.strictEqual(c.disabled, false, "the row must be usable while the monitor runs");
+
+    // Each chip sends its key and a newline, through the Flasher's command
+    // with exactly that command's arguments.
+    for (const b of chips) b.fire("click");
+    await drain();
+    const camel = (x) => x.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    const sig = /fn serial_monitor_send\(([\s\S]*?)\)\s*->/.exec(labFlash);
+    assert.ok(sig, "the Lab's flash.rs must define serial_monitor_send");
+    const rustArgs = [...sig[1].matchAll(/(?:^|,)\s*(\w+)\s*:/g)].map((m) => m[1]).filter((a) => a !== "state").map(camel);
+    assert.deepStrictEqual(sends(run).map((a) => Object.keys(a)), cmds.map(() => rustArgs),
+      "invoke(\"serial_monitor_send\") must carry exactly the command's arguments");
+    assert.deepStrictEqual(sends(run).map((a) => a.command), cmds.map(([ch]) => ch + "\n"),
+      "each chip must send its key with the newline the firmware's parser reads");
+
+    // The box sends what was typed plus a newline, on Enter and on Send, and
+    // clears once the send went; an empty box sends nothing.
+    const before = sends(run).length;
+    input.value = "wifi";
+    input.fire("keydown", { key: "Enter", preventDefault() {} });
+    await drain();
+    input.value = "s";
+    send.fire("click");
+    await drain();
+    input.value = "";
+    send.fire("click");
+    input.fire("keydown", { key: "Enter", preventDefault() {} });
+    input.value = "x";
+    input.fire("keydown", { key: "a" });
+    await drain();
+    assert.deepStrictEqual(sends(run).slice(before).map((a) => a.command), ["wifi\n", "s\n"],
+      "the box must send typed text plus a newline on Enter or Send, and nothing for an empty box or another key");
+    input.value = "";
+
+    // A refused send is said in the status line — the engine's own words — and
+    // the typed command stays in the box to send again.
+    const notRunning = /"serial monitor is not running"/.test(engineRs("monitor")) && "serial monitor is not running";
+    assert.ok(notRunning, "the engine's refusal text moved");
+    run.answers.send = notRunning;
+    chips[0].fire("click");
+    await drain();
+    assert.ok(run.text().includes(notRunning), "a refused chip send must be shown, not swallowed");
+    run.emit("serial:status", "Serial monitor connected to /dev/ttyACM0 at 115200 baud.");
+    input.value = "t";
+    send.fire("click");
+    await drain();
+    assert.ok(run.text().includes(notRunning), "a refused typed send must be shown, not swallowed");
+    assert.strictEqual(input.value, "t", "a refused typed command stays in the box");
+    run.answers.send = null;
+
+    // When the monitor stops, the row goes with it: every control disabled,
+    // and nothing is sent.
+    run.emit("serial:status", "Serial monitor stopped.");
+    for (const c of all) assert.strictEqual(c.disabled, true, "the row must be disabled once the monitor stops");
+    const atStop = sends(run).length;
+    chips[1].fire("click");
+    send.fire("click");
+    await drain();
+    assert.strictEqual(sends(run).length, atStop, "a stopped monitor must send nothing");
+  } finally { run.close(); }
+
+  // "Stop watching" disables the row too.
+  const stopped = await runNativeBench({ flashAnswers: [receipt] });
+  try {
+    await stopped.pick("securacv-canary");
+    const { all } = controls(stopped);
+    for (const c of all) assert.strictEqual(c.disabled, false);
+    stopped.mount.find((n) => n.tagName === "button" && n.textContent === "Stop watching").fire("click");
+    await drain();
+    for (const c of all) assert.strictEqual(c.disabled, true, "Stop watching must disable the row");
+  } finally { stopped.close(); }
+
+  // A monitor that never started leaves the row disabled, beside the reason.
+  const unstarted = await runNativeBench({ flashAnswers: [receipt], startAnswer: "serial monitor is already running" });
+  try {
+    await unstarted.pick("securacv-canary");
+    const { all } = controls(unstarted);
+    assert.strictEqual(all.length, cmds.length + 2, "the row is drawn even when the monitor did not start");
+    for (const c of all) assert.strictEqual(c.disabled, true, "a monitor that never started must leave the row disabled");
+    assert.match(unstarted.text(), /but the serial monitor didn’t start \(serial monitor is already running\)/);
+  } finally { unstarted.close(); }
 });
 
 // ── The derived birth certificate: one bird, one name, three surfaces ─────

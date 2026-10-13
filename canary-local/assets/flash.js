@@ -158,8 +158,9 @@ async function boot() {
   }
 
   if (nativeSerial) {
-    // The native bench, with the browser's own Wi-Fi / broker form.
-    await mountNativeBench(mount, { catalog: state.catalog, renderWifiFields });
+    // The native bench, with the browser's own Wi-Fi / broker form and its
+    // monitor's command chips (one MONITOR_CMDS table for both benches).
+    await mountNativeBench(mount, { catalog: state.catalog, renderWifiFields, monitorCmds: MONITOR_CMDS });
     mount.append(renderReassurance({ nativeShell: true }));
     return;
   }
