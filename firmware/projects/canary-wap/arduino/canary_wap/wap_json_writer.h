@@ -26,6 +26,13 @@
  *    it: ArduinoJson decodes `\u00XX` back to the raw byte and writes it raw
  *    (fleet_scan_cache.h's reader, handle_fleet_scan(), does exactly that),
  *    while `\ufffd` decodes to U+FFFD, which it writes as valid UTF-8.
+ *  - replaced_text() writes the same replacement into a plain string, for a
+ *    value ArduinoJson writes itself or a printf's %s (sweep F262: the SSIDs
+ *    the Wi-Fi answers, the self-test and the health log carry): each of
+ *    those control bytes becomes U+FFFD's three UTF-8 bytes, which
+ *    ArduinoJson writes as they are, and a text that does not fit is cut on
+ *    a character boundary, never inside one. raw_control() is the one test
+ *    of which bytes, for str(), the replace_controls writer and it.
  *  - Every write is whole or not at all: a write that does not fit before the
  *    reserve sets `overflow` and writes nothing, and every write after it is
  *    refused too, so the text is always a run of whole writes followed by a
@@ -74,6 +81,67 @@ inline size_t escaped_byte_len(unsigned char c) {
   if (c == '"' || c == '\\' || c == '\b' || c == '\f' || c == '\n' || c == '\r' || c == '\t') return 2;
   if (c < 0x20) return kEscapeMax;
   return 1;
+}
+
+/* True when `c` is a byte ArduinoJson 7.4.1 writes raw though JSON forbids it
+ * raw: a control byte other than \b \f \n \r \t. str() writes it as \u00XX,
+ * a replace_controls writer as \ufffd (sweep F211), and replaced_text() as
+ * the replacement character itself (sweep F262): the one test all three
+ * read. */
+inline bool raw_control(unsigned char c) { return escaped_byte_len(c) == kEscapeMax; }
+
+/* U+FFFD, the replacement character, as UTF-8: what replaced_text() writes
+ * for a raw_control() byte. */
+static constexpr char kReplacement[] = "\xEF\xBF\xBD";
+static constexpr size_t kReplacementLen = sizeof(kReplacement) - 1;
+
+/* The buffer replaced_text() needs to keep a string of `n` bytes whole, its
+ * NUL included: n bytes that are all raw_control() spend 3 each (an SSID of
+ * 32 bytes of 0x01 is 96 bytes of text). */
+constexpr size_t replaced_cap(size_t n) { return n * kReplacementLen + 1; }
+
+/* The bytes the character at `p` spans: a UTF-8 lead byte (0xC0 to 0xF7) and
+ * the continuation bytes (0x80 to 0xBF) that follow it, up to its sequence's
+ * length; any other byte, a stray continuation byte included, alone. */
+inline size_t char_span(const unsigned char* p) {
+  const unsigned char c = p[0];
+  const size_t want = c < 0xC0 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : c < 0xF8 ? 4 : 1;
+  size_t n = 1;
+  while (n < want && (p[n] & 0xC0) == 0x80) ++n;
+  return n;
+}
+
+/* Copies `s` (NULL as "") into out[cap] as the text an ArduinoJson value or a
+ * printf's %s takes, with each raw_control() byte written as U+FFFD and every
+ * other byte as it is (sweep F262: a string the device did not choose, such
+ * as an SSID an access point broadcasts or a person typed, written raw by
+ * ArduinoJson, made the answer unparseable; ArduinoJson writes the
+ * replacement as the valid UTF-8 it is and still escapes `"` and `\`
+ * itself). The same replacement as a replace_controls writer's \ufffd, for
+ * a text that is not JSON yet.
+ *
+ * `out` is always terminated (cap > 0) and never written past `cap`. The
+ * text is whole, or cut before the first character that does not fit whole:
+ * never part of a U+FFFD, never a UTF-8 lead byte without the continuation
+ * bytes that follow it in `s`. Returns true when all of `s` fit; false when
+ * it cut (or `out` is NULL or `cap` 0, which write nothing). */
+inline bool replaced_text(char* out, size_t cap, const char* s) {
+  if (out == nullptr || cap == 0) return false;
+  size_t len = 0;
+  for (const unsigned char* p = (const unsigned char*)(s ? s : ""); *p;) {
+    const size_t span = char_span(p);
+    const bool replace = raw_control(*p);   /* below 0x20: a span of one */
+    const size_t need = replace ? kReplacementLen : span;
+    if (need > cap - 1 - len) {
+      out[len] = '\0';
+      return false;
+    }
+    memcpy(out + len, replace ? (const unsigned char*)kReplacement : p, need);
+    len += need;
+    p += span;
+  }
+  out[len] = '\0';
+  return true;
 }
 
 /* The bytes str() spends on `s`, its two quotes included (NULL is ""). */
@@ -184,9 +252,9 @@ inline bool escaped(Writer& w, const char* s) {
       case '\r': *o++ = '\\'; *o++ = 'r';  break;
       case '\t': *o++ = '\\'; *o++ = 't';  break;
       default:
-        if (c < 0x20 && w.replace_controls) {
+        if (raw_control(c) && w.replace_controls) {
           *o++ = '\\'; *o++ = 'u'; *o++ = 'f'; *o++ = 'f'; *o++ = 'f'; *o++ = 'd';
-        } else if (c < 0x20) {
+        } else if (raw_control(c)) {
           *o++ = '\\'; *o++ = 'u'; *o++ = '0'; *o++ = '0';
           *o++ = kHex[c >> 4]; *o++ = kHex[c & 0x0F];
         } else {

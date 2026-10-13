@@ -22,6 +22,15 @@
 // heap-buffer-overflow (without ASan, the guard checks fail), the room() case
 // reads a length past the cap as room, and the identity build answers a
 // refused write pass with its measured length instead of a refusal.
+//
+// And replaced_text() (sweep F262), the replacement the fleet scan cache's
+// writer spells \ufffd written into a plain string for ArduinoJson or a
+// printf: every byte value at three places, the 32-byte SSID of 0x01 that
+// needs 96 bytes, 400 seeded SSIDs, and every buffer size for strings of
+// mixed UTF-8, each an exact heap block. Taking every byte below 0x20 (not
+// raw_control()) fails 245 checks, cutting by bytes rather than characters
+// 20, and testing the room one byte too late aborts under ASan with a
+// heap-buffer-overflow.
 
 // Arduino.h's global names first, as in the sketch's translation unit.
 #include "arduino_globals.h"
@@ -31,6 +40,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 // The hooks: each write calls this after it measured `s` and before it
 // copies it; identity_json::build() calls the second between its passes.
@@ -424,6 +434,177 @@ void test_fleet_cache_drops_a_row_that_grew() {
   disarm();
 }
 
+// ── replaced_text(): an SSID's control bytes as U+FFFD (sweep F262) ─────
+
+// ArduinoJson 7.4.1's spelling of a string value (TextFormatter::writeChar
+// over EscapeSequence's table): `"` `\` \b \f \n \r \t escaped, every other
+// byte as it is, a control byte included.
+std::string arduinojson_spelling(const std::string& v) {
+  std::string out = "\"";
+  for (char c : v) {
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\b': out += "\\b"; break;
+      case '\f': out += "\\f"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default: out += c;
+    }
+  }
+  return out + "\"";
+}
+
+// True when `{"ssid":<value>}`, as ArduinoJson writes it, parses as a
+// browser's JSON.parse reads it, and gives `want` back.
+bool answer_parses_as(const std::string& value, const std::string& want) {
+  json_strict::Value v;
+  if (!json_strict::parse("{\"ssid\":" + arduinojson_spelling(value) + "}", &v)) return false;
+  const json_strict::Value* got = v.get("ssid");
+  return got != nullptr && got->kind == json_strict::Value::String && got->text == want;
+}
+
+// The test's own reading of `s` (independent of the header): its
+// characters, each with the text replaced_text() owes for it.
+struct Piece {
+  std::string text;
+};
+std::vector<Piece> pieces_of(const std::string& s) {
+  std::vector<Piece> out;
+  for (size_t i = 0; i < s.size();) {
+    const unsigned char c = (unsigned char)s[i];
+    size_t want = 1;
+    if (c >= 0xC0 && c <= 0xDF) want = 2;
+    else if (c >= 0xE0 && c <= 0xEF) want = 3;
+    else if (c >= 0xF0 && c <= 0xF7) want = 4;
+    size_t n = 1;
+    while (n < want && i + n < s.size() && ((unsigned char)s[i + n] & 0xC0) == 0x80) ++n;
+    const bool control = c < 0x20 && c != '\b' && c != '\f' && c != '\n' && c != '\r' && c != '\t';
+    out.push_back({control ? std::string("\xEF\xBF\xBD") : s.substr(i, n)});
+    i += n;
+  }
+  return out;
+}
+std::string expected_text(const std::string& s) {
+  std::string out;
+  for (const Piece& p : pieces_of(s)) out += p.text;
+  return out;
+}
+
+// The predicate all three spellings read: a control byte other than \b \f
+// \n \r \t, and the F211 writer (replace_controls) writes \ufffd for exactly
+// those bytes.
+void test_raw_control_is_the_writers_own_test() {
+  for (int b = 1; b < 256; ++b) {
+    const unsigned char c = (unsigned char)b;
+    const bool control = c < 0x20 && c != '\b' && c != '\f' && c != '\n' && c != '\r' && c != '\t';
+    CHECK(wap_json::raw_control(c) == control);
+    char one[2] = {(char)c, 0};
+    char out[16];
+    wap_json::Writer w;
+    wap_json::begin(w, out, sizeof(out));
+    w.replace_controls = true;
+    CHECK(wap_json::str(w, one));
+    CHECK((std::strcmp(out, "\"\\ufffd\"") == 0) == control);
+  }
+}
+
+// Every byte value at three places in an SSID: each raw control byte comes
+// back as U+FFFD and every other byte as it is, whole in replaced_cap() of
+// the input's length, and the answer ArduinoJson writes from it parses with
+// that text; the input itself, written raw, does not parse wherever it held
+// a raw control byte (so the parse is not vacuous).
+void test_replaced_text_writes_each_control_byte_as_u_fffd() {
+  for (int b = 1; b < 256; ++b) {
+    for (int at = 0; at < 3; ++at) {
+      std::string s = "Shed";
+      if (at == 0) s.insert(s.begin(), (char)b);
+      else if (at == 1) s.insert(2, 1, (char)b);
+      else s.push_back((char)b);
+      const std::string want = expected_text(s);
+      Exact e(wap_json::replaced_cap(s.size()));
+      CHECK(wap_json::replaced_text(e.buf, e.cap, s.c_str()));
+      CHECK(std::string(e.buf) == want);
+      CHECK(answer_parses_as(e.buf, want));
+      CHECK(answer_parses_as(s, s) == !wap_json::raw_control((unsigned char)b));
+    }
+  }
+}
+
+// The longest SSID an access point can broadcast, 32 bytes of 0x01: 96
+// bytes of text, which replaced_cap(32) holds whole; one byte less cuts it
+// to 31 whole replacements (never two bytes of the 32nd). And 400 seeded
+// SSIDs of 1 to 32 arbitrary bytes, each whole in replaced_cap(32).
+void test_replaced_text_keeps_a_32_byte_ssid_whole() {
+  const std::string ssid(32, '\x01');
+  CHECK(wap_json::replaced_cap(32) == 97);
+  {
+    Exact e(wap_json::replaced_cap(32));
+    CHECK(wap_json::replaced_text(e.buf, e.cap, ssid.c_str()));
+    CHECK(std::strlen(e.buf) == 96 && std::string(e.buf) == expected_text(ssid));
+  }
+  {
+    Exact e(96);
+    CHECK(!wap_json::replaced_text(e.buf, e.cap, ssid.c_str()));
+    CHECK(std::strlen(e.buf) == 93 && std::string(e.buf) == expected_text(std::string(31, '\x01')));
+  }
+  uint32_t seed = 0x5eed1234u;
+  for (int k = 0; k < 400; ++k) {
+    seed = seed * 1103515245u + 12345u;
+    std::string s;
+    const size_t n = 1 + (seed >> 16) % 32;
+    for (size_t i = 0; i < n; ++i) {
+      seed = seed * 1103515245u + 12345u;
+      const char c = (char)(1 + (seed >> 16) % 255);
+      s.push_back(c);
+    }
+    Exact e(wap_json::replaced_cap(32));
+    CHECK(wap_json::replaced_text(e.buf, e.cap, s.c_str()));
+    CHECK(std::string(e.buf) == expected_text(s));
+    CHECK(answer_parses_as(e.buf, expected_text(s)));
+  }
+}
+
+// A text that does not fit is cut before the first character that does not
+// fit whole: for strings mixing ASCII, raw control bytes, \t, two-, three-
+// and four-byte UTF-8, a stray continuation byte, a lead byte past 0xF7 and
+// a sequence cut short in the input, at every buffer size from 1 to one past
+// whole (each an exact heap block, under AddressSanitizer), the text is the
+// longest run of whole characters that fits, terminated, and the answer is
+// true only when nothing was left out.
+void test_replaced_text_cuts_on_a_character_boundary() {
+  const std::string inputs[] = {
+      std::string("caf\xC3\xA9\x01" "x\xE2\x82\xAC" "\x02\xF0\x9F\x90\xA6" "\t!"),
+      std::string("\x80\x01\xC3\xA9\xF8\xFF\x1F"),
+      std::string("ab\xE2\x82" "c\x01\xF0\x9F\x90" "d"),
+      std::string(31, '\x01') + "\xC3\xA9",
+      std::string("\xF0\x9F\x90\xA6\xF0\x9F\x90\xA6\x01\x01\xF0\x9F\x90\xA6"),
+  };
+  for (const std::string& s : inputs) {
+    const std::vector<Piece> pieces = pieces_of(s);
+    const std::string whole = expected_text(s);
+    for (size_t cap = 1; cap <= whole.size() + 2; ++cap) {
+      std::string fits;
+      for (const Piece& p : pieces) {
+        if (fits.size() + p.text.size() > cap - 1) break;
+        fits += p.text;
+      }
+      Exact e(cap);
+      const bool all = wap_json::replaced_text(e.buf, e.cap, s.c_str());
+      CHECK(all == (whole.size() <= cap - 1));
+      CHECK(std::string(e.buf) == fits);
+    }
+  }
+  // Nothing to write into, and no string at all.
+  char one[1] = {'x'};
+  CHECK(!wap_json::replaced_text(one, 0, "a") && one[0] == 'x');
+  CHECK(!wap_json::replaced_text(nullptr, 8, "a"));
+  CHECK(!wap_json::replaced_text(one, 1, "a") && one[0] == '\0');
+  char four[4] = {'x', 'x', 'x', 'x'};
+  CHECK(wap_json::replaced_text(four, sizeof(four), nullptr) && four[0] == '\0');
+}
+
 }  // namespace
 
 int main() {
@@ -433,6 +614,10 @@ int main() {
   test_device_info_refuses_a_label_that_grew();
   test_receipt_refuses_an_address_that_grew();
   test_fleet_cache_drops_a_row_that_grew();
+  test_raw_control_is_the_writers_own_test();
+  test_replaced_text_writes_each_control_byte_as_u_fffd();
+  test_replaced_text_keeps_a_32_byte_ssid_whole();
+  test_replaced_text_cuts_on_a_character_boundary();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;
