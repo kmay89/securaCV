@@ -550,6 +550,11 @@ canonical = "securacv:chirp:witness:v0"
          || session_pubkey(32)
 ```
 
+The timestamp is signed as four little-endian bytes, as the header carries
+it on the canary-wap (`test_chirp_protocol_invariants.cpp` verifies a frame
+the firmware sent against these 73 bytes written out from this list, and a
+big-endian timestamp does not verify).
+
 The `confirm_count` field from v0.1 is **removed from the wire**. Confirmation
 state is local-only and derived from `CHIRP_MSG_ACK` messages with unique
 `session_pubkey`s.
