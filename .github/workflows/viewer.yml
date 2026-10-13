@@ -117,6 +117,8 @@ jobs:
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/web_ui_logic.test.js
     - name: Recovery kit offer (dashboard BOOT-tap sign-in, wizard close-out)
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
+    - name: Dashboard gates (Camera and Community views only where the build serves them, Export saves its answer)
+      run: node --test firmware/projects/canary-wap/arduino/canary_wap/dashboard_gates.test.js
 
   canary-vision-lint:
     name: ESLint (canary-vision)

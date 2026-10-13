@@ -1325,7 +1325,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </p>
       </div>
 
-      <div class="card">
+      <div class="card" id="peekControlsCard">
         <div class="card-header">
           <div>
             <div class="card-title">Camera Controls</div>
@@ -1444,7 +1444,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
 
       <!-- Real-time camera info: every value is read from /api/peek/status (esp_camera state). -->
-      <div class="card">
+      <div class="card" id="camInfoCard">
         <div class="card-header">
           <div>
             <div class="card-title">Camera Info</div>
@@ -1717,14 +1717,18 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <!-- ═══════════════════════════════════════════════════════════════════════ -->
     <div class="panel" id="panel-community">
       <!-- Sub-navigation -->
+      <!-- Opera and Chirp stay hidden until GET /api/mesh or GET /api/chirp
+           answers (F276, F176's shape): both route families are registered
+           only under FEATURE_MESH_NETWORK, which the DEV profile leaves off.
+           BLE Discovery is the first view until Opera answers. -->
       <div class="sub-nav">
-        <button class="sub-nav-btn active" onclick="switchCommunityTab('opera')">🔗 Opera Network</button>
-        <button class="sub-nav-btn" onclick="switchCommunityTab('chirp')">🐦 Chirp Channel</button>
-        <button class="sub-nav-btn" onclick="switchCommunityTab('ble-discovery')">📡 BLE Discovery</button>
+        <button class="sub-nav-btn" data-tab="opera" id="communityTabOpera" style="display:none" onclick="switchCommunityTab('opera')">🔗 Opera Network</button>
+        <button class="sub-nav-btn" data-tab="chirp" id="communityTabChirp" style="display:none" onclick="switchCommunityTab('chirp')">🐦 Chirp Channel</button>
+        <button class="sub-nav-btn active" data-tab="ble-discovery" onclick="switchCommunityTab('ble-discovery')">📡 BLE Discovery</button>
       </div>
 
       <!-- BLE DISCOVERY SUB-PANEL -->
-      <div class="sub-panel" id="community-ble-discovery">
+      <div class="sub-panel active" id="community-ble-discovery">
         <div class="feature-info">
           <h4>📡 BLE Discovery (Opera/Chirp/Nearby)</h4>
           <p>Bluetooth Low Energy subsystem for device presence, broadcast alerts, and proximity detection.</p>
@@ -1795,7 +1799,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
 
       <!-- OPERA SUB-PANEL -->
-      <div class="sub-panel active" id="community-opera">
+      <div class="sub-panel" id="community-opera">
         <!-- What is Opera? Info Box -->
         <div class="feature-info">
           <h4>🔗 What is Opera Network?</h4>
@@ -2706,6 +2710,13 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
      * genuine init failure, heat, or the battery policy block the
      * preview, each with its own honest copy. */
     function cameraPanelState(initialized, standby, gate) {
+      /* A build without FEATURE_CAMERA_PEEK registers no camera route
+       * (sweep F274): the status was refused before any had answered. */
+      if (gate === 'not_built') {
+        return { usable: false, btn: '\u26a0 No Camera',
+                 label: 'No camera in this build',
+                 offline: 'This firmware was built without the camera preview.' };
+      }
       if (!initialized && !standby) {
         return { usable: false, btn: '\u26a0 No Camera',
                  label: 'Camera unavailable',
@@ -3076,7 +3087,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     let currentPanel = 'status';
-    let currentCommunityTab = 'opera';
+    let currentCommunityTab = 'ble-discovery';
     let currentRecordsTab = 'logs';
     let currentSettingsTab = 'wifi';
     let pendingAckSeq = null;
@@ -3314,15 +3325,26 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       return window.location.pathname.replace(/\/+$/, '') === '/settings' ? 'settings' : 'status';
     }
 
+    // The Community view the owner picked (F276): until one is picked, the
+    // Opera view takes over from BLE Discovery when GET /api/mesh first
+    // answers, so a build with the mesh opens on Opera as it always did.
+    let communityTabChosen = false;
+
     function switchCommunityTab(tab) {
-      currentCommunityTab = tab;
-      document.querySelectorAll('#panel-community .sub-nav-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
-      document.querySelectorAll('#panel-community .sub-panel').forEach(p => p.classList.remove('active'));
-      document.getElementById(`community-${tab}`).classList.add('active');
+      communityTabChosen = true;
+      selectCommunityTab(tab);
       if (tab === 'opera') refreshOpera();
       else if (tab === 'ble-discovery') refreshBleDiscovery();
       else refreshChirpStatus();
+    }
+
+    function selectCommunityTab(tab) {
+      currentCommunityTab = tab;
+      document.querySelectorAll('#panel-community .sub-nav-btn').forEach(b => {
+        if (b.dataset.tab === tab) b.classList.add('active'); else b.classList.remove('active');
+      });
+      document.querySelectorAll('#panel-community .sub-panel').forEach(p => p.classList.remove('active'));
+      document.getElementById(`community-${tab}`).classList.add('active');
     }
 
     function switchRecordsTab(tab) {
@@ -3930,26 +3952,52 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (camInfoTimer) { clearInterval(camInfoTimer); camInfoTimer = null; }
     }
 
+    // F274: the camera routes are registered only under FEATURE_CAMERA_PEEK
+    // (not in the DEV profile, the canary-wap-mobile env, or FULL on the
+    // XIAO ESP32-C3). A refused status before any status has answered is a
+    // build without the preview: the tab shows its no-camera state and hides
+    // the Camera Controls and Camera Info cards, the only callers of the
+    // other camera routes. Once a status has answered (peekServed), a failed
+    // poll changes nothing, as before: a blip mid-stream is not a missing
+    // camera.
+    let peekServed = false;
+
     async function refreshPeekStatus() {
       const data = await api('/api/peek/status');
-      if (data && data.ok) {
-        const wasReady = cameraReady;
-        cameraReady = data.camera_initialized;
-        cameraStandby = !!data.standby;
-        cameraGate = data.gate || 'ok';
-        peekActive = data.peek_active;
-        if (typeof data.resolution !== 'undefined') {
-          currentResolution = data.resolution;
-          if (data.resolution_name) currentResolutionName = data.resolution_name;
-          updateResolutionUI();
+      if (!(data && data.ok)) {
+        if (!peekServed) {
+          cameraReady = false;
+          cameraStandby = false;
+          cameraGate = 'not_built';
+          peekActive = false;
+          stopCamInfoPolling();
+          updatePeekUI();
+          document.getElementById('peekControlsCard').style.display = 'none';
+          document.getElementById('camInfoCard').style.display = 'none';
         }
-        applyCameraInfo(data);
-        updatePeekUI();
-        if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
-        // The camera just became available — pull sensor state so the
-        // tuning sliders show the on-chip values rather than blanks.
-        if (cameraReady && !wasReady) refreshSensorState();
+        return;
       }
+      if (!peekServed) {
+        peekServed = true;
+        document.getElementById('peekControlsCard').style.display = '';
+        document.getElementById('camInfoCard').style.display = '';
+      }
+      const wasReady = cameraReady;
+      cameraReady = data.camera_initialized;
+      cameraStandby = !!data.standby;
+      cameraGate = data.gate || 'ok';
+      peekActive = data.peek_active;
+      if (typeof data.resolution !== 'undefined') {
+        currentResolution = data.resolution;
+        if (data.resolution_name) currentResolutionName = data.resolution_name;
+        updateResolutionUI();
+      }
+      applyCameraInfo(data);
+      updatePeekUI();
+      if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
+      // The camera just became available — pull sensor state so the
+      // tuning sliders show the on-chip values rather than blanks.
+      if (cameraReady && !wasReady) refreshSensorState();
     }
 
     function updatePeekUI() {
@@ -4176,9 +4224,23 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     let pairingPollingInterval = null;
 
+    // F276: the Opera and Chirp views show only once their status route has
+    // answered. Both families are registered only under
+    // FEATURE_MESH_NETWORK; in the DEV profile the page load's one call each
+    // is refused, the views stay hidden, and the 5 s poll (which refreshes
+    // only the view on screen) never asks for them. Opening the Community
+    // panel asks once more, so a probe a busy load turned away recovers.
+    let operaServed = false;
+    let chirpServed = false;
+
     async function refreshOpera() {
       const data = await api('/api/mesh');
       if (!data.ok) return;
+      if (!operaServed) {
+        operaServed = true;
+        document.getElementById('communityTabOpera').style.display = '';
+        if (!communityTabChosen) selectCommunityTab('opera');
+      }
 
       document.getElementById('operaStatus').textContent = data.state || 'DISABLED';
       document.getElementById('peersOnline').textContent = data.peers_online || 0;
@@ -4292,6 +4354,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function refreshChirpStatus() {
       const data = await api('/api/chirp');
       if (!data.state) return;
+      if (!chirpServed) {
+        chirpServed = true;
+        document.getElementById('communityTabChirp').style.display = '';
+      }
 
       document.getElementById('chirpSessionEmoji').textContent = data.session_emoji || '--';
       document.getElementById('chirpNearbyCount').textContent = data.nearby_count || 0;
@@ -4430,10 +4496,26 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>`).join('');
     }
 
+    // POST /api/export answers the bundle itself, inline (F278: the
+    // download_url it used to name was a route nothing registers), so the
+    // page saves that answer as the download. A card copy, when one was
+    // written, is named in card_path; the download does not depend on it.
     async function exportWitness() {
       const data = await api('/api/export', 'POST');
-      if (data.ok && data.download_url) window.location.href = data.download_url;
-      else alert('Export failed');
+      if (!data || data.ok !== true) {
+        alert('Export failed: ' + ((data && data.error) || 'Unknown error'));
+        return;
+      }
+      const id = String(data.device_id || 'canary').replace(/[^A-Za-z0-9_-]/g, '_');
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'witness-export-' + id + '.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     // ── Pairing QR (Settings → Device) ──────────────────────────────────
@@ -5130,9 +5212,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         list.innerHTML = html;
       } catch(e) { console.error('Failed to fetch nearby devices:', e); }
 
-      // Auto-refresh every 10 seconds when tab is visible
+      // Auto-refresh every 10 seconds while the view is on screen: the
+      // Community panel open and BLE Discovery picked in it (now the first
+      // view where Opera never answers, F276, so a left panel stops it).
       clearTimeout(bleDiscoveryTimer);
-      if (currentCommunityTab === 'ble-discovery') {
+      if (currentPanel === 'community' && currentCommunityTab === 'ble-discovery') {
         bleDiscoveryTimer = setTimeout(refreshBleDiscovery, 10000);
       }
     }

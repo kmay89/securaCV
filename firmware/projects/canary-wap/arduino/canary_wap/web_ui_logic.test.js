@@ -126,6 +126,15 @@ describe('cameraPanelState', () => {
     assert.equal(s.usable, false);
     assert.match(s.offline, /battery/i);
   });
+
+  it('a build without the camera preview says so, whatever the flags (F274)', () => {
+    for (const [initialized, standby] of [[false, false], [true, false], [false, true]]) {
+      const s = L.cameraPanelState(initialized, standby, 'not_built');
+      assert.equal(s.usable, false);
+      assert.equal(s.label, 'No camera in this build');
+      assert.match(s.offline, /built without the camera preview/);
+    }
+  });
 });
 
 describe('otaBannerVisible', () => {
