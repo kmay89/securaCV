@@ -913,10 +913,12 @@ def _go2rtc_streams_to_cameras(streams) -> list:
     zone:[a-z0-9_-]{1,64}, so the name is lowercased (ASCII only, as jq's
     ascii_downcase does) BEFORE the character sweep. A stream whose name
     slugs to nothing (the empty name: every other character becomes one) is
-    skipped too, not given a made-up slug: its row would carry `zone:`,
-    which fails that pattern, and run.sh takes the first row by name as
-    the primary camera, so "" sorted first and stopped the app at start
-    (sweep HA34). A made-up slug could also collide with a real stream's.
+    skipped too, not given a made-up slug, since there is nothing to derive
+    one from: its row would carry `zone:`, which fails that pattern, and
+    run.sh takes the first row by name as the primary camera, so "" sorted
+    first and stopped the app at start (sweep HA34). (Distinct names can
+    already share a slug, "Front Door" and "front_door" say; both rows are
+    kept, and run.sh uses only the primary.)
 
     This is the REFERENCE for discover_cameras.sh, the jq copy the add-on
     runs at every start: tests/test_serve_wizard.py feeds both the same

@@ -1552,25 +1552,60 @@ def test_go2rtc_shell_transform_matches_the_reference(label):
 # stray go2rtc stream stopped the app at start (sweep HA34). The block is
 # lifted out of run.sh from its first line to the comment that ends it, the
 # discovery script's install path swapped for this tree's copy (run under
-# sh, as its #!/bin/sh would), and bashio stubbed: three options and the log.
+# sh, as its #!/bin/sh would), and bashio stubbed: the log, and the option
+# reads answered as bashio answers them (below).
 _RUN_SH = _MODULE_PATH.parent / "run.sh"
 _PICK_START = "    GO2RTC_DISCOVERY=$(bashio::config 'go2rtc_discovery')\n"
 _PICK_END = "    # Build configuration file\n"
 _PICK_DISCOVER = '/usr/local/bin/discover_cameras.sh "$GO2RTC_URL"'
+# bashio::config and bashio::config.has_value as bashio v0.15.0 (the version
+# the app's 3.18 base image pins; lib/config.sh, unchanged through bashio's
+# main branch) writes them, reading the options from $TEST_OPTIONS instead of
+# the Supervisor. The part that matters: an array option is printed one
+# compact element per line (`.key[]` through `jq --raw-output -c -M`), never
+# as a JSON array, and an empty one prints nothing. `|| true` after `read`
+# only keeps its end-of-input status from tripping `set -e` here.
 _PICK_STUBS = r"""set -euo pipefail
 bashio::config() {
-    case "$1" in
-        go2rtc_discovery) printf '%s\n' true ;;
-        go2rtc_url) printf '%s\n' "http://127.0.0.1:9" ;;
-        cameras) printf '%s\n' "$TEST_CAMERAS" ;;
-        *) echo "run.sh read an option this test does not stub: $1" >&2; exit 97 ;;
-    esac
+    local key=${1}
+    local default_value=${2:-null}
+    local query
+    local result
+    read -r -d '' query << QUERY || true
+        if (.${key} == null) then
+            null
+        elif (.${key} | type == "string") then
+            .${key} // empty
+        elif (.${key} | type == "boolean") then
+            .${key} // false
+        elif (.${key} | type == "array") then
+            if (.${key} == []) then
+                empty
+            else
+                .${key}[]
+            end
+        elif (.${key} | type == "object") then
+            if (.${key} == {}) then
+                empty
+            else
+                .${key}
+            end
+        else
+            .${key}
+        end
+QUERY
+    result=$(jq --raw-output -c -M "${query}" <<< "${TEST_OPTIONS}")
+    if [[ "${result}" == "null" ]]; then
+        echo "${default_value}"
+    else
+        printf "%s" "${result}"
+    fi
+    return 0
 }
 bashio::config.has_value() {
-    case "$1" in
-        cameras) [ -n "$TEST_CAMERAS" ] && [ "$TEST_CAMERAS" != null ] ;;
-        *) echo "run.sh asked about an option this test does not stub: $1" >&2; exit 97 ;;
-    esac
+    local value
+    value=$(bashio::config "${1}")
+    [[ "${value}" != "null" ]] && [[ -n "${value}" ]]
 }
 bashio::log.info() { printf 'info: %s\n' "$*" >&2; }
 bashio::log.warning() { printf 'warning: %s\n' "$*" >&2; }
@@ -1579,16 +1614,49 @@ bashio::log.error() { printf 'error: %s\n' "$*" >&2; }
 _PICK_REPORT = "printf '%s\\n' \"$CAMERA_NAME\" \"$CAMERA_ZONE\" \"$CAMERA_URL\"\n"
 
 
-def _run_sh_camera_pick(streams, cameras=()):
-    """Run run.sh's standalone camera pick on a go2rtc payload (and the
-    configured `cameras` option). Returns (exit code, [name, zone, url] of the
-    primary camera when it got that far, stderr)."""
+def _bashio_stub_ready():
     if shutil.which("jq") is None:
         if os.environ.get("CI"):
             pytest.fail("jq is not installed: run.sh's camera pick cannot run")
         pytest.skip("jq is not installed")
     if shutil.which("bash") is None:
         pytest.skip("bash is not installed")
+
+
+def test_the_bashio_stub_answers_list_options_as_bashio_does():
+    """The stub is only worth what its fidelity is: two cameras come back as
+    two compact objects on two lines (not an array), an empty list as nothing
+    (so has_value is false), a missing option as its default."""
+    _bashio_stub_ready()
+    options = {
+        "cameras": [{"name": "a", "url": "rtsp://a"}, {"name": "b", "url": "rtsp://b"}],
+        "none": [],
+        "go2rtc_discovery": True,
+    }
+    script = _PICK_STUBS + (
+        "bashio::config cameras; echo '|'\n"
+        "bashio::config.has_value none || echo 'none: no value'\n"
+        "bashio::config missing; bashio::config go2rtc_discovery; echo\n"
+    )
+    out = subprocess.run(
+        ["bash", "-c", script], env={**os.environ, "TEST_OPTIONS": json.dumps(options)},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.splitlines() == [
+        '{"name":"a","url":"rtsp://a"}',
+        '{"name":"b","url":"rtsp://b"}|',
+        "none: no value",
+        "null",
+        "true",
+    ], out.stdout
+
+
+def _run_sh_camera_pick(streams, cameras=()):
+    """Run run.sh's standalone camera pick on a go2rtc payload (and the
+    configured `cameras` option). Returns (exit code, [name, zone, url] of the
+    primary camera when it got that far, stderr)."""
+    _bashio_stub_ready()
     text = _RUN_SH.read_text(encoding="utf-8")
     assert text.count(_PICK_START) == 1 and text.count(_PICK_END) == 1, (
         "run.sh's standalone camera block moved; update this test"
@@ -1600,7 +1668,13 @@ def _run_sh_camera_pick(streams, cameras=()):
     env = {
         **os.environ,
         "GO2RTC_STREAMS_JSON": json.dumps(streams),
-        "TEST_CAMERAS": json.dumps(list(cameras)),
+        # The options as the Supervisor holds them: config.yaml's defaults
+        # with the user's cameras (an empty list when none is configured).
+        "TEST_OPTIONS": json.dumps({
+            "go2rtc_discovery": True,
+            "go2rtc_url": "http://127.0.0.1:9",
+            "cameras": list(cameras),
+        }),
         "TEST_DISCOVER_SH": str(_DISCOVER_SH),
     }
     out = subprocess.run(
@@ -1622,11 +1696,21 @@ def test_run_sh_never_takes_a_nameless_stream_as_the_primary_camera():
     assert "Invalid zone_id" not in err
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "run.sh reads the cameras option as a JSON array, but bashio prints an "
+        "array option one element per line: with any configured camera "
+        "`.[0]` fails on an object and the app exits at start (handed up from "
+        "the HA34 review, #1802). Remove this marker when run.sh reads the "
+        "option whole."
+    ),
+)
 def test_run_sh_takes_the_configured_camera_beside_a_nameless_stream():
-    """Only the configured camera is left once the nameless stream is
-    skipped. (run.sh takes the first camera BY NAME across configured and
-    discovered rows, so a discovered name that sorts first would still be
-    primary; that is the pick's rule, not this item's.)"""
+    """Once the nameless stream is skipped, the configured camera is what is
+    left to be primary. This is what run.sh should do; today it never gets
+    that far (the xfail says why), so the case fails, strictly, until it
+    does."""
     configured = [{"name": "porch", "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch"}]
     code, primary, err = _run_sh_camera_pick(
         {"": {"producers": ["rtsp://10.0.0.1/empty"]}}, configured
