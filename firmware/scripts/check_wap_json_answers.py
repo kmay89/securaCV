@@ -83,10 +83,11 @@ J5. An answer spelled with `snprintf()` (F212): a call whose format is a JSON
     chunked list's `,"%s"` row is a piece of the answer (F227 review). A send
     is `httpd_resp_sendstr()`, `httpd_resp_send()`, their chunked forms, or
     any helper of the sketch shaped `(httpd_req_t* req, const char* text)`
-    (`const char* const` too) that hands `text` to a send (`http_send_json()`,
-    `send_json()`, `send_json_response()`, found to a fixpoint, so an answer
-    sent through a helper is an answer: F227), with or without a
-    `(const char*)` cast at the send. A format may be one of the sketch's
+    (`const char* const` too, and a defaulted `text`: F265) that hands `text`
+    to a send, itself or as a branch of a top-level ternary (`text ? text :
+    "{}"`, F265) (`http_send_json()`, `send_json()`, `send_json_response()`,
+    found to a fixpoint, so an answer sent through a helper is an answer:
+    F227), with or without a `(const char*)` cast at the send. A format may be one of the sketch's
     named string constants. No answer file calls an unsized `sprintf()` or
     `vsprintf()` (F227). Each answer is measured, one of:
     - guarded: the statement after it tests the length it returned against
@@ -150,10 +151,17 @@ J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
     two and `get_device_name()` names `s_device_name`, and the setter is
     called once in each rename route (`handle_wifi_connect()`,
     `handle_device_name()`), after `device_name_rule::usable()` of the same
-    argument, unchanged in between (host-tested in
-    tests_host/test_device_name.cpp). POST /api/device-name answers a name
-    `usable()` refuses with `device_name_rule::kRefusal`, the rule's own
-    words beside it (F263).
+    argument, unchanged in between, on usable()'s true branch: after it in
+    a top-level `&&` condition (an `||` decides nothing), in the body of an
+    `if` whose `&&` holds it, or in the else of `if (!usable(...))` (F265: a
+    usable() called and ignored passed). A call is the setter's when it is
+    qualified or made unqualified inside namespace `setup_wizard`, in any
+    file (F265), and no using-declaration or using-directive names it. No
+    file casts `get_device_name()`'s result, or a local holding it, to a
+    pointer that is not `const` (F265: a write around the setter). Host-
+    tested in tests_host/test_device_name.cpp. POST /api/device-name answers
+    a name `usable()` refuses with `device_name_rule::kRefusal`, the rule's
+    own words beside it (F263).
 
 J9. No SSID reaches a JSON text with a raw control byte (F262): an SSID is
     up to 32 bytes an access point broadcast or a person typed, and
@@ -1388,7 +1396,8 @@ def check_fleet_cache(files: dict[str, str], idx: Index) -> list[str]:
 
 BASE_SINKS = ("http_send_json", "httpd_resp_sendstr", "httpd_resp_sendstr_chunk")   # (req, text)
 CAST = r"(?:\(\s*const\s+char\s*\*\s*\)\s*)?"     # a send of `(const char*)buf` sends buf
-TEXT_PARAM = re.compile(r"const\s+char\s*\*\s*(?:const\s+)?(\w+)")
+# A helper's text parameter, with a default or without (F265: `const char* json = nullptr`).
+TEXT_PARAM = re.compile(r"const\s+char\s*\*\s*(?:const\s+)?(\w+)(?:\s*=\s*[^,]+)?")
 
 
 def send_re(sinks: frozenset[str]) -> re.Pattern:
@@ -1581,11 +1590,33 @@ def sinks_of(idx: Index) -> frozenset[str]:
                 if text is None:
                     continue
                 body = blank_comments_and_strings(idx.files[f.file])[f.body[0]:f.body[1]]
-                if any((m.group(1) or m.group(2)) == text.group(1) for m in rx.finditer(body)):
+                if any((m.group(1) or m.group(2)) == text.group(1) for m in rx.finditer(body)) or \
+                        sends_through_ternary(body, frozenset(sinks), text.group(1)):
                     sinks.add(name)
                     changed = True
                     break
     return frozenset(sinks)
+
+
+def sends_through_ternary(body: str, sinks: frozenset[str], param: str) -> bool:
+    """A send in `body` whose text argument is a top-level ternary with `param` as a branch
+    (`httpd_resp_sendstr(req, json ? json : "{}")`): the helper hands its text on, so it is a send
+    too (F265: such a helper, its text parameter defaulted, was not taken for one)."""
+    names = "|".join(sorted(re.escape(n) for n in sinks | {"httpd_resp_send", "httpd_resp_send_chunk"}))
+    for m in re.finditer(r"\b(?:" + names + r")\s*\(", body):
+        close = matching_paren(body, m.end() - 1)
+        args = split_top(body[m.end():close]) if close > 0 else []
+        if len(args) < 2:
+            continue
+        branches = top_ternary(strip_parens(args[1]))
+        if branches is None:
+            continue
+        for b in branches:
+            b = strip_parens(b)
+            b = re.sub(r"^\(\s*const\s+char\s*\*\s*\)\s*", "", b).strip()
+            if strip_parens(b) == param:
+                return True
+    return False
 
 
 SEND = send_re(frozenset(BASE_SINKS))   # check_files() widens it to every sink the sketch defines
@@ -2319,6 +2350,97 @@ WIZARD = f"{SKETCH}/setup_wizard.h"
 NAME_ROUTES = ("handle_wifi_connect", "handle_device_name")
 
 
+def if_parts(code: str, at: int, hi: int) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int] | None] | None:
+    """The `if` at `at`: (condition span, then span, else span or None), each (lo, hi) in `code`;
+    an `else if` chain's else span runs to the end of the chain."""
+    p_open = code.find("(", at)
+    if p_open < 0 or p_open >= hi:
+        return None
+    p_close = matching_paren(code, p_open)
+    if p_close < 0:
+        return None
+    j = p_close + 1
+    while j < hi and code[j].isspace():
+        j += 1
+    if j < hi and code[j] == "{":
+        then_end = close_brace(code, j) + 1
+    else:
+        then_end = statement_end(code, j) + 1
+    if then_end <= j:
+        return None
+    k = then_end
+    while k < hi and code[k].isspace():
+        k += 1
+    els = None
+    if re.match(r"else\b", code[k:hi]):
+        e = k + 4
+        while e < hi and code[e].isspace():
+            e += 1
+        if code.startswith("if", e) and re.match(r"if\s*\(", code[e:hi]):
+            inner = if_parts(code, e, hi)
+            end = (inner[2] or inner[1])[1] if inner else e
+        elif e < hi and code[e] == "{":
+            end = close_brace(code, e) + 1
+        else:
+            end = statement_end(code, e) + 1
+        els = (e, end)
+    return (p_open + 1, p_close), (j, then_end), els
+
+
+def usable_decides(code: str, lo: int, hi: int, call_at: int, arg: str) -> bool:
+    """True when the setter call at `call_at` runs only when `device_name_rule::usable(arg)` was
+    true: after it in a top-level `&&` condition, inside the body of an `if` whose condition's
+    top-level `&&` holds it, or inside the else of `if (!device_name_rule::usable(arg))` (F265: a
+    usable() that was called but decided nothing passed J8)."""
+    usable = r"device_name_rule\s*::\s*usable\s*\(\s*" + re.escape(arg) + r"\s*\)"
+    for m in re.finditer(r"\bif\s*\(", code[lo:hi]):
+        parts = if_parts(code, lo + m.start(), hi)
+        if parts is None:
+            continue
+        (c_lo, c_hi), (t_lo, t_hi), els = parts
+        cond = code[c_lo:c_hi]
+        ands = split_and(cond)
+        if c_lo <= call_at < c_hi:
+            off = c_lo
+            for operand in ands:
+                o_lo = cond.find(operand, off - c_lo) + c_lo
+                if o_lo <= call_at < o_lo + len(operand):
+                    break
+                if re.fullmatch(usable, strip_parens(operand)):
+                    return True
+                off = o_lo + len(operand)
+        elif t_lo <= call_at < t_hi:
+            if any(re.fullmatch(usable, strip_parens(o)) for o in ands):
+                return True
+        elif els is not None and els[0] <= call_at < els[1]:
+            if re.fullmatch(r"!\s*" + usable, strip_parens(cond).strip()):
+                return True
+    return False
+
+
+def split_and(cond: str) -> list[str]:
+    """`cond`'s top-level `&&` operands, or the whole condition when it holds a top-level `||` (an
+    `||` decides nothing for the operands beside it)."""
+    depth, parts, cur, i = 0, [], [], 0
+    while i < len(cond):
+        ch = cond[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if depth == 0 and cond.startswith("||", i):
+            return [cond.strip()]
+        if depth == 0 and cond.startswith("&&", i):
+            parts.append("".join(cur))
+            cur = []
+            i += 2
+            continue
+        cur.append(ch)
+        i += 1
+    parts.append("".join(cur))
+    return [p.strip() for p in parts]
+
+
 def check_device_name(files: dict[str, str], idx: Index) -> list[str]:
     """J8: setup_wizard::set_device_name() refuses a control byte, init() scrubs a stored name, nothing
     else writes s_device_name, and every rename decides with device_name_rule::usable() first."""
@@ -2363,12 +2485,26 @@ def check_device_name(files: dict[str, str], idx: Index) -> list[str]:
             line = c.count("\n", 0, m.start()) + 1
             errors.append(f"{name}:{line}: names s_device_name outside setup_wizard.h's init(), "
                           "set_device_name() and get_device_name(): the name's one writer is the setter (J8)")
-    # Every rename decides with usable() on the argument it then stores.
+    # Every rename decides with usable() on the argument it then stores. A call is the setter's when
+    # it is qualified, or unqualified inside namespace setup_wizard, whatever the file (F265: J8
+    # counted qualified calls only), and a using-declaration that names the setter is refused.
     calls = 0
     for name, src in files.items():
         c = blank_comments_and_strings(src)
         k = blank_comments_only(src)
-        for m in re.finditer(r"\bsetup_wizard\s*::\s*set_device_name\s*\(", c):
+        for m in re.finditer(r"\busing\s+(?:namespace\s+(?:::\s*)?setup_wizard\b|(?:::\s*)?setup_wizard\s*::\s*"
+                             r"set_device_name\b)", c):
+            errors.append(f"{name}:{c.count(chr(10), 0, m.start()) + 1}: a using-declaration or using-directive names "
+                          "setup_wizard's setter: every call of it must be one J8 reads (J8, F265)")
+        spans = namespace_spans(c)
+        setter_calls = list(re.finditer(r"\bsetup_wizard\s*::\s*set_device_name\s*\(", c))
+        for m in re.finditer(r"(?<![\w:.>])set_device_name\s*\(", c):
+            if ns_at(spans, m.start())[:1] != ("setup_wizard",):
+                continue
+            if re.search(r"\bbool\s*$", c[max(0, m.start() - 64):m.start()]):
+                continue                                    # the definition
+            setter_calls.append(m)
+        for m in sorted(setter_calls, key=lambda x: x.start()):
             calls += 1
             open_at = m.end() - 1
             args = split_top(k[open_at + 1:matching_paren(c, open_at)])
@@ -2386,9 +2522,30 @@ def check_device_name(files: dict[str, str], idx: Index) -> list[str]:
                               "first (J8)")
             elif re.search(r"(?<![\w.>])" + re.escape(args[0]) + r"\s*=(?!=)", before[before.rfind("device_name_rule"):]):
                 errors.append(f"{where}: {args[0]} is reassigned between usable() and the store (J8)")
+            elif not usable_decides(c, fn.body[0], fn.body[1], m.start(), args[0]):
+                errors.append(f"{where}: stores {args[0]} where device_name_rule::usable({args[0]}) does not decide "
+                              "it: the store must sit on usable()'s true branch (after it in an `&&` "
+                              "condition, in the body of `if (usable(...))`, or in the else of "
+                              "`if (!usable(...))`) (J8, F265)")
     if calls != len(NAME_ROUTES):
         errors.append(f"{INO}: setup_wizard::set_device_name() is called {calls} times, not once in each of "
                       f"{NAME_ROUTES} (J8)")
+    # The getter hands out a `const char*` into s_device_name: a cast of it (or of a local holding it)
+    # is a way to write the name around the setter (F265).
+    for name, src in files.items():
+        c = blank_comments_and_strings(src)
+        getter = r"(?:setup_wizard\s*::\s*)?get_device_name\s*\(\s*\)"
+        held = {h.group(1) for h in re.finditer(r"\b(?:const\s+)?(?:char|auto)\s*\*?\s*(?:const\s+)?(\w+)\s*=\s*"
+                                                + getter, c)}
+        operand = "(?:" + getter + ("|" + "|".join(sorted(map(re.escape, held))) if held else "") + ")"
+        cast = (r"\((?P<c>\s*(?:const\s+|volatile\s+|unsigned\s+|signed\s+)*[A-Za-z_][\w:]*\s*\*+\s*(?:const\s*)?)\)"
+                + r"\s*\(*\s*" + operand + r"(?![\w(])"
+                + r"|\b(?:const|reinterpret|static|dynamic)_cast\s*<(?P<t>[^<>;]*)>\s*\(\s*" + operand + r"\s*\)")
+        for m in re.finditer(cast, c):
+            if re.match(r"\s*const\b", m.group("c") or m.group("t")):
+                continue                                    # to a `const T*`: reads the name, writes nothing
+            errors.append(f"{name}:{c.count(chr(10), 0, m.start()) + 1}: casts setup_wizard::get_device_name()'s "
+                          "result: the name is written only through set_device_name() (J8, F265)")
     # POST /api/device-name answers a refused name in the rule's own words (F263), the ones
     # device_name_rule.h writes beside usable(), never a literal of its own.
     if INO in files:
@@ -2941,6 +3098,64 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("POST /api/device-name's refusal goes back to the words of a rule it never applied (F263)",
      raw_in(INO, '      doc["error"] = device_name_rule::kRefusal;',
             '      doc["error"] = "Invalid name (1-32 chars, letters/digits/hyphen)";')),
+    # F265: the J5 and J8 shapes the F227 review's probes found passing.
+    ("a route answers through a helper whose text parameter is defaulted and sent through a ternary, "
+     "and its answer is cut (F265)",
+     add_file(f"{SKETCH}/zz_reply_api.h",
+              "namespace zz_api {\nstatic inline esp_err_t reply_json(httpd_req_t* req, const char* json = nullptr) {\n"
+              "  return httpd_resp_sendstr(req, json ? json : \"{}\");\n}\n"
+              "inline esp_err_t handle_zz(httpd_req_t* req) {\n  char buf[8];\n"
+              "  snprintf(buf, sizeof(buf), \"{\\\"state\\\":\\\"%s\\\"}\", \"connected\");\n"
+              "  return reply_json(req, buf);\n}\n}\n")),
+    ("a route answers through a helper whose text parameter is defaulted, and its answer is cut (F265)",
+     add_file(f"{SKETCH}/zz_reply_api.h",
+              "namespace zz_api {\nstatic inline esp_err_t reply_json(httpd_req_t* req, const char* json = \"{}\") {\n"
+              "  return httpd_resp_sendstr(req, json);\n}\n"
+              "inline esp_err_t handle_zz(httpd_req_t* req) {\n  char buf[8];\n"
+              "  snprintf(buf, sizeof(buf), \"{\\\"state\\\":\\\"%s\\\"}\", \"connected\");\n"
+              "  return reply_json(req, buf);\n}\n}\n")),
+    ("a route answers through a helper that sends its text through a ternary, and its answer is cut (F265)",
+     add_file(f"{SKETCH}/zz_reply_api.h",
+              "namespace zz_api {\nstatic inline esp_err_t reply_json(httpd_req_t* req, const char* json) {\n"
+              "  return httpd_resp_sendstr(req, (json != nullptr) ? (const char*)json : \"{}\");\n}\n"
+              "inline esp_err_t handle_zz(httpd_req_t* req) {\n  char buf[8];\n"
+              "  snprintf(buf, sizeof(buf), \"{\\\"state\\\":\\\"%s\\\"}\", \"connected\");\n"
+              "  return reply_json(req, buf);\n}\n}\n")),
+    ("setup_wizard.h calls its own setter unqualified, from no rename route (F265)",
+     raw_in(WIZARD, "}  /* namespace setup_wizard */",
+            "inline void zz_rename(const char* n) { set_device_name(n); }\n\n}  /* namespace setup_wizard */")),
+    ("another file reopens namespace setup_wizard and calls the setter unqualified, tested (F265)",
+     add_file(f"{SKETCH}/zz_wizard_more.h",
+              "namespace setup_wizard {\ninline void zz_rename(const char* n) {\n"
+              "  if (device_name_rule::usable(n)) set_device_name(n);\n}\n}\n")),
+    ("a using-directive brings the setter in unqualified (F265)",
+     add_file(f"{SKETCH}/zz_using.h",
+              "using namespace setup_wizard;\nstatic void zz_rename(const char* n) {\n"
+              "  if (device_name_rule::usable(n)) set_device_name(n);\n}\n")),
+    ("a using-declaration names the setter (F265)",
+     add_file(f"{SKETCH}/zz_using.h", "using setup_wizard::set_device_name;\n")),
+    ("the Wi-Fi join calls usable() and lets it decide nothing (F265)",
+     raw_in(INO, "  if (device_name_rule::usable(device_name) && setup_wizard::set_device_name(device_name)) {",
+            "  (void)device_name_rule::usable(device_name);\n"
+            "  if (setup_wizard::set_device_name(device_name)) {")),
+    ("the Wi-Fi join stores the name when usable() says no (F265)",
+     raw_in(INO, "  if (device_name_rule::usable(device_name) && setup_wizard::set_device_name(device_name)) {",
+            "  if (device_name_rule::usable(device_name) || setup_wizard::set_device_name(device_name)) {")),
+    ("POST /api/device-name stores the name on usable()'s false branch (F265)",
+     raw_in(INO, "    if (!device_name_rule::usable(name)) {\n", "    if (device_name_rule::usable(name)) {\n")),
+    ("a name is copied through the getter's pointer cast to char* (F265)",
+     raw_in(INO, "  const char* device_name = body[\"device_name\"] | \"\";\n",
+            "  const char* device_name = body[\"device_name\"] | \"\";\n"
+            "  strncpy((char*)setup_wizard::get_device_name(), device_name, 32);\n")),
+    ("a name is written through const_cast of the getter's pointer (F265)",
+     raw_in(INO, "  const char* device_name = body[\"device_name\"] | \"\";\n",
+            "  const char* device_name = body[\"device_name\"] | \"\";\n"
+            "  const_cast<char*>(setup_wizard::get_device_name())[0] = 'x';\n")),
+    ("a name is written through a local holding the getter's pointer, cast (F265)",
+     raw_in(INO, "  const char* device_name = body[\"device_name\"] | \"\";\n",
+            "  const char* device_name = body[\"device_name\"] | \"\";\n"
+            "  const char* zz_held = setup_wizard::get_device_name();\n"
+            "  memcpy((void*)zz_held, device_name, 1);\n")),
     # J9: no SSID reaches a JSON text with a raw control byte (F262).
     ("GET /api/wifi/scan lists each network's SSID raw again",
      raw_in(INO, '    net["ssid"] = ssid;', '    net["ssid"] = g_scan_cache[i].ssid;')),
