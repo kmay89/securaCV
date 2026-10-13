@@ -25,6 +25,7 @@
 #include <Arduino.h>
 #include <string.h>
 
+#include "device_name_rule.h"   // F261: the name holds no control byte (F226's test)
 #include "loop_command_ring.h"  // F111: the owner's commands handed to the loop task
 
 namespace bluetooth_channel {
@@ -40,6 +41,27 @@ static const size_t MAX_PAIRED_DEVICES = 8;
 static const size_t MAX_SCANNED_DEVICES = 16;
 static const size_t MAX_DEVICE_NAME_LEN = 32;
 static const size_t MAX_SERVICE_DATA_LEN = 20;
+
+// What the device's own Bluetooth name may hold (sweep F261): 1 to
+// MAX_DEVICE_NAME_LEN bytes, none of them a control byte. GET
+// /api/bluetooth and GET /api/bluetooth/settings write the name through
+// ArduinoJson 7.4.1, which writes a control byte other than \b \f \n \r \t
+// raw, and a browser's JSON.parse refuses the answer; the radio advertises
+// the same name. device_name_rule.h's test (F226, the friendly name's), at
+// this name's bound: set_device_name(), a settings command naming the name,
+// and POST /api/bluetooth/settings before it brings anything up all apply
+// it; a stored name that fails it is not loaded (the default is). The
+// scanned devices' names (ScannedDevice) are other devices' and not held to
+// it.
+inline bool name_storable(const char* name) {
+  return device_name_rule::storable(name, MAX_DEVICE_NAME_LEN);
+}
+// What a refused name is answered with: the rule name_storable() applies,
+// in words, its bound held to MAX_DEVICE_NAME_LEN below.
+static constexpr char DEVICE_NAME_REFUSAL[] =
+    "Invalid Bluetooth name: 1 to 32 bytes, no control characters";
+static_assert(device_name_rule::states_bound(DEVICE_NAME_REFUSAL, MAX_DEVICE_NAME_LEN),
+              "DEVICE_NAME_REFUSAL states MAX_DEVICE_NAME_LEN");
 
 // Timing (milliseconds)
 static const uint32_t ADVERTISING_INTERVAL_MS = 500;
@@ -442,8 +464,8 @@ struct Command {
 };
 
 // Why ENABLE, ADVERTISE_START, PAIR_START or a SETTINGS that turns
-// Bluetooth on did not run, or why PAIRED_REMOVE / PAIRED_CLEAR left a
-// phone's bond.
+// Bluetooth on did not run, why PAIRED_REMOVE / PAIRED_CLEAR left a
+// phone's bond, or why a name was refused (F261).
 enum Refusal : uint8_t {
   BT_REFUSED_NONE = 0,     // it ran (ok says how it went)
   BT_REFUSED_NOT_ENABLED,  // Bluetooth off and not brought up (init() has not run);
@@ -453,6 +475,8 @@ enum Refusal : uint8_t {
                            // (ble_gap_unpair() busy); its entry stays listed
   BT_REFUSED_NOT_UP,       // PAIRED_REMOVE / PAIRED_CLEAR: the stack is not up, so
                            // its bond store cannot be reached; nothing changed
+  BT_REFUSED_BAD_NAME,     // NAME, or a SETTINGS naming the name: not name_storable()
+                           // (sweep F261); a refused SETTINGS applied none of its fields
 };
 
 // What a command did, as the loop task saw it right after the command ran.

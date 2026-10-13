@@ -22,9 +22,10 @@
  *
  *  - storable(): setup_wizard::set_device_name(), the one setter both
  *    rename routes call, refuses a name holding one (and an empty one, or
- *    one past kMaxLen bytes, as before). The BLE "device name" is a
- *    different name (bluetooth_channel's own setting), and no serial or BLE
- *    command sets this one.
+ *    one past kMaxLen bytes, as before). No serial or BLE command sets
+ *    this name. The BLE "device name" is a different one
+ *    (bluetooth_channel's own setting); since sweep F261 its setters hold
+ *    it to the same test at its own bound (storable(name, max_len)).
  *  - usable(): the routes' own test, storable() and a letter or digit for
  *    the mDNS label (canary-<label>.local), so POST /api/device-name answers
  *    a refused name as invalid rather than as an NVS failure.
@@ -50,19 +51,47 @@ namespace device_name_rule {
 /* The longest name kept, in bytes (setup_wizard::DEVICE_NAME_MAX). */
 static constexpr size_t kMaxLen = 32;
 
+/* True when the words `text` say "1 to <n> bytes" and <n> is `max_len`: a
+ * refusal that states the bound of the rule beside it says the number that
+ * rule applies, held at compile time (static_assert) where the words are
+ * written, so the words and the rule cannot drift apart (sweep F261, F263).
+ * False when the text says no such bound. */
+constexpr bool states_bound(const char* text, size_t max_len) {
+  for (const char* p = text; p != nullptr && *p; ++p) {
+    if (p[0] != '1' || p[1] != ' ' || p[2] != 't' || p[3] != 'o' || p[4] != ' ') continue;
+    const char* q = p + 5;
+    size_t n = 0;
+    bool digits = false;
+    while (*q >= '0' && *q <= '9') {
+      n = n * 10 + (size_t)(*q - '0');
+      digits = true;
+      ++q;
+    }
+    return digits && n == max_len && q[0] == ' ' && q[1] == 'b' && q[2] == 'y' && q[3] == 't' &&
+           q[4] == 'e' && q[5] == 's';
+  }
+  return false;
+}
+
 /* True when `c` is a byte JSON may not carry raw (below 0x20). */
 inline bool is_control(char c) { return (unsigned char)c < 0x20; }
 
-/* True when `name` may be stored as the device's name: 1 to kMaxLen bytes,
- * none of them a control byte. */
-inline bool storable(const char* name) {
+/* True when `name` is 1 to `max_len` bytes, none of them a control byte: the
+ * rule storable() applies at kMaxLen, and the one the Bluetooth name
+ * (bluetooth_channel's own setting, MAX_DEVICE_NAME_LEN) is held to since
+ * sweep F261, through this same test rather than a copy of it. */
+inline bool storable(const char* name, size_t max_len) {
   if (name == nullptr || name[0] == '\0') return false;
   size_t n = 0;
   for (const char* p = name; *p; ++p) {
-    if (++n > kMaxLen || is_control(*p)) return false;
+    if (++n > max_len || is_control(*p)) return false;
   }
   return true;
 }
+
+/* True when `name` may be stored as the device's name: 1 to kMaxLen bytes,
+ * none of them a control byte. */
+inline bool storable(const char* name) { return storable(name, kMaxLen); }
 
 /* True when `name` is storable and holds a letter or a digit: the bytes the
  * mDNS-label sanitizer keeps (it lowercases A-Z, keeps a-z, 0-9 and '-',

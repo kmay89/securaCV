@@ -188,6 +188,7 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 #pragma GCC diagnostic pop
 
 #include "http_status_line.h"   // the status line a Bluetooth not-run answer sends
+#include "json_strict.h"        // the answers parse as a browser's JSON.parse reads them (F261)
 
 // The REST handlers themselves (sweep F235): the REAL bluetooth_api.h, over
 // stand-ins for ArduinoJson (stubs/bt/ArduinoJson.h) and esp_http_server
@@ -4582,6 +4583,164 @@ void test_the_door_is_refused_under_any_bonded_link() {
   std::printf("PASS the_door_is_refused_under_any_bonded_link\n");
 }
 
+// ── The device's Bluetooth name holds no control byte (sweep F261) ─────
+
+// `s` as a page's JSON.stringify spells it inside a JSON string.
+std::string json_text(const std::string& s) {
+  std::string out;
+  for (unsigned char c : s) {
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += (char)c;
+    } else if (c < 0x20) {
+      char u[8];
+      std::snprintf(u, sizeof u, "\\u%04x", c);
+      out += u;
+    } else {
+      out += (char)c;
+    }
+  }
+  return out;
+}
+
+// GET /api/bluetooth and GET /api/bluetooth/settings, the two answers that
+// carry the name: each parses as a browser's JSON.parse reads it, and gives
+// `name` back byte for byte.
+void answers_carry_name(const std::string& name) {
+  for (const Handler h : {bluetooth_api::handle_bluetooth_status, bluetooth_api::handle_bluetooth_settings_get}) {
+    const Tap t = tap(h);
+    json_strict::Value v;
+    if (!json_strict::parse(t.body, &v)) std::fprintf(stderr, "unparseable: %s\n", t.body.c_str());
+    CHECK(json_strict::parse(t.body, &v));
+    const json_strict::Value* n = v.get("device_name");
+    CHECK(n != nullptr && n->kind == json_strict::Value::String && n->text == name);
+  }
+}
+
+// POST /api/bluetooth/name and POST /api/bluetooth/settings took any byte
+// but NUL (set_device_name() and the settings command tested the length
+// alone), and ArduinoJson 7.4.1 writes a control byte other than \b \f \n \r
+// \t raw: a name holding 0x01 made both answers above unparseable, and the
+// radio advertised it. Every such byte, at the start, the middle and the
+// end: the name route answers the rule in words, the settings POST answers
+// the same words before it brings anything up or submits anything (the
+// other field it named is not applied), the settings command refuses it on
+// the loop task whoever hands it, nothing is saved, and both answers still
+// parse with the old name. Every other byte (a space, a quote, DEL, a byte
+// past 0x7f) is kept, and both answers carry it.
+void test_a_name_holding_a_control_byte_is_refused() {
+  const std::string refused = refused_with(bc::DEVICE_NAME_REFUSAL);
+  CHECK(refused.find("1 to 32 bytes, no control characters") != std::string::npos);
+  boot();
+  Tap t = tap(bluetooth_api::handle_bluetooth_name_set, "{\"name\":\"Porch\"}");
+  CHECK(t.body == succeeded_with("Device name updated"));
+  answers_carry_name("Porch");
+  for (unsigned b = 1; b < 0x20; ++b) {
+    for (int at = 0; at < 3; ++at) {
+      std::string name = "Shed";
+      if (at == 0) name.insert(name.begin(), (char)b);
+      else if (at == 1) name.insert(2, 1, (char)b);
+      else name.push_back((char)b);
+      const std::string text = json_text(name);
+      const unsigned writes = host_sim::count("nvs_write");
+      const bool pairing = bc::g_settings.allow_pairing;
+
+      t = tap(bluetooth_api::handle_bluetooth_name_set, ("{\"name\":\"" + text + "\"}").c_str());
+      CHECK(t.status == "200 OK" && t.body == refused && t.sleeps > 0);
+
+      t = tap(bluetooth_api::handle_bluetooth_settings_set,
+              ("{\"allow_pairing\":" + std::string(pairing ? "false" : "true") + ",\"device_name\":\"" + text +
+               "\"}").c_str());
+      CHECK(t.body == refused && t.sleeps == 0 && t.inits == 0);
+
+      bc::Command s = cmd_of(bc::BT_CMD_SETTINGS);
+      s.settings.allow_pairing = !pairing;
+      std::memcpy(s.settings.device_name, name.c_str(), name.size() + 1);
+      s.set_mask = bc::BT_SET_ALLOW_PAIRING | bc::BT_SET_DEVICE_NAME;
+      const Rest r = rest(s);
+      CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == bc::BT_REFUSED_BAD_NAME);
+
+      CHECK(bc::g_settings.allow_pairing == pairing);
+      CHECK(std::strcmp(bc::g_settings.device_name, "Porch") == 0);
+      CHECK(host_sim::count("nvs_write") == writes);
+      answers_carry_name("Porch");
+    }
+  }
+  // Every other byte, through each route.
+  for (unsigned b = 0x20; b < 0x100; ++b) {
+    const std::string name = std::string("A") + (char)b + "B";
+    t = tap(bluetooth_api::handle_bluetooth_name_set, ("{\"name\":\"" + json_text(name) + "\"}").c_str());
+    CHECK(t.body == succeeded_with("Device name updated"));
+    CHECK(std::strcmp(bc::g_settings.device_name, name.c_str()) == 0);
+    answers_carry_name(name);
+    const std::string again = std::string("C") + (char)b;
+    t = tap(bluetooth_api::handle_bluetooth_settings_set,
+            ("{\"device_name\":\"" + json_text(again) + "\"}").c_str());
+    CHECK(t.body == succeeded_with("Settings updated"));
+    answers_carry_name(again);
+  }
+  // The bound both routes state: 32 bytes kept, 33 refused, an empty name
+  // and one that is not a string refused (the settings POST cut a long name
+  // to 32 and kept an empty or non-string one as "").
+  const std::string longest(bc::MAX_DEVICE_NAME_LEN, 'n');
+  for (const Handler h : {bluetooth_api::handle_bluetooth_name_set, bluetooth_api::handle_bluetooth_settings_set}) {
+    const char* key = h == bluetooth_api::handle_bluetooth_name_set ? "name" : "device_name";
+    t = tap(h, ("{\"" + std::string(key) + "\":\"" + longest + "\"}").c_str());
+    CHECK(t.body.find("\"success\":true") != std::string::npos);
+    answers_carry_name(longest);
+    for (const std::string& bad : {"\"" + longest + "x\"", std::string("\"\""), std::string("5")}) {
+      t = tap(h, ("{\"" + std::string(key) + "\":" + bad + "}").c_str());
+      CHECK(t.body == refused);
+      answers_carry_name(longest);
+    }
+  }
+  none_on_httpd();
+  std::printf("PASS a_name_holding_a_control_byte_is_refused\n");
+}
+
+// A name saved before the rule (F261) holding a control byte is not loaded:
+// the loop task's first pass keeps the default name, init() hands the stack
+// the default to advertise, both answers parse with it, and the health log
+// says so once, on the loop task, as the paired list's repairs are logged.
+// The row keeps its bytes until a save writes the name the device holds (on
+// a device saved on, the bring-up's enable() is one). A saved name without
+// one (DEL included) loads as before.
+void test_a_saved_name_holding_a_control_byte_is_not_loaded() {
+  const std::string def = bc::kDefaultSettings.device_name;
+  const char* const kLog = "Saved Bluetooth name held a control byte: the default name is used";
+  struct Case {
+    std::string saved;
+    bool kept;
+  };
+  const Case cases[] = {{std::string("Por\x01" "ch"), false}, {std::string("\x1f"), false},
+                        {std::string("Porch\n"), false}, {std::string("Porch\x7f"), true},
+                        {std::string("Porch"), true}};
+  for (const Case& c : cases) {
+    boot(/*bring_up=*/false);
+    host_sim::main_nvs["bt_name"].assign(c.saved.begin(), c.saved.end());
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    bc::update();
+    CHECK(bc::g_initialized);
+    const std::string expect = c.kept ? c.saved : def;
+    CHECK(bc::g_settings.device_name == expect);
+    CHECK(host_sim::nimble_name == expect);
+    unsigned logged = 0;
+    for (const HealthLine& l : g_health_lines) {
+      if (l.message != kLog) continue;
+      ++logged;
+      CHECK(l.detail == def && l.task == "loop");
+    }
+    CHECK(logged == (c.kept ? 0u : 1u));
+    answers_carry_name(expect);
+    const Tap t = tap(bluetooth_api::handle_bluetooth_settings_set, "{\"auto_advertise\":true}");
+    CHECK(t.body == succeeded_with("Settings updated"));
+    CHECK(host_sim::main_nvs["bt_name"] == std::vector<uint8_t>(expect.begin(), expect.end()));
+  }
+  std::printf("PASS a_saved_name_holding_a_control_byte_is_not_loaded\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -4672,6 +4831,9 @@ const Test kTests[] = {
     {"a_full_cccd_store_evicts_no_bond", test_a_full_cccd_store_evicts_no_bond},
     {"the_bring_up_leaves_the_state_of_what_runs", test_the_bring_up_leaves_the_state_of_what_runs},
     {"the_door_is_refused_under_any_bonded_link", test_the_door_is_refused_under_any_bonded_link},
+    {"a_name_holding_a_control_byte_is_refused", test_a_name_holding_a_control_byte_is_refused},
+    {"a_saved_name_holding_a_control_byte_is_not_loaded",
+     test_a_saved_name_holding_a_control_byte_is_not_loaded},
 };
 
 }  // namespace bt_commands

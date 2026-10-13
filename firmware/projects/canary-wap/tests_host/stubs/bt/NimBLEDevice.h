@@ -513,6 +513,8 @@ inline bool nimble_up = false;
 // initialized, so on a device every later init() fails until a reboot; that
 // sticky kind is not modeled here.
 inline bool nimble_init_fails = false;
+// The name the last init() was given: the name the radio advertises (F261).
+inline std::string nimble_name;
 inline std::unique_ptr<NimBLEServer> server;
 inline NimBLEAdvertising advertising;
 inline NimBLEScan scan;
@@ -574,8 +576,9 @@ int gap_unpair(const NimBLEAddress& a);   // ble_gap_unpair() (below NimBLEDevic
 class NimBLEDevice {
  public:
   static bool isInitialized() { return host_sim::nimble_up; }
-  static bool init(const std::string&) {
+  static bool init(const std::string& name) {
     host_sim::note("nimble_init");
+    host_sim::nimble_name = name;
     if (host_sim::nimble_init_fails) return false;
     host_sim::nimble_up = true;
     return true;

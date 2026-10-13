@@ -3076,7 +3076,8 @@ def check_bluetooth_dispatch(files: dict[str, str], errors: list[str]) -> None:
 SIG_BT_IS_INIT = r"\bbool\s+is_initialized\s*\(\s*\)"
 SIG_BT_FAIL_REASON = r"\bconst\s+char\s*\*\s*init_fail_reason\s*\(\s*\)"
 SIG_BT_SET_FAIL = r"\bstatic\s+void\s+set_init_fail_reason\s*\(\s*const\s+char\s*\*\s*fmt\s*,\s*\.\.\.\s*\)"
-SIG_BT_LOAD_SETTINGS = r"\bstatic\s+void\s+load_settings\s*\(\s*BluetoothSettings\s*\*\s*out\s*\)"
+# Since sweep F261 it answers whether it refused the saved name (load_saved() logs it).
+SIG_BT_LOAD_SETTINGS = r"\bstatic\s+(?:void|bool)\s+load_settings\s*\(\s*BluetoothSettings\s*\*\s*out\s*\)"
 SIG_BT_LOAD_PAIRED = r"\bstatic\s+void\s+load_paired_devices\s*\([^)]*\)"
 SIG_BT_DEINIT = r"\bstatic\s+void\s+deinit\s*\(\s*\)"
 # The file globals init() may name: its latch, its handoff and the flag it

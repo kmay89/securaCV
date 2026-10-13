@@ -290,7 +290,7 @@ static BluetoothState rest_state();
 static bool init_running();
 static void load_saved();
 static void adopt_init_result();
-static void load_settings(BluetoothSettings* out);
+static bool load_settings(BluetoothSettings* out);
 static void save_settings();
 static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity);
 static void save_paired_devices();
@@ -1112,9 +1112,16 @@ static void set_state(BluetoothState new_state) {
 // (its callers start it from kDefaultSettings): load_saved()'s, on the loop
 // task, and init()'s, on its own, into its hand-over (the settings it gives
 // the stack, sweep F167). It names none of the channel's state.
-static void load_settings(BluetoothSettings* out) {
+//
+// A saved name that name_storable() refuses (one saved before sweep F261
+// holding a control byte) is not loaded: `out` keeps its default name, so
+// neither answer nor the advert carries the byte, and true is returned so
+// load_saved() can say so in the health log. The NVS row keeps the old bytes
+// until the next save writes the name the device holds (this opens the
+// namespace read-only).
+static bool load_settings(BluetoothSettings* out) {
   NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return;
+  if (!nvs.isOpen()) return false;
 
   // Defaults (used when the device has never saved BT settings) come from
   // bt_defaults.h so the first-boot state matches the struct initializer.
@@ -1126,12 +1133,19 @@ static void load_settings(BluetoothSettings* out) {
   out->inactivity_timeout_ms = nvs->getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
   out->long_range_mode = nvs->getBool(NVS_KEY_BT_LONG_RANGE, bt_defaults::LONG_RANGE);
 
+  bool name_refused = false;
   size_t name_len = nvs->getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {
-    nvs->getBytes(NVS_KEY_BT_NAME, out->device_name, name_len);
-    out->device_name[name_len] = '\0';
+    char saved[MAX_DEVICE_NAME_LEN + 1];
+    nvs->getBytes(NVS_KEY_BT_NAME, saved, name_len);
+    saved[name_len] = '\0';
+    if (name_storable(saved)) {
+      memcpy(out->device_name, saved, strlen(saved) + 1);
+    } else {
+      name_refused = true;
+    }
   }
-
+  return name_refused;
 }
 
 static void save_settings() {
@@ -1417,7 +1431,7 @@ bool init() {
   Bringup& b = g_bringup;
   memset(&b, 0, sizeof(b));
   b.applied = kDefaultSettings;
-  load_settings(&b.applied);
+  (void)load_settings(&b.applied);   // a refused saved name: load_saved() logs it (F261)
 
   // Initialize NimBLE. This is the single NimBLEDevice::init() owner for the
   // firmware: it runs before ble_manager::init() in setup() and owns the GAP
@@ -1702,7 +1716,12 @@ static void load_saved() {
   if (g_saved_loaded) return;
   g_saved_loaded = true;
   BluetoothSettings saved = kDefaultSettings;
-  load_settings(&saved);
+  if (load_settings(&saved)) {
+    // As the paired list's repairs are logged (sweep F261).
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+               "Saved Bluetooth name held a control byte: the default name is used",
+               saved.device_name);
+  }
   g_settings = saved;
   load_paired_devices(g_paired_devices, &g_paired_count, &g_paired_by_identity);
 }
@@ -2435,9 +2454,9 @@ static bool set_settings(const BluetoothSettings& settings) {
 }
 
 static bool set_device_name(const char* name) {
-  if (!name || strlen(name) == 0 || strlen(name) > MAX_DEVICE_NAME_LEN) {
-    return false;
-  }
+  // 1 to MAX_DEVICE_NAME_LEN bytes, none a control byte (sweep F261: the
+  // length alone let 0x01 into both Bluetooth answers and the advert).
+  if (!name_storable(name)) return false;
 
   strncpy(g_settings.device_name, name, MAX_DEVICE_NAME_LEN);
   g_settings.device_name[MAX_DEVICE_NAME_LEN] = '\0';
@@ -2721,6 +2740,12 @@ static Result run_command(const Command& cmd) {
       if (cmd.set_mask & BT_SET_DEVICE_NAME) {
         memcpy(s.device_name, in.device_name, sizeof(s.device_name));
         s.device_name[MAX_DEVICE_NAME_LEN] = '\0';
+        // The rule set_device_name() applies (sweep F261), refused whole:
+        // none of the POST's fields is applied, as a refused enable.
+        if (!name_storable(s.device_name)) {
+          r.refusal = BT_REFUSED_BAD_NAME;
+          break;
+        }
       }
       if (cmd.set_mask & BT_SET_TX_POWER) s.tx_power = in.tx_power;
       if (cmd.set_mask & BT_SET_INACTIVITY) s.inactivity_timeout_ms = in.inactivity_timeout_ms;
@@ -2741,6 +2766,7 @@ static Result run_command(const Command& cmd) {
       memcpy(name, cmd.name, sizeof(name));
       name[sizeof(name) - 1] = '\0';
       r.ok = set_device_name(name);
+      if (!r.ok) r.refusal = BT_REFUSED_BAD_NAME;   // its only refusal (F261)
       break;
     }
     case BT_CMD_POWER:

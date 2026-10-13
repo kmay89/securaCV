@@ -756,9 +756,14 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
     cmd.set_mask |= bluetooth_channel::BT_SET_REQUIRE_PIN;
   }
   if (input["device_name"].is<JsonVariant>()) {
+    // 1 to 32 bytes, no control byte (sweep F261): refused in words here,
+    // before anything is brought up or applied, as the command refuses it on
+    // the loop task; a name that passes is never cut by the copy below.
     const char* name = input["device_name"].as<const char*>();
-    strncpy(settings.device_name, name != nullptr ? name : "",
-            bluetooth_channel::MAX_DEVICE_NAME_LEN);
+    if (!bluetooth_channel::name_storable(name)) {
+      return send_error(req, bluetooth_channel::DEVICE_NAME_REFUSAL);
+    }
+    strncpy(settings.device_name, name, bluetooth_channel::MAX_DEVICE_NAME_LEN);
     settings.device_name[bluetooth_channel::MAX_DEVICE_NAME_LEN] = '\0';
     cmd.set_mask |= bluetooth_channel::BT_SET_DEVICE_NAME;
   }
@@ -791,6 +796,9 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
   if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);
   if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_ENABLED) {
     return send_bt_error(req, "Bluetooth init failed");
+  }
+  if (r.refusal == bluetooth_channel::BT_REFUSED_BAD_NAME) {
+    return send_error(req, bluetooth_channel::DEVICE_NAME_REFUSAL);
   }
   if (r.ok) {
     return send_success(req, "Settings updated");
@@ -828,7 +836,8 @@ inline esp_err_t handle_bluetooth_name_set(httpd_req_t* req) {
   if (r.ok) {
     return send_success(req, "Device name updated");
   }
-  return send_error(req, "Invalid name");
+  // Its one refusal (sweep F261): the rule, in words.
+  return send_error(req, bluetooth_channel::DEVICE_NAME_REFUSAL);
 }
 
 // POST /api/bluetooth/power - Set TX power
