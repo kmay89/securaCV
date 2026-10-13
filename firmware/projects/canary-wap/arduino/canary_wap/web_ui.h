@@ -951,7 +951,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="card-subtitle" id="recoveryKitLead">One small file proves this Canary is yours: its name, its keys, and the password for its own network. Keep it somewhere safe &mdash; you'll want it if you ever change phones or routers.</div>
         </div>
       </div>
-      <p class="card-subtitle" id="recoveryKitDone" style="display:none;margin:0 0 0.6rem;">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>.</p>
+      <p class="card-subtitle" id="recoveryKitDone" style="display:none;margin:0 0 0.6rem;">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can save it again any time from the dashboard: Settings, Device, Recovery kit.</p>
       <div style="display:flex;gap:0.5rem;justify-content:flex-end;flex-wrap:wrap;">
         <button class="btn btn-ghost btn-sm" id="recoveryKitLater" onclick="closeRecoveryKit()">Do this later</button>
         <button class="btn btn-primary btn-sm" id="recoveryKitSave" onclick="saveRecoveryKit()">Save my recovery kit</button>
@@ -2462,6 +2462,23 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Recovery kit, any time (sweep F257): the receipt this signed-in
+             page can already fetch (GET /api/provisioning-receipt serves
+             its token or its session cookie), saved by the browser as
+             canary-recovery-kit.json through RecoveryKit.save, the builder
+             the BOOT-tap offer and the /companion wizard save with. -->
+        <div class="card" id="settingsKitCard">
+          <div class="card-header">
+            <div>
+              <div class="card-title" id="settingsKitTitle">Recovery kit</div>
+              <div class="card-subtitle" id="settingsKitLead">One small file proves this Canary is yours: its name, its keys, and the password for its own network. Keep it somewhere safe &mdash; you'll want it if you ever change phones or routers.</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="saveRecoveryKitFromSettings()" id="settingsKitSave">Save my recovery kit</button>
+          </div>
+          <p class="card-subtitle" id="settingsKitDone" style="display:none;margin:0;">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>.</p>
+          <p class="card-subtitle" id="settingsKitErr" role="alert" style="display:none;margin:0;color:var(--danger);"></p>
+        </div>
+
         <!-- Software Update Card (signed pull updates over WiFi) -->
         <div class="card" id="otaCard" style="display:none;">
           <div class="card-header">
@@ -2915,6 +2932,34 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('recoveryKitDone').style.display = 'block';
       document.getElementById('recoveryKitSave').style.display = 'none';
       document.getElementById('recoveryKitLater').textContent = 'Continue';
+    }
+
+    // Settings → Device → Recovery kit (sweep F257): the kit again, any time,
+    // without a tap. A page that is signed in already holds what the receipt
+    // route serves on (its token, or the cv_session cookie a BOOT tap, a
+    // setup-door claim or the landing page issued); a browser that resumed
+    // its session on load never sees the BOOT-tap offer above, so this is
+    // where its owner saves the kit. The one request is that GET; the save
+    // is RecoveryKit.save's blob: download. A refused session is
+    // secureFetch's: the sign-in comes back, and its BOOT tap offers the kit.
+    async function saveRecoveryKitFromSettings() {
+      const done = document.getElementById('settingsKitDone');
+      const err = document.getElementById('settingsKitErr');
+      done.style.display = 'none';
+      err.style.display = 'none';
+      err.textContent = '';
+      try {
+        const resp = await secureFetch('/api/provisioning-receipt', { cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (!RecoveryKit.save(window, await resp.text())) throw new Error('not a recovery kit');
+        done.style.display = 'block';
+      } catch (e) {
+        const signIn = e && (e.message === 'auth_required' || e.message === 'rate_limited');
+        err.textContent = signIn
+          ? 'Sign in again first (Use BOOT Tap Once offers the kit as it signs you in).'
+          : 'Could not fetch the recovery kit: ' + (e && e.message ? e.message : 'unknown') + '. Try again.';
+        err.style.display = 'block';
+      }
     }
 
     async function requestFromDevice() {

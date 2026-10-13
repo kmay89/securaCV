@@ -476,7 +476,7 @@ footer a{color:var(--accent);text-decoration:none}
           <li>Within 30 seconds, tap <strong>Save my recovery kit</strong> below.</li>
         </ol>
         <div class="err" id="wiz-recovery-err" role="alert"></div>
-        <p class="wiz-sub" id="wiz-recovery-done" style="display:none;margin:0 0 .6rem">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can get it again any time: press BOOT, then reload the dashboard.</p>
+        <p class="wiz-sub" id="wiz-recovery-done" style="display:none;margin:0 0 .6rem">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can save it again any time from the dashboard: Settings, Device, Recovery kit.</p>
         <div class="wiz-btnrow">
           <button class="btn btn-secondary" id="wiz-recovery-skip">Do this later</button>
           <button class="btn btn-primary" id="wiz-recovery-save">Save my recovery kit</button>

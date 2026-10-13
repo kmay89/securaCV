@@ -1,6 +1,6 @@
 'use strict';
 
-// The recovery kit after a BOOT-tap sign-in on the dashboard (sweep F257).
+// The recovery kit on the dashboard (sweep F257).
 //
 // A WAP set up through the Bluetooth setup door never runs the /companion
 // wizard's close-out, which was the one place canary-recovery-kit.json was
@@ -12,12 +12,18 @@
 //
 //   * both pages carry the RECOVERY_KIT builder, line for line;
 //   * the dashboard's BOOT-tap success offers the kit in the wizard's words,
-//     and Save hands the browser the receipt text exactly as served, every
-//     field identity_json.h writes, as canary-recovery-kit.json through a
-//     blob: URL, with no request of any kind after the receipt GET;
+//     its Save button showing, again after a second sign-in in the same page;
+//     Save hands the browser the receipt text exactly as served, every field
+//     identity_json.h writes, as canary-recovery-kit.json through a blob: URL.
+//     The Save itself adds no request (the dashboard's own refreshes go on
+//     around it), and no request carries the kit's text;
 //   * a tap that never served a receipt (403 every poll, an answer that is
 //     not a receipt) offers nothing;
-//   * the wizard's close-out saves through the same builder.
+//   * Settings → Device → Recovery kit saves it again for a page that is
+//     already signed in (a session cookie or a token): one GET, the same
+//     builder; a refused session brings the sign-in back and saves nothing;
+//   * the wizard's close-out saves through the same builder, and its saved
+//     line names that Settings path, which exists.
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
 
@@ -82,11 +88,27 @@ const FIELDS = {
 };
 const RECEIPT = '{\n' + Object.entries(FIELDS).map(([k, v]) => '  "' + k + '": ' + JSON.stringify(v)).join(',\n') + '\n}';
 
-// A browser window just big enough for the pages' kit code: elements by id,
-// a body, Blob, URL and timers, with every save recorded.
-function fakeWindow(ids) {
+// Each element's starting display, read from its markup: 'none' where its
+// style attribute hides it, '' (shown) otherwise. An id the markup does not
+// carry starts hidden.
+function startingDisplay(src, id) {
+  const m = src.match(new RegExp('<[a-z0-9]+\\b[^>]*\\bid="' + id + '"[^>]*>'));
+  if (!m) return 'none';
+  const style = (m[0].match(/\bstyle="([^"]*)"/) || [])[1] || '';
+  return /display\s*:\s*none/.test(style) ? 'none' : '';
+}
+
+// A browser window just big enough for the pages' kit code: elements by id
+// (starting as `markup` draws them), a body, Blob, URL and timers, with every
+// save recorded.
+function fakeWindow(ids, markup) {
   const els = {};
-  for (const id of ids) els[id] = { id, style: { display: 'none' }, textContent: '', className: '' };
+  for (const id of ids) {
+    const display = markup ? startingDisplay(markup, id) : 'none';
+    els[id] = { id, style: { display }, textContent: '', className: '',
+                classList: { hidden: false, add(c) { if (c === 'hidden') this.hidden = true; },
+                             remove(c) { if (c === 'hidden') this.hidden = false; } } };
+  }
   const saved = [];
   const appended = [];
   const timers = [];
@@ -114,29 +136,40 @@ function fakeWindow(ids) {
   return win;
 }
 
-const DASH_IDS = ['authStatus', 'recoveryKitCard', 'recoveryKitDone', 'recoveryKitSave', 'recoveryKitLater'];
+const DASH_IDS = ['authStatus', 'authOverlay', 'recoveryKitCard', 'recoveryKitDone', 'recoveryKitSave',
+                  'recoveryKitLater', 'settingsKitDone', 'settingsKitErr'];
 
-// The dashboard's BOOT-tap sign-in exactly as web_ui.h ships it: the RECOVERY_KIT
-// block, requestFromDevice and the three kit functions, run against a device
-// that answers each poll from `answers` (the last one repeats).
-async function dashboardTap(answers) {
+// The dashboard exactly as web_ui.h ships its sign-in and kit code: the
+// RECOVERY_KIT block, secureFetch, the auth modal, requestFromDevice, the
+// three offer functions and the Settings save, run against a device that
+// answers the receipt route from `answers` (the last one repeats; `more()`
+// queues the next sign-in's answers) and every other route 200. Its
+// startDashboard() makes the dashboard's own first requests through the same
+// fetch, so a test that says "the Save added no request" means the Save.
+function dashboard(answers) {
   const src = read(UI);
   const code = [
     kitBlock(src, 'web_ui.h'),
+    src.match(/\n {4}let apiToken = null;\n/)[0],
+    uiFunction(src, 'secureFetch', true),
+    uiFunction(src, 'showAuthModal'),
+    uiFunction(src, 'hideAuthModal'),
     src.match(/\n {4}let recoveryKitText = null;\n/)[0],
     uiFunction(src, 'offerRecoveryKit'),
     uiFunction(src, 'closeRecoveryKit'),
     uiFunction(src, 'saveRecoveryKit'),
+    uiFunction(src, 'saveRecoveryKitFromSettings', true),
     uiFunction(src, 'requestFromDevice', true),
-    ';({ requestFromDevice, saveRecoveryKit, closeRecoveryKit, kitText: () => recoveryKitText, token: () => apiToken })',
+    ';({ requestFromDevice, saveRecoveryKit, closeRecoveryKit, saveRecoveryKitFromSettings,',
+    '    kitText: () => recoveryKitText, token: () => apiToken, setToken: (t) => { apiToken = t; } })',
   ].join('\n');
-  const win = fakeWindow(DASH_IDS);
+  const win = fakeWindow(DASH_IDS, src);
   const asked = [];
+  let queue = answers.slice();
   let polls = 0;
-  const calls = { hide: 0, start: 0 };
+  const calls = { start: 0 };
   const ctx = {
     API_BASE: '',
-    apiToken: null,
     document: win.document,
     Blob: win.Blob,
     URL: win.URL,
@@ -146,16 +179,32 @@ async function dashboardTap(answers) {
     setTimeout: (fn, ms) => { win.timers.push(ms); fn(); },
     fetch: async (url, opts) => {
       asked.push({ url, opts });
-      const a = answers[Math.min(polls++, answers.length - 1)];
-      return { status: a.status, json: async () => JSON.parse(a.body), text: async () => a.body };
+      if (url !== '/api/provisioning-receipt') {
+        return { status: 200, ok: true, json: async () => ({}), text: async () => '{}' };
+      }
+      const a = queue[Math.min(polls++, queue.length - 1)];
+      return { status: a.status, ok: a.status >= 200 && a.status < 300,
+               json: async () => JSON.parse(a.body), text: async () => a.body };
     },
-    hideAuthModal: () => { calls.hide++; },
-    startDashboard: () => { calls.start++; },
+    // The dashboard's own first requests (refreshAll's /api/status and the
+    // OTA banner), made through the same fetch.
+    startDashboard: () => { calls.start++; ctx.fetch('/api/status'); ctx.fetch('/api/ota/status'); },
   };
   ctx.window = ctx;   // the page's global object is its window
-  const api = vm.runInNewContext(code, ctx, { filename: 'web_ui.boot_tap.js' });
-  await api.requestFromDevice();
-  return { api, win, asked, calls, ctx };
+  const api = vm.runInNewContext(code, ctx, { filename: 'web_ui.recovery_kit.js' });
+  const more = (next) => { queue = next.slice(); polls = 0; };
+  return { api, win, asked, calls, ctx, more };
+}
+
+async function dashboardTap(answers) {
+  const d = dashboard(answers);
+  await d.api.requestFromDevice();
+  return d;
+}
+
+// Whether any request carried `text` (in its URL, a header or a body).
+function carried(asked, text) {
+  return asked.some((q) => JSON.stringify(q).includes(text));
 }
 
 const GATE_403 = { status: 403, body: '{"error":"physical_confirmation_required","gate_ttl_seconds":30}' };
@@ -202,6 +251,9 @@ describe('RecoveryKit.isReceipt / save', () => {
     assert.equal(win.URL.made[0].blob.type, 'application/json');
     assert.deepEqual(win.appended, [], 'the link is removed again');
     assert.deepEqual(win.URL.revoked, ['blob:wap/0']);
+    // Revoked later, not at once: a blob: URL revoked as the click returns
+    // can cancel the download it started.
+    assert.deepEqual(win.timers, [4000]);
   });
   it('saves nothing that is not a receipt', () => {
     const win = fakeWindow([]);
@@ -216,28 +268,41 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.deepEqual(Object.keys(FIELDS), receiptKeys());
   });
 
-  it('a tap that served a receipt signs in and offers the kit', async () => {
+  it('the markup draws the card hidden, and its Save and Later showing', () => {
+    const win = fakeWindow(DASH_IDS, read(UI));
+    assert.equal(win.els.recoveryKitCard.style.display, 'none');
+    assert.equal(win.els.recoveryKitDone.style.display, 'none');
+    assert.equal(win.els.recoveryKitSave.style.display, '');
+    assert.equal(win.els.recoveryKitLater.style.display, '');
+  });
+
+  it('a tap that served a receipt signs in and offers the kit, its Save button showing', async () => {
     const { api, win, asked, calls } = await dashboardTap([GATE_403, { status: 200, body: RECEIPT }]);
-    assert.equal(calls.hide, 1);
+    assert.equal(win.els.authOverlay.classList.hidden, true, 'the sign-in is put away');
     assert.equal(calls.start, 1);
     assert.equal(api.token(), FIELDS.token, 'the dashboard still signs in with the receipt token');
     assert.equal(win.els.recoveryKitCard.style.display, 'block', 'the offer is on screen');
+    assert.notEqual(win.els.recoveryKitSave.style.display, 'none', 'with a Save button to press');
+    assert.notEqual(win.els.recoveryKitLater.style.display, 'none');
     assert.equal(win.els.recoveryKitDone.style.display, 'none');
     assert.equal(win.els.recoveryKitLater.textContent, 'Do this later');
     assert.equal(api.kitText(), RECEIPT, 'held for the save, as served');
     assert.equal(win.saved.length, 0, 'nothing is saved before the person asks');
-    assert.deepEqual(asked.map((q) => q.url), ['/api/provisioning-receipt', '/api/provisioning-receipt']);
+    assert.deepEqual(asked.filter((q) => q.url === '/api/provisioning-receipt').length, 2);
   });
 
-  it('Save hands the browser the receipt as canary-recovery-kit.json and sends nothing', async () => {
+  it('Save hands the browser the receipt as canary-recovery-kit.json, and adds no request', async () => {
     const { api, win, asked } = await dashboardTap([{ status: 200, body: RECEIPT }]);
+    // The dashboard started and made its own requests: the Save is judged
+    // against them, not against a page that makes none.
+    assert.ok(asked.some((q) => q.url === '/api/status'), 'the dashboard\'s own refresh ran');
     const before = asked.length;
     api.saveRecoveryKit();
-    assert.equal(asked.length, before, 'no request after the receipt GET');
+    assert.equal(asked.length, before, 'the Save adds no request');
+    assert.ok(!carried(asked, FIELDS.ap_password), 'no request carries the kit\'s text');
     for (const q of asked) {
-      assert.equal(q.url, '/api/provisioning-receipt');
       assert.ok(!q.opts || ((!q.opts.method || q.opts.method === 'GET') && q.opts.body === undefined),
-        'the only request is the receipt GET');
+        'no request writes anything: ' + q.url);
     }
     assert.equal(win.saved.length, 1);
     const a = win.saved[0];
@@ -257,6 +322,31 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.equal(api.kitText(), null);
     api.saveRecoveryKit();
     assert.equal(win.saved.length, 1, 'a second Save saves nothing');
+  });
+
+  it('a second sign-in in the same page offers the kit afresh', async () => {
+    // Saved once; then the session is lost (a 401/403 brings secureFetch's
+    // sign-in back) and BOOT is tapped again: the offer comes back whole,
+    // Save showing, the saved line hidden, Later saying "Do this later".
+    const d = await dashboardTap([{ status: 200, body: RECEIPT }]);
+    d.api.saveRecoveryKit();
+    assert.equal(d.win.els.recoveryKitSave.style.display, 'none');
+    d.more([{ status: 403, body: '{"error":"physical_confirmation_required"}' }]);
+    await d.api.saveRecoveryKitFromSettings();   // the session is gone: refused
+    assert.equal(d.win.els.authOverlay.classList.hidden, false, 'the sign-in is back');
+    assert.equal(d.win.saved.length, 1, 'the refused fetch saved nothing');
+    const again = RECEIPT.replace('"boot:7"', '"boot:8"');
+    assert.notEqual(again, RECEIPT);
+    d.more([GATE_403, { status: 200, body: again }]);
+    await d.api.requestFromDevice();
+    assert.equal(d.win.els.recoveryKitCard.style.display, 'block');
+    assert.notEqual(d.win.els.recoveryKitSave.style.display, 'none', 'Save shows again');
+    assert.equal(d.win.els.recoveryKitDone.style.display, 'none', 'the old saved line is gone');
+    assert.equal(d.win.els.recoveryKitLater.textContent, 'Do this later');
+    assert.equal(d.api.kitText(), again, 'the new receipt, held for the save');
+    d.api.saveRecoveryKit();
+    assert.equal(d.win.saved.length, 2);
+    assert.deepEqual([...d.win.URL.made[1].blob.parts], [again]);
   });
 
   it('Do this later closes the offer and drops the text, saving nothing', async () => {
@@ -290,6 +380,72 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
   });
 });
 
+describe('Settings → Device → Recovery kit saves it again for a signed-in page (sweep F257)', () => {
+  it('on the session cookie: one GET, no token sent, the receipt saved as served', async () => {
+    const d = dashboard([{ status: 200, body: RECEIPT }]);   // a resumed session: no token in the page
+    await d.api.saveRecoveryKitFromSettings();
+    assert.deepEqual(d.asked.map((q) => q.url), ['/api/provisioning-receipt']);
+    const q = d.asked[0];
+    assert.equal(q.opts.cache, 'no-store');
+    assert.ok(!q.opts.method || q.opts.method === 'GET');
+    assert.equal(q.opts.body, undefined);
+    assert.equal(q.opts.headers.Authorization, undefined, 'the cookie carries the session, not the page');
+    assert.equal(d.win.saved.length, 1);
+    assert.equal(d.win.saved[0].download, 'canary-recovery-kit.json');
+    assert.deepEqual([...d.win.URL.made[0].blob.parts], [RECEIPT]);
+    assert.equal(d.win.els.settingsKitDone.style.display, 'block');
+    assert.equal(d.win.els.settingsKitErr.style.display, 'none');
+    assert.equal(d.win.els.recoveryKitCard.style.display, 'none', 'the BOOT-tap offer stays away');
+  });
+
+  it('on a token: the same GET carries it as a Bearer header', async () => {
+    const d = dashboard([{ status: 200, body: RECEIPT }]);
+    d.api.setToken(FIELDS.token);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.asked.length, 1);
+    assert.equal(d.asked[0].opts.headers.Authorization, 'Bearer ' + FIELDS.token);
+    assert.equal(d.win.saved.length, 1);
+  });
+
+  it('a refused session saves nothing and brings the sign-in back', async () => {
+    const d = dashboard([GATE_403]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.asked.length, 1);
+    assert.equal(d.win.saved.length, 0);
+    assert.equal(d.win.URL.made.length, 0);
+    assert.equal(d.win.els.authOverlay.classList.hidden, false, 'secureFetch shows the sign-in');
+    assert.equal(d.win.els.settingsKitDone.style.display, 'none');
+    assert.equal(d.win.els.settingsKitErr.style.display, 'block');
+    assert.match(d.win.els.settingsKitErr.textContent, /Sign in again first/);
+  });
+
+  it('an answer that is not a receipt saves nothing and says so', async () => {
+    const d = dashboard([{ status: 200, body: '{"ok":true}' }]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.win.saved.length, 0);
+    assert.match(d.win.els.settingsKitErr.textContent, /Could not fetch the recovery kit: not a recovery kit/);
+    assert.equal(d.win.els.settingsKitDone.style.display, 'none');
+  });
+
+  it('a second save after a failure clears the failure', async () => {
+    const d = dashboard([{ status: 500, body: '{}' }]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.match(d.win.els.settingsKitErr.textContent, /HTTP 500/);
+    d.more([{ status: 200, body: RECEIPT }]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.win.els.settingsKitErr.style.display, 'none');
+    assert.equal(d.win.els.settingsKitDone.style.display, 'block');
+    assert.equal(d.win.saved.length, 1);
+  });
+
+  it('the handler builds no download of its own', () => {
+    const fn = uiFunction(read(UI), 'saveRecoveryKitFromSettings', true);
+    assert.match(fn, /RecoveryKit\.save\(window, await resp\.text\(\)\)/);
+    assert.match(fn, /secureFetch\('\/api\/provisioning-receipt', \{ cache: 'no-store' \}\)/);
+    assert.doesNotMatch(fn, /new Blob|createObjectURL|\.download\s*=|method:/);
+  });
+});
+
 describe("the offer speaks the wizard's words", () => {
   const ui = read(UI);
   const pwa = read(PWA);
@@ -298,35 +454,54 @@ describe("the offer speaks the wizard's words", () => {
     assert.ok(m, what + ' not found');
     return m[1];
   };
-  it('title, lead, buttons and the saved line match the /companion close-out', () => {
-    const wizBlock = inner(pwa, /<div id="wiz-recovery-block"[^>]*>([\s\S]*?)\n {6}<\/div>\n/, 'the wizard block');
-    const wizTitle = inner(wizBlock, /<h3[^>]*>([^<]*)<\/h3>/, 'the wizard title');
-    const wizLead = inner(wizBlock, /<p class="wiz-sub" style="margin:0 0 \.6rem">([^]*?)<\/p>/, 'the wizard lead');
-    const wizSave = inner(wizBlock, /id="wiz-recovery-save">([^<]*)</, 'the wizard Save');
-    const wizLater = inner(wizBlock, /id="wiz-recovery-skip">([^<]*)</, 'the wizard Later');
-    const wizDone = inner(wizBlock, /id="wiz-recovery-done"[^>]*>([^]*?)<\/p>/, 'the wizard saved line');
+  const wizBlock = inner(pwa, /<div id="wiz-recovery-block"[^>]*>([\s\S]*?)\n {6}<\/div>\n/, 'the wizard block');
+  const wizTitle = inner(wizBlock, /<h3[^>]*>([^<]*)<\/h3>/, 'the wizard title');
+  const wizLead = inner(wizBlock, /<p class="wiz-sub" style="margin:0 0 \.6rem">([^]*?)<\/p>/, 'the wizard lead');
+  const wizSave = inner(wizBlock, /id="wiz-recovery-save">([^<]*)</, 'the wizard Save');
+  const wizLater = inner(wizBlock, /id="wiz-recovery-skip">([^<]*)</, 'the wizard Later');
+  const wizDone = inner(wizBlock, /id="wiz-recovery-done"[^>]*>([^]*?)<\/p>/, 'the wizard saved line');
+  const firstSentence = wizDone.slice(0, wizDone.indexOf('</strong>.') + '</strong>.'.length);
 
+  it('title, lead, buttons and the saved line match the /companion close-out', () => {
     assert.equal(inner(ui, /id="recoveryKitTitle">([^<]*)</, 'the offer title'), wizTitle);
     assert.equal(inner(ui, /id="recoveryKitLead">([^]*?)<\/div>/, 'the offer lead'), wizLead);
     assert.equal(inner(ui, /id="recoveryKitSave"[^>]*>([^<]*)</, 'the offer Save'), wizSave);
     assert.equal(inner(ui, /id="recoveryKitLater"[^>]*>([^<]*)</, 'the offer Later'), wizLater);
-    // The wizard's saved line names the file, then how to get it again. The
-    // dashboard says the first sentence only: the save itself just gave this
-    // browser a session, so a reload here goes straight in, past the BOOT-tap
-    // sign-in where the kit is offered.
-    const dashDone = inner(ui, /id="recoveryKitDone"[^>]*>([^]*?)<\/p>/, 'the offer saved line');
-    assert.equal(dashDone, wizDone.slice(0, wizDone.indexOf('</strong>.') + '</strong>.'.length));
-    assert.match(dashDone, /canary-recovery-kit\.json/);
+    assert.equal(inner(ui, /id="recoveryKitDone"[^>]*>([^]*?)<\/p>/, 'the offer saved line'), wizDone);
     assert.equal(wizTitle, 'Save your recovery kit');
     assert.equal(wizSave, 'Save my recovery kit');
   });
-  it('the card is hidden until a tap, each id appears once, and the buttons are wired', () => {
+
+  it('the Settings card says the same: the lead, the Save, the saved line\'s first sentence', () => {
+    assert.equal(inner(ui, /id="settingsKitTitle">([^<]*)</, 'the Settings title'), 'Recovery kit');
+    assert.equal(inner(ui, /id="settingsKitLead">([^]*?)<\/div>/, 'the Settings lead'), wizLead);
+    assert.equal(inner(ui, /id="settingsKitSave"[^>]*>([^<]*)</, 'the Settings Save'), wizSave);
+    assert.equal(inner(ui, /id="settingsKitDone"[^>]*>([^]*?)<\/p>/, 'the Settings saved line'), firstSentence);
+    assert.match(firstSentence, /canary-recovery-kit\.json/);
+  });
+
+  it('the saved line names a Settings path the dashboard has', () => {
+    // "You can save it again any time from the dashboard: Settings, Device,
+    // Recovery kit." — each of those is on web_ui.h's page, in that order.
+    assert.match(wizDone, /from the dashboard: Settings, Device, Recovery kit\.$/);
+    assert.match(ui, /<button class="nav-btn" data-panel="settings">Settings<\/button>/);
+    assert.match(ui, /onclick="switchSettingsTab\('device'\)">[^<]*Device<\/button>/);
+    const device = ui.indexOf('<div class="sub-panel" id="settings-device">');
+    const next = ui.indexOf('<div class="sub-panel"', device + 1);
+    const card = ui.indexOf('id="settingsKitCard"');
+    assert.ok(device > 0 && card > device && (next < 0 || card < next), 'the Recovery kit card sits in Settings → Device');
+    assert.match(ui, /<div class="card" id="settingsKitCard">/, 'shown, not hidden behind a tap');
+  });
+
+  it('the cards are where they should be, each id appears once, and the buttons are wired', () => {
     assert.match(ui, /<div class="card" id="recoveryKitCard" style="display:none"/);
-    for (const id of DASH_IDS.slice(1).concat(['recoveryKitTitle', 'recoveryKitLead'])) {
+    for (const id of DASH_IDS.slice(2).concat(['recoveryKitTitle', 'recoveryKitLead', 'settingsKitCard',
+                                               'settingsKitTitle', 'settingsKitLead', 'settingsKitSave'])) {
       assert.equal((ui.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, id);
     }
     assert.match(ui, /id="recoveryKitLater" onclick="closeRecoveryKit\(\)"/);
     assert.match(ui, /id="recoveryKitSave" onclick="saveRecoveryKit\(\)"/);
+    assert.match(ui, /onclick="saveRecoveryKitFromSettings\(\)" id="settingsKitSave"/);
     // The sign-in offers it right after it starts the dashboard, with the text it read.
     assert.match(uiFunction(ui, 'requestFromDevice', true),
       /const text = await resp\.text\(\);\n\s*const receipt = JSON\.parse\(text\);\n\s*apiToken = receipt\.token;\n\s*hideAuthModal\(\);\n\s*startDashboard\(\);\n\s*offerRecoveryKit\(text\);\n\s*return;/);
