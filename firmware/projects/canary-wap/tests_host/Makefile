@@ -458,6 +458,29 @@ clean-identity-json:
 run: run-identity-json
 clean: clean-identity-json
 
+# Which address the receipt's base_url names (sweep F255): the REAL
+# receipt_authority.h for every grant (bearer, BOOT tap, setup-door claim) on
+# the SoftAP, on the STA with the STA up, and with the STA down, beside the
+# old rule (192.168.4.1 for a receipt fetched over the home LAN); its socket
+# address mapping held to firmware/common/network/provisioning_gate.h's; and
+# the sketch's glue read from canary_wap.ino (its path is passed in).
+RAUTH_BIN = test_receipt_authority
+RAUTH_SRC = test_receipt_authority.cpp
+
+$(RAUTH_BIN): $(RAUTH_SRC) arduino_globals.h $(SRC_DIR)/receipt_authority.h \
+              ../../../common/network/provisioning_gate.h $(SRC_DIR)/canary_wap.ino
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -I ../../../common \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(RAUTH_SRC)
+
+.PHONY: run-receipt-authority clean-receipt-authority
+run-receipt-authority: $(RAUTH_BIN)
+	$(call run_marked,$(RAUTH_BIN))
+clean-receipt-authority:
+	rm -f $(RAUTH_BIN)
+
+run: run-receipt-authority
+clean: clean-receipt-authority
+
 # The writer's bounds (sweep F230): the REAL wap_json_writer.h, identity_json.h
 # and fleet_scan_cache.h, with a string grown where a live global can change
 # under a build: between escaped()'s measure and its copy (and str()'s), and

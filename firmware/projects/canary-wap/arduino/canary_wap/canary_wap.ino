@@ -168,6 +168,7 @@
 #include "wap_diagnostics.h"     // pure, host-tested: GET /api/diagnostics's body (F149)
 #include "fleet_scan_cache.h"    // pure, host-tested: the fleet scan's cache keeps the adverts that fit (F211)
 #include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
+#include "receipt_authority.h"   // pure, host-tested: which address the receipt's base_url names (F255)
 #include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
@@ -8270,23 +8271,63 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 // API: PROVISIONING RECEIPT (physical gate or Bearer auth)
 // ════════════════════════════════════════════════════════════════════════════
 
-// `via_claim`: the caller spent a setup-door claim, so it is on the home LAN
-// by construction (claim_ticket.h) — its base_url is the device's .local
-// name while the STA holds one, since the SoftAP address the other two
-// grants answer with is gone once the AP drops. The bearer and BOOT-tap
-// answers are unchanged.
-static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = false) {
+// Host-order IPv4 (a<<24 | b<<16 | c<<8 | d) of an Arduino IPAddress.
+static uint32_t ipv4_host_order(const IPAddress& ip) {
+  return ((uint32_t)ip[0] << 24) | ((uint32_t)ip[1] << 16) |
+         ((uint32_t)ip[2] << 8)  |  (uint32_t)ip[3];
+}
+
+// The IPv4 address this request arrived on: the socket's LOCAL address
+// (getsockname), host order, or 0 when the socket cannot say. On the
+// dual-stack listener both cores open, an IPv4 request reads as
+// ::ffff:a.b.c.d (receipt_authority::ipv4_from_addr maps it). The same
+// fd works under esp_https_server, whose sessions sit on the httpd socket.
+static uint32_t request_local_ipv4(httpd_req_t* req) {
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return 0;
+  struct sockaddr_storage ss;
+  socklen_t len = sizeof(ss);
+  memset(&ss, 0, sizeof(ss));
+  if (getsockname(fd, (struct sockaddr*)&ss, &len) != 0) return 0;
+  if (ss.ss_family == AF_INET) {
+    const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
+    return receipt_authority::ipv4_from_addr(receipt_authority::AddrFamily::IPV4,
+                                             (const uint8_t*)&sin->sin_addr.s_addr);
+  }
+#if defined(LWIP_IPV6) && LWIP_IPV6
+  if (ss.ss_family == AF_INET6) {
+    const struct sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss;
+    return receipt_authority::ipv4_from_addr(receipt_authority::AddrFamily::IPV6,
+                                             (const uint8_t*)&sin6->sin6_addr);
+  }
+#endif
+  return 0;
+}
+
+// `grant`: what admitted the request. The base_url's authority is
+// receipt_authority.h's choice (sweep F255): the device's .local name
+// whenever the STA holds an address and the request did not arrive on the
+// SoftAP (a receipt fetched over the home LAN used to name 192.168.4.1,
+// which no LAN reader reaches and which is gone once the AP drops); the
+// SoftAP address for a bearer or BOOT-tap request made over the SoftAP, or
+// whenever the STA is down. A spent setup-door claim answers the .local
+// name whenever the STA holds an address, as it always did.
+static esp_err_t send_provisioning_receipt(httpd_req_t* req, receipt_authority::Grant grant) {
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
-  String authority = WiFi.softAPIP().toString();
-  if (via_claim && WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
-    authority = String(g_device.mdns_hostname) + ".local";
-  }
+  receipt_authority::Inputs reach = {};
+  reach.request_local = request_local_ipv4(req);
+  reach.softap_ip     = ipv4_host_order(WiFi.softAPIP());
+  reach.sta_ip        = WiFi.isConnected() ? ipv4_host_order(WiFi.localIP()) : 0;
+  reach.mdns_host     = g_device.mdns_hostname;
+  reach.grant         = grant;
+  char authority[80];
+  receipt_authority::write(authority, sizeof(authority), reach);
   identity_json::Receipt in = {};
   in.device_id   = g_device.device_id;
   in.tls_enabled = g_tls_enabled;
-  in.ap_ip       = authority.c_str();
+  in.ap_ip       = authority;
   in.token       = g_device.api_token_str;
   in.pubkey_fp   = g_device.fingerprint_hex;
   in.firmware    = FIRMWARE_VERSION;
@@ -8332,7 +8373,7 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 
   // 1. A valid Bearer token always serves (for SAP re-sync).
   if (api_auth_check_optional(req, g_device.api_token_str)) {
-    return send_provisioning_receipt(req);
+    return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
   // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one atomic
@@ -8398,7 +8439,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
     }
   }
-  esp_err_t result = send_provisioning_receipt(req, claim_served);
+  esp_err_t result = send_provisioning_receipt(
+      req, claim_served ? receipt_authority::Grant::SETUP_DOOR_CLAIM
+                        : receipt_authority::Grant::BOOT_TAP);
   if (claim_served) {
     Serial.println("[AUTH] Provisioning receipt served on a setup-door claim.");
     log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served on a setup-door claim", nullptr);
