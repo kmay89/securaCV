@@ -3,13 +3,19 @@
 Can a household get what HomeKit Secure Video's face recognition sells —
 "Mom is at the front door," no alert when the family comes home, a real alert
 when a stranger does — on cheap hardware, with no Apple device in the house
-and nothing leaving it? **Yes, by recognizing a key, not a face.** The camera
-keeps witnessing *what* happened (`Person` at the front door) and never learns
-*who*. The person proves who they are with a credential they carry: a phone, a
-watch, an NFC card or sticker that costs a dollar or less, a fob. If they want a biometric in the loop, it is the
-Face ID or fingerprint sensor already on their own phone, unlocking that key on
-that phone. That is how Face ID itself works: the face unlocks a key inside a
-secure element, and the other side only ever sees a signature.
+and nothing leaving it? **Partly — and only by recognizing a key, not a
+face.** The camera keeps witnessing *what* happened (`Person` at the front
+door) and never learns *who*. A household member presents a key they carry —
+a phone, a watch, an NFC card or sticker that costs a dollar or less, a fob —
+and that signed act, not the camera, is what the system acts on: it sets the
+home's posture (Home, Away, Night), which is where "don't alert me about my
+own family" honestly comes from. A key proves possession, not identity (a
+borrowed card reads the same), so the system never names anyone: "Mom is at
+the front door" is the part this design refuses. If a biometric is wanted in
+the loop, it is the Face ID or fingerprint sensor already on the person's own
+phone, unlocking that key on that phone. That is how Face ID itself works: the
+face unlocks a key inside a secure element, and the other side only ever sees
+a signature.
 
 The second half of the answer is the line. A camera that recognizes faces has
 to compute a face template for **everyone** who walks into frame — the courier,
@@ -308,10 +314,13 @@ useful sign that the line is in the right place:
   open-source system **cannot** geofence — it would need location telemetry it
   refuses to collect, and a fork can delete the check. For this project,
   "compliance by geography" is not an option; compliance has to come from the
-  design. A design that never computes a template is compliant everywhere
-  without a consent flow, a retention schedule or a geofence — which is the
-  point [`legal-audit-2026-07.md`](../legal-audit-2026-07.md) already makes
-  ("keep that line bright; it's a genuine differentiator").
+  design. A design that never computes a template stays outside every
+  biometric statute surveyed here — no biometric consent flow, no template
+  retention schedule, no geofence — which is the point
+  [`legal-audit-2026-07.md`](../legal-audit-2026-07.md) already makes ("keep
+  that line bright; it's a genuine differentiator"). It does not lift the
+  ordinary duties of a camera that sees public space (the *Ryneš* point
+  above); those apply with or without faces.
 
 ## 6. The design: household keys — Face ID's architecture, with the face left on your own phone
 
@@ -438,7 +447,7 @@ Modeled on the voice contract in
 | **Hub checker** | A separate crate and process, not `witnessd`; no internet route | Holds the roster in the app's private data, excluded from Home Assistant backups, with secrets wrapped under a key outside backup scope. The crate split keeps kernel code from linking it; file isolation is a Unix-permission `won't`, not a `can't`. |
 | **Phone keys** | Android Keystore/StrongBox P-256 gated by a Class 3 biometric; iOS Secure Enclave P-256 behind `.userPresence` | No Apple hub, no Apple Home. The phone runs a foreground NFC session: the satellite emulates an ISO 7816 tag, serves the challenge, and takes the signature back over NFC — so the challenge exists only in the RF field, works before the phone rejoins Wi-Fi, and cannot be stockpiled. Phone door keys always require user presence (no "express" keys: a stolen unlocked phone must not be a house key). |
 | **Cards** | NTAG 424 DNA (AES-128, ~$0.45–1 per sticker, ~$2.50–5 per PVC card) or MIFARE DESFire EV3 (EAL5+, with a relay-resistant proximity check) | Random ID on; per-card keys diversified from a random value read after authentication, never from the UID; encrypted PICC data. Honest label: a card is *possession, not intent* — it answers any reader field — so offer shielding sleeves. |
-| **FIDO2 keys** | Any CTAP2 NFC key ($15–29) | Register with user verification required (`credProtect` 3) so harvested credential IDs cannot silently probe a key elsewhere; WebAuthn counter rules (zero counters allowed). Disclose that the relying-party ID and credential IDs are not secrets. |
+| **FIDO2 keys** | Any CTAP2 NFC key ($15–29) | Register with user verification required (`credProtect` 3) so harvested credential IDs cannot silently probe a key elsewhere; freshness comes from the hub's nonce, and the signature counter is deliberately not stored (clone detection is traded away so no per-credential usage tally exists — say so). Disclose that the relying-party ID and credential IDs are not secrets. |
 | **Fob** | nRF52840 with one button (~$10–12 DIY) | Challenge–response after a button press; the button is the deliberate act. |
 
 **Two curves.** Member keys are P-256 (it is what phones' secure elements,
@@ -564,9 +573,15 @@ repo-wide and is flagged as such.
 
 1. **Identity is a key, not a face.** A member's credential is a private key in
    hardware they hold (phone secure enclave / StrongBox, FIDO2 key, NTAG 424
-   DNA, an nRF52 fob). Readers and the hub store **public keys only**, so
-   physically extracting a reader yields nothing that impersonates anyone —
-   the property a face template can never have.
+   DNA, an nRF52 fob). Readers store no member material, and the hub stores
+   only **public keys** for every asymmetric credential (phone, FIDO2, fob),
+   so physically extracting a reader yields nothing that impersonates anyone —
+   the property a face template can never have. AES cards are the exception
+   and must be said out loud: verifying NTAG 424 DNA or DESFire needs a
+   symmetric secret on the hub (per-card keys diversified from a household
+   master secret), which is clone-capable material. It lives only in the
+   checker's private data, wrapped under a key outside backup scope, and a hub
+   compromise means re-keying every card.
 2. **Any biometric is local user verification on the member's own device**
    (Face ID, Android Class 3, a fingerprint FIDO key), unlocking the key. This
    is the FIDO/WebAuthn architecture: the relying party sees a signature and
@@ -593,10 +608,14 @@ repo-wide and is flagged as such.
    secure ranging (UWB), and UWB itself is not a proof: Ghost Peak reduced a
    measured 12 m to 0 m with up to ~4% success per attempt on $65 of hardware.
    Write "relay-resistant," never "relay-proof."
-5. **Counters are only protection if they are enforced.** An NTAG 424 DNA tap
-   carries an AES-CMAC over the UID and a read counter; replay protection
-   exists only if the verifier stores the last counter per card and rejects
-   anything not strictly greater.
+5. **Cards answer a live challenge, not a counter.** An NTAG 424 DNA "SUN"
+   tap message (an AES-CMAC over the UID and a read counter) is
+   replay-protected only if the verifier stores each card's last counter and
+   rejects anything not strictly greater — a per-card usage tally that §6.4
+   rule 4 forbids. So cards are used only through live mutual authentication
+   (`AuthenticateEV2First`) with the hub's single-use nonce as the reader's
+   random, which needs no stored counter; SUN tap messages are never used for
+   anything with authority.
 6. **Membership is a signed set with an epoch.** Adding or revoking a member is
    a signed roster change with a monotonic epoch; readers refuse a stale epoch.
    That makes revocation of a lost phone a single, auditable act — and the
