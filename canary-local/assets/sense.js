@@ -90,7 +90,7 @@ async function main() {
 
   const sSetup = section("setup", "bring it up", "Provision it once, over USB",
     data.provisioning.intro);
-  sSetup.append(buildProvision(data, bus));
+  sSetup.append(buildProvision(data));
   const sTwo = el("div", "wap-two");
   const left = el("div", "wap-two-col");
   left.append(el("h3", "wap-col-h", "4 · the serial console"), buildSerial(data, bus));

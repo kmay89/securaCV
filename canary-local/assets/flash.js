@@ -132,7 +132,7 @@ async function boot() {
     const resp = await fetch("devices/flash.json");
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     state.catalog = await resp.json();
-  } catch (e) {
+  } catch {
     mount.append(errorBox("Couldn’t load the flasher catalog",
       "Reload the page. If it keeps happening, the guided path still works.", true));
     return;
@@ -1148,7 +1148,7 @@ async function onConnect() {
   let port;
   try {
     port = await navigator.serial.requestPort();
-  } catch (e) {
+  } catch {
     // User dismissed the chooser — not an error, just nudge.
     state.connecting = false;
     return;
@@ -1438,7 +1438,7 @@ async function readCurrentFirmware() {
       built: d.date ? `${d.date} ${d.time || ""}`.trim() : null,
       idf: d.idfVer || null,
     };
-  } catch (e) {
+  } catch {
     state.current = { unknown: true };
   }
 }
@@ -5465,7 +5465,7 @@ function renderReport(r) {
           body.append(line);
         });
         peek.append(el("p", "fineprint", "What this looks like: " + core.sniffRegion(bytes) + "."));
-      } catch (e) {
+      } catch {
         body.textContent = "couldn’t read that region right now — reconnect and try again";
       }
     };

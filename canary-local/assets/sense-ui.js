@@ -301,7 +301,7 @@ export function buildDevice(data, bus) {
 }
 
 // ── provisioning: Track A (USB seeds NVS) + Track B (stock ESPHome) ───────
-export function buildProvision(data, bus) {
+export function buildProvision(data) {
   const p = data.provisioning;
   const wrap = el("div", "sense-prov");
 

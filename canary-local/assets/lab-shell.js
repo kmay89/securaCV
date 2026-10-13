@@ -567,7 +567,7 @@ function familyView() {
   fetch("devices/ecosystem.json", { cache: "no-cache" })
     .then((r) => { if (!r.ok) throw new Error("ecosystem " + r.status); return r.json(); })
     .then((eco) => {
-      grid.replaceChildren(...Object.entries(eco.surfaces).map(([id, s]) =>
+      grid.replaceChildren(...Object.values(eco.surfaces).map((s) =>
         h("div", { class: "allcol" },
           h("h4", {}, s.name),
           h("div", { class: "sitelinks" },
