@@ -763,6 +763,67 @@ does; `test_ha_discovery_ids.cpp` at the 32-character prefix;
     TLS (`"transport"` names the CA mode, `"connected":true`).
   - Artifact: `docs/audit/repro/F241/ca-chain/`.
 
+## canary-wap MQTT config body, settings read and card event lines (F264, F266, F267) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp`
+(`handle_config_post()` refuses a Content-Length of 0 or past
+`csi_mqtt::MAX_CONFIG_BODY_LEN`, 6845 bytes, with 400 before reading, then
+reads the body with `http_body_reader.h`'s `read_all()` until it is whole;
+`config_load()` reads `mqtt.host`, `mqtt.user`, `mqtt.pass` and
+`mqtt.prefix` only behind `isKey()`) and
+`firmware/common/csi/src/csi_event_log_line.h` (staged in the sketch:
+`parse()` refuses a line whose string field holds a backslash or a byte
+outside printable ASCII, which the backfill skips and counts and the boot
+load leaves out of the ring). Host-tested
+(`tests_host/test_mqtt_reinit.cpp`:
+`the_config_post_reads_a_body_that_arrives_in_pieces`,
+`the_config_post_refuses_a_body_past_its_cap`,
+`an_unconfigured_bridge_reads_its_settings_without_an_error_line`;
+`test_csi_event_log_load.cpp`, `test_wap_event_egress.cpp`;
+`firmware/tests_host/test_csi_event_log_line.cpp`,
+`test_csi_event_backfill.cpp`). Compile is CI's. Owner: U1.
+
+- [ ] **A config body that arrives in several TCP segments is read whole**
+  - Setup: a canary-wap board joined to Wi-Fi with a paired session token, a
+    TLS broker whose CA PEM is about 2 KB, and a laptop with Python 3.
+  - Repro: send `POST /api/mqtt/config` with a body of
+    `{"tls_mode":1,"ca":"<the PEM, newlines as \n>","host":"<broker>","user":"<user>"}`
+    from a script that writes the headers, then the body in three
+    `sendall()` calls with `TCP_NODELAY` set and 300 ms between them (so the
+    CA crosses all three). Then send a request whose `Content-Length` is
+    7000 with that body padded to 7000 bytes.
+  - Expected: the first answers `{"ok":true}`; `GET /api/mqtt/config`
+    answers `"ca_set":true` and the host and user from the body's tail, and
+    the board connects over TLS (before this fix: "ca must be a PEM
+    certificate" or a CA stored cut, and the fields after the cut lost). The
+    second answers 400 `{"ok":false,"reason":"body must be at most 6845
+    bytes"}` at once, and nothing stored changes.
+  - Artifact: `docs/audit/repro/F266/segmented-body/`.
+- [ ] **A debug build whose MQTT bridge was never configured boots without NVS error lines**
+  - Setup: a canary-wap board flashed with `canary-wap-debug` after an NVS
+    erase, a serial monitor at 115200.
+  - Repro: boot it, let the egress write its delivery ceiling, reboot, open
+    `/mqtt` once.
+  - Expected: no `nvs_get_str len fail: mqtt.host NOT_FOUND` line (nor for
+    `mqtt.user`, `mqtt.pass`, `mqtt.prefix`) at either boot or on the page's
+    GET (before this fix: four such lines each time); the page shows the
+    bridge disabled, port 1883 and the default prefix.
+  - Artifact: `docs/audit/repro/F267/debug-boot-log/`.
+- [ ] **An events-log line edited on the card is skipped, not published**
+  - Setup: a canary-wap board with a card and a broker, `mosquitto_sub -v
+    -t '<prefix>/#'` on a laptop.
+  - Repro: stop the broker, let three or more events commit, power off,
+    and on a computer change one line's `"state":"…"` in
+    `/EVENTS/today.ndjson` to `"state":"occ\"`; put the card back, boot,
+    start the broker.
+  - Expected: every other held row arrives on `<prefix>/<id>/events` once,
+    in order, and each body parses (`jq .`); the edited row never does, and
+    `GET /api/csi/events/today` parses and does not list it; the retained
+    `<prefix>/<id>/egress` topic's `planner.skipped` counts it (before this
+    fix the edited row went out as a body `jq` refuses, and the ring row
+    made the events-today answer unparseable).
+  - Artifact: `docs/audit/repro/F264/edited-card-line/`.
+
 ## canary-wap loop-task ownership (F96, F106) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
