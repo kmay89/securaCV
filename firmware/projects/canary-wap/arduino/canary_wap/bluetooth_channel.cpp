@@ -1377,12 +1377,15 @@ bool init() {
   // Concurrency latch: init() can now be entered from the boot bring-up
   // worker task AND the HTTP task (a user tapping Enable/Advertise/Pair
   // during the bring-up window has the handler bring the stack up, F111;
-  // since F235 whenever the stack is down, whatever the saved setting).
-  // NimBLE init is not reentrant, so exactly one caller may run the body;
-  // the loser backs off with false and the handler answers that Bluetooth
-  // is still starting (bring_up_starting()), while GET /api/bluetooth reads
-  // "initializing" (the loop task's view, from init_running()). Cleared on
-  // every exit path (RAII), after the last write of the body.
+  // since F235 whenever the stack is down, Start Advertising and Pair on a
+  // device saved on only once the sketch's boot bring-up is over, F235's
+  // review). NimBLE init is not reentrant, so exactly one caller may run
+  // the body; the loser backs off with false and the handler answers that
+  // Bluetooth is still starting (bring_up_starting()), while GET
+  // /api/bluetooth reads "initializing" (the loop task's view, from
+  // init_running()). Cleared on every exit path (RAII), after the last write
+  // of the body, g_stack_up's publish among them: bring_up_starting() rests
+  // on that order (check_wap_loop_commands.py BV4 holds it).
   bool expected = false;
   if (!__atomic_compare_exchange_n(&g_init_in_progress, &expected, true,
                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
