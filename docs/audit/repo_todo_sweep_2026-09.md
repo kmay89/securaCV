@@ -11879,9 +11879,10 @@ so — see D2 below.)
   `-D warnings` is clean for that target with no source change. A type error
   planted in the Windows-only `hub_enumerate_windows::enumerate()` or hub-io's
   `open_target()` passes the Linux check and fails the Windows one. The MSVC
-  target the runner builds was not checked locally, and the job has not run in
-  CI yet; its first run is the proof that lzma-sys and ring build there.
-  Compile-checked only: nothing runs on Windows. Found here: A87.
+  target the runner builds was not checked locally; in CI, on #1802's
+  340d0253, both `windows-latest` jobs passed `cargo check --all-targets`, so
+  lzma-sys and ring build there. Compile-checked only: nothing runs on
+  Windows. Found here: A87.
 - [ ] **A87 [code] Hub Core's Windows job compiles but neither lints nor
   tests.** `windows-check` (A68) runs `cargo check --all-targets` only. `cargo
   clippy --all-targets -- -D warnings` for `x86_64-pc-windows-gnu` was clean
@@ -12002,7 +12003,9 @@ so — see D2 below.)
   compile passes none, and no in-tree source those compiles include reads one.
   It walks only the `pins/` directories the scripts name, so its reads stay
   inside `canary-local.yml`'s path filter (`check_path_filter_reads.py`, at
-  the package head). By that proof A76 alone moves no dist byte; the Dist
+  the package head; the page logic tests job's reads gate and its Node tests
+  passed in CI on #1802's 340d0253). By that proof A76 alone moves no dist
+  byte; the Dist
   drift check confirms it at the next rebuild, which F258's figure table
   forces anyway.
 - [ ] **A89 [code] figures.json's XIAO ESP32-S3 hardware row serves nothing.**
@@ -12836,8 +12839,10 @@ so — see D2 below.)
   pin the slugger, the URL shapes, the resolver and the CLI's exit codes, and
   run the gate's and the link step's own `run:` scripts on git fixtures. Of
   145 single mutations, 132 fail it; the 2 that pass are equivalent, and the
-  other 11 target replaced code. It has not run on GitHub Actions yet; the
-  mirror PR's own run is its first. Limit: the check reads `main` weekly, so a
+  other 11 target replaced code. On GitHub Actions, the mirror PR's own run on
+  its head (50f496f) passed the link step against the monorepo's `main` and
+  ran `test_lint_readme.py` green in `workflows-lint.yml`; the PR is still
+  open and unmerged. Limit: the check reads `main` weekly, so a
   heading renamed or a file moved upstream still breaks the HACS page until
   that run notices (HA35). Host-tested. Found here: HA35.
 - [ ] **HA35 [code] A monorepo PR that breaks a link on the HACS store page
@@ -12874,9 +12879,10 @@ so — see D2 below.)
   backslashes and quotes that fails on the old script. The binary is the
   upstream release build with its own oniguruma; Alpine 3.18's jq 1.6-r4
   builds the same unpatched source against Alpine's, and the cases have still
-  not run inside the app image itself. The jq download step has not run in CI
-  yet (curl retries three times and fails closed on a digest mismatch).
-  Host-tested. Found here: HA34.
+  not run inside the app image itself. In CI, on #1802's 340d0253, the jq-1.6
+  download and its digest check passed, and the parity, `run_lib` and config
+  render steps passed on it (curl retries three times and fails closed on a
+  digest mismatch). Host-tested and run in CI. Found here: HA34.
 - [ ] **HA34 [code] An empty go2rtc stream name stops the app.** Both
   `serve_wizard._go2rtc_streams_to_cameras` and `discover_cameras.sh` slug a
   stream named `""` to `zone:` (they agree, so the parity cases pass), which
@@ -13280,13 +13286,17 @@ so — see D2 below.)
   are scanned like pages. A self-test holds the original shapes, the six a
   first version missed, and their fixes; index.html's category hover ink
   (#8b5cf6, 4.0:1 at night against 4.2:1 by day) is an ALLOW row with that
-  measurement. On the base tree the guard names all seven rules, seven more,
-  playground's noscript gray and `js/store.js`'s catalog-failure line; all are
-  fixed. In Chromium, in both dark sources with scripts on and off, every
-  fixed panel ink reads 10.0 to 12.6:1 at night (witness `.po .cost .x`
-  6.5:1), up from 1.4 to 2.5:1, and no measured element changes by day. A
-  whole-site night audit with scripts on found 21 dark-ink elements under 3:1
-  before and only linux's `.dash` device mock (the same in both modes) after.
+  measurement. On the base tree the guard names all seven rules and ten more
+  (`.category strong`; `.plain p` on how-it-works, linux and vault;
+  `.status-note p` and `b` on linux and vault; gallery `.how h3`; witness
+  `.po .cost .x`), playground's noscript gray and `js/store.js`'s
+  catalog-failure line (the same gray); all are fixed. In Chromium, in both
+  dark sources with scripts on and off, every fixed panel ink reads 10.0 to
+  12.6:1 at night (witness `.po .cost .x` 6.5:1), up from 1.4 to 2.5:1
+  (witness 3.7:1); the two page-ground lines read 9.4:1, up from 2.5:1; and no
+  measured element changes by day. A whole-site night audit with scripts on
+  found 21 dark-ink elements under 3:1 before and only linux's `.dash` device
+  mock (the same in both modes) after.
   Host-tested in node and Chromium. Found here: W32-W34.
 - [ ] **W32 [code] White ink on night-lifted `--brand` fills reads at 2.45:1
   on the website.** Primary buttons and calls to action on about 40 pages set
@@ -14248,8 +14258,8 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   the same plant under `assets/vendor/` is not read. The bodies of 8f656f63
   (17 and 7) and 989a9ef6 (the dead code "cannot grow back") are wrong; this
   text carries the measured numbers. On the integrated tree, with the other
-  packages' asset edits, the same command passes over the 78 files.
-  `lab-lint.yml` has not run in CI yet. CSS is not linted (CI16).
+  packages' asset edits, the same command passes over the 78 files, and
+  `lab-lint.yml` passed in CI on #1802's 340d0253. CSS is not linted (CI16).
 - [ ] **CI16 [code] No lint keeps unused CSS out of the Lab's stylesheets.**
   The 2026-10 cleanup removed unused CSS from `canary-local/assets` by hand;
   CI12's ESLint job covers the JavaScript only, so a selector no page or

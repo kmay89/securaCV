@@ -90,8 +90,11 @@
   Alpine 3.18 image ships, and `discover_cameras.sh` pipes its payload through
   `printf` instead of `echo`, whose escapes the runner's dash read and the
   app's busybox did not. Compile-checked against the GNU Windows target and
-  host-tested; the Windows job, `lab-lint.yml` and the jq download step have
-  not run in CI yet; nothing runs on Windows. Filed: A87, HA34 and CI16.
+  host-tested. In CI on this PR's 340d0253, the `windows-latest` cargo check
+  passed for both crates, `lab-lint.yml` passed over the 78 files, and the
+  jq-1.6 download, its digest check and the parity steps passed. Nothing runs
+  on Windows, and the parity cases have still not run inside the app image.
+  Filed: A87, HA34 and CI16.
 - **The spelling lint holds the website's word families, and the tree passes
   them (sweep CI9).** `scripts/lint_spelling.py` builds its British forms from
   the same US-stem families as the website's spelling test, pinned to the
@@ -106,21 +109,21 @@
   enclosure comments whose geometry is unchanged (98 previews rendered and
   shared; no STL committed). The website's carried `canary_fit_coupon.scad`
   follows with the weekly carry. **Host-tested**. Filed: CI13-CI15.
-- **The website's Lab playground files are carried, not hand-copied (sweep
-  W31, with the website PR securacv_website#227).** `scripts/carry_to_site.py`
-  gains a `playground` carry that writes the website's `js/playground-data.js`
-  (`canary-local/devices/playground.json` as an ES module) and
-  `js/playground-sim.js` / `js/mode-sim.js` (the upstream sims, whole) under
-  CARRIED headers, checking every source before it writes, so the weekly carry
-  job can refresh them and `fw_version` stops falling behind a firmware
-  release. Pinned by `scripts/tests/test_carry_to_site.py`, which holds the
-  written bytes to the upstream files. The website half (`CARRY_PATHS`, the
+- **The website's Lab playground files are carried, not hand-copied (sweep W22,
+  W23, W31; with the website PR securacv_website#227).**
+  `scripts/carry_to_site.py` gains a `playground` carry that writes the
+  website's `js/playground-data.js` (`canary-local/devices/playground.json` as
+  an ES module) and `js/playground-sim.js` / `js/mode-sim.js` (the upstream
+  sims, whole) under CARRIED headers, checking every source before it writes, so
+  the weekly carry job can refresh them and `fw_version` stops falling behind a
+  firmware release. Pinned by `scripts/tests/test_carry_to_site.py`, which holds
+  the written bytes to the upstream files. The website half (`CARRY_PATHS`, the
   headers, `tests/carry-claims.test.mjs`, the `docs/LAYOUT.md` row) is in the
   website PR, still open, which merges after this one. The same PR lifts the
-  dark ink on panels the night theme darkens, with a guard for the class
-  (W22), and fixes four cleanup leftovers: the flasher's "checks the write"
-  wording, the ID card's public key, the "apple tv" search and two dead night
-  overrides (W23). **Host-tested** in node and Chromium. Filed: W32-W34.
+  dark ink on panels the night theme darkens, with a guard for the class (W22),
+  and fixes four cleanup leftovers: the flasher's "checks the write" wording,
+  the ID card's public key, the "apple tv" search and two dead night overrides
+  (W23). **Host-tested** in node and Chromium. Filed: W32-W34.
 - **HACS mirror: the store page's links into the monorepo are checked (sweep
   HA31, in the mirror PR securacv-homeassistant#28).** The mirror's
   `lint_readme.py` gains `--source <monorepo-checkout>`. It resolves every URL
@@ -130,8 +133,10 @@
   anchors. The mirror's `mirror-freshness.yml` runs it weekly and on
   store-page PRs as its own step, so a renamed heading or a moved
   `scripts/install.sh` fails that step without raising the "mirror has
-  drifted" issue. The mirror PR is still open and has not run on GitHub
-  Actions yet. **Host-tested**. Filed: HA35.
+  drifted" issue. The mirror PR's own run on GitHub Actions, on its head
+  50f496f, passed the link step and `test_lint_readme.py`; the PR is still
+  open and unmerged. The check reads `main` weekly, so a link broken upstream
+  shows a week late at most. **Host-tested**. Filed: HA35.
 
 Nothing in wave 17 is bench-tested, and no running Home Assistant was seen.
 One carried Home Assistant file changes (`www/securacv-evidence-viewer.html`,
