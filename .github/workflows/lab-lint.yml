@@ -5,10 +5,12 @@ name: Lab assets lint
 # by hand; this job keeps the JavaScript half of that from growing back.
 #
 # ESLint with ONE rule, no-unused-vars at its defaults, and the module source
-# type, and nothing else: no config file is read (--no-config-lookup), so the
-# rule cannot be weakened from inside the tree. It lints the first-party files
-# only: the glob stops at canary-local/assets/, so the third-party code under
-# assets/vendor/ is not read.
+# type, and nothing else. Nothing in the tree can weaken that rule: no config
+# file is read (--no-config-lookup), and no comment in a linted file is obeyed
+# (--no-inline-config), so `// eslint-disable-next-line`, `/* eslint-disable */`
+# and `/* eslint no-unused-vars: "off" */` change nothing. It lints the
+# first-party files only: the glob stops at canary-local/assets/, so the
+# third-party code under assets/vendor/ is not read.
 #
 # The ESLint is the one canary-vision's lockfile pins, installed the way
 # viewer.yml's "ESLint (canary-vision)" job installs it (setup-node's npm
@@ -68,6 +70,7 @@ jobs:
         run: >-
           canary-vision/node_modules/.bin/eslint
           --no-config-lookup
+          --no-inline-config
           --rule '{"no-unused-vars": "error"}'
           --parser-options sourceType:module
           'canary-local/assets/*.js'
