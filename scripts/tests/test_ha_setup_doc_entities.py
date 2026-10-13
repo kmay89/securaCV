@@ -13,7 +13,9 @@ guide to the sources instead of to a reader's memory of them:
   - every `zone:` id the guide names passes the kernel's own pattern, read
     from validate_zone_id() in src/lib.rs (lowercased first, as it does), and
     the guide's slug example is what the bridge's slug makes of its zone;
-  - the REST Sensor example asks `/digest`, and its value template renders,
+  - the REST Sensor example asks `/digest` with the bearer token the app's
+    token-gated arm wants, reads the `event_types` field DigestPayload
+    serializes, and its value template renders,
     in Home Assistant's template environment (_ha_jinja), to the sum of the
     digest's boundary-crossing types, and to 0 when the digest counted none;
     the event-type keys it reads are the ones the kernel's digest writes
@@ -130,7 +132,21 @@ class RestSensorExample(unittest.TestCase):
     def test_rest_sensor_asks_the_digest(self):
         self.assertEqual(self.rest["platform"], "rest")
         self.assertTrue(self.rest["resource"].endswith("/digest"))
-        self.assertIn("digest", API.read_text(encoding="utf-8"))
+        api = API.read_text(encoding="utf-8")
+        # The app serves GET /digest behind its capability token (the same
+        # match arm as /events and /status), so the example must send it.
+        self.assertIn('request.path == "/digest"', api)
+        gated = re.search(r'\(\s*"GET"\s*,\s*"/events"\s*\)(?:\s*\|\s*\(\s*"GET"\s*,\s*"[^"]+"\s*\))*\s*=>', api)
+        self.assertIsNotNone(gated, "the token-gated GET arm is where it was")
+        self.assertIn('("GET", "/digest")', gated.group(0))
+        self.assertTrue(str(self.rest.get("headers", {}).get("Authorization", "")).startswith("Bearer "))
+
+    def test_digest_writes_the_field_the_template_reads(self):
+        api = API.read_text(encoding="utf-8")
+        body = api[api.index("pub struct DigestPayload {"):]
+        body = body[: body.index("\n}")]
+        self.assertRegex(body, r"\bpub event_types: BTreeMap<String, u64>,")
+        self.assertIn("value_json.event_types.", self.rest["value_template"])
 
     def test_digest_keys_are_event_type_names(self):
         self.assertIn('format!("{:?}", event.event_type)', API.read_text(encoding="utf-8"))
