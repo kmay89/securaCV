@@ -152,8 +152,8 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   composite action on every PR; `firmware-release.yml` publishes from the same
   matrix. Profiles are the `CANARY_PROFILE_*` defines the sketch reads.
 
-- [ ] **Stabilize Arduino dependency pinning** — the docs half is done; the CI
-  half is the open sub-item below
+- [x] **Stabilize Arduino dependency pinning** — the docs half and the CI
+  half below (#1802); the PR row floats on purpose
   - [x] Tested core + libraries locked in the docs: `arduino/canary_wap/sketch.yaml` pins
         `esp32:esp32 (3.3.8)` and lists ArduinoJson / Crypto / NimBLE-Arduino;
         the firmware SBOM (`scripts/gen_firmware_sbom.py --check --validate`,
@@ -161,11 +161,21 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   - [x] Compatibility notes: `README.md` "Install Libraries" names
         ArduinoJson 7.x, Crypto, and NimBLE-Arduino **2.3.8 or later** (1.x
         compiles with Bluetooth silently disabled).
-  - [ ] Locked in the CI scripts too: the WAP's Arduino-CLI CI rows still
-        build on the weekly "latest" core while the sketch pins 3.3.8, so the
-        box's "in docs + CI scripts" is not met yet.
-        [`firmware/PLATFORMS.md`](../../PLATFORMS.md) records pinning those
-        rows as a release decision for the maintainer, not a lint's call.
+  - [x] Locked in the CI scripts too (#1802, sweep F21): the WAP's release
+        rows (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
+        `csi_module_disable_matrix.yml`) pass `core-version: "3.3.8"`, the
+        sketch's pin; the two release jobs install it exclusively, since they
+        go on to install the display cores in the same job. `firmware.yml`'s
+        PR row keeps floating on the weekly "latest" by design, as the early
+        warning for the next core, so a cut release can differ from its PR
+        build's core; [`firmware/PLATFORMS.md`](../../PLATFORMS.md) records
+        the decision (maintainer to confirm). Evidence: the firmware SBOM
+        lists each row under the core it pins, and
+        `gen_firmware_sbom.py --check --validate` (`lint.yml`) refuses a row
+        pin no WAP sketch profile shares. The libraries stay unversioned in
+        the rows and the profile alike (the README names minimum versions).
+        The release rows compile only when a release runs (CI's, on dispatch
+        or tag).
 
 - [x] **Split oversized `web_ui.h` payload** — superseded by the gzip
   shipping model.

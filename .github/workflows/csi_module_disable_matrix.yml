@@ -61,12 +61,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI + ESP32 core (cached)
-        # All five matrix legs share ONE toolchain cache entry with the
-        # main firmware.yml Arduino jobs — this used to be five separate
-        # >1 GB toolchain downloads per run.
+      - name: Install Arduino CLI + ESP32 core 3.3.8 (cached)
+        # The core the WAP's release rows pin (the sketch.yaml's 3.3.8,
+        # sweep F21, firmware/PLATFORMS.md), so each leg proves a module can
+        # be dropped from the build a release makes. All five legs share ONE
+        # toolchain cache entry (key core-3.3.8, as the other pinned WAP rows) — this
+        # used to be five separate >1 GB toolchain downloads per run.
+        # firmware.yml's PR row floats on "latest" on purpose and keeps its
+        # own entry.
         uses: ./.github/actions/setup-arduino-esp32
         with:
+          core-version: "3.3.8"
           libraries: |
             Crypto
             ArduinoJson

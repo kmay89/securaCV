@@ -136,16 +136,33 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   above); and every library a workflow row pins on a core line (GFX / lvgl /
   NimBLE split their majors along the core boundary) is pinned to the same
   version by that product's profiles on that core
-  ([`sbom/README.md`](../sbom/README.md)). What that leaves, on purpose: the
-  WAP's Arduino-CLI rows (`firmware.yml`, `firmware-release.yml`,
-  `flasher-release.yml`, `csi_module_disable_matrix.yml`, `ram_audit.yml`)
-  pass no `core-version` and build on the action's weekly "latest", while the
-  WAP sketch pins 3.3.8 — the core inside `platform_core3`. The sketch tracks
-  the PlatformIO path; the CI rows float above it by design. Pinning those
-  rows is a release decision (new cache keys, the weekly rotation ends),
-  recorded here when someone makes it, not a lint's call. Note too that the
-  core-3 lines sit on different patch releases (PlatformIO 3.3.8, Arduino-CLI
-  3.3.10); the SBOM lists them as two components rather than one.
+  ([`sbom/README.md`](../sbom/README.md)).
+- **The WAP's Arduino-CLI rows: release rows pinned, the PR row floats** (a
+  release decision, made in #1802, sweep F21; maintainer to confirm). The
+  rows that make or measure what a release ships (`firmware-release.yml`,
+  `flasher-release.yml`, `ram_audit.yml`, `csi_module_disable_matrix.yml`)
+  pass `core-version: "3.3.8"`, the WAP sketch's pin and the core inside
+  `platform_core3`, so the Arduino-CLI and PlatformIO builds of a release
+  ride one core release. The two release jobs install it with
+  `exclusive-core: "true"`, because they go on to install the display's two
+  cores in the same job and a restored `~/.arduino15` can carry those in
+  beside it (`.github/RELEASE_LESSONS.md` 2026-07-29 (k)). `firmware.yml`'s
+  PR row (`build-arduino-cli`) keeps passing no `core-version` and builds on
+  the action's weekly "latest", on purpose: it is the early warning that the
+  next core breaks the sketch, before anyone moves the pin. The cost is
+  stated, not hidden: **a cut release can differ from its PR build's core**.
+  On a PR the Arduino-CLI row proves the sketch on "latest"; the same sources
+  compile on 3.3.8 through the PlatformIO `canary-wap-*` envs and the
+  CSI-module matrix, but the release's own Arduino-CLI invocation on 3.3.8
+  runs only when a release does. Moving the pin is one edit per row plus the
+  sketch's `sketch.yaml` (the SBOM refuses a row pin no WAP profile shares),
+  and the PR row's warning is the reason to make it. What was rejected:
+  pinning the PR row too (the early warning goes with it), and leaving every
+  row on "latest" (a release would build on whatever the action resolved
+  that week, a core no PR had necessarily compiled the sketch on). Note too
+  that the core-3 lines sit on different patch releases (the WAP on 3.3.8 in
+  both build paths, the display's Arduino-CLI rows on 3.3.10); the SBOM lists
+  them as two components rather than one.
 - **`projects/canary-wap/setup.sh`** runs `pio pkg install --global --platform
   espressif32` (unpinned, latest official) for its interactive first-run path.
   That pre-installs a platform; the env's own `platform =` spec still governs

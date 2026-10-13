@@ -51,9 +51,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI + ESP32 core (cached)
+      - name: Install Arduino CLI + ESP32 core 3.3.8 (cached)
+        # The core the WAP's release rows pin (the sketch.yaml's 3.3.8), so
+        # this audit measures the image a release ships (sweep F21,
+        # firmware/PLATFORMS.md). One core in this job, so no exclusive
+        # install.
         uses: ./.github/actions/setup-arduino-esp32
         with:
+          core-version: "3.3.8"
           libraries: |
             Crypto
             ArduinoJson
