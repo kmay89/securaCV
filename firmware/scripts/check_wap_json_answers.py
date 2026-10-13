@@ -2108,7 +2108,7 @@ def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
 # with none to record fail. The lengths are not computed here: where a cut
 # matters the reason says what the builder does with one.
 RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
-    ("api_auth.h", "api_auth_check"): (
+    ("api_auth.h", "api_auth_check_header"): (
         ("retry_str",),
         "the 429 answer: retry_str is snprintf(\"%lu\") of the lockout's seconds, a number outside a "
         "string; body[128] holds the longest answer (63 bytes)"),
