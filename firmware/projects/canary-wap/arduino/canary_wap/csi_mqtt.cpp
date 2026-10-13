@@ -529,11 +529,19 @@ bool config_load(Config* out) {
    * length with its NUL exceeds maxLen; these read with MAX_*_LEN, so a
    * value of exactly MAX_*_LEN characters, which the POST stores, read back
    * as nothing: the prefix as the default, the host as none. A value longer
-   * than its member (none this firmware writes) is still refused that way. */
-  prefs.getString(NVS_KEY_HOST,   out->host,   sizeof(out->host));
-  prefs.getString(NVS_KEY_USER,   out->user,   sizeof(out->user));
-  prefs.getString(NVS_KEY_PASS,   out->pass,   sizeof(out->pass));
-  prefs.getString(NVS_KEY_PREFIX, out->prefix, sizeof(out->prefix));
+   * than its member (none this firmware writes) is still refused that way.
+   * Each is read only when it is there (sweep F267), as the time zone and
+   * the CA are: getString() logs "nvs_get_str len fail: <key> NOT_FOUND" at
+   * error level for a missing key, and the shared namespace exists on a
+   * device whose bridge was never configured (the egress's ceiling record
+   * creates it at boot), so every boot, re-init and config GET or POST of a
+   * debug build printed four such lines. A missing key leaves the member as
+   * the memset above left it, as the refused read did: an empty host, user
+   * and password, and the default prefix below. */
+  if (prefs.isKey(NVS_KEY_HOST))   prefs.getString(NVS_KEY_HOST,   out->host,   sizeof(out->host));
+  if (prefs.isKey(NVS_KEY_USER))   prefs.getString(NVS_KEY_USER,   out->user,   sizeof(out->user));
+  if (prefs.isKey(NVS_KEY_PASS))   prefs.getString(NVS_KEY_PASS,   out->pass,   sizeof(out->pass));
+  if (prefs.isKey(NVS_KEY_PREFIX)) prefs.getString(NVS_KEY_PREFIX, out->prefix, sizeof(out->prefix));
   prefs.end();
   if (!out->prefix[0]) strncpy(out->prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
   if (out->port == 0)  out->port = out->tls ? DEFAULT_PORT_TLS : DEFAULT_PORT;

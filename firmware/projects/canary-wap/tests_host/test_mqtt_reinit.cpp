@@ -1195,6 +1195,68 @@ void test_the_settings_read_on_a_fresh_nvs_logs_nothing() {
   std::printf("PASS the_settings_read_on_a_fresh_nvs_logs_nothing\n");
 }
 
+// Sweep F267: once anything has created the shared "csi" namespace (the
+// egress writes its delivery ceiling there at boot, csi_event_egress.cpp),
+// the read-only open succeeds, and config_load() read the host, user,
+// password and prefix with getString() whether or not they were there.
+// Arduino-ESP32 3.3.8's getString() logs "nvs_get_str len fail: <key>
+// NOT_FOUND" at error level for a missing key (the stub counts each), so a
+// debug build whose bridge was never configured printed four error lines at
+// every boot, re-init and config GET or POST. Each is now read behind
+// isKey(), as the time zone and the CA are: no line, and the defaults the
+// refused reads left (no host, user or password, the default prefix,
+// disabled, port 1883, discovery on). A namespace holding only some of the
+// strings reads those and logs nothing for the rest.
+void test_an_unconfigured_bridge_reads_its_settings_without_an_error_line() {
+  stub_nvs().clear();
+  stub_nvs_created().clear();
+  {
+    Preferences p;   // the egress's ceiling record, as it writes it
+    CHECK(p.begin("csi", false));
+    CHECK(p.putULong(csi_mqtt::NVS_KEY_DELIVERED, 0xC0000040u) > 0);
+    p.end();
+  }
+  CHECK(stub_nvs_has_namespace("csi"));
+  const int logs = stub_nvs_error_logs();
+  csi_mqtt::Config cfg;
+  std::memset(&cfg, 0x5A, sizeof cfg);   // config_load() owns every field
+  CHECK(csi_mqtt::config_load(&cfg));
+  if (stub_nvs_error_logs() != logs) {
+    std::printf("FAIL config_load() on an unconfigured namespace logged %d error line(s)\n",
+                stub_nvs_error_logs() - logs);
+  }
+  CHECK(stub_nvs_error_logs() == logs);
+  CHECK(!cfg.enabled && cfg.port == 1883 && cfg.discovery && !cfg.ca_set);
+  CHECK(cfg.tls_mode == 0 && !cfg.tls);
+  CHECK(cfg.host[0] == '\0' && cfg.user[0] == '\0' && cfg.pass[0] == '\0');
+  CHECK(std::string(cfg.prefix) == "securacv");
+
+  // The config GET reads the same way: no line either.
+  const int before_get = stub_nvs_error_logs();
+  const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(get.req.status == "200 OK");
+  CHECK(stub_nvs_error_logs() == before_get);
+
+  // Some of the strings stored: those come back, the rest stay at their
+  // defaults, and nothing is logged.
+  {
+    Preferences p;
+    CHECK(p.begin("csi", false));
+    CHECK(p.putString(csi_mqtt::NVS_KEY_HOST, "10.0.0.7") > 0);
+    CHECK(p.putString(csi_mqtt::NVS_KEY_PREFIX, "attic") > 0);
+    p.end();
+  }
+  const int before_some = stub_nvs_error_logs();
+  csi_mqtt::Config some;
+  CHECK(csi_mqtt::config_load(&some));
+  CHECK(stub_nvs_error_logs() == before_some);
+  CHECK(std::string(some.host) == "10.0.0.7" && std::string(some.prefix) == "attic");
+  CHECK(some.user[0] == '\0' && some.pass[0] == '\0');
+  stub_nvs().clear();
+  stub_nvs_created().clear();
+  std::printf("PASS an_unconfigured_bridge_reads_its_settings_without_an_error_line\n");
+}
+
 // ── GET /api/mqtt/config (sweep F227) ──────────────────────────────────
 
 // The old format of GET /api/mqtt/config's answer (an unescaped %s per
@@ -1703,6 +1765,8 @@ struct Test {
 const Test kTests[] = {
     {"a_config_post_reinits_on_the_loop_task", test_a_config_post_reinits_on_the_loop_task},
     {"the_settings_read_on_a_fresh_nvs_logs_nothing", test_the_settings_read_on_a_fresh_nvs_logs_nothing},
+    {"an_unconfigured_bridge_reads_its_settings_without_an_error_line",
+     test_an_unconfigured_bridge_reads_its_settings_without_an_error_line},
     {"a_publish_in_flight_keeps_its_client", test_a_publish_in_flight_keeps_its_client},
     {"the_test_handler_reports_the_new_clients_connect", test_the_test_handler_reports_the_new_clients_connect},
     {"the_test_handler_is_bounded", test_the_test_handler_is_bounded},
