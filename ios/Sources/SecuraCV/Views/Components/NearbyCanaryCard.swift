@@ -209,6 +209,10 @@ struct NearbySetupSheet: View {
     /// (each Bluetooth sighting rebuilds it), and a Keychain read there is
     /// a main-thread stall per advert.
     @State private var remembered: HouseholdWiFi?
+    /// The hub's broker login (a Keychain item too), read in begin() with
+    /// the Wi-Fi for the same reason — the done card used to read it in
+    /// `body`, once per render (sweep A75).
+    @State private var hubLogin: HubSecretStore.BrokerLogin?
     @State private var verdict: ImprovClient.Outcome?
     @State private var paired = false
     /// Joined but not paired, and how to pair it later — shown in the done
@@ -443,7 +447,7 @@ struct NearbySetupSheet: View {
             appearRow
             Button("Done") { dismiss() }
         } footer: {
-            if let login = HubSecretStore.brokerLogin(), canary.family == .vision || canary.family == .sense {
+            if let login = hubLogin, canary.family == .vision || canary.family == .sense {
                 Text("Its hub login, if it asks for one: \(login.username). The Set up screen copies the password for you.")
             }
         }
@@ -483,6 +487,7 @@ struct NearbySetupSheet: View {
     private func begin() async {
         stage = .connecting
         remembered = HouseholdWiFiStore.load()
+        hubLogin = HubSecretStore.brokerLogin()
         guard let c = store.ble.beginSetup(canary.peripheralID) else {
             stage = .failed("That Canary isn't in range any more — power it on near this phone and try again.")
             return

@@ -285,6 +285,15 @@ jobs:
         # that touches UserDefaults must ship a PrivacyInfo.xcprivacy or the
         # upload is rejected by email after CI is green.
         run: python3 scripts/lint_apple_plists.py
+      - name: No Keychain read on an iPhone view's render path
+        # A SwiftUI view's @State initial values run on every init and its
+        # body on every change the fleet publishes — during a scan, once per
+        # Bluetooth sighting — and a Keychain read is a synchronous trip to
+        # securityd on the main thread. The 2026-10 review moved one such
+        # read out of a @State initializer and left three more behind (sweep
+        # A75). The readers are derived from the sources; the tests in
+        # scripts/tests/test_lint_ios_keychain_reads.py pin every verdict.
+        run: python3 scripts/lint_ios_keychain_reads.py
       - name: App icon catalogs are complete (stdlib PNG header check)
         # Runs on the macOS job too, but that one is gated behind
         # ENABLE_IOS_BUILD; this is the every-PR Linux copy.
