@@ -4532,79 +4532,63 @@ static esp_err_t handle_config_post(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// POST /api/export: the witness bundle header (version, device, firmware,
+// ruleset, export time, chain position, record count, public key), answered
+// INLINE beside ok:true (sweep F278). It used to be written only to the card
+// and answered as download_url "/api/download?path=...", a route nothing
+// registers, so the dashboard's Export always failed after a good export.
+// The bundle is a fixed set of short fields (a few hundred bytes of JSON), so
+// the handler holds it whole and the page saves the answer itself, as the
+// PlatformIO canary's handle_export does. With a card in, the same header is
+// still written to /EXPORT/bundle_<ms>.json (the export staging area POST
+// /api/logs/rotate trims), and the answer names that copy in card_path; a
+// card that is missing or refuses the write costs the copy, not the export.
 static esp_err_t handle_export(httpd_req_t* req) {
   g_health.http_requests++;
 
-  // Check SD card availability using hardware state (non-blocking)
-  if (!sd_is_available()) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "SD card not available";
-    doc["sd_state"] = sd_state_name(g_hw.sd_state);
-    doc["sd_available"] = false;
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
-  }
-
-  // Verify SD card is still present before proceeding
-  if (!sd_verify_present()) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "SD card was removed during operation";
-    doc["sd_state"] = sd_state_name(g_hw.sd_state);
-    doc["sd_available"] = false;
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
-  }
-
-  // Create export bundle
-  char export_path[64];
-  // Root-level /EXPORT: the SD library already roots paths at the card, so
-  // the old "/sd/EXPORT" spelling addressed a literal "sd" subdirectory
-  // that nothing ever created — every bundle write failed on a card
-  // provisioned with the /EXPORT dir the mount path mkdirs.
-  snprintf(export_path, sizeof(export_path), "/EXPORT/bundle_%u.json", (unsigned)millis());
-
-  File file = SD.open(export_path, FILE_WRITE);
-  if (!file) {
-    // SD operation failed - mark as error
-    sd_op_failure();
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "Failed to create export file";
-    doc["sd_state"] = sd_state_name(g_hw.sd_state);
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
-  }
-
-  // Write export header
-  JsonDocument header;
-  header["version"] = PROTOCOL_VERSION;
-  header["device_id"] = g_device.device_id;
-  header["firmware"] = FIRMWARE_VERSION;
-  header["ruleset"] = RULESET_ID;
-  header["export_time_ms"] = millis();
-  header["chain_seq"] = g_device.seq;
-  header["records_total"] = g_health.records_created;
+  JsonDocument doc;
+  doc["version"] = PROTOCOL_VERSION;
+  doc["device_id"] = g_device.device_id;
+  doc["firmware"] = FIRMWARE_VERSION;
+  doc["ruleset"] = RULESET_ID;
+  doc["export_time_ms"] = millis();
+  doc["chain_seq"] = g_device.seq;
+  doc["records_total"] = g_health.records_created;
 
   char pubkey_hex[65];
   hex_to_str(pubkey_hex, g_device.pubkey, 32);
-  header["pubkey"] = pubkey_hex;
+  doc["pubkey"] = pubkey_hex;
 
-  serializeJson(header, file);
-  file.close();
+  // The card copy. Root-level /EXPORT: the SD library already roots paths
+  // at the card, so the old "/sd/EXPORT" spelling addressed a literal "sd"
+  // subdirectory that nothing ever created.
+  char export_path[64] = "";
+  const bool card = sd_is_available() && sd_verify_present();
+  if (card) {
+    snprintf(export_path, sizeof(export_path), "/EXPORT/bundle_%u.json", (unsigned)millis());
+    File file = SD.open(export_path, FILE_WRITE);
+    bool whole = false;
+    if (file) {
+      // The header alone, as before; a short write is no copy.
+      whole = serializeJson(doc, file) == measureJson(doc);
+      file.close();
+      if (!whole) SD.remove(export_path);
+    }
+    if (whole) {
+      sd_op_success();
+      log_health(SCV_LOG_INFO, SCV_CAT_USER, "Export created", export_path);
+    } else {
+      sd_op_failure();
+      export_path[0] = '\0';
+      log_health(SCV_LOG_NOTICE, SCV_CAT_STORAGE, "Export card copy failed", nullptr);
+    }
+  } else {
+    log_health(SCV_LOG_INFO, SCV_CAT_USER, "Export created (no card copy)", nullptr);
+  }
 
-  // Mark successful SD operation
-  sd_op_success();
-
-  log_health(SCV_LOG_INFO, SCV_CAT_USER, "Export created", export_path);
-
-  JsonDocument doc;
   doc["ok"] = true;
-  doc["download_url"] = String("/api/download?path=") + export_path;
+  doc["sd_available"] = card;
+  if (export_path[0]) doc["card_path"] = export_path;
 
   String response;
   serializeJson(doc, response);

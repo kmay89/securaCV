@@ -552,6 +552,34 @@ clean-device-name:
 run: run-device-name
 clean: clean-device-name
 
+# POST /api/export answers the bundle it exports (sweep F278): canary_wap.ino's
+# handle_export(), cut verbatim (firmware/tests_host/cut_functions.awk), over
+# the fake SD card (stubs/sd_fake) and stand-ins for a flat ArduinoJson, the
+# health log and http_send_json. The answer carries ok:true and every bundle
+# field and names no URL (it used to name /api/download, which nothing
+# registers); a card copy is named in card_path only when the card took the
+# whole header; no card still exports.
+EXPORT_BIN = test_export_answer
+EXPORT_SRC = test_export_answer.cpp
+EXPORT_INC = test_export_answer.inc
+EXPORT_CUT = ../../../tests_host/cut_functions.awk
+
+$(EXPORT_INC): $(SRC_DIR)/canary_wap.ino $(EXPORT_CUT) Makefile
+	awk -v 'sigs=static esp_err_t handle_export(httpd_req_t* req) {' \
+	  -f $(EXPORT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(EXPORT_BIN): $(EXPORT_SRC) $(EXPORT_INC) json_strict.h arduino_globals.h $(wildcard stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/sd_fake -I . -o $@ $(EXPORT_SRC)
+
+.PHONY: run-export-answer clean-export-answer
+run-export-answer: $(EXPORT_BIN)
+	$(call run_marked,$(EXPORT_BIN))
+clean-export-answer:
+	rm -f $(EXPORT_BIN) $(EXPORT_INC)
+
+run: run-export-answer
+clean: clean-export-answer
+
 # The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
 # sketch's csi_module_settings_* readers, by the shared
 # csi_module_settings_nvs.h rule, and its boot init through one read-only
@@ -1683,7 +1711,7 @@ clean: clean-mqtt-identity
 # The cut .inc files are its prerequisites, since the preprocessor reads
 # them: run it standalone through `make run-arduino-globals`.
 .PHONY: run-arduino-globals
-run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS)
+run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS) $(EXPORT_INC)
 	python3 check_arduino_globals.py
 
 run: run-arduino-globals
