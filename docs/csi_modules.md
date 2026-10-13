@@ -227,22 +227,34 @@ a noisy period, set `default_ceiling_per_hour` defensively — the runtime
 caps the burst and the bundler still surfaces a single summary row.
 
 The ceiling counts rows, not emits. An emit that opens a bundle spends one
-slot; an emit merged into its key's open bundle spends none; and a bundle
-reopened after its 10-minute window or its 2-minute quiet gap spends one
-like any opening. Re-emitting a held state to refresh its row is therefore
-free inside the window, but a state held past the window reopens every 10
-minutes, which is 6 slots an hour. A ceiling at or under that rate is full
-after about an hour in one state, and then the module's next transition is
-refused until a slot ages out, up to about ten minutes (the ceiling is
-checked before the bundler runs, so the held state's own refreshes are
-refused too). Size the ceiling
-above the window rate plus the transitions you need to keep.
+slot. An emit that merges into its key's open bundle spends none and is
+never refused, even at a full ceiling: the chokepoint asks the bundler
+first (`csi_bundler_peek()`), on the values it has already cleaned, and by
+the bundler's own expiry, so a bundle past its 2-minute quiet gap or its
+10-minute window is not one it merges into. A bundle reopened after its
+window or its gap spends one slot like any opening. Re-emitting a held
+state to refresh its row is therefore free while its bundle is open, but a
+state held past the window reopens every 10 minutes, which is 6 slots an
+hour. So that a held state cannot shut out the change that ends it, a
+ceiling of two or more keeps its last slot for an opening whose (type,
+state) differs from the module's most recent opening (sweep F90). A state
+held on its own therefore opens at most the ceiling less one of its own
+bundles in the counter's hour; the window it cannot reopen goes without an
+open row until a slot ages out, up to about ten minutes; and the
+transition out of it is admitted at once. A ceiling of 1 has no slot to
+spare: the held state's reopening takes it, and a transition waits until it
+ages out, as before. A row that commits at the emit (ambient, or no
+`state_name`) is not an opening: it takes any free slot, the last
+included, and leaves the module's most recent opening as it was. Size the
+ceiling above the window rate plus the transitions you need to keep.
 
 The ceiling's hour is six 10-minute buckets, the current one and the five
-before it, not a sliding 60 minutes. Any six consecutive buckets hold at
-most the ceiling's openings, but openings that bunch at a bucket edge can
-put up to twice the ceiling in one sliding hour, and a bundled row commits
-when its bundle closes, after the bucket that counted it (sweep F132).
+before it, not a sliding 60 minutes, and that is the decision (sweep F132;
+`csi_event_set_module_ceiling()` in `csi_event.h` says so too). Any six
+consecutive buckets hold at most the ceiling's openings, but openings that
+bunch at a bucket edge can put up to twice the ceiling in one sliding hour,
+and a bundled row commits when its bundle closes, after the bucket that
+counted it.
 
 ## Dismiss feedback
 

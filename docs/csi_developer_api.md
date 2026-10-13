@@ -203,17 +203,24 @@ trees close bundles the same way, once per main loop (`csi_bundler_tick`);
 until sweep F81 the canary base closed every bundle after each CSI window,
 so each of its observations was a row of its own, committed within a
 second. A module's hourly ceiling counts rows: a bundle that opens spends
-one slot, an observation merged into its open bundle spends none, and a
-bundle that reopens after its ten minutes or its quiet gap spends one like
-any other opening (sweep F80). The ceiling's hour is its six 10-minute
-buckets, not a sliding 60 minutes, so one sliding hour can hold up to twice
-the ceiling's rows (sweep F132). A state held for an hour therefore spends
-six slots on its own rows, which is all of `core.presence`'s six an hour:
-until one ages out, the next transition is refused, and so is every further
-observation of the held state (measured on the host: after an hour or more
-in one state the transition waits up to about ten minutes, 7 to 602 s
-depending on when a slot ages out, and the held state's rows carry one
-observation each).
+one slot, an observation merged into its open bundle spends none and is
+never refused, even at a full ceiling, and a bundle that reopens after its
+ten minutes or its quiet gap spends one like any other opening (sweeps F80,
+F90). The ceiling's hour is its six 10-minute buckets, not a sliding 60
+minutes, so one sliding hour can hold up to twice the ceiling's rows; that
+is the decision (sweep F132). A state held past its window reopens every
+ten minutes, six times an hour, which is all of `core.presence`'s six, so
+the ceiling keeps its last slot for a change of state: with a ceiling of
+two or more, an opening at the last slot is admitted only when its (type,
+state) differs from the module's most recent opening (sweep F90). A state
+held on its own therefore commits at most five of its rows in the
+counter's hour, goes up to about ten minutes once an hour with no open row,
+and the transition out of it is admitted at once (host-tested on the
+library and on the canary's bridge, holds of one to three hours at several
+clock phases). Before F90 the ceiling was checked before the bundler: after
+an hour or more in one state the transition waited up to about ten
+minutes, 7 to 602 s depending on when a slot aged out, and every refresh of
+the held state's open bundle was refused too.
 
 Both trees also keep an SD event log, `/EVENTS/today.ndjson`, one committed
 row per line in one shared format

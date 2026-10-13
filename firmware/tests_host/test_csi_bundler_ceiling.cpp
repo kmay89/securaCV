@@ -210,9 +210,9 @@ static int test_emits_just_past_the_gap_spend_the_ceiling() {
 // bundle every 30 s spends one slot per BUNDLE, not one per refresh, so a
 // real state change after 45 minutes of it still gets through. (Each
 // 10-minute window is a new bundle and a new row, so it does spend one slot
-// per window: an hour of unbroken presence fills a 6/hour ceiling on its
-// own. That cost is the ceiling's, older than F80, and is tracked in the
-// backlog as F90.)
+// per window: an hour of unbroken presence would fill a 6/hour ceiling on
+// its own. Since F90 the ceiling keeps its last slot for a change of state;
+// the F90 tests below hold a state for hours.)
 static int test_refreshes_of_an_open_bundle_stay_free() {
   power_on();
   uint32_t admitted = 0, emits = 0;
@@ -389,11 +389,17 @@ struct KeyModel {
   uint32_t opened_ms;
   uint32_t last_ms;
   uint32_t handle;
+  bool closed;          // a bundle of this key has closed
+  uint32_t closed_ms;   // when it did (its window's end or its gap's)
 };
 static bool model_open(KeyModel* k) {
   if (k->open && (g_now_ms - k->opened_ms >= CSI_BUNDLER_WINDOW_MS ||
                   g_now_ms - k->last_ms >= CSI_BUNDLER_MAX_GAP_MS)) {
     k->open = false;
+    k->closed = true;
+    const uint32_t window_end = k->opened_ms + CSI_BUNDLER_WINDOW_MS;
+    const uint32_t gap_end = k->last_ms + CSI_BUNDLER_MAX_GAP_MS;
+    k->closed_ms = (int32_t)(window_end - gap_end) < 0 ? window_end : gap_end;
   }
   return k->open;
 }
@@ -405,6 +411,7 @@ struct Tally {
   uint32_t refreshes_moved;     // admitted, but not into the open bundle
   uint32_t attempts;            // openings tried
   uint32_t refused;             // openings refused (a full ceiling, or the last slot)
+  uint32_t longest_closed_ms;   // the longest a key went from a close to its next opening
 };
 
 // Every opening this run admitted, with the counter's first bucket.
@@ -438,7 +445,10 @@ static void emit_modeled(const char* state, KeyModel* k, Tally* t) {
     ++t->refused;
     return;
   }
-  *k = KeyModel{true, g_now_ms, g_now_ms, h};
+  if (k->closed && g_now_ms - k->closed_ms > t->longest_closed_ms) {
+    t->longest_closed_ms = g_now_ms - k->closed_ms;
+  }
+  *k = KeyModel{true, g_now_ms, g_now_ms, h, false, 0};
   if (g_open_n < sizeof(g_open_at) / sizeof(g_open_at[0])) g_open_at[g_open_n++] = g_now_ms;
 }
 
@@ -481,7 +491,10 @@ static void hold_then_change(uint32_t phase_ms, uint32_t hold_ms, Tally* t, KeyM
 // One state held one, two and three hours, at eight clock phases. No
 // refresh of the open bundle is refused, every one merges into it, the
 // change of state is admitted at once, and the openings, the change's
-// included, stay within the ceiling in every six buckets. Before F90 the
+// included, stay within the ceiling in every six buckets. The price of the
+// kept slot: once an hour the held state has no open bundle until a slot
+// ages out, never longer than a bucket (and the 7 s to the next refresh)
+// after its bundle closed. Before F90 the
 // ceiling filled with the held state's own reopenings within the first hour
 // and then refused the open bundle's refreshes and the change alike.
 static int test_a_held_state_never_refuses_a_refresh_or_the_change() {
@@ -505,10 +518,13 @@ static int test_a_held_state_never_refuses_a_refresh_or_the_change() {
       CHECK(change.open);                          // admitted at once
       CHECK(tc.refused == 0);
       CHECK(max_openings_in_six_buckets() <= kCeiling);
+      CHECK(t.longest_closed_ms <= kBucket + 7 * kSecond);
       if (hours == 3 && phase == 0) {
         std::printf("  hold 3 h: %u refreshes, none refused; %u of %u reopenings refused "
-                    "(last slot or full); the change admitted at once\n",
-                    (unsigned)t.refreshes, (unsigned)t.refused, (unsigned)t.attempts);
+                    "(last slot or full), at most %u s without an open bundle; the change "
+                    "admitted at once\n",
+                    (unsigned)t.refreshes, (unsigned)t.refused, (unsigned)t.attempts,
+                    (unsigned)(t.longest_closed_ms / kSecond));
       }
     }
   }
