@@ -10,7 +10,9 @@ CI9). This suite holds:
   or ALLOW word is) is clean, and it has teeth: a family dropped from the
   rule, the word list dropped from it, the case flag dropped, or a rule made
   greedy, makes it report;
-- the generated pairs cover every family, prefix and suffix the rules name;
+- the generated pairs cover every family, prefix and suffix the rules name,
+  and the ported lists are pinned by digest to the website commit they
+  were ported from;
 - the cached word-run check finds exactly the lines a per-line search would;
 - main() stops with exit 2 before reading a file when the self-test reports
   (a missed form, an eaten correct word, a pattern the word runs cannot see),
@@ -28,7 +30,9 @@ Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import re
 import subprocess
 import sys
@@ -177,9 +181,28 @@ class Coverage(unittest.TestCase):
         for p in L.ER_PREFIXES:
             self.assertIn(p + L._stems(L.ER_NOUNS, "er")[1] + "re" + "s", uk)
 
-    def test_each_pair_differs_and_the_us_side_is_the_stem_spelling(self):
+    def test_each_pair_differs(self):
         for us, uk in L.family_pairs():
             self.assertNotEqual(us.lower(), uk.lower())
+
+    def test_the_port_is_pinned_to_its_website_source(self):
+        # What was ported, pinned: every stem, prefix and suffix list and the
+        # word list, as they stand at website origin/main 32fa634 (all equal
+        # there today, compared list by list). A stem dropped or added here
+        # is a family change the website does not have, so it must be a
+        # visible edit to this digest, made with the same edit over there.
+        names = ["DOUBLE_L", "DOUBLE_L_PREFIXES", "DOUBLE_L_SUFFIXES",
+                 "OR_NOUNS", "OR_PREFIXES", "IZE_VERBS", "IZE_PREFIXES",
+                 "IZE_SUFFIXES", "YZE_VERBS", "YZE_SUFFIXES", "ER_NOUNS",
+                 "ER_PREFIXES", "ER_SUFFIXES", "SE_NOUNS", "SE_SUFFIXES"]
+        blob = json.dumps({"lists": {n: getattr(L, n) for n in names},
+                           "word_list": sorted(L.WORD_LIST.split("|"))},
+                          sort_keys=True)
+        self.assertEqual(
+            hashlib.sha256(blob.encode()).hexdigest(),
+            "739ecc6d50899ea45a0917330c018aa1f1b03ec1fa21eb84b352732240633c48")
+        # SHIPPED is built from the first verb: keep it the one that shipped.
+        self.assertEqual(L.DOUBLE_L[0], "travel")
 
     def test_families_are_built_from_us_words_only(self):
         # The stems the rules are made of are US spellings: none is banned.

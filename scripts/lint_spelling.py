@@ -190,7 +190,7 @@ DOUBLE_L_SUFFIXES = ["ed", "ing", "er", "ers", "or", "ors"]
 
 # -or nouns; the British spelling inserts a u, and everything built on it
 # (plurals, -ed, -ful, -less, -able, -ite, -hood, -way) keeps the u, so the
-# rule takes any word ending after it. "glamour" is absent: US English keeps
+# rule takes any word ending after it. "glamor" is absent: US English keeps
 # the u in that one.
 OR_NOUNS = ["color", "behavior", "neighbor", "honor", "odor", "labor", "favor",
             "flavor", "humor", "rumor", "harbor", "armor", "vapor", "endeavor",
