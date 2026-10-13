@@ -5,7 +5,7 @@
  * bytes into a small, STABLE picture a human can eyeball — the same primitive
  * OpenSSH prints for `ssh-keygen -lv` (sshkey.c fingerprint_randomart, the
  * "drunken bishop" walk by Loss/Limmer/von Gernler). For a *witness* device
- * this is not decoration: the operator memorises the shape once, and a swapped
+ * this is not decoration: the operator memorizes the shape once, and a swapped
  * board or tampered key draws a visibly different picture. It's identity you can
  * check with your eyes, needing no tool.
  *

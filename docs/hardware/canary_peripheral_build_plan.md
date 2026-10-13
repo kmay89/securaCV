@@ -339,7 +339,7 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   presets (`battery_full`, `compact_plain`, `battery_weather`), per-printer fit
   tolerances, an opt-in **weather mode** (printed TPU gasket + drip-edge lid +
   sealed camera-disc seat, ≈ IP54 splash resistance) and opt-in **wall mounting**
-  (blind keyholes / screw tabs). The weather-kit parts are itemised in
+  (blind keyholes / screw tabs). The weather-kit parts are itemized in
   [`bom_canary_wap.csv`](./bom_canary_wap.csv) (items 21–26). Print the clip
   coupon and verify against your hardware before printing the full case; for
   harsh outdoor exposure the polycarbonate ENC1 remains the rated path.

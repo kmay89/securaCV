@@ -1184,7 +1184,7 @@
   HTML instruction page, including Android's `/generate_204`. Android only
   treats a network as "validated/online" when that probe returns **HTTP 204
   No Content**; any other response flips it to "Wi-Fi has no internet,"
-  which de-prioritises the AP and eventually disassociates.
+  which de-prioritizes the AP and eventually disassociates.
 - **Fix:** Answer probes per-platform (the "hybrid" strategy):
   - **Apple** (`/hotspot-detect.html`, `/library/test/success.html`) → the
     instruction page. This pops the Captive Network Assistant sheet (which

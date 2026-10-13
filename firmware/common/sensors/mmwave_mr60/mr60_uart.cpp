@@ -4,7 +4,7 @@
  *
  * Incremental, byte-at-a-time state machine that hunts for the 0x01 SOF,
  * validates the header checksum + bounded payload length, validates the data
- * checksum, decodes the known frame types, and resynchronises after any
+ * checksum, decodes the known frame types, and resynchronizes after any
  * validation failure by dropping the latched SOF byte and re-hunting. Unknown
  * (but well-framed) types are skipped and counted. No dynamic allocation: a
  * fixed reassembly buffer plus a small decoded-frame ring.

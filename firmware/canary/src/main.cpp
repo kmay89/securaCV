@@ -3732,7 +3732,7 @@ static void emit_self_manifest() {
   // Only the scan build carries a fleet[]; size it for the WORST case so a full,
   // maximally-flagged roster never overflows to {"error":...} exactly when it's
   // most interesting. Worst peer — max age (uint32) + every status word —
-  // serialises to ~119B; FLEET_ROSTER_MAX (16) of them ≈ 1.9KB, plus the base
+  // serializes to ~119B; FLEET_ROSTER_MAX (16) of them ≈ 1.9KB, plus the base
   // manifest (full command set + features + 64-hex keys) ≈ 1.4KB → ~3.3KB. 4KB
   // clears that with headroom. Non-scan builds keep the small buffer (their
   // fleet[] is always empty), so RAM doesn't regress there.

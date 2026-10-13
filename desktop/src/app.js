@@ -6829,7 +6829,7 @@ function hubValidateAccount() {
   const pass = $("hub-acct-pass").value;
   const pass2 = $("hub-acct-pass2").value;
   const hint = $("hub-acct-hint");
-  // Intent to pre-make an account is signalled by a PASSWORD — a name or
+  // Intent to pre-make an account is signaled by a PASSWORD — a name or
   // username alone can't make a login and must never block a plain flash
   // (they may be remembered from last time). And because the password field
   // lives inside the collapsed panel, "requested" can only ever become true

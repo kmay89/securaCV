@@ -8,7 +8,7 @@
 //! whether we can trust a pinned hash or must fall back to HA's published
 //! `.sha256`.
 //!
-//! It stays pure and dependency-free: the desktop app deserialises the JSON into
+//! It stays pure and dependency-free: the desktop app deserializes the JSON into
 //! a [`CatalogView`] (it already has serde for the flasher catalog) and calls
 //! [`resolve`]. Keeping the parsing in the app and the *reasoning* here means the
 //! resolution logic is unit-tested in `hub-core` on every PR, same as the disk

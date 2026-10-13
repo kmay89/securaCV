@@ -119,7 +119,7 @@ Response (200):
 ```
 
 Field rules — flat, mirroring `wizard::Status` 1:1 so the handler
-serialises with no manual rename layer:
+serializes with no manual rename layer:
 
 - `state` ∈ `{unconfigured, pairing, training, ready}` — 1:1 with
   `wizard::SetupState`.
@@ -248,7 +248,7 @@ Request: no body. Bearer-auth + rate-limited (admin action).
 Calls `tests::run_all(&report)` (NOT `run_all_conformance` alone — the
 red-team scenarios are part of the spec coverage and the response
 example below includes them). The response mirrors `tests::Report`
-field-for-field so the handler is a thin serialiser:
+field-for-field so the handler is a thin serializer:
 
 ```json
 {

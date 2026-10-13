@@ -47,7 +47,7 @@ echo "Checking anonymous (user-equivalent) pullability on GHCR…"
 echo
 
 # Fetch a manifest anonymously; print "HTTP_CODE\nBODY". Retries transient
-# failures (GHCR briefly 503s while a just-pushed manifest materialises).
+# failures (GHCR briefly 503s while a just-pushed manifest materializes).
 fetch_manifest() {
   local tag="$1" token code body attempt
   body=$'\n000'
