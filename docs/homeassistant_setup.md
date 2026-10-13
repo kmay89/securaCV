@@ -613,7 +613,7 @@ says online; the **Online** sensor stays available to report offline.
    - **Motion** and **Occupancy** — standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)
    - **WiFi AP**, **WiFi Station**, **MQTT**, **Bluetooth**, **Mesh Network**, **Chirp Network** — per-transport connectivity, diagnostic and **disabled by default** — enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it — see the [transport catalog](#transport-catalog))
    - **Mesh Connected** — Opera mesh peers present, with peer and relay counts (`mesh_connected`; `mesh` topic, unsigned)
-   - **Chirp Active** — Chirp community network enabled and ready, with the session emoji and alert counters (`chirp_active`; `chirp` topic, unsigned)
+   - **Chirp Active** — Chirp community network on: the canary-wap's channel is on (active, cooldown or muted) rather than disabled, with the firmware's own word in its `channel_state` attribute (`chirp_active`; `chirp` topic, unsigned)
 
    Events:
    - **Tamper events** — one event entity per Canary with the ten tamper types above as its event types; fires on the device's live `tamper` publishes, with `kind` and `device_id` (`tamper_events`)
