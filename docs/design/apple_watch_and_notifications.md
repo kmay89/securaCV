@@ -81,8 +81,8 @@ every surface (iPhone, Watch, web, HA, displays):
 
 | Tier | When | iOS/watchOS delivery | Web delivery | Sound/haptic |
 |---|---|---|---|---|
-| **Digest** | Routine: household presence, ambient events, daily summary | `.passive` — no light-up, no sound, sits in Notification Center / Smart Stack | No push at all; visible on next open + morning digest | none |
-| **Important** | Phase 8 says notable: non-household presence, device offline past tolerance, health warning | `.timeSensitive` — breaks through Focus, once | Web Push, normal | single |
+| **Digest** | Routine: activity on a single weak channel (radio, sound or PIR alone), ambient events, daily summary. No tier keys on who someone is or whether they belong to the household ([decision record](household_presence_and_posture.md) D6) | `.passive` — no light-up, no sound, sits in Notification Center / Smart Stack | No push at all; visible on next open + morning digest | none |
+| **Important** | Corroborated presence (two or more physically independent channels agree, or a camera or radar reports a person — [`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §7.2), device offline past tolerance, health warning | `.timeSensitive` — breaks through Focus, once | Web Push, normal | single |
 | **Critical** | Tamper, chain-integrity failure, heartbeat declared **dark/failed** | `.critical` (entitlement pending — ship `.timeSensitive` until granted, per `iphone_companion_app.md` §10 #6) | Web Push flagged urgent | distinct, repeats until acked |
 
 Doctrine, in five rules (these are the §5b properties made operational):
