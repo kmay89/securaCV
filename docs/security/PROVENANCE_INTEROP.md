@@ -212,8 +212,9 @@ Frontier models do not attack the cryptography; they attack the two places a
 human stands between a request and a signature. The documented 2024–2026
 record — the Arup deepfake video-call fraud (~$25.6M), FBI IC3's ~$893M in
 AI-linked fraud losses, FinCEN's alert on GenAI defeating identity
-verification, and the Bybit theft (~$1.4B) where a 3-of-3 hardware multisig
-was drained by swapping the *displayed meaning* of what the signers signed —
+verification, and the Bybit theft (~$1.4B) where a hardware-wallet Safe
+multisig (on-chain threshold: three signatures) was drained by swapping the
+*displayed meaning* of what the signers signed —
 maps directly onto break-glass:
 
 | # | Attack path | Countermeasure | Status |
