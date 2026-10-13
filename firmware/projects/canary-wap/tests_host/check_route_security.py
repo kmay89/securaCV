@@ -14,11 +14,29 @@ landing page at / mints a session for any caller that reaches the device,
 on the home network too, so a route that answers the bearer token or the
 SoftAP password takes the bearer header or a session minted beside a served
 receipt (api_auth_check_credential / _optional), never a gate that takes any
-session. Every function in canary_wap.ino that reads g_device.api_token_str
-or g_device.ap_password other than as the token a gate compares against is
-named in CREDENTIAL_READERS, as an HTTP answer or as a local use (serial,
-NVS, the AP's own bring-up); an unnamed reader fails, and an answer must sit
-in, or be called only from, a route handler gated that way.
+session or the landing's pair token. What it reads, and nothing more:
+
+  - canary_wap.ino: every function that reads g_device.api_token_str,
+    g_device.ap_password or g_device.privkey, the TLS key (g_tls_key_der),
+    or calls derive_api_token() / derive_ap_password(), other than as the
+    token a gate compares against, is named in CREDENTIAL_READERS as an HTTP
+    answer or a local use (serial, NVS, the AP's own bring-up, a module's
+    init); an unnamed reader fails, and an answer must sit in, or be called
+    only from, a route handler gated that way (the gate names are matched
+    in code, not in string literals).
+  - every other sketch file: each line that names a module's copy of the
+    token (csi_integration.cpp's g_api_token, a register_routes module's
+    auth_token_storage(), csi_mqtt.cpp's s_api_token_provider) has one of
+    the shapes in TOKEN_COPY_LINES, and a `tok` read from one goes only to
+    an auth check or a null test.
+  - csi_mqtt.cpp's POST /api/mqtt/config: a save that keeps the stored
+    broker password and moves it asks authorized_for_credential() (the
+    bearer header or an owner's session, no session gate) before
+    config_save().
+
+It is a text check: a gate inside a branch that never runs, or a secret
+reached through a name it does not know, passes it. The host suites
+(test_receipt_session, test_mqtt_reinit) drive the behavior.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -117,8 +135,9 @@ CREDENTIAL_GATES = (
     "api_auth_check_credential(",
     "api_auth_check_credential_optional(",
 )
-# Gates that take any live session, the landing page's included: never in
-# front of such an answer.
+# Gates that take any live session, the landing page's included, or the
+# pair token the landing page hands any caller: never in front of such an
+# answer.
 ANY_SESSION_GATES = (
     "api_auth_check(",
     "api_auth_check_optional(",
@@ -127,23 +146,62 @@ ANY_SESSION_GATES = (
     "cv_session_validate(",
     "session_validate_cookie(",
     "authorized(req",
+    "pair_token_valid(",
+    "wifi_change_authorize(",
 )
-# Every function in canary_wap.ino that reads the bearer token or the SoftAP
-# password other than as the token a gate or a module compares against.
-# "answer": it puts the secret in an HTTP answer. "local": it never does.
+# Every function in canary_wap.ino that reads the bearer token, the SoftAP
+# password, the device key or the TLS key (or derives one) other than as the
+# token a gate or a module compares against. "answer": it puts a secret in
+# an HTTP answer. "local": it never does.
 CREDENTIAL_READERS = {
     "send_provisioning_receipt": ("answer", "the receipt's token and ap_password (the recovery kit)"),
     "handle_pairing_qr": ("answer", "the pairing QR's payload carries the token"),
     "resolve_ap_password": ("local", "hands the SoftAP its own password at bring-up"),
-    "provision_device": ("local", "derives and stores both at first boot"),
+    "provision_device": ("local", "derives and stores the key, the token and the AP password at first boot"),
+    "derive_api_token": ("local", "computes the token from the device key"),
+    "derive_ap_password": ("local", "computes the SoftAP password from the device key"),
     "print_quick_connect_details": ("local", "USB serial, at the desk"),
     "handle_serial_commands": ("local", "USB serial commands"),
-    "setup": ("local", "boot banner on USB serial"),
+    "setup": ("local", "boot banner on USB serial; hands the key to the mesh"),
+    "loop": ("local", "hands the key to the data-management pass"),
+    "register_api_routes": ("local", "hands the key to device_signature"),
+    "create_witness_record": ("local", "signs a witness record"),
+    "tls_load_from_nvs": ("local", "reads the TLS key from NVS"),
+    "tls_store_to_nvs": ("local", "writes the TLS key to NVS"),
+    "tls_generate_self_signed_cert": ("local", "makes the TLS key"),
+    "start_http_server": ("local", "hands the TLS key to the HTTPS server"),
 }
 _COMPARER = re.compile(
     r"\b(?:api_auth_check\w*|\w+::register_routes|csi_integration::init)\s*\(\s*\w+"
     r"\s*,\s*g_device\.api_token_str\s*\)")
-_SECRET = re.compile(r"\bg_device\.(?:api_token_str|ap_password)\b")
+_SECRET = re.compile(
+    r"\bg_device\.(?:api_token_str|ap_password|privkey)\b|\bg_tls_key_der\b"
+    r"|\bderive_(?:api_token|ap_password)\s*\(")
+
+# Each line, anywhere but canary_wap.ino, that names a module's copy of the
+# token, in the shapes it has today (whitespace folded): stored, checked for
+# null, handed to an auth check, read into a `tok` that only an auth check
+# reads. Anything else (a copy answered, logged, copied on) fails.
+TOKEN_COPY = re.compile(r"\bg_api_token\b|\bauth_token_storage\s*\(\s*\)|\bs_api_token_provider\b")
+TOKEN_COPY_LINES = (
+    r"const char\* g_api_token = nullptr;",
+    r"if \(!g_api_token\) \{",
+    r"if \(api_auth_check_optional\(\(req\), g_api_token\)\) break;",
+    r"g_api_token = api_token;",
+    r"csi_mqtt::set_api_token_provider\(\[\]\(\) -> const char\* \{ return g_api_token; \}\);",
+    r"inline const char\*& auth_token_storage\(\) \{",
+    r"const char\* tok = auth_token_storage\(\);",
+    r"auth_token_storage\(\) = api_token;",
+    r"const char\* \(\*s_api_token_provider\)\(\) = nullptr;",
+    r"const char\* tok = s_api_token_provider \? s_api_token_provider\(\) : nullptr;",
+    r"s_api_token_provider = fn;",
+)
+# What a `tok` read from a copy may meet: its own declaration, an auth check
+# that compares against it, a null test.
+_TOK_USES = re.compile(
+    r"const char\* tok = [^;]*;"
+    r"|\b(?:api_auth_check\w*|authorized|authorized_for_credential)\s*\(\s*\(?req\)?\s*,\s*tok\s*\)"
+    r"|\btok\s*&&|!\s*tok\b")
 _FUNC_HEAD = re.compile(
     r"^(?!(?:if|for|while|switch|return|else|do)\b)[A-Za-z_][\w:<>\*&\s,]*?"
     r"\b([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*(?:const\s*)?\{", re.M)
@@ -179,17 +237,25 @@ def credential_problems(ino: str, handlers: set) -> list:
         if _SECRET.search(_COMPARER.sub("", body)):
             readers.add(name)
     for name in sorted(readers - set(CREDENTIAL_READERS)):
-        problems.append(f"{name}() reads the bearer token or the SoftAP password and is not "
-                        f"in CREDENTIAL_READERS (name it as an answer or a local use)")
+        problems.append(f"{name}() reads the bearer token, the SoftAP password, the device key "
+                        f"or the TLS key and is not in CREDENTIAL_READERS (name it as an answer "
+                        f"or a local use)")
     for name in sorted(set(CREDENTIAL_READERS) - readers):
-        problems.append(f"CREDENTIAL_READERS names {name}(), which reads neither secret — "
+        problems.append(f"CREDENTIAL_READERS names {name}(), which reads none of those secrets — "
                         f"remove or fix it")
+    # A local use never answers a request: a registered route handler named
+    # "local" would hand its read to the caller unchecked.
+    for name in sorted(readers & set(CREDENTIAL_READERS) & handlers):
+        if CREDENTIAL_READERS[name][0] == "local":
+            problems.append(f"{name}() is a registered route handler and reads a secret, so it "
+                            f"is an answer, not a local use (CREDENTIAL_READERS)")
 
     def gated_for_credentials(handler: str) -> str:
         found = bodies.get(handler, [])
         if len(found) != 1:
             return f"{handler}() defined {len(found)} times"
-        body = found[0]
+        # Gate names count in code only: a log line that names a gate is not one.
+        body = blank_string_contents(found[0])
         if not any(g in body for g in CREDENTIAL_GATES):
             return f"{handler}() answers a credential behind no {' / '.join(CREDENTIAL_GATES)}"
         took = [g for g in ANY_SESSION_GATES if g in body]
@@ -222,6 +288,67 @@ def credential_problems(ino: str, handlers: set) -> list:
     return problems
 
 
+def token_copy_problems(sources: dict) -> list:
+    """Every line outside canary_wap.ino that names a module's copy of the
+    token has a TOKEN_COPY_LINES shape, and each `tok` read from one meets
+    only _TOK_USES. `sources` maps file names to comment-stripped text."""
+    problems = []
+    allowed = [re.compile(r) for r in TOKEN_COPY_LINES]
+    for fname, text in sorted(sources.items()):
+        if fname == "canary_wap.ino":
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if not TOKEN_COPY.search(line):
+                continue
+            shape = " ".join(line.strip().rstrip("\\").split())
+            if not any(a.fullmatch(shape) for a in allowed):
+                problems.append(f"{fname}:{lineno}: a new use of the module's copy of the token "
+                                f"({shape!r}): it may only be stored, null-tested or compared "
+                                f"(TOKEN_COPY_LINES)")
+        for name, body in top_level_functions(text):
+            if not re.search(r"const char\* tok = (?:auth_token_storage|s_api_token_provider)", body):
+                continue
+            rest = _TOK_USES.sub("", blank_string_contents(body))
+            if re.search(r"\btok\b", rest):
+                problems.append(f"{fname}: {name}() reads the token into `tok` and uses it other "
+                                f"than in an auth check or a null test")
+    return problems
+
+
+_MQTT_GATE = re.compile(
+    r"if\s*\(\s*moves_the_kept_password\s*\(\s*c\s*,\s*password_sent\s*,\s*ca_changed\s*\)"
+    r"\s*&&\s*!\s*authorized_for_credential\s*\(\s*req\s*,\s*tok\s*\)\s*\)")
+
+
+def mqtt_password_problems(mqtt: str) -> list:
+    """POST /api/mqtt/config (csi_mqtt.cpp, comment-stripped): the save that
+    keeps the stored broker password and moves it asks the owner's gate
+    before config_save(), and that gate takes no session of any origin."""
+    problems = []
+    post = function_body(mqtt, "handle_config_post")
+    if post is None:
+        return ["csi_mqtt.cpp: handle_config_post() not found"]
+    code = blank_string_contents(post)
+    gate = _MQTT_GATE.search(code)
+    save = code.find("config_save(")
+    if gate is None:
+        problems.append("csi_mqtt.cpp: handle_config_post() saves a moved broker with the stored "
+                        "password and no authorized_for_credential() gate")
+    elif save < 0 or gate.start() > save:
+        problems.append("csi_mqtt.cpp: handle_config_post() asks authorized_for_credential() "
+                        "after config_save(), or never saves")
+    owner = re.search(r"static bool authorized_for_credential\s*\([^)]*\)\s*\{(.*?)\n\}", mqtt, re.S)
+    if owner is None:
+        problems.append("csi_mqtt.cpp: authorized_for_credential() not found")
+    else:
+        body = blank_string_contents(owner.group(1))
+        took = [g for g in ANY_SESSION_GATES if g in body]
+        if took or "cv_session_validate_owner" not in body or "api_auth_bearer_header_ok(" not in body:
+            problems.append("csi_mqtt.cpp: authorized_for_credential() must take the bearer header "
+                            "or an owner's session only" + (f" (it takes {', '.join(took)})" if took else ""))
+    return problems
+
+
 def _assert_credential_rule() -> None:
     """The F289 rule on fixtures, every run: the shapes it must pass and
     the ones it must refuse."""
@@ -243,9 +370,19 @@ def _assert_credential_rule() -> None:
         "static void handle_serial_commands() { p(g_device.ap_password); }\n"
         "void setup() {\n  p(g_device.ap_password);\n"
         "  bluetooth_api::register_routes(active_server, g_device.api_token_str);\n}\n"
+        "static bool derive_api_token(const uint8_t k[32], char* o, size_t n) { return true; }\n"
+        "static void derive_ap_password(const uint8_t k[32], char* o, size_t n) {}\n"
+        "void loop() { datamgmt::process(g_device.privkey); }\n"
+        "static void register_api_routes(httpd_handle_t s) { device_signature::init(g_device.privkey); }\n"
+        "static void create_witness_record() { sign_message(g_device.privkey); }\n"
+        "static bool tls_load_from_nvs() { return load(&g_tls_key_der); }\n"
+        "static bool tls_store_to_nvs() { return store(g_tls_key_der); }\n"
+        "static bool tls_generate_self_signed_cert() { return make(&g_tls_key_der); }\n"
+        "static void start_http_server() { c.prvtkey_pem = g_tls_key_der; }\n"
     )
     handlers = {"handle_provisioning_receipt", "handle_pairing_qr", "handle_status_auth"}
     assert credential_problems(good, handlers) == [], credential_problems(good, handlers)
+    qr_gate = "  if (!api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n"
     bad = {
         "the receipt's old first grant": good.replace(
             "api_auth_check_credential_optional(req", "api_auth_check_optional(req"),
@@ -262,10 +399,97 @@ def _assert_credential_rule() -> None:
             "static esp_err_t handle_other(httpd_req_t* req) {\n"
             "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
             "  return send_provisioning_receipt(req, Grant::BEARER);\n}\n"),
+        # The review's plants (F289 review): a gate that takes the landing's
+        # pair token or any session beside the credential gate, and a
+        # credential gate named only in a string literal.
+        "the landing's pair token beside the credential gate": good.replace(qr_gate, (
+            "  if (!csi_integration::pair_token_valid(\"x\") &&\n"
+            "      !api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n")),
+        "wifi_change_authorize beside the credential gate": good.replace(qr_gate, (
+            "  if (!wifi_change_authorize(req) &&\n"
+            "      !api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n")),
+        "a credential gate named only in a string": good.replace(qr_gate, (
+            "  Serial.println(\"api_auth_check_credential(\");\n"
+            "  if (!csi_integration::pair_token_valid(t)) return ESP_OK;\n")),
+        "the SoftAP password derived in a new answer": good + (
+            "static esp_err_t handle_status_ap(httpd_req_t* req) {\n"
+            "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
+            "  derive_ap_password(g_device.privkey, buf, sizeof(buf));\n"
+            "  return httpd_resp_sendstr(req, buf);\n}\n"),
     }
-    handlers_bad = handlers | {"handle_leak", "handle_other"}
+    handlers_bad = handlers | {"handle_leak", "handle_other", "handle_status_ap"}
     for why, text in bad.items():
         assert credential_problems(text, handlers_bad), f"credential rule passed {why}"
+    # A route handler listed as a local use is still a route handler.
+    assert credential_problems(good, handlers | {"handle_serial_commands"}), \
+        "credential rule passed a route handler named as a local use"
+
+    # The modules' copies of the token.
+    copies = {
+        "csi_integration.cpp": (
+            "const char*                             g_api_token          = nullptr;\n"
+            "#define CSI_AUTH_OR_RETURN(req) do { \\\n"
+            "    if (!g_api_token) {                                               \\\n"
+            "    if (api_auth_check_optional((req), g_api_token)) break;           \\\n"
+            "} while (0)\n"
+            "bool init(const char* api_token) {\n  g_api_token = api_token;\n"
+            "  csi_mqtt::set_api_token_provider([]() -> const char* { return g_api_token; });\n}\n"),
+        "chirp_api.h": (
+            "inline const char*& auth_token_storage() {\n  static const char* token = nullptr;\n"
+            "  return token;\n}\n"
+            "static esp_err_t chirp_auth_gated(httpd_req_t* req) {\n"
+            "  const char* tok = auth_token_storage();\n"
+            "  if (tok && !api_auth_check(req, tok)) return ESP_OK;\n  return Real(req);\n}\n"
+            "void register_routes(httpd_handle_t s, const char* api_token) {\n"
+            "  auth_token_storage() = api_token;\n}\n"),
+        "csi_mqtt.cpp": (
+            "const char* (*s_api_token_provider)() = nullptr;\n"
+            "esp_err_t handle_test(httpd_req_t* req) {\n"
+            "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
+            "  if (!authorized(req, tok)) {\n    return ESP_OK;\n  }\n  return ESP_OK;\n}\n"
+            "void set_api_token_provider(const char* (*fn)()) {\n  s_api_token_provider = fn;\n}\n"),
+    }
+    assert token_copy_problems(copies) == [], token_copy_problems(copies)
+    copy_bad = {
+        "a CSI handler answering g_api_token": ("csi_integration.cpp", copies["csi_integration.cpp"] + (
+            "esp_err_t handle_x(httpd_req_t* req) {\n  CSI_AUTH_OR_RETURN(req);\n"
+            "  return httpd_resp_sendstr(req, g_api_token);\n}\n")),
+        "a module logging its copy": ("chirp_api.h", copies["chirp_api.h"].replace(
+            "  auth_token_storage() = api_token;\n",
+            "  auth_token_storage() = api_token;\n  Serial.println(auth_token_storage());\n")),
+        "a tok answered": ("chirp_api.h", copies["chirp_api.h"].replace(
+            "  if (tok && !api_auth_check(req, tok)) return ESP_OK;\n",
+            "  if (tok && !api_auth_check(req, tok)) return ESP_OK;\n  httpd_resp_sendstr(req, tok);\n")),
+        "the MQTT provider answered": ("csi_mqtt.cpp", copies["csi_mqtt.cpp"].replace(
+            "  return ESP_OK;\n}\nvoid set_api",
+            "  return httpd_resp_sendstr(req, s_api_token_provider());\n}\nvoid set_api")),
+    }
+    for why, (fname, text) in copy_bad.items():
+        assert token_copy_problems({**copies, fname: text}), f"token-copy rule passed {why}"
+
+    # POST /api/mqtt/config.
+    mqtt_good = (
+        "static bool authorized_for_credential(httpd_req_t* req, const char* api_token) {\n"
+        "  if (api_token && api_token[0] != '\\0' && api_auth_bearer_header_ok(req, api_token)) return true;\n"
+        "  return cv_session_validate_owner && cv_session_validate_owner(req);\n}\n"
+        "esp_err_t handle_config_post(httpd_req_t* req) {\n"
+        "  if (!authorized(req, tok)) {\n    return ESP_OK;\n  }\n"
+        "  if (moves_the_kept_password(c, password_sent, ca_changed) &&\n"
+        "      !authorized_for_credential(req, tok)) {\n    return ESP_OK;\n  }\n"
+        "  if (!config_save(c)) {\n    return ESP_OK;\n  }\n  return ESP_OK;\n}\n")
+    assert mqtt_password_problems(mqtt_good) == [], mqtt_password_problems(mqtt_good)
+    mqtt_gate = ("  if (moves_the_kept_password(c, password_sent, ca_changed) &&\n"
+                 "      !authorized_for_credential(req, tok)) {\n    return ESP_OK;\n  }\n")
+    mqtt_bad = {
+        "the old handler, no owner's gate": mqtt_good.replace(mqtt_gate, ""),
+        "the owner's gate after the save": mqtt_good.replace(mqtt_gate, "").replace(
+            "  return ESP_OK;\n}\n", mqtt_gate + "  return ESP_OK;\n}\n"),
+        "an owner's gate that takes any session": mqtt_good.replace(
+            "  return cv_session_validate_owner && cv_session_validate_owner(req);",
+            "  return csi_integration::session_validate_cookie(req);"),
+    }
+    for why, text in mqtt_bad.items():
+        assert mqtt_password_problems(text), f"MQTT rule passed {why}"
 
 
 def strip_comments(text: str) -> str:
@@ -527,6 +751,8 @@ def main() -> int:
     ino_handlers = {h.split("::")[-1].split("<")[0]
                     for _u, _m, h, f in routes if f == "canary_wap.ino"}
     failures.extend(credential_problems(ino, ino_handlers))
+    failures.extend(token_copy_problems(sources))
+    failures.extend(mqtt_password_problems(sources.get("csi_mqtt.cpp", "")))
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):
