@@ -47,7 +47,8 @@
           {
             "id": "boot",
             "label": "B · BOOT",
-            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+            "note": "GPIO0 strapping pin, sampled at reset — this firmware also reads it while running: a press wakes the glass, a hold acknowledges",
+            "read_while_running": true
           },
           {
             "id": "reset",
@@ -143,7 +144,8 @@
           {
             "id": "boot",
             "label": "BOOT",
-            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running",
+            "read_while_running": false
           },
           {
             "id": "reset",
@@ -246,7 +248,8 @@
           {
             "id": "boot",
             "label": "BOOT",
-            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+            "note": "GPIO0 strapping pin, sampled at reset — this firmware also reads it while running: a press wakes the glass, a double press summons or dismisses the lamp, a hold acknowledges",
+            "read_while_running": true
           },
           {
             "id": "reset",
@@ -340,7 +343,8 @@
           {
             "id": "boot",
             "label": "BOOT",
-            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+            "note": "GPIO0 strapping pin, sampled at reset — this firmware also reads it while running: a press wakes the glass, a double press summons or dismisses the lamp, a hold acknowledges",
+            "read_while_running": true
           },
           {
             "id": "reset",
@@ -404,7 +408,8 @@
           {
             "id": "boot",
             "label": "BOOT",
-            "note": "GPIO0 strapping pin — this firmware also reads it at runtime for the tap/double/hold ladder"
+            "note": "GPIO0 strapping pin, sampled at reset — this firmware also reads it while running: a press wakes the glass, a double press summons or dismisses the lamp, a hold acknowledges",
+            "read_while_running": true
           },
           {
             "id": "reset",
@@ -467,7 +472,8 @@
           {
             "id": "boot",
             "label": "BOOT",
-            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running",
+            "read_while_running": false
           },
           {
             "id": "reset",
@@ -582,7 +588,8 @@
           {
             "id": "boot",
             "label": "BOOT",
-            "note": "GPIO9 strapping pin, sampled at reset — this firmware also reads it while running: a press wakes the glass, a double press summons or dismisses the lamp, a hold acknowledges, a triple press turns the face a quarter"
+            "note": "GPIO9 strapping pin, sampled at reset — this firmware also reads it while running: a press wakes the glass, a double press summons or dismisses the lamp, a hold acknowledges, a triple press turns the face a quarter",
+            "read_while_running": true
           },
           {
             "id": "reset",

@@ -9,6 +9,8 @@
 // display_living_canary.md, canary_qr_onboarding.md,
 // getting_started_canary.md) — same voice, same honesty rules.
 
+import { ROM_VOICES } from "../emulator/web/bench.js";
+
 async function allQuiet(ctx) {
   ctx.emu.setTimeScale(1);
   ctx.setHour(10);
@@ -423,6 +425,9 @@ export const BENCH_FIXES = [
       },
       {
         title: "Second guess: it's in download mode",
+        // quotes the ROM's download banner: offered only where the board's
+        // ROM voice prints it (benchFixesFor, sweep A83)
+        rom: [{ kind: "download", quote: "waiting for download" }],
         body:
           "If BOOT was held (or wedged by an enclosure misfit) when the " +
           "board last reset, the ROM sits in download mode: rail up, PWR " +
@@ -443,6 +448,8 @@ export const BENCH_FIXES = [
   },
   {
     symptom: "Serial says 'waiting for download'",
+    // the symptom itself quotes the ROM's download banner (sweep A83)
+    rom: [{ kind: "download", quote: "waiting for download" }],
     steps: [
       {
         title: "That's the ROM, not a fault",
@@ -555,20 +562,28 @@ export const BENCH_FIXES = [
       },
       {
         title: "Tell deliberate reboots from brownouts",
+        // quotes the ROM's restart and power-on banners: offered only where
+        // the board's ROM voice prints both (benchFixesFor, sweep A83)
+        rom: [{ kind: "swreset", quote: "RTC_SW_SYS_RST" }, { kind: "poweron", quote: "POWERON" }],
         body:
           "The reset reason in the ROM banner never lies: RTC_SW_SYS_RST " +
           "is the firmware rebooting itself; a brownout means power, not " +
-          "software — undersized supply or a dying battery. Restore Wi-Fi " +
-          "and the reboots stop.",
-        stage: async (ctx) => {
-          ctx.emu.setWifi(true);
-          ctx.emu.setTimeScale(1);
-        },
+          "software — undersized supply or a dying battery.",
         onDevice:
           "Reboot-looping on real glass? Read the rst: line at the top of " +
           "each boot. POWERON in a loop = power problem. RTC_SW_SYS_RST in " +
           "a loop = it can't reach your network — fix the network, not the " +
           "board.",
+      },
+      {
+        title: "Restore Wi-Fi and the reboots stop",
+        body:
+          "Wi-Fi back, time at ×1: the countdown never reaches its reset, " +
+          "and the display stays up with everything it learned.",
+        stage: async (ctx) => {
+          ctx.emu.setWifi(true);
+          ctx.emu.setTimeScale(1);
+        },
       },
     ],
   },
@@ -578,6 +593,9 @@ export const BENCH_FIXES = [
       {
         title: "Correct — and that's a design fact",
         strap: true, // names the BOOT strap: benchFixesFor() says the board's own
+        // true only where the running firmware never reads BOOT (the bench
+        // block's boot button says, sweep A83)
+        boot: "ignored",
         body:
           "BOOT is GPIO0, a strapping pin the ROM samples at reset. While " +
           "the firmware runs, this display never reads it (witness canaries " +
@@ -590,11 +608,30 @@ export const BENCH_FIXES = [
         },
       },
       {
+        title: "This board's firmware does read it",
+        strap: true, // names the BOOT strap: benchFixesFor() says the board's own
+        // true only where the running firmware reads BOOT (sweep A83)
+        boot: "read",
+        body:
+          "BOOT is GPIO0, a strapping pin the ROM samples at reset, and on " +
+          "this board the running firmware reads it too: its bench card " +
+          "lists what each press does (hover the BOOT chip). On real " +
+          "hardware, a press that does nothing is a press that never " +
+          "reaches the pin — a case that misses the button, or a stuck " +
+          "one. This bench's BOOT holds the strap only and is not wired to " +
+          "the twin's button input, so the glass will not answer it. Hold " +
+          "it AND press RESET — download mode.",
+        stage: async (ctx) => {
+          ctx.bench?.setBootHeld(true);
+          ctx.note?.("BOOT held — the strap only; the bench does not press the twin's button");
+        },
+      },
+      {
         title: "Release it before the next reset",
         body:
-          "The only way BOOT 'does something' is by being low at the wrong " +
-          "moment. Released, every reset boots the app. (We released it " +
-          "for you.)",
+          "BOOT's one trap on a bench is being low at the wrong moment: " +
+          "held through a reset, it parks the ROM waiting for a flasher. " +
+          "Released, every reset boots the app. (We released it for you.)",
         stage: async (ctx) => {
           ctx.bench?.setBootHeld(false);
         },
@@ -612,17 +649,36 @@ export const BENCH_FIXES = [
 // A step flagged `strap` names that pin; on a board whose bench block names
 // another (`rom.boot_strap`: the Nightlight's ESP32-C3 straps BOOT on GPIO9)
 // it says that board's pin instead (sweep A59).
+// A flow or step that quotes the mask ROM (`rom`: each { kind, quote }) is
+// offered only where the board's ROM voice (bench.js's ROM_VOICES, by its
+// bench block's `rom.chip`) prints a line of that kind holding the quote: the
+// Nightlight's ESP32-C3 prints no restart or download banner the Lab can
+// quote, so no flow tells it to look for one. A step marked `boot` is
+// offered only where the board's BOOT button says the running firmware
+// reads it ("read") or never does ("ignored"): `read_while_running`, and
+// neither where the bench block does not say (sweep A83).
 const FLOWS_STRAP = "GPIO0";
+function romSays(profile, quotes) {
+  if (!quotes) return true;
+  const voice = ROM_VOICES[profile?.rom?.chip];
+  return !!voice && quotes.every(({ kind, quote }) => typeof voice[kind] === "string" && voice[kind].includes(quote));
+}
+function bootSays(profile, boot) {
+  if (!boot) return true;
+  const reads = (profile?.buttons || []).find((b) => b.id === "boot")?.read_while_running;
+  return typeof reads === "boolean" && (boot === "read") === reads;
+}
 export function benchFixesFor(profile) {
   const strap = profile?.rom?.boot_strap;
   const restrap = !!strap && strap !== FLOWS_STRAP;
-  if (profile?.power?.battery && !restrap) return BENCH_FIXES;
   const pin = (t) => (typeof t === "string" ? t.split(FLOWS_STRAP).join(strap) : t);
   return BENCH_FIXES
+    .filter((f) => romSays(profile, f.rom))
     .map((f) => ({
       ...f,
       steps: f.steps
         .filter((st) => profile?.power?.battery || !st.battery)
+        .filter((st) => romSays(profile, st.rom) && bootSays(profile, st.boot))
         .map((st) => (restrap && st.strap ? { ...st, title: pin(st.title), body: pin(st.body), onDevice: pin(st.onDevice) } : st)),
     }))
     .filter((f) => f.steps.length);

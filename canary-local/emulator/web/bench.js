@@ -162,6 +162,36 @@ export function benchRibbon(profile) {
     `no firmware here or on your desk can turn ${many ? "them" : "it"} off.`;
 }
 
+// ── BOOT held while the app runs (sweep A83) ────────────────────────────
+// The strap is sampled at reset on every board; whether the running firmware
+// also reads the pin is the board's own story, and its bench block's BOOT
+// button says it (`read_while_running`, held to the button's note and to the
+// firmware's pin map by bench.test.js): main.cpp's BOOT grammar (a press
+// wakes the glass, a hold acknowledges) runs wherever the board's pins.h
+// names a BOOT_BUTTON_PIN. The bench's BOOT chip holds the strap only: it is
+// not wired to the twin's button input (emu_button), so on a board that reads
+// the pin the bench says so rather than implying the firmware saw a press. A
+// bench block that does not say gets neither story.
+/**
+ * The bench's line for BOOT held while the app runs, from the board's bench
+ * block (its `rom.boot_strap` and its BOOT button's `read_while_running`).
+ * @param profile the registry entry's `bench` block
+ */
+export function bootHeldLine(profile) {
+  const boot = (profile?.buttons || []).find((b) => b.id === "boot");
+  const strap = profile?.rom?.boot_strap;
+  const name = strap ? `BOOT (${strap})` : "BOOT";
+  if (boot?.read_while_running === false) {
+    return `${name} held — a strapping pin, sampled only at reset. Running firmware ignores it.`;
+  }
+  if (boot?.read_while_running === true) {
+    return `${name} held — a strapping pin, sampled at reset. This board's firmware also reads it while running, ` +
+      "but the bench holds it as the strap only: it is not wired to the twin's button, so the firmware sees no press.";
+  }
+  return `${name} held — a strapping pin, sampled at reset. This board's bench block does not say whether its ` +
+    "running firmware reads it.";
+}
+
 // ── The power plane ─────────────────────────────────────────────────────
 // Modes: "run" (rail up, app booted), "download" (rail up, ROM waiting —
 // BOOT was low at reset), "off" (no rail). The truth table the tests pin:
@@ -251,11 +281,7 @@ export class BenchPower {
   setBootHeld(held) {
     if (this.bootHeld === !!held) return;
     this.bootHeld = !!held;
-    if (this.bootHeld && this.mode === "run") {
-      this._log(
-        "BOOT held — a strapping pin, sampled only at reset. Running firmware ignores it."
-      );
-    }
+    if (this.bootHeld && this.mode === "run") this._log(bootHeldLine(this.profile));
   }
 
   pressReset() {

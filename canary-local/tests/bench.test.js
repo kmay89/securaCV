@@ -301,7 +301,11 @@ test("a bench with no battery path is offered no step that stages a battery", as
     }
   }
   assert.ok(BENCH_FIXES.some((f) => f.steps.some((st) => st.battery)), "some step stages a battery");
-  assert.strictEqual(benchFixesFor(benchProfile("canary-display-dash")), BENCH_FIXES, "a board with a battery gets every flow");
+  // a board with a battery is offered every step that stages one, as written
+  const dashSteps = benchFixesFor(benchProfile("canary-display-dash")).flatMap((f) => f.steps);
+  for (const f of BENCH_FIXES) {
+    for (const st of f.steps) if (st.battery) assert.ok(dashSteps.includes(st), `a board with a battery is offered ${f.symptom}: ${st.title}`);
+  }
   for (const id of ["canary-display-nightstand-s3", "canary-nightlight"]) {
     const offered = benchFixesFor(benchProfile(id));
     assert.ok(offered.length >= 3, `${id}: still a curriculum`);
@@ -709,7 +713,174 @@ test("A59: the pages stage each board's own ROM, and the bench and its flows nam
     const pins = new Set(words.match(/GPIO\d+/g) || []);
     assert.deepStrictEqual([...pins], [dev.bench.rom.boot_strap], `${dev.id}: its flows name ${[...pins].join(", ")} as BOOT`);
   }
-  assert.strictEqual(benchFixesFor(benchProfile("canary-display-dash")), BENCH_FIXES, "an S3 board with a battery still gets the flows as written");
+  // an S3 board with a battery is offered every flow, each step as written
+  // (the BOOT steps are the board's own story, sweep A83, below)
+  const dash = benchFixesFor(benchProfile("canary-display-dash"));
+  assert.deepStrictEqual(dash.map((f) => f.symptom), BENCH_FIXES.map((f) => f.symptom), "an S3 board with a battery is offered every flow");
+  for (const f of dash) for (const st of f.steps) assert.ok(BENCH_FIXES.some((g) => g.steps.includes(st)), `${f.symptom}: ${st.title} is offered as written`);
+});
+
+// Sweep A83: the bench told the S3 boards' story on every card. setBootHeld()
+// logged "Running firmware ignores it" and the "Pressing BOOT does nothing"
+// flow said the display never reads BOOT while it runs, on boards whose
+// firmware does (main.cpp's BOOT grammar runs wherever the board's pins.h
+// names a BOOT_BUTTON_PIN: the watch, the 1.47" stick, the Touch 1.69, the
+// AMOLED 2.41 and the Nightlight; the 4.3" and 7" dashes name none, GPIO0
+// being an RGB data line there), and three flows quoted ESP32-S3 ROM lines the
+// Nightlight's ESP32-C3 card never prints. Each bench block's BOOT button now
+// says whether the running firmware reads it (`read_while_running`), held
+// here to its note's words and to the firmware; setBootHeld() narrates from
+// it; and the flows read the board's ROM voice for the lines they quote.
+const ROM_TOKENS = ["waiting for download", "RTC_SW_SYS_RST", "POWERON", "SPI_FAST_FLASH_BOOT", "DOWNLOAD(USB/UART0)", "ESP-ROM"];
+function envFor(dev) {
+  // the PlatformIO env a card's firmware is: its claiming manifest's, else
+  // the env named after the card
+  for (const slug of require("node:fs").readdirSync(join(ROOT, "..", "devices"))) {
+    let m;
+    try { m = JSON.parse(readFileSync(join(ROOT, "..", "devices", slug, "device.json"), "utf8")); } catch { continue; }
+    if (m.lab?.card === dev.id) return m.board.envs[0];
+  }
+  return dev.id;
+}
+function envBlock(ini, env) {
+  const at = ini.indexOf(`\n[env:${env}]\n`);
+  assert.ok(at >= 0, `canary-display.ini has no [env:${env}]`);
+  const rest = ini.slice(at + 1);
+  const end = rest.slice(1).search(/\n\[/);
+  return end < 0 ? rest : rest.slice(0, end + 1);
+}
+
+test("A83: each bench block's BOOT button says whether the running firmware reads it, as its note and the firmware do", () => {
+  const REPO = join(ROOT, "..");
+  const ini = readFileSync(join(REPO, "firmware/envs/platformio/canary-display.ini"), "utf8");
+  const main = readFileSync(join(REPO, "firmware/projects/canary-display/src/main.cpp"), "utf8");
+  // main.cpp reads BOOT while it runs wherever the pin map names one
+  assert.match(main, /#if defined\(BOOT_BUTTON_PIN\) && \(BOOT_BUTTON_PIN >= 0\)\n  \/\/ BOOT-button grammar[\s\S]*?const bool pressed = digitalRead\(BOOT_BUTTON_PIN\) == BOOT_BUTTON_ACTIVE;/,
+    "main.cpp's loop reads BOOT on every board whose pins.h names a BOOT_BUTTON_PIN");
+  const seen = { read: [], ignored: [] };
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const boot = dev.bench.buttons.find((b) => b.id === "boot");
+    assert.strictEqual(typeof boot.read_while_running, "boolean", `${dev.id}: the BOOT button says whether the running firmware reads it`);
+    // the note's words agree with the flag
+    if (boot.read_while_running) {
+      assert.match(boot.note, /, sampled at reset — this firmware also reads it while running: /, `${dev.id}: the note says the firmware reads it`);
+    } else {
+      assert.match(boot.note, /, sampled only at reset — this firmware never reads it while running$/, `${dev.id}: the note says it is never read`);
+    }
+    // ...and the firmware: the env's pin map names a BOOT_BUTTON_PIN or not
+    const block = envBlock(ini, envFor(dev));
+    const pinsDir = /boards\/([a-z0-9-]+)\/pins/.exec(block)?.[1];
+    const cfgDir = /configs\/canary-display\/([a-z0-9-]+)/.exec(block)?.[1];
+    assert.ok(pinsDir && cfgDir, `${dev.id}: its env names a pin map and a config`);
+    const pins = readFileSync(join(REPO, "firmware/boards", pinsDir, "pins/pins.h"), "utf8");
+    const pin = Number(/^#define BOOT_BUTTON_PIN\s+\(?(-?\d+)\)?/m.exec(pins)?.[1]);
+    assert.ok(Number.isInteger(pin), `${dev.id}: ${pinsDir}'s pins.h names its BOOT_BUTTON_PIN`);
+    assert.strictEqual(boot.read_while_running, pin >= 0,
+      `${dev.id}: read_while_running is ${boot.read_while_running}, but ${pinsDir}'s BOOT_BUTTON_PIN is ${pin}`);
+    // the presses it lists are the ones this firmware answers
+    const cfg = readFileSync(join(REPO, "firmware/configs/canary-display", cfgDir, "config.h"), "utf8");
+    if (boot.read_while_running) {
+      assert.strictEqual(/a double press/.test(boot.note), /^#define FEATURE_LANTERN\s+1\b/m.test(cfg),
+        `${dev.id}: the note's double press (the lamp) and ${cfgDir}'s FEATURE_LANTERN disagree`);
+      assert.strictEqual(/a triple press/.test(boot.note), /^#define CD_NIGHTLIGHT\s+1\b/m.test(cfg),
+        `${dev.id}: the note's triple press (the turn) and ${cfgDir}'s CD_NIGHTLIGHT disagree`);
+      assert.match(boot.note, /a press wakes the glass/);
+      assert.match(boot.note, /a hold acknowledges/);
+    }
+    seen[boot.read_while_running ? "read" : "ignored"].push(dev.id);
+  }
+  assert.deepStrictEqual(seen, {
+    read: ["canary-display-watch", "canary-display-nightstand-s3", "canary-display-touch169", "canary-display-amoled241", "canary-nightlight"],
+    ignored: ["canary-display-dash", "canary-display-dash7"],
+  });
+});
+
+test("A83: holding BOOT narrates each board's own story, read off its bench block", async () => {
+  const { BenchPower, bootHeldLine } = await importBench();
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const { bench, events } = rig(dev.bench, BenchPower);
+    bench.setBootHeld(true);
+    const lines = events.filter(([k]) => k === "log").map(([, l]) => l);
+    assert.deepStrictEqual(lines, [bootHeldLine(dev.bench)], `${dev.id}: one line, the board's own`);
+    const [line] = lines;
+    const reads = dev.bench.buttons.find((b) => b.id === "boot").read_while_running;
+    assert.ok(line.startsWith(`BOOT (${dev.bench.rom.boot_strap}) held — a strapping pin`), `${dev.id}: names its strap: ${line}`);
+    assert.strictEqual(/Running firmware ignores it\./.test(line), !reads, `${dev.id}: ${line}`);
+    assert.strictEqual(/This board's firmware also reads it while running/.test(line), reads, `${dev.id}: ${line}`);
+    if (reads) assert.match(line, /not wired to the twin's button, so the firmware sees no press\.$/, "and says the bench does not press it");
+  }
+  // a block that does not say gets neither story
+  const unsaid = bootHeldLine({ rom: { boot_strap: "GPIO0" }, buttons: [{ id: "boot", label: "BOOT", note: "x" }] });
+  assert.ok(!/ignores it|also reads it/.test(unsaid) && /does not say whether its running firmware reads it/.test(unsaid), unsaid);
+  // held in download mode or off, the bench says nothing of the running firmware
+  const { bench, events } = rig(benchProfile("canary-nightlight"), BenchPower);
+  bench.setUsb(false);
+  events.length = 0;
+  bench.setBootHeld(true);
+  assert.ok(!events.some(([k]) => k === "log"), "no running firmware, no story");
+});
+
+test("A83: the troubleshooter quotes only the ROM lines the board's chip prints, and tells its own BOOT story", async () => {
+  const { BENCH_FIXES, benchFixesFor } = await importGuides();
+  const { ROM_VOICES } = await importBench();
+  const voiceText = (chip) => Object.entries(ROM_VOICES[chip] || {})
+    .filter(([k, v]) => k !== "name" && typeof v === "string").map(([, v]) => v).join("\n");
+  for (const t of ROM_TOKENS) assert.ok(voiceText("esp32s3").includes(t), `${t} is a line the S3's voice prints`);
+  const textOf = (f, st) => [f.symptom, st.title, st.body, st.onDevice].filter(Boolean).join(" ");
+  // the tags are honest: a step or flow that quotes a ROM line says which,
+  // and what it says it quotes is in its text
+  for (const f of BENCH_FIXES) {
+    for (const q of f.rom || []) assert.ok(f.symptom.includes(q.quote), `${f.symptom} is tagged with ${q.quote} it does not say`);
+    for (const st of f.steps) {
+      const own = [st.title, st.body, st.onDevice].filter(Boolean).join(" ");
+      const tagged = [...(f.rom || []), ...(st.rom || [])].map((q) => q.quote);
+      for (const t of ROM_TOKENS) {
+        if (own.includes(t)) assert.ok(tagged.includes(t), `${f.symptom}: ${st.title} quotes ${t} untagged`);
+      }
+      for (const q of st.rom || []) {
+        assert.ok(own.includes(q.quote), `${f.symptom}: ${st.title} is tagged with ${q.quote} it does not say`);
+        assert.ok((ROM_VOICES.esp32s3[q.kind] || "").includes(q.quote), `${q.quote} is the S3's ${q.kind} line`);
+      }
+      assert.ok(st.boot === undefined || st.boot === "read" || st.boot === "ignored", `${st.title}: boot is read or ignored`);
+    }
+  }
+  // per board: no offered text quotes a ROM line its chip does not print,
+  // and the BOOT steps are its own
+  const offeredOn = {};
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const voice = voiceText(dev.bench.rom.chip);
+    const reads = dev.bench.buttons.find((b) => b.id === "boot").read_while_running;
+    const offered = benchFixesFor(dev.bench);
+    for (const f of offered) {
+      for (const st of f.steps) {
+        for (const t of ROM_TOKENS) {
+          assert.ok(!textOf(f, st).includes(t) || voice.includes(t), `${dev.id}: "${f.symptom}" / ${st.title} quotes ${t}, which its ${dev.bench.rom.chip} never prints`);
+        }
+        if (st.boot) assert.strictEqual(st.boot === "read", reads, `${dev.id}: ${st.title} tells the other boards' BOOT story`);
+      }
+    }
+    const boot = offered.find((f) => f.symptom === "Pressing BOOT does nothing");
+    assert.ok(boot && boot.steps.length === 2, `${dev.id}: the BOOT flow is offered, its own story and the release`);
+    assert.strictEqual(/never reads it/.test(JSON.stringify(boot.steps.map((st) => st.body))), !reads, `${dev.id}: the BOOT flow says never-read only where it is true`);
+    offeredOn[dev.id] = offered.map((f) => `${f.symptom} (${f.steps.length})`);
+  }
+  // the Nightlight's C3: no download banner and no restart banner to quote,
+  // so the download flow and both quoting steps are left out; the restore
+  // step is not
+  const nl = offeredOn["canary-nightlight"];
+  assert.ok(!nl.some((s) => s.startsWith("Serial says 'waiting for download'")), "the C3 card offers no flow for a banner it never prints");
+  assert.ok(nl.includes("It reboots by itself (2)"), `the C3 card's reboot flow keeps its countdown and its restore: ${nl}`);
+  assert.ok(nl.includes("Screen dark, but the power light is on (1)"), `...and its screen-dark flow drops the download guess: ${nl}`);
+  const s3 = offeredOn["canary-display-watch"];
+  assert.ok(s3.includes("Serial says 'waiting for download' (2)") && s3.includes("It reboots by itself (3)") &&
+    s3.includes("Screen dark, but the power light is on (2)"), `the S3 cards keep every ROM step: ${s3}`);
+  // a block that says nothing of BOOT is offered neither BOOT story
+  const bare = { ...benchProfile("canary-display-dash"), buttons: [{ id: "boot", label: "BOOT", note: "GPIO0 strapping pin" }, { id: "reset", label: "RESET" }] };
+  assert.deepStrictEqual(benchFixesFor(bare).find((f) => f.symptom === "Pressing BOOT does nothing").steps.map((st) => st.title),
+    ["Release it before the next reset"]);
 });
 
 // ── the debug curriculum stages cleanly ─────────────────────────────────
