@@ -45,7 +45,7 @@ def preprocessor() -> list[str] | None:
 def full_block_lines(text: str) -> tuple[int, int]:
     """1-based [start, end) of the `#elif defined(BUILD_PROFILE_FULL)` block that sets FEATURE_*."""
     lines = text.split("\n")
-    starts = [i for i, l in enumerate(lines) if re.match(r"\s*#\s*elif\s+defined\(BUILD_PROFILE_FULL\)\s*$", l)]
+    starts = [i for i, line in enumerate(lines) if re.match(r"\s*#\s*elif\s+defined\(BUILD_PROFILE_FULL\)\s*$", line)]
     for s in starts:
         depth = 0
         for j in range(s + 1, len(lines)):
