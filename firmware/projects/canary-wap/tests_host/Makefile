@@ -28,7 +28,9 @@ SRC_DIR   = ../arduino/canary_wap
 # $(ARDUINO_GLOBALS) itself. check_arduino_globals.py (run by `run`) holds
 # every compile to it by what the preprocessor reads, planned as this file
 # stands and with CXXFLAGS given on make's command line. A change to
-# arduino_globals.h rebuilds nothing by itself: `make -B`.
+# arduino_globals.h rebuilds only the four suites that list it as a
+# prerequisite (fleet-scan cache, identity JSON, JSON writer, device name);
+# for the rest, `make -B`.
 ARDUINO_GLOBALS = -include arduino_globals.h
 override CXXFLAGS += $(ARDUINO_GLOBALS)
 

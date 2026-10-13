@@ -82,26 +82,29 @@
   or the heap guard refused, both taps answered a failed start naming nothing
   and never brought the stack up; only Enable could. Each tap now runs the
   bring-up again and names a refusal (the heap guard's measured RAM, NimBLE's
-  init). On a device saved on, while the stack is down and the sketch's boot
-  bring-up is not over (the provisioning join window, safe mode, the worker
-  and its finalize stage), they leave the stack to it and answer 503:
-  "Bluetooth is still starting; try again in a moment" while another bring-up
-  (the worker's) is running, else "Bluetooth has not started yet; it starts
-  once Wi-Fi setup is done or within five minutes (never in safe mode)". A tap
-  after the worker has brought the stack up succeeds, and its advertising
-  starts at finalize. Enable and a settings POST turning Bluetooth on now
-  answer that "still starting" 503 too, where they answered a failure. A tap
-  that brings the stack up holds the web server's one task for NimBLE's
+  init). Until the sketch's boot bring-up is over they leave the stack to it
+  and answer 503: "Bluetooth has not started yet; it starts once Wi-Fi setup
+  is done or within five minutes (never in safe mode)" before it starts (the
+  provisioning join window, safe mode), and "Bluetooth is still starting; try
+  again in a moment" from the moment it starts until it is over while the
+  stack is down, even after its first init was refused or failed (Enable and a
+  settings POST turning Bluetooth on now answer the same while a bring-up
+  runs, where they answered a failure); a tap after the boot worker has
+  brought the stack up answers 200 and advertises once that bring-up finishes.
+  A tap that brings the stack up holds the web server's one task for NimBLE's
   bring-up (seconds), as Enable does. The dashboard's Bluetooth card drops a
-  refusal once the stack is up. The Bluetooth host harness now runs the real
-  REST handlers over an ArduinoJson stand-in. `check_wap_loop_commands.py`
-  holds the guard, the wait and every direct `bring_up()` call, pins the head
-  of `init()`'s latch, and counts the sketch's two end-of-bring-up marks and
-  their order (384 mutations in the whole check). It does not yet hold where
-  those marks sit or the latch's re-check: mutants that pass are filed
-  (F287). **Host-tested** (`test_bluetooth_commands_wap.cpp`, 77 tests, 1682
-  checks, TSAN clean; `web_ui_logic.test.js`); the compiles are CI's; not
-  bench-tested. Filed: F259, F260, F287 and F288.
+  refusal once it clears, with Bluetooth on or off. The Bluetooth host harness
+  now runs the real REST handlers over an ArduinoJson stand-in, and
+  `check_wap_loop_commands.py` holds the guard, the wait and its two answers,
+  every reference to `bring_up()` (and refuses any other name for its
+  namespace), `init()`'s latch order and its re-check, and where the sketch
+  starts and ends its boot bring-up and its worker hands its result to the
+  finalize stage, each a statement that runs whenever it is reached (436
+  mutations in the whole check). **Host-tested**
+  (`test_bluetooth_commands_wap.cpp`, 77 tests, 1708 checks, TSAN clean;
+  `web_ui_logic.test.js`); the compiles are CI's; not bench-tested. Filed:
+  F259 and F260; the F235 verification's findings (F287, F288) are closed
+  here.
 - **The route lists, the route-match test's reach, the probe-route comment and
   FEATURES.md's REST table say what is served, and the Home Assistant guide is
   held to the sources (sweep F238, F239, F240; and notes on F237 and HA30,

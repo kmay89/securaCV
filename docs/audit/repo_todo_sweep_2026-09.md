@@ -4761,89 +4761,134 @@ so — see D2 below.)
   a host probe on the real `bluetooth_channel.cpp`, at #1762's base and head.
   Found by F210's review (#1762).
   *Done (#1802):* the premise held. On the real handlers (a scratch probe over
-  ArduinoJson 7.4.1 on the pre-wave tree, and the harness below), a device
-  saved on whose boot bring-up NimBLE's init failed or the heap guard refused
-  answered every Start Advertising and Pair tap
-  `{"success":false,"error":"Failed to start advertising"}` (or `... pairing`)
-  with 200, ran no `init()`, and the stack stayed down. The two handlers now
-  take Enable's guard, `if (!bring_up()) { return send_bring_up_refused(req,
-  ...`, with `bring_up()` exactly `is_initialized() || init()`: a tap that
-  needs the stack brings it up whenever it is down, each tap re-running
-  `init()` (which re-checks the heap guard), and none decides a bring-up from
-  the setting. Ahead of that guard, on a device saved on, they leave the stack
-  to the sketch's boot bring-up until it is over (`waits_for_boot_bring_up()`:
-  the stack down, `boot_bring_up_tried()` false, the setting on) and answer
-  503 through `send_boot_bring_up_pending()`: `Bluetooth is still starting;
-  try again in a moment` while the boot worker's `init()` holds the latch,
-  else `Bluetooth has not started yet; it starts once Wi-Fi setup is done or
-  within five minutes (never in safe mode)` (the port's d9e4977b; the
-  package's text said only "after Wi-Fi setup", which main's door makes
-  incomplete). `canary_wap.ino` keeps Bluetooth out of the provisioning join
-  window for at most `BLE_DISCOVERY_MAX_HOLD_MS` (five minutes; a fresh unit
-  with nobody on its SoftAP brings it up within seconds, main's magic-pairing
-  setup door with the scanners held), never brings it up in safe mode, and on
-  FULL its worker and finalize stage call `NimBLEDevice::init()` themselves
+  ArduinoJson 7.4.1 at #1762's base, and the harness below), a device saved on
+  whose boot bring-up NimBLE's init failed or the heap guard refused answered
+  every Start Advertising and Pair tap `{"success":false,"error":"Failed to
+  start advertising"}` (or `... pairing`) with 200, ran no `init()`, and the
+  stack stayed down. The two handlers now take Enable's guard, `if
+  (!bring_up()) { return send_bring_up_refused(req, ...`, with `bring_up()`
+  exactly `is_initialized() || init()`: a tap that needs the stack brings it
+  up whenever it is down, each tap re-running `init()` (which re-checks the
+  heap guard), and none decides a bring-up from the setting. Ahead of that
+  guard, on a device saved on, they leave the stack to the sketch's boot
+  bring-up until it is over (`waits_for_boot_bring_up()`: the stack down,
+  `boot_bring_up_tried()` false, the setting on) and answer 503 through
+  `send_boot_bring_up_pending()`: before the sketch opens its Bluetooth gate
+  (the provisioning join window, up to 5 min, or a whole safe-mode boot)
+  `bluetooth_channel::boot_bring_up_pending_error()`, `Bluetooth has not
+  started yet; it starts once Wi-Fi setup is done or within five minutes
+  (never in safe mode)`; from the gate's opening (`boot_bring_up_started()`,
+  published once by `bringup_worker_started()` with a release store, read with
+  an acquire, never cleared) until the boot bring-up is over, and while any
+  bring-up holds `init()`'s latch, `Bluetooth is still starting; try again in
+  a moment` while the stack is down, even after the worker's `init()` was
+  refused or failed (the verify found a tap after a refused worker init told
+  Bluetooth had not started yet, with Wi-Fi setup done and the refusal
+  recorded; a tap a moment later, after the finalize stage, runs `init()`
+  itself and names its own refusal). Once the worker's `init()` has brought
+  the stack up, a tap answers 200 and its advertising waits for the finalize
+  stage (F167's hold). `canary_wap.ino` keeps Bluetooth out of the
+  provisioning join window, never brings it up in safe mode, and on FULL its
+  worker and finalize stage call `NimBLEDevice::init()` themselves
   (ble_manager, then the Scout's `nimble_scan_init()` on the loop task); the
   boot bring-up is over only when
-  `bluetooth_channel::boot_bring_up_finished()` runs, the last call of
-  `ble_bringup_finalize_if_done()` (after the Scout), or where `xTaskCreate`
-  fails (the review found the first version marking it in
-  `bringup_worker_finished()`, before the Scout's init: a tap there ran
-  `init()` beside it). A bring-up that leaves the stack down submits nothing
-  and answers through `send_bring_up_refused()`, which Enable and a settings
-  POST naming `"enabled": true` use too: 503 `Bluetooth is still starting; try
-  again in a moment` while the boot worker's `init()` holds its latch or has
-  just brought the stack up (`bring_up_starting()` reads the latch first, then
-  the stack; GET /api/bluetooth reads `initializing`), else `init()`'s refusal
-  by name (the heap guard's measured RAM, `NimBLE stack init failed
-  (controller/host bring-up)`, the server). The REST routes are served by one
-  esp_http_server task, so a tap that brings the stack up holds it, and every
-  other request waits, for NimBLE's bring-up (seconds), as Enable's always
-  did. The dashboard's Bluetooth card now puts its `BLE connectivity` subtitle
-  back when a status names no refusal (it kept `Radio off — <reason>`, and the
-  not-registered line, until a reload); `web_assets_gz.h` regenerated;
-  `web_ui_logic.test.js` runs the real `refreshBtStatus()` glue. The harness
-  compiles the real `bluetooth_api.h` over stand-ins for ArduinoJson
-  (`stubs/bt/ArduinoJson.h`, which aborts on a quoted number it cannot parse
-  as 7.4.1 does) and esp_http_server; `test_bluetooth_commands_wap.cpp` holds
-  a tap bringing the stack up whatever the setting (NimBLE's init failed, the
-  heap guard refusing; the stand-in's NimBLE failure is the kind
-  NimBLE-Arduino 2.5.0 can retry, a host model), a tap while the boot worker's
-  bring-up runs, a tap before the boot bring-up is over (the join window past
-  the 5 min hold, safe mode, the window between the worker's result and the
-  end of finalize), `the_worker_never_meets_a_taps_bring_up`, and
-  `threads_a_tap_meets_the_bring_up` on three threads (now deterministic: 0
+  `bluetooth_channel::boot_bring_up_finished()` runs, its last call into the
+  channel, the Scout or ble_manager (after the Scout), just before its `BLE
+  bring-up finalized` log line, or where `xTaskCreate` fails (the review found
+  the first version marking it in `bringup_worker_finished()`, before the
+  Scout's init: a tap there ran `init()` beside it). A bring-up that leaves
+  the stack down submits nothing and answers through
+  `send_bring_up_refused()`, which Enable and a settings POST naming
+  `"enabled": true` use too: 503 `Bluetooth is still starting; try again in a
+  moment` while the boot worker's `init()` holds its latch or has just brought
+  the stack up (`bring_up_starting()` reads the latch first, then the stack;
+  GET /api/bluetooth reads `initializing`), else `init()`'s refusal by name
+  (the heap guard's measured RAM, `NimBLE stack init failed (controller/host
+  bring-up)`, the server). The REST routes are served by one esp_http_server
+  task, so a tap that brings the stack up holds it, and every other request
+  waits, for NimBLE's bring-up (seconds), as Enable's always did. The
+  dashboard's Bluetooth card now puts its `BLE connectivity` subtitle back
+  when a status names no refusal, with Bluetooth on or off (it kept `Radio off
+  — <reason>`, and the not-registered line, until a reload); `web_assets_gz.h`
+  regenerated; `web_ui_logic.test.js` runs the real `refreshBtStatus()` glue
+  (36 tests). The harness compiles the real `bluetooth_api.h` over stand-ins
+  for ArduinoJson (`stubs/bt/ArduinoJson.h`, which aborts on a quoted number
+  it cannot parse as 7.4.1 does) and esp_http_server;
+  `test_bluetooth_commands_wap.cpp` holds a tap bringing the stack up whatever
+  the setting (NimBLE's init failed, the heap guard refusing; the stand-in's
+  NimBLE failure is the kind NimBLE-Arduino 2.5.0 can retry, a host model), a
+  tap while the boot worker's bring-up runs, a tap before the boot bring-up is
+  over (the join window past the 5 min hold and safe mode: the pending text;
+  the gate open before the worker's init, a refused worker init, the window
+  between the worker's result and the end of finalize: still starting), a tap
+  answered 200 between the worker's `init()` and the finalize stage with
+  nothing advertised until it, `the_worker_never_meets_a_taps_bring_up`, and
+  `threads_a_tap_meets_the_bring_up` on three threads (deterministic: 0
   failures in 1600 oversubscribed -O2 runs and 800 TSAN runs, where it had
-  failed about 1 in 10). The suite runs 77 tests and 1682 checks; `make
+  failed about 1 in 10). The suite runs 77 tests and 1708 checks; `make
   tsan-bt-commands` clean; `BT_CMD_DEPS` names `api_auth.h`, which the suite
-  now reads through `bluetooth_api.h` (d9e4977b).
-  `check_wap_loop_commands.py`: C3 holds the wait guard first in Start
+  now reads through `bluetooth_api.h` (d9e4977b). `check_wap_loop_commands.py`
+  (436 self-test mutations refused): C3 holds the wait guard first in Start
   Advertising and Pair and the bring-up guard first in each bring-up handler
-  with no setting or status read there, the bodies of `bring_up()`,
+  with no setting or status read there; the bodies of `bring_up()`,
   `send_bring_up_refused()`, `bring_up_starting()`,
-  `waits_for_boot_bring_up()` and `send_boot_bring_up_pending()` exactly, and
-  every call of `bring_up(`, qualified or not, in every file of the sketch:
-  only as that guard, only in the three handlers and the settings POST (a
-  call through a function pointer gets past it); BV4 pins the head of
-  `init()` (the first look at the stack, the latch taken by the one
-  compare-exchange, then its RAII guard, whose destructor is the release
-  store) and `init_running()`'s acquire load, but a guard destroyed by hand
-  before the stack's publish, and a dropped re-check after the take, pass it
-  and the suite; BV7 holds `boot_bring_up_finished()`'s body (exactly the
-  release store) and counts the sketch's two calls and their order: one after
-  the failed create's `bringup_worker_finished()`, one as the finalize stage's
-  last bluetooth_channel/ble_scout/ble_manager call. It does not yet prove the
-  first sits inside the failed-create branch, or that finalize cannot return
-  before the second: the F235 verification found four mutants that pass it
-  (F287). The check refuses 384 mutations. Between the worker's result and
-  finalize, a tap gets the pending text even when the worker's init was
-  refused, and 200 once it has brought the stack up, its advertising held
-  until finalize; U1's F235 row expects 503 for both (F288). Read against
-  main's magic-pairing door (#1780, #1783) on the port: a saved-off tap brings
-  the stack up as it did before F235, and nothing new bypasses the scanners'
-  hold. Host-tested; the Arduino and PlatformIO compiles are CI's; not
-  bench-tested (U1: the F235 row). Found here: F259 and F260; the F235
-  verification found F287 and F288.
+  `waits_for_boot_bring_up()`, `send_boot_bring_up_pending()`,
+  `boot_bring_up_started()` and `boot_bring_up_tried()` exactly; and every
+  reference to `bring_up`, spelled `bring_up` or `bluetooth_api::bring_up`,
+  called or taken as a function pointer, in every file of the sketch: only as
+  that guard, only in the three handlers and the settings POST; no file of the
+  sketch names the namespace another way (`namespace x = bluetooth_api;` or
+  `using namespace bluetooth_api;`, through which `x::bring_up` went unread:
+  the second verify); a name built by token pasting is a lexical limit, not
+  held. BV4 holds `init()`'s latch order: taken first by the one
+  compare-exchange, the stack looked at again once the latch is held, cleared
+  only by its RAII guard's release store after the stack's publish, with no
+  other mention of `InitLatchClear` or `latch_clear` in `init()`;
+  `init_running()` is the acquire load. BV7 holds where the sketch starts and
+  ends its boot bring-up, each a statement that runs every time it is reached.
+  In `ble_discovery_start_if_due()`:
+  `bluetooth_channel::bringup_worker_started();` (F167's hold, and since the
+  verify the start of the still-starting answer) once, a statement of the
+  gate's body itself, compiled under the gate's `#if FEATURE_BLE ||
+  FEATURE_BLUETOOTH || FEATURE_BLE_SCAN` with `#if FEATURE_BLUETOOTH` alone
+  inside it, with nothing but its `#endif` between it and the `if
+  (xTaskCreate(ble_bringup_task, ...) != pdPASS) {` that follows (no `return`,
+  `goto`, label or statement fits there: it runs whenever the create does, and
+  the create whenever it has run); and, as statements of that failed create's
+  block itself, `bringup_worker_finished();` then
+  `bluetooth_channel::boot_bring_up_finished();`, each once, with no
+  condition, branch, inner block, `return` or `goto` ahead of it there, under
+  the same two guards. In `ble_bringup_finalize_if_done()`: no `return` or
+  `goto` after its head; `bringup_worker_finished();` once, a statement of the
+  body's own under `#if FEATURE_BLUETOOTH` alone; and
+  `bluetooth_channel::boot_bring_up_finished();` once, held the same way, as
+  its last call into the channel, the Scout or ble_manager. In
+  `ble_bringup_task()`: its last statement before its one `vTaskDelete(NULL);`
+  is `__atomic_store_n(&g_ble_bringup_done, true, __ATOMIC_RELEASE);`, a
+  statement of its body's own outside every `#if`, with no `return` or `goto`
+  in the worker, and nothing in the sketch names `g_ble_bringup_done` but its
+  definition, acquire reads and that store. No other function of the sketch
+  makes any of the three channel calls. `bringup_worker_started()` is exactly
+  its own flag and `g_boot_bring_up_started`'s release store,
+  `boot_bring_up_finished()` exactly the tried flag's release store. (The
+  second verify found the start mark, finalize's `bringup_worker_finished()`
+  and the worker's store unheld: a `return` between the start mark and the
+  create held every tap at 503 still starting, its advertising held, until a
+  reboot; finalize's `bringup_worker_finished()` under `#if FEATURE_BLE`,
+  which DEV sets to 0, answered a tap 200 `Advertising started` with nothing
+  on air until a reboot; 19 mutations now hold the three.) BV7 does not hold
+  the path to those functions (that `loop()` reaches
+  `ble_discovery_start_if_due()` and that it runs the finalize stage first), a
+  worker or finalize stage that never reaches its end (a wait that never ends,
+  a restart), or a NimBLE init the finalize stage reaches through a helper
+  called after its mark (the last-call scan is lexical): read, not gated; the
+  sketch is not compiled on the host. Read against main's magic-pairing door
+  (#1780, #1783) on the port: a saved-off tap brings the stack up as it did
+  before F235, and nothing new bypasses the scanners' hold. Host-tested; the
+  Arduino and PlatformIO compiles are CI's; not bench-tested (U1: the F235
+  row, which names each boot window by its serial line and what a tap answers
+  there). Found here: F259 and F260; the F235 verification's findings, filed
+  as F287 and F288, are closed in #1802 (below).
 - [ ] **F259 [code+decision] canary-wap Bluetooth: Enable, a settings POST and
   a saved-off tap still bring the stack up before the boot bring-up is over.**
   F235's review made Start Advertising and Pair on a device saved on wait for
@@ -4881,7 +4926,7 @@ so — see D2 below.)
   channel runs the sketch's registrations after any bring-up, or a late
   bring-up says what it left out. From code; not probed. Found by F235
   (#1802).
-- [ ] **F287 [code] check_wap_loop_commands.py: BV7, BV4 and C3 pass mutants
+- [x] **F287 [code] check_wap_loop_commands.py: BV7, BV4 and C3 pass mutants
   that bring F235's races back.** BV7 counts the sketch's two
   `boot_bring_up_finished()` calls and their order on the squashed bodies, and
   four mutants pass it: the mark moved out of the `xTaskCreate(...) !=
@@ -4907,7 +4952,34 @@ so — see D2 below.)
   outside the guarded handlers, add an `enabled: false` case, and add each
   mutant. From the F235 verification's mutation driver over the check on the
   ported tree. Found by F235's verification (#1802).
-- [ ] **F288 [code] canary-wap Bluetooth: between the boot worker's init and
+  *Done (#1802):* the premise held, and the check now holds each shape. BV7
+  (9c68d8ed, 571f9c26) holds where the sketch starts and ends its boot
+  bring-up and where its worker hands over, each a statement that runs
+  whenever it is reached: the gate's `bringup_worker_started();` with nothing
+  but its `#endif` between it and the `if (xTaskCreate(ble_bringup_task, ...)
+  != pdPASS) {` that follows; `bringup_worker_finished();` and
+  `bluetooth_channel::boot_bring_up_finished();` once each as statements of
+  that failed create's block itself, under the gate's two guards; in
+  `ble_bringup_finalize_if_done()` no `return` or `goto` after its head and
+  both calls as statements of its body under `#if FEATURE_BLUETOOTH` alone;
+  and `ble_bringup_task()` ending with the `g_ble_bringup_done` release store
+  before its one `vTaskDelete(NULL);`, with nothing else in the sketch writing
+  that flag. BV4 (02dffafe) pins `init()`'s re-check of the stack after the
+  take and allows `InitLatchClear` and `latch_clear` only in its head. C3
+  (02dffafe, 4ef784b9) reads every reference to `bring_up`, called or taken as
+  a function pointer, and refuses any other name for the `bluetooth_api`
+  namespace (an alias or a using-directive, which the second verification
+  found hid a call from it). `web_ui_logic.test.js` gains a subtitle case on a
+  status with `enabled: false` (72ef32bc), which a restore gated on
+  `data.enabled` now fails. Every mutant both verifications listed escaped the
+  old check and is refused by the new one: 52 new mutations, 436 in the whole
+  check. Not held: the path from `loop()` to those functions, a stage that
+  never reaches its end, a NimBLE init reached through a helper called after
+  the mark (the scan is lexical), and a name built by token pasting.
+  Host-tested (the check's self-test; the Bluetooth suite, 77 tests, 1708
+  checks; 36 `web_ui_logic.test.js` tests); the sketch is not compiled on the
+  host.
+- [x] **F288 [code] canary-wap Bluetooth: between the boot worker's init and
   the finalize stage, a tap's answer is not what the pending text or U1's
   F235 row says.** (a) After the worker's `init()` was refused (the heap
   guard) or failed, and before finalize, Start Advertising and Pair on a
@@ -4927,6 +4999,27 @@ so — see D2 below.)
   advertised before `finalized`) holds. From the F235 verification's probes
   on the real handlers and channel; not probed on a device. Found by F235's
   verification (#1802).
+  *Done (#1802):* (a) decided for "still starting" (6b9004e5).
+  `bringup_worker_started()` also publishes `g_boot_bring_up_started` (a
+  release store; `boot_bring_up_started()` is its acquire load, never
+  cleared), and `send_boot_bring_up_pending()` answers `Bluetooth is still
+  starting; try again in a moment` from the gate's opening until the boot
+  bring-up is over while the stack is down, even after the worker's `init()`
+  was refused or failed, and the "has not started yet" text only before the
+  gate. The refusal by name was not taken: before finalize it is not the last
+  word (on FULL, ble_manager's and the Scout's NimBLE inits follow), and a tap
+  after finalize runs `init()` itself and names its own refusal, which a 503
+  "still starting" invites. `test_a_tap_before_the_boot_bring_up_waits_for_it`
+  expects still starting after the gate, after a refused init and after the
+  worker's result is taken; reverting only the answer fails it. (b) The
+  checklist's U1 F235 row (a35b77a5) names each boot window by its serial
+  line: 503 with the pending text before `[..] Initializing Bluetooth Low
+  Energy`, 503 still starting until `[OK] Bluetooth initialized`, 200 with the
+  advertising started at finalize between that line and `BLE bring-up
+  finalized` (a health-log line the console prints at the default INFO level),
+  and nothing advertised before `finalized`; the harness holds each claim on
+  the real handlers. Host-tested (77 tests, 1708 checks, TSAN clean); not
+  bench-tested (U1).
 - [x] **F146 [code] A canary-wap Chirp send refused for an unsynced clock
   answers `cooldown`.** `can_send_chirp()` is false both in the cooldown and
   while `time()` is below `MIN_UNIX_TIME`, and the send's refusal (checked in
@@ -5544,8 +5637,10 @@ so — see D2 below.)
   disabling the check's entry rule, code-line rule, shell split, fail-closed
   command rule, redirection drop or command-line plan each fails its
   self-test; a `test_*.cpp` the Makefile does not build fails it. An edit to
-  `arduino_globals.h` alone rebuilds nothing incrementally (`make -B`; CI
-  builds fresh; F286). Host-tested (10 to 15 s with the self-test); the ESP32
+  `arduino_globals.h` alone rebuilds only the four suites that list it as a
+  prerequisite (the fleet-scan cache, identity JSON, JSON writer and device
+  name suites), not the rest that force-include it (`make -B`; CI builds
+  fresh; F286). Host-tested (10 to 15 s with the self-test); the ESP32
   compiles are CI's.
 - [x] **F230 [code] canary-wap: `wap_json_writer.h`'s escaped write trusts a
   length it measured earlier.** `escaped()` checks room for the string's
@@ -9498,8 +9593,8 @@ so — see D2 below.)
   `ble_ota.h`, `ble_presence.h`, `ble_provision.h`, `ble_witness_export.h`,
   `build_config.h`, `health_log.h`, `log_level.h`, `loop_snapshot.h`,
   `nvs_store.h` and `ota_release_key.h`, and an edit to `arduino_globals.h`
-  alone, which every compile there force-includes (F229), rebuilds nothing
-  (its Makefile comment says to use `make -B`). CI builds fresh; a local
+  alone, which every compile there force-includes (F229), rebuilds only the
+  four suites that list it (its Makefile comment says to use `make -B`). CI builds fresh; a local
   `make` after such an edit reruns a stale binary that may still pass.
   Extending that test's two reads to every target in both Makefiles (or
   generating dependency files with `-MMD -MP`) would close the class. Found by
