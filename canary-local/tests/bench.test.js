@@ -5,7 +5,8 @@
 //   rail up ⇔ USB ∨ (battery ∧ switch ∧ charge>0)
 // — the switch gates ONLY the battery path, the straps are sampled only
 // at reset, the charge/power LEDs answer to the rail and the charger
-// (never to firmware), and the ROM banners say what a real ESP32-S3 says.
+// (never to firmware), and each board's ROM banners are its own chip's,
+// quoted from Espressif (sweep A59).
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync } = require("node:fs");
@@ -461,13 +462,172 @@ test("the bench fast-forward scales the battery, not virtual time", async () => 
 
 test("ROM banners say what a real ESP32-S3 says", async () => {
   const { romBanner } = await importBench();
-  assert.match(romBanner("poweron"), /^ESP-ROM:esp32s3-20210327\n/);
-  assert.match(romBanner("poweron"), /rst:0x1 \(POWERON\),boot:0x8 \(SPI_FAST_FLASH_BOOT\)/);
-  assert.match(romBanner("swreset"), /rst:0x3 \(RTC_SW_SYS_RST\)/);
-  assert.match(romBanner("download"), /boot:0x0 \(DOWNLOAD\(USB\/UART0\)\)/);
-  assert.match(romBanner("download"), /waiting for download/);
-  assert.ok(!/waiting for download/.test(romBanner("reset")),
+  const s3 = benchProfile("canary-display-dash").rom;
+  assert.match(romBanner("poweron", s3), /^ESP-ROM:esp32s3-20210327\n/);
+  assert.match(romBanner("poweron", s3), /rst:0x1 \(POWERON\),boot:0x8 \(SPI_FAST_FLASH_BOOT\)/);
+  assert.match(romBanner("swreset", s3), /rst:0x3 \(RTC_SW_SYS_RST\)/);
+  assert.match(romBanner("download", s3), /boot:0x0 \(DOWNLOAD\(USB\/UART0\)\)/);
+  assert.match(romBanner("download", s3), /waiting for download/);
+  assert.ok(!/waiting for download/.test(romBanner("reset", s3)),
     "only a BOOT-low reset waits for a flasher");
+});
+
+// Sweep A59: romBanner() printed the ESP32-S3's banner and strap story for
+// every card, so the Nightlight's twin (an ESP32-C3, BOOT on GPIO9) printed
+// an S3 banner at power-on, reset and download mode. Each bench block now
+// names its chip and BOOT strap (`rom`), the banner is that chip's, every
+// banner line is a quote of the Espressif source bench.js cites, and a kind
+// no source quotes prints a note saying so, never another chip's banner.
+const CHIP_IDS = { "ESP32-S3": "esp32s3", "ESP32-C3": "esp32c3" };
+// The cited sources' lines, as fetched for A59 (esp-idf tag v5.4), each with
+// its file's four-space code indent stripped: what bench.js may print.
+const QUOTED = {
+  esp32s3: [ // docs/en/security/esp32s3_log.inc, lines 6-8 and 70-72
+    "ESP-ROM:esp32s3-20210327", "Build:Mar 27 2021",
+    "rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)", "rst:0x3 (RTC_SW_SYS_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)",
+  ],
+  esp32c3: [ // examples/security/security_features_app/README.md, lines 328-330
+    "ESP-ROM:esp32c3-api1-20210207", "Build:Feb  7 2021", "rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)",
+  ],
+};
+// The S3's download lines predate A59 and are not in the fetched source; they
+// are named here so a new unquoted line cannot hide among them.
+const S3_UNSOURCED = ["rst:0x1 (POWERON),boot:0x0 (DOWNLOAD(USB/UART0))", "waiting for download"];
+
+test("A59: every bench block names its chip's ROM and BOOT strap, and they are the board's", () => {
+  const REPO = join(ROOT, "..");
+  const manifests = new Map();
+  for (const slug of require("node:fs").readdirSync(join(REPO, "devices"))) {
+    let m;
+    try { m = JSON.parse(readFileSync(join(REPO, "devices", slug, "device.json"), "utf8")); } catch { continue; }
+    if (m.lab && m.lab.card) manifests.set(m.lab.card, m);
+  }
+  let benches = 0;
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    benches += 1;
+    const rom = dev.bench.rom;
+    assert.ok(rom && rom.chip && rom.boot_strap, `${dev.id}: the bench block names no rom { chip, boot_strap }`);
+    // the chip: the one the registry's board names, and the claiming manifest's mcu
+    const named = /ESP32-[A-Z]\d+/.exec(dev.board);
+    assert.ok(named, `${dev.id}: the board "${dev.board}" names no ESP32 chip`);
+    assert.strictEqual(rom.chip, CHIP_IDS[named[0]], `${dev.id}: rom.chip ${rom.chip} is not the board's ${named[0]}`);
+    const m = manifests.get(dev.id);
+    if (m) assert.strictEqual(rom.chip, CHIP_IDS[m.board.mcu], `${dev.id}: rom.chip is not its manifest's mcu ${m.board.mcu}`);
+    // the strap: the pin the bench's own BOOT button note names
+    const boot = dev.bench.buttons.find((b) => b.id === "boot");
+    const pin = /^(GPIO\d+) strapping pin/.exec(boot.note);
+    assert.ok(pin, `${dev.id}: the BOOT button's note names no strapping pin`);
+    assert.strictEqual(rom.boot_strap, pin[1], `${dev.id}: rom.boot_strap ${rom.boot_strap} is not the BOOT button's ${pin[1]}`);
+  }
+  assert.strictEqual(benches, 7, "the bench blocks this test reads (six S3 boards, the C3 Nightlight)");
+  // the Nightlight: an ESP32-C3 with BOOT on GPIO9, as its cited files say
+  assert.deepStrictEqual(benchProfile("canary-nightlight").rom, { chip: "esp32c3", boot_strap: "GPIO9" });
+  assert.ok(benchProfile("canary-nightlight").sources.some((x) => x.file === "devices/canary-display-nightlight-c3/device.json"),
+    "the Nightlight's bench cites where its chip comes from");
+});
+
+test("A59: every bench block's ROM banners are its own chip's, quoted, and the C3's never an S3's", async () => {
+  const { romBanner, ROM_VOICES } = await importBench();
+  const KINDS = ["poweron", "reset", "swreset", "download"];
+  assert.deepStrictEqual(Object.keys(ROM_VOICES).sort(), ["esp32c3", "esp32s3"]);
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const rom = dev.bench.rom;
+    const others = Object.keys(ROM_VOICES).filter((c) => c !== rom.chip);
+    for (const kind of KINDS) {
+      const out = romBanner(kind, rom);
+      assert.ok(out.length, `${dev.id}/${kind}: printed nothing`);
+      for (const c of others) assert.ok(!out.includes(c), `${dev.id}/${kind}: prints ${c} on a ${rom.chip} board: ${JSON.stringify(out)}`);
+      if (out.startsWith("ESP-ROM:")) {
+        assert.ok(out.startsWith(`ESP-ROM:${rom.chip}`), `${dev.id}/${kind}: the banner is not ${rom.chip}'s`);
+        // every line it prints is a quote of the cited source (the S3's two
+        // download lines excepted, named above)
+        for (const line of out.split("\n").filter(Boolean)) {
+          const ok = QUOTED[rom.chip].includes(line) || (rom.chip === "esp32s3" && kind === "download" && S3_UNSOURCED.includes(line));
+          assert.ok(ok, `${dev.id}/${kind}: ${JSON.stringify(line)} is no line of the source bench.js cites for ${rom.chip}`);
+        }
+      } else {
+        // no source quotes this one: a note in parentheses, no banner line
+        assert.match(out, /^\(.*\)\n$/, `${dev.id}/${kind}: an unquoted banner must be a one-line note`);
+        assert.ok(!/ESP-ROM:|rst:0x|boot:0x/.test(out), `${dev.id}/${kind}: a note must not pass for a banner`);
+      }
+    }
+  }
+  const c3 = benchProfile("canary-nightlight").rom;
+  // the C3's quoted power-on banner, byte for byte, at power-on and RESET
+  const c3On = "ESP-ROM:esp32c3-api1-20210207\nBuild:Feb  7 2021\nrst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)\n";
+  assert.strictEqual(romBanner("poweron", c3), c3On);
+  assert.strictEqual(romBanner("reset", c3), c3On);
+  // download mode: the C3's own strap story, and no banner nobody quoted
+  assert.match(romBanner("download", c3), /^\(ESP32-C3 ROM: BOOT \(GPIO9\) was low at reset, so it waits for a flasher\./);
+  assert.match(romBanner("swreset", c3), /^\(ESP32-C3 ROM: its banner for this reset is not reproduced/);
+  for (const kind of KINDS) assert.ok(!/esp32s3|GPIO0/i.test(romBanner(kind, c3)), `the C3's ${kind} speaks of the S3`);
+  // no chip named, no banner: never a default chip's
+  for (const kind of KINDS) {
+    assert.strictEqual(romBanner(kind), "", `romBanner(${kind}) with no rom must print nothing, not an S3 banner`);
+    assert.strictEqual(romBanner(kind, {}), "");
+    assert.ok(!/ESP-ROM:/.test(romBanner(kind, { chip: "esp32c6" })), "a chip with no quoted voice prints no banner");
+  }
+});
+
+// Each call's argument text, parentheses balanced (a ternary or a nested call
+// inside the arguments stays whole).
+function callArgs(src, fn) {
+  const out = [];
+  for (let at = src.indexOf(`${fn}(`); at >= 0; at = src.indexOf(`${fn}(`, at + 1)) {
+    if (/[\w.]/.test(src[at - 1] || "")) continue; // another name ending in fn
+    let depth = 0, k = at + fn.length;
+    for (; k < src.length; k++) {
+      if (src[k] === "(") depth++;
+      else if (src[k] === ")" && --depth === 0) break;
+    }
+    out.push(src.slice(at + fn.length + 1, k));
+  }
+  return out;
+}
+
+test("A59: the pages stage each board's own ROM, and the bench and its flows name its BOOT strap", async () => {
+  const { BenchPower } = await importBench();
+  const { BENCH_FIXES, benchFixesFor } = await importGuides();
+  // app.js: every banner it stages is the sheet's board's
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.match(app, /async function buildDisplaySheet\(ctx, side, stage\) \{\n  const dev = ctx\.dev;\n[\s\S]{0,400}?\n  const rom = dev\.bench\?\.rom;\n/,
+    "the display sheet reads its board's rom off the bench block");
+  const calls = callArgs(app, "romBanner");
+  assert.ok(calls.length >= 6, "app.js stages the ROM banners");
+  for (const c of calls) assert.match(c, /^"(?:poweron|reset|swreset|download)", rom$/, `app.js calls romBanner(${c}) without the board's rom`);
+  // the WAP page: an ESP32-S3 board, as its flash product says
+  const wap = readFileSync(join(ROOT, "assets/wap-ui.js"), "utf8");
+  assert.match(wap, /const WAP_ROM = \{ chip: "esp32s3", boot_strap: "GPIO0" \};/);
+  const flash = JSON.parse(readFileSync(join(ROOT, "devices/flash.json"), "utf8"));
+  assert.strictEqual(flash.products.find((p) => p.id === "securacv-canary-wap").chip, "ESP32-S3", "the WAP's chip moved: WAP_ROM must follow it");
+  const wapCalls = callArgs(wap, "romBanner");
+  assert.ok(wapCalls.length >= 2 && wapCalls.every((c) => /, WAP_ROM$/.test(c)), `wap-ui.js stages a banner without WAP_ROM: ${wapCalls.join(" | ")}`);
+  // BenchPower: BOOT held through RESET names the board's strap
+  for (const [id, pin] of [["canary-nightlight", "GPIO9"], ["canary-display-dash", "GPIO0"]]) {
+    const { bench, events } = rig(benchProfile(id), BenchPower);
+    bench.setBootHeld(true);
+    bench.pressReset();
+    assert.ok(events.some(([k, l]) => k === "log" && l === `RESET with BOOT (${pin}) low — the ROM boots to download mode instead of the app.`),
+      `${id}: the download narration names ${pin}`);
+  }
+  // the troubleshooter: a step that names a GPIO as the BOOT strap is flagged
+  // so, and each board's flows name only its own strap
+  for (const f of BENCH_FIXES) {
+    for (const st of f.steps) {
+      const text = [st.title, st.body, st.onDevice].join(" ");
+      const strapPin = /BOOT(?: is | \()GPIO\d+/.test(text);
+      assert.strictEqual(!!st.strap, strapPin, `${f.symptom}: ${st.title} ${strapPin ? "names the BOOT strap unflagged" : "is flagged but names no strap"}`);
+    }
+  }
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const words = JSON.stringify(benchFixesFor(dev.bench).map((f) => f.steps.filter((st) => st.strap).map((st) => [st.title, st.body, st.onDevice])));
+    const pins = new Set(words.match(/GPIO\d+/g) || []);
+    assert.deepStrictEqual([...pins], [dev.bench.rom.boot_strap], `${dev.id}: its flows name ${[...pins].join(", ")} as BOOT`);
+  }
+  assert.strictEqual(benchFixesFor(benchProfile("canary-display-dash")), BENCH_FIXES, "an S3 board with a battery still gets the flows as written");
 });
 
 // ── the debug curriculum stages cleanly ─────────────────────────────────

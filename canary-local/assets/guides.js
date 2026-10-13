@@ -446,6 +446,7 @@ export const BENCH_FIXES = [
     steps: [
       {
         title: "That's the ROM, not a fault",
+        strap: true, // names the BOOT strap: benchFixesFor() says the board's own
         body:
           "BOOT (GPIO0) was low when reset released, so the mask ROM " +
           "parked the chip for flashing instead of running the app. It " +
@@ -576,6 +577,7 @@ export const BENCH_FIXES = [
     steps: [
       {
         title: "Correct — and that's a design fact",
+        strap: true, // names the BOOT strap: benchFixesFor() says the board's own
         body:
           "BOOT is GPIO0, a strapping pin the ROM samples at reset. While " +
           "the firmware runs, this display never reads it (witness canaries " +
@@ -606,10 +608,23 @@ export const BENCH_FIXES = [
 // would show a rail going down under words about riding the battery: such
 // steps are left out there, and a flow left with no steps is not offered
 // (sweep A54; BenchPower refuses the battery as well).
+// The flows are written for the ESP32-S3 boards, whose BOOT strap is GPIO0.
+// A step flagged `strap` names that pin; on a board whose bench block names
+// another (`rom.boot_strap`: the Nightlight's ESP32-C3 straps BOOT on GPIO9)
+// it says that board's pin instead (sweep A59).
+const FLOWS_STRAP = "GPIO0";
 export function benchFixesFor(profile) {
-  if (profile?.power?.battery) return BENCH_FIXES;
+  const strap = profile?.rom?.boot_strap;
+  const restrap = !!strap && strap !== FLOWS_STRAP;
+  if (profile?.power?.battery && !restrap) return BENCH_FIXES;
+  const pin = (t) => (typeof t === "string" ? t.split(FLOWS_STRAP).join(strap) : t);
   return BENCH_FIXES
-    .map((f) => ({ ...f, steps: f.steps.filter((st) => !st.battery) }))
+    .map((f) => ({
+      ...f,
+      steps: f.steps
+        .filter((st) => profile?.power?.battery || !st.battery)
+        .map((st) => (restrap && st.strap ? { ...st, title: pin(st.title), body: pin(st.body), onDevice: pin(st.onDevice) } : st)),
+    }))
     .filter((f) => f.steps.length);
 }
 

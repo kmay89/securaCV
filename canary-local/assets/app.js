@@ -316,6 +316,10 @@ function closeSheet() {
 // ── display sheet: live firmware ────────────────────────────────────────
 async function buildDisplaySheet(ctx, side, stage) {
   const dev = ctx.dev;
+  // The board's chip and BOOT strap, as its bench block names them: every
+  // mask-ROM banner this sheet stages is that chip's (bench.js ROM_VOICES,
+  // sweep A59), never one chip's for every card.
+  const rom = dev.bench?.rom;
 
   // The glass: the emulator's native canvas — touchable, and the very
   // same pixels the 3D screen textures from. The shade above it is the
@@ -514,7 +518,7 @@ async function buildDisplaySheet(ctx, side, stage) {
           return;
         }
         note("device rebooted — booting again with its memory intact");
-        serialAppend("\n\n※ ── power cycle ── ※\n\n" + romBanner("swreset"));
+        serialAppend("\n\n※ ── power cycle ── ※\n\n" + romBanner("swreset", rom));
         await boot({ preserve: true });
       },
     });
@@ -581,7 +585,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     g2d.fillStyle = "#000";
     g2d.fillRect(0, 0, glass.width, glass.height);
     setShade("waiting for download");
-    serialAppend("\n※ ── reset, BOOT held low ── ※\n\n" + romBanner("download"));
+    serialAppend("\n※ ── reset, BOOT held low ── ※\n\n" + romBanner("download", rom));
   };
   ctx.bench = dev.bench
     ? new BenchPower(dev.bench, {
@@ -599,7 +603,7 @@ async function buildDisplaySheet(ctx, side, stage) {
             enterDownload();
             return;
           }
-          serialAppend("\n※ ── power restored ── ※\n\n" + romBanner("poweron"));
+          serialAppend("\n※ ── power restored ── ※\n\n" + romBanner("poweron", rom));
           await bootWhenFree();
         },
         onReset: async (kind) => {
@@ -608,7 +612,7 @@ async function buildDisplaySheet(ctx, side, stage) {
             enterDownload();
             return;
           }
-          serialAppend("\n※ ── reset ── ※\n\n" + romBanner("reset"));
+          serialAppend("\n※ ── reset ── ※\n\n" + romBanner("reset", rom));
           await bootWhenFree();
         },
       })
@@ -618,7 +622,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     ctx.dispose.push(() => clearInterval(benchTick));
   }
 
-  serialAppend(romBanner("poweron"));
+  serialAppend(romBanner("poweron", rom));
   await boot();
 
   const guideCtx = {
@@ -632,7 +636,7 @@ async function buildDisplaySheet(ctx, side, stage) {
         return;
       }
       note("rebooting for a first meeting — the bird will introduce itself, then raise its setup network (the phone in Try it walks it)");
-      serialAppend("\n\n※ ── power cycle (first meeting) ── ※\n\n" + romBanner("poweron"));
+      serialAppend("\n\n※ ── power cycle (first meeting) ── ※\n\n" + romBanner("poweron", rom));
       ctx.emu.retire();
       await boot({ preserve: true, firstMeeting: true });
     },

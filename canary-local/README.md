@@ -257,9 +257,13 @@ Three doors into the same live device, all driven by one scenario API
   lights (PWR on the rail, CHG/DONE on the charge chip, the watch's
   batteryless-CHG flicker) answer only to physics — no firmware here or
   on your desk can turn them off, and the bench says so to your face.
-  Rail transitions print the ESP32-S3 ROM's verbatim reset banners
-  (staged — the ROM is the one program we can't compile to wasm;
-  everything after the banner is the real firmware), NVS rides through
+  Rail transitions print the reset banners of the board's own chip, as
+  its bench block's `rom` names it (staged — the ROM is the one program we
+  can't compile to wasm; everything after the banner is the real
+  firmware). Each banner line is quoted from an Espressif source
+  `bench.js` cites; where no source quotes one (the ESP32-C3's
+  software-reset and download-mode banners) the bench prints a note
+  saying so, never another chip's banner. NVS rides through
   every power event like the flash it is, and a live diagnostics pane
   (power source, boot stage, uptime, backlight duty, flush count, link,
   MQTT session, NVS keys) plus symptom-first debug flows ("a red light

@@ -55,6 +55,10 @@
             "note": "chip reset — RAM clears, NVS flash survives"
           }
         ],
+        "rom": {
+          "chip": "esp32s3",
+          "boot_strap": "GPIO0"
+        },
         "leds": [
           {
             "id": "chg",
@@ -147,6 +151,10 @@
             "note": "chip reset — RAM clears, NVS flash survives"
           }
         ],
+        "rom": {
+          "chip": "esp32s3",
+          "boot_strap": "GPIO0"
+        },
         "leds": [
           {
             "id": "pwr",
@@ -246,6 +254,10 @@
             "note": "chip reset — RAM clears, NVS flash survives"
           }
         ],
+        "rom": {
+          "chip": "esp32s3",
+          "boot_strap": "GPIO0"
+        },
         "leds": []
       }
     },
@@ -336,6 +348,10 @@
             "note": "chip reset — RAM clears, NVS flash survives"
           }
         ],
+        "rom": {
+          "chip": "esp32s3",
+          "boot_strap": "GPIO0"
+        },
         "leds": []
       }
     },
@@ -396,6 +412,10 @@
             "note": "chip reset — RAM clears, NVS flash survives (the readable PWR case button is described with the power latch above — it is a power control, not a bench input)"
           }
         ],
+        "rom": {
+          "chip": "esp32s3",
+          "boot_strap": "GPIO0"
+        },
         "leds": []
       }
     },
@@ -455,6 +475,10 @@
             "note": "chip reset — RAM clears, NVS flash survives"
           }
         ],
+        "rom": {
+          "chip": "esp32s3",
+          "boot_strap": "GPIO0"
+        },
         "leds": [
           {
             "id": "pwr",
@@ -566,6 +590,10 @@
             "note": "chip reset — RAM clears, NVS flash survives"
           }
         ],
+        "rom": {
+          "chip": "esp32c3",
+          "boot_strap": "GPIO9"
+        },
         "backlight": {
           "cap_pct": 50,
           "note": "the board's HAL clips the backlight at 50% duty, the nightlight's heat budget in the closed pocket case; the twin's display HAL clips it at the same register byte, and the row says so only when the emulator in use does (one built before it set the level as asked)"
@@ -580,6 +608,11 @@
             "fact": "the power path: USB-C only, through a diode-OR, no battery and no charger IC",
             "file": "firmware/boards/waveshare-esp32c3-lcd147/pins/pins.h",
             "quote": "#define HAS_BATTERY             0     // USB-C powered (VBUS→VSYS diode-OR, no charger IC)"
+          },
+          {
+            "fact": "the board's chip is an ESP32-C3, so its ROM speaks as one",
+            "file": "devices/canary-display-nightlight-c3/device.json",
+            "quote": "\"mcu\": \"ESP32-C3\""
           },
           {
             "fact": "BOOT is GPIO9, a strapping pin",
