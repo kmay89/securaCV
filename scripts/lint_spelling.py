@@ -61,7 +61,13 @@ EXTS = {".rs", ".py", ".js", ".mjs", ".ts", ".c", ".h", ".cpp", ".hpp", ".md",
         # web manifests and any future .xml are text with words in them.
         # All scanned clean the day they were added.
         ".svg", ".webmanifest", ".plist", ".ini", ".properties",
-        ".entitlements", ".csv", ".xml"}
+        ".entitlements", ".csv", ".xml",
+        # Plain text (CMakeLists.txt, the vendored PROVENANCE.txt notes, the
+        # requirements files, the microcopy term lists): the website's
+        # copy-honesty test reads .txt, so a text file carried or copied
+        # there met a gate this one never ran (sweep CI15). The 19 tracked
+        # then scanned clean.
+        ".txt"}
 # Extensionless files that are still source. Same reason as .ino.
 EXTRA_NAMES = {"Makefile", "makefile", "GNUmakefile", "Dockerfile"}
 SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",

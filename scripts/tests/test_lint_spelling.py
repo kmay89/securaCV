@@ -18,8 +18,9 @@ CI9). This suite holds:
   (a missed form, an eaten correct word) or the pattern holds something the
   word runs cannot see,
   fails on a file holding a family form the old word list never had (in any
-  letter case), passes a file of the US forms, and blanks the Swift API
-  member that needs blanking (and only in .swift).
+  letter case), reads the .txt files a directory walk meets (CI15), passes a
+  file of the US forms, and blanks the Swift API member that needs blanking
+  (and only in .swift).
 
 AGENTS.md rule 3b: this file never types a banned form. Every British
 spelling it needs is BUILT from a US stem at run time (the lint's own
@@ -308,6 +309,21 @@ class Gate(unittest.TestCase):
         r = run_main_with("re.compile(m.BANNED.pattern,re.A)", self._planted())
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("no longer catches", r.stderr)
+
+    def test_a_walked_directory_reads_text_files(self):
+        # The tree walk, not a file named on the command line (which is read
+        # whatever its suffix): a .txt planted in a directory is found, as the
+        # website's copy-honesty test finds one (sweep CI15).
+        tree = self.dir / "tree"
+        (tree / "sub").mkdir(parents=True)
+        (tree / "sub" / "CMakeLists.txt").write_text(
+            f"# The beacon {SHIPPED} home.\n", encoding="utf-8")
+        (tree / "sub" / "notes.txt").write_text(
+            f"{SHIPPED} as far as a radio carries it.\n", encoding="utf-8")
+        r = run_lint(tree)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn(f"CMakeLists.txt:1: {SHIPPED}", r.stderr)
+        self.assertIn(f"notes.txt:1: {SHIPPED}", r.stderr)
 
     def test_main_passes_the_us_forms(self):
         f = self.dir / "note.md"
