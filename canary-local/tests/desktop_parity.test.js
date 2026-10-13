@@ -3225,7 +3225,7 @@ const browserMonitorCmds = () => {
   return [...m[1].matchAll(/\["([a-z])", "([a-z-]+)"\]/g)].map((x) => [x[1], x[2]]);
 };
 
-async function runNativeBench({ flashAnswers, detectAnswer, ports, startAnswer, monitorCmds }) {
+async function runNativeBench({ flashAnswers, detectAnswer, ports, startAnswer, monitorCmds, onListen }) {
   const calls = [];
   // What the monitor commands answer, changeable mid-run: a string here is
   // thrown the way Tauri rejects an invoke, with the command's Err text.
@@ -3273,6 +3273,7 @@ async function runNativeBench({ flashAnswers, detectAnswer, ports, startAnswer, 
   globalThis.document = doc;
   const heard = {};
   const listen = async (evt, cb) => {
+    if (onListen) onListen(evt, (e, payload) => { for (const f of heard[e] || []) f({ payload }); });
     (heard[evt] = heard[evt] || []).push(cb);
     return () => { heard[evt] = (heard[evt] || []).filter((f) => f !== cb); };
   };
@@ -3526,6 +3527,7 @@ test("A67: the Lab's post-flash monitor has the Flasher's command row, live only
     input.value = "wifi";
     input.fire("keydown", { key: "Enter", preventDefault() {} });
     await drain();
+    assert.strictEqual(input.value, "", "a sent command leaves the box empty for the next");
     input.value = "s";
     send.fire("click");
     await drain();
@@ -3576,6 +3578,18 @@ test("A67: the Lab's post-flash monitor has the Flasher's command row, live only
     await drain();
     for (const c of all) assert.strictEqual(c.disabled, true, "Stop watching must disable the row");
   } finally { stopped.close(); }
+
+  // The row mirrors what the bench believes about the port: a stop heard while
+  // the card is still wiring itself up (the engine speaks from its own
+  // thread) has the row drawn disabled, not enabled over a stopped monitor.
+  const early = await runNativeBench({ flashAnswers: [receipt],
+    onListen: (evt, emit) => { if (evt === "serial:receipt") emit("serial:status", "Serial monitor stopped."); } });
+  try {
+    await early.pick("securacv-canary");
+    const { all } = controls(early);
+    assert.strictEqual(all.length, cmds.length + 2);
+    for (const c of all) assert.strictEqual(c.disabled, true, "a row drawn after the monitor stopped must be disabled");
+  } finally { early.close(); }
 
   // A monitor that never started leaves the row disabled, beside the reason.
   const unstarted = await runNativeBench({ flashAnswers: [receipt], startAnswer: "serial monitor is already running" });
