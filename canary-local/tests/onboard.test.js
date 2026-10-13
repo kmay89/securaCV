@@ -1289,8 +1289,8 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   const web = read(join(REPO, "firmware/projects/canary-display/src/net/glass_web.cpp"));
   assert.ok(web.includes("canary::care::nightlight_request_rotation((uint8_t)v);"), "the app's picker writes the same mailbox");
   const mainCpp = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
-  assert.ok(mainCpp.includes("const int req = canary::care::nightlight_take_rotation_request();\n      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now);"),
-    "main.cpp's loop drains it into the one apply path");
+  assert.ok(mainCpp.includes("const int req = canary::care::nightlight_take_rotation_request();\n      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now, \"app picker\");"),
+    "main.cpp's loop drains it into the one apply path, naming the app's picker on the [orient] line (F285)");
   // CI: beside glass_turn.sh — after the third-party cache, before every step
   // that reads the committed dist — unconditional and bounded.
   const wf = read(join(REPO, ".github/workflows/canary-local.yml"));

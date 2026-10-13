@@ -4,11 +4,13 @@
 # build.sh's whole nightlight TU list (the REAL src/main.cpp and firmware, the
 # emulator's src/*.cpp and shims) and LVGL 8.4, rweather's Crypto and
 # ArduinoJson at build.sh's pins, then runs it: a provisioned nightlight
-# booted at each rotation, and turned at 9 s from each rotation to each other
+# booted at each rotation, and turned at 7 s from each rotation to each other
 # one through nightlight_request_rotation(), must seat its companion where a
-# boot at that rotation seats it, hop with the tumble's Startle (F242) and
-# keep one owner of the bird's y through that hop (F244). No emsdk: this
-# proves the sources the dist is built from, not the dist's bytes.
+# boot at that rotation seats it, hop with the tumble's Startle (F242; inside
+# the first 8 s of uptime, F279), keep one owner of the bird's y through that
+# hop (F244) and write one "[orient] app picker -> rotation R (was P)" line
+# (F285). No emsdk: this proves the sources the dist is built from, not the
+# dist's bytes.
 #
 #   bash canary-local/emulator/test/runtime_turn.sh [LVGL_DIR [ARDUINOJSON_DIR [ARDUINOLIBS_DIR]]]
 #

@@ -2407,7 +2407,7 @@ to https. The rows below use https; on an http-only build (or one whose
     Before F257 the dashboard offered no kit.
   - Artifact: `docs/audit/repro/F257/dashboard-kit/`.
 
-## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244) — on-device verification
+## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
 
 Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`
 (`display_set_rotation()`'s MADCTL table), `include/canary/io/orientation.h`
@@ -2420,20 +2420,24 @@ Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`
 turn is not. Compile is CI's. Owner: U1.
 
 - [ ] **Each pose commits its rotation, then reads upright**
-  - Setup: a `canary-display-nightlight` build on the C3-LCD-1.47,
-    provisioned (its address on the LAN), "turn with the room" on,
-    daytime. An IMU commit writes nothing to serial; the committed
-    rotation is `"orientation"` in `GET http://<glass>/api/settings`
-    (`care::nightlight_rotation()`, saved by every commit).
+  - Setup: a `canary-display-nightlight` build on the C3-LCD-1.47 on a
+    serial monitor (or provisioned, its address on the LAN), "turn with the
+    room" on, daytime. Every commit writes one serial line naming the
+    rotation, the one before it and who asked, `[orient] IMU -> rotation 1
+    (was 0)` (F285; a triple-press says `triple-press`, the app's picker
+    `app picker`); the committed rotation is also `"orientation"` in
+    `GET http://<glass>/api/settings` (`care::nightlight_rotation()`, saved
+    by every commit).
   - Repro: stand it upright (USB down) and hold it still for 3 s, then read
-    `"orientation"`; the same after a quarter turn clockwise onto its right
+    the `[orient]` line (or `"orientation"`); the same after a quarter turn clockwise onto its right
     edge (USB to the left), after standing it upright again and turning it a
     quarter counter-clockwise onto its left edge (USB to the right), and
     upside down (USB up). Photograph the glass in each pose.
   - Expected, in this order. First the IMU: each pose commits about 1.2 s
-    after the device comes to rest, and `"orientation"` reads 0 upright, 1
-    after the clockwise turn, 3 after the counter-clockwise turn and 2
-    upside down. If it does not, fix `pins.h` (`IMU_AXES_SWAP_XY`,
+    after the device comes to rest, with one `[orient] IMU -> rotation R
+    (was P)` line, and the rotation (that line's R, or `"orientation"`)
+    reads 0 upright, 1 after the clockwise turn, 3 after the
+    counter-clockwise turn and 2 upside down. If it does not, fix `pins.h` (`IMU_AXES_SWAP_XY`,
     `IMU_X_SIGN`, `IMU_Y_SIGN`) until it does, and only then judge the
     glass. `io/orientation.h`'s classifier wants the gravity vector, while
     an accelerometer at rest reads +1 g along the axis that points up and
@@ -2452,11 +2456,12 @@ turn is not. Compile is CI's. Owner: U1.
     upside down, swap the r1/r3 bytes in `kMadctl`. A mirrored face is an
     MX/MY fault, not this one.
   - Artifact: `docs/audit/repro/F250/side-turns/` (a photo and the
-    `"orientation"` value per pose).
+    `[orient]` line or `"orientation"` value per pose).
 
 - [ ] **The companion startles with each turn, and its hop is smooth**
-  - Setup: as above, more than 8 s after power-on (the mark refuses Tilt and
-    Startle for the first 8 s of uptime).
+  - Setup: as above. The mark lets one Tilt or Startle through per 8 s, the
+    first one after power-on included (F279: it used to refuse both for the
+    first 8 s of uptime), so leave 8 s between turns.
   - Repro: turn it a quarter clockwise, wait 10 s, turn it back; the same a
     quarter counter-clockwise and a half turn; then once more during quiet
     hours.
@@ -2468,13 +2473,16 @@ turn is not. Compile is CI's. Owner: U1.
     Where it enters past the glass's edge the slide hides much of the rise
     and the bird is mostly seen coming down onto its perch; where it enters
     already on the glass the whole hop shows. Natively on LVGL 8.4
-    (`runtime_turn.sh` prints it per turn) the apex comes at 195 ms, and
-    the whole bird is on the glass in 8 of the hop's 115 frames when it
-    enters over the landscape glass's right edge (its perch is at that
-    edge), 56 when it falls from above onto the landscape glass, 62 when it
-    enters either side of the portrait glass, and all 115 when it enters
-    from the landscape glass's left or falls from above onto the portrait
-    glass. Either way the bird never drops back to its perch for a frame
+    (`runtime_turn.sh` prints it per turn; its turns come 7 s after
+    power-on) the apex comes at 185 ms, and the whole bird is on the glass
+    in none of the hop's 113 frames when it enters over the landscape
+    glass's right edge (its perch is at that edge), 54 when it falls from
+    above onto the landscape glass, 60 when it enters either side of the
+    portrait glass, and all 113 when it enters from the landscape glass's
+    left or falls from above onto the portrait glass. Where the hop falls
+    against the render tick moves these by a frame or a few (F242's
+    measurement, with the turns at 9 s, read 195 ms and 8, 56, 62 and 115
+    of 115). Either way the bird never drops back to its perch for a frame
     mid-hop. In quiet hours it tumbles in without the hop (asleep).
   - Artifact: `docs/audit/repro/F242/tumble-video/`.
 

@@ -14,7 +14,7 @@
 //    the nightlight's own scv-nl key) and never turns: where its companion
 //    sits, breathing, is the perch nightlight_ui_create() seats on that
 //    glass;
-//  * a TURNED boot wears rotation P from power-on and, at 9 s, is asked for
+//  * a TURNED boot wears rotation P from power-on and, at 7 s, is asked for
 //    R through nightlight_request_rotation() — the mailbox the app's picker
 //    writes (glass_web.cpp) and main.cpp's loop drains into
 //    nightlight_apply_orientation(): the panel turned, the face rebuilt into
@@ -41,9 +41,16 @@
 // running its list newest first, its write landed after the hop's whenever
 // its value moved. Each reference boot ends the same way with a hop over its
 // running breath, mid-cycle: Joyful, which starts a hop the way the idle
-// flourish does, unrationed. The turn comes at 9 s, not sooner, because the mark's
-// Tilt/Startle ration clock starts at 0 and refuses both for the first 8 s
-// of uptime (the turns were at 7 s before F242, where no Startle could show).
+// flourish does, unrationed. The turn comes at 7 s, inside the first 8 s of
+// uptime: the mark's Tilt/Startle ration starts as "never reacted" (F279).
+// Its clock used to start at 0 and refused both for the first 8 s, so a turn
+// at 7 s refused the Startle on all 12 turns (these turns ran at 9 s for it).
+//
+// Every ask writes one serial line in the apply path (F285): a turned boot
+// "[orient] app picker -> rotation R (was P)", and a reference boot, which
+// asks at 7 s for the rotation it already wears, "[orient] app picker ->
+// rotation R (already worn)" and is not turned. The driver reads the
+// firmware's serial for "[orient]" lines and needs exactly that one.
 //
 //   runtime_turn_test            every case, prints a line per case, exit 1 on a failure
 //   runtime_turn_test -v         the same with the firmware's serial log on stderr
@@ -92,8 +99,8 @@ int emu_entry();  // emu_main.cpp's main(), renamed by runtime_turn.sh
 
 namespace {
 
-constexpr double kTurnAt = 9000;        // ms after power-on: the face is up, past
-                                        // the mark's 8 s Tilt/Startle ration
+constexpr double kTurnAt = 7000;        // ms after power-on: the face is up, and
+                                        // inside the first 8 s of uptime (F279)
 constexpr double kHopFor = 1000;        // ms after the ask: the Startle's 560 ms hop is over
 constexpr double kFirstRead = 60;       // ms after the ask: two frames on
 constexpr double kSettleFrom = 1500;    // ms after the ask: the 700 ms tumble is long done
@@ -126,6 +133,8 @@ struct Seen {
   int not_hop_y, not_hop_v;
   int hop_apex_ms;    // when the bird rose highest (ms into the hop window)
   int hop_on_glass;   // hop frames whose drawn box lies wholly on the glass
+  int orient_lines;   // "[orient]" lines on serial (F285)
+  char orient[2][96]; // the first two of them
 };
 
 bool g_verbose = false;
@@ -221,6 +230,7 @@ void beat() {
   if (!g_asked && g_wall >= kTurnAt) {
     g_asked = true;
     if (g_case.to >= 0) canary::care::nightlight_request_rotation((uint8_t)g_case.to);
+    else canary::care::nightlight_request_rotation((uint8_t)g_case.from);  // already worn
   }
   if (!g_asked) return;
   const double t = g_wall - kTurnAt;
@@ -372,6 +382,21 @@ extern "C" {
 // ── the page's side of every EM_JS ──
 void js_serial_write(const char* s) {
   if (g_verbose) fputs(s, stderr);
+  // Whole lines, however the writes split them: keep each "[orient]" one.
+  static std::string line;
+  for (const char* p = s; p != nullptr && *p != '\0'; ++p) {
+    if (*p != '\n') {
+      line += *p;
+      continue;
+    }
+    if (line.compare(0, 8, "[orient]") == 0) {
+      if (g_seen.orient_lines < 2)
+        snprintf(g_seen.orient[g_seen.orient_lines], sizeof g_seen.orient[0], "%s",
+                 line.c_str());
+      g_seen.orient_lines++;
+    }
+    line.clear();
+  }
 }
 void js_backlight(int, int, int) {}
 void js_tone(int, int) {}
@@ -456,6 +481,15 @@ int main(int argc, char** argv) {
           "rotation %d, Joyful: in %d of the hop's %d frames the bird's y offset was not the "
           "hop's (first at %d ms: y offset %d, the hop's value %d from seat %d)",
           r, s.not_hops, s.hop_frames, s.first_not_hop, s.not_hop_y, s.not_hop_v, seat);
+    // The ask for the rotation it wears writes one line and turns nothing
+    // (the companion was on stage throughout, above).
+    char want[96];
+    snprintf(want, sizeof want, "[orient] app picker -> rotation %d (already worn)", r);
+    printf("rotation %d, asked for itself: %d [orient] line(s): \"%s\"\n", r, s.orient_lines,
+           s.orient_lines ? s.orient[0] : "");
+    CHECK(s.orient_lines == 1 && strcmp(s.orient[0], want) == 0,
+          "rotation %d, asked for itself: want one line \"%s\", got %d (\"%s\")", r, want,
+          s.orient_lines, s.orient_lines ? s.orient[0] : "");
   }
 
   for (int from = 0; from < 4; ++from) {
@@ -473,9 +507,10 @@ int main(int argc, char** argv) {
       const int delta = (to - from) & 3;
       printf("turned %d -> %d: glass %dx%d, first frames x %d y %d, then x %d..%d y %d..%d; "
              "Startle hop %d frames to y offset %d (seat %d), %d beside a breath, %d not the hop's; "
-             "apex at %d ms, the bird wholly on the glass in %d of them\n",
+             "apex at %d ms, the bird wholly on the glass in %d of them; serial \"%s\"\n",
              from, to, s.fb_w, s.fb_h, s.first_x, s.first_y, s.x_lo, s.x_hi, s.y_lo, s.y_hi,
-             s.hop_frames, s.hop_lo, seat, s.beside, s.not_hops, s.hop_apex_ms, s.hop_on_glass);
+             s.hop_frames, s.hop_lo, seat, s.beside, s.not_hops, s.hop_apex_ms, s.hop_on_glass,
+             s.orient_lines ? s.orient[0] : "");
       CHECK(s.shape_w == w && s.shape_h == h && s.fb_w == w && s.fb_h == h && s.port_w == w &&
                 s.port_h == h,
             "turned %d -> %d: announced %dx%d, glass %dx%d, LVGL %dx%d, want %dx%d", from, to,
@@ -517,6 +552,12 @@ int main(int argc, char** argv) {
             "hop's (first at %d ms: y offset %d, the hop's value %d from seat %d)",
             from, to, s.not_hops, s.hop_frames, s.first_not_hop, s.not_hop_y, s.not_hop_v,
             seat);
+      // ...and the commit says so on serial, naming who asked (F285).
+      char want[96];
+      snprintf(want, sizeof want, "[orient] app picker -> rotation %d (was %d)", to, from);
+      CHECK(s.orient_lines == 1 && strcmp(s.orient[0], want) == 0,
+            "turned %d -> %d: want one line \"%s\", got %d (\"%s\")", from, to, want,
+            s.orient_lines, s.orient_lines ? s.orient[0] : "");
     }
   }
 
