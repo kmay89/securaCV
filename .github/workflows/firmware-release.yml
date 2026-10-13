@@ -72,7 +72,7 @@ concurrency:
 jobs:
   build-sign-release:
     name: Build, sign, and publish firmware
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 90
     outputs:
       tag: ${{ steps.ver.outputs.tag }}

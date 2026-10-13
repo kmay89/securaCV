@@ -46,7 +46,7 @@ concurrency:
 jobs:
   ram-audit:
     name: DRAM static-symbol ranking (FULL/S3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7

@@ -68,7 +68,7 @@ concurrency:
 jobs:
   factory-images:
     name: Build + attach browser-flasher factory images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 60
     steps:
       - name: Resolve the target release

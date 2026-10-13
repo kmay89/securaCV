@@ -189,7 +189,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   flavors:
     name: Load flavor manifest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.load.outputs.matrix }}
@@ -218,7 +218,7 @@ jobs:
   build-platformio:
     name: PlatformIO Build (${{ matrix.flavor.leg }})
     needs: flavors
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     # The display used to build all 21 of its environments in ONE leg —
     # measured at 43-44 minutes on main, against a limit first set at 45 and
     # then raised to 90 — while every other flavor finishes in 2-5 minutes.
@@ -384,7 +384,7 @@ jobs:
   pio-check:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -436,7 +436,7 @@ jobs:
 
   build-arduino-cli:
     name: Arduino CLI Build (Canary WAP)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
@@ -573,7 +573,7 @@ jobs:
 
   build-arduino-cli-display:
     name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }}, core ${{ matrix.core.name }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -673,7 +673,7 @@ jobs:
 
   csi-sketch-sync:
     name: CSI Sketch Copy Sync
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -889,7 +889,7 @@ jobs:
 
   regression-check:
     name: Regression Guards
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -967,7 +967,7 @@ jobs:
 
   archive-guard:
     name: Archive Edit Guard
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -1015,7 +1015,7 @@ jobs:
 
   csi-invariants:
     name: CSI Privacy Invariants
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -1163,7 +1163,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   mesh-scout-host-tests:
     name: Mesh + Scout Host Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
@@ -1501,7 +1501,7 @@ jobs:
 
   microcopy-lint:
     name: Dashboard Microcopy Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -1544,7 +1544,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   fleet-link-host-tests:
     name: Fleet-Link Host Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7

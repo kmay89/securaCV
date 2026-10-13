@@ -11,7 +11,7 @@ name: Add-on image
 # home-assistant/builder action (which builds from the app directory).
 #
 # - Each arch builds NATIVELY on a runner of its own architecture: amd64 on
-#   ubuntu-latest, aarch64 on ubuntu-24.04-arm. The aarch64 leg used to run
+#   ubuntu-24.04, aarch64 on ubuntu-24.04-arm. The aarch64 leg used to run
 #   under QEMU on an x86 runner and hit the 90-minute timeout on main six runs
 #   in a row (a Rust build under emulation is an order of magnitude slower),
 #   so Raspberry Pi users got no image at all. There is no QEMU step any more.
@@ -77,7 +77,7 @@ jobs:
         include:
           - arch: amd64
             platform: linux/amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
           - arch: aarch64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
@@ -185,7 +185,7 @@ jobs:
     name: Verify publicly installable
     needs: build
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7

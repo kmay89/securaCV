@@ -137,7 +137,7 @@ concurrency:
 jobs:
   lint-type-test:
     name: ruff + mypy + pytest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -181,7 +181,7 @@ jobs:
     # and `aioclient_mock` fixtures, the registries, the HTTP views, the
     # repairs API and the blueprint helpers.
     name: real Home Assistant (${{ matrix.cell }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 25
     strategy:
       fail-fast: false

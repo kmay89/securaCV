@@ -42,7 +42,7 @@ permissions:
 jobs:
   build-with-module-disabled:
     name: Build with ${{ matrix.module }} disabled
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     strategy:
       fail-fast: false
