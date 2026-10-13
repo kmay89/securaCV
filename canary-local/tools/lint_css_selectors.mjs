@@ -11,8 +11,9 @@
 // canary-local/assets/*.css (first-party: the glob stops before vendor/),
 // takes the class and id names out of each rule's selector (never out of a
 // declaration, so a #fff or a url(#x) is not a name; never out of an at-rule's
-// prelude; quoted attribute values and strings are dropped first), and requires each name to be USED: written as a whole token in a
-// page (canary-local/*.html) or a first-party script
+// prelude; quoted attribute values and strings are dropped first), and
+// requires each name to be USED: written as a whole token in a page
+// (canary-local/*.html) or a first-party script
 // (canary-local/assets/*.js, *.mjs). Those are the only files that put a
 // class or id on an element the stylesheets reach; nested pages
 // (voice/, witness/, the emulator harness) load stylesheets of their own.

@@ -84,7 +84,8 @@ jobs:
 
   unused-css:
     # No class or id selector in canary-local/assets/*.css that no page
-    # (canary-local/*.html) or first-party script (canary-local/assets/*.js)
+    # (canary-local/*.html) or first-party script (canary-local/assets/*.js,
+    # *.mjs)
     # names (sweep CI16). Classes a script builds at run time (`wire-${dir}`,
     # "flash-map-" + kind) are read from the scripts: a built prefix plus a
     # value the pages or scripts name counts as used. A name built from data
