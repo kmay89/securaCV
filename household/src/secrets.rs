@@ -234,7 +234,7 @@ impl CardStore {
             return Err(Error::Invalid("card store plaintext has the wrong length"));
         }
         let mut store = CardStore::new();
-        for rec in pt[2..].chunks_exact(32) {
+        for rec in pt[2..].as_chunks::<32>().0 {
             let mut h = [0u8; 16];
             h.copy_from_slice(&rec[..16]);
             let mut k = Zeroizing::new([0u8; 16]);

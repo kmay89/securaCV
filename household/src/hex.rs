@@ -32,7 +32,7 @@ pub fn decode(s: &str) -> Result<Vec<u8>> {
         return Err(Error::Invalid("hex has odd length"));
     }
     let mut out = Vec::with_capacity(b.len() / 2);
-    for pair in b.chunks_exact(2) {
+    for pair in b.as_chunks::<2>().0 {
         let hi = nibble(pair[0]).ok_or(Error::Invalid("hex is not lowercase hex"))?;
         let lo = nibble(pair[1]).ok_or(Error::Invalid("hex is not lowercase hex"))?;
         out.push((hi << 4) | lo);
