@@ -2309,11 +2309,19 @@
   The sketch reads the local address with `httpd_req_to_sockfd()` +
   `getsockname()` through the same IPv4-mapped unwrap as the flagship, and
   a socket that cannot say falls back to the `.local` name while the STA is
-  up, the one answer every home-network reader can use (sweep F255).
+  up, the one answer every home-network reader can use (sweep F255). Port
+  80's redirect to https made the same choice for every caller and now asks
+  the same header. An address that reads 0 is never named: on
+  Arduino-ESP32 core 3.x `WiFi.softAPIP()` reads `0.0.0.0` once
+  `wifi_drop_ap()` has released the AP netif, which is an installed WAP's
+  steady state, so a test that only ever feeds the configured
+  `192.168.4.1` never sees the case the device lives in.
 - **Regression check:** `firmware/projects/canary-wap/tests_host/test_receipt_authority.cpp`
-  (every grant on the SoftAP, on the STA and with the STA down, beside the
-  old rule; the unwrap held to `provisioning_gate.h`'s; the sketch's glue).
-  The lwIP glue is built only by CI; not run on a device.
+  (every grant and the redirect on the SoftAP, on the STA, with the STA
+  down and with the SoftAP dropped, beside the old rule; the unwrap held to
+  `provisioning_gate.h`'s; the sketch's glue compared token for token with
+  its comments removed). The lwIP glue is built only by CI; not run on a
+  device.
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots

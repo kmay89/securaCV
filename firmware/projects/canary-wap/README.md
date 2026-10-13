@@ -216,10 +216,12 @@ as `{"device_id","claim","claim_url","tls_cert_fp","sta_ip","mdns_host","expires
 The phone spends it on the home LAN — `GET /api/provisioning-receipt?claim=<hex>`
 — and gets the same receipt the BOOT-tap route serves, `base_url` at the
 `.local` name. (Every grant names the `.local` name once the WAP is on the
-home Wi-Fi and the request did not arrive over its setup network;
-`receipt_authority.h`, sweep F255. A BOOT-tap sign-in on the dashboard at
-`/settings` then offers that receipt as `canary-recovery-kit.json`, sweep
-F257, for the iPhone app's **Ready to pair** row.) The route decides bearer → claim → BOOT tap — the four-grant
+home Wi-Fi and the request did not arrive over its setup network, and so
+does port 80's redirect to https; `receipt_authority.h`, sweep F255. The
+dashboard at `https://canary-<suffix>.local/settings` then saves that
+receipt as `canary-recovery-kit.json`, for the iPhone app's **Ready to
+pair** row: offered after a BOOT-tap sign-in, and from **Settings**,
+**Device**, **Recovery kit** when already signed in; sweep F257.) The route decides bearer → claim → BOOT tap — the four-grant
 `provisioning_gate::receipt_decide` order minus its first question (a
 foreign `Host`), which the WAP does not ask on this route today (the
 flagship's `auth_gate` does); a wrong guess burns the claim, an expired one

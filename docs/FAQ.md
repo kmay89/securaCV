@@ -529,10 +529,12 @@ lives in our own companion service, which a standard client never looks
 for, so a WAP set up from Home Assistant's app has Wi-Fi and is then paired
 in the SecuraCV app: tap it under *Ready to pair* on the Fleet tab and add it
 with its recovery kit (`canary-recovery-kit.json`: open its dashboard at
-`/settings`, choose **Use BOOT Tap Once**, short-tap BOOT, then **Save my
-recovery kit**; the setup page's close-out saves the same file; the
-dashboard's offer is new, checked by automated tests and not yet on a
-bench device). Home Assistant's own "Improv via BLE" integration needs a Bluetooth
+`https://canary-<suffix>.local/settings` and accept the certificate
+warning; signed in already, choose **Settings**, **Device**, **Recovery
+kit**, **Save my recovery kit**; signed out, choose **Use BOOT Tap Once**,
+short-tap BOOT, then **Save my recovery kit**. The setup page's close-out
+saves the same file. Both dashboard paths are new, checked by automated
+tests and not yet on a bench device). Home Assistant's own "Improv via BLE" integration needs a Bluetooth
 radio on the Home Assistant machine itself; through an ESPHome Bluetooth
 proxy the one-tap pairing cannot complete — expected, and untested.
 → [Home Assistant setup](homeassistant_setup.md#step-3-configure-the-canary-device)

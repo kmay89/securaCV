@@ -2335,46 +2335,76 @@ not run on a device. Owner: U1.
     `"current_source":"stored"`. Before, the load stored 35 / 75 / 30.
   - Artifact: `docs/audit/repro/F166/tuning-lab-values/`.
 
-## canary-wap receipt address and the dashboard's recovery kit (F255, F257) — on-device verification
+## canary-wap receipt address, port 80's redirect and the dashboard's recovery kit (F255, F257) — on-device verification
 
-Code: `receipt_authority.h` and `send_provisioning_receipt()` /
-`request_local_ipv4()` in `canary_wap.ino` (F255); the `RECOVERY_KIT`
-block in `web_ui.h` and `companion_pwa.h`, and the dashboard's
-`requestFromDevice()` / `offerRecoveryKit()` (F257). Host-tested
-(`tests_host/test_receipt_authority.cpp`, every grant on the SoftAP, on the
-STA and with the STA down; `recovery_kit.test.js`, the dashboard's sign-in
-run against a fake device); the compile is CI's; not run on a device.
-Owner: U1.
+Code: `receipt_authority.h`, and `request_local_ipv4()` / `request_reach()`
+/ `send_provisioning_receipt()` / `handle_https_redirect()` in
+`canary_wap.ino` (F255); the `RECOVERY_KIT` block in `web_ui.h` and
+`companion_pwa.h`, the dashboard's `requestFromDevice()` /
+`offerRecoveryKit()` and its Settings save `saveRecoveryKitFromSettings()`
+(F257). Host-tested (`tests_host/test_receipt_authority.cpp`: every grant
+and the redirect on the SoftAP, on the STA, with the STA down and with the
+SoftAP dropped; `recovery_kit.test.js`: the dashboard's sign-in and
+Settings save run against a fake device); the compile is CI's; not run on
+a device. Owner: U1.
 
-- [ ] **A receipt fetched over the home network names the `.local` name**
+An installed WAP serves its dashboard and API over https on 443 from the
+first boot after setup (a self-signed certificate; the browser warns once,
+and the receipt's `tls_cert_fp` is that certificate's SHA-256), and port
+80 answers everything but the captive probes and `/api/fleet` with a 301
+to https. The rows below use https; on an http-only build (or one whose
+`/api/status` `tls_mode_reason` says TLS is off) use http and expect no
+301.
+
+- [ ] **A receipt fetched over the home network names the `.local` name; port 80's redirect does too**
   - Setup: a canary-wap on this firmware, joined to the home Wi-Fi, a laptop
     on the home network, a phone on the setup network inside the SoftAP's
-    grace window after the join, the API token.
-  - Repro: on the laptop, `curl -s -H "Authorization: Bearer <token>"
-    http://canary-<suffix>.local/api/provisioning-receipt`; short-tap BOOT and,
-    within 30 s, `curl -s http://<the WAP's home-network address>/api/provisioning-receipt`;
-    on the phone, short-tap BOOT and fetch the receipt from `192.168.4.1`.
-  - Expected: both laptop receipts carry
-    `"base_url": "http(s)://canary-<suffix>.local"` (before F255 both named
-    `192.168.4.1`); the phone's names `192.168.4.1`. A receipt read after the
-    SoftAP dropped never names `192.168.4.1`.
+    grace window after the join, the API token. Then the same laptop after
+    the grace window, once `/api/status` shows the AP dropped.
+  - Repro: on the laptop, `curl -sk -H "Authorization: Bearer <token>"
+    https://canary-<suffix>.local/api/provisioning-receipt`; short-tap BOOT
+    and, within 30 s, `curl -sk https://<the WAP's home-network
+    address>/api/provisioning-receipt`; compare the certificate `openssl
+    s_client -connect canary-<suffix>.local:443 </dev/null | openssl x509
+    -outform DER | sha256sum` shows with the receipt's `tls_cert_fp`.
+    `curl -si http://canary-<suffix>.local/settings` and `curl -si
+    http://<the WAP's home-network address>/settings`. On the phone, short-tap
+    BOOT and fetch `https://192.168.4.1/api/provisioning-receipt`, then
+    `http://192.168.4.1/settings` with redirects shown. Repeat the laptop's
+    four requests after the AP dropped.
+  - Expected: both laptop receipts carry `"base_url":
+    "https://canary-<suffix>.local"` (before F255 both named `192.168.4.1`)
+    and the certificate's SHA-256 equals `tls_cert_fp`; both port-80 answers
+    are `301` with `Location: https://canary-<suffix>.local/settings`
+    (before, `https://192.168.4.1/settings`, and `https://0.0.0.0/settings`
+    once the AP dropped on core 3.x); the phone's receipt and redirect name
+    `192.168.4.1`. Nothing read after the AP dropped names `192.168.4.1` or
+    `0.0.0.0`.
   - Artifact: `docs/audit/repro/F255/receipt-authority/`.
-- [ ] **The dashboard's BOOT-tap sign-in offers the recovery kit, and the kit pairs the iPhone**
+- [ ] **The dashboard offers the recovery kit, signed out (BOOT tap) and signed in (Settings), and the kit pairs the iPhone**
   - Setup: a canary-wap set up through the Bluetooth setup door (so its
-    wizard's close-out never ran), a laptop browser with no session for it,
-    the iPhone app with the WAP under **Ready to pair**.
-  - Repro: open `http://canary-<suffix>.local/settings`, choose **Use BOOT
-    Tap Once**, short-tap BOOT; on the card, choose **Save my recovery kit**.
-    Move `canary-recovery-kit.json` to the iPhone and add the WAP from its
-    **Ready to pair** row with the file. Then sign in again with
+    wizard's close-out never ran), a laptop browser with no session for it
+    (a private window), the iPhone app with the WAP under **Ready to pair**.
+  - Repro: open `https://canary-<suffix>.local/settings` (accept the
+    certificate warning), choose **Use BOOT Tap Once**, short-tap BOOT; on
+    the card, choose **Save my recovery kit**, with the browser's network
+    log open. Move `canary-recovery-kit.json` to the iPhone and add the WAP
+    from its **Ready to pair** row with the file. Reload the page (the
+    session resumes, no sign-in), open **Settings**, **Device**, **Recovery
+    kit**, choose **Save my recovery kit**. Reboot the WAP and choose it
+    again from the open page. Last, in a fresh private window, sign in with
     **Use BOOT Tap Once** and press nothing until the minute runs out.
   - Expected: after the tap the dashboard opens with the card "Save your
     recovery kit" in the wizard's words; the saved file is the receipt
-    (`device_id`, `base_url` at the `.local` name, `token`, `tls_cert_fp`
-    where TLS is on, the AP name and password); the browser's network log
-    shows no request after the receipt's `GET`; the iPhone pairs from the
-    file. The sign-in whose tap never came shows no card. Before F257 the
-    dashboard offered no kit.
+    (`device_id`, `base_url` at `https://canary-<suffix>.local`, `token`,
+    `tls_cert_fp`, the AP name and password); choosing **Save my recovery
+    kit** adds no request to the network log (the file comes from a `blob:`
+    URL), and no request carries the kit's text, while the dashboard's own
+    refreshes go on; the iPhone pairs from the file. The Settings save
+    makes one `GET /api/provisioning-receipt` and saves the same receipt;
+    after the reboot (sessions are dropped) it saves nothing and the
+    sign-in comes back. The sign-in whose tap never came shows no card.
+    Before F257 the dashboard offered no kit.
   - Artifact: `docs/audit/repro/F257/dashboard-kit/`.
 
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244) — on-device verification
