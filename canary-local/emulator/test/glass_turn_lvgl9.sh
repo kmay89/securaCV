@@ -143,7 +143,7 @@ mkdir -p "$OUT/lvgl"
 # The dash env's wiring, as its build_flags hand it to the compiler.
 CFG="$FW/configs/canary-display/dash"
 PINS="$FW/boards/waveshare-esp32s3-lcd43/pins"
-DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE -DCONFIG_CANARY_DISPLAY)
+DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE)
 
 # LVGL, once per checkout and lv_conf (an object newer than its source is
 # kept): build_lvgl <objdir> <extra flags...>. CD_LEAN_BUILD changes what

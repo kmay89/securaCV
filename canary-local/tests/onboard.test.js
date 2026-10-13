@@ -1303,6 +1303,41 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   assert.ok(step && !/^\s+if:/m.test(step) && /^\s+timeout-minutes: \d+$/m.test(step), "the step runs unconditionally, with a time bound");
 });
 
+test("A76: no emulator build hands a compiler a marker define nothing reads", () => {
+  // The 2026-10 cleanup dropped the PlatformIO envs' unread CONFIG_CANARY_*
+  // markers; the emulator's build and its native harnesses kept passing
+  // -DCONFIG_CANARY_DISPLAY to every compile. No source of ours reads it
+  // (scanned below over every in-tree directory those compiles put on the -I
+  // path; the fetched third_party/ is not in a checkout, and the sweep's
+  // preprocessor run found every translation unit byte-identical without the
+  // flag), so a flavor is its config directory on the -I path, as on the
+  // board. build.sh's DEFINES and runtime_turn.sh's DEFS are held equal by
+  // the F222 test above.
+  const fs = require("node:fs");
+  const scripts = ["emulator/build.sh", "emulator/test/glass_turn.sh", "emulator/test/glass_turn_lvgl9.sh",
+    "emulator/test/runtime_turn.sh"];
+  for (const f of scripts) {
+    assert.ok(!/-DCONFIG_CANARY_\w+/.test(read(join(ROOT, f))), `${f} passes no CONFIG_CANARY_* marker`);
+  }
+  // ...nor this file's own native compile of the binding (F243, below).
+  const self = read(__filename);
+  assert.ok(!self.includes('"-DCONFIG_' + 'CANARY_DISPLAY"'), "the request-rotation compile passes no marker");
+  const roots = [join(REPO, "firmware/projects/canary-display"), join(REPO, "firmware/common"),
+    join(REPO, "firmware/configs/canary-display"), join(REPO, "firmware/boards"), join(ROOT, "emulator/src"),
+    join(ROOT, "emulator/shim"), join(ROOT, "emulator/test")];
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? (e.name === "third_party" || e.name.startsWith(".") ? [] : walk(join(d, e.name)))
+      : /\.(c|cc|cpp|h|hpp|ino)$/.test(e.name) ? [join(d, e.name)] : []);
+  let scanned = 0;
+  for (const r of roots) {
+    for (const f of walk(r)) {
+      scanned++;
+      assert.ok(!/\bCONFIG_CANARY_[A-Z_]+/.test(read(f)), `${f} reads a CONFIG_CANARY_* marker`);
+    }
+  }
+  assert.ok(scanned > 100, `scanned the emulator's include trees (${scanned} files)`);
+});
+
 test("dash face (F223): main.cpp picks the dash face from the turn the port wore, never from the saved rotation", () => {
   // The choice is dash_face.h's, held by test_lvgl_port_turn on a glass whose
   // turn buffer is refused; main.cpp must ask it and nothing else.
@@ -1372,7 +1407,7 @@ test("F243: emu_request_rotation writes the mailbox main.cpp drains, and only on
       const inc = ["-I", join(EMU, "test/native"), "-I", join(EMU, "shim"), "-I", join(EMU, "src"), "-I", join(PROJ, "include"),
         "-I", join(FW, "configs/canary-display", c.cfg), "-I", join(FW, "boards", c.board, "pins"), "-I", join(FW, "common")];
       const cxx = ["-std=gnu++17", "-O1", "-fno-exceptions", "-fno-rtti", "-Wall", "-Wno-unused-parameter",
-        "-DARDUINO=10812", "-DCONFIG_CANARY_DISPLAY", ...inc];
+        "-DARDUINO=10812", ...inc];
       // the emulator's real binding (main() renamed: the driver owns the
       // process), the driver, and on the nightlight the firmware's real mailbox
       const srcs = [[join(EMU, "src/emu_main.cpp"), ["-Dmain=emu_entry"]], [join(EMU, "test/request_rotation_test.cpp"), []]];

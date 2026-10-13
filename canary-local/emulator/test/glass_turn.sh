@@ -54,7 +54,7 @@ mkdir -p "$OUT/lvgl"
 # The dash flavor's wiring, as build.sh hands it to em++.
 CFG="$FW/configs/canary-display/dash"
 PINS="$FW/boards/waveshare-esp32s3-lcd43/pins"
-DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE -DCONFIG_CANARY_DISPLAY)
+DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE)
 LVGL_INC=(-I "$PROJ/include" -I "$EMU/shim" -I "$LVGL")
 INC=(-I "$HERE/native" -I "$EMU/shim" -I "$EMU/src" -I "$PROJ/include"
      -I "$CFG" -I "$PINS" -I "$FW/common" -I "$LVGL")
