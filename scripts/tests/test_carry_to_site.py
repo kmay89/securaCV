@@ -285,6 +285,29 @@ class EndToEnd(unittest.TestCase):
             cs.main(["--site", str(self.tmp), *extra])
         return out.getvalue()
 
+    def assert_playground_bytes(self, snap: dict):
+        """What the weekly job commits is the written file, so hold the bytes
+        on disk to an oracle built here from the upstream files, not to
+        playground_outputs() (a writer that empties, swaps or re-ends the
+        files would still agree with that)."""
+        data_rel = "js/playground-data.js"
+        upstream_json = PLAYGROUND_FILES[data_rel].read_bytes()
+        self.assertTrue(upstream_json.endswith(b"}\n"))
+        self.assertEqual(
+            snap[data_rel],
+            cs.PLAYGROUND_DATA_HEADER.encode("utf-8")
+            + b"export const PLAYGROUND = " + upstream_json[:-1] + b";\n",
+            f"{data_rel}: not the header, the export and the upstream JSON")
+        for rel in ("js/playground-sim.js", "js/mode-sim.js"):
+            upstream = PLAYGROUND_FILES[rel].read_bytes()
+            written = snap[rel]
+            self.assertTrue(written.endswith(upstream), f"{rel}: not the upstream bytes, whole")
+            header = written[:-len(upstream)]
+            self.assertTrue(header.startswith(f"// {rel} — ".encode("utf-8")), rel)
+            self.assertIn(b"CARRIED", header, rel)
+            self.assertTrue(header.endswith(b"\n\n"), f"{rel}: a blank line closes the header")
+            self.assertNotIn(b"\r", header, f"{rel}: the header is written with LF line ends")
+
     def test_full_run_is_byte_reproducible_and_complete(self):
         first_out = self.run_carry()
         first = self.snapshot()
@@ -319,6 +342,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(spec_json["drive"]["name"], "CANARY-EVIDENCE")
         self.assertEqual(json.loads(first["kernel-status.json"]),
                          cs.kernel_status_module().site_document())
+        self.assert_playground_bytes(first)
 
     def test_only_selects_a_single_carry(self):
         self.run_carry("--only", "verifier")
@@ -393,7 +417,9 @@ class EndToEnd(unittest.TestCase):
 
     def test_only_playground_writes_exactly_its_three_files(self):
         self.run_carry("--only", "playground")
-        self.assertEqual(set(self.snapshot()), {"onboarding-spec.json", *PLAYGROUND_FILES})
+        snap = self.snapshot()
+        self.assertEqual(set(snap), {"onboarding-spec.json", *PLAYGROUND_FILES})
+        self.assert_playground_bytes(snap)
 
     def test_a_missing_or_broken_upstream_file_stops_the_playground_carry_before_any_write(self):
         # Every source is checked before the first write: the website keeps
