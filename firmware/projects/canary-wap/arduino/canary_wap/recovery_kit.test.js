@@ -64,7 +64,10 @@ function receiptKeys() {
 }
 
 // A receipt in the bytes the builder writes, for a TLS device read over the
-// home network (base_url at the .local name since sweep F255).
+// home network (base_url at the .local name since sweep F255): the repo test
+// key's names (device id and SSID suffix 4dC2, fingerprint 7916ca48..., so
+// mDNS host canary-7916), which scripts/tests/test_wap_name_examples.py holds
+// every source to.
 const FIELDS = {
   device_id: 'canary-s3-4dC2',
   base_url: 'https://canary-7916.local',
@@ -72,7 +75,7 @@ const FIELDS = {
   pubkey_fp: '7916ca487912fa1b',
   firmware: '2.4.15',
   hw_token: '0123456789abcdef0123456789abcdef',
-  ap_ssid: 'SecuraCV-7916',
+  ap_ssid: 'SecuraCV-4dC2',
   ap_password: 'quiet-owl-lamp-42',
   tls_cert_fp: 'cdfcca58db62ca948e8741d19e28ce1c79b4a818755559b419b1dd17c439dcfa',
   provisioned_at: 'boot:7',
