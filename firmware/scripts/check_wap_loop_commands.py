@@ -219,9 +219,12 @@ C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
     exactly `return bluetooth_channel::is_initialized() ||
     bluetooth_channel::init();`. It is called only as `!bring_up()` in a
     guard of `BT_BRING_UP_GUARDED` (the three handlers and the settings
-    POST), unqualified, and no other file of the sketch calls `bring_up(` or
-    `bluetooth_api::bring_up(`, every call of every file looked at (from
-    loop() it is NimBLE's init on the loop task); every such guard (the
+    POST), unqualified, and no other file of the sketch names `bring_up` or
+    `bluetooth_api::bring_up`, every call and every other reference of every
+    file looked at (from loop() it is NimBLE's init on the loop task; since
+    wave 16's verify a reference too, so `&bluetooth_api::bring_up` taken
+    into a function pointer and called through it is refused, in
+    `bluetooth_api.h` as anywhere else); every such guard (the
     settings POST's too, BV1) answers through
     `send_bring_up_refused(req, `, which is exactly a 503 with
     `bring_up_starting_error()` while `bluetooth_channel::bring_up_starting()`
@@ -487,7 +490,14 @@ BV4. `init()` hands its result to the loop task (F167). It runs on the BLE
      false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) { return false; }`, with the
      guard that clears it, `struct InitLatchClear { ~InitLatchClear() {
      __atomic_store_n(&g_init_in_progress, false, __ATOMIC_RELEASE); } }
-     latch_clear;`, naming `g_init_in_progress` nowhere else, and
+     latch_clear;`, then looks at the stack again, `if
+     (__atomic_load_n(&g_stack_up, __ATOMIC_ACQUIRE)) return true;` (wave
+     16's verify: without it a caller that read the stack down just before a
+     winner finished took the freed latch and ran NimBLE's init and
+     createServer() a second time), naming `g_init_in_progress`,
+     `InitLatchClear` and `latch_clear` nowhere else (an explicit
+     `latch_clear.~InitLatchClear();` or an inner guard is the early clear by
+     another spelling), and
      `init_running()` is exactly its acquire load (the F235 review: the latch
      clears as `init()` returns, after the stack's publish, which C3's
      `bring_up_starting()` reads the latch first on; cleared earlier, a tap
@@ -1706,7 +1716,9 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
                       "bluetooth_channel::bring_up_starting() says another task's bring-up runs, and "
                       "send_bt_error(req, fallback) (the refusal by name) otherwise, exactly (F235)")
     spans = named_bodies(code)
-    for m in re.finditer(r"\bbluetooth_api\s*::\s*bring_up\s*\(|(?<![\w:.>])bring_up\s*\(", code):
+    # Every reference, not only a call (wave 16's verify): `&bring_up` taken
+    # into a function pointer and called through it was not a `bring_up(`.
+    for m in re.finditer(r"\bbluetooth_api\s*::\s*bring_up\b|(?<![\w:.>])bring_up\b", code):
         before = code[:m.start()].rstrip()
         if re.search(r"\bbool$", before) and not code[m.start():m.end()].startswith("bluetooth_api"):
             continue                                  # the definition
@@ -1714,7 +1726,7 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
         if where not in BT_BRING_UP_GUARDED or not before.endswith("!") or \
                 not squash(code[m.start():m.start() + 160]).startswith(
                     "bring_up()){returnsend_bring_up_refused(req,"):
-            errors.append(f"{BT_API}: {where or 'file scope'}() calls bring_up() other than as a guard "
+            errors.append(f"{BT_API}: {where or 'file scope'}() names bring_up other than as a guard "
                           "answering `if (... !bring_up()) { return send_bring_up_refused(req, ...` in "
                           f"{', '.join(BT_BRING_UP_GUARDED)} — the NimBLE bring-up runs only where a tap "
                           "needs the stack, and a bring-up that left it down is answered by name, or as "
@@ -1728,14 +1740,15 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
         if path == BT_API:
             continue
         other = blank_comments_and_strings(src)
-        for hit in re.finditer(r"\bbluetooth_api\s*::\s*bring_up\s*\(|(?<![\w:.>~])bring_up\s*\(", other):
+        for hit in re.finditer(r"\bbluetooth_api\s*::\s*bring_up\b|(?<![\w:.>~])bring_up\b", other):
             if not other[hit.start():hit.end()].startswith("bluetooth_api") and \
                     re.search(r"\b(?:bool|void|int|static|inline)\s*$", other[:hit.start()]):
                 continue                              # a definition, not a call
             where = enclosing_function(named_bodies(other), hit.start())
-            errors.append(f"{path}: {where or 'file scope'}() calls bring_up( — bluetooth_api.h's, called "
-                          "only in its bring-up handlers' guards: anywhere else it is NimBLE's init on a "
-                          "task that never needed it (from loop(), past the loop task's watchdog) (F235)")
+            errors.append(f"{path}: {where or 'file scope'}() names bring_up (a call, or a reference such "
+                          "as a function pointer) — bluetooth_api.h's, called only in its bring-up handlers' "
+                          "guards: anywhere else it is NimBLE's init on a task that never needed it (from "
+                          "loop(), past the loop task's watchdog) (F235; references since wave 16's verify)")
             break
     # Start Advertising and Pair leave the stack to the boot bring-up (the
     # F235 review).
@@ -3043,11 +3056,18 @@ BT_PUBLISH_HANDOFF = "__atomic_store_n(&g_bringup_ready,true,__ATOMIC_RELEASE);"
 # returns, after the body's last write (g_stack_up's publish among them). A
 # tap that lost the latch then reads it clear (acquire) only once the stack
 # is up or refused: bring_up_starting() reads the latch first on that.
+# And (wave 16's verify) the re-check of the stack right after the guard: a
+# caller that read the stack down just before a winner finished takes the
+# freed latch, and without it runs NimBLEDevice::init() and createServer() a
+# second time. The guard is named nowhere else in init(): an explicit
+# `latch_clear.~InitLatchClear();` or an inner `{ InitLatchClear c; }`
+# before the publish is the early clear by another spelling.
 BT_INIT_HEAD = ("if(__atomic_load_n(&g_stack_up,__ATOMIC_ACQUIRE))returntrue;"
                 "boolexpected=false;if(!__atomic_compare_exchange_n(&g_init_in_progress,&expected,true,false,"
                 "__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)){returnfalse;}"
                 "structInitLatchClear{~InitLatchClear(){__atomic_store_n(&g_init_in_progress,false,"
-                "__ATOMIC_RELEASE);}}latch_clear;")
+                "__ATOMIC_RELEASE);}}latch_clear;"
+                "if(__atomic_load_n(&g_stack_up,__ATOMIC_ACQUIRE))returntrue;")
 SIG_BT_INIT_RUNNING = r"\bstatic\s+bool\s+init_running\s*\(\s*\)"
 BT_INIT_RUNNING_BODY = "return__atomic_load_n(&g_init_in_progress,__ATOMIC_ACQUIRE);"
 BT_PUBLISH_STACK_UP = "__atomic_store_n(&g_stack_up,true,__ATOMIC_RELEASE);"
@@ -3088,12 +3108,17 @@ def check_bluetooth_bringup(cpp_src: str, errors: list[str]) -> None:
                               f"{', '.join(BT_INIT_CALLS)}; the state, the list's rebuild, the "
                               "auto-advertise and the saves are the loop task's (F167)")
         sq = squash(init)
-        if not sq.startswith(BT_INIT_HEAD) or sq.count("g_init_in_progress") != 2:
-            errors.append(f"{BT_CPP}: init() must start `{BT_INIT_HEAD}` and name g_init_in_progress nowhere "
-                          "else — the latch is taken first, by the one compare-exchange, and cleared only by "
-                          "its guard's release store as init() returns, after the stack's publish: cleared "
-                          "earlier, a tap that lost the latch reads it clear with the stack not up yet and "
-                          "answers a refusal for a bring-up that is coming up (the F235 review)")
+        if not sq.startswith(BT_INIT_HEAD) or sq.count("g_init_in_progress") != 2 or \
+                sq.count("InitLatchClear") != 2 or sq.count("latch_clear") != 1:
+            errors.append(f"{BT_CPP}: init() must start `{BT_INIT_HEAD}` and name g_init_in_progress, "
+                          "InitLatchClear and latch_clear nowhere else — the latch is taken first, by the one "
+                          "compare-exchange, cleared only by its guard's release store as init() returns, after "
+                          "the stack's publish (cleared earlier, by an explicit destructor call or an inner "
+                          "guard, a tap that lost the latch reads it clear with the stack not up yet and "
+                          "answers a refusal for a bring-up that is coming up: the F235 review), and the stack "
+                          "is looked at again once the latch is held (without it, a caller that read the "
+                          "stack down just before a winner finished runs NimBLE's init a second time: wave "
+                          "16's verify)")
         pub = sq.find(BT_PUBLISH_HANDOFF)
         if sq.count(BT_PUBLISH_HANDOFF) != 1:
             errors.append(f"{BT_CPP}: init() must publish its result once, `{BT_PUBLISH_HANDOFF}` "
@@ -4254,6 +4279,22 @@ MUTATIONS: list[tuple[str, Mutation]] = [
                         r"&expected2, true, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);\n  \1")(s)),
     ("init_running() reads the latch relaxed",
      on_other(BT_CPP, SIG_BT_INIT_RUNNING, r"__ATOMIC_ACQUIRE", "__ATOMIC_RELAXED")),
+    ("init() destroys its latch guard by hand before the stack is published (wave 16's verify)",
+     on_other(BT_CPP, SIG_BT_INIT, r"(__atomic_store_n\(&g_stack_up, true, __ATOMIC_RELEASE\);)",
+              r"latch_clear.~InitLatchClear();\n  \1")),
+    ("init() clears its latch through an inner guard before the stack is published",
+     on_other(BT_CPP, SIG_BT_INIT, r"(__atomic_store_n\(&g_stack_up, true, __ATOMIC_RELEASE\);)",
+              r"{ InitLatchClear early_clear; }\n  \1")),
+    ("init() no longer looks at the stack again once it holds the latch (wave 16's verify)",
+     on_other(BT_CPP, SIG_BT_INIT,
+              r"(// Another caller brought it up between the first look and the latch\.\n)[ \t]*"
+              r"if \(__atomic_load_n\(&g_stack_up, __ATOMIC_ACQUIRE\)\) return true;\n", r"\1")),
+    ("init() looks at the stack again only after its first log",
+     lambda s: on_other(BT_CPP, SIG_BT_INIT, r"(log_health\(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, \"Initializing BLE\", nullptr\);)",
+                        r"\1\n  if (__atomic_load_n(&g_stack_up, __ATOMIC_ACQUIRE)) return true;")(
+         on_other(BT_CPP, SIG_BT_INIT,
+                  r"(// Another caller brought it up between the first look and the latch\.\n)[ \t]*"
+                  r"if \(__atomic_load_n\(&g_stack_up, __ATOMIC_ACQUIRE\)\) return true;\n", r"\1")(s))),
     ("deinit() clears init()'s latch",
      on_other(BT_CPP, SIG_BT_DEINIT, r"(set_state\(BT_DISABLED\);)",
               r"__atomic_store_n(&g_init_in_progress, false, __ATOMIC_RELEASE);\n  \1")),
@@ -4265,6 +4306,13 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("a sketch file defines a bring_up() of its own, then loop() calls bluetooth_api::bring_up()",
      raw("ino", "void loop() {",
          "static bool bring_up() { return false; }\nvoid loop() {\n  (void)bluetooth_api::bring_up();")),
+    ("the sketch's loop() calls bluetooth_api::bring_up() through a function pointer (wave 16's verify)",
+     on("ino", SIG_INO_LOOP, r"^", "\n  { bool (*bu)() = &bluetooth_api::bring_up; (void)bu(); }")),
+    ("the sketch's loop() takes bring_up's address under a using-directive",
+     on("ino", SIG_INO_LOOP, r"^", "\n  { using namespace bluetooth_api; bool (*bu)() = &bring_up; (void)bu(); }")),
+    ("a bluetooth_api.h route takes bring_up's address and calls through it",
+     on_other(BT_API, api_handler("handle_bluetooth_status"), r"^",
+              "\n  { bool (*bu)() = &bring_up; (void)bu(); }")),
     ("the disable handler calls bluetooth_api::bring_up()",
      on_other(BT_API, api_handler("handle_bluetooth_disable"), r"(bluetooth_channel::Result r;)",
               r"(void)bluetooth_api::bring_up();\n  \1")),
