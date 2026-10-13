@@ -1391,6 +1391,29 @@ def test_go2rtc_transform_rejects_non_dict_payload():
     assert serve_wizard._go2rtc_streams_to_cameras(None) == []
 
 
+def test_go2rtc_transform_skips_a_name_that_slugs_to_nothing():
+    """The empty name is the one that slugs to nothing (every other
+    character becomes one), and `zone:` fails zone:[a-z0-9_-]{1,64}: run.sh
+    took that row, sorted first by name, as the primary camera and exited
+    with "Invalid zone_id format" (sweep HA34). It is skipped, beside a good
+    stream; a blank or non-ASCII name still slugs to "_" and stays."""
+    streams = {
+        "": {"producers": [{"url": "rtsp://10.0.0.1/empty"}]},
+        " ": {"producers": [{"url": "rtsp://10.0.0.1/blank"}]},
+        "\u00e9": {"producers": [{"url": "rtsp://10.0.0.1/e"}]},
+        "Front Door": {"producers": [{"url": "rtsp://10.0.0.1/front"}]},
+    }
+    cameras = serve_wizard._go2rtc_streams_to_cameras(streams)
+    assert [(c["name"], c["zone_id"]) for c in cameras] == [
+        (" ", "zone:_"),
+        ("Front Door", "zone:front_door"),
+        ("\u00e9", "zone:_"),
+    ]
+    assert serve_wizard._go2rtc_streams_to_cameras(
+        {"": {"producers": ["rtsp://10.0.0.1/only"]}}
+    ) == []
+
+
 def test_go2rtc_transform_skips_malformed_rows_not_the_payload():
     streams = {
         "good": {"producers": [{"url": "rtsp://10.0.0.1/a"}]},
@@ -1446,6 +1469,18 @@ _GO2RTC_PARITY_PAYLOADS = {
         "İstanbul Gate": {"producers": ["rtsp://i/1"]},
         "Ünïcode-über": {"producers": ["rtsp://u/1"]},
         "L" * 80: {"producers": ["rtsp://l/1"]},
+    },
+    # The empty name slugs to nothing and is skipped (sweep HA34); a blank
+    # and a non-ASCII name slug to "_" and stay. It sorts first, so a row
+    # for it would be the one run.sh takes as the primary camera.
+    "a name that slugs to nothing": {
+        "": {"producers": ["rtsp://e/1"]},
+        " ": {"producers": ["rtsp://s/1"]},
+        "\u00e9": {"producers": ["rtsp://u/1"]},
+        "cam": {"producers": ["rtsp://c/1"]},
+    },
+    "only a name that slugs to nothing": {
+        "": {"producers": [{"url": "rtsp://e/1"}]},
     },
     "a list payload": ["not", "a", "dict"],
     "a string payload": "oops",
