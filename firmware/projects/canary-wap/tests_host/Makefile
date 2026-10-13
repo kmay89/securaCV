@@ -55,18 +55,24 @@ SOURCES   = test_mesh_coexistence.cpp \
 
 BIN       = test_mesh_coexistence
 
-# v0.2 (audit C16): host-side protocol-invariants test for Chirp v0.2.
-# Self-contained — reimplements the canonical builders to validate byte
-# layout and signer-distinguishing-canonical invariants without pulling in
-# ESP-NOW / Arduino dependencies.
+# v0.2 (audit C16): Chirp v0.2's wire invariants on the REAL chirp_channel.cpp
+# (chirp_host_harness.h, over stubs/mesh_net): the version and magic a
+# receiver takes, and the bytes each signature covers, written out from the
+# spec and verified against the frames the firmware sends (witness, ACK,
+# suppress vote, relay), C1, C4, C6 and C17. It re-implemented the builders
+# and tested the copies until sweep F271.
 CHIRP_INV_BIN = test_chirp_protocol_invariants
 CHIRP_INV_SRC = test_chirp_protocol_invariants.cpp
 
-# v0.3 (audit C16 closure): per-finding regression tests for the Chirp v0.2
-# security model (C2/C3 self-counting, C5 ACK dedup, C7 suppress dedup, C8
-# priority storage, C9 Bloom dedup, C11 emoji size).
+# v0.3 (audit C16 closure): the Chirp v0.2 security model on the REAL
+# chirp_channel.cpp (chirp_host_harness.h) with signed frames: no self-count
+# (C2, C3), one count per confirming key and none without a nearby row (C5,
+# C13), urgent chirps kept through a flood (C8), a nonce refused after a
+# thousand more (C9). It tested copies until sweep F271; its C7 and C11 copies
+# were retired for test_chirp_suppress_wap.cpp and test_chirp_commands_wap.cpp.
 CHIRP_SEC_BIN = test_chirp_security
 CHIRP_SEC_SRC = test_chirp_security.cpp
+CHIRP_HARNESS_DEPS = chirp_host_harness.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/chirp_channel.cpp $(SRC_DIR)/mesh_network.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/airtime_governor.cpp
 
 # v0.3: Beacon receive-path invariants. Verifies the validation pipeline in
 # beacon_channel.cpp::handle_alert_frame rejects single-signature frames,
@@ -255,11 +261,11 @@ WITNESS_PAGE_FIXTURE = ../../../../spec/fixtures/witness_page_v1.json
 $(BIN): $(SOURCES) $(SRC_DIR)/airtime_governor.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
 	$(CXX) $(CXXFLAGS) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(SOURCES)
 
-$(CHIRP_INV_BIN): $(CHIRP_INV_SRC)
-	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_INV_SRC)
+$(CHIRP_INV_BIN): $(CHIRP_INV_SRC) $(CHIRP_HARNESS_DEPS)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_INV_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
 
-$(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC)
-	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_SEC_SRC)
+$(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC) $(CHIRP_HARNESS_DEPS)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_SEC_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
 
 $(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC) beacon_source_scan.h $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h
 	$(CXX) $(CXXFLAGS) -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_ORIG_SRC)
@@ -918,8 +924,8 @@ $(TAMPER_BIN): $(TAMPER_SOURCES)
 
 run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(STATUSTIER_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN) $(WITNESS_PAGE_BIN)
 	./$(BIN)
-	./$(CHIRP_INV_BIN)
-	./$(CHIRP_SEC_BIN)
+	$(call run_marked,$(CHIRP_INV_BIN))
+	$(call run_marked,$(CHIRP_SEC_BIN))
 	./$(BEACON_ORIG_BIN)
 	./$(BEACON_SOLO_BIN)
 	./$(BEACON_TAMPER_BIN)
