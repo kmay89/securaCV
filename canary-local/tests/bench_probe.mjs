@@ -241,7 +241,10 @@ if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench_ok.png` });
 // chip is inert, a click on it fits nothing, the troubleshooter offers no
 // step that stages a battery, pulling the cable drops the rail at once, and
 // the backlight row says the cap the board's HAL enforces and this twin's
-// does not. A fresh document: the page reads its #card only at load.
+// does not. Its ROM is the ESP32-C3's (sweep A59): the power-on banner is
+// the C3's quoted one, BOOT held through RST parks it with GPIO9 named, and
+// no S3 banner is ever printed on the card. A fresh document: the page reads
+// its #card only at load.
 await page.goto("about:blank");
 await page.goto(`http://127.0.0.1:${port}/canary-local/fleet.html#canary-nightlight`);
 await page.waitForSelector(".tabs .tab", { timeout: 30000 });
@@ -253,6 +256,8 @@ await openTab("Wire");
 const nlBoots0 = await sings();
 await waitSerial("The canary is singing");
 await waitSerial("backlight duty capped at 50%");   // the firmware's own boot line, on the twin
+if (!(await serial()).includes("ESP-ROM:esp32c3-api1-20210207\nBuild:Feb  7 2021\nrst:0x1 (POWERON)"))
+  await fail("the Nightlight's power-on banner is not the ESP32-C3's");
 await openTab("Try it");
 await page.waitForSelector(".style-chip.on", { timeout: 15000 })
   .catch(() => fail("the Nightlight's Try it never showed the firmware's Character ring"));
@@ -316,6 +321,22 @@ await chip("USB-C cable").click();
 await openTab("Wire");
 await waitSings(nlBoots1);
 if (await shade()) await fail("the Nightlight's glass still shaded after USB came back");
+// BOOT (GPIO9) held through RST: the C3's ROM waits for a flasher, said in its
+// own strap story; release BOOT, RST again, and the firmware boots.
+await openTab("Bench");
+await chip("BOOT").click();
+await chip("RST").click();
+if ((await shade()) !== "waiting for download") await fail("the Nightlight's download mode not shown on the glass");
+await openTab("Wire");
+await waitSerial("ESP32-C3 ROM: BOOT (GPIO9) was low at reset, so it waits for a flasher");
+const nlBoots2 = await sings();
+await openTab("Bench");
+await chip("BOOT").click();
+await chip("RST").click();
+await openTab("Wire");
+await waitSings(nlBoots2);
+if (await shade()) await fail("the Nightlight's glass still shaded after recovery from download mode");
+if (/esp32s3|GPIO0\b/i.test(await serial())) await fail("the Nightlight's serial printed an ESP32-S3 banner or strap");
 if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench_nightlight_ok.png` });
 await browser.close();
 server.close();
