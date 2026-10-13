@@ -1314,6 +1314,68 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   assert.ok(step && !/^\s+if:/m.test(step) && /^\s+timeout-minutes: \d+$/m.test(step), "the step runs unconditionally, with a time bound");
 });
 
+// Sweep A82: glass_turn.sh and runtime_turn.sh made a fresh `mktemp -d` per
+// run (about 3.5 MB of objects) and never removed it. Each script now removes
+// its default directory on exit, pass or fail, and leaves an explicit
+// GLASS_TURN_OUT / RUNTIME_TURN_OUT alone. Run here for real, against
+// stand-in checkouts whose headers refuse to compile: each script gets past
+// its checks, makes its build directory, and ends red at its first compile,
+// so the exit path is the one a broken tree takes (a green run leaves by the
+// same trap; CI's wasm job runs both scripts whole).
+test("A82: the turn scripts remove their default build directory on exit and leave an explicit one", (t) => {
+  const gxx = spawnSync("g++", ["--version"], { encoding: "utf8" });
+  if (gxx.status !== 0) {
+    if (process.env.CI) assert.fail("g++ is missing on this CI runner: the turn scripts' exit cannot be run");
+    t.skip("no g++ on this host: the turn scripts compile with it");
+    return;
+  }
+  const os = require("node:os");
+  const fs = require("node:fs");
+  const base = fs.mkdtempSync(join(os.tmpdir(), "securacv-a82-"));
+  const put = (rel, text) => {
+    fs.mkdirSync(join(base, rel, ".."), { recursive: true });
+    fs.writeFileSync(join(base, rel), text);
+  };
+  // An LVGL 8.4 by its version lines (both scripts check them), with no C
+  // sources and a header that stops every compile that includes it.
+  put("lvgl/lvgl.h", "#define LVGL_VERSION_MAJOR 8\n#define LVGL_VERSION_MINOR 4\n#error stand-in LVGL (sweep A82 test)\n");
+  fs.mkdirSync(join(base, "lvgl/src"), { recursive: true });
+  put("aj/src/ArduinoJson.h", "#error stand-in ArduinoJson (sweep A82 test)\n");
+  put("al/libraries/Crypto/Ed25519.cpp", "#error stand-in Crypto (sweep A82 test)\n");
+  const dirsIn = (d) => fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  const run = (script, args, outVar, outDir) => {
+    const tmp = fs.mkdtempSync(join(base, "tmpdir-"));
+    const env = { ...process.env, TMPDIR: tmp };
+    delete env.GLASS_TURN_OUT;
+    delete env.RUNTIME_TURN_OUT;
+    if (outDir) env[outVar] = outDir;
+    const r = spawnSync("bash", [join(ROOT, "emulator/test", script), ...args.map((a) => join(base, a))],
+      { encoding: "utf8", env, timeout: 300000 });
+    return { r, tmp };
+  };
+  try {
+    for (const [script, args, outVar, made] of [
+      ["glass_turn.sh", ["lvgl"], "GLASS_TURN_OUT", "lvgl"],
+      ["runtime_turn.sh", ["lvgl", "aj", "al"], "RUNTIME_TURN_OUT", "fw"],
+    ]) {
+      // Default: a temporary directory, gone once the script has ended.
+      const def = run(script, args);
+      assert.notStrictEqual(def.r.status, 0, `${script} passed against stand-in checkouts that cannot compile`);
+      assert.match(def.r.stderr, /stand-in (?:LVGL|ArduinoJson|Crypto) \(sweep A82 test\)/,
+        `${script} did not reach a compile:\n${def.r.stderr.slice(-2000)}`);
+      assert.deepStrictEqual(dirsIn(def.tmp), [], `${script} left its build directory in TMPDIR (${def.tmp})`);
+      // Explicit: the caller's directory, kept with what the script built in it.
+      const keep = join(base, `keep-${outVar}`);
+      const exp = run(script, args, outVar, keep);
+      assert.notStrictEqual(exp.r.status, 0, `${script} passed with ${outVar} set, against stand-in checkouts`);
+      assert.ok(fs.existsSync(join(keep, made)), `${script} removed the ${outVar} directory it was handed`);
+      assert.deepStrictEqual(dirsIn(exp.tmp), [], `${script} made a temporary directory although ${outVar} was set`);
+    }
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("A76: no emulator build hands a compiler a marker define nothing reads", () => {
   // The 2026-10 cleanup dropped the PlatformIO envs' unread CONFIG_CANARY_*
   // markers; the emulator's build and its native harnesses kept passing

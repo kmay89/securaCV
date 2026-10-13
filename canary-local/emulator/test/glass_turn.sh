@@ -19,8 +19,10 @@
 # any step that reads the committed dist: a stale dist goes red in the
 # browser probes, and a step after them would be skipped, hiding the one
 # proof of these sources that does not need the dist. An explicit LVGL_DIR
-# is never fetched into. GLASS_TURN_OUT keeps the objects between runs
-# (default: a fresh temporary directory).
+# is never fetched into. GLASS_TURN_OUT keeps the objects between runs and
+# is left as it is; without it the objects go to a fresh temporary directory
+# that is removed on exit, pass or fail (sweep A82, as glass_turn_lvgl9.sh
+# does).
 set -euo pipefail
 export LC_ALL=C
 
@@ -48,7 +50,12 @@ if [[ "$ver" != "8.4." ]]; then
   exit 2
 fi
 
-OUT="${GLASS_TURN_OUT:-$(mktemp -d)}"
+if [[ -n "${GLASS_TURN_OUT:-}" ]]; then
+  OUT="$GLASS_TURN_OUT"
+else
+  OUT="$(mktemp -d)"
+  trap '[[ -n "$OUT" && -d "$OUT" ]] && rm -rf -- "$OUT"' EXIT
+fi
 mkdir -p "$OUT/lvgl"
 
 # The dash flavor's wiring, as build.sh hands it to em++.

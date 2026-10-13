@@ -21,7 +21,10 @@
 # it and skips its own clone — what lets CI (canary-local.yml) run this beside
 # glass_turn.sh, before any step that reads the committed dist. An explicit
 # directory is never fetched into. RUNTIME_TURN_OUT keeps the objects between
-# runs (default: a fresh temporary directory).
+# runs and is left as it is; without it the objects go to a fresh temporary
+# directory that is removed on exit, pass or fail, once the compiles still
+# running in the background have ended (sweep A82, as glass_turn_lvgl9.sh
+# removes its own).
 set -euo pipefail
 export LC_ALL=C
 
@@ -78,7 +81,14 @@ if [[ -z "$AL" || ! -f "$CRYPTO/Ed25519.cpp" ]]; then
   exit 2
 fi
 
-OUT="${RUNTIME_TURN_OUT:-$(mktemp -d)}"
+if [[ -n "${RUNTIME_TURN_OUT:-}" ]]; then
+  OUT="$RUNTIME_TURN_OUT"
+else
+  OUT="$(mktemp -d)"
+  # The compiles below run in the background, and a red one ends the script
+  # while others are still writing objects: wait them out, then remove.
+  trap 'wait; [[ -n "$OUT" && -d "$OUT" ]] && rm -rf -- "$OUT"' EXIT
+fi
 mkdir -p "$OUT/lvgl" "$OUT/fw"
 
 # The nightlight flavor's wiring, as build.sh hands it to em++ (its pin map,
