@@ -1314,6 +1314,72 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   assert.ok(step && !/^\s+if:/m.test(step) && /^\s+timeout-minutes: \d+$/m.test(step), "the step runs unconditionally, with a time bound");
 });
 
+// Sweep A81: the native drivers play the page, so each defines the EM_JS
+// calls of the emulator sources it links. Under their emscripten.h stand-ins
+// an EM_JS is a plain extern "C" declaration, which carries no signature: a
+// definition that drops an argument links all the same and then cannot read
+// it (runtime_turn_test.cpp's js_display_ready took three, dropping A56's
+// turn). So every definition is held here to its EM_JS: the same return type
+// and the same parameter types, in order, and no page call left undefined or
+// defined for a call the sources no longer make.
+const EMU_SRC = join(ROOT, "emulator/src");
+function cTypes(params) {
+  const TYPE_WORDS = new Set(["void", "int", "char", "double", "float", "long", "short", "unsigned", "signed",
+    "const", "bool", "size_t", "uint8_t", "uint16_t", "uint32_t", "int32_t"]);
+  const list = params.replace(/\s+/g, " ").trim();
+  if (list === "" || list === "void") return [];
+  return list.split(",").map((p) => {
+    const words = p.trim().replace(/\s*\*\s*/g, "* ").trim().split(" ");
+    if (words.length > 1 && /^[A-Za-z_]\w*$/.test(words[words.length - 1]) && !TYPE_WORDS.has(words[words.length - 1])) words.pop();
+    return words.join(" ").replace(/\* ?$/, "*");
+  });
+}
+function emJsCalls(files) {
+  const calls = new Map();
+  for (const f of files) {
+    for (const m of read(f).matchAll(/\bEM_JS\(\s*([^,]+?)\s*,\s*(js_\w+)\s*,\s*\(([^)]*)\)/g)) {
+      calls.set(m[2], { ret: m[1].trim(), params: cTypes(m[3]), file: f });
+    }
+  }
+  return calls;
+}
+function pageDefinitions(driver) {
+  const defs = new Map();
+  for (const m of read(driver).matchAll(/^(?:extern "C" )?([A-Za-z_][\w ]*?\**)\s+(js_\w+)\s*\(([^)]*)\)\s*\{/gm)) {
+    defs.set(m[2], { ret: m[1].trim(), params: cTypes(m[3]) });
+  }
+  return defs;
+}
+test("A81: every native driver defines each page call it links with the EM_JS's own signature", () => {
+  const all = require("node:fs").readdirSync(EMU_SRC).filter((f) => /\.(?:cpp|c)$/.test(f)).map((f) => join(EMU_SRC, f));
+  const hal = [join(EMU_SRC, "emu_hal_display.cpp")];
+  // The parser reads every EM_JS the sources hold (a form it cannot read
+  // would drop out of the comparison unseen).
+  const declared = all.reduce((n, f) => n + (read(f).match(/\bEM_JS\(/g) || []).length, 0);
+  assert.strictEqual(emJsCalls(all).size, declared, "every EM_JS in emulator/src has a form this test reads");
+  assert.deepStrictEqual(emJsCalls(hal).get("js_display_ready").params, ["int", "int", "int", "int"],
+    "the HAL announces width, height, round mask and turn (A56)");
+  for (const [driver, links] of [
+    ["emulator/test/runtime_turn_test.cpp", all],   // runtime_turn.sh links every emulator source
+    ["emulator/test/glass_turn_test.cpp", hal],     // glass_turn.sh links the display HAL alone
+    ["emulator/test/backlight_cap_test.cpp", hal],
+  ]) {
+    const want = emJsCalls(links);
+    const have = pageDefinitions(join(ROOT, driver));
+    assert.deepStrictEqual([...have.keys()].sort(), [...want.keys()].sort(),
+      `${driver} defines the page calls of exactly the sources it links`);
+    for (const [name, w] of want) {
+      assert.deepStrictEqual(have.get(name), { ret: w.ret, params: w.params },
+        `${driver}'s ${name} is not the ${w.file.replace(`${ROOT}/`, "")} EM_JS's ${w.ret} (${w.params.join(", ")})`);
+    }
+  }
+  // ...and the full boot reads the turn it is now handed, after every turn.
+  const drv = read(join(ROOT, "emulator/test/runtime_turn_test.cpp"));
+  assert.ok(drv.includes("g_seen.shape_turn = turn;") && drv.includes("g_seen.shapes_at_ask = g_seen.shapes;") &&
+    drv.includes("s.shape_turn == announced_turn(to)") && drv.includes("s.shape_turn == announced_turn(r)"),
+  "runtime_turn_test.cpp records the announced turn and requires it at boot and after each turn");
+});
+
 // Sweep A82: glass_turn.sh and runtime_turn.sh made a fresh `mktemp -d` per
 // run (about 3.5 MB of objects) and never removed it. Each script now removes
 // its default directory on exit, pass or fail, and leaves an explicit

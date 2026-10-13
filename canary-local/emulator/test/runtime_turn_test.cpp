@@ -20,7 +20,9 @@
 //    nightlight_apply_orientation(): the panel turned, the face rebuilt into
 //    the new shape, and the companion tumbling in from the edge that was up
 //    (nightlight_ui_tumble()).
-// For every P -> R the turned boot must announce R's shape, show its
+// For every P -> R the turned boot must announce R's shape and its quarter
+// turns after the ask (A56's turn, read from io/orientation.h's Orient as
+// main.cpp hands it on; sweep A81), show its
 // companion off its perch on the first frames after the turn (the tumble ran:
 // a case whose turn never happened cannot pass), and then, over six seconds
 // from 1.5 s after the turn, draw the companion exactly where the reference
@@ -70,6 +72,7 @@
 
 #include "lvgl.h"
 #include "src/misc/lv_gc.h"  // LVGL 8.4's animation list, read below
+#include "canary/io/orientation.h"
 #include "canary/ui/canary_mark.h"
 
 namespace canary {
@@ -117,7 +120,9 @@ struct Case {
 struct Seen {
   int reached_end;
   int shapes;                 // glass shapes announced (js_display_ready)
-  int shape_w, shape_h;       // the last one
+  int shapes_at_ask;          // ...of them, those announced before the ask
+  int shape_w, shape_h;       // the last one: its size,
+  int shape_round, shape_turn;  // round mask and quarter turns (sweep A81)
   int fb_w, fb_h;             // the framebuffer at the end
   int port_w, port_h;         // LVGL's logical canvas at the end
   int first_valid, first_x, first_y, first_shown;  // the bird kFirstRead after the ask
@@ -229,6 +234,7 @@ void finish() {
 void beat() {
   if (!g_asked && g_wall >= kTurnAt) {
     g_asked = true;
+    g_seen.shapes_at_ask = g_seen.shapes;
     if (g_case.to >= 0) canary::care::nightlight_request_rotation((uint8_t)g_case.to);
     else canary::care::nightlight_request_rotation((uint8_t)g_case.from);  // already worn
   }
@@ -376,6 +382,16 @@ void shape_of(int rot, int* w, int* h) {
   *h = land ? 180 : 320;
 }
 
+// The quarter turns the page must be told a rotation is worn at (A56's
+// turn): io/orientation.h's Orient, as main.cpp hands the rotation on
+// (static_cast<Orient>), written out by name, as glass_turn_test.cpp writes
+// them since A64 (sweep A81): the device turned a quarter clockwise is 1.
+int announced_turn(int rot) {
+  using canary::io::Orient;
+  const Orient o = static_cast<Orient>(rot);
+  return o == Orient::R90 ? 1 : o == Orient::R180 ? 2 : o == Orient::R270 ? 3 : 0;
+}
+
 }  // namespace
 
 extern "C" {
@@ -417,10 +433,16 @@ void js_mqtt_conn(int, const char*, const char*) {}
 void js_http_response(int, int, const char*, const char*, const char*) {}
 void js_radio_event(const char*, const char*) {}
 void js_udp_send(int, const char*, int, const char*) {}
-void js_display_ready(int w, int h, int) {
+// Every argument the HAL hands the page (sweep A81): a call that drops one
+// links all the same (an extern "C" name carries no signature), and then
+// cannot read the turn. onboard.test.js holds each of these definitions to
+// the EM_JS it stands in for.
+void js_display_ready(int w, int h, int round_mask, int turn) {
   g_seen.shapes++;
   g_seen.shape_w = w;
   g_seen.shape_h = h;
+  g_seen.shape_round = round_mask;
+  g_seen.shape_turn = turn;
 }
 void js_flush(int, int, int, int, int) {}
 void js_backlight_apply(int, int) {}
@@ -456,6 +478,13 @@ int main(int argc, char** argv) {
     CHECK(s.fb_w == w && s.fb_h == h && s.port_w == w && s.port_h == h,
           "rotation %d from power-on: glass %dx%d, LVGL %dx%d, want %dx%d", r, s.fb_w, s.fb_h,
           s.port_w, s.port_h, w, h);
+    // The page was told that glass: its shape, no round mask, and the turn it
+    // is worn at (A56), as a unit booted at that rotation announces it.
+    CHECK(s.shapes > 0 && s.shape_w == w && s.shape_h == h && s.shape_round == 0 &&
+              s.shape_turn == announced_turn(r),
+          "rotation %d from power-on: the HAL last told the page %dx%d, round %d, turn %d (%d "
+          "announcements); want %dx%d, round 0, turn %d",
+          r, s.shape_w, s.shape_h, s.shape_round, s.shape_turn, s.shapes, w, h, announced_turn(r));
     CHECK(s.samples > 0 && s.hidden == 0 && s.missing == 0,
           "rotation %d from power-on: the companion on stage throughout (%d reads, %d hidden, %d "
           "missing)",
@@ -515,6 +544,13 @@ int main(int argc, char** argv) {
                 s.port_h == h,
             "turned %d -> %d: announced %dx%d, glass %dx%d, LVGL %dx%d, want %dx%d", from, to,
             s.shape_w, s.shape_h, s.fb_w, s.fb_h, s.port_w, s.port_h, w, h);
+      // ...announced after the ask, with the turn the glass is now worn at
+      // (A56 through nightlight_request_rotation(); sweep A81): a turn the
+      // HAL misnames, or one it never announces, fails here.
+      CHECK(s.shapes > s.shapes_at_ask && s.shape_round == 0 && s.shape_turn == announced_turn(to),
+            "turned %d -> %d: the HAL last told the page round %d, turn %d (%d announcements, %d "
+            "before the ask); want round 0 and turn %d, announced after the ask",
+            from, to, s.shape_round, s.shape_turn, s.shapes, s.shapes_at_ask, announced_turn(to));
       // The tumble ran: right after the turn the companion is off its perch,
       // on the side the turn's old "up" now faces (nightlight_ui_tumble():
       // a quarter turn clockwise enters over the right edge, a half turn

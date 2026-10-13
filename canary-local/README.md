@@ -946,12 +946,19 @@ fails on byte drift.
   already wears, writes `[orient] app picker -> rotation R (already worn)`
   and is not turned (F285). Each reference boot ends with a Joyful hop over
   its running breath, held the same way. It reads the bird's box, its style
-  y, LVGL 8.4's animation list, the glass's shape and the firmware's
-  `[orient]` serial lines. Fetches LVGL, Crypto and
+  y, LVGL 8.4's animation list, the glass's shape and turn, and the
+  firmware's `[orient]` serial lines: every boot's last announcement, and
+  one made after each turn, must carry the quarter turns the glass is worn
+  at (A81: `Orient`'s R90, R180 and R270 as 1, 2 and 3). Fetches LVGL,
+  Crypto and
   ArduinoJson at `build.sh`'s pins when absent, and CI runs it right after
   `glass_turn.sh`.
   `tests/onboard.test.js` holds its TU lists, defines and language flags to
-  what `build.sh` hands em++ for the nightlight.
+  what `build.sh` hands em++ for the nightlight, and each page call it (and
+  `glass_turn.sh`'s two tests) defines to the signature of the `EM_JS` it
+  stands in for. Both scripts build in `GLASS_TURN_OUT` /
+  `RUNTIME_TURN_OUT` when set and leave it there; otherwise in a temporary
+  directory they remove on exit, pass or fail (A82).
 
 - `emulator/test/glass_turn_lvgl9.sh` — the same turned dash glass on the
   LVGL the dash builds ship (F225): the real `ui/lvgl_port.cpp` (its LVGL 9
