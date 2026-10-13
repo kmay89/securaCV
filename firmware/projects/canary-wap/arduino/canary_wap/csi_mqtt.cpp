@@ -47,11 +47,25 @@
  *     don't get counted.
  *
  * Auth model:
- *   - The HTTP config / test handlers go through CSI_AUTH_OR_RETURN
- *     just like every other /api/csi/* route. A casual visitor on the
- *     SoftAP can't read the broker password back, can't change the
+ *   - The HTTP config / test handlers take what CSI_AUTH_OR_RETURN takes
+ *     on every other /api/csi/* route (authorized() below): any live
+ *     dashboard session, or the bearer token in the Authorization header.
+ *     A visitor with neither can't read the config, can't change the
  *     broker, and can't trigger /test (which would leak the broker
  *     hostname via a connect attempt).
+ *   - Any session is not only the owner's. The landing page at / mints
+ *     one for any caller that reaches the device, on the SoftAP and, once
+ *     the WAP has joined the home Wi-Fi, on the home network too (the
+ *     2026-07 audit's "Trust-on-LAN" posture; cv_session_store.h,
+ *     Origin::LANDING). Such a session can change the broker. The broker
+ *     password is write-only (GET answers password_set, never the
+ *     password), and a save that would send the STORED password somewhere
+ *     new (a new host, port, user, TLS mode or CA, with no "password" in
+ *     the body) takes only the bearer header or a session a BOOT tap or a
+ *     setup-door claim minted (Origin::OWNER; authorized_for_credential()
+ *     below, sweep F289): a landing session is asked to type the password
+ *     again, so it can point the bridge at its own listener only with a
+ *     password it already knows.
  */
 
 #include "csi_mqtt.h"
@@ -1950,6 +1964,37 @@ static bool authorized(httpd_req_t* req, const char* api_token) {
   return false;
 }
 
+/* For a save that would send the stored broker password somewhere it was
+ * not going (sweep F289): the bearer token in the Authorization header, or
+ * a session minted beside a served provisioning receipt (a BOOT tap or a
+ * setup-door claim; api_auth.h's cv_session_validate_owner, the check
+ * api_auth_check_credential_optional() makes). Never a session the landing
+ * page minted: the landing hands one to any caller on the network, and
+ * authorized() above takes it. An empty token is no token. */
+static bool authorized_for_credential(httpd_req_t* req, const char* api_token) {
+  if (api_token && api_token[0] != '\0' && api_auth_bearer_header_ok(req, api_token)) return true;
+  return cv_session_validate_owner && cv_session_validate_owner(req);
+}
+
+/* Whether a save would send the stored broker password somewhere it was
+ * not going (sweep F289): the body sent no "password", so `next` carries
+ * the stored one, and it moves the broker (host or port), the user the
+ * password is sent for, or how it is sent (the TLS mode, or the CA a
+ * CA-mode link trusts: a CA the caller picks is a broker the caller runs).
+ * The stored settings are read again here, in this frame, not the
+ * handler's; with no settings namespace they read as the defaults (no
+ * host), which the kept password's broker is not. */
+static bool moves_the_kept_password(const Config& next, bool password_sent, bool ca_sent) {
+  if (password_sent || next.pass[0] == '\0') return false;
+  if (ca_sent) return true;
+  Config was;
+  (void)config_load(&was);
+  const bool moved = strcmp(was.host, next.host) != 0 || was.port != next.port ||
+                     strcmp(was.user, next.user) != 0 || was.tls_mode != next.tls_mode;
+  memset(&was, 0, sizeof(was));   /* its copy of the password */
+  return moved;
+}
+
 /* The api_token for csi_mqtt's Bearer surface is the same one
  * /api/csi/* routes already check. We don't have direct access to
  * g_device.api_token_str from here, so the integration layer
@@ -2348,12 +2393,31 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     if (refuse_too_long(req, "prefix", buf, MAX_PREFIX_LEN)) return ESP_OK;
     strncpy(c.prefix, buf, MAX_PREFIX_LEN); c.prefix[MAX_PREFIX_LEN] = '\0';
   }
-  if (json_extract_string(body, "\"password\"", buf, sizeof(buf))) {
+  const bool password_sent = json_extract_string(body, "\"password\"", buf, sizeof(buf));
+  if (password_sent) {
     if (refuse_too_long(req, "password", buf, MAX_PASS_LEN)) return ESP_OK;
     strncpy(c.pass,   buf, MAX_PASS_LEN);   c.pass  [MAX_PASS_LEN]   = '\0';
   }
   if (!c.prefix[0]) strncpy(c.prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
   if (c.port == 0)  c.port = c.tls ? DEFAULT_PORT_TLS : DEFAULT_PORT;
+
+  /* The stored password goes only where the owner sent it (sweep F289). A
+   * save that keeps it (no "password" in the body) and moves it (a new
+   * host, port, user, TLS mode or CA) takes the bearer header or an owner's
+   * session, not any session: the landing page mints one for any caller on
+   * the network, which could otherwise point the bridge at a listener of
+   * its own and have the bridge send it the password. Refused before
+   * anything is saved; typing the password again is the owner's way past
+   * it on a landing session (the /mqtt page shows this reason). */
+  if (moves_the_kept_password(c, password_sent, ca_changed) &&
+      !authorized_for_credential(req, tok)) {
+    memset(&c, 0, sizeof(c));
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req,
+      "{\"ok\":false,\"error\":\"password_needed\",\"reason\":\"type the broker password again to change the broker, user or encryption\"}", -1);
+    return ESP_OK;
+  }
 
   if (!config_save(c) || (ca_changed && !ca_save(cabuf.p))) {
     httpd_resp_set_status(req, "500 Internal Server Error");
