@@ -1322,9 +1322,23 @@ test("A76: no emulator build hands a compiler a marker define nothing reads", ()
   // ...nor this file's own native compile of the binding (F243, below).
   const self = read(__filename);
   assert.ok(!self.includes('"-DCONFIG_' + 'CANARY_DISPLAY"'), "the request-rotation compile passes no marker");
+  // The board directories: exactly the pins/ directories those compiles put
+  // on -I (each script names its own; F243's compile below names two), not
+  // all of firmware/boards, whose other files sit outside canary-local.yml's
+  // path filter (scripts/check_path_filter_reads.py holds every read here to
+  // it). A pins assignment in another shape is refused rather than skipped.
+  const pinsDirs = new Set(REQUEST_ROTATION_CONFIGS.map((c) => `boards/${c.board}/pins`));
+  for (const f of scripts) {
+    for (const line of read(join(ROOT, f)).split("\n").filter((l) => /^\s*\w*PINS\w*=/.test(l))) {
+      const m = /^\s*\w*PINS\w*="\$FW\/(boards\/[\w-]+\/pins)"\s*$/.exec(line);
+      assert.ok(m, `${f}: a pins directory this test cannot read: ${line.trim()}`);
+      pinsDirs.add(m[1]);
+    }
+  }
+  assert.ok(pinsDirs.size >= 6, `the compiles' pins directories (${[...pinsDirs].join(", ")})`);
   const roots = [join(REPO, "firmware/projects/canary-display"), join(REPO, "firmware/common"),
-    join(REPO, "firmware/configs/canary-display"), join(REPO, "firmware/boards"), join(ROOT, "emulator/src"),
-    join(ROOT, "emulator/shim"), join(ROOT, "emulator/test")];
+    join(REPO, "firmware/configs/canary-display"), ...[...pinsDirs].map((d) => join(REPO, "firmware", d)),
+    join(ROOT, "emulator/src"), join(ROOT, "emulator/shim"), join(ROOT, "emulator/test")];
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? (e.name === "third_party" || e.name.startsWith(".") ? [] : walk(join(d, e.name)))
       : /\.(c|cc|cpp|h|hpp|ino)$/.test(e.name) ? [join(d, e.name)] : []);
