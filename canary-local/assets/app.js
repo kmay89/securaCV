@@ -17,7 +17,7 @@ import { buildBuildIt } from "./build-it.js";
 import { buildBoardLab } from "./board-lab.js";
 import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
-import { BenchPower, romBanner } from "../emulator/web/bench.js";
+import { BenchPower, romBanner, benchRibbon } from "../emulator/web/bench.js";
 import { DEMO, beatsBetween } from "./mode-sim.js";
 import { buildOnboardPhone } from "./onboard-phone.js";
 import {
@@ -907,11 +907,10 @@ function benchView(ctx, guideCtx, noteLine) {
       "wired past the chip. Pull the cable mid-frame, brown out the " +
       "battery, park the ROM in download mode — the glass and the serial " +
       "log react exactly as a real bench would."),
-    el("p", "bench-ribbon",
-      "Honesty: the mask-ROM banner is staged by the bench (its text is " +
-      "verbatim ESP32-S3); everything after it is the real firmware. The " +
-      "PWR/CHG/DONE lights are hardwired to the rail and charge chip — " +
-      "no firmware here or on your desk can turn them off.")
+    // Said per board, from its bench block (its chip's ROM, its own
+    // hardwired lights): one fixed sentence for every card named the S3's
+    // ROM and PWR/CHG/DONE on the Nightlight's card (sweep A59 review).
+    el("p", "bench-ribbon", benchRibbon(profile))
   );
 
   // ── The lights ────────────────────────────────────────────────────────

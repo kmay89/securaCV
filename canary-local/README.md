@@ -261,9 +261,11 @@ Three doors into the same live device, all driven by one scenario API
   its bench block's `rom` names it (staged — the ROM is the one program we
   can't compile to wasm; everything after the banner is the real
   firmware). Each banner line is quoted from an Espressif source
-  `bench.js` cites; where no source quotes one (the ESP32-C3's
-  software-reset and download-mode banners) the bench prints a note
-  saying so, never another chip's banner. NVS rides through
+  `bench.js` cites, except the ESP32-S3's two download-mode lines, kept
+  from before and not re-sourced; where no source quotes one (the
+  ESP32-C3's software-reset and download-mode banners) the bench prints a
+  note saying so, never another chip's banner. The bench's honesty
+  ribbon says which is which on each card. NVS rides through
   every power event like the flash it is, and a live diagnostics pane
   (power source, boot stage, uptime, backlight duty, flush count, link,
   MQTT session, NVS keys) plus symptom-first debug flows ("a red light

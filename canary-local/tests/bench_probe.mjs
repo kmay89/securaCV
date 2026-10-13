@@ -136,6 +136,15 @@ if (!(await serial()).includes("ESP-ROM:esp32s3-20210327"))
 // ── The Bench tab: lights on, app running ───────────────────────────────
 await openTab("Bench");
 await page.waitForSelector(".bench-led-dot", { timeout: 10000 });
+// the honesty ribbon is the watch's own (sweep A59 review): its S3's ROM, its
+// download lines not called quoted, and its one hardwired light (CHG)
+const ribbon = () => page.evaluate(() => document.querySelector(".bench-ribbon")?.textContent || "");
+{
+  const r = await ribbon();
+  if (!r.includes("this board's ESP32-S3:") || /ESP32-C3|verbatim/.test(r)) await fail(`the watch's ribbon is not its S3's: ${r}`);
+  if (!r.includes("download-mode lines are the bench's own")) await fail(`the watch's ribbon calls its download lines quoted: ${r}`);
+  if (!r.includes("The CHG light is hardwired") || /\b(PWR|DONE|USER)\b/.test(r)) await fail(`the watch's ribbon names lights it has not: ${r}`);
+}
 if ((await page.locator(".bench-led-dot.on, .bench-led-dot.flicker").count()) < 1)
   await fail("no LED lit on a powered, charging board");
 await page
@@ -270,6 +279,12 @@ await page
   )
   .catch(() => fail("the Nightlight's bench never reported the app running"));
 if (await page.locator(".bench-led-dot").count()) await fail("the Nightlight's bench lists a light no file settles");
+{
+  // the ribbon is the C3's story, with no S3 and no lights in it (sweep A59 review)
+  const r = await ribbon();
+  if (!r.includes("this board's ESP32-C3:")) await fail(`the Nightlight's ribbon does not name its ESP32-C3: ${r}`);
+  if (/ESP32-S3|esp32s3|verbatim|\b(PWR|CHG|DONE)\b/.test(r)) await fail(`the Nightlight's ribbon tells the S3's story: ${r}`);
+}
 if (!/none on this board/.test(await chip("battery").textContent())) await fail("the Nightlight's battery chip does not say the board has none");
 if (!(await chip("battery").isDisabled())) await fail("the Nightlight's battery chip can be pressed, on a board with no battery path");
 // a hand at the chip anyway: nothing fits, the chip keeps saying so

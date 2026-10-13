@@ -17,9 +17,12 @@
 //   - The mask-ROM boot banner ("waiting for download") is staged by the
 //     bench (the ROM is the one program we can't compile to wasm). It is
 //     the board's own chip's, named by its bench block (`rom.chip`), each
-//     line quoted from an Espressif source cited below; where no source
-//     quotes a banner, the bench prints none and says so. Everything after
-//     the banner is the real firmware talking.
+//     line quoted from an Espressif source cited below, except the
+//     ESP32-S3's two download-mode lines, kept from before A59 and not
+//     re-sourced (its voice lists them `unsourced`); where no source quotes
+//     a banner, the bench prints none and says so. Everything after the
+//     banner is the real firmware talking. The bench's honesty ribbon says
+//     exactly that, per board (benchRibbon()).
 //
 // DOM-free on purpose: tested under Node (repo convention — CI runs the
 // exact shipped source). Hardware facts (which LEDs, what the switch
@@ -37,7 +40,9 @@ export const DRAIN_PCT_PER_SEC = 0.15;
 // its BOOT button pulls low (`rom.boot_strap`); the banner is looked up here
 // by that chip, never assumed. Every line below is quoted, byte for byte,
 // from the Espressif source cited beside it (fetched for A59 from
-// github.com/espressif/esp-idf at tag v5.4). `boot:` is the chip's strap
+// github.com/espressif/esp-idf at tag v5.4), except the kinds a voice lists
+// in `unsourced`: the ESP32-S3's two download-mode lines, kept from before
+// A59 and not re-sourced. `boot:` is the chip's strap
 // sample as the quoted board's pins read it: the BOOT strap high runs the
 // app (SPI_FAST_FLASH_BOOT); held low through reset, the ROM sits waiting
 // for a flasher. The RESET button is a chip power-on reset (the enable
@@ -59,8 +64,10 @@ export const ROM_VOICES = {
     swreset: "rst:0x3 (RTC_SW_SYS_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)\n",
     // Not in that source: this is the bench's download line as it stood
     // before A59, kept; the esp-idf v5.4 docs and examples quote no ESP32-S3
-    // download-mode banner to check it against.
+    // download-mode banner to check it against. Listed in `unsourced`, so the
+    // ribbon says so on every S3 card.
     download: "rst:0x1 (POWERON),boot:0x0 (DOWNLOAD(USB/UART0))\nwaiting for download\n",
+    unsourced: ["download"],
   },
   esp32c3: {
     name: "ESP32-C3",
@@ -79,6 +86,7 @@ export const ROM_VOICES = {
     // different strap sample), so the bench prints neither and says why.
     swreset: null,
     download: null,
+    unsourced: [],
   },
 };
 
@@ -105,6 +113,53 @@ export function romBanner(kind, rom) {
   }
   return `(${voice.name} ROM: its banner for this reset is not reproduced: the only ${voice.name} ` +
     "banner the Lab quotes from Espressif is the power-on one)\n";
+}
+
+// ── The honesty ribbon (sweep A59 review) ───────────────────────────────
+// The bench's ribbon says what is staged and what is real, per board: the
+// chip whose ROM it stages (its bench block's `rom`), which of that chip's
+// banners are quoted from Espressif, which are the bench's own, and which it
+// prints a note for instead; then which of its lights are hardwired (a
+// `rail` or `charger` driver: no firmware can drive them). It used to be one
+// sentence for every card ("verbatim ESP32-S3", "PWR/CHG/DONE"), which the
+// Nightlight's ESP32-C3 card, with no lights at all, contradicted.
+const RIBBON_KINDS = [["poweron", "power-on"], ["swreset", "restart"], ["download", "download-mode"]];
+const sayList = (words, joint) =>
+  words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} ${joint} ${words[words.length - 1]}`;
+const LED_WIRES = { rail: "the power rail", charger: "the charge chip" };
+/**
+ * The bench's honesty ribbon for one board, from its bench block alone.
+ * @param profile the registry entry's `bench` block (rom, leds)
+ */
+export function benchRibbon(profile) {
+  const rom = profile?.rom;
+  const voice = rom && rom.chip ? ROM_VOICES[rom.chip] : null;
+  let first;
+  if (!rom || !rom.chip) {
+    first = "Honesty: this bench names no chip, so it stages no mask-ROM banner; everything on its serial is the real firmware.";
+  } else if (!voice) {
+    first = `Honesty: the Lab quotes no mask-ROM banner for this board's ${rom.chip}, so the bench prints a note where the ROM would speak; everything after it is the real firmware.`;
+  } else {
+    const unsourced = voice.unsourced || [];
+    const quoted = RIBBON_KINDS.filter(([k]) => voice[k] && !unsourced.includes(k)).map(([, w]) => w);
+    const own = RIBBON_KINDS.filter(([k]) => voice[k] && unsourced.includes(k)).map(([, w]) => w);
+    const none = RIBBON_KINDS.filter(([k]) => !voice[k]).map(([, w]) => w);
+    const parts = [];
+    if (quoted.length)
+      parts.push(`its ${sayList(quoted, "and")} ${quoted.length > 1 ? "banners are" : "banner is"} quoted from Espressif's esp-idf (cited in bench.js)`);
+    if (own.length)
+      parts.push(`its ${sayList(own, "and")} lines are the bench's own, not checked against an Espressif source`);
+    if (none.length)
+      parts.push(`no Espressif source the Lab quotes prints its ${sayList(none, "or")} banner, so there the bench prints a note instead`);
+    first = `Honesty: the mask-ROM banner is staged by the bench for this board's ${voice.name}: ${parts.join("; ")}. Everything after the banner is the real firmware.`;
+  }
+  const wired = (profile?.leds || []).filter((l) => LED_WIRES[l.driver]);
+  if (!wired.length) return first;
+  const labels = sayList(wired.map((l) => l.label), "and");
+  const wires = sayList([...new Set(wired.map((l) => LED_WIRES[l.driver]))], "and");
+  const many = wired.length > 1;
+  return `${first} The ${labels} ${many ? "lights are" : "light is"} hardwired to ${wires} — ` +
+    `no firmware here or on your desk can turn ${many ? "them" : "it"} off.`;
 }
 
 // ── The power plane ─────────────────────────────────────────────────────

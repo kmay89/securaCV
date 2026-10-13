@@ -531,6 +531,11 @@ test("A59: every bench block's ROM banners are its own chip's, quoted, and the C
   const { romBanner, ROM_VOICES } = await importBench();
   const KINDS = ["poweron", "reset", "swreset", "download"];
   assert.deepStrictEqual(Object.keys(ROM_VOICES).sort(), ["esp32c3", "esp32s3"]);
+  // the voices say which kinds are not quoted (the ribbon reads it): only the
+  // S3's download lines, and they are exactly the two named above
+  assert.deepStrictEqual(ROM_VOICES.esp32s3.unsourced, ["download"]);
+  assert.deepStrictEqual(ROM_VOICES.esp32c3.unsourced, []);
+  assert.deepStrictEqual(ROM_VOICES.esp32s3.download.split("\n").filter(Boolean), S3_UNSOURCED);
   for (const dev of registry().devices) {
     if (!dev.bench) continue;
     const rom = dev.bench.rom;
@@ -544,7 +549,8 @@ test("A59: every bench block's ROM banners are its own chip's, quoted, and the C
         // every line it prints is a quote of the cited source (the S3's two
         // download lines excepted, named above)
         for (const line of out.split("\n").filter(Boolean)) {
-          const ok = QUOTED[rom.chip].includes(line) || (rom.chip === "esp32s3" && kind === "download" && S3_UNSOURCED.includes(line));
+          const unsourced = (ROM_VOICES[rom.chip].unsourced || []).includes(kind);
+          const ok = QUOTED[rom.chip].includes(line) || (unsourced && rom.chip === "esp32s3" && S3_UNSOURCED.includes(line));
           assert.ok(ok, `${dev.id}/${kind}: ${JSON.stringify(line)} is no line of the source bench.js cites for ${rom.chip}`);
         }
       } else {
@@ -586,6 +592,61 @@ function callArgs(src, fn) {
   }
   return out;
 }
+
+// Sweep A59 review: the bench's honesty ribbon was one fixed sentence on every
+// card ("its text is verbatim ESP32-S3", "The PWR/CHG/DONE lights are
+// hardwired"), so the Nightlight's ESP32-C3 card, with no lights, said the
+// S3 story beside a C3 banner, and the S3 cards called their unsourced
+// download lines verbatim. benchRibbon() now says it from the bench block.
+test("A59: the bench's honesty ribbon names each board's own chip, sources and lights", async () => {
+  const { benchRibbon, ROM_VOICES } = await importBench();
+  assert.strictEqual(typeof benchRibbon, "function", "bench.js builds the ribbon per board");
+  const HARDWIRED = new Set(["rail", "charger"]);
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const r = benchRibbon(dev.bench);
+    const voice = ROM_VOICES[dev.bench.rom.chip];
+    assert.ok(r.startsWith("Honesty: "), `${dev.id}: ${r}`);
+    assert.ok(r.includes(`this board's ${voice.name}:`), `${dev.id}: the ribbon does not name its ${voice.name}: ${r}`);
+    for (const [chip, v] of Object.entries(ROM_VOICES)) {
+      if (chip === dev.bench.rom.chip) continue;
+      assert.ok(!r.includes(v.name) && !r.includes(chip), `${dev.id}: the ribbon names ${v.name} on a ${voice.name} board`);
+    }
+    assert.ok(!/verbatim/i.test(r), `${dev.id}: the ribbon calls the staged banner verbatim`);
+    assert.strictEqual(/the bench's own, not checked against an Espressif source/.test(r), (voice.unsourced || []).length > 0,
+      `${dev.id}: the ribbon and the voice disagree on unquoted lines`);
+    assert.strictEqual(/prints a note instead/.test(r), ["poweron", "swreset", "download"].some((k) => !voice[k]),
+      `${dev.id}: the ribbon and the voice disagree on where the bench prints a note`);
+    // the lights: exactly the board's hardwired ones (a gpio LED, the watch's
+    // USER, is the firmware's to drive and is not named)
+    const leds = dev.bench.leds || [];
+    for (const led of leds)
+      assert.strictEqual(new RegExp(`\\b${led.label}\\b`).test(r), HARDWIRED.has(led.driver),
+        `${dev.id}: the ribbon ${HARDWIRED.has(led.driver) ? "omits" : "names"} ${led.label} (${led.driver})`);
+    for (const label of ["PWR", "CHG", "DONE", "USER"])
+      if (!leds.some((l) => l.label === label)) assert.ok(!new RegExp(`\\b${label}\\b`).test(r), `${dev.id}: the ribbon names a ${label} light the board has not`);
+    assert.strictEqual(/hardwired/.test(r), leds.some((l) => HARDWIRED.has(l.driver)), `${dev.id}: ${r}`);
+  }
+  // the Nightlight's card, whole: the C3's story, no S3 and no lights
+  assert.strictEqual(benchRibbon(benchProfile("canary-nightlight")),
+    "Honesty: the mask-ROM banner is staged by the bench for this board's ESP32-C3: its power-on banner is " +
+    "quoted from Espressif's esp-idf (cited in bench.js); no Espressif source the Lab quotes prints its restart " +
+    "or download-mode banner, so there the bench prints a note instead. Everything after the banner is the real firmware.");
+  // an S3 card with all three lights: its download lines are not called quoted
+  assert.strictEqual(benchRibbon(benchProfile("canary-display-dash")),
+    "Honesty: the mask-ROM banner is staged by the bench for this board's ESP32-S3: its power-on and restart " +
+    "banners are quoted from Espressif's esp-idf (cited in bench.js); its download-mode lines are the bench's own, " +
+    "not checked against an Espressif source. Everything after the banner is the real firmware. The PWR, CHG and " +
+    "DONE lights are hardwired to the power rail and the charge chip — no firmware here or on your desk can turn them off.");
+  assert.match(benchRibbon(benchProfile("canary-display-watch")), / The CHG light is hardwired to the charge chip — no firmware here or on your desk can turn it off\.$/);
+  // no chip named, none claimed
+  assert.ok(!/ESP32/.test(benchRibbon({})) && !/ESP32/.test(benchRibbon(undefined)));
+  assert.ok(!/ESP32-S3/.test(benchRibbon({ rom: { chip: "esp32c6" } })));
+  // app.js draws the ribbon from the board's bench block and names no chip itself
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.match(app, /el\("p", "bench-ribbon", benchRibbon\(profile\)\)/, "app.js builds the bench ribbon per board");
+  assert.ok(!/ESP32|esp32|verbatim/.test(app), "app.js names a chip, or calls a banner verbatim, itself");
+});
 
 test("A59: the pages stage each board's own ROM, and the bench and its flows name its BOOT strap", async () => {
   const { BenchPower } = await importBench();
