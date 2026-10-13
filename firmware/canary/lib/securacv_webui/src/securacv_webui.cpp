@@ -2899,7 +2899,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           console.error('JSON parse error:', parseErr, 'Response:', text);
           // Truncate error to avoid huge HTML error pages in alerts
           const errMsg = res.ok ? 'Invalid response format' : (text || 'Request failed');
-          return { ok: false, success: false, error: errMsg.length > 100 ? errMsg.slice(0, 100) + '...' : errMsg };
+          // unrouted: a 404 page or a redirect, how the GET "/*" fallback
+          // answers a path no route of this build registers (the redirect
+          // goes to the setup wizard). Only a caller whose route always
+          // answers JSON may read it as "this build has no such route".
+          return { ok: false, success: false, error: errMsg.length > 100 ? errMsg.slice(0, 100) + '...' : errMsg,
+                   unrouted: res.status === 404 || res.redirected === true };
         }
       } catch (e) {
         console.error('API error:', e);
@@ -2912,18 +2917,21 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     
     // F274: the camera routes are registered only where FEATURE_CAMERA_PEEK
-    // is set (not in [env:minimal] or [env:esp32-wroom]). A refused status
-    // before any status has answered is a build without the preview: the
+    // is set (not in [env:minimal] or [env:esp32-wroom]). A status no route
+    // took (api()'s unrouted: the fallback's 404 page or setup redirect),
+    // before any status has answered, is a build without the preview: the
     // panel shows its no-camera state, says why, and hides the controls and
-    // metrics cards, the only callers of the other camera routes. Once a
-    // status has answered (peekServed), a failed poll changes nothing, as
-    // before: a network blip mid-stream is not a missing camera.
+    // metrics cards, the only callers of the other camera routes. No answer,
+    // or the route's own refusal (a token it wants), says nothing about the
+    // build and changes nothing. Once a status has answered (peekServed), a
+    // failed poll changes nothing, as before: a network blip mid-stream is
+    // not a missing camera.
     let peekServed = false;
 
     async function refreshPeekStatus() {
       const data = await api('/api/peek/status');
       if (!(data && data.ok)) {
-        if (!peekServed) {
+        if (!peekServed && data && data.unrouted) {
           cameraReady = false;
           peekActive = false;
           stopCamInfoPolling();

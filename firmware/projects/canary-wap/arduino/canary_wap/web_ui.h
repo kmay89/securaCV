@@ -2711,7 +2711,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
      * preview, each with its own honest copy. */
     function cameraPanelState(initialized, standby, gate) {
       /* A build without FEATURE_CAMERA_PEEK registers no camera route
-       * (sweep F274): the status was refused before any had answered. */
+       * (sweep F274): no route took the status read before any had
+       * answered. */
       if (gate === 'not_built') {
         return { usable: false, btn: '\u26a0 No Camera',
                  label: 'No camera in this build',
@@ -3377,8 +3378,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       try {
         const res = await secureFetch(endpoint, opts);
         const text = await res.text();
+        // unrouted: a 404 that is not JSON, how esp_http_server answers a
+        // path no route of this build registers. Only a caller whose route
+        // always answers JSON may read it as "this build has no such route".
         try { return JSON.parse(text); }
-        catch { return { ok: false, error: text.slice(0, 100) }; }
+        catch { return { ok: false, error: text.slice(0, 100), unrouted: res.status === 404 }; }
       } catch (e) {
         if (e.message === 'auth_required' || e.message === 'rate_limited') return { ok: false, error: e.message };
         return { ok: false, error: 'Network error' };
@@ -3954,18 +3958,19 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     // F274: the camera routes are registered only under FEATURE_CAMERA_PEEK
     // (not in the DEV profile, the canary-wap-mobile env, or FULL on the
-    // XIAO ESP32-C3). A refused status before any status has answered is a
-    // build without the preview: the tab shows its no-camera state and hides
-    // the Camera Controls and Camera Info cards, the only callers of the
-    // other camera routes. Once a status has answered (peekServed), a failed
-    // poll changes nothing, as before: a blip mid-stream is not a missing
-    // camera.
+    // XIAO ESP32-C3). A status no route took (api()'s unrouted: the server's
+    // 404), before any status has answered, is a build without the preview:
+    // the tab shows its no-camera state and hides the Camera Controls and
+    // Camera Info cards, the only callers of the other camera routes. No
+    // answer, or a sign-in the route wants, says nothing about the build and
+    // changes nothing. Once a status has answered (peekServed), a failed poll
+    // changes nothing, as before: a blip mid-stream is not a missing camera.
     let peekServed = false;
 
     async function refreshPeekStatus() {
       const data = await api('/api/peek/status');
       if (!(data && data.ok)) {
-        if (!peekServed) {
+        if (!peekServed && data && data.unrouted) {
           cameraReady = false;
           cameraStandby = false;
           cameraGate = 'not_built';

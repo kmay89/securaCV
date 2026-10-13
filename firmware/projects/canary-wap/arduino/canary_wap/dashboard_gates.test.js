@@ -8,10 +8,14 @@
 //     FEATURE_CAMERA_PEEK (not in the DEV profile, the canary-wap-mobile env,
 //     or FULL on the XIAO ESP32-C3). refreshPeekStatus() ignored the refused
 //     status, so the tab kept "Ready" and "▶ Start", and Start answered an
-//     alert. A refusal before any status has answered now shows the no-camera
-//     state (the "not_built" gate of WebUiLogic.cameraPanelState) and hides
-//     the Camera Controls and Camera Info cards, the only callers of the other
-//     camera routes; once a status has answered, a failed poll changes nothing.
+//     alert. A status no route took (esp_http_server's 404), before any
+//     status has answered, now shows the no-camera state (the "not_built"
+//     gate of WebUiLogic.cameraPanelState) and hides the Camera Controls and
+//     Camera Info cards, the only callers of the other camera routes. No
+//     answer, or a sign-in the route wants, says nothing about the build and
+//     changes nothing; once a status has answered, a failed poll changes
+//     nothing. The refusals come from the page's own secureFetch() and api(),
+//     run against a stub fetch.
 //   * Community (F276): the /api/mesh and /api/chirp routes are registered only
 //     under FEATURE_MESH_NETWORK (off in the DEV profile), and the Opera and
 //     Chirp views kept their markup and controls. They now take F176's shape:
@@ -66,8 +70,27 @@ const logicBlock = (() => {
   return m[0];
 })();
 
-// What api() returns for esp_http_server's 404 page (text, not JSON).
-const NOT_FOUND = { ok: false, error: 'Nothing matches the given URI' };
+// What the page's own api() (and the secureFetch() under it) returns for a
+// response, or for no answer at all: lifted from the page and run against a
+// stub fetch, so a refusal a test feeds a view is the one the page makes.
+const apiSrc = uiFunction('secureFetch', true) + uiFunction('api', true);
+async function answerTo(res) {
+  const ctx = {
+    API_BASE: '', apiToken: null, console: { error() {} }, showAuthModal() {},
+    fetch: async () => {
+      if (res === 'no answer') throw new TypeError('Failed to fetch');
+      return { status: res.status, ok: res.status >= 200 && res.status < 300,
+               text: async () => res.body, json: async () => JSON.parse(res.body) };
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(apiSrc + '\nglobalThis.__api = api;\n', ctx);
+  return ctx.__api('/api/peek/status');
+}
+// esp_http_server's own 404, for a path no route registers.
+const IDF_404 = { status: 404, body: 'Nothing matches the given URI' };
+// What api() makes of it (pinned to the page below).
+const NOT_FOUND = { ok: false, error: 'Nothing matches the given URI', unrouted: true };
 const settle = () => new Promise((r) => setImmediate(r));
 
 function makeEl(id, init = {}) {
@@ -309,8 +332,12 @@ function cameraPage(answers) {
 const PEEK_STATUS = { ok: true, camera_initialized: true, standby: false, gate: 'ok', peek_active: false, resolution: 8 };
 
 describe('Camera tab: the no-camera state on a refused status (F274)', () => {
-  it('a refused GET /api/peek/status shows the no-camera state and hides the camera cards', async () => {
-    const p = cameraPage({});
+  it("api() reads esp_http_server's 404 as no route of this build", async () => {
+    assert.deepEqual({ ...(await answerTo(IDF_404)) }, NOT_FOUND);
+  });
+
+  it('a GET /api/peek/status no route took shows the no-camera state and hides the camera cards', async () => {
+    const p = cameraPage({ '/api/peek/status': await answerTo(IDF_404) });
     await p.ctx.__t.refreshPeekStatus();
     assert.equal(p.el('peekToggle').disabled, true, 'Start is off');
     assert.equal(p.el('peekToggle').textContent, '⚠ No Camera');
@@ -331,13 +358,32 @@ describe('Camera tab: the no-camera state on a refused status (F274)', () => {
     assert.equal(p.el('camInfoCard').style.display, '');
   });
 
+  for (const [name, res] of [['no answer', 'no answer'],
+                             ['the route wants a token (401)', { status: 401, body: '{"ok":false,"error":"unauthorized"}' }],
+                             ['the sign-in is rate-limited (429)', { status: 429, body: '{"ok":false,"retry_after_s":30}' }]]) {
+    it(`${name}, before any status, says nothing about the build`, async () => {
+      const refused = await answerTo(res);
+      assert.notEqual(refused.ok, true);
+      const p = cameraPage({ '/api/peek/status': refused });
+      const before = ['peekStatus', 'peekToggle', 'peekOfflineText'].map((id) => p.el(id).textContent);
+      await p.ctx.__t.refreshPeekStatus();
+      assert.deepEqual(['peekStatus', 'peekToggle', 'peekOfflineText'].map((id) => p.el(id).textContent), before,
+        'no claim about the build');
+      assert.equal(p.el('peekToggle').disabled, false);
+      assert.equal(p.el('peekControlsCard').style.display, '');
+      assert.equal(p.el('camInfoCard').style.display, '');
+    });
+  }
+
   it('once a status has answered, a failed poll changes nothing', async () => {
     const answers = { '/api/peek/status': { ...PEEK_STATUS, peek_active: true } };
     const p = cameraPage(answers);
     await p.ctx.__t.refreshPeekStatus();
     assert.equal(p.el('peekToggle').textContent, '⏹ Stop');
-    answers['/api/peek/status'] = { ok: false, error: 'Network error' };
-    await p.ctx.__t.refreshPeekStatus();
+    for (const res of ['no answer', IDF_404]) {
+      answers['/api/peek/status'] = await answerTo(res);
+      await p.ctx.__t.refreshPeekStatus();
+    }
     assert.equal(p.el('peekToggle').textContent, '⏹ Stop', 'still streaming');
     assert.equal(p.el('peekToggle').disabled, false);
     assert.equal(p.el('peekControlsCard').style.display, '');

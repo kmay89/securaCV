@@ -12,12 +12,16 @@
 //   - Peek (F274): the camera routes are registered only under
 //     FEATURE_CAMERA_PEEK ([env:minimal] and [env:esp32-wroom] have none).
 //     refreshPeekStatus() ignored the refusal, so the tab kept "Ready" and
-//     "▶ Start", and Start answered an alert. A refused status before any
-//     status has answered now shows the panel's no-camera state, says the
-//     build has no preview, and hides the Camera Controls and Stream Metrics
-//     cards, the only callers of the other camera routes; once a status has
-//     answered, a failed poll changes nothing (a blip mid-stream is not a
-//     missing camera).
+//     "▶ Start", and Start answered an alert. A status no route took (the
+//     GET "/*" fallback's 404 page, or its redirect to the setup wizard),
+//     before any status has answered, now shows the panel's no-camera state,
+//     says the build has no preview, and hides the Camera Controls and Stream
+//     Metrics cards, the only callers of the other camera routes. No answer,
+//     or the route's own refusal (it wants a token), says nothing about the
+//     build and changes nothing; once a status has answered, a failed poll
+//     changes nothing (a blip mid-stream is not a missing camera). The
+//     answers fed to the panel come from the page's own api(), run against a
+//     stub fetch.
 //   - Export (F278): handle_export answers the bundle inline (ok and the
 //     bundle's fields, no download_url), and exportWitness() looked for a
 //     download_url, so every good export alerted "Export failed: Unknown
@@ -53,8 +57,10 @@ function slice(from, to) {
   return src.slice(a, b);
 }
 
-// What api() returns for esp_http_server's 404 page (text, not JSON).
-const NOT_FOUND = { ok: false, success: false, error: "Nothing matches the given URI" };
+// What api() returns for the GET "/*" fallback's 404 page (text, not JSON),
+// the answer a build gives a route it does not register (pinned to the
+// page's own api() in the Peek section).
+const NOT_FOUND = { ok: false, success: false, error: "not found", unrouted: true };
 
 const settle = () => new Promise((r) => setImmediate(r));
 
@@ -193,6 +199,31 @@ test("unlocking with a token asks a turned-away Opera probe once more", async ()
 
 const peek = slice("    // PEEK (Camera Preview)", "    function togglePeek() {");
 
+// What the page's own api() returns for a response (or for no answer at
+// all): lifted from the page and run against a stub fetch, so the refusal a
+// test feeds the panel is the one the page itself makes of it.
+const apiSrc = slice("    async function api(endpoint, method = 'GET', body = null) {", "\n    }\n") + "\n    }\n";
+async function answerTo(res) {
+  const ctx = {
+    API_BASE: "", CV_TOKEN: "", console: { error() {} },
+    fetch: async () => {
+      if (res === "no answer") throw new TypeError("Failed to fetch");
+      return { status: res.status, ok: res.status >= 200 && res.status < 300, redirected: !!res.redirected,
+               text: async () => res.body };
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(apiSrc + "\nglobalThis.__api = api;\n", ctx);
+  return ctx.__api("/api/peek/status");
+}
+// The GET "/*" fallback (handle_captive_catchall): a 404 page, or during
+// setup a redirect to the wizard, which fetch follows.
+const FALLBACK_404 = { status: 404, body: "not found" };
+const FALLBACK_SETUP = { status: 200, redirected: true, body: "<!DOCTYPE html><html><title>Canary setup</title></html>" };
+// The route's own refusals (securacv_auth, auth_gate): JSON.
+const ROUTE_401 = { status: 401, body: '{"error":"unauthorized","message":"Bearer token required"}' };
+const ROUTE_503 = { status: 503, body: '{"error":"not_provisioned"}' };
+
 // The panel's text as the markup writes it, so a refusal that changes
 // nothing reads "Ready" and "▶ Start" as the page does.
 function peekSeed() {
@@ -231,18 +262,51 @@ function peekPage(answers) {
 
 const PEEK_STATUS = { ok: true, camera_initialized: true, peek_active: false, resolution: 8 };
 
-test("a refused GET /api/peek/status shows the no-camera state and hides the camera cards", async () => {
-  const p = peekPage({});
+test("api() reads the fallback's 404 page as no route of this build", async () => {
+  assert.deepStrictEqual({ ...(await answerTo(FALLBACK_404)) }, NOT_FOUND);
+});
+
+for (const [name, res] of [["the fallback's 404 page", FALLBACK_404], ["the fallback's redirect to setup", FALLBACK_SETUP]]) {
+  test(`a GET /api/peek/status no route took (${name}) shows the no-camera state and hides the camera cards`, async () => {
+    const refused = await answerTo(res);
+    const p = peekPage({ "/api/peek/status": refused });
+    await p.ctx.__t.refreshPeekStatus();
+    assert.strictEqual(p.el("peekToggle").disabled, true, "Start is off");
+    assert.strictEqual(p.el("peekToggle").textContent, "⚠ No Camera");
+    assert.strictEqual(p.el("peekStatus").textContent, "No camera in this build");
+    assert.match(p.el("peekOfflineText").textContent, /built without the camera preview/);
+    assert.strictEqual(p.el("peekStream").style.display, "none");
+    assert.strictEqual(p.el("peekControlsCard").style.display, "none");
+    assert.strictEqual(p.el("camInfoCard").style.display, "none");
+    assert.deepStrictEqual(p.calls.filter((c) => c.startsWith("/api/") || c.includes(" /api/")),
+      ["/api/peek/status"], "nothing else is asked of the camera");
+  });
+}
+
+for (const [name, res] of [["no answer", "no answer"], ["the route wants a token (401)", ROUTE_401],
+                           ["the route has no token to check (503)", ROUTE_503]]) {
+  test(`${name}, before any status, says nothing about the build`, async () => {
+    const refused = await answerTo(res);
+    assert.notStrictEqual(refused.ok, true);
+    const p = peekPage({ "/api/peek/status": refused });
+    const seed = peekSeed();
+    await p.ctx.__t.refreshPeekStatus();
+    assert.strictEqual(p.el("peekStatus").textContent, seed.peekStatus, "no claim about the build");
+    assert.strictEqual(p.el("peekToggle").textContent, seed.peekToggle);
+    assert.strictEqual(p.el("peekToggle").disabled, false);
+    assert.strictEqual(p.el("peekControlsCard").style.display, "");
+    assert.strictEqual(p.el("camInfoCard").style.display, "");
+  });
+}
+
+test("a status no route took, after a no-answer, still shows the no-camera state", async () => {
+  const answers = { "/api/peek/status": await answerTo("no answer") };
+  const p = peekPage(answers);
   await p.ctx.__t.refreshPeekStatus();
-  assert.strictEqual(p.el("peekToggle").disabled, true, "Start is off");
-  assert.strictEqual(p.el("peekToggle").textContent, "⚠ No Camera");
+  answers["/api/peek/status"] = await answerTo(FALLBACK_404);
+  await p.ctx.__t.refreshPeekStatus();
   assert.strictEqual(p.el("peekStatus").textContent, "No camera in this build");
-  assert.match(p.el("peekOfflineText").textContent, /built without the camera preview/);
-  assert.strictEqual(p.el("peekStream").style.display, "none");
   assert.strictEqual(p.el("peekControlsCard").style.display, "none");
-  assert.strictEqual(p.el("camInfoCard").style.display, "none");
-  assert.deepStrictEqual(p.calls.filter((c) => c.startsWith("/api/") || c.includes(" /api/")),
-    ["/api/peek/status"], "nothing else is asked of the camera");
 });
 
 test("a camera status shows the cards and the preview's own state", async () => {
@@ -261,7 +325,10 @@ test("once a status has answered, a failed poll changes nothing", async () => {
   const p = peekPage(answers);
   await p.ctx.__t.refreshPeekStatus();
   assert.strictEqual(p.el("peekToggle").textContent, "⏹ Stop");
-  answers["/api/peek/status"] = { ok: false, success: false, error: "Network error" };
+  for (const res of ["no answer", FALLBACK_404]) {
+    answers["/api/peek/status"] = await answerTo(res);
+    await p.ctx.__t.refreshPeekStatus();
+  }
   p.calls.length = 0;
   await p.ctx.__t.refreshPeekStatus();
   assert.strictEqual(p.el("peekToggle").textContent, "⏹ Stop", "still streaming");
