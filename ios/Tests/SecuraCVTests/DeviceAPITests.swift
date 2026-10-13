@@ -116,31 +116,103 @@ final class DeviceAPITests: XCTestCase {
         XCTAssertEqual(receipt.tlsCertFingerprint, fixtureFP)
     }
 
-    // ── a recovery kit saved during setup, used after the WAP joined ──
-    // The receipt names the setup network's 192.168.4.1, which is gone once
-    // the WAP is on your Wi-Fi; PairView moves it onto the host the device
-    // answers at, keeping the scheme, the port and the pin.
+    // ── a recovery kit, used after the address it names went away ──
+    // A kit names where its WAP answered when it was saved: the setup
+    // network's 192.168.4.1, gone once the WAP is on your Wi-Fi, or its
+    // `.local` name, gone once the WAP is named (sweep A88). PairView moves
+    // a kit of the device it was opened for onto the host that device
+    // answers at, whatever the kit named, keeping the scheme, the port and
+    // the pin; a kit of another device stays as it is.
+
+    private func decodeKit(_ json: String) throws -> ProvisioningReceipt {
+        try JSONDecoder().decode(ProvisioningReceipt.self, from: Data(json.utf8))
+    }
 
     func testAKitNamingTheSetupAddressMovesToWhereTheDeviceAnswers() throws {
-        let json = Data(#"{"device_id":"wap-ab12","base_url":"https://192.168.4.1","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#.utf8)
-        let kit = try JSONDecoder().decode(ProvisioningReceipt.self, from: json)
-        let moved = kit.rebased(onto: DeviceAPI.url(forDiscoveredHost: "canary-ab12"))
+        let kit = try decodeKit(#"{"device_id":"wap-ab12","base_url":"https://192.168.4.1","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+        let moved = kit.rebased(onto: DeviceAPI.url(forDiscoveredHost: "canary-ab12"), discoveredAs: "wap-ab12")
         XCTAssertEqual(moved.baseURL.absoluteString, "https://canary-ab12.local",
                        "the receipt's https survives; only the host moves")
         XCTAssertEqual(moved.tlsCertFingerprint, fixtureFP, "the pin is the kit's own")
         XCTAssertEqual(moved.token, "cv_x")
+        XCTAssertEqual(moved.deviceID, "wap-ab12")
         XCTAssertTrue(DeviceAPI.isPrivate(moved.baseURL))
     }
 
-    func testAKitNamingAnyOtherAddressIsKeptAsIs() throws {
-        let json = Data(#"{"device_id":"wap-ab12","base_url":"http://192.168.1.20","token":"cv_x"}"#.utf8)
-        let kit = try JSONDecoder().decode(ProvisioningReceipt.self, from: json)
-        XCTAssertEqual(kit.rebased(onto: URL(string: "http://canary-ab12.local")).baseURL.absoluteString,
-                       "http://192.168.1.20", "an address that still means something is the receipt's word")
-        let setup = try JSONDecoder().decode(ProvisioningReceipt.self,
-                                             from: Data(#"{"base_url":"http://192.168.4.1","token":"t"}"#.utf8))
-        XCTAssertEqual(setup.rebased(onto: nil).baseURL.absoluteString, "http://192.168.4.1",
-                       "nowhere seen: nothing to move it to")
+    func testAStaleLocalKitOfThisDeviceMovesToItsNewName() throws {
+        // Saved over the home network as canary-ab12.local; the WAP was
+        // named "kitchen" since, and answers as canary-kitchen.local now.
+        let kit = try decodeKit(#"{"device_id":"wap-ab12","base_url":"https://canary-ab12.local","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+        let moved = kit.rebased(onto: DeviceAPI.url(forDiscoveredHost: "canary-kitchen"), discoveredAs: "wap-ab12")
+        XCTAssertEqual(moved.baseURL.absoluteString, "https://canary-kitchen.local",
+                       "a .local name from before the rename names nothing; the host it answers at now does")
+        XCTAssertEqual(moved.tlsCertFingerprint, fixtureFP,
+                       "the pin moves with it — the certificate, not the name, holds the connection")
+        XCTAssertEqual(moved.token, "cv_x")
+        XCTAssertTrue(DeviceAPI.isPrivate(moved.baseURL))
+    }
+
+    func testAKitOfThisDeviceKeepsItsSchemePortAndPinWhateverItNamed() throws {
+        let discovered = DeviceAPI.url(forDiscoveredHost: "192.168.1.31")
+        for named in ["https://canary-ab12.local:8443", "https://192.168.1.20:8443", "https://192.168.4.1:8443"] {
+            let kit = try decodeKit(#"{"device_id":"wap-ab12","base_url":"\#(named)","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+            let moved = kit.rebased(onto: discovered, discoveredAs: "wap-ab12")
+            XCTAssertEqual(moved.baseURL.absoluteString, "https://192.168.1.31:8443",
+                           "\(named): only the host is the discovered one's; the scheme and port are the kit's")
+            XCTAssertEqual(moved.tlsCertFingerprint, fixtureFP, "\(named): the pin is the kit's own")
+        }
+        // A plain-http kit stays http, and carries no pin to keep.
+        let plain = try decodeKit(#"{"device_id":"wap-ab12","base_url":"http://canary-ab12.local","token":"cv_x"}"#)
+        let movedPlain = plain.rebased(onto: discovered, discoveredAs: "wap-ab12")
+        XCTAssertEqual(movedPlain.baseURL.absoluteString, "http://192.168.1.31")
+        XCTAssertNil(movedPlain.tlsCertFingerprint)
+        // A kit already naming where the device answers is unchanged.
+        let current = try decodeKit(#"{"device_id":"wap-ab12","base_url":"https://canary-kitchen.local","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+        XCTAssertEqual(current.rebased(onto: DeviceAPI.url(forDiscoveredHost: "canary-kitchen"), discoveredAs: "wap-ab12")
+                        .baseURL.absoluteString, "https://canary-kitchen.local")
+    }
+
+    func testAnotherDevicesKitIsNeverMoved() throws {
+        // Opened from the row of wap-cd34 — a kit of wap-ab12 opens that
+        // device, not this one, whatever it names.
+        let discovered = DeviceAPI.url(forDiscoveredHost: "canary-cd34")
+        for named in ["https://canary-ab12.local", "https://192.168.4.1", "http://192.168.1.20"] {
+            let kit = try decodeKit(#"{"device_id":"wap-ab12","base_url":"\#(named)","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+            XCTAssertEqual(kit.rebased(onto: discovered, discoveredAs: "wap-cd34").baseURL.absoluteString, named,
+                           "another device's kit (\(named)) is its own word")
+        }
+        // An id that differs only by case is another id: the match is exact,
+        // as the paired row's id is.
+        let upper = try decodeKit(#"{"device_id":"WAP-AB12","base_url":"https://canary-ab12.local","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+        XCTAssertEqual(upper.rebased(onto: discovered, discoveredAs: "wap-ab12").baseURL.absoluteString,
+                       "https://canary-ab12.local")
+        // And a row discovered with no id matches no kit's id.
+        let named = try decodeKit(#"{"device_id":"wap-ab12","base_url":"https://canary-ab12.local","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+        XCTAssertEqual(named.rebased(onto: discovered, discoveredAs: "").baseURL.absoluteString,
+                       "https://canary-ab12.local")
+    }
+
+    func testANamelessKitMovesOnlyOffTheSetupAddress() throws {
+        // No device_id: the kit cannot say whose it is. 192.168.4.1 is every
+        // WAP's setup address and names no device either, so it moves (as it
+        // always did); any other host is the kit's word.
+        let discovered = DeviceAPI.url(forDiscoveredHost: "canary-ab12")
+        let setup = try decodeKit(#"{"base_url":"http://192.168.4.1","token":"t"}"#)
+        XCTAssertEqual(setup.rebased(onto: discovered, discoveredAs: "wap-ab12").baseURL.absoluteString,
+                       "http://canary-ab12.local")
+        for named in ["http://canary-old1.local", "http://192.168.1.20"] {
+            let kit = try decodeKit(#"{"base_url":"\#(named)","token":"t"}"#)
+            XCTAssertEqual(kit.rebased(onto: discovered, discoveredAs: "wap-ab12").baseURL.absoluteString, named,
+                           "a nameless kit naming \(named) is its own word")
+        }
+    }
+
+    func testNowhereSeenNothingToMoveItTo() throws {
+        let kit = try decodeKit(#"{"device_id":"wap-ab12","base_url":"https://canary-ab12.local","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+        XCTAssertEqual(kit.rebased(onto: nil, discoveredAs: "wap-ab12").baseURL.absoluteString,
+                       "https://canary-ab12.local")
+        let setup = try decodeKit(#"{"base_url":"http://192.168.4.1","token":"t"}"#)
+        XCTAssertEqual(setup.rebased(onto: nil, discoveredAs: "").baseURL.absoluteString, "http://192.168.4.1")
     }
 
     func testReceiptEmptyFingerprintIsNoPin() throws {

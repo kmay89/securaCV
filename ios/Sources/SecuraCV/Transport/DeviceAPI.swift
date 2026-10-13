@@ -70,18 +70,30 @@ struct ProvisioningReceipt: Codable, Sendable {
         baseURL = url
     }
 
-    /// The address a WAP writes into a receipt it serves on a BOOT tap or a
-    /// bearer over its setup network is that network's (192.168.4.1), and
-    /// firmware before #1802 wrote it into every such receipt, home network
-    /// included (sweep F255). It stops existing the moment the WAP joins
-    /// your Wi-Fi, so a recovery kit saved during setup points at nothing
-    /// afterwards. When the receipt names that address and
-    /// the device has been seen on the network, swap in the host it is
-    /// answering at, keeping the receipt's own scheme, port and certificate
-    /// pin (the pin is what an https connection is held to, not the name).
-    /// Any other address is the receipt's word and is kept as it is.
-    func rebased(onto discovered: URL?) -> ProvisioningReceipt {
-        guard baseURL.host == SetupPortal.host,
+    /// A recovery kit names the address its WAP answered at when the kit was
+    /// saved, and neither address a WAP hands out lasts. The setup
+    /// network's (192.168.4.1) stops existing the moment the WAP joins your
+    /// Wi-Fi, and firmware before #1802 wrote it into every BOOT-tap and
+    /// bearer receipt, home network included (sweep F255). The `.local`
+    /// name a kit saved over the home network names lasts only as long as
+    /// the WAP's name: naming it (the wizard's device name, or
+    /// `POST /api/device-name`) changes the host, so a kit saved before
+    /// names a host nothing answers (sweep A88).
+    ///
+    /// So a kit of THIS device — its `device_id` is the id the device was
+    /// discovered under (`discoveredID`, the Ready-to-pair row's) — is
+    /// moved onto the host it answers at now, whatever host the kit names,
+    /// keeping the kit's own scheme, port and certificate pin (the pin is
+    /// what an https connection is held to, not the name). A kit that names
+    /// no device is moved only off the setup address, which names no device
+    /// either; any other host is its word. A kit of another device is never
+    /// moved: its token opens that device, not the one found here, so the
+    /// host it names stays its word. Nothing seen on the network, nothing
+    /// to move it onto.
+    func rebased(onto discovered: URL?, discoveredAs discoveredID: String) -> ProvisioningReceipt {
+        let thisDevice = !deviceID.isEmpty && deviceID == discoveredID
+        let namelessSetupKit = deviceID.isEmpty && baseURL.host == SetupPortal.host
+        guard thisDevice || namelessSetupKit,
               let host = discovered?.host, !host.isEmpty,
               var parts = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else { return self }
         parts.host = host
