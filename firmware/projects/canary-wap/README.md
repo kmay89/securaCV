@@ -215,7 +215,11 @@ within **180 s**, from the SecuraCV companion service
 as `{"device_id","claim","claim_url","tls_cert_fp","sta_ip","mdns_host","expires_in_s"}`.
 The phone spends it on the home LAN — `GET /api/provisioning-receipt?claim=<hex>`
 — and gets the same receipt the BOOT-tap route serves, `base_url` at the
-`.local` name. The route decides bearer → claim → BOOT tap — the four-grant
+`.local` name. (Every grant names the `.local` name once the WAP is on the
+home Wi-Fi and the request did not arrive over its setup network;
+`receipt_authority.h`, sweep F255. A BOOT-tap sign-in on the dashboard at
+`/settings` then offers that receipt as `canary-recovery-kit.json`, sweep
+F257, for the iPhone app's **Ready to pair** row.) The route decides bearer → claim → BOOT tap — the four-grant
 `provisioning_gate::receipt_decide` order minus its first question (a
 foreign `Host`), which the WAP does not ask on this route today (the
 flagship's `auth_gate` does); a wrong guess burns the claim, an expired one

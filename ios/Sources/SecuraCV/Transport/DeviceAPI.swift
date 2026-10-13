@@ -71,9 +71,11 @@ struct ProvisioningReceipt: Codable, Sendable {
     }
 
     /// The address a WAP writes into a receipt it serves on a BOOT tap or a
-    /// bearer is its setup network's (192.168.4.1) — which stops existing
-    /// the moment it joins your Wi-Fi, so a recovery kit saved during setup
-    /// points at nothing afterwards. When the receipt names that address and
+    /// bearer over its setup network is that network's (192.168.4.1), and
+    /// firmware before #1802 wrote it into every such receipt, home network
+    /// included (sweep F255). It stops existing the moment the WAP joins
+    /// your Wi-Fi, so a recovery kit saved during setup points at nothing
+    /// afterwards. When the receipt names that address and
     /// the device has been seen on the network, swap in the host it is
     /// answering at, keeping the receipt's own scheme, port and certificate
     /// pin (the pin is what an https connection is held to, not the name).

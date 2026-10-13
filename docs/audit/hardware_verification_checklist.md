@@ -2335,6 +2335,48 @@ not run on a device. Owner: U1.
     `"current_source":"stored"`. Before, the load stored 35 / 75 / 30.
   - Artifact: `docs/audit/repro/F166/tuning-lab-values/`.
 
+## canary-wap receipt address and the dashboard's recovery kit (F255, F257) — on-device verification
+
+Code: `receipt_authority.h` and `send_provisioning_receipt()` /
+`request_local_ipv4()` in `canary_wap.ino` (F255); the `RECOVERY_KIT`
+block in `web_ui.h` and `companion_pwa.h`, and the dashboard's
+`requestFromDevice()` / `offerRecoveryKit()` (F257). Host-tested
+(`tests_host/test_receipt_authority.cpp`, every grant on the SoftAP, on the
+STA and with the STA down; `recovery_kit.test.js`, the dashboard's sign-in
+run against a fake device); the compile is CI's; not run on a device.
+Owner: U1.
+
+- [ ] **A receipt fetched over the home network names the `.local` name**
+  - Setup: a canary-wap on this firmware, joined to the home Wi-Fi, a laptop
+    on the home network, a phone on the setup network inside the SoftAP's
+    grace window after the join, the API token.
+  - Repro: on the laptop, `curl -s -H "Authorization: Bearer <token>"
+    http://canary-<suffix>.local/api/provisioning-receipt`; short-tap BOOT and,
+    within 30 s, `curl -s http://<the WAP's home-network address>/api/provisioning-receipt`;
+    on the phone, short-tap BOOT and fetch the receipt from `192.168.4.1`.
+  - Expected: both laptop receipts carry
+    `"base_url": "http(s)://canary-<suffix>.local"` (before F255 both named
+    `192.168.4.1`); the phone's names `192.168.4.1`. A receipt read after the
+    SoftAP dropped never names `192.168.4.1`.
+  - Artifact: `docs/audit/repro/F255/receipt-authority/`.
+- [ ] **The dashboard's BOOT-tap sign-in offers the recovery kit, and the kit pairs the iPhone**
+  - Setup: a canary-wap set up through the Bluetooth setup door (so its
+    wizard's close-out never ran), a laptop browser with no session for it,
+    the iPhone app with the WAP under **Ready to pair**.
+  - Repro: open `http://canary-<suffix>.local/settings`, choose **Use BOOT
+    Tap Once**, short-tap BOOT; on the card, choose **Save my recovery kit**.
+    Move `canary-recovery-kit.json` to the iPhone and add the WAP from its
+    **Ready to pair** row with the file. Then sign in again with
+    **Use BOOT Tap Once** and press nothing until the minute runs out.
+  - Expected: after the tap the dashboard opens with the card "Save your
+    recovery kit" in the wizard's words; the saved file is the receipt
+    (`device_id`, `base_url` at the `.local` name, `token`, `tls_cert_fp`
+    where TLS is on, the AP name and password); the browser's network log
+    shows no request after the receipt's `GET`; the iPhone pairs from the
+    file. The sign-in whose tap never came shows no card. Before F257 the
+    dashboard offered no kit.
+  - Artifact: `docs/audit/repro/F257/dashboard-kit/`.
+
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244) — on-device verification
 
 Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`

@@ -561,12 +561,19 @@ allowed → the reason and **Open Settings**, never a spinner. On a WAP's
 claim: nothing answered (the phone off Wi-Fi, or the `.local` name not yet
 settled) → the claim is unspent, so **Try again** while it lives (180 s);
 a `403` or any other answer → the device's row under **Ready to pair** on
-the Fleet tab, which takes its recovery kit (the receipt its own page saves
-after a BOOT tap — its setup-network address moved onto the address the
-WAP answers at now, the pin still its own) or a fresh setup. The app has
-no BOOT-tap pairing over the LAN: a receipt served on a BOOT tap names the
-SoftAP address, and an installed WAP speaks https with no pin the phone
-could hold it to before the first dial.
+the Fleet tab, which takes its recovery kit or a fresh setup. The kit is
+the receipt the WAP's own pages save after a BOOT tap: the setup wizard's
+close-out, and since #1802 the dashboard's BOOT-tap sign-in
+(`/settings`, **Use BOOT Tap Once**), which offers **Save my recovery kit**
+in the wizard's words, so a WAP set up through this door, which never runs
+the wizard's close-out, has a kit to save (F257). A kit saved on the setup
+network names the SoftAP address, which the app moves onto the address the
+WAP answers at now, the pin still its own; one saved over the home network
+names the `.local` name, which the app keeps (F255: the receipt names the
+SoftAP address only for a bearer or BOOT-tap request that arrived over the
+SoftAP, or while the STA holds no address). The app has no BOOT-tap
+pairing over the LAN: an installed WAP speaks https with no pin the phone
+could hold it to before the first dial (F256).
 
 Tests: `ImprovWireTests` (the codec, pinned to the firmware's vectors),
 `MagicPairPlanTests` (the sequence, its fallbacks and the retry rule),
@@ -714,6 +721,16 @@ cannot speak to.
       second time is `403`; a wrong claim is `403` **and** burns the real
       one; a claim after 180 s is `403`; the BOOT tap is still unspent after
       a claim served.
+- [ ] With the WAP joined to the home Wi-Fi, a BOOT-tap receipt fetched
+      from a laptop on the home network (the dashboard's sign-in at
+      `/settings`) names `base_url` at the `.local` name; the same tap from
+      a phone still on the setup network inside the AP grace window names
+      `192.168.4.1`; a bearer re-sync over the home network names the
+      `.local` name.
+- [ ] The dashboard's BOOT-tap sign-in offers **Save my recovery kit**;
+      the saved `canary-recovery-kit.json` is the receipt, and it pairs the
+      WAP from its row under **Ready to pair** in the iPhone app; a sign-in
+      whose tap never came offers nothing.
 - [ ] The iPhone ends up paired from one tap; the `tls_cert_fp` pin holds
       on a TLS-enabled unit; a phone that takes three minutes to spend the
       claim still finds the WAP up (the reboot is held while the claim is
@@ -750,6 +767,8 @@ cannot speak to.
 | The short BOOT tap (pure) | [`firmware/common/io/short_tap.h`](../../firmware/common/io/short_tap.h) | `firmware/tests_host/test_short_tap.cpp` |
 | The claim ticket (pure) | [`firmware/common/network/claim_ticket.h`](../../firmware/common/network/claim_ticket.h) | `firmware/tests_host/test_claim_ticket.cpp` |
 | The receipt's four-grant order | [`firmware/common/network/provisioning_gate.h`](../../firmware/common/network/provisioning_gate.h) (`receipt_decide`) | `firmware/tests_host/test_provisioning_gate.cpp` |
+| Which address the WAP's receipt names (pure) | [`firmware/projects/canary-wap/arduino/canary_wap/receipt_authority.h`](../../firmware/projects/canary-wap/arduino/canary_wap/receipt_authority.h) | `firmware/projects/canary-wap/tests_host/test_receipt_authority.cpp` |
+| The WAP's recovery kit, one builder for the wizard and the dashboard | `RECOVERY_KIT` in `companion_pwa.h` and `web_ui.h` (same lines) | `firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js` |
 | The beacon's setup bit | [`firmware/common/fleet_link/fleet_beacon.h`](../../firmware/common/fleet_link/fleet_beacon.h) (`FLEET_BEACON_FLAG_SETUP_OPEN`) | the beacon tests |
 | Sense / Vision flag and window | `include/canary/config.h` (`FEATURE_IMPROV`, `IMPROV_FIRST_BOOT_WINDOW_MS`) | the per-board `-DFEATURE_IMPROV=0` CI veto |
 | The WAP's glue, advert set, claim service | [`firmware/projects/canary-wap/arduino/canary_wap/ble_improv.h`](../../firmware/projects/canary-wap/arduino/canary_wap/ble_improv.h), `build_config.h` (`FEATURE_IMPROV`), `bluetooth_channel::set_setup_door` | CI-compiled; `check_improv_sync.sh` holds the staged core |

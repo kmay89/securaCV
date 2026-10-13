@@ -60,7 +60,8 @@ struct DeviceInfo {
 struct Receipt {
   const char* device_id;     /* g_device.device_id */
   bool        tls_enabled;   /* g_tls_enabled: the base_url's scheme */
-  const char* ap_ip;         /* WiFi.softAPIP().toString() */
+  const char* ap_ip;         /* the base_url's authority: receipt_authority::write()'s
+                                .local name or address (sweep F255) */
   const char* token;         /* g_device.api_token_str */
   const char* pubkey_fp;     /* g_device.fingerprint_hex */
   const char* firmware;      /* FIRMWARE_VERSION */
