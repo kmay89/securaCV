@@ -3292,7 +3292,9 @@ async function runNativeBench({ flashAnswers, detectAnswer, ports, startAnswer, 
       monitorCmds: monitorCmds || browserMonitorCmds(),
     });
     const run = { calls, timeline, mount, doc, answers, close: restore };
-    run.emit = (evt, payload) => { for (const cb of heard[evt] || []) cb({ payload }); };
+    run.emit = (evt, payload) => { for (const cb of [...(heard[evt] || [])]) cb({ payload }); };
+    // How many listeners an event has right now (sweep A85 counts them).
+    run.listeners = (evt) => (heard[evt] || []).length;
     run.text = () => mount.textContent;
     run.pick = async (id) => {
       const name = catalog.products.find((p) => p.id === id).name;
@@ -3651,6 +3653,71 @@ test("A67: a re-read takes the row with the port, and the chips are the table th
     await drain();
     assert.deepStrictEqual(sends(handed), ["z\n", "q\n"]);
   } finally { handed.close(); }
+});
+
+// ── sweep A85: the receipt card lets go of the previous flash ──────────────
+//
+// renderReceipt registered serial:status, serial:log and serial:receipt on
+// every flash and removed them only on Stop watching, so each further flash
+// in one session left the earlier card's three attached, writing into a card
+// no longer on the page. A new card, a new flash and a re-read now each let
+// go of the last card's listeners. Counted here, across flashes.
+test("A85: a second flash leaves one set of monitor listeners, and a re-read leaves none", async () => {
+  const receipt = { target: "esp32-host", product_id: "securacv-canary", version: "9.9.9", release_sha256: "a".repeat(64),
+    installed_sha256: "b".repeat(64), bytes_written: 1, release_verification: "ed25519+sha256", channel: "stable",
+    chip_write_verified: true, provisioned: false };
+  const EVENTS = ["serial:status", "serial:log", "serial:receipt"];
+  const counts = (run) => EVENTS.map((e) => run.listeners(e));
+  const consoles = (run) => [...run.mount.walk()].filter((n) => n.tagName === "pre" && n.className === "flash-console-tall");
+
+  const run = await runNativeBench({ flashAnswers: [receipt, receipt, receipt, "Failed to open serial port /dev/ttyACM0: busy"] });
+  try {
+    await run.pick("securacv-canary");
+    assert.deepStrictEqual(counts(run), [1, 1, 1], "one flash, one card: one listener per serial event");
+    const first = consoles(run);
+    assert.strictEqual(first.length, 1);
+
+    // The same session flashes again: the first card's listeners go with it.
+    await run.pick("securacv-canary");
+    assert.deepStrictEqual(counts(run), [1, 1, 1],
+      "a second flash must leave one set of listeners, not stack another on the first card's");
+    const second = consoles(run);
+    assert.strictEqual(second.length, 1, "only the new card is on the page");
+    assert.notStrictEqual(second[0], first[0], "the receipt card was drawn afresh");
+    run.emit("serial:log", "boot line\n");
+    assert.strictEqual(first[0].textContent, "", "the detached card must hear nothing more");
+    assert.strictEqual(second[0].textContent, "boot line\n", "the new card hears the port");
+
+    // A third flash, then a fourth that fails: the bench takes the port back
+    // for the write, and a failed write draws no card, so nothing is left
+    // listening to a monitor that is not running.
+    await run.pick("securacv-canary");
+    assert.deepStrictEqual(counts(run), [1, 1, 1], "a third flash still leaves one set");
+    await run.pick("securacv-canary");
+    assert.ok(run.text().includes("That port is busy"), "the fourth flash failed as scripted");
+    assert.deepStrictEqual(counts(run), [0, 0, 0],
+      "a flash that took the port back and failed must leave no monitor listeners behind");
+  } finally { run.close(); }
+
+  // "Read the board again" takes the port back from the monitor: the card's
+  // listeners go with it.
+  const reread = await runNativeBench({ flashAnswers: [receipt] });
+  try {
+    await reread.pick("securacv-canary");
+    assert.deepStrictEqual(counts(reread), [1, 1, 1]);
+    reread.mount.find((n) => n.tagName === "button" && n.textContent === "Read the board again").fire("click");
+    await drain(); await drain();
+    assert.deepStrictEqual(counts(reread), [0, 0, 0], "a re-read must let go of the card's listeners");
+  } finally { reread.close(); }
+
+  // Stop watching still lets go of them, as it always did.
+  const stopped = await runNativeBench({ flashAnswers: [receipt] });
+  try {
+    await stopped.pick("securacv-canary");
+    stopped.mount.find((n) => n.tagName === "button" && n.textContent === "Stop watching").fire("click");
+    await drain();
+    assert.deepStrictEqual(counts(stopped), [0, 0, 0], "Stop watching must let go of the card's listeners");
+  } finally { stopped.close(); }
 });
 
 // ── The derived birth certificate: one bird, one name, three surfaces ─────

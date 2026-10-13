@@ -223,6 +223,18 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields, monit
     st.monitoring = on;
     for (const c of monitorControls) c.disabled = !on;
   };
+  // The receipt card's serial:status / serial:log / serial:receipt listeners
+  // belong to that card alone (sweep A85). A new flash, a new card and a
+  // re-read each let go of the last card's three, or every further flash in
+  // one session leaves another set writing into a card that is no longer on
+  // the page (and a failed reflash, which draws no card, leaves them
+  // listening to a monitor that is not running).
+  let receiptCard = null; // { unlisteners: [] } while a card is drawn
+  const releaseReceipt = (card = receiptCard) => {
+    if (!card) return;
+    for (const u of card.unlisteners.splice(0)) u();
+    if (receiptCard === card) receiptCard = null;
+  };
 
   // ── the cards ────────────────────────────────────────────────────────────
   const head = el("section", "flash-card");
@@ -377,6 +389,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields, monit
       try { await invoke("stop_serial_monitor"); } catch { /* already stopped */ }
       setMonitoring(false);
     }
+    releaseReceipt(); // the card's listeners go with the port it watched
     st.failedPort = null;
     st.chip = null;
     pollPorts();
@@ -585,6 +598,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields, monit
     });
     try { await invoke("stop_serial_monitor"); } catch { /* not running is fine */ }
     setMonitoring(false);
+    releaseReceipt(); // the last card's monitor is over; its listeners go too
     try {
       const receipt = await withBaudLadder((baud) => invoke("flash", {
         port: st.port,
@@ -631,6 +645,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields, monit
     // not read the rebooting board (a board-info resets it) while the
     // monitor is still starting.
     monitorControls = []; // the last receipt's row went with its card
+    releaseReceipt(); // …and so do its listeners, before this card adds its own
+    const card = { unlisteners: [] };
+    receiptCard = card;
     setMonitoring(true);
     result.innerHTML = "";
     result.classList.remove("flash-hidden");
@@ -651,18 +668,18 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields, monit
     // The serial monitor, started the way the Flasher starts it after a flash:
     // one deliberate reboot of a native-USB board so its boot streams from
     // the first line, then a pure observer that rides out re-enumeration.
-    const unlisteners = [];
-    unlisteners.push(await listen("serial:status", (ev) => {
+    const hold = async (pending) => { card.unlisteners.push(await pending); };
+    await hold(listen("serial:status", (ev) => {
       status.textContent = String(ev.payload);
       // The monitor thread only ends when stopped; hand the port back to the
       // poll then (the Flasher reads the same word).
       if (String(ev.payload).toLowerCase().includes("stopped")) setMonitoring(false);
     }));
-    unlisteners.push(await listen("serial:log", (ev) => {
+    await hold(listen("serial:log", (ev) => {
       boot.textContent = (boot.textContent + String(ev.payload)).slice(-16 * 1024);
       boot.scrollTop = boot.scrollHeight;
     }));
-    unlisteners.push(await listen("serial:receipt", (ev) => {
+    await hold(listen("serial:receipt", (ev) => {
       const r = ev.payload || {};
       const m = r.manifest || {};
       // The self-manifest's `firmware` is the version string the board
@@ -727,7 +744,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields, monit
     stop.addEventListener("click", async () => {
       try { await invoke("stop_serial_monitor"); } catch { /* already stopped */ }
       setMonitoring(false);
-      for (const u of unlisteners.splice(0)) u();
+      releaseReceipt(card);
       stop.remove();
     });
     result.append(stop);
