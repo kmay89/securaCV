@@ -168,6 +168,7 @@
 #include "wap_diagnostics.h"     // pure, host-tested: GET /api/diagnostics's body (F149)
 #include "fleet_scan_cache.h"    // pure, host-tested: the fleet scan's cache keeps the adverts that fit (F211)
 #include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
+#include "wap_json_writer.h"      // pure, host-tested: an SSID's control bytes as U+FFFD (F262)
 #include "receipt_authority.h"   // pure, host-tested: which address the receipt's base_url names (F255)
 #include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
@@ -1142,6 +1143,16 @@ static void print_quick_connect_details(const char* title);
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out);
 // log_health is declared extern in health_log.h for use by other modules
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail = nullptr);
+// A health-log line whose detail is an SSID (sweep F262): GET /api/logs
+// writes the detail through ArduinoJson, which writes a control byte raw, and
+// an SSID is whatever bytes an access point broadcast or a person typed. The
+// SSID goes in with its control bytes as U+FFFD (wap_json::replaced_text()),
+// cut on a character to the detail the ring keeps whole.
+static void log_health_ssid(LogLevel level, LogCategory category, const char* message, const char* ssid) {
+  char shown[sizeof(HealthLogRingEntry::detail)];
+  wap_json::replaced_text(shown, sizeof(shown), ssid);
+  log_health(level, category, message, shown);
+}
 
 // WiFi provisioning
 static bool wifi_load_credentials();
@@ -6209,11 +6220,17 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   doc["ok"] = true;
   doc["state"] = wifi_state_name(g_wifi_status.state);
   doc["ap_active"] = g_wifi_status.ap_active;
-  doc["ap_ssid"] = g_device.ap_ssid;
+  // Every SSID the answer carries, with its control bytes as U+FFFD (sweep
+  // F262): the home network's is whatever a person typed or a QR code held.
+  char ap_ssid[wap_json::replaced_cap(sizeof(g_device.ap_ssid) - 1)];
+  wap_json::replaced_text(ap_ssid, sizeof(ap_ssid), g_device.ap_ssid);
+  char sta_ssid[wap_json::replaced_cap(sizeof(g_wifi_creds.ssid) - 1)];
+  wap_json::replaced_text(sta_ssid, sizeof(sta_ssid), g_wifi_creds.configured ? g_wifi_creds.ssid : "");
+  doc["ap_ssid"] = ap_ssid;
   doc["ap_ip"] = g_wifi_status.ap_ip;
   doc["ap_clients"] = g_wifi_status.ap_clients;
   doc["sta_connected"] = g_wifi_status.sta_connected;
-  doc["sta_ssid"] = g_wifi_creds.configured ? g_wifi_creds.ssid : "";
+  doc["sta_ssid"] = sta_ssid;
   doc["sta_ip"] = g_wifi_status.sta_ip;
   doc["rssi"] = g_wifi_status.rssi;
   doc["configured"] = g_wifi_creds.configured;
@@ -6354,7 +6371,11 @@ static String scan_cache_json(bool from_cache, uint32_t now) {
   JsonArray networks = doc["networks"].to<JsonArray>();
   for (int i = 0; i < g_scan_cache_count; i++) {
     JsonObject net = networks.add<JsonObject>();
-    net["ssid"] = g_scan_cache[i].ssid;
+    // Up to 32 bytes the access point chose, any of them a control byte
+    // ArduinoJson would write raw (sweep F262): written as U+FFFD, whole.
+    char ssid[wap_json::replaced_cap(sizeof(ScanCacheEntry::ssid) - 1)];
+    wap_json::replaced_text(ssid, sizeof(ssid), g_scan_cache[i].ssid);
+    net["ssid"] = ssid;
     net["rssi"] = g_scan_cache[i].rssi;
     net["channel"] = g_scan_cache[i].channel;
     net["security"] = g_scan_cache[i].security;
@@ -6716,10 +6737,13 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // Attempt connection
   wifi_connect_to_home();
 
+  // The SSID as saved, its control bytes as U+FFFD (sweep F262).
+  char saved_ssid[wap_json::replaced_cap(sizeof(g_wifi_creds.ssid) - 1)];
+  wap_json::replaced_text(saved_ssid, sizeof(saved_ssid), g_wifi_creds.ssid);
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Credentials saved, attempting connection";
-  doc["ssid"] = g_wifi_creds.ssid;
+  doc["ssid"] = saved_ssid;
   doc["tz"] = tz_outcome;
 
   String response;
@@ -6874,9 +6898,9 @@ bool ble_request_wifi_provisioning(const char* ssid, const char* password) {
   g_wifi_status.last_fail_reason[0] = '\0';
   wifi_connect_to_home();
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-             "WiFi credentials applied via BLE provisioning",
-             g_wifi_creds.ssid);
+  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                  "WiFi credentials applied via BLE provisioning",
+                  g_wifi_creds.ssid);
   return true;
 }
 
@@ -6928,9 +6952,9 @@ bool ble_improv_submit_join(const char* ssid, const char* password) {
   g_wifi_status.last_fail_reason[0] = '\0';
   wifi_connect_to_home();
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-             "Setup door: WiFi credentials applied for one join (saved once it works)",
-             g_wifi_creds.ssid);
+  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                  "Setup door: WiFi credentials applied for one join (saved once it works)",
+                  g_wifi_creds.ssid);
   return true;
 }
 
@@ -6957,9 +6981,9 @@ bool ble_improv_join_verdict(bool joined) {
                  "Setup door: joined, but the credentials were forgotten meanwhile — nothing saved",
                  nullptr);
     } else if (!wifi_save_credentials()) {
-      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
-                 "Setup door: joined, but the credentials were NOT saved (NVS) — kept until reboot",
-                 g_wifi_creds.ssid);
+      log_health_ssid(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                      "Setup door: joined, but the credentials were NOT saved (NVS) — kept until reboot",
+                      g_wifi_creds.ssid);
     }
     return true;
   }
@@ -7258,10 +7282,13 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
 
   wifi_connect_to_home();
 
+  // The SSID as saved, its control bytes as U+FFFD (sweep F262).
+  char saved_ssid[wap_json::replaced_cap(sizeof(g_wifi_creds.ssid) - 1)];
+  wap_json::replaced_text(saved_ssid, sizeof(saved_ssid), g_wifi_creds.ssid);
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Attempting to reconnect";
-  doc["ssid"] = g_wifi_creds.ssid;
+  doc["ssid"] = saved_ssid;
 
   String response;
   serializeJson(doc, response);
@@ -7919,10 +7946,10 @@ static void qr_scan_task_fn(void* param) {
         // The "for sure it saw it" answer: an ascending chirp (or LED
         // blink on silent hardware) the moment credentials are accepted.
         audible_chirp::play_pattern(audible_chirp::PATTERN_SUCCESS);
-        log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-                   hub_saved ? "WiFi + hub applied via QR scan"
-                             : "WiFi credentials applied via QR scan",
-                   ssid);
+        log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                        hub_saved ? "WiFi + hub applied via QR scan"
+                                  : "WiFi credentials applied via QR scan",
+                        ssid);
       }
 
       memset(pass, 0, sizeof(pass));
@@ -8106,8 +8133,11 @@ static esp_err_t handle_qr_scan_status(httpd_req_t* req) {
   doc["ok"] = true;
   doc["scanning"] = (bool)g_qr_scan_active;
   doc["success"] = (bool)g_qr_scan_success;
-  if (g_qr_scanned_ssid[0])
-    doc["ssid"] = g_qr_scanned_ssid;
+  // The SSID the QR code held, its control bytes as U+FFFD (sweep F262).
+  char scanned_ssid[wap_json::replaced_cap(sizeof(g_qr_scanned_ssid) - 1)];
+  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);
+  if (scanned_ssid[0])
+    doc["ssid"] = scanned_ssid;
   if (g_qr_scan_error[0])
     doc["error"] = g_qr_scan_error;
 
@@ -9933,14 +9963,14 @@ static bool wifi_save_credentials() {
     ok = nvs->putBool(NVS_KEY_WIFI_AP_ONLY, false) == sizeof(bool) && ok;
   }
   if (!ok) {
-    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
-               "WiFi credentials NOT saved (NVS write failed)", g_wifi_creds.ssid);
+    log_health_ssid(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                    "WiFi credentials NOT saved (NVS write failed)", g_wifi_creds.ssid);
     return false;
   }
   g_wifi_ap_only = false;
   g_wifi_creds.configured = true;
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
+  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
   return true;
 }
 
@@ -10062,8 +10092,12 @@ static void wifi_connect_to_home() {
   g_wifi_status.connect_attempts++;
   g_wifi_status.last_connect_ms = millis();
 
+  // The SSID with its control bytes as U+FFFD, cut on a character to what
+  // the line has room for (sweep F262: GET /api/logs writes the line raw).
   char msg[64];
-  snprintf(msg, sizeof(msg), "Connecting to: %s", g_wifi_creds.ssid);
+  char shown[sizeof(msg) - (sizeof("Connecting to: ") - 1)];
+  wap_json::replaced_text(shown, sizeof(shown), g_wifi_creds.ssid);
+  snprintf(msg, sizeof(msg), "Connecting to: %s", shown);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, nullptr);
 
   // Start connection (non-blocking)
@@ -10173,7 +10207,9 @@ static void wifi_check_connection() {
         g_wifi_status.last_fail_reason[0] = '\0';
 
         char msg[80];
-        snprintf(msg, sizeof(msg), "Connected to %s", g_wifi_creds.ssid);
+        char shown[sizeof(msg) - (sizeof("Connected to ") - 1)];   // F262, as "Connecting to: "
+        wap_json::replaced_text(shown, sizeof(shown), g_wifi_creds.ssid);
+        snprintf(msg, sizeof(msg), "Connected to %s", shown);
         log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.sta_ip);
         break;
       }
@@ -10195,12 +10231,12 @@ static void wifi_check_connection() {
         snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
                  "%s", fail_reason);
         g_wifi_status.state = WIFI_PROV_FAILED;
-        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, fail_reason, g_wifi_creds.ssid);
+        log_health_ssid(SCV_LOG_WARNING, SCV_CAT_NETWORK, fail_reason, g_wifi_creds.ssid);
       } else if (now - g_wifi_status.last_connect_ms > WIFI_CONNECT_TIMEOUT_MS) {
         snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
                  "%s", "Connection timeout");
         g_wifi_status.state = WIFI_PROV_FAILED;
-        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WiFi connection timeout", g_wifi_creds.ssid);
+        log_health_ssid(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WiFi connection timeout", g_wifi_creds.ssid);
       }
       break;
     }
@@ -10590,8 +10626,12 @@ static void wifi_init_provisioning() {
     Serial.println("[OK] Pre-scanning WiFi networks for the setup wizard");
   }
 
+  // The device's own AP name, written as every SSID in a log line is
+  // (sweep F262): its control bytes (it has none) as U+FFFD.
   char msg[64];
-  snprintf(msg, sizeof(msg), "AP: %s", ap_ssid);
+  char shown_ssid[sizeof(msg) - (sizeof("AP: ") - 1)];
+  wap_json::replaced_text(shown_ssid, sizeof(shown_ssid), ap_ssid);
+  snprintf(msg, sizeof(msg), "AP: %s", shown_ssid);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.ap_ip);
 
   // Start mDNS with this device's UNIQUE hostname (e.g. canary-kitchen or

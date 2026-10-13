@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "health_log.h"
+#include "wap_json_writer.h"   // an SSID's control bytes as U+FFFD (F262)
 
 // External-linkage bridge defined in canary_wap.ino. Validates input,
 // persists credentials to NVS, kicks the existing connect state machine.
@@ -178,7 +179,12 @@ static void publish_scan_results(int n_found) {
 
   for (int i = 0; i < n_found && i < 20; i++) {  // cap at 20 to fit MTU budget
     JsonObject ap = arr.add<JsonObject>();
-    ap["ssid"] = WiFi.SSID(i).c_str();
+    // At most 32 bytes the access point chose, its control bytes as U+FFFD
+    // (sweep F262: ArduinoJson writes one raw, and the phone's JSON.parse
+    // refuses the list).
+    char ssid[wap_json::replaced_cap(32)];
+    wap_json::replaced_text(ssid, sizeof(ssid), WiFi.SSID(i).c_str());
+    ap["ssid"] = ssid;
     ap["rssi"] = WiFi.RSSI(i);
     ap["sec"]  = security_short(WiFi.encryptionType(i));
   }
@@ -197,7 +203,9 @@ static void publish_scan_results(int n_found) {
     JsonArray trim_arr = trim["aps"].to<JsonArray>();
     for (int i = 0; i < n_found && i < 8; i++) {
       JsonObject ap = trim_arr.add<JsonObject>();
-      ap["ssid"] = WiFi.SSID(i).c_str();
+      char ssid[wap_json::replaced_cap(32)];   // as above (F262)
+      wap_json::replaced_text(ssid, sizeof(ssid), WiFi.SSID(i).c_str());
+      ap["ssid"] = ssid;
       ap["rssi"] = WiFi.RSSI(i);
       ap["sec"]  = security_short(WiFi.encryptionType(i));
     }

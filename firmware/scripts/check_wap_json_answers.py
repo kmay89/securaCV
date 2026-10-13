@@ -2,8 +2,9 @@
 """Every canary-wap REST answer fits the buffer it is serialized into (sweep F196),
 the fleet scan's cache keeps the adverts that fit (F211), the answers spelled
 with snprintf() are measured and escaped (F212), every other JSON text spelled
-with printf is held or recorded (F227), and the device name holds no byte
-ArduinoJson would write raw (F226).
+with printf is held or recorded (F227), the device name holds no byte
+ArduinoJson would write raw (F226), and neither does any SSID a JSON text
+carries (F262).
 
 ArduinoJson's `serializeJson(doc, char_array)` and its sized form
 `serializeJson(doc, buf, n)` write at most the buffer's size and add the
@@ -153,6 +154,21 @@ J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
     tests_host/test_device_name.cpp). POST /api/device-name answers a name
     `usable()` refuses with `device_name_rule::kRefusal`, the rule's own
     words beside it (F263).
+
+J9. No SSID reaches a JSON text with a raw control byte (F262): an SSID is
+    up to 32 bytes an access point broadcast or a person typed, and
+    ArduinoJson 7.4.1 writes a control byte other than \b \f \n \r \t raw.
+    Every ArduinoJson value whose key names an SSID (`"ssid"`, `"sta_ssid"`,
+    `"ap_ssid"`) or whose value reads one (an identifier holding `ssid`,
+    `WiFi.SSID(`), in any file of the sketch, is a local buffer declared
+    `char x[wap_json::replaced_cap(...)]` (the whole SSID, every byte a
+    replacement) and filled by `wap_json::replaced_text(x, sizeof(x), ...)`
+    before it, with nothing writing it in between; and every value a printf
+    (J7's family) or `log_health()` is handed that reads an SSID is such a
+    buffer, of any size (the text is cut on a character), unless
+    `SSID_RAW` records the function, why the network's own bytes are right
+    there, and the call still exists (a stale record fails).
+    `log_health_ssid()` and `replaced_text()` themselves take the SSID.
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -2387,6 +2403,100 @@ def check_device_name(files: dict[str, str], idx: Index) -> list[str]:
     return errors
 
 
+# J9: an SSID reaches no JSON text with a raw control byte (F262).
+SSID_TOKEN = re.compile(r"\bWiFi\s*\.\s*SSID\s*\(|\b\w*ssid\w*\b", re.I)
+SSID_KEYED = re.compile(r'\[\s*"([^"\\\n]*)"\s*\]\s*=(?!=)')
+LITERAL = re.compile(r'"(?:\\.|[^"\\\n])*"')
+# The printf and log calls that hand an SSID on with its own bytes, by file and function, with why
+# those bytes are right there (no JSON reads them).
+SSID_RAW: dict[tuple[str, str], str] = {
+    (INO, "ble_improv_scan_row"):
+        "the Improv setup door's scan row: a length-prefixed string the phone's Improv client reads "
+        "byte for byte, never JSON; the network's own name is what the phone sends back to join it",
+    (INO, "handle_fleet_qr"):
+        "the provisioning QR code's payload (SECURACV:S:<ssid>;P:<pass>;;), drawn as an SVG: the "
+        "scanning Canary joins the network by these exact bytes",
+}
+
+
+def replaced_buffer(code: str, lo: int, at: int, name: str) -> bool:
+    """`name` was filled by `wap_json::replaced_text(name, sizeof(name), ...)` in code[lo:at], and no
+    statement after that fill and before `at` writes it."""
+    fills = list(re.finditer(r"\bwap_json\s*::\s*replaced_text\s*\(\s*" + re.escape(name)
+                             + r"\s*,\s*sizeof\s*\(\s*" + re.escape(name) + r"\s*\)\s*,", code[lo:at]))
+    if not fills:
+        return False
+    between = code[lo + fills[-1].end():at]
+    return not re.search(r"(?<![\w.>])" + re.escape(name) + r"\s*(?:\[[^\]]*\])?\s*=(?!=)"
+                         r"|\b(?:strn?cpy|strn?cat|strlcpy|memcpy|memmove|v?s?n?printf|replaced_text)\s*\("
+                         r"\s*(?:wap_json\s*::\s*)?" + re.escape(name) + r"\b", between.split(";", 1)[1]
+                         if ";" in between else "")
+
+
+def check_ssid_texts(files: dict[str, str], idx: Index) -> list[str]:
+    """J9: every ArduinoJson value, printf value and log_health() text that carries an SSID carries
+    it through wap_json::replaced_text(), or is recorded in SSID_RAW (F262)."""
+    errors: list[str] = []
+    used: set[tuple[str, str]] = set()
+
+    def where(name: str, code: str, at: int) -> tuple[str, Fn | None]:
+        fn = fn_containing(idx, name, at)
+        return f"{name}:{code.count(chr(10), 0, at) + 1}: {fn.name if fn else '?'}()", fn
+
+    for name, src in files.items():
+        code = blank_comments_and_strings(src)
+        kept = blank_comments_only(src)
+        for m in SSID_KEYED.finditer(kept):
+            if code[m.start()] != "[":
+                continue                                    # inside a literal
+            end = statement_end(code, m.end())
+            if end < 0:
+                continue
+            rhs = kept[m.end():end].strip()
+            if not (re.search("ssid", m.group(1), re.I) or SSID_TOKEN.search(code[m.end():end])):
+                continue
+            at, fn = where(name, code, m.start())
+            ok = (fn is not None and re.fullmatch(r"\w+", rhs) is not None
+                  and replaced_buffer(code, fn.body[0], m.start(), rhs)
+                  and re.search(r"\bchar\s+" + rhs + r"\s*\[\s*wap_json\s*::\s*replaced_cap\s*\(",
+                                code[fn.body[0]:m.start()]) is not None)
+            if not ok:
+                errors.append(f"{at}: [\"{m.group(1)}\"] = {rhs}: an SSID written into a JSON value without "
+                              "wap_json::replaced_text() into a `char x[wap_json::replaced_cap(...)]` buffer: "
+                              "ArduinoJson writes its control bytes raw (J9, F262)")
+    # The printf family's values and log_health()'s message and detail.
+    cs = printf_callees(idx)
+    sites = [(n, at, c, args, list(range(fi + 1, len(args)))) for n, at, c, args, fi in printf_calls(files, cs)]
+    for name, src in files.items():
+        code = blank_comments_and_strings(src)
+        kept = blank_comments_only(src)
+        for m in re.finditer(r"(?<![\w:.>])log_health\s*\(", code):
+            open_at = m.end() - 1
+            args = split_top(kept[open_at + 1:matching_paren(code, open_at)])
+            if len(args) >= 3 and not re.match(r"\s*(?:const\s+)?char\s*\*", args[2]):
+                sites.append((name, m.start(), "log_health", args, [i for i in (2, 3) if i < len(args)]))
+    for name, at_pos, callee, args, values in sites:
+        code = blank_comments_and_strings(files[name])
+        for i in values:
+            arg = LITERAL.sub('""', args[i]).strip()
+            if not SSID_TOKEN.search(arg):
+                continue
+            at, fn = where(name, code, at_pos)
+            if fn is not None and re.fullmatch(r"\w+", arg) and replaced_buffer(code, fn.body[0], at_pos, arg):
+                continue
+            if fn is not None and (name, fn.name) in SSID_RAW:
+                used.add((name, fn.name))
+                continue
+            errors.append(f"{at}: {callee}() is handed {arg}, an SSID, with its own bytes: write it "
+                          "through wap_json::replaced_text() (log_health_ssid() for a log detail), or "
+                          "record in SSID_RAW why no JSON reads it (J9, F262)")
+    for key in SSID_RAW:
+        if key not in used:
+            errors.append(f"{key[0]}: SSID_RAW records {key[1]}(), which no longer hands an SSID to a printf "
+                          "or log_health(): drop the record (J9)")
+    return errors
+
+
 def check_unsized_printf(files: dict[str, str]) -> list[str]:
     """J5: no answer file spells text with an unsized sprintf() (or vsprintf()): it writes whatever
     length its arguments come to, past any buffer (F227)."""
@@ -2413,6 +2523,7 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     errors += check_fleet_cache(files, idx)
     errors += check_identity_answers(files, idx)
     errors += check_device_name(files, idx)
+    errors += check_ssid_texts(files, idx)
     printf_errors, printfs = check_printf_answers(files, idx)
     errors += printf_errors
     errors += check_recorded_json_texts(files, idx, {(pf.file, pf.line) for pf in printfs})
@@ -2830,6 +2941,51 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("POST /api/device-name's refusal goes back to the words of a rule it never applied (F263)",
      raw_in(INO, '      doc["error"] = device_name_rule::kRefusal;',
             '      doc["error"] = "Invalid name (1-32 chars, letters/digits/hyphen)";')),
+    # J9: no SSID reaches a JSON text with a raw control byte (F262).
+    ("GET /api/wifi/scan lists each network's SSID raw again",
+     raw_in(INO, '    net["ssid"] = ssid;', '    net["ssid"] = g_scan_cache[i].ssid;')),
+    ("POST /api/wifi/connect echoes the saved SSID raw",
+     raw_in(INO, '  doc["message"] = "Credentials saved, attempting connection";\n  doc["ssid"] = saved_ssid;',
+            '  doc["message"] = "Credentials saved, attempting connection";\n  doc["ssid"] = g_wifi_creds.ssid;')),
+    ("POST /api/wifi/reconnect echoes the saved SSID raw",
+     raw_in(INO, '  doc["message"] = "Attempting to reconnect";\n  doc["ssid"] = saved_ssid;',
+            '  doc["message"] = "Attempting to reconnect";\n  doc["ssid"] = g_wifi_creds.ssid;')),
+    ("the QR scan's status answers the scanned SSID raw",
+     raw_in(INO, '    doc["ssid"] = scanned_ssid;', '    doc["ssid"] = g_qr_scanned_ssid;')),
+    ("GET /api/wifi/status answers the home SSID raw",
+     raw_in(INO, '  doc["sta_ssid"] = sta_ssid;', '  doc["sta_ssid"] = g_wifi_creds.configured ? g_wifi_creds.ssid : "";')),
+    ("the self-test's Wi-Fi metric carries the joined SSID raw",
+     raw_in(f"{SKETCH}/selftest_api.h", '      metric["ssid"]     = ssid;', '      metric["ssid"]     = WiFi.SSID();')),
+    ("the self-test's Wi-Fi line carries the joined SSID raw",
+     raw_in(f"{SKETCH}/selftest_api.h", 'set_detail(r, "Joined %s · %lddBm", line_ssid, (long)rssi);',
+            'set_detail(r, "Joined %s · %lddBm", WiFi.SSID().c_str(), (long)rssi);')),
+    ("the BLE provisioning scan list carries each SSID raw",
+     raw_in(f"{SKETCH}/ble_provision.cpp", '      char ssid[wap_json::replaced_cap(32)];   // as above (F262)\n'
+            '      wap_json::replaced_text(ssid, sizeof(ssid), WiFi.SSID(i).c_str());\n      ap["ssid"] = ssid;',
+            '      ap["ssid"] = WiFi.SSID(i).c_str();')),
+    ("a JSON value under another key reads an SSID raw",
+     add_file(f"{SKETCH}/zz_ssid_api.h",
+              "namespace zz_api {\ninline void zz_fill(JsonDocument& doc) {\n  doc[\"network\"] = WiFi.SSID();\n}\n}\n")),
+    ("the scan list's SSID buffer is cut short of a whole SSID",
+     raw_in(INO, '    char ssid[wap_json::replaced_cap(sizeof(ScanCacheEntry::ssid) - 1)];',
+            '    char ssid[sizeof(ScanCacheEntry::ssid)];')),
+    ("the scan list's SSID is copied in raw, not replaced",
+     raw_in(INO, '    wap_json::replaced_text(ssid, sizeof(ssid), g_scan_cache[i].ssid);',
+            '    strncpy(ssid, g_scan_cache[i].ssid, sizeof(ssid) - 1);')),
+    ("the QR status's buffer is written over between its fill and the answer",
+     raw_in(INO, '  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);\n',
+            '  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);\n'
+            '  strncpy(scanned_ssid, g_qr_scanned_ssid, sizeof(scanned_ssid) - 1);\n')),
+    ("the SSID log wrapper logs the SSID raw",
+     raw_in(INO, '  log_health(level, category, message, shown);', '  log_health(level, category, message, ssid);')),
+    ("a health-log line takes the saved SSID raw again",
+     raw_in(INO, '  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);',
+            '  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);')),
+    ("the join line spells the SSID raw into its message",
+     raw_in(INO, '  snprintf(msg, sizeof(msg), "Connecting to: %s", shown);',
+            '  snprintf(msg, sizeof(msg), "Connecting to: %s", g_wifi_creds.ssid);')),
+    ("a recorded raw SSID use is gone and its record stays",
+     raw_in(INO, '    snprintf(ssid, ssid_cap, "%s", e.ssid);', '    strncpy(ssid, e.ssid, ssid_cap - 1);')),
     ("a third route sets the name, tested",
      add_file(f"{SKETCH}/zz_name_route.h",
               "static void zz_ble_rename(const char* n) {\n"
@@ -2881,8 +3037,9 @@ def main(argv: list[str]) -> int:
           f"({kinds['fits']} measured to fit, {kinds['guarded']} length-tested, {kinds['composed']} composed), "
           f"every %s escaped by construction; the identity answers measured by identity_json.h; "
           f"{j7_sites} other JSON texts spelled with printf in {j7_fns} functions, {j7_recorded} of them "
-          f"recorded by the values the check cannot read; the device name's setter, loader and routes "
-          f"({len(MUTATIONS)} mutations refused).")
+          f"recorded by the values the check cannot read; the device name's setter, loader and routes; "
+          f"every SSID a JSON text carries written through replaced_text() ({len(SSID_RAW)} raw uses "
+          f"recorded) ({len(MUTATIONS)} mutations refused).")
     return 0
 
 
