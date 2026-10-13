@@ -376,7 +376,9 @@ This project follows the SecuraCV firmware architecture:
 
 - **Board definitions**: `../../boards/xiao-esp32s3-sense/`
 - **Configuration**: `arduino/canary_wap/build_config.h` (hardware target +
-  build profile), the only place the WAP's flags live. There is no
+  build profile), where the WAP's profile flags live; a few module flags
+  default in their own headers (`FEATURE_BEACON_CHANNEL` in
+  `beacon_channel.h`, the BLE sub-modes in `ble_config.h`). There is no
   `configs/canary-wap/`; the Lab's Workshop and fleet figures read this
   header and `canary_wap.ino` directly.
 - **Common modules**: `../../common/`

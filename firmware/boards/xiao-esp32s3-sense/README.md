@@ -41,8 +41,11 @@ during deep sleep.
 | `canary-wap-mobile` | WAP sketch `build_config.h`, `BUILD_PROFILE_DEV` | The lighter DEV profile: no camera, mesh or Opera discovery |
 
 The WAP has no `firmware/configs/` directory: its sketch
-(`projects/canary-wap/arduino/canary_wap/`) takes every flag from its own
-`build_config.h`, and its pins are restated in `canary_wap.ino`.
+(`projects/canary-wap/arduino/canary_wap/`) takes its profile flags from the
+`BUILD_PROFILE_*` blocks in its own `build_config.h` (a few module flags
+default in their own headers: `FEATURE_BEACON_CHANNEL` in `beacon_channel.h`,
+the BLE sub-modes in `ble_config.h`), and its pins are restated in
+`canary_wap.ino`.
 
 ## Pin Groups
 

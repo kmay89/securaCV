@@ -89,7 +89,8 @@ const LADDER = ['idea', 'prototype', 'confirmed', 'shipping'];
 
 // A device whose flags live in its own sources rather than a firmware/configs/
 // directory: the WAP's sketch includes no config.h, and build_config.h's
-// BUILD_PROFILE_* blocks set every flag. Its flavor is the one the Workshop
+// BUILD_PROFILE_* blocks set its profile flags (a few module flags default in
+// their own headers). Its flavor is the one the Workshop
 // publishes from that header (gen_enclosures.py reads the FULL block through
 // _wap_profile.py), present while the header still has the block — so the
 // evidence moves if the block does.

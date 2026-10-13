@@ -432,7 +432,7 @@ the note above the per-subsystem tables), and its `FEATURE_GNSS`,
 `FEATURE_RF_PRESENCE` and `FEATURE_CHIRP` ✅ came from a
 `firmware/configs/canary-wap/` directory no build compiled (deleted in sweep
 F258, once the Lab read the sketch instead). The canary-wap that builds today
-takes its flags from the sketch's `build_config.h`: GNSS is unconditional
+takes its profile flags from the sketch's `build_config.h`: GNSS is unconditional
 there (no flag), and `FEATURE_RF_PRESENCE` / `FEATURE_CHIRP` are not sketch
 flags at all (2026-10-09).
 

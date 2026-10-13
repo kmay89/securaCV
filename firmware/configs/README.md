@@ -17,10 +17,12 @@ configs/
 └── canary-vision/      # default
 ```
 
-The Canary WAP has no directory here. Its sketch takes every flag from its
-own `build_config.h` (the `BUILD_PROFILE_*` blocks, in
-[`../projects/canary-wap/arduino/canary_wap/`](../projects/canary-wap/arduino/canary_wap/)),
-and the Lab's generators read that header directly.
+The Canary WAP has no directory here. Its sketch takes its profile flags from
+the `BUILD_PROFILE_*` blocks in its own `build_config.h` (in
+[`../projects/canary-wap/arduino/canary_wap/`](../projects/canary-wap/arduino/canary_wap/);
+a few module flags default in their own headers, such as
+`FEATURE_BEACON_CHANNEL` in `beacon_channel.h` and the BLE sub-modes in
+`ble_config.h`), and the Lab's generators read that header directly.
 
 ## Available Configurations
 
