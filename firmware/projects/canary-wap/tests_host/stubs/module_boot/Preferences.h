@@ -15,7 +15,18 @@
  * "nvs_open failed: ..." at error level for each (sweep F125). fail_begin
  * models NVS itself refusing every open (a fault, not a missing namespace).
  * nvs.h beside this file answers IDF's nvs_open() from the same store, and
- * logs nothing. */
+ * logs nothing.
+ *
+ * remove() and isKey() (the Tuning Lab's reset, sweep F127) follow
+ * Arduino-ESP32's Preferences.cpp as sweep F137 read it (stubs/mesh_net's
+ * Preferences.h models the same): remove() refuses a read-only handle or a
+ * null key (false, nothing logged), and otherwise erases the key's row
+ * whatever its type, as nvs_erase_key() does; a key that is not there is
+ * ESP_ERR_NVS_NOT_FOUND, which Preferences logs at error level
+ * ("nvs_erase_key fail") and answers false. It counts every call in
+ * `removes`, each row it erased in `removed`, and each such log in
+ * `error_logs`. isKey() logs nothing, and is false for a key longer than
+ * NVS's 15 characters. */
 #ifndef STUB_MODULE_BOOT_PREFERENCES_H
 #define STUB_MODULE_BOOT_PREFERENCES_H
 
@@ -36,9 +47,11 @@ struct HostPrefs {
   bool fail_begin = false;              /* NVS refuses every open (a fault) */
   int  begins = 0;                      /* begin() calls, opened or refused */
   int  opens = 0;                       /* begin() calls that opened */
-  int  error_logs = 0;                  /* failed begin()s: Preferences logs each */
+  int  error_logs = 0;                  /* failed begin()s and remove()s of a missing row: Preferences logs each */
   int  probes = 0;                      /* nvs_open() calls (nvs.h), which log nothing */
+  int  removes = 0;                     /* remove() calls (sweep F127) */
   std::vector<std::string> gets;        /* "<namespace>/<key>", one per get */
+  std::vector<std::string> removed;     /* "<namespace>/<key>", one per row remove() erased */
 
   void clear() { *this = HostPrefs(); }
   /* Does NVS hold namespace `ns`? */
@@ -90,6 +103,26 @@ class Preferences {
   size_t putInt(const char* key, int32_t v) { return put(host_prefs().i32, key, v); }
   size_t putBool(const char* key, bool v) { return put(host_prefs().flag, key, v); }
   size_t putULong(const char* key, uint32_t v) { return put(host_prefs().u32, key, v); }
+
+  bool isKey(const char* key) {
+    if (!open_ || !key || std::string(key).size() > 15) return false;
+    const std::string k = ns_ + "/" + key;
+    HostPrefs& p = host_prefs();
+    return p.i32.count(k) + p.flag.count(k) + p.f32.count(k) + p.u32.count(k) != 0;
+  }
+  bool remove(const char* key) {
+    HostPrefs& p = host_prefs();
+    p.removes++;
+    if (!open_ || ro_ || !key) return false;
+    const std::string k = ns_ + "/" + key;
+    const size_t erased = p.i32.erase(k) + p.flag.erase(k) + p.f32.erase(k) + p.u32.erase(k);
+    if (erased == 0) {
+      p.error_logs++;                   /* log_e("nvs_erase_key fail: ...") */
+      return false;
+    }
+    p.removed.push_back(k);
+    return true;
+  }
 
  private:
   template <class T>

@@ -1,5 +1,5 @@
 // Host tests for the canary-wap's Tuning Lab and its Quiet Hours (sweeps
-// F123, F128).
+// F123, F127, F128).
 //
 // F123: the Tuning Lab's table declared core.quiet_hours.start_min 0 and
 // end_min 480 (00:00 to 08:00) while the chokepoint's boot apply and
@@ -41,6 +41,13 @@
 // fail; with tune_post() not re-applying Quiet Hours (the code before F128),
 // the apply-at-once and bundle tests fail.
 //
+// F127: the Lab's per-row reset and Reset all stored each knob's declared
+// default as a row, and a stored core.presence threshold wins over the
+// dashboard's preset and sensitivity, so after a reset a preset or slider
+// change applied nowhere. tune_ui.h now sends null, and tune_post() removes
+// the row. The F127 tests below fail on the code before it (tune_post()
+// skipped a null as an unreadable value, and the page sent the default).
+//
 // Build/run: make -C firmware/projects/canary-wap/tests_host
 
 #include <algorithm>
@@ -57,6 +64,7 @@
 #include <vector>
 
 #include "Preferences.h"
+#include "csi_bundler.h"
 #include "csi_event.h"
 #include "csi_module.h"
 #include "csi_module_settings_nvs.h"
@@ -212,13 +220,14 @@ static int test_the_lab_declares_the_device_quiet_hours_default() {
   return 0;
 }
 
-// The Lab's reset buttons store each row's declared default. An owner who
-// turns Quiet Hours on in the Lab and resets its start and end gets the
-// window the dashboard shows, 23:00 to 07:00: from the next boot on, a row
-// at 23:30 is held and one at 07:30 is not. (Through a reboot, so this
-// holds whether or not the Lab applies at once; F128 is tested below.)
-// Before F123 the reset stored 00:00 to 08:00: the 23:30 row went out and
-// the 07:30 one was held.
+// Each row's declared default, stored (what the Lab's reset buttons stored
+// until F127; they now remove the row, tested below): an owner who turns
+// Quiet Hours on in the Lab with that start and end gets the window the
+// dashboard shows, 23:00 to 07:00: from the next boot on, a row at 23:30 is
+// held and one at 07:30 is not. (Through a reboot, so this holds whether or
+// not the Lab applies at once; F128 is tested below.) Before F123 the
+// declared window was 00:00 to 08:00: the 23:30 row went out and the 07:30
+// one was held.
 static int test_resetting_the_lab_window_keeps_the_device_window() {
   host_prefs().clear();
   reboot_and_boot();
@@ -1187,6 +1196,274 @@ static bool mutate(std::string& s, const std::string& from, const std::string& t
   return true;
 }
 
+// ── F127: a Lab reset removes the row ───────────────────────────────────
+
+// The NVS row of a knob, "<namespace>/<key>".
+static std::string row_of(const char* full_key) {
+  const char* nvs = csi_module_settings_nvs::nvs_key_for(full_key);
+  return std::string(csi_module_settings_nvs::kNamespace) + "/" + (nvs ? nvs : "?");
+}
+static bool has_row(const char* full_key) {
+  const std::string k = row_of(full_key);
+  const HostPrefs& p = host_prefs();
+  return p.i32.count(k) + p.flag.count(k) + p.f32.count(k) + p.u32.count(k) != 0;
+}
+
+// core.presence as it runs right now, on two windows of a motion of
+// `motion` (no breathing, no RSSI swing): does it leave "empty" for
+// "subtle"? It does when its motion threshold is at or under `motion` and
+// its active threshold above it. deinit() puts it back in "empty" and keeps
+// the thresholds its last init() read, so this reads what the last init()
+// (a boot, or a POST's re-init) applied, and re-reads nothing.
+static bool presence_reads_as_subtle(int8_t motion) {
+  const csi_module_t* m = csi_module_find("core.presence");
+  if (m == nullptr || m->deinit == nullptr || m->tick == nullptr) return false;
+  m->deinit();
+  csi_bundler_reset();
+  csi_features_t f;
+  std::memset(&f, 0, sizeof(f));
+  for (int i = 8; i < 12; ++i) f.v[i] = motion;   // the phase-Doppler bands
+  f.v[20] = f.v[22] = f.v[23] = -50;              // RSSI: no swing
+  f.frames_in_window = 20;
+  m->tick(&f);
+  m->tick(&f);                                    // two windows of hysteresis
+  return csi_bundler_has_open("core.presence", "presence_changed", "subtle");
+}
+
+// A null removes the knob's row, whatever its kind, and applies like any
+// change: the module re-runs its init(), Quiet Hours re-apply. A reset of a
+// knob with no row is still a reset (the handler answers it, not 400) and
+// removes nothing: Preferences' remove() would log an error for it.
+static int test_a_lab_reset_removes_the_row() {
+  host_prefs().clear();
+  reboot_and_boot();
+  CHECK(tune_post("{\"core.presence.active_threshold\":99}", reinit_module_model).changed == 1);
+  CHECK(has_row("core.presence.active_threshold"));
+  const int logs = host_prefs().error_logs;
+  g_reinits.clear();
+  TunePost post = tune_post("{\"core.presence.active_threshold\":null}", reinit_module_model);
+  CHECK(post.nvs_ok);
+  CHECK(post.changed == 1);
+  CHECK(post.reinit_presence && !post.quiet_hours);
+  CHECK((g_reinits == std::vector<std::string>{"core.presence"}));
+  CHECK(!has_row("core.presence.active_threshold"));
+  CHECK((host_prefs().removed == std::vector<std::string>{row_of("core.presence.active_threshold")}));
+  CHECK(lab_value("core.presence.active_threshold") == 75);   // the balanced baseline
+
+  const int removes = host_prefs().removes;
+  post = tune_post("{\"core.presence.active_threshold\":null}", reinit_module_model);
+  CHECK(post.changed == 1 && post.reinit_presence);
+  CHECK(host_prefs().removes == removes);      // no row: isKey() first, remove() not called
+  CHECK(host_prefs().error_logs == logs);
+
+  // A bool and a Quiet Hours knob in one body, spaced as a person types it.
+  CHECK(tune_post("{\"core.presence.pet_mode\":true,\"core.quiet_hours.enabled\":true}",
+                  reinit_module_model).changed == 2);
+  CHECK(has_row("core.presence.pet_mode") && has_row("core.quiet_hours.enabled"));
+  post = tune_post("{ \"core.presence.pet_mode\" : null , \"core.quiet_hours.enabled\":null }",
+                   reinit_module_model);
+  CHECK(post.changed == 2);
+  CHECK(post.reinit_presence && post.quiet_hours);
+  CHECK(!has_row("core.presence.pet_mode") && !has_row("core.quiet_hours.enabled"));
+  CHECK(lab_value("core.presence.pet_mode") == 0);
+  CHECK(lab_value("core.quiet_hours.enabled") == (kQuietHoursDefaultEnabled ? 1 : 0));
+  CHECK(host_prefs().error_logs == logs);
+  host_prefs().clear();
+  return 0;
+}
+
+// What F127 is for. Threshold rows (the old reset's, or a slider's) win
+// over the dashboard's preset. After the Lab's reset of the three the saved
+// preset applies, at once and from the next boot; and after Reset all (one
+// null per knob, as tune_ui.h sends it) the dashboard's next preset does.
+// Before F127 the reset stored the declared defaults as rows, and both
+// stayed on the balanced 35 / 75 / 30.
+static int test_after_a_reset_the_saved_preset_applies() {
+  static const char* const kThresholds[] = {"core.presence.motion_threshold",
+                                            "core.presence.active_threshold",
+                                            "core.presence.breathing_threshold"};
+  host_prefs().clear();
+  host_prefs().created.insert("csi");
+  reboot_and_boot();
+  CHECK(presence_reads_as_subtle(40));         // balanced: motion threshold 35
+
+  // The rows the old reset stored, then "quiet" saved on the dashboard
+  // (/api/settings stores it, then re-runs core.presence's init()).
+  std::string rows = "{";
+  for (const char* k : kThresholds) {
+    if (rows.size() > 1) rows += ",";
+    rows += "\"" + std::string(k) + "\":" + std::to_string(tune_coeff_for(k)->default_v);
+  }
+  rows += "}";
+  CHECK(tune_post(rows.c_str(), reinit_module_model).changed == 3);
+  CHECK(presence_post("{\"preset\":\"quiet\"}"));
+  reinit_module_model("core.presence");
+  CHECK(reads(status_current(), 35, 75, 30, "stored"));
+  CHECK(presence_reads_as_subtle(40));         // the rows win: "quiet" runs nowhere
+
+  // The Lab's reset on each threshold row: "quiet" (50 / 90 / 40) at once...
+  for (const char* k : kThresholds) {
+    const std::string body = "{\"" + std::string(k) + "\":null}";
+    const TunePost post = tune_post(body.c_str(), reinit_module_model);
+    CHECK(post.changed == 1 && post.reinit_presence);
+    CHECK(!has_row(k));
+  }
+  CHECK(reads(status_current(), 50, 90, 40, "preset"));
+  CHECK(lab_reads(50, 90, 40));
+  CHECK(!presence_reads_as_subtle(40));
+  CHECK(presence_reads_as_subtle(50));
+  // ...and from the next boot.
+  reboot_and_boot();
+  CHECK(!presence_reads_as_subtle(40));
+  CHECK(presence_reads_as_subtle(50));
+
+  // Reset all: every knob's row goes, the dashboard's preset with them (the
+  // Lab lists it), so the device runs the balanced defaults...
+  CHECK(tune_post(rows.c_str(), reinit_module_model).changed == 3);
+  for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) {
+    const std::string body = "{\"" + std::string(TUNE_COEFFS[i].full_key) + "\":null}";
+    const TunePost post = tune_post(body.c_str(), reinit_module_model);
+    CHECK(post.nvs_ok && post.changed == 1);
+    CHECK(!has_row(TUNE_COEFFS[i].full_key));
+  }
+  CHECK(reads(status_current(), 35, 75, 30, "preset"));
+  CHECK(!presence_reads_as_subtle(30));
+  // ...and the next preset the owner saves applies, at once and at boot:
+  // "sensitive" (25 / 60 / 20) reads a motion of 30 as "subtle".
+  CHECK(presence_post("{\"preset\":\"sensitive\"}"));
+  reinit_module_model("core.presence");
+  CHECK(reads(status_current(), 25, 60, 20, "preset"));
+  CHECK(presence_reads_as_subtle(30));
+  reboot_and_boot();
+  CHECK(presence_reads_as_subtle(30));
+  host_prefs().clear();
+  return 0;
+}
+
+// A bundle import still stores every knob as a row (F127 changes the
+// reset, not the import): a device reset to its defaults exports its
+// bundle, loads it back, and holds a row for every knob, at the values it
+// exported, which a second export repeats.
+static int test_the_import_round_trip_still_stores_rows() {
+  host_prefs().clear();
+  host_prefs().created.insert("csi");
+  reboot_and_boot();
+  CHECK(presence_post("{\"preset\":\"quiet\"}"));
+  const std::string bundle = exported_bundle();
+  const TunePost post = tune_post(bundle.c_str(), reinit_module_model);
+  CHECK(post.nvs_ok && post.changed == (int)TUNE_COEFF_COUNT);
+  for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) CHECK(has_row(TUNE_COEFFS[i].full_key));
+  CHECK(host_prefs().removes == 0);
+  CHECK(reads(status_current(), 50, 90, 40, "stored"));
+  CHECK(exported_bundle() == bundle);
+  host_prefs().clear();
+  return 0;
+}
+
+// What the reset does not take: a value that is not null, nor a number, nor
+// a bool's word (nul, nullx, "null", a word), and a null on a key the Lab
+// does not list (or a known key's name inside another), store and remove
+// nothing.
+static int test_a_malformed_value_or_unknown_null_changes_nothing() {
+  host_prefs().clear();
+  reboot_and_boot();
+  CHECK(tune_post("{\"core.presence.active_threshold\":99,\"core.presence.pet_mode\":true}",
+                  reinit_module_model).changed == 2);
+  const HostPrefs before = host_prefs();
+  static const char* const kBodies[] = {
+      "{\"core.presence.active_threshold\":nul}",
+      "{\"core.presence.active_threshold\":nullx}",
+      "{\"core.presence.active_threshold\":\"null\"}",
+      "{\"core.presence.pet_mode\":maybe}",
+      "{\"core.presence.pet_mode\":nulls}",
+      "{\"core.presence.bogus\":null}",
+      "{\"not_core.presence.pet_mode\":null}",
+      "{\"wifi.channel_activity.cooldown_sec\":null}",
+  };
+  for (const char* body : kBodies) {
+    const TunePost post = tune_post(body, reinit_module_model);
+    CHECK(post.nvs_ok);
+    if (post.changed != 0) std::fprintf(stderr, "changed by %s\n", body);
+    CHECK(post.changed == 0);
+  }
+  CHECK(host_prefs().i32 == before.i32);
+  CHECK(host_prefs().flag == before.flag);
+  CHECK(host_prefs().removes == before.removes);
+  CHECK(host_prefs().error_logs == before.error_logs);
+  host_prefs().clear();
+  return 0;
+}
+
+// F122: wifi.channel_activity's three knobs are compile-time defaults on
+// this tree too: the Lab lists none and the key map has no row for them.
+static int test_wifi_channel_activity_has_no_lab_knob() {
+  for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) {
+    CHECK(std::strncmp(TUNE_COEFFS[i].full_key, "wifi.channel_activity.", 22) != 0);
+  }
+  static const char* const kKnobs[] = {"wifi.channel_activity.spike_ratio",
+                                       "wifi.channel_activity.min_activity",
+                                       "wifi.channel_activity.cooldown_sec"};
+  for (const char* k : kKnobs) CHECK(csi_module_settings_nvs::nvs_key_for(k) == nullptr);
+  return 0;
+}
+
+// The page: tune_ui.h's per-row reset and Reset all each POST a null for
+// the knob, never its declared default. Checked against in-memory mutations
+// of the page (each must be caught).
+static std::vector<std::string> lab_page_problems(const std::string& page) {
+  std::vector<std::string> out;
+  auto block = [&](const std::string& head) -> std::string {
+    const size_t at = page.find(head);
+    if (at == std::string::npos) return "";
+    int depth = 0;
+    for (size_t j = page.find('{', at); j != std::string::npos && j < page.size(); ++j) {
+      if (page[j] == '{') ++depth;
+      if (page[j] == '}' && --depth == 0) return page.substr(at, j - at + 1);
+    }
+    return "";
+  };
+  const struct { const char* name; const char* head; } kHandlers[] = {
+      {"the row's reset", "row.querySelector('.reset').addEventListener('click'"},
+      {"Reset all", "$('#resetAll').addEventListener('click'"},
+  };
+  for (const auto& h : kHandlers) {
+    const std::string b = block(h.head);
+    if (b.empty()) {
+      out.push_back(std::string(h.name) + ": handler not found");
+      continue;
+    }
+    if (count_of(b, "body[c.full_key] = null;") != 1)
+      out.push_back(std::string(h.name) + ": does not POST the knob as null");
+    if (b.find("c.default") != std::string::npos)
+      out.push_back(std::string(h.name) + ": still uses the declared default");
+    if (b.find("'/api/tune/coefficients'") == std::string::npos)
+      out.push_back(std::string(h.name) + ": does not POST to /api/tune/coefficients");
+  }
+  return out;
+}
+
+static int test_the_lab_page_resets_with_null() {
+  const std::string page = read_source("tune_ui.h");
+  CHECK(!page.empty());
+  const std::vector<std::string> problems = lab_page_problems(page);
+  for (const std::string& p : problems) std::fprintf(stderr, "page: %s\n", p.c_str());
+  CHECK(problems.empty());
+  struct Mutation { const char* from; const char* to; };
+  const Mutation kMutations[] = {
+      {"body[c.full_key] = null;", "body[c.full_key] = c.default;"},
+      {"const body = {}; body[c.full_key] = null;   // null removes the row (sweep F127)",
+       "const body = {}; body[c.full_key] = c.value;"},
+      {"$('#resetAll').addEventListener('click'", "$('#resetAll').addEventListener('dblclick'"},
+  };
+  for (const Mutation& mu : kMutations) {
+    std::string m = page;
+    CHECK(mutate(m, mu.from, mu.to));
+    if (lab_page_problems(m).empty()) std::fprintf(stderr, "page mutation not caught: %s\n", mu.to);
+    CHECK(!lab_page_problems(m).empty());
+  }
+  return 0;
+}
+
 static int test_csi_integration_is_thin_around_the_tested_code() {
   const std::string integ = read_source("csi_integration.cpp");
   CHECK(!integ.empty());
@@ -1419,6 +1696,13 @@ int main(int argc, char** argv) {
     {"the_privacy_ceiling_is_one_row", test_the_privacy_ceiling_is_one_row},
     {"no_sketch_source_spells_a_module_settings_key", test_no_sketch_source_spells_a_module_settings_key},
     {"csi_integration_is_thin_around_the_tested_code", test_csi_integration_is_thin_around_the_tested_code},
+    {"a_lab_reset_removes_the_row", test_a_lab_reset_removes_the_row},
+    {"after_a_reset_the_saved_preset_applies", test_after_a_reset_the_saved_preset_applies},
+    {"the_import_round_trip_still_stores_rows", test_the_import_round_trip_still_stores_rows},
+    {"a_malformed_value_or_unknown_null_changes_nothing",
+     test_a_malformed_value_or_unknown_null_changes_nothing},
+    {"wifi_channel_activity_has_no_lab_knob", test_wifi_channel_activity_has_no_lab_knob},
+    {"the_lab_page_resets_with_null", test_the_lab_page_resets_with_null},
   };
   int ran = 0;
   for (const Test& t : kTests) {

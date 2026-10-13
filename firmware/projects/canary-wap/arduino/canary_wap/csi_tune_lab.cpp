@@ -125,9 +125,28 @@ void tune_write_value(Preferences& prefs, const TuneCoeff& c, int32_t v) {
   }
 }
 
+/* The Lab's reset (sweep F127): no row, so the reader's default applies,
+ * for core.presence's thresholds the stored preset and sensitivity's
+ * baseline. Storing the declared default as a row, as the reset did, made
+ * it win over every later preset or slider change. */
+void tune_clear_value(Preferences& prefs, const TuneCoeff& c) {
+  const char* nvs = nvs_key_for(c.full_key);
+  if (!nvs) return;
+  if (prefs.isKey(nvs)) prefs.remove(nvs);
+}
+
+/* Is `p` a JSON null, a whole token (not "nullx")? */
+static bool is_json_null(const char* p) {
+  if (strncmp(p, "null", 4) != 0) return false;
+  const char next = p[4];
+  return next == '\0' || next == ',' || next == '}' || next == ' ' || next == '\t' ||
+         next == '\r' || next == '\n';
+}
+
 /* Find one or more "key":value pairs in the body and write each. The
  * parser is intentionally minimal — it walks the body looking for
- * keys we recognize from TUNE_COEFFS and a numeric or true/false RHS.
+ * keys we recognize from TUNE_COEFFS and a numeric or true/false RHS, or
+ * null, which removes the knob's row (the Lab's reset, sweep F127).
  * Any unrecognized key is silently ignored (P2; tinkerers are not
  * expected to need detailed feedback on typos). */
 TunePost tune_post(const char* body, void (*reinit)(const char* module_id)) {
@@ -159,21 +178,27 @@ TunePost tune_post(const char* body, void (*reinit)(const char* module_id)) {
     p++;
     while (*p == ' ' || *p == '\t') p++;
 
-    int32_t v;
-    if (c.kind == TK_BOOL) {
+    /* null: the Lab's reset, the row goes whatever the knob's kind. */
+    const bool reset = is_json_null(p);
+    int32_t v = 0;
+    if (!reset && c.kind == TK_BOOL) {
       if      (strncmp(p, "true",  4) == 0) v = 1;
       else if (strncmp(p, "false", 5) == 0) v = 0;
       else if (strncmp(p, "1",     1) == 0) v = 1;
       else if (strncmp(p, "0",     1) == 0) v = 0;
       else continue;
-    } else {
+    } else if (!reset) {
       char* end = nullptr;
       long n = strtol(p, &end, 10);
       if (end == p) continue;
       v = (int32_t)n;
     }
 
-    tune_write_value(prefs, c, v);
+    if (reset) {
+      tune_clear_value(prefs, c);
+    } else {
+      tune_write_value(prefs, c, v);
+    }
     post.changed++;
     switch (c.apply) {
       case TA_REINIT_PRESENCE:  post.reinit_presence  = true; break;

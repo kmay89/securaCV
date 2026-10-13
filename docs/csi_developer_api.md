@@ -458,7 +458,7 @@ the Lab from the dashboard (long-press on the version chip, or
 | --- | --- |
 | `GET /tune` | the Tuning Lab UI |
 | `GET /api/tune/coefficients` | every registered tuning knob, current values |
-| `POST /api/tune/coefficients` | update one or more knobs; persists to NVS; applies at once and from every boot |
+| `POST /api/tune/coefficients` | update one or more knobs; persists to NVS; applies at once and from every boot. A `null` value removes the knob's stored row instead (the Lab's reset, sweep F127) |
 | `GET /api/tune/preset` | export every knob's current value as one flat, unsigned JSON object (a download named `tuning-preset.json`) |
 | `POST /api/tune/preset` | import such an object: the same handler as `POST /api/tune/coefficients`, which checks no signature |
 
@@ -487,13 +487,22 @@ baseline `core.presence` runs, the calibration status's `current` below.
 Before F166's review it reported their declared balanced 35 / 75 / 30
 whatever the preset, so a bundle exported and loaded back stored those as
 rows, which moved the thresholds. Their declared `default` is still the
-balanced 35 / 75 / 30, and that is what the reset buttons store. A bundle import is the same handler,
-so it stores every coefficient in the bundle, the three presence
-thresholds included. So do the Lab's per-row **reset** and **Reset all**,
-which POST each coefficient's default as a stored value. A stored
+balanced 35 / 75 / 30. A bundle import is the same handler, so it stores
+every coefficient in the bundle as a row, the three presence thresholds
+included, and so does the calibration's apply (those three). A stored
 `core.presence.motion_threshold`, `active_threshold` or
 `breathing_threshold` wins over the dashboard's preset and sensitivity
-(they set only the default of those reads), at boot as after a change.
+(they set only the default of those reads), at boot as after a change. The
+Lab's per-row **reset** and **Reset all** POST each knob as `null`, which
+removes its stored row (sweep F127): the device then runs what it runs with
+no row, its declared default, and for the three thresholds the saved preset
+and sensitivity's baseline, at once and from every boot. Before F127 the
+reset stored the declared default as a row, so a preset or slider change
+made after it applied nowhere. Reset all removes every knob's row, the
+dashboard's own preset and sensitivity among them (the Lab lists them), so
+it returns the device to balanced at sensitivity 50; a value `tune_post()`
+cannot read (not a number, `true` / `false`, or `null`) is ignored, as
+before.
 
 ---
 
@@ -594,9 +603,11 @@ Lab's coefficients behave the same way, its Quiet Hours knobs included
 (sweep F128; see the Tuning Lab section above). The
 preset and sensitivity set only the default of `core.presence`'s three
 thresholds: once a threshold is stored directly (the calibration's apply
-stores all three; so do the Tuning Lab's reset buttons and a bundle
-import), the stored threshold wins, at boot as at once, while
-`GET /api/settings` keeps reporting the saved preset.
+stores all three, and a Tuning Lab bundle import or slider stores its own),
+the stored threshold wins, at boot as at once, while
+`GET /api/settings` keeps reporting the saved preset. The Tuning Lab's
+reset removes a threshold's row, and the preset and sensitivity apply to it
+again (sweep F127).
 The wire keys are deliberately short (the dashboard's controls surface,
 not the full module-tunable surface):
 
@@ -756,8 +767,9 @@ csi_settings_nvs.cpp::apply_quiet_hours_from_nvs()`, which
 `csi_integration.cpp`'s `register_v1_modules()` calls at boot, the
 `/api/settings` POST handler calls on a Quiet Hours change, and the Tuning
 Lab's POST (`csi_tune_lab.cpp`'s `tune_post()`, also the bundle import)
-calls when it stores a `core.quiet_hours.*` knob (sweep F128). A device
-that never stored the range runs it off, 23:00 to 07:00
+calls when it stores a `core.quiet_hours.*` knob (sweep F128), or removes
+one for the Lab's reset (sweep F127). A device that never stored the range,
+or whose rows the Lab's reset removed, runs it off, 23:00 to 07:00
 (`kQuietHoursDefault*` in `csi_settings_nvs.h`, sweep F123). The
 `/api/settings` POST stores the range through
 `store_quiet_hours_from_settings()` beside it, by the same key map, so

@@ -112,7 +112,9 @@ footer code{background:var(--card-hi);padding:1px 5px;border-radius:4px}
 <div class="warn">
   Power-user controls. Values you change here persist to NVS and take effect
   on the next module tick. Out-of-range values are clamped at read time.
-  Use <span style="font-weight:600">Reset</span> on a row to restore the default.
+  <span style="font-weight:600">Reset</span> on a row removes its stored value:
+  the device goes back to its default, and the three presence thresholds
+  follow the dashboard's preset and sensitivity again.
 </div>
 
 <div class="toolbar">
@@ -271,18 +273,22 @@ function bindRowEvents(){
       input.addEventListener('change', () => postCoeff(c));
     }
 
-    row.querySelector('.reset').addEventListener('click', () => {
-      c.value = c.default;
-      if (c.kind === 'bool'){
-        const t = row.querySelector('.toggle');
-        t.classList.toggle('on', !!c.value);
-        t.setAttribute('aria-checked', !!c.value);
-        t.querySelector('span:last-child').textContent = c.value?'enabled':'disabled';
-      } else {
-        row.querySelector('input[type=range]').value = c.value;
+    row.querySelector('.reset').addEventListener('click', async () => {
+      // null removes the stored row (sweep F127): the device runs its
+      // default again, which for a presence threshold is the preset's.
+      // Reload to show what it runs now.
+      try {
+        const body = {}; body[c.full_key] = null;
+        const r = await cvFetch('/api/tune/coefficients', {
+          method:'POST', headers:{'content-type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        await load();
+        setStatus('Reset '+c.full_key+': stored value removed', 'good');
+      } catch(e){
+        setStatus('Reset failed: '+e.message, 'warn');
       }
-      row.querySelector('.v').textContent = fmtVal(c, c.value);
-      postCoeff(c);
     });
   });
 }
@@ -339,18 +345,17 @@ $('#loadPreset').addEventListener('change', async ev => {
 });
 
 $('#resetAll').addEventListener('click', async () => {
-  if (!confirm('Reset every coefficient to its default? This is one POST per row.')) return;
+  if (!confirm('Remove every stored coefficient, so each goes back to its default? This is one POST per row.')) return;
   for (const c of state.coeffs){
-    c.value = c.default;
     try {
-      const body = {}; body[c.full_key] = c.value;
+      const body = {}; body[c.full_key] = null;   // null removes the row (sweep F127)
       await cvFetch('/api/tune/coefficients', {
         method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)
       });
     } catch(_){}
   }
   await load();
-  setStatus('All coefficients reset to defaults.', 'good');
+  setStatus('All stored coefficients removed; the defaults apply.', 'good');
 });
 
 load();
