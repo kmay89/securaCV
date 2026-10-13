@@ -424,6 +424,14 @@ CHIRPPANEL_JS = test_canary_community_panel.test.js
 # and a scan holds every route the page names to one a source registers.
 DASHROUTES_JS = test_canary_dashboard_routes.test.js
 
+# What that dashboard shows where the build lacks a feature, and what Export
+# saves (repo sweeps F273, F274, F278, from F238's GATED list): the Opera tab
+# starts hidden until GET /api/mesh answers (only [env:full] registers the
+# mesh routes), a refused GET /api/peek/status shows the Peek panel's
+# no-camera state and hides the cards that call the other camera routes, and
+# Export saves the bundle POST /api/export answers inline (it named no file).
+DASHGATES_JS = test_canary_dashboard_gates.test.js
+
 # POST /api/logs/<seq>/ack on both trees (repo sweep F214). Both registered
 # "/api/logs/*/ack", which esp_http_server's httpd_uri_match_wildcard never
 # matches (a `*` counts only at a template's end), so the per-entry
@@ -1163,6 +1171,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(HEALTHLOG_JS)
 	$(NODE) --test $(CHIRPPANEL_JS)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
+	$(NODE) --test $(DASHGATES_JS)
 	./$(LOGACK_BIN)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) LOG_ACK_ROUTE_BIN=$(abspath $(LOGACK_BIN)) $(NODE) --test $(ROUTEMATCH_JS)
 
