@@ -1450,6 +1450,17 @@ _GO2RTC_PARITY_PAYLOADS = {
     "a list payload": ["not", "a", "dict"],
     "a string payload": "oops",
     "an empty object": {},
+    # JSON escapes reach jq as written: a tab, a newline, a backslash and a
+    # quote in a name, a backslash in a URL. The script once piped the payload
+    # through `echo`, which dash (the runner's /bin/sh) reads escapes in, so
+    # "\t" became a raw tab and jq refused the payload; Alpine's busybox echo
+    # does not, so the add-on and CI ran different bytes (sweep HA32).
+    "JSON escapes in names and URLs": {
+        "tab\there": {"producers": ["rtsp://t/1"]},
+        "new\nline": {"producers": ["rtsp://n/1"]},
+        "back\\slash": {"producers": ["rtsp://b/1\\x"]},
+        'say "cheese"': {"producers": ["rtsp://q/1"]},
+    },
 }
 
 
@@ -1465,6 +1476,27 @@ def _shell_go2rtc_rows(payload):
     )
     assert out.returncode == 0, f"discover_cameras.sh exited {out.returncode}: {out.stderr}"
     return json.loads(out.stdout)
+
+
+# The add-on runs Alpine 3.18's jq, 1.6 (the base tag test_addon_store.py
+# pins; aports 3.18-stable builds the unpatched 1.6 release source); the
+# runner's is 1.7. pwk-wizard-tests.yml puts the jq-1.6 release binary, pinned
+# by sha256, first on PATH and names the version it must report in
+# PWK_REQUIRE_JQ, so the cases above run on the add-on's jq. A CI run that
+# falls back to the runner's jq, or loses the variable, fails here instead of
+# passing the parity cases on a jq the add-on never runs (sweep HA32).
+def test_go2rtc_parity_runs_on_the_jq_ci_requires():
+    want = os.environ.get("PWK_REQUIRE_JQ")
+    if not want:
+        if os.environ.get("CI"):
+            pytest.fail("CI must name the jq the parity cases run on (PWK_REQUIRE_JQ, e.g. jq-1.6)")
+        pytest.skip("PWK_REQUIRE_JQ is not set (CI sets it to the add-on's jq-1.6)")
+    if shutil.which("jq") is None:
+        pytest.fail("jq is not installed: discover_cameras.sh cannot be held to the reference")
+    got = subprocess.run(["jq", "--version"], capture_output=True, text=True, timeout=30)
+    assert got.stdout.strip() == want, (
+        f"the parity cases would run on {got.stdout.strip() or got.stderr.strip()!r}, not {want!r}"
+    )
 
 
 @pytest.mark.parametrize("label", sorted(_GO2RTC_PARITY_PAYLOADS))

@@ -8,7 +8,8 @@ name: PWK Wizard Tests
 # integration's version), the wizard page's setup-flow and pairing-screen
 # tests (node:test, no browser), shellcheck over the entry scripts and the
 # s6 services, the run_lib unit tests and the kernel-config render check
-# (which also covers the Docker sidecar's copy of the same heredoc). The
+# (which also covers the Docker sidecar's copy of the same heredoc), all on
+# the app's jq 1.6 rather than the runner's 1.7 (sweep HA32). The
 # custom_components/securacv tests are run separately by python.yml
 # (ruff + mypy + pytest). Triggers on changes under privacy_witness_kernel/**
 # and on the integration manifest (the carried version must equal the app's),
@@ -66,9 +67,33 @@ jobs:
         # because the image has no PyYAML.
         run: pip install pytest pyyaml
 
+      - name: Put the app's jq (1.6) first on PATH
+        # The app runs discover_cameras.sh, run.sh and run_lib.sh on the
+        # image's jq: Alpine 3.18's jq 1.6 (aports 3.18-stable builds the
+        # unpatched 1.6 release source), while ubuntu-latest ships 1.7. So the
+        # rest of this job runs on the jq-1.6 release binary, fetched by URL
+        # and pinned by sha256 (the same digest from the jqlang and the older
+        # stedolan release URL), and the pytest step's PWK_REQUIRE_JQ makes
+        # the parity cases fail if they ever run on another jq (sweep HA32).
+        # Move both when the base tag moves in the Dockerfile.
+        env:
+          JQ16_URL: https://github.com/jqlang/jq/releases/download/jq-1.6/jq-linux64
+          JQ16_SHA256: af986793a515d500ab2d35f8d2aecd656e764504b789b66d7e1a0b727a124c44
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/jq-1.6"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/jq" "$JQ16_URL"
+          echo "$JQ16_SHA256  $dir/jq" | sha256sum -c -
+          chmod +x "$dir/jq"
+          test "$("$dir/jq" --version)" = "jq-1.6"
+          echo "$dir" >> "$GITHUB_PATH"
+
       - name: Run wizard, integration-carry and store-presentation tests
         env:
           CI: "true"
+          # The version the parity cases must run on: the step above's jq.
+          PWK_REQUIRE_JQ: jq-1.6
         run: pytest privacy_witness_kernel/tests/ -v
 
       # The carried integration's version must equal the app's: the image

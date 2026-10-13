@@ -39,8 +39,12 @@ fi
 # every good camera with it. Zone IDs must match zone:[a-z0-9_-]{1,64}, so
 # the stream name is lowercased BEFORE the character sweep ("FrontDoor" ->
 # "zone:frontdoor", not "zone:_ront_oor"). Rows come out sorted by name.
-# Every `if` carries an `else`: the add-on's Alpine 3.18 ships jq 1.6.
-echo "$streams" | jq -r '
+# Every `if` carries an `else`: the add-on's Alpine 3.18 ships jq 1.6, and
+# pwk-wizard-tests.yml runs the parity cases on the jq-1.6 release binary.
+# The payload goes to jq through printf, not echo: dash's echo (the runner's
+# /bin/sh) turns a JSON "\t" or "\\" into the byte it names, Alpine's busybox
+# echo does not, and printf '%s' passes the bytes as they are in both.
+printf '%s\n' "$streams" | jq -r '
     if type != "object" then [] else
     to_entries | sort_by(.key) | map(
         select(.value | type == "object") |
