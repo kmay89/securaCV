@@ -259,8 +259,9 @@ const OPT_ABBR = {
 };
 // Where a device's flags live, for the flash stage's copy. Most devices keep
 // one config.h per flavor under firmware/configs/<project>/; the WAP keeps its
-// flags in its sketch's build_config.h (the BUILD_PROFILE_FULL block), so a
-// firmware.source that names a header is one file, not a folder of flavors.
+// profile flags in its sketch's build_config.h (the BUILD_PROFILE_FULL
+// block), so a firmware.source that names a header is one file, not a folder
+// of flavors.
 export function flagsHome(fw) {
   if (/\.(h|hpp)$/.test(fw.source)) {
     const file = fw.source.split("/").pop();
@@ -269,6 +270,21 @@ export function flagsHome(fw) {
   }
   return { href: `${fw.source}/`, label: `${fw.source}/`, edit: "config.h",
     line: " — one folder per flavor, flashing docs beside them." };
+}
+
+// The flash stage's flag lines, as text, so a node test holds the words the
+// page renders. An option's flag that is OFF in the flavor keeps its note,
+// which is where a caveat lives (the WAP's tamper input: off until its pin
+// is bench-validated), ahead of the how-to-turn-it-on.
+export function impliedFlagText(f, flavor, fw) {
+  const note = f.note ? ` (${f.note})` : "";
+  return f.on
+    ? ` — ON in the ${flavor} flavor${note}`
+    : ` — OFF in ${flavor}${note}: set it to 1 in ${flagsHome(fw).edit} when you build`;
+}
+
+export function flagValueText(v) {
+  return ` ${v.on ? "1" : "0"}${v.expr ? ` (${v.expr})` : ""}${v.note ? " — " + v.note : ""}`;
 }
 
 export function specName(devId, match, vector) {
@@ -1015,9 +1031,7 @@ function renderFlash(root) {
     for (const f of fl.implied) {
       const li = el("li", f.on ? "ws-on" : "ws-off");
       li.append(el("code", "ws-flag", f.flag),
-        el("span", null, f.on
-          ? ` — ON in the ${fl.flavor} flavor${f.note ? ` (${f.note})` : ""}`
-          : ` — OFF in ${fl.flavor}: set it to 1 in ${flagsHome(fw).edit} when you build`),
+        el("span", null, impliedFlagText(f, fl.flavor, fw)),
         el("span", "ws-because", ` ← ${f.because}`));
       ul.append(li);
     }
@@ -1029,7 +1043,7 @@ function renderFlash(root) {
   for (const [name, v] of Object.entries(fl.flags)) {
     const li = el("li", v.on ? "ws-on" : "ws-off");
     li.append(el("code", "ws-flag", name),
-      el("span", "muted", ` ${v.on ? "1" : "0"}${v.expr ? ` (${v.expr})` : ""}${v.note ? " — " + v.note : ""}`));
+      el("span", "muted", flagValueText(v)));
     ul2.append(li);
   }
   root.append(ul2);

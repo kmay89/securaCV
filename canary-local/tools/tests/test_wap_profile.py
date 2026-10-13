@@ -268,5 +268,42 @@ class Refusals(unittest.TestCase):
                      .rsplit("#endif", 1)[0], "never closes")
 
 
+class WorkshopNotes(unittest.TestCase):
+    """apply_workshop_notes(): the Workshop's curated notes, each held to the header."""
+
+    FLAGS = {"FEATURE_A": {"on": True, "note": "first"},
+             "FEATURE_B": {"on": True, "note": "ESP32-C3 has none", "expr": "HW_HAS_CAMERA"},
+             "FEATURE_C": {"on": False, "note": "-D overridable"}}
+
+    def test_a_curated_note_replaces_the_line_and_none_drops_it(self):
+        got = wp.apply_workshop_notes(self.FLAGS, "/* C stays off until bench-validated */", {
+            "FEATURE_B": (None, []),
+            "FEATURE_C": ("off until bench-validated", [r"off until bench-validated"])})
+        self.assertEqual(got, {"FEATURE_A": {"on": True, "note": "first"},
+                               "FEATURE_B": {"on": True, "expr": "HW_HAS_CAMERA"},
+                               "FEATURE_C": {"on": False, "note": "off until bench-validated"}})
+        self.assertEqual(list(got["FEATURE_B"]), ["on", "expr"])
+        self.assertEqual(self.FLAGS["FEATURE_C"]["note"], "-D overridable", "the input is not edited")
+
+    def test_a_caveat_the_header_dropped_is_refused(self):
+        with self.assertRaises(wp.WapProfileError) as ctx:
+            wp.apply_workshop_notes(self.FLAGS, "/* C is validated now */", {
+                "FEATURE_B": (None, []),
+                "FEATURE_C": ("off until bench-validated", [r"off until bench-validated"])})
+        self.assertIn("FEATURE_C", str(ctx.exception))
+        self.assertIn("no longer says", str(ctx.exception))
+
+    def test_a_note_for_a_flag_the_profile_dropped_is_refused(self):
+        with self.assertRaises(wp.WapProfileError) as ctx:
+            wp.apply_workshop_notes(self.FLAGS, "", {"FEATURE_B": (None, []), "FEATURE_Z": ("z", [])})
+        self.assertIn("FEATURE_Z", str(ctx.exception))
+
+    def test_a_note_naming_the_c3_is_refused_until_curated(self):
+        with self.assertRaises(wp.WapProfileError) as ctx:
+            wp.apply_workshop_notes(self.FLAGS, "", {})
+        self.assertIn("FEATURE_B", str(ctx.exception))
+        self.assertIn("another target", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -384,12 +384,11 @@
       },
       "FEATURE_CAMERA_PEEK": {
        "on": true,
-       "note": "ESP32-C3 has no camera interface",
        "expr": "HW_HAS_CAMERA"
       },
       "FEATURE_TAMPER_GPIO": {
        "on": false,
-       "note": "-D overridable: CI's compile-only gate sets 1"
+       "note": "Enclosure tamper contact (reed/hall switch on D3); off in every shipped profile until the pin is bench-validated"
       },
       "FEATURE_WATCHDOG": {
        "on": true
@@ -406,7 +405,7 @@
       },
       "FEATURE_BLE": {
        "on": true,
-       "note": "BLE Discovery (Opera/Chirp/Nearby) — works on both S3 and C3"
+       "note": "BLE Discovery (Opera/Chirp/Nearby)"
       },
       "FEATURE_BLE_SCAN": {
        "on": true,

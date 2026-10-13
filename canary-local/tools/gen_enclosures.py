@@ -29,7 +29,7 @@ from pathlib import Path
 
 from _devices import load_manifests
 from _tooling import repo_root
-from _wap_profile import WapProfileError, read_full_profile_file
+from _wap_profile import WapProfileError, apply_workshop_notes, read_full_profile_file
 
 REPO = repo_root()
 ENC = REPO / "docs/hardware/enclosure"
@@ -824,8 +824,10 @@ WORKSHOP_JSON = REPO / "canary-local/devices/workshop.json"
 FWCONF = REPO / "firmware/configs"
 
 # The WAP's flags are its sketch's, not a configs/ directory's: the sketch
-# includes no config.h, and build_config.h's BUILD_PROFILE_* blocks set every
-# FEATURE_*. The Workshop publishes the one combination a stock WAP compiles —
+# includes no config.h, and build_config.h's BUILD_PROFILE_* blocks set its
+# profile flags (a few module flags default in their own headers, e.g.
+# FEATURE_BEACON_CHANNEL in beacon_channel.h, and are not the profile's). The
+# Workshop publishes the one combination a stock WAP compiles —
 # the in-file defaults, XIAO ESP32-S3 + BUILD_PROFILE_FULL (what
 # [env:canary-wap-default] passes too) — as a single "full" flavor, resolved
 # by _wap_profile.py, which refuses a header shape it cannot read.
@@ -833,6 +835,36 @@ WAP_BUILD_CONFIG = "firmware/projects/canary-wap/arduino/canary_wap/build_config
 WAP_FLAVOR = "full"
 WAP_FLAVOR_NOTE = ("the sketch's BUILD_PROFILE_FULL block, resolved for the XIAO "
                    "ESP32-S3 (its in-file default, and what canary-wap-default builds)")
+
+# The Workshop shows each WAP flag's note to a builder, but a FULL-block line's
+# own comment is written for the firmware's developers, and some of them say
+# the wrong thing on this page: the tamper input's line says who overrides it
+# (CI's compile-only gate), not that it is off until its pin is bench-
+# validated (the header's tamper section says that), and a note that names
+# the ESP32-C3 describes another target than the S3 this flavor is resolved
+# for. So a flag listed here gets this note instead (None: no note), and only
+# while every pattern beside it still matches the header, so the page cannot
+# keep a caveat the header has dropped; any other note that names the C3 is
+# refused, so a new one is decided here rather than shown.
+WAP_NOTES = {
+    "FEATURE_TAMPER_GPIO": (
+        "Enclosure tamper contact (reed/hall switch on D3); off in every "
+        "shipped profile until the pin is bench-validated",
+        [r"OFF in every shipped profile until the pin is\s*(?://\s*)?bench-validated",
+         r"#define TAMPER_PIN_DEFAULT\s+4\s+//\s*D3\b"]),
+    # on through HW_HAS_CAMERA, which the flag list shows; the C3 has none
+    "FEATURE_CAMERA_PEEK": (None, [r"#define FEATURE_CAMERA_PEEK\s+HW_HAS_CAMERA\b"]),
+    "FEATURE_BLE": (
+        "BLE Discovery (Opera/Chirp/Nearby)",
+        [r"#define FEATURE_BLE\s+1\s+//\s*BLE Discovery \(Opera/Chirp/Nearby\)"]),
+}
+
+
+def wap_workshop_flags(path: Path) -> dict:
+    """build_config.h's FULL profile with the Workshop's notes (WAP_NOTES)."""
+    text = path.read_text(encoding="utf-8")
+    return apply_workshop_notes(read_full_profile_file(path), text, WAP_NOTES)
+
 
 # device id → (configs project dir, flavors to publish)
 FW_FLAVORS = {
@@ -1123,7 +1155,7 @@ def workshop_main():
 
     features = {}
     try:
-        features["canary-wap"] = {WAP_FLAVOR: read_full_profile_file(REPO / WAP_BUILD_CONFIG)}
+        features["canary-wap"] = {WAP_FLAVOR: wap_workshop_flags(REPO / WAP_BUILD_CONFIG)}
     except WapProfileError as e:
         raise SystemExit(f"workshop: the WAP's flags: {e}")
     for dev, (project, flavors) in FW_FLAVORS.items():

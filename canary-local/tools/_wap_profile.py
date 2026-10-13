@@ -2,11 +2,14 @@
 """canary-local/tools/_wap_profile.py — the WAP's firmware flags, read from its sketch.
 
 The Canary WAP builds one Arduino sketch
-(firmware/projects/canary-wap/arduino/canary_wap/), and that sketch takes its
-feature flags from build_config.h and nowhere else: a hardware-target block
-derives the board's HW_HAS_* capabilities, and three BUILD_PROFILE_* blocks
-(MINIMAL, DEV, FULL) set every FEATURE_*. No build puts a firmware/configs/
-directory on its include path. This module reads the one combination a stock
+(firmware/projects/canary-wap/arduino/canary_wap/), and that sketch's build
+profile is build_config.h: a hardware-target block derives the board's HW_HAS_*
+capabilities, and three BUILD_PROFILE_* blocks (MINIMAL, DEV, FULL) set its
+profile flags. A few module flags default elsewhere and are not the profile's
+(FEATURE_BEACON_CHANNEL in beacon_channel.h, the BLE sub-modes
+FEATURE_BLE_OPERA / _CHIRP / _NEARBY in ble_config.h, FEATURE_USB_EVIDENCE_DRIVE
+after the blocks). No build puts a firmware/configs/ directory on its include
+path. This module reads the one combination a stock
 WAP compiles — the header's in-file defaults, the XIAO ESP32-S3 and
 BUILD_PROFILE_FULL, which is also what [env:canary-wap-default] passes with
 -D — and resolves each FEATURE_* the FULL block sets to on or off, the way the
@@ -351,3 +354,40 @@ def read_full_profile_file(path: Path) -> dict:
     except OSError as e:
         raise WapProfileError(f"{path}: {e}") from e
     return read_full_profile(text)
+
+
+# A note that names a hardware target other than the S3 this flavor is
+# resolved for describes another build.
+_OTHER_TARGET = re.compile(r"\bC3\b")
+
+
+def apply_workshop_notes(flags: dict, text: str, notes: dict) -> dict:
+    """The profile with a curated note per flag in `notes` (name -> (note or
+    None, [patterns])), for a page that shows the notes to a builder.
+
+    A FULL-block line's comment is written for the firmware's developers. Each
+    curated note holds only while every pattern beside it still matches the
+    header text, so a page cannot keep a caveat the header has dropped; a note
+    of None removes the line's comment. Refused, by name: a curated flag the
+    profile no longer sets, a pattern the header no longer matches, and any
+    note left that names another target than the S3. Each entry's keys keep
+    the reader's order (on, note, expr).
+    """
+    out = {name: dict(entry) for name, entry in flags.items()}
+    for name, (note, evidence) in notes.items():
+        if name not in out:
+            raise WapProfileError(f"the Workshop's note for {name}: the FULL profile no longer sets it")
+        for pat in evidence:
+            if not re.search(pat, text):
+                raise WapProfileError(
+                    f"the Workshop's note for {name} rests on /{pat}/, which build_config.h no "
+                    "longer says: re-read the header and update or drop the note")
+        out[name].pop("note", None)
+        if note:
+            out[name]["note"] = note
+    for name, entry in out.items():
+        if _OTHER_TARGET.search(entry.get("note", "")):
+            raise WapProfileError(
+                f"{name}'s note names another target than the S3 this flavor is resolved "
+                f"for ({entry['note']!r}): give it a curated note")
+    return {n: {k: e[k] for k in ("on", "note", "expr") if k in e} for n, e in out.items()}

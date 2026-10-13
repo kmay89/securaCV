@@ -170,6 +170,45 @@ test("the flash stage names the file a flag lives in", async () => {
   assert.match(sense.line, /one folder per flavor/);
 });
 
+test("the WAP's flag notes are for a builder: the tamper caveat stays, no other target's note", async () => {
+  // Review of F258: a FULL-block line's comment is written for the firmware's
+  // developers, so the Workshop's notes come through WAP_NOTES
+  // (gen_enclosures.py), each held to the header. The tamper input is off in
+  // every shipped profile until its pin is bench-validated, and the page says
+  // so wherever it shows the flag; nothing on the S3 flavor's page describes
+  // the ESP32-C3.
+  const fw = ws.devices["canary-wap"].firmware;
+  const full = fw.flavors.full;
+  assert.match(full.FEATURE_TAMPER_GPIO.note, /off in every shipped profile until the pin is bench-validated/);
+  assert.strictEqual(full.FEATURE_TAMPER_GPIO.on, false);
+  const header = readFileSync(join(ROOT, "..", fw.source), "utf8");
+  assert.match(header, /OFF in every shipped profile until the pin is\s*(?:\/\/\s*)?bench-validated/,
+    "the caveat is the header's own");
+  for (const [name, v] of Object.entries(full)) {
+    assert.ok(!/\bC3\b/.test(v.note || ""), `${name}'s note describes another target: ${v.note}`);
+  }
+  // The words the flash stage renders: the tamper option's line keeps the
+  // caveat ahead of the how-to, and names the header to edit, not config.h.
+  const { impliedFlagText, flagValueText } = await import("../assets/workshop.js");
+  const tamper = impliedFlagText({ flag: "FEATURE_TAMPER_GPIO", ...full.FEATURE_TAMPER_GPIO }, "full", fw);
+  assert.match(tamper, /^ — OFF in full \(Enclosure tamper contact .*bench-validated\): set it to 1 in build_config\.h when you build$/);
+  const camera = impliedFlagText({ flag: "FEATURE_CAMERA_PEEK", ...full.FEATURE_CAMERA_PEEK }, "full", fw);
+  assert.strictEqual(camera, " — ON in the full flavor");
+  assert.strictEqual(flagValueText(full.FEATURE_CAMERA_PEEK), " 1 (HW_HAS_CAMERA)");
+  assert.strictEqual(flagValueText(full.FEATURE_TAMPER_GPIO),
+    ` 0 — ${full.FEATURE_TAMPER_GPIO.note}`);
+  // ...and the stage renders through those helpers, not copy of its own
+  // (workshop_probe.mjs holds the rendered page in Chromium).
+  const src = readFileSync(join(ROOT, "assets/workshop.js"), "utf8");
+  const body = src.slice(src.indexOf("function renderFlash(root) {"), src.indexOf("// ── stage: BUILD CARD"));
+  assert.ok(body.length > 200, "renderFlash found");
+  for (const call of ["impliedFlagText(f, fl.flavor, fw)", "flagValueText(v)", "const home = flagsHome(fw);",
+    'el("a", null, home.label)', 'src.append("Flags live in ", a, home.line);']) {
+    assert.ok(body.includes(call), `renderFlash renders through ${call}`);
+  }
+  assert.ok(!/config\.h|one folder per flavor/.test(body), "renderFlash names no flag home of its own");
+});
+
 test("drill templates exist and every device reference is a real device", () => {
   for (const [file, t] of Object.entries(ws.templates)) {
     assert.ok(existsSync(join(ENC, file)), file);
