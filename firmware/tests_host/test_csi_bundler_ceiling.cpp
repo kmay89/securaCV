@@ -610,6 +610,11 @@ static uint32_t emit_stateless() {
   csi_event_values_t v = stateless();
   return csi_event_emit("test.ceiling", "presence", &v);
 }
+static uint32_t emit_ambient(const char* state) {
+  csi_event_values_t v = presence(state);
+  v.category = CSI_CATEGORY_AMBIENT;
+  return csi_event_emit("test.ceiling", "presence", &v);
+}
 
 static int test_the_last_slot_goes_to_a_change_of_state() {
   start_run(0);
@@ -634,6 +639,31 @@ static int test_the_last_slot_goes_to_a_change_of_state() {
   CHECK(emit("a") == 0);                       // the last slot; "a" was the last opening
   CHECK(emit_stateless() != 0);                // a direct row takes it
   CHECK(emit("b") == 0);                       // full
+
+  // Nor are ambient rows, even one of the last opening's type and state.
+  start_run(0);
+  CHECK(emit("a") != 0);
+  csi_bundler_flush_key("test.ceiling", "presence", "a");
+  for (int i = 0; i < 4; ++i) CHECK(emit_stateless() != 0);
+  CHECK(emit("a") == 0);
+  CHECK(emit_ambient("a") != 0);               // committed at the emit, in the last slot
+  CHECK(emit("b") == 0);                       // full
+  return 0;
+}
+
+// The peek runs on the values admit will see, after the sanitizer: a state
+// name it rewrites ("pre\x01" becomes "pre?") still finds its open bundle,
+// so that state's refresh merges at a full ceiling. A peek on the raw
+// values would look for "pre\x01", find nothing, and refuse it.
+static int test_the_peek_sees_the_cleaned_state() {
+  start_run(0);
+  const uint32_t h = emit("pre\x01");
+  CHECK(h != 0);
+  CHECK(csi_bundler_has_open("test.ceiling", "presence", "pre?"));
+  static const char* const kOthers[] = {"b", "c", "d", "e", "f"};
+  for (const char* st : kOthers) CHECK(emit(st) != 0);
+  CHECK(emit("g") == 0);                       // full
+  CHECK(emit("pre\x01") == h);                 // the refresh merges
   return 0;
 }
 
@@ -759,6 +789,7 @@ int main() {
   if (test_a_day_held_stays_within_the_ceiling()) return 1;
   if (test_alternating_states_cannot_exceed_the_cap()) return 1;
   if (test_the_last_slot_goes_to_a_change_of_state()) return 1;
+  if (test_the_peek_sees_the_cleaned_state()) return 1;
   if (test_a_ceiling_of_one_has_no_slot_to_keep()) return 1;
   if (test_a_ceiling_of_255()) return 1;
   std::printf("test_csi_bundler_ceiling: %d checks passed\n", g_checks);
