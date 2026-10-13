@@ -15,6 +15,11 @@ rule exists to retire ARE.
 R9's reason half (an explicit `python-version` says why) reads raw text, so
 its cases pin which comment counts as the pin's reason and which line counts
 as a pin at all.
+R11 (no floating `ubuntu-latest` runner) runs from main() on the repo's own
+workflow files, not inside check_workflow, so the synthetic workflows above
+and below may keep saying `runs-on: ubuntu-latest`; its cases pin every place
+a runner can be named, what does not count (comments, step scripts, pinned
+labels), the exemption, and that main() really runs it.
 """
 
 from __future__ import annotations
@@ -466,6 +471,145 @@ class R3Eviction(unittest.TestCase):
                   - uses: actions/checkout@v7
         """)
         self.assertFalse(any("R3" in p for p in probs), probs)
+
+
+class R11FloatingRunner(unittest.TestCase):
+    PINNED = "ubuntu-24.04  # pinned ahead of the 26.04 image move"
+
+    def _check(self, body: str, policy: dict | None = None) -> list[str]:
+        with tempfile.TemporaryDirectory() as d:
+            return cpc.check_floating_runners(
+                _write_workflow(d, body), policy or BASE_POLICY)
+
+    def _job(self, runs_on: str, extra: str = "") -> str:
+        return """
+            on: {workflow_dispatch: {}}
+            permissions: {contents: read}
+            jobs:
+              build:
+                runs-on: %s
+                timeout-minutes: 5%s
+                steps:
+                  - uses: actions/checkout@v7
+        """ % (runs_on, extra)
+
+    def test_a_bare_runs_on_is_refused_with_its_place(self):
+        probs = self._check(self._job("ubuntu-latest"))
+        self.assertEqual(len(probs), 1, probs)
+        self.assertIn("R11", probs[0])
+        self.assertIn("jobs.build.runs-on: ubuntu-latest", probs[0])
+        self.assertTrue(probs[0].startswith("wf.yml: "), probs)
+
+    def test_every_way_of_naming_a_runner_is_seen(self):
+        for runs_on, extra, where in (
+            ("[self-hosted, ubuntu-latest]", "", "jobs.build.runs-on[1]"),
+            ("{group: big, labels: ubuntu-latest}", "", "jobs.build.runs-on.labels"),
+            ("ubuntu-latest-8-cores", "", "jobs.build.runs-on"),
+            ("\"${{ (matrix.lang == 'swift' && 'macos-latest') || 'ubuntu-latest' }}\"",
+             "", "jobs.build.runs-on"),
+            ("${{ matrix.os }}",
+             "\n                strategy: {matrix: {os: [ubuntu-latest, macos-latest]}}",
+             "jobs.build.strategy.matrix.os[0]"),
+            ("${{ matrix.runner }}",
+             "\n                strategy:\n                  matrix:\n"
+             "                    include:\n"
+             "                      - {arch: amd64, runner: ubuntu-latest}\n"
+             "                      - {arch: aarch64, runner: ubuntu-24.04-arm}",
+             "jobs.build.strategy.matrix.include[0].runner"),
+        ):
+            probs = self._check(self._job(runs_on, extra))
+            self.assertEqual(len(probs), 1, (runs_on, probs))
+            self.assertIn(where, probs[0], probs)
+
+    def test_an_input_default_is_a_runner_choice(self):
+        probs = self._check("""
+            on:
+              workflow_dispatch:
+                inputs:
+                  runner: {type: string, default: ubuntu-latest}
+            permissions: {contents: read}
+            jobs:
+              build:
+                runs-on: ${{ inputs.runner }}
+                timeout-minutes: 5
+                steps:
+                  - run: echo hi
+        """)
+        self.assertEqual(len(probs), 1, probs)
+        self.assertIn("on.workflow_dispatch.inputs.runner.default", probs[0])
+
+    def test_pinned_labels_comments_and_step_scripts_pass(self):
+        for runs_on in (self.PINNED, "ubuntu-22.04", "ubuntu-24.04-arm",
+                        "macos-latest", "windows-latest", "macos-26",
+                        "ubuntu-latestish", "my-ubuntu-latest"):
+            self.assertEqual(self._check(self._job(runs_on)), [], runs_on)
+        probs = self._check("""
+            # Pinned, not ubuntu-latest: ubuntu-latest moves to 26.04.
+            on: {workflow_dispatch: {}}
+            permissions: {contents: read}
+            jobs:
+              build:
+                # was ubuntu-latest
+                runs-on: ubuntu-24.04  # not ubuntu-latest
+                timeout-minutes: 5
+                steps:
+                  - name: Say ubuntu-latest
+                    run: echo "this used to run on ubuntu-latest"
+                    env: {NOTE: ubuntu-latest}
+        """)
+        self.assertEqual(probs, [])
+
+    def test_exemption_is_per_workflow_file(self):
+        wf = self._job("ubuntu-latest")
+        self.assertTrue(self._check(wf))
+        policy = dict(BASE_POLICY, ubuntu_latest_ok=["wf.yml"])
+        self.assertEqual(self._check(wf, policy), [])
+        policy = dict(BASE_POLICY, ubuntu_latest_ok=["other.yml"])
+        self.assertTrue(self._check(wf, policy))
+
+    def test_check_workflow_leaves_r11_to_main(self):
+        # The synthetic workflows in this file say ubuntu-latest; the rule is
+        # scoped to the repo's own files, so check_workflow never reports it.
+        probs = _problems(self._job("ubuntu-latest"))
+        self.assertFalse(any("R11" in p for p in probs), probs)
+
+    def _main_on(self, body: str, policy_yaml: str = "") -> tuple[int, str]:
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            wfdir = os.path.join(d, ".github", "workflows")
+            os.makedirs(wfdir)
+            with open(os.path.join(wfdir, "wf.yml"), "w", encoding="utf-8") as f:
+                f.write(textwrap.dedent(body))
+            policy_path = os.path.join(d, ".github", "ci-policy.yml")
+            with open(policy_path, "w", encoding="utf-8") as f:
+                f.write("unfiltered_ok: [wf.yml]\n" + policy_yaml)
+            saved = (cpc.REPO_ROOT, cpc.WORKFLOWS_DIR, cpc.POLICY_PATH)
+            cpc.REPO_ROOT, cpc.WORKFLOWS_DIR, cpc.POLICY_PATH = d, wfdir, policy_path
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    rc = cpc.main()
+            finally:
+                cpc.REPO_ROOT, cpc.WORKFLOWS_DIR, cpc.POLICY_PATH = saved
+            return rc, out.getvalue()
+
+    def test_main_refuses_a_planted_bare_runner(self):
+        rc, out = self._main_on(self._job("ubuntu-latest"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("wf.yml: R11", out)
+        rc, out = self._main_on(self._job(self.PINNED))
+        self.assertEqual(rc, 0, out)
+        rc, out = self._main_on(self._job("ubuntu-latest"),
+                                "ubuntu_latest_ok: [wf.yml]\n")
+        self.assertEqual(rc, 0, out)
+
+    def test_the_repo_policy_lists_only_real_workflows(self):
+        # A misspelled entry exempts nothing and hides that it was meant to.
+        policy = cpc.load_policy()
+        for name in policy.get("ubuntu_latest_ok") or []:
+            self.assertTrue(
+                os.path.exists(os.path.join(cpc.WORKFLOWS_DIR, name)), name)
 
 
 if __name__ == "__main__":

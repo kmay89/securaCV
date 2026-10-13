@@ -61,3 +61,21 @@ system_python_ok: []
 # are `<workflow>.yml:<job>`, each with a reason; should stay empty — an inline
 # copy is exactly the drift the actions exist to end.
 inline_toolchain_ok: []
+
+# R11: workflows allowed to keep the floating `ubuntu-latest` runner label.
+# TEMPORARY, and it should be empty: ubuntu-latest moves to Ubuntu 26.04 from
+# 2026-10-19, so every other workflow is pinned to ubuntu-24.04 (sweep CI11,
+# #1802). These seven are open in other changes of the 2026-09 sweep (wave 18,
+# and the kernel-ops package for container-images.yml); pinning them here
+# would collide with those edits. The integrator pins each one and empties
+# this list once those changes have merged. (ios-selfheal.yml has no Linux
+# job today, so its entry changes nothing; it is listed with the other files
+# wave 18 owns so that this change leaves it alone.)
+ubuntu_latest_ok:
+  - lint.yml               # wave 18 (CI/docs hygiene; the iOS package also edits it)
+  - lab-lint.yml           # wave 18 (CI/docs hygiene)
+  - desktop-hub-core.yml   # wave 18 (CI/docs hygiene)
+  - viewer.yml             # wave 18 (dashboards)
+  - canary-local.yml       # wave 18 (display companion; the Lab bench also edits it)
+  - ios-selfheal.yml       # wave 18 (iOS)
+  - container-images.yml   # kernel-ops package (pins it there)
