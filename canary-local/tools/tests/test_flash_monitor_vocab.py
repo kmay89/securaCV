@@ -111,6 +111,10 @@ class Refusals(VocabCase):
         self.refuses(SENSE, "execute_() reads no 'sometimes' after stream")
         self.with_cmds(SENSE, [("j", "help")])
         self.refuses(SENSE, "the tuning console reads words, and j is not one")
+        # "knobs" heads a help line ("[tune] knobs (name range current):") but
+        # execute_() answers no such word: the help text alone is not enough.
+        self.with_cmds(SENSE, [("knobs", "knobs")])
+        self.refuses(SENSE, "a word the help prints but execute_() does not answer")
         self.with_cmds(SENSE, [("cfg", "radar line")])
         self.refuses(SENSE, "cfg's help line says nothing of a radar line")
 

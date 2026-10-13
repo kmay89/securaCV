@@ -3940,6 +3940,10 @@ test("A86: the Flasher's vocabulary rule is the browser's and the Lab's, product
         `"Print receipt (j)" must show exactly where ${id}'s firmware answers j`);
     }
   }
+  // Redrawn whenever the monitor starts, so the chips follow the product the
+  // bench now holds (a flash, a different card) instead of the launch's.
+  assert.match(fnSource(appJs, "startMonitor"), /\brenderMonitorCmds\(\);/,
+    "the Flasher must redraw its command chips when its monitor starts");
   const local = draw({ product: byId("securacv-canary"), vision: { hostFlash: { product_id: "local-file" } } });
   assert.deepStrictEqual(local.chips, [], "a local file names no product: no chips");
   assert.strictEqual(local.placeholder, catalog.monitor_unknown.placeholder);
