@@ -7,15 +7,16 @@
 // and an on-board 120 Ohm terminator is jumper-selectable (OFF by default).
 //
 // Gated by FEATURE_CAN (default 0). Compiled only in the canary-display-dash-can
-// env; the default and emulator builds see an empty translation unit, so the
-// wasm stays byte-for-byte identical. Bench-pending: TX/RX orientation, bit
-// timing, and the terminator jumper are VERIFY-tagged in pins.h until validated
-// on hardware.
-//
-// NO CALLER YET (audit, 2026-10-09): the dash-can env compiles this driver, but
-// nothing calls can_begin(), can_transmit(), can_receive() or can_loop(). The
-// playground (src/playground/playground.cpp) installs its own TWAI transport
-// on the same bus. Wiring one transport through here is planned work.
+// env; the default builds see an empty translation unit and the emulator does
+// not compile it. Its caller is the playground's CAN station
+// (src/playground/playground.cpp: action_can_send and the loop's drain), which
+// that env compiles through FEATURE_DEVMODE: under FEATURE_CAN the station
+// sends and receives through here, and no other code touches the TWAI
+// controller. Nothing here recovers a controller that has gone bus-off; it
+// stays there until reboot. Host-tested against a stand-in TWAI driver by
+// tests_host/test_fieldbus_glue.cpp. Bench-pending: TX/RX orientation, bit
+// timing, and the terminator jumper are VERIFY-tagged in pins.h until
+// validated on hardware.
 
 #pragma once
 
@@ -51,12 +52,6 @@ int can_transmit(const can::Frame& f, uint32_t timeout_ms);
 // Receive one frame into `*out`, waiting up to `timeout_ms`. Returns CAN_OK (and
 // fills *out), CAN_ERR_TIMEOUT if the bus was quiet, or another negative code.
 int can_receive(can::Frame* out, uint32_t timeout_ms);
-
-// Optional bench heartbeat: drains any received frames and logs them via
-// can::format_frame. Provided for a future setup()/loop() wiring once the bus is
-// bench-validated (kept out of the shipping loop for now). No-op until
-// can_begin() runs. `now` is millis(); safe to call every loop.
-void can_loop(uint32_t now);
 
 }  // namespace io
 }  // namespace canary

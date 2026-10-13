@@ -22,7 +22,9 @@
 #include <lvgl.h>
 #include <stdarg.h>
 #include <string.h>
+#if !(defined(FEATURE_CAN) && FEATURE_CAN)
 #include <driver/twai.h>   // CAN station: ESP-IDF TWAI controller (GPIO15/16)
+#endif
 #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
 #include "mode_glue.h"  // long-press exit: clear both latches, reboot
 #endif
@@ -35,6 +37,12 @@
 #include "version.h"
 #include "modbus_rtu.h"   // RS485 station: pure Modbus RTU framing/CRC
 #include "can_frame.h"    // CAN station: pure frame model + formatter
+#if defined(FEATURE_RS485) && FEATURE_RS485
+#include "rs485.h"        // RS485 station: the production transport
+#endif
+#if defined(FEATURE_CAN) && FEATURE_CAN
+#include "can_bus.h"      // CAN station: the production transport
+#endif
 #include "boot_banner.h"
 
 namespace canary::playground {
@@ -348,21 +356,41 @@ void action_tof_cycle_trip() {
 }
 
 // ── RS485 (Modbus RTU) + CAN (TWAI) fieldbus stations ───────────────────
-// The production RS485/CAN drivers ship gated (FEATURE_RS485/FEATURE_CAN); the
-// playground brings up its own thin transport here using the SAME host-tested
-// pure cores (canary/io/modbus_rtu.h, canary/io/can_frame.h), so a bench can
-// exercise both buses without enabling the production feature flags — exactly
-// the "minimal in-repo driver" posture the I2C sensors use. Bench-pending:
-// TX/RX orientation and bit timing are VERIFY-tagged in pins.h.
+// One transport per bus in every build. Where the build compiles the
+// production drivers (FEATURE_RS485 / FEATURE_CAN — the canary-display-dash-
+// rs485 and -dash-can envs, which carry this bench through FEATURE_DEVMODE),
+// the stations go through them: canary::io::rs485_begin + rs485_read_holding
+// own Serial1, canary::io::can_begin + can_transmit + can_receive own the
+// TWAI controller, so those envs compile real call sites and the bench walks
+// the driver a fielded build would. Elsewhere (the playground, dash-b and
+// dash-modes envs) the drivers are not compiled, and the stations bring up
+// the thin transport below on the SAME host-tested pure cores
+// (canary/io/modbus_rtu.h, canary/io/can_frame.h) — the "minimal in-repo
+// driver" posture the I2C sensors use. Either way the wire sees the same
+// thing: Serial1 at RS485_BAUD_DEFAULT 8N1 on RS485_PIN_RX/TX, one read of
+// holding register 0 of slave 1 with a 300 ms reply window, stale bytes
+// drained first; TWAI in normal mode at 500 kbit/s with an accept-all
+// filter, one 0x100 test frame with a 50 ms queue wait, up to 8 frames
+// drained per pass without waiting, and no bus-off recovery (a controller
+// that goes bus-off stays there until reboot). tests_host/
+// test_fieldbus_glue.cpp drives both builds of this file and holds them to
+// that one trace. The driver path adds one console line per bus the first
+// time it comes up ("[RS485] up on A/B ..." / "[CAN] up on H/L ..."), and
+// "[CAN] driver install failed" / "[CAN] start failed" before a refused
+// bring-up's "tx=fail driver". Bench-pending: TX/RX orientation and bit
+// timing are VERIFY-tagged in pins.h.
 namespace mb = canary::io::modbus;
 namespace canf = canary::io::can;
 
+#if !(defined(FEATURE_RS485) && FEATURE_RS485)
 static void rs485_begin_once() {
   if (g.rs485.ready) return;
   Serial1.begin(RS485_BAUD_DEFAULT, SERIAL_8N1, RS485_PIN_RX, RS485_PIN_TX);
   g.rs485.ready = true;
 }
+#endif
 
+#if !(defined(FEATURE_CAN) && FEATURE_CAN)
 static bool can_begin_once() {
   if (g.can.ready) return true;
   twai_general_config_t gc = TWAI_GENERAL_CONFIG_DEFAULT(
@@ -374,11 +402,18 @@ static bool can_begin_once() {
   g.can.ready = true;
   return true;
 }
+#endif
 
 // Drain any received CAN frames (non-blocking), logging each. Called from loop.
 static void can_drain() {
   if (!g.can.ready) return;
   for (int i = 0; i < 8; i++) {
+#if defined(FEATURE_CAN) && FEATURE_CAN
+    canf::Frame f = {};
+    if (canary::io::can_receive(&f, 0) != canary::io::CAN_OK) break;
+    g.can.rx++;
+    g.can.last_id = f.id;
+#else
     twai_message_t m = {};
     if (twai_receive(&m, 0) != ESP_OK) break;
     g.can.rx++;
@@ -389,12 +424,22 @@ static void can_drain() {
     f.rtr = m.rtr != 0;
     f.dlc = m.data_length_code > canf::MAX_DLC ? canf::MAX_DLC : m.data_length_code;
     for (uint8_t j = 0; j < f.dlc; j++) f.data[j] = m.data[j];
+#endif
     char line[80];
     if (canf::format_frame(f, line, sizeof(line)) > 0) say_evt("can", "rx %s", line);
   }
 }
 
 void action_rs485_probe() {
+#if defined(FEATURE_RS485) && FEATURE_RS485
+  canary::io::rs485_begin(RS485_BAUD_DEFAULT);  // idempotent, as rs485_begin_once was
+  g.rs485.ready = canary::io::rs485_ready();
+  uint16_t regs[1] = {0};
+  // Drains stale bytes, sends the request, waits out the reply window and
+  // parses it; anything but one register back is "reply=none", as below.
+  const int r = canary::io::rs485_read_holding(1, 0, 1, regs, 1, 300);
+  g.rs485.polls++;
+#else
   rs485_begin_once();
   uint8_t req[mb::MAX_ADU];
   const size_t n = mb::build_read_holding(1, 0, 1, req, sizeof(req));
@@ -413,6 +458,7 @@ void action_rs485_probe() {
   const int r = (got >= want)
                     ? mb::parse_registers(resp, got, 1, mb::FN_READ_HOLDING, regs, 1)
                     : (int)mb::ERR_SHORT;
+#endif
   if (r == 1) {
     g.rs485.replies++;
     g.rs485.last_val = regs[0];
@@ -425,16 +471,29 @@ void action_rs485_probe() {
 }
 
 void action_can_send() {
+#if defined(FEATURE_CAN) && FEATURE_CAN
+  // can_begin() returns at once when the controller is already up, as
+  // can_begin_once did, and tries the install again on the tap after a
+  // refused one.
+  if (!canary::io::can_begin(canf::BITRATE_500K)) { say_evt("can", "tx=fail driver"); return; }
+  g.can.ready = canary::io::can_ready();
+#else
   if (!can_begin_once()) { say_evt("can", "tx=fail driver"); return; }
+#endif
   canf::Frame f = {};
   f.id = 0x100;
   f.dlc = 8;
   for (uint8_t i = 0; i < f.dlc; i++) f.data[i] = (uint8_t)(0xC0 + i);
+#if defined(FEATURE_CAN) && FEATURE_CAN
+  const bool sent = canary::io::can_transmit(f, 50) == canary::io::CAN_OK;
+#else
   twai_message_t m = {};
   m.identifier = f.id;
   m.data_length_code = f.dlc;
   for (uint8_t i = 0; i < f.dlc; i++) m.data[i] = f.data[i];
-  if (twai_transmit(&m, pdMS_TO_TICKS(50)) == ESP_OK) {
+  const bool sent = twai_transmit(&m, pdMS_TO_TICKS(50)) == ESP_OK;
+#endif
+  if (sent) {
     g.can.tx++;
     say_evt("can", "tx id=0x%03lX dlc=8 ok", (unsigned long)f.id);
   } else {

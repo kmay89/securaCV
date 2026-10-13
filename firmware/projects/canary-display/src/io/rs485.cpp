@@ -1,8 +1,9 @@
 // RS485 / Modbus RTU master transport — see canary/io/rs485.h.
 //
-// The whole translation unit is behind FEATURE_RS485 so the default and
-// emulator builds compile it to nothing (byte-neutral wasm). No stubs are
-// needed: every caller in main.cpp is under the same gate.
+// The whole translation unit is behind FEATURE_RS485 so the default builds
+// compile it to nothing (the emulator does not compile it at all). No stubs
+// are needed: the one caller, the playground's RS485 station
+// (src/playground/playground.cpp), is under the same gate.
 
 #include <config.h>
 
@@ -22,14 +23,6 @@ namespace mb = canary::io::modbus;
 
 namespace {
 bool s_ready = false;
-uint32_t s_next_probe_ms = 0;
-
-// Bench heartbeat cadence + probe target. Deliberately gentle — this is a
-// bring-up sanity poll, not a data path.
-constexpr uint32_t PROBE_EVERY_MS = 5000;
-constexpr uint8_t PROBE_SLAVE = 1;
-constexpr uint16_t PROBE_REG = 0;
-constexpr uint32_t PROBE_TIMEOUT_MS = 500;
 
 // Drain any stale bytes left on the line before a fresh request, so a late
 // reply from a previous poll can't be mistaken for this one's.
@@ -89,27 +82,6 @@ int rs485_read_holding(uint8_t slave, uint16_t start, uint16_t count,
   if (got < want) return RS485_ERR_TIMEOUT;
 
   return mb::parse_registers(resp, got, slave, mb::FN_READ_HOLDING, regs, cap);
-}
-
-void rs485_loop(uint32_t now) {
-  if (!s_ready) return;
-  if ((int32_t)(now - s_next_probe_ms) < 0) return;
-  s_next_probe_ms = now + PROBE_EVERY_MS;
-
-  uint16_t reg = 0;
-  const int r =
-      rs485_read_holding(PROBE_SLAVE, PROBE_REG, 1, &reg, 1, PROBE_TIMEOUT_MS);
-  char msg[80];
-  if (r == 1) {
-    snprintf(msg, sizeof(msg), "probe slave %u reg %u = %u (0x%04X)", PROBE_SLAVE,
-             PROBE_REG, reg, reg);
-  } else if (r == RS485_ERR_TIMEOUT) {
-    snprintf(msg, sizeof(msg), "probe slave %u: no reply (nothing on the bus?)",
-             PROBE_SLAVE);
-  } else {
-    snprintf(msg, sizeof(msg), "probe slave %u: status %d", PROBE_SLAVE, r);
-  }
-  log_line("RS485", msg);
 }
 
 }  // namespace io

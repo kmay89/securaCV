@@ -1,8 +1,9 @@
 // CAN / TWAI transport — see canary/io/can_bus.h.
 //
-// The whole translation unit is behind FEATURE_CAN so the default and emulator
-// builds compile it to nothing (byte-neutral wasm). No stubs are needed: every
-// caller is under the same gate.
+// The whole translation unit is behind FEATURE_CAN so the default builds
+// compile it to nothing (the emulator does not compile it at all). No stubs
+// are needed: the one caller, the playground's CAN station
+// (src/playground/playground.cpp), is under the same gate.
 
 #include "flavor_config.h"
 
@@ -21,10 +22,6 @@ namespace io {
 
 namespace {
 bool s_ready = false;
-uint32_t s_next_drain_ms = 0;
-
-constexpr uint32_t DRAIN_EVERY_MS = 1000;   // bench heartbeat cadence
-constexpr uint32_t DRAIN_BUDGET_MS = 0;     // non-blocking: drain queued frames only
 
 // Map a standard ISO 11898 bit rate to the matching TWAI timing preset. Returns
 // false for anything without a preset, so can_begin() refuses to guess.
@@ -112,36 +109,6 @@ int can_receive(can::Frame* out, uint32_t timeout_ms) {
   if (r != ESP_OK) return CAN_ERR_BUS;
   *out = from_twai(m);
   return CAN_OK;
-}
-
-void can_loop(uint32_t now) {
-  if (!s_ready) return;
-  if ((int32_t)(now - s_next_drain_ms) < 0) return;
-  s_next_drain_ms = now + DRAIN_EVERY_MS;
-
-  // Self-heal a bus-off: enough TX errors put the TWAI controller into BUS_OFF,
-  // where it neither sends nor receives until recovery runs (ISO 11898). Drive
-  // recovery across ticks, non-blocking — BUS_OFF: kick off recovery; once the
-  // bus is clean the driver lands in STOPPED: restart it; RECOVERING: wait.
-  twai_status_info_t status;
-  if (twai_get_status_info(&status) == ESP_OK && status.state != TWAI_STATE_RUNNING) {
-    if (status.state == TWAI_STATE_BUS_OFF) {
-      twai_initiate_recovery();
-      log_line("CAN", "bus-off - initiating recovery");
-    } else if (status.state == TWAI_STATE_STOPPED) {
-      if (twai_start() == ESP_OK) log_line("CAN", "recovered - restarted");
-    }
-    return;  // don't drain until the controller is running again
-  }
-
-  // Drain whatever arrived since the last tick (non-blocking, bounded so a busy
-  // bus can't monopolize the loop), logging each frame in a stable ASCII form.
-  for (int i = 0; i < 8; i++) {
-    can::Frame f;
-    if (can_receive(&f, DRAIN_BUDGET_MS) != CAN_OK) break;
-    char line[80];
-    if (can::format_frame(f, line, sizeof(line)) > 0) log_line("CAN", line);
-  }
 }
 
 }  // namespace io
