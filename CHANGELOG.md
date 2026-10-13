@@ -82,21 +82,26 @@
   or the heap guard refused, both taps answered a failed start naming nothing
   and never brought the stack up; only Enable could. Each tap now runs the
   bring-up again and names a refusal (the heap guard's measured RAM, NimBLE's
-  init). Until the sketch's boot bring-up is over (the provisioning join
-  window, safe mode, the worker and its finalize stage) they leave the stack
-  to it and answer 503 "Bluetooth has not started yet; it starts once Wi-Fi
-  setup is done or within five minutes (never in safe mode)", and, as Enable
-  and a settings POST turning Bluetooth on now do too, 503 "Bluetooth is still
-  starting; try again in a moment" while the boot bring-up runs, where they
-  answered a failure. A tap that brings the stack up holds the web server's
-  one task for NimBLE's bring-up (seconds), as Enable does. The dashboard's
-  Bluetooth card drops a refusal once the stack is up. The Bluetooth host
-  harness now runs the real REST handlers over an ArduinoJson stand-in, and
-  `check_wap_loop_commands.py` holds the guard, the wait, every `bring_up()`
-  caller and `init()`'s latch order (384 mutations in the whole check).
-  **Host-tested** (`test_bluetooth_commands_wap.cpp`, 77 tests, 1682 checks,
-  TSAN clean; `web_ui_logic.test.js`); the compiles are CI's; not
-  bench-tested. Filed: F259 and F260.
+  init). On a device saved on, while the stack is down and the sketch's boot
+  bring-up is not over (the provisioning join window, safe mode, the worker
+  and its finalize stage), they leave the stack to it and answer 503:
+  "Bluetooth is still starting; try again in a moment" while another bring-up
+  (the worker's) is running, else "Bluetooth has not started yet; it starts
+  once Wi-Fi setup is done or within five minutes (never in safe mode)". A tap
+  after the worker has brought the stack up succeeds, and its advertising
+  starts at finalize. Enable and a settings POST turning Bluetooth on now
+  answer that "still starting" 503 too, where they answered a failure. A tap
+  that brings the stack up holds the web server's one task for NimBLE's
+  bring-up (seconds), as Enable does. The dashboard's Bluetooth card drops a
+  refusal once the stack is up. The Bluetooth host harness now runs the real
+  REST handlers over an ArduinoJson stand-in. `check_wap_loop_commands.py`
+  holds the guard, the wait and every direct `bring_up()` call, pins the head
+  of `init()`'s latch, and counts the sketch's two end-of-bring-up marks and
+  their order (384 mutations in the whole check). It does not yet hold where
+  those marks sit or the latch's re-check: mutants that pass are filed
+  (F287). **Host-tested** (`test_bluetooth_commands_wap.cpp`, 77 tests, 1682
+  checks, TSAN clean; `web_ui_logic.test.js`); the compiles are CI's; not
+  bench-tested. Filed: F259, F260, F287 and F288.
 - **The route lists, the route-match test's reach, the probe-route comment and
   FEATURES.md's REST table say what is served, and the Home Assistant guide is
   held to the sources (sweep F238, F239, F240; and notes on F237 and HA30,
@@ -207,10 +212,14 @@
   six display flavors (mark2's `canary_mark.cpp` and `nightlight_ui.cpp`,
   labprobe4's display HAL and request-rotation binding); CI's pinned emsdk
   rebuilt it on the branch (5abf3e34), and the rebuilt dist was not run here.
-  Before that rebuild the committed dist had neither new binding, so
-  `boot_probe.mjs` skipped the runtime turn by name, `bench_probe.mjs` kept
-  the old backlight row, and the wasm job's dist drift check failed. The
-  integrator's local CI mirror passed 87 of 87 gates on d9e4977b. No carried
+  On a dist without the two bindings, `boot_probe.mjs` skips the runtime turn
+  by name, `bench_probe.mjs` keeps the old backlight row, and the drift check
+  fails. CI's wasm job on d9e4977b stopped at "Turned glass" (the link error
+  0e2272d7 fixes) before it reached any of them. On 0e2272d7, with the
+  rebuilt dist, whose nightlight bundle carries both bindings, every check
+  passed, the wasm job's boot and bench probes, its drift check and the page
+  logic tests among them. The integrator's local CI mirror passed 87 of 87
+  gates on d9e4977b and did not catch that link error. No carried
   Home Assistant file changed, so no HACS mirror carry is needed. Nothing is
   bench-tested, and no running Home Assistant was seen.
 
