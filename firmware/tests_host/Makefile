@@ -284,10 +284,14 @@ IDFLOOR_BIN = $(BUILD_DIR)/test_csi_event_id_floor
 # The SD event log's line format both trees write
 # (common/csi/src/csi_event_log_line.h, backlog F37): byte-exact goldens of
 # the canary-wap format it came from, round trip, torn and glued lines
-# refused, and both trees' adapters naming the same file and cap.
+# refused, and both trees' adapters naming the same file and cap. And a
+# string field holding a byte no writer puts in a name refused, so what
+# parse() takes writes back as JSON through marshal() and the events body
+# (sweep F264, held with the canary-wap host tests' strict JSON reader).
 EVLINE_HDRS = ../common/csi/src/csi_event_log_line.h ../common/csi/src/csi_event.h \
               ../projects/canary-wap/arduino/canary_wap/csi_event_log.h \
-              ../canary/src/csi_event_log.h ../common/csi/src/csi_event_backfill.h
+              ../canary/src/csi_event_log.h ../common/csi/src/csi_event_backfill.h \
+              ../common/csi/src/csi_event_wire.h ../projects/canary-wap/tests_host/json_strict.h
 EVLINE_BIN  = $(BUILD_DIR)/test_csi_event_log_line
 
 # The one event-id space (backlog F46), on the REAL CSI library: csi_event.cpp
