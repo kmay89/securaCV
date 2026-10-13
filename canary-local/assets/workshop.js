@@ -257,6 +257,20 @@ const OPT_ABBR = {
   opt_seal: "seal", opt_mount: "mount", opt_batt: "batt", opt_lux: "lux",
   opt_vent: "vent",
 };
+// Where a device's flags live, for the flash stage's copy. Most devices keep
+// one config.h per flavor under firmware/configs/<project>/; the WAP keeps its
+// flags in its sketch's build_config.h (the BUILD_PROFILE_FULL block), so a
+// firmware.source that names a header is one file, not a folder of flavors.
+export function flagsHome(fw) {
+  if (/\.(h|hpp)$/.test(fw.source)) {
+    const file = fw.source.split("/").pop();
+    return { href: fw.source, label: fw.source, edit: file,
+      line: `: one header, read as ${fw.note || "the sketch's build profile"}.` };
+  }
+  return { href: `${fw.source}/`, label: `${fw.source}/`, edit: "config.h",
+    line: " — one folder per flavor, flashing docs beside them." };
+}
+
 export function specName(devId, match, vector) {
   const what = match?.exact && match.pkg
     ? match.pkg.id.replace(/_/g, "-")
@@ -1003,7 +1017,7 @@ function renderFlash(root) {
       li.append(el("code", "ws-flag", f.flag),
         el("span", null, f.on
           ? ` — ON in the ${fl.flavor} flavor${f.note ? ` (${f.note})` : ""}`
-          : ` — OFF in ${fl.flavor}: set it to 1 in config.h when you build`),
+          : ` — OFF in ${fl.flavor}: set it to 1 in ${flagsHome(fw).edit} when you build`),
         el("span", "ws-because", ` ← ${f.because}`));
       ul.append(li);
     }
@@ -1015,15 +1029,16 @@ function renderFlash(root) {
   for (const [name, v] of Object.entries(fl.flags)) {
     const li = el("li", v.on ? "ws-on" : "ws-off");
     li.append(el("code", "ws-flag", name),
-      el("span", "muted", ` ${v.on ? "1" : "0"}${v.note ? " — " + v.note : ""}`));
+      el("span", "muted", ` ${v.on ? "1" : "0"}${v.expr ? ` (${v.expr})` : ""}${v.note ? " — " + v.note : ""}`));
     ul2.append(li);
   }
   root.append(ul2);
 
   const src = el("p", "muted fineprint");
-  const a = el("a", null, `${fw.source}/`);
+  const home = flagsHome(fw);
+  const a = el("a", null, home.label);
   a.href = GH + fw.source; a.target = "_blank"; a.rel = "noopener";
-  src.append("Flags live in ", a, " — one folder per flavor, flashing docs beside them.");
+  src.append("Flags live in ", a, home.line);
   root.append(src);
 
   if (state.dev.startsWith("canary-display")) {

@@ -80,16 +80,92 @@ test("wap presets carry the README's own option story", () => {
   for (const p of wap.packages) assert.match(p.dims_mm, /×.*×.*mm/);
 });
 
-test("gps option: the flagship link chain is intact end to end", () => {
+// The WAP's flags are its sketch's build_config.h — the BUILD_PROFILE_FULL
+// block for the default XIAO ESP32-S3, one "full" flavor (sweep F258). They
+// used to come from firmware/configs/canary-wap/, which no build compiled and
+// whose FEATURE_GNSS / FEATURE_CHIRP the sketch never read.
+const WAP_SKETCH = join(ROOT, "../firmware/projects/canary-wap/arduino/canary_wap");
+const wapFullBlock = () => {
+  // The body of each `#elif defined(BUILD_PROFILE_FULL)`, to the #elif /
+  // #else / #endif at its own depth (the block nests #ifndef defaults).
+  const lines = readFileSync(join(WAP_SKETCH, "build_config.h"), "utf8").split("\n");
+  const blocks = [];
+  lines.forEach((l, i) => {
+    if (!/^\s*#\s*elif\s+defined\(BUILD_PROFILE_FULL\)\s*$/.test(l)) return;
+    let depth = 0;
+    const body = [];
+    for (const m of lines.slice(i + 1)) {
+      const d = /^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b/.exec(m)?.[1];
+      if (d && d.startsWith("if")) depth++;
+      else if (d === "endif" && depth) depth--;
+      else if (d && depth === 0) break;
+      body.push(m);
+    }
+    blocks.push(body.join("\n"));
+  });
+  const setting = blocks.filter((b) => /#\s*define\s+FEATURE_/.test(b));
+  assert.strictEqual(setting.length, 1, "build_config.h has one FULL block that sets FEATURE_*");
+  return setting[0];
+};
+
+test("the WAP's firmware flavor is build_config.h's FULL profile, flag for flag", () => {
+  const fw = ws.devices["canary-wap"].firmware;
+  assert.strictEqual(fw.source, "firmware/projects/canary-wap/arduino/canary_wap/build_config.h");
+  assert.ok(existsSync(join(ROOT, "..", fw.source)), `${fw.source} exists`);
+  assert.deepStrictEqual(Object.keys(fw.flavors), ["full"], "one flavor: what a stock WAP compiles");
+  // Every FEATURE_* the FULL block sets is on the page, in the block's order,
+  // and nothing else is (canary-local/tools/tests/test_wap_profile.py holds
+  // each value to the C preprocessor).
+  const inBlock = [...new Set([...wapFullBlock().matchAll(/#\s*define\s+(FEATURE_\w+)/g)].map((m) => m[1]))];
+  assert.deepStrictEqual(Object.keys(fw.flavors.full), inBlock);
+});
+
+test("buzzer option: the piezo's flag is the one the sketch gates it on", () => {
+  const buzzer = ws.devices["canary-wap"].options.find((o) => o.id === "opt_buzzer");
+  assert.ok(buzzer, "opt_buzzer parsed from the scad");
+  assert.deepStrictEqual(buzzer.fw, ["FEATURE_AUDIBLE_CHIRP"]);
+  assert.strictEqual(ws.devices["canary-wap"].firmware.flavors.full.FEATURE_AUDIBLE_CHIRP.on, true);
+  // audible_chirp.h is the buzzer driver (CHIRP_GPIO, LEDC tones), and it
+  // compiles only under that flag.
+  const driver = readFileSync(join(WAP_SKETCH, "audible_chirp.h"), "utf8");
+  assert.match(driver, /^#if FEATURE_AUDIBLE_CHIRP$/m);
+  assert.match(driver, /#define CHIRP_GPIO/);
+});
+
+test("gps option: BOM link intact, and no firmware flag, because GNSS has none", () => {
   const gps = ws.devices["canary-wap"].options.find((o) => o.id === "opt_gps");
   assert.ok(gps, "opt_gps parsed from the scad");
   assert.match(gps.label, /L76K|GPS/i);
   assert.deepStrictEqual(gps.bom, ["M1"]);
-  assert.deepStrictEqual(gps.fw, ["FEATURE_GNSS"]);
+  assert.strictEqual(gps.fw, undefined, "the GPS option links no flag: the sketch has none to flip");
   const m1 = build.devices["canary-wap"].bom.rows.find((r) => r.ref === "M1");
   assert.match(m1.desc, /L76K/);
-  assert.strictEqual(
-    ws.devices["canary-wap"].firmware.flavors.default.FEATURE_GNSS.on, true);
+  // GNSS is unconditional in the sketch: setup() opens the receiver's UART
+  // outside every #if, and no profile carries a GNSS bit.
+  for (const fl of Object.values(ws.devices["canary-wap"].firmware.flavors)) {
+    assert.ok(!Object.keys(fl).some((f) => /GNSS|GPS/.test(f)), "no GNSS flag in the WAP's flavors");
+  }
+  const ino = readFileSync(join(WAP_SKETCH, "canary_wap.ino"), "utf8");
+  const at = ino.indexOf("Serial1.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_GPIO, GPS_TX_GPIO);");
+  assert.ok(at > 0, "canary_wap.ino opens the GNSS UART");
+  let depth = 0;
+  for (const line of ino.slice(0, at).split("\n")) {
+    if (/^\s*#\s*if/.test(line)) depth++;
+    else if (/^\s*#\s*endif/.test(line)) depth--;
+  }
+  assert.strictEqual(depth, 0, "...outside every #if");
+});
+
+test("the flash stage names the file a flag lives in", async () => {
+  const { flagsHome } = await import("../assets/workshop.js");
+  const wap = flagsHome(ws.devices["canary-wap"].firmware);
+  assert.strictEqual(wap.edit, "build_config.h");
+  assert.strictEqual(wap.href, "firmware/projects/canary-wap/arduino/canary_wap/build_config.h");
+  assert.match(wap.line, /BUILD_PROFILE_FULL/);
+  const sense = flagsHome(ws.devices["canary-sense"].firmware);
+  assert.strictEqual(sense.edit, "config.h");
+  assert.strictEqual(sense.href, "firmware/configs/canary-sense/");
+  assert.match(sense.line, /one folder per flavor/);
 });
 
 test("drill templates exist and every device reference is a real device", () => {

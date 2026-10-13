@@ -4,7 +4,8 @@
   "docs/hardware/enclosure/README.md",
   "docs/hardware/enclosure/*.scad (customizer annotations)",
   "docs/hardware/bom_*.csv (rows + build-recipe comments)",
-  "firmware/configs/*/config.h (FEATURE_* flags)"
+  "firmware/configs/*/config.h (FEATURE_* flags)",
+  "firmware/projects/canary-wap/arduino/canary_wap/build_config.h (the WAP's BUILD_PROFILE_FULL FEATURE_* flags)"
  ],
  "calibration_note": "print templates at 100% / \"actual size\" — the 20 mm calibration square must measure exactly 20 mm",
  "devices": {
@@ -40,7 +41,7 @@
       "Dfb1"
      ],
      "fw": [
-      "FEATURE_CHIRP"
+      "FEATURE_AUDIBLE_CHIRP"
      ]
     },
     {
@@ -79,9 +80,6 @@
      "default": false,
      "bom": [
       "M1"
-     ],
-     "fw": [
-      "FEATURE_GNSS"
      ]
     },
     {
@@ -367,68 +365,103 @@
    ],
    "firmware": {
     "project": "canary-wap",
-    "source": "firmware/configs/canary-wap",
+    "source": "firmware/projects/canary-wap/arduino/canary_wap/build_config.h",
+    "note": "the sketch's BUILD_PROFILE_FULL block, resolved for the XIAO ESP32-S3 (its in-file default, and what canary-wap-default builds)",
     "flavors": {
-     "default": {
+     "full": {
       "FEATURE_SD_STORAGE": {
-       "on": true,
-       "note": "Enable SD card storage"
+       "on": true
       },
       "FEATURE_WIFI_AP": {
-       "on": true,
-       "note": "Enable WiFi Access Point"
-      },
-      "FEATURE_WIFI_STA": {
-       "on": true,
-       "note": "Enable WiFi Station (connect to home)"
+       "on": true
       },
       "FEATURE_HTTP_SERVER": {
+       "on": true
+      },
+      "FEATURE_MDNS_BROKER_GOSSIP": {
        "on": true,
-       "note": "Enable HTTP API server"
+       "note": "advertise broker/bport so displays self-discover"
       },
       "FEATURE_CAMERA_PEEK": {
        "on": true,
-       "note": "Enable camera preview streaming"
+       "note": "ESP32-C3 has no camera interface",
+       "expr": "HW_HAS_CAMERA"
       },
       "FEATURE_TAMPER_GPIO": {
        "on": false,
-       "note": "Enclosure tamper contact (reed/hall on D3); off until bench-validated"
+       "note": "-D overridable: CI's compile-only gate sets 1"
       },
       "FEATURE_WATCHDOG": {
-       "on": true,
-       "note": "Enable hardware watchdog"
+       "on": true
       },
       "FEATURE_STATE_LOG": {
-       "on": true,
-       "note": "Log state transitions"
+       "on": true
       },
       "FEATURE_MESH_NETWORK": {
-       "on": true,
-       "note": "Enable Opera mesh network"
+       "on": true
       },
       "FEATURE_BLUETOOTH": {
        "on": true,
-       "note": "Enable Bluetooth Low Energy"
+       "expr": "HW_HAS_BLE"
       },
-      "FEATURE_RF_PRESENCE": {
+      "FEATURE_BLE": {
        "on": true,
-       "note": "Enable RF presence detection"
+       "note": "BLE Discovery (Opera/Chirp/Nearby) — works on both S3 and C3"
       },
-      "FEATURE_GNSS": {
+      "FEATURE_BLE_SCAN": {
        "on": true,
-       "note": "Enable GPS/GNSS"
+       "note": "BLE Scout — paired-beacon room attribution",
+       "expr": "HW_HAS_BLE"
       },
-      "FEATURE_CHIRP": {
+      "FEATURE_IMPROV": {
        "on": true,
-       "note": "Enable Chirp community witness network"
+       "expr": "(FEATURE_BLUETOOTH && FEATURE_BLE)"
       },
-      "FEATURE_BLE_DEBUG": {
-       "on": false
-      }
-     },
-     "mobile": {
-      "FEATURE_CAMERA_PEEK": {
-       "on": false
+      "FEATURE_BLE_STATUS": {
+       "on": true,
+       "note": "BLE GATT status service (battery/health/chain)"
+      },
+      "FEATURE_SYS_MONITOR": {
+       "on": true
+      },
+      "FEATURE_WIFI_PRESENCE": {
+       "on": true,
+       "note": "WiFi probe request presence detection"
+      },
+      "FEATURE_AUDIBLE_CHIRP": {
+       "on": true,
+       "note": "Local audible/visual alert tones"
+      },
+      "FEATURE_DATA_MGMT": {
+       "on": true,
+       "note": "SD log rotation, chain backup/restore"
+      },
+      "FEATURE_POWER_MONITOR": {
+       "on": true,
+       "note": "Battery voltage + SoC monitoring"
+      },
+      "FEATURE_POWER_POLICY": {
+       "on": true,
+       "note": "Smart battery power modes"
+      },
+      "FEATURE_QR_PROVISION": {
+       "on": true,
+       "note": "Camera-based WiFi QR provisioning",
+       "expr": "HW_HAS_CAMERA"
+      },
+      "FEATURE_ACOUSTIC_EVENTS": {
+       "on": true,
+       "note": "PDM mic T3/T4 alarm cadence detection",
+       "expr": "HW_HAS_PDM_MIC"
+      },
+      "FEATURE_ACOUSTIC_TRANSIENTS": {
+       "on": true,
+       "note": "Knock/doorbell/glass-break",
+       "expr": "FEATURE_ACOUSTIC_EVENTS"
+      },
+      "FEATURE_VAULT_SNAPSHOT": {
+       "on": true,
+       "expr": "(HW_HAS_CAMERA && HW_HAS_PDM_MIC)"
       }
      }
     }

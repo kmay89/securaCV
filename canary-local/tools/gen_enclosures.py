@@ -29,6 +29,7 @@ from pathlib import Path
 
 from _devices import load_manifests
 from _tooling import repo_root
+from _wap_profile import WapProfileError, read_full_profile_file
 
 REPO = repo_root()
 ENC = REPO / "docs/hardware/enclosure"
@@ -809,6 +810,8 @@ build_main()
 #   · docs/hardware/bom_*.csv        → option ↔ RefDes links + build recipes
 #     (the CSV's own `# ... build (REF+REF+…)` comment rows)
 #   · firmware/configs/*/config.h    → FEATURE_* flags per flavor
+#   · the WAP sketch's build_config.h → its one "full" flavor (the
+#     BUILD_PROFILE_FULL block for the default XIAO ESP32-S3, _wap_profile.py)
 #   · template_*.svg                 → 1:1 paper drill templates
 #
 # OPTION_LINKS is the one curated mapping (which RefDes serves which
@@ -820,9 +823,19 @@ build_main()
 WORKSHOP_JSON = REPO / "canary-local/devices/workshop.json"
 FWCONF = REPO / "firmware/configs"
 
+# The WAP's flags are its sketch's, not a configs/ directory's: the sketch
+# includes no config.h, and build_config.h's BUILD_PROFILE_* blocks set every
+# FEATURE_*. The Workshop publishes the one combination a stock WAP compiles —
+# the in-file defaults, XIAO ESP32-S3 + BUILD_PROFILE_FULL (what
+# [env:canary-wap-default] passes too) — as a single "full" flavor, resolved
+# by _wap_profile.py, which refuses a header shape it cannot read.
+WAP_BUILD_CONFIG = "firmware/projects/canary-wap/arduino/canary_wap/build_config.h"
+WAP_FLAVOR = "full"
+WAP_FLAVOR_NOTE = ("the sketch's BUILD_PROFILE_FULL block, resolved for the XIAO "
+                   "ESP32-S3 (its in-file default, and what canary-wap-default builds)")
+
 # device id → (configs project dir, flavors to publish)
 FW_FLAVORS = {
-    "canary-wap": ("canary-wap", ["default", "mobile"]),
     "canary-vision": ("canary-vision", ["default"]),
     "canary-sense": ("canary-sense", ["default", "wellbeing"]),
     "canary-display-watch": ("canary-display", ["watch"]),
@@ -835,14 +848,18 @@ FW_FLAVORS = {
 OPTION_LINKS = {
     ("canary_wap_enclosure.scad", "opt_camera"): {
         "bom": ["CW1", "ADH1"], "fw": ["FEATURE_CAMERA_PEEK"]},
+    # the piezo on CHIRP_GPIO is driven by audible_chirp.h, which compiles
+    # only under FEATURE_AUDIBLE_CHIRP (Chirp the network is not a sketch flag)
     ("canary_wap_enclosure.scad", "opt_buzzer"): {
-        "bom": ["BZ1", "R1", "Q1", "Dfb1"], "fw": ["FEATURE_CHIRP"]},
+        "bom": ["BZ1", "R1", "Q1", "Dfb1"], "fw": ["FEATURE_AUDIBLE_CHIRP"]},
     ("canary_wap_enclosure.scad", "opt_led"): {
         "bom": ["DLED1", "R2", "C1", "LP1"], "fw": []},
     ("canary_wap_enclosure.scad", "opt_battery"): {
         "bom": ["BT1", "BT1-ALT1", "BT1-ALT2"], "fw": []},
+    # no flag: the sketch brings the GNSS UART up unconditionally (setup()'s
+    # PHASE 4, outside every #if) and probes for the receiver at boot
     ("canary_wap_enclosure.scad", "opt_gps"): {
-        "bom": ["M1"], "fw": ["FEATURE_GNSS"]},
+        "bom": ["M1"], "fw": []},
     ("canary_wap_enclosure.scad", "opt_tamper"): {
         "bom": ["SW2", "SW2-ALT", "MAG1"], "fw": ["FEATURE_TAMPER_GPIO"]},
     ("canary_wap_enclosure.scad", "opt_touch"): {
@@ -1006,7 +1023,7 @@ def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
                 if f not in flags:
                     raise SystemExit(
                         f"workshop: {scad}:{p['name']} names {f} absent "
-                        f"from {dev}'s parsed config.h flags")
+                        f"from {dev}'s parsed firmware flags")
             out.append({
                 "id": p["name"],
                 "group": g["name"].split("—")[0].split(" you have")[0].strip(),
@@ -1105,6 +1122,10 @@ def workshop_main():
         bom_rows[dev_id] = parse_bom(name, prefix)["rows"]
 
     features = {}
+    try:
+        features["canary-wap"] = {WAP_FLAVOR: read_full_profile_file(REPO / WAP_BUILD_CONFIG)}
+    except WapProfileError as e:
+        raise SystemExit(f"workshop: the WAP's flags: {e}")
     for dev, (project, flavors) in FW_FLAVORS.items():
         features[dev] = {fl: parse_features(project, fl) for fl in flavors}
 
@@ -1172,6 +1193,14 @@ def workshop_main():
         },
     }
     for dev in devices:
+        if dev == "canary-wap":
+            devices[dev]["firmware"] = {
+                "project": "canary-wap",
+                "source": WAP_BUILD_CONFIG,
+                "note": WAP_FLAVOR_NOTE,
+                "flavors": features[dev],
+            }
+            continue
         devices[dev]["firmware"] = {
             "project": FW_FLAVORS[dev][0],
             "source": f"firmware/configs/{FW_FLAVORS[dev][0]}",
@@ -1185,6 +1214,7 @@ def workshop_main():
             "docs/hardware/enclosure/*.scad (customizer annotations)",
             "docs/hardware/bom_*.csv (rows + build-recipe comments)",
             "firmware/configs/*/config.h (FEATURE_* flags)",
+            f"{WAP_BUILD_CONFIG} (the WAP's BUILD_PROFILE_FULL FEATURE_* flags)",
         ],
         "calibration_note": "print templates at 100% / \"actual size\" — the "
                             "20 mm calibration square must measure exactly 20 mm",
