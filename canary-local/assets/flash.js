@@ -5607,7 +5607,8 @@ function phaseMonitor(port, opts = {}) {
   box.append(modeBadge("running"));
   box.append(el("p", "muted",
     "This is the board’s own voice: a live text feed the firmware prints over " +
-    "the USB cable, plus single-key commands you can send back. It’s how you " +
+    "the USB cable, plus the commands that firmware answers, a tap away (a " +
+    "display’s firmware reads none). It’s how you " +
     "check on a Canary without touching anything — and nothing you type here " +
     "can break the board."));
   const status = el("p", "muted flash-mon-status", "Opening the console…");

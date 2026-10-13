@@ -1843,8 +1843,9 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         },
         "serial_monitor": {
             "label": "Serial monitor",
-            "what": "The board's live voice over USB: watch it think, send its "
-                    "single-key commands. Nothing typed here can break it.",
+            "what": "The board's live voice over USB: watch it think, and send the "
+                    "commands its firmware answers (a display's reads none). Nothing "
+                    "typed here can break it.",
         },
         "rescue": {
             "label": "Rescue",
