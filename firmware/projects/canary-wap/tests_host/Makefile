@@ -1245,7 +1245,10 @@ clean: clean-bt-commands
 # refusal is reached through wap_json_writer.h's test hook, which
 # mqtt_test_hooks.h (forced in with -include) gives a body in this build
 # only; the buffer is counted by wrapping malloc() and free() with GNU ld's
-# --wrap, on Linux (elsewhere that one test says it did not run).
+# --wrap, on Linux (elsewhere that one test says it did not run). And the
+# config POST's body read whole through http_body_reader.h (sweep F266), the
+# stub's httpd_req_recv() handing it over in short reads, and the settings
+# read without an error line on a namespace the bridge never wrote (F267).
 MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
 ifeq ($(shell uname -s),Linux)
@@ -1253,8 +1256,8 @@ MQTT_REINIT_HEAP = -DMQTT_TEST_HEAP_WRAP -Wl,--wrap=malloc -Wl,--wrap=free
 endif
 
 $(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
-                  $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h json_strict.h mqtt_test_hooks.h \
-                  $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
+                  $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/http_body_reader.h \
+                  json_strict.h mqtt_test_hooks.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
 	  -include mqtt_test_hooks.h $(MQTT_REINIT_HEAP) \
 	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp
@@ -1281,7 +1284,7 @@ HA_IDS_SRC = test_ha_discovery_ids.cpp
 
 $(HA_IDS_BIN): $(HA_IDS_SRC) beacon_source_scan.h $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
                $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h \
-               $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
+               $(SRC_DIR)/http_body_reader.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
 	  -I stubs/mqtt -I $(SRC_DIR) -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \
 	  -o $@ $(HA_IDS_SRC) $(SRC_DIR)/csi_mqtt.cpp

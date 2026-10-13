@@ -543,10 +543,23 @@ struct Http {
   unsigned delays = 0;
   uint32_t took_ms = 0;
 };
+// How the next request's body reaches the handler (sweep F266), taken by
+// the next http() and cleared: the socket's reads (stubs/mqtt's recv_plan:
+// a cap per read, or an error code) and a Content-Length that is not the
+// body's size (a peer that closes early, or one that claims too much).
+struct Wire {
+  std::vector<int> plan;
+  bool set_len = false;
+  size_t content_len = 0;
+};
+Wire g_wire;
 Http http(esp_err_t (*handler)(httpd_req_t*), const std::string& body, unsigned turn_at,
           std::function<void(unsigned)> on_delay = nullptr, bool workers = true) {
   Http h;
   h.req.body = body;
+  h.req.content_len = g_wire.set_len ? g_wire.content_len : body.size();   // IDF: Content-Length
+  h.req.recv_plan = g_wire.plan;
+  g_wire = Wire{};
   const uint32_t start = stub_mqtt::now_ms;
   stub_mqtt::on_delay = [&](uint32_t ms) {
     stub_mqtt::now_ms += ms;
@@ -1733,6 +1746,124 @@ void test_the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past() {
   std::printf("PASS the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past\n");
 }
 
+// Sweep F266: POST /api/mqtt/config parsed what ONE httpd_req_recv()
+// returned, and IDF's recv returns what the socket holds, so a body that
+// came in more than one TCP segment was parsed cut. Here the body carries a
+// 2.4 KB CA, the way the /mqtt page sends a pasted PEM, with the host, port,
+// user and discovery after it, and the socket hands it over in three reads,
+// the CA split across all three. The handler now reads until Content-Length
+// bytes are in (http_body::read_all(), as the Beacon routes do), asks for no
+// more than is still owed, and sits out up to three socket timeouts; a peer
+// that closes early, or a fourth timeout, is refused with nothing stored.
+void test_the_config_post_reads_a_body_that_arrives_in_pieces() {
+  boot_with_broker("10.0.0.1");
+  const std::string pem = pem_of(2400, 'Q');
+  const std::string body = "{\"tls_mode\":1,\"ca\":\"" + json_inside(pem + "\n") +
+                           "\",\"host\":\"10.0.0.5\",\"port\":8884,\"user\":\"bob\",\"discovery\":false}";
+  const size_t ca_at = body.find("BEGIN");
+  const size_t ca_end = body.find("END CERTIFICATE");
+  CHECK(ca_at < 700 && ca_end > 700 + 900);   // each of the three reads holds some of the CA
+  g_wire.plan = {700, 900};                    // then the rest, in one read
+  const Http h = http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+  if (h.req.status != "200 OK") {
+    std::printf("FAIL a body in three reads answered %s %s\n", h.req.status.c_str(), h.req.resp.c_str());
+  }
+  CHECK(h.req.status == "200 OK" && h.req.resp == "{\"ok\":true}");
+  CHECK(h.req.body_off == body.size() && h.req.recv_calls == 3);
+  CHECK(h.req.recv_asked_max <= body.size());   // never more than is owed
+  CHECK(stored_ca() == pem + "\n");
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  CHECK(std::string(c.host) == "10.0.0.5" && c.port == 8884 && std::string(c.user) == "bob");
+  CHECK(!c.discovery && c.tls_mode == 1);
+  CHECK(fake::last_client()->certificate == pem + "\n");
+  CHECK(fake::last_client()->uri == "mqtts://10.0.0.5:8884");
+
+  // Three socket timeouts between the pieces are sat out.
+  const std::string body2 = "{\"user\":\"carol\",\"ca\":\"" + json_inside(pem_of(1800, 'R') + "\n") + "\"}";
+  g_wire.plan = {600, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, 500, HTTPD_SOCK_ERR_TIMEOUT};
+  const Http h2 = http(csi_mqtt::handle_config_post, body2, /*turn_at=*/1);
+  CHECK(h2.req.status == "200 OK" && h2.req.body_off == body2.size());
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == "carol");
+  CHECK(stored_ca() == pem_of(1800, 'R') + "\n");
+
+  // A fourth is not, and nothing of that body is stored.
+  const std::string read_failed = "{\"ok\":false,\"reason\":\"body read failed\"}";
+  const std::string body3 = "{\"user\":\"dave\",\"ca\":\"" + json_inside(pem_of(1700, 'S') + "\n") + "\"}";
+  g_wire.plan = {600, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT,
+                 HTTPD_SOCK_ERR_TIMEOUT};
+  const Http h3 = http(csi_mqtt::handle_config_post, body3, /*turn_at=*/1);
+  CHECK(h3.req.status == "400 Bad Request" && h3.req.resp == read_failed);
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == "carol");
+  CHECK(stored_ca() == pem_of(1800, 'R') + "\n");
+  // A socket error, the same.
+  g_wire.plan = {600, HTTPD_SOCK_ERR_FAIL};
+  const Http h4 = http(csi_mqtt::handle_config_post, body3, /*turn_at=*/1);
+  CHECK(h4.req.status == "400 Bad Request" && h4.req.resp == read_failed);
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == "carol");
+
+  // A peer that closes before its Content-Length is in: the old handler
+  // parsed what had come.
+  g_wire.set_len = true;
+  g_wire.content_len = std::string("{\"user\":\"erin\"}").size() + 10;
+  const Http h5 = http(csi_mqtt::handle_config_post, "{\"user\":\"erin\"}", /*turn_at=*/1);
+  CHECK(h5.req.status == "400 Bad Request" && h5.req.resp == read_failed);
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == "carol");
+  power_cycle();
+  std::printf("PASS the_config_post_reads_a_body_that_arrives_in_pieces\n");
+}
+
+// Sweep F266: a body past the handler's cap was cut at it and the cut
+// parsed, though the handler's comment said it was refused. Now a
+// Content-Length past csi_mqtt::MAX_CONFIG_BODY_LEN is refused with the
+// limit in the reason (400, as the handler's other refusals; the /mqtt page
+// and the setup wizard show it) before anything is read, and a body of
+// exactly the cap is read and taken. No Content-Length is "empty body".
+void test_the_config_post_refuses_a_body_past_its_cap() {
+  boot_with_broker("10.0.0.1");
+  const size_t max = csi_mqtt::MAX_CONFIG_BODY_LEN;
+  CHECK(max == 640 + 2 * csi_mqtt::MAX_CA_LEN + 63);
+  // A body of `n` bytes that sets the host first, padded with a key the
+  // handler does not read.
+  auto padded = [](const std::string& host, size_t n) {
+    const std::string head = "{\"host\":\"" + host + "\",\"pad\":\"";
+    const std::string tail = "\"}";
+    CHECK(n > head.size() + tail.size());
+    return head + std::string(n - head.size() - tail.size(), 'x') + tail;
+  };
+  const Http at = http(csi_mqtt::handle_config_post, padded("10.0.0.6", max), /*turn_at=*/1);
+  CHECK(at.req.status == "200 OK" && at.req.resp == "{\"ok\":true}");
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.host) == "10.0.0.6");
+
+  const Http past = http(csi_mqtt::handle_config_post, padded("10.0.0.7", max + 1), /*turn_at=*/1);
+  if (past.req.status != "400 Bad Request") {
+    std::printf("FAIL a body one past the cap answered %s %s\n", past.req.status.c_str(),
+                past.req.resp.c_str());
+  }
+  CHECK(past.req.status == "400 Bad Request" && past.req.resp == too_long("body", max));
+  CHECK(past.req.recv_calls == 0);   // refused before any of it was read
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.host) == "10.0.0.6");
+
+  // A Content-Length far past the cap, whatever the socket then holds.
+  g_wire.set_len = true;
+  g_wire.content_len = 1u << 20;
+  const Http huge = http(csi_mqtt::handle_config_post, "{\"host\":\"10.0.0.8\"}", /*turn_at=*/1);
+  CHECK(huge.req.status == "400 Bad Request" && huge.req.resp == too_long("body", max));
+  CHECK(huge.req.recv_calls == 0);
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.host) == "10.0.0.6");
+
+  // No Content-Length (or 0): nothing to read.
+  g_wire.set_len = true;
+  g_wire.content_len = 0;
+  const Http none = http(csi_mqtt::handle_config_post, "{\"host\":\"10.0.0.9\"}", /*turn_at=*/1);
+  CHECK(none.req.status == "400 Bad Request" &&
+        none.req.resp == "{\"ok\":false,\"reason\":\"empty body\"}");
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.host) == "10.0.0.6");
+  power_cycle();
+  std::printf("PASS the_config_post_refuses_a_body_past_its_cap\n");
+}
+
 // The /mqtt page's inputs stop at the lengths the device takes.
 void test_the_settings_page_limits_each_field() {
   g_soft_failures = 0;
@@ -1797,6 +1928,9 @@ const Test kTests[] = {
     {"the_config_post_limits_are_bytes", test_the_config_post_limits_are_bytes},
     {"the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past",
      test_the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past},
+    {"the_config_post_reads_a_body_that_arrives_in_pieces",
+     test_the_config_post_reads_a_body_that_arrives_in_pieces},
+    {"the_config_post_refuses_a_body_past_its_cap", test_the_config_post_refuses_a_body_past_its_cap},
 };
 
 }  // namespace reinit

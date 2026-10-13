@@ -64,6 +64,7 @@
 #include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
 #include "csi_module_settings_nvs.h" /* staged copy — begin_read_only(), the quiet read-only open (F150) */
 #include "wap_json_writer.h"         /* GET /api/mqtt/config's answer, escaped and measured (sweep F227) */
+#include "http_body_reader.h"        /* POST /api/mqtt/config's body, read whole or refused (sweep F266) */
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -2116,10 +2117,11 @@ static bool json_extract_int(const char* body, const char* key, long* out) {
   return true;
 }
 
-/* Answer a setting longer than the device keeps (sweep F241), with the
- * limit in the reason, so the page can say which field and how long. The
- * limit is bytes: strlen() of what the extract decoded, so a letter outside
- * ASCII spends two to four of them (an HTML maxlength counts UTF-16 units). */
+/* Answer a setting longer than the device keeps (sweep F241), or a body
+ * longer than the handler reads (F266), with the limit in the reason, so the
+ * page can say which field and how long. A setting's limit is bytes:
+ * strlen() of what the extract decoded, so a letter outside ASCII spends two
+ * to four of them (an HTML maxlength counts UTF-16 units). */
 static void answer_too_long(httpd_req_t* req, const char* field, size_t max) {
   char answer[96];
   snprintf(answer, sizeof(answer),
@@ -2147,11 +2149,22 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  /* Body cap covers all fields including a 128-char password, a
-   * 128-char host and a JSON-escaped CA PEM (3071 bytes raw, newlines as
-   * \n); anything longer is rejected as oversized rather than silently
-   * truncated. Heap, not stack: 5 KB on the httpd task's stack is how a
-   * settings save becomes a reboot. */
+  /* The body is read whole or refused (sweep F266). The cap covers every
+   * field at its limit, a 128-byte password and host among them, and a
+   * JSON-escaped CA PEM (3071 bytes raw, newlines as \n). A body whose
+   * Content-Length is past it is refused before any of it is read or a
+   * buffer is taken, with the limit in the reason (400, as every other
+   * refusal here: the /mqtt page and the setup wizard show the reason of
+   * any answer that is not ok). The handler used to parse what ONE
+   * httpd_req_recv() returned, which is what the socket held: a body that
+   * came in more than one TCP segment (a pasted CA is most of it) was parsed
+   * cut, its CA refused or stored cut and any field after the cut lost
+   * without a word; and a body past the cap was cut at it, not refused as
+   * this comment said. http_body::read_all() (the Beacon routes' reader,
+   * beacon_api.h's read_body()) loops until Content-Length bytes are in,
+   * never asks for more than is owed, and gives up after three socket
+   * timeouts. Heap, not stack: these 10 KB (the body and the CA) on the httpd
+   * task's stack are how a settings save becomes a reboot. */
   struct HeapBuf {
     char* p;
     explicit HeapBuf(size_t n) : p((char*)malloc(n)) {}
@@ -2159,7 +2172,16 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     HeapBuf(const HeapBuf&) = delete;
     HeapBuf& operator=(const HeapBuf&) = delete;
   };
-  constexpr size_t kBodyCap = 640 + 2 * MAX_CA_LEN + 64;
+  constexpr size_t kBodyCap = MAX_CONFIG_BODY_LEN + 1;   /* and its NUL */
+  if (req->content_len == 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty body\"}", -1);
+    return ESP_OK;
+  }
+  if (req->content_len > MAX_CONFIG_BODY_LEN) {
+    answer_too_long(req, "body", MAX_CONFIG_BODY_LEN);
+    return ESP_OK;
+  }
   HeapBuf bodybuf(kBodyCap);
   HeapBuf cabuf(MAX_CA_LEN + 1);
   if (!bodybuf.p || !cabuf.p) {
@@ -2168,13 +2190,17 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     return ESP_OK;
   }
   char* body = bodybuf.p;
-  const int got = httpd_req_recv(req, body, kBodyCap - 1);
-  if (got <= 0) {
+  size_t got = 0;
+  const http_body::Result read = http_body::read_all(
+      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+      req->content_len, body, kBodyCap, HTTPD_SOCK_ERR_TIMEOUT, 3, &got);
+  if (read != http_body::OK) {
     httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty body\"}", -1);
+    httpd_resp_send(req, read == http_body::TOO_LARGE
+                             ? "{\"ok\":false,\"reason\":\"body too large\"}"
+                             : "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
     return ESP_OK;
   }
-  body[got] = '\0';
 
   /* Start from current NVS so PATCH-style requests (just toggling
    * enabled, leaving everything else alone) work. */
