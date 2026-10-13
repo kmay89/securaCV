@@ -7,7 +7,9 @@
 //     Canary is close (NearbyCanaries.autoOffer), it slides up from the
 //     bottom of whatever screen is showing, AirPods-style: the device's
 //     figure, its name, Continue, Not now. Mounted once at the root; never
-//     offers the same Canary twice in a session.
+//     offers the same Canary twice in a session, and stands down while the
+//     Fleet tab's "+" sheet, which lists the same Canaries, is up
+//     (NearbyOfferLatch).
 //   * NearbyCanaryCard — the same Canaries as an inline card (Today, Fleet,
 //     the walkthrough), for when two are on the table and the person picks.
 //   * NearbySetupSheet — the ceremony one tap opens: the phone connects,
@@ -51,45 +53,50 @@ struct NearbyOfferOverlay: View {
     @EnvironmentObject var store: FleetStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var target: NearbyCanary?
-    /// The Canary the card is showing. Latched when the card first appears —
-    /// and counted as offered right then, not when it is answered — so a
-    /// card that is ignored, or whose signal wobbles across "close enough",
-    /// neither flickers nor slides up a second time this session. It stays
-    /// until it is answered or the Canary drops out of earshot entirely.
-    @State private var shown: NearbyCanary?
+    /// The Canary the card holds (Shared/NearbyCanary.swift,
+    /// NearbyOfferLatch). Latched when the card first appears — and counted
+    /// as offered right then, not when it is answered — so a card that is
+    /// ignored, or whose signal wobbles across "close enough", neither
+    /// flickers nor slides up a second time this session. It stays until it
+    /// is answered or the Canary drops out of earshot entirely, and it stands
+    /// down while the Fleet tab's "+" sheet is up (store.nearbyOfferStandsDown):
+    /// that sheet lists the same Canaries inline, and its .medium detent
+    /// would otherwise leave this card showing dimmed behind it.
+    @State private var offer = NearbyOfferLatch()
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if let c = shown {
+            if let c = offer.visible(standingDown: store.nearbyOfferStandsDown) {
                 // The live sighting, so "right here / close by" keeps up.
                 let live = store.nearbyCanaries.first { $0.suffix == c.suffix } ?? c
                 NearbyOfferCard(canary: live,
                                 onContinue: {
-                                    shown = nil
+                                    offer.answer()
                                     target = live
                                 },
-                                onNotNow: { shown = nil })
+                                onNotNow: { offer.answer() })
                     .padding(.horizontal, Theme.s)
                     .padding(.bottom, Theme.s)
                     .frame(maxWidth: 520)
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(reduceMotion ? nil : Animation.spring(response: 0.45, dampingFraction: 0.85), value: shown?.id)
+        .animation(reduceMotion ? nil : Animation.spring(response: 0.45, dampingFraction: 0.85),
+                   value: offer.visible(standingDown: store.nearbyOfferStandsDown)?.id)
         .onChange(of: store.nearbyOffer?.id, initial: true) { _, _ in latchOffer() }
         .onChange(of: target?.id) { _, _ in latchOffer() }   // a sheet closed: the next one may show
-        .onChange(of: store.nearbyCanaries.map(\.suffix)) { _, heard in
-            if let c = shown, !heard.contains(c.suffix) { shown = nil }
-        }
+        .onChange(of: store.nearbyOfferStandsDown) { _, _ in latchOffer() }   // the "+" sheet closed
+        .onChange(of: store.nearbyCanaries.map(\.suffix)) { _, heard in offer.heard(heard) }
         .sheet(item: $target) { c in
             NearbySetupSheet(canary: c)
         }
     }
 
     private func latchOffer() {
-        guard shown == nil, target == nil, let c = store.nearbyOffer else { return }
-        store.noteOffered(c.suffix)
-        shown = c
+        if let suffix = offer.latch(store.nearbyOffer, setupOpen: target != nil,
+                                    standingDown: store.nearbyOfferStandsDown) {
+            store.noteOffered(suffix)
+        }
     }
 }
 

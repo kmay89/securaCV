@@ -347,7 +347,9 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
     root): its figure, its name, Continue, Not now. Two on the table stay a
     choice in the inline card (Today, Fleet, the "+" sheet and the first
     section of the walkthrough — which listens before it asks "which
-    Canary is it?", because the advert already says).
+    Canary is it?", because the advert already says). While the "+" sheet
+    is up the card stands down, rather than show dimmed behind its
+    half-height detent (`NearbyOfferLatch`, `NearbyCanaryTests`).
   - **One tap, then the Canary's own word.** Continue →
     `Transport/ImprovClient.swift` connects; the first encrypted write (the
     network scan) raises **the iOS Pair sheet**, and the screen says to tap

@@ -515,7 +515,11 @@ card that names this device.
    **Continue**, **Not now**. Two on the table stay a choice in the inline
    card — on Today, Fleet (comb and list), the "+" sheet and the first
    section of the Set up walkthrough, which listens before it asks which
-   family it is (the advert already says). Strongest signal first.
+   family it is (the advert already says). Strongest signal first. While
+   the "+" sheet is up the card stands down — it would only show dimmed
+   behind the sheet's half-height detent, offering what the sheet already
+   lists — and nothing is counted as offered behind it; a card already up
+   comes back when the sheet closes (`NearbyOfferLatch`).
 3. **Tap → connect → the pairing sheet → pick.** `ImprovClient` connects,
    discovers the service, subscribes to state / error / result, reads the
    state, and asks `GET_WIFI_NETWORKS`. That first write to the command
@@ -756,6 +760,10 @@ cannot speak to.
 
 - [ ] The card on Today, Fleet and the walkthrough; dismissal; the
       paired-and-unambiguous exclusion with two devices sharing a suffix.
+- [ ] With the card up, the Fleet tab's "+" sheet hides it (nothing dimmed
+      behind the half-height sheet, on an iPhone and on an iPad) and lists
+      the Canary inline; closing the sheet brings the card back; a Canary
+      first heard while the sheet is up is offered once it closes.
 - [ ] The Keychain item is written only after a proven join, never on a
       failure; Forget clears it; it is absent from iCloud Keychain.
 - [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,
