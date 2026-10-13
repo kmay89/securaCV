@@ -298,7 +298,8 @@ inline bool waits_for_boot_bring_up() {
 // A tap that leaves the stack to the boot bring-up, before anything is
 // submitted: 503, "still starting" while a bring-up holds init()'s latch
 // (the worker's) or has just brought the stack up, otherwise that the
-// stack starts after Wi-Fi setup (and not in safe mode). Before, such a
+// stack starts once Wi-Fi setup is done or within five minutes (a fresh
+// unit with nobody on its SoftAP within seconds), and not in safe mode. Before, such a
 // tap submitted to a stack that was down and answered a failed start.
 inline esp_err_t send_boot_bring_up_pending(httpd_req_t* req) {
   httpd_resp_set_status(req, http_status_line(503));

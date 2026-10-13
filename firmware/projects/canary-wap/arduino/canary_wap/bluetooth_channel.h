@@ -277,7 +277,9 @@ void bringup_worker_finished();
 // acquire), whatever the bring-up's outcome. The sketch defers that
 // bring-up out of the provisioning join window (BLE duty starves a phone's
 // WPA2 handshake to the SoftAP; the stack's internal RAM goes to Wi-Fi
-// first) and never runs it in safe mode, so false through the join window,
+// first) and never runs it in safe mode, so false through the join window
+// (at most BLE_DISCOVERY_MAX_HOLD_MS, five minutes; a fresh unit with nobody
+// on its SoftAP brings it up within seconds, the setup door, scanners held),
 // while the worker and the finalize stage run, and for the whole of a
 // safe-mode boot. The Start Advertising and Pair handlers bring nothing up
 // before it on a device saved on (bluetooth_api.h's
@@ -289,7 +291,7 @@ void bringup_worker_finished();
 void boot_bring_up_finished();
 bool boot_bring_up_tried();
 inline const char* boot_bring_up_pending_error() {
-  return "Bluetooth has not started yet; it starts after Wi-Fi setup (never in safe mode)";
+  return "Bluetooth has not started yet; it starts once Wi-Fi setup is done or within five minutes (never in safe mode)";
 }
 
 // Why the last init() attempt left the radio off ("" when initialized or

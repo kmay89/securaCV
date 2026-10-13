@@ -2797,7 +2797,7 @@ void test_a_tap_while_the_stack_comes_up_says_so() {
 // Now each answers 503 and brings nothing up until the sketch says its
 // bring-up is over (boot_bring_up_finished(), the finalize stage's last
 // step, whatever the outcome): "still starting" while the worker's init()
-// holds the latch, else that Bluetooth starts after Wi-Fi setup, through a
+// holds the latch, else that Bluetooth starts once setup is done, through a
 // refused worker, its result taken and the rest of the finalize stage.
 // After it, a tap brings a refused stack up as F235 does. Saved off, a tap
 // brings the stack up as before (a_tap_brings_the_stack_up_whatever_the_setting).

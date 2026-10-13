@@ -1536,7 +1536,8 @@ Owner: U1.
     Advertising, timing how long a second browser tab's `GET /api/status`
     waits meanwhile; then tap Pair.
   - Expected: (a) each early tap answers 503 `Bluetooth has not started
-    yet; it starts after Wi-Fi setup (never in safe mode)`, or `Bluetooth
+    yet; it starts once Wi-Fi setup is done or within five minutes (never
+    in safe mode)`, or `Bluetooth
     is still starting; try again in a moment` while the boot bring-up
     runs, and the web UI alerts that text; the scanner sees no WAP
     advertising before the `finalized` line (before the F235 review one
