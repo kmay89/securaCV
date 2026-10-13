@@ -239,13 +239,26 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   - [x] `--no-default-features` build (note: `Cargo.toml` defines no `default` feature, so this is the same build as the default one)
   - [x] `--features backend-tract` build
 
-- [ ] **Backend audit trail** — **open, its own change** (lives in the
-  kernel, not this firmware): a `docs/security/backend_audit.md` row per
-  detector backend (the default pure-Rust path; `backend-tract` behind its
-  cargo feature) and a `cargo test` asserting every non-pure-Rust backend is
-  feature-gated.
-  - Document audit results for each enabled detector backend.
-  - Ensure all non-pure-Rust backends remain feature-gated.
+- [x] **Backend audit trail** — done in #1802 (sweep F34; lives in the
+  kernel, not this firmware): [`docs/security/backend_audit.md`](../../../docs/security/backend_audit.md)
+  has a row per file in `src/detect/backends/` (the default motion-only
+  `cpu` and `stub` backends and their shared `motion.rs` engine; `tract`
+  behind `backend-tract`, which `detect-eval` also enables), and
+  `scripts/tests/test_backend_feature_gates.py` (unittest, run by `lint.yml`'s
+  `scripts/tests` discover) is the gate. Decision (maintainer to confirm): a
+  static Python test, not the `cargo test` this box first named; the kernel's
+  crates are not fetchable everywhere the check should run and the property
+  lives in the source text (`Cargo.toml` features, `cfg` on the `mod` line or
+  the file), while `rust.yml` keeps building the default and
+  `backend-tract` feature sets. It passes on this tree; its own cases break the
+  gate on copies of the real inputs (tract ungated, gated on a feature that
+  does not pull `tract-onnx`, `default` enabling it directly or through
+  `detect-eval`, a missing or stale audit row) and each fails.
+  - [x] Document audit results for each enabled detector backend — the
+        table's "Audit result" column (a source reading; no bench run).
+  - [x] Ensure all non-pure-Rust backends remain feature-gated — read as
+        "every backend that needs an optional crate"; the default backends
+        need none.
 
 ---
 
