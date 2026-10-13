@@ -44,8 +44,8 @@ The debug beacon this guide used to describe — a `SCV-DBG-XXXX` name with a
 20-byte health payload in the manufacturer data, switched on by a 3-second
 BOOT hold or `FEATURE_BLE_DEBUG` — is not in any firmware built today. Its
 code was removed in the whole-repo cleanup (#1578); the flag survived only in
-`firmware/configs/canary-wap/default/config.h`, which no build compiles, and
-there is no `canary-wap` PlatformIO env (the WAP's envs are
+a WAP config directory no build compiled (since deleted), and there is no
+`canary-wap` PlatformIO env (the WAP's envs are
 `canary-wap-default`, `-mobile`, `-debug` and `-usbdrive`). A Canary you scan
 today advertises its normal name only; the Scanner FAP below still decodes the
 old payload, so it shows a device's name and RSSI but no health view.

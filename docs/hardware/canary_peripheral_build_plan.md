@@ -73,7 +73,7 @@ buzzer onto a `MINIMAL` build that never calls it.
 | Tamper input | `FEATURE_TAMPER_GPIO` | — | optional | optional |
 | External RGB status LED | (replaces `LED_BUILTIN` fallback) | optional | optional | optional |
 | microSD storage | `FEATURE_SD_STORAGE` | — | ✅ | ✅ |
-| GNSS (L76K) | `FEATURE_GNSS` | ✅ | ✅ | ✅ |
+| GNSS (L76K) | none: `setup()` opens its UART in every profile | ✅ | ✅ | ✅ |
 
 `FEATURE_TAMPER_GPIO` defaults to `0` in every profile
 ([`build_config.h`](../../firmware/projects/canary-wap/arduino/canary_wap/build_config.h),

@@ -1783,7 +1783,9 @@
   Envs and samples: four canary envs and both firmware samples were
   compiled by no job, and one sample had already drifted from the library.
   `firmware/configs/canary-wap/` was compiled by no build at all while the
-  Workshop, `FEATURES.md` and the Flipper guide quoted its flags.
+  Workshop, `FEATURES.md` and the Flipper guide quoted its flags (deleted in
+  sweep F258, once the Lab's generators read the sketch's `build_config.h`
+  and `canary_wap.ino` instead).
 - **Root cause:** every one of these passed the guards that existed: the
   reachability check looked at `.cpp` files, the flag lint at Cargo
   features, and CI at the envs `flavors.json` lists. The shape of a feature

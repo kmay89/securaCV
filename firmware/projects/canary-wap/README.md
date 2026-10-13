@@ -376,8 +376,9 @@ This project follows the SecuraCV firmware architecture:
 
 - **Board definitions**: `../../boards/xiao-esp32s3-sense/`
 - **Configuration**: `arduino/canary_wap/build_config.h` (hardware target +
-  build profile). `../../configs/canary-wap/` is compiled by no build; only
-  the Lab's tooling reads it.
+  build profile), the only place the WAP's flags live. There is no
+  `configs/canary-wap/`; the Lab's Workshop and fleet figures read this
+  header and `canary_wap.ino` directly.
 - **Common modules**: `../../common/`
 - **Build environments**: `../../envs/platformio/`
 

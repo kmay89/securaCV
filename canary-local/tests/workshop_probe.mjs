@@ -101,9 +101,12 @@ if (!/print-validated/.test(await ribbon.textContent())) {
 step("ribbon flips");
 // ── checklist speaks the real BOM + firmware language ──
 const checkText = await page.locator(".ws-check").textContent();
-for (const needle of ["M1", "FEATURE_GNSS", "BT1"]) {
+// (the WAP's flags are its sketch's build_config.h: the buzzer implies
+// FEATURE_AUDIBLE_CHIRP; GPS implies none, since GNSS is unconditional there)
+for (const needle of ["M1", "FEATURE_AUDIBLE_CHIRP", "BT1"]) {
   if (!checkText.includes(needle)) fail(`checklist missing "${needle}"`);
 }
+if (checkText.includes("FEATURE_GNSS")) fail("checklist names a GNSS flag the WAP sketch does not have");
 // …and sells honestly: GPS card wears its real price delta, the ticker runs
 const gpsCard = await page.locator(".ws-opt", { hasText: "GPS" }).textContent();
 if (!/\+ \$15\.90/.test(gpsCard)) fail("GPS option missing its + $15.90 delta");
@@ -193,7 +196,9 @@ const tplImgs = await page.locator(".ws-template img").count();
 if (tplImgs < 1) fail("assemble missing drill template previews");
 
 const flashT = await stage("Flash & setup");
-if (!/FEATURE_GNSS/.test(flashT)) fail("flash stage missing the implied GNSS flag");
+if (!/FEATURE_AUDIBLE_CHIRP/.test(flashT)) fail("flash stage missing the buzzer's implied flag");
+if (/FEATURE_GNSS/.test(flashT)) fail("flash stage names a GNSS flag the WAP sketch does not have");
+if (!/build_config\.h/.test(flashT)) fail("flash stage should name build_config.h as where the WAP's flags live");
 
 const cardT = await stage("Your build");
 if (!/your spec/i.test(cardT)) fail("build card missing");

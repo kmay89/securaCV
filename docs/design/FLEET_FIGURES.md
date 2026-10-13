@@ -58,8 +58,19 @@ So: one description, one projector, one ladder, and every surface reads it.
   canary-local/devices/         │   tools/figures/iso.mjs   ┌──► canary-local/figures/*.svg
     registry.json               ├──►  massing.mjs        ───┼──► firmware/common/core/fleet_figures.h
     catalog.json                │     gen_figures.mjs       ├──► ios/Shared/FleetFigures.swift
-  firmware/configs/*/           ┘                           └──► canary-local/devices/figures.json
+  firmware/configs/*/           │                           └──► canary-local/devices/figures.json
+  the WAP sketch                ┘
+  (build_config.h, canary_wap.ino,
+   csi_mqtt.cpp)
 ```
+
+The device types come from each config's `DEVICE_TYPE`, and for the WAP —
+whose sketch reads no `firmware/configs/` directory — from the type it puts
+on the fleet's wire: the mDNS `dt` record in `canary_wap.ino` and the
+`device_type` on `csi_mqtt.cpp`'s status topic (`"canary-wap"`), which the
+generator requires to agree. The sketch's own `DEVICE_TYPE` constant
+(`"canary"`, for REST and its signed records) is not what a peer's figure
+lookup is fed.
 
 One command builds all of it, and CI fails if the tree disagrees with it:
 

@@ -351,7 +351,7 @@ the same generator and drift-gated in CI:
 | packages with real outer dimensions | the enclosure README's preset table |
 | each package's case parts | the variant tables (committed, print-validated STLs) |
 | option → parts links (`opt_gps` → `M1 L76K`) | `docs/hardware/bom_*.csv` rows — **verified at generation**: a renamed RefDes fails the build |
-| option → firmware links (`opt_gps` → `FEATURE_GNSS`) | `firmware/configs/*/config.h` — same verification |
+| option → firmware links (`opt_buzzer` → `FEATURE_AUDIBLE_CHIRP`) | `firmware/configs/*/config.h`, and for the WAP its sketch's `build_config.h` (the `BUILD_PROFILE_FULL` block, resolved for the XIAO ESP32-S3) — same verification |
 | reference builds with prices | the BOM's own `# … (REF+REF)` summary rows |
 | drill templates (print at 100%, 20 mm calibration square) | `template_*.svg`, rendered from `canary_templates_2d.scad` |
 
@@ -528,7 +528,7 @@ and render table-only — a flag is a claim.
 
 - **Assembly permutations** — `builds` is an array per device, not a single
   harness: field vs bedside vs battery-less loadouts are new entries, no new
-  code, and the Workshop's option flags (`FEATURE_GNSS`, battery bay…) map
+  code, and the Workshop's option flags (`FEATURE_AUDIBLE_CHIRP`, battery bay…) map
   1:1 onto which peripherals a build carries. A future Workshop hook can
   select the matching build the way it already selects the matching STL.
 - **Live pin emulation** — every firmware-facing connection carries

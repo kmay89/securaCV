@@ -429,11 +429,12 @@ Single-row-per-capability summary across every non-archived variant. This is the
 
 The **PlatformIO (canary-wap/)** column is the deleted scaffold's record (see
 the note above the per-subsystem tables), and its `FEATURE_GNSS`,
-`FEATURE_RF_PRESENCE` and `FEATURE_CHIRP` ✅ came from
-`firmware/configs/canary-wap/`, which no build compiles. The canary-wap that
-builds today takes its flags from the sketch's `build_config.h`: GNSS is
-unconditional there (no flag), and `FEATURE_RF_PRESENCE` / `FEATURE_CHIRP`
-are not sketch flags at all (2026-10-09).
+`FEATURE_RF_PRESENCE` and `FEATURE_CHIRP` ✅ came from a
+`firmware/configs/canary-wap/` directory no build compiled (deleted in sweep
+F258, once the Lab read the sketch instead). The canary-wap that builds today
+takes its flags from the sketch's `build_config.h`: GNSS is unconditional
+there (no flag), and `FEATURE_RF_PRESENCE` / `FEATURE_CHIRP` are not sketch
+flags at all (2026-10-09).
 
 `FEATURE_TAMPER_GPIO` has a consumer in both trees: a reed/hall enclosure
 contact on the board map's `TAMPER_PIN_DEFAULT`, debounced
