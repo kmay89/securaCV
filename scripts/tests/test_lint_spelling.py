@@ -15,7 +15,8 @@ CI9). This suite holds:
   were ported from;
 - the cached word-run check finds exactly the lines a per-line search would;
 - main() stops with exit 2 before reading a file when the self-test reports
-  (a missed form, an eaten correct word, a pattern the word runs cannot see),
+  (a missed form, an eaten correct word) or the pattern holds something the
+  word runs cannot see,
   fails on a file holding a family form the old word list never had (in any
   letter case), passes a file of the US forms, and blanks the Swift API
   member that needs blanking (and only in .swift).
