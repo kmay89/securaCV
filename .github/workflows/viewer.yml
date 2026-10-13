@@ -115,6 +115,8 @@ jobs:
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/wizard_logic.test.js
     - name: Admin dashboard logic tests (peek URL, retry policy, BLE endpoint)
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/web_ui_logic.test.js
+    - name: Recovery kit offer (dashboard BOOT-tap sign-in, wizard close-out)
+      run: node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
 
   canary-vision-lint:
     name: ESLint (canary-vision)

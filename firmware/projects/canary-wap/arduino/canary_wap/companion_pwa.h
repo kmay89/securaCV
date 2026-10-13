@@ -826,6 +826,51 @@ const WizardLogic = (function () {
 if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
 /* WIZARD_LOGIC:END */
 
+/* RECOVERY_KIT:BEGIN — the recovery kit, one builder for the two pages that
+   offer it: the /companion wizard's close-out (companion_pwa.h) and the
+   dashboard after a BOOT-tap sign-in (web_ui.h, sweep F257). The two copies
+   are the same lines, indentation aside; recovery_kit.test.js holds them so
+   and drives both pages through them. The kit is the receipt text exactly
+   as GET /api/provisioning-receipt served it, handed to the browser as a
+   download: nothing here fetches or sends anything. DOM-free: the page
+   passes its window in (document, Blob, URL, setTimeout), so Node can drive
+   it. */
+const RecoveryKit = (function () {
+  const FILE_NAME = 'canary-recovery-kit.json';
+
+  // A receipt the iPhone's recovery path can pair from (PairView decodes a
+  // base_url and a non-empty token), so neither page offers or saves
+  // anything else as a kit.
+  function isReceipt(text) {
+    if (typeof text !== 'string' || text === '') return false;
+    let r;
+    try { r = JSON.parse(text); } catch (e) { return false; }
+    return !!r && typeof r === 'object' && !Array.isArray(r) &&
+           typeof r.token === 'string' && r.token !== '' &&
+           typeof r.base_url === 'string' && r.base_url !== '';
+  }
+
+  // Save `text` as canary-recovery-kit.json through a same-page blob: URL.
+  // False, with nothing saved, when it is not a receipt.
+  function save(win, text) {
+    if (!isReceipt(text)) return false;
+    const blob = new win.Blob([text], { type: 'application/json' });
+    const url = win.URL.createObjectURL(blob);
+    const a = win.document.createElement('a');
+    a.href = url;
+    a.download = FILE_NAME;
+    win.document.body.appendChild(a);
+    a.click();
+    win.document.body.removeChild(a);
+    win.setTimeout(function () { win.URL.revokeObjectURL(url); }, 4000);
+    return true;
+  }
+
+  return { FILE_NAME: FILE_NAME, isReceipt: isReceipt, save: save };
+})();
+if (typeof module !== 'undefined' && module.exports) { module.exports = RecoveryKit; }
+/* RECOVERY_KIT:END */
+
 (function onboardWizard() {
   const params = new URLSearchParams(window.location.search);
   let token = params.get('token');
@@ -1807,16 +1852,9 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
         return;
       }
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const text = await r.text();
-      const blob = new Blob([text], { type: 'application/json' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href = url;
-      a.download = 'canary-recovery-kit.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      // The same builder the dashboard's BOOT-tap sign-in saves with
+      // (RECOVERY_KIT above, sweep F257): a receipt or nothing.
+      if (!RecoveryKit.save(window, await r.text())) throw new Error('not a recovery kit');
       $w('wiz-recovery-done').style.display = 'block';
       save.style.display = 'none';
       $w('wiz-recovery-skip').textContent = 'Continue';

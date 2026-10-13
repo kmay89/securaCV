@@ -939,6 +939,24 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <button class="btn btn-primary btn-sm" onclick="otaBannerView()">View &amp; install</button>
       <button class="btn btn-ghost btn-sm" onclick="otaBannerDismiss()">Later</button>
     </div>
+    <!-- The recovery kit after a BOOT-tap sign-in (sweep F257), in the
+         /companion wizard's words: the receipt that tap fetched, saved by the
+         browser as canary-recovery-kit.json (RecoveryKit.save). Shown only
+         after a tap that served a receipt; saving it or putting it off drops
+         the text. -->
+    <div class="card" id="recoveryKitCard" style="display:none" role="region" aria-labelledby="recoveryKitTitle">
+      <div class="card-header">
+        <div>
+          <div class="card-title" id="recoveryKitTitle">Save your recovery kit</div>
+          <div class="card-subtitle" id="recoveryKitLead">One small file proves this Canary is yours: its name, its keys, and the password for its own network. Keep it somewhere safe &mdash; you'll want it if you ever change phones or routers.</div>
+        </div>
+      </div>
+      <p class="card-subtitle" id="recoveryKitDone" style="display:none;margin:0 0 0.6rem;">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>.</p>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" id="recoveryKitLater" onclick="closeRecoveryKit()">Do this later</button>
+        <button class="btn btn-primary btn-sm" id="recoveryKitSave" onclick="saveRecoveryKit()">Save my recovery kit</button>
+      </div>
+    </div>
     <!-- Clean 5-Tab Navigation -->
     <nav>
       <button class="nav-btn active" data-panel="status">Status</button>
@@ -2741,6 +2759,51 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
     /* WEBUI_LOGIC:END */
 
+    /* RECOVERY_KIT:BEGIN — the recovery kit, one builder for the two pages that
+       offer it: the /companion wizard's close-out (companion_pwa.h) and the
+       dashboard after a BOOT-tap sign-in (web_ui.h, sweep F257). The two copies
+       are the same lines, indentation aside; recovery_kit.test.js holds them so
+       and drives both pages through them. The kit is the receipt text exactly
+       as GET /api/provisioning-receipt served it, handed to the browser as a
+       download: nothing here fetches or sends anything. DOM-free: the page
+       passes its window in (document, Blob, URL, setTimeout), so Node can drive
+       it. */
+    const RecoveryKit = (function () {
+      const FILE_NAME = 'canary-recovery-kit.json';
+
+      // A receipt the iPhone's recovery path can pair from (PairView decodes a
+      // base_url and a non-empty token), so neither page offers or saves
+      // anything else as a kit.
+      function isReceipt(text) {
+        if (typeof text !== 'string' || text === '') return false;
+        let r;
+        try { r = JSON.parse(text); } catch (e) { return false; }
+        return !!r && typeof r === 'object' && !Array.isArray(r) &&
+               typeof r.token === 'string' && r.token !== '' &&
+               typeof r.base_url === 'string' && r.base_url !== '';
+      }
+
+      // Save `text` as canary-recovery-kit.json through a same-page blob: URL.
+      // False, with nothing saved, when it is not a receipt.
+      function save(win, text) {
+        if (!isReceipt(text)) return false;
+        const blob = new win.Blob([text], { type: 'application/json' });
+        const url = win.URL.createObjectURL(blob);
+        const a = win.document.createElement('a');
+        a.href = url;
+        a.download = FILE_NAME;
+        win.document.body.appendChild(a);
+        a.click();
+        win.document.body.removeChild(a);
+        win.setTimeout(function () { win.URL.revokeObjectURL(url); }, 4000);
+        return true;
+      }
+
+      return { FILE_NAME: FILE_NAME, isReceipt: isReceipt, save: save };
+    })();
+    if (typeof module !== 'undefined' && module.exports) { module.exports = RecoveryKit; }
+    /* RECOVERY_KIT:END */
+
     // ═══════════════════════════════════════════════════════════════
     // AUTH — Token stored ONLY in JS variable. No localStorage/cookies.
     // ═══════════════════════════════════════════════════════════════
@@ -2822,6 +2885,38 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
+    // The recovery kit after a BOOT-tap sign-in (sweep F257). A WAP set up
+    // through the Bluetooth setup door never runs the /companion wizard's
+    // close-out, the one place the kit was offered, so its owner had no kit
+    // for the iPhone's recovery path (PairView) to pair from. The tap's
+    // receipt text is held here only while the offer is on screen (saving it
+    // or putting it off drops it), and it never leaves the browser: the save
+    // is a download through a blob: URL, not a request.
+    let recoveryKitText = null;
+
+    function offerRecoveryKit(text) {
+      if (!RecoveryKit.isReceipt(text)) return false;
+      recoveryKitText = text;
+      document.getElementById('recoveryKitDone').style.display = 'none';
+      document.getElementById('recoveryKitSave').style.display = '';
+      document.getElementById('recoveryKitLater').textContent = 'Do this later';
+      document.getElementById('recoveryKitCard').style.display = 'block';
+      return true;
+    }
+
+    function closeRecoveryKit() {
+      recoveryKitText = null;
+      document.getElementById('recoveryKitCard').style.display = 'none';
+    }
+
+    function saveRecoveryKit() {
+      if (!RecoveryKit.save(window, recoveryKitText)) return;
+      recoveryKitText = null;
+      document.getElementById('recoveryKitDone').style.display = 'block';
+      document.getElementById('recoveryKitSave').style.display = 'none';
+      document.getElementById('recoveryKitLater').textContent = 'Continue';
+    }
+
     async function requestFromDevice() {
       const s = document.getElementById('authStatus');
       s.className = 'auth-status info';
@@ -2837,10 +2932,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         try {
           const resp = await fetch(API_BASE + '/api/provisioning-receipt');
           if (resp.status === 200) {
-            const receipt = await resp.json();
+            const text = await resp.text();
+            const receipt = JSON.parse(text);
             apiToken = receipt.token;
             hideAuthModal();
             startDashboard();
+            offerRecoveryKit(text);
             return;
           }
           if (resp.status === 403 && !gotFirst403) {
