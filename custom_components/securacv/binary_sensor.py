@@ -130,14 +130,14 @@ TRANSPORT_SENSORS: dict[str, str] = {
 # The canary-wap is the one firmware that publishes the topic:
 # csi_mqtt::publish_chirp_state() sends `{"state": "<word>"}` (retained,
 # about every 30 s on a build with the mesh feature), and the word is
-# chirp_channel::state_name() of the channel's shown state. On reads the
-# channel is on with a session: `active`; `cooldown`, an active channel
-# whose own send timer runs (shown, never stored); `muted`, a channel on
-# that drops incoming chirps for the mute's window while its presence
-# beacon and an owner's send still go out (spec §7.1); and `listening`,
-# which state_name() can name though the canary-wap never enters it. Off
-# reads `disabled` and `initializing` (no session yet). Any other word,
-# state_name()'s own `unknown` among them, reads unknown rather than off.
+# chirp_channel::state_name() of the channel's shown state. The words that
+# read on are a channel that is on with a session: `active`; `cooldown`, an
+# active channel whose own send timer runs (shown, never stored); `muted`, a
+# channel that drops incoming chirps for the mute's window while its
+# presence beacon and an owner's send still go out (spec §7.1); and
+# `listening`, which state_name() can name though the canary-wap never
+# enters it. `disabled` and `initializing` (no session yet) read off. Any
+# other word, state_name()'s own `unknown` among them, reads unknown, not off.
 # test_chirp_active.py holds this table to state_name()'s words.
 CHIRP_STATE_IS_ON: dict[str, bool] = {
     "active": True,
