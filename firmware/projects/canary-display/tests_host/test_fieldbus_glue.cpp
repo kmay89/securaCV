@@ -264,7 +264,14 @@ static void rs485_quiet_bus_waits_the_window() {
 
 static void rs485_reply_inside_window() {
   slave_answers(1, {0x00FF}, 250);
+  const uint64_t t0 = now_ms();
   pg::action_rs485_probe();
+  // The probe returns once the reply is in, not at the end of its window: a
+  // wait that always ran the full 300 ms would hold the playground loop that
+  // long on every answered tap.
+  const uint64_t took = now_ms() - t0;
+  CHECK(took >= 250);
+  CHECK(took < 255);
   const auto e = evts();
   CHECK(e.size() == 1 && e[0] == "rs485 slave=1 reg=0 val=255 crc=ok");
 }
@@ -538,7 +545,13 @@ static void rs485_driver_reads_several_registers() {
   io::rs485_begin(0);
   slave_answers(7, {0x0102, 0x0304, 0xFFFF}, 30);
   uint16_t r[3] = {0, 0, 0};
+  const uint64_t t0 = now_ms();
   CHECK(io::rs485_read_holding(7, 0x0010, 3, r, 3, 200) == 3);
+  // The call returns once the 11-byte reply is in (30 ms), not at its 200 ms
+  // timeout.
+  const uint64_t took = now_ms() - t0;
+  CHECK(took >= 30);
+  CHECK(took < 35);
   CHECK(Serial1.tx == with_crc({0x07, 0x03, 0x00, 0x10, 0x00, 0x03}));
   CHECK(r[0] == 0x0102 && r[1] == 0x0304 && r[2] == 0xFFFF);
 }
