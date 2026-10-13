@@ -90,9 +90,9 @@ void bob_cb(void* var, int32_t v) {
   lv_obj_set_y((lv_obj_t*)var, s_base_y + v);
 }
 
-// Breath: the one always-on motion. Rate is the arousal baseline —
-// alert 1.4 s, calm 1.4 s, asleep 2.8 s half-period. The Character's
-// breath temperament rescales the request (clamped to a sane band).
+// Breath: the one always-on motion. Rate is the arousal baseline, and each
+// mood owns its own (mood_breath below). The Character's breath temperament
+// rescales the request (clamped to a sane band).
 void start_bob(uint32_t half_ms, int amp) {
   s_breath_raw_ms = half_ms;
   s_breath_amp = amp;
@@ -114,8 +114,37 @@ void hop_cb(void* var, int32_t v) {
   lv_obj_set_y((lv_obj_t*)var, s_base_y - v);
 }
 
-// The hop hands the bird's y back to a fresh breath.
-void hop_done(lv_anim_t*) { start_bob(1400, 2); }
+// The breath each mood owns: its half-period before the Character's
+// temperament, and its swing. One table, read by canary_mark_mood() when a
+// mood begins and by hop_done() when a hop lands, so a hop hands the bird
+// back the breath its mood owns. hop_done() used to start the calm 1400 ms
+// breath whatever the mood, so a worried, distressed, searching or calling
+// bird breathed calm after any hop it made (the search flourish's hop, a
+// Startle) until its next mood change (F281).
+struct Breath {
+  uint32_t half_ms;
+  int amp;
+};
+Breath mood_breath(CanaryMood m) {
+  switch (m) {
+    case CanaryMood::Asleep:
+      return {2800, 1};  // stillness is the information
+    case CanaryMood::Worried:
+    case CanaryMood::Distressed:
+    case CanaryMood::Searching:
+    case CanaryMood::Calling:
+      return {1100, 2};  // breath quickens a touch
+    default:
+      return {1400, 2};  // Idle, and Happy once its hop lands
+  }
+}
+void start_mood_breath() {
+  const Breath b = mood_breath(s_mood);
+  start_bob(b.half_ms, b.amp);
+}
+
+// The hop hands the bird's y back to a fresh breath, the one its mood owns.
+void hop_done(lv_anim_t*) { start_mood_breath(); }
 
 // A hop running on the bird right now (it owns the bird's y until hop_done).
 bool hopping() { return s_bird && lv_anim_get(s_bird, hop_cb) != nullptr; }
@@ -520,26 +549,26 @@ void canary_mark_mood(CanaryMood m) {
       lv_timer_pause(s_flourish);
       s_eye_shut = false;
       lv_obj_clear_flag(s_eye, LV_OBJ_FLAG_HIDDEN);
-      start_bob(2800, 1);
+      start_mood_breath();
       break;
     case CanaryMood::Worried:
     case CanaryMood::Distressed:
       pose_worried();
       lv_timer_resume(s_blink);
       lv_timer_resume(s_flourish);
-      start_bob(1100, 2);  // breath quickens a touch
+      start_mood_breath();
       break;
     case CanaryMood::Searching:
       pose_searching();
       lv_timer_resume(s_blink);
       lv_timer_resume(s_flourish);
-      start_bob(1100, 2);
+      start_mood_breath();
       break;
     case CanaryMood::Calling:
       pose_calling();
       lv_timer_resume(s_blink);
       lv_timer_resume(s_flourish);
-      start_bob(1100, 2);
+      start_mood_breath();
       break;
     case CanaryMood::Happy:
       pose_rest();
@@ -551,7 +580,7 @@ void canary_mark_mood(CanaryMood m) {
       pose_rest();
       lv_timer_resume(s_blink);
       lv_timer_resume(s_flourish);
-      start_bob(1400, 2);
+      start_mood_breath();
       break;
   }
 }

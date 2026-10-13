@@ -583,6 +583,53 @@ static void test_hop_leaves_host_slide() {
   fake_esp::script().clear();
 }
 
+// 10. A hop hands back the breath its mood owns (F281). hop_done() used to
+//     start the calm 1400 ms breath whatever the mood, so a worried,
+//     distressed, searching or calling bird (1100 ms) breathed calm after any
+//     hop it made, until its next mood change. Every mood the mark lets hop
+//     (a Startle in each, the search flourish's hop, Happy's own hop) must
+//     land into its own breath, the one canary_mark_mood() started; an asleep
+//     bird refuses the Startle and keeps its 2800 ms breath.
+static void test_hop_keeps_mood_breath() {
+  std::printf("a hop hands back the breath its mood owns (F281):\n");
+  struct {
+    const char* what;
+    CanaryMood mood;
+    void (*start)(lv_timer_t*);  // null: the mood's own hop (Happy)
+    uint32_t want_ms;
+  } const cases[] = {
+      {"Idle, a Startle", CanaryMood::Idle, react_startle, 1400},
+      {"Worried, a Startle", CanaryMood::Worried, react_startle, 1100},
+      {"Distressed, a Startle", CanaryMood::Distressed, react_startle, 1100},
+      {"Searching, a Startle", CanaryMood::Searching, react_startle, 1100},
+      {"Searching, the flourish's hop", CanaryMood::Searching, roll_search_hop, 1100},
+      {"Calling, a Startle", CanaryMood::Calling, react_startle, 1100},
+      {"Happy, its own hop", CanaryMood::Happy, nullptr, 1400},
+      {"Asleep, a Startle (refused)", CanaryMood::Asleep, react_startle, 2800},
+  };
+  for (const auto& c : cases) {
+    lv_obj_t* content = nullptr;
+    lv_obj_t* scr = glass(320, 180, &content);
+    const size_t before = fake_lvgl::timers().size();
+    lv_obj_t* bird = canary_mark_create(content, 93);
+    lv_timer_t* flourish = flourish_timer(before);
+    lv_obj_align(bird, LV_ALIGN_RIGHT_MID, -1, -15);
+    canary_mark_mood(c.mood);
+    if (c.start != nullptr) {
+      watch(scr, bird, 1000);  // mid-breath
+      fake_lvgl::run(8000);    // past the ration since any earlier Startle
+      CHECK(flourish != nullptr, "%s: the flourish timer", c.what);
+      if (flourish != nullptr) c.start(flourish);
+    }
+    watch(scr, bird, 600);  // 240 ms up, 320 ms down: the hop has landed
+    char label[80];
+    std::snprintf(label, sizeof label, "%s, landed", c.what);
+    check_breath(label, bird, c.want_ms);
+    lv_obj_del(scr);
+  }
+  fake_esp::script().clear();
+}
+
 // 0. The first small reaction after power-on plays (F279). The Tilt/Startle
 //    ration allows one per 8 s; its clock used to start at 0 while LVGL's
 //    tick is millis() from power-on, so every Tilt and Startle in the first
@@ -644,6 +691,7 @@ int main() {
   test_hop_owns_y();
   test_temperament_reaches_breath();
   test_hop_leaves_host_slide();
+  test_hop_keeps_mood_breath();
   if (g_fail == 0) {
     std::printf("ALL CANARY MARK SEAT TESTS PASSED\n");
     return 0;
