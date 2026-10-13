@@ -25,12 +25,13 @@ is this script's. The checker is the mirror's on purpose: one slugger, one
 URL parser and one rule set for both repositories, so the two checks cannot
 disagree about what lands.
 
-The checker gained `--source` in securacv-homeassistant#28. Until that merges,
-the mirror's main carries a lint_readme.py without it, which would ignore the
-flag and lint the fetched prose's RELATIVE links against an empty directory.
-So a checker with no --source mode is not run: this prints a GitHub warning
-naming the gap and exits 0. That is the only path that passes without
-checking, and it says so in the job log and as an annotation.
+The checker gained `--source` in securacv-homeassistant#28 (merged
+2026-10-13). A lint_readme.py without it (the mirror's main before that, or
+an older --ref) would ignore the flag and lint the fetched prose's RELATIVE
+links against an empty directory. So a checker with no --source mode is not
+run: this prints a GitHub warning naming the gap and exits 0. That is the
+only path that passes without checking, and it says so in the job log and as
+an annotation.
 
 Exit codes: 0 = every link lands (or the mirror's checker predates --source,
 warned); 1 = a link does not land, or the checker failed its own probes;
@@ -62,7 +63,7 @@ FILES = PROSE + (CHECKER,)
 SOURCE_FLAG = '"--source"'
 PREDATES = ("::warning title=HACS store page links not checked::the mirror's "
             f"{CHECKER} on {{ref}} has no --source mode yet "
-            "(securacv-homeassistant#28 adds it), so the store page's links "
+            "(securacv-homeassistant#28 added it), so the store page's links "
             "into this repository were not checked")
 
 

@@ -442,8 +442,8 @@ jobs:
         # Fetches README.md, AGENTS.md, CLAUDE.md and
         # .github/scripts/lint_readme.py from the mirror's main over
         # raw.githubusercontent.com (public, no credentials, three tries),
-        # then runs the checker with -I against this checkout. Until
-        # securacv-homeassistant#28 merges, the mirror's checker has no
-        # --source mode, and the script says so in a warning annotation
-        # instead of running it.
+        # then runs the checker with -I against this checkout. A checker
+        # with no --source mode (the mirror's main before
+        # securacv-homeassistant#28 merged, 2026-10-13) is not run: the
+        # script says so in a warning annotation instead.
         run: python3 scripts/check_hacs_store_links.py
