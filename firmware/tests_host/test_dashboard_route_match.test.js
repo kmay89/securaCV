@@ -479,7 +479,7 @@ const GATED = {
       "FEATURE_CAMERA_PEEK": {
         routes: ["GET /api/peek/sensor", "GET /api/peek/snapshot", "GET /api/peek/status", "GET /api/peek/stream",
                  "POST /api/peek/resolution", "POST /api/peek/sensor", "POST /api/peek/stop"],
-        meets: "refreshPeekStatus() shows the no-camera state and hides the Peek controls and camera info cards, the only callers of the rest, on a refusal before any answer (F274)" },
+        meets: "refreshPeekStatus() shows the no-camera state and hides the Peek controls and camera info cards, the only callers of the rest, when no route takes the status read (the fallback's 404 or setup redirect) before any status has answered (F274)" },
       "FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER": {
         routes: ["GET /api/sensing"],
         meets: "refreshSensing() shows the offline pill on a refused answer" },
@@ -526,7 +526,7 @@ const GATED = {
       "FEATURE_CAMERA_PEEK": {
         routes: ["GET /api/peek/sensor", "GET /api/peek/snapshot", "GET /api/peek/status", "GET /api/peek/stream",
                  "POST /api/peek/init", "POST /api/peek/resolution", "POST /api/peek/sensor", "POST /api/peek/stop"],
-        meets: "refreshPeekStatus() shows the no-camera state and hides the Camera Controls and Camera Info cards, the only callers of the rest, on a refusal before any answer (F274)" },
+        meets: "refreshPeekStatus() shows the no-camera state and hides the Camera Controls and Camera Info cards, the only callers of the rest, when no route takes the status read (the server's 404) before any status has answered (F274)" },
       "FEATURE_MESH_NETWORK": {
         routes: ["DELETE /api/mesh/alerts", "GET /api/chirp", "GET /api/chirp/recent", "GET /api/mesh", "GET /api/mesh/alerts",
                  "GET /api/mesh/peers", "POST /api/chirp/confirm", "POST /api/chirp/disable", "POST /api/chirp/dismiss",
