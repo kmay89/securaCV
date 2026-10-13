@@ -1,0 +1,45 @@
+# Standalone workspace root: like hub-core, hub-io and tvos/witness-core, this
+# declares an empty [workspace] so Cargo doesn't fold it into the repo-root
+# package. Nothing path-depends on it, and it path-depends on nothing: the
+# household-key checker is a separate crate and process from witnessd
+# (docs/research/face_id_without_faces.md §6.5), so kernel code cannot link it.
+[workspace]
+
+[package]
+name = "household-keys"
+version = "0.1.0"
+description = "The SecuraCV household-key checker: roster, challenges, credential verifiers and signed household-posture statements."
+authors = ["Errer Labs"]
+license = "Apache-2.0"
+repository = "https://github.com/kmay89/securaCV"
+edition = "2021"
+# aes 0.9.3 sets the floor (sha2 0.11.1 needs 1.88). Not enforced by CI yet.
+rust-version = "1.89"
+publish = false
+
+[lib]
+name = "household_keys"
+path = "src/lib.rs"
+
+[[bin]]
+name = "household_checker"
+path = "src/bin/household_checker.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[dependencies]
+sha2 = "0.11"
+hkdf = "0.13"
+rand = "0.10"
+subtle = "2.5"
+zeroize = "1.7"
+ed25519-dalek = "3.0"
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+aes = "0.9"
+cbc = "0.2"
+cmac = "0.8"
+chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
