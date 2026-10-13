@@ -458,12 +458,14 @@ clean-identity-json:
 run: run-identity-json
 clean: clean-identity-json
 
-# Which address the receipt's base_url names (sweep F255): the REAL
-# receipt_authority.h for every grant (bearer, BOOT tap, setup-door claim) on
-# the SoftAP, on the STA with the STA up, and with the STA down, beside the
-# old rule (192.168.4.1 for a receipt fetched over the home LAN); its socket
-# address mapping held to firmware/common/network/provisioning_gate.h's; and
-# the sketch's glue read from canary_wap.ino (its path is passed in).
+# Which address names the WAP to a caller (sweep F255): the REAL
+# receipt_authority.h for every grant (bearer, BOOT tap, setup-door claim)
+# and port 80's https redirect, on the SoftAP, on the STA with the STA up,
+# with the STA down, and with the SoftAP dropped (0.0.0.0 on core 3.x),
+# beside the old rule (192.168.4.1 for a receipt or redirect over the home
+# LAN); its octet packing and socket address mapping, the latter held to
+# firmware/common/network/provisioning_gate.h's; and the sketch's glue read
+# from canary_wap.ino with its comments left out (its path is passed in).
 RAUTH_BIN = test_receipt_authority
 RAUTH_SRC = test_receipt_authority.cpp
 

@@ -8271,10 +8271,10 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 // API: PROVISIONING RECEIPT (physical gate or Bearer auth)
 // ════════════════════════════════════════════════════════════════════════════
 
-// Host-order IPv4 (a<<24 | b<<16 | c<<8 | d) of an Arduino IPAddress.
+// Host-order IPv4 (a<<24 | b<<16 | c<<8 | d) of an Arduino IPAddress: the
+// packing receipt_authority.h holds (and the host test checks).
 static uint32_t ipv4_host_order(const IPAddress& ip) {
-  return ((uint32_t)ip[0] << 24) | ((uint32_t)ip[1] << 16) |
-         ((uint32_t)ip[2] << 8)  |  (uint32_t)ip[3];
+  return receipt_authority::ipv4_from_octets(ip[0], ip[1], ip[2], ip[3]);
 }
 
 // The IPv4 address this request arrived on: the socket's LOCAL address
@@ -8304,6 +8304,20 @@ static uint32_t request_local_ipv4(httpd_req_t* req) {
   return 0;
 }
 
+// What receipt_authority.h decides from, read where the device keeps it:
+// the request's own local address, the SoftAP's (0.0.0.0 on core 3.x once
+// wifi_drop_ap() released the AP netif), the STA's while it is connected,
+// and the mDNS host. The receipt and port 80's redirect both ask it.
+static receipt_authority::Inputs request_reach(httpd_req_t* req, receipt_authority::Grant grant) {
+  receipt_authority::Inputs reach = {};
+  reach.request_local = request_local_ipv4(req);
+  reach.softap_ip     = ipv4_host_order(WiFi.softAPIP());
+  reach.sta_ip        = WiFi.isConnected() ? ipv4_host_order(WiFi.localIP()) : 0;
+  reach.mdns_host     = g_device.mdns_hostname;
+  reach.grant         = grant;
+  return reach;
+}
+
 // `grant`: what admitted the request. The base_url's authority is
 // receipt_authority.h's choice (sweep F255): the device's .local name
 // whenever the STA holds an address and the request did not arrive on the
@@ -8311,19 +8325,16 @@ static uint32_t request_local_ipv4(httpd_req_t* req) {
 // which no LAN reader reaches and which is gone once the AP drops); the
 // SoftAP address for a bearer or BOOT-tap request made over the SoftAP, or
 // whenever the STA is down. A spent setup-door claim answers the .local
-// name whenever the STA holds an address, as it always did.
+// name whenever the STA holds an address, as it always did. A device with
+// no name and no address at all refuses rather than name nothing.
 static esp_err_t send_provisioning_receipt(httpd_req_t* req, receipt_authority::Grant grant) {
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
-  receipt_authority::Inputs reach = {};
-  reach.request_local = request_local_ipv4(req);
-  reach.softap_ip     = ipv4_host_order(WiFi.softAPIP());
-  reach.sta_ip        = WiFi.isConnected() ? ipv4_host_order(WiFi.localIP()) : 0;
-  reach.mdns_host     = g_device.mdns_hostname;
-  reach.grant         = grant;
   char authority[80];
-  receipt_authority::write(authority, sizeof(authority), reach);
+  if (receipt_authority::write(authority, sizeof(authority), request_reach(req, grant)) == 0) {
+    return http_send_error(req, 503, "no_address");
+  }
   identity_json::Receipt in = {};
   in.device_id   = g_device.device_id;
   in.tls_enabled = g_tls_enabled;
@@ -8457,11 +8468,21 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 #if SECURACV_HAS_HTTPS_SERVER
+// The Location names the WAP the way the receipt's base_url does
+// (receipt_authority.h): a caller on the setup network keeps the SoftAP
+// address, anyone else gets the .local name. It used to be WiFi.softAPIP()
+// for everyone, so http://canary-<suffix>.local/ typed on the home network
+// went to https://192.168.4.1 (or https://0.0.0.0 once the AP netif is gone),
+// which the home network cannot reach.
 static esp_err_t handle_https_redirect(httpd_req_t* req) {
+  char authority[80];
+  if (receipt_authority::write(authority, sizeof(authority),
+                               request_reach(req, receipt_authority::Grant::HTTPS_REDIRECT)) == 0) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_sendstr(req, "No address to redirect to.");
+  }
   char location[128];
-  snprintf(location, sizeof(location), "https://%s%s",
-           WiFi.softAPIP().toString().c_str(),
-           req->uri);
+  snprintf(location, sizeof(location), "https://%s%s", authority, req->uri);
   httpd_resp_set_status(req, "301 Moved Permanently");
   httpd_resp_set_hdr(req, "Location", location);
   return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
