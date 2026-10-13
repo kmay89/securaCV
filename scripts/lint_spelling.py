@@ -92,9 +92,11 @@ SKIP_FILES = {"lint_spelling.py"}
 
 # THE WORD LIST. The website's tests/copy-honesty.test.mjs (UK_WORD_LIST)
 # holds the same words, letter for letter, and the generated families below
-# come from the same file — keep the two repos aligned, because a file carried
-# from here to there (scad/cad-dims.json, scad/colorways.json,
-# onboarding-spec.json, the carried .scad sources) is held to both.
+# come from the same file — keep the two repos aligned, because a JSON file
+# carried from here to there (scad/cad-dims.json, scad/colorways.json,
+# onboarding-spec.json) is held to both. The carried .scad sources are held
+# to this lint alone: the website's test reads .json, .md, .html and the like,
+# never .scad, so this is the only gate their comments ever meet.
 WORD_LIST = (
     # NOT colou?r — the optional u matches "colored", which is the CORRECT
     # US spelling. That typo made this linter flag ~8 already-correct files on
@@ -165,12 +167,13 @@ WORD_LIST = (
 # safe to write anywhere — and each family's rule makes every inflection at
 # once. This is a port of those families (tests/copy-honesty.test.mjs,
 # website origin/main 32fa634, 2026-10-10): the same stems, the same prefixes,
-# the same suffix sets. Until it was here, a file carried to the website could
-# pass this lint and fail that test on the carry PR (sweep item CI9).
+# the same suffix sets. Until it was here, a carried JSON file could pass this
+# lint and fail that test on the carry PR (sweep item CI9).
 #
 # Adding a word means adding its US spelling to the family it belongs to — in
-# both repos. self_test() below proves every form a family builds is caught
-# and every US form it is built from is not.
+# both repos. self_test() below proves every form a family builds is caught,
+# in any letter case, that every word-list entry still is, and that every US
+# form a family is built from is not.
 
 # The British form doubles the final l before a suffix; the US form does not.
 # Only verbs whose last syllable is unstressed — "control", "annul", "compel"
@@ -369,15 +372,27 @@ def family_pairs():
 
 
 def self_test():
-    """(missed, eaten): British forms a family no longer catches, and correct
-    words — US forms and ALLOW — the ban now matches. Both must be empty."""
+    """(missed, eaten): British forms BANNED no longer catches — a family's
+    built form, a word-list entry, or the shipped form in any letter case —
+    and correct words (US forms and ALLOW) it now matches. Both must be
+    empty."""
     pairs = family_pairs()
     missed = [uk for _, uk in pairs if not BANNED.search(uk)]
+    # The word list is typed, not built, so nothing above covers it. BANNED is
+    # a composition of it and the families; an edit to that composition that
+    # drops the list (the families alone miss the forms no family builds)
+    # would otherwise pass every pair here.
+    missed += [w for w in WORD_LIST.split("|") if not BANNED.fullmatch(w)]
     # The one that shipped on the website: a compound adjective on a past
-    # tense the word list had only in its -ing form.
-    shipped = "a better-" + DOUBLE_L[0] + "led route"
-    if not BANNED.search(shipped):
-        missed.append(shipped)
+    # tense the word list had only in its -ing form. In every letter case,
+    # because a sentence starts with a capital and a heading or a log line
+    # can be all caps (two of the lines CI9 fixed were capitalized), and the
+    # website's regex carries the i flag.
+    shipped = DOUBLE_L[0] + "led"
+    for form in (shipped, shipped.capitalize(), shipped.upper()):
+        line = "a better-" + form + " route"
+        if not BANNED.search(line):
+            missed.append(line)
     eaten = [w for w in [us for us, _ in pairs] + ALLOW if BANNED.search(w)]
     return missed, eaten
 
@@ -429,9 +444,11 @@ def walk(paths):
 
 def main() -> int:
     # The guard on the guard, FIRST and before a single file is read: if
-    # BANNED ever starts matching a word that is correct English, or a family
-    # stops catching a form it is built to catch, say so here rather than in
-    # a corrupted commit or a green run that checked nothing.
+    # BANNED ever starts matching a word that is correct English, or stops
+    # catching a form it is built to catch (a family's, the word list's, in
+    # any letter case), say so here rather than in a corrupted commit or a
+    # green run that checked nothing. scripts/tests/test_lint_spelling.py
+    # holds main() to both exits.
     missed, eaten = self_test()
     if eaten:
         print("lint_spelling.py: the BANNED pattern now matches words that are "
@@ -440,8 +457,9 @@ def main() -> int:
               "file's header for what each of these cost.", file=sys.stderr)
         return 2
     if missed:
-        print("lint_spelling.py: a family rule no longer catches the British "
-              f"form it is built to catch: {', '.join(missed[:20])}.",
+        print("lint_spelling.py: BANNED no longer catches a British form it "
+              "is built to catch (a family's form, a word-list entry, or a "
+              f"form in capitals): {', '.join(missed[:20])}.",
               file=sys.stderr)
         return 2
     odd = non_word_literals()

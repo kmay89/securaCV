@@ -5,13 +5,18 @@ the families it shares with the website's tests/copy-honesty.test.mjs, each
 GENERATED from US words so a form nobody typed is still caught (sweep item
 CI9). This suite holds:
 
-- the module's own self-test (every form a family builds is caught, every US
-  form and every ALLOW word is not) is clean, and it has teeth: a family
-  dropped from the rule, or a rule made greedy, makes it report;
+- the module's own self-test (every form a family builds is caught, every
+  word-list entry is, the shipped form is in any letter case, and no US form
+  or ALLOW word is) is clean, and it has teeth: a family dropped from the
+  rule, the word list dropped from it, the case flag dropped, or a rule made
+  greedy, makes it report;
 - the generated pairs cover every family, prefix and suffix the rules name;
 - the cached word-run check finds exactly the lines a per-line search would;
-- main() fails on a file holding a family form the old word list never had,
-  passes a file of the US forms, and blanks the Swift API names it exempts.
+- main() stops with exit 2 before reading a file when the self-test reports
+  (a missed form, an eaten correct word, a pattern the word runs cannot see),
+  fails on a file holding a family form the old word list never had (in any
+  letter case), passes a file of the US forms, and blanks the Swift API
+  member that needs blanking (and only in .swift).
 
 AGENTS.md rule 3b: this file never types a banned form. Every British
 spelling it needs is BUILT from a US stem at run time (the lint's own
@@ -47,12 +52,26 @@ def run_lint(*paths: Path) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
-def with_banned(pattern: str):
-    """Swap the module's BANNED for one built from `pattern` (same flags)."""
+def run_main_with(banned_expr: str, *paths: Path) -> subprocess.CompletedProcess:
+    """Run the lint's main() in a child whose BANNED is `banned_expr`, Python
+    source evaluated with the loaded module bound to `m` (so the pattern is
+    built at run time from the module's own parts, never typed here)."""
+    code = ("import importlib.util,re,sys;"
+            f"s=importlib.util.spec_from_file_location('l',{str(SCRIPT)!r});"
+            "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+            f"m.BANNED={banned_expr};m._is_banned.cache_clear();"
+            f"sys.argv=['l',*{[str(p) for p in paths]!r}];sys.exit(m.main())")
+    return subprocess.run([sys.executable, "-c", code], capture_output=True,
+                          text=True)
+
+
+def with_banned(pattern: str, flags: int = re.IGNORECASE | re.ASCII):
+    """Swap the module's BANNED for one built from `pattern` (the module's
+    flags unless told otherwise)."""
     class _Swap:
         def __enter__(self):
             self.saved = L.BANNED
-            L.BANNED = re.compile(pattern, re.IGNORECASE | re.ASCII)
+            L.BANNED = re.compile(pattern, flags)
             L._is_banned.cache_clear()
 
         def __exit__(self, *exc):
@@ -99,6 +118,36 @@ class SelfTest(unittest.TestCase):
             _, eaten = L.self_test()
         self.assertIn("color", eaten)
         self.assertIn("colored", eaten)
+
+    def test_every_word_list_entry_is_caught(self):
+        # The word list is typed, not built from pairs, so the pair checks
+        # above never see it; BANNED must still match every entry whole.
+        entries = L.WORD_LIST.split("|")
+        self.assertGreater(len(entries), 100)
+        self.assertEqual([w for w in entries if not L.BANNED.fullmatch(w)], [])
+
+    def test_dropping_the_word_list_makes_the_self_test_report(self):
+        # The families alone miss the entries no family builds; a BANNED that
+        # loses the word list must make the self-test name them.
+        families_only = re.compile(rf"\b({'|'.join(L.FAMILIES)})\b",
+                                   re.IGNORECASE | re.ASCII)
+        uncovered = [w for w in L.WORD_LIST.split("|")
+                     if not families_only.fullmatch(w)]
+        self.assertTrue(uncovered)
+        with with_banned(families_only.pattern):
+            missed, eaten = L.self_test()
+        self.assertEqual(sorted(set(missed) & set(uncovered)), sorted(uncovered))
+        self.assertEqual(eaten, [])
+
+    def test_dropping_the_case_flag_makes_the_self_test_report(self):
+        # Every pair is lower case; the self-test's capitalized and upper-case
+        # forms of the shipped compound are what notice a lost IGNORECASE.
+        with with_banned(L.BANNED.pattern, flags=re.ASCII):
+            missed, eaten = L.self_test()
+        self.assertIn(f"a better-{SHIPPED.capitalize()} route", missed)
+        self.assertIn(f"a better-{SHIPPED.upper()} route", missed)
+        self.assertNotIn(f"a better-{SHIPPED} route", missed)
+        self.assertEqual(eaten, [])
 
     def test_a_dropped_allow_guard_word_is_reported_when_eaten(self):
         # A rule that eats an ALLOW word (aria-labelledby's attribute name is
@@ -162,12 +211,8 @@ class WordRuns(unittest.TestCase):
     def test_main_refuses_a_pattern_the_word_runs_cannot_see(self):
         f = Path(tempfile.mkdtemp()) / "x.md"
         f.write_text("plain\n", encoding="utf-8")
-        code = ("import importlib.util,re,sys;"
-                f"s=importlib.util.spec_from_file_location('l',{str(SCRIPT)!r});"
-                "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
-                "m.BANNED=re.compile(m.BANNED.pattern[:-3]+'|a-b)\\\\b',re.I|re.A);"
-                f"sys.argv=['l',{str(f)!r}];sys.exit(m.main())")
-        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        r = run_main_with(
+            "re.compile(m.BANNED.pattern[:-3]+'|a-b)\\\\b',re.I|re.A)", f)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("word-run check cannot see it", r.stderr)
 
@@ -175,6 +220,11 @@ class WordRuns(unittest.TestCase):
         a = L.DOUBLE_L[1] + "l" + "ing"
         b = L._stems(L.IZE_VERBS, "ize")[2] + "is" + "ed"
         self.assertEqual(L.banned_words(f"{a} and {b}"), [a, b])
+
+    def test_a_form_is_caught_in_any_letter_case(self):
+        # Two of the lines CI9 fixed opened a sentence with the form.
+        for form in (SHIPPED.capitalize(), SHIPPED.upper()):
+            self.assertEqual(L.banned_words(f"{form} as far as it goes"), [form])
 
 
 class Gate(unittest.TestCase):
@@ -193,6 +243,48 @@ class Gate(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn(f"note.md:1: {SHIPPED}", r.stderr)
 
+    def test_main_fails_a_family_form_in_capitals(self):
+        f = self.dir / "note.md"
+        cap, upper = SHIPPED.capitalize(), SHIPPED.upper()
+        f.write_text(f"{cap} as far as a radio carries it.\n"
+                     f"NOTE: {upper} HOME\n", encoding="utf-8")
+        r = run_lint(f)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn(f"note.md:1: {cap}", r.stderr)
+        self.assertIn(f"note.md:2: {upper}", r.stderr)
+
+    def _planted(self) -> Path:
+        # A file the lint would fail (exit 1) if it ever read it: an exit of 2
+        # means main() stopped before the walk.
+        f = self.dir / "planted.md"
+        f.write_text(f"The beacon {SHIPPED} home.\n", encoding="utf-8")
+        return f
+
+    def test_main_stops_before_reading_when_a_family_misses(self):
+        # BANNED reduced to the hand-typed word list: every family form is
+        # missed, no correct word is eaten.
+        r = run_main_with(r"re.compile(r'\b('+m.WORD_LIST+r')\b',re.I|re.A)",
+                          self._planted())
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("no longer catches", r.stderr)
+        self.assertNotIn("planted.md", r.stderr)
+        self.assertNotIn("spelling OK", r.stdout)
+
+    def test_main_stops_before_reading_when_a_rule_eats_a_correct_word(self):
+        # The intact BANNED plus the optional-u rule that shipped on this
+        # file's first run: it eats the US word, so main() must refuse.
+        r = run_main_with(
+            r"re.compile(m.BANNED.pattern[:-3]+r'|colou?r\w*)\b',re.I|re.A)",
+            self._planted())
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("CORRECT English", r.stderr)
+        self.assertNotIn("planted.md", r.stderr)
+
+    def test_main_stops_before_reading_when_the_case_flag_is_lost(self):
+        r = run_main_with("re.compile(m.BANNED.pattern,re.A)", self._planted())
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("no longer catches", r.stderr)
+
     def test_main_passes_the_us_forms(self):
         f = self.dir / "note.md"
         f.write_text(" ".join(us for us, _ in L.family_pairs()[::11]) + "\n",
@@ -200,14 +292,22 @@ class Gate(unittest.TestCase):
         r = run_lint(f)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
-    def test_swift_api_names_are_blanked_not_banned(self):
-        member = "is" + "Cancel" + "led"
-        f = self.dir / "Task.swift"
-        f.write_text(f"if Task.{member} {{ return }}\n", encoding="utf-8")
-        self.assertEqual(run_lint(f).returncode, 0)
-        g = self.dir / "task.js"
-        g.write_text(f"// the job was {'cancel' + 'led'}\n", encoding="utf-8")
-        self.assertEqual(run_lint(g).returncode, 1)
+    def test_swift_api_member_is_blanked_in_swift_only(self):
+        # Network's browser state is a dotted member spelled the vendor's way:
+        # on its own it is a banned word run, so only the .swift exemption
+        # lets it through. The same line in a .js file must still fail.
+        # (`Task.isCancelled` needs no exemption: one \w run that no rule
+        # fullmatches, so it passes in any file and proves nothing here.)
+        line = "case ." + "cancel" + "led: break\n"
+        f = self.dir / "Browser.swift"
+        f.write_text(line, encoding="utf-8")
+        r = run_lint(f)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        g = self.dir / "browser.js"
+        g.write_text(line, encoding="utf-8")
+        r = run_lint(g)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("browser.js:1: " + "cancel" + "led", r.stderr)
 
 
 if __name__ == "__main__":
