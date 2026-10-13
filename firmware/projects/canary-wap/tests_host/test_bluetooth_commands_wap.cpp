@@ -92,6 +92,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -2936,17 +2937,40 @@ void test_the_worker_never_meets_a_taps_bring_up() {
 // runs, then again once the loop task has taken the bring-up. `make
 // tsan-bt-commands` runs it under ThreadSanitizer: the tap reads the latch
 // and the stack's flag while the worker writes them.
+//
+// Deterministic whatever the scheduler does (the F235 review: it failed
+// about 1 run in 10 with eight -O2 copies on four cores, and under TSAN).
+// Only the loop thread moves the clock: the second tap's wait sleeps in real
+// time without spending the simulated one. The default vTaskDelay added its
+// poll to the clock on the HTTP thread, so a starved loop thread let
+// COMMAND_WAIT_MS pass in simulated time and the ring withdrew the command
+// (503 bluetooth_timeout); now each pass that moves the clock drains first.
+// And every wait is for its event, not for a count of yields: the worker
+// stays inside init() until the tap has been answered (a bounded spin let
+// it leave first under load, and the tap then found the stack up). The
+// real-time deadline only keeps a broken build from hanging; reaching it
+// fails the test.
 void test_threads_a_tap_meets_the_bring_up() {
   boot(/*bring_up=*/false);
   loop_pass();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+  const auto in_time = [deadline] { return std::chrono::steady_clock::now() < deadline; };
   std::atomic<bool> inside{false};
   std::atomic<bool> tapped{false};
   std::atomic<bool> adopted{false};
   std::atomic<bool> worker_done{false};
   std::atomic<bool> done{false};
+  std::atomic<bool> give_up{false};
+  host_sim::on_task_delay = [&give_up](uint32_t ms) {
+    if (give_up.load()) {
+      host_sim::now_ms += ms;                      // past the deadline: let a wait run out
+    } else {
+      std::this_thread::sleep_for(std::chrono::microseconds(50));
+    }
+  };
   g_inside_init = [&] {
     inside.store(true);
-    for (int i = 0; i < 2000000 && !tapped.load(); ++i) std::this_thread::yield();
+    while (!tapped.load() && !give_up.load()) std::this_thread::yield();
   };
   bc::bringup_worker_started();
   std::thread bringup([&] {
@@ -2957,13 +2981,15 @@ void test_threads_a_tap_meets_the_bring_up() {
   std::string first_status, first_body, second_status, second_body;
   std::thread httpd([&] {
     host_sim::task = "httpd";
-    while (!inside.load()) std::this_thread::yield();
+    while (!inside.load() && !give_up.load()) std::this_thread::yield();
+    if (give_up.load()) return;
     httpd_req_t during;
     CHECK(bluetooth_api::handle_bluetooth_advertise_start(&during) == ESP_OK);
     first_status = during.status;
     first_body = during.resp;
     tapped.store(true);
-    while (!adopted.load()) std::this_thread::yield();
+    while (!adopted.load() && !give_up.load()) std::this_thread::yield();
+    if (give_up.load()) return;
     httpd_req_t after;
     CHECK(bluetooth_api::handle_bluetooth_advertise_start(&after) == ESP_OK);
     second_status = after.status;
@@ -2972,7 +2998,7 @@ void test_threads_a_tap_meets_the_bring_up() {
   });
   host_sim::task = "loop";
   bool finalized = false;
-  for (uint32_t pass = 0; !done.load() && pass < 50000000u; ++pass) {
+  while (!done.load() && in_time()) {
     if (!finalized && worker_done.load()) {
       bc::bringup_worker_finished();               // the sketch's finalize, on the loop task
       bc::boot_bring_up_finished();
@@ -2983,17 +3009,17 @@ void test_threads_a_tap_meets_the_bring_up() {
     host_sim::now_ms += 1;
     std::this_thread::yield();
   }
-  tapped.store(true);                              // never leave the worker waiting
-  adopted.store(true);
+  give_up.store(true);                             // the deadline passed: free every waiter
   bringup.join();
   httpd.join();
+  host_sim::on_task_delay = nullptr;
   g_inside_init = nullptr;
   if (!finalized) {
     bc::bringup_worker_finished();
     bc::boot_bring_up_finished();
   }
   bc::update();
-  CHECK(done.load());
+  CHECK(done.load());                              // false only at the deadline
   CHECK(first_status == "503 Service Unavailable" && first_body == refused_with(kStillStarting));
   CHECK(second_status == "200 OK" && second_body == succeeded_with("Advertising started"));
   CHECK(host_sim::count("nimble_init") == 1 && host_sim::count("nimble_init", "bringup") == 1);
