@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 
+pub mod attention;
 pub mod busybar;
 
 /// The coarse severity classes — the whole vocabulary that may leave the LAN.

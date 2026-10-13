@@ -525,6 +525,9 @@ def main() -> int:
     # --- system.integrity tamper kinds (firmware module + HA + narrations) ---
     _check_integrity_kinds(d["known_divergences"]["tamper_vocabularies"], const_py)
 
+    # --- Household posture + the hub attention engine (Rust core + vectors) ---
+    _check_attention(d)
+
     if ERRORS:
         print("Witness Dictionary drift detected "
               "(edit spec/witness_dictionary.json first, then every copy below):\n", file=sys.stderr)
@@ -813,6 +816,504 @@ def _check_integrity_kinds(tv: dict, const_py: str) -> None:
         err(f"[drift] system_integrity_hosts cover {sorted(union)}, not "
             f"system_integrity_kinds {sorted(want)} — a kind no host can emit "
             f"is a sensor that never fires")
+
+
+# --------------------------------------------------------------------------
+# Household posture and the hub attention engine
+# --------------------------------------------------------------------------
+#
+# The attention engine (src/relay/attention.rs) decides how loudly the hub
+# notifies, so every vocabulary it speaks is pinned here: a silent rename of a
+# tier, a class quietly moved off critical, a phrase that grows a second blank
+# or an identity word, a channel regrouped so two radios on one phone count as
+# independent corroboration. The engine mirrors the dictionary through one
+# method per fact (`id`, `floor_tier`, `family`, `text`, ...), each a plain
+# `match` the parsers below read from its own impl body — the same scoping
+# reason as rust_fn_body: several impls here share method names.
+
+_ATT_RS = "src/relay/attention.rs"
+_ATT_FIXTURE = "spec/fixtures/attention_v1.json"
+_SENTINEL_H = "firmware/common/fusion/sentinel_fusion.h"
+_SENTINEL_CPP = "firmware/common/fusion/sentinel_fusion.cpp"
+_NOTIFY_H = "firmware/projects/canary-wap/arduino/canary_wap/notify.h"
+_REPEAT_SWIFT = "ios/Sources/SecuraCV/Alerts/RepeatGovernor.swift"
+_RELAY_RS = "src/relay/mod.rs"
+
+# Words no phrase or reason text may say (spec household_keys_v0 §7.2 rule 7,
+# Free Signals Invariant F and §5): no who, no known-vs-unknown, no
+# authorized-vs-not, and the novelty hint never reaches wording.
+_ATTENTION_FORBIDDEN_WORDS = frozenset({
+    "name", "names", "known", "unknown", "stranger", "strangers", "intruder",
+    "intruders", "recognized", "verified", "familiar", "unfamiliar",
+    "authorized", "unauthorized", "household",
+})
+
+
+def rust_impl_body(text: str, type_name: str, rel: str) -> str:
+    """Body of `impl {type_name} { ... }` (not a trait impl), or ""."""
+    m = re.search(r"\bimpl\s+" + re.escape(type_name) + r"\s*\{", text)
+    if not m:
+        err(f"[parse] could not find `impl {type_name}` in {rel} — update the linter if it moved")
+        return ""
+    return _balanced_body(text, m.end() - 1)
+
+
+def rust_impl_fn_body(text: str, type_name: str, fn: str, rel: str) -> str:
+    """Body of `fn {fn}` inside `impl {type_name}`, or ""."""
+    impl = rust_impl_body(text, type_name, rel)
+    if not impl:
+        return ""
+    return rust_fn_body(impl, fn, f"{rel} impl {type_name}")
+
+
+def rust_variant_arms(body: str, enum: str, rhs: str) -> dict[str, str]:
+    """{variant: rhs-group} for `E::A | E::B => rhs` arms, braces allowed.
+
+    `rhs` is a regex with exactly one group. Unambiguous for the same reason
+    as rust_event_signal_map: every repetition consumes a literal `E::` and a
+    literal `|`.
+    """
+    out: dict[str, str] = {}
+    e = re.escape(enum)
+    pat = (r"((?:" + e + r"::\w+\s*\|\s*)*" + e + r"::\w+)\s*=>\s*\{?\s*" + rhs)
+    for m in re.finditer(pat, body):
+        for var in re.findall(e + r"::(\w+)", m.group(1)):
+            out[var] = m.group(2)
+    return out
+
+
+def rust_matches_set(body: str, enum: str) -> set[str]:
+    """Variants named in a `matches!(self, E::A | E::B)` body."""
+    m = re.search(r"matches!\s*\(\s*self\s*,(.*?)\)", body, re.S)
+    if not m:
+        return set()
+    return set(re.findall(re.escape(enum) + r"::(\w+)", m.group(1)))
+
+
+def rust_all_array(text: str, type_name: str, rel: str) -> list[str]:
+    """Variants listed in `impl T { pub const ALL: [T; n] = [...] }`."""
+    impl = rust_impl_body(text, type_name, rel)
+    m = re.search(r"const\s+ALL\s*:\s*\[\s*" + re.escape(type_name) + r"\s*;\s*\d+\s*\]\s*=\s*\[(.*?)\];",
+                  impl, re.S)
+    if not m:
+        err(f"[parse] {rel}: `{type_name}::ALL` not found — update the linter if it moved")
+        return []
+    return re.findall(re.escape(type_name) + r"::(\w+)", m.group(1))
+
+
+def rust_const_int(text: str, name: str, rel: str) -> int | None:
+    m = re.search(r"\bconst\s+" + re.escape(name) + r"\s*:\s*u\d+\s*=\s*([0-9_]+)\s*;", text)
+    if not m:
+        err(f"[parse] {rel}: const {name} not found — update the linter if it moved")
+        return None
+    return int(m.group(1).replace("_", ""))
+
+
+def cpp_fn_body(text: str, name: str, rel: str) -> str:
+    """Body of a C/C++ function DEFINITION `... {name}(...) {`, or ""."""
+    m = re.search(r"\b" + re.escape(name) + r"\s*\([^()]*\)\s*\{", text)
+    if not m:
+        err(f"[parse] could not find the definition of {name}() in {rel} — update the linter")
+        return ""
+    return _balanced_body(text, m.end() - 1)
+
+
+def cpp_enum_class_variants(text: str, name: str, rel: str) -> list[str]:
+    """Variants of a C++ `enum class {name} : T { ... }`, minus `kCount`."""
+    m = re.search(r"\benum\s+class\s+" + re.escape(name) + r"\b[^{;]*\{", text)
+    if not m:
+        err(f"[parse] could not find `enum class {name}` in {rel} — update the linter if it moved")
+        return []
+    body = _balanced_body(text, m.end() - 1)
+    out = []
+    for line in _c_code(body).splitlines():
+        vm = re.match(r"^\s*([A-Z][A-Za-z0-9_]*)\b", line)
+        if vm and vm.group(1) != "kCount":
+            out.append(vm.group(1))
+    return out
+
+
+def _check_id_enum(att_rs: str, rust_type: str, items: list, what: str) -> dict[str, str]:
+    """Variants (order included), ALL, and `fn id` of one id-carrying enum.
+
+    Returns {rust_variant: id} as the dictionary states it, for the callers'
+    cross-references.
+    """
+    want_variants = [i["rust_variant"] for i in items]
+    got_variants = rust_enum_variants(att_rs, rust_type, _ATT_RS)
+    if got_variants != want_variants:
+        err(f"[drift] {_ATT_RS} enum {rust_type}: variants {got_variants} vs dictionary "
+            f"{what} {want_variants} (order is part of the contract)")
+    all_arr = rust_all_array(att_rs, rust_type, _ATT_RS)
+    if all_arr and all_arr != want_variants:
+        err(f"[drift] {_ATT_RS} {rust_type}::ALL {all_arr} vs dictionary {what} {want_variants}")
+    ids = rust_variant_arms(rust_impl_fn_body(att_rs, rust_type, "id", _ATT_RS),
+                            rust_type, r'"([a-z0-9_]+)"')
+    want = {i["rust_variant"]: i["id"] for i in items}
+    if ids != want:
+        err(f"[drift] {_ATT_RS} {rust_type}::id(): code {ids} vs dictionary {what} {want}")
+    return want
+
+
+def _check_attention_text(what: str, text: str) -> None:
+    """A phrase or reason text: one blank at most ({zone}), no identity word."""
+    bare = text.replace("{zone}", "")
+    if "{" in bare or "}" in bare:
+        err(f"[drift] attention {what} {text!r}: the only blank allowed is {{zone}}")
+    for word in re.findall(r"[A-Za-z]+", bare):
+        if word.lower() in _ATTENTION_FORBIDDEN_WORDS:
+            err(f"[drift] attention {what} {text!r} says {word!r} — no who, no "
+                f"known-vs-unknown, no novelty in any wording (spec §7.2 rule 7)")
+
+
+def _check_attention(d: dict) -> None:
+    """Pin `household_posture` and `attention` to src/relay/attention.rs.
+
+    Also holds the channel grouping to the sentinel's own modality_of, the
+    sustained-dwell threshold to canary-wap notify.h, the governor's numbers
+    to the Apple apps' RepeatGovernor, cloud classes to the relay's PokeClass
+    wire words, and the conformance vectors' ids to the dictionary.
+    """
+    hp = d.get("household_posture")
+    att = d.get("attention")
+    if not hp or not att:
+        err("[drift] spec/witness_dictionary.json has no household_posture / attention block")
+        return
+    src = read(_ATT_RS)
+    if not src:
+        return
+
+    # Household posture: variants, ids, and the signed statement's wire byte.
+    postures = hp["values"]
+    _check_id_enum(src, "HouseholdPosture", postures, "household_posture")
+    wire = rust_variant_arms(rust_impl_fn_body(src, "HouseholdPosture", "wire_byte", _ATT_RS),
+                             "HouseholdPosture", r"(Some\(\s*(?:0x[0-9A-Fa-f]+|\d+)\s*\)|None)")
+    for p in postures:
+        arm = wire.get(p["rust_variant"])
+        got = None if arm in (None, "None") else int(re.search(r"\((.*)\)", arm).group(1).strip(), 0)
+        if arm is None:
+            err(f"[drift] HouseholdPosture::wire_byte() has no arm for {p['rust_variant']}")
+        elif got != p["wire"]:
+            err(f"[drift] HouseholdPosture::{p['rust_variant']}.wire_byte(): code {got!r} vs "
+                f"dictionary {p['wire']!r} — the posture byte of a signed statement")
+    if [p["id"] for p in postures if p["wire"] is None] != ["unset"]:
+        err("[drift] household_posture: exactly `unset` must have no wire byte (it is never signed)")
+
+    # Tiers: declaration order IS the ladder (derive(Ord)), so it must equal rank order.
+    tiers = sorted(att["tiers"], key=lambda t: t["rank"])
+    _check_id_enum(src, "Tier", tiers, "attention.tiers")
+    tier_by_id = {t["id"]: t["rust_variant"] for t in tiers}
+
+    # Zone kinds and which of them household posture acts on.
+    zks = att["zone_kinds"]
+    _check_id_enum(src, "ZoneKind", zks, "attention.zone_kinds")
+    applies = rust_matches_set(rust_impl_fn_body(src, "ZoneKind", "posture_applies", _ATT_RS),
+                               "ZoneKind")
+    want_applies = {z["rust_variant"] for z in zks if z["posture_applies"]}
+    if applies != want_applies:
+        err(f"[drift] ZoneKind::posture_applies(): code {sorted(applies)} vs dictionary "
+            f"{sorted(want_applies)} — household posture must act on indoor zones only")
+
+    # Modality classes, the corroboration cap, and the sentinel's own classes.
+    mods = att["modalities"]["items"]
+    _check_id_enum(src, "Modality", mods, "attention.modalities")
+    mod_by_id = {m["id"]: m for m in mods}
+    cap = rust_const_int(rust_impl_body(src, "CorroborationClasses", _ATT_RS), "MAX", _ATT_RS)
+    if att["modalities"]["max_classes"] != len(mods) or (cap is not None and cap != len(mods)):
+        err(f"[drift] corroboration cap: dictionary max_classes "
+            f"{att['modalities']['max_classes']}, CorroborationClasses::MAX {cap}, "
+            f"{len(mods)} modality classes — all three must agree")
+    sentinel_h = read(_SENTINEL_H)
+    sentinel_mods = cpp_enum_class_variants(sentinel_h, "Modality", _SENTINEL_H) if sentinel_h else []
+    named = {m["sentinel_variant"] for m in mods if m["sentinel_variant"]}
+    if sentinel_mods and named != set(sentinel_mods):
+        err(f"[drift] attention.modalities sentinel_variant {sorted(named)} vs {_SENTINEL_H} "
+            f"Modality {sorted(sentinel_mods)} — every sentinel class must be counted, once")
+
+    # Channels: id, class, weak, sees_person — and the sentinel's modality_of.
+    chans = att["channels"]["items"]
+    _check_id_enum(src, "Channel", chans, "attention.channels")
+    modality_arms = rust_variant_arms(rust_impl_fn_body(src, "Channel", "modality", _ATT_RS),
+                                      "Channel", r"(Some\(\s*Modality::\w+\s*\)|None)")
+    weak = rust_matches_set(rust_impl_fn_body(src, "Channel", "is_weak", _ATT_RS), "Channel")
+    sees = rust_matches_set(rust_impl_fn_body(src, "Channel", "sees_person", _ATT_RS), "Channel")
+    for c in chans:
+        rv = c["rust_variant"]
+        arm = modality_arms.get(rv)
+        got = None
+        if arm and arm != "None":
+            got = re.search(r"Modality::(\w+)", arm).group(1)
+        want = mod_by_id[c["modality"]]["rust_variant"] if c["modality"] else None
+        if arm is None:
+            err(f"[drift] Channel::modality() has no arm for {rv}")
+        elif got != want:
+            err(f"[drift] Channel::{rv}.modality(): code {got!r} vs dictionary {want!r}")
+        if c["modality"] is not None and c["modality"] not in mod_by_id:
+            err(f"[drift] attention.channels {c['id']!r} names modality {c['modality']!r}, "
+                f"which attention.modalities does not list")
+    want_weak = {c["rust_variant"] for c in chans if c["weak"]}
+    if weak != want_weak:
+        err(f"[drift] Channel::is_weak(): code {sorted(weak)} vs dictionary {sorted(want_weak)}")
+    want_sees = {c["rust_variant"] for c in chans if c["sees_person"]}
+    if sees != want_sees:
+        err(f"[drift] Channel::sees_person(): code {sorted(sees)} vs dictionary {sorted(want_sees)}")
+    sentinel_cpp = read(_SENTINEL_CPP)
+    if sentinel_cpp and sentinel_h:
+        of = dict(re.findall(r"case\s+Channel::(\w+)\s*:\s*return\s+Modality::(\w+)\s*;",
+                             cpp_fn_body(_c_code(sentinel_cpp), "modality_of", _SENTINEL_CPP)))
+        sentinel_chans = cpp_enum_class_variants(sentinel_h, "Channel", _SENTINEL_H)
+        if not of:
+            err(f"[parse] {_SENTINEL_CPP}: no `case Channel::X: return Modality::Y;` arms in "
+                f"modality_of — update the linter if it moved")
+        chan_by_rv = {c["rust_variant"]: c for c in chans}
+        for sc in sentinel_chans:
+            c = chan_by_rv.get(sc)
+            if c is None:
+                err(f"[drift] sentinel channel {sc} ({_SENTINEL_H}) is not in attention.channels")
+                continue
+            ours = mod_by_id.get(c["modality"] or "", {}).get("sentinel_variant")
+            if of.get(sc) != ours:
+                err(f"[drift] channel {c['id']!r}: dictionary groups it as sentinel class "
+                    f"{ours!r}, {_SENTINEL_CPP} modality_of says {of.get(sc)!r} — two channels an "
+                    f"evader defeats together must count as one class")
+
+    # Dwell bands, and the 90 s the WAP's own filter uses.
+    dwell = att["dwell_bands"]
+    _check_id_enum(src, "DwellBand", dwell["items"], "attention.dwell_bands")
+    secs = rust_const_int(src, "DWELL_SUSTAINED_SECS", _ATT_RS)
+    if secs is not None and secs != dwell["sustained_secs"]:
+        err(f"[drift] DWELL_SUSTAINED_SECS {secs} vs dictionary sustained_secs "
+            f"{dwell['sustained_secs']}")
+    notify = read(_NOTIFY_H)
+    if notify:
+        nm = re.search(r"MIN_SUSTAINED_MS\s*=\s*(\d+)\s*UL?\s*\*\s*(\d+)\s*UL?\s*;", notify)
+        if not nm:
+            err(f"[parse] {_NOTIFY_H}: MIN_SUSTAINED_MS (`N * 1000`) not found — update the linter")
+        elif int(nm.group(1)) * int(nm.group(2)) != dwell["sustained_secs"] * 1000:
+            err(f"[drift] {_NOTIFY_H} MIN_SUSTAINED_MS {nm.group(1)}*{nm.group(2)} ms vs dictionary "
+                f"sustained_secs {dwell['sustained_secs']} — one notion of a sustained dwell")
+
+    # Novelty.
+    _check_id_enum(src, "Novelty", att["novelty"]["items"], "attention.novelty")
+
+    # Episode families, and the only four that may map to a cloud poke class.
+    fams = att["episode_families"]["items"]
+    fam_rv = _check_id_enum(src, "EpisodeFamily", fams, "attention.episode_families")
+    relay = read(_RELAY_RS)
+    sev = rust_variant_arms(rust_fn_body(relay, "sev", _RELAY_RS), "PokeClass",
+                            r'"([a-z]+)"') if relay else {}
+    cc_body = rust_fn_body(src, "cloud_class", _ATT_RS)
+    some = rust_variant_arms(cc_body, "EpisodeFamily", r"Some\(\s*PokeClass::(\w+)\s*\)")
+    none = rust_variant_arms(cc_body, "EpisodeFamily", r"(None)\b")
+    for f in fams:
+        rv, want = f["rust_variant"], f["cloud_class"]
+        got = sev.get(some[rv], f"PokeClass::{some[rv]}") if rv in some else None
+        if got != want:
+            err(f"[drift] cloud_class() for EpisodeFamily::{rv}: code {got!r} vs dictionary "
+                f"{want!r}")
+        if want is None and rv not in none:
+            err(f"[drift] cloud_class(): EpisodeFamily::{rv} must be listed explicitly in the "
+                f"`=> None` arm (no wildcard: a new family decides on purpose)")
+        if want is not None and want not in sev.values():
+            err(f"[drift] attention.episode_families {f['id']!r} cloud_class {want!r} is not a "
+                f"PokeClass wire word in {_RELAY_RS}")
+        if want == "drill":
+            err("[drift] attention.episode_families: `drill` is lane-local and never a cloud class")
+
+    # Episode governor numbers: the Rust consts and the Apple apps' RepeatGovernor.
+    gov = att["episode_governor"]
+    swift_gov = read(_REPEAT_SWIFT)
+    for key, const, swift_name in (
+            ("base_cooldown_secs", "EPISODE_BASE_COOLDOWN_SECS", "baseCooldown"),
+            ("cooldown_cap_secs", "EPISODE_COOLDOWN_CAP_SECS", "cooldownCap"),
+            ("calm_gap_secs", "EPISODE_CALM_GAP_SECS", "calmGap")):
+        got = rust_const_int(src, const, _ATT_RS)
+        if got is not None and got != gov[key]:
+            err(f"[drift] {const} {got} vs dictionary episode_governor.{key} {gov[key]}")
+        sm = re.search(r"static\s+let\s+" + swift_name + r"\s*:\s*TimeInterval\s*=\s*(\d+)",
+                       swift_gov)
+        if not sm:
+            err(f"[parse] {_REPEAT_SWIFT}: `static let {swift_name}` not found — update the linter")
+        elif int(sm.group(1)) != gov[key]:
+            err(f"[drift] {_REPEAT_SWIFT} {swift_name} {sm.group(1)} vs dictionary "
+                f"episode_governor.{key} {gov[key]} — hub and phone must rest a burst alike")
+
+    # Phrases and reasons: ids, texts, and the wording rules.
+    phrases = att["phrase_ids"]["items"]
+    phrase_rv = _check_id_enum(src, "PhraseId", phrases, "attention.phrase_ids")
+    texts = rust_variant_arms(rust_impl_fn_body(src, "PhraseId", "text", _ATT_RS),
+                              "PhraseId", r'"([^"\\]*)"')
+    for p in phrases:
+        _check_attention_text(f"phrase {p['id']!r}", p["text"])
+        if texts.get(p["rust_variant"]) != p["text"]:
+            err(f"[drift] PhraseId::{p['rust_variant']}.text(): code "
+                f"{texts.get(p['rust_variant'])!r} vs dictionary {p['text']!r}")
+    reasons = att["reason_codes"]["items"]
+    _check_id_enum(src, "ReasonCode", reasons, "attention.reason_codes")
+    rtexts = rust_variant_arms(rust_impl_fn_body(src, "ReasonCode", "text", _ATT_RS),
+                               "ReasonCode", r'"([^"\\]*)"')
+    for r in reasons:
+        _check_attention_text(f"reason {r['id']!r}", r["id"].replace("_", " "))
+        _check_attention_text(f"reason {r['id']!r}", r["text"])
+        if rtexts.get(r["rust_variant"]) != r["text"]:
+            err(f"[drift] ReasonCode::{r['rust_variant']}.text(): code "
+                f"{rtexts.get(r['rust_variant'])!r} vs dictionary {r['text']!r}")
+
+    # Classes: floor, ceiling, family, phrase, person flag — and their sanity.
+    classes = att["classes"]["items"]
+    _check_id_enum(src, "EventClass", classes, "attention.classes")
+    class_by_id = {c["id"]: c for c in classes}
+    rank = {t["id"]: t["rank"] for t in tiers}
+    floors = rust_variant_arms(rust_impl_fn_body(src, "EventClass", "floor_tier", _ATT_RS),
+                               "EventClass", r"Tier::(\w+)")
+    ceilings = rust_variant_arms(rust_impl_fn_body(src, "EventClass", "ceiling_tier", _ATT_RS),
+                                 "EventClass", r"Tier::(\w+)")
+    families = rust_variant_arms(rust_impl_fn_body(src, "EventClass", "family", _ATT_RS),
+                                 "EventClass", r"EpisodeFamily::(\w+)")
+    phrase_of = rust_variant_arms(rust_impl_fn_body(src, "EventClass", "phrase", _ATT_RS),
+                                  "EventClass", r"PhraseId::(\w+)")
+    person = rust_matches_set(rust_impl_fn_body(src, "EventClass", "person_class", _ATT_RS),
+                              "EventClass")
+    fam_variant = {f["id"]: f["rust_variant"] for f in fams}
+    phrase_variant = {p["id"]: p["rust_variant"] for p in phrases}
+    for c in classes:
+        rv = c["rust_variant"]
+        for field, got_map, want in (
+                ("floor_tier", floors, tier_by_id.get(c["floor_tier"])),
+                ("ceiling_tier", ceilings, tier_by_id.get(c["ceiling_tier"])),
+                ("family", families, fam_variant.get(c["family"])),
+                ("phrase", phrase_of, phrase_variant.get(c["phrase"]))):
+            if want is None:
+                err(f"[drift] attention.classes {c['id']!r} {field} {c[field]!r} is not in the "
+                    f"dictionary's own list")
+            elif got_map.get(rv) != want:
+                err(f"[drift] EventClass::{rv}.{field}(): code {got_map.get(rv)!r} vs "
+                    f"dictionary {want!r}")
+        if (rv in person) != bool(c["person_class"]):
+            err(f"[drift] EventClass::{rv}.person_class(): code {rv in person} vs dictionary "
+                f"{c['person_class']}")
+        f, ce = rank.get(c["floor_tier"], -1), rank.get(c["ceiling_tier"], -1)
+        if c["floor_tier"] == "critical" and c["ceiling_tier"] != "critical":
+            err(f"[drift] attention.classes {c['id']!r}: a critical floor needs a critical ceiling")
+        if c["floor_tier"] != "critical" and c["ceiling_tier"] not in ("digest", "important"):
+            err(f"[drift] attention.classes {c['id']!r}: a non-critical class can earn at most "
+                f"important (critical comes only from the class)")
+        if c["floor_tier"] not in ("digest", "critical") or f > ce:
+            err(f"[drift] attention.classes {c['id']!r}: floor {c['floor_tier']!r} / ceiling "
+                f"{c['ceiling_tier']!r} — floors are digest or critical, and never above the ceiling")
+    used_phrases = {c["phrase"] for c in classes}
+    if used_phrases != set(phrase_rv.values()):
+        err(f"[drift] attention.phrase_ids not used by any class: "
+            f"{sorted(set(phrase_rv.values()) - used_phrases)}")
+    used_fams = {c["family"] for c in classes}
+    if used_fams != set(fam_rv.values()):
+        err(f"[drift] attention.episode_families not used by any class: "
+            f"{sorted(set(fam_rv.values()) - used_fams)}")
+
+    # The class map, both dialects.
+    cm = att["class_map"]
+    ev_items = d["event_types"]["items"]
+    if sorted(cm["kernel_event_types"]) != sorted(e["id"] for e in ev_items):
+        err(f"[drift] attention.class_map.kernel_event_types keys must be exactly the "
+            f"event_types ids; got {sorted(cm['kernel_event_types'])}")
+    kernel_arms = rust_variant_arms(rust_fn_body(src, "class_for_event_type", _ATT_RS),
+                                    "EventType", r"EventClass::(\w+)")
+    for e in ev_items:
+        want_class = cm["kernel_event_types"].get(e["id"])
+        want = class_by_id.get(want_class, {}).get("rust_variant")
+        if want is None:
+            err(f"[drift] class_map.kernel_event_types[{e['id']!r}] = {want_class!r} is not a class")
+        elif kernel_arms.get(e["rust_variant"]) != want:
+            err(f"[drift] class_for_event_type(EventType::{e['rust_variant']}): code "
+                f"{kernel_arms.get(e['rust_variant'])!r} vs dictionary {want!r}")
+    word_body = rust_fn_body(src, "class_for_device_word", _ATT_RS)
+    word_arms = dict(re.findall(r'"([a-z0-9_]+)"\s*=>\s*EventClass::(\w+)', word_body))
+    want_words = {w: class_by_id[c]["rust_variant"] for w, c in cm["device_words"].items()
+                  if c in class_by_id}
+    for w, c in cm["device_words"].items():
+        if c not in class_by_id:
+            err(f"[drift] class_map.device_words[{w!r}] = {c!r} is not a class")
+        if w in cm["kernel_event_types"]:
+            err(f"[drift] class_map.device_words lists {w!r}, a kernel event id — one dialect each")
+    if word_arms != want_words:
+        missing = sorted(set(want_words.items()) - set(word_arms.items()))
+        extra = sorted(set(word_arms.items()) - set(want_words.items()))
+        err(f"[drift] class_for_device_word(): code vs dictionary device_words — missing "
+            f"{missing}, unexpected {extra}")
+    fallback = re.search(r"\b_\s*=>\s*EventClass::(\w+)", word_body)
+    unknown_cls = class_by_id.get(cm["unknown_word_class"])
+    if unknown_cls is None:
+        err(f"[drift] class_map.unknown_word_class {cm['unknown_word_class']!r} is not a class")
+    else:
+        if not fallback or fallback.group(1) != unknown_cls["rust_variant"]:
+            err(f"[drift] class_for_device_word(): the `_ =>` fallback must be "
+                f"EventClass::{unknown_cls['rust_variant']} (dictionary unknown_word_class)")
+        if unknown_cls["ceiling_tier"] != "digest" or unknown_cls["floor_tier"] != "digest":
+            err("[drift] attention: the unknown-word class must be digest, floor and ceiling — "
+                "an unknown word falls back to digest, never critical")
+
+    _check_attention_fixture(d, class_by_id)
+
+
+def _check_attention_fixture(d: dict, class_by_id: dict) -> None:
+    """Every id the conformance vectors use is a dictionary id, and every word
+    vector agrees with the dictionary's class map. The Rust replay proves the
+    engine against the vectors; this proves the vectors against the vocabulary,
+    in the unfiltered lint job, for every surface that replays them."""
+    raw = read(_ATT_FIXTURE)
+    if not raw:
+        return
+    try:
+        fx = json.loads(raw)
+    except json.JSONDecodeError as e:
+        err(f"[drift] {_ATT_FIXTURE} is not valid JSON: {e}")
+        return
+    att, hp = d["attention"], d["household_posture"]
+    ids = {
+        "class": set(class_by_id),
+        "zone_kind": {z["id"] for z in att["zone_kinds"]},
+        "posture": {p["id"] for p in hp["values"]},
+        "channel": {c["id"] for c in att["channels"]["items"]},
+        "dwell": {b["id"] for b in att["dwell_bands"]["items"]},
+        "novelty": {n["id"] for n in att["novelty"]["items"]},
+        "tier": {t["id"] for t in att["tiers"]},
+        "phrase": {p["id"] for p in att["phrase_ids"]["items"]},
+        "reason": {r["id"] for r in att["reason_codes"]["items"]},
+        "family": {f["id"] for f in att["episode_families"]["items"]},
+    }
+
+    def need(where: str, kind: str, value) -> None:
+        if value not in ids[kind]:
+            err(f"[drift] {_ATT_FIXTURE} {where}: {kind} {value!r} is not a dictionary id")
+
+    vectors = fx.get("vectors") or []
+    if not vectors or not fx.get("words") or not fx.get("episodes"):
+        err(f"[drift] {_ATT_FIXTURE}: vectors, words and episodes must all be non-empty")
+    for v in vectors:
+        name, i, e = v.get("name"), v.get("input", {}), v.get("expect", {})
+        for kind in ("class", "zone_kind", "posture", "channel", "dwell", "novelty"):
+            need(name, kind, i.get(kind))
+        for ch in i.get("corroboration", []):
+            need(name, "channel", ch)
+        for kind in ("tier", "phrase", "reason"):
+            need(name, kind, e.get(kind))
+        need(name, "family", e.get("episode", {}).get("family"))
+    cm = att["class_map"]
+    ev_by_variant = {ev["rust_variant"]: ev["id"] for ev in d["event_types"]["items"]}
+    for w in fx.get("words", []):
+        if "device_word" in w:
+            want = cm["device_words"].get(w["device_word"], cm["unknown_word_class"])
+            where = f"device_word {w['device_word']!r}"
+        else:
+            want = cm["kernel_event_types"].get(ev_by_variant.get(w.get("kernel_event_type")))
+            where = f"kernel_event_type {w.get('kernel_event_type')!r}"
+        if w.get("class") != want:
+            err(f"[drift] {_ATT_FIXTURE} {where}: class {w.get('class')!r} vs dictionary "
+                f"class_map {want!r}")
+    for s in fx.get("episodes", []):
+        for step in s.get("steps", []):
+            need(s.get("name"), "tier", step.get("tier"))
+            need(s.get("name"), "family", step.get("episode", {}).get("family"))
 
 
 # Files that BUILD or REBUILD a `securacv-canary-sig|v<n>|<kind>|...` canonical
