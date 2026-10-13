@@ -148,6 +148,43 @@ jobs:
             exit 1
           fi
 
+  # The Windows branches of the hub writer, compiled where they run (sweep
+  # A68). The matrix above is Linux only, so `cfg(windows)` code —
+  # hub-core's hub_enumerate_windows.rs, hub-io's staged \\.\PhysicalDriveN
+  # writer in write.rs — and the Windows view of every test target were
+  # compiled by no workflow: the 2026-10 cleanup found hub-core's own tests
+  # did not build off Linux until it fixed an import. This job compiles them
+  # and enables nothing: the Windows writer stays staged until A9's VM or
+  # hardware pass, and nothing here runs, flashes or ships a Windows build.
+  # Same toolchain as the matrix above (the runner image's rustup stable, no
+  # pin of its own), the same cache shape and the workflow's path filters.
+  # `check`, not `test`: the FAT round-trip tests need dosfstools/mtools and
+  # the loopback HTTP tests are Linux facts already proven above; what only
+  # Windows can say is whether the Windows code compiles.
+  windows-check:
+    name: cargo check on Windows (${{ matrix.crate }})
+    runs-on: windows-latest
+    # A cold check builds hub-io's C dependencies (liblzma, ring) with MSVC;
+    # a few minutes healthy, so this is the circuit breaker, not a race.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [hub-core, hub-io]
+    defaults:
+      run:
+        working-directory: desktop/${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        # One entry per crate, as in the matrix above; rust-cache keys on the
+        # job and the runner OS too, so these never share an entry with Linux.
+        with:
+          workspaces: desktop/${{ matrix.crate }} -> target
+          key: ${{ matrix.crate }}
+      - name: cargo check --all-targets (Windows branches compile)
+        run: cargo check --all-targets
+
   # Self-contained pure modules that live inside the release-only tauri crate
   # (desktop/src-tauri) but depend on nothing but `std`, so `rustc --test` runs
   # their unit tests on a plain runner. (rescue.rs, port_hint.rs, health.rs and
