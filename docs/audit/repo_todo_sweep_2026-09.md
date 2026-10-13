@@ -4823,17 +4823,27 @@ so — see D2 below.)
   `send_bring_up_refused()`, `bring_up_starting()`,
   `waits_for_boot_bring_up()` and `send_boot_bring_up_pending()` exactly, and
   every call of `bring_up(`, qualified or not, in every file of the sketch:
-  only as that guard, only in the three handlers and the settings POST; BV4
-  holds `init()`'s latch order (taken first by the one compare-exchange,
-  cleared only by its RAII guard's release store after the stack's publish;
-  `init_running()` the acquire load); BV7 holds `boot_bring_up_finished()`
-  (exactly the release store, called once at the failed create and once as the
-  finalize stage's last bluetooth_channel/ble_scout/ble_manager call). The
-  check refuses 384 mutations. Read against main's magic-pairing door (#1780,
-  #1783) on the port: a saved-off tap brings the stack up as it did before
-  F235, and nothing new bypasses the scanners' hold. Host-tested; the Arduino
-  and PlatformIO compiles are CI's; not bench-tested (U1: the F235 row). Found
-  here: F259 and F260.
+  only as that guard, only in the three handlers and the settings POST (a
+  call through a function pointer gets past it); BV4 pins the head of
+  `init()` (the first look at the stack, the latch taken by the one
+  compare-exchange, then its RAII guard, whose destructor is the release
+  store) and `init_running()`'s acquire load, but a guard destroyed by hand
+  before the stack's publish, and a dropped re-check after the take, pass it
+  and the suite; BV7 holds `boot_bring_up_finished()`'s body (exactly the
+  release store) and counts the sketch's two calls and their order: one after
+  the failed create's `bringup_worker_finished()`, one as the finalize stage's
+  last bluetooth_channel/ble_scout/ble_manager call. It does not yet prove the
+  first sits inside the failed-create branch, or that finalize cannot return
+  before the second: the F235 verification found four mutants that pass it
+  (F287). The check refuses 384 mutations. Between the worker's result and
+  finalize, a tap gets the pending text even when the worker's init was
+  refused, and 200 once it has brought the stack up, its advertising held
+  until finalize; U1's F235 row expects 503 for both (F288). Read against
+  main's magic-pairing door (#1780, #1783) on the port: a saved-off tap brings
+  the stack up as it did before F235, and nothing new bypasses the scanners'
+  hold. Host-tested; the Arduino and PlatformIO compiles are CI's; not
+  bench-tested (U1: the F235 row). Found here: F259 and F260; the F235
+  verification found F287 and F288.
 - [ ] **F259 [code+decision] canary-wap Bluetooth: Enable, a settings POST and
   a saved-off tap still bring the stack up before the boot bring-up is over.**
   F235's review made Start Advertising and Pair on a device saved on wait for
@@ -4871,6 +4881,52 @@ so — see D2 below.)
   channel runs the sketch's registrations after any bring-up, or a late
   bring-up says what it left out. From code; not probed. Found by F235
   (#1802).
+- [ ] **F287 [code] check_wap_loop_commands.py: BV7, BV4 and C3 pass mutants
+  that bring F235's races back.** BV7 counts the sketch's two
+  `boot_bring_up_finished()` calls and their order on the squashed bodies, and
+  four mutants pass it: the mark moved out of the `xTaskCreate(...) !=
+  pdPASS` block to run after every create (the boot bring-up is then over
+  while the worker runs, so a Start Advertising or Pair tap can run `init()`
+  beside the worker's `ble_manager::init()` and the Scout's
+  `nimble_scan_init()`, the race F235's review closed), an early `return`
+  before the Scout in `ble_bringup_finalize_if_done()`, the mark under a
+  condition, and the mark under `FEATURE_BLE` in place of
+  `FEATURE_BLUETOOTH`. In the last three, a device saved on whose boot
+  bring-up was refused answers every tap "has not started yet" for good,
+  F235's own symptom. The host harness does not compile `canary_wap.ino`, so
+  BV7 is the only guard. BV4 pins the head of `init()` but passes an explicit
+  `latch_clear.~InitLatchClear()` (or a second guard in an inner block)
+  before the stack's publish, and a dropped re-check of the stack after the
+  take; both mutated channels also pass the 77-test suite. C3's every-caller
+  rule matches only `bring_up(`, so a call through a function pointer passes.
+  And `web_ui_logic.test.js`'s Bluetooth subtitle cases send `enabled: true`
+  only, so a restore gated on `data.enabled` survives. Hold the mark inside
+  the failed-create block and at finalize's top level under
+  `FEATURE_BLUETOOTH` alone, refuse a `return` before it, pin the re-check
+  and refuse any other mention of the guard, flag any `bring_up` reference
+  outside the guarded handlers, add an `enabled: false` case, and add each
+  mutant. From the F235 verification's mutation driver over the check on the
+  ported tree. Found by F235's verification (#1802).
+- [ ] **F288 [code] canary-wap Bluetooth: between the boot worker's init and
+  the finalize stage, a tap's answer is not what the pending text or U1's
+  F235 row says.** (a) After the worker's `init()` was refused (the heap
+  guard) or failed, and before finalize, Start Advertising and Pair on a
+  device saved on answer 503 `Bluetooth has not started yet; it starts once
+  Wi-Fi setup is done or within five minutes (never in safe mode)` while
+  `init_fail_reason()` already names the refusal; after finalize the same tap
+  names it. On FULL, when the channel's NimBLE init failed, that window spans
+  `ble_manager::init()`'s own NimBLE init (seconds).
+  `test_a_tap_before_the_boot_bring_up_waits_for_it` pins the pending text
+  there. Answer "still starting" once `bringup_worker_started()` has run, or
+  keep the wording and say why. (b) After the worker's `init()` has brought
+  the stack up, and before finalize, a tap answers 200 (`Advertising started`,
+  `Pairing mode started`) and its advertising is held until
+  `bringup_worker_finished()`. The hardware checklist's F235 row (a) expects
+  503 for every tap before the `BLE bring-up finalized` line, so a bench run
+  that follows it logs a false failure; its scanner expectation (nothing
+  advertised before `finalized`) holds. From the F235 verification's probes
+  on the real handlers and channel; not probed on a device. Found by F235's
+  verification (#1802).
 - [x] **F146 [code] A canary-wap Chirp send refused for an unsynced clock
   answers `cooldown`.** `can_send_chirp()` is false both in the cooldown and
   while `time()` is below `MIN_UNIX_TIME`, and the send's refusal (checked in
@@ -8661,9 +8717,10 @@ so — see D2 below.)
   all 12 turns refuse the Startle even with the fix (F279). The
   `runtime_turn.sh` counts are the package head's: it needs LVGL 8.4,
   ArduinoJson and arduinolibs checkouts and was not rerun on the integrated
-  tree here; CI's wasm job runs it. The dist moves for the nightlight flavor
-  (and for all six through `canary_mark.cpp`, F244); CI's pinned emsdk rebuilt
-  it on the branch (5abf3e34), and the rebuilt dist was not run here.
+  tree here; CI's wasm job runs it, and passed it on 0e2272d7. The dist moves
+  for the nightlight flavor (and for all six through `canary_mark.cpp`, F244);
+  CI's pinned emsdk rebuilt it on the branch (5abf3e34), and the rebuilt dist
+  was not run here.
   Host-tested and run natively on LVGL 8.4; not bench-tested.
 - [x] **F243 [code] No browser probe turns a running glass.**
   `runtime_turn.sh` holds the sources natively, but the dist's nightlight
@@ -8702,9 +8759,10 @@ so — see D2 below.)
   on 2 and the step fails on the announced turn; a binding that turns nothing
   fails on the wait. `runtime_turn.sh` stays green with the new
   `emu_main.cpp`. The binding moves the dist for all six display flavors. CI's
-  pinned emsdk rebuilt it on the branch (5abf3e34); the rebuilt dist was not
-  run here, so CI's boot probe on it is the step's first run on real dist
-  bytes. Not looked at in the Lab page by hand. Found here: A80.
+  pinned emsdk rebuilt it on the branch (5abf3e34), and its nightlight bundle
+  carries the binding; the rebuilt dist was not run here. CI's wasm job on
+  0e2272d7 passed its boot probe on that dist, the step's first run on real
+  dist bytes. Not looked at in the Lab page by hand. Found here: A80.
 - [x] **F244 [code] A hop the canary mark starts over a running breath fights
   it for the bird's y.** `start_hop()` starts `s_bob` with `hop_cb` while the
   breath runs with `bob_cb`; LVGL's `lv_anim_start()` replaces only an
@@ -8747,11 +8805,12 @@ so — see D2 below.)
   the hop animation's current value, read off LVGL's own animation list, with
   no breath beside it (124 checks at the package head; 32 fail on the old
   file; not rerun on the integrated tree here, for want of the LVGL 8.4
-  checkout; CI's wasm job runs it). The emulator dist moves for all six
-  display flavors (`canary_mark.cpp` is in each); CI's pinned emsdk rebuilt it
-  on the branch (5abf3e34), not run here. A hop still hands back the calm 1400
-  ms breath in a quickened mood (F281). Host-tested and run natively on LVGL
-  8.4; the ESP32 builds and `pio check` are CI's; not bench-tested.
+  checkout; CI's wasm job runs it, and passed it on 0e2272d7). The emulator
+  dist moves for all six display flavors (`canary_mark.cpp` is in each); CI's
+  pinned emsdk rebuilt it on the branch (5abf3e34), not run here. A hop still
+  hands back the calm 1400 ms breath in a quickened mood (F281). Host-tested
+  and run natively on LVGL 8.4; the ESP32 builds and `pio check` are CI's;
+  not bench-tested.
 - [ ] **F245 [code+decision] A refused turn is still shown as the glass's
   orientation.** When `lvgl_port_set_rotation()` refuses a turn for want of a
   turn buffer (F205), the face stays landscape (F223), but Settings >
@@ -11171,19 +11230,20 @@ so — see D2 below.)
   `js_display_ready`, `js_flush` and `js_backlight_apply` in the test itself
   (run end to end by the integrator with an LVGL 8.4 checkout: dash glass 56
   checks, nightlight 54, and the backlight test in both configs; not rerun
-  here). `bench.test.js` holds the test's restatement to `display_1in47.cpp`,
-  plus the night-ceiling checks, the HAL and shell wiring, and
-  `backlightCapNote()` as shipped. It fails on the old HAL and on the old
-  `app.js`. It is also the only thing that holds the value the page is told: a
-  HAL that tells the page the unclipped level or duty passes the native test
-  and fails `bench.test.js`'s pins. `bench_probe.mjs` reads the nightlight
-  bundle for the binding, and on a dist without it holds the old row. A
-  stand-in bundle that clips gave "day ladder · 127/255 · capped ...", and one
-  that only claims to clip failed at 140/255. No probe reads a night duty. The
-  expander's compression of a dim night duty to 256 steps (`>> 5`, never zero)
-  is not modeled (A79). The HAL moves the dist for all six display flavors;
-  CI's pinned emsdk rebuilt it on the branch (5abf3e34), not run here.
-  Host-tested; not bench-tested; not looked at in the Lab page by hand.
+  here; CI's "Turned glass" step passed on 0e2272d7). `bench.test.js` holds
+  the test's restatement to `display_1in47.cpp`, plus the night-ceiling
+  checks, the HAL and shell wiring, and `backlightCapNote()` as shipped. It
+  fails on the old HAL and on the old `app.js`. It is also the only thing that
+  holds the value the page is told: a HAL that tells the page the unclipped
+  level or duty passes the native test and fails `bench.test.js`'s pins.
+  `bench_probe.mjs` reads the nightlight bundle for the binding, and on a dist
+  without it holds the old row. A stand-in bundle that clips gave "day ladder
+  · 127/255 · capped ...", and one that only claims to clip failed at 140/255.
+  No probe reads a night duty. The expander's compression of a dim night duty
+  to 256 steps (`>> 5`, never zero) is not modeled (A79). The HAL moves the
+  dist for all six display flavors; CI's pinned emsdk rebuilt it on the branch
+  (5abf3e34), not run here. Host-tested; not bench-tested; not looked at in
+  the Lab page by hand.
 - [ ] **A79 [code] The Nightlight twin does not model its expander's
   night-floor steps.** `display_1in47.cpp`'s `backlight_night_set()` writes
   the 13-bit night duty as one expander byte (`duty13 >> 5`, raised to 1 when
