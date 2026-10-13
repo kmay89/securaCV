@@ -18,6 +18,7 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync, existsSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const ROOT = join(__dirname, "..");
 const REPO = join(ROOT, "..");
@@ -392,20 +393,25 @@ test("a device type is never guessed onto the wrong hardware", () => {
   }
 });
 
-test("the WAP resolves by the device type it puts on the fleet's wire, read from its sketch", () => {
+test("the WAP resolves by the device type it puts on the fleet's wire, read from its sketch", async () => {
   // Sweep F258: the WAP's rows came from firmware/configs/canary-wap/, which no
   // build compiles, as "canary_wap" and "canary_wap_mobile" — types nothing
   // publishes. The glass's figure_for() compares exactly, so a WAP peer (whose
   // MQTT status says "canary-wap") never resolved on a display. The sketch
   // advertises its type twice, and both must say the same thing: the mDNS `dt`
   // record the phone keys on, and the device_type its status topic carries.
+  // gen_figures.mjs reads it through wire_types.mjs, which reads every site
+  // and refuses one it cannot spell (the next test holds the refusals).
   const WAP = join(REPO, "firmware/projects/canary-wap/arduino/canary_wap");
   const ino = readFileSync(join(WAP, "canary_wap.ino"), "utf8");
-  const mqtt = readFileSync(join(WAP, "csi_mqtt.cpp"), "utf8");
-  const dts = [...ino.matchAll(/MDNS\.addServiceTxt\("securacv",\s*"tcp",\s*"dt",\s*"([^"]+)"\)/g)].map((m) => m[1]);
-  const statuses = [...mqtt.matchAll(/\\"device_type\\":\\"([^"\\]+)\\"/g)].map((m) => m[1]);
-  assert.ok(dts.length > 0 && statuses.length > 0, "the sketch advertises dt and publishes a status device_type");
-  const wire = [...new Set([...dts, ...statuses])];
+  const { walkTrees } = await import(pathToFileURL(join(ROOT, "tools/figures/wire_types.mjs")).href);
+  const [tree] = walkTrees(REPO);
+  assert.strictEqual(tree.family, "canary-wap");
+  for (const f of ["canary_wap.ino", "csi_mqtt.cpp"]) {
+    assert.ok(tree.sites.some((s) => s.startsWith(`firmware/projects/canary-wap/arduino/canary_wap/${f}:`)),
+      `${f} publishes the wire type (${tree.sites.join(", ")})`);
+  }
+  const wire = [tree.device_type];
   assert.deepStrictEqual(wire, ["canary-wap"], "one wire type, everywhere the sketch puts it");
   const dt = led.device_types;
   const row = dt.mapped.find((m) => m.device_type === wire[0]);
@@ -428,6 +434,64 @@ test("the WAP resolves by the device type it puts on the fleet's wire, read from
   assert.deepStrictEqual(byId.get("device.canary-wap").evidence.firmware_configs,
     Object.keys(ws.devices["canary-wap"].firmware.flavors));
   assert.strictEqual(byId.get("device.canary-wap").confidence, "shipping");
+});
+
+test("the WAP's wire-type reader refuses every site it cannot spell, not only a file with none", async () => {
+  // Sweep F258 review: the first reader matched only the literal shape, so a
+  // dt record handed a variable beside two literal ones passed --check. Each
+  // case is a copy of the real sketch files with one edit, read under a
+  // scratch root.
+  const os = require("node:os");
+  const fs = require("node:fs");
+  const { walkTrees, TREE_TYPES } = await import(pathToFileURL(join(ROOT, "tools/figures/wire_types.mjs")).href);
+  const [row] = TREE_TYPES;
+  const [inoF, mqttF] = row.sources.map((s) => s.file);
+  const real = { [inoF]: readFileSync(join(REPO, inoF), "utf8"), [mqttF]: readFileSync(join(REPO, mqttF), "utf8") };
+  const DT = 'MDNS.addServiceTxt("securacv", "tcp", "dt",   "canary-wap");';
+  const STATUS = 'const char* online = "{\\"online\\":true,\\"device_type\\":\\"canary-wap\\"}";';
+  assert.strictEqual(real[inoF].split(DT).length - 1, 3, "the fixture edits find the three dt records");
+  assert.ok(real[mqttF].includes(STATUS), "the fixture edits find the online status");
+  const second = (text, from, to) => { const i = text.indexOf(from, text.indexOf(from) + 1); return text.slice(0, i) + to + text.slice(i + from.length); };
+  const dir = fs.mkdtempSync(join(os.tmpdir(), "securacv-wire-types-"));
+  const readWith = (edit) => {
+    const files = { ...real, ...edit(real) };
+    for (const [f, text] of Object.entries(files)) {
+      fs.mkdirSync(join(dir, f, ".."), { recursive: true });
+      fs.writeFileSync(join(dir, f), text);
+    }
+    return walkTrees(dir);
+  };
+  try {
+    assert.strictEqual(readWith(() => ({}))[0].device_type, "canary-wap", "the unedited copy reads");
+    const refusals = [
+      ["one dt record handed a variable beside two literals",
+        (r) => ({ [inoF]: second(r[inoF], DT, 'MDNS.addServiceTxt("securacv", "tcp", "dt",   WAP_DT);') }), /canary_wap\.ino:\d+: the "dt" value is not one string literal \(WAP_DT\)/],
+      ["a dt record handed DEVICE_TYPE",
+        (r) => ({ [inoF]: second(r[inoF], DT, 'MDNS.addServiceTxt("securacv", "tcp", "dt", DEVICE_TYPE);') }), /not one string literal \(DEVICE_TYPE\)/],
+      ["a dt value built by concatenation",
+        (r) => ({ [inoF]: second(r[inoF], DT, 'MDNS.addServiceTxt("securacv", "tcp", "dt", "canary" "-wap");') }), /not one string literal/],
+      ["a TXT key this reader cannot read",
+        (r) => ({ [inoF]: second(r[inoF], DT, 'MDNS.addServiceTxt("securacv", "tcp", kDtKey, "canary-wap");') }), /key that is not one string literal \(kDtKey\)/],
+      ["a status built around a %s",
+        (r) => ({ [mqttF]: r[mqttF].replace(STATUS, 'const char* online = "{\\"online\\":true,\\"device_type\\":\\"%s\\"}";') }), /csi_mqtt\.cpp:\d+: "device_type" is not the key of a literal value/],
+      ["a status that ends its string at the key",
+        (r) => ({ [mqttF]: r[mqttF].replace(STATUS, 'const char* online = "{\\"online\\":true,\\"device_type\\":\\"" DEVICE_TYPE "\\"}";') }), /csi_mqtt\.cpp:\d+: "device_type" is not the key/],
+      ["an ArduinoJson device_type",
+        (r) => ({ [mqttF]: r[mqttF].replace(STATUS, 'doc["device_type"] = DEVICE_TYPE;') }), /"device_type" is not the key of a literal value/],
+      ["two literals that disagree",
+        (r) => ({ [inoF]: second(r[inoF], DT, 'MDNS.addServiceTxt("securacv", "tcp", "dt", "canary-wapx");') }), /publishes 2 different device types/],
+      ["a file with no site left",
+        (r) => ({ [mqttF]: r[mqttF].split("device_type").join("dev_kind") }), /csi_mqtt\.cpp no longer publishes/],
+    ];
+    for (const [name, edit, why] of refusals) {
+      assert.throws(() => readWith(edit), why, name);
+    }
+    // A commented-out site publishes nothing, so it is no site.
+    assert.strictEqual(readWith((r) => ({ [inoF]: r[inoF].replace(DT, `${DT}\n  // MDNS.addServiceTxt("securacv", "tcp", "dt", DEVICE_TYPE);\n  /* doc["device_type"] = x; */`) }))[0].sites.length, 5,
+      "a commented-out call is not read");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the exact lookup is keyed on something the build already depends on", () => {

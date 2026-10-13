@@ -31,6 +31,7 @@ import {
 } from './iso.mjs';
 import { stlBounds } from './stlbox.mjs';
 import { FIGURES, conceptFigure } from './massing.mjs';
+import { TREE_TYPES, walkTrees } from './wire_types.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../..');
@@ -99,31 +100,10 @@ const SKETCH_FLAVORS = {
   },
 };
 
-/* Device types published by a tree that reads no firmware/configs/ directory:
- * the WAP's sketch. A config's DEVICE_TYPE is the type that device puts on
- * the fleet's wire, which is what both lookups are fed (the glass's
- * figure_for() reads device_type off a peer's MQTT status and state rows; the
- * phone's forDeviceType() reads the mDNS `dt` record). The WAP's wire type is
- * not its DEVICE_TYPE constant: canary_wap.ino declares DEVICE_TYPE "canary"
- * for its REST /api/status, its signed records and its boot banner, but
- * advertises `dt` "canary-wap" over mDNS and csi_mqtt.cpp publishes
- * "device_type":"canary-wap" on its status topic. So the row reads the wire
- * spelling from every place the sketch puts it, and refuses unless each place
- * says it at least once and all of them agree. A row is keyed
- * `<family>/<flavor>` like a config, so CONFIG_FIGURE, CONFIG_FIGURELESS and
- * the one-device-family backing below treat it the same way, and carries its
- * `source`. */
-const TREE_TYPES = [
-  {
-    family: 'canary-wap', flavor: 'sketch',
-    sources: [
-      { file: 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
-        pattern: /MDNS\.addServiceTxt\("securacv",\s*"tcp",\s*"dt",\s*"([^"]+)"\)/g },
-      { file: 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp',
-        pattern: /\\"device_type\\":\\"([^"\\]+)\\"/g },
-    ],
-  },
-];
+/* Device types published by a tree that reads no firmware/configs/ directory
+ * (the WAP's sketch): TREE_TYPES and walkTrees() live in wire_types.mjs, which
+ * reads every site a row's files publish the type at and refuses one it cannot
+ * spell, so figures.test.js can hold the reader itself to the sketch. */
 
 function firmwareConfigs(deviceId) {
   // firmware/configs/<family>/<flavor>/config.h — the flavors that exist.
@@ -620,33 +600,8 @@ function globIni(dir, nested = false) {
   return out.sort();
 }
 
-function walkTrees() {
-  return TREE_TYPES.map((t) => {
-    const seen = new Map();   // device type -> where it was read
-    for (const src of t.sources) {
-      const path = join(ROOT, src.file);
-      if (!existsSync(path)) {
-        throw new Error(`figures: TREE_TYPES reads ${t.family}'s device type from ${src.file}, which is gone. `
-          + 'Point the row at the files that publish it, or remove the row.');
-      }
-      const hits = [...readFileSync(path, 'utf8').matchAll(src.pattern)].map((m) => m[1]);
-      if (!hits.length) {
-        throw new Error(`figures: ${src.file} no longer publishes a device type in the form TREE_TYPES `
-          + `reads for ${t.family} (${src.pattern}). Fix the row's pattern, or drop the source.`);
-      }
-      for (const h of hits) seen.set(h, [...(seen.get(h) || []), src.file]);
-    }
-    if (seen.size !== 1) {
-      throw new Error(`figures: ${t.family} publishes ${seen.size} different device types on the wire `
-        + `(${[...seen].map(([dt, where]) => `"${dt}" in ${[...new Set(where)].join(', ')}`).join('; ')}). `
-        + 'A figure lookup can only follow one; make the sources agree.');
-    }
-    return { family: t.family, flavor: t.flavor, device_type: [...seen.keys()][0], source: t.sources[0].file };
-  });
-}
-
 function walkConfigs() {
-  const out = [...walkTrees()];
+  const out = walkTrees(ROOT).map(({ sites, ...row }) => row);
   const base = join(ROOT, 'firmware/configs');
   if (!existsSync(base)) return out;
   for (const fam of readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory())) {
