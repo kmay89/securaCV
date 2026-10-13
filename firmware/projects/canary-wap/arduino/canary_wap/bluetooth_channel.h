@@ -267,18 +267,26 @@ bool scanners_held();
 void bringup_worker_started();
 void bringup_worker_finished();
 
-// Any task (sweep F235's review): whether the sketch's boot bring-up has
-// had its go, set once bringup_worker_finished() has run (the worker's
-// result taken, or no worker could be created), whatever the outcome. The
-// sketch defers that bring-up out of the provisioning join window (BLE duty
-// starves a phone's WPA2 handshake to the SoftAP; the stack's internal RAM
-// goes to Wi-Fi first) and never runs it in safe mode, so false through the
-// join window, while the worker runs, and for the whole of a safe-mode
-// boot. The Start Advertising and Pair handlers bring nothing up before it
-// on a device saved on (bluetooth_api.h's waits_for_boot_bring_up()): that
-// bring-up will, and on FULL the worker's ble_manager::init() runs
-// NimBLEDevice::init() itself when the channel's init() did not bring the
-// stack up, beside any init() a tap left running.
+// The sketch's whole boot bring-up is over (sweep F235's review), on the
+// loop task: the last step of its finalize stage, after the worker's result
+// was taken (bringup_worker_finished()) and the finalize stage's own NimBLE
+// users ran (the Scout's nimble_scan_init(), which calls
+// NimBLEDevice::init() when the stack is down), or right after
+// bringup_worker_finished() when no worker could be created. Once per boot.
+// boot_bring_up_tried(), any task: whether it has been called (release,
+// acquire), whatever the bring-up's outcome. The sketch defers that
+// bring-up out of the provisioning join window (BLE duty starves a phone's
+// WPA2 handshake to the SoftAP; the stack's internal RAM goes to Wi-Fi
+// first) and never runs it in safe mode, so false through the join window,
+// while the worker and the finalize stage run, and for the whole of a
+// safe-mode boot. The Start Advertising and Pair handlers bring nothing up
+// before it on a device saved on (bluetooth_api.h's
+// waits_for_boot_bring_up()): that bring-up will, and every other
+// NimBLEDevice::init() caller runs inside it (the worker's channel init()
+// and, on FULL, ble_manager::init() when the channel's did not bring the
+// stack up; the Scout's at finalize), so a tap's init() would run beside
+// them, and init()'s latch holds only the channel's callers.
+void boot_bring_up_finished();
 bool boot_bring_up_tried();
 inline const char* boot_bring_up_pending_error() {
   return "Bluetooth has not started yet; it starts after Wi-Fi setup (never in safe mode)";
@@ -509,7 +517,7 @@ BluetoothSettings read_settings();
 // down for good; whether Bluetooth is saved on says nothing about whether
 // the stack is up, and since sweep F235 bring_up() asks is_initialized().
 // They read it only to leave the stack to the sketch's boot bring-up before
-// it has had its go, on a device saved on (bluetooth_api.h's
+// it is over, on a device saved on (bluetooth_api.h's
 // waits_for_boot_bring_up(), F235's review); before the first pass it
 // answers the boot default, on.
 bool read_enabled();

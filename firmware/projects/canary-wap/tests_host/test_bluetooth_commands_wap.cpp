@@ -76,7 +76,10 @@
 // whose boot bring-up failed or the heap guard refused, every tap answered
 // a failed start and the stack stayed down. A tap that needs the stack now
 // brings it up whenever it is down, names a refusal, and answers 503 "still
-// starting" while another task's bring-up runs.
+// starting" while another task's bring-up runs. F235's review: on a device
+// saved on, Start Advertising and Pair leave the stack to the sketch's boot
+// bring-up until it is over (the join window, safe mode, the worker and
+// the finalize stage's own NimBLE inits), answering 503 meanwhile.
 //
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
@@ -369,7 +372,7 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_scanners_held = false;             // the long path's init(), scanners started
   bc::g_meta_hold_scanners = false;        // no hold pushed to the next init()
   bc::g_advertise_after_bringup = false;
-  bc::g_boot_bring_up_tried = false;       // F235's review: the sketch's bring-up has not had its go
+  bc::g_boot_bring_up_tried = false;       // F235's review: the sketch's bring-up is not over
   bc::g_init_fail_reason = "";
   bc::g_server = nullptr;                  // the stack's objects went with the stack
   bc::g_service = nullptr;
@@ -2598,7 +2601,9 @@ const char* started_message(Handler h) { return h == kAdvertise ? "Advertising s
 
 // The boot worker's bring-up, on a device saved with Bluetooth on (the
 // default), as the sketch runs it, its first pass loaded first: refused by
-// the heap guard (`heap_low`) or failed in NimBLE's own init (else).
+// the heap guard (`heap_low`) or failed in NimBLE's own init (else). Then
+// the sketch's finalize stage: the worker's result taken, and the boot
+// bring-up over (F235's review).
 void boot_bring_up_refused(bool heap_low) {
   boot(/*bring_up=*/false);
   loop_pass();                                     // the first pass: saved on, loaded
@@ -2613,6 +2618,7 @@ void boot_bring_up_refused(bool heap_low) {
   CHECK(!bc::init());
   host_sim::task = "loop";
   bc::bringup_worker_finished();
+  bc::boot_bring_up_finished();
   loop_pass();
   CHECK(bc::read_enabled() && !bc::is_initialized() && !bc::g_initialized);
   CHECK(strcmp(bc::init_fail_reason(), heap_low ? kHeapRefused : kNimBLEFailed) == 0);
@@ -2766,27 +2772,31 @@ void test_a_tap_while_the_stack_comes_up_says_so() {
   std::printf("PASS a_tap_while_the_stack_comes_up_says_so\n");
 }
 
-// A tap made before the sketch's boot bring-up has had its go (sweep F235's
+// A tap made before the sketch's boot bring-up is over (sweep F235's
 // review), on a device saved on: canary_wap.ino defers the whole Bluetooth
 // bring-up out of the provisioning join window (the phone's WPA2 handshake
 // to the SoftAP, the internal RAM Wi-Fi takes first) and never runs it in
-// safe mode, and on FULL its worker runs NimBLEDevice::init() itself
-// (ble_manager::init()) when the channel's init() did not bring the stack
-// up, beside any init() a tap left running. F235 had Start Advertising and
-// Pair bring the stack up whenever it was down, so a tap in the join window
-// (or in safe mode) brought NimBLE up on the HTTP task and advertised at
-// once. Now each answers 503 and brings nothing up until the sketch says its
-// bring-up is done (bringup_worker_finished(), whatever the outcome): "still
-// starting" while the worker's init() holds the latch, else that Bluetooth
-// starts after Wi-Fi setup, a refused worker's result taken or not. After
-// it, a tap brings a refused stack up as F235 does. Saved off, a tap brings
-// the stack up as before (a_tap_brings_the_stack_up_whatever_the_setting).
+// safe mode, and the firmware's other NimBLEDevice::init() callers run
+// inside it (on FULL the worker's ble_manager::init() when the channel's
+// init() did not bring the stack up; the Scout's nimble_scan_init() in the
+// finalize stage, on the loop task). F235 had Start Advertising and Pair
+// bring the stack up whenever it was down, so a tap in the join window (or
+// in safe mode) brought NimBLE up on the HTTP task and advertised at once.
+// Now each answers 503 and brings nothing up until the sketch says its
+// bring-up is over (boot_bring_up_finished(), the finalize stage's last
+// step, whatever the outcome): "still starting" while the worker's init()
+// holds the latch, else that Bluetooth starts after Wi-Fi setup, through a
+// refused worker, its result taken and the rest of the finalize stage.
+// After it, a tap brings a refused stack up as F235 does. Saved off, a tap
+// brings the stack up as before (a_tap_brings_the_stack_up_whatever_the_setting).
 void test_a_tap_before_the_boot_bring_up_waits_for_it() {
   const char* const kPending = bc::boot_bring_up_pending_error();
   for (const Handler first : {kAdvertise, kPair}) {
     const Handler second = first == kAdvertise ? kPair : kAdvertise;
     // Before the loop task's first pass (the boot default, on), then in the
-    // join window (saved on, loaded), or for a whole safe-mode boot: no worker.
+    // join window (saved on, loaded), or for a whole safe-mode boot: no
+    // worker, however long the device runs (the channel keys on the
+    // sketch's word, not on the clock: past the sketch's 5 min hold too).
     boot(/*bring_up=*/false);
     Tap t = tap(first);
     CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kPending));
@@ -2798,6 +2808,7 @@ void test_a_tap_before_the_boot_bring_up_waits_for_it() {
         CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kPending));
         CHECK(t.inits == 0 && t.sleeps == 0);                // nothing brought up, nothing submitted
       }
+      host_sim::now_ms += 300000;
       loop_pass();
     }
     CHECK(host_sim::count("nimble_init") == 0 && !bc::is_initialized() && !bc::g_initialized);
@@ -2819,9 +2830,21 @@ void test_a_tap_before_the_boot_bring_up_waits_for_it() {
     CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kPending));
     CHECK(t.inits == 0 && t.sleeps == 0);
     CHECK(strcmp(bc::init_fail_reason(), kHeapRefused) == 0);
-    // The sketch takes the worker's result: the boot bring-up has had its
-    // go, and a tap now runs init() again (F235), named while refused...
+    // The sketch's finalize stage takes the worker's result
+    // (bringup_worker_finished()) and goes on to the Scout, whose
+    // nimble_scan_init() runs NimBLEDevice::init() on the loop task when the
+    // stack is down and the heap allows: a tap in between still waits.
     bc::bringup_worker_finished();
+    heap_recovers();                                 // the heap allows now: only the wait keeps the tap out
+    t = tap(first);
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kPending));
+    CHECK(t.inits == 0 && t.sleeps == 0 && host_sim::count("nimble_init") == 0);
+    CHECK(!bc::boot_bring_up_tried());
+    host_sim::internal_largest_block = 20 * 1024;
+    host_sim::internal_free = 30 * 1024;
+    // The finalize stage's last step: the boot bring-up is over, and a tap
+    // now runs init() again (F235), named while refused...
+    bc::boot_bring_up_finished();
     CHECK(bc::boot_bring_up_tried());
     t = tap(first);
     CHECK(t.status == "200 OK" && t.body == refused_with(kHeapRefused));
@@ -2844,9 +2867,66 @@ void test_a_tap_before_the_boot_bring_up_waits_for_it() {
     t = tap(first);                                  // up, its result not taken yet: the tap runs
     CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)) && t.inits == 0);
     bc::bringup_worker_finished();
+    bc::boot_bring_up_finished();
     CHECK(host_sim::count("nimble_init") == 1 && host_sim::count("nimble_init", "bringup") == 1);
   }
   std::printf("PASS a_tap_before_the_boot_bring_up_waits_for_it\n");
+}
+
+// The FULL race that wait keeps out (sweep F235's review): a Start
+// Advertising or Pair tap in the join window whose init() was still running
+// when the gate opened. The worker's own bluetooth_channel::init() then lost
+// the latch to it and answered false with nothing refused, so canary_wap.ino
+// printed "Bluetooth init failed" and skipped ble_status, and on FULL went on
+// to ble_manager::init(), whose NimBLEDevice::init() ran beside the tap's
+// (NimBLE-Arduino 2.5.0 reads isInitialized() false until its init has
+// synced). Played by opening the gate from inside any init() a tap runs: the
+// tap now runs none, so the worker's bring-up has the stack to itself and is
+// the boot's only one, and ble_manager finds the stack up.
+void test_the_worker_never_meets_a_taps_bring_up() {
+  for (const Handler h : {kAdvertise, kPair}) {
+    boot(/*bring_up=*/false);
+    loop_pass();                                     // saved on, loaded: the join window
+    bool gate_opened_inside_a_tap = false;
+    bool worker_up = false;
+    std::string worker_reason;
+    g_inside_init = [&] {
+      if (host_sim::task != "httpd" || gate_opened_inside_a_tap) return;
+      gate_opened_inside_a_tap = true;               // the window clears while the tap's init() runs
+      bc::bringup_worker_started();
+      host_sim::task = "bringup";
+      worker_up = bc::init();
+      worker_reason = bc::init_fail_reason();
+      host_sim::task = "httpd";
+    };
+    const Tap t = tap(h);
+    g_inside_init = nullptr;
+    // Had the tap run init(), the worker's would have lost the latch: false,
+    // nothing refused (on FULL, ble_manager's own NimBLE init next).
+    CHECK(!gate_opened_inside_a_tap || (worker_up && worker_reason.empty()));
+    CHECK(!gate_opened_inside_a_tap);                // the tap ran no init() to open the gate beside
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(bc::boot_bring_up_pending_error()));
+    CHECK(t.inits == 0 && t.sleeps == 0 && host_sim::count("nimble_init") == 0);
+    // The gate opens: the worker's init() has the stack to itself.
+    bc::bringup_worker_started();
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    CHECK(strcmp(bc::init_fail_reason(), "") == 0);
+    // On FULL ble_manager::init() runs next on the worker: the stack is up,
+    // so ble_manager.h's isInitialized() guard skips its own NimBLE init.
+    CHECK(NimBLEDevice::isInitialized());
+    CHECK(host_sim::count("nimble_init") == 1 && host_sim::count("nimble_init", "bringup") == 1);
+    loop_pass();                                     // the loop task takes the bring-up
+    bc::bringup_worker_finished();
+    bc::boot_bring_up_finished();
+    loop_pass();
+    CHECK(bc::g_initialized && bc::is_enabled());
+    const Tap after = tap(h);
+    CHECK(after.status == "200 OK" && after.body == succeeded_with(started_message(h)) && after.inits == 0);
+    CHECK(host_sim::count("nimble_init") == 1);
+  }
+  std::printf("PASS the_worker_never_meets_a_taps_bring_up\n");
 }
 
 // For real on three threads (sweep F235): the boot worker's init() (held in
@@ -2895,6 +2975,7 @@ void test_threads_a_tap_meets_the_bring_up() {
   for (uint32_t pass = 0; !done.load() && pass < 50000000u; ++pass) {
     if (!finalized && worker_done.load()) {
       bc::bringup_worker_finished();               // the sketch's finalize, on the loop task
+      bc::boot_bring_up_finished();
       finalized = true;
     }
     bc::update();
@@ -2907,7 +2988,10 @@ void test_threads_a_tap_meets_the_bring_up() {
   bringup.join();
   httpd.join();
   g_inside_init = nullptr;
-  if (!finalized) bc::bringup_worker_finished();
+  if (!finalized) {
+    bc::bringup_worker_finished();
+    bc::boot_bring_up_finished();
+  }
   bc::update();
   CHECK(done.load());
   CHECK(first_status == "503 Service Unavailable" && first_body == refused_with(kStillStarting));
@@ -4489,6 +4573,7 @@ const Test kTests[] = {
     {"a_tap_brings_the_stack_up_whatever_the_setting", test_a_tap_brings_the_stack_up_whatever_the_setting},
     {"a_tap_while_the_stack_comes_up_says_so", test_a_tap_while_the_stack_comes_up_says_so},
     {"a_tap_before_the_boot_bring_up_waits_for_it", test_a_tap_before_the_boot_bring_up_waits_for_it},
+    {"the_worker_never_meets_a_taps_bring_up", test_the_worker_never_meets_a_taps_bring_up},
     {"threads_a_tap_meets_the_bring_up", test_threads_a_tap_meets_the_bring_up},
     {"commands_while_init_runs_are_kept", test_commands_while_init_runs_are_kept},
     {"the_advertising_waits_for_the_bring_up_worker", test_the_advertising_waits_for_the_bring_up_worker},

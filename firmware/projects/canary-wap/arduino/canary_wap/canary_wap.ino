@@ -12320,6 +12320,16 @@ static void ble_bringup_finalize_if_done() {
   ble_scout::ble_scout_init();
   #endif
 
+  // Last (sweep F235's review): the boot bring-up is over. Only from here
+  // does a Start Advertising or Pair tap on a device saved on bring the
+  // stack up on the HTTP task (bluetooth_api.h's waits_for_boot_bring_up()):
+  // everything above that can run NimBLEDevice::init() (the worker's
+  // channel and ble_manager inits, the Scout's nimble_scan_init() just
+  // above) has run, so a tap's init() runs beside none of them.
+  #if FEATURE_BLUETOOTH
+  bluetooth_channel::boot_bring_up_finished();
+  #endif
+
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
              "BLE bring-up finalized (post-provisioning window)", nullptr);
 }
@@ -12378,6 +12388,7 @@ static void ble_discovery_start_if_due() {
       != pdPASS) {
     #if FEATURE_BLUETOOTH
     bluetooth_channel::bringup_worker_finished();   // no worker: nothing to wait for
+    bluetooth_channel::boot_bring_up_finished();    // and no finalize stage: a tap may bring it up (F235)
     #endif
     g_ble_init_attempted = true;
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,

@@ -17,7 +17,7 @@
  * bluetooth_busy or 503 bluetooth_timeout (send_not_run). The one call a
  * handler still makes itself is bluetooth_channel::init() (bring_up), when
  * a tap that needs the stack finds it down (sweep F235: whatever the saved
- * setting says, once the sketch's boot bring-up has had its go): it can
+ * setting says, once the sketch's boot bring-up is over): it can
  * block past the loop task's watchdog, so it never runs there.
  * firmware/scripts/check_wap_loop_commands.py holds every handler here to
  * that.
@@ -248,9 +248,12 @@ inline esp_err_t send_not_run(httpd_req_t* req, loop_command_ring::Wait w) {
 // off, so on a device saved on (the default) whose boot bring-up failed or
 // the heap guard refused, every tap answered a failed start and none ever
 // brought the stack up. Those two leave the stack to the sketch's boot
-// bring-up until it has had its go (waits_for_boot_bring_up(), F235's
-// review). init() admits one caller at a time (the bring-up worker may be
-// inside it) and checks the heap guard again on every call.
+// bring-up until it is over (waits_for_boot_bring_up(), F235's review).
+// init() admits one caller at a time (the bring-up worker may be inside it)
+// and checks the heap guard again on every call. A tap that runs it holds
+// this task, the web server's only one, for NimBLE's bring-up (seconds on a
+// device), and every other REST request waits behind it, as Enable's always
+// did.
 inline bool bring_up() {
   return bluetooth_channel::is_initialized() || bluetooth_channel::init();
 }
@@ -271,18 +274,21 @@ inline esp_err_t send_bring_up_refused(httpd_req_t* req, const char* fallback) {
 }
 
 // Whether a Start Advertising or Pair tap leaves the stack to the sketch's
-// boot bring-up (sweep F235's review): the stack is down, that bring-up
-// has not had its go yet, and Bluetooth is saved on, so it will bring the
-// stack up. canary_wap.ino defers the whole Bluetooth bring-up out of the
-// provisioning join window (BLE duty starves a phone's WPA2 handshake to
-// the SoftAP; the stack's internal RAM goes to Wi-Fi first) and never runs
-// it in safe mode; its worker, on FULL, also runs NimBLEDevice::init()
-// itself (ble_manager::init()) when the channel's init() did not bring the
-// stack up, and init()'s latch holds only the channel's callers. A tap that
-// brought the stack up there undid the deferral, and one still running when
-// the worker started ran NimBLE's init beside the worker's. Saved off, the
-// tap brings the stack up as it did before F235 (as Enable and a settings
-// POST turning Bluetooth on do: pre-existing, sweep F111 and F144).
+// boot bring-up (sweep F235's review): the stack is down, that bring-up is
+// not over yet (bluetooth_channel::boot_bring_up_finished(), the last step
+// of the sketch's finalize stage), and Bluetooth is saved on, so it will
+// bring the stack up. canary_wap.ino defers the whole Bluetooth bring-up
+// out of the provisioning join window (BLE duty starves a phone's WPA2
+// handshake to the SoftAP; the stack's internal RAM goes to Wi-Fi first)
+// and never runs it in safe mode. Inside it run the firmware's other
+// NimBLEDevice::init() callers: the worker's ble_manager::init() on FULL
+// when the channel's init() did not bring the stack up, and the Scout's
+// nimble_scan_init() at finalize, on the loop task; init()'s latch holds
+// only the channel's callers. A tap that brought the stack up there undid
+// the deferral, and one still running when the worker started ran NimBLE's
+// init beside the worker's. Saved off, the tap brings the stack up as it
+// did before F235 (as Enable and a settings POST turning Bluetooth on do:
+// pre-existing, sweep F111 and F144).
 inline bool waits_for_boot_bring_up() {
   return !bluetooth_channel::is_initialized() && !bluetooth_channel::boot_bring_up_tried() &&
          bluetooth_channel::read_enabled();
@@ -330,7 +336,7 @@ inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
   // The stack comes up here whenever it is down (sweep F235; before, only
   // when the published setting said off, so a device saved on whose boot
   // bring-up failed never came up), except on a device saved on whose boot
-  // bring-up has not had its go: that bring-up will (F235's review). The
+  // bring-up is not over: that bring-up will (F235's review). The
   // enable itself is the command's.
   if (waits_for_boot_bring_up()) {
     return send_boot_bring_up_pending(req);

@@ -225,10 +225,11 @@ static bool g_saved_loaded = false;
 // finishes.
 static bool g_bringup_worker_running = false;
 static bool g_advertise_after_bringup = false;
-// Any task's (sweep F235's review): the sketch's boot bring-up has had its
-// go. Set once, by bringup_worker_finished() on the loop task (release);
-// boot_bring_up_tried() reads it (acquire). Never cleared: the sketch runs
-// its bring-up once per boot.
+// Any task's (sweep F235's review): the sketch's boot bring-up is over, its
+// finalize stage's NimBLE users among it. Set once, by
+// boot_bring_up_finished() on the loop task (release); boot_bring_up_tried()
+// reads it (acquire). Never cleared: the sketch runs its bring-up once per
+// boot.
 static bool g_boot_bring_up_tried = false;
 
 // Scan results
@@ -1777,6 +1778,11 @@ void bringup_worker_finished() {
     g_advertise_after_bringup = false;
     start_advertising();
   }
+}
+
+// The loop task, as the sketch's finalize stage ends (sweep F235's review):
+// see g_boot_bring_up_tried.
+void boot_bring_up_finished() {
   __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);
 }
 

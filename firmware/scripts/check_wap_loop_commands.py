@@ -178,16 +178,38 @@ C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
     calls nothing on the channel but pure lookups (`AFTER_SUBMIT_CALLS`): it
     answers from the Result. The Bluetooth enable, advertise and pair
     handlers (`BT_BRING_UP_HANDLERS`) bring the stack up first, whenever it
-    is down, whatever the saved setting says (F235): their first statement is
-    `if (!bring_up()) { return send_bring_up_refused(req, ...`, and none of
-    them reads the published setting or status (`read_enabled(`,
-    `read_settings(`, `read_status(`). No command runs `init()`, so without
-    it a tap could never bring up a stack whose boot bring-up failed or the
-    heap guard refused. That was the advertise and pair handlers' case on a
-    device saved on (the default) until F235: they brought the stack up only
-    when the published setting said off, so every tap answered a failed
-    start. `bring_up()` is exactly `return bluetooth_channel::is_initialized()
-    || bluetooth_channel::init();`. It is called only as `!bring_up()` in a
+    is down, whatever the saved setting says (F235): the enable handler's
+    first statement is `if (!bring_up()) { return send_bring_up_refused(req,
+    ...`, and none of them reads the published setting or status
+    (`read_enabled(`, `read_settings(`, `read_status(`) in its own body. No
+    command runs `init()`, so without it a tap could never bring up a stack
+    whose boot bring-up failed or the heap guard refused. That was the
+    advertise and pair handlers' case on a device saved on (the default)
+    until F235: they brought the stack up only when the published setting
+    said off, so every tap answered a failed start. The advertise and pair
+    handlers (`BT_BOOT_WAIT_HANDLERS`) first leave the stack to the sketch's
+    boot bring-up until it is over (the F235 review: the sketch defers it out
+    of the provisioning join window and skips it in safe mode, and the
+    firmware's other NimBLE init callers run inside it, the worker's
+    ble_manager::init() on FULL and the Scout's at finalize, so a tap there
+    undid the deferral and could run NimBLE's init beside theirs): their
+    first statement is `if (waits_for_boot_bring_up()) { return
+    send_boot_bring_up_pending(req); }`, then the bring-up guard.
+    `waits_for_boot_bring_up()` is exactly `return
+    !bluetooth_channel::is_initialized() &&
+    !bluetooth_channel::boot_bring_up_tried() &&
+    bluetooth_channel::read_enabled();` (saved off, a tap brings the stack up
+    as before F235, as Enable does), called once by each of those two and by
+    nothing else; `send_boot_bring_up_pending()` is exactly a 503 with
+    `bring_up_starting_error()` while `bring_up_starting()` says a bring-up
+    runs, else `boot_bring_up_pending_error()`. In `bluetooth_channel.cpp`,
+    `boot_bring_up_tried()` is exactly the acquire load of
+    `g_boot_bring_up_tried` and `boot_bring_up_finished()` exactly its
+    release store, and nothing else names the flag (BV7 holds the sketch's
+    two calls of the setter: last in its finalize stage, after the Scout's
+    init, and where the worker could not be created). `bring_up()` is
+    exactly `return bluetooth_channel::is_initialized() ||
+    bluetooth_channel::init();`. It is called only as `!bring_up()` in a
     guard, and every such guard (the settings POST's too, BV1) answers through
     `send_bring_up_refused(req, `, which is exactly a 503 with
     `bring_up_starting_error()` while `bluetooth_channel::bring_up_starting()`
@@ -530,9 +552,17 @@ BV7. No advertising start while the sketch's bring-up worker registers GATT
      returns), and `bringup_worker_finished();` when the create fails;
      `ble_bringup_finalize_if_done()` calls `bringup_worker_finished();`
      once, after its acquire of `g_ble_bringup_done`; no other function of
-     the sketch calls either (both are loop-task only). That a start waits
-     for the worker, over a stand-in whose advertising start walks the
-     services, is `test_bluetooth_commands_wap.cpp`'s.
+     the sketch calls either (both are loop-task only). The boot bring-up's
+     end (the F235 review, C3's `boot_bring_up_tried()`):
+     `bluetooth_channel::boot_bring_up_finished();` is called once in
+     `ble_discovery_start_if_due()`, after the failed create's
+     `bringup_worker_finished();`, and once in
+     `ble_bringup_finalize_if_done()` as its last call into the channel, the
+     Scout or ble_manager (after `ble_scout::ble_scout_init();`, whose
+     `nimble_scan_init()` runs `NimBLEDevice::init()` on the loop task when
+     the stack is down), and by nothing else. That a start waits for the
+     worker, over a stand-in whose advertising start walks the services, is
+     `test_bluetooth_commands_wap.cpp`'s.
 
 BV8. Whether Bluetooth is on, as another task reads it (F210). The Start
      Advertising and Pair handlers decided whether to bring the stack up
@@ -541,9 +571,11 @@ BV8. Whether Bluetooth is on, as another task reads it (F210). The Start
      task's commands and its first pass's `load_saved()` wrote it: a data
      race, which TSAN reports in the threaded test when the read is put
      back. They read `bluetooth_channel::read_enabled()` until F235, when C3
-     stopped them deciding a bring-up from the setting at all (the stack
-     being down decides it); `read_enabled()` stays any task's race-free
-     read of the setting. In `bluetooth_channel.cpp`, `read_enabled()`
+     stopped them deciding a bring-up from the setting (the stack being down
+     decides it); since the F235 review they read it, through
+     `waits_for_boot_bring_up()`, only to leave the stack to the sketch's
+     boot bring-up on a device saved on, and `read_enabled()` stays any
+     task's race-free read of the setting. In `bluetooth_channel.cpp`, `read_enabled()`
      is exactly `return read_settings().enabled;` (the settings the last pass
      published; BV3 adds it to the readers, which name none of the live
      state); `is_enabled()` is defined once, `static`, and called only from
@@ -1299,6 +1331,26 @@ BT_HANDLER_COMMANDS = {
 BT_BRING_UP_HANDLERS = ("handle_bluetooth_enable", "handle_bluetooth_advertise_start",
                         "handle_bluetooth_pair_start")
 BT_BRING_UP_GUARD = "if(!bring_up()){returnsend_bring_up_refused(req,"
+# The F235 review: Start Advertising and Pair leave the stack to the sketch's
+# boot bring-up until it is over, on a device saved on (the sketch defers it
+# out of the provisioning join window and skips it in safe mode, and the
+# firmware's other NimBLE init callers run inside it: the worker's
+# ble_manager::init() on FULL, the Scout's at finalize). Their first
+# statement is this guard, then the bring-up guard.
+BT_BOOT_WAIT_HANDLERS = ("handle_bluetooth_advertise_start", "handle_bluetooth_pair_start")
+BT_BOOT_WAIT_GUARD = "if(waits_for_boot_bring_up()){returnsend_boot_bring_up_pending(req);}"
+SIG_WAITS_FOR_BOOT = r"\binline\s+bool\s+waits_for_boot_bring_up\s*\(\s*\)"
+BT_WAITS_FOR_BOOT_BODY = ("return!bluetooth_channel::is_initialized()&&!bluetooth_channel::boot_bring_up_tried()"
+                          "&&bluetooth_channel::read_enabled();")
+SIG_SEND_BOOT_PENDING = r"\binline\s+esp_err_t\s+send_boot_bring_up_pending\s*\([^)]*\)"
+BT_BOOT_PENDING_BODY = ("httpd_resp_set_status(req,http_status_line(503));"
+                        "returnsend_error(req,bluetooth_channel::bring_up_starting()"
+                        "?bluetooth_channel::bring_up_starting_error()"
+                        ":bluetooth_channel::boot_bring_up_pending_error());")
+SIG_BT_BOOT_TRIED = r"\bbool\s+boot_bring_up_tried\s*\(\s*\)"
+BT_BOOT_TRIED_BODY = "return__atomic_load_n(&g_boot_bring_up_tried,__ATOMIC_ACQUIRE);"
+BT_BOOT_TRIED_STORE = "__atomic_store_n(&g_boot_bring_up_tried,true,__ATOMIC_RELEASE);"
+SIG_BT_BOOT_FINISHED = r"\bvoid\s+boot_bring_up_finished\s*\(\s*\)"
 # What a bring-up handler never reads (F235): the published setting or status.
 # Whether Bluetooth is saved on says nothing about whether the stack is up.
 BT_SETTING_READERS = ("read_enabled", "read_settings", "read_status")
@@ -1563,11 +1615,14 @@ def check_channel_handlers(ns: str, api: str, api_src: str, errors: list[str]) -
                               "answer from the Result the loop task read (`r.`), not from state "
                               "the loop task may be changing (F111)")
         if h in BT_BRING_UP_HANDLERS:
-            if not s.startswith(BT_BRING_UP_GUARD):
+            wait = BT_BOOT_WAIT_GUARD if h in BT_BOOT_WAIT_HANDLERS else ""
+            if not s.startswith(wait + BT_BRING_UP_GUARD):
                 errors.append(f"{api}: {h}() must bring the stack up on its own task first, before "
-                              f"anything else, whenever it is down (`{BT_BRING_UP_GUARD} ...`): no "
-                              "command runs init(), so without it a tap never brings up a stack whose "
-                              "boot bring-up failed or was refused (F111, F235)")
+                              "anything else, whenever it is down (" +
+                              (f"`{wait}` first, leaving it to the sketch's boot bring-up until that "
+                               "is over on a device saved on (F235's review), then " if wait else "") +
+                              f"`{BT_BRING_UP_GUARD} ...`): no command runs init(), so without it a tap "
+                              "never brings up a stack whose boot bring-up failed or was refused (F111, F235)")
             for reader in BT_SETTING_READERS:
                 if re.search(r"(?<![\w:.>])" + ns + r"::" + reader + r"\s*\(", body):
                     errors.append(f"{api}: {h}() reads {ns}::{reader}() — whether Bluetooth is saved "
@@ -1583,8 +1638,9 @@ def check_channel_handlers(ns: str, api: str, api_src: str, errors: list[str]) -
 
 
 def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str]) -> None:
-    """Rule C3's bring-up part (F235): what a tap's bring-up runs, and how a
-    bring-up that left the stack down is answered."""
+    """Rule C3's bring-up part (F235 and its review): what a tap's bring-up
+    runs, when Start Advertising and Pair leave it to the sketch's boot
+    bring-up, and how a bring-up that left the stack down is answered."""
     code = blank_comments_and_strings(api_src)
     body = body_of(code, SIG_BRING_UP, f"{BT_API}: bring_up()", errors)
     if body is not None and squash(body) != BT_BRING_UP_BODY:
@@ -1597,6 +1653,7 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str]) -> N
                       "bluetooth_channel::bring_up_starting_error() while "
                       "bluetooth_channel::bring_up_starting() says another task's bring-up runs, and "
                       "send_bt_error(req, fallback) (the refusal by name) otherwise, exactly (F235)")
+    spans = named_bodies(code)
     for m in re.finditer(r"(?<![\w:.>])bring_up\s*\(", code):
         before = code[:m.start()].rstrip()
         if re.search(r"\bbool$", before):
@@ -1607,7 +1664,45 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str]) -> N
                           "`if (... !bring_up()) { return send_bring_up_refused(req, ...` — a bring-up "
                           "that left the stack down is answered by name, or as still starting (F235)")
             break
+    # Start Advertising and Pair leave the stack to the boot bring-up (the
+    # F235 review).
+    body = body_of(code, SIG_WAITS_FOR_BOOT, f"{BT_API}: waits_for_boot_bring_up()", errors)
+    if body is not None and squash(body) != BT_WAITS_FOR_BOOT_BODY:
+        errors.append(f"{BT_API}: waits_for_boot_bring_up() must be exactly `return "
+                      "!bluetooth_channel::is_initialized() && !bluetooth_channel::boot_bring_up_tried() && "
+                      "bluetooth_channel::read_enabled();` — the stack down, the sketch's boot bring-up not "
+                      "over (it defers it out of the join window and skips it in safe mode), and "
+                      "Bluetooth saved on, so that bring-up will bring it up (F235's review)")
+    body = body_of(code, SIG_SEND_BOOT_PENDING, f"{BT_API}: send_boot_bring_up_pending()", errors)
+    if body is not None and squash(body) != BT_BOOT_PENDING_BODY:
+        errors.append(f"{BT_API}: send_boot_bring_up_pending() must answer 503 with "
+                      "bluetooth_channel::bring_up_starting_error() while bring_up_starting() says a "
+                      "bring-up runs, and boot_bring_up_pending_error() otherwise, exactly (F235's review)")
+    calls = [m for m in re.finditer(r"(?<![\w:.>])waits_for_boot_bring_up\s*\(", code)
+             if not re.search(r"\bbool$", code[:m.start()].rstrip())]
+    where = sorted(enclosing_function(spans, m.start()) or "file scope" for m in calls)
+    if where != sorted(BT_BOOT_WAIT_HANDLERS):
+        errors.append(f"{BT_API}: waits_for_boot_bring_up() is called by {', '.join(where) or 'nothing'} — "
+                      f"exactly once each by {', '.join(BT_BOOT_WAIT_HANDLERS)}, first (F235's review)")
     cpp = blank_comments_and_strings(cpp_src)
+    body = body_of(cpp, SIG_BT_BOOT_TRIED, f"{BT_CPP}: boot_bring_up_tried()", errors)
+    if body is not None and squash(body) != BT_BOOT_TRIED_BODY:
+        errors.append(f"{BT_CPP}: boot_bring_up_tried() must be exactly `return "
+                      "__atomic_load_n(&g_boot_bring_up_tried, __ATOMIC_ACQUIRE);` — any task asks it "
+                      "(F235's review)")
+    body = body_of(cpp, SIG_BT_BOOT_FINISHED, f"{BT_CPP}: boot_bring_up_finished()", errors)
+    if body is not None and squash(body) != BT_BOOT_TRIED_STORE:
+        errors.append(f"{BT_CPP}: boot_bring_up_finished() must be exactly `__atomic_store_n("
+                      "&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);` — the release a tap's acquire in "
+                      "boot_bring_up_tried() pairs with (F235's review)")
+    cspans = named_bodies(cpp)
+    for m in re.finditer(r"\bg_boot_bring_up_tried\b", cpp):
+        where = enclosing_function(cspans, m.start())
+        if where not in (None, "boot_bring_up_finished", "boot_bring_up_tried"):
+            errors.append(f"{BT_CPP}: {where}() names g_boot_bring_up_tried — set only by "
+                          "boot_bring_up_finished(), when the sketch says its boot bring-up is over (BV7), "
+                          "read only by boot_bring_up_tried() (F235's review)")
+            break
     body = body_of(cpp, SIG_BT_BRING_UP_STARTING, f"{BT_CPP}: bring_up_starting()", errors)
     if body is not None and squash(body) != BT_BRING_UP_STARTING_BODY:
         errors.append(f"{BT_CPP}: bring_up_starting() must be exactly `return init_running() || "
@@ -3094,6 +3189,11 @@ BT_WORKER_FINISHED_BODY = ("g_bringup_worker_running=false;if(g_advertise_after_
                            "g_advertise_after_bringup=false;start_advertising();}")
 INO_WORKER_STARTED = "bluetooth_channel::bringup_worker_started();"
 INO_WORKER_FINISHED = "bluetooth_channel::bringup_worker_finished();"
+# The F235 review: the boot bring-up is over (C3's boot_bring_up_tried()).
+INO_BOOT_FINISHED = "bluetooth_channel::boot_bring_up_finished();"
+# A call into what can run NimBLEDevice::init() or start the stack's radio in
+# the finalize stage; the boot bring-up's end is the last of them.
+INO_FINALIZE_STACK_CALL = r"\b(?:bluetooth_channel|ble_scout|ble_manager)\s*::\s*\w+\s*\("
 INO_WORKER_CREATE = "xTaskCreate(ble_bringup_task,"
 INO_FINALIZE_HEAD = ("if(g_ble_bringup_finalized||!__atomic_load_n(&g_ble_bringup_done,__ATOMIC_ACQUIRE)){return;}"
                      "g_ble_bringup_finalized=true;")
@@ -3159,6 +3259,12 @@ def check_bluetooth_bringup_worker(files: dict[str, str], errors: list[str]) -> 
                           f"`{INO_WORKER_STARTED}` once, before `{INO_WORKER_CREATE}` (the worker may run "
                           f"before it returns), and `{INO_WORKER_FINISHED}` when the create fails "
                           "(the F167 review)")
+        bf = sq.find(INO_BOOT_FINISHED)
+        if sq.count(INO_BOOT_FINISHED) != 1 or fin < 0 or bf < fin:
+            errors.append(f"{INO}: ble_discovery_start_if_due() tells the pairing channel "
+                          f"`{INO_BOOT_FINISHED}` once, right after the failed create's "
+                          f"`{INO_WORKER_FINISHED}` — no worker, no finalize stage: the boot bring-up is "
+                          "over, and Start Advertising and Pair may bring the stack up (F235's review)")
     fin_body = body_of(ino, SIG_INO_FINALIZE, f"{INO}: ble_bringup_finalize_if_done()", errors)
     if fin_body is not None:
         sq = squash(fin_body)
@@ -3166,9 +3272,22 @@ def check_bluetooth_bringup_worker(files: dict[str, str], errors: list[str]) -> 
             errors.append(f"{INO}: ble_bringup_finalize_if_done() tells the pairing channel "
                           f"`{INO_WORKER_FINISHED}` once, after it has taken the worker's result "
                           "(the F167 review)")
+        # Read on the blanked body, not the squashed one: squashing glues a
+        # preprocessor line's last word to the call after it.
+        stack_calls = list(re.finditer(INO_FINALIZE_STACK_CALL, fin_body))
+        last_is_end = bool(stack_calls) and re.match(r"bluetooth_channel\s*::\s*boot_bring_up_finished\s*\(",
+                                                     fin_body[stack_calls[-1].start():])
+        if sq.count(INO_BOOT_FINISHED) != 1 or not last_is_end:
+            errors.append(f"{INO}: ble_bringup_finalize_if_done() tells the pairing channel "
+                          f"`{INO_BOOT_FINISHED}` once, as its last call into the channel, the Scout or "
+                          "ble_manager — after `ble_scout::ble_scout_init();`, whose nimble_scan_init() runs "
+                          "NimBLEDevice::init() on the loop task when the stack is down: a Start Advertising "
+                          "or Pair tap's init() on the HTTP task must not run beside it (F235's review)")
     for call, allowed in (("bringup_worker_started", ("ble_discovery_start_if_due",)),
                           ("bringup_worker_finished", ("ble_discovery_start_if_due",
-                                                       "ble_bringup_finalize_if_done"))):
+                                                       "ble_bringup_finalize_if_done")),
+                          ("boot_bring_up_finished", ("ble_discovery_start_if_due",
+                                                      "ble_bringup_finalize_if_done"))):
         for path, src in files.items():
             if path in (BT_CPP, BT_H):
                 continue
@@ -3226,9 +3345,10 @@ def check_bluetooth_enabled_read(files: dict[str, str], errors: list[str]) -> No
     """Rule BV8 (F210): the Start Advertising and Pair handlers decided from
     is_enabled(), the loop task's g_settings.enabled read in place on the
     httpd task, whether to bring the stack up; the loop task's commands and
-    its first pass's load_saved() write it. They read read_enabled() until
-    F235 (C3 now forbids a bring-up handler any setting read), which is the
-    published settings' flag;
+    its first pass's load_saved() write it. They read read_enabled(), the
+    published settings' flag (since F235 only through C3's
+    waits_for_boot_bring_up(): a bring-up handler's own body reads no
+    setting);
     is_enabled() is the loop task's alone: static, named by no other file,
     called only by run_command() (BV3's BT_LIVE_READERS keeps it out of the
     header and out of every handler)."""
@@ -3743,6 +3863,81 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("bring_up_starting() reads the stack before the latch",
      on_other(BT_CPP, SIG_BT_BRING_UP_STARTING, r"return\s+init_running\(\)\s*\|\|\s*is_initialized\(\);",
               "return is_initialized() || init_running();")),
+    # Rule C3, the boot bring-up's go (the F235 review): a default device's
+    # Start Advertising and Pair brought NimBLE up in the join window and in
+    # safe mode, and beside the worker's own NimBLEDevice::init() on FULL.
+    ("the advertise handler brings the stack up before the sketch's boot bring-up",
+     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
+              r"if\s*\(waits_for_boot_bring_up\(\)\)\s*\{[^}]*\}\s*", "")),
+    ("the pair handler brings the stack up before the sketch's boot bring-up",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_start"),
+              r"if\s*\(waits_for_boot_bring_up\(\)\)\s*\{[^}]*\}\s*", "")),
+    ("the pair handler waits for the boot bring-up after its own bring-up",
+     lambda s: on_other(BT_API, api_handler("handle_bluetooth_pair_start"),
+                        r"(if\s*\(!bring_up\(\)\)\s*\{[^}]*\})",
+                        r"\1\n  if (waits_for_boot_bring_up()) { return send_boot_bring_up_pending(req); }")(
+         on_other(BT_API, api_handler("handle_bluetooth_pair_start"),
+                  r"if\s*\(waits_for_boot_bring_up\(\)\)\s*\{[^}]*\}\s*", "")(s))),
+    ("the advertise handler answers the boot wait as a refusal",
+     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
+              r"return\s+send_boot_bring_up_pending\(req\);", "return send_bring_up_refused(req, \"x\");")),
+    ("waits_for_boot_bring_up() waits on a device saved off too",
+     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"\s*&&\s*bluetooth_channel::read_enabled\(\)", "")),
+    ("waits_for_boot_bring_up() waits whether or not the boot bring-up is over",
+     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"!bluetooth_channel::boot_bring_up_tried\(\)\s*&&\s*", "")),
+    ("waits_for_boot_bring_up() waits with the stack up",
+     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"!bluetooth_channel::is_initialized\(\)\s*&&\s*", "")),
+    ("waits_for_boot_bring_up() reads the loop task's flag in place",
+     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"bluetooth_channel::read_enabled\(\)",
+              "bluetooth_channel::read_settings().enabled")),
+    ("send_boot_bring_up_pending() answers 200",
+     on_other(BT_API, SIG_SEND_BOOT_PENDING, r"httpd_resp_set_status\(req,\s*http_status_line\(503\)\);", "")),
+    ("send_boot_bring_up_pending() never says still starting",
+     on_other(BT_API, SIG_SEND_BOOT_PENDING, r"bluetooth_channel::bring_up_starting\(\)\s*\?[^:]*:\s*", "")),
+    ("send_boot_bring_up_pending() always says still starting",
+     on_other(BT_API, SIG_SEND_BOOT_PENDING, r"\s*:\s*bluetooth_channel::boot_bring_up_pending_error\(\)",
+              " : bluetooth_channel::bring_up_starting_error()")),
+    ("the disable handler waits for the boot bring-up",
+     on_other(BT_API, api_handler("handle_bluetooth_disable"), r"(bluetooth_channel::Result r;)",
+              r"if (waits_for_boot_bring_up()) { return send_boot_bring_up_pending(req); }\n  \1")),
+    ("boot_bring_up_tried() reads relaxed",
+     on_other(BT_CPP, SIG_BT_BOOT_TRIED, r"__ATOMIC_ACQUIRE", "__ATOMIC_RELAXED")),
+    ("boot_bring_up_tried() always answers yes",
+     on_other(BT_CPP, SIG_BT_BOOT_TRIED, r"return\s+__atomic_load_n\([^;]*\);", "return true;")),
+    ("the boot bring-up counts as tried once the worker starts",
+     on_other(BT_CPP, SIG_BT_WORKER_STARTED, r"(g_bringup_worker_running = true;)",
+              r"\1\n  __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);")),
+    ("boot_bring_up_finished() never marks the boot bring-up over",
+     on_other(BT_CPP, SIG_BT_BOOT_FINISHED, r"(&g_boot_bring_up_tried, )true(, __ATOMIC_RELEASE\);)",
+              r"\1false\2")),
+    ("boot_bring_up_finished() marks it with a relaxed store",
+     on_other(BT_CPP, SIG_BT_BOOT_FINISHED, r"(&g_boot_bring_up_tried, true, )__ATOMIC_RELEASE",
+              r"\1__ATOMIC_RELAXED")),
+    ("the worker's end marks the boot bring-up over, before the finalize stage's Scout init",
+     on_other(BT_CPP, SIG_BT_WORKER_FINISHED, r"$",
+              "\n  __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);\n")),
+    # Rule BV7, the sketch's two calls of the boot bring-up's end (the F235
+    # review): last in the finalize stage, after the Scout's NimBLE init, and
+    # where no worker could be created; nowhere else.
+    ("the finalize stage marks the boot bring-up over before the Scout's NimBLE init",
+     lambda s: on("ino", SIG_INO_FINALIZE, r"(ble_scout::ble_scout_allow_radio\(\);)",
+                  r"bluetooth_channel::boot_bring_up_finished();\n  \1")(
+         on("ino", SIG_INO_FINALIZE, r"bluetooth_channel::boot_bring_up_finished\(\);", "")(s))),
+    ("the finalize stage marks the boot bring-up over before it takes the worker's result",
+     lambda s: on("ino", SIG_INO_FINALIZE, r"(bluetooth_channel::bringup_worker_finished\(\);)",
+                  r"bluetooth_channel::boot_bring_up_finished();\n  \1")(
+         on("ino", SIG_INO_FINALIZE, r"bluetooth_channel::boot_bring_up_finished\(\);", "")(s))),
+    ("the finalize stage never marks the boot bring-up over",
+     on("ino", SIG_INO_FINALIZE, r"bluetooth_channel::boot_bring_up_finished\(\);", "")),
+    ("a failed worker create never marks the boot bring-up over",
+     on("ino", SIG_INO_DISCOVERY_START, r"bluetooth_channel::boot_bring_up_finished\(\);", "")),
+    ("the gate marks the boot bring-up over as it starts the worker",
+     on("ino", SIG_INO_DISCOVERY_START, r"(bluetooth_channel::bringup_worker_started\(\);)",
+        r"\1\n  bluetooth_channel::boot_bring_up_finished();")),
+    ("the sketch's loop() marks the boot bring-up over",
+     on("ino", SIG_INO_LOOP, r"^", "\n  bluetooth_channel::boot_bring_up_finished();")),
+    ("stop_advertising() marks the boot bring-up tried",
+     on_other(BT_CPP, SIG_BT_STOP_ADV, r"$", "\n  __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);\n")),
     # Rule C3, what the command carries (the review's C-k, C-l, C-m, B-n, B-g).
     ("the Chirp ack handler dismisses a confirmation",
      on_other(CHIRP_API, api_handler("handle_chirp_ack"),
