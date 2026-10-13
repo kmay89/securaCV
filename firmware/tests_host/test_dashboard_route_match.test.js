@@ -24,8 +24,8 @@
 // PlatformIO canary's dashboard and setup page; canary-wap's admin dashboard
 // (web_ui.h, /admin), Sensing dashboard (/, which /sense redirects to),
 // companion PWA, Tuning Lab and MQTT page, and its captive page. A URL a page
-// takes from a response is not read, so nothing here holds it to a route
-// (both dashboards' Export sends the browser to the answer's download_url).
+// takes from a response is not read by that reader; Export's answer, the
+// one the dashboards followed, is held on its own (F278).
 // What this pins:
 //   - the copy is the IDF function, byte for byte (a hash of its text), and
 //     the oracle answers as IDF's matcher does on the cases that decided F214;
@@ -45,6 +45,10 @@
 //   - every request whose route sits under an #if the page's own
 //     registration does not is listed in GATED, by page and condition, with
 //     how the page meets a build without it (F238);
+//   - every /api/ URL the POST /api/export handler (and any handler it
+//     returns through) writes reaches a route that means it, and no page's
+//     Export sends the browser or a request to a field of the answer the
+//     handler never writes (F278);
 //   - the log routes reach their handlers on both trees: POST
 //     /api/logs/<seq>/ack the log-ack handler, ack-all and rotate theirs;
 //   - each page's per-entry Acknowledge builds a URL its own tree's handler
@@ -343,6 +347,31 @@ test("the condition reader reads #if, #elif, #else and nesting, and skips guards
 // object over several lines, a method the page computes, a ternary URL, a
 // template, a query and a fragment (neither is part of the path), a
 // double-quoted URL, and URLs held for later (no method).
+test("the Export readers read an answer's keys and URLs, and what a page follows (F278)", () => {
+  const answer = exportAnswer([
+    'doc["ok"] = true;',
+    'if (doc["ok"] == true) {}',
+    'doc["download_url"] = String("/api/download?path=") + export_path;',
+    'last_rec["seq"] = 7; doc["note"] = "see /sd/EXPORT";',
+  ].join("\n"));
+  assert.deepStrictEqual(answer, { keys: ["download_url", "note", "ok", "seq"], urls: ["/api/download"] });
+  const page = [
+    "async function a() { const data = await api('/api/export', 'POST');",
+    "  if (data.ok && data.download_url) { window.location.href = data.download_url; } }",
+    "async function b() { let r = await fetch(\"/api/export\", { method: 'POST' });",
+    "  if (r.ok) { location.assign(r['file']); x.src = r.thumb; window.open(r.page); } }",
+    "async function c() { const d = await secureFetch(`/api/export`); const t = `${d.ok ? '}' : '{'}`;",
+    "  if (t === d.href) alert('x'); }",
+    "  const later = data.download_url; window.location.href = data.after_scope;",
+    "async function e() { const data = await api('/api/export', 'POST');",
+    "  const url = URL.createObjectURL(blob); a.href = url; a.download = data.device_id; }",
+  ].join("\n");
+  const got = exportFollows(page);
+  assert.strictEqual(got.calls, 4);
+  assert.deepStrictEqual(got.follows.map((f) => `${f.key}@${f.line}`),
+    ["download_url@2", "file@4", "thumb@4", "page@4"]);
+});
+
 test("the page reader reads each call form, quote and URL shape", () => {
   const page = [
     "#pragma once",
@@ -438,8 +467,10 @@ test("PlatformIO canary: the probe routes match as kProbePaths' comment says (F2
 // Requests to a route only some builds register (sweep F238), by tree, page
 // and the condition(s) the route sits under that the page's own
 // registration does not: the routes, and how the page meets a build without
-// them, read from the page. `gap` marks one it does not meet, each handed up
-// as a new sweep item by F238 rather than fixed here. Which builds lack each
+// them, read from the page. F238 marked five it did not meet; F273-F276
+// gated them, and test_canary_dashboard_gates.test.js,
+// test_canary_setup_page.test.js and canary-wap's dashboard_gates.test.js
+// run each page's own code to hold what `meets` says. Which builds lack each
 // condition is platformio.ini's (PlatformIO canary) and build_config.h's
 // profiles (canary-wap) business; the test pins only what the sources say.
 const GATED = {
@@ -448,8 +479,7 @@ const GATED = {
       "FEATURE_CAMERA_PEEK": {
         routes: ["GET /api/peek/sensor", "GET /api/peek/snapshot", "GET /api/peek/status", "GET /api/peek/stream",
                  "POST /api/peek/resolution", "POST /api/peek/sensor", "POST /api/peek/stop"],
-        meets: "refreshPeekStatus() ignores the refusal, so the Peek tab keeps its markup (Ready, Start) and Start answers 'Camera not available'",
-        gap: true },
+        meets: "refreshPeekStatus() shows the no-camera state and hides the Peek controls and camera info cards, the only callers of the rest, on a refusal before any answer (F274)" },
       "FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER": {
         routes: ["GET /api/sensing"],
         meets: "refreshSensing() shows the offline pill on a refused answer" },
@@ -473,14 +503,12 @@ const GATED = {
         routes: ["DELETE /api/mesh/alerts", "GET /api/mesh", "GET /api/mesh/alerts", "GET /api/mesh/peers",
                  "POST /api/mesh/enable", "POST /api/mesh/leave", "POST /api/mesh/name", "POST /api/mesh/pair/cancel",
                  "POST /api/mesh/pair/confirm", "POST /api/mesh/pair/join", "POST /api/mesh/pair/start", "POST /api/mesh/remove"],
-        meets: "refreshOpera() returns on a refused answer and the Opera tab stays, its pairing and settings controls posting to no route",
-        gap: true },
+        meets: "the Opera tab, the only caller of the rest, starts hidden and shows when /api/mesh answers (F273)" },
     },
     "setup page": {
       "FEATURE_HA_MQTT": {
         routes: ["GET /api/mqtt/status", "POST /api/mqtt/ca", "POST /api/mqtt/config"],
-        meets: "loadHub() ignores the refusal and the hub box stays; Save then says the hub bridge is not turned on and to set it up from canary.local, which serves no hub route either",
-        gap: true },
+        meets: "the hub box, the only caller of the rest, starts hidden and shows when /api/mqtt/status answers JSON (F275)" },
     },
   },
   wap: {
@@ -498,8 +526,7 @@ const GATED = {
       "FEATURE_CAMERA_PEEK": {
         routes: ["GET /api/peek/sensor", "GET /api/peek/snapshot", "GET /api/peek/status", "GET /api/peek/stream",
                  "POST /api/peek/init", "POST /api/peek/resolution", "POST /api/peek/sensor", "POST /api/peek/stop"],
-        meets: "refreshPeekStatus() ignores the refusal, so the Camera tab keeps its markup (Ready, Start) and Start answers 'Camera not available'",
-        gap: true },
+        meets: "refreshPeekStatus() shows the no-camera state and hides the Camera Controls and Camera Info cards, the only callers of the rest, on a refusal before any answer (F274)" },
       "FEATURE_MESH_NETWORK": {
         routes: ["DELETE /api/mesh/alerts", "GET /api/chirp", "GET /api/chirp/recent", "GET /api/mesh", "GET /api/mesh/alerts",
                  "GET /api/mesh/peers", "POST /api/chirp/confirm", "POST /api/chirp/disable", "POST /api/chirp/dismiss",
@@ -507,8 +534,7 @@ const GATED = {
                  "POST /api/chirp/unmute", "POST /api/mesh/enable", "POST /api/mesh/leave", "POST /api/mesh/name",
                  "POST /api/mesh/pair/cancel", "POST /api/mesh/pair/confirm", "POST /api/mesh/pair/join",
                  "POST /api/mesh/pair/start", "POST /api/mesh/remove"],
-        meets: "refreshOpera() and refreshChirpStatus() return on a refused answer and the Community tab's Opera and Chirp views stay, their controls posting to no route",
-        gap: true },
+        meets: "the Community tab's Opera and Chirp sub-tabs, the only callers of the rest, start hidden and show when /api/mesh and /api/chirp answer (F276)" },
       "FEATURE_ACOUSTIC_EVENTS": {
         routes: ["GET /api/audio/config", "GET /api/audio/selftest", "GET /api/audio/status", "POST /api/audio/config",
                  "POST /api/audio/mute", "POST /api/audio/selftest"],
@@ -564,6 +590,104 @@ function pageAsks(table, page) {
 // The registrations that serve a page: those of each handler it names.
 function servingRegs(table, page) {
   return page.servedBy.flatMap((h) => table.filter((g) => g.handler === h.handler));
+}
+
+// The registration a request means, as pageAsks() decides it (an exact
+// template equal to its path, else the one wildcard other than a catch-all
+// that matches it), if httpd answers it there; else null.
+function meantRoute(table, method, path) {
+  const matched = R.match(table.map((g) => [g.uri, path]));
+  const { answers } = R.route(table, [{ method, target: path }]);
+  let want = table.findIndex((g) => g.method === method && g.uri === path);
+  if (want < 0) {
+    const wild = table.map((g, j) => (g.method === method && matched[j] && !catchAll(g) ? j : -1)).filter((j) => j >= 0);
+    want = wild.length === 1 ? wild[0] : -1;
+  }
+  return want >= 0 && answers[0] === want ? table[want] : null;
+}
+
+// ── Export's answer (sweep F278) ─────────────────────────────────────────
+// The page reader reads only URLs a page writes, so a URL a page takes from
+// a response is held here, for the one answer the dashboards followed:
+// canary-wap's POST /api/export answered download_url
+// "/api/download?path=...", which nothing registers, and the PlatformIO
+// dashboard looked for a download_url its handler never sends. Both now
+// answer the bundle inline and both pages save the answer. What is read:
+//   - the answer: the keys a handler body assigns (doc["key"] = ...) and the
+//     /api/ URLs it writes, through every handler it returns through
+//     (`return handle_x(req);`, the canary-wap auth wrappers);
+//   - what a page follows: in the scope of each `X = await api('/api/export'
+//     ...)` (or fetch, secureFetch, cvFetch), a field of X handed to a
+//     navigation, a link, an image or a request (`.href =`, `.src =`,
+//     location.assign/replace, window.open, api/fetch/secureFetch/cvFetch).
+//     A field copied to a variable first is not followed here.
+
+function exportAnswer(text) {
+  return {
+    keys: [...new Set([...text.matchAll(/\[\s*"(\w+)"\s*\]\s*=(?!=)/g)].map((m) => m[1]))].sort(),
+    urls: [...new Set([...text.matchAll(/"(\/api\/[^"?#\s]*)/g)].map((m) => m[1]))].sort(),
+  };
+}
+
+function exportHandler(table) {
+  const reg = table.find((g) => g.method === "POST" && g.uri === "/api/export");
+  assert.ok(reg, "POST /api/export is registered");
+  const file = reg.where.replace(/:\d+$/, "");
+  const bodies = [];
+  const queue = [reg.handler];
+  while (queue.length) {
+    const h = queue.shift();
+    if (bodies.some((b) => b.handler === h)) continue;
+    const body = R.handlerBody({ handler: h, file });
+    bodies.push({ handler: h, body });
+    for (const m of body.matchAll(/\breturn\s+(\w+)\s*\(\s*req\s*\)\s*;/g)) queue.push(m[1]);
+  }
+  return { handlers: bodies.map((b) => b.handler), ...exportAnswer(bodies.map((b) => b.body).join("\n")) };
+}
+
+// The end of the block that encloses `from` in page script: the offset of
+// the first `}` that closes a brace opened before it (quotes and template
+// literals skipped, a template's ${...} read as code).
+function scopeEnd(text, from) {
+  let depth = 0;
+  const tpl = [];
+  for (let i = from; i < text.length; i++) {
+    const c = text[i];
+    if (tpl.length && depth === tpl[tpl.length - 1]) {
+      if (c === "\\") { i++; continue; }
+      if (c === "`") { tpl.pop(); continue; }
+      if (c === "$" && text[i + 1] === "{") { depth++; i++; }
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      for (i++; i < text.length && text[i] !== c && text[i] !== "\n"; i++) if (text[i] === "\\") i++;
+    } else if (c === "`") {
+      tpl.push(depth);
+    } else if (c === "{") {
+      depth++;
+    } else if (c === "}") {
+      if (depth === 0) return i;
+      depth--;
+    }
+  }
+  return text.length;
+}
+
+function exportFollows(text) {
+  const out = [];
+  let calls = 0;
+  const call = /\b(\w+)\s*=\s*await\s+(?:api|fetch|secureFetch|cvFetch)\(\s*(['"`])\/api\/export\2/g;
+  for (const m of text.matchAll(call)) {
+    calls++;
+    const v = m[1];
+    const scope = text.slice(m.index, scopeEnd(text, m.index));
+    const sink = new RegExp(`(?:\\.(?:href|src)\\s*=(?!=)|\\blocation\\.(?:assign|replace)\\(|\\bwindow\\.open\\(|\\b(?:api|fetch|secureFetch|cvFetch)\\()` +
+      `\\s*${v}\\s*(?:\\.\\s*(\\w+)|\\[\\s*['"](\\w+)['"]\\s*\\])`, "g");
+    for (const f of scope.matchAll(sink)) {
+      out.push({ key: f[1] || f[2], line: text.slice(0, m.index + f.index).split("\n").length });
+    }
+  }
+  return { calls, follows: out };
 }
 
 for (const tree of TREES) {
@@ -679,6 +803,27 @@ for (const tree of TREES) {
       for (const [c, g] of Object.entries(byCond)) expected[p][c] = [...g.routes].sort();
     }
     assert.deepStrictEqual(actual, expected);
+  });
+
+  test(`${tree.name}: the URL an Export answer names is served, and the dashboard's Export follows only what it answers (F278)`, () => {
+    const table = tree.table();
+    const answer = exportHandler(table);
+    for (const k of ["ok", "device_id", "pubkey"]) {
+      assert.ok(answer.keys.includes(k), `${answer.handlers.join(" → ")}: the answer's ${k} was read (${answer.keys})`);
+    }
+    const unserved = answer.urls.filter((u) => !meantRoute(table, "GET", u));
+    assert.deepStrictEqual(unserved, [], `${answer.handlers.join(" → ")} answers a URL no route serves`);
+    let calls = 0;
+    const wrong = [];
+    for (const page of R.PAGES[tree.key]) {
+      const got = exportFollows(R.pageText(page));
+      calls += got.calls;
+      for (const f of got.follows) {
+        if (!answer.keys.includes(f.key)) wrong.push(`${page.name} (page line ${f.line}) follows ${f.key}, which ${answer.handlers.join(" → ")} never answers`);
+      }
+    }
+    assert.ok(calls >= 1, `a page of the ${tree.name} posts /api/export (${calls})`);
+    assert.deepStrictEqual(wrong, []);
   });
 
   test(`${tree.name}: the log routes reach their handlers`, () => {

@@ -668,7 +668,8 @@ function callMethod(fn, args) {
 // secureFetch(), fetch() or cvFetch() call (a ternary's arms included) that
 // names it or none (GET). Elsewhere (a constant, a URL held for later, an
 // href) the method is null. Only URLs written in the page are read: a URL
-// the page takes from a response (the Export answer's download_url) is not.
+// the page takes from a response is not (Export's answer, the one the
+// dashboards followed, is held by test_dashboard_route_match.test.js, F278).
 function pageRequests(page) {
   const text = pageText(page);
   const calls = [];

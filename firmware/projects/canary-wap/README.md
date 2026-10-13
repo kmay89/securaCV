@@ -294,7 +294,7 @@ make help               # Show all targets
 | `/api/logs` | GET | Log export |
 | `/api/witness` | GET | The newest witness record (sequence, time bucket, type, chain hash); the signed page is `/api/v1/witness` |
 | `/api/v1/witness?last=N` | GET | Newest N signed witness records with their chain-hash pre-image — the shared page contract the phone verifies (`spec/witness_api_v1.md`) |
-| `/api/export` | POST | Writes an export bundle header (device id, firmware, chain position, public key) to the SD card and returns its download URL |
+| `/api/export` | POST | Answers the export bundle header (device id, firmware, chain position, record count, public key) inline, which the dashboard's Export saves as a JSON file; with a card in, also writes it to `/EXPORT/bundle_<ms>.json` and names that copy in `card_path` |
 | `/api/peek/start` | POST | Start camera stream |
 | `/api/peek/stop` | POST | Stop camera stream |
 | `/api/audio/status` | GET | Mic state, mute info, detection counters |
