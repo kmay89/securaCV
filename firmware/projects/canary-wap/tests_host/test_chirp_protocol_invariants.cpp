@@ -29,6 +29,10 @@
 //     test_chirp_commands_wap.cpp's every_session_display_is_five_emoji_in_its_field
 //     renders every session display through the real generate_emoji_string()
 //     into the real field (sweep F231).
+//   - common_header_matches_the_reference: new (sweep F272). The canonical
+//     C-ABI header, firmware/common/chirp/chirp_channel.h, sized the session
+//     display for three emoji and differed in five more values; each of its
+//     values is held here, by static_assert, to the constant it names.
 //   - removed_template_is_refused: new, for the C17 row of
 //     docs/audit/mesh_and_chirp_audit_v1.md §10, which cited
 //     protocol_version_is_v02: a witness naming the removed 0x04 template is
@@ -42,6 +46,15 @@
 #include "chirp_host_harness.h"
 
 #include <openssl/evp.h>
+
+#include <algorithm>
+#include <iterator>
+
+// The canonical C-ABI API the ACTIVE tree's port is to implement (sweep
+// F272): its values are held to this reference below. After the firmware
+// file, whose own names are in namespace chirp_channel and none of which
+// these macros spell.
+#include "../../../common/chirp/chirp_channel.h"
 
 namespace chirp_protocol {
 
@@ -339,6 +352,99 @@ void test_removed_template_is_refused() {
   CHECK(cc::g_recent_chirp_count == 1);
 }
 
+// ── The canonical C-ABI header (sweep F272) ─────────────────────────────
+
+// firmware/common/chirp/chirp_channel.h, the API the ACTIVE tree's port is
+// to implement, says what the reference does: each of its values against the
+// constant it names (the relay delay excepted: the reference has none). It
+// sized the session display for three emoji in 20 bytes, kept 32 recent and
+// 16 nearby rows, beaconed every 15 s and named a 64-entry nonce cache.
+static_assert(CHIRP_WIRE_VERSION == cc::PROTOCOL_VERSION, "wire version");
+static_assert(CHIRP_WIRE_MAGIC == cc::CHIRP_MAGIC, "magic");
+static_assert(CHIRP_SESSION_ID_SIZE == cc::SESSION_ID_SIZE, "session id");
+static_assert(CHIRP_SESSION_PUBKEY_SIZE == cc::SESSION_PUBKEY_SIZE, "session key");
+static_assert(CHIRP_NONCE_SIZE == sizeof(cc::ChirpHeader{}.nonce), "nonce");
+static_assert(CHIRP_EMOJI_DISPLAY_SIZE == cc::EMOJI_DISPLAY_SIZE, "five emoji in 31 bytes");
+static_assert(CHIRP_EMOJI_DISPLAY_SIZE == sizeof(cc::ChirpPresencePayload{}.emoji), "the beacon's field");
+static_assert(CHIRP_MAX_HOPS == cc::MAX_HOP_COUNT, "hops");
+static_assert(CHIRP_WITNESS_MAX_AGE_S == cc::WITNESS_MAX_AGE_S, "freshness, behind");
+static_assert(CHIRP_WITNESS_MAX_AHEAD_S == cc::WITNESS_MAX_AHEAD_S, "freshness, ahead");
+static_assert(CHIRP_MIN_UNIX_TIME == cc::MIN_UNIX_TIME, "clock floor");
+static_assert(CHIRP_MAX_RECENT == cc::MAX_RECENT_CHIRPS, "recent rows");
+static_assert(CHIRP_MAX_NEARBY == cc::MAX_NEARBY_CACHE, "nearby rows");
+static_assert(CHIRP_NONCE_HOLD_MS == cc::NONCE_FILTER_HALF_MS, "nonce hold");
+static_assert(CHIRP_PRESENCE_INTERVAL_MS == cc::PRESENCE_INTERVAL_MS, "beacon interval");
+static_assert(CHIRP_PRESENCE_TIMEOUT_MS == cc::NEARBY_TIMEOUT_MS, "nearby timeout");
+static_assert(CHIRP_RECENT_TTL_MS == cc::DEFAULT_DISPLAY_MS, "display time");
+static_assert(CHIRP_PRESENCE_REQ_MS == cc::PRESENCE_REQUIRED_MS, "presence requirement");
+static_assert(CHIRP_COOLDOWN_TIER1_MS == cc::COOLDOWN_TIER_1_MS, "cooldown 1");
+static_assert(CHIRP_COOLDOWN_TIER2_MS == cc::COOLDOWN_TIER_2_MS, "cooldown 2");
+static_assert(CHIRP_COOLDOWN_TIER3_MS == cc::COOLDOWN_TIER_3_MS, "cooldown 3");
+static_assert(CHIRP_COOLDOWN_TIER4_MS == cc::COOLDOWN_TIER_4_MS, "cooldown 4");
+static_assert(CHIRP_COOLDOWN_RESET_MS == cc::COOLDOWN_RESET_MS, "cooldown reset");
+
+// The enums the API names, value for value, and the template table: every
+// template the reference takes, and no other (0x04 stays reserved).
+void test_common_header_matches_the_reference() {
+  CHECK((int)CHIRP_CAT_AUTHORITY == (int)cc::CHIRP_CAT_AUTHORITY);
+  CHECK((int)CHIRP_CAT_INFRA == (int)cc::CHIRP_CAT_INFRA);
+  CHECK((int)CHIRP_CAT_EMERGENCY == (int)cc::CHIRP_CAT_EMERGENCY);
+  CHECK((int)CHIRP_CAT_WEATHER == (int)cc::CHIRP_CAT_WEATHER);
+  CHECK((int)CHIRP_CAT_MUTUAL_AID == (int)cc::CHIRP_CAT_MUTUAL_AID);
+  CHECK((int)CHIRP_CAT_ALL_CLEAR == (int)cc::CHIRP_CAT_ALL_CLEAR);
+  CHECK((int)CHIRP_URG_INFO == (int)cc::CHIRP_URG_INFO);
+  CHECK((int)CHIRP_URG_CAUTION == (int)cc::CHIRP_URG_CAUTION);
+  CHECK((int)CHIRP_URG_URGENT == (int)cc::CHIRP_URG_URGENT);
+  CHECK((int)CHIRP_ACK_SEEN == (int)cc::CHIRP_ACK_SEEN);
+  CHECK((int)CHIRP_ACK_CONFIRMED == (int)cc::CHIRP_ACK_CONFIRMED);
+  CHECK((int)CHIRP_ACK_RESOLVED == (int)cc::CHIRP_ACK_RESOLVED);
+  const struct {
+    int api;
+    int ref;
+  } details[] = {
+      {CHIRP_DETAIL_NONE, cc::DETAIL_NONE},
+      {CHIRP_DETAIL_SCALE_FEW, cc::DETAIL_SCALE_FEW},
+      {CHIRP_DETAIL_SCALE_MANY, cc::DETAIL_SCALE_MANY},
+      {CHIRP_DETAIL_SCALE_MASSIVE, cc::DETAIL_SCALE_MASSIVE},
+      {CHIRP_DETAIL_STATUS_ONGOING, cc::DETAIL_STATUS_ONGOING},
+      {CHIRP_DETAIL_STATUS_CONTAINED, cc::DETAIL_STATUS_CONTAINED},
+      {CHIRP_DETAIL_STATUS_SPREADING, cc::DETAIL_STATUS_SPREADING},
+      {CHIRP_DETAIL_DIR_NORTH, cc::DETAIL_DIR_NORTH},
+      {CHIRP_DETAIL_DIR_SOUTH, cc::DETAIL_DIR_SOUTH},
+      {CHIRP_DETAIL_DIR_EAST, cc::DETAIL_DIR_EAST},
+      {CHIRP_DETAIL_DIR_WEST, cc::DETAIL_DIR_WEST},
+  };
+  for (const auto& d : details) CHECK(d.api == d.ref);
+  const int api_templates[] = {
+      CHIRP_TPL_AUTH_POLICE_ACTIVITY, CHIRP_TPL_AUTH_HEAVY_RESPONSE, CHIRP_TPL_AUTH_ROAD_BLOCKED,
+      CHIRP_TPL_AUTH_HELICOPTER,      CHIRP_TPL_INFRA_POWER_OUT,     CHIRP_TPL_INFRA_WATER_ISSUE,
+      CHIRP_TPL_INFRA_GAS_SMELL,      CHIRP_TPL_INFRA_INTERNET_DOWN, CHIRP_TPL_INFRA_ROAD_CLOSED,
+      CHIRP_TPL_EMERG_FIRE,           CHIRP_TPL_EMERG_MEDICAL,       CHIRP_TPL_EMERG_MULTI_AMBULANCE,
+      CHIRP_TPL_EMERG_EVACUATION,     CHIRP_TPL_EMERG_SHELTER,       CHIRP_TPL_WX_SEVERE,
+      CHIRP_TPL_WX_TORNADO,           CHIRP_TPL_WX_FLOOD,            CHIRP_TPL_WX_LIGHTNING,
+      CHIRP_TPL_AID_WELFARE,          CHIRP_TPL_AID_SUPPLIES,        CHIRP_TPL_AID_OFFERING,
+      CHIRP_TPL_CLR_RESOLVED,         CHIRP_TPL_CLR_SAFE,            CHIRP_TPL_CLR_FALSE_ALARM,
+  };
+  size_t taken = 0;
+  for (int id = 0; id < 256; ++id) {
+    const bool in_api = std::find(std::begin(api_templates), std::end(api_templates), id) !=
+                        std::end(api_templates);
+    const bool in_ref = cc::is_valid_template((cc::ChirpTemplate)id);
+    CHECK(in_api == in_ref);
+    taken += in_ref ? 1 : 0;
+  }
+  CHECK(taken == sizeof api_templates / sizeof api_templates[0]);
+  CHECK(!cc::is_valid_template((cc::ChirpTemplate)0x04));
+  // The longest display there is (five suns, each 6 bytes with its variation
+  // selector) and its NUL fit the API's field.
+  uint8_t sid[cc::SESSION_ID_SIZE];
+  memset(sid, 0x0B, sizeof sid);   // nibble 11 picks the sun everywhere
+  char display[CHIRP_EMOJI_DISPLAY_SIZE];
+  memset(display, 0x7F, sizeof display);
+  cc::generate_emoji_string(sid, display);
+  CHECK(std::strlen(display) == 30 && display[30] == '\0');
+}
+
 const Test kTests[] = {
     {"protocol_version_is_v02", test_protocol_version_is_v02},
     {"magic_byte", test_magic_byte},
@@ -348,6 +454,7 @@ const Test kTests[] = {
     {"suppress_canonical_layout", test_suppress_canonical_layout},
     {"canonical_distinguishes_signers", test_canonical_distinguishes_signers},
     {"removed_template_is_refused", test_removed_template_is_refused},
+    {"common_header_matches_the_reference", test_common_header_matches_the_reference},
 };
 
 }  // namespace chirp_protocol

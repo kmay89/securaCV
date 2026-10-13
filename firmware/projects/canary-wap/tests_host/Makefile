@@ -261,7 +261,7 @@ WITNESS_PAGE_FIXTURE = ../../../../spec/fixtures/witness_page_v1.json
 $(BIN): $(SOURCES) $(SRC_DIR)/airtime_governor.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
 	$(CXX) $(CXXFLAGS) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(SOURCES)
 
-$(CHIRP_INV_BIN): $(CHIRP_INV_SRC) $(CHIRP_HARNESS_DEPS)
+$(CHIRP_INV_BIN): $(CHIRP_INV_SRC) $(CHIRP_HARNESS_DEPS) ../../../common/chirp/chirp_channel.h ../../../common/core/types.h
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_INV_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
 
 $(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC) $(CHIRP_HARNESS_DEPS)
