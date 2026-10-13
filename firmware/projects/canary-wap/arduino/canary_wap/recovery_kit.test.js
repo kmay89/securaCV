@@ -20,8 +20,11 @@
 //   * a tap that never served a receipt (403 every poll, an answer that is
 //     not a receipt) offers nothing;
 //   * Settings → Device → Recovery kit saves it again for a page that is
-//     already signed in (a session cookie or a token): one GET, the same
-//     builder; a refused session brings the sign-in back and saves nothing;
+//     already signed in (the session cookie a BOOT tap or a setup-door claim
+//     minted, or a token): one GET, the same builder; a refused session (one
+//     the landing page at / minted, which the receipt no longer takes, sweep
+//     F289, or one a reboot dropped) brings the sign-in back and saves
+//     nothing;
 //   * the wizard's close-out saves through the same builder, and its saved
 //     line names that Settings path, which exists.
 //
@@ -381,7 +384,7 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
 });
 
 describe('Settings → Device → Recovery kit saves it again for a signed-in page (sweep F257)', () => {
-  it('on the session cookie: one GET, no token sent, the receipt saved as served', async () => {
+  it('on the session cookie a BOOT tap minted: one GET, no token sent, the receipt saved as served', async () => {
     const d = dashboard([{ status: 200, body: RECEIPT }]);   // a resumed session: no token in the page
     await d.api.saveRecoveryKitFromSettings();
     assert.deepEqual(d.asked.map((q) => q.url), ['/api/provisioning-receipt']);
@@ -407,8 +410,8 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
     assert.equal(d.win.saved.length, 1);
   });
 
-  it('a refused session saves nothing and brings the sign-in back', async () => {
-    const d = dashboard([GATE_403]);
+  it('a refused session (the landing page\'s, sweep F289) saves nothing and brings the sign-in back', async () => {
+    const d = dashboard([GATE_403]);   // the receipt route's answer to a landing session: the tap's refusal
     await d.api.saveRecoveryKitFromSettings();
     assert.equal(d.asked.length, 1);
     assert.equal(d.win.saved.length, 0);

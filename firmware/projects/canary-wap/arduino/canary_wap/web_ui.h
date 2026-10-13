@@ -2467,8 +2467,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
 
         <!-- Recovery kit, any time (sweep F257): the receipt this signed-in
-             page can already fetch (GET /api/provisioning-receipt serves
-             its token or its session cookie), saved by the browser as
+             page can fetch (GET /api/provisioning-receipt serves its token,
+             or the session cookie a BOOT tap or a setup-door claim minted;
+             a session the landing page at / minted gets the BOOT-tap
+             refusal, sweep F289), saved by the browser as
              canary-recovery-kit.json through RecoveryKit.save, the builder
              the BOOT-tap offer and the /companion wizard save with. -->
         <div class="card" id="settingsKitCard">
@@ -2947,13 +2949,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // Settings → Device → Recovery kit (sweep F257): the kit again, any time,
-    // without a tap. A page that is signed in already holds what the receipt
-    // route serves on (its token, or the cv_session cookie a BOOT tap, a
-    // setup-door claim or the landing page issued); a browser that resumed
-    // its session on load never sees the BOOT-tap offer above, so this is
-    // where its owner saves the kit. The one request is that GET; the save
-    // is RecoveryKit.save's blob: download. A refused session is
-    // secureFetch's: the sign-in comes back, and its BOOT tap offers the kit.
+    // without a tap, for a page that holds what the receipt route serves on:
+    // its token, or the cv_session cookie a BOOT tap or a setup-door claim
+    // minted. A browser that resumed its session on load never sees the
+    // BOOT-tap offer above, so this is where its owner saves the kit. The one
+    // request is that GET; the save is RecoveryKit.save's blob: download. A
+    // session the landing page at / minted (for any caller on the network)
+    // runs this dashboard but is refused here (sweep F289), as is one a
+    // reboot dropped: secureFetch brings the sign-in back, and its BOOT tap
+    // offers the kit.
     async function saveRecoveryKitFromSettings() {
       const done = document.getElementById('settingsKitDone');
       const err = document.getElementById('settingsKitErr');
