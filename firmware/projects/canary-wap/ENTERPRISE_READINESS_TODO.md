@@ -170,12 +170,14 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         warning for the next core, so a cut release can differ from its PR
         build's core; [`firmware/PLATFORMS.md`](../../PLATFORMS.md) records
         the decision (maintainer to confirm). Evidence: the firmware SBOM
-        lists each row under the core it pins, and
+        lists each row under the core it pins,
         `gen_firmware_sbom.py --check --validate` (`lint.yml`) refuses a row
-        pin no WAP sketch profile shares. The libraries stay unversioned in
-        the rows and the profile alike (the README names minimum versions).
-        The release rows compile only when a release runs (CI's, on dispatch
-        or tag).
+        pin no WAP sketch profile shares, and
+        `scripts/tests/test_gen_firmware_sbom.py` holds each WAP row to its
+        side of the split (a row moved either way fails it). The libraries
+        stay unversioned in the rows and the profile alike (the README names
+        minimum versions). The release rows compile only when a release runs
+        (CI's, on dispatch or tag).
 
 - [x] **Split oversized `web_ui.h` payload** — superseded by the gzip
   shipping model.

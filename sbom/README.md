@@ -89,9 +89,10 @@ inside `platform_core3`, so rule 1 holds them to the sketch; `firmware.yml`'s
 PR row still builds on "latest" by design, the early warning for the next
 core, and appears under the `framework:arduino-esp32@latest` component. That
 split is a release decision ([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md),
-#1802), not a lint's. A row moved back to "latest" is not refused, but it
-moves its build path to that component and `--check` stays red until the
-document is regenerated.
+#1802), not a lint's. The generator does not refuse a row moved back to
+"latest" (it moves that build path to the `@latest` component, and `--check`
+is red until the document is regenerated); `scripts/tests/test_gen_firmware_sbom.py`
+holds each WAP row to its side of the split.
 
 ### What is still declared by hand
 

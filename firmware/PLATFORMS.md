@@ -155,8 +155,9 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   compile on 3.3.8 through the PlatformIO `canary-wap-*` envs and the
   CSI-module matrix, but the release's own Arduino-CLI invocation on 3.3.8
   runs only when a release does. Moving the pin is one edit per row plus the
-  sketch's `sketch.yaml` (the SBOM refuses a row pin no WAP profile shares),
-  and the PR row's warning is the reason to make it. What was rejected:
+  sketch's `sketch.yaml` (the SBOM refuses a row pin no WAP profile shares,
+  and `scripts/tests/test_gen_firmware_sbom.py` names which rows pin and
+  which floats), and the PR row's warning is the reason to make it. What was rejected:
   pinning the PR row too (the early warning goes with it), and leaving every
   row on "latest" (a release would build on whatever the action resolved
   that week, a core no PR had necessarily compiled the sketch on). Note too
