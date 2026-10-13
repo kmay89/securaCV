@@ -10,8 +10,10 @@
  *     member creates nothing, and is<JsonVariant>() is false for it;
  *   - as<bool>() reads null false, a number true when it is not zero, and a
  *     string, object or array true; as<integer>() reads a number that fits
- *     the type, else 0 (a string reads 0); as<const char*>() reads a
- *     string, else nullptr;
+ *     the type, else 0, and aborts on a string (ArduinoJson 7.4.1 parses
+ *     one, "5" reading 5; that parse is not modeled, so a test that posts a
+ *     quoted number fails loudly instead of pinning a 0); as<const char*>()
+ *     reads a string, else nullptr;
  *   - a string is written with the seven escapes check_wap_json_answers.py
  *     counts (\" \\ \b \f \n \r \t), any other byte as it is;
  *   - deserializeJson() reads one value and stops after it, and answers
@@ -388,6 +390,14 @@ class JsonVariant {
       case host_json::Node::kInt: v = (long double)n->i; break;
       case host_json::Node::kUInt: v = (long double)n->u; break;
       case host_json::Node::kFloat: v = (long double)n->f; break;
+      case host_json::Node::kString:
+        // ArduinoJson 7.4.1 parses a string here (VariantData::asIntegral()
+        // calls parseNumber()): {"tx_power":"5"} reads 5. The stand-in does
+        // not model that parse, so a test that reaches it stops here rather
+        // than pin a 0 the device would not answer.
+        fprintf(stderr, "ArduinoJson stand-in: as<integer>() of the string \"%s\" is not modeled "
+                        "(ArduinoJson 7.4.1 parses it)\n", n->s.c_str());
+        abort();
       default: return 0;
     }
     if (v < (long double)std::numeric_limits<T>::min() || v > (long double)std::numeric_limits<T>::max()) {
