@@ -63,6 +63,31 @@ def full_block_lines(text: str) -> tuple[int, int]:
     raise AssertionError("no FULL block that sets FEATURE_* in build_config.h")
 
 
+def preprocessor_values(case: unittest.TestCase, include_dir: Path, flags) -> dict[str, str]:
+    """What `cpp -DHARDWARE_XIAO_ESP32S3 -DBUILD_PROFILE_FULL` gives each flag
+    for the build_config.h in include_dir: name -> "1" or "0"."""
+    cmd = preprocessor()
+    if cmd is None:
+        if os.environ.get("CI"):
+            case.fail("no C preprocessor on this CI runner: the oracle cannot run")
+        case.skipTest("no cpp/gcc/clang on this host")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "probe.c"
+        # String literals name each flag so the preprocessor leaves the
+        # label alone; #if gives the value it would compile.
+        probe = ['#include "build_config.h"']
+        for name in sorted(flags):
+            probe += [f"#if {name}", f'"{name}" 1', "#else", f'"{name}" 0', "#endif"]
+        src.write_text("\n".join(probe) + "\n")
+        run = subprocess.run(
+            cmd + ["-DHARDWARE_XIAO_ESP32S3", "-DBUILD_PROFILE_FULL", "-I", str(include_dir), str(src)],
+            capture_output=True, text=True)
+        case.assertEqual(run.returncode, 0, run.stderr)
+        got = dict(re.findall(r'"(FEATURE_\w+)" ([01])', run.stdout))
+        case.assertEqual(set(got), set(flags))
+        return got
+
+
 class RealHeader(unittest.TestCase):
     def setUp(self):
         self.flags = wp.read_full_profile(TEXT)
@@ -89,41 +114,24 @@ class RealHeader(unittest.TestCase):
         self.assertNotRegex(TEXT, r"#\s*define\s+FEATURE_(GNSS|GPS)\b")
 
     def test_every_flag_is_the_preprocessors_value(self):
+        got = preprocessor_values(self, HEADER.parent, self.flags)
+        for name, entry in self.flags.items():
+            self.assertEqual(entry["on"], got[name] == "1", f"{name}: reader vs preprocessor")
+        # Every FEATURE_* the preprocessor defines for this build that the
+        # reader leaves out is set OUTSIDE the FULL block.
         cmd = preprocessor()
-        if cmd is None:
-            if os.environ.get("CI"):
-                self.fail("no C preprocessor on this CI runner: the oracle cannot run")
-            self.skipTest("no cpp/gcc/clang on this host")
-        with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp) / "probe.c"
-            # String literals name each flag so the preprocessor leaves the
-            # label alone; #if gives the value it would compile.
-            probe = ['#include "build_config.h"']
-            for name in sorted(self.flags):
-                probe += [f"#if {name}", f'"{name}" 1', "#else", f'"{name}" 0', "#endif"]
-            src.write_text("\n".join(probe) + "\n")
-            run = subprocess.run(
-                cmd + ["-DHARDWARE_XIAO_ESP32S3", "-DBUILD_PROFILE_FULL", "-I", str(HEADER.parent), str(src)],
-                capture_output=True, text=True)
-            self.assertEqual(run.returncode, 0, run.stderr)
-            got = dict(re.findall(r'"(FEATURE_\w+)" ([01])', run.stdout))
-            self.assertEqual(set(got), set(self.flags))
-            for name, entry in self.flags.items():
-                self.assertEqual(entry["on"], got[name] == "1", f"{name}: reader vs preprocessor")
-            # Every FEATURE_* the preprocessor defines for this build that the
-            # reader leaves out is set OUTSIDE the FULL block.
-            macros = subprocess.run(
-                [cmd[0], "-dM", "-E"] + (["-x", "c"] if cmd[0] != "cpp" else [])
-                + ["-DHARDWARE_XIAO_ESP32S3", "-DBUILD_PROFILE_FULL", str(HEADER)],
-                capture_output=True, text=True)
-            self.assertEqual(macros.returncode, 0, macros.stderr)
-            defined = set(re.findall(r"^#define (FEATURE_\w+)\b", macros.stdout, re.M))
-            start, end = full_block_lines(TEXT)
-            block = "\n".join(TEXT.split("\n")[start - 1:end - 1])
-            for extra in sorted(defined - set(self.flags)):
-                self.assertNotRegex(block, r"#\s*define\s+%s\b" % extra,
-                                    f"{extra} is set in the FULL block but the reader dropped it")
-            self.assertTrue(defined >= set(self.flags))
+        macros = subprocess.run(
+            [cmd[0], "-dM", "-E"] + (["-x", "c"] if cmd[0] != "cpp" else [])
+            + ["-DHARDWARE_XIAO_ESP32S3", "-DBUILD_PROFILE_FULL", str(HEADER)],
+            capture_output=True, text=True)
+        self.assertEqual(macros.returncode, 0, macros.stderr)
+        defined = set(re.findall(r"^#define (FEATURE_\w+)\b", macros.stdout, re.M))
+        start, end = full_block_lines(TEXT)
+        block = "\n".join(TEXT.split("\n")[start - 1:end - 1])
+        for extra in sorted(defined - set(self.flags)):
+            self.assertNotRegex(block, r"#\s*define\s+%s\b" % extra,
+                                f"{extra} is set in the FULL block but the reader dropped it")
+        self.assertTrue(defined >= set(self.flags))
 
     def test_keeps_the_blocks_order(self):
         start, end = full_block_lines(TEXT)
@@ -143,9 +151,11 @@ GOOD = """\
 #endif
 #if defined(HARDWARE_XIAO_ESP32C3)
   #define HW_HAS_CAMERA 0
+  #define HW_HAS_PSRAM  0
 #elif defined(HARDWARE_XIAO_ESP32S3)
   #define HW_HAS_CAMERA 1
   #define HW_HAS_BLE    1
+  #define HW_HAS_PSRAM  0
 #endif
 #if defined(BUILD_PROFILE_MINIMAL)
   #define FEATURE_A 0
@@ -156,6 +166,11 @@ GOOD = """\
   #define FEATURE_C 0
   #endif
   #define FEATURE_D (FEATURE_A && !FEATURE_C)
+  #define FEATURE_E (FEATURE_A && FEATURE_C)
+  #define FEATURE_F (FEATURE_C || FEATURE_A)
+  #define FEATURE_G (HW_HAS_CAMERA && HW_HAS_PSRAM)
+  #define FEATURE_H FEATURE_A || FEATURE_C && FEATURE_C
+  #define FEATURE_I !(FEATURE_C || HW_HAS_PSRAM)
   #define DEBUG_X 0
 #endif
 #if defined(BUILD_PROFILE_FULL)
@@ -171,7 +186,27 @@ class Refusals(unittest.TestCase):
             "FEATURE_B": {"on": True, "expr": "HW_HAS_CAMERA"},
             "FEATURE_C": {"on": False, "note": "-D overridable"},
             "FEATURE_D": {"on": True, "expr": "(FEATURE_A && !FEATURE_C)"},
+            # The operators come apart here (review of F258): the real header's
+            # only && flags have every operand on, so neither it nor FEATURE_D
+            # tells && from ||. E is off and F on only if each is itself; G
+            # reads an S3 capability that is 0; H is on only if && binds
+            # tighter than ||, as in C; I negates a parenthesized ||.
+            "FEATURE_E": {"on": False, "expr": "(FEATURE_A && FEATURE_C)"},
+            "FEATURE_F": {"on": True, "expr": "(FEATURE_C || FEATURE_A)"},
+            "FEATURE_G": {"on": False, "expr": "(HW_HAS_CAMERA && HW_HAS_PSRAM)"},
+            "FEATURE_H": {"on": True, "expr": "FEATURE_A || FEATURE_C && FEATURE_C"},
+            "FEATURE_I": {"on": True, "expr": "!(FEATURE_C || HW_HAS_PSRAM)"},
         })
+
+    def test_the_good_shape_is_the_preprocessors_value(self):
+        # The fixture's answers are the C preprocessor's, not this file's
+        # opinion of them: the same oracle the real header is held to.
+        flags = wp.read_full_profile(GOOD)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "build_config.h").write_text(GOOD)
+            got = preprocessor_values(self, Path(tmp), flags)
+        for name, entry in flags.items():
+            self.assertEqual(entry["on"], got[name] == "1", f"{name}: reader vs preprocessor")
 
     def refuses(self, text, needle):
         with self.assertRaises(wp.WapProfileError) as ctx:
