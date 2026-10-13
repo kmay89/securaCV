@@ -28,7 +28,8 @@
  *    it to the same test at its own bound (storable(name, max_len)).
  *  - usable(): the routes' own test, storable() and a letter or digit for
  *    the mDNS label (canary-<label>.local), so POST /api/device-name answers
- *    a refused name as invalid rather than as an NVS failure.
+ *    a refused name as invalid rather than as an NVS failure, in kRefusal's
+ *    words, the rule's own (F263).
  *  - scrub_stored(): setup_wizard::init() turns each control byte of a name
  *    stored before this rule into a space, in RAM, as it reads it. The mDNS
  *    sanitizer maps a control byte and a space alike to '-', so the device's
@@ -93,10 +94,20 @@ inline bool storable(const char* name, size_t max_len) {
  * none of them a control byte. */
 inline bool storable(const char* name) { return storable(name, kMaxLen); }
 
+/* What POST /api/device-name answers a name usable() refuses (sweep F263):
+ * the rule usable() applies, in words, beside it, so the route and its words
+ * read one place. The bound it states is held to kMaxLen at compile time.
+ * The old answer, "1-32 chars, letters/digits/hyphen", named a rule the
+ * route never applied: a space, a quote and a byte past 0x7f are kept (the
+ * mDNS label drops them), and since F226 only a control byte is refused. */
+static constexpr char kRefusal[] =
+    "Invalid name: 1 to 32 bytes, no control characters, and at least one letter or digit";
+static_assert(states_bound(kRefusal, kMaxLen), "kRefusal states kMaxLen");
+
 /* True when `name` is storable and holds a letter or a digit: the bytes the
  * mDNS-label sanitizer keeps (it lowercases A-Z, keeps a-z, 0-9 and '-',
  * writes every other byte as '-' and trims the hyphens at both ends), so its
- * label is not empty. */
+ * label is not empty. kRefusal says it in words. */
 inline bool usable(const char* name) {
   if (!storable(name)) return false;
   for (const char* p = name; *p; ++p) {

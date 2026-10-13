@@ -8632,10 +8632,11 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
       name = body["name"] | "";
     }
     // 1-32 bytes, no control byte, a letter or digit for the mDNS label
-    // (sweep F226: device_name_rule.h, the setter's own rule).
+    // (sweep F226: device_name_rule.h, the setter's own rule), refused in
+    // that rule's own words (F263).
     if (!device_name_rule::usable(name)) {
       doc["ok"] = false;
-      doc["error"] = "Invalid name (1-32 chars, letters/digits/hyphen)";
+      doc["error"] = device_name_rule::kRefusal;
     } else if (!setup_wizard::set_device_name(name)) {
       doc["ok"] = false;
       doc["error"] = "Could not save name";

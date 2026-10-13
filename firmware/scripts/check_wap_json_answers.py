@@ -150,7 +150,9 @@ J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
     called once in each rename route (`handle_wifi_connect()`,
     `handle_device_name()`), after `device_name_rule::usable()` of the same
     argument, unchanged in between (host-tested in
-    tests_host/test_device_name.cpp).
+    tests_host/test_device_name.cpp). POST /api/device-name answers a name
+    `usable()` refuses with `device_name_rule::kRefusal`, the rule's own
+    words beside it (F263).
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -2371,6 +2373,17 @@ def check_device_name(files: dict[str, str], idx: Index) -> list[str]:
     if calls != len(NAME_ROUTES):
         errors.append(f"{INO}: setup_wizard::set_device_name() is called {calls} times, not once in each of "
                       f"{NAME_ROUTES} (J8)")
+    # POST /api/device-name answers a refused name in the rule's own words (F263), the ones
+    # device_name_rule.h writes beside usable(), never a literal of its own.
+    if INO in files:
+        kept_ino = blank_comments_only(files[INO])
+        route = [f for f in idx.fns.get("handle_device_name", []) if f.file == INO and f.body]
+        body = kept_ino[route[0].body[0]:route[0].body[1]] if len(route) == 1 else ""
+        if not re.search(r"if\s*\(\s*!\s*device_name_rule\s*::\s*usable\s*\(\s*\w+\s*\)\s*\)\s*\{[^{}]*"
+                         r"\[\s*\"error\"\s*\]\s*=\s*device_name_rule\s*::\s*kRefusal\s*;", body):
+            errors.append(f"{INO}: handle_device_name() does not answer a name usable() refuses with "
+                          "device_name_rule::kRefusal, the rule's own words: the answer would name a rule the "
+                          "route does not apply (J8, F263)")
     return errors
 
 
@@ -2814,6 +2827,9 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw_in(INO, "  const char* device_name = body[\"device_name\"] | \"\";\n",
             "  const char* device_name = body[\"device_name\"] | \"\";\n"
             "  strncpy(setup_wizard::s_device_name, device_name, setup_wizard::DEVICE_NAME_MAX);\n")),
+    ("POST /api/device-name's refusal goes back to the words of a rule it never applied (F263)",
+     raw_in(INO, '      doc["error"] = device_name_rule::kRefusal;',
+            '      doc["error"] = "Invalid name (1-32 chars, letters/digits/hyphen)";')),
     ("a third route sets the name, tested",
      add_file(f"{SKETCH}/zz_name_route.h",
               "static void zz_ble_rename(const char* n) {\n"

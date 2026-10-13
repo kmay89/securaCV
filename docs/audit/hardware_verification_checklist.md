@@ -1954,8 +1954,9 @@ repo). Compile is CI's. Owner: U1.
     `curl -s http://<wap>/api/device-info`, then flash this firmware without
     erasing NVS and read `/api/fleet/scan` and `/api/device-info` again, and
     `ping canary-kit-chen.local`.
-  - Expected: the rename answers `"ok":false` with "Invalid name (1-32
-    chars, letters/digits/hyphen)" and the device keeps its old name; the
+  - Expected: the rename answers `"ok":false` with "Invalid name: 1 to 32
+    bytes, no control characters, and at least one letter or digit" (the
+    rule the route applies, since F263) and the device keeps its old name; the
     scan answer parses and the Fleet sheet lists the device. On the upgraded
     device both answers parse, the name reads `kit chen` (the control byte as
     a space), and its host is still `canary-kit-chen.local` (before F226 the

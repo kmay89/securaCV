@@ -28,6 +28,11 @@
 //
 // With the setter's old length-only test put back 279 checks fail, with
 // init()'s scrub removed 230, and with usable() taking control bytes 187.
+//
+// And POST /api/device-name's refusal (sweep F263): its words are
+// device_name_rule::kRefusal, written beside usable(), whose bound a
+// static_assert holds to kMaxLen; the words name each clause the rule
+// applies, and the old ones ("letters/digits/hyphen") named one it never did.
 
 #include "arduino_globals.h"
 
@@ -107,7 +112,7 @@ bool wifi_connect_rename(const char* device_name) {
 // handle_device_name(): the answer's `ok`, and its error when refused.
 const char* device_name_route(const char* name, bool* ok) {
   *ok = false;
-  if (!device_name_rule::usable(name)) return "Invalid name (1-32 chars, letters/digits/hyphen)";
+  if (!device_name_rule::usable(name)) return device_name_rule::kRefusal;
   if (!setup_wizard::set_device_name(name)) return "Could not save name";
   *ok = true;
   return nullptr;
@@ -265,7 +270,7 @@ void test_every_route_refuses_and_both_answers_parse() {
       bool ok = true;
       const char* why = device_name_route(n.c_str(), &ok);
       CHECK(!ok);
-      CHECK(why != nullptr && std::strcmp(why, "Invalid name (1-32 chars, letters/digits/hyphen)") == 0);
+      CHECK(why != nullptr && std::strcmp(why, device_name_rule::kRefusal) == 0);
       CHECK(name_now() == "Porch");
       CHECK(stored_name() == "Porch");
       CHECK(answers_parse());
@@ -334,6 +339,37 @@ void test_a_name_stored_before_reads_back_without_control_bytes() {
   CHECK(answers_parse());
 }
 
+// POST /api/device-name's refusal says the rule the route applies (sweep
+// F263): its words name each of usable()'s three clauses, and each clause
+// the words name refuses a name on its own (one byte past the bound, an
+// empty name, a control byte, a name with no letter or digit); a name that
+// breaks none of them is taken, whatever else it holds (a space, a quote, a
+// byte past 0x7f), which the old words ("letters/digits/hyphen") said was
+// refused. The bound the words state is the one storable() applies, read
+// from the words themselves.
+void test_the_refusal_states_the_rule_the_route_applies() {
+  const std::string words = device_name_rule::kRefusal;
+  CHECK(words.find("1 to 32 bytes") != std::string::npos);
+  CHECK(words.find("no control characters") != std::string::npos);
+  CHECK(words.find("at least one letter or digit") != std::string::npos);
+  CHECK(words.find("hyphen") == std::string::npos);
+  CHECK(device_name_rule::states_bound(device_name_rule::kRefusal, device_name_rule::kMaxLen));
+  CHECK(!device_name_rule::states_bound(device_name_rule::kRefusal, device_name_rule::kMaxLen + 1));
+  CHECK(!device_name_rule::states_bound("Invalid name (1-32 chars, letters/digits/hyphen)", 32));
+  const std::string longest(device_name_rule::kMaxLen, 'n');
+  bool ok = false;
+  for (const std::string& refused : {longest + "n", std::string(), std::string("kit\x01" "chen"),
+                                     std::string(" \"-\" ")}) {
+    CHECK(!device_name_rule::usable(refused.c_str()));
+    CHECK(device_name_route(refused.c_str(), &ok) == std::string(words) && !ok);
+  }
+  for (const std::string& taken : {longest, std::string("kitchen north"), std::string("kitchen \"north\""),
+                                   std::string("K\xc3\xbc" "che"), std::string("a\x7f" "b")}) {
+    CHECK(device_name_route(taken.c_str(), &ok) == nullptr && ok);
+    CHECK(name_now() == taken);
+  }
+}
+
 // The answers' model writes a control byte raw, as ArduinoJson does: a name
 // holding one does not parse (what F226 refuses), so the parse checks above
 // are not vacuous.
@@ -356,6 +392,7 @@ int main() {
   test_every_route_refuses_and_both_answers_parse();
   test_a_name_stored_before_reads_back_without_control_bytes();
   test_a_control_byte_breaks_the_answers();
+  test_the_refusal_states_the_rule_the_route_applies();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;
