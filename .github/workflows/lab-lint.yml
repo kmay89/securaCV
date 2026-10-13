@@ -1,8 +1,9 @@
 name: Lab assets lint
 
-# Keeps dead code out of the Lab's browser assets (sweep CI12). The 2026-10
-# cleanup removed unused functions, constants and CSS from canary-local/assets
-# by hand; this job keeps the JavaScript half of that from growing back.
+# Keeps dead code out of the Lab's browser assets (sweeps CI12, CI16). The
+# 2026-10 cleanup removed unused functions, constants and CSS from
+# canary-local/assets by hand; the no-unused-vars job keeps the JavaScript half
+# of that from growing back, and the unused-css job the stylesheet half.
 #
 # ESLint with ONE rule, no-unused-vars at its defaults, and the module source
 # type, and nothing else. Nothing in the tree can weaken that rule: no config
@@ -27,6 +28,9 @@ on:
     branches: [main]
     paths:
       - "canary-local/assets/**"
+      # unused-css reads the pages too: a class only a page names is used.
+      - "canary-local/*.html"
+      - "canary-local/tools/lint_css_selectors.mjs"
       - "canary-vision/package.json"
       - "canary-vision/package-lock.json"
       - "canary-vision/device-api/package.json"
@@ -35,6 +39,9 @@ on:
     branches: [main]
     paths:
       - "canary-local/assets/**"
+      # unused-css reads the pages too: a class only a page names is used.
+      - "canary-local/*.html"
+      - "canary-local/tools/lint_css_selectors.mjs"
       - "canary-vision/package.json"
       - "canary-vision/package-lock.json"
       - "canary-vision/device-api/package.json"
@@ -74,3 +81,24 @@ jobs:
           --rule '{"no-unused-vars": "error"}'
           --parser-options sourceType:module
           'canary-local/assets/*.js'
+
+  unused-css:
+    # No class or id selector in canary-local/assets/*.css that no page
+    # (canary-local/*.html) or first-party script (canary-local/assets/*.js)
+    # names (sweep CI16). Classes a script builds at run time (`wire-${dir}`,
+    # "flash-map-" + kind) are read from the scripts: a built prefix plus a
+    # value the pages or scripts name counts as used. A name built from data
+    # the scripts transform is listed in the tool's ALLOW with where it is
+    # built, and an entry that is no longer needed fails the job. The tool runs
+    # its own probes first and refuses to pass the stylesheets if one comes
+    # out wrong. Node only, no install: plain fs reads.
+    name: Unused CSS selectors (canary-local/assets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Every selector name is used by a page or script
+        run: node canary-local/tools/lint_css_selectors.mjs
