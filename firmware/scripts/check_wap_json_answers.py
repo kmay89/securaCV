@@ -2077,26 +2077,30 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
          'rec->values.dominant_signal[0] ? rec->values.dominant_signal : ""',
          'rec->values.state_name[0] ? rec->values.state_name : ""'),
         "an events-log line on the card, not an answer: a live record's names are the CSI modules' own "
-        "labels. NOT safe for a record read back from the card: csi_event_log_line::json_str() stops at a "
-        "quote but keeps a backslash or a control byte, so a hand-edited line carries one into the line "
-        "rewritten from it (an open item, F227 review); marshal() returns 0 on a cut line"),
+        "labels; a record read back from the card (a restored ring row a dismissal rewrites) passed "
+        "csi_event_log_line::parse(), which refuses a line whose string field holds a backslash or a byte "
+        "outside printable ASCII (sweep F264; json_str() stops at a quote), so every name it spells needs "
+        "no escape; marshal() returns 0 on a cut line"),
     ("csi_event_wire.h", "build_event_body"): (
         ('module_id ? module_id : ""', "sig_b64", "sig_kv", 'signer.alg ? signer.alg : ""',
          "signer.fingerprint_hex", "state_s", 'type_name ? type_name : ""',
          'values->confidence[0] ? values->confidence : "tentative"'),
         "the MQTT events body (host-tested in firmware/tests_host): a live record's module and state names "
         "are the modules' labels, the signature base64url, the fingerprint hex, the algorithm a constant; "
-        "sig_kv is the piece this function spells itself; a cut body returns 0. NOT safe for a record the "
-        "backfill reads back from the card (csi_event_backfill.h, through csi_mqtt::publish_event_row()): "
-        "csi_event_log_line::json_str() keeps a backslash or a control byte, so a hand-edited card line "
-        "reaches Home Assistant as a body that is not JSON (an open item, F227 review)"),
+        "sig_kv is the piece this function spells itself; a cut body returns 0. A record the backfill "
+        "reads back from the card (csi_event_backfill.h, through csi_mqtt::publish_event_row()) passed "
+        "csi_event_log_line::parse(), which refuses a line whose string field holds a backslash or a byte "
+        "outside printable ASCII (sweep F264): the walk skips and counts such a line and sends the rows "
+        "behind it"),
     ("csi_event_wire.h", "build_tamper_bridge_body"): (
         ("values->state_name",),
         "the tamper bridge body: only for system.integrity's tamper events, whose state names are "
         "tamper_events_module's literal kinds"),
     ("csi_integration.cpp", "handle_events_today"): (
         ("active", "r->module_id", "r->type_name", "r->values.confidence", "r->values.state_name"),
-        "GET /api/csi/events/today, chunked: rows from the event ring (the modules' labels) and active, "
+        "GET /api/csi/events/today, chunked: rows from the event ring (the modules' labels; a row the "
+        "boot load restored from the card passed csi_event_log_line::parse(), which refuses a backslash or "
+        "a byte outside printable ASCII in its strings, sweep F264) and active, "
         "tamper_events_active_kind()'s literal kinds; each row is length-tested and a cut one skipped"),
     ("csi_integration.cpp", "handle_pair_token"): (
         ("hex",),
