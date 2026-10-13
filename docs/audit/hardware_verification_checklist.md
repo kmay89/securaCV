@@ -1423,7 +1423,10 @@ bring-up is over, `waits_for_boot_bring_up()`, which `canary_wap.ino`'s
 finalize stage ends with `bluetooth_channel::boot_bring_up_finished()`
 after the Scout's own NimBLE init; before it, and while another bring-up
 runs, they answer 503, `send_boot_bring_up_pending()` /
-`send_bring_up_refused()`).
+`send_bring_up_refused()`: "still starting" once the sketch has started its
+boot bring-up, `bluetooth_channel::boot_bring_up_started()`, set by
+`bringup_worker_started()` as the gate opens, and "has not started yet"
+only before that).
 Host-tested (`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE
 stand-in that models NimBLE-Arduino's 3-bond store and 8-record CCCD
 store, its full-store event at a Pairing Request, its default evictions
@@ -1526,32 +1529,52 @@ Owner: U1.
     boot; the web UI's Bluetooth tab open; a phone with a BLE scanner (nRF
     Connect); for the second part, a boot state that leaves the internal
     heap under the bring-up guard's floor, if one can be arranged.
-  - Repro: (a) reboot and, from the SoftAP or the LAN, tap Start
-    Advertising and then Pair before the boot log's `BLE bring-up
-    finalized` line (the join window, up to 5 min with the SoftAP up);
-    repeat once while the log shows `Initializing Bluetooth Low Energy`;
-    then boot into safe mode and tap both again. (b) After a refused boot
-    bring-up (`GET /api/bluetooth` names `init_fail_reason`), tap Start
-    Advertising twice; free the heap if the setup allows and tap Start
-    Advertising, timing how long a second browser tab's `GET /api/status`
-    waits meanwhile; then tap Pair.
-  - Expected: (a) each early tap answers 503 `Bluetooth has not started
-    yet; it starts once Wi-Fi setup is done or within five minutes (never
-    in safe mode)`, or `Bluetooth
-    is still starting; try again in a moment` while the boot bring-up
-    runs, and the web UI alerts that text; the scanner sees no WAP
-    advertising before the `finalized` line (before the F235 review one
-    tap there brought NimBLE up on the HTTP task and advertised at once);
-    the boot log shows `[OK] Bluetooth initialized`, never `Bluetooth init
-    failed` with no reason after such a tap; in safe mode no tap ever
-    brings Bluetooth up. (b) each tap while refused answers the refusal by
-    name (the heap guard's measured RAM) with no crash or watchdog reset;
-    once the heap allows, the tap brings Bluetooth up and advertises
-    (before F235 every tap answered `Failed to start advertising` and the
-    stack stayed down until Enable), the Bluetooth card's subtitle goes
-    back to `BLE connectivity` without a reload, and the other tab's
-    request waits for that bring-up (seconds), as it does behind an
-    Enable tap; the Pair tap after it starts pairing mode.
+  - Repro: the serial console prints, in order, `[..] Initializing
+    Bluetooth Low Energy (post-join-window)...`, then `[OK] Bluetooth
+    initialized` (or, refused, `[--] Bluetooth init failed (reason
+    recorded for self-test)`), then, at the default log level (Device tab:
+    INFO), `[INFO/BLUETOOTH] BLE bring-up finalized (post-provisioning
+    window)`, which `GET /api/logs` lists too. (a) Reboot and, from the
+    SoftAP or the LAN, tap Start Advertising and then Pair in each of three
+    windows: before `Initializing Bluetooth Low Energy` (the join window,
+    up to 5 min with the SoftAP up); between it and `[OK] Bluetooth
+    initialized`; and between that and `BLE bring-up finalized` (on FULL
+    it spans ble_status's registration and ble_manager's bring-up, seconds;
+    a scripted `curl` loop catches it more surely than a finger). Then boot
+    into safe mode and tap both again. (b) After a refused boot bring-up
+    (`[--] Bluetooth init failed`; `GET /api/bluetooth` names
+    `init_fail_reason`), tap Start Advertising once before `BLE bring-up
+    finalized` if quick enough, then twice after it; free the heap if the
+    setup allows and tap Start Advertising, timing how long a second
+    browser tab's `GET /api/status` waits meanwhile; then tap Pair.
+  - Expected: (a) before `Initializing Bluetooth Low Energy` (the gate
+    shut) each tap answers 503 `Bluetooth has not started yet; it starts
+    once Wi-Fi setup is done or within five minutes (never in safe mode)`;
+    from the gate's opening, a moment before that line, until `[OK]
+    Bluetooth initialized` (the worker's init running) 503 `Bluetooth is
+    still starting; try again in a moment`; the web UI alerts each text.
+    Between `[OK] Bluetooth initialized` and `BLE bring-up finalized` each
+    tap answers 200 (`Advertising started`, `Pairing mode started`) and
+    runs no bring-up of its own, and its advertising starts only when the
+    finalize stage takes the worker's result. In every one of these windows the scanner sees no WAP
+    advertising before `BLE bring-up finalized` (the finalize stage starts
+    it a moment before that line, in the same loop pass; before the F235
+    review a tap in the join window brought NimBLE up on the HTTP task and
+    advertised at once); the console shows `[OK] Bluetooth initialized`,
+    never `Bluetooth init failed` with no reason after such a tap; in safe
+    mode every tap answers the "has not started yet" text and none ever
+    brings Bluetooth up. (b) a tap after `[--] Bluetooth init failed` and
+    before `BLE bring-up finalized` answers 503 `Bluetooth is still
+    starting; try again in a moment` (until wave 16's verify it was told
+    Bluetooth had not started yet); each tap after `finalized` while
+    refused answers the refusal by name (the heap guard's measured RAM)
+    with no crash or watchdog reset; once the heap allows, the tap brings
+    Bluetooth up and advertises (before F235 every tap answered `Failed to
+    start advertising` and the stack stayed down until Enable), the
+    Bluetooth card's subtitle goes back to `BLE connectivity` without a
+    reload, and the other tab's request waits for that bring-up (seconds),
+    as it does behind an Enable tap; the Pair tap after it starts pairing
+    mode.
   - Artifact: `docs/audit/repro/F235/tap-brings-up/`.
 
 ## canary-wap Chirp status reads and the unset-clock refusal (F138 Chirp half, F146) — on-device verification
