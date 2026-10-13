@@ -197,14 +197,16 @@ namespace {
 struct Reply {
   std::string status;
   std::string body;
-  std::string set_cookie;   // the cv_session value a response set, or ""
+  std::string set_cookie;       // the cv_session value a response set, or ""
+  std::string set_cookie_hdr;   // the whole Set-Cookie header, or ""
 };
 
-Reply call(esp_err_t (*handler)(httpd_req_t*), const std::string& query,
-           const std::string& cookie, const std::string& authorization) {
+// A request with its Cookie header exactly as given ("" for none).
+Reply call_raw(esp_err_t (*handler)(httpd_req_t*), const std::string& query,
+               const std::string& cookie_header, const std::string& authorization) {
   httpd_req_t req;
   req.query = query;
-  if (!cookie.empty()) req.req_hdrs["Cookie"] = "theme=dark; cv_session=" + cookie;
+  if (!cookie_header.empty()) req.req_hdrs["Cookie"] = cookie_header;
   if (!authorization.empty()) req.req_hdrs["Authorization"] = authorization;
   handler(&req);
   Reply r;
@@ -213,10 +215,30 @@ Reply call(esp_err_t (*handler)(httpd_req_t*), const std::string& query,
   auto it = req.resp_hdrs.find("Set-Cookie");
   if (it != req.resp_hdrs.end()) {
     const std::string& v = it->second;
+    r.set_cookie_hdr = v;
     const size_t at = v.find("cv_session=");
     if (at != std::string::npos) r.set_cookie = v.substr(at + 11, cv_session::TOK_HEX_LEN);
   }
   return r;
+}
+
+// A browser's request: the session cookie after another cookie of its own.
+Reply call(esp_err_t (*handler)(httpd_req_t*), const std::string& query,
+           const std::string& cookie, const std::string& authorization) {
+  return call_raw(handler, query, cookie.empty() ? "" : "theme=dark; cv_session=" + cookie,
+                  authorization);
+}
+
+// What the session checks answer for a Cookie header, alone.
+bool any_session(const std::string& cookie_header) {
+  httpd_req_t req;
+  req.req_hdrs["Cookie"] = cookie_header;
+  return csi_integration::session_validate_cookie(&req);
+}
+bool owner_session(const std::string& cookie_header) {
+  httpd_req_t req;
+  req.req_hdrs["Cookie"] = cookie_header;
+  return csi_integration::session_validate_owner_cookie(&req);
 }
 
 bool carries_secret(const Reply& r) {
@@ -443,12 +465,14 @@ void test_origin_is_the_mints() {
 
   // And the other way: a full store, every slot a landing session, then a
   // tap: the oldest goes, the new one is the owner's, the rest stay landing.
+  // Eviction is read from the session checks, not the receipt, which
+  // refuses a landing session whether or not it was evicted.
   reset_world();
-  std::string first;
+  std::string landings[cv_session::SLOTS];
   for (size_t i = 0; i < cv_session::SLOTS; ++i) {
     stub_receipt::now_ms += 10;
-    const std::string s = landing_session();
-    if (i == 0) first = s;
+    landings[i] = landing_session();
+    CHECK(any_session("cv_session=" + landings[i]));
   }
   stub_receipt::now_ms += 10;
   g_tap_open = true;
@@ -457,7 +481,12 @@ void test_origin_is_the_mints() {
   for (const auto& s : g_sessions.slots) owners += (s.active && s.origin == cv_session::Origin::OWNER);
   CHECK(owners == 1);
   CHECK(call(handle_provisioning_receipt, "", owner2, "").status == "200 OK");
-  CHECK(call(handle_provisioning_receipt, "", first, "").status == "403 Forbidden");   // evicted
+  CHECK(owner_session("cv_session=" + owner2));
+  CHECK(!any_session("cv_session=" + landings[0]));             // the oldest: evicted
+  for (size_t i = 1; i < cv_session::SLOTS; ++i) {
+    CHECK(any_session("cv_session=" + landings[i]));             // the rest: still live
+    CHECK(!owner_session("cv_session=" + landings[i]));          // and still landing
+  }
 }
 
 // Nothing the client sends picks the origin: the cookie is the token alone,
@@ -514,6 +543,135 @@ void test_credential_checks() {
   }
 }
 
+// A Cookie header nothing minted (sweep F289 review). The store is zero at
+// boot, so a cookie of 64 zeros matches an unused slot's token byte for
+// byte: only the slot's `active` flag stands between it and a session, and
+// only the zero value of Origin (NONE) between it and an owner's. Checked
+// inside the first 24 h of uptime, where a zeroed slot's issued_ms of 0 is
+// not yet past the TTL.
+void test_forged_zero_cookie() {
+  reset_world();
+  const uint32_t saved_now = stub_receipt::now_ms;
+  stub_receipt::now_ms = 60000;   // a minute after boot
+  const std::string zeros(cv_session::TOK_HEX_LEN, '0');
+  const std::string hdr = "cv_session=" + zeros;
+  CHECK(cv_session::Slot{}.origin == cv_session::Origin::NONE);
+  CHECK(static_cast<uint8_t>(cv_session::Origin::NONE) == 0);
+  CHECK(!any_session(hdr));
+  CHECK(!owner_session(hdr));
+  const Reply receipt = call_raw(handle_provisioning_receipt, "", hdr, "");
+  CHECK(receipt.status == "403 Forbidden" && !carries_secret(receipt));
+  const Reply qr = call_raw(handle_pairing_qr, "", hdr, "");
+  CHECK(qr.status == "401 Unauthorized" && !carries_secret(qr));
+  {
+    httpd_req_t req;
+    req.req_hdrs["Cookie"] = hdr;
+    CHECK(!api_auth_check(&req, g_device.api_token_str));
+    CHECK(req.status == "401 Unauthorized");
+  }
+  CHECK(call_raw(handle_ui, "", hdr, "").body != "DASHBOARD");   // the landing, not the dashboard
+  // Beside one real session in slot 0, the other seven still zero.
+  const std::string landing = landing_session();
+  CHECK(any_session("cv_session=" + landing));
+  CHECK(!any_session(hdr) && !owner_session(hdr));
+  CHECK(call_raw(handle_provisioning_receipt, "", hdr, "").status == "403 Forbidden");
+  stub_receipt::now_ms = saved_now + 60000;
+}
+
+// Every byte of the token is compared: an owner's cookie with any one of its
+// 64 hex digits changed is no session at all, and a landing cookie likewise.
+// (Changing digit i changes byte i / 2, so this reaches the first byte, the
+// last, and every one between.)
+void test_every_cookie_digit_counts() {
+  reset_world();
+  const std::string landing = landing_session();
+  g_tap_open = true;
+  const std::string owner = call(handle_provisioning_receipt, "", "", "").set_cookie;
+  CHECK(owner.size() == cv_session::TOK_HEX_LEN);
+  size_t taken = 0, receipts_served = 0, landing_taken = 0;
+  for (size_t i = 0; i < cv_session::TOK_HEX_LEN; ++i) {
+    std::string o = owner;
+    o[i] = o[i] == '0' ? '1' : '0';
+    if (any_session("cv_session=" + o) || owner_session("cv_session=" + o)) {
+      std::printf("FAIL: an owner cookie with digit %zu changed is a session\n", i);
+      ++taken;
+    }
+    const Reply r = call(handle_provisioning_receipt, "", o, "");
+    if (r.status != "403 Forbidden" || carries_secret(r)) ++receipts_served;
+    std::string l = landing;
+    l[i] = l[i] == '0' ? '1' : '0';
+    if (any_session("cv_session=" + l)) {
+      std::printf("FAIL: a landing cookie with digit %zu changed is a session\n", i);
+      ++landing_taken;
+    }
+  }
+  CHECK(taken == 0);
+  CHECK(receipts_served == 0);
+  CHECK(landing_taken == 0);
+  // And the cookies themselves still are what they were.
+  CHECK(owner_session("cv_session=" + owner) && any_session("cv_session=" + landing));
+}
+
+// The cv_session pair need not be the last cookie in the header: a browser
+// sends its cookies in the order it likes. Ended by ';', ' ' or the end.
+void test_cookie_anywhere_in_the_header() {
+  reset_world();
+  g_tap_open = true;
+  const std::string owner = call(handle_provisioning_receipt, "", "", "").set_cookie;
+  const std::string shapes[] = {
+      "cv_session=" + owner,
+      "cv_session=" + owner + "; theme=dark",
+      "cv_session=" + owner + ";theme=dark",
+      "lang=en; cv_session=" + owner + "; theme=dark",
+  };
+  for (const std::string& h : shapes) {
+    const Reply r = call_raw(handle_provisioning_receipt, "", h, "");
+    if (r.status != "200 OK") std::printf("FAIL: Cookie \"%s\" was refused\n", h.c_str());
+    CHECK(r.status == "200 OK" && carries_secret(r));
+    CHECK(g_last_grant == receipt_authority::Grant::BEARER);
+    CHECK(owner_session(h));
+  }
+  // A longer value is not the token followed by something.
+  CHECK(!owner_session("cv_session=" + owner + "0; theme=dark"));
+  CHECK(!owner_session("cv_session=" + owner + "x"));
+}
+
+// The cookie each mint sets: HttpOnly, SameSite=Strict, Path=/, 24 h, and
+// Secure exactly when the unit serves its dashboard over TLS. The owner's
+// stands in for the bearer for those 24 h; the landing's runs the dashboard.
+void test_cookie_attributes() {
+  for (int tls = 0; tls < 2; ++tls) {
+    reset_world();
+    g_tls_enabled = tls != 0;
+    const std::string tail = std::string("; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400") +
+                             (tls ? "; Secure" : "");
+    // The landing's mint (handle_ui's /?cv_pair= exchange).
+    const Reply landing = call(handle_ui, "", "", "");
+    const size_t at = landing.body.find("cv_pair=");
+    CHECK(at != std::string::npos);
+    const Reply exchanged =
+        call(handle_ui, "cv_pair=" + landing.body.substr(at + 8, csi_integration::PAIR_TOKEN_HEX_LEN), "", "");
+    CHECK(exchanged.status == "302 Found");
+    CHECK(exchanged.set_cookie_hdr == "cv_session=" + exchanged.set_cookie + tail);
+    // The tap's mint.
+    g_tap_open = true;
+    const Reply tapped = call(handle_provisioning_receipt, "", "", "");
+    CHECK(tapped.status == "200 OK");
+    CHECK(tapped.set_cookie_hdr == "cv_session=" + tapped.set_cookie + tail);
+    // The claim's mint.
+    const std::string claim = mint_claim();
+    const Reply claimed = call(handle_provisioning_receipt, "claim=" + claim, "", "");
+    CHECK(claimed.status == "200 OK");
+    CHECK(claimed.set_cookie_hdr == "cv_session=" + claimed.set_cookie + tail);
+    if (exchanged.set_cookie_hdr != "cv_session=" + exchanged.set_cookie + tail ||
+        tapped.set_cookie_hdr != "cv_session=" + tapped.set_cookie + tail) {
+      std::printf("FAIL: tls=%d landing \"%s\" tap \"%s\"\n", tls,
+                  exchanged.set_cookie_hdr.c_str(), tapped.set_cookie_hdr.c_str());
+    }
+  }
+  g_tls_enabled = false;
+}
+
 }  // namespace
 
 int main() {
@@ -531,6 +689,10 @@ int main() {
   test_origin_is_the_mints();
   test_client_cannot_choose_origin();
   test_credential_checks();
+  test_forged_zero_cookie();
+  test_every_cookie_digit_counts();
+  test_cookie_anywhere_in_the_header();
+  test_cookie_attributes();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;

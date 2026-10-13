@@ -3647,10 +3647,13 @@ static esp_err_t handle_ui(httpd_req_t* req) {
         // HttpOnly: no JS can read the cookie (mitigates XSS exfil).
         // SameSite=Strict: cross-origin requests can't carry it (CSRF).
         // Path=/: covers /, /tune, /api/*.
+        // Secure on a TLS unit (sweep F289 review): this route is served on
+        // 443 only then, and port 80 is the redirect server, so a browser
+        // that types http:// never sends the cookie in the clear.
         char cookie_hdr[160];
         snprintf(cookie_hdr, sizeof(cookie_hdr),
-          "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-          session_hex);
+          "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
+          session_hex, g_tls_enabled ? "; Secure" : "");
         httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
         httpd_resp_set_hdr(req, "Location", "/");
@@ -8744,13 +8747,15 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // provisioned over the door is as present as the hand on the BOOT button.
   // OWNER: this response carries the bearer token, so the session minted
   // with it stands in for the bearer on grant 1 (sweep F289).
+  // The same attributes as handle_ui's, Secure included on a TLS unit:
+  // this cookie stands in for the bearer for 24 h.
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
   if (csi_integration::session_issue(session_hex, sizeof(session_hex),
                                      cv_session::Origin::OWNER)) {
     char cookie_hdr[160];
     int cookie_len = snprintf(cookie_hdr, sizeof(cookie_hdr),
-      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-      session_hex);
+      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
+      session_hex, g_tls_enabled ? "; Secure" : "");
     if (cookie_len > 0 && (size_t)cookie_len < sizeof(cookie_hdr)) {
       httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
     }

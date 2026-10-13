@@ -3,7 +3,8 @@
  * session came from (sweep F289).
  *
  * A session is a 32-byte random token the browser holds in an HttpOnly,
- * SameSite=Strict cookie (`cv_session=<64 hex>`). Two places mint one:
+ * SameSite=Strict cookie (`cv_session=<64 hex>`), Secure on a unit that
+ * serves its dashboard over TLS. Two places mint one:
  *
  *   LANDING — GET /?cv_pair=<token> (handle_ui). The landing page at `/`
  *             mints a pair token for ANY caller that can reach the device,
@@ -47,10 +48,14 @@ constexpr size_t   TOK_BYTES   = 32;                           /* 256-bit entrop
 constexpr size_t   TOK_HEX_LEN = TOK_BYTES * 2;                /* 64 hex chars */
 
 /* Where a session came from. Set at mint, from the code path that minted
- * it; never from the request that presents it. */
+ * it; never from the request that presents it. The zero value is NONE, so
+ * a slot nothing ever minted (the store is zero-initialized) reads as no
+ * origin at all, never as the owner's: only an explicit OWNER mint answers
+ * a credential. */
 enum class Origin : uint8_t {
-  LANDING = 0,   /* the landing page's pair token: any caller on the network */
-  OWNER   = 1,   /* minted with a served receipt: a BOOT tap or a setup-door claim */
+  NONE    = 0,   /* never minted: what a zeroed slot holds */
+  LANDING = 1,   /* the landing page's pair token: any caller on the network */
+  OWNER   = 2,   /* minted with a served receipt: a BOOT tap or a setup-door claim */
 };
 
 struct Slot {
