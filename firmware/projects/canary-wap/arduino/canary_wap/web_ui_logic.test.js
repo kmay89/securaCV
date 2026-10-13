@@ -347,6 +347,22 @@ describe('the Bluetooth card after a refused stack comes up', () => {
     assert.equal(page.el('btStateText').textContent, 'Advertising');
     assert.equal(page.el('btStateBadge').className, 'badge info');
   });
+  // A refusal can clear on a status saying Bluetooth is off (a tap brought
+  // the stack up, and the owner then turned it off before the next poll):
+  // the card's own line comes back there too. Restored only while enabled,
+  // the card would read "Radio off — <old refusal>" under a Disabled badge
+  // (wave 16's verify).
+  it('puts it back when the refusal clears on a status saying Bluetooth is off', async () => {
+    const page = bluetoothPage();
+    page.el('btSubtitle').textContent = cardMarkupSubtitle();
+    await refreshWith(page, { ...base, state: 'disabled', advertising: false,
+                              init_fail_reason: 'Not started: internal RAM too low' });
+    assert.equal(page.el('btSubtitle').textContent, 'Radio off — Not started: internal RAM too low');
+    await refreshWith(page, { ...base, enabled: false, state: 'disabled', advertising: false });
+    assert.equal(page.el('btSubtitle').textContent, 'BLE connectivity');
+    assert.equal(page.el('btStateText').textContent, 'Disabled');
+    assert.equal(page.el('btEnabled').checked, false);
+  });
   it('puts it back after a refresh that found no backend, too', async () => {
     const page = bluetoothPage();
     await refreshWith(page, null);                    // a failed request: "not registered"
