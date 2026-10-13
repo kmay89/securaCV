@@ -251,8 +251,14 @@ those bodies `"replay":true`. On the canary base
   refuses the device from then on. Both devices' MQTT health carries
   `event_id_space_low` (sweep F82), true once the allocator's next id
   reaches 0xF0000000 (2^28 ids before the wrap, about four years at the
-  most a device can commit) and after a wrap. It only warns: what recovers
-  the device is still a decision. Home Assistant shows it as the device's
+  most a device can commit) and after a wrap. It only warns, and nothing on
+  the device resets the id space (sweep F82's decision): recovery is an
+  owner action. On a canary, a factory reset clears its NVS, the floor
+  (`csi.evid`) and the delivery ceiling (`csi.evsent`) with it; a canary-wap
+  has no reset path, so its owner flashes it with the flasher's full erase,
+  which clears the floor (`ev.next`) and `csi.evsent` with the rest of NVS.
+  Either way the owner then re-pins the device in Home Assistant, whose mark
+  is above the restarted ids. Home Assistant shows the flag as the device's
   Event ID Space Low diagnostic binary sensor (HA24). At boot the id floor is held at or above the delivery ceiling (NVS
   `csi.evsent`), unless that ceiling is past 0xF0000000 (an older firmware
   wrote one for a forged card line): the floor and the backfill both treat
