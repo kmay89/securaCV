@@ -1964,6 +1964,55 @@ repo). Compile is CI's. Owner: U1.
     could not reach the device). A later rename replaces the stored bytes.
   - Artifact: `docs/audit/repro/F226/control-byte-name/`.
 
+## canary-wap: no control byte reaches a JSON answer through the Bluetooth name or an SSID (F261, F262) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.h` /
+`.cpp` (`name_storable()`, on `device_name_rule.h`'s control-byte test:
+`set_device_name()` and the settings command refuse a name holding a byte
+below 0x20, and a saved one is not loaded), `bluetooth_api.h` (POST
+`/api/bluetooth/settings` and `/api/bluetooth/name` answer
+`DEVICE_NAME_REFUSAL`), `wap_json_writer.h` (`replaced_text()`: each control
+byte as U+FFFD, cut on a character), and its callers in `canary_wap.ino`,
+`selftest_api.h` and `ble_provision.cpp`. Host-tested
+(`tests_host/test_bluetooth_commands_wap.cpp` on the real
+`bluetooth_channel.cpp` and `bluetooth_api.h`, `tests_host/test_wap_json_writer.cpp`
+on the real header and ArduinoJson 7.4.1's own writer) and held by
+`firmware/scripts/check_wap_json_answers.py` (J9); no host test runs the
+radio, a real access point's beacon, or a browser reading the device.
+
+- [ ] **A Bluetooth name holding a control byte is refused, and a saved one is not loaded (F261)**
+  - Setup: a canary-wap with its API token and Bluetooth on; for the second
+    half, a canary-wap still on firmware from before F261.
+  - Repro: `curl -X POST -H "Authorization: Bearer <token>"
+    --data-binary $'{"device_name":"kit\x01chen"}' http://<wap>/api/bluetooth/settings`,
+    and the same name as `{"name":...}` to `/api/bluetooth/name`; then
+    `curl -s -H "Authorization: Bearer <token>" http://<wap>/api/bluetooth
+    | python3 -m json.tool`, the same for `/api/bluetooth/settings`, and a
+    phone's Bluetooth scan. On the older device, set the name the same way (it
+    takes it), then flash this firmware without erasing NVS and read both
+    answers and `/api/logs` again.
+  - Expected: both POSTs answer `"success":false` with "Invalid Bluetooth
+    name: 1 to 32 bytes, no control characters" and nothing else in the
+    settings POST is applied; both GETs parse and the radio still advertises
+    the old name. On the upgraded device both answers parse, the name is the
+    default one, and the health log holds "Saved Bluetooth name held a control
+    byte: the default name is used" (before F261 both answers were
+    unparseable in the browser).
+  - Artifact: `docs/audit/repro/F261/control-byte-bt-name/`.
+- [ ] **An SSID holding a control byte reaches every answer as U+FFFD, and the device still joins it (F262)**
+  - Setup: a canary-wap with its API token, and an access point whose SSID
+    holds 0x01 (hostapd with `ssid2=P"kit\x01chen"`) in range.
+  - Repro: `curl -s http://<wap>/api/wifi/scan | python3 -m json.tool`; join
+    it with `curl -X POST --data-binary
+    '{"ssid":"kit\u0001chen","password":"<pass>"}' http://<wap>/api/wifi/connect`
+    and read that answer; once joined, read `/api/wifi`, `/api/selftest` and
+    `/api/logs` (with the token) the same way, and open the setup wizard's
+    network list.
+  - Expected: every answer parses; each shows the network as `kit�chen`
+    (U+FFFD where the byte was), and the device joins the network by its real
+    bytes. Before F262 the scan answer did not parse in the browser.
+  - Artifact: `docs/audit/repro/F262/control-byte-ssid/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at
