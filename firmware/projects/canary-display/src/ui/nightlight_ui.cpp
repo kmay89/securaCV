@@ -79,11 +79,44 @@ lv_obj_t* s_caption = nullptr;        // the companion's few words
 lv_obj_t* s_bird = nullptr;
 int s_bird_px = 96;                   // bird size this composition chose
 
-uint32_t s_caption_bright_until = 0;  // ambient-life check-in window
-uint32_t s_tumble_until = 0;          // caption shows the tumble word
+// A moment the face plays for a while after something happened: a flag
+// that one is playing and when it began, read by elapsed ms. The tumble's
+// word ("wheee!") and the clock's breath-in play for kTumbleMs from a turn,
+// and a life glance brightens the caption for kBrightMs. Each used to be a
+// deadline compared by sign, (int32_t)(now - until) < 0, and create()
+// zeroed the tumble's: once millis() passed 2^31 (24.8 days of uptime) a
+// zero read as still to come, so a face built without a turn said "wheee!"
+// and stopped setting the clock's opacity until the counter wrapped at
+// 49.7 days (F280). A moment that has not begun never plays, and elapsed
+// ms read the same on either side of 2^31 and across the wrap.
+constexpr uint32_t kTumbleMs = 1400;  // the caption's one word of glee
+constexpr uint32_t kBrightMs = 6000;  // the ambient-life check-in
+struct Moment {
+  bool on = false;
+  uint32_t at = 0;
+  void begin(uint32_t now) {
+    on = true;
+    at = now;
+  }
+  bool playing(uint32_t now, uint32_t ms) {
+    if (on && now - at >= ms) on = false;
+    return on;
+  }
+};
+Moment s_bright;                      // the ambient-life check-in window
+Moment s_tumble;                      // the tumble's word and breath-in
 bool s_tumble_startle = false;        // the tumble's Startle, owed to the
                                       // first mood (see nightlight_ui_tumble)
 VisitKind s_staged = VisitKind::None; // the visit currently on stage
+// The bird's translate_y is the visit's stage lift plus the tumble's fall
+// from above, written in one place (place_bird_y) so the fall lands on the
+// lift. The fall used to animate translate_y itself, to 0, while
+// stage_bird() owned it for the lift: create() resets s_staged, so the first
+// update after a portrait half turn re-staged a running visit under the
+// fall, the fall's next frames overwrote the lift, and the bird sat on its
+// perch for the rest of the visit (F284).
+int s_lift_y = 0;                     // the staged lift: bird_lift() or 0
+int s_fall_y = 0;                     // the fall's offset, 0 once it lands
 
 lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
   lv_obj_t* l = lv_label_create(parent);
@@ -165,14 +198,22 @@ void build_clock_digits(lv_obj_t* parent, int x0, int gap, int colon_w) {
 // perch is already center stage).
 int bird_lift() { return s_land ? 0 : -((s_h * 66) / 320); }
 
-void stage_bird(bool up) {
+void place_bird_y() {
   if (!s_bird) return;
-  lv_obj_set_style_translate_y(s_bird, up ? bird_lift() : 0, 0);
+  lv_obj_set_style_translate_y(s_bird, (lv_coord_t)(s_lift_y + s_fall_y), 0);
+}
+
+void stage_bird(bool up) {
+  s_lift_y = up ? bird_lift() : 0;
+  place_bird_y();
 }
 
 // ── Tumble plumbing ──────────────────────────────────────────────────────
-void anim_ty_cb(void* var, int32_t v) {
-  lv_obj_set_style_translate_y((lv_obj_t*)var, (lv_coord_t)v, 0);
+// The fall from above animates its own offset; the bird wears it on top of
+// the stage lift, so the fall ends wherever the visit has the bird.
+void anim_fall_cb(void*, int32_t v) {
+  s_fall_y = (int)v;
+  place_bird_y();
 }
 void anim_tx_cb(void* var, int32_t v) {
   lv_obj_set_style_translate_x((lv_obj_t*)var, (lv_coord_t)v, 0);
@@ -284,7 +325,9 @@ void nightlight_ui_create() {
   }
 
   s_staged = VisitKind::None;
-  s_tumble_until = 0;
+  s_lift_y = 0;
+  s_fall_y = 0;
+  s_tumble = Moment();
   s_tumble_startle = false;
 }
 
@@ -317,7 +360,7 @@ void nightlight_ui_tumble(uint8_t delta_cw, uint32_t now) {
   if (from_y != 0) {
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_bird);
-    lv_anim_set_exec_cb(&a, anim_ty_cb);
+    lv_anim_set_exec_cb(&a, anim_fall_cb);
     lv_anim_set_values(&a, from_y, 0);
     lv_anim_set_time(&a, 700);
     lv_anim_set_path_cb(&a, lv_anim_path_bounce);
@@ -344,7 +387,7 @@ void nightlight_ui_tumble(uint8_t delta_cw, uint32_t now) {
     lv_anim_start(&a);
   }
 
-  s_tumble_until = now + 1400;   // the caption's one word of glee
+  s_tumble.begin(now);   // the caption's one word of glee
 }
 
 void nightlight_ui_update(const Fleet& fleet, uint32_t now,
@@ -366,7 +409,7 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
   // first update that comes after that pays nothing.
   if (s_tumble_startle) {
     s_tumble_startle = false;
-    if ((int32_t)(now - s_tumble_until) < 0)
+    if (s_tumble.playing(now, kTumbleMs))
       canary_mark_react(CanaryReact::Startle);
   }
 
@@ -439,7 +482,7 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
 
     const bool visiting = st.visit.kind != VisitKind::None &&
                           st.visit.kind != VisitKind::Moonwatch;
-    const bool tumbling = (int32_t)(now - s_tumble_until) < 0;
+    const bool tumbling = s_tumble.playing(now, kTumbleMs);
     if (!tumbling) {  // the tumble's own opa animation owns it briefly
       lv_obj_set_style_opa(s_clock, visiting ? LV_OPA_40 : LV_OPA_COVER, 0);
     }
@@ -453,8 +496,8 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
       s_staged = k;
       stage_bird(k != VisitKind::None && k != VisitKind::Moonwatch);
     }
-    const bool tumbling = (int32_t)(now - s_tumble_until) < 0;
-    const bool bright = (int32_t)(now - s_caption_bright_until) < 0;
+    const bool tumbling = s_tumble.playing(now, kTumbleMs);
+    const bool bright = s_bright.playing(now, kBrightMs);
     if (tumbling) {
       lv_label_set_text(s_caption, "wheee!");
       lv_obj_set_style_text_color(s_caption, col_text(), 0);
@@ -514,9 +557,7 @@ void nightlight_ui_ack_hold(bool /*active*/) {
   // the glass to track). Kept for main.cpp call symmetry.
 }
 
-void nightlight_ui_life_glance(uint32_t now) {
-  s_caption_bright_until = now + 6000;
-}
+void nightlight_ui_life_glance(uint32_t now) { s_bright.begin(now); }
 
 }  // namespace canary::ui
 

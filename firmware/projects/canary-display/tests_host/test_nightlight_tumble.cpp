@@ -34,6 +34,7 @@
 #include "canary/ui/theme.h"
 
 #include <cstdio>
+#include <string>
 
 using namespace canary::ui;
 
@@ -159,6 +160,37 @@ static void report(const char* what, const YSpan& s) {
   std::printf("  %-46s y %d..%d (seat %d)\n", what, s.lo, s.hi, seat_y());
 }
 
+// The face's caption: the last label nightlight_ui_create() puts on the
+// screen (glance, date, caption in portrait; the caption after the bird in
+// landscape).
+static std::string caption() {
+  const lv_obj_t* last = nullptr;
+  for (const lv_obj_t* c : g_scr->children)
+    if (c->kind == fake_lvgl::kLabel) last = c;
+  return last != nullptr ? last->text : std::string("<no caption>");
+}
+
+// The clock: the one container of four digits and two colon dots.
+static int clock_opa() {
+  for (const lv_obj_t* c : g_scr->children)
+    if (c->kind == fake_lvgl::kObj && c->children.size() == 6 &&
+        c->children[0]->children.size() == 7)
+      return c->opa;
+  return -1;
+}
+
+static NightlightState visiting(CanaryMood m, canary::care::VisitKind k) {
+  NightlightState st = state(m);
+  st.visit.kind = k;
+  return st;
+}
+
+// The bird's translate_y: the visit's lift plus the tumble's fall.
+static int bird_ty() {
+  const lv_obj_t* b = canary_mark_obj();
+  return b != nullptr ? b->ty : -9999;
+}
+
 int main() {
   // A turn in the first seconds of uptime wears its Startle too (F279): the
   // mark's Tilt/Startle ration starts as "never reacted". Its clock used to
@@ -261,6 +293,8 @@ int main() {
     fresh_glass(320, 180);
     nightlight_ui_create();
     nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption().empty(), "a face built at boot (%u ms of uptime) says nothing (\"%s\")",
+          (unsigned)now(), caption().c_str());
     const YSpan boot = watch_y(600);
     report("a face built at boot", boot);
     CHECK(!startled(boot), "a face built without a turn does not Startle (y %d..%d)",
@@ -296,6 +330,130 @@ int main() {
     report("a turn after 24.8 days of uptime", turned);
     CHECK(startled(turned), "a turn after 24.8 days of uptime hops (y %d..%d)",
           turned.lo, turned.hi);
+  }
+
+  // F280: the face's moments read by elapsed ms, past 2^31 and across the
+  // wrap. A face built without a turn at 2^31 + 60 s of uptime said "wheee!"
+  // (its zeroed tumble deadline read as still to come) and stopped setting
+  // the clock's opacity, so a visit no longer dimmed it.
+  std::printf("the face's moments past 24.8 days of uptime (F280):\n");
+  {
+    using canary::care::VisitKind;
+    fake_lvgl::tick() = 0x80000000u + 120000u;
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    std::printf("  a face built at %u ms: caption \"%s\", clock opa %d\n", (unsigned)now(),
+                caption().c_str(), clock_opa());
+    CHECK(caption().empty(), "a face built without a turn after 24.8 days says nothing "
+          "(\"%s\")", caption().c_str());
+    nightlight_ui_update(g_fleet, now(), visiting(CanaryMood::Idle, VisitKind::Stretch));
+    CHECK(caption() == canary::care::visit_caption(VisitKind::Stretch) &&
+              clock_opa() == LV_OPA_40,
+          "a visit after 24.8 days dims the clock and names itself (caption \"%s\", clock "
+          "opa %d)", caption().c_str(), clock_opa());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption().empty() && clock_opa() == LV_OPA_COVER,
+          "...and the visit's end brings the clock back (caption \"%s\", clock opa %d)",
+          caption().c_str(), clock_opa());
+    // A life glance brightens the caption for 6 s, and then it goes quiet.
+    nightlight_ui_life_glance(now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption() == "here with you", "a life glance after 24.8 days shows its line (\"%s\")",
+          caption().c_str());
+    fake_lvgl::run(6100);
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption().empty(), "...for 6 s only (\"%s\" 6.1 s on)", caption().c_str());
+    // A turn there still says its word for the tumble's 1.4 s.
+    fake_lvgl::run(9000);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(1, now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption() == "wheee!", "a turn after 24.8 days says its word (\"%s\")",
+          caption().c_str());
+    fake_lvgl::run(1500);
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption().empty(), "...for the tumble's 1.4 s only (\"%s\" 1.5 s on)",
+          caption().c_str());
+    // ...and across the counter's wrap at 49.7 days: a turn 0.5 s before it
+    // keeps its word 1 s on (past the wrap) and drops it 1.5 s on.
+    fake_lvgl::tick() = 0u - 500u;
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(1, now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    fake_lvgl::run(1000);
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption() == "wheee!", "a turn 0.5 s before the wrap still says its word 1 s on, at "
+          "%u ms (\"%s\")", (unsigned)now(), caption().c_str());
+    fake_lvgl::run(500);
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption().empty(), "...and not 1.5 s on, at %u ms (\"%s\")", (unsigned)now(),
+          caption().c_str());
+  }
+
+  // F284: a portrait half turn during a visit keeps the companion's lift.
+  // The fall from above used to animate translate_y to 0 while stage_bird()
+  // owned translate_y for the lift (-66 * h / 320); create() resets the
+  // staging, the first update re-staged the running visit under the fall,
+  // and the fall's last frame put the bird back on its perch.
+  std::printf("a turn during a visit keeps the companion's lift (F284):\n");
+  {
+    using canary::care::VisitKind;
+    const NightlightState visit = visiting(CanaryMood::Idle, VisitKind::Stretch);
+    fake_lvgl::run(9000);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_update(g_fleet, now(), visit);
+    const int lift = -(66 * 320) / 320;
+    CHECK(bird_ty() == lift, "the visit lifts the bird to translate_y %d (%d)", lift, bird_ty());
+    // The half turn: portrait to portrait, the bird falling from above.
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(2, now());
+    nightlight_ui_update(g_fleet, now(), visit);
+    fake_lvgl::run(200);
+    const int mid = bird_ty();
+    nightlight_ui_update(g_fleet, now(), visit);
+    fake_lvgl::run(800);  // the 700 ms fall is over
+    nightlight_ui_update(g_fleet, now(), visit);
+    std::printf("  a half turn mid-visit: translate_y %d at 200 ms, %d after the fall (lift %d)\n",
+                mid, bird_ty(), lift);
+    CHECK(mid < lift, "200 ms into the fall the bird is still above its lift (%d, lift %d)", mid,
+          lift);
+    CHECK(bird_ty() == lift, "after a half turn mid-visit the bird keeps its lift (translate_y "
+          "%d, lift %d)", bird_ty(), lift);
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(bird_ty() == 0, "the visit's end puts the bird back on its perch (%d)", bird_ty());
+    // A visit that begins mid-fall: the fall lands on the lift.
+    fake_lvgl::run(9000);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(2, now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    fake_lvgl::run(300);
+    nightlight_ui_update(g_fleet, now(), visit);
+    fake_lvgl::run(700);
+    CHECK(bird_ty() == lift, "a visit begun mid-fall: the fall lands on the lift (%d, lift %d)",
+          bird_ty(), lift);
+    // A fall with no visit lands on the perch, as it did.
+    fake_lvgl::run(9000);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(2, now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    fake_lvgl::run(1000);
+    CHECK(bird_ty() == 0, "a fall with no visit lands on the perch (%d)", bird_ty());
+    // On the landscape glass the perch is already center stage (no lift): a
+    // half turn mid-visit lands at 0.
+    fake_lvgl::run(9000);
+    fresh_glass(320, 180);
+    nightlight_ui_create();
+    nightlight_ui_tumble(2, now());
+    nightlight_ui_update(g_fleet, now(), visit);
+    fake_lvgl::run(1000);
+    CHECK(bird_ty() == 0, "landscape, a half turn mid-visit lands at 0 (%d)", bird_ty());
   }
 
   if (g_fail == 0) {

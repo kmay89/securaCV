@@ -187,6 +187,7 @@ struct _lv_obj_t {
   uint32_t text_color;        // LV_STYLE_TEXT_COLOR as set on the object
   bool text_color_set;        // (not inherited: the test reads what it set)
   lv_coord_t arc_w_main, arc_w_ind;  // LV_STYLE_ARC_WIDTH per part
+  uint8_t opa;                // LV_STYLE_OPA (the whole object's)
 };
 
 namespace fake_lvgl {
@@ -219,6 +220,7 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   o->same_text_sets = 0;
   o->text_color_set = false;
   o->arc_w_main = o->arc_w_ind = 0;
+  o->opa = 255;  // LV_OPA_COVER, LVGL's default
   if (parent == nullptr) {
     // A screen: the display's size, at the origin. The first one is active
     // (lv_obj_constructor: the display's act_scr when it has none).
@@ -344,7 +346,7 @@ enum { LV_GRAD_DIR_NONE = 0, LV_GRAD_DIR_VER, LV_GRAD_DIR_HOR };
 typedef uint8_t lv_grad_dir_t;
 inline void lv_obj_set_style_bg_grad_dir(lv_obj_t*, lv_grad_dir_t, lv_style_selector_t) {}
 inline void lv_obj_set_style_bg_grad_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
-inline void lv_obj_set_style_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_opa(lv_obj_t* o, lv_opa_t v, lv_style_selector_t) { o->opa = v; }
 inline void lv_obj_set_style_border_width(lv_obj_t* o, lv_coord_t w, lv_style_selector_t) {
   o->border = w;
 }
