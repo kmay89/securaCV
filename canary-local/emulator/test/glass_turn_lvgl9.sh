@@ -93,7 +93,7 @@ grep -Eq '^extends[[:space:]]*=[[:space:]]*canary_display_c6_core3[[:space:]]*$'
   die "the nightstand-c6 env no longer extends canary_display_c6_core3"
 grep -Eq "^[[:space:]]*lvgl/lvgl@\\^${pin//./\\.}[[:space:]]*$" <<<"$(env_block canary_display_c6_core3)" ||
   die "canary_display_c6_core3 does not ask for lvgl/lvgl@^$pin (sketch.yaml's pin)"
-for flag in '-DCD_LEAN_BUILD=1' '-DCONFIG_NIGHTSTAND' '-DLV_CONF_INCLUDE_SIMPLE' \
+for flag in '-DCD_LEAN_BUILD=1' '-DLV_CONF_INCLUDE_SIMPLE' \
             '-I${PROJECT_DIR}/include' \
             '-I${PROJECT_DIR}/../../configs/canary-display/nightstand' \
             '-I${PROJECT_DIR}/../../boards/waveshare-esp32c6-lcd147/pins'; do
@@ -202,10 +202,12 @@ run_suite "dash splash tail" "$OUT/glass_splash_lvgl9_test"
 
 # nightstand-c6's wiring (F248), as its env's build_flags hand it to the
 # compiler (the defines that reach the display UI; the OTA and secrets
-# paths do not): the nightstand config on the C6 pin map, built lean.
+# paths do not): the nightstand config on the C6 pin map, built lean. The
+# flavor is its config.h on the -I path (CD_FLAVOR_NIGHTSTAND); the env has
+# carried no CONFIG_* marker since 2026-10-09.
 C6_CFG="$FW/configs/canary-display/nightstand"
 C6_PINS="$FW/boards/waveshare-esp32c6-lcd147/pins"
-C6_DEFS=(-DCONFIG_NIGHTSTAND -DCD_LEAN_BUILD=1 -DFEATURE_CHIRP_SCAN=0 -DFEATURE_FLEET_LINK=0
+C6_DEFS=(-DCD_LEAN_BUILD=1 -DFEATURE_CHIRP_SCAN=0 -DFEATURE_FLEET_LINK=0
          -DCANARY_MQTT_PLAIN_ONLY=1)
 build_lvgl "$OUT/lvgl_lean" -DCD_LEAN_BUILD=1
 C6_CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter

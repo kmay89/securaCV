@@ -121,7 +121,7 @@ test("nightstand-c6 (F248): the script builds the same test in the lean C6 confi
   // The config its env compiles: the nightstand on the C6 pin map, lean.
   assert.ok(sh.includes('C6_CFG="$FW/configs/canary-display/nightstand"') &&
     sh.includes('C6_PINS="$FW/boards/waveshare-esp32c6-lcd147/pins"') &&
-    /C6_DEFS=\(-DCONFIG_NIGHTSTAND -DCD_LEAN_BUILD=1 /.test(sh), "the nightstand-c6 config, lean");
+    /C6_DEFS=\(-DCD_LEAN_BUILD=1 /.test(sh) && !sh.includes("CONFIG_NIGHTSTAND"), "the nightstand-c6 config, lean");
   assert.ok(sh.includes('build_lvgl "$OUT/lvgl_lean" -DCD_LEAN_BUILD=1') &&
     sh.includes('"$OUT"/lvgl_lean/*.o'), "its LVGL objects are compiled with the lean lv_conf");
   assert.ok(sh.includes('"${C6_CXX[@]}" -c "$PROJ/src/ui/lvgl_port.cpp"') &&
@@ -129,7 +129,7 @@ test("nightstand-c6 (F248): the script builds the same test in the lean C6 confi
   // The env still is that config (the script refuses to run otherwise).
   const ini = read(join(REPO, "firmware/envs/platformio/canary-display.ini"));
   const c6 = /\n\[env:canary-display-nightstand-c6\]\n([\s\S]*?)(?=\n\[)/.exec(ini)?.[1] || "";
-  for (const flag of ["-DCD_LEAN_BUILD=1", "-DCONFIG_NIGHTSTAND", "-DLV_CONF_INCLUDE_SIMPLE", "-I${PROJECT_DIR}/include",
+  for (const flag of ["-DCD_LEAN_BUILD=1", "-DLV_CONF_INCLUDE_SIMPLE", "-I${PROJECT_DIR}/include",
     "-I${PROJECT_DIR}/../../configs/canary-display/nightstand", "-I${PROJECT_DIR}/../../boards/waveshare-esp32c6-lcd147/pins"]) {
     assert.ok(c6.split("\n").includes(`    ${flag}`), `the nightstand-c6 env carries ${flag}`);
     assert.ok(sh.includes(`'${flag}'`), `the script checks ${flag}`);
